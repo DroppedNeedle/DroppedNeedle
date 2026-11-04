@@ -87,46 +87,42 @@ impl ServiceError {
 mod tests {
     use super::*;
 
+    /// The stop rules that decide whether a play is kept: the native rule
+    /// (omitted position, past 90%, the last second, unknown runtime) and
+    /// the Subsonic half-capped-at-four-minutes rule.
     #[test]
-    fn omitted_position_counts() {
-        assert!(should_scrobble_native(None, Some(200_000)));
-        assert!(should_scrobble_native(None, None));
-    }
+    fn scrobble_thresholds() {
+        let native = [
+            ("omitted position", None, Some(200_000), true),
+            ("omitted position, no runtime", None, None, true),
+            ("past 90%", Some(181_000), Some(200_000), true),
+            ("exactly 90%", Some(180_000), Some(200_000), false),
+            ("within the last second", Some(199_500), Some(200_000), true),
+            ("halfway", Some(100_000), Some(200_000), false),
+            // Exactly 90% of a short track is inside its last second.
+            (
+                "90% inside the last second",
+                Some(9_000),
+                Some(10_000),
+                true,
+            ),
+            (
+                "just before the last second",
+                Some(8_999),
+                Some(10_000),
+                false,
+            ),
+            ("unknown runtime", Some(100_000), None, false),
+            ("zero runtime", Some(100_000), Some(0), false),
+        ];
+        for (case, position, runtime, counts) in native {
+            assert_eq!(should_scrobble_native(position, runtime), counts, "{case}");
+        }
 
-    #[test]
-    fn past_ninety_percent_counts() {
-        assert!(should_scrobble_native(Some(181_000), Some(200_000)));
-        assert!(!should_scrobble_native(Some(180_000), Some(200_000)));
-    }
-
-    #[test]
-    fn last_second_counts() {
-        assert!(should_scrobble_native(Some(199_500), Some(200_000)));
-        assert!(!should_scrobble_native(Some(100_000), Some(200_000)));
-    }
-
-    #[test]
-    fn unknown_runtime_never_counts() {
-        assert!(!should_scrobble_native(Some(100_000), None));
-        assert!(!should_scrobble_native(Some(100_000), Some(0)));
-    }
-
-    #[test]
-    fn subsonic_threshold_halves_and_caps() {
         assert_eq!(subsonic_scrobble_threshold_ms(600_000), 240_000);
         assert_eq!(subsonic_scrobble_threshold_ms(200_000), 100_000);
         assert_eq!(subsonic_scrobble_threshold_ms(0), 240_000);
         assert!(meets_subsonic_threshold(100_000, 200_000));
         assert!(!meets_subsonic_threshold(99_999, 200_000));
-    }
-
-    #[test]
-    fn client_normalization_trims_and_folds() {
-        assert_eq!(normalize_client(None), None);
-        assert_eq!(normalize_client(Some("  ")), None);
-        assert_eq!(
-            normalize_client(Some(" Symfonium ")),
-            Some("symfonium".to_owned())
-        );
     }
 }

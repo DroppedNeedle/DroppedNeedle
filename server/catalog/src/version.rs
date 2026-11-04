@@ -349,48 +349,40 @@ mod tests {
         }
     }
 
+    /// The update check compares the running version with the latest tag: a
+    /// newer tag is an update with its release attached, the same or an
+    /// older one is not, no latest answers the current version only, an
+    /// unreadable tag fails closed, and a dev build reports one.
     #[test]
-    fn newer_tag_marks_update_and_attaches_release() {
+    fn update_check_compares_tags() {
         let answer = build_update_response(&current("1.2.0"), Some(&release("v1.3.0")));
-        assert!(answer.update_available);
-        assert!(!answer.comparison_failed);
-        assert_eq!(answer.latest_version.as_deref(), Some("v1.3.0"));
-        assert!(answer.latest_release.is_some());
-    }
+        assert!(answer.update_available, "newer");
+        assert!(!answer.comparison_failed, "newer");
+        assert_eq!(answer.latest_version.as_deref(), Some("v1.3.0"), "newer");
+        assert!(answer.latest_release.is_some(), "newer");
 
-    #[test]
-    fn same_or_older_tag_marks_no_update_without_release() {
         for tag in ["v1.2.0", "1.1.9"] {
             let answer = build_update_response(&current("1.2.0"), Some(&release(tag)));
             assert!(!answer.update_available, "tag {tag}");
             assert!(!answer.comparison_failed, "tag {tag}");
             assert!(answer.latest_release.is_none(), "tag {tag}");
         }
-    }
 
-    #[test]
-    fn missing_latest_answers_current_only() {
         let answer = build_update_response(&current("1.2.0"), None);
-        assert_eq!(answer.current_version, "1.2.0");
-        assert_eq!(answer.latest_version, None);
-        assert!(!answer.update_available);
-        assert!(!answer.comparison_failed);
-        assert!(answer.latest_release.is_none());
-    }
+        assert_eq!(answer.current_version, "1.2.0", "no latest");
+        assert_eq!(answer.latest_version, None, "no latest");
+        assert!(!answer.update_available, "no latest");
+        assert!(!answer.comparison_failed, "no latest");
+        assert!(answer.latest_release.is_none(), "no latest");
 
-    #[test]
-    fn unparseable_tags_fail_closed() {
         let answer = build_update_response(&current("1.2.0"), Some(&release("nightly")));
-        assert!(!answer.update_available);
-        assert!(answer.comparison_failed);
-        assert!(answer.latest_release.is_none());
-    }
+        assert!(!answer.update_available, "unreadable tag");
+        assert!(answer.comparison_failed, "unreadable tag");
+        assert!(answer.latest_release.is_none(), "unreadable tag");
 
-    #[test]
-    fn dev_build_with_failed_comparison_reports_update() {
         let answer = build_update_response(&current("dev"), Some(&release("nightly")));
-        assert!(answer.update_available);
-        assert!(answer.comparison_failed);
-        assert!(answer.latest_release.is_some());
+        assert!(answer.update_available, "dev build");
+        assert!(answer.comparison_failed, "dev build");
+        assert!(answer.latest_release.is_some(), "dev build");
     }
 }

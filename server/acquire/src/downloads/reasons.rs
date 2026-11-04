@@ -63,44 +63,86 @@ pub fn task_reason(
 mod tests {
     use super::*;
 
+    /// The worker's outcome explains a settled task, a cancelled task shows
+    /// only a settled reason it stopped for, and the import decision wins.
     #[test]
-    fn the_worker_outcome_explains_a_settled_task() {
-        let stalled = task_reason(TaskStatus::Failed, Some(Reason::Stalled), false, None);
-        assert_eq!(stalled, Some(Reason::Stalled));
-        let unknown = task_reason(TaskStatus::Failed, None, false, None);
-        assert_eq!(unknown, Some(Reason::DownloadFailed));
-        assert!(task_reason(TaskStatus::Downloading, Some(Reason::Stalled), false, None).is_none());
-        let moved = task_reason(TaskStatus::Queued, Some(Reason::MovedOn), false, None);
-        assert_eq!(moved, Some(Reason::MovedOn));
-    }
-
-    #[test]
-    fn a_cancelled_task_shows_the_settled_reason_it_stopped_for() {
-        let settled = task_reason(
-            TaskStatus::Cancelled,
-            Some(Reason::NoBetterCopy),
-            false,
-            None,
-        );
-        assert_eq!(settled, Some(Reason::NoBetterCopy));
-        let stopped = task_reason(TaskStatus::Cancelled, Some(Reason::MovedOn), false, None);
-        assert_eq!(stopped, Some(Reason::Cancelled));
-        let stalled = task_reason(TaskStatus::Cancelled, Some(Reason::Stalled), false, None);
-        assert_eq!(stalled, Some(Reason::Cancelled));
-    }
-
-    #[test]
-    fn the_import_decision_wins() {
-        let decision = DecisionReason {
+    fn task_reason_table() {
+        let held = DecisionReason {
             outcome: ImportOutcome::Held,
             code: Some(Reason::WeakMatch),
         };
-        let reason = task_reason(
-            TaskStatus::Failed,
-            Some(Reason::WeakMatch),
-            true,
-            Some(&decision),
-        );
-        assert_eq!(reason, Some(Reason::WeakMatch));
+        let cases = [
+            (
+                "failed with an outcome",
+                TaskStatus::Failed,
+                Some(Reason::Stalled),
+                false,
+                None,
+                Some(Reason::Stalled),
+            ),
+            (
+                "failed without one",
+                TaskStatus::Failed,
+                None,
+                false,
+                None,
+                Some(Reason::DownloadFailed),
+            ),
+            (
+                "still downloading",
+                TaskStatus::Downloading,
+                Some(Reason::Stalled),
+                false,
+                None,
+                None,
+            ),
+            (
+                "moved on by hand",
+                TaskStatus::Queued,
+                Some(Reason::MovedOn),
+                false,
+                None,
+                Some(Reason::MovedOn),
+            ),
+            (
+                "cancelled for a settled reason",
+                TaskStatus::Cancelled,
+                Some(Reason::NoBetterCopy),
+                false,
+                None,
+                Some(Reason::NoBetterCopy),
+            ),
+            (
+                "cancelled after moving on",
+                TaskStatus::Cancelled,
+                Some(Reason::MovedOn),
+                false,
+                None,
+                Some(Reason::Cancelled),
+            ),
+            (
+                "cancelled while stalled",
+                TaskStatus::Cancelled,
+                Some(Reason::Stalled),
+                false,
+                None,
+                Some(Reason::Cancelled),
+            ),
+            (
+                "held by the import",
+                TaskStatus::Failed,
+                Some(Reason::WeakMatch),
+                true,
+                Some(&held),
+                Some(Reason::WeakMatch),
+            ),
+        ];
+        for (label, status, outcome, held_for_review, decision, expected) in cases {
+            assert_eq!(
+                task_reason(status, outcome, held_for_review, decision),
+                expected,
+                "{label}"
+            );
+        }
     }
 }

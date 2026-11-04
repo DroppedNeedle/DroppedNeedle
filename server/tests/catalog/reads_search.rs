@@ -1,7 +1,7 @@
 //! Unified search over a migrated database behind the real
 //! session gate: ranked buckets, accent and case folding, drill-down
-//! paging, suggest, enrichment that degrades inside a 200, the auth row
-//! and the fixed 500 on a database fault.
+//! paging, suggest, enrichment that degrades inside a 200 and the fixed
+//! 500 on a database fault.
 
 use crate::common::Probe;
 use droppedneedle_catalog::search;
@@ -202,39 +202,151 @@ fn assert_screaming_snake(code: &str) {
     );
 }
 
+/// The search routes over the seeded catalog: ranked buckets with their
+/// tops, accents and case folded, a blank query refused in the envelope,
+/// suggest merging buckets best first under its cap, and a bucket's
+/// drill-down paging with its top only on the first page.
 #[tokio::test]
-async fn unified_search_returns_ranked_buckets_with_tops() {
+async fn search_routes_answer_the_seeded_catalog() {
     let (app, _, _held) = authed_app().await;
+
+    // Ranked buckets with tops.
     let (status, _, bytes) = call(
-        app,
+        app.clone(),
         Method::GET,
         "/api/v3/search?q=beyonce",
         Some(TEST_TOKEN),
         None,
     )
     .await;
-
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "buckets");
     let body = json(&bytes);
-    assert_eq!(body["artists"][0]["title"], "Beyoncé");
-    assert_eq!(body["artists"][0]["kind"], "artist");
-    assert_eq!(body["artists"][0]["score"], 100);
+    assert_eq!(body["artists"][0]["title"], "Beyoncé", "buckets");
+    assert_eq!(body["artists"][0]["kind"], "artist", "buckets");
+    assert_eq!(body["artists"][0]["score"], 100, "buckets");
     assert_eq!(
-        body["artists"][0]["musicbrainz_id"],
-        "859d1e45-caf9-4e94-9e90-f17e67db2a6a"
+        body["artists"][0]["musicbrainz_id"], "859d1e45-caf9-4e94-9e90-f17e67db2a6a",
+        "buckets"
     );
-    assert_eq!(body["artists"][0]["in_library"], true);
-    assert_eq!(body["artists"][0]["requested"], false);
-    assert_eq!(body["top_artist"]["title"], "Beyoncé");
-    assert_eq!(body["albums"][0]["title"], "Renaissance");
-    assert_eq!(body["albums"][0]["artist"], "Beyoncé");
-    assert_eq!(body["albums"][0]["year"], 2022);
-    assert_eq!(body["tracks"][0]["title"], "Alien Superstar");
-    assert_eq!(body["tracks"][0]["track"]["album_id"], "album-renaissance");
-    assert_eq!(body["tracks"][0]["track"]["album_title"], "Renaissance");
-    assert_eq!(body["tracks"][0]["track"]["format"], "flac");
-    assert!(body["artists"][0]["track"].is_null());
-    assert!(body["top_track"].is_null());
+    assert_eq!(body["artists"][0]["in_library"], true, "buckets");
+    assert_eq!(body["artists"][0]["requested"], false, "buckets");
+    assert_eq!(body["top_artist"]["title"], "Beyoncé", "buckets");
+    assert_eq!(body["albums"][0]["title"], "Renaissance", "buckets");
+    assert_eq!(body["albums"][0]["artist"], "Beyoncé", "buckets");
+    assert_eq!(body["albums"][0]["year"], 2022, "buckets");
+    assert_eq!(body["tracks"][0]["title"], "Alien Superstar", "buckets");
+    assert_eq!(
+        body["tracks"][0]["track"]["album_id"], "album-renaissance",
+        "buckets"
+    );
+    assert_eq!(
+        body["tracks"][0]["track"]["album_title"], "Renaissance",
+        "buckets"
+    );
+    assert_eq!(body["tracks"][0]["track"]["format"], "flac", "buckets");
+    assert!(body["artists"][0]["track"].is_null(), "buckets");
+    assert!(body["top_track"].is_null(), "buckets");
+
+    // Accents and case.
+    for query in ["beyonce", "BEYONCE", "Beyoncé", "BEYONCÉ"] {
+        let uri = format!("/api/v3/search?{}", urlencode_query(query));
+        let (status, _, bytes) = call(app.clone(), Method::GET, &uri, Some(TEST_TOKEN), None).await;
+        assert_eq!(status, StatusCode::OK, "{query}");
+        let body = json(&bytes);
+        assert_eq!(body["artists"][0]["title"], "Beyoncé", "{query}");
+    }
+
+    // A blank query.
+    let (status, _, bytes) = call(
+        app.clone(),
+        Method::GET,
+        "/api/v3/search?q=%20%20",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "blank query");
+    let body = json(&bytes);
+    assert_eq!(
+        body,
+        serde_json::json!({"error": {"code": "INVALID_INPUT", "message": "Query must not be blank", "details": null}}),
+        "blank query"
+    );
+    assert_screaming_snake(body["error"]["code"].as_str().unwrap());
+
+    // Suggest.
+    let (status, _, bytes) = call(
+        app.clone(),
+        Method::GET,
+        "/api/v3/search/suggest?q=bey",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "suggest");
+    let body = json(&bytes);
+    let kinds: Vec<&str> = body["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["kind"].as_str().unwrap())
+        .collect();
+    assert!(kinds.contains(&"artist"), "suggest: {kinds:?}");
+    assert!(kinds.contains(&"album"), "suggest: {kinds:?}");
+    let scores: Vec<i64> = body["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["score"].as_i64().unwrap())
+        .collect();
+    assert!(
+        scores.windows(2).all(|pair| pair[0] >= pair[1]),
+        "suggest: {scores:?}"
+    );
+    let (status, _, bytes) = call(
+        app.clone(),
+        Method::GET,
+        "/api/v3/search/suggest?q=bey&limit=1",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "suggest cap");
+    assert_eq!(
+        json(&bytes)["results"].as_array().unwrap().len(),
+        1,
+        "suggest cap"
+    );
+
+    // A bucket's drill-down.
+    let (status, _, bytes) = call(
+        app.clone(),
+        Method::GET,
+        "/api/v3/search/artists?q=be&limit=1&offset=0",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "first page");
+    let body = json(&bytes);
+    assert_eq!(body["bucket"], "artists", "first page");
+    assert_eq!(body["limit"], 1, "first page");
+    assert_eq!(body["offset"], 0, "first page");
+    assert_eq!(body["results"].as_array().unwrap().len(), 1, "first page");
+    assert_eq!(body["results"][0]["title"], "Beirut", "first page");
+    assert_eq!(body["top_result"]["title"], "Beirut", "first page");
+    let (status, _, bytes) = call(
+        app,
+        Method::GET,
+        "/api/v3/search/artists?q=be&limit=1&offset=1",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "second page");
+    let body = json(&bytes);
+    assert_eq!(body["results"][0]["title"], "Beyoncé", "second page");
+    assert!(body["top_result"].is_null(), "second page");
 }
 
 /// A library album with no art of its own and no release group is marked
@@ -431,18 +543,6 @@ async fn a_song_title_finds_the_song() {
     assert_eq!(short, vec!["t-intro-g", "t-intro-r", "t-reprise"]);
 }
 
-#[tokio::test]
-async fn search_ignores_accents_and_case() {
-    let (app, _, _held) = authed_app().await;
-    for query in ["beyonce", "BEYONCE", "Beyoncé", "BEYONCÉ"] {
-        let uri = format!("/api/v3/search?{}", urlencode_query(query));
-        let (status, _, bytes) = call(app.clone(), Method::GET, &uri, Some(TEST_TOKEN), None).await;
-        assert_eq!(status, StatusCode::OK, "{query}");
-        let body = json(&bytes);
-        assert_eq!(body["artists"][0]["title"], "Beyoncé", "{query}");
-    }
-}
-
 fn urlencode_query(query: &str) -> String {
     let mut encoded = String::from("q=");
     for byte in query.as_bytes() {
@@ -453,102 +553,6 @@ fn urlencode_query(query: &str) -> String {
         }
     }
     encoded
-}
-
-#[tokio::test]
-async fn search_blank_query_is_a_400_envelope() {
-    let (app, _, _held) = authed_app().await;
-    let (status, _, bytes) = call(
-        app,
-        Method::GET,
-        "/api/v3/search?q=%20%20",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    let body = json(&bytes);
-    assert_eq!(
-        body,
-        serde_json::json!({"error": {"code": "INVALID_INPUT", "message": "Query must not be blank", "details": null}})
-    );
-    assert_screaming_snake(body["error"]["code"].as_str().unwrap());
-}
-
-#[tokio::test]
-async fn suggest_merges_buckets_best_first_and_caps() {
-    let (app, _, _held) = authed_app().await;
-    let (status, _, bytes) = call(
-        app.clone(),
-        Method::GET,
-        "/api/v3/search/suggest?q=bey",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let body = json(&bytes);
-    let kinds: Vec<&str> = body["results"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|item| item["kind"].as_str().unwrap())
-        .collect();
-    assert!(kinds.contains(&"artist"));
-    assert!(kinds.contains(&"album"));
-    let scores: Vec<i64> = body["results"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|item| item["score"].as_i64().unwrap())
-        .collect();
-    assert!(scores.windows(2).all(|pair| pair[0] >= pair[1]));
-
-    let (status, _, bytes) = call(
-        app,
-        Method::GET,
-        "/api/v3/search/suggest?q=bey&limit=1",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(json(&bytes)["results"].as_array().unwrap().len(), 1);
-}
-
-#[tokio::test]
-async fn bucket_drilldown_pages_with_top_only_on_first_page() {
-    let (app, _, _held) = authed_app().await;
-    let (status, _, bytes) = call(
-        app.clone(),
-        Method::GET,
-        "/api/v3/search/artists?q=be&limit=1&offset=0",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let body = json(&bytes);
-    assert_eq!(body["bucket"], "artists");
-    assert_eq!(body["limit"], 1);
-    assert_eq!(body["offset"], 0);
-    assert_eq!(body["results"].as_array().unwrap().len(), 1);
-    assert_eq!(body["results"][0]["title"], "Beirut");
-    assert_eq!(body["top_result"]["title"], "Beirut");
-
-    let (status, _, bytes) = call(
-        app,
-        Method::GET,
-        "/api/v3/search/artists?q=be&limit=1&offset=1",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let body = json(&bytes);
-    assert_eq!(body["results"][0]["title"], "Beyoncé");
-    assert!(body["top_result"].is_null());
 }
 
 #[tokio::test]
@@ -580,50 +584,6 @@ async fn enrich_failure_degrades_inside_a_200() {
     let raw = String::from_utf8(bytes).unwrap();
     assert!(!raw.contains("lb.internal"));
     assert!(!raw.contains("critique-brainz"));
-}
-
-#[tokio::test]
-async fn auth_matrix_row_401_without_bearer() {
-    let (app, _, _held) = authed_app().await;
-    for uri in [
-        "/api/v3/search?q=beyonce",
-        "/api/v3/search/suggest?q=bey",
-        "/api/v3/search/artists?q=bey",
-    ] {
-        let (status, headers, bytes) = call(app.clone(), Method::GET, uri, None, None).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri}");
-        assert_eq!(headers.get("www-authenticate").unwrap(), "Bearer", "{uri}");
-        assert_eq!(json(&bytes)["error"]["code"], "UNAUTHORIZED", "{uri}");
-    }
-    let (status, _, _) = call(
-        app.clone(),
-        Method::POST,
-        "/api/v3/search/enrich/batch",
-        None,
-        Some(serde_json::json!({"artists": [], "albums": []})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-
-    let (status, _, _) = call(
-        app.clone(),
-        Method::GET,
-        "/api/v3/search?q=beyonce",
-        Some("bogus-token"),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-
-    let (status, _, _) = call(
-        app,
-        Method::GET,
-        "/api/v3/search?q=beyonce",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]

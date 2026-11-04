@@ -199,11 +199,18 @@ mod tests {
         }
     }
 
-    // What automatic downloads may take: each row is one recipe and one file.
+    /// What automatic downloads may take, one recipe and one file a row, and
+    /// the tiers `beats` compares when an upgrade replaces a copy.
     #[test]
-    fn the_recipe_decides_what_a_file_may_be() {
+    fn the_recipe_and_tiers_decide_what_a_file_may_be() {
         use RecipeFit::{Outside, Step, Unshown};
         let default = recipe_for_range("mp3_320", "lossless", &[]);
+        assert_eq!(
+            droppedneedle_kernel::runtime_config::sections::DownloadPolicy::default()
+                .quality_recipe,
+            default,
+            "the saved policy's default recipe is the table's"
+        );
         let capped = vec![flac(RecipeQuality::Cd), mp3(320, None)];
         let gap = vec![mp3(320, None), mp3(192, Some(255))];
         let custom = vec![exact(16, 44_100)];
@@ -229,10 +236,13 @@ mod tests {
             (&default, "m4a", None, Some(16), None, Outside),
             (&default, "wav", None, Some(16), Some(44_100), Outside),
             (&default, "dsf", None, Some(1), Some(2_822_400), Outside),
+            (&default, "dff", None, Some(1), Some(2_822_400), Outside),
             (&default, "flac", None, Some(24), Some(192_000), Step(0)),
+            (&default, "flac", None, Some(16), Some(44_100), Step(0)),
             (&default, "FLAC", None, None, None, Step(0)),
             (&default, "mp3", Some(320), None, None, Step(1)),
             (&default, "mp3", Some(256), None, None, Outside),
+            (&default, "mp3", Some(128), None, None, Outside),
             (&default, "mp3", None, None, None, Unshown),
             (&capped, "flac", None, Some(16), Some(44_100), Step(0)),
             (&capped, "flac", None, Some(24), Some(44_100), Outside),
@@ -296,19 +306,20 @@ mod tests {
                 "{format} {bitrate:?} {depth:?} {rate:?} on {recipe:?}"
             );
         }
-    }
 
-    #[test]
-    fn tiers_follow_v2() {
-        assert_eq!(tier_for("FLAC", None, None), "lossless");
-        assert_eq!(tier_for("m4a", Some(256), None), "mp3_256");
-        assert_eq!(tier_for("m4a", Some(900), Some(16)), "lossless");
-        assert_eq!(tier_for("mp3", Some(320), None), "mp3_320");
-        assert_eq!(tier_for("ogg", Some(160), None), "low");
-        assert_eq!(worst(["lossless", "mp3_256", "mp3_320"]), Some("mp3_256"));
-        assert!(in_range("mp3_320", "mp3_320", "lossless"));
-        assert!(!in_range("mp3_256", "mp3_320", "lossless"));
-        assert!(beats("lossless", "mp3_320"));
-        assert!(!beats("mp3_320", "mp3_320"));
+        assert_eq!(tier_for("FLAC", None, None), "lossless", "tier");
+        assert_eq!(tier_for("m4a", Some(256), None), "mp3_256", "tier");
+        assert_eq!(tier_for("m4a", Some(900), Some(16)), "lossless", "tier");
+        assert_eq!(tier_for("mp3", Some(320), None), "mp3_320", "tier");
+        assert_eq!(tier_for("ogg", Some(160), None), "low", "tier");
+        assert_eq!(
+            worst(["lossless", "mp3_256", "mp3_320"]),
+            Some("mp3_256"),
+            "tier"
+        );
+        assert!(in_range("mp3_320", "mp3_320", "lossless"), "tier");
+        assert!(!in_range("mp3_256", "mp3_320", "lossless"), "tier");
+        assert!(beats("lossless", "mp3_320"), "tier");
+        assert!(!beats("mp3_320", "mp3_320"), "tier");
     }
 }

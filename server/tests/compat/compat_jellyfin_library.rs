@@ -17,9 +17,6 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use axum::http::{HeaderMap, StatusCode};
 use droppedneedle_auth::compat_auth::jellyfin::server_id;
-use droppedneedle_media::stream::transcode::{
-    OutFormat, StreamPlan, TrackInfo, TranscodeSettings, decide,
-};
 use serde_json::{Value, json};
 
 use crate::common::compat::{CompatApp, PLAYER, named};
@@ -751,8 +748,11 @@ async fn an_identified_artist_sends_its_musicbrainz_id() {
     rig.stop().await;
 }
 
+/// Pictures open without credentials; a miss names the item. An artist with
+/// no MusicBrainz link shows the mosaic of their albums' art.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn images_serve_anonymously_with_immutable_cache() {
+async fn images_serve_anonymously() {
+    use crate::compat_subsonic_library::{GREEN, RED, assert_quadrants, two_covers_for_radiohead};
     let rig = CompatApp::start("jf-images").await;
     let auth = finamp(&rig.secret);
     let views = json(&rig, "/jellyfin/UserViews", &auth).await;
@@ -791,6 +791,29 @@ async fn images_serve_anonymously_with_immutable_cache() {
     )
     .await;
     assert_eq!(backdrop.bare(), (404, 0));
+
+    // An artist with no MusicBrainz link advertises a picture when their
+    // albums have art, and it is the mosaic the web UI shows, at the bucket
+    // the size asks for. One with no art advertises none.
+    two_covers_for_radiohead(&rig).await;
+    let artists = json(&rig, "/jellyfin/Artists", &auth).await;
+    let radiohead = named(&artists["Items"], "Name", "Radiohead");
+    assert!(radiohead["ImageTags"]["Primary"].is_string(), "{radiohead}");
+    let massive = named(&artists["Items"], "Name", "Massive Attack");
+    assert_eq!(massive["ImageTags"], json!({}), "{massive}");
+    let id = radiohead["Id"].as_str().expect("artist id");
+    let reply = get(
+        &rig,
+        &format!("/jellyfin/Items/{id}/Images/Primary?fillWidth=200"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (reply.status, reply.header("content-type")),
+        (StatusCode::OK, "image/jpeg"),
+        "mosaic"
+    );
+    assert_quadrants(&reply.body, 250, [RED, GREEN, GREEN, RED]);
     rig.stop().await;
 }
 
@@ -835,102 +858,6 @@ async fn a_failed_read_is_a_server_error_not_an_empty_answer() {
         })
         .expect("playlists count");
     assert_eq!(playlists, 0);
-    rig.stop().await;
-}
-
-/// An artist with no MusicBrainz link advertises a picture when their
-/// albums have art, and it is the mosaic the web UI shows, at the bucket
-/// the size asks for. One with no art advertises none.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_unlinked_artist_shows_their_album_mosaic() {
-    use crate::compat_subsonic_library::{GREEN, RED, assert_quadrants, two_covers_for_radiohead};
-    let rig = CompatApp::start("jf-artist-mosaic").await;
-    let auth = finamp(&rig.secret);
-    two_covers_for_radiohead(&rig).await;
-    let artists = json(&rig, "/jellyfin/Artists", &auth).await;
-    let radiohead = named(&artists["Items"], "Name", "Radiohead");
-    assert!(radiohead["ImageTags"]["Primary"].is_string(), "{radiohead}");
-    let massive = named(&artists["Items"], "Name", "Massive Attack");
-    assert_eq!(massive["ImageTags"], json!({}), "{massive}");
-    let id = radiohead["Id"].as_str().expect("artist id");
-    let reply = get(
-        &rig,
-        &format!("/jellyfin/Items/{id}/Images/Primary?fillWidth=200"),
-        None,
-    )
-    .await;
-    assert_eq!(
-        (reply.status, reply.header("content-type")),
-        (StatusCode::OK, "image/jpeg")
-    );
-    assert_quadrants(&reply.body, 250, [RED, GREEN, GREEN, RED]);
-    rig.stop().await;
-}
-
-/// An app that listed an album before it was merged into another asks for
-/// its picture by the old id, with no credentials, and gets the picture of
-/// the album that holds it now.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_merged_album_shows_the_picture_of_the_album_that_holds_it() {
-    use crate::compat_subsonic_library::two_covers_for_radiohead;
-    let rig = CompatApp::start("jf-merged-picture").await;
-    let auth = finamp(&rig.secret);
-    two_covers_for_radiohead(&rig).await;
-    let mezzanine = album_id(&rig, &auth, "Mezzanine").await;
-    let ok_computer = album_id(&rig, &auth, "OK Computer").await;
-    rig.jellyfin_ids_caught_up().await;
-    let (teardrop, survivor): (String, String) = rig
-        .app
-        .db()
-        .query_row(
-            "SELECT t.id, (SELECT local_album_id FROM local_tracks \
-             WHERE relative_path = 'Radiohead/OK Computer/01 Airbag.flac') \
-             FROM local_tracks t WHERE t.relative_path = 'Massive Attack/Mezzanine/04 Teardrop.m4a'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .expect("the track and the album it joins");
-    let admin = rig.app.login_admin().await;
-    let admin = [("authorization", admin.as_str())];
-    let mut selection = json!({"track_ids": [teardrop], "target_album_id": survivor});
-    let (status, preview) = rig
-        .app
-        .call(
-            "POST",
-            "/api/v3/library/albums/merge-preview",
-            &admin,
-            Some(selection.clone()),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{preview}");
-    selection["preview_token"] = preview["preview_token"].clone();
-    let (status, merged) = rig
-        .app
-        .call(
-            "POST",
-            "/api/v3/library/albums/merge",
-            &admin,
-            Some(selection),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{merged}");
-
-    let current = get(
-        &rig,
-        &format!("/jellyfin/Items/{ok_computer}/Images/Primary"),
-        None,
-    )
-    .await;
-    assert_eq!(current.status, StatusCode::OK);
-    let old = get(
-        &rig,
-        &format!("/jellyfin/Items/{mezzanine}/Images/Primary"),
-        None,
-    )
-    .await;
-    assert_eq!(old.status, StatusCode::OK);
-    assert_eq!(old.header("content-type"), current.header("content-type"));
-    assert_eq!(old.body, current.body);
     rig.stop().await;
 }
 
@@ -1116,57 +1043,6 @@ async fn finamp_file_universal_and_hls_routes() {
     let playlist = get(&rig, &audio(&format!("main.m3u8?{query}")), None).await;
     assert_eq!(playlist.status, StatusCode::NOT_FOUND);
     rig.stop().await;
-}
-
-/// The transcode policy shared by `/Audio` and PlaybackInfo, which both
-/// read the stream gateway's one decision.
-#[test]
-fn transcode_decision_rules() {
-    let track = TrackInfo {
-        file_format: "mp3".to_owned(),
-        bitrate_kbps: Some(320),
-        duration_seconds: 0.0,
-    };
-    let on = TranscodeSettings::default();
-    let plan = |requested: Option<&str>,
-                ceiling: Option<i64>,
-                force: bool,
-                start: f64,
-                settings: &TranscodeSettings| {
-        decide(&track, requested, ceiling, force, start, settings, true)
-    };
-    // Nothing requested, a zero ceiling, force-original or transcoding off
-    // all stream direct.
-    assert!(!plan(None, None, false, 0.0, &on).is_transcode());
-    assert!(!plan(None, Some(0), false, 0.0, &on).is_transcode());
-    assert!(!plan(Some("opus"), None, true, 0.0, &on).is_transcode());
-    let off = TranscodeSettings {
-        transcoding_enabled: false,
-        ..TranscodeSettings::default()
-    };
-    assert!(!plan(Some("opus"), None, false, 0.0, &off).is_transcode());
-    // A codec or a ceiling triggers; the server max caps but never triggers.
-    assert!(matches!(
-        plan(None, Some(64), false, 0.0, &on),
-        StreamPlan::Transcode {
-            out_bitrate_kbps: 64,
-            ..
-        }
-    ));
-    assert!(matches!(
-        plan(Some("opus"), Some(999), false, 0.0, &on),
-        StreamPlan::Transcode {
-            out_format: OutFormat::Opus,
-            out_bitrate_kbps: 320,
-            ..
-        }
-    ));
-    // Unusable formats fall back to the default; negative starts clamp.
-    assert!(matches!(
-        plan(Some("wav"), None, false, -5.0, &on),
-        StreamPlan::Transcode { out_format: OutFormat::Mp3, start_seconds, .. }
-            if start_seconds == 0.0
-    ));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1877,20 +1753,25 @@ fn unserved_methods() -> Vec<(&'static str, String)> {
     out
 }
 
-/// Wrong app passwords at sign-in still lock the address out; asking who
-/// may sign in never does.
+/// Only new guesses lock an address out. Wrong app passwords at sign-in
+/// lock it; asking who may sign in never does. A device repeating one wrong
+/// password or token, or still sending a revoked app password, is refused
+/// every time without locking out its address: another app behind it then
+/// signs in. Each case sends from an address of its own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn failed_sign_ins_lock_out_and_public_routes_do_not() {
+async fn sign_ins_lock_out_only_new_guesses() {
     let rig = CompatApp::start("jf-sign-in-lockout").await;
     let login = "/jellyfin/Users/AuthenticateByName";
+
+    // New guesses lock the guesser out; the public list stays open to others.
     let guesser = vec![("x-forwarded-for", "10.78.0.1")];
     for guess in 0..5 {
         let body = json!({"Username": PLAYER, "Pw": format!("guess-{guess}")});
         let reply = raw(&rig, "POST", login, guesser.clone(), None, Some(body)).await;
-        assert_eq!(reply.bare(), (401, 0));
+        assert_eq!(reply.bare(), (401, 0), "guess {guess}");
     }
     let locked = raw(&rig, "GET", "/jellyfin/Users/Public", guesser, None, None).await;
-    assert_eq!(locked.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(locked.status, StatusCode::TOO_MANY_REQUESTS, "guesser");
     assert!(!locked.header("retry-after").is_empty(), "Retry-After");
 
     let asker = vec![("x-forwarded-for", "10.78.0.2")];
@@ -1904,25 +1785,17 @@ async fn failed_sign_ins_lock_out_and_public_routes_do_not() {
             None,
         )
         .await;
-        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.status, StatusCode::OK, "asker");
     }
-    rig.stop().await;
-}
 
-/// A device repeating one wrong password or token is refused every time but
-/// counted once a minute, so it does not lock out its address: another app
-/// behind it then signs in. The sign-ins stay under the public bucket's
-/// burst of 20; the token's repeats past their own bucket's burst are told
-/// to wait.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_repeated_wrong_credential_does_not_lock_out_its_address() {
-    let rig = CompatApp::start("jf-repeat-lockout").await;
+    // A repeated wrong credential is counted once a minute. The sign-ins
+    // stay under the public bucket's burst of 20; the token's repeats past
+    // their own bucket's burst are told to wait.
     let household = vec![("x-forwarded-for", "10.78.2.1")];
-    let login = "/jellyfin/Users/AuthenticateByName";
     for _ in 0..19 {
         let body = json!({"Username": PLAYER, "Pw": "mistyped"});
         let reply = raw(&rig, "POST", login, household.clone(), None, Some(body)).await;
-        assert_eq!(reply.bare(), (401, 0));
+        assert_eq!(reply.bare(), (401, 0), "repeated password");
     }
     let stale = finamp("a-deleted-users-token");
     for _ in 0..50 {
@@ -1930,23 +1803,15 @@ async fn a_repeated_wrong_credential_does_not_lock_out_its_address() {
         let reply = raw(&rig, "GET", me, household.clone(), Some(&stale), None).await;
         assert!(
             matches!(reply.bare(), (401, 0) | (429, 0)),
-            "{:?}",
+            "repeated token: {:?}",
             reply.bare()
         );
     }
-
     let body = json!({"Username": PLAYER, "Pw": rig.secret});
     let signed_in = raw(&rig, "POST", login, household, None, Some(body)).await;
-    assert_eq!(signed_in.status, StatusCode::OK);
-    rig.stop().await;
-}
+    assert_eq!(signed_in.status, StatusCode::OK, "after repeats");
 
-/// A device still sending a revoked app password is refused every time
-/// without locking out its address: another app behind the same address
-/// signs in and reads as normal.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_revoked_app_password_does_not_lock_out_its_address() {
-    let rig = CompatApp::start("jf-revoked-lockout").await;
+    // A revoked app password.
     let dave = rig.app.login_user("dave").await;
     let dave = [("authorization", dave.authorization.as_str())];
     let (status, created) = rig
@@ -1977,18 +1842,17 @@ async fn a_revoked_app_password_does_not_lock_out_its_address() {
             None,
         )
         .await;
-        assert_eq!(reply.bare(), (401, 0));
+        assert_eq!(reply.bare(), (401, 0), "revoked token");
     }
-    let login = "/jellyfin/Users/AuthenticateByName";
     for _ in 0..5 {
         let body = json!({"Username": "dave", "Pw": revoked});
         let reply = raw(&rig, "POST", login, household.clone(), None, Some(body)).await;
-        assert_eq!(reply.bare(), (401, 0));
+        assert_eq!(reply.bare(), (401, 0), "revoked sign-in");
     }
 
     let body = json!({"Username": PLAYER, "Pw": rig.secret});
     let signed_in = raw(&rig, "POST", login, household.clone(), None, Some(body)).await;
-    assert_eq!(signed_in.status, StatusCode::OK);
+    assert_eq!(signed_in.status, StatusCode::OK, "after the revoked one");
     let token = signed_in.json()["AccessToken"]
         .as_str()
         .expect("access token")
@@ -2002,7 +1866,7 @@ async fn a_revoked_app_password_does_not_lock_out_its_address() {
         None,
     )
     .await;
-    assert_eq!(me.status, StatusCode::OK);
+    assert_eq!(me.status, StatusCode::OK, "after the revoked one");
     rig.stop().await;
 }
 

@@ -877,8 +877,11 @@ mod tests {
     use super::{Reason, ReasonKind};
     use crate::landing::specs::Disposition;
 
+    /// Every reason has words and one stored spelling that survives storage,
+    /// retired codes read as held by an earlier version, and a held file
+    /// carries the hold and library reasons plus the two lookup outages.
     #[test]
-    fn every_reason_has_words_a_spelling_and_survives_storage() {
+    fn every_reason_is_spelled_stored_and_held_once() {
         let mut codes: Vec<&str> = Reason::ALL.iter().map(|reason| reason.code()).collect();
         codes.sort_unstable();
         codes.dedup();
@@ -903,10 +906,7 @@ mod tests {
         }
         assert_eq!(Reason::LocalFault.kind(), ReasonKind::Library);
         assert_eq!(Reason::AlbumVersionOnly.kind(), ReasonKind::Hold);
-    }
 
-    #[test]
-    fn a_held_file_carries_the_hold_and_library_reasons_and_two_lookups() {
         let expected: Vec<Reason> = Reason::ALL
             .into_iter()
             .filter(|reason| {
@@ -917,9 +917,13 @@ mod tests {
                     )
             })
             .collect();
-        assert_eq!(Reason::HELD.to_vec(), expected);
-        assert_eq!(Reason::Corrupt.held(), Reason::HeldByEarlierVersion);
-        assert_eq!(Reason::WeakMatch.held(), Reason::WeakMatch);
+        assert_eq!(Reason::HELD.to_vec(), expected, "held reasons");
+        assert_eq!(
+            Reason::Corrupt.held(),
+            Reason::HeldByEarlierVersion,
+            "held reasons"
+        );
+        assert_eq!(Reason::WeakMatch.held(), Reason::WeakMatch, "held reasons");
     }
 
     /// What the code before typed reasons did with each reason. A held

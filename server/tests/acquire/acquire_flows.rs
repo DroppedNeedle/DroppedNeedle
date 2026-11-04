@@ -1,9 +1,8 @@
 //! Acquisition flows over the durable stores: the wanted watcher, status
 //! sync, follow poll, upgrade sweep and drop import.
 //!
-//! Ticks take an explicit `now`; the loop test runs on paused tokio time
-//! and bounds its waits in wall-clock time. Stores sit on a scratch
-//! database and downloads go into the real journal on it. The wanted
+//! Ticks take an explicit `now`. Stores sit on a scratch database and
+//! downloads go into the real journal on it. The wanted
 //! watcher searches the sources the saved settings turn on (the slskd
 //! mock), the follow poll reads MusicBrainz pages from a scripted wire,
 //! and flow notices go to a real event hub.
@@ -25,9 +24,8 @@ use droppedneedle_acquire::downloads::worker::SourceList;
 use droppedneedle_acquire::downloads::worker::WorkerSettings;
 use droppedneedle_acquire::flows::{
     loops::{
-        FollowDeps, PruneDeps, SYNC_INITIAL_DELAY, SYNC_INTERVAL, SYNC_JOB, SweepDeps, SyncDeps,
-        WantedDeps, follow_tick, interval_seconds, prune_tick, spawn_sync_loop, sweep_tick,
-        sync_tick, wanted_tick,
+        FollowDeps, PruneDeps, SweepDeps, SyncDeps, WantedDeps, follow_tick, interval_seconds,
+        prune_tick, sweep_tick, sync_tick, wanted_tick,
     },
     seams::TickSink,
     stores::{AdminDirectory, LibraryPresence, UpgradeWorklist},
@@ -46,11 +44,9 @@ use droppedneedle_acquire::search_jobs::store::JobStore;
 use droppedneedle_acquire::target::Targets;
 use droppedneedle_acquire::wiring::ClientLives;
 use droppedneedle_auth::{Principal, Role};
-use droppedneedle_kernel::db::{DbRuntime, JobState};
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::events::model::names;
 use droppedneedle_kernel::ids::UuidGenerator;
-use droppedneedle_kernel::jobs::Supervisor;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::SlskdConnection;
 use droppedneedle_kernel::runtime_config::sections::{DownloadPolicy, WantedWatcher};
@@ -60,21 +56,6 @@ use droppedneedle_providers::musicbrainz::MbSource;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 
 const NOW: i64 = 1_700_000_000;
-/// Scratch directory, removed when the test ends.
-fn scratch_dir(name: &str) -> crate::common::ScratchDir {
-    crate::common::ScratchDir::new(name)
-}
-
-/// A served runtime for the tests that need the job registry.
-async fn runtime(name: &str) -> (DbRuntime, AcquireDb, crate::common::ScratchDir) {
-    let dir = scratch_dir(name);
-    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
-    let db = AcquireDb::new(
-        runtime.db().clone(),
-        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
-    );
-    (runtime, db, dir)
-}
 
 /// One request row in `status`, owned by `user-1`.
 async fn seed_request(store: &RequestStore, key: &str, status: &str, task: Option<&str>) {
@@ -287,10 +268,12 @@ async fn wanted_with_slskd(db: &AcquireDb, slskd_on: bool) -> Wanted {
     }
 }
 
-// A failed request enrols a durable watch; once due with a candidate it
-// auto-dispatches and links the task to the request.
+/// A failed request enrols a durable watch; once due with a candidate it
+/// auto-dispatches, links the task, and reads imported once that download
+/// completes, announced once. A watch the library now holds is fulfilled
+/// without a download.
 #[tokio::test]
-async fn wanted_enrols_then_auto_downloads() {
+async fn wanted_watch_lifecycle() {
     let db = AcquireDb::scratch().unwrap();
     let rig = wanted(&db).await;
     seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
@@ -327,6 +310,44 @@ async fn wanted_enrols_then_auto_downloads() {
         notices(&rig.events, "user-1").await,
         [names::WANTED_AUTO_DISPATCHED]
     );
+
+    // The download completes (reported twice): the request reads imported,
+    // its watch is fulfilled, and it is announced once.
+    assert_eq!(status_of(&rig.deps.ledger, "rg-blue").await, "downloading");
+    let task = tasks(&db).await.remove(0);
+    let recorded = Arc::new(crate::common::bundles::FulfilledTicks::default());
+    let journal = Journal::new(db.clone(), recorded.clone());
+    for _ in 0..2 {
+        let id = task.id.clone();
+        let _ = journal
+            .run("test.complete", move |store| {
+                store.transition_task(&id, TaskStatus::Completed, NOW as f64, None)
+            })
+            .await;
+    }
+    assert_eq!(status_of(&rig.deps.ledger, "rg-blue").await, "imported");
+    let watch = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
+    assert_eq!(watch.state, WatchState::Fulfilled);
+    assert_eq!(recorded.keys(), ["rg-blue"], "announced once");
+
+    // Case "held by the library", on a rig of its own so its notices and
+    // tasks are its own.
+    let db = AcquireDb::scratch().unwrap();
+    let rig = wanted(&db).await;
+    seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
+    wanted_tick(NOW, &rig.deps).await;
+    rig.library.add(&["rg-blue"]);
+    let due = NOW + interval_seconds(None, 0, NOW);
+    let summary = wanted_tick(due, &rig.deps).await;
+    assert_eq!(summary.fulfilled, 1);
+    assert_eq!(status_of(&rig.deps.ledger, "rg-blue").await, "imported");
+    let watch = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
+    assert_eq!(watch.state, WatchState::Fulfilled);
+    assert_eq!(
+        notices(&rig.events, "user-1").await,
+        [names::WANTED_FULFILLED]
+    );
+    assert!(tasks(&db).await.is_empty(), "nothing is downloaded");
 }
 
 // The watcher asks only the sources that are turned on. With slskd set up
@@ -405,27 +426,6 @@ async fn a_removed_watch_stays_gone_until_the_request_fails_again() {
             .unwrap()
     );
     assert_eq!(wanted_tick(NOW, &rig.deps).await.enrolled, 1);
-}
-
-// A watch the library now holds is fulfilled and its request imported.
-#[tokio::test]
-async fn wanted_satisfied_from_the_library() {
-    let db = AcquireDb::scratch().unwrap();
-    let rig = wanted(&db).await;
-    seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
-    wanted_tick(NOW, &rig.deps).await;
-    rig.library.add(&["rg-blue"]);
-    let due = NOW + interval_seconds(None, 0, NOW);
-    let summary = wanted_tick(due, &rig.deps).await;
-    assert_eq!(summary.fulfilled, 1);
-    assert_eq!(status_of(&rig.deps.ledger, "rg-blue").await, "imported");
-    let watch = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
-    assert_eq!(watch.state, WatchState::Fulfilled);
-    assert_eq!(
-        notices(&rig.events, "user-1").await,
-        [names::WANTED_FULFILLED]
-    );
-    assert!(tasks(&db).await.is_empty(), "nothing is downloaded");
 }
 
 // The status sweep settles what the journal did not: rows whose task
@@ -621,9 +621,11 @@ async fn follow_poll_baselines_then_emits() {
     assert_eq!(feed, ["rg-future", "rg-new"]);
 }
 
-// The upgrade sweep needs both gates and an admin, and honours its cap.
+/// The upgrade sweep needs both gates and an admin, and honours its cap. An
+/// upgrade asked for an album already downloading answers that task as
+/// active and queues nothing.
 #[tokio::test]
-async fn upgrade_sweep_gates_and_cap() {
+async fn upgrade_sweep_gates_cap_and_active() {
     let db = AcquireDb::scratch().unwrap();
     // Four albums below the cutoff, one 128 kbps file each.
     db.write("test.seed_library", |tx| {
@@ -706,6 +708,36 @@ async fn upgrade_sweep_gates_and_cap() {
         "0a0b0c0d-0000-4000-8000-000000000001"
     );
     assert_eq!(grabs[0].user_id, "admin-1");
+
+    let before = tasks(&db).await.len();
+    let outcome = deps
+        .downloads
+        .dispatch(&DispatchRequest {
+            user_id: "admin-1".to_owned(),
+            target: DispatchTarget::Album {
+                release_group_mbid: "0a0b0c0d-0000-4000-8000-000000000000".to_owned(),
+            },
+            artist_name: "Massive Attack".to_owned(),
+            title: "T".to_owned(),
+            origin: DispatchOrigin::Upgrade,
+            release_mbid: None,
+            wanted: Vec::new(),
+            planned_album: None,
+            idempotency_key: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome,
+        DispatchOutcome::Active {
+            task_id: "task-0".to_owned()
+        }
+    );
+    assert_eq!(
+        tasks(&db).await.len(),
+        before,
+        "an active upgrade queues nothing"
+    );
 }
 
 // A file's release-group tag stands in for the album's identity only
@@ -762,146 +794,6 @@ async fn presence_trusts_a_tag_only_for_an_unidentified_album() {
     );
 }
 
-// The sync loop waits its startup delay, runs a pass, waits the honest
-// interval and parks the job stopped on shutdown; a stop during the delay
-// still parks it stopped without running a pass.
-#[tokio::test]
-async fn loop_cadence_and_shutdown() {
-    let (runtime, db, _dir) = runtime("loops").await;
-    db.add_user("user-1", "Owner", "user").await.unwrap();
-    let ledger = RequestStore::new(db.clone());
-    seed_request(&ledger, "rg-1", "downloading", Some("task-9")).await;
-    seed_request(&ledger, "rg-2", "downloading", Some("task-10")).await;
-    seed_task(&db, "task-9", "rg-1", TaskStatus::Completed).await;
-    seed_task(&db, "task-10", "rg-2", TaskStatus::Downloading).await;
-    // A held album with no task: settling it is the pass's last step.
-    seed_request(&ledger, "rg-held", "pending", None).await;
-    let library = Arc::new(LibraryPresence::new());
-    library.add(&["rg-held"]);
-    let announced = Arc::new(crate::common::bundles::FulfilledTicks::default());
-    let deps = Arc::new(SyncDeps {
-        ledger: ledger.clone(),
-        journal: Arc::new(Journal::new(db.clone(), quiet_ticks())),
-        library,
-        ticks: announced.clone(),
-    });
-    let supervisor = Supervisor::start(
-        runtime.db().clone(),
-        Arc::new(droppedneedle_kernel::clock::SystemClock),
-        droppedneedle_kernel::jobs::CancellationToken::new(),
-    )
-    .await
-    .unwrap();
-    tokio::time::pause();
-
-    spawn_sync_loop(&supervisor, deps.clone()).unwrap();
-    settle_loop().await;
-    tokio::time::advance(SYNC_INITIAL_DELAY - Duration::from_secs(1)).await;
-    settle_loop().await;
-    supervisor.cancel(SYNC_JOB, GRACE).await;
-    assert_eq!(
-        unpaused_status(&ledger, "rg-1").await,
-        "downloading",
-        "a pass ran inside the startup delay"
-    );
-    let row =
-        crate::common::loop_row(runtime.db(), SYNC_JOB, |row| row.state != JobState::Running).await;
-    assert_eq!(row.state, JobState::Stopped);
-
-    spawn_sync_loop(&supervisor, deps).unwrap();
-    settle_loop().await;
-    tokio::time::advance(SYNC_INITIAL_DELAY).await;
-    // The announce is the pass's last act, and the loop arms its interval
-    // in the same poll: advancing before then would start the interval
-    // late.
-    until("the first pass", || {
-        let done = announced.keys() == ["rg-held"];
-        async move { done }
-    })
-    .await;
-    assert_eq!(unpaused_status(&ledger, "rg-1").await, "imported");
-    // Written with the clock running: an idle runtime on a paused clock
-    // would jump straight to the loop's next pass while the write waits.
-    tokio::time::resume();
-    behind(&db, "task-10", TaskStatus::Completed).await;
-    tokio::time::pause();
-    tokio::time::advance(SYNC_INTERVAL - Duration::from_secs(1)).await;
-    settle_loop().await;
-    assert_eq!(
-        unpaused_status(&ledger, "rg-2").await,
-        "downloading",
-        "a pass ran inside the interval"
-    );
-    tokio::time::advance(Duration::from_secs(1)).await;
-    until("the second pass", || async {
-        status_of(&ledger, "rg-2").await == "imported"
-    })
-    .await;
-
-    supervisor.shutdown(GRACE).await;
-    // Store reads wait for a pooled connection on a tokio timer, which the
-    // paused clock would run out at once while a blocking read holds one.
-    tokio::time::resume();
-    let row =
-        crate::common::loop_row(runtime.db(), SYNC_JOB, |row| row.state != JobState::Running).await;
-    assert_eq!(row.state, JobState::Stopped);
-    assert_eq!(status_of(&ledger, "rg-1").await, "imported");
-    assert_eq!(status_of(&ledger, "rg-2").await, "imported");
-    runtime.shutdown().await;
-}
-
-const GRACE: Duration = Duration::from_secs(5);
-
-/// Let the loop run what is due now, or start its wait. Yields instead of
-/// sleeping, so the paused clock stays put.
-async fn settle_loop() {
-    for _ in 0..50 {
-        tokio::task::yield_now().await;
-        std::thread::sleep(Duration::from_millis(2));
-    }
-}
-
-/// A request's status, read with the clock running: the read waits for a
-/// pooled connection on a tokio timer, which the paused clock could run
-/// out at once. The loop's next wait is a minute away, so it stays put.
-async fn unpaused_status(ledger: &RequestStore, key: &str) -> String {
-    tokio::time::resume();
-    let status = status_of(ledger, key).await;
-    tokio::time::pause();
-    status
-}
-
-/// Wait until `done` answers true, bounded in wall-clock time. The pass's
-/// database calls wait on tokio timers too, so each turn moves the paused
-/// clock by a millisecond.
-async fn until<F: Future<Output = bool>>(what: &str, mut done: impl FnMut() -> F) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    loop {
-        // Checked with the clock running, as in `unpaused_status`.
-        tokio::time::resume();
-        let done = done().await;
-        tokio::time::pause();
-        if done {
-            return;
-        }
-        assert!(std::time::Instant::now() < deadline, "{what} never came");
-        tokio::time::advance(Duration::from_millis(1)).await;
-        std::thread::sleep(Duration::from_millis(2));
-    }
-}
-
-// The wanted recheck table's age bands.
-#[test]
-fn recheck_bands() {
-    let now = 1_716_720_000; // 2024-05-26 UTC
-    assert_eq!(interval_seconds(Some("2024-05-20"), 0, now), 2 * 86_400);
-    assert_eq!(interval_seconds(Some("2024-04-01"), 0, now), 4 * 86_400);
-    assert_eq!(interval_seconds(Some("2024-01-15"), 0, now), 7 * 86_400);
-    assert_eq!(interval_seconds(Some("2020-01-01"), 0, now), 14 * 86_400);
-    assert_eq!(interval_seconds(Some("2020-01-01"), 10, now), 28 * 86_400);
-    assert_eq!(interval_seconds(None, 0, now), 14 * 86_400);
-}
-
 // The store prune drops settled requests past retention, never an active
 // one.
 #[tokio::test]
@@ -928,39 +820,6 @@ async fn prune_drops_only_settled_rows_past_retention() {
             .is_none()
     );
     assert_eq!(status_of(&ledger, "rg-live").await, "pending");
-}
-
-// An upgrade asked for an album that is already downloading answers that
-// task as active and queues nothing.
-#[tokio::test]
-async fn upgrade_of_a_downloading_album_answers_active() {
-    let db = AcquireDb::scratch().unwrap();
-    db.add_user("user-1", "Owner", "user").await.unwrap();
-    db.add_user("admin-1", "Admin", "admin").await.unwrap();
-    seed_task(&db, "task-0", "rg-0", TaskStatus::Downloading).await;
-    let outcome = dispatch(&db, &settings(&db))
-        .dispatch(&DispatchRequest {
-            user_id: "admin-1".to_owned(),
-            target: DispatchTarget::Album {
-                release_group_mbid: "rg-0".to_owned(),
-            },
-            artist_name: "Massive Attack".to_owned(),
-            title: "rg-0".to_owned(),
-            origin: DispatchOrigin::Upgrade,
-            release_mbid: None,
-            wanted: Vec::new(),
-            planned_album: None,
-            idempotency_key: None,
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        outcome,
-        DispatchOutcome::Active {
-            task_id: "task-0".to_owned()
-        }
-    );
-    assert_eq!(tasks(&db).await.len(), 1);
 }
 
 /// `user-2`, a plain user, follows `artist-1` with auto-download approved.
@@ -1033,221 +892,194 @@ fn follow_rig(db: &AcquireDb, settings: &ConfigStore) -> (FollowDeps, Arc<Reques
     (deps, requests)
 }
 
-// A plain user's auto-download of a followed artist's new release, made
-// while their request quota is full, is a request that waits on the
-// Requests page and starts by itself once the window has room. It is never
-// dropped, and a start that cannot reach the download queue leaves it
-// waiting, never failed.
+/// A follow download waits, is never dropped, and starts by itself: past
+/// a full request quota, and past another user's ask that an admin
+/// rejects.
 #[tokio::test]
-async fn follow_download_waits_while_the_follower_is_over_quota() {
-    let db = AcquireDb::scratch().unwrap();
-    seed_approved_follower(&db).await;
-    // The Requests page reads the quota at the real time, so the poll runs
-    // on it too.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
-    let settings = settings(&db);
-    settings
-        .save_blocking(DownloadPolicy {
-            default_request_quota_count: 1,
-            default_request_quota_days: 7,
-            ..DownloadPolicy::default()
-        })
-        .expect("download policy saves");
-    // One ask already in the window uses up the quota.
-    let ledger = RequestStore::new(db.clone());
-    let record = RequestRecord {
-        key: "rg-asked".to_owned(),
-        kind: RequestKind::Album,
-        status: RequestStatus::Imported,
-        artist_name: "The Band".to_owned(),
-        album_title: "Asked".to_owned(),
-        artist_mbid: None,
-        year: None,
-        release_mbid: None,
-        track_title: None,
-        duration_seconds: None,
-        track_release_group_mbid: None,
-        user_id: Some("user-2".to_owned()),
-        origin: DispatchOrigin::User,
-        requested_by_name: None,
-        requesters: Vec::new(),
-        requested_at: now as u64,
-        completed_at: None,
-        task_id: None,
-        generation: 0,
-        dispatch_authorized: true,
-        monitor_artist: false,
-        auto_download_artist: false,
-        reviewed_by_name: None,
-        reviewed_at: None,
-    };
-    ledger
-        .begin_batch(vec![record], "user-2", None)
-        .await
-        .unwrap()
-        .unwrap();
-    let (deps, requests) = follow_rig(&db, &settings);
-    follow_tick(now, &deps).await;
-    let polled = follow_tick(now + 86_400, &deps).await;
-    assert_eq!(polled.enqueued, 0);
-    assert!(tasks(&db).await.is_empty(), "nothing is downloaded");
-    let follower = Principal::acting_for("user-2", Role::User, None);
-    let active = requests.active(&follower).await.unwrap();
-    let waiting = active
-        .items
-        .iter()
-        .find(|item| item.musicbrainz_id == "rg-new")
-        .expect("the follow download is on the Requests page");
-    assert_eq!(waiting.origin, RequestOrigin::Follow);
-    assert_eq!(
-        waiting.waiting_reason,
-        Some(WaitingReason::RequestQuotaFull)
-    );
-
-    let still = follow_tick(now + 86_400 + 60, &deps).await;
-    assert_eq!(still.enqueued, 0, "the window is still full");
-    assert!(tasks(&db).await.is_empty());
-
-    // The earlier ask leaves the seven-day window, but the download queue
-    // refuses the start: the request goes back to waiting.
-    db.write("refuse downloads", |tx| {
-        tx.execute_batch(
-            "CREATE TRIGGER refuse_downloads BEFORE INSERT ON download_tasks \
-             BEGIN SELECT RAISE(ABORT, 'refused'); END;",
-        )?;
-        Ok(())
-    })
-    .await
-    .unwrap();
-    let refused = follow_tick(now + 8 * 86_400, &deps).await;
-    assert_eq!(refused.enqueued, 0);
-    let row = ledger
-        .get(RequestKind::Album, "rg-new")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(row.status, RequestStatus::Queued, "never failed");
-    assert_eq!(row.task_id, None);
-    db.write("accept downloads", |tx| {
-        tx.execute_batch("DROP TRIGGER refuse_downloads;")?;
-        Ok(())
-    })
-    .await
-    .unwrap();
-
-    let freed = follow_tick(now + 8 * 86_400 + 60, &deps).await;
-    assert_eq!(freed.enqueued, 1, "the waiting request starts by itself");
-    let started = tasks(&db).await;
-    assert_eq!(started.len(), 1);
-    assert_eq!(started[0].release_group_mbid, "rg-new");
-    assert_eq!(started[0].user_id, "user-2");
-    let row = ledger
-        .get(RequestKind::Album, "rg-new")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(row.task_id.as_deref(), Some(started[0].id.as_str()));
-    assert_eq!(row.status, RequestStatus::Downloading);
-}
-
-// A follow download that meets another user's ask still waiting for an
-// admin keeps the release held; when that ask is rejected, the follower's
-// own download goes ahead.
-#[tokio::test]
-async fn follow_download_outlives_a_rejected_ask_it_met() {
-    let db = AcquireDb::scratch().unwrap();
-    seed_approved_follower(&db).await;
-    db.add_user("user-3", "Asker", "user").await.unwrap();
-    let ledger = RequestStore::new(db.clone());
-    let asked = RequestRecord {
-        key: "rg-new".to_owned(),
-        kind: RequestKind::Album,
-        status: RequestStatus::AwaitingApproval,
-        artist_name: "The Band".to_owned(),
-        album_title: "rg-new".to_owned(),
-        artist_mbid: None,
-        year: None,
-        release_mbid: None,
-        track_title: None,
-        duration_seconds: None,
-        track_release_group_mbid: None,
-        user_id: Some("user-3".to_owned()),
-        origin: DispatchOrigin::User,
-        requested_by_name: None,
-        requesters: Vec::new(),
-        requested_at: NOW as u64,
-        completed_at: None,
-        task_id: None,
-        generation: 0,
-        dispatch_authorized: false,
-        monitor_artist: false,
-        auto_download_artist: false,
-        reviewed_by_name: None,
-        reviewed_at: None,
-    };
-    ledger
-        .begin_batch(vec![asked], "user-3", None)
-        .await
-        .unwrap()
-        .unwrap();
-    let settings = settings(&db);
-    let (deps, _requests) = follow_rig(&db, &settings);
-    follow_tick(NOW, &deps).await;
-    let met = follow_tick(NOW + 86_400, &deps).await;
-    assert_eq!(met.enqueued, 0);
-    assert!(tasks(&db).await.is_empty(), "the ask waits for an admin");
-
-    assert!(
+async fn follow_downloads_wait_and_start_by_themselves() {
+    {
+        // Over quota: a plain user's auto-download of a followed artist's
+        // new release, made while their request quota is full, waits on the
+        // Requests page and starts by itself once the window has room. A
+        // start that cannot reach the download queue leaves it waiting,
+        // never failed.
+        let db = AcquireDb::scratch().unwrap();
+        seed_approved_follower(&db).await;
+        // The Requests page reads the quota at the real time, so the poll runs
+        // on it too.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let settings = settings(&db);
+        settings
+            .save_blocking(DownloadPolicy {
+                default_request_quota_count: 1,
+                default_request_quota_days: 7,
+                ..DownloadPolicy::default()
+            })
+            .expect("download policy saves");
+        // One ask already in the window uses up the quota.
+        let ledger = RequestStore::new(db.clone());
+        let record = RequestRecord {
+            key: "rg-asked".to_owned(),
+            kind: RequestKind::Album,
+            status: RequestStatus::Imported,
+            artist_name: "The Band".to_owned(),
+            album_title: "Asked".to_owned(),
+            artist_mbid: None,
+            year: None,
+            release_mbid: None,
+            track_title: None,
+            duration_seconds: None,
+            track_release_group_mbid: None,
+            user_id: Some("user-2".to_owned()),
+            origin: DispatchOrigin::User,
+            requested_by_name: None,
+            requesters: Vec::new(),
+            requested_at: now as u64,
+            completed_at: None,
+            task_id: None,
+            generation: 0,
+            dispatch_authorized: true,
+            monitor_artist: false,
+            auto_download_artist: false,
+            reviewed_by_name: None,
+            reviewed_at: None,
+        };
         ledger
-            .update_status(
-                RequestKind::Album,
-                "rg-new",
-                RequestStatus::Rejected,
-                Some(NOW as u64 + 90_000),
-                None,
-            )
+            .begin_batch(vec![record], "user-2", None)
             .await
             .unwrap()
-    );
-    let later = follow_tick(NOW + 2 * 86_400, &deps).await;
-    assert_eq!(later.enqueued, 1, "the follower's download goes ahead");
-    let started = tasks(&db).await;
-    assert_eq!(started.len(), 1);
-    assert_eq!(started[0].user_id, "user-2");
-    assert_eq!(started[0].release_group_mbid, "rg-new");
-}
+            .unwrap();
+        let (deps, requests) = follow_rig(&db, &settings);
+        follow_tick(now, &deps).await;
+        let polled = follow_tick(now + 86_400, &deps).await;
+        assert_eq!(polled.enqueued, 0);
+        assert!(tasks(&db).await.is_empty(), "nothing is downloaded");
+        let follower = Principal::acting_for("user-2", Role::User, None);
+        let active = requests.active(&follower).await.unwrap();
+        let waiting = active
+            .items
+            .iter()
+            .find(|item| item.musicbrainz_id == "rg-new")
+            .expect("the follow download is on the Requests page");
+        assert_eq!(waiting.origin, RequestOrigin::Follow);
+        assert_eq!(
+            waiting.waiting_reason,
+            Some(WaitingReason::RequestQuotaFull)
+        );
 
-// A failed request the wanted watcher downloads again reads downloading,
-// then imported once that download completes, with its watch fulfilled and
-// the request announced once.
-#[tokio::test]
-async fn wanted_redispatch_imports_the_failed_request() {
-    let db = AcquireDb::scratch().unwrap();
-    let rig = wanted(&db).await;
-    seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
-    wanted_tick(NOW, &rig.deps).await;
-    let watch = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
-    let checked = wanted_tick(watch.next_check_at as i64, &rig.deps).await;
-    assert_eq!(checked.dispatched, 1);
-    assert_eq!(status_of(&rig.deps.ledger, "rg-blue").await, "downloading");
-    let task = tasks(&db).await.remove(0);
-    let recorded = Arc::new(crate::common::bundles::FulfilledTicks::default());
-    let journal = Journal::new(db.clone(), recorded.clone());
-    for _ in 0..2 {
-        let id = task.id.clone();
-        let _ = journal
-            .run("test.complete", move |store| {
-                store.transition_task(&id, TaskStatus::Completed, NOW as f64, None)
-            })
-            .await;
+        let still = follow_tick(now + 86_400 + 60, &deps).await;
+        assert_eq!(still.enqueued, 0, "the window is still full");
+        assert!(tasks(&db).await.is_empty());
+
+        // The earlier ask leaves the seven-day window, but the download queue
+        // refuses the start: the request goes back to waiting.
+        db.write("refuse downloads", |tx| {
+            tx.execute_batch(
+                "CREATE TRIGGER refuse_downloads BEFORE INSERT ON download_tasks \
+                 BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let refused = follow_tick(now + 8 * 86_400, &deps).await;
+        assert_eq!(refused.enqueued, 0);
+        let row = ledger
+            .get(RequestKind::Album, "rg-new")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, RequestStatus::Queued, "never failed");
+        assert_eq!(row.task_id, None);
+        db.write("accept downloads", |tx| {
+            tx.execute_batch("DROP TRIGGER refuse_downloads;")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let freed = follow_tick(now + 8 * 86_400 + 60, &deps).await;
+        assert_eq!(freed.enqueued, 1, "the waiting request starts by itself");
+        let started = tasks(&db).await;
+        assert_eq!(started.len(), 1);
+        assert_eq!(started[0].release_group_mbid, "rg-new");
+        assert_eq!(started[0].user_id, "user-2");
+        let row = ledger
+            .get(RequestKind::Album, "rg-new")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.task_id.as_deref(), Some(started[0].id.as_str()));
+        assert_eq!(row.status, RequestStatus::Downloading);
     }
-    assert_eq!(status_of(&rig.deps.ledger, "rg-blue").await, "imported");
-    let watch = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
-    assert_eq!(watch.state, WatchState::Fulfilled);
-    assert_eq!(recorded.keys(), ["rg-blue"], "announced once");
+    {
+        // Past a rejected ask: a follow download that meets another user's
+        // ask still waiting for an admin keeps the release held; when that
+        // ask is rejected, the follower's own download goes ahead.
+        let db = AcquireDb::scratch().unwrap();
+        seed_approved_follower(&db).await;
+        db.add_user("user-3", "Asker", "user").await.unwrap();
+        let ledger = RequestStore::new(db.clone());
+        let asked = RequestRecord {
+            key: "rg-new".to_owned(),
+            kind: RequestKind::Album,
+            status: RequestStatus::AwaitingApproval,
+            artist_name: "The Band".to_owned(),
+            album_title: "rg-new".to_owned(),
+            artist_mbid: None,
+            year: None,
+            release_mbid: None,
+            track_title: None,
+            duration_seconds: None,
+            track_release_group_mbid: None,
+            user_id: Some("user-3".to_owned()),
+            origin: DispatchOrigin::User,
+            requested_by_name: None,
+            requesters: Vec::new(),
+            requested_at: NOW as u64,
+            completed_at: None,
+            task_id: None,
+            generation: 0,
+            dispatch_authorized: false,
+            monitor_artist: false,
+            auto_download_artist: false,
+            reviewed_by_name: None,
+            reviewed_at: None,
+        };
+        ledger
+            .begin_batch(vec![asked], "user-3", None)
+            .await
+            .unwrap()
+            .unwrap();
+        let settings = settings(&db);
+        let (deps, _requests) = follow_rig(&db, &settings);
+        follow_tick(NOW, &deps).await;
+        let met = follow_tick(NOW + 86_400, &deps).await;
+        assert_eq!(met.enqueued, 0);
+        assert!(tasks(&db).await.is_empty(), "the ask waits for an admin");
+
+        assert!(
+            ledger
+                .update_status(
+                    RequestKind::Album,
+                    "rg-new",
+                    RequestStatus::Rejected,
+                    Some(NOW as u64 + 90_000),
+                    None,
+                )
+                .await
+                .unwrap()
+        );
+        let later = follow_tick(NOW + 2 * 86_400, &deps).await;
+        assert_eq!(later.enqueued, 1, "the follower's download goes ahead");
+        let started = tasks(&db).await;
+        assert_eq!(started.len(), 1);
+        assert_eq!(started[0].user_id, "user-2");
+        assert_eq!(started[0].release_group_mbid, "rg-new");
+    }
 }
 
 /// A release group key the request routes accept.

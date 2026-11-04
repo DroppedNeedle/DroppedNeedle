@@ -668,10 +668,13 @@ mod tests {
         }
     }
 
-    // A listed file is the only thing a plugin says about a format before the
-    // download; a release that lists none is left to the landing.
+    /// Plugin releases are scored inside the release policy: a listed file
+    /// in a format the recipe does not list refuses its release, and plugin
+    /// scores rank only inside the policy's gates.
     #[test]
-    fn a_listed_file_the_recipe_does_not_list_refuses_the_release() {
+    fn plugin_releases_stay_inside_the_policy() {
+        // A listed file is the only thing a plugin says about a format before
+        // the download; a release that lists none is left to the landing.
         let policy = ReleasePolicy {
             usenet: UsenetPolicy::v2_defaults(),
             ignored_terms: Vec::new(),
@@ -708,12 +711,10 @@ mod tests {
                 ("flac", false),
                 ("none", false),
                 ("ogg", true)
-            ]
+            ],
+            "listed files"
         );
-    }
 
-    #[test]
-    fn plugin_scores_rank_inside_the_policy_gates() {
         let mut usenet = UsenetPolicy::v2_defaults();
         usenet.max_size_mb = 500;
         let policy = ReleasePolicy {
@@ -756,8 +757,9 @@ mod tests {
                 ("Artist - Album [320]", Band::Auto),
                 ("Artist - Album [overscored]", Band::Auto),
                 ("Artist - Album [maybe]", Band::Manual),
-            ]
+            ],
+            "ranking"
         );
-        assert_eq!(ranked[2].score, 1.0);
+        assert_eq!(ranked[2].score, 1.0, "ranking: an overscored release");
     }
 }

@@ -34,21 +34,6 @@ pub fn routes() -> Routes<ProdPlaylistSync> {
     Routes::new().admin(routes!(sync_now_route))
 }
 
-/// The route at a relative path over any exporter, for tests that drive
-/// it with a scripted one: `POST /navidrome/playlist-sync`.
-#[cfg(any(test, feature = "test-support"))]
-pub fn router<E>(state: PlaylistSyncState<E>) -> axum::Router
-where
-    E: PlaylistExporter,
-{
-    axum::Router::new()
-        .route(
-            "/navidrome/playlist-sync",
-            axum::routing::post(sync_now::<E>),
-        )
-        .with_state(state)
-}
-
 /// Run one Navidrome playlist sync now.
 // The mounted form of `sync_now` over the production types.
 #[utoipa::path(

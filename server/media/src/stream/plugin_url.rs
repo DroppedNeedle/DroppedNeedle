@@ -186,18 +186,3 @@ impl Drop for Spool {
 pub fn within_cap(len: u64) -> bool {
     len > 0 && len <= PROXY_MAX_BYTES
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn format_prefers_the_url_extension_then_the_hint() {
-        let url = reqwest::Url::parse("https://cdn.example/a/track.FLAC?sig=1").unwrap();
-        assert_eq!(url_format(&url, "audio/mpeg"), "flac");
-        let bare = reqwest::Url::parse("https://cdn.example/play/123").unwrap();
-        assert_eq!(url_format(&bare, "audio/mpeg; charset=x"), "mp3");
-        assert_eq!(url_format(&bare, "audio/x-matroska"), "x-matroska");
-        assert_eq!(url_format(&bare, ""), "");
-    }
-}

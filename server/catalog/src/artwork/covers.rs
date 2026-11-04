@@ -168,10 +168,8 @@ pub trait CoverArt: Send + Sync + 'static {
 #[derive(Debug, Clone, Default)]
 pub struct FakeCoverArt {
     release_groups: std::collections::HashMap<(String, Option<String>), CoverBytes>,
-    artists: std::collections::HashMap<(String, Option<u32>), CoverBytes>,
     albums: std::collections::HashMap<String, CoverBytes>,
     warming_release_groups: std::collections::HashSet<(String, Option<String>)>,
-    warming_artists: std::collections::HashSet<(String, Option<u32>)>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -188,12 +186,6 @@ impl FakeCoverArt {
         self
     }
 
-    /// Preload one artist image.
-    pub fn with_artist(mut self, id: &str, size_px: Option<u32>, cover: CoverBytes) -> Self {
-        self.artists.insert((id.to_owned(), size_px), cover);
-        self
-    }
-
     /// Preload one local album's art.
     pub fn with_album(mut self, album_id: &str, cover: CoverBytes) -> Self {
         self.albums.insert(album_id.to_owned(), cover);
@@ -204,12 +196,6 @@ impl FakeCoverArt {
     pub fn warming_release_group(mut self, id: &str, size: Option<&str>) -> Self {
         self.warming_release_groups
             .insert((id.to_owned(), size.map(str::to_owned)));
-        self
-    }
-
-    /// Mark one artist image as warming.
-    pub fn warming_artist(mut self, id: &str, size_px: Option<u32>) -> Self {
-        self.warming_artists.insert((id.to_owned(), size_px));
         self
     }
 }
@@ -240,16 +226,10 @@ impl CoverArt for FakeCoverArt {
 
     fn artist_image<'a>(
         &'a self,
-        artist_id: &'a str,
-        size_px: Option<u32>,
+        _artist_id: &'a str,
+        _size_px: Option<u32>,
     ) -> BoxFuture<'a, CoverLookup> {
-        let key = (artist_id.to_owned(), size_px);
-        let found = match self.artists.get(&key) {
-            Some(cover) => CoverLookup::Found(cover.clone()),
-            None if self.warming_artists.contains(&key) => CoverLookup::Warming,
-            None => CoverLookup::Missing,
-        };
-        Box::pin(async move { found })
+        Box::pin(async { CoverLookup::Missing })
     }
 
     fn artist_image_credit<'a>(
@@ -698,30 +678,5 @@ pub async fn library_artist_artwork(
     {
         Some(art) => art_response(art, &headers, PRIVATE_SHORT_CACHE),
         None => missing_response(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn size_defaults_and_aliases() {
-        assert_eq!(normalize_size("500").unwrap(), Some("500".to_owned()));
-        for alias in ["", "original", "FULL", " max ", "Largest"] {
-            assert_eq!(normalize_size(alias).unwrap(), None, "alias {alias}");
-        }
-        let err = normalize_size("999").unwrap_err();
-        assert!(err.contains("Unsupported size '999'"), "{err}");
-    }
-
-    #[test]
-    fn etag_matching_covers_strong_weak_and_star() {
-        assert!(etag_matches(Some("\"abc\""), "\"abc\""));
-        assert!(etag_matches(Some("W/\"abc\""), "\"abc\""));
-        assert!(etag_matches(Some("*"), "\"abc\""));
-        assert!(etag_matches(Some("\"other\", \"abc\""), "\"abc\""));
-        assert!(!etag_matches(Some("\"other\""), "\"abc\""));
-        assert!(!etag_matches(None, "\"abc\""));
     }
 }

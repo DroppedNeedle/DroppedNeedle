@@ -149,12 +149,26 @@ async fn send(journal: &Arc<Journal>, (req, who): (Request<Body>, Who)) -> (Stat
     (status, json)
 }
 
-// Non-admins are refused; missing, never-downloaded and live tasks answer
-// 404; a reimportable task whose download client is gone answers 409 and
-// stays failed.
+/// The dispatch seam reads a task's progress and the reimport guard from
+/// the journal. The route refuses non-admins, answers 404 for missing,
+/// never-downloaded and live tasks, and 409 for a reimportable task whose
+/// download client is gone, which stays failed.
 #[tokio::test]
-async fn reimport_guards_role_link_and_client() {
+async fn reimport_guard_and_task_snapshot() {
     let journal = journal().await;
+    let dispatch = dispatch_over(journal.clone());
+
+    let snapshot = dispatch.task("t-linked").await.unwrap().unwrap();
+    assert_eq!(snapshot.status, TaskStatus::Failed);
+    assert_eq!(snapshot.error_message.as_deref(), Some("mount gone"));
+    assert_eq!(snapshot.progress_percent, 0);
+    assert!(dispatch.task("nope").await.unwrap().is_none());
+
+    assert!(dispatch.reimportable("t-linked").await.unwrap());
+    assert!(!dispatch.reimportable("t-bare").await.unwrap());
+    assert!(!dispatch.reimportable("t-live").await.unwrap());
+    assert!(!dispatch.reimportable("nope").await.unwrap());
+
     let (status, _) = send(
         &journal,
         post("/api/v3/downloads/tasks/t-linked/reimport", USER),
@@ -162,24 +176,14 @@ async fn reimport_guards_role_link_and_client() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
-    let (status, _) = send(
-        &journal,
-        post("/api/v3/downloads/tasks/t-bare/reimport", ADMIN),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = send(
-        &journal,
-        post("/api/v3/downloads/tasks/t-live/reimport", ADMIN),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = send(
-        &journal,
-        post("/api/v3/downloads/tasks/nope/reimport", ADMIN),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    for id in ["t-bare", "t-live", "nope"] {
+        let (status, _) = send(
+            &journal,
+            post(&format!("/api/v3/downloads/tasks/{id}/reimport"), ADMIN),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
+    }
 
     let (status, _) = send(
         &journal,
@@ -193,24 +197,6 @@ async fn reimport_guards_role_link_and_client() {
         .unwrap()
         .unwrap();
     assert_eq!(row.status, TaskStatus::Failed);
-}
-
-// The dispatch seam reads progress and the reimport guard from the
-// journal, so the request views render live task data.
-#[tokio::test]
-async fn dispatch_reads_progress_and_guard_from_journal() {
-    let dispatch = dispatch_over(journal().await);
-
-    let snapshot = dispatch.task("t-linked").await.unwrap().unwrap();
-    assert_eq!(snapshot.status, TaskStatus::Failed);
-    assert_eq!(snapshot.error_message.as_deref(), Some("mount gone"));
-    assert_eq!(snapshot.progress_percent, 0);
-    assert!(dispatch.task("nope").await.unwrap().is_none());
-
-    assert!(dispatch.reimportable("t-linked").await.unwrap());
-    assert!(!dispatch.reimportable("t-bare").await.unwrap());
-    assert!(!dispatch.reimportable("t-live").await.unwrap());
-    assert!(!dispatch.reimportable("nope").await.unwrap());
 }
 
 /// Dispatch over `journal`, with settings beside its scratch database.

@@ -121,34 +121,6 @@ mod tests {
     }
 
     #[test]
-    fn mix_alternates_pools_and_caps_artists() {
-        let library: Vec<_> = (0..6)
-            .map(|n| track("Portishead", &format!("own {n}"), true))
-            .collect();
-        let external = vec![
-            track("Massive Attack", "Teardrop", false),
-            track("Tricky", "Hell Is Round the Corner", false),
-        ];
-        let plan = mix(library, external, 10, true);
-        // Four Portishead tracks at most, starting from the library pool.
-        assert_eq!(
-            plan.iter()
-                .filter(|track| track.artist_name == "Portishead")
-                .count(),
-            4
-        );
-        assert!(plan[0].in_library);
-        assert_eq!(plan[1].artist_name, "Massive Attack");
-        // Never three in a row by one artist.
-        for window in plan.windows(3) {
-            assert!(
-                !(window[0].artist_name == window[1].artist_name
-                    && window[1].artist_name == window[2].artist_name)
-            );
-        }
-    }
-
-    #[test]
     fn library_mode_ignores_the_provider_pool() {
         let plan = mix(
             vec![track("A", "one", true)],

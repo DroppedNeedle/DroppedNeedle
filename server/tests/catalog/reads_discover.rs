@@ -1,5 +1,5 @@
-//! Discover routes through the production app: the session challenge,
-//! input validation, and fixed 5xx envelopes that name an outage's service
+//! Discover routes through the production app: input validation, and
+//! fixed 5xx envelopes that name an outage's service
 //! and wait. Plus the live charts: "your top" read for the calling user's
 //! own link, and Last.fm reading the instance key on every call.
 
@@ -33,35 +33,12 @@ async fn serve(stub: Router) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// The routes: session challenge and input validation
+// The routes: input validation
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn discover_routes_need_a_session_and_check_their_input() {
+async fn discover_routes_check_their_input() {
     let app = TestApp::start("reads-discover-input").await;
-
-    // Every discover route needs a session. GET /now-playing is absent
-    // here: playback serves it, and the standing auth matrix pins its 401.
-    for (method, uri, body) in [
-        ("GET", "/api/v3/discover", None),
-        ("GET", "/api/v3/home", None),
-        (
-            "POST",
-            "/api/v3/discover/batches",
-            Some(json!({"name": "x", "items": []})),
-        ),
-        (
-            "GET",
-            "/api/v3/home/trending/artists?range=this_month",
-            None,
-        ),
-    ] {
-        let (status, headers, bytes) = app.raw(method, uri, &[], body).await;
-        let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {uri}");
-        assert_eq!(error_code(&body), "UNAUTHORIZED", "{method} {uri}");
-        assert_eq!(headers["www-authenticate"], "Bearer", "{method} {uri}");
-    }
 
     let user = app.login_user("discover-input").await;
     let auth = [("authorization", user.authorization.as_str())];

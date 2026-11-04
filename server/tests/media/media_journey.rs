@@ -172,10 +172,12 @@ async fn media_connect_browse_play_seek_stop() {
     app.stop().await;
 }
 
-/// A player streaming from a media server that refuses connections reads
-/// the closed-list `REMOTE_UNAVAILABLE`, not the generic internal error.
+/// A media server that refuses connections answers the closed-list
+/// `REMOTE_UNAVAILABLE` through the whole app, not the generic internal
+/// error, on browse and on stream alike: the session gate and the rate
+/// limiter pass the cause on to the request boundary, which writes the body.
 #[tokio::test]
-async fn a_stream_from_a_server_that_is_down_answers_remote_unavailable() {
+async fn a_server_that_is_down_answers_remote_unavailable() {
     let app = TestApp::start("media-plex-down").await;
     let auth = app.login_admin().await;
     let closed = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -197,6 +199,34 @@ async fn a_stream_from_a_server_that_is_down_answers_remote_unavailable() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
 
+    let (status, headers, bytes) = app
+        .raw(
+            "GET",
+            "/api/v3/remotes/plex/albums",
+            &[
+                ("authorization", auth.as_str()),
+                ("x-request-id", "remote-down-1"),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "browse");
+    assert_eq!(
+        headers.get("x-request-id").unwrap(),
+        "remote-down-1",
+        "browse"
+    );
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("body is json");
+    assert_eq!(
+        body,
+        json!({"error": {
+            "code": "REMOTE_UNAVAILABLE",
+            "message": "Your media server did not answer or returned an error.",
+            "details": {"error_id": "remote-down-1"},
+        }}),
+        "browse"
+    );
+
     let (status, _, bytes) = app
         .raw(
             "GET",
@@ -208,7 +238,7 @@ async fn a_stream_from_a_server_that_is_down_answers_remote_unavailable() {
             None,
         )
         .await;
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "stream");
     let body: serde_json::Value = serde_json::from_slice(&bytes).expect("body is json");
     assert_eq!(
         body,
@@ -216,7 +246,8 @@ async fn a_stream_from_a_server_that_is_down_answers_remote_unavailable() {
             "code": "REMOTE_UNAVAILABLE",
             "message": "Your media server did not answer or returned an error.",
             "details": {"error_id": "stream-down-1"},
-        }})
+        }}),
+        "stream"
     );
     app.stop().await;
 }

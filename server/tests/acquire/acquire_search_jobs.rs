@@ -33,7 +33,8 @@ use droppedneedle_acquire::target::Targets;
 use droppedneedle_acquire::target::lookup::{AlbumRelease, AlbumTrack, FixedAlbums};
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
-use droppedneedle_kernel::events::EventHub;
+use droppedneedle_kernel::events::model::names;
+use droppedneedle_kernel::events::{EventHub, Subscription};
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use serde_json::{Value, json};
 
@@ -151,6 +152,19 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
 
 fn principal(user_id: &str) -> Principal {
     test_principal(user_id, Role::User, "sess-test", SessionKind::Standard)
+}
+
+/// Wait for the look a pass started: it tells the owner once it parks or
+/// takes, and leaves the running set in the same step on this runtime.
+async fn look_finishes(updates: &mut Subscription, worker: &DownloadWorker) {
+    tokio::time::timeout(crate::common::PATIENCE, async {
+        while updates.next().await.expect("the hub stays open").name() != names::SEARCH_JOB_UPDATED
+        {
+        }
+    })
+    .await
+    .expect("the look tells its owner");
+    assert!(!worker.reviews_running(), "the look finished");
 }
 
 #[tokio::test]
@@ -314,15 +328,10 @@ async fn automatic_download_waits_for_a_pick_when_unsure() {
         .await
         .expect("task seeds");
 
+    let mut updates = rig.events.subscribe("u1");
     rig.worker.run_once(1).await;
     // The look runs off the pass.
-    for _ in 0..200 {
-        if !rig.worker.reviews_running() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(!rig.worker.reviews_running(), "the look finished");
+    look_finishes(&mut updates, &rig.worker).await;
     let searched = mock.search_texts().len();
     assert!(searched > 0, "the worker searched before grabbing");
     rig.worker.run_once(2).await;
@@ -475,14 +484,9 @@ async fn an_upgrade_with_no_recommended_copy_settles_instead_of_waiting() {
         .await
         .expect("a request joins the upgrade");
 
+    let mut updates = rig.events.subscribe("u1");
     rig.worker.run_once(1).await;
-    for _ in 0..200 {
-        if !rig.worker.reviews_running() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert!(!rig.worker.reviews_running(), "the look finished");
+    look_finishes(&mut updates, &rig.worker).await;
     rig.worker.run_once(2).await;
 
     let waiting = rig
@@ -642,8 +646,7 @@ impl KeptFile {
 
 /// The search service and a worker that lands into a real library, over
 /// the slskd mock whose peers share `copies` (each already downloaded
-/// into the mock's folder). [`kept_rig`]'s settings keep lossless only, so
-/// every MP3 copy is outside the band.
+/// into the mock's folder), under the download policy `saved`.
 struct KeptRig {
     jobs: Arc<SearchJobs>,
     worker: Arc<DownloadWorker>,
@@ -655,15 +658,6 @@ struct KeptRig {
     _platform: droppedneedle_kernel::platform::Platform,
 }
 
-async fn kept_rig(copies: &[Copy]) -> KeptRig {
-    kept_rig_with(
-        copies,
-        json!({"quality_min": "lossless", "quality_max": "lossless"}),
-    )
-    .await
-}
-
-/// As [`kept_rig`], with the download policy.
 async fn kept_rig_with(copies: &[Copy], saved: Value) -> KeptRig {
     use crate::acquire_landing::{Releases, land_file, length_ms, release};
     use crate::common::TestPlatform;
@@ -930,72 +924,87 @@ impl KeptRig {
     }
 }
 
-/// A folder outside the quality band is listed with its reason. Picking it
-/// without a confirm answers 409 and starts nothing; with the confirm, the
-/// download fetches it and its files are imported although their quality
-/// is outside the band.
+/// A copy outside the saved settings (an MP3 outside a lossless-only band,
+/// an OGG the default recipe does not list) is listed with its reason.
+/// Picking it without a confirm answers 409 and starts nothing; with the
+/// confirm, the download fetches it and its files are imported.
 #[tokio::test]
-async fn a_folder_outside_the_band_is_kept_once_its_pick_is_confirmed() {
-    let rig = kept_rig(&[Copy {
+async fn a_confirmed_pick_keeps_a_copy_outside_the_settings() {
+    let mp3 = Copy {
         username: "mp3peer",
         folder: "Dummy (MP3)",
         album_tag: "Dummy",
         bitrate: Some(320),
         file: KeptFile::MP3,
-    }])
-    .await;
-    let owner = principal("u1");
-    let (job_id, payload) = rig.search(&owner).await;
-    let listed: Vec<_> = payload
-        .candidates
-        .iter()
-        .map(|c| (c.view.username.clone(), c.view.tier, c.view.refusal.clone()))
-        .collect();
-    assert_eq!(
-        listed,
-        [(
-            Some("mp3peer".to_owned()),
-            CandidateTier::Refused,
-            vec![CandidateRefusal::QualityOutsideRange]
-        )]
-    );
+    };
+    let lossless_only = json!({"quality_min": "lossless", "quality_max": "lossless"});
+    for (case, copy, policy, extension) in [
+        ("an mp3 outside the band", mp3, lossless_only, "mp3"),
+        ("an unlisted ogg", OGG_FOLDER, default_policy(), "ogg"),
+    ] {
+        let username = copy.username;
+        let rig = kept_rig_with(&[copy], policy).await;
+        let owner = principal("u1");
+        let (job_id, payload) = rig.search(&owner).await;
+        let listed: Vec<_> = payload
+            .candidates
+            .iter()
+            .map(|c| (c.view.username.clone(), c.view.tier, c.view.refusal.clone()))
+            .collect();
+        assert_eq!(
+            listed,
+            [(
+                Some(username.to_owned()),
+                CandidateTier::Refused,
+                vec![CandidateRefusal::QualityOutsideRange]
+            )],
+            "{case}"
+        );
 
-    let refused = rig
-        .jobs
-        .pick(&owner, &job_id, 0, false)
-        .await
-        .expect_err("an unconfirmed pick is refused");
-    assert!(matches!(
-        refused,
-        SearchJobError::PolicyBreak(CandidateRefusal::QualityOutsideRange)
-    ));
-    let answer = droppedneedle_kernel::error::ApiError::from(refused);
-    assert_eq!((answer.status().as_u16(), answer.code()), (409, "CONFLICT"));
-    assert_eq!(rig.task_count(), 0, "no download starts");
-    let view = rig.jobs.get(&owner, &job_id).await.expect("job reads");
-    assert_eq!(
-        view.row.status,
-        JobStatus::Completed,
-        "the search stays open"
-    );
+        let refused = rig
+            .jobs
+            .pick(&owner, &job_id, 0, false)
+            .await
+            .expect_err("an unconfirmed pick is refused");
+        assert!(
+            matches!(
+                refused,
+                SearchJobError::PolicyBreak(CandidateRefusal::QualityOutsideRange)
+            ),
+            "{case}"
+        );
+        let answer = droppedneedle_kernel::error::ApiError::from(refused);
+        assert_eq!(
+            (answer.status().as_u16(), answer.code()),
+            (409, "CONFLICT"),
+            "{case}"
+        );
+        assert_eq!(rig.task_count(), 0, "{case}: no download starts");
+        let view = rig.jobs.get(&owner, &job_id).await.expect("job reads");
+        assert_eq!(
+            view.row.status,
+            JobStatus::Completed,
+            "{case}: the search stays open"
+        );
 
-    let task_id = rig
-        .jobs
-        .pick(&owner, &job_id, 0, true)
-        .await
-        .expect("a confirmed pick starts");
-    let task = rig.settle(&task_id).await;
-    assert_eq!(
-        task.status.as_str(),
-        "completed",
-        "{:?}",
-        task.error_message
-    );
-    assert_eq!(
-        crate::acquire_landing::files_under(&rig.music, "mp3").len(),
-        1,
-        "the picked files are in the library"
-    );
+        let task_id = rig
+            .jobs
+            .pick(&owner, &job_id, 0, true)
+            .await
+            .expect("a confirmed pick starts");
+        let task = rig.settle(&task_id).await;
+        assert_eq!(
+            task.status.as_str(),
+            "completed",
+            "{case}: {:?}",
+            task.error_message
+        );
+        assert_eq!(
+            crate::acquire_landing::files_under(&rig.music, extension).len(),
+            1,
+            "{case}: the picked files are in the library"
+        );
+    }
 }
 
 /// A confirmed pick covers only the attempt that fetched it. When that
@@ -1124,42 +1133,6 @@ async fn an_automatic_download_takes_no_format_the_recipe_does_not_list() {
         .db()
         .one("SELECT COUNT(*) FROM download_attempts", []);
     assert_eq!(attempts, 0, "nothing was fetched");
-}
-
-/// A person may take that folder, behind the confirm the server enforces, and
-/// only then is it placed.
-#[tokio::test]
-async fn a_confirmed_pick_keeps_a_format_the_recipe_does_not_list() {
-    let rig = kept_rig_with(&[OGG_FOLDER], default_policy()).await;
-    let owner = principal("u1");
-    let (job_id, payload) = rig.search(&owner).await;
-    assert_eq!(
-        payload.candidates[0].view.refusal,
-        [CandidateRefusal::QualityOutsideRange]
-    );
-    let refused = rig
-        .jobs
-        .pick(&owner, &job_id, 0, false)
-        .await
-        .expect_err("an unconfirmed pick is refused");
-    assert!(matches!(refused, SearchJobError::PolicyBreak(_)));
-
-    let task_id = rig
-        .jobs
-        .pick(&owner, &job_id, 0, true)
-        .await
-        .expect("a confirmed pick starts");
-    let task = rig.settle(&task_id).await;
-    assert_eq!(
-        task.status.as_str(),
-        "completed",
-        "{:?}",
-        task.error_message
-    );
-    assert_eq!(
-        crate::acquire_landing::files_under(&rig.music, "ogg").len(),
-        1
-    );
 }
 
 /// Files that turn out to be a quality the recipe does not list are held,

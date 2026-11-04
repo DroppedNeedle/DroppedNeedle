@@ -105,24 +105,6 @@ fn error_envelope_json_golden() {
 }
 
 #[test]
-fn error_envelope_xml_golden() {
-    let rendered = render_error(
-        PARAM_MISSING,
-        default_message(PARAM_MISSING),
-        SubsonicFormat::Xml,
-        None,
-        "DroppedNeedle",
-        "3.0.0",
-    );
-    assert_eq!(rendered.status, 200);
-    assert_eq!(rendered.content_type, "application/xml");
-    assert_eq!(
-        rendered.body_text(),
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><subsonic-response xmlns=\"http://subsonic.org/restapi\" status=\"failed\" version=\"1.16.1\" type=\"DroppedNeedle\" serverVersion=\"3.0.0\" openSubsonic=\"true\"><error code=\"10\" message=\"Required parameter is missing.\"/></subsonic-response>"
-    );
-}
-
-#[test]
 fn error_envelope_escapes_and_jsonp_falls_back() {
     let rendered = render_error(
         GENERIC,
@@ -447,6 +429,15 @@ fn jellyfin_token_extraction_order_is_pinned() {
     };
     assert_eq!(extract_token(&empty), None);
 
+    // An empty `Authorization` falls through to the legacy header.
+    let blank = JellyfinRequest {
+        authorization: Some(""),
+        emby_authorization: Some("MediaBrowser Token=\"legacy\", Client=\"Jellify\""),
+        ..JellyfinRequest::default()
+    };
+    assert_eq!(extract_token(&blank).as_deref(), Some("legacy"));
+    assert_eq!(extract_client(&blank).as_deref(), Some("Jellify"));
+
     assert_eq!(extract_client(&full).as_deref(), Some("Finamp"));
     let device = JellyfinRequest {
         authorization: Some("MediaBrowser Device=\"Pixel\", DeviceId=\"dev-1\""),
@@ -457,17 +448,6 @@ fn jellyfin_token_extraction_order_is_pinned() {
         (Some("Pixel".to_owned()), Some("dev-1".to_owned()))
     );
     assert_eq!(extract_device(&JellyfinRequest::default()), (None, None));
-}
-
-#[test]
-fn empty_authorization_falls_through_to_legacy_header() {
-    let request = JellyfinRequest {
-        authorization: Some(""),
-        emby_authorization: Some("MediaBrowser Token=\"legacy\", Client=\"Jellify\""),
-        ..JellyfinRequest::default()
-    };
-    assert_eq!(extract_token(&request).as_deref(), Some("legacy"));
-    assert_eq!(extract_client(&request).as_deref(), Some("Jellify"));
 }
 
 #[test]

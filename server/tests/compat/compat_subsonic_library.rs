@@ -529,28 +529,28 @@ async fn search3_counts_go_up_to_the_cap() {
     rig.stop().await;
 }
 
-/// LRCLIB as the lyrics lookup sees it: synced and plain lyrics for "One"
-/// by U2, nothing for anything else.
+/// LRCLIB as the lyrics lookup sees it: its recorded found answer for "One"
+/// by U2, its recorded 404 for anything else.
 async fn lyrics_server() -> (String, droppedneedle_testkit::usenet::ServerGuard) {
     use axum::extract::Query;
+    use axum::http::header::CONTENT_TYPE;
     use axum::response::IntoResponse;
     use std::collections::HashMap;
 
     let get = |Query(query): Query<HashMap<String, String>>| async move {
         if query.get("track_name").map(String::as_str) != Some("One") {
-            return StatusCode::NOT_FOUND.into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                [(CONTENT_TYPE, "application/json")],
+                include_str!("../fixtures/lrclib/get_not_found.json"),
+            )
+                .into_response();
         }
-        axum::Json(json!({
-            "id": 1,
-            "trackName": "One",
-            "artistName": "U2",
-            "albumName": "Achtung Baby",
-            "duration": 200,
-            "instrumental": false,
-            "plainLyrics": "First line\nSecond line",
-            "syncedLyrics": "[00:01.00]First line\n[00:02.00]Second line",
-        }))
-        .into_response()
+        (
+            [(CONTENT_TYPE, "application/json")],
+            include_str!("../fixtures/lrclib/get_found.json"),
+        )
+            .into_response()
     };
     let router = axum::Router::new().route("/lrclib/api/get", axum::routing::get(get));
     droppedneedle_testkit::usenet::serve_loopback(router)
@@ -876,7 +876,7 @@ async fn response_shapes() {
             vec![
                 "lang=\"und\"",
                 "synced=\"true\"",
-                "First line",
+                "First line of the song",
                 "displayTitle=\"One\"",
             ],
             vec![],
@@ -890,14 +890,14 @@ async fn response_shapes() {
         (
             "getLyrics",
             vec![("artist", "U2"), ("title", "One")],
-            vec!["First line", "Second line"],
+            vec!["First line of the song", "Second line of the song"],
             vec![],
         ),
         (
             "getLyrics",
             vec![("title", "No Such Song")],
             vec!["<lyrics"],
-            vec!["First line"],
+            vec!["First line of the song"],
         ),
         (
             "getGenres",
@@ -1225,6 +1225,33 @@ async fn cover_art_buckets_caching_and_misses() {
         let answer = client.get("getCoverArt", &[("id", id)]).await;
         assert_code(&answer, 70, id);
     }
+
+    // An artist with no MusicBrainz link gets the picture the web UI shows,
+    // the mosaic of their albums' art, at the bucket the size asks for. One
+    // with no art keeps its placeholder. This gives two albums above art, so
+    // it runs after their placeholders.
+    let radiohead = format!("ar-{}", two_covers_for_radiohead(&rig).await);
+    let info = client.ok("getArtist", &[("id", &radiohead)]).await;
+    assert_eq!(info["artist"]["coverArt"], radiohead.as_str(), "{info}");
+    for (size, side) in [(Some("100"), 250), (None, 500)] {
+        let mut pairs = vec![("id", radiohead.as_str())];
+        pairs.extend(size.map(|size| ("size", size)));
+        let answer = client.get("getCoverArt", &pairs).await;
+        assert_eq!(
+            (answer.status, answer.content_type()),
+            (StatusCode::OK, "image/jpeg"),
+            "mosaic {size:?}"
+        );
+        assert_quadrants(&answer.body, side, [RED, GREEN, GREEN, RED]);
+    }
+    let bare = client
+        .get("getCoverArt", &[("id", &ids.artist("Massive Attack"))])
+        .await;
+    assert_eq!(
+        (bare.status, bare.content_type()),
+        (StatusCode::OK, "image/webp"),
+        "an artist with no art"
+    );
     rig.stop().await;
 }
 
@@ -1296,38 +1323,6 @@ pub(crate) fn assert_quadrants(body: &[u8], side: u32, quadrants: [[u8; 3]; 4]) 
             "pixel at ({x}, {y}) is {got:?}, wanted {want:?}"
         );
     }
-}
-
-/// An artist with no MusicBrainz link gets the picture the web UI shows,
-/// the mosaic of their albums' art, at the bucket the size asks for. One
-/// with no art keeps its placeholder.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_unlinked_artist_shows_their_album_mosaic() {
-    let rig = CompatApp::start("compat-sub-artist-mosaic").await;
-    let client = Client::player(&rig);
-    let radiohead = format!("ar-{}", two_covers_for_radiohead(&rig).await);
-    let artist = client.ok("getArtist", &[("id", &radiohead)]).await;
-    assert_eq!(artist["artist"]["coverArt"], radiohead.as_str(), "{artist}");
-    for (size, side) in [(Some("100"), 250), (None, 500)] {
-        let mut pairs = vec![("id", radiohead.as_str())];
-        pairs.extend(size.map(|size| ("size", size)));
-        let answer = client.get("getCoverArt", &pairs).await;
-        assert_eq!(
-            (answer.status, answer.content_type()),
-            (StatusCode::OK, "image/jpeg"),
-            "{size:?}"
-        );
-        assert_quadrants(&answer.body, side, [RED, GREEN, GREEN, RED]);
-    }
-    let ids = Ids::read(&client).await;
-    let bare = client
-        .get("getCoverArt", &[("id", &ids.artist("Massive Attack"))])
-        .await;
-    assert_eq!(
-        (bare.status, bare.content_type()),
-        (StatusCode::OK, "image/webp")
-    );
-    rig.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1729,77 +1724,6 @@ async fn transcoding_streams() {
         refused.text()
     );
     rig.stop().await;
-}
-
-/// When `stream` transcodes: only on a real trigger, never when forced
-/// original, disabled or without ffmpeg. The stream gateway makes this one
-/// decision for every protocol.
-#[test]
-fn stream_transcode_decision() {
-    use droppedneedle_media::stream::transcode::{
-        OutFormat, StreamPlan, TrackInfo, TranscodeSettings, decide,
-    };
-
-    let source = |format: &str, bitrate: i64| TrackInfo {
-        file_format: format.to_owned(),
-        bitrate_kbps: Some(bitrate),
-        duration_seconds: 0.0,
-    };
-    let plan = |source: TrackInfo, requested: Option<&str>, ceiling: Option<i64>| {
-        decide(
-            &source,
-            requested,
-            ceiling,
-            false,
-            0.0,
-            &TranscodeSettings::default(),
-            true,
-        )
-    };
-    // A server ceiling alone, or a zero client bitrate (Feishin), is no trigger.
-    assert!(!plan(source("flac", 900), None, None).is_transcode());
-    assert!(!plan(source("flac", 900), None, Some(0)).is_transcode());
-    assert!(!plan(source("mp3", 320), Some("mp3"), None).is_transcode());
-    assert!(matches!(
-        plan(source("flac", 900), None, Some(128)),
-        StreamPlan::Transcode {
-            out_format: OutFormat::Mp3,
-            out_bitrate_kbps: 128,
-            ..
-        }
-    ));
-    assert_eq!(
-        plan(source("mp3", 320), Some("opus"), None).out_format(),
-        Some(OutFormat::Opus)
-    );
-    // The floor is 64 kbps on every protocol.
-    assert!(matches!(
-        plan(source("flac", 900), None, Some(48)),
-        StreamPlan::Transcode {
-            out_bitrate_kbps: 64,
-            ..
-        }
-    ));
-    for (force, enabled, ffmpeg) in [
-        (true, true, true),
-        (false, false, true),
-        (false, true, false),
-    ] {
-        let settings = TranscodeSettings {
-            transcoding_enabled: enabled,
-            ..TranscodeSettings::default()
-        };
-        let plan = decide(
-            &source("flac", 900),
-            Some("opus"),
-            Some(64),
-            force,
-            5.0,
-            &settings,
-            ffmpeg,
-        );
-        assert!(!plan.is_transcode());
-    }
 }
 
 /// Request parsing bounds and XML escaping: both guard against hostile input.

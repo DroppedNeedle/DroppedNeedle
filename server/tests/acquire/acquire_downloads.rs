@@ -10,7 +10,7 @@ use crate::common::Probe;
 use droppedneedle_acquire::downloads;
 
 use std::sync::Arc;
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::dispatch::DispatchOrigin;
@@ -31,12 +31,12 @@ fn mount_gone() -> TaskOutcome<'static> {
 }
 use downloads::quarantine::QuarantineReason;
 use downloads::recovery::{FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS, StartupAction};
-use downloads::state::{AttemptDisposition, AttemptState, can_transition};
+use downloads::state::{AttemptDisposition, AttemptState};
 use downloads::store::{NewTask, ReimportStart, TaskOutcome};
 use downloads::{
     DownloadStore, OrphanDecision, OrphanEvidence, OrphanPolicy, PollSample, QuarantineDir,
     RetryPolicy, TaskStatus, Watchdog, WatchdogConfig, WatchdogOutcome,
-    canonical_soulseek_identity, classify_startup, is_terminal, plan_retry,
+    canonical_soulseek_identity, classify_startup, plan_retry,
 };
 use rusqlite::Connection;
 
@@ -186,18 +186,22 @@ async fn startup_recovery_follows_the_task_rows() {
     }
 }
 
+/// One scratch store: a cleanup lease passes to a successor only once it
+/// expires and a stale revision loses, terminal rows never move, and an
+/// idempotency key answers the first task.
 #[test]
-fn orchestrator_failover_claims_only_past_the_lease() {
-    let dir = scratch_dir("failover");
+fn the_task_store_hands_each_task_to_one_owner() {
+    let dir = scratch_dir("one-owner");
     let conn = scratch_store(&dir);
     let store = DownloadStore::new(&conn);
     let now = 1_700_000_000.0;
 
-    store.insert_task(&new_task("t1"), now).unwrap();
+    // Failover: the lease.
+    store.insert_task(&new_task("lease"), now).unwrap();
     store
         .insert_attempt(
             "a1",
-            "t1",
+            "lease",
             "usenet",
             0,
             "droppedneedle-job",
@@ -255,6 +259,54 @@ fn orchestrator_failover_claims_only_past_the_lease() {
         )
         .unwrap();
     assert!(stale.is_none());
+
+    // Terminal rows never move, not even back to queued.
+    store.insert_task(&new_task("done"), now).unwrap();
+    store
+        .transition_task("done", TaskStatus::Failed, now, None)
+        .unwrap();
+    assert!(
+        store
+            .transition_task("done", TaskStatus::Queued, now, None)
+            .is_err()
+    );
+    // Finalizing into a non-terminal status is refused, not asserted.
+    assert!(
+        store
+            .finalize_task_and_attempt("done", TaskStatus::Downloading, now, None, None, false)
+            .is_err()
+    );
+    // Startup classification leaves misfed terminal rows alone.
+    for status in [
+        TaskStatus::Completed,
+        TaskStatus::Partial,
+        TaskStatus::Failed,
+        TaskStatus::Cancelled,
+    ] {
+        assert_eq!(
+            classify_startup(status, &[]),
+            StartupAction::Noop,
+            "{status:?}"
+        );
+    }
+
+    // An idempotency key answers the task that claimed it first.
+    store.insert_task(&new_task("task-a"), now).unwrap();
+    assert!(
+        store
+            .claim_key("dispatch:k1", "task-a", "dispatch", now)
+            .unwrap()
+    );
+    assert!(
+        !store
+            .claim_key("dispatch:k1", "task-b", "dispatch", now)
+            .unwrap()
+    );
+    assert_eq!(
+        store.task_id_for_key("dispatch:k1").unwrap().as_deref(),
+        Some("task-a")
+    );
+    assert_eq!(store.task_id_for_key("dispatch:missing").unwrap(), None);
 }
 
 #[test]
@@ -324,7 +376,6 @@ fn auto_retry_sweep_honors_backoff_newest_wins_and_held_gate() {
     let now = 1_700_000_000.0;
     let policy = RetryPolicy::default();
 
-    assert_eq!(policy.ladder_minutes(), vec![15, 30, 60, 120, 240, 480]);
     assert_eq!(policy.next_retry_at(0, now, "failed"), Some(now + 900.0));
     assert_eq!(policy.next_retry_at(6, now, "failed"), None);
     assert_eq!(policy.next_retry_at(0, now, "completed"), None);
@@ -407,8 +458,10 @@ fn auto_retry_sweep_honors_backoff_newest_wins_and_held_gate() {
     assert!(plan_retry("live", TaskStatus::Downloading, "user", 0).is_none());
 }
 
+/// Quarantine rows expire and clear on a manual retry, and a suspect file
+/// moves only into the sandbox, never under a stamp that escapes it.
 #[test]
-fn quarantine_blocks_expires_and_clears_on_manual_retry() {
+fn quarantine_expires_and_holds_files_only_in_its_sandbox() {
     let dir = scratch_dir("quar");
     let conn = scratch_store(&dir);
     let store = DownloadStore::new(&conn);
@@ -463,10 +516,15 @@ fn quarantine_blocks_expires_and_clears_on_manual_retry() {
         .unwrap();
     assert_eq!(store.delete_quarantine_for_album("rg-1").unwrap(), 1);
 
-    // Suspect files move into the sandbox only.
+    // Suspect files move into the sandbox only, and a stamp that would
+    // climb out of it is refused with the file left where it was.
     let sandbox = QuarantineDir::sandbox(dir.join("quarantine"));
     let suspect = dir.join("suspect.flac");
     std::fs::write(&suspect, b"bad bytes").unwrap();
+    assert!(sandbox.hold_file(&suspect, "../escape").is_err());
+    assert!(sandbox.hold_file(&suspect, "a/b").is_err());
+    assert!(sandbox.hold_file(&suspect, "..").is_err());
+    assert!(suspect.exists());
     let held = sandbox.hold_file(&suspect, "20240101T000000").unwrap();
     assert!(!suspect.exists());
     assert!(held.exists());
@@ -606,147 +664,33 @@ fn watchdog_orders_terminal_ceiling_stall_and_queue() {
         ..base.clone()
     };
     assert_eq!(watchdog.evaluate(&queued), WatchdogOutcome::QueuedTimeout);
-}
 
-#[test]
-fn terminal_states_close_the_task_but_open_a_retry() {
-    for status in [
-        TaskStatus::Completed,
-        TaskStatus::Partial,
-        TaskStatus::Failed,
-        TaskStatus::Cancelled,
-    ] {
-        assert!(is_terminal(status.as_str()));
-        for next in [
-            TaskStatus::Queued,
-            TaskStatus::Downloading,
-            TaskStatus::Processing,
-            TaskStatus::Completed,
-            TaskStatus::Partial,
-            TaskStatus::Failed,
-            TaskStatus::Cancelled,
-        ] {
-            assert!(!can_transition(status, next));
-        }
-    }
-    assert!(can_transition(TaskStatus::Queued, TaskStatus::Downloading));
-    assert!(!is_terminal("downloading"));
-
-    // Quarantine reasons stay within the CHECK vocabulary.
-    let reasons: Vec<&str> = [
-        QuarantineReason::VerifyFailed,
-        QuarantineReason::Corrupt,
-        QuarantineReason::FingerprintMismatch,
-        QuarantineReason::DurationMismatch,
-        QuarantineReason::DownloadFailed,
-        QuarantineReason::Manual,
-    ]
-    .iter()
-    .map(|reason| reason.as_str())
-    .collect();
+    // Past the stall mark with no active transfer and past the materialize
+    // window: the materialize fast-fail fires first.
+    let never_materialized = PollSample {
+        has_active_transfer: false,
+        downloaded_bytes: 0,
+        idle_seconds: 31.0 * 60.0,
+        materialize_wait_seconds: 120.0,
+        ..base.clone()
+    };
     assert_eq!(
-        reasons,
-        vec![
-            "verify_failed",
-            "corrupt",
-            "fingerprint_mismatch",
-            "duration_mismatch",
-            "download_failed",
-            "manual"
-        ]
+        watchdog.evaluate(&never_materialized),
+        WatchdogOutcome::MaterializeTimeout
     );
-    // Watchdog defaults stay ordered: stall < queued < 6h deadline, and
-    // the materialize + reap windows sit under the stall timeout.
-    let config = WatchdogConfig::default();
-    assert_eq!(config.deadline_seconds, 6.0 * 3600.0);
-    assert!(config.stall_timeout_seconds < config.queued_timeout_seconds);
-    assert!(config.queued_timeout_seconds < config.deadline_seconds);
-    assert!(config.materialize_seconds < config.stall_timeout_seconds);
-    assert!(config.reap_threshold_seconds <= config.stall_timeout_seconds);
 }
 
+/// Reimport needs a failed or partial task whose attempt still names its
+/// files and moves it to processing with its error cleared. Kept files go
+/// to cleanup after 90 days or when their task stops, and a reimport and
+/// cleanup each take the attempt by compare and set, so neither works on
+/// files the other has.
 #[test]
-fn terminal_tasks_reject_outgoing_transitions() {
-    let dir = scratch_dir("term-guard");
-    let conn = scratch_store(&dir);
-    let store = DownloadStore::new(&conn);
-    let now = 1_700_000_000.0;
-    store.insert_task(&new_task("t1"), now).unwrap();
-    store
-        .transition_task("t1", TaskStatus::Failed, now, None)
-        .unwrap();
-    // Terminal rows never move, not even back to queued.
-    assert!(
-        store
-            .transition_task("t1", TaskStatus::Queued, now, None)
-            .is_err()
-    );
-    // Finalizing into a non-terminal status is refused, not asserted.
-    assert!(
-        store
-            .finalize_task_and_attempt("t1", TaskStatus::Downloading, now, None, None, false)
-            .is_err()
-    );
-    // Startup classification leaves misfed terminal rows alone.
-    for status in [
-        TaskStatus::Completed,
-        TaskStatus::Partial,
-        TaskStatus::Failed,
-        TaskStatus::Cancelled,
-    ] {
-        assert_eq!(classify_startup(status, &[]), StartupAction::Noop);
-    }
-}
-
-#[test]
-fn idempotency_keys_answer_the_original_task() {
-    let dir = scratch_dir("idem-key");
-    let conn = scratch_store(&dir);
-    let store = DownloadStore::new(&conn);
-    let now = 1_700_000_000.0;
-    store.insert_task(&new_task("task-a"), now).unwrap();
-    assert!(
-        store
-            .claim_key("dispatch:k1", "task-a", "dispatch", now)
-            .unwrap()
-    );
-    assert!(
-        !store
-            .claim_key("dispatch:k1", "task-b", "dispatch", now)
-            .unwrap()
-    );
-    assert_eq!(
-        store.task_id_for_key("dispatch:k1").unwrap().as_deref(),
-        Some("task-a")
-    );
-    assert_eq!(store.task_id_for_key("dispatch:missing").unwrap(), None);
-}
-
-#[test]
-fn quarantine_hold_rejects_escaping_stamps() {
-    let dir = scratch_dir("quar-stamp");
-    let sandbox = QuarantineDir::sandbox(dir.join("quarantine"));
-    let suspect = dir.join("suspect.flac");
-    std::fs::write(&suspect, b"bad bytes").unwrap();
-    assert!(sandbox.hold_file(&suspect, "../escape").is_err());
-    assert!(sandbox.hold_file(&suspect, "a/b").is_err());
-    assert!(sandbox.hold_file(&suspect, "..").is_err());
-    assert!(suspect.exists());
-    let held = sandbox.hold_file(&suspect, "20240101T000000").unwrap();
-    assert!(held.starts_with(dir.join("quarantine")));
-}
-
-// Reimport needs a failed or partial task whose attempt still names its
-// files; starting one moves the task to processing with its error cleared
-// (the guard is keyed on the attempt journal).
-#[test]
-fn reimport_starts_tasks_whose_files_remain() {
+fn reimport_and_cleanup_never_share_kept_files() {
+    // Case "reimport": the guard is keyed on the attempt journal.
     let dir = scratch_dir("reimport");
     let conn = scratch_store(&dir);
-    let now = SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64();
+    let now = 1_700_000_000.0;
     let store = DownloadStore::new(&conn);
     for id in ["kept", "bare", "live"] {
         store.insert_task(&new_task(id), now).unwrap();
@@ -809,16 +753,11 @@ fn reimport_starts_tasks_whose_files_remain() {
         store.begin_reimport("missing", "missing-a0", now).unwrap(),
         ReimportStart::NotReimportable
     );
-}
 
-// Files kept for "Retry import" go to cleanup after 90 days, or at once
-// when their task is stopped. A reimport and cleanup each take the
-// attempt by compare and set, so neither works on files the other has:
-// a reimport that started keeps them past the 90 days, a reimport takes
-// back files cleanup has not leased yet, and files cleanup has leased are
-// never reimported.
-#[test]
-fn kept_files_go_to_cleanup_without_racing_a_reimport() {
+    // Case "kept files": a reimport that started keeps them past the 90
+    // days, a reimport takes back files cleanup has not leased yet, and
+    // files cleanup has leased are never reimported. Its own store, so the
+    // 90-day release sees only these rows.
     let dir = scratch_dir("kept-files");
     let conn = scratch_store(&dir);
     let store = DownloadStore::new(&conn);

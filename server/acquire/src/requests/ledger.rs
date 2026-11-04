@@ -538,96 +538,93 @@ mod tests {
         can_watch_transition,
     };
 
-    /// Every request status pair: exactly the listed moves are allowed.
+    /// Every request status, watch state and approval state pair: exactly
+    /// the listed moves are allowed.
     #[test]
-    fn request_transitions_are_exactly_the_listed_pairs() {
-        use RequestStatus::{
-            AwaitingApproval, Cancelled, Cancelling, Downloading, Failed, Imported, Incomplete,
-            Pending, Queued, Rejected,
-        };
-        let live_settles = [Cancelled, Failed, Imported, Incomplete];
-        let mut allowed = Vec::new();
-        for from in [Pending, Queued] {
-            for to in live_settles.into_iter().chain([Downloading, Cancelling]) {
-                allowed.push((from, to));
+    fn ledger_transitions_are_exactly_the_listed_pairs() {
+        {
+            use RequestStatus::{
+                AwaitingApproval, Cancelled, Cancelling, Downloading, Failed, Imported, Incomplete,
+                Pending, Queued, Rejected,
+            };
+            let live_settles = [Cancelled, Failed, Imported, Incomplete];
+            let mut allowed = Vec::new();
+            for from in [Pending, Queued] {
+                for to in live_settles.into_iter().chain([Downloading, Cancelling]) {
+                    allowed.push((from, to));
+                }
+            }
+            allowed.push((Pending, AwaitingApproval));
+            allowed.push((Queued, Pending));
+            allowed.push((Pending, Queued));
+            for to in live_settles.into_iter().chain([Cancelling]) {
+                allowed.push((Downloading, to));
+            }
+            for to in [Pending, Rejected, Cancelled, Imported] {
+                allowed.push((AwaitingApproval, to));
+            }
+            for to in [Cancelled, Pending, Queued, Downloading, Imported] {
+                allowed.push((Cancelling, to));
+            }
+            for from in [Failed, Cancelled, Incomplete] {
+                for to in [Pending, AwaitingApproval, Queued, Downloading] {
+                    allowed.push((from, to));
+                }
+            }
+            for from in [Failed, Incomplete] {
+                allowed.push((from, Imported));
+            }
+            for from in [Imported, Rejected] {
+                for to in [Pending, AwaitingApproval, Queued] {
+                    allowed.push((from, to));
+                }
+            }
+            for from in RequestStatus::ALL {
+                for to in RequestStatus::ALL {
+                    assert_eq!(
+                        can_request_transition(from, to),
+                        allowed.contains(&(from, to)),
+                        "request {from} -> {to}"
+                    );
+                }
             }
         }
-        allowed.push((Pending, AwaitingApproval));
-        allowed.push((Queued, Pending));
-        allowed.push((Pending, Queued));
-        for to in live_settles.into_iter().chain([Cancelling]) {
-            allowed.push((Downloading, to));
-        }
-        for to in [Pending, Rejected, Cancelled, Imported] {
-            allowed.push((AwaitingApproval, to));
-        }
-        for to in [Cancelled, Pending, Queued, Downloading, Imported] {
-            allowed.push((Cancelling, to));
-        }
-        for from in [Failed, Cancelled, Incomplete] {
-            for to in [Pending, AwaitingApproval, Queued, Downloading] {
-                allowed.push((from, to));
+        {
+            use WatchState::{Fulfilled, Stopped, Watching};
+            let allowed = [
+                (Watching, Stopped),
+                (Watching, Fulfilled),
+                (Stopped, Watching),
+                (Stopped, Fulfilled),
+                (Fulfilled, Watching),
+            ];
+            for from in WatchState::ALL {
+                for to in WatchState::ALL {
+                    assert_eq!(
+                        can_watch_transition(from, to),
+                        allowed.contains(&(from, to)),
+                        "watch {from:?} -> {to:?}"
+                    );
+                }
             }
         }
-        for from in [Failed, Incomplete] {
-            allowed.push((from, Imported));
-        }
-        for from in [Imported, Rejected] {
-            for to in [Pending, AwaitingApproval, Queued] {
-                allowed.push((from, to));
-            }
-        }
-        for from in RequestStatus::ALL {
-            for to in RequestStatus::ALL {
-                assert_eq!(
-                    can_request_transition(from, to),
-                    allowed.contains(&(from, to)),
-                    "{from} -> {to}"
-                );
-            }
-        }
-    }
-
-    /// Every watch state pair: exactly the listed moves are allowed.
-    #[test]
-    fn watch_transitions_are_exactly_the_listed_pairs() {
-        use WatchState::{Fulfilled, Stopped, Watching};
-        let allowed = [
-            (Watching, Stopped),
-            (Watching, Fulfilled),
-            (Stopped, Watching),
-            (Stopped, Fulfilled),
-            (Fulfilled, Watching),
-        ];
-        for from in WatchState::ALL {
-            for to in WatchState::ALL {
-                assert_eq!(
-                    can_watch_transition(from, to),
-                    allowed.contains(&(from, to)),
-                    "{from:?} -> {to:?}"
-                );
-            }
-        }
-    }
-
-    /// Every approval state pair: exactly the listed moves are allowed.
-    #[test]
-    fn approval_transitions_are_exactly_the_listed_pairs() {
-        use ApprovalState::{Approved, Pending, Rejected, Revoked};
-        let allowed = [
-            (Pending, Approved),
-            (Pending, Rejected),
-            (Approved, Revoked),
-            (Rejected, Pending),
-            (Revoked, Pending),
-        ];
-        for from in ApprovalState::ALL {
-            for to in ApprovalState::ALL {
-                assert_eq!(
-                    can_approval_transition(from, to),
-                    allowed.contains(&(from, to)),
-                    "{from:?} -> {to:?}"
-                );
+        {
+            use ApprovalState::{Approved, Pending, Rejected, Revoked};
+            let allowed = [
+                (Pending, Approved),
+                (Pending, Rejected),
+                (Approved, Revoked),
+                (Rejected, Pending),
+                (Revoked, Pending),
+            ];
+            for from in ApprovalState::ALL {
+                for to in ApprovalState::ALL {
+                    assert_eq!(
+                        can_approval_transition(from, to),
+                        allowed.contains(&(from, to)),
+                        "approval {from:?} -> {to:?}"
+                    );
+                }
             }
         }
     }

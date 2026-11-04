@@ -1575,12 +1575,46 @@ fn content_words(title: &str, artist_words: &[String]) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// The word helpers that feed match evidence: edition phrases are whole
+    /// words, remote folders skip the share root and local paths, an artist
+    /// tag agrees word for word, and content words drop editions and noise.
     #[test]
-    fn edition_phrases_match_whole_words() {
+    fn landing_evidence_words() {
         let text = words("Led_Zeppelin-Live_EP Box.Set");
-        assert!(has_phrase(&text, "live"));
-        assert!(has_phrase(&text, "box set"));
-        assert!(!has_phrase(&words("Alive"), "live"));
+        assert!(has_phrase(&text, "live"), "edition phrase");
+        assert!(has_phrase(&text, "box set"), "edition phrase");
+        assert!(!has_phrase(&words("Alive"), "live"), "edition phrase");
+
+        let names = vec![
+            r"@@x\Music\Portishead\Singles\01 - Glory Box.flac".to_owned(),
+            "/srv/Portishead/downloads/Singles/01 - Glory Box.flac".to_owned(),
+        ];
+        assert_eq!(
+            remote_folders(&names, "01 - Glory Box.flac"),
+            vec!["Music", "Portishead", "Singles"],
+            "remote folders"
+        );
+        assert!(
+            remote_folders(&names, "02 - Roads.flac").is_empty(),
+            "remote folders"
+        );
+
+        assert!(
+            words_within("Beethoven", "Ludwig van Beethoven"),
+            "artist tag"
+        );
+        assert!(!words_within("Dan Romer", "Yan Qing"), "artist tag");
+
+        let artist = words("Led Zeppelin");
+        assert!(
+            content_words("Led Zeppelin (Remastered) [Disc 1]", &artist).is_empty(),
+            "content words"
+        );
+        assert_eq!(
+            content_words("Led Zeppelin II", &artist),
+            vec!["ii"],
+            "content words"
+        );
     }
 
     #[test]
@@ -1679,31 +1713,5 @@ mod tests {
                 "{name} in {folder}/{stem}"
             );
         }
-    }
-
-    #[test]
-    fn remote_folders_skip_the_share_root_and_local_paths() {
-        let names = vec![
-            r"@@x\Music\Portishead\Singles\01 - Glory Box.flac".to_owned(),
-            "/srv/Portishead/downloads/Singles/01 - Glory Box.flac".to_owned(),
-        ];
-        assert_eq!(
-            remote_folders(&names, "01 - Glory Box.flac"),
-            vec!["Music", "Portishead", "Singles"]
-        );
-        assert!(remote_folders(&names, "02 - Roads.flac").is_empty());
-    }
-
-    #[test]
-    fn an_artist_tag_agrees_word_for_word() {
-        assert!(words_within("Beethoven", "Ludwig van Beethoven"));
-        assert!(!words_within("Dan Romer", "Yan Qing"));
-    }
-
-    #[test]
-    fn content_words_ignore_editions_and_noise() {
-        let artist = words("Led Zeppelin");
-        assert!(content_words("Led Zeppelin (Remastered) [Disc 1]", &artist).is_empty());
-        assert_eq!(content_words("Led Zeppelin II", &artist), vec!["ii"]);
     }
 }

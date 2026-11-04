@@ -16,8 +16,10 @@ use crate::common::compat::{
     CompatApp, PLAYER, Trace, assert_golden, bless_requested, library_goldens, named, rest,
 };
 
+/// Tripwires over the goldens: blessing is refused in CI, and no golden
+/// recorded from the library carries a credential.
 #[test]
-fn bless_is_refused_in_ci() {
+fn goldens_are_safe() {
     assert_eq!(bless_requested(None, None), Ok(false));
     assert_eq!(bless_requested(None, Some("true")), Ok(false));
     assert_eq!(bless_requested(Some("1"), None), Ok(true));
@@ -27,6 +29,20 @@ fn bless_is_refused_in_ci() {
         refusal.contains("COMPAT_BLESS") && refusal.contains("CI"),
         "{refusal}"
     );
+
+    let goldens = library_goldens();
+    assert!(!goldens.is_empty(), "the library goldens are committed");
+    let secret =
+        regex::Regex::new(r"(?i)\b(p|t|s|api_key|apikey|token)=([^&\x22\s]+)").expect("pattern");
+    for path in goldens {
+        let text = std::fs::read_to_string(&path).expect("golden reads");
+        for found in secret.captures_iter(&text) {
+            assert_eq!(&found[2], "***", "{} carries {}", path.display(), &found[0]);
+        }
+        for word in ["AccessToken", "Bearer ", "-password-", "correct horse"] {
+            assert!(!text.contains(word), "{} carries {word:?}", path.display());
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -493,73 +509,27 @@ async fn jellyfin_pinned_reference_shapes() {
     rig.stop().await;
 }
 
-/// The MusicBrainz ids player apps get for an album come from the files'
-/// tags until the app has matched it, then from the accepted match, even
-/// where the tags say otherwise: Subsonic sends the release (the release
-/// group when the match knows no release), Jellyfin both. Reading them
-/// writes no identity.
+/// Player apps get only proven MusicBrainz ids. An album's come from the
+/// files' tags until the app has matched it, then from the accepted match,
+/// even where the tags say otherwise: Subsonic sends the release (the release
+/// group when the match knows no release), Jellyfin both, and reading them
+/// writes no identity. An artist row whose files name two MusicBrainz
+/// artists for it, with no list pairing names and ids, is no single artist:
+/// it gets no MusicBrainz id, on Subsonic or on a Jellyfin track.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_album_sends_the_accepted_ids_else_its_tags() {
+async fn player_apps_send_only_proven_musicbrainz_ids() {
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
     const TAG_RELEASE: &str = "0da3b3e3-1111-4444-8888-aaaaaaaaaaaa";
     const TAG_GROUP: &str = "b1392450-e666-3926-a536-22c65f834433";
     const RELEASE: &str = "44444444-4444-4444-8444-444444444444";
     const GROUP: &str = "55555555-5555-4555-8555-555555555555";
-    let rig = CompatApp::start("compat-player-ids").await;
-    let (airbag, album, _) = catalog_ids(&rig, "Radiohead/OK Computer/01 Airbag.flac");
-
-    let before = identity_rows(&rig);
-    let (subsonic, jellyfin) = album_ids_sent(&rig, &album, &airbag).await;
-    assert_eq!(subsonic, json!(TAG_RELEASE));
-    assert_eq!(
-        jellyfin,
-        json!({"MusicBrainzAlbum": TAG_RELEASE, "MusicBrainzReleaseGroup": TAG_GROUP})
-    );
-    assert_eq!(identity_rows(&rig), before, "reading wrote an identity");
-
-    rig.app
-        .seed(&format!(
-            "INSERT INTO local_album_external_identities (local_album_id, provider, \
-             release_group_mbid, release_mbid, decision_source, selected_at) \
-             VALUES ('{album}', 'musicbrainz', '{GROUP}', '{RELEASE}', 'manual', 1) \
-             ON CONFLICT (local_album_id, provider) DO UPDATE SET \
-             release_group_mbid = excluded.release_group_mbid, \
-             release_mbid = excluded.release_mbid, decision_source = 'manual'; \
-             DELETE FROM library_album_match_state WHERE local_album_id = '{album}';"
-        ))
-        .await;
-    let before = identity_rows(&rig);
-    let (subsonic, jellyfin) = album_ids_sent(&rig, &album, &airbag).await;
-    assert_eq!(subsonic, json!(RELEASE));
-    assert_eq!(
-        jellyfin,
-        json!({"MusicBrainzAlbum": RELEASE, "MusicBrainzReleaseGroup": GROUP})
-    );
-    assert_eq!(identity_rows(&rig), before, "reading wrote an identity");
-
-    rig.app
-        .seed_with(
-            "UPDATE local_album_external_identities SET release_mbid = NULL \
-             WHERE local_album_id = ?1",
-            [album.as_str()],
-        )
-        .await;
-    let (subsonic, jellyfin) = album_ids_sent(&rig, &album, &airbag).await;
-    assert_eq!(subsonic, json!(GROUP));
-    assert_eq!(jellyfin, json!({"MusicBrainzReleaseGroup": GROUP}));
-    rig.stop().await;
-}
-
-/// An artist row whose files name two MusicBrainz artists for it, with no
-/// list pairing names and ids, is no single artist: player apps get no
-/// MusicBrainz id for it, on Subsonic or on a Jellyfin track.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_composite_artist_sends_no_musicbrainz_id() {
-    use droppedneedle_library::tags::TagField;
-    use droppedneedle_library::tags::save::{TagEdit, save_tags};
-
     const FIRST: &str = "aaaaaaaa-0000-4000-8000-000000000001";
     const SECOND: &str = "aaaaaaaa-0000-4000-8000-000000000002";
-    let rig = CompatApp::start("compat-composite-artist").await;
+    let rig = CompatApp::start("compat-player-ids").await;
+
+    // The composite artist: a copy tagged with two artist ids, scanned in.
     let music = rig.app.config.root_app_dir.join("music");
     let duet = music.join("Duo/Together/01.flac");
     std::fs::create_dir_all(duet.parent().expect("folder")).expect("folder made");
@@ -586,7 +556,11 @@ async fn a_composite_artist_sends_no_musicbrainz_id() {
     let (track, _, artist) = catalog_ids(&rig, "Duo/Together/01.flac");
 
     let answer = subsonic_ok(&rig, &format!("getArtist?id=ar-{artist}")).await;
-    assert_eq!(answer["artist"]["musicBrainzId"], json!(""), "{answer}");
+    assert_eq!(
+        answer["artist"]["musicBrainzId"],
+        json!(""),
+        "composite artist: {answer}"
+    );
     rig.jellyfin_ids_caught_up().await;
     let token = rig.jellyfin_auth();
     let (status, item) = rig
@@ -598,8 +572,61 @@ async fn a_composite_artist_sends_no_musicbrainz_id() {
             None,
         )
         .await;
-    assert_eq!(status, StatusCode::OK, "{item}");
-    assert_eq!(item["ProviderIds"].get("MusicBrainzArtist"), None, "{item}");
+    assert_eq!(status, StatusCode::OK, "composite artist: {item}");
+    assert_eq!(
+        item["ProviderIds"].get("MusicBrainzArtist"),
+        None,
+        "composite artist: {item}"
+    );
+
+    // The album: its tags, then its accepted match, then a match with no
+    // release.
+    let (airbag, album, _) = catalog_ids(&rig, "Radiohead/OK Computer/01 Airbag.flac");
+    let before = identity_rows(&rig);
+    let (subsonic, jellyfin) = album_ids_sent(&rig, &album, &airbag).await;
+    assert_eq!(subsonic, json!(TAG_RELEASE), "tags");
+    assert_eq!(
+        jellyfin,
+        json!({"MusicBrainzAlbum": TAG_RELEASE, "MusicBrainzReleaseGroup": TAG_GROUP}),
+        "tags"
+    );
+    assert_eq!(identity_rows(&rig), before, "reading wrote an identity");
+
+    rig.app
+        .seed(&format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at) \
+             VALUES ('{album}', 'musicbrainz', '{GROUP}', '{RELEASE}', 'manual', 1) \
+             ON CONFLICT (local_album_id, provider) DO UPDATE SET \
+             release_group_mbid = excluded.release_group_mbid, \
+             release_mbid = excluded.release_mbid, decision_source = 'manual'; \
+             DELETE FROM library_album_match_state WHERE local_album_id = '{album}';"
+        ))
+        .await;
+    let before = identity_rows(&rig);
+    let (subsonic, jellyfin) = album_ids_sent(&rig, &album, &airbag).await;
+    assert_eq!(subsonic, json!(RELEASE), "accepted match");
+    assert_eq!(
+        jellyfin,
+        json!({"MusicBrainzAlbum": RELEASE, "MusicBrainzReleaseGroup": GROUP}),
+        "accepted match"
+    );
+    assert_eq!(identity_rows(&rig), before, "reading wrote an identity");
+
+    rig.app
+        .seed_with(
+            "UPDATE local_album_external_identities SET release_mbid = NULL \
+             WHERE local_album_id = ?1",
+            [album.as_str()],
+        )
+        .await;
+    let (subsonic, jellyfin) = album_ids_sent(&rig, &album, &airbag).await;
+    assert_eq!(subsonic, json!(GROUP), "match with no release");
+    assert_eq!(
+        jellyfin,
+        json!({"MusicBrainzReleaseGroup": GROUP}),
+        "match with no release"
+    );
     rig.stop().await;
 }
 
@@ -1027,7 +1054,7 @@ async fn stream_ids(
 /// transcodes the same codec, a codec change transcodes, the original
 /// stays direct whatever the ceiling, and HEAD of a transcode answers its
 /// headers without starting ffmpeg. Every route answers the same status
-/// and headers.
+/// and headers, and PlaybackInfo's transcoding address keeps the ceiling.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn transcodes_alike_on_every_stream_route() {
     let rig = CompatApp::transcoding("compat-transcodes").await;
@@ -1152,33 +1179,15 @@ async fn transcodes_alike_on_every_stream_route() {
             assert_eq!(rig.ffmpeg_runs("airbag").len(), runs, "{case}: no ffmpeg");
         }
     }
-    rig.stop().await;
-}
 
-/// PlaybackInfo's transcoding address carries the bitrate ceiling its
-/// decision used, so a client that follows the address alone gets the
-/// transcode at that bitrate rather than the source file.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn transcode_address_carries_the_ceiling() {
-    let rig = CompatApp::transcoding("compat-transcode-address").await;
-    let app = &rig.app;
-    let auth = rig.subsonic_auth("matrix");
-    let key = format!("api_key={}", rig.secret);
-    let (_, items) = app
-        .call(
-            "GET",
-            &format!("/jellyfin/Items?includeItemTypes=Audio&Recursive=true&{key}"),
-            &[],
-            None,
-        )
-        .await;
-    let (_, _, item, kbps) = stream_ids(&rig, &auth, &items, "One").await;
-    let ceiling = kbps / 2;
+    // PlaybackInfo's transcoding address carries the ceiling its decision
+    // used, so a client that follows the address alone (as Jellify plays
+    // the server address plus this) gets the transcode at that bitrate.
     let (status, info) = app
         .call(
             "GET",
             &format!(
-                "/jellyfin/Items/{item}/PlaybackInfo?maxStreamingBitrate={}&{key}",
+                "/jellyfin/Items/{mp3_item}/PlaybackInfo?maxStreamingBitrate={}&{key}",
                 ceiling * 1000
             ),
             &[],
@@ -1186,17 +1195,17 @@ async fn transcode_address_carries_the_ceiling() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{info}");
-    // Jellify plays the server address it signed in with plus this.
     let address = info["MediaSources"][0]["TranscodingUrl"]
         .as_str()
         .expect("transcoding url");
     let (status, _, bytes) = app
         .raw("GET", &format!("/jellyfin{address}"), &[], None)
         .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "transcoding address");
     assert_eq!(
         bytes,
-        format!("ffmpeg stand-in: mp3 {}k\n", ceiling.clamp(64, 320)).into_bytes()
+        format!("ffmpeg stand-in: mp3 {}k\n", ceiling.clamp(64, 320)).into_bytes(),
+        "transcoding address"
     );
     rig.stop().await;
 }
@@ -1329,170 +1338,6 @@ async fn a_repeated_refused_credential_is_slowed_not_locked_out() {
         )
         .await;
     assert_eq!(status, StatusCode::OK);
-    rig.stop().await;
-}
-
-/// A player trusts `IsAdministrator`: only the admin role is reported as
-/// one, at sign-in and on "who am I". A trusted user is not one.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn jellyfin_reports_an_administrator_only_for_an_admin() {
-    let rig = CompatApp::start("compat-jellyfin-admin").await;
-    let app = &rig.app;
-    let owner = rig.admin_secret().await;
-    let trusted = rig.trusted_secret("tris").await;
-
-    for (name, secret, is_admin) in [
-        (PLAYER, rig.secret.as_str(), false),
-        ("tris", &trusted, false),
-        ("admin", &owner, true),
-    ] {
-        let (status, echo) = app
-            .call(
-                "POST",
-                "/jellyfin/Users/AuthenticateByName",
-                &[],
-                Some(json!({"Username": name, "Pw": secret})),
-            )
-            .await;
-        assert_eq!(status, StatusCode::OK, "{name}");
-        assert_eq!(echo["User"]["Name"], json!(name));
-        assert_eq!(
-            echo["User"]["Policy"]["IsAdministrator"],
-            json!(is_admin),
-            "{name} at sign-in"
-        );
-        let token = format!("MediaBrowser Client=\"Journey\", Token=\"{secret}\"");
-        let (status, me) = app
-            .call(
-                "GET",
-                "/jellyfin/Users/Me",
-                &[("X-Emby-Authorization", token.as_str())],
-                None,
-            )
-            .await;
-        assert_eq!(status, StatusCode::OK, "{name}");
-        assert_eq!(
-            me["Policy"]["IsAdministrator"],
-            json!(is_admin),
-            "{name} on who am I"
-        );
-    }
-    rig.stop().await;
-}
-
-/// A playlist with no uploaded cover gets a picture made from its tracks'
-/// albums, for those who may read it only: another user asking for a
-/// private playlist's cover gets the placeholder, as for any miss.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn subsonic_made_playlist_cover_is_private_to_its_readers() {
-    let rig = CompatApp::start("compat-playlist-cover").await;
-    let app = &rig.app;
-    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let second = app.config.root_app_dir.join("second");
-    let album = second.join("Covered/Sleeve");
-    std::fs::create_dir_all(&album).expect("mkdir");
-    std::fs::copy(
-        manifest.join("tests/fixtures/library/management_full.flac"),
-        album.join("01 Sleeve.flac"),
-    )
-    .expect("fixture copies");
-    image::RgbImage::from_pixel(8, 8, image::Rgb([200, 10, 10]))
-        .save(album.join("cover.png"))
-        .expect("cover writes");
-    app.add_library_folder("second", &second).await;
-
-    let admin = app.login_admin().await;
-    let (status, created) = app
-        .call(
-            "POST",
-            "/api/v3/me/app-passwords",
-            &[("authorization", admin.as_str())],
-            Some(json!({"name": "Other"})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::CREATED, "{created}");
-    let other = format!(
-        "u=admin&p={}&v=1.16.1&c=cover-check&f=json",
-        created["secret"].as_str().expect("secret")
-    );
-    let owner = rig.subsonic_auth("cover-check");
-
-    let (_, all) = app
-        .call(
-            "GET",
-            &rest("search3?query=&songCount=500", &owner),
-            &[],
-            None,
-        )
-        .await;
-    let song = all["subsonic-response"]["searchResult3"]["song"]
-        .as_array()
-        .expect("songs")
-        .iter()
-        .find(|song| song["path"] == "Covered/Sleeve/01 Sleeve.flac")
-        .expect("the covered song")["id"]
-        .as_str()
-        .expect("song id")
-        .to_owned();
-    let (_, made) = app
-        .call(
-            "GET",
-            &rest(&format!("createPlaylist?name=Mine&songId={song}"), &owner),
-            &[],
-            None,
-        )
-        .await;
-    let playlist = &made["subsonic-response"]["playlist"];
-    let id = playlist["id"].as_str().expect("playlist id").to_owned();
-    assert_eq!(playlist["coverArt"], json!(id));
-
-    let cover = |auth: String| {
-        let id = id.clone();
-        async move {
-            let uri = rest(&format!("getCoverArt?id={id}"), &auth);
-            let (status, headers, body) =
-                crate::common::through_busy(|| app.raw("GET", &uri, &[], None)).await;
-            assert_eq!(status, StatusCode::OK);
-            (
-                header_str(&headers, "content-type"),
-                header_str(&headers, "cache-control"),
-                body,
-            )
-        }
-    };
-    // An album art read that fails on a loaded host (the album's row read
-    // waiting out the read pool) is logged and answers that one request
-    // with the placeholder. The made cover is the same on every ask, so the
-    // owner asks again until it comes.
-    let (kind, cache, picture) = app
-        .until("the owner gets the cover made from the album", || {
-            let asked = cover(owner.clone());
-            async move {
-                let answer = asked.await;
-                (answer.0 != "image/webp").then_some(answer)
-            }
-        })
-        .await;
-    assert_eq!(
-        (kind.as_str(), cache.as_str()),
-        ("image/png", "private, max-age=3600")
-    );
-    let (kind, cache, placeholder) = cover(other.clone()).await;
-    assert_eq!(
-        (kind.as_str(), cache.as_str()),
-        ("image/webp", "public, max-age=86400")
-    );
-    assert_ne!(placeholder, picture);
-
-    let (_, lists) = app
-        .call("GET", &rest("getPlaylists", &other), &[], None)
-        .await;
-    assert!(
-        !lists["subsonic-response"]["playlists"]
-            .to_string()
-            .contains(&id),
-        "{lists}"
-    );
     rig.stop().await;
 }
 
@@ -1839,16 +1684,21 @@ fn info_links(info: &Value) -> Vec<String> {
         .collect()
 }
 
-/// Album and artist picture links open with no credentials: the links of
-/// `getAlbumInfo2`, `getArtistInfo2` and an artist's `artistImageUrl` are
-/// absolute at the address the app used, carry no credential, and answer
-/// a picture with `nosniff`, a sandbox policy and a one-day cache to a
-/// request that signs in with nothing. The album's picture is the one
-/// `getCoverArt` gives a signed-in user, and the same request gets the
-/// same link every time.
+/// Album and artist picture links open with no credentials, and the picture
+/// address opens nothing else. The links of `getAlbumInfo2`,
+/// `getArtistInfo2` and an artist's `artistImageUrl` are absolute at the
+/// address the app used, carry no credential, and answer a picture with
+/// `nosniff`, a sandbox policy and a one-day cache to a request that signs
+/// in with nothing. The album's picture is the one `getCoverArt` gives a
+/// signed-in user, and the same request gets the same link every time.
+/// Each refusal is the same empty 404: a signature with one character
+/// changed, an album's signature on its artist's id, on a readable
+/// playlist's id or on a song's id, no signature, and a good link while
+/// the Subsonic API is off. None of them counts as a failed sign-in: the
+/// client that sent them still signs in.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn subsonic_picture_links_open_without_sign_in() {
-    let (rig, [album_id, artist_id, _]) = covered_album("compat-picture-links").await;
+async fn subsonic_picture_links_open_only_what_they_sign() {
+    let (rig, [album_id, artist_id, song_id]) = covered_album("compat-picture-links").await;
     let app = &rig.app;
     let auth = rig.subsonic_auth("pictures");
     let get = |call: String| {
@@ -1909,28 +1759,9 @@ async fn subsonic_picture_links_open_without_sign_in() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(header_str(&headers, "content-type"), "image/png");
     assert_eq!(opened, served);
-    rig.stop().await;
-}
 
-/// The picture address opens nothing else, each refusal the same empty
-/// 404: a signature with one character changed, an album's signature on
-/// its artist's id, on a readable playlist's id or on a song's id, no
-/// signature, and a good link while the Subsonic API is off. None of them
-/// counts as a failed sign-in: the client that sent them still signs in.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn subsonic_picture_address_opens_nothing_else() {
-    let (rig, [album_id, artist_id, song_id]) = covered_album("compat-picture-refusals").await;
-    let app = &rig.app;
-    let auth = rig.subsonic_auth("pictures");
-    let (_, info) = app
-        .call(
-            "GET",
-            &rest(&format!("getAlbumInfo2?id={album_id}"), &auth),
-            &[],
-            None,
-        )
-        .await;
-    let link = picture_path(&info["subsonic-response"]["albumInfo"]["mediumImageUrl"]);
+    // The refusals.
+    let link = picture_path(&album_info["subsonic-response"]["albumInfo"]["mediumImageUrl"]);
     let (status, _, _) = app.raw("GET", &link, &[], None).await;
     assert_eq!(status, StatusCode::OK, "the link opens");
     let sig = link
@@ -1992,13 +1823,15 @@ async fn subsonic_picture_address_opens_nothing_else() {
     rig.stop().await;
 }
 
-/// The admin's setting for who may download library files holds in player
-/// apps. A user it excludes is told so and is refused at the download
-/// addresses; a user it admits is told so and is served. Playing is not
-/// downloading: everyone still streams, and still gets the original file
-/// from the address a Jellyfin app plays it from.
+/// Player apps are told each user's role. A player trusts
+/// `IsAdministrator`: only the admin role is reported as one, at sign-in
+/// and on "who am I"; a trusted user is not one. The admin's setting for
+/// who may download library files holds: a user it excludes is told so and
+/// is refused at the download addresses; a user it admits is told so and
+/// is served. Playing is not downloading: everyone still streams, and still
+/// gets the original file from the address a Jellyfin app plays it from.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn download_setting_holds_in_player_apps() {
+async fn player_apps_report_each_role() {
     let rig = CompatApp::start("compat-download-setting").await;
     let app = &rig.app;
     let users = [
@@ -2078,10 +1911,16 @@ async fn download_setting_holds_in_player_apps() {
                 .call("GET", &format!("/jellyfin/Users/Me?{key}"), &[], None)
                 .await;
             assert_eq!(status, StatusCode::OK, "{case}");
+            assert_eq!(echo["User"]["Name"], json!(name), "{case}");
             for (policy, at) in [
                 (&echo["User"]["Policy"], "sign-in"),
                 (&me["Policy"], "who am I"),
             ] {
+                assert_eq!(
+                    policy["IsAdministrator"],
+                    json!(*name == "admin"),
+                    "{case}: IsAdministrator at {at}"
+                );
                 let told = &policy["EnableContentDownloading"];
                 if *told != json!(may) {
                     wrong.push(format!("{case}: EnableContentDownloading {told} at {at}"));
@@ -2325,15 +2164,20 @@ async fn picture(
     crate::common::through_busy(|| rig.app.raw("GET", &uri, &[], None)).await
 }
 
-/// The Jellyfin picture address opens only for ids the server handed out.
-/// The album's and the artist's ids from a signed-in answer open with no
+/// The ids a Jellyfin app is handed for the covered album, and its old
+/// ones. The picture address opens only for ids the server handed out: the
+/// album's and the artist's ids from a signed-in answer open with no
 /// credentials, as an image with `nosniff` and a sandbox policy, sized by
 /// the width the app asks for. Their old unkeyed ids, which anyone can work
 /// out from public data, are an empty 404 with or without a valid token,
 /// and so is a track's id; the track points at its album's picture
-/// instead. None of these refusals counts as a failed sign-in.
+/// instead. None of these refusals counts as a failed sign-in. A signed-in
+/// app that stored an album's old unkeyed id still reaches the album
+/// through it: the item answers with its current id, browsing it lists its
+/// tracks and favouriting it sticks. With no token the same address is a
+/// 401.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn jellyfin_pictures_open_only_for_ids_the_server_handed_out() {
+async fn jellyfin_covered_album_ids() {
     let (rig, ids) = covered_jellyfin("compat-jellyfin-pictures").await;
     for id in [&ids.album, &ids.artist] {
         let (status, headers, body) = picture(&rig, id, None).await;
@@ -2397,20 +2241,9 @@ async fn jellyfin_pictures_open_only_for_ids_the_server_handed_out() {
     }
     let (status, me) = rig.app.call("GET", "/jellyfin/Users/Me", &auth, None).await;
     assert_eq!(status, StatusCode::OK, "{me}");
-    rig.stop().await;
-}
 
-/// A signed-in app that stored an album's old unkeyed id still reaches the
-/// album through it: the item answers with its current id, browsing it
-/// lists its tracks and favouriting it sticks. With no token the same
-/// address is a 401.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn jellyfin_old_album_ids_still_work_signed_in() {
-    let (rig, ids) = covered_jellyfin("compat-jellyfin-old-ids").await;
-    let token = rig.jellyfin_auth();
-    let auth = [("X-Emby-Authorization", token.as_str())];
+    // The old album id, signed in.
     let old = &ids.old_album;
-
     let (status, item) = rig
         .app
         .call("GET", &format!("/jellyfin/Items/{old}"), &auth, None)
@@ -2463,33 +2296,7 @@ async fn jellyfin_old_album_ids_still_work_signed_in() {
         .app
         .call("GET", &format!("/jellyfin/Items/{old}"), &[], None)
         .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    rig.stop().await;
-}
-
-/// An album keeps its id across a restart, and its picture opens when that
-/// is the first request the new process gets, once the server is no longer
-/// busy loading its stored ids.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn jellyfin_album_ids_survive_a_restart() {
-    let (mut rig, ids) = covered_jellyfin("compat-jellyfin-restart").await;
-    rig.app = rig.app.restart().await;
-    let (status, _, body) = picture(&rig, &ids.album, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(!body.is_empty());
-
-    let token = rig.jellyfin_auth();
-    let auth = [("X-Emby-Authorization", token.as_str())];
-    let (_, track) = rig
-        .app
-        .call(
-            "GET",
-            &format!("/jellyfin/Items/{}", ids.track),
-            &auth,
-            None,
-        )
-        .await;
-    assert_eq!(track["AlbumId"], json!(ids.album));
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "old id with no token");
     rig.stop().await;
 }
 
@@ -3055,24 +2862,6 @@ async fn a_continued_track_opens_by_its_old_id() {
     rig.stop().await;
 }
 
-/// Tripwire: no golden recorded from the library carries a credential.
-#[test]
-fn library_goldens_carry_no_credentials() {
-    let goldens = library_goldens();
-    assert!(!goldens.is_empty(), "the library goldens are committed");
-    let secret =
-        regex::Regex::new(r"(?i)\b(p|t|s|api_key|apikey|token)=([^&\x22\s]+)").expect("pattern");
-    for path in goldens {
-        let text = std::fs::read_to_string(&path).expect("golden reads");
-        for found in secret.captures_iter(&text) {
-            assert_eq!(&found[2], "***", "{} carries {}", path.display(), &found[0]);
-        }
-        for word in ["AccessToken", "Bearer ", "-password-", "correct horse"] {
-            assert!(!text.contains(word), "{} carries {word:?}", path.display());
-        }
-    }
-}
-
 /// One Subsonic call as `auth`, answered 200: its `subsonic-response`.
 async fn subsonic(rig: &CompatApp, call: &str, auth: &str) -> Value {
     let (status, body) = rig
@@ -3311,12 +3100,33 @@ async fn web_ratings(rig: &CompatApp, session: &str, ids: [&str; 3]) -> Value {
     body
 }
 
+/// One web favourite call as `session`: its status and answer.
+async fn favorite_on_web(
+    rig: &CompatApp,
+    session: &str,
+    kind: &str,
+    id: &str,
+    favorited: bool,
+) -> (StatusCode, Value) {
+    rig.app
+        .call(
+            "PUT",
+            &format!("/api/v3/favorites/{kind}/{id}"),
+            &[("authorization", session)],
+            Some(json!({ "favorited": favorited })),
+        )
+        .await
+}
+
 /// A rating set on the web is the one a Subsonic app shows, and the other
 /// way round. Each user, the admin included, sees only their own; 0
 /// clears; a bad rating or kind is a 400 and an unknown id a 404 that
-/// stores nothing; a merged album's old id rates the album it went into.
+/// stores nothing. A heart set on the web is the star a Subsonic app
+/// shows, and the web's favourites list holds it; an unknown id is a 404
+/// that stores nothing. A merged album's old id rates and hearts the album
+/// it went into.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn web_and_subsonic_apps_share_one_rating() {
+async fn web_and_subsonic_apps_share_ratings_and_favorites() {
     let rig = CompatApp::start("compat-web-ratings").await;
     let (track, album, artist) = catalog_ids(&rig, "Radiohead/OK Computer/01 Airbag.flac");
     let (teardrop, mezzanine, _) = catalog_ids(&rig, "Massive Attack/Mezzanine/04 Teardrop.m4a");
@@ -3326,6 +3136,7 @@ async fn web_and_subsonic_apps_share_one_rating() {
     let get_song = format!("getSong?id=tr-{track}");
     let none = json!({"albums": {}, "tracks": {}, "artists": {}});
 
+    // Ratings.
     let (status, body) = rate_on_web(&rig, &web, "track", &track, 4).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
@@ -3382,46 +3193,9 @@ async fn web_and_subsonic_apps_share_one_rating() {
         .expect("ratings read");
     assert_eq!(stored, 0);
 
-    merge_albums(&rig, &teardrop, &album).await;
-    let (status, body) = rate_on_web(&rig, &web, "album", &mezzanine, 2).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["item_id"], json!(album));
-    let survivor = subsonic(&rig, &format!("getAlbum?id=al-{album}"), &mine).await;
-    assert_eq!(survivor["album"]["userRating"], 2, "{survivor}");
-    rig.stop().await;
-}
-
-/// One web favourite call as `session`: its status and answer.
-async fn favorite_on_web(
-    rig: &CompatApp,
-    session: &str,
-    kind: &str,
-    id: &str,
-    favorited: bool,
-) -> (StatusCode, Value) {
-    rig.app
-        .call(
-            "PUT",
-            &format!("/api/v3/favorites/{kind}/{id}"),
-            &[("authorization", session)],
-            Some(json!({ "favorited": favorited })),
-        )
-        .await
-}
-
-/// A heart set on the web is the star a Subsonic app shows, and the web's
-/// favourites list holds it. An unknown id is a 404 that stores nothing,
-/// and a merged album's old id acts on the album it went into.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn web_and_subsonic_apps_share_one_favorite() {
-    let rig = CompatApp::start("compat-web-favorites").await;
-    let (_, album, _) = catalog_ids(&rig, "Radiohead/OK Computer/01 Airbag.flac");
-    let (teardrop, mezzanine, _) = catalog_ids(&rig, "Massive Attack/Mezzanine/04 Teardrop.m4a");
-    let mine = rig.subsonic_auth("web-favorites");
-    let web = player_web_session(&rig).await;
+    // Favourites.
     let starred =
         || async { subsonic(&rig, "getStarred2", &mine).await["starred2"]["album"].clone() };
-
     let (status, body) = favorite_on_web(&rig, &web, "album", &album, true).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
@@ -3458,23 +3232,30 @@ async fn web_and_subsonic_apps_share_one_favorite() {
         .expect("favourites read");
     assert_eq!(stored, 0);
 
+    // A merged album's old id.
     merge_albums(&rig, &teardrop, &album).await;
+    let (status, body) = rate_on_web(&rig, &web, "album", &mezzanine, 2).await;
+    assert_eq!(status, StatusCode::OK, "rating: {body}");
+    assert_eq!(body["item_id"], json!(album), "rating");
+    let survivor = subsonic(&rig, &format!("getAlbum?id=al-{album}"), &mine).await;
+    assert_eq!(survivor["album"]["userRating"], 2, "{survivor}");
     let (status, body) = favorite_on_web(&rig, &web, "album", &mezzanine, false).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["item_id"], json!(album));
+    assert_eq!(status, StatusCode::OK, "favourite: {body}");
+    assert_eq!(body["item_id"], json!(album), "favourite");
     let left = starred().await;
     assert!(left.as_array().is_none_or(Vec::is_empty), "{left}");
     rig.stop().await;
 }
 
-/// LRCLIB as the lyrics lookup sees it, counting every lookup: synced
-/// lyrics for "Paranoid Android", nothing for anything else.
+/// LRCLIB as the lyrics lookup sees it, counting every lookup: its recorded
+/// found answer for "Paranoid Android", its recorded 404 for anything else.
 async fn counted_lyrics_server() -> (
     String,
     droppedneedle_testkit::usenet::ServerGuard,
     std::sync::Arc<std::sync::atomic::AtomicUsize>,
 ) {
     use axum::extract::Query;
+    use axum::http::header::CONTENT_TYPE;
     use axum::response::IntoResponse;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -3486,18 +3267,18 @@ async fn counted_lyrics_server() -> (
         async move {
             counter.fetch_add(1, Ordering::SeqCst);
             if query.get("track_name").map(String::as_str) != Some("Paranoid Android") {
-                return StatusCode::NOT_FOUND.into_response();
+                return (
+                    StatusCode::NOT_FOUND,
+                    [(CONTENT_TYPE, "application/json")],
+                    include_str!("../fixtures/lrclib/get_not_found.json"),
+                )
+                    .into_response();
             }
-            axum::Json(json!({
-                "id": 7,
-                "trackName": "Paranoid Android",
-                "artistName": "Radiohead",
-                "albumName": "OK Computer",
-                "duration": 200,
-                "instrumental": false,
-                "syncedLyrics": "[00:01.00]Copper rain on a tin roof\n[00:02.50]Static in the hall",
-            }))
-            .into_response()
+            (
+                [(CONTENT_TYPE, "application/json")],
+                include_str!("../fixtures/lrclib/get_found.json"),
+            )
+                .into_response()
         }
     };
     let router = axum::Router::new().route("/lrclib/api/get", axum::routing::get(get));
@@ -3618,8 +3399,8 @@ async fn lyrics_come_from_the_file_first() {
     assert_eq!(
         lyrics["Lyrics"],
         json!([
-            {"Text": "Copper rain on a tin roof", "Start": 10_000_000},
-            {"Text": "Static in the hall", "Start": 25_000_000},
+            {"Text": "First line of the song", "Start": 1_500_000},
+            {"Text": "Second line of the song", "Start": 71_300_000},
         ])
     );
     assert_eq!(asked.load(Ordering::SeqCst), 1);

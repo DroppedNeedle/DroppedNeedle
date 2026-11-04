@@ -537,20 +537,19 @@ pub fn release_group_cover_url(release_group_mbid: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Only web links reach a page: an external or purchase link with a
+    /// `javascript:` or odd scheme is dropped.
     #[test]
-    fn external_links_keep_web_urls_only() {
+    fn only_web_links_are_kept() {
         let relations: Vec<Relation> = serde_json::from_value(serde_json::json!([
             {"type": "official homepage", "type-id": "x", "url": {"resource": "javascript:alert(1)"}},
             {"type": "wikipedia", "type-id": "y", "url": {"resource": "https://en.wikipedia.org/wiki/Radiohead"}},
         ]))
         .unwrap();
         let links = external_links(&relations);
-        assert_eq!(links.len(), 1);
-        assert_eq!(links[0].label, "Wikipedia");
-    }
+        assert_eq!(links.len(), 1, "external links");
+        assert_eq!(links[0].label, "Wikipedia", "external links");
 
-    #[test]
-    fn purchase_links_keep_web_urls_only() {
         let relations: Vec<Relation> = serde_json::from_value(serde_json::json!([
             {"type": "purchase for download", "type-id": "x", "url": {"resource": "httpx://store.example/a"}},
             {"type": "purchase for download", "type-id": "x", "url": {"resource": "https://store.example/a"}},
@@ -560,7 +559,7 @@ mod tests {
             .iter()
             .filter_map(|relation| purchase_link(relation, &["purchase for download"]))
             .collect();
-        assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0].url, "https://store.example/a");
+        assert_eq!(kept.len(), 1, "purchase links");
+        assert_eq!(kept[0].url, "https://store.example/a", "purchase links");
     }
 }

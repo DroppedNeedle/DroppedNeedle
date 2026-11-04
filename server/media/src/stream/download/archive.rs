@@ -328,15 +328,6 @@ mod tests {
     }
 
     #[test]
-    fn dos_dates_clamp_to_the_representable_range() {
-        // 2023-11-14 22:13:20 UTC.
-        let (time, date) = dos_datetime(1_700_000_000);
-        assert_eq!(date, (43 << 9) | (11 << 5) | 14);
-        assert_eq!(time, (22 << 11) | (13 << 5) | 10);
-        assert_eq!(dos_datetime(0), (0, (1 << 5) | 1));
-    }
-
-    #[test]
     fn big_files_switch_to_zip64_fields() {
         let entry = Entry {
             name: "huge.wav".to_owned(),

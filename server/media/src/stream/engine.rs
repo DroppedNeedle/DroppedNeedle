@@ -259,12 +259,4 @@ mod tests {
         assert_eq!(content_type_for_extension(".zip"), None);
         assert_eq!(content_type_for_extension(""), None);
     }
-
-    #[test]
-    fn sources_parse_case_insensitively() {
-        assert_eq!(AudioSource::parse("local"), Some(AudioSource::Local));
-        assert_eq!(AudioSource::parse("Plex"), Some(AudioSource::Plex));
-        assert_eq!(AudioSource::parse("ftp"), None);
-        assert_eq!(AudioSource::parse(""), None);
-    }
 }

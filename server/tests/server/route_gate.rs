@@ -36,11 +36,6 @@ const ALLOWED: &[Allowed] = &[
         calls: 1,
         why: "test-support only: the stream route over a fake engine, for its slice tests",
     },
-    Allowed {
-        path: "media/src/remotes/playlist_sync.rs",
-        calls: 1,
-        why: "test-support only: playlist sync over fakes, for its slice tests",
-    },
 ];
 
 #[test]

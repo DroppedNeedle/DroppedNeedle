@@ -36,16 +36,15 @@ pub(super) fn page<T: Clone>(items: &[T], start: usize, limit: usize) -> (Vec<T>
 mod tests {
     use super::*;
 
+    /// A zero limit pages everything from the start; the highest listed
+    /// type wins, album by default.
     #[test]
-    fn paging_treats_zero_limit_as_everything_from_start() {
+    fn query_paging_and_type() {
         let items = [1, 2, 3, 4];
         assert_eq!(page(&items, 1, 2), (vec![2, 3], 4));
         assert_eq!(page(&items, 1, 0), (vec![2, 3, 4], 4));
         assert_eq!(page(&items, 9, 2), (Vec::new(), 4));
-    }
 
-    #[test]
-    fn item_type_priority() {
         let types = ["Audio".to_owned(), "MusicArtist".to_owned()];
         assert_eq!(primary_type(&types), "MusicArtist");
         assert_eq!(primary_type(&[]), "MusicAlbum");

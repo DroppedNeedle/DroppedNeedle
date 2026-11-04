@@ -3,7 +3,6 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-mod jobs_playlist_sync;
 mod media_journey;
 mod playback_reporting;
 mod remotes_adapter;

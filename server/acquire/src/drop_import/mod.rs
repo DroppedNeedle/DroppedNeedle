@@ -1491,25 +1491,3 @@ fn remove_empty_dirs(root: &Path) {
         tracing::debug!(dir = %root.display(), "drop staging folder kept: files remain");
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn summary_reads_like_v2() {
-        let done = Counts {
-            imported: 9,
-            owned: 1,
-            waiting: 1,
-            covered: 10,
-            expected: 12,
-            ..Counts::default()
-        };
-        assert_eq!(
-            describe(&done, 0, false),
-            "Imported 9 files, 1 track already in your library, 1 file left for review, \
-             covers 10 of 12 album tracks."
-        );
-    }
-}

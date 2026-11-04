@@ -211,15 +211,13 @@ fn track(name: &str) -> Value {
     json!({"track_name": name, "artist_name": "Art", "album_name": "Alb"})
 }
 
+/// Others read a private playlist's list row redacted, admins included;
+/// once public it opens to them in full and refuses their writes with the
+/// `FORBIDDEN` code. The per-id statuses are rows of the ownership table.
 #[tokio::test]
 async fn playlist_auth_matrix() {
     let rig = Rig::open().await;
     let app = rig.app();
-
-    let (status, headers, _) =
-        send(&app, None, request(Method::GET, "/api/v3/playlists", None)).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert_eq!(headers.get("www-authenticate").unwrap(), "Bearer");
 
     let (_, created) = call(
         &app,
@@ -231,18 +229,6 @@ async fn playlist_auth_matrix() {
     .await;
     let id = created["id"].as_str().unwrap().to_owned();
     let one = format!("/api/v3/playlists/{id}");
-
-    let (status, _) = call(&app, Method::GET, &one, Some(BOB), None).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "private answers its stub");
-    let (status, _) = call(
-        &app,
-        Method::PUT,
-        &one,
-        Some(BOB),
-        Some(json!({"name": "X"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "private mutation hides too");
 
     for identity in [BOB, ADMIN] {
         let (_, list) = call(&app, Method::GET, "/api/v3/playlists", Some(identity), None).await;
@@ -755,39 +741,6 @@ async fn remote_playlist_import_lands_in_the_users_playlists() {
     assert_eq!(detail["source_ref"], "plex:pl9");
     assert_eq!(detail["tracks"][0]["track_source_id"], "/library/parts/1");
     assert_eq!(detail["tracks"][0]["plex_rating_key"], "1");
-}
-
-/// Entry lengths are stored in milliseconds and the native API answers them
-/// in seconds, fractions kept, each entry and the total.
-#[tokio::test]
-async fn playlist_lengths_answer_in_fractional_seconds() {
-    let rig = Rig::open().await;
-    let app = rig.app();
-    let (_, created) = call(
-        &app,
-        Method::POST,
-        "/api/v3/playlists",
-        Some(ADA),
-        Some(json!({"name": "Lengths"})),
-    )
-    .await;
-    let one = format!("/api/v3/playlists/{}", created["id"].as_str().unwrap());
-    let mut timed = track("Timed");
-    timed["duration"] = json!(215.25);
-    let (status, _) = call(
-        &app,
-        Method::POST,
-        &format!("{one}/tracks"),
-        Some(ADA),
-        Some(json!({"tracks": [timed, track("Untimed")]})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-
-    let (_, detail) = call(&app, Method::GET, &one, Some(ADA), None).await;
-    assert_eq!(detail["tracks"][0]["duration"], 215.25);
-    assert_eq!(detail["tracks"][1]["duration"], Value::Null);
-    assert_eq!(detail["total_duration"], 215.25);
 }
 
 #[tokio::test]

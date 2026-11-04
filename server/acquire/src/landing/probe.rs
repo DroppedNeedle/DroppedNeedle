@@ -224,8 +224,10 @@ fn file_name(path: &Path) -> String {
 mod tests {
     use super::*;
 
+    /// The host path never counts as evidence, and a real track named
+    /// "Sampler" is kept.
     #[test]
-    fn only_the_path_below_the_downloads_folder_is_read() {
+    fn probe_reads_only_what_it_should() {
         let file = |path: &str| LandedFile {
             path: PathBuf::from(path),
             format: AudioFormat::Flac,
@@ -243,10 +245,7 @@ mod tests {
                 .folders_below(&folders)
                 .is_empty()
         );
-    }
 
-    #[test]
-    fn samples_are_whole_words() {
         assert!(is_sample(Path::new("/d/album-sample.flac")));
         assert!(is_sample(Path::new("/d/Sample.mp3")));
         assert!(!is_sample(Path::new("/d/01 Sampler.flac")));

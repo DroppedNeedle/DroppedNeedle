@@ -182,212 +182,236 @@ fn transcode_parts(plan: &StreamPlan) -> (OutFormat, i64, f64) {
 // decide() policy tests
 // ---------------------------------------------------------------------------
 
-#[test]
-fn client_cap_below_source_transcodes_and_honors_client_cap() {
-    let plan = decide(
-        &track(Some(900), "flac"),
-        None,
-        Some(128),
-        false,
-        0.0,
-        &settings(),
-        true,
-    );
-    let (format, bitrate, _) = transcode_parts(&plan);
-    assert_eq!(format, OutFormat::Mp3);
-    assert_eq!(bitrate, 128);
+/// One `decide()` call: the file (kbps, format), what the client asked and
+/// the server's state. `Ask::of` is transcoding on with ffmpeg present.
+#[derive(Clone, Copy)]
+struct Ask {
+    file: (i64, &'static str),
+    format: Option<&'static str>,
+    cap: Option<i64>,
+    force: bool,
+    start: f64,
+    enabled: bool,
+    ffmpeg: bool,
 }
 
-#[test]
-fn lossless_over_server_cap_still_direct_plays() {
-    // Jellify regression: the server ceiling must never trigger a transcode,
-    // or direct-play clients break on every lossless file.
-    let plan = decide(
-        &track(Some(900), "flac"),
-        None,
-        Some(0),
-        false,
-        0.0,
-        &settings(),
-        true,
-    );
-    assert!(
-        !plan.is_transcode(),
-        "server cap must not trigger: {plan:?}"
-    );
-}
+impl Ask {
+    fn of(kbps: i64, file: &'static str, format: Option<&'static str>, cap: Option<i64>) -> Self {
+        Self {
+            file: (kbps, file),
+            format,
+            cap,
+            force: false,
+            start: 0.0,
+            enabled: true,
+            ffmpeg: true,
+        }
+    }
 
-#[test]
-fn codec_request_transcodes_at_codec_default_without_a_cap() {
-    // Manet: /universal?AudioCodec=mp3 on a FLAC transcodes to mp3. The
-    // client gave no bitrate, so the output takes the mp3 default (192),
-    // not the 320 server ceiling.
-    let plan = decide(
-        &track(Some(900), "flac"),
-        Some("mp3"),
-        Some(0),
-        false,
-        0.0,
-        &settings(),
-        true,
-    );
-    let (format, bitrate, _) = transcode_parts(&plan);
-    assert_eq!(format, OutFormat::Mp3);
-    assert_eq!(bitrate, 192);
-    let opus = decide(
-        &track(Some(900), "flac"),
-        Some("opus"),
-        None,
-        false,
-        0.0,
-        &settings(),
-        true,
-    );
-    assert_eq!(transcode_parts(&opus).1, 128);
-}
-
-#[test]
-fn raw_is_never_a_codec_mismatch() {
-    // Subsonic format=raw short-circuits to the file upstream of decide();
-    // inside decide() "raw" still never counts as a codec change.
-    let plan = decide(
-        &track(Some(900), "flac"),
-        Some("raw"),
-        None,
-        false,
-        0.0,
-        &settings(),
-        true,
-    );
-    assert!(!plan.is_transcode(), "{plan:?}");
-
-    // Exact-port pin: raw only exempts the mismatch half. A client ceiling
-    // breach underneath still transcodes here; the router's raw short-circuit
-    // is what keeps real raw requests direct.
-    let plan = decide(
-        &track(Some(900), "flac"),
-        Some("raw"),
-        Some(128),
-        false,
-        0.0,
-        &settings(),
-        true,
-    );
-    assert!(plan.is_transcode(), "{plan:?}");
-}
-
-#[test]
-fn force_original_lands_direct() {
-    // Jellyfin static=true (and Subsonic download-style) landings arrive as
-    // force_original and always serve the file, whatever else was asked.
-    let plan = decide(
-        &track(Some(900), "flac"),
-        Some("mp3"),
-        Some(128),
-        true,
-        30.0,
-        &settings(),
-        true,
-    );
-    assert!(!plan.is_transcode(), "{plan:?}");
-    assert_eq!(plan.source_duration_seconds(), 200.0);
-}
-
-#[test]
-fn disabled_or_ffmpeg_absent_falls_back_to_direct_silently() {
-    // Both landings return a direct plan with no error: a missing ffmpeg is
-    // a degradation, not a failure, and direct play keeps working.
-    for (enabled, ffmpeg) in [(false, true), (true, false)] {
-        let mut settings = settings();
-        settings.transcoding_enabled = enabled;
-        let plan = decide(
-            &track(Some(900), "flac"),
-            Some("mp3"),
-            Some(128),
-            false,
-            0.0,
+    fn plan(self) -> StreamPlan {
+        let settings = TranscodeSettings {
+            transcoding_enabled: self.enabled,
+            ..settings()
+        };
+        decide(
+            &track(Some(self.file.0), self.file.1),
+            self.format,
+            self.cap,
+            self.force,
+            self.start,
             &settings,
-            ffmpeg,
-        );
-        assert!(
-            !plan.is_transcode(),
-            "enabled={enabled} ffmpeg={ffmpeg}: {plan:?}"
-        );
-    }
-    let plan = decide(
-        &track(Some(900), "flac"),
-        Some("mp3"),
-        Some(128),
-        false,
-        30.0,
-        &settings(),
-        false,
-    );
-    assert!(!plan.is_transcode(), "{plan:?}");
-}
-
-#[test]
-fn zero_unset_and_finamp_bitrates_mean_no_cap() {
-    // Feishin sends 0 and Finamp sends 999999999 to mean "no cap"; both must
-    // direct-play a matching file.
-    for max in [None, Some(0), Some(999_999_999)] {
-        let plan = decide(
-            &track(Some(192), "mp3"),
-            None,
-            max,
-            false,
-            0.0,
-            &settings(),
-            true,
-        );
-        assert!(!plan.is_transcode(), "max={max:?}: {plan:?}");
+            self.ffmpeg,
+        )
     }
 }
 
+/// The plan a row expects. A transcode names the format, bitrate and start
+/// it pins; `None` leaves that part unchecked.
+enum Want {
+    Direct,
+    Transcode(Option<OutFormat>, Option<i64>, Option<f64>),
+}
+
+/// The one stream decision every protocol shares: direct unless a codec
+/// change or a client ceiling asks otherwise, and never when forced original,
+/// disabled or without ffmpeg (a degradation, not an error).
 #[test]
-fn start_offset_survives_only_on_transcode() {
-    let plan = decide(
-        &track(Some(900), "flac"),
-        Some("mp3"),
-        Some(128),
-        false,
-        30.0,
-        &settings(),
-        true,
-    );
-    let (_, _, start) = transcode_parts(&plan);
-    assert_eq!(start, 30.0);
-
-    let plan = decide(
-        &track(Some(192), "mp3"),
-        None,
-        Some(0),
-        false,
-        30.0,
-        &settings(),
-        true,
-    );
-    assert!(!plan.is_transcode(), "{plan:?}");
-
-    let plan = decide(
-        &track(Some(900), "flac"),
-        Some("mp3"),
-        Some(128),
-        false,
-        -5.0,
-        &settings(),
-        true,
-    );
-    let (_, _, start) = transcode_parts(&plan);
-    assert_eq!(start, 0.0, "negative seeks clamp to zero");
+fn decide_picks_direct_or_transcode() {
+    use Want::{Direct, Transcode};
+    let mp3 = Some(OutFormat::Mp3);
+    let opus = Some(OutFormat::Opus);
+    let rows: Vec<(&str, Ask, Want)> = vec![
+        (
+            "a client cap below the source",
+            Ask::of(900, "flac", None, Some(128)),
+            Transcode(mp3, Some(128), None),
+        ),
+        // Jellify: the server ceiling must never trigger a transcode, or
+        // direct-play clients break on every lossless file.
+        (
+            "lossless over the server cap",
+            Ask::of(900, "flac", None, Some(0)),
+            Direct,
+        ),
+        // Manet: /universal?AudioCodec=mp3 on a FLAC transcodes to mp3 at the
+        // mp3 default (192), not the 320 server ceiling.
+        (
+            "a codec ask without a cap",
+            Ask::of(900, "flac", Some("mp3"), Some(0)),
+            Transcode(mp3, Some(192), None),
+        ),
+        (
+            "opus at its codec default",
+            Ask::of(900, "flac", Some("opus"), None),
+            Transcode(None, Some(128), None),
+        ),
+        // Subsonic format=raw short-circuits to the file upstream of
+        // decide(); inside decide() "raw" still never counts as a codec change.
+        (
+            "raw is no codec change",
+            Ask::of(900, "flac", Some("raw"), None),
+            Direct,
+        ),
+        // Exact-port pin: raw only exempts the mismatch half. A client
+        // ceiling breach underneath still transcodes here; the router's raw
+        // short-circuit is what keeps real raw requests direct.
+        (
+            "raw over a client ceiling",
+            Ask::of(900, "flac", Some("raw"), Some(128)),
+            Transcode(None, None, None),
+        ),
+        // Jellyfin static=true (and Subsonic download-style) landings arrive
+        // as force_original and always serve the file, whatever else was asked.
+        (
+            "force original",
+            Ask {
+                force: true,
+                start: 30.0,
+                ..Ask::of(900, "flac", Some("mp3"), Some(128))
+            },
+            Direct,
+        ),
+        (
+            "transcoding disabled",
+            Ask {
+                enabled: false,
+                ..Ask::of(900, "flac", Some("mp3"), Some(128))
+            },
+            Direct,
+        ),
+        (
+            "ffmpeg absent",
+            Ask {
+                ffmpeg: false,
+                ..Ask::of(900, "flac", Some("mp3"), Some(128))
+            },
+            Direct,
+        ),
+        (
+            "ffmpeg absent, seeking",
+            Ask {
+                ffmpeg: false,
+                start: 30.0,
+                ..Ask::of(900, "flac", Some("mp3"), Some(128))
+            },
+            Direct,
+        ),
+        // Feishin sends 0 and Finamp sends 999999999 to mean "no cap"; both
+        // must direct-play a matching file.
+        ("no cap: unset", Ask::of(192, "mp3", None, None), Direct),
+        (
+            "no cap: Feishin's 0",
+            Ask::of(192, "mp3", None, Some(0)),
+            Direct,
+        ),
+        (
+            "no cap: Finamp's 999999999",
+            Ask::of(192, "mp3", None, Some(999_999_999)),
+            Direct,
+        ),
+        (
+            "a seek survives on a transcode",
+            Ask {
+                start: 30.0,
+                ..Ask::of(900, "flac", Some("mp3"), Some(128))
+            },
+            Transcode(None, None, Some(30.0)),
+        ),
+        (
+            "a seek on a direct play",
+            Ask {
+                start: 30.0,
+                ..Ask::of(192, "mp3", None, Some(0))
+            },
+            Direct,
+        ),
+        (
+            "a negative seek clamps to zero",
+            Ask {
+                start: -5.0,
+                ..Ask::of(900, "flac", Some("mp3"), Some(128))
+            },
+            Transcode(None, None, Some(0.0)),
+        ),
+        // The server maximum caps a client's ask but never triggers.
+        (
+            "the server maximum caps a 999 kbps ask",
+            Ask::of(320, "mp3", Some("opus"), Some(999)),
+            Transcode(opus, Some(320), None),
+        ),
+        // An unusable format falls back to the default, and the seek clamps.
+        (
+            "wav falls back to mp3",
+            Ask {
+                start: -5.0,
+                ..Ask::of(320, "mp3", Some("wav"), None)
+            },
+            Transcode(mp3, None, Some(0.0)),
+        ),
+        // The floor is 64 kbps on every protocol.
+        (
+            "a 48 kbps ceiling meets the floor",
+            Ask::of(900, "flac", None, Some(48)),
+            Transcode(None, Some(64), None),
+        ),
+        (
+            "the file's own codec streams direct",
+            Ask::of(320, "mp3", Some("mp3"), None),
+            Direct,
+        ),
+    ];
+    for (case, ask, want) in rows {
+        let plan = ask.plan();
+        assert_eq!(plan.source_duration_seconds(), 200.0, "{case}: {plan:?}");
+        match want {
+            Direct => assert!(!plan.is_transcode(), "{case}: {plan:?}"),
+            Transcode(format, bitrate, start) => {
+                assert!(plan.is_transcode(), "{case}: {plan:?}");
+                let (out_format, out_bitrate, out_start) = transcode_parts(&plan);
+                if let Some(format) = format {
+                    assert_eq!(out_format, format, "{case}");
+                }
+                if let Some(bitrate) = bitrate {
+                    assert_eq!(out_bitrate, bitrate, "{case}");
+                }
+                if let Some(start) = start {
+                    assert_eq!(out_start, start, "{case}");
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
 // ffmpeg argv contract tests
 // ---------------------------------------------------------------------------
 
+/// The ffmpeg argv per output format: the exact mp3 argv without a seek,
+/// the FLAC the web player asks for when a browser refuses a lossless
+/// source, and opus seeking before its input.
 #[test]
-fn mp3_argv_is_exact() {
+fn ffmpeg_argv_per_format() {
+    // mp3, no seek: the whole argv.
     let plan = StreamPlan::Transcode {
         out_format: OutFormat::Mp3,
         out_bitrate_kbps: 128,
@@ -417,14 +441,11 @@ fn mp3_argv_is_exact() {
     .into_iter()
     .map(str::to_owned)
     .collect();
-    assert_eq!(argv, expected);
-    assert!(!argv.iter().any(|arg| arg == "-ss"), "no seek, no -ss");
-}
+    assert_eq!(argv, expected, "mp3");
+    assert!(!argv.iter().any(|arg| arg == "-ss"), "mp3: no seek, no -ss");
 
-/// The web player asks for FLAC when a browser refuses a lossless source. It
-/// seeks like the others, carries no bitrate, and has no size to estimate.
-#[test]
-fn flac_request_transcodes_to_flac_and_seeks() {
+    // flac seeks like the others, carries no bitrate, and has no size to
+    // estimate.
     let plan = decide(
         &track(Some(900), "m4a"),
         Some("flac"),
@@ -434,21 +455,23 @@ fn flac_request_transcodes_to_flac_and_seeks() {
         &settings(),
         true,
     );
-    assert_eq!(plan.out_format(), Some(OutFormat::Flac));
-    assert_eq!(estimate_size(&plan), None);
+    assert_eq!(plan.out_format(), Some(OutFormat::Flac), "flac");
+    assert_eq!(estimate_size(&plan), None, "flac");
     let argv = build_cmd(Path::new("/m/x.m4a"), &plan).expect("transcode builds argv");
-    let seek = argv.iter().position(|arg| arg == "-ss").expect("seek flag");
-    assert_eq!(argv[seek + 1], "12.500");
-    assert!(!argv.iter().any(|arg| arg == "-b:a"), "{argv:?}");
+    let seek = argv
+        .iter()
+        .position(|arg| arg == "-ss")
+        .expect("flac seek flag");
+    assert_eq!(argv[seek + 1], "12.500", "flac");
+    assert!(!argv.iter().any(|arg| arg == "-b:a"), "flac: {argv:?}");
     assert_eq!(
         &argv[argv.len() - 5..],
-        &["-c:a", "flac", "-f", "flac", "pipe:1"]
+        &["-c:a", "flac", "-f", "flac", "pipe:1"],
+        "flac"
     );
     assert_eq!(out_media_type(&OutFormat::Flac), "audio/flac");
-}
 
-#[test]
-fn opus_argv_seeks_before_input() {
+    // opus seeks before its input.
     let plan = StreamPlan::Transcode {
         out_format: OutFormat::Opus,
         out_bitrate_kbps: 160,
@@ -456,12 +479,18 @@ fn opus_argv_seeks_before_input() {
         source_duration_seconds: 200.0,
     };
     let argv = build_cmd(Path::new("/m/x.flac"), &plan).expect("transcode builds argv");
-    let seek = argv.iter().position(|arg| arg == "-ss").expect("seek flag");
-    let input = argv.iter().position(|arg| arg == "-i").expect("input flag");
-    assert!(seek < input, "-ss must come before -i: {argv:?}");
-    assert_eq!(argv[seek + 1], "12.500");
-    assert!(argv.contains(&"libopus".to_owned()));
-    assert_eq!(&argv[argv.len() - 3..], &["-f", "ogg", "pipe:1"]);
+    let seek = argv
+        .iter()
+        .position(|arg| arg == "-ss")
+        .expect("opus seek flag");
+    let input = argv
+        .iter()
+        .position(|arg| arg == "-i")
+        .expect("opus input flag");
+    assert!(seek < input, "opus: -ss must come before -i: {argv:?}");
+    assert_eq!(argv[seek + 1], "12.500", "opus");
+    assert!(argv.contains(&"libopus".to_owned()), "opus: {argv:?}");
+    assert_eq!(&argv[argv.len() - 3..], &["-f", "ogg", "pipe:1"], "opus");
 }
 
 // ---------------------------------------------------------------------------
@@ -518,8 +547,12 @@ async fn scripted_stream_serves_chunks_then_frees_lease_at_eof() {
     assert_eq!(&argv[0][argv[0].len() - 3..], &["-f", "mp3", "pipe:1"]);
 }
 
+/// A client that goes away mid-transcode drops the body: ffmpeg is stopped
+/// once and both the ffmpeg slot and the direct slot come back, on the
+/// service itself and through the gateway.
 #[tokio::test]
-async fn dropped_stream_kills_child_and_releases_once() {
+async fn a_dropped_transcode_stops_ffmpeg_and_frees_both_slots() {
+    // The service, holding a direct slot.
     let gate = transcode_gate();
     let direct = Arc::new(DirectGate::new());
     let probe = Probe::default();
@@ -539,15 +572,15 @@ async fn dropped_stream_kills_child_and_releases_once() {
 
     drop(body);
     settled(&gate).await;
-    assert_eq!(probe.stops(), 1, "a dropped body stops ffmpeg once");
-    assert_eq!(probe.finishes(), 0);
-    assert_eq!(direct.active(), 0, "the direct slot goes with it");
-}
+    assert_eq!(
+        probe.stops(),
+        1,
+        "service: a dropped body stops ffmpeg once"
+    );
+    assert_eq!(probe.finishes(), 0, "service");
+    assert_eq!(direct.active(), 0, "service: the direct slot goes with it");
 
-/// A client that goes away mid-transcode drops the response body; through
-/// the gateway that stops ffmpeg and frees the slot the open took.
-#[tokio::test]
-async fn disconnect_kills_ffmpeg_and_releases_lease() {
+    // Through the gateway, which takes the direct slot on open.
     let root = ScratchDir::new("transcode-disconnect");
     std::fs::write(root.join("song.flac"), b"FLAC").unwrap();
     let gate = transcode_gate();
@@ -574,16 +607,19 @@ async fn disconnect_kills_ffmpeg_and_releases_lease() {
         )
         .await
         .expect("transcode opens");
-    assert!(media.lease.is_none(), "the transcode holds the direct slot");
+    assert!(
+        media.lease.is_none(),
+        "gateway: the transcode holds the direct slot"
+    );
     let MediaBody::Chunks(mut chunks) = media.body else {
-        panic!("a transcode streams chunks");
+        panic!("gateway: a transcode streams chunks");
     };
     assert!(chunks.next().await.expect("chunk").is_ok());
-    assert_eq!(gate.active(), 1);
+    assert_eq!(gate.active(), 1, "gateway");
 
     drop(chunks);
     settled(&gate).await;
-    assert_eq!(probe.stops(), 1, "disconnect stops ffmpeg");
+    assert_eq!(probe.stops(), 1, "gateway: disconnect stops ffmpeg");
 }
 
 /// A body nobody reads (a paused-forever client, a forgotten tab) is

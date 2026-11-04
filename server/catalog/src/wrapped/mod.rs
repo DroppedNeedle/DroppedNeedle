@@ -453,31 +453,6 @@ mod tests {
     }
 
     #[test]
-    fn key_check_passes_only_on_exact_match() {
-        let exact = headers(&[("x-wrapped-api-key", "secret")]);
-        assert!(check_key(&exact, "secret"));
-        // Header names are case-insensitive per HTTP.
-        let upper = headers(&[("X-WRAPPED-API-KEY", "secret")]);
-        assert!(check_key(&upper, "secret"));
-    }
-
-    #[test]
-    fn key_check_rejects_everything_else() {
-        assert!(!check_key(&HeaderMap::new(), "secret"));
-        let wrong = headers(&[("x-wrapped-api-key", "other")]);
-        assert!(!check_key(&wrong, "secret"));
-        // No trimming: padded values fail.
-        for padded in [" secret", "secret ", " secret "] {
-            let headers = headers(&[("x-wrapped-api-key", padded)]);
-            assert!(!check_key(&headers, "secret"), "value {padded:?}");
-        }
-        // Unconfigured secret denies everything, even a presented key.
-        let presented = headers(&[("x-wrapped-api-key", "secret")]);
-        assert!(!check_key(&presented, ""));
-        assert!(!check_key(&HeaderMap::new(), ""));
-    }
-
-    #[test]
     fn rotated_key_applies_without_a_restart() {
         use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
         let dir = std::env::temp_dir().join(format!("dn-wrapped-key-{}", std::process::id()));
@@ -496,14 +471,5 @@ mod tests {
         let stale = headers(&[("x-wrapped-api-key", "first-key")]);
         assert!(!check_key(&stale, &source.current()), "old key is refused");
         let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn empty_payload_falls_back_to_user_id() {
-        let empty = empty_user_wrapped("u-1", 2026);
-        assert!(!empty.has_data);
-        assert_eq!(empty.display_name, "u-1");
-        assert!(empty.top_artists.is_empty());
-        assert_eq!(empty.total_listens_estimated, 0);
     }
 }

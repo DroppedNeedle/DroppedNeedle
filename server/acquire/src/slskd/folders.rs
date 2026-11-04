@@ -608,10 +608,13 @@ mod tests {
         }
     }
 
-    // A format the recipe does not list refuses a folder only when it is the
-    // album: a bonus file is left behind, a track never is.
+    /// How `rank_folders` picks: an unlisted format refuses a folder only
+    /// when it is a track, an album folder beats a lone track and fetches
+    /// only the wanted file, and a peer's separate disc folders join.
     #[test]
-    fn an_unlisted_file_refuses_a_folder_only_when_it_is_a_track() {
+    fn rank_folders_cases() {
+        // A format the recipe does not list refuses a folder only when it is
+        // the album: a bonus file is left behind, a track never is.
         let tracklist = vec![
             track(1, "Safe From Harm", 331.0),
             track(2, "One Love", 288.0),
@@ -640,17 +643,23 @@ mod tests {
             let mut hits = album.to_vec();
             hits.push(stray);
             let picks = rank_folders(&hits, request(&tracklist), &policy);
-            assert_eq!(picks.len(), 1, "the album is taken");
-            assert_eq!(picks[0].files.len(), 2, "without the stray");
+            assert_eq!(picks.len(), 1, "unlisted bonus: the album is taken");
+            assert_eq!(picks[0].files.len(), 2, "unlisted bonus: without the stray");
         }
 
         let half = [
             flac("01 Safe From Harm.flac", 331.0),
             other("02 One Love.ogg", 288.0, "ogg"),
         ];
-        assert!(rank_folders(&half, request(&tracklist), &policy).is_empty());
+        assert!(
+            rank_folders(&half, request(&tracklist), &policy).is_empty(),
+            "unlisted track: the folder is refused"
+        );
         let listed = rank_listing(&half, request(&tracklist), &policy);
-        assert!(listed[0].out_of_band, "a person may still take it");
+        assert!(
+            listed[0].out_of_band,
+            "unlisted track: a person may still take it"
+        );
 
         let mut unknown = album.to_vec();
         unknown.push(other("Bonus Interview.ogg", 90.0, "ogg"));
@@ -658,10 +667,9 @@ mod tests {
             rank_folders(&unknown, request(&[]), &policy).is_empty(),
             "with no tracklist nothing says it is a stray"
         );
-    }
 
-    #[test]
-    fn album_folder_beats_lone_track_and_only_the_wanted_file_is_fetched() {
+        // An album folder beats a lone track, and only the wanted file is
+        // fetched from it.
         let tracklist = vec![
             track(1, "Safe From Harm", 331.0),
             track(2, "One Love", 288.0),
@@ -708,38 +716,17 @@ mod tests {
             &DownloadPolicy::default(),
         );
         let users: Vec<&str> = picks.iter().map(|pick| pick.username.as_str()).collect();
-        assert_eq!(users, ["album", "lone"]);
-        assert!(!picks[0].lone_track && picks[1].lone_track);
-        assert_eq!(picks[0].coverage, 4);
+        assert_eq!(users, ["album", "lone"], "lone track");
+        assert!(!picks[0].lone_track && picks[1].lone_track, "lone track");
+        assert_eq!(picks[0].coverage, 4, "lone track");
         let names: Vec<&str> = picks[0].files.iter().map(|f| f.filename.as_str()).collect();
-        assert_eq!(names, ["Music\\Blue Lines\\02 One Love.flac"]);
-    }
+        assert_eq!(
+            names,
+            ["Music\\Blue Lines\\02 One Love.flac"],
+            "lone track: only the wanted file"
+        );
 
-    #[test]
-    fn names_and_disc_folders_read() {
-        assert_eq!(
-            folder_of("a\\Album\\CD2\\01.flac"),
-            ("a\\Album".to_owned(), Some(2))
-        );
-        assert_eq!(
-            leading_number("1-03 Title", true),
-            (Some(1), Some(3), " Title")
-        );
-        assert_eq!(leading_number("203 Title", true).0, Some(2));
-        assert_eq!(leading_number("10cc - Song", false).1, None);
-        assert_eq!(leading_number("1999 Mix", false).1, None);
-        assert_eq!(folder_of("a\\Album\\[CD2]\\01.flac").1, Some(2));
-        assert_eq!(folder_of("a\\Album\\Disc One\\01.flac").0, "a\\Album");
-        assert_eq!(
-            folder_of("a\\Album (Disc 2)\\01.flac"),
-            ("a\\Album (Disc 2)".to_owned(), Some(2))
-        );
-        assert_eq!(folder_of("a\\Album CD 3\\01.flac").1, Some(3));
-        assert_eq!(folder_of("a\\Abcd 2\\01.flac").1, None);
-    }
-
-    #[test]
-    fn a_peers_separate_disc_folders_join_into_one_album() {
+        // A peer's separate disc folders join into one album.
         let mut tracklist = vec![track(1, "Alpha", 200.0), track(2, "Beta", 210.0)];
         let mut second = vec![track(1, "Gamma", 220.0), track(2, "Delta", 230.0)];
         for track in &mut second {
@@ -764,8 +751,35 @@ mod tests {
             },
             &DownloadPolicy::default(),
         );
-        assert_eq!(picks[0].username, "p");
-        assert_eq!(picks[0].coverage, 4, "both discs count");
-        assert_eq!(picks[0].files.len(), 4, "every disc is fetched");
+        assert_eq!(picks[0].username, "p", "disc folders");
+        assert_eq!(picks[0].coverage, 4, "disc folders: both discs count");
+        assert_eq!(
+            picks[0].files.len(),
+            4,
+            "disc folders: every disc is fetched"
+        );
+    }
+
+    #[test]
+    fn names_and_disc_folders_read() {
+        assert_eq!(
+            folder_of("a\\Album\\CD2\\01.flac"),
+            ("a\\Album".to_owned(), Some(2))
+        );
+        assert_eq!(
+            leading_number("1-03 Title", true),
+            (Some(1), Some(3), " Title")
+        );
+        assert_eq!(leading_number("203 Title", true).0, Some(2));
+        assert_eq!(leading_number("10cc - Song", false).1, None);
+        assert_eq!(leading_number("1999 Mix", false).1, None);
+        assert_eq!(folder_of("a\\Album\\[CD2]\\01.flac").1, Some(2));
+        assert_eq!(folder_of("a\\Album\\Disc One\\01.flac").0, "a\\Album");
+        assert_eq!(
+            folder_of("a\\Album (Disc 2)\\01.flac"),
+            ("a\\Album (Disc 2)".to_owned(), Some(2))
+        );
+        assert_eq!(folder_of("a\\Album CD 3\\01.flac").1, Some(3));
+        assert_eq!(folder_of("a\\Abcd 2\\01.flac").1, None);
     }
 }

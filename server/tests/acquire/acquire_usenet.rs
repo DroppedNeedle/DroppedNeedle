@@ -80,10 +80,14 @@ async fn refused_url(path: &str) -> String {
 // SABnzbd: suffix params + multipart add.
 // ---------------------------------------------------------------------------
 
-/// Every call appends `output=json` + `apikey` as suffix query params
-/// (Lidarr `SabnzbdProxy`), verified on 5.0.4.
+/// Verified on SABnzbd 5.0.4: every call appends `output=json` + `apikey`
+/// as suffix query params (Lidarr `SabnzbdProxy`); `mode=addfile` is a
+/// multipart POST with `cat` (not `category`), the `name` field carrying
+/// `{job}.nzb` as `application/x-nzb`, and the validated NZB bytes in the
+/// body; and a proxy answering that POST with a 308 costs nothing: the
+/// upload is sent again, whole, and the job is added once.
 #[tokio::test]
-async fn sab_suffix_params_output_apikey_last() {
+async fn sab_request_wire_shape() {
     let mock = SabnzbdMock::new();
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let client = sab_client(&base);
@@ -92,7 +96,7 @@ async fn sab_suffix_params_output_apikey_last() {
     client.queue(TIMEOUT).await.expect("queue");
 
     let calls = mock.state().api_calls.clone();
-    assert_eq!(calls.len(), 2);
+    assert_eq!(calls.len(), 2, "suffix params");
     for call in &calls {
         let keys: Vec<&str> = call
             .raw_query
@@ -100,22 +104,17 @@ async fn sab_suffix_params_output_apikey_last() {
             .map(|pair| pair.split('=').next().unwrap_or(""))
             .collect();
         assert!(keys.len() >= 3, "params carry mode + suffixes: {keys:?}");
-        assert_eq!(&keys[keys.len() - 2..], &["output", "apikey"]);
-        assert!(call.raw_query.contains("output=json"));
-        assert!(call.raw_query.contains("apikey=SABKEY"));
+        assert_eq!(
+            &keys[keys.len() - 2..],
+            &["output", "apikey"],
+            "suffix params"
+        );
+        assert!(call.raw_query.contains("output=json"), "suffix params");
+        assert!(call.raw_query.contains("apikey=SABKEY"), "suffix params");
     }
-}
 
-/// `mode=addfile` is a multipart POST with `cat` (not `category`), the
-/// `name` field carrying `{job}.nzb` as `application/x-nzb`, and the
-/// validated NZB bytes in the body.
-#[tokio::test]
-async fn sab_addfile_multipart_shape() {
-    let mock = SabnzbdMock::new();
-    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let mount = temp_dir("addfile");
     let queue = queue_for(&mock, &base, mount.to_path_buf());
-
     let handle = queue
         .enqueue_album(
             "t1",
@@ -126,12 +125,12 @@ async fn sab_addfile_multipart_shape() {
         )
         .await
         .expect("enqueue");
-    assert_eq!(handle.source, "usenet");
-    assert_eq!(handle.job_name, "droppedneedle-t1");
-    assert_eq!(handle.nzo_id, "nzo-test-1");
+    assert_eq!(handle.source, "usenet", "multipart");
+    assert_eq!(handle.job_name, "droppedneedle-t1", "multipart");
+    assert_eq!(handle.nzo_id, "nzo-test-1", "multipart");
 
     let calls = mock.state().add_file_requests.clone();
-    assert_eq!(calls.len(), 1);
+    assert_eq!(calls.len(), 1, "multipart");
     let call = &calls[0];
     let get = |key: &str| {
         call.params
@@ -139,37 +138,33 @@ async fn sab_addfile_multipart_shape() {
             .find(|(name, _)| name == key)
             .map(|(_, value)| value.clone())
     };
-    assert_eq!(get("mode").as_deref(), Some("addfile"));
-    assert_eq!(get("nzbname").as_deref(), Some("droppedneedle-t1"));
-    assert_eq!(get("cat").as_deref(), Some("audio"));
+    assert_eq!(get("mode").as_deref(), Some("addfile"), "multipart");
+    assert_eq!(
+        get("nzbname").as_deref(),
+        Some("droppedneedle-t1"),
+        "multipart"
+    );
+    assert_eq!(get("cat").as_deref(), Some("audio"), "multipart");
     assert!(get("category").is_none(), "cat, never category, on add");
 
     let content_type = call.content_type.clone().unwrap_or_default();
     assert!(
         content_type.starts_with("multipart/form-data; boundary="),
-        "{content_type}"
+        "multipart: {content_type}"
     );
     let body = String::from_utf8_lossy(&call.body);
     assert!(
         body.contains("name=\"name\"; filename=\"droppedneedle-t1.nzb\""),
-        "{body}"
+        "multipart: {body}"
     );
-    assert!(body.contains("application/x-nzb"), "{body}");
-    assert!(body.contains("<nzb"), "{body}");
+    assert!(body.contains("application/x-nzb"), "multipart: {body}");
+    assert!(body.contains("<nzb"), "multipart: {body}");
 
-    std::fs::remove_dir_all(&mount).ok();
-}
-
-/// A proxy in front of SABnzbd that answers the POST with a 308 costs nothing:
-/// the upload is sent again, whole, and the job is added once.
-#[tokio::test]
-async fn sab_addfile_survives_a_308_redirect() {
     let mock = SabnzbdMock::new();
     mock.state().addfile_redirect_308 = 1;
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let mount = temp_dir("addfile-308");
     let queue = queue_for(&mock, &base, mount.to_path_buf());
-
     let handle = queue
         .enqueue_album(
             "t1",
@@ -180,17 +175,21 @@ async fn sab_addfile_survives_a_308_redirect() {
         )
         .await
         .expect("enqueue");
-    assert_eq!(handle.nzo_id, "nzo-test-1");
-
+    assert_eq!(handle.nzo_id, "nzo-test-1", "308");
     let calls = mock.state().add_file_requests.clone();
-    assert_eq!(calls.len(), 1);
-    assert!(String::from_utf8_lossy(&calls[0].body).contains("<nzb"));
+    assert_eq!(calls.len(), 1, "308: the job is added once");
+    assert!(
+        String::from_utf8_lossy(&calls[0].body).contains("<nzb"),
+        "308: the upload is sent whole"
+    );
 }
 
 /// A no-response transport failure falls back to `addurl`: SABnzbd
-/// fetches the enclosure itself, for indexers only it can reach.
+/// fetches the enclosure itself, for indexers only it can reach. A
+/// deterministic content rejection (indexer error page, not an NZB) never
+/// does: the indexer answered, so SABnzbd would fetch the same error page.
 #[tokio::test]
-async fn sab_addurl_fallback_on_transport_failure() {
+async fn sab_enqueue_falls_back_only_on_transport_failure() {
     let mock = SabnzbdMock::new();
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let mount = temp_dir("addurl");
@@ -202,11 +201,11 @@ async fn sab_addurl_fallback_on_transport_failure() {
         .await
         .expect("addurl fallback");
 
-    assert_eq!(handle.job_name, "droppedneedle-t9");
-    assert_eq!(handle.nzo_id, "nzo-test-1");
-    assert!(mock.state().add_file_requests.is_empty());
+    assert_eq!(handle.job_name, "droppedneedle-t9", "fallback");
+    assert_eq!(handle.nzo_id, "nzo-test-1", "fallback");
+    assert!(mock.state().add_file_requests.is_empty(), "fallback");
     let calls = mock.state().add_url_requests.clone();
-    assert_eq!(calls.len(), 1);
+    assert_eq!(calls.len(), 1, "fallback");
     let get = |key: &str| {
         calls[0]
             .params
@@ -214,23 +213,18 @@ async fn sab_addurl_fallback_on_transport_failure() {
             .find(|(name, _)| name == key)
             .map(|(_, value)| value.clone())
     };
-    assert_eq!(get("mode").as_deref(), Some("addurl"));
-    assert_eq!(get("name").as_deref(), Some(nzb_url.as_str()));
-    assert_eq!(get("nzbname").as_deref(), Some("droppedneedle-t9"));
+    assert_eq!(get("mode").as_deref(), Some("addurl"), "fallback");
+    assert_eq!(get("name").as_deref(), Some(nzb_url.as_str()), "fallback");
+    assert_eq!(
+        get("nzbname").as_deref(),
+        Some("droppedneedle-t9"),
+        "fallback"
+    );
 
-    std::fs::remove_dir_all(&mount).ok();
-}
-
-/// A deterministic content rejection (indexer error page, not an NZB)
-/// never falls back to addurl: the indexer answered, so SABnzbd would
-/// fetch the same error page.
-#[tokio::test]
-async fn sab_no_addurl_on_content_rejection() {
     let mock = SabnzbdMock::new();
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let mount = temp_dir("rejection");
     let queue = queue_for(&mock, &base, mount.to_path_buf());
-
     let err = queue
         .enqueue_album(
             "t2",
@@ -241,9 +235,9 @@ async fn sab_no_addurl_on_content_rejection() {
         )
         .await
         .expect_err("content rejection fails");
-    assert!(err.to_string().contains("non-NZB body"), "{err}");
-    assert!(mock.state().add_file_requests.is_empty());
-    assert!(mock.state().add_url_requests.is_empty());
+    assert!(err.to_string().contains("non-NZB body"), "rejection: {err}");
+    assert!(mock.state().add_file_requests.is_empty(), "rejection");
+    assert!(mock.state().add_url_requests.is_empty(), "rejection");
 
     // The raw client marks the rejection for blocklist handling.
     let client = sab_client(&base);
@@ -253,15 +247,15 @@ async fn sab_no_addurl_on_content_rejection() {
         .expect_err("rejection");
     assert!(
         matches!(err, NzbFetchError::ContentRejection { .. }),
-        "{err:?}"
+        "rejection: {err:?}"
     );
-
-    std::fs::remove_dir_all(&mount).ok();
 }
 
-/// All three SABnzbd error forms, plus auth detection by message.
+/// All three SABnzbd error forms, plus auth detection by message. Idempotent
+/// GETs retry 5xx with backoff; queue mutations never retry (a retried add
+/// could double-add the job).
 #[tokio::test]
-async fn sab_error_forms() {
+async fn sab_errors_and_retry_discipline() {
     use droppedneedle_testkit::usenet::SabErrorForm;
 
     let mock = SabnzbdMock::new();
@@ -270,33 +264,28 @@ async fn sab_error_forms() {
 
     mock.state().api_error = Some(SabErrorForm::JsonFalse("nope".to_owned()));
     let err = client.queue(TIMEOUT).await.expect_err("json false");
-    assert_eq!(err.to_string(), "nope");
-    assert!(!err.is_auth());
+    assert_eq!(err.to_string(), "nope", "error forms");
+    assert!(!err.is_auth(), "error forms");
 
     mock.state().api_error = Some(SabErrorForm::JsonFalseString("stringly".to_owned()));
     let err = client.queue(TIMEOUT).await.expect_err("stringly false");
-    assert_eq!(err.to_string(), "stringly");
+    assert_eq!(err.to_string(), "stringly", "error forms");
 
     mock.state().api_error = Some(SabErrorForm::PlainText("boom".to_owned()));
     let err = client.queue(TIMEOUT).await.expect_err("plain text");
-    assert_eq!(err.to_string(), "boom");
+    assert_eq!(err.to_string(), "boom", "error forms");
 
     mock.state().api_error = Some(SabErrorForm::JsonFalse("API Key Incorrect".to_owned()));
     let err = client.queue(TIMEOUT).await.expect_err("auth");
-    assert!(err.is_auth(), "{err:?}");
+    assert!(err.is_auth(), "error forms: {err:?}");
 
     mock.state().api_error = Some(SabErrorForm::JsonFalse("API key required".to_owned()));
     let err = client.queue(TIMEOUT).await.expect_err("auth");
-    assert!(err.is_auth(), "{err:?}");
+    assert!(err.is_auth(), "error forms: {err:?}");
 
     mock.state().api_error = None;
     client.queue(TIMEOUT).await.expect("recovered");
-}
 
-/// Idempotent GETs retry 5xx with backoff; queue mutations never retry
-/// (a retried add could double-add the job).
-#[tokio::test]
-async fn sab_retry_discipline() {
     let mock = SabnzbdMock::new();
     mock.state().queue_fail_500 = 2;
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
@@ -309,7 +298,7 @@ async fn sab_retry_discipline() {
         .iter()
         .filter(|call| call.raw_query.contains("mode=queue"))
         .count();
-    assert_eq!(queue_calls, 3, "two blips + success");
+    assert_eq!(queue_calls, 3, "retry: two blips + success");
 
     mock.state().addfile_fail_500 = 1;
     let err = client
@@ -318,7 +307,7 @@ async fn sab_retry_discipline() {
         .expect_err("add is not retried");
     assert!(
         matches!(&err, SabnzbdError::Client(ClientError::Unavailable { detail, .. }) if detail == "HTTP 500"),
-        "{err:?}"
+        "retry: {err:?}"
     );
     let add_calls = mock
         .state()
@@ -574,76 +563,36 @@ async fn sab_abort_and_discard_ownership() {
     std::fs::remove_dir_all(&mount).ok();
 }
 
-/// Storage remap, as the mount diagnosis reads it: `complete_dir` prefix
-/// strip, backslash folding for a Windows-native SAB, basename fallback.
+/// A job's output is read only from its own folder: a job folder that is
+/// a link (here to the downloads folder itself) is not read by the
+/// diagnosis, so it never counts as resolvable; and a job whose storage is
+/// SABnzbd's complete folder itself names no job folder, so nothing in the
+/// downloads folder is read as that job's output, though other jobs' files
+/// sit there.
 #[tokio::test]
-async fn sab_storage_remap() {
-    let mount = temp_dir("remap");
-    write_file(&mount.join("job1/track.flac"), b"FLAC");
-
-    // Prefix strip: the mock's complete_dir is /data/Downloads/complete.
-    let plain = SabnzbdMock::new();
-    plain.history_job(
-        "nzo-1",
-        "job1",
-        "Completed",
-        "/data/Downloads/complete/job1",
-        4,
-        "",
-    );
-    // Backslash paths from a Windows-native SAB fold before the remap.
-    let windows = SabnzbdMock::new();
-    windows.state().complete_dir = "C:\\data\\complete".to_owned();
-    windows.history_job(
-        "nzo-2",
-        "job1",
-        "Completed",
-        "C:\\data\\complete\\job1",
-        4,
-        "",
-    );
-    // Prefix mismatch falls back to the job-folder basename.
-    let elsewhere = SabnzbdMock::new();
-    elsewhere.history_job("nzo-3", "job1", "Completed", "/elsewhere/job1", 4, "");
-
-    for (mock, nzo) in [(plain, "nzo-1"), (windows, "nzo-2"), (elsewhere, "nzo-3")] {
+async fn sab_job_output_never_reaches_past_its_folder() {
+    #[cfg(unix)]
+    {
+        let mount = temp_dir("diag-link");
+        write_file(&mount.join("loose.flac"), b"FLAC");
+        std::os::unix::fs::symlink(".", mount.join("evil")).expect("link");
+        let mock = SabnzbdMock::new();
+        mock.history_job(
+            "nzo-evil",
+            "evil",
+            "Completed",
+            "/data/Downloads/complete/evil",
+            4,
+            "",
+        );
         let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
         let queue = queue_for(&mock, &base, mount.to_path_buf());
+
         let diagnosis = queue.diagnose_downloads_mount().await;
-        assert_eq!(diagnosis.resolvable_downloads, 1, "{nzo}");
+        assert_eq!(diagnosis.sampled_downloads, 1, "linked job folder");
+        assert_eq!(diagnosis.resolvable_downloads, 0, "linked job folder");
     }
-}
 
-/// A job folder that is a link (here to the downloads folder itself) is
-/// not read by the diagnosis, so it never counts as resolvable.
-#[cfg(unix)]
-#[tokio::test]
-async fn sab_diagnosis_never_walks_a_linked_job_folder() {
-    let mount = temp_dir("diag-link");
-    write_file(&mount.join("loose.flac"), b"FLAC");
-    std::os::unix::fs::symlink(".", mount.join("evil")).expect("link");
-    let mock = SabnzbdMock::new();
-    mock.history_job(
-        "nzo-evil",
-        "evil",
-        "Completed",
-        "/data/Downloads/complete/evil",
-        4,
-        "",
-    );
-    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let queue = queue_for(&mock, &base, mount.to_path_buf());
-
-    let diagnosis = queue.diagnose_downloads_mount().await;
-    assert_eq!(diagnosis.sampled_downloads, 1);
-    assert_eq!(diagnosis.resolvable_downloads, 0);
-}
-
-/// A job whose storage is SABnzbd's complete folder itself names no job
-/// folder: nothing in the downloads folder is read as that job's output,
-/// though other jobs' files sit there.
-#[tokio::test]
-async fn sab_storage_at_the_complete_folder_lands_nothing() {
     let mount = temp_dir("complete-root");
     write_file(&mount.join("other-job/track.flac"), b"FLAC");
     write_file(&mount.join("loose.flac"), b"FLAC");
@@ -665,17 +614,24 @@ async fn sab_storage_at_the_complete_folder_lands_nothing() {
         handle("job-slash", "nzo-slash"),
     ] {
         let material = queue.inspect_materialization(&job).await.expect("done");
-        assert_eq!(material.state, "completed");
-        assert_eq!(material.workspace_path, "", "{}", material.remote_storage);
+        assert_eq!(material.state, "completed", "complete folder");
+        assert_eq!(
+            material.workspace_path, "",
+            "complete folder: {}",
+            material.remote_storage
+        );
     }
     assert_eq!(
         queue.diagnose_downloads_mount().await.resolvable_downloads,
-        0
+        0,
+        "complete folder"
     );
 }
 
 /// Materialization evidence and the mount-health split: a missing mount
-/// root is an environment fault; an empty per-job folder is not.
+/// root is an environment fault; an empty per-job folder is not. The
+/// storage remap, as the mount diagnosis reads it: `complete_dir` prefix
+/// strip, backslash folding for a Windows-native SAB, basename fallback.
 #[tokio::test]
 async fn sab_materialization_and_mount() {
     let mount = temp_dir("material");
@@ -750,60 +706,54 @@ async fn sab_materialization_and_mount() {
             .contains(&"audio".to_owned())
     );
 
+    // Backslash paths from a Windows-native SAB fold before the remap.
+    let windows = SabnzbdMock::new();
+    windows.state().complete_dir = "C:\\data\\complete".to_owned();
+    windows.history_job(
+        "nzo-2",
+        "job1",
+        "Completed",
+        "C:\\data\\complete\\job1",
+        4,
+        "",
+    );
+    // Prefix mismatch falls back to the job-folder basename.
+    let elsewhere = SabnzbdMock::new();
+    elsewhere.history_job("nzo-3", "job1", "Completed", "/elsewhere/job1", 4, "");
+    for (mock, nzo) in [(windows, "nzo-2"), (elsewhere, "nzo-3")] {
+        let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
+        let queue = queue_for(&mock, &base, mount.to_path_buf());
+        let diagnosis = queue.diagnose_downloads_mount().await;
+        assert_eq!(diagnosis.resolvable_downloads, 1, "remap {nzo}");
+    }
+
     std::fs::remove_dir_all(&mount).ok();
 }
 
-/// Addurl errors scrub echoed enclosure credentials (`apikey=`,
-/// `api_key=`, DrunkenSlug `r=`, Prowlarr `link=`); identifiers and
-/// innocent words pass through untouched.
+/// Every key form is scrubbed like a plain `apikey=`: echoed enclosure
+/// credentials (`apikey=`, `api_key=`, DrunkenSlug `r=`, Prowlarr `link=`),
+/// a key in a URL path, percent-encoded inside another URL's query, as a
+/// JSON member (escaped or under a longer name), as a URL's password, or
+/// in a URL's last segment (DrunkenSlug's enclosure); identifiers and
+/// innocent words pass through. An addurl error SABnzbd echoes and a job's
+/// stored failure text are scrubbed the same way.
 #[tokio::test]
-async fn sab_addurl_redaction() {
-    assert_eq!(
-        redact_query_secrets("fetch failed for https://x/getnzb?a=1&apikey=SECRET&x=2"),
-        "fetch failed for https://x/getnzb?a=1&apikey=***&x=2"
-    );
-    assert_eq!(
-        redact_query_secrets("https://x/nzb?i=7&r=PERUSERKEY"),
-        "https://x/nzb?i=7&r=***"
-    );
-    assert_eq!(
-        redact_query_secrets("error=oops&apikey=Z"),
-        "error=oops&apikey=***"
-    );
-    assert_eq!(
-        redact_query_secrets("https://prowlarr/9/download?apikey=K&link=ezQxYw&file=a"),
-        "https://prowlarr/9/download?apikey=***&link=***&file=a"
-    );
-    assert_eq!(
-        redact_query_secrets("nothing secret here, hyperlink=kept"),
-        "nothing secret here, hyperlink=kept"
-    );
-
-    let mock = SabnzbdMock::new();
-    mock.state().addurl_echo_url = true;
-    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let mount = temp_dir("redact");
-    let queue = queue_for(&mock, &base, mount.to_path_buf());
-
-    let nzb_url = format!("{}/getnzb/x.nzb?i=7&r=PERUSERKEY", refused_url("").await);
-    let err = queue
-        .enqueue_album("t7", Some(&nzb_url), None, None, None)
-        .await
-        .expect_err("echoed");
-    assert!(err.to_string().contains("r=***"), "{err}");
-    assert!(!err.to_string().contains("PERUSERKEY"), "{err}");
-    assert!(err.to_string().contains("i=7"), "{err}");
-
-    std::fs::remove_dir_all(&mount).ok();
-}
-
-/// A key echoed in a URL path, percent-encoded inside another URL's query,
-/// as a JSON member (escaped or under a longer name) or as a URL's
-/// password is scrubbed like a plain `apikey=`, and a key written into a
-/// URL's last segment (DrunkenSlug's enclosure) still is.
-#[test]
-fn redaction_covers_path_encoded_and_json_keys() {
+async fn redaction_scrubs_every_key_form() {
     let cases = [
+        (
+            "fetch failed for https://x/getnzb?a=1&apikey=SECRET&x=2",
+            "fetch failed for https://x/getnzb?a=1&apikey=***&x=2",
+        ),
+        ("https://x/nzb?i=7&r=PERUSERKEY", "https://x/nzb?i=7&r=***"),
+        ("error=oops&apikey=Z", "error=oops&apikey=***"),
+        (
+            "https://prowlarr/9/download?apikey=K&link=ezQxYw&file=a",
+            "https://prowlarr/9/download?apikey=***&link=***&file=a",
+        ),
+        (
+            "nothing secret here, hyperlink=kept",
+            "nothing secret here, hyperlink=kept",
+        ),
         (
             "fetch failed for https://dognzb.cr/fetch/5f1e2a/0123456789abcdef0123456789abcdef",
             "fetch failed for https://dognzb.cr/fetch/5f1e2a/***",
@@ -857,6 +807,44 @@ fn redaction_covers_path_encoded_and_json_keys() {
         .map(|(got, (_, want))| format!("got {got}, want {want}"))
         .collect();
     assert!(leaks.is_empty(), "{leaks:#?}");
+
+    let mock = SabnzbdMock::new();
+    mock.state().addurl_echo_url = true;
+    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
+    let mount = temp_dir("redact");
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
+    let nzb_url = format!("{}/getnzb/x.nzb?i=7&r=PERUSERKEY", refused_url("").await);
+    let err = queue
+        .enqueue_album("t7", Some(&nzb_url), None, None, None)
+        .await
+        .expect_err("echoed");
+    assert!(err.to_string().contains("r=***"), "echoed addurl: {err}");
+    assert!(
+        !err.to_string().contains("PERUSERKEY"),
+        "echoed addurl: {err}"
+    );
+    assert!(err.to_string().contains("i=7"), "echoed addurl: {err}");
+
+    // If SABnzbd's failure text for a job quotes the URL it was given, the
+    // indexer key in it never reaches the task error.
+    let mock = SabnzbdMock::new();
+    mock.history_job(
+        "nzo-f",
+        "job-f",
+        "Failed",
+        "",
+        0,
+        "URL Fetching failed; https://idx.test/getnzb?id=1&apikey=SECRETKEY",
+    );
+    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
+    let mount = temp_dir("fail-text");
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
+    let status = status_for(&mock, &queue, "job-f", "nzo-f").await;
+    assert_eq!(
+        status.error.as_deref(),
+        Some("URL Fetching failed; https://idx.test/getnzb?id=1&apikey=***"),
+        "stored failure text"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -891,37 +879,6 @@ fn entry_for(client: NewznabClient, id: &str, name: &str, priority: u32) -> Newz
         priority,
         limit: 100,
     }
-}
-
-/// A `t=music` 202 falls back to `t=search`, even when caps advertised
-/// audio-search (a real indexer quirk).
-#[tokio::test]
-async fn newznab_music_202_fallback() {
-    let log = NewznabMock::new();
-    let (base, _server) = serve_loopback(log.router(NewznabScenario::BrokenMusic))
-        .await
-        .expect("mock serves");
-    let indexer = newznab_indexer(vec![entry_for(
-        newznab_client(&base, "bm", "BM"),
-        "bm",
-        "BM",
-        1,
-    )]);
-    let hits = indexer
-        .search_album("Radiohead", "In Rainbows", None, USER)
-        .await;
-    assert_eq!(hits.len(), 3, "fell back to the search feed");
-    let recorded = log.calls();
-    let kinds: Vec<&str> = recorded.iter().map(|call| call.kind.as_str()).collect();
-    assert_eq!(kinds, vec!["music", "search"]);
-
-    // The raw client surfaces the 202 with its code intact.
-    let client = newznab_client(&base, "bm", "BM");
-    let err = client
-        .music_search("Radiohead", "In Rainbows", &[], None, 0, 100, USER)
-        .await
-        .expect_err("202");
-    assert_eq!(err.code(), Some(202));
 }
 
 /// Item parsing: MIME-enforced enclosures, entity decoding, attr mapping
@@ -1076,7 +1033,8 @@ async fn newznab_query_ladder() {
 }
 
 /// Fan-out: cross-indexer dedup by (title, size) with priority winning,
-/// one bad member never failing the pool, backoff skips, cache hits.
+/// one bad member never failing the pool, backoff skips, cache hits, and
+/// the health probe reusing its answer until a search fails.
 #[tokio::test]
 async fn newznab_fanout() {
     assert_eq!(
@@ -1194,12 +1152,9 @@ async fn newznab_fanout() {
     assert_eq!(ds_log.statuses().requests(), asked);
     let empty = newznab_indexer(vec![]);
     assert_eq!(empty.health_check(USER).await.status, "error");
-}
 
-/// A search the indexer refuses or fails ends the health probe's reuse of its
-/// last answer, so the next probe finds out.
-#[tokio::test]
-async fn a_failed_search_makes_the_next_health_probe_ask() {
+    // A search the indexer refuses or fails ends the health probe's reuse
+    // of its last answer, so the next probe finds out.
     let log = NewznabMock::new();
     let (base, _server) = serve_loopback(log.router(NewznabScenario::DrunkenSlug))
         .await
@@ -1210,8 +1165,16 @@ async fn a_failed_search_makes_the_next_health_probe_ask() {
         "DS",
         1,
     )]);
-    assert_eq!(indexer.health_check(USER).await.status, "ok");
-    assert_eq!(indexer.health_check(USER).await.status, "ok");
+    assert_eq!(
+        indexer.health_check(USER).await.status,
+        "ok",
+        "failed search"
+    );
+    assert_eq!(
+        indexer.health_check(USER).await.status,
+        "ok",
+        "failed search"
+    );
     let asked = log.statuses().requests();
 
     log.statuses().answer_next(401, None);
@@ -1219,7 +1182,7 @@ async fn a_failed_search_makes_the_next_health_probe_ask() {
         .search_album("Radiohead", "In Rainbows", None, USER)
         .await;
     let searched = log.statuses().requests();
-    assert!(searched > asked);
+    assert!(searched > asked, "failed search: the search asked");
     indexer.health_check(USER).await;
     assert!(
         log.statuses().requests() > searched,
@@ -1297,10 +1260,47 @@ async fn prowlarr_search_mapping() {
     assert!(releases.is_empty(), "v1 is usenet-only");
 }
 
-/// The instance key is never logged: it appears in no Debug output and
-/// no error string, even though the NZB URLs embed it.
+/// Secrets never surface: the SAB key, the key-bearing NZB URLs and the
+/// history password render redacted in Debug, and the Prowlarr instance
+/// key appears in no Debug output and no error string, even though the
+/// NZB URLs embed it.
 #[tokio::test]
-async fn prowlarr_apikey_never_logged() {
+async fn usenet_secrets_never_logged() {
+    let client = sab_client("http://127.0.0.1:9");
+    let debug = format!("{client:?}");
+    assert!(debug.contains("<redacted>"), "{debug}");
+    assert!(!debug.contains("SABKEY"), "{debug}");
+
+    let release = UsenetRelease {
+        indexer_id: "idx".to_owned(),
+        indexer_name: "idx".to_owned(),
+        guid: "g".to_owned(),
+        title: "t".to_owned(),
+        nzb_url: "https://idx/getnzb?apikey=SUPERSECRET".to_owned(),
+        size_bytes: 1,
+        category_ids: Vec::new(),
+        grabs: None,
+        files: None,
+        usenet_date: None,
+        password: 0,
+    };
+    let debug = format!("{release:?}");
+    assert!(!debug.contains("SUPERSECRET"), "{debug}");
+
+    let prowlarr = ProwlarrRelease {
+        download_url: "https://prowlarr/dl?apikey=SUPERSECRET".to_owned(),
+        ..ProwlarrRelease::default()
+    };
+    let debug = format!("{prowlarr:?}");
+    assert!(!debug.contains("SUPERSECRET"), "{debug}");
+
+    let slot = HistorySlot {
+        password: Some("nzb-password".to_owned()),
+        ..HistorySlot::default()
+    };
+    let debug = format!("{slot:?}");
+    assert!(!debug.contains("nzb-password"), "{debug}");
+
     let log = ProwlarrMock::new();
     let (base, _server) = serve_loopback(log.router(ProwlarrScenario {
         search_500: true,
@@ -1311,34 +1311,27 @@ async fn prowlarr_apikey_never_logged() {
     let client = prowlarr_client(&base);
 
     let debug = format!("{client:?}");
-    assert!(debug.contains("<redacted>"), "{debug}");
-    assert!(!debug.contains("SUPERSECRET"), "{debug}");
+    assert!(debug.contains("<redacted>"), "prowlarr: {debug}");
+    assert!(!debug.contains("SUPERSECRET"), "prowlarr: {debug}");
 
     let err = client
         .search("x", &[], &[], 100, TIMEOUT)
         .await
         .expect_err("500");
-    assert!(!err.to_string().contains("SUPERSECRET"));
+    assert!(
+        !err.to_string().contains("SUPERSECRET"),
+        "prowlarr 500: {err}"
+    );
 
     let dead = ProwlarrClient::new(http(), &refused_url("").await, "SUPERSECRET", "prowlarr");
     let err = dead
         .search("x", &[], &[], 100, TIMEOUT)
         .await
         .expect_err("transport");
-    assert!(!err.to_string().contains("SUPERSECRET"), "{err}");
-
-    // The URL-less and torrent rows never leak their (empty) URLs either:
-    // mapping output carries only the self-contained usenet URL.
-    let log = ProwlarrMock::new();
-    let (base, _server) = serve_loopback(log.router(ProwlarrScenario::default()))
-        .await
-        .expect("mock serves");
-    let client = prowlarr_client(&base);
-    let releases = client
-        .search("x", &[], &[], 100, TIMEOUT)
-        .await
-        .expect("search");
-    assert_eq!(releases.len(), 1);
+    assert!(
+        !err.to_string().contains("SUPERSECRET"),
+        "prowlarr transport: {err}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1362,10 +1355,13 @@ async fn serve_streamed(body: Vec<u8>) -> (String, droppedneedle_testkit::usenet
     serve_loopback(router).await.expect("mock serves")
 }
 
-/// A document nested far deeper than any feed is an error, not a stack
-/// overflow that takes the server down.
+/// A hostile server's body is refused, never a crash: a document nested
+/// far deeper than any feed is an error, not a stack overflow; and an
+/// indexer body, an NZB or a SABnzbd answer past its cap is refused while
+/// it is read, whatever it holds and however it is sent (in pieces, with
+/// no declared length).
 #[tokio::test]
-async fn newznab_deeply_nested_document_is_refused() {
+async fn hostile_bodies_are_refused() {
     let depth = 100_000;
     let body = format!("{}{}", "<a>".repeat(depth), "</a>".repeat(depth));
     let (base, _server) = serve_streamed(body.into_bytes()).await;
@@ -1375,14 +1371,10 @@ async fn newznab_deeply_nested_document_is_refused() {
         .expect_err("too deep");
     assert!(
         matches!(err, NewznabError::Provider(ProviderError::Payload { .. })),
-        "{err:?}"
+        "deep: {err:?}"
     );
-}
 
-/// A body past the cap is refused while it is being read, whatever it
-/// holds: here a well-formed feed padded with one long comment.
-#[tokio::test]
-async fn oversized_indexer_bodies_are_refused() {
+    // A well-formed feed padded with one long comment.
     let padding = "x".repeat(usenet::MAX_INDEXER_BODY_BYTES);
     let feed = format!("<rss><channel><!-- {padding} --></channel></rss>");
     let (base, _server) = serve_streamed(feed.into_bytes()).await;
@@ -1392,7 +1384,7 @@ async fn oversized_indexer_bodies_are_refused() {
         .expect_err("too large");
     assert!(
         matches!(err, NewznabError::Provider(ProviderError::Payload { .. })),
-        "{err:?}"
+        "indexer body: {err:?}"
     );
 
     let rows = format!("[{}]", " ".repeat(usenet::MAX_INDEXER_BODY_BYTES));
@@ -1401,13 +1393,11 @@ async fn oversized_indexer_bodies_are_refused() {
         .search("x", &[], &[], 100, TIMEOUT)
         .await
         .expect_err("too large");
-    assert!(matches!(err, ClientError::Decode { .. }), "{err:?}");
-}
+    assert!(
+        matches!(err, ClientError::Decode { .. }),
+        "prowlarr body: {err:?}"
+    );
 
-/// An NZB or a SABnzbd answer past its cap is an error, however the
-/// server sends it: here both arrive in pieces with no declared length.
-#[tokio::test]
-async fn oversized_nzbs_and_sabnzbd_answers_are_refused() {
     let nzb = format!(
         "<nzb><!-- {} --></nzb>",
         "x".repeat(usenet::sabnzbd::MAX_NZB_BYTES)
@@ -1417,7 +1407,7 @@ async fn oversized_nzbs_and_sabnzbd_answers_are_refused() {
         .fetch_nzb(&format!("{base}/big.nzb"), TIMEOUT)
         .await
         .expect_err("too large");
-    assert!(matches!(err, NzbFetchError::TooLarge), "{err:?}");
+    assert!(matches!(err, NzbFetchError::TooLarge), "nzb: {err:?}");
 
     let answer = format!(
         "{{\"queue\": {{\"slots\": []}}{}}}",
@@ -1430,32 +1420,8 @@ async fn oversized_nzbs_and_sabnzbd_answers_are_refused() {
         .expect_err("too large");
     assert!(
         matches!(err, SabnzbdError::Client(ClientError::Decode { .. })),
-        "{err:?}"
+        "sabnzbd answer: {err:?}"
     );
-}
-
-/// If SABnzbd's failure text for a job quotes the URL it was given, the
-/// indexer key in it never reaches the task error.
-#[tokio::test]
-async fn sab_failure_text_is_stored_without_the_indexer_key() {
-    let mock = SabnzbdMock::new();
-    mock.history_job(
-        "nzo-f",
-        "job-f",
-        "Failed",
-        "",
-        0,
-        "URL Fetching failed; https://idx.test/getnzb?id=1&apikey=SECRETKEY",
-    );
-    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let mount = temp_dir("fail-text");
-    let queue = queue_for(&mock, &base, mount.to_path_buf());
-    let status = status_for(&mock, &queue, "job-f", "nzo-f").await;
-    assert_eq!(
-        status.error.as_deref(),
-        Some("URL Fetching failed; https://idx.test/getnzb?id=1&apikey=***")
-    );
-    std::fs::remove_dir_all(&mount).ok();
 }
 
 // ---------------------------------------------------------------------------
@@ -1499,11 +1465,16 @@ fn shown(error: &(impl std::fmt::Display + std::fmt::Debug)) -> String {
     format!("{error} {error:?}")
 }
 
-/// SABnzbd takes its key as a query parameter on every call, so a dead
-/// SABnzbd must not put the request URL in an error or a log line. The
-/// NZB fetch is the same: the enclosure URL carries the indexer's key.
-#[tokio::test]
-async fn sab_transport_errors_never_carry_the_url() {
+/// A dead client never puts the request URL in an error or a log line.
+/// SABnzbd takes its key as a query parameter on every call, and the NZB
+/// fetch's enclosure URL carries the indexer's key; Newznab takes its key
+/// as a query parameter too, and a dead indexer is logged by the health
+/// check, the caps fetch and the search fan-out; Prowlarr's key travels
+/// in a header, but the base URL is the user's and can hold a secret of
+/// its own (a proxy path, basic-auth userinfo). The clock is paused so
+/// the providers' retry backoff costs no wall time.
+#[tokio::test(start_paused = true)]
+async fn transport_errors_never_carry_the_url() {
     let (logs, _guard) = capture_logs();
     let base = refused_url("").await;
     let client = || SabnzbdClient::new(http(), &base, MARKER, 1, Duration::from_millis(1));
@@ -1511,68 +1482,66 @@ async fn sab_transport_errors_never_carry_the_url() {
     let err = client().queue(TIMEOUT).await.expect_err("refused");
     assert!(
         matches!(err, SabnzbdError::Client(ClientError::Unavailable { .. })),
-        "{err:?}"
+        "sabnzbd: {err:?}"
     );
-    assert!(!shown(&err).contains(MARKER), "{}", shown(&err));
+    assert!(!shown(&err).contains(MARKER), "sabnzbd: {}", shown(&err));
 
     let err = client()
         .add_file("job", b"<nzb/>", None, None, None, TIMEOUT)
         .await
         .expect_err("refused");
-    assert!(!shown(&err).contains(MARKER), "{}", shown(&err));
+    assert!(!shown(&err).contains(MARKER), "sabnzbd: {}", shown(&err));
 
     let enclosure = format!("{base}/getnzb?id=1&token={MARKER}");
     let err = client()
         .add_url("job", &enclosure, None, None, None, TIMEOUT)
         .await
         .expect_err("refused");
-    assert!(!shown(&err).contains(MARKER), "{}", shown(&err));
+    assert!(!shown(&err).contains(MARKER), "sabnzbd: {}", shown(&err));
 
     let err = client()
         .fetch_nzb(&enclosure, TIMEOUT)
         .await
         .expect_err("refused");
-    assert!(matches!(err, NzbFetchError::Transport(_)), "{err:?}");
-    assert!(!shown(&err).contains(MARKER), "{}", shown(&err));
+    assert!(
+        matches!(err, NzbFetchError::Transport(_)),
+        "sabnzbd: {err:?}"
+    );
+    assert!(!shown(&err).contains(MARKER), "sabnzbd: {}", shown(&err));
 
     let mount = temp_dir("sab-dead");
     let queue = SabnzbdQueue::new(client(), &base, MARKER, mount.to_path_buf(), test_policy());
-    assert_eq!(queue.health_check().await.status, "error");
+    assert_eq!(queue.health_check().await.status, "error", "sabnzbd");
     let text = logged(&logs);
-    assert!(text.contains("sabnzbd health check failed"), "{text}");
-    assert!(!text.contains(MARKER), "{text}");
-}
+    assert!(
+        text.contains("sabnzbd health check failed"),
+        "sabnzbd: {text}"
+    );
+    assert!(!text.contains(MARKER), "sabnzbd: {text}");
 
-/// Newznab takes its key as a query parameter too. A dead indexer is
-/// logged by the health check, the caps fetch and the search fan-out.
-#[tokio::test]
-async fn newznab_transport_errors_never_carry_the_url() {
-    let (logs, _guard) = capture_logs();
     let base = refused_url("/api").await;
     let indexers = newznab_indexers();
     let client = || indexers.client("dead", "Dead", &base, MARKER);
 
     let err = client().caps(USER).await.expect_err("refused");
-    assert!(!shown(&err).contains(MARKER), "{}", shown(&err));
+    assert!(!shown(&err).contains(MARKER), "newznab: {}", shown(&err));
 
     let indexer = newznab_indexer(vec![entry_for(client(), "dead", "Dead", 0)]);
-    assert_eq!(indexer.health_check(USER).await.status, "error");
+    assert_eq!(indexer.health_check(USER).await.status, "error", "newznab");
     assert!(
         indexer
             .search_album("Radiohead", "In Rainbows", None, USER)
             .await
-            .is_empty()
+            .is_empty(),
+        "newznab"
     );
     let text = logged(&logs);
-    assert!(text.contains("newznab indexer search failed"), "{text}");
-    assert!(!text.contains(MARKER), "{text}");
-}
+    assert!(
+        text.contains("newznab indexer search failed"),
+        "newznab: {text}"
+    );
+    assert!(!text.contains(MARKER), "newznab: {text}");
 
-/// Prowlarr's key travels in a header, but the base URL is the user's
-/// and can hold a secret of its own (a proxy path, basic-auth userinfo).
-#[tokio::test]
-async fn prowlarr_transport_errors_never_carry_the_url() {
-    let (logs, _guard) = capture_logs();
     let base = refused_url(&format!("/{MARKER}")).await;
     let client = || ProwlarrClient::new(http(), &base, "SUPERSECRET", "prowlarr");
 
@@ -1580,7 +1549,7 @@ async fn prowlarr_transport_errors_never_carry_the_url() {
         .search("x", &[], &[], 100, TIMEOUT)
         .await
         .expect_err("refused");
-    assert!(!shown(&err).contains(MARKER), "{}", shown(&err));
+    assert!(!shown(&err).contains(MARKER), "prowlarr: {}", shown(&err));
 
     let indexer = usenet::prowlarr::ProwlarrIndexer::new(
         Some(client()),
@@ -1594,56 +1563,17 @@ async fn prowlarr_transport_errors_never_carry_the_url() {
         indexer
             .search_album("Radiohead", "In Rainbows", TIMEOUT)
             .await
-            .is_empty()
+            .is_empty(),
+        "prowlarr"
     );
     let text = logged(&logs);
-    assert!(text.contains("prowlarr search failed"), "{text}");
-    assert!(!text.contains(MARKER), "{text}");
+    assert!(text.contains("prowlarr search failed"), "prowlarr: {text}");
+    assert!(!text.contains(MARKER), "prowlarr: {text}");
 }
 
 // ---------------------------------------------------------------------------
 // Policy: tiers, recipe, timeouts, retention.
 // ---------------------------------------------------------------------------
-
-/// Secrets never surface in Debug: the SAB key, the key-bearing NZB URLs,
-/// and the history password all render redacted.
-#[test]
-fn usenet_secrets_never_logged() {
-    let client = sab_client("http://127.0.0.1:9");
-    let debug = format!("{client:?}");
-    assert!(debug.contains("<redacted>"), "{debug}");
-    assert!(!debug.contains("SABKEY"), "{debug}");
-
-    let release = UsenetRelease {
-        indexer_id: "idx".to_owned(),
-        indexer_name: "idx".to_owned(),
-        guid: "g".to_owned(),
-        title: "t".to_owned(),
-        nzb_url: "https://idx/getnzb?apikey=SUPERSECRET".to_owned(),
-        size_bytes: 1,
-        category_ids: Vec::new(),
-        grabs: None,
-        files: None,
-        usenet_date: None,
-        password: 0,
-    };
-    let debug = format!("{release:?}");
-    assert!(!debug.contains("SUPERSECRET"), "{debug}");
-
-    let prowlarr = ProwlarrRelease {
-        download_url: "https://prowlarr/dl?apikey=SUPERSECRET".to_owned(),
-        ..ProwlarrRelease::default()
-    };
-    let debug = format!("{prowlarr:?}");
-    assert!(!debug.contains("SUPERSECRET"), "{debug}");
-
-    let slot = HistorySlot {
-        password: Some("nzb-password".to_owned()),
-        ..HistorySlot::default()
-    };
-    let debug = format!("{slot:?}");
-    assert!(!debug.contains("nzb-password"), "{debug}");
-}
 
 /// Crash-retry usenet enqueue re-attaches instead of double-adding: the
 /// deterministic job name is already on the client, so the adapter

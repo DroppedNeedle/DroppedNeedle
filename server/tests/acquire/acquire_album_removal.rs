@@ -410,21 +410,25 @@ async fn album_cleanup_claims_before_it_deletes() {
 /// Old held copies in the read-then-write test.
 const OLD_COPIES: i64 = 400;
 
-/// A watch is enrolled in whole seconds: one armed a second before the
-/// removal stops, one armed in the removal's own second (it may have come
-/// after) and one armed a second after keep watching.
+/// A watch is enrolled in whole seconds. A removal that stops watches
+/// stops one armed a second before it; one armed in its own second (it may
+/// have come after) and one armed a second after keep watching. A removal
+/// that wants a replacement rearms a watch fulfilled before it, once; one
+/// fulfilled in its own second and a stopped watch stay as they were.
 #[tokio::test]
-async fn album_cleanup_stops_only_a_watch_armed_before_the_removal() {
+async fn album_cleanup_settles_watches_by_removal_time() {
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("fan", "Fan", "user").await.expect("user");
     let (platform, queue) = start(&db).await;
     let removed_at = removal_time();
+    let conn = droppedneedle_kernel::db::open_connection(db.path()).expect("db opens");
+
+    // Case "stop": only a watch armed before the removal stops.
     let (before_ms, same_ms, after_ms) = (
         millis(removed_at.floor() - 1.0),
         millis(removed_at.floor()),
         millis(removed_at.floor() + 1.0),
     );
-    let conn = droppedneedle_kernel::db::open_connection(db.path()).expect("db opens");
     conn.execute_batch(&format!(
         "INSERT INTO wanted_watches (release_group_mbid_lower, release_group_mbid, user_id, \
          artist_name, album_title, kind, state, created_at, next_check_at) VALUES \
@@ -443,7 +447,7 @@ async fn album_cleanup_stops_only_a_watch_armed_before_the_removal() {
             stop_wanted: true,
             removed_at,
         };
-        run_job(&platform.db, &queue, &format!("removal-{group}"), &job).await;
+        run_job(&platform.db, &queue, &format!("stop-{group}"), &job).await;
     }
     assert_eq!(
         watch_states(&conn),
@@ -451,21 +455,15 @@ async fn album_cleanup_stops_only_a_watch_armed_before_the_removal() {
             ("rg-early".to_owned(), "stopped".to_owned()),
             ("rg-late".to_owned(), "watching".to_owned()),
             ("rg-same".to_owned(), "watching".to_owned()),
-        ]
+        ],
+        "stop"
     );
-}
 
-/// A removal that wants a replacement rearms a watch fulfilled before it,
-/// once: a run again leaves the rearmed watch as it is. A watch fulfilled
-/// in the removal's own second and a stopped watch stay as they were.
-#[tokio::test]
-async fn album_cleanup_rearms_a_watch_fulfilled_before_the_removal() {
-    let db = AcquireDb::scratch().expect("scratch db");
-    db.add_user("fan", "Fan", "user").await.expect("user");
-    let (platform, queue) = start(&db).await;
-    let removed_at = removal_time();
+    // Case "rearm": a watch fulfilled before the removal is rearmed, and a
+    // run again leaves the rearmed watch as it is.
+    conn.execute("DELETE FROM wanted_watches", [])
+        .expect("stop case cleared");
     let (before_ms, same_ms) = (millis(removed_at - 60.0), millis(removed_at.floor()));
-    let conn = droppedneedle_kernel::db::open_connection(db.path()).expect("db opens");
     conn.execute_batch(&format!(
         "INSERT INTO wanted_watches (release_group_mbid_lower, release_group_mbid, user_id, \
          artist_name, album_title, kind, state, created_at, next_check_at, check_count) VALUES \
@@ -484,7 +482,7 @@ async fn album_cleanup_rearms_a_watch_fulfilled_before_the_removal() {
             stop_wanted: false,
             removed_at,
         };
-        run_job(&platform.db, &queue, &format!("removal-{group}"), &job).await;
+        run_job(&platform.db, &queue, &format!("rearm-{group}"), &job).await;
     }
     assert_eq!(
         watch_states(&conn),
@@ -492,7 +490,8 @@ async fn album_cleanup_rearms_a_watch_fulfilled_before_the_removal() {
             ("rg-done".to_owned(), "watching".to_owned()),
             ("rg-same".to_owned(), "fulfilled".to_owned()),
             ("rg-stopped".to_owned(), "stopped".to_owned()),
-        ]
+        ],
+        "rearm"
     );
     let rearm = |conn: &rusqlite::Connection| -> (i64, i64) {
         conn.query_row(
@@ -518,7 +517,7 @@ async fn album_cleanup_rearms_a_watch_fulfilled_before_the_removal() {
         stop_wanted: false,
         removed_at,
     };
-    run_job(&platform.db, &queue, "removal-rg-done-again", &job).await;
+    run_job(&platform.db, &queue, "rearm-rg-done-again", &job).await;
     assert_eq!(
         rearm(&conn),
         (first.0, 2),

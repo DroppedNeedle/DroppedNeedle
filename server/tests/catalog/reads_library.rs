@@ -1,5 +1,5 @@
 //! Library reads over the real stores on a migrated template database:
-//! the auth matrix, input validation and fault hiding over the routes, and
+//! input validation and fault hiding over the routes, and
 //! the catalog, favorites and lookups reads, including a missing and an
 //! excluded track proving streamable-only counts.
 
@@ -96,8 +96,8 @@ async fn get(app: Router, path: &str) -> (StatusCode, Value) {
     (status, json)
 }
 
-/// Every library route with ids the seeded catalog holds. The auth and
-/// fault loops walk this.
+/// Every library route with ids the seeded catalog holds. The fault loop
+/// walks this.
 const ROUTES: &[&str] = &[
     "/api/v3/library/albums",
     "/api/v3/library/albums/al1",
@@ -141,41 +141,6 @@ async fn bad_input_stays_in_the_envelope() {
         assert_eq!(json["error"]["code"], "INVALID_INPUT", "for {path}");
         assert!(json["error"]["message"].is_string(), "for {path}");
     }
-}
-
-#[tokio::test]
-async fn auth_matrix_every_route_401s_anonymous_and_admits_users() {
-    let fixture = sqlite_fixture().await;
-    let deps = deps(fixture.runtime.db(), Some(Arc::new(scripted_lyrics())));
-    let authenticated = app(deps.clone(), Some(ADA));
-    let anonymous = app(deps.clone(), None);
-    for path in ROUTES {
-        let (status, _) = get(authenticated.clone(), path).await;
-        assert_eq!(status, StatusCode::OK, "user should pass {path}");
-        let response = anonymous
-            .clone()
-            .oneshot(
-                Request::get(*path)
-                    .body(Body::empty())
-                    .expect("request builds"),
-            )
-            .await
-            .expect("router answers");
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "anon {path}");
-        let challenge = response
-            .headers()
-            .get(axum::http::header::WWW_AUTHENTICATE)
-            .expect("challenge header");
-        assert_eq!(challenge, "Bearer", "anon {path}");
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("body reads");
-        let json: Value = serde_json::from_slice(&bytes).expect("body is json");
-        assert_eq!(json["error"]["code"], "UNAUTHORIZED", "anon {path}");
-    }
-    let as_admin = app(deps, Some(("user-root", Role::Admin)));
-    let (status, _) = get(as_admin, "/api/v3/library/stats").await;
-    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -309,9 +274,15 @@ async fn sqlite_fixture() -> SqliteFixture {
     }
 }
 
+/// The store reads the seeded catalog back: album lists with their counts,
+/// identity and filters, sorts and the release group lookup, an album's
+/// tracks and copies, artist scopes and credits, track filters and stats,
+/// genres, decades and suggestion pools, favourites, and the ALAC name.
 #[tokio::test]
-async fn sqlite_albums_streamable_counts_identity_and_filters() {
+async fn the_seeded_catalog_reads_back() {
     let fixture = sqlite_fixture().await;
+
+    // Albums: streamable counts, identity and filters.
     let filter = AlbumFilter::default();
     let (albums, total) = fixture
         .catalog
@@ -319,25 +290,25 @@ async fn sqlite_albums_streamable_counts_identity_and_filters() {
         .await
         .map(|page| (page.items, page.total))
         .expect("albums list");
-    assert_eq!(total, 4);
+    assert_eq!(total, 4, "albums");
     let first = albums
         .iter()
         .find(|album| album.id == "al1")
         .expect("al1 listed");
-    assert_eq!(first.track_count, 2);
-    assert_eq!(first.total_duration_seconds, 400.0);
-    assert_eq!(first.total_size_bytes, 8_000_000);
-    assert_eq!(first.format.as_deref(), Some("flac"));
-    assert_eq!(first.release_group_mbid.as_deref(), Some("rg1"));
-    assert_eq!(first.artist_mbid.as_deref(), Some("m1"));
-    assert!(first.linked);
-    assert!(first.cover_available);
+    assert_eq!(first.track_count, 2, "al1");
+    assert_eq!(first.total_duration_seconds, 400.0, "al1");
+    assert_eq!(first.total_size_bytes, 8_000_000, "al1");
+    assert_eq!(first.format.as_deref(), Some("flac"), "al1");
+    assert_eq!(first.release_group_mbid.as_deref(), Some("rg1"), "al1");
+    assert_eq!(first.artist_mbid.as_deref(), Some("m1"), "al1");
+    assert!(first.linked, "al1");
+    assert!(first.cover_available, "al1");
     let second = albums
         .iter()
         .find(|album| album.id == "al2")
         .expect("al2 listed");
-    assert_eq!(second.track_count, 1);
-    assert!(!second.linked);
+    assert_eq!(second.track_count, 1, "al2");
+    assert!(!second.linked, "al2");
 
     assert!(
         fixture
@@ -345,64 +316,46 @@ async fn sqlite_albums_streamable_counts_identity_and_filters() {
             .get_album("nope")
             .await
             .expect("lookup runs")
-            .is_none()
+            .is_none(),
+        "unknown album"
     );
 
-    let filter = AlbumFilter {
-        q: Some("peak".to_owned()),
-        ..Default::default()
-    };
-    let (_, total) = fixture
-        .catalog
-        .list_albums(&filter, AlbumSort::Name, false, 50, &After::default())
-        .await
-        .map(|page| (page.items, page.total))
-        .expect("q filter");
-    assert_eq!(total, 1);
-
-    let filter = AlbumFilter {
-        decade: Some(1990),
-        ..Default::default()
-    };
-    let (_, total) = fixture
-        .catalog
-        .list_albums(&filter, AlbumSort::Name, false, 50, &After::default())
-        .await
-        .map(|page| (page.items, page.total))
-        .expect("decade filter");
-    assert_eq!(total, 3);
-
-    let filter = AlbumFilter {
-        artist_id: Some("a1".to_owned()),
-        ..Default::default()
-    };
-    let (_, total) = fixture
-        .catalog
-        .list_albums(&filter, AlbumSort::Name, false, 50, &After::default())
-        .await
-        .map(|page| (page.items, page.total))
-        .expect("artist filter");
-    assert_eq!(total, 3);
-}
-
-#[tokio::test]
-async fn sqlite_format_filter_artist_sort_and_release_group_lookup() {
-    let fixture = sqlite_fixture().await;
-    for (format, total) in [("flac", 2), ("mp3", 1), ("FLAC", 2), ("ogg", 0)] {
-        let filter = AlbumFilter {
-            formats: vec![format.to_lowercase()],
-            ..Default::default()
-        };
-        let (albums, counted) = fixture
+    for (filter, want, case) in [
+        (
+            AlbumFilter {
+                q: Some("peak".to_owned()),
+                ..Default::default()
+            },
+            1,
+            "q filter",
+        ),
+        (
+            AlbumFilter {
+                decade: Some(1990),
+                ..Default::default()
+            },
+            3,
+            "decade filter",
+        ),
+        (
+            AlbumFilter {
+                artist_id: Some("a1".to_owned()),
+                ..Default::default()
+            },
+            3,
+            "artist filter",
+        ),
+    ] {
+        let (_, total) = fixture
             .catalog
             .list_albums(&filter, AlbumSort::Name, false, 50, &After::default())
             .await
             .map(|page| (page.items, page.total))
-            .expect("format filter");
-        assert_eq!(counted, total, "for {format}");
-        assert_eq!(albums.len() as u64, total, "for {format}");
+            .expect(case);
+        assert_eq!(total, want, "{case}");
     }
 
+    // The artist sort, both ways, and the release group lookup.
     let filter = AlbumFilter::default();
     let (albums, _) = fixture
         .catalog
@@ -415,7 +368,8 @@ async fn sqlite_format_filter_artist_sort_and_release_group_lookup() {
             .iter()
             .map(|album| album.id.as_str())
             .collect::<Vec<_>>(),
-        ["al1", "al4", "al2", "al3"]
+        ["al1", "al4", "al2", "al3"],
+        "artist sort"
     );
     let (albums, _) = fixture
         .catalog
@@ -428,7 +382,8 @@ async fn sqlite_format_filter_artist_sort_and_release_group_lookup() {
             .iter()
             .map(|album| album.id.as_str())
             .collect::<Vec<_>>(),
-        ["al3", "al2", "al4", "al1"]
+        ["al3", "al2", "al4", "al1"],
+        "artist sort desc"
     );
 
     let found = fixture
@@ -437,69 +392,32 @@ async fn sqlite_format_filter_artist_sort_and_release_group_lookup() {
         .await
         .expect("lookup runs")
         .expect("rg1 resolves");
-    assert_eq!(found.id, "al1");
+    assert_eq!(found.id, "al1", "release group lookup");
     assert!(
         fixture
             .catalog
             .get_album_by_release_group("nope")
             .await
             .expect("lookup runs")
-            .is_none()
+            .is_none(),
+        "unknown release group"
     );
-}
 
-/// A web player picks its transcode by this name: an MP4 file with a bit
-/// depth is ALAC, and one without stays what it is.
-#[tokio::test]
-async fn an_alac_track_is_named_apart_from_aac() {
-    let fixture = sqlite_fixture().await;
-    fixture
-        .runtime
-        .db()
-        .write(
-            droppedneedle_kernel::db::Lane::Foreground,
-            "mp4 tracks",
-            |tx| {
-                tx.execute_batch(
-                    "UPDATE local_tracks SET file_format = 'm4a', bit_depth = 16 WHERE id = 't1'; \
-                     UPDATE local_tracks SET file_format = 'm4a' WHERE id = 't2'",
-                )
-                .map_err(droppedneedle_kernel::db::DbError::from)
-            },
-        )
-        .await
-        .expect("seed batch runs");
-    let (tracks, _) = fixture
-        .catalog
-        .album_tracks("al1", 50, 0)
-        .await
-        .expect("tracks list");
-    assert_eq!(
-        tracks
-            .iter()
-            .map(|track| track.format.as_str())
-            .collect::<Vec<_>>(),
-        ["alac", "m4a"]
-    );
-}
-
-#[tokio::test]
-async fn sqlite_album_tracks_and_copies() {
-    let fixture = sqlite_fixture().await;
+    // An album's tracks and its copies.
     let (tracks, total) = fixture
         .catalog
         .album_tracks("al1", 50, 0)
         .await
         .expect("tracks list");
-    assert_eq!(total, 2);
+    assert_eq!(total, 2, "album tracks");
     assert_eq!(
         tracks
             .iter()
             .map(|track| track.id.as_str())
             .collect::<Vec<_>>(),
-        ["t1", "t2"]
+        ["t1", "t2"],
+        "album tracks"
     );
-
     let copies = fixture
         .catalog
         .album_copies("al1")
@@ -510,28 +428,26 @@ async fn sqlite_album_tracks_and_copies() {
             .iter()
             .map(|album| album.id.as_str())
             .collect::<Vec<_>>(),
-        ["al4"]
+        ["al4"],
+        "al1 copies"
     );
     let copies = fixture
         .catalog
         .album_copies("al2")
         .await
         .expect("copies list");
-    assert!(copies.is_empty());
-}
+    assert!(copies.is_empty(), "al2 copies");
 
-#[tokio::test]
-async fn sqlite_artists_scopes_and_credits() {
-    let fixture = sqlite_fixture().await;
+    // Artists: scopes and credits. Every credited artist is listed; the
+    // retired row and the migration's uncredited Various/Unknown sentinels
+    // stay out.
     let (artists, total, led, contributors) = fixture
         .catalog
         .list_artists(ArtistScope::All, None, ArtistSort::Name, false, 50, 0)
         .await
         .expect("artists list");
-    // Every credited artist: the retired row and the migration's uncredited
-    // Various/Unknown sentinels stay out.
-    assert_eq!((total, led, contributors), (3, 2, 1));
-    assert!(!artists.iter().any(|artist| artist.id == "ax"));
+    assert_eq!((total, led, contributors), (3, 2, 1), "artists");
+    assert!(!artists.iter().any(|artist| artist.id == "ax"), "artists");
 
     let (scoped, total, _, _) = fixture
         .catalog
@@ -545,8 +461,8 @@ async fn sqlite_artists_scopes_and_credits() {
         )
         .await
         .expect("contributors list");
-    assert_eq!(total, 1);
-    assert_eq!(scoped[0].id, "a3");
+    assert_eq!(total, 1, "contributors");
+    assert_eq!(scoped[0].id, "a3", "contributors");
 
     let a1 = fixture
         .catalog
@@ -562,9 +478,10 @@ async fn sqlite_artists_scopes_and_credits() {
             a1.led_track_count,
             a1.appearance_album_count
         ),
-        (2, 3, 3, 0)
+        (2, 3, 3, 0),
+        "a1"
     );
-    assert_eq!(a1.artist_mbid.as_deref(), Some("m1"));
+    assert_eq!(a1.artist_mbid.as_deref(), Some("m1"), "a1");
 
     let a3 = fixture
         .catalog
@@ -580,7 +497,8 @@ async fn sqlite_artists_scopes_and_credits() {
             a3.appearance_album_count,
             a3.appearance_track_count
         ),
-        (0, 1, 0, 1, 1)
+        (0, 1, 0, 1, 1),
+        "a3"
     );
 
     let (led_albums, total) = fixture
@@ -589,8 +507,8 @@ async fn sqlite_artists_scopes_and_credits() {
         .await
         .map(|page| (page.items, page.total))
         .expect("led list");
-    assert_eq!(total, 3);
-    assert_eq!(led_albums[0].id, "al1");
+    assert_eq!(total, 3, "led albums");
+    assert_eq!(led_albums[0].id, "al1", "led albums");
 
     let (appearances, total) = fixture
         .catalog
@@ -598,50 +516,178 @@ async fn sqlite_artists_scopes_and_credits() {
         .await
         .map(|page| (page.items, page.total))
         .expect("appearances list");
-    assert_eq!(total, 1);
-    assert_eq!(appearances[0].id, "al3");
-}
+    assert_eq!(total, 1, "appearances");
+    assert_eq!(appearances[0].id, "al3", "appearances");
 
-#[tokio::test]
-async fn an_album_page_carries_its_revision_and_pending_review() {
-    let fixture = sqlite_fixture().await;
-    let deps = deps(fixture.runtime.db(), None);
-    let uri = "/api/v3/library/albums/al2";
-
-    let (status, body) = get(app(deps.clone(), Some(ADA)), uri).await;
-    assert_eq!(status, 200);
-    assert_eq!(body["row_revision"], 1);
-    assert!(body["pending_review_id"].is_null());
-
-    fixture
-        .runtime
-        .db()
-        .write(
-            droppedneedle_kernel::db::Lane::Foreground,
-            "reviews seed",
-            |tx| {
-                tx.execute_batch(
-                    "UPDATE local_albums SET row_revision = 7 WHERE id = 'al2'; \
-                     INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
-                     candidates_json, state, created_at, updated_at) VALUES \
-                     ('done', 'al2', 'r', '[]', 'approved', 3, 3), \
-                     ('open', 'al2', 'r', '[]', 'pending', 2, 2)",
-                )
-                .map_err(droppedneedle_kernel::db::DbError::from)
-            },
-        )
+    // Tracks: filters and stats.
+    let filter = TrackFilter {
+        q: Some("single".to_owned()),
+        ..Default::default()
+    };
+    let (tracks, total) = fixture
+        .catalog
+        .list_tracks(&filter, TrackSort::Title, false, 50, &After::default())
         .await
-        .expect("seed batch runs");
+        .map(|page| (page.items, page.total))
+        .expect("q filter");
+    assert_eq!(total, 1, "track q filter");
+    assert_eq!(tracks[0].id, "t4", "track q filter");
+    assert_eq!(tracks[0].genre.as_deref(), Some("Jazz"), "track q filter");
 
-    let (_, body) = get(app(deps, Some(ADA)), uri).await;
-    assert_eq!(body["row_revision"], 7);
-    assert_eq!(body["pending_review_id"], "open");
+    let filter = TrackFilter {
+        genre: Some("Rock".to_owned()),
+        ..Default::default()
+    };
+    let (_, total) = fixture
+        .catalog
+        .list_tracks(&filter, TrackSort::Title, false, 50, &After::default())
+        .await
+        .map(|page| (page.items, page.total))
+        .expect("genre filter");
+    assert_eq!(total, 2, "track genre filter");
+
+    let filter = TrackFilter {
+        artist_id: Some("a3".to_owned()),
+        ..Default::default()
+    };
+    let (tracks, total) = fixture
+        .catalog
+        .list_tracks(&filter, TrackSort::Title, false, 50, &After::default())
+        .await
+        .map(|page| (page.items, page.total))
+        .expect("artist filter");
+    assert_eq!(total, 1, "track artist filter");
+    assert_eq!(tracks[0].id, "t6", "track artist filter");
+
+    assert!(
+        fixture
+            .catalog
+            .get_track("t3")
+            .await
+            .expect("lookup runs")
+            .is_none(),
+        "a missing track"
+    );
+
+    let stats = fixture.catalog.stats().await.expect("stats read");
+    assert_eq!(
+        (stats.total_albums, stats.total_artists, stats.total_tracks),
+        (3, 3, 4),
+        "the Artists card counts what the Artists page lists, not uncredited rows"
+    );
+    assert_eq!(stats.total_size_bytes, 16_000_000, "stats");
+    assert_eq!(stats.format_breakdown.get("flac"), Some(&3), "stats");
+    assert_eq!(stats.format_breakdown.get("mp3"), Some(&1), "stats");
+
+    // Genres, decades and suggestion pools.
+    let genres = fixture.catalog.genres().await.expect("genres list");
+    assert_eq!(genres.len(), 2, "genres");
+    assert_eq!(genres[0].folded_name, "rock", "genres");
+    assert_eq!(
+        (genres[0].track_count, genres[0].album_count),
+        (2, 1),
+        "genres"
+    );
+
+    let decades = fixture.catalog.decades().await.expect("decades list");
+    assert_eq!(decades.len(), 2, "decades");
+    assert_eq!(
+        (decades[0].decade, decades[0].album_count),
+        (1990, 2),
+        "decades"
+    );
+    assert_eq!(
+        (decades[1].decade, decades[1].album_count),
+        (2000, 1),
+        "decades"
+    );
+
+    let newest = fixture.catalog.newest_tracks(2).await.expect("newest");
+    assert_eq!(
+        newest
+            .iter()
+            .map(|track| track.id.as_str())
+            .collect::<Vec<_>>(),
+        ["t4", "t6"],
+        "newest"
+    );
+    let oldest = fixture.catalog.oldest_tracks(1).await.expect("oldest");
+    assert_eq!(oldest[0].id, "t1", "oldest");
+    let era = fixture
+        .catalog
+        .random_tracks(10, Some(1990))
+        .await
+        .expect("era random");
+    assert!(!era.is_empty(), "era");
+    assert!(
+        era.iter()
+            .all(|track| track.year.is_some_and(|year| (1990..2000).contains(&year))),
+        "era"
+    );
+    assert!(
+        era.iter().all(|track| track.id != "t3" && track.id != "t5"),
+        "era"
+    );
+
+    // Favourites.
+    let ids = ["al1".to_owned(), "al2".to_owned()];
+    let marked = fixture
+        .catalog
+        .filter_favorites("u1", "album", &ids)
+        .await
+        .expect("filter runs");
+    assert_eq!(
+        marked,
+        std::collections::HashSet::from(["al1".to_owned()]),
+        "favourites"
+    );
+    let counts = fixture
+        .catalog
+        .favorite_counts("u1")
+        .await
+        .expect("counts read");
+    assert_eq!(counts, (1, 1, 1), "favourites");
+    let counts = fixture
+        .catalog
+        .favorite_counts("nobody")
+        .await
+        .expect("counts read");
+    assert_eq!(counts, (0, 0, 0), "no favourites");
+
+    // A web player picks its transcode by this name: an MP4 file with a bit
+    // depth is ALAC, and one without stays what it is. Last: it rewrites
+    // t1 and t2.
+    seed(
+        &fixture,
+        "UPDATE local_tracks SET file_format = 'm4a', bit_depth = 16 WHERE id = 't1'; \
+         UPDATE local_tracks SET file_format = 'm4a' WHERE id = 't2'",
+    )
+    .await;
+    let (tracks, _) = fixture
+        .catalog
+        .album_tracks("al1", 50, 0)
+        .await
+        .expect("tracks list");
+    assert_eq!(
+        tracks
+            .iter()
+            .map(|track| track.format.as_str())
+            .collect::<Vec<_>>(),
+        ["alac", "m4a"],
+        "alac"
+    );
 }
 
+/// The album and artist pages over the seeded catalog: an album page
+/// carries its row revision (what a stale Apply is refused by) and its
+/// pending review, appearances answer by MusicBrainz id as by library id,
+/// and albums tell how many tracks their edition has.
 #[tokio::test]
-async fn appearances_answer_by_musicbrainz_id_as_by_library_id() {
+async fn album_and_artist_pages_answer_the_seeded_catalog() {
     let fixture = sqlite_fixture().await;
     let deps = deps(fixture.runtime.db(), None);
+
+    // Appearances by MusicBrainz id as by library id.
     let (status, by_id) = get(
         app(deps.clone(), Some(ADA)),
         "/api/v3/library/artists/a3/appearances",
@@ -655,136 +701,79 @@ async fn appearances_answer_by_musicbrainz_id_as_by_library_id() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{by_mbid}");
-    assert_eq!(by_mbid, by_id);
-
+    assert_eq!(by_mbid, by_id, "appearances by MusicBrainz id");
     let (status, body) = get(
-        app(deps, Some(ADA)),
+        app(deps.clone(), Some(ADA)),
         "/api/v3/library/artists/no-such-artist/appearances",
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-}
 
-#[tokio::test]
-async fn sqlite_tracks_filters_and_stats() {
-    let fixture = sqlite_fixture().await;
-    let filter = TrackFilter {
-        q: Some("single".to_owned()),
-        ..Default::default()
-    };
-    let (tracks, total) = fixture
-        .catalog
-        .list_tracks(&filter, TrackSort::Title, false, 50, &After::default())
-        .await
-        .map(|page| (page.items, page.total))
-        .expect("q filter");
-    assert_eq!(total, 1);
-    assert_eq!(tracks[0].id, "t4");
-    assert_eq!(tracks[0].genre.as_deref(), Some("Jazz"));
-
-    let filter = TrackFilter {
-        genre: Some("Rock".to_owned()),
-        ..Default::default()
-    };
-    let (_, total) = fixture
-        .catalog
-        .list_tracks(&filter, TrackSort::Title, false, 50, &After::default())
-        .await
-        .map(|page| (page.items, page.total))
-        .expect("genre filter");
-    assert_eq!(total, 2);
-
-    let filter = TrackFilter {
-        artist_id: Some("a3".to_owned()),
-        ..Default::default()
-    };
-    let (tracks, total) = fixture
-        .catalog
-        .list_tracks(&filter, TrackSort::Title, false, 50, &After::default())
-        .await
-        .map(|page| (page.items, page.total))
-        .expect("artist filter");
-    assert_eq!(total, 1);
-    assert_eq!(tracks[0].id, "t6");
-
-    assert!(
-        fixture
-            .catalog
-            .get_track("t3")
-            .await
-            .expect("lookup runs")
-            .is_none()
-    );
-
-    let stats = fixture.catalog.stats().await.expect("stats read");
+    // An album page's revision and pending review.
+    let uri = "/api/v3/library/albums/al2";
+    let (status, body) = get(app(deps.clone(), Some(ADA)), uri).await;
+    assert_eq!(status, 200, "album page");
+    assert_eq!(body["row_revision"], 1, "album page");
+    assert!(body["pending_review_id"].is_null(), "album page");
+    seed(
+        &fixture,
+        "UPDATE local_albums SET row_revision = 7 WHERE id = 'al2'; \
+         INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+         candidates_json, state, created_at, updated_at) VALUES \
+         ('done', 'al2', 'r', '[]', 'approved', 3, 3), \
+         ('open', 'al2', 'r', '[]', 'pending', 2, 2)",
+    )
+    .await;
+    let (_, body) = get(app(deps.clone(), Some(ADA)), uri).await;
+    assert_eq!(body["row_revision"], 7, "album page after a write");
     assert_eq!(
-        (stats.total_albums, stats.total_artists, stats.total_tracks),
-        (3, 3, 4),
-        "the Artists card counts what the Artists page lists, not uncredited rows"
+        body["pending_review_id"], "open",
+        "album page after a write"
     );
-    assert_eq!(stats.total_size_bytes, 16_000_000);
-    assert_eq!(stats.format_breakdown.get("flac"), Some(&3));
-    assert_eq!(stats.format_breakdown.get("mp3"), Some(&1));
-}
 
-#[tokio::test]
-async fn sqlite_genres_decades_and_suggestion_pools() {
-    let fixture = sqlite_fixture().await;
-    let genres = fixture.catalog.genres().await.expect("genres list");
-    assert_eq!(genres.len(), 2);
-    assert_eq!(genres[0].folded_name, "rock");
-    assert_eq!((genres[0].track_count, genres[0].album_count), (2, 1));
-
-    let decades = fixture.catalog.decades().await.expect("decades list");
-    assert_eq!(decades.len(), 2);
-    assert_eq!((decades[0].decade, decades[0].album_count), (1990, 2));
-    assert_eq!((decades[1].decade, decades[1].album_count), (2000, 1));
-
-    let newest = fixture.catalog.newest_tracks(2).await.expect("newest");
+    // How many tracks an album's edition has: with no MusicBrainz release
+    // held, from its files' tags; an album no tag tells about has none. The
+    // list and the album agree.
+    seed(
+        &fixture,
+        "INSERT INTO local_track_edition_tags (local_track_id, total_discs, total_tracks) \
+         VALUES ('t1', 1, 12), ('t2', 1, 12)",
+    )
+    .await;
+    let (status, page) = get(
+        app(deps.clone(), Some(ADA)),
+        "/api/v3/library/albums?limit=50",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let counts: Vec<(String, u64, Value)> = page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|album| {
+            (
+                album["id"].as_str().unwrap().to_owned(),
+                album["track_count"].as_u64().unwrap(),
+                album["expected_track_count"].clone(),
+            )
+        })
+        .filter(|(id, _, _)| id == "al1" || id == "al3")
+        .collect();
     assert_eq!(
-        newest
-            .iter()
-            .map(|track| track.id.as_str())
-            .collect::<Vec<_>>(),
-        ["t4", "t6"]
+        counts,
+        [
+            ("al1".to_owned(), 2, serde_json::json!(12)),
+            ("al3".to_owned(), 1, Value::Null)
+        ],
+        "edition track counts"
     );
-    let oldest = fixture.catalog.oldest_tracks(1).await.expect("oldest");
-    assert_eq!(oldest[0].id, "t1");
-    let era = fixture
-        .catalog
-        .random_tracks(10, Some(1990))
-        .await
-        .expect("era random");
-    assert!(!era.is_empty());
-    assert!(
-        era.iter()
-            .all(|track| track.year.is_some_and(|year| (1990..2000).contains(&year)))
+    let (status, album) = get(app(deps, Some(ADA)), "/api/v3/library/albums/al1").await;
+    assert_eq!(status, StatusCode::OK, "{album}");
+    assert_eq!(
+        album["expected_track_count"],
+        serde_json::json!(12),
+        "edition track count"
     );
-    assert!(era.iter().all(|track| track.id != "t3" && track.id != "t5"));
-}
-
-#[tokio::test]
-async fn sqlite_favorites_flags_and_counts() {
-    let fixture = sqlite_fixture().await;
-    let ids = ["al1".to_owned(), "al2".to_owned()];
-    let marked = fixture
-        .catalog
-        .filter_favorites("u1", "album", &ids)
-        .await
-        .expect("filter runs");
-    assert_eq!(marked, std::collections::HashSet::from(["al1".to_owned()]));
-    let counts = fixture
-        .catalog
-        .favorite_counts("u1")
-        .await
-        .expect("counts read");
-    assert_eq!(counts, (1, 1, 1));
-    let counts = fixture
-        .catalog
-        .favorite_counts("nobody")
-        .await
-        .expect("counts read");
-    assert_eq!(counts, (0, 0, 0));
 }
 
 /// One artist's albums, one of each kind the album rules tell apart: a live
@@ -1233,48 +1222,6 @@ async fn lists_filter_by_formats_and_minimum_tracks() {
         seen_filtered_out,
         "the fixture has an artist the minimum drops"
     );
-}
-
-/// An album shows how many tracks its edition has next to the ones the
-/// library holds: with no MusicBrainz release held, from its files' tags;
-/// an album no tag tells about has none. The list and the album agree.
-#[tokio::test]
-async fn albums_tell_how_many_tracks_their_edition_has() {
-    let fixture = sqlite_fixture().await;
-    seed(
-        &fixture,
-        "INSERT INTO local_track_edition_tags (local_track_id, total_discs, total_tracks) \
-         VALUES ('t1', 1, 12), ('t2', 1, 12)",
-    )
-    .await;
-    let app = || app(deps(fixture.runtime.db(), None), Some(ADA));
-
-    let (status, page) = get(app(), "/api/v3/library/albums?limit=50").await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    let counts: Vec<(String, u64, Value)> = page["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|album| {
-            (
-                album["id"].as_str().unwrap().to_owned(),
-                album["track_count"].as_u64().unwrap(),
-                album["expected_track_count"].clone(),
-            )
-        })
-        .filter(|(id, _, _)| id == "al1" || id == "al3")
-        .collect();
-    assert_eq!(
-        counts,
-        [
-            ("al1".to_owned(), 2, serde_json::json!(12)),
-            ("al3".to_owned(), 1, Value::Null)
-        ]
-    );
-
-    let (status, album) = get(app(), "/api/v3/library/albums/al1").await;
-    assert_eq!(status, StatusCode::OK, "{album}");
-    assert_eq!(album["expected_track_count"], serde_json::json!(12));
 }
 
 async fn seed(fixture: &SqliteFixture, sql: &'static str) {

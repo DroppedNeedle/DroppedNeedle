@@ -253,37 +253,25 @@ async fn wma_never_streams() {
     );
 }
 
+/// `format=raw` serves the file's own bytes, and a gateway built without
+/// ffmpeg serves a transcode ask direct; neither runs the transcoder.
 #[tokio::test]
-async fn raw_format_stays_direct() {
-    let root = ScratchDir::new("raw");
+async fn direct_when_raw_or_ffmpeg_absent() {
+    let root = ScratchDir::new("direct-fallback");
     put(&root, "song.flac", b"FLAC-BYTES");
-    let transcoder = FakeTranscoder::succeeding(vec![b"SHOULD-NOT-RUN".to_vec()]);
-    let calls = Arc::clone(&transcoder.calls);
-    let app = engine(&root, FakeRemote::default(), transcoder, true);
+    for (case, format, ffmpeg_present) in [("raw", "raw", true), ("ffmpeg absent", "mp3", false)] {
+        let transcoder = FakeTranscoder::succeeding(vec![b"SHOULD-NOT-RUN".to_vec()]);
+        let calls = Arc::clone(&transcoder.calls);
+        let app = engine(&root, FakeRemote::default(), transcoder, ffmpeg_present);
 
-    let media = app
-        .open_stream(open_transcode("song.flac", "raw"), false)
-        .await
-        .unwrap();
-    assert!(!media.transcoded);
-    assert_eq!(file_bytes(media).await, b"FLAC-BYTES");
-    assert!(calls.lock().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn ffmpeg_absent_falls_back_to_direct() {
-    let root = ScratchDir::new("no-ffmpeg");
-    put(&root, "song.flac", b"FLAC-BYTES");
-    let transcoder = FakeTranscoder::succeeding(vec![b"SHOULD-NOT-RUN".to_vec()]);
-    let calls = Arc::clone(&transcoder.calls);
-    let app = engine(&root, FakeRemote::default(), transcoder, false);
-
-    let media = app
-        .open_stream(open_transcode("song.flac", "mp3"), false)
-        .await
-        .unwrap();
-    assert!(!media.transcoded);
-    assert!(calls.lock().unwrap().is_empty());
+        let media = app
+            .open_stream(open_transcode("song.flac", format), false)
+            .await
+            .unwrap();
+        assert!(!media.transcoded, "{case}");
+        assert_eq!(file_bytes(media).await, b"FLAC-BYTES", "{case}");
+        assert!(calls.lock().unwrap().is_empty(), "{case}");
+    }
 }
 
 #[tokio::test]
@@ -564,7 +552,9 @@ impl RemoteReader for BlockingRemote {
     }
 }
 
-#[tokio::test]
+/// The clock is paused, so the N+1th request's wait at the gate passes in
+/// virtual time once every holder is parked at the remote.
+#[tokio::test(start_paused = true)]
 async fn media_concurrent_streams_under_caps() {
     assert_eq!(
         DIRECT_PRINCIPAL_LIMIT, 8,

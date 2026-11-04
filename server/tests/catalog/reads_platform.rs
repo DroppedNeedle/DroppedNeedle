@@ -149,23 +149,34 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
 
 // Covers.
 
+/// A release group's cover: a hit serves its bytes and revalidates against
+/// a strong, weak, listed or `*` tag, and a tag that does not match gets
+/// the bytes again; a miss is a bare 404 and a warming cover a 202, both
+/// `no-store`.
 #[tokio::test]
-async fn release_group_cover_hit_serves_bytes_and_revalidates() {
+async fn release_group_cover_answers() {
     let app = || covers_app(covers_fixture());
     let (status, headers, body) = get(app(), "/api/v3/covers/release-group/rg-1", &[]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, PNG_BYTES);
-    assert_eq!(header(&headers, "content-type"), Some("image/png"));
+    assert_eq!(status, StatusCode::OK, "hit");
+    assert_eq!(body, PNG_BYTES, "hit");
+    assert_eq!(header(&headers, "content-type"), Some("image/png"), "hit");
     assert_eq!(
         header(&headers, "x-cover-source"),
-        Some("cover-art-archive")
+        Some("cover-art-archive"),
+        "hit"
     );
     assert_eq!(
         header(&headers, "cache-control"),
-        Some("private, max-age=86400, stale-while-revalidate=604800")
+        Some("private, max-age=86400, stale-while-revalidate=604800"),
+        "hit"
     );
     let etag = header(&headers, "etag").unwrap().to_owned();
-    for candidate in [etag.clone(), format!("W/{etag}"), "*".to_owned()] {
+    for candidate in [
+        etag.clone(),
+        format!("W/{etag}"),
+        "*".to_owned(),
+        format!("\"other\", {etag}"),
+    ] {
         let (status, headers, body) = get(
             app(),
             "/api/v3/covers/release-group/rg-1",
@@ -173,37 +184,41 @@ async fn release_group_cover_hit_serves_bytes_and_revalidates() {
         )
         .await;
         assert_eq!(status, StatusCode::NOT_MODIFIED, "candidate {candidate}");
-        assert!(body.is_empty());
-        assert_eq!(header(&headers, "etag"), Some(etag.as_str()));
+        assert!(body.is_empty(), "candidate {candidate}");
+        assert_eq!(
+            header(&headers, "etag"),
+            Some(etag.as_str()),
+            "candidate {candidate}"
+        );
     }
-}
-
-#[tokio::test]
-async fn release_group_cover_miss_answers_404_without_a_body() {
-    let (status, headers, body) = get(
-        covers_app(covers_fixture()),
-        "/api/v3/covers/release-group/unknown",
-        &[],
+    let (status, _, body) = get(
+        app(),
+        "/api/v3/covers/release-group/rg-1",
+        &[("if-none-match", "\"other\"")],
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(header(&headers, "content-type"), None);
-    assert_eq!(header(&headers, "cache-control"), Some("no-store"));
-    assert!(body.is_empty());
-}
+    assert_eq!(status, StatusCode::OK, "a tag that does not match");
+    assert_eq!(body, PNG_BYTES, "a tag that does not match");
 
-#[tokio::test]
-async fn release_group_cover_warming_answers_202() {
-    let (status, headers, body) = get(
-        covers_app(covers_fixture()),
-        "/api/v3/covers/release-group/rg-warm",
-        &[],
-    )
-    .await;
-    assert_eq!(status, StatusCode::ACCEPTED);
-    assert!(body.is_empty());
-    assert_eq!(header(&headers, "cache-control"), Some("no-store"));
-    assert_eq!(header(&headers, "x-cover-source"), Some("warming"));
+    let (status, headers, body) = get(app(), "/api/v3/covers/release-group/unknown", &[]).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "miss");
+    assert_eq!(header(&headers, "content-type"), None, "miss");
+    assert_eq!(header(&headers, "cache-control"), Some("no-store"), "miss");
+    assert!(body.is_empty(), "miss");
+
+    let (status, headers, body) = get(app(), "/api/v3/covers/release-group/rg-warm", &[]).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "warming");
+    assert!(body.is_empty(), "warming");
+    assert_eq!(
+        header(&headers, "cache-control"),
+        Some("no-store"),
+        "warming"
+    );
+    assert_eq!(
+        header(&headers, "x-cover-source"),
+        Some("warming"),
+        "warming"
+    );
 }
 
 // Wrapped.
@@ -243,16 +258,23 @@ async fn wrapped_trio_shapes_with_valid_key() {
     assert!(json.get("top_artist_sitewide").is_none());
 }
 
+/// The wrapped routes refuse every key but the configured one: absent on
+/// every route, any key while none is configured, a padded key (never
+/// trimmed) and a wrong one. Each is a 401; an absent key gets no challenge
+/// and the fixed envelope, and a wrong one is not echoed.
 #[tokio::test]
-async fn wrapped_rejects_missing_key_on_every_route() {
+async fn wrapped_refuses_every_key_but_the_configured_one() {
     for uri in [
         "/api/v3/wrapped/users",
         "/api/v3/wrapped/user/u-1",
         "/api/v3/wrapped/server",
     ] {
         let (status, headers, body) = get(wrapped_app(WRAPPED_KEY), uri, &[]).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri}");
-        assert!(header(&headers, "www-authenticate").is_none(), "{uri}");
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "absent: {uri}");
+        assert!(
+            header(&headers, "www-authenticate").is_none(),
+            "absent: {uri}"
+        );
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
             json,
@@ -261,26 +283,20 @@ async fn wrapped_rejects_missing_key_on_every_route() {
                 "message": "Invalid or missing wrapped API key",
                 "details": null,
             }}),
-            "{uri}"
+            "absent: {uri}"
         );
     }
-}
 
-#[tokio::test]
-async fn wrapped_rejects_everything_when_unconfigured() {
     let (status, _, _) = get(wrapped_app(""), "/api/v3/wrapped/users", &[]).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "unconfigured, absent");
     let (status, _, _) = get(
         wrapped_app(""),
         "/api/v3/wrapped/server",
         &[("x-wrapped-api-key", "anything")],
     )
     .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-}
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "unconfigured, any key");
 
-#[tokio::test]
-async fn wrapped_rejects_padded_values_without_trimming() {
     for value in [" test-secret-key", "test-secret-key ", " test-secret-key "] {
         let (status, _, _) = get(
             wrapped_app(WRAPPED_KEY),
@@ -288,14 +304,9 @@ async fn wrapped_rejects_padded_values_without_trimming() {
             &[("x-wrapped-api-key", value)],
         )
         .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "value {value:?}");
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "padded {value:?}");
     }
-}
 
-// Leaks.
-
-#[tokio::test]
-async fn wrapped_rejection_echoes_no_key_material() {
     let (status, _, body) = get(
         wrapped_app("expected-dn-secret-marker-9f31"),
         "/api/v3/wrapped/users",
@@ -305,11 +316,13 @@ async fn wrapped_rejection_echoes_no_key_material() {
         )],
     )
     .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "wrong");
     let text = String::from_utf8(body).unwrap();
     assert!(!text.contains("dn-secret-marker-9f31"), "{text}");
     assert!(!text.contains("/srv/secrets/droppedneedle.key"), "{text}");
 }
+
+// Leaks.
 
 #[tokio::test]
 async fn covers_400_carries_only_caller_input() {

@@ -167,8 +167,17 @@ pub fn can_transition(from: TaskStatus, to: TaskStatus) -> bool {
 mod tests {
     use super::*;
 
+    /// Exactly completed, partial, failed and cancelled are terminal (as the
+    /// stores read the stored string), they have no outgoing edge, and the
+    /// happy path from queued to completed exists.
     #[test]
-    fn terminal_states_have_no_outgoing_edges() {
+    fn task_state_edges() {
+        for status in ["completed", "partial", "failed", "cancelled"] {
+            assert!(is_terminal(status), "{status} is terminal");
+        }
+        for status in ["queued", "downloading", "processing"] {
+            assert!(!is_terminal(status), "{status} is not terminal");
+        }
         for from in TaskStatus::ALL {
             if from.is_terminal() {
                 for to in TaskStatus::ALL {
@@ -176,10 +185,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn happy_path_edges_exist() {
         assert!(can_transition(TaskStatus::Queued, TaskStatus::Downloading));
         assert!(can_transition(
             TaskStatus::Downloading,

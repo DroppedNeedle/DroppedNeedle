@@ -20,3 +20,11 @@ them. None is known to be made up, and none is marked as recorded.
 None is re-recorded here. The answers recorded on 2026-10-21 come from the
 BrainzMash mirror (see `server/tests/fixtures/musicbrainz/README.md`). The
 catalog tests read these values, so the files stay as they are.
+
+`upstreams.json` holds the other answers the catalog page tests serve
+(ListenBrainz, Last.fm, iTunes and one MusicBrainz release), keyed by name.
+TheAudioDB, Wikidata, Wikipedia and Commons are served from their recorded
+answers in `tests/fixtures/audiodb` and `tests/fixtures/wikidata`.
+Special:EntityData's answer for an unknown id was never recorded: the fake
+answers a path it does not know with a bare 404, which the client reads as
+absence without decoding the body.

@@ -1,5 +1,4 @@
-//! Shared compat security posture: the public Subsonic endpoint, query
-//! redaction, the rate-limit and auth-backoff budgets, the address
+//! Shared compat security posture: query redaction, the rate-limit and auth-backoff budgets, the address
 //! player apps are given and the signature on open picture links. The
 //! credential schemes are pinned in `auth_compat_goldens`.
 
@@ -13,15 +12,6 @@ use droppedneedle_compat::subsonic::picture::{PURPOSE, PictureKind, PictureSigne
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_kernel::runtime_config::sections::PublicAddress;
-
-/// One Subsonic endpoint skips auth, in any case and with `.view`. The
-/// Jellyfin public routes are walked through the app in
-/// `compat_jellyfin_library`.
-#[test]
-fn subsonic_public_endpoint() {
-    assert!(auth::subsonic_is_public("getopensubsonicextensions.view"));
-    assert!(!auth::subsonic_is_public("stream"));
-}
 
 /// Credentials ride in compat query strings; anything logged goes through
 /// this redactor, which masks every spelling of every secret key.

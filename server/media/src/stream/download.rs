@@ -569,18 +569,17 @@ fn attachment_headers(headers: &mut HeaderMap, filename: &str) {
 mod tests {
     use super::*;
 
+    /// Entry names are sanitized and never collide, and the download's
+    /// Content-Disposition carries an ASCII-safe name beside the UTF-8 one.
     #[test]
-    fn archive_names_follow_v2_and_never_collide() {
+    fn download_names_are_safe_and_unique() {
         let mut taken = std::collections::HashSet::new();
         assert_eq!(unique_name("01 Song.flac", &mut taken), "01 Song.flac");
         assert_eq!(unique_name("01 Song.flac", &mut taken), "01 Song (2).flac");
         assert_eq!(unique_name("01 SONG.flac", &mut taken), "01 SONG (3).flac");
         assert_eq!(sanitize_filename(" AC/DC: Live? "), "AC_DC_ Live_");
         assert_eq!(sanitize_filename("   "), "Untitled");
-    }
 
-    #[test]
-    fn disposition_carries_ascii_and_utf8_names() {
         let mut headers = HeaderMap::new();
         attachment_headers(&mut headers, "Sigur Rós - ( ).zip");
         let value = headers

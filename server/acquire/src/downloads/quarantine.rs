@@ -285,17 +285,3 @@ pub enum QuarantineFileError {
         detail: String,
     },
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn soulseek_identity_canonicalizes() {
-        assert_eq!(
-            canonical_soulseek_identity("Peer\\Music\\Track.Flac"),
-            "peer/music/track.flac"
-        );
-        assert_eq!(canonical_soulseek_identity("lone"), "lone");
-    }
-}

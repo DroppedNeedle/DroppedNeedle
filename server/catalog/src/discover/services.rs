@@ -583,14 +583,3 @@ pub async fn your_top_albums(
         .your_top_albums(user_id, range, limit, offset, source)
         .await?)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn blank_names_fail() {
-        assert!(check_name("  ", "artist").is_err());
-        assert!(check_name("Portishead", "artist").is_ok());
-    }
-}

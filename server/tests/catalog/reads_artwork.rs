@@ -431,17 +431,21 @@ async fn seed_artist_albums(rig: &Rig, files: &Path, covers: &[Vec<u8>]) {
 
 /// Asks for `a1`'s picture at `size` and checks it is a `size` pixel JPEG
 /// mosaic whose quadrants (left to right, top to bottom) show `quadrants`.
-async fn assert_mosaic(rig: &Rig, size: u32, quadrants: [[u8; 3]; 4]) -> String {
+async fn assert_mosaic(rig: &Rig, case: &str, size: u32, quadrants: [[u8; 3]; 4]) -> String {
     let (status, headers, body) = get(
         rig.app(true),
         &format!("/api/v3/library/artists/a1/artwork?size={size}"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(header(&headers, "content-type"), Some("image/jpeg"));
-    assert_eq!(header(&headers, "x-cover-source"), Some("mosaic"));
+    assert_eq!(status, StatusCode::OK, "{case}");
+    assert_eq!(
+        header(&headers, "content-type"),
+        Some("image/jpeg"),
+        "{case}"
+    );
+    assert_eq!(header(&headers, "x-cover-source"), Some("mosaic"), "{case}");
     let picture = image::load_from_memory(&body).unwrap().to_rgb8();
-    assert_eq!(picture.dimensions(), (size, size));
+    assert_eq!(picture.dimensions(), (size, size), "{case}");
     let (near, far) = (size / 4, size * 3 / 4);
     let points = [(near, near), (far, near), (near, far), (far, far)];
     for ((x, y), want) in points.into_iter().zip(quadrants) {
@@ -450,19 +454,52 @@ async fn assert_mosaic(rig: &Rig, size: u32, quadrants: [[u8; 3]; 4]) -> String 
             got.iter()
                 .zip(want)
                 .all(|(got, want)| got.abs_diff(want) <= 30),
-            "pixel at ({x}, {y}) is {got:?}, wanted {want:?}"
+            "{case}: pixel at ({x}, {y}) is {got:?}, wanted {want:?}"
         );
     }
     header(&headers, "etag").unwrap().to_owned()
 }
 
-/// Four or more albums with art: a 2x2 of the first four, newest first.
-/// A cover that does not decode is passed over, not a failed picture.
+/// An artist with no MusicBrainz link gets a picture drawn from their
+/// albums' covers, newest first; each case has its own rig.
 #[cfg(unix)]
 #[tokio::test]
-async fn an_unlinked_artist_with_four_covers_is_a_two_by_two() {
+async fn an_unlinked_artists_picture_is_drawn_from_their_covers() {
+    // No album with art (the rig's album has none): 404, and the page shows
+    // its placeholder.
+    let rig = self::rig(None).await;
+    let (status, _, _) = get(rig.app(true), "/api/v3/library/artists/a1/artwork").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "no covers");
+
+    // One album with art: that cover as the album shows it.
+    let files = ScratchDir::new("reads-artwork-mosaic-one");
+    let rig = self::rig(None).await;
+    let cover = solid_png(RED, 300);
+    seed_artist_albums(&rig, &files, std::slice::from_ref(&cover)).await;
+    let (status, headers, body) = get(rig.app(true), "/api/v3/library/artists/a1/artwork").await;
+    assert_eq!(status, StatusCode::OK, "one cover");
+    assert_eq!(body, cover, "one cover");
+    assert_eq!(
+        header(&headers, "x-cover-source"),
+        Some("folder"),
+        "one cover"
+    );
+
+    // Two or three albums with art: the first two crosswise.
+    let files = ScratchDir::new("reads-artwork-mosaic-three");
+    let rig = self::rig(None).await;
+    let covers = [
+        solid_png(RED, 300),
+        solid_png(GREEN, 300),
+        solid_png(BLUE, 300),
+    ];
+    seed_artist_albums(&rig, &files, &covers).await;
+    assert_mosaic(&rig, "three covers", 500, [RED, GREEN, GREEN, RED]).await;
+
+    // Four or more albums with art: a 2x2 of the first four. A cover that
+    // does not decode is passed over, not a failed picture.
     let files = ScratchDir::new("reads-artwork-mosaic-four");
-    let rig = rig(None).await;
+    let rig = self::rig(None).await;
     let broken = b"\x89PNG\r\n\x1a\nnot really a picture".to_vec();
     let covers = [
         solid_png(RED, 300),
@@ -473,56 +510,13 @@ async fn an_unlinked_artist_with_four_covers_is_a_two_by_two() {
         solid_png(MAGENTA, 300),
     ];
     seed_artist_albums(&rig, &files, &covers).await;
-    assert_mosaic(&rig, 250, [RED, GREEN, BLUE, YELLOW]).await;
-}
+    assert_mosaic(&rig, "six covers", 250, [RED, GREEN, BLUE, YELLOW]).await;
 
-/// Two or three albums with art: the first two crosswise.
-#[cfg(unix)]
-#[tokio::test]
-async fn an_unlinked_artist_with_two_or_three_covers_is_crosswise() {
-    let files = ScratchDir::new("reads-artwork-mosaic-three");
-    let rig = rig(None).await;
-    let covers = [
-        solid_png(RED, 300),
-        solid_png(GREEN, 300),
-        solid_png(BLUE, 300),
-    ];
-    seed_artist_albums(&rig, &files, &covers).await;
-    assert_mosaic(&rig, 500, [RED, GREEN, GREEN, RED]).await;
-}
-
-/// One album with art: that cover as the album shows it.
-#[cfg(unix)]
-#[tokio::test]
-async fn an_unlinked_artist_with_one_cover_shows_it() {
-    let files = ScratchDir::new("reads-artwork-mosaic-one");
-    let rig = rig(None).await;
-    let cover = solid_png(RED, 300);
-    seed_artist_albums(&rig, &files, std::slice::from_ref(&cover)).await;
-
-    let (status, headers, body) = get(rig.app(true), "/api/v3/library/artists/a1/artwork").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, cover);
-    assert_eq!(header(&headers, "x-cover-source"), Some("folder"));
-}
-
-/// No album with art (the rig's album has none): 404, and the page shows
-/// its placeholder.
-#[tokio::test]
-async fn an_unlinked_artist_with_no_covers_has_no_picture() {
-    let rig = rig(None).await;
-    let (status, _, _) = get(rig.app(true), "/api/v3/library/artists/a1/artwork").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-}
-
-/// A cover one pixel wide and thousands tall is cut to its centre square
-/// before it is scaled, so it costs no more memory than its own pixels
-/// and still fills its quadrant.
-#[cfg(unix)]
-#[tokio::test]
-async fn a_sliver_cover_takes_its_quadrant_without_blowing_up() {
+    // A cover one pixel wide and thousands tall is cut to its centre square
+    // before it is scaled, so it costs no more memory than its own pixels
+    // and still fills its quadrant.
     let files = ScratchDir::new("reads-artwork-mosaic-sliver");
-    let rig = rig(None).await;
+    let rig = self::rig(None).await;
     let covers = [
         solid_png_sized(YELLOW, 1, 200_000),
         solid_png(RED, 300),
@@ -530,22 +524,17 @@ async fn a_sliver_cover_takes_its_quadrant_without_blowing_up() {
         solid_png(BLUE, 300),
     ];
     seed_artist_albums(&rig, &files, &covers).await;
-    assert_mosaic(&rig, 250, [YELLOW, RED, GREEN, BLUE]).await;
-}
+    assert_mosaic(&rig, "a sliver", 250, [YELLOW, RED, GREEN, BLUE]).await;
 
-/// A cover replaced on disk draws a new mosaic; the old one is not served.
-#[cfg(unix)]
-#[tokio::test]
-async fn a_changed_cover_draws_a_new_mosaic() {
+    // A cover replaced on disk draws a new mosaic; the old one is not served.
     let files = ScratchDir::new("reads-artwork-mosaic-change");
-    let rig = rig(None).await;
+    let rig = self::rig(None).await;
     let covers = [solid_png(RED, 300), solid_png(GREEN, 300)];
     seed_artist_albums(&rig, &files, &covers).await;
-    let before = assert_mosaic(&rig, 250, [RED, GREEN, GREEN, RED]).await;
-
+    let before = assert_mosaic(&rig, "before a change", 250, [RED, GREEN, GREEN, RED]).await;
     std::fs::write(files.join("m0").join("cover.png"), solid_png(BLUE, 200)).unwrap();
-    let after = assert_mosaic(&rig, 250, [BLUE, GREEN, GREEN, BLUE]).await;
-    assert_ne!(before, after);
+    let after = assert_mosaic(&rig, "after a change", 250, [BLUE, GREEN, GREEN, BLUE]).await;
+    assert_ne!(before, after, "a changed cover");
 }
 
 #[tokio::test]

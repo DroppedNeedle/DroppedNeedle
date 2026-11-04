@@ -810,42 +810,15 @@ fn scan_blobs(dir: &Path) -> HashMap<String, BlobUse> {
 mod tests {
     use super::*;
 
-    /// A failure marker never overwrites a stored image: a background
-    /// fetch that fails beside a page fetch that stored the cover leaves
-    /// the cover in place.
+    /// A marker never outlives stored art. A "no art" marker is known in
+    /// memory until it expires by the cache's clock, and an image stored
+    /// under its key ends it at once. A failure marker never overwrites a
+    /// stored image: a background fetch that fails beside a page fetch that
+    /// stored the cover leaves the cover in place.
     #[tokio::test]
-    async fn a_failure_never_blanks_a_stored_image() {
+    async fn markers_never_outlive_stored_art() {
         let root = std::env::temp_dir().join(format!(
-            "dn-artwork-cache-{}-{}",
-            std::process::id(),
-            droppedneedle_kernel::clock::SystemClock.now_ms()
-        ));
-        let cache = ArtworkCache::new(
-            root.clone(),
-            1024 * 1024,
-            Arc::new(droppedneedle_kernel::clock::SystemClock),
-        );
-        let key = "caa:release-group:aff0622e-7bd3-4fb6-9ca3-0fa19dd2340b:500";
-        let hash = cache.put(Some(key), b"cover".to_vec(), "image/jpeg").await;
-
-        cache.put_miss(key, 900).await;
-
-        assert_eq!(
-            cache.key(key).await,
-            Some(KeyEntry::Hit {
-                hash,
-                content_type: "image/jpeg".to_owned()
-            })
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    /// A "no art" marker is known in memory until it expires by the
-    /// cache's clock, and an image stored under its key ends it at once.
-    #[tokio::test]
-    async fn a_known_miss_ends_when_it_expires_or_art_arrives() {
-        let root = std::env::temp_dir().join(format!(
-            "dn-artwork-known-{}-{}",
+            "dn-artwork-markers-{}-{}",
             std::process::id(),
             droppedneedle_kernel::clock::SystemClock.now_ms()
         ));
@@ -864,6 +837,20 @@ mod tests {
         cache.put(Some(key), b"cover".to_vec(), "image/jpeg").await;
         assert!(!cache.knows_missing(key), "stored art ends the miss");
         assert!(cache.holds(key));
+
+        let stored = "caa:release-group:aff0622e-7bd3-4fb6-9ca3-0fa19dd2340b:250";
+        let hash = cache
+            .put(Some(stored), b"cover".to_vec(), "image/jpeg")
+            .await;
+        cache.put_miss(stored, 900).await;
+        assert_eq!(
+            cache.key(stored).await,
+            Some(KeyEntry::Hit {
+                hash,
+                content_type: "image/jpeg".to_owned()
+            }),
+            "a failure never blanks a stored image"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }

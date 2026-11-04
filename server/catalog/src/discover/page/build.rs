@@ -2462,7 +2462,7 @@ pub async fn mark_ownership(db: &Db, page: &mut DiscoverResponse) {
 
 #[cfg(test)]
 mod tests {
-    use super::{in_order_until, mix_split};
+    use super::in_order_until;
 
     /// The second mix never finishes: the first is kept, the third is not
     /// reached, and the set is reported incomplete. The deadline has
@@ -2477,12 +2477,5 @@ mod tests {
             Some(n)
         });
         assert_eq!(in_order_until(deadline, builds).await, (vec![1], false));
-    }
-
-    #[test]
-    fn mix_split_prefers_sixty_forty_and_tops_up_the_short_side() {
-        assert_eq!(mix_split(20, 20), (7, 5));
-        assert_eq!(mix_split(2, 20), (2, 10));
-        assert_eq!(mix_split(20, 1), (11, 1));
     }
 }

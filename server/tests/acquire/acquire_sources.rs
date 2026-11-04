@@ -8,7 +8,7 @@
 //! as a real subprocess. Plus the gates that keep a source's stored text
 //! in the one conversion and the Usenet backend in the wiring.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,6 +33,7 @@ use droppedneedle_acquire::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
 use droppedneedle_acquire::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::runtime_config::sections::PluginConfig;
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_plugins::process::ProcessLauncher;
 use droppedneedle_plugins::runtime::RuntimeState;
@@ -518,46 +519,53 @@ fn album(artist: &str, title: &str) -> SearchTarget {
 
 /// An indexer that can answer finds releases, every one tagged Usenet and
 /// carrying an NZB link.
-async fn answers(indexer: &dyn Indexer) {
+async fn answers(who: &str, indexer: &dyn Indexer) {
     let target = album("Radiohead", "In Rainbows");
     let hits = indexer.search(&IndexerQuery::Album(&target), USER).await;
-    assert!(!hits.is_empty(), "the indexer answers");
+    assert!(!hits.is_empty(), "{who}: the indexer answers");
     for hit in &hits {
-        assert_eq!(hit.source, SourceTag::Usenet);
-        assert!(!hit.usenet.nzb_url.is_empty(), "{:?}", hit.usenet);
+        assert_eq!(hit.source, SourceTag::Usenet, "{who}");
+        assert!(!hit.usenet.nzb_url.is_empty(), "{who}: {:?}", hit.usenet);
     }
 }
 
 /// A refused key is no releases, never a failure.
-async fn refused(indexer: &dyn Indexer) {
+async fn refused(who: &str, indexer: &dyn Indexer) {
     let target = album("Radiohead", "In Rainbows");
     assert!(
         indexer
             .search(&IndexerQuery::Album(&target), USER)
             .await
-            .is_empty()
+            .is_empty(),
+        "{who}: a refused key finds nothing"
     );
 }
 
 /// A 429 is no releases, and the indexer sits out for the `Retry-After`
 /// it was given.
-async fn limited(indexer: &dyn Indexer, searches: impl Fn() -> usize) {
+async fn limited(who: &str, indexer: &dyn Indexer, searches: impl Fn() -> usize) {
     let target = album("Radiohead", "In Rainbows");
     assert!(
         indexer
             .search(&IndexerQuery::Album(&target), USER)
             .await
-            .is_empty()
+            .is_empty(),
+        "{who}: a 429 finds nothing"
     );
     let asked = searches();
-    assert!(asked > 0, "the indexer was asked");
+    assert!(asked > 0, "{who}: the indexer was asked");
     assert!(
         indexer
             .search(&IndexerQuery::Album(&target), USER)
             .await
-            .is_empty()
+            .is_empty(),
+        "{who}: a limited indexer finds nothing"
     );
-    assert_eq!(searches(), asked, "Retry-After keeps the indexer out");
+    assert_eq!(
+        searches(),
+        asked,
+        "{who}: Retry-After keeps the indexer out"
+    );
 }
 
 /// An indexer, its mock's call log, and the mock's server task.
@@ -584,16 +592,6 @@ async fn newznab_on(scenario: NewznabScenario) -> Rig<NewznabIndexer, NewznabMoc
     (indexer, mock, server)
 }
 
-#[tokio::test]
-async fn newznab_indexer_conforms() {
-    let (indexer, _, _server) = newznab_on(NewznabScenario::DrunkenSlug).await;
-    answers(&indexer).await;
-    let (indexer, _, _server) = newznab_on(NewznabScenario::AuthError).await;
-    refused(&indexer).await;
-    let (indexer, mock, _server) = newznab_on(NewznabScenario::Http429).await;
-    limited(&indexer, || mock.calls().len()).await;
-}
-
 async fn prowlarr_on(scenario: ProwlarrScenario) -> Rig<ProwlarrIndexer, ProwlarrMock> {
     let mock = ProwlarrMock::new();
     let (base, server) = serve_loopback(mock.router(scenario))
@@ -615,22 +613,31 @@ async fn prowlarr_on(scenario: ProwlarrScenario) -> Rig<ProwlarrIndexer, Prowlar
     (indexer, mock, server)
 }
 
+/// Newznab and Prowlarr each answer, take a refused key as no releases,
+/// and sit out a 429 for its `Retry-After`.
 #[tokio::test]
-async fn prowlarr_indexer_conforms() {
+async fn indexers_conform() {
+    let (indexer, _, _server) = newznab_on(NewznabScenario::DrunkenSlug).await;
+    answers("newznab", &indexer).await;
+    let (indexer, _, _server) = newznab_on(NewznabScenario::AuthError).await;
+    refused("newznab", &indexer).await;
+    let (indexer, mock, _server) = newznab_on(NewznabScenario::Http429).await;
+    limited("newznab", &indexer, || mock.calls().len()).await;
+
     let (indexer, _, _server) = prowlarr_on(ProwlarrScenario::default()).await;
-    answers(&indexer).await;
+    answers("prowlarr", &indexer).await;
     let (indexer, _, _server) = prowlarr_on(ProwlarrScenario {
         auth_fail: true,
         ..ProwlarrScenario::default()
     })
     .await;
-    refused(&indexer).await;
+    refused("prowlarr", &indexer).await;
     let (indexer, mock, _server) = prowlarr_on(ProwlarrScenario {
         search_429: true,
         ..ProwlarrScenario::default()
     })
     .await;
-    limited(&indexer, || mock.calls().len()).await;
+    limited("prowlarr", &indexer, || mock.calls().len()).await;
 }
 
 fn repo() -> PathBuf {
@@ -766,8 +773,8 @@ impl Drop for PluginRig {
     }
 }
 
-async fn plugin_rig(tag: &str) -> PluginRig {
-    let dir = ScratchDir::new(&format!("source-plugin-{tag}"));
+async fn plugin_rig() -> PluginRig {
+    let dir = ScratchDir::new("source-plugin");
     for example in ["local-folder-client", "local-folder-indexer"] {
         copy_dir(
             &repo().join("examples/plugins").join(example),
@@ -799,23 +806,14 @@ async fn plugin_rig(tag: &str) -> PluginRig {
             Arc::new(droppedneedle_kernel::clock::SystemClock),
         ),
     );
-    let host = PluginHost::new(
-        dir.join("plugins"),
-        config,
-        Arc::new(ProcessLauncher::new(
-            repo().join("sdk/python"),
-            platform.supervisor.clone(),
-        )),
-        droppedneedle_plugins::wiring::tick_store(&platform),
-        library,
-    );
-    host.load_all();
     let source_dir = dir.join("music-source");
     std::fs::create_dir_all(&source_dir).expect("source folder");
     std::fs::write(source_dir.join("Test Artist - Fixtures.flac"), b"fLaC").expect("file");
     let downloads = dir.join("downloads");
     let source_text = source_dir.to_string_lossy().into_owned();
     let downloads_text = downloads.to_string_lossy().into_owned();
+    // Every plugin is enabled before the one load, so the four Python
+    // starts overlap instead of running one after another.
     for (name, settings) in [
         (
             "local-folder-indexer",
@@ -835,10 +833,34 @@ async fn plugin_rig(tag: &str) -> PluginRig {
             .into_iter()
             .map(|(key, value)| (key.to_owned(), value))
             .collect();
-        host.update_settings(name, true, settings)
+        config
+            .save_plugin_blocking(
+                name,
+                PluginConfig {
+                    enabled: true,
+                    settings,
+                },
+                &HashSet::new(),
+            )
             .expect("plugin enabled");
-        running(&host, name).await;
     }
+    let host = PluginHost::new(
+        dir.join("plugins"),
+        config,
+        Arc::new(ProcessLauncher::new(
+            repo().join("sdk/python"),
+            platform.supervisor.clone(),
+        )),
+        droppedneedle_plugins::wiring::tick_store(&platform),
+        library,
+    );
+    host.load_all();
+    tokio::join!(
+        running(&host, "local-folder-indexer"),
+        running(&host, "local-folder-client"),
+        running(&host, "usenet-feed"),
+        running(&host, "fault-client"),
+    );
     PluginRig {
         _dir: dir,
         host,
@@ -889,9 +911,20 @@ fn plugin_client(rig: &PluginRig, name: &str, journal: Arc<Journal>) -> PluginDo
     )
 }
 
+/// Plugins on one running host: the example client lands inside its own
+/// folder, and a plugin indexer feeding Usenet keeps only what SABnzbd can
+/// fetch. A plugin client says whose fault a failed download was, and the
+/// worker believes it, never the text (all three say "disk full"): a
+/// local failure moves to the next result with its release unblamed;
+/// the source's, or one that says nothing, blocklists the release.
 #[tokio::test]
 async fn plugins_conform() {
-    let rig = plugin_rig("conform").await;
+    use droppedneedle_acquire::downloads::worker::{DownloadWorker, WorkerConfig};
+    use droppedneedle_acquire::downloads::{AttemptState, TaskStatus};
+    use droppedneedle_acquire::reason::Reason;
+    use droppedneedle_providers::health::ServiceHealth;
+
+    let rig = plugin_rig().await;
     let journal = journal_with_task("t-plugin", "Test Artist", "Fixtures").await;
     let source = Arc::new(plugin_source(&rig, journal));
     conforms(
@@ -910,24 +943,12 @@ async fn plugins_conform() {
     // The plugin indexer feeding Usenet, on the same running host: only
     // the release SABnzbd can fetch comes back.
     let indexers = PluginIndexers::new(rig.host.clone());
-    answers(&indexers).await;
+    answers("plugin indexer", &indexers).await;
     let target = album("Radiohead", "In Rainbows");
     let hits = indexers.search(&IndexerQuery::Album(&target), USER).await;
     assert_eq!(hits.len(), 1, "a release without an NZB link is dropped");
-}
 
-/// A plugin client says whose fault a failed download was, and the
-/// worker believes it, never the text (all three say "disk full"): a
-/// local failure moves to the next result with its release unblamed;
-/// the source's, or one that says nothing, blocklists the release.
-#[tokio::test]
-async fn a_plugin_says_whose_fault_a_failed_download_was() {
-    use droppedneedle_acquire::downloads::worker::{DownloadWorker, WorkerConfig};
-    use droppedneedle_acquire::downloads::{AttemptState, TaskStatus};
-    use droppedneedle_acquire::reason::Reason;
-    use droppedneedle_providers::health::ServiceHealth;
-
-    let rig = plugin_rig("fault").await;
+    // A plugin client's own word on whose fault a failure was.
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("u1", "U", "user").await.expect("user seeds");
     let journal = Arc::new(Journal::new(db, quiet_ticks()));
@@ -1039,9 +1060,12 @@ fn acquire_code() -> Vec<(String, usize, String)> {
 }
 
 /// A source's stored text is written and read only by `SourceTag`: no
-/// other acquire code spells `"soulseek"` or `"usenet"`.
+/// other acquire code spells `"soulseek"` or `"usenet"`. Only the wiring
+/// reads which Usenet backend is chosen, to build the indexer list; every
+/// search goes through the indexer seam.
 #[test]
-fn source_text_lives_in_the_tag() {
+fn acquire_source_gates() {
+    let lines = acquire_code();
     // The one conversion.
     let tag_file = "downloads/source_tag.rs";
     // Allowed lines, with the reason: Prowlarr's `protocol` field is
@@ -1050,8 +1074,8 @@ fn source_text_lives_in_the_tag() {
         "usenet/prowlarr.rs",
         "if !release.protocol.eq_ignore_ascii_case(\"usenet\") {",
     )];
-    let found: Vec<String> = acquire_code()
-        .into_iter()
+    let found: Vec<String> = lines
+        .iter()
         .filter(|(file, _, code)| {
             file != tag_file
                 && (code.contains("\"soulseek\"") || code.contains("\"usenet\""))
@@ -1064,14 +1088,9 @@ fn source_text_lives_in_the_tag() {
         "source text outside SourceTag:\n{}",
         found.join("\n")
     );
-}
 
-/// Only the wiring reads which Usenet backend is chosen, to build the
-/// indexer list; every search goes through the indexer seam.
-#[test]
-fn usenet_backend_is_matched_only_in_the_wiring() {
-    let found: Vec<String> = acquire_code()
-        .into_iter()
+    let found: Vec<String> = lines
+        .iter()
         .filter(|(file, _, code)| file != "wiring.rs" && code.contains("UsenetBackend::"))
         .map(|(file, number, code)| format!("{file}:{number}: {code}"))
         .collect();

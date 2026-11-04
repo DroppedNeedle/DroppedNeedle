@@ -1172,8 +1172,11 @@ mod tests {
         assert!(!below_cutoff("low", &unknown));
     }
 
+    /// List inputs: the limit's cap and the offset's floor, and the format
+    /// list cleaned, lowercased and deduplicated, winning over the one
+    /// format.
     #[test]
-    fn page_defaults_and_caps() {
+    fn list_inputs_clean_and_cap() {
         assert_eq!(page(None, None, 50, 200), Ok((50, 0)));
         assert_eq!(
             page(Some(0), None, 50, 200),
@@ -1193,34 +1196,7 @@ mod tests {
                 "offset must be 0 or more".to_owned()
             ))
         );
-    }
 
-    #[test]
-    fn unknown_sorts_fail_with_guidance() {
-        assert!(album_sort(Some("nope"), false).is_err());
-        assert!(artist_sort(Some("nope"), false).is_err());
-        assert!(track_sort(Some("nope"), false).is_err());
-        assert!(artist_scope(Some("nope")).is_err());
-        assert!(descending(Some("sideways"), false).is_err());
-    }
-
-    #[test]
-    fn decades_must_be_start_years() {
-        assert_eq!(check_decade(None), Ok(None));
-        assert_eq!(check_decade(Some(1990)), Ok(Some(1990)));
-        assert!(check_decade(Some(1995)).is_err());
-        assert!(check_decade(Some(1500)).is_err());
-    }
-
-    #[test]
-    fn blank_filter_text_reads_as_absent() {
-        assert_eq!(clean_q(None), None);
-        assert_eq!(clean_q(Some("  ")), None);
-        assert_eq!(clean_q(Some("  abba ")), Some("abba".to_owned()));
-    }
-
-    #[test]
-    fn format_filter_cleans_and_lowercases() {
         assert_eq!(clean_formats(None, None), Vec::<String>::new());
         assert_eq!(clean_formats(None, Some("  ")), Vec::<String>::new());
         assert_eq!(clean_formats(None, Some("  FLAC ")), ["flac"]);
@@ -1234,16 +1210,5 @@ mod tests {
         assert!(without_formats(Some("except")).is_err());
         assert_eq!(check_min_tracks(Some(1)).ok(), Some(None));
         assert!(check_min_tracks(Some(0)).is_err());
-    }
-
-    #[test]
-    fn artist_sort_parses() {
-        assert_eq!(album_sort(Some("artist"), false), Ok(AlbumSort::Artist));
-    }
-
-    #[test]
-    fn store_faults_stay_internal() {
-        let failure = LibraryFailure::from(StoreError::Internal("db is gone".to_owned()));
-        assert_eq!(failure, LibraryFailure::Internal("db is gone".to_owned()));
     }
 }

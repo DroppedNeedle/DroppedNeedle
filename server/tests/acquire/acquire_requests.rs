@@ -380,22 +380,29 @@ async fn requests_and_approvals_survive_a_rebuild() {
     assert_eq!(keys(&wanted), vec![MBID_C.to_owned()]);
 }
 
-// User ask, admin approval, dispatch, landing: the row reads imported.
+// One task per album however it is asked for, owned by the requester: an
+// approval (a second one dispatches nothing), a duplicate ask (a listener)
+// and a batch (raw and live duplicates skipped).
 #[tokio::test]
-async fn approval_dispatches_and_the_landing_imports() {
+async fn an_album_dispatches_once_however_it_is_asked() {
+    // A user's ask, an admin's approval, dispatch and landing: imported.
+    let case = "approval";
     let (state, _db, dispatch) = setup().await;
     ask(&state, ADA, MBID_A).await;
-    assert!(dispatch.take_calls().await.is_empty());
+    assert!(dispatch.take_calls().await.is_empty(), "{case}");
     let uri = format!("/api/v3/requests/approvals/{MBID_A}/approve");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::OK, "{case}: {body}");
     let calls = dispatch.take_calls().await;
-    assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].user_id, "u-ada", "the owner, never the approver");
+    assert_eq!(calls.len(), 1, "{case}");
+    assert_eq!(
+        calls[0].user_id, "u-ada",
+        "{case}: the owner, never the approver"
+    );
     // A second approval loses the claim instead of dispatching again.
     let (_, again) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
-    assert_eq!(again["success"], false);
-    assert!(dispatch.take_calls().await.is_empty());
+    assert_eq!(again["success"], false, "{case}");
+    assert!(dispatch.take_calls().await.is_empty(), "{case}");
 
     dispatch.land(&calls[0].id).await;
     let (_, active) = call(
@@ -406,7 +413,7 @@ async fn approval_dispatches_and_the_landing_imports() {
         None,
     )
     .await;
-    assert!(keys(&active).is_empty());
+    assert!(keys(&active).is_empty(), "{case}");
     let (_, history) = call(
         &state,
         Method::GET,
@@ -415,20 +422,18 @@ async fn approval_dispatches_and_the_landing_imports() {
         None,
     )
     .await;
-    assert_eq!(history["items"][0]["status"], "imported");
-    assert_eq!(history["items"][0]["reviewed_by_name"], "Root");
-}
+    assert_eq!(history["items"][0]["status"], "imported", "{case}");
+    assert_eq!(history["items"][0]["reviewed_by_name"], "Root", "{case}");
 
-// A duplicate ask attaches as a listener: one dispatch, one row.
-#[tokio::test]
-async fn duplicate_ask_attaches_a_listener() {
+    // A duplicate ask attaches as a listener: one dispatch, one row.
+    let case = "duplicate ask";
     let (state, _db, dispatch) = setup().await;
     ask(&state, TRUSTED, MBID_A).await;
     let (status, body) = ask(&state, BOB, MBID_A).await;
-    assert_eq!(status, StatusCode::ACCEPTED);
-    assert_eq!(body["message"], "Request already in progress");
+    assert_eq!(status, StatusCode::ACCEPTED, "{case}");
+    assert_eq!(body["message"], "Request already in progress", "{case}");
     let calls = dispatch.take_calls().await;
-    assert_eq!(calls.len(), 1);
+    assert_eq!(calls.len(), 1, "{case}");
     let (_, all) = call(
         &state,
         Method::GET,
@@ -437,17 +442,42 @@ async fn duplicate_ask_attaches_a_listener() {
         None,
     )
     .await;
-    assert_eq!(all["count"], 1);
-    assert_eq!(all["items"][0]["task_id"], calls[0].id.as_str());
+    assert_eq!(all["count"], 1, "{case}");
+    assert_eq!(all["items"][0]["task_id"], calls[0].id.as_str(), "{case}");
 
     // The listener reads the download's own state on the shared row, though
     // the task is the owner's and not in the listener's own task list.
     let active = "/api/v3/requests/active";
     let (_, bobs) = call(&state, Method::GET, active, Some(BOB), None).await;
-    assert_eq!(bobs["items"][0]["task_state"], "searching", "{bobs}");
+    assert_eq!(
+        bobs["items"][0]["task_state"], "searching",
+        "{case}: {bobs}"
+    );
     dispatch.settle(&calls[0].id, TaskStatus::Downloading).await;
     let (_, bobs) = call(&state, Method::GET, active, Some(BOB), None).await;
-    assert_eq!(bobs["items"][0]["task_state"], "downloading", "{bobs}");
+    assert_eq!(
+        bobs["items"][0]["task_state"], "downloading",
+        "{case}: {bobs}"
+    );
+
+    // A batch skips raw and live duplicates and dispatches the new rows.
+    let case = "batch";
+    let (state, _db, dispatch) = setup().await;
+    ask(&state, TRUSTED, MBID_A).await;
+    dispatch.take_calls().await;
+    let item = |mbid: &str| json!({"musicbrainz_id": mbid, "artist_name": "A", "album_title": "B"});
+    let (status, body) = call(
+        &state,
+        Method::POST,
+        "/api/v3/requests/batches",
+        Some(TRUSTED),
+        Some(json!({"items": [item(MBID_A), item(MBID_B), item(MBID_B), item(MBID_C)]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{case}: {body}");
+    assert_eq!(body["requested"], 2, "{case}");
+    assert_eq!(body["skipped"], 2, "{case}");
+    assert_eq!(dispatch.take_calls().await.len(), 2, "{case}");
 }
 
 const REL_1: &str = "44444444-4444-4444-8444-444444444444";
@@ -480,92 +510,76 @@ async fn requested_edition(state: &RequestsState, mbid: &str) -> Value {
     item.expect("live request")["release_mbid"].clone()
 }
 
-// An album the library does not hold is fetched in the edition the page
-// asked for, not the catalog's preferred one.
-#[tokio::test]
-async fn a_request_fetches_the_edition_it_asked_for() {
-    let (state, _db, dispatch) = setup().await;
-    assert_eq!(
-        ask_edition(&state, TRUSTED, MBID_A, REL_2).await["status"],
-        "pending"
-    );
-    let calls = dispatch.take_calls().await;
-    assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].release_mbid.as_deref(), Some(REL_2));
-    assert_eq!(requested_edition(&state, MBID_A).await, REL_2);
-}
-
-// A curator's other edition switches a live request while no download
-// serves it; a plain user's ask never does, and once the download has
-// started the request keeps its edition.
+// A fresh curator's ask is fetched in the edition the page asked for. A
+// curator's other edition switches a live request while no download serves
+// it; a plain user's ask never does, and once the download has started the
+// request keeps its edition.
 #[tokio::test]
 async fn a_request_switches_edition_only_before_its_download_starts() {
     let (state, _db, dispatch) = setup().await;
+
+    // An album the library does not hold is fetched in the edition the page
+    // asked for, not the catalog's preferred one.
+    let case = "fresh trusted ask";
+    assert_eq!(
+        ask_edition(&state, TRUSTED, MBID_B, REL_2).await["status"],
+        "pending",
+        "{case}"
+    );
+    let calls = dispatch.take_calls().await;
+    assert_eq!(calls.len(), 1, "{case}");
+    assert_eq!(calls[0].release_mbid.as_deref(), Some(REL_2), "{case}");
+    assert_eq!(requested_edition(&state, MBID_B).await, REL_2, "{case}");
+
+    let case = "switch before the download";
     ask_edition(&state, ADA, MBID_A, REL_1).await;
     ask_edition(&state, BOB, MBID_A, REL_3).await;
-    assert_eq!(requested_edition(&state, MBID_A).await, REL_1);
+    assert_eq!(requested_edition(&state, MBID_A).await, REL_1, "{case}");
     let answer = ask_edition(&state, TRUSTED, MBID_A, REL_2).await;
-    assert_eq!(answer["status"], "awaiting_approval", "{answer}");
-    assert_eq!(answer["message"], "The request now gets this edition");
-    assert_eq!(requested_edition(&state, MBID_A).await, REL_2);
+    assert_eq!(answer["status"], "awaiting_approval", "{case}: {answer}");
+    assert_eq!(
+        answer["message"], "The request now gets this edition",
+        "{case}"
+    );
+    assert_eq!(requested_edition(&state, MBID_A).await, REL_2, "{case}");
 
     let uri = format!("/api/v3/requests/approvals/{MBID_A}/approve");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::OK, "{case}: {body}");
     let calls = dispatch.take_calls().await;
-    assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].release_mbid.as_deref(), Some(REL_2));
+    assert_eq!(calls.len(), 1, "{case}");
+    assert_eq!(calls[0].release_mbid.as_deref(), Some(REL_2), "{case}");
 
+    let case = "after the download started";
     let answer = ask_edition(&state, TRUSTED, MBID_A, REL_3).await;
-    assert_eq!(answer["status"], "downloading", "{answer}");
+    assert_eq!(answer["status"], "downloading", "{case}: {answer}");
     assert_eq!(
-        answer["message"],
-        "Already downloading, so the edition stays as it is"
+        answer["message"], "Already downloading, so the edition stays as it is",
+        "{case}"
     );
-    assert_eq!(requested_edition(&state, MBID_A).await, REL_2);
-    assert!(dispatch.take_calls().await.is_empty());
+    assert_eq!(requested_edition(&state, MBID_A).await, REL_2, "{case}");
+    assert!(dispatch.take_calls().await.is_empty(), "{case}");
 }
 
-// A batch skips raw and live duplicates and dispatches the new rows.
+// Listeners detach and owners or an admin stop the task; a cancel outlasts
+// the automatic retry; a retry dispatches only with approval provenance.
+// Another user's cancel and retry answer 404 in the ownership table.
 #[tokio::test]
-async fn batch_dedupes_and_dispatches_new_rows() {
-    let (state, _db, dispatch) = setup().await;
-    ask(&state, TRUSTED, MBID_A).await;
-    dispatch.take_calls().await;
-    let item = |mbid: &str| json!({"musicbrainz_id": mbid, "artist_name": "A", "album_title": "B"});
-    let (status, body) = call(
-        &state,
-        Method::POST,
-        "/api/v3/requests/batches",
-        Some(TRUSTED),
-        Some(json!({"items": [item(MBID_A), item(MBID_B), item(MBID_B), item(MBID_C)]})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
-    assert_eq!(body["requested"], 2);
-    assert_eq!(body["skipped"], 2);
-    assert_eq!(dispatch.take_calls().await.len(), 2);
-}
-
-// Strangers get the unknown-id answer, listeners detach, owners stop the
-// task.
-#[tokio::test]
-async fn cancel_matrix() {
+async fn cancel_and_retry_respect_owner_and_approval() {
+    let case = "cancel";
     let (state, _db, dispatch) = setup().await;
     ask(&state, TRUSTED, MBID_A).await;
     ask(&state, BOB, MBID_A).await;
     let uri = format!("/api/v3/requests/active/{MBID_A}");
-    let (status, _) = call(&state, Method::DELETE, &uri, Some(ADA), None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
     let (_, detached) = call(&state, Method::DELETE, &uri, Some(BOB), None).await;
-    assert_eq!(detached["success"], true);
+    assert_eq!(detached["success"], true, "{case}");
     assert!(
         dispatch.take_cancels().is_empty(),
-        "a listener never stops the task"
+        "{case}: a listener never stops the task"
     );
     let (_, cancelled) = call(&state, Method::DELETE, &uri, Some(TRUSTED), None).await;
-    assert_eq!(cancelled["success"], true, "{cancelled}");
-    assert_eq!(dispatch.take_cancels(), vec![dispatch.task(1)]);
+    assert_eq!(cancelled["success"], true, "{case}: {cancelled}");
+    assert_eq!(dispatch.take_cancels(), vec![dispatch.task(1)], "{case}");
     let (_, history) = call(
         &state,
         Method::GET,
@@ -574,15 +588,16 @@ async fn cancel_matrix() {
         None,
     )
     .await;
-    assert_eq!(history["items"][0]["status"], "cancelled");
+    assert_eq!(history["items"][0]["status"], "cancelled", "{case}");
 
     // An admin stops someone else's download: stopping the task settles
     // the row, and the cancel answers success.
+    let case = "admin cancel";
     ask(&state, TRUSTED, MBID_B).await;
     let uri = format!("/api/v3/requests/active/{MBID_B}");
     let (_, stopped) = call(&state, Method::DELETE, &uri, Some(ADMIN), None).await;
-    assert_eq!(stopped["success"], true, "{stopped}");
-    assert_eq!(dispatch.take_cancels(), vec![dispatch.task(2)]);
+    assert_eq!(stopped["success"], true, "{case}: {stopped}");
+    assert_eq!(dispatch.take_cancels(), vec![dispatch.task(2)], "{case}");
     let (_, history) = call(
         &state,
         Method::GET,
@@ -597,15 +612,13 @@ async fn cancel_matrix() {
         .iter()
         .find(|item| item["musicbrainz_id"] == MBID_B)
         .expect("the stopped row");
-    assert_eq!(stopped["status"], "cancelled", "{history}");
-}
+    assert_eq!(stopped["status"], "cancelled", "{case}: {history}");
 
-// A requester's cancel that meets a download which has just failed stops it
-// for good: the automatic retry neither starts the album again nor moves the
-// request back. Retrying the stopped download by hand brings the request
-// back with it.
-#[tokio::test]
-async fn a_cancel_outlasts_the_automatic_retry() {
+    // A requester's cancel that meets a download which has just failed stops
+    // it for good: the automatic retry neither starts the album again nor
+    // moves the request back. Retrying the stopped download by hand brings
+    // the request back with it.
+    let case = "cancel outlasts the automatic retry";
     let (state, db, dispatch) = setup().await;
     ask(&state, TRUSTED, MBID_A).await;
     let first = dispatch.task(1);
@@ -622,7 +635,7 @@ async fn a_cancel_outlasts_the_automatic_retry() {
     .unwrap();
     let uri = format!("/api/v3/requests/active/{MBID_A}");
     let (_, cancelled) = call(&state, Method::DELETE, &uri, Some(TRUSTED), None).await;
-    assert_eq!(cancelled["success"], true, "{cancelled}");
+    assert_eq!(cancelled["success"], true, "{case}: {cancelled}");
 
     let journal = dispatch.dispatch.journal().clone();
     let worker = Arc::new(DownloadWorker::fixed(
@@ -634,11 +647,11 @@ async fn a_cancel_outlasts_the_automatic_retry() {
     ));
     worker.run_once(1).await;
     let row = state.store.get(RequestKind::Album, MBID_A).await.unwrap();
-    assert_eq!(row.unwrap().status.as_str(), "cancelled");
+    assert_eq!(row.unwrap().status.as_str(), "cancelled", "{case}");
     assert_eq!(
         dispatch.ids(),
         std::slice::from_ref(&first),
-        "nothing starts again"
+        "{case}: nothing starts again"
     );
 
     let source = journal.read_task(&first).await.unwrap().unwrap();
@@ -648,29 +661,46 @@ async fn a_cancel_outlasts_the_automatic_retry() {
         .expect("a hand retry starts");
     let row = state.store.get(RequestKind::Album, MBID_A).await.unwrap();
     let row = row.unwrap();
-    assert_eq!(row.status.as_str(), "downloading");
-    assert_eq!(row.task_id.as_deref(), Some(successor.as_str()));
-}
+    assert_eq!(row.status.as_str(), "downloading", "{case}");
+    assert_eq!(row.task_id.as_deref(), Some(successor.as_str()), "{case}");
 
-// The request-count quota counts durable rows, so a restart does not reset
-// it, and the refusal writes nothing.
-#[tokio::test]
-async fn request_quota_survives_a_restart() {
-    let (_, db, dispatch) = setup().await;
-    let limited = QuotaPolicy {
-        request_count: 1,
-        ..QuotaPolicy::default()
-    };
-    let state = rebuilt(&db, limited.clone(), &dispatch);
-    assert_eq!(ask(&state, ADA, MBID_A).await.0, StatusCode::ACCEPTED);
+    // A retry dispatches only with approval provenance; otherwise it queues.
+    let case = "retry provenance";
+    let (state, _db, dispatch) = setup().await;
+    ask(&state, TRUSTED, MBID_A).await;
+    ask(&state, ADA, MBID_B).await;
+    call(
+        &state,
+        Method::POST,
+        &format!("/api/v3/requests/approvals/{MBID_B}/reject"),
+        Some(ADMIN),
+        None,
+    )
+    .await;
+    dispatch.fail(&dispatch.task(1)).await;
+    dispatch.take_calls().await;
 
-    let state = rebuilt(&db, limited, &dispatch);
-    let (status, body) = ask(&state, ADA, MBID_B).await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(body["error"]["code"], "QUOTA_EXCEEDED");
-    assert_eq!(body["error"]["details"]["used"], 1);
-    // Curators are exempt.
-    assert_eq!(ask(&state, TRUSTED, MBID_B).await.0, StatusCode::ACCEPTED);
+    let (_, retried) = call(
+        &state,
+        Method::POST,
+        &format!("/api/v3/requests/retry/{MBID_A}"),
+        Some(TRUSTED),
+        None,
+    )
+    .await;
+    assert_eq!(retried["success"], true, "{case}: {retried}");
+    assert_eq!(dispatch.take_calls().await.len(), 1, "{case}");
+    // A rejected row is not retryable at all.
+    let (_, rejected) = call(
+        &state,
+        Method::POST,
+        &format!("/api/v3/requests/retry/{MBID_B}"),
+        Some(ADA),
+        None,
+    )
+    .await;
+    assert_eq!(rejected["success"], false, "{case}");
+    assert!(dispatch.take_calls().await.is_empty(), "{case}");
 }
 
 /// A settings store in `dir` whose download policy was copied in from a
@@ -692,11 +722,40 @@ pub(crate) fn unreadable_policy_store(dir: &std::path::Path) -> ConfigStore {
     store
 }
 
-// A download policy that does not read is never "unlimited": a request
-// answers 500 and leaves no request or task behind. Saving the policy again
-// brings the quota back without a restart.
+// Quotas count durable rows and never read as unlimited: the request count
+// survives a restart and its refusal writes nothing, a download policy that
+// does not read refuses until saved, and the library cap reads the library.
 #[tokio::test]
-async fn an_unreadable_download_policy_refuses_requests_until_saved() {
+async fn quotas_count_durable_rows_and_never_read_as_unlimited() {
+    let case = "restart";
+    let (_, db, dispatch) = setup().await;
+    let limited = QuotaPolicy {
+        request_count: 1,
+        ..QuotaPolicy::default()
+    };
+    let state = rebuilt(&db, limited.clone(), &dispatch);
+    assert_eq!(
+        ask(&state, ADA, MBID_A).await.0,
+        StatusCode::ACCEPTED,
+        "{case}"
+    );
+
+    let state = rebuilt(&db, limited, &dispatch);
+    let (status, body) = ask(&state, ADA, MBID_B).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{case}");
+    assert_eq!(body["error"]["code"], "QUOTA_EXCEEDED", "{case}");
+    assert_eq!(body["error"]["details"]["used"], 1, "{case}");
+    // Curators are exempt.
+    assert_eq!(
+        ask(&state, TRUSTED, MBID_B).await.0,
+        StatusCode::ACCEPTED,
+        "{case}"
+    );
+
+    // A download policy that does not read is never "unlimited": a request
+    // answers 500 and leaves no request or task behind. Saving the policy
+    // again brings the quota back without a restart.
+    let case = "unreadable policy";
     let (_, db, dispatch) = setup().await;
     let dir = db
         .path()
@@ -708,7 +767,7 @@ async fn an_unreadable_download_policy_refuses_requests_until_saved() {
     let state = RequestsState::new(&db, quota, dispatch.dispatch.clone());
 
     let (status, _) = ask(&state, ADA, MBID_A).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{case}");
     let (_, history) = call(
         &state,
         Method::GET,
@@ -717,8 +776,8 @@ async fn an_unreadable_download_policy_refuses_requests_until_saved() {
         None,
     )
     .await;
-    assert_eq!(history["items"], json!([]));
-    assert!(dispatch.take_calls().await.is_empty());
+    assert_eq!(history["items"], json!([]), "{case}");
+    assert!(dispatch.take_calls().await.is_empty(), "{case}");
 
     store
         .save_blocking(DownloadPolicy {
@@ -726,16 +785,19 @@ async fn an_unreadable_download_policy_refuses_requests_until_saved() {
             ..DownloadPolicy::default()
         })
         .expect("policy saves");
-    assert_eq!(ask(&state, ADA, MBID_A).await.0, StatusCode::ACCEPTED);
+    assert_eq!(
+        ask(&state, ADA, MBID_A).await.0,
+        StatusCode::ACCEPTED,
+        "{case}"
+    );
     assert_eq!(
         ask(&state, ADA, MBID_B).await.0,
-        StatusCode::TOO_MANY_REQUESTS
+        StatusCode::TOO_MANY_REQUESTS,
+        "{case}"
     );
-}
 
-// The library cap reads the real library size.
-#[tokio::test]
-async fn library_cap_reads_the_library() {
+    // The library cap reads the real library size.
+    let case = "library cap";
     let (_, db, dispatch) = setup().await;
     db.write("test.seed_library", |tx| {
         tx.execute_batch(
@@ -764,63 +826,25 @@ async fn library_cap_reads_the_library() {
         &dispatch,
     );
     let (status, body) = ask(&state, ADMIN, MBID_A).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(body["error"]["code"], "STORAGE_FULL");
+    assert_eq!(status, StatusCode::FORBIDDEN, "{case}");
+    assert_eq!(body["error"]["code"], "STORAGE_FULL", "{case}");
 }
 
-// A retry dispatches only with approval provenance; otherwise it queues.
+// A watch stops and resumes, a fulfilled one refuses to stop, the retrying
+// rows come from the auto-retry schedule, removing a watch takes its seen
+// candidates with it, and clearing takes only the caller's finished watches.
+// Another user's stop and remove answer 404 in the ownership table.
 #[tokio::test]
-async fn retry_keeps_approval_provenance() {
-    let (state, _db, dispatch) = setup().await;
-    ask(&state, TRUSTED, MBID_A).await;
-    ask(&state, ADA, MBID_B).await;
-    call(
-        &state,
-        Method::POST,
-        &format!("/api/v3/requests/approvals/{MBID_B}/reject"),
-        Some(ADMIN),
-        None,
-    )
-    .await;
-    dispatch.fail(&dispatch.task(1)).await;
-    dispatch.take_calls().await;
+async fn wanted_watches_stop_resume_remove_and_clear() {
+    const MBID_D: &str = "44444444-4444-4444-8444-444444444444";
+    const MBID_E: &str = "55555555-5555-4555-8555-555555555555";
 
-    let (_, retried) = call(
-        &state,
-        Method::POST,
-        &format!("/api/v3/requests/retry/{MBID_A}"),
-        Some(TRUSTED),
-        None,
-    )
-    .await;
-    assert_eq!(retried["success"], true, "{retried}");
-    assert_eq!(dispatch.take_calls().await.len(), 1);
-    // A rejected row is not retryable at all.
-    let (_, rejected) = call(
-        &state,
-        Method::POST,
-        &format!("/api/v3/requests/retry/{MBID_B}"),
-        Some(ADA),
-        None,
-    )
-    .await;
-    assert_eq!(rejected["success"], false);
-    assert!(dispatch.take_calls().await.is_empty());
-}
-
-// Wanted actions check ownership; a fulfilled watch refuses; the retrying
-// rows come from the auto-retry schedule.
-#[tokio::test]
-async fn wanted_view_and_actions() {
+    let case = "stop and resume";
     let (state, _db, dispatch) = setup().await;
     state.wanted.enrol(watch(MBID_A, "u-ada")).await.unwrap();
     let stop = format!("/api/v3/requests/wanted/{MBID_A}/stop");
-    assert_eq!(
-        call(&state, Method::POST, &stop, Some(BOB), None).await.0,
-        StatusCode::NOT_FOUND
-    );
     let (_, stopped) = call(&state, Method::POST, &stop, Some(ADA), None).await;
-    assert_eq!(stopped["state"], "stopped");
+    assert_eq!(stopped["state"], "stopped", "{case}");
     let (_, resumed) = call(
         &state,
         Method::POST,
@@ -829,7 +853,7 @@ async fn wanted_view_and_actions() {
         None,
     )
     .await;
-    assert_eq!(resumed["state"], "watching");
+    assert_eq!(resumed["state"], "watching", "{case}");
     state
         .store
         .settle_in_library(MBID_A, WatchOutcome::InLibrary, 1_700_000_100)
@@ -837,9 +861,11 @@ async fn wanted_view_and_actions() {
         .unwrap();
     assert_eq!(
         call(&state, Method::POST, &stop, Some(ADA), None).await.0,
-        StatusCode::BAD_REQUEST
+        StatusCode::BAD_REQUEST,
+        "{case}: a fulfilled watch refuses"
     );
 
+    let case = "retrying";
     ask(&state, TRUSTED, MBID_B).await;
     dispatch.fail(&dispatch.task(1)).await;
     let (_, wanted) = call(
@@ -851,18 +877,14 @@ async fn wanted_view_and_actions() {
     )
     .await;
     // The default policy retries a failed download six times; none spent.
-    assert_eq!(wanted["retrying"][0]["musicbrainz_id"], MBID_B);
-    assert_eq!(wanted["retrying"][0]["retry_count"], 0);
-    assert_eq!(wanted["retrying"][0]["max_attempts"], 6);
-}
+    assert_eq!(wanted["retrying"][0]["musicbrainz_id"], MBID_B, "{case}");
+    assert_eq!(wanted["retrying"][0]["retry_count"], 0, "{case}");
+    assert_eq!(wanted["retrying"][0]["max_attempts"], 6, "{case}");
 
-// Auto-download approvals: single approve, then a batch reject.
-// Removing a watch takes its seen candidates with it, and an active one goes
-// in one step. Clearing takes only the finished watches the caller can see.
-#[tokio::test]
-async fn wanted_watches_can_be_removed_and_cleared() {
-    const MBID_D: &str = "44444444-4444-4444-8444-444444444444";
-    const MBID_E: &str = "55555555-5555-4555-8555-555555555555";
+    // Removing a watch takes its seen candidates with it, and an active one
+    // goes in one step. Clearing takes only the finished watches the caller
+    // can see.
+    let case = "remove and clear";
     let (state, _db, _dispatch) = setup().await;
     state.wanted.enrol(watch(MBID_A, "u-ada")).await.unwrap();
     state
@@ -871,22 +893,20 @@ async fn wanted_watches_can_be_removed_and_cleared() {
         .await
         .unwrap();
     let remove = format!("/api/v3/requests/wanted/{MBID_A}");
-    assert_eq!(
-        call(&state, Method::DELETE, &remove, Some(BOB), None)
-            .await
-            .0,
-        StatusCode::NOT_FOUND
-    );
     let (status, removed) = call(&state, Method::DELETE, &remove, Some(ADA), None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(removed["removed"], 1);
-    assert!(state.wanted.get(MBID_A).await.unwrap().is_none());
-    assert!(state.wanted.seen(MBID_A).await.unwrap().is_empty());
+    assert_eq!(status, StatusCode::OK, "{case}");
+    assert_eq!(removed["removed"], 1, "{case}");
+    assert!(state.wanted.get(MBID_A).await.unwrap().is_none(), "{case}");
+    assert!(
+        state.wanted.seen(MBID_A).await.unwrap().is_empty(),
+        "{case}"
+    );
     assert_eq!(
         call(&state, Method::DELETE, &remove, Some(ADA), None)
             .await
             .0,
-        StatusCode::NOT_FOUND
+        StatusCode::NOT_FOUND,
+        "{case}"
     );
 
     for (key, user) in [
@@ -908,7 +928,10 @@ async fn wanted_watches_can_be_removed_and_cleared() {
         .unwrap();
     let clear = "/api/v3/requests/wanted/clear-finished";
     let (_, cleared) = call(&state, Method::POST, clear, Some(ADA), None).await;
-    assert_eq!(cleared["removed"], 2, "stopped and fulfilled, own only");
+    assert_eq!(
+        cleared["removed"], 2,
+        "{case}: stopped and fulfilled, own only"
+    );
     let (_, left) = call(
         &state,
         Method::GET,
@@ -917,9 +940,16 @@ async fn wanted_watches_can_be_removed_and_cleared() {
         None,
     )
     .await;
-    assert_eq!(keys(&left), vec![MBID_D.to_owned(), MBID_E.to_owned()]);
+    assert_eq!(
+        keys(&left),
+        vec![MBID_D.to_owned(), MBID_E.to_owned()],
+        "{case}"
+    );
     let (_, cleared) = call(&state, Method::POST, clear, Some(ADMIN), None).await;
-    assert_eq!(cleared["removed"], 1, "an admin's covers everyone's");
+    assert_eq!(
+        cleared["removed"], 1,
+        "{case}: an admin's covers everyone's"
+    );
     let (_, left) = call(
         &state,
         Method::GET,
@@ -928,11 +958,17 @@ async fn wanted_watches_can_be_removed_and_cleared() {
         None,
     )
     .await;
-    assert_eq!(keys(&left), vec![MBID_D.to_owned()], "active stays");
+    assert_eq!(keys(&left), vec![MBID_D.to_owned()], "{case}: active stays");
 }
 
+// Standing grants: an auto-download ask waits for an admin (a single
+// approve and a batch reject), the weekly mix grant builds and refreshes and
+// follows the role, and a curator's pending mix ask is neither listed nor
+// kept.
 #[tokio::test]
-async fn auto_download_approvals() {
+async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
+    // Auto-download approvals: single approve, then a batch reject.
+    let case = "auto-download";
     let (state, _db, _dispatch) = setup().await;
     ask_auto_download(&state, ADA, ARTIST).await;
     let imported = state
@@ -951,7 +987,11 @@ async fn auto_download_approvals() {
         )
         .await
         .unwrap();
-    assert_eq!(imported.approval_batch_id.as_deref(), Some("batch-1"));
+    assert_eq!(
+        imported.approval_batch_id.as_deref(),
+        Some("batch-1"),
+        "{case}"
+    );
     let (_, count) = call(
         &state,
         Method::GET,
@@ -960,24 +1000,32 @@ async fn auto_download_approvals() {
         None,
     )
     .await;
-    assert_eq!(count["count"], 2, "one single plus one batch");
+    assert_eq!(count["count"], 2, "{case}: one single plus one batch");
     let approve = format!("/api/v3/requests/auto-download-approvals/u-ada/{ARTIST}/approve");
     assert_eq!(
         call(&state, Method::POST, &approve, Some(ADA), None)
             .await
             .0,
-        StatusCode::FORBIDDEN
+        StatusCode::FORBIDDEN,
+        "{case}"
     );
     let (_, approved) = call(&state, Method::POST, &approve, Some(ADMIN), None).await;
-    assert_eq!(approved["success"], true);
+    assert_eq!(approved["success"], true, "{case}");
     let status = state.follows.status("u-ada", ARTIST).await.unwrap();
-    assert!(status.auto_download, "the verdict arms the follow with it");
+    assert!(
+        status.auto_download,
+        "{case}: the verdict arms the follow with it"
+    );
     assert_eq!(
         serde_json::to_value(status.auto_download_state).unwrap(),
-        "approved"
+        "approved",
+        "{case}"
     );
     let (_, again) = call(&state, Method::POST, &approve, Some(ADMIN), None).await;
-    assert_eq!(again["success"], false, "only a pending row decides");
+    assert_eq!(
+        again["success"], false,
+        "{case}: only a pending row decides"
+    );
     let (_, rejected) = call(
         &state,
         Method::POST,
@@ -986,23 +1034,211 @@ async fn auto_download_approvals() {
         None,
     )
     .await;
-    assert_eq!(rejected["message"], "Auto-download rejected for 2 artists");
+    assert_eq!(
+        rejected["message"], "Auto-download rejected for 2 artists",
+        "{case}"
+    );
     let status = state.follows.status("u-bob", MBID_A).await.unwrap();
     assert!(
         status.followed && !status.auto_download,
-        "a rejected batch keeps the follow and clears its intent"
+        "{case}: a rejected batch keeps the follow and clears its intent"
     );
 
     // A grant stays listed for an admin until it is revoked.
     let list = "/api/v3/requests/auto-download-approvals";
     let (_, listed) = call(&state, Method::GET, list, Some(ADMIN), None).await;
-    assert_eq!(listed["granted"][0]["artist_mbid"], ARTIST, "{listed}");
-    assert_eq!(listed["count"], 0, "a grant is not a pending ask");
+    assert_eq!(
+        listed["granted"][0]["artist_mbid"], ARTIST,
+        "{case}: {listed}"
+    );
+    assert_eq!(listed["count"], 0, "{case}: a grant is not a pending ask");
     let revoke = format!("/api/v3/requests/auto-download-approvals/u-ada/{ARTIST}/revoke");
     let (_, revoked) = call(&state, Method::POST, &revoke, Some(ADMIN), None).await;
-    assert_eq!(revoked["success"], true);
+    assert_eq!(revoked["success"], true, "{case}");
     let (_, listed) = call(&state, Method::GET, list, Some(ADMIN), None).await;
-    assert_eq!(listed["granted"], json!([]), "{listed}");
+    assert_eq!(listed["granted"], json!([]), "{case}: {listed}");
+
+    // The weekly mix journey: the toggle queues an approval, the admin
+    // grants it, a build writes the playlist and requests the missing albums
+    // without a per-request approval wait, a reject turns the toggle off, and
+    // the refresh route needs a ListenBrainz link.
+    let case = "weekly mix";
+    let (mut state, db, dispatch) = setup().await;
+    let prefs = ListeningStore::new(
+        db.db().clone(),
+        Arc::new(droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]).unwrap()),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    let playlists = PlaylistStore::new(CollectionsDb::new(db.db().clone(), db.clock().clone()));
+    let builder = Arc::new(PersonalMixBuilder::new(
+        Arc::new(FakeMix),
+        prefs.clone(),
+        playlists.clone(),
+        state.clone(),
+        EventHub::new(),
+    ));
+    state.mixer = Some(builder.clone());
+    let hooks = MixGrantHooks::new(state.mixer.clone());
+
+    prefs
+        .update_prefs(
+            "u-ada",
+            &PrefsPatch {
+                auto_request_personal_mix: Some(true),
+                ..PrefsPatch::default()
+            },
+        )
+        .await
+        .unwrap();
+    hooks.on_toggle("u-ada", Role::User, true).await;
+    assert_eq!(
+        hooks.state("u-ada", Role::User, true).await,
+        "pending",
+        "{case}"
+    );
+    let approve = "/api/v3/requests/personal-mix-approvals/u-ada/approve";
+    assert_eq!(
+        call(&state, Method::POST, approve, Some(ADMIN), None)
+            .await
+            .1["success"],
+        true,
+        "{case}"
+    );
+    assert_eq!(
+        hooks.state("u-ada", Role::User, true).await,
+        "approved",
+        "{case}"
+    );
+
+    let built = builder.build_for_user("u-ada", false).await.unwrap();
+    assert_eq!(
+        (built.track_count, built.requested_albums, built.skipped),
+        (2, 2, None),
+        "{case}"
+    );
+    let playlist = built.playlist_id.expect("mix playlist");
+    assert_eq!(
+        playlists
+            .owned_by("u-ada")
+            .tracks(&playlist)
+            .await
+            .unwrap()
+            .len(),
+        2,
+        "{case}"
+    );
+    assert_eq!(
+        dispatch.take_calls().await.len(),
+        2,
+        "{case}: granted asks dispatch straight away"
+    );
+    let again = builder.build_for_user("u-ada", false).await.unwrap();
+    assert_eq!(again.skipped, Some(SkipReason::Fresh), "{case}");
+
+    // A trusted user holds the grant by role, so the toggle files no approval
+    // row and the build requests straight away. Demoted to user, the grant is
+    // gone and the build requests nothing.
+    let toggle = PrefsPatch {
+        auto_request_personal_mix: Some(true),
+        ..PrefsPatch::default()
+    };
+    prefs.update_prefs("u-tris", &toggle).await.unwrap();
+    hooks.on_toggle("u-tris", Role::Trusted, true).await;
+    assert_eq!(
+        hooks.state("u-tris", Role::Trusted, true).await,
+        "approved",
+        "{case}"
+    );
+    let trusted = builder.build_for_user("u-tris", false).await.unwrap();
+    assert_eq!(
+        trusted.requested_albums, 2,
+        "{case}: trusted asks need no approval row"
+    );
+
+    db.write("test.demote_tris", |tx| {
+        tx.execute(
+            "UPDATE auth_users SET role = 'user' WHERE id = 'u-tris'",
+            rusqlite::params![],
+        )?;
+        Ok(())
+    })
+    .await
+    .expect("demotion");
+    assert_eq!(
+        hooks.state("u-tris", Role::User, true).await,
+        "none",
+        "{case}"
+    );
+    let demoted = builder.build_for_user("u-tris", true).await.unwrap();
+    assert_eq!(
+        demoted.requested_albums, 0,
+        "{case}: a demotion drops the grant"
+    );
+
+    let list = "/api/v3/requests/personal-mix-approvals";
+    let (_, listed) = call(&state, Method::GET, list, Some(ADMIN), None).await;
+    assert_eq!(listed["granted"][0]["user_id"], "u-ada", "{case}: {listed}");
+    let revoke = "/api/v3/requests/personal-mix-approvals/u-ada/revoke";
+    assert_eq!(
+        call(&state, Method::POST, revoke, Some(ADMIN), None)
+            .await
+            .1["success"],
+        true,
+        "{case}"
+    );
+    let (_, listed) = call(&state, Method::GET, list, Some(ADMIN), None).await;
+    assert_eq!(listed["granted"], json!([]), "{case}: {listed}");
+    assert!(
+        !prefs.prefs("u-ada").await.auto_request_personal_mix,
+        "{case}: revoke turns the toggle off"
+    );
+
+    let refresh = "/api/v3/requests/personal-mix/refresh";
+    assert_eq!(
+        call(&state, Method::POST, refresh, Some(ADA), None).await.1["status"],
+        "started",
+        "{case}"
+    );
+    assert_eq!(
+        call(&state, Method::POST, refresh, Some(BOB), None).await.0,
+        StatusCode::BAD_REQUEST,
+        "{case}: no ListenBrainz link"
+    );
+
+    // An admin's or a trusted user's Weekly Mix grant never waits for review:
+    // a pending ask of theirs (filed before their role changed, or brought
+    // over from v2) is not in the admin's list, and startup removes it.
+    let case = "curator's pending mix ask";
+    let (state, _db, _) = setup().await;
+    state
+        .mixes
+        .file_pending("u-tris", 1_700_000_000)
+        .await
+        .unwrap();
+    state
+        .mixes
+        .file_pending("u-ada", 1_700_000_001)
+        .await
+        .unwrap();
+
+    let uri = "/api/v3/requests/personal-mix-approvals";
+    let (_, listed) = call(&state, Method::GET, uri, Some(ADMIN), None).await;
+    let users: Vec<&str> = listed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["user_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(users, ["u-ada"], "{case}");
+
+    let report = RequestsService::new(&state).recover().await.unwrap();
+    assert_eq!(report.mix_asks_cleared, 1, "{case}");
+    assert_eq!(state.mixes.state("u-tris").await.unwrap(), None, "{case}");
+    assert_eq!(
+        state.mixes.state("u-ada").await.unwrap(),
+        Some(droppedneedle_acquire::requests::ledger::ApprovalState::Pending),
+        "{case}"
+    );
 }
 
 /// ListenBrainz stand-in: one weekly-jams playlist with two tracks on two
@@ -1086,141 +1322,19 @@ impl MixSources for FakeMix {
     }
 }
 
-// The weekly mix journey: the toggle queues an approval, the admin grants
-// it, a build writes the playlist and requests the missing albums without
-// a per-request approval wait, a reject turns the toggle off, and the
-// refresh route needs a ListenBrainz link.
+// History pages; a user hides a row from their own view while an admin
+// deletes it, and `status=reimportable` lists only the failed requests whose
+// download kept its files, and only for an admin.
 #[tokio::test]
-async fn personal_mix_grant_build_and_refresh() {
-    let (mut state, db, dispatch) = setup().await;
-    let prefs = ListeningStore::new(
-        db.db().clone(),
-        Arc::new(droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]).unwrap()),
-        Arc::new(droppedneedle_kernel::clock::SystemClock),
-    );
-    let playlists = PlaylistStore::new(CollectionsDb::new(db.db().clone(), db.clock().clone()));
-    let builder = Arc::new(PersonalMixBuilder::new(
-        Arc::new(FakeMix),
-        prefs.clone(),
-        playlists.clone(),
-        state.clone(),
-        EventHub::new(),
-    ));
-    state.mixer = Some(builder.clone());
-    let hooks = MixGrantHooks::new(state.mixer.clone());
-
-    prefs
-        .update_prefs(
-            "u-ada",
-            &PrefsPatch {
-                auto_request_personal_mix: Some(true),
-                ..PrefsPatch::default()
-            },
-        )
-        .await
-        .unwrap();
-    hooks.on_toggle("u-ada", Role::User, true).await;
-    assert_eq!(hooks.state("u-ada", Role::User, true).await, "pending");
-    let approve = "/api/v3/requests/personal-mix-approvals/u-ada/approve";
-    assert_eq!(
-        call(&state, Method::POST, approve, Some(ADMIN), None)
-            .await
-            .1["success"],
-        true
-    );
-    assert_eq!(hooks.state("u-ada", Role::User, true).await, "approved");
-
-    let built = builder.build_for_user("u-ada", false).await.unwrap();
-    assert_eq!(
-        (built.track_count, built.requested_albums, built.skipped),
-        (2, 2, None)
-    );
-    let playlist = built.playlist_id.expect("mix playlist");
-    assert_eq!(
-        playlists
-            .owned_by("u-ada")
-            .tracks(&playlist)
-            .await
-            .unwrap()
-            .len(),
-        2
-    );
-    assert_eq!(
-        dispatch.take_calls().await.len(),
-        2,
-        "granted asks dispatch straight away"
-    );
-    let again = builder.build_for_user("u-ada", false).await.unwrap();
-    assert_eq!(again.skipped, Some(SkipReason::Fresh));
-
-    // A trusted user holds the grant by role, so the toggle files no approval
-    // row and the build requests straight away. Demoted to user, the grant is
-    // gone and the build requests nothing.
-    let toggle = PrefsPatch {
-        auto_request_personal_mix: Some(true),
-        ..PrefsPatch::default()
-    };
-    prefs.update_prefs("u-tris", &toggle).await.unwrap();
-    hooks.on_toggle("u-tris", Role::Trusted, true).await;
-    assert_eq!(hooks.state("u-tris", Role::Trusted, true).await, "approved");
-    let trusted = builder.build_for_user("u-tris", false).await.unwrap();
-    assert_eq!(
-        trusted.requested_albums, 2,
-        "trusted asks need no approval row"
-    );
-
-    db.write("test.demote_tris", |tx| {
-        tx.execute(
-            "UPDATE auth_users SET role = 'user' WHERE id = 'u-tris'",
-            rusqlite::params![],
-        )?;
-        Ok(())
-    })
-    .await
-    .expect("demotion");
-    assert_eq!(hooks.state("u-tris", Role::User, true).await, "none");
-    let demoted = builder.build_for_user("u-tris", true).await.unwrap();
-    assert_eq!(demoted.requested_albums, 0, "a demotion drops the grant");
-
-    let list = "/api/v3/requests/personal-mix-approvals";
-    let (_, listed) = call(&state, Method::GET, list, Some(ADMIN), None).await;
-    assert_eq!(listed["granted"][0]["user_id"], "u-ada", "{listed}");
-    let revoke = "/api/v3/requests/personal-mix-approvals/u-ada/revoke";
-    assert_eq!(
-        call(&state, Method::POST, revoke, Some(ADMIN), None)
-            .await
-            .1["success"],
-        true
-    );
-    let (_, listed) = call(&state, Method::GET, list, Some(ADMIN), None).await;
-    assert_eq!(listed["granted"], json!([]), "{listed}");
-    assert!(
-        !prefs.prefs("u-ada").await.auto_request_personal_mix,
-        "revoke turns the toggle off"
-    );
-
-    let refresh = "/api/v3/requests/personal-mix/refresh";
-    assert_eq!(
-        call(&state, Method::POST, refresh, Some(ADA), None).await.1["status"],
-        "started"
-    );
-    assert_eq!(
-        call(&state, Method::POST, refresh, Some(BOB), None).await.0,
-        StatusCode::BAD_REQUEST,
-        "no ListenBrainz link"
-    );
-}
-
-// History pages; a user hides a row from their own view, an admin deletes.
-#[tokio::test]
-async fn history_pages_and_clears() {
+async fn history_pages_hides_and_lists_reimportable() {
+    let case = "pages and clears";
     let (state, _db, dispatch) = setup().await;
     for mbid in [MBID_A, MBID_B, MBID_C] {
         ask(&state, TRUSTED, mbid).await;
     }
     ask(&state, BOB, MBID_A).await;
     let tasks = dispatch.take_calls().await;
-    assert_eq!(tasks.len(), 3);
+    assert_eq!(tasks.len(), 3, "{case}");
     for task in &tasks {
         dispatch.land(&task.id).await;
     }
@@ -1232,22 +1346,24 @@ async fn history_pages_and_clears() {
         None,
     )
     .await;
-    assert_eq!(page["total"], 3);
-    assert_eq!(page["total_pages"], 2);
-    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(page["total"], 3, "{case}");
+    assert_eq!(page["total_pages"], 2, "{case}");
+    assert_eq!(page["items"].as_array().unwrap().len(), 1, "{case}");
 
     let clear = format!("/api/v3/requests/history/{MBID_A}");
     assert_eq!(
         call(&state, Method::DELETE, &clear, Some(ADA), None)
             .await
             .0,
-        StatusCode::NOT_FOUND
+        StatusCode::NOT_FOUND,
+        "{case}"
     );
     assert_eq!(
         call(&state, Method::DELETE, &clear, Some(BOB), None)
             .await
             .1["success"],
-        true
+        true,
+        "{case}"
     );
     let (_, bobs) = call(
         &state,
@@ -1257,7 +1373,7 @@ async fn history_pages_and_clears() {
         None,
     )
     .await;
-    assert_eq!(bobs["total"], 0, "hidden from Bob only");
+    assert_eq!(bobs["total"], 0, "{case}: hidden from Bob only");
     let (_, owners) = call(
         &state,
         Method::GET,
@@ -1266,7 +1382,7 @@ async fn history_pages_and_clears() {
         None,
     )
     .await;
-    assert_eq!(owners["total"], 3);
+    assert_eq!(owners["total"], 3, "{case}");
     call(&state, Method::DELETE, &clear, Some(ADMIN), None).await;
     let (_, owners) = call(
         &state,
@@ -1276,13 +1392,9 @@ async fn history_pages_and_clears() {
         None,
     )
     .await;
-    assert_eq!(owners["total"], 2);
-}
+    assert_eq!(owners["total"], 2, "{case}");
 
-// `status=reimportable` lists only the failed requests whose download kept
-// its files, and only for an admin.
-#[tokio::test]
-async fn history_filters_reimportable_for_admins() {
+    let case = "reimportable";
     let (state, _db, dispatch) = setup().await;
     for mbid in [MBID_A, MBID_B] {
         ask(&state, TRUSTED, mbid).await;
@@ -1312,42 +1424,13 @@ async fn history_filters_reimportable_for_admins() {
 
     let uri = "/api/v3/requests/history?status=reimportable";
     let (status, body) = call(&state, Method::GET, uri, Some(ADMIN), None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["total"], 1, "{body}");
-    assert_eq!(body["items"][0]["musicbrainz_id"], MBID_A);
-    assert_eq!(body["items"][0]["can_reimport"], true);
+    assert_eq!(status, StatusCode::OK, "{case}: {body}");
+    assert_eq!(body["total"], 1, "{case}: {body}");
+    assert_eq!(body["items"][0]["musicbrainz_id"], MBID_A, "{case}");
+    assert_eq!(body["items"][0]["can_reimport"], true, "{case}");
 
     let (status, body) = call(&state, Method::GET, uri, Some(TRUSTED), None).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-}
-
-// Missing principal is 401, a user on an admin queue is 403, a bad body is
-// a 400 envelope.
-#[tokio::test]
-async fn auth_and_envelope_posture() {
-    let (state, _db, _dispatch) = setup().await;
-    let (status, body) = call(&state, Method::GET, "/api/v3/requests/active", None, None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert_eq!(body["error"]["code"], "UNAUTHORIZED");
-    let (status, _) = call(
-        &state,
-        Method::GET,
-        "/api/v3/requests/approvals",
-        Some(ADA),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    let (status, body) = call(
-        &state,
-        Method::POST,
-        "/api/v3/requests/albums",
-        Some(ADA),
-        Some(json!({"musicbrainz_id": "not-an-mbid", "artist": "A", "album": "B"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["error"]["message"], "Invalid MBID format");
+    assert_eq!(status, StatusCode::FORBIDDEN, "{case}: {body}");
 }
 
 // Startup recovery finishes an interrupted cancel and dispatches an
@@ -1725,11 +1808,15 @@ async fn edition_setup() -> (RequestsState, AcquireDb, Downloads) {
     (state, db, dispatch)
 }
 
-// With two copies and no chosen release, a fetch with no album named joins
-// the copy the album page shows, on its release: here the newer copy, the
-// only one with files. A shown copy that names no release gives no edition.
+// Which copy and release an edition fetch joins: the copy the album page
+// shows, a copy a person picked, and with no plan the copy asked about.
 #[tokio::test]
-async fn a_fetch_follows_the_copy_the_album_page_shows() {
+async fn a_fetch_joins_the_copy_the_album_page_shows() {
+    // With two copies and no chosen release, a fetch with no album named
+    // joins the copy the album page shows, on its release: here the newer
+    // copy, the only one with files. A shown copy that names no release
+    // gives no edition.
+    let case = "shown copy";
     let (state, db, dispatch) = setup().await;
     seed_edition_album(&db).await;
     let group = MBID_A.to_owned();
@@ -1754,22 +1841,23 @@ async fn a_fetch_follows_the_copy_the_album_page_shows() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(page.title, "Shown");
+    assert_eq!(page.title, "Shown", "{case}");
     let edition = droppedneedle_acquire::edition::chosen_edition(db.db(), &group)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(edition.release_mbid, "rel-shown");
+    assert_eq!(edition.release_mbid, "rel-shown", "{case}");
     let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::OK, "{case}: {body}");
     let planned = dispatch.take_calls().await[0]
         .planned_album
         .clone()
         .expect("a planned copy");
     assert_eq!(
         (planned.album_id.as_str(), planned.release_mbid.as_str()),
-        ("al1", "rel-shown")
+        ("al1", "rel-shown"),
+        "{case}"
     );
 
     db.write("test.unmanaged", |tx| {
@@ -1786,14 +1874,12 @@ async fn a_fetch_follows_the_copy_the_album_page_shows() {
             .await
             .unwrap(),
         None,
-        "another copy's release does not stand in"
+        "{case}: another copy's release does not stand in"
     );
-}
 
-// Two copies with files: the newer one a person picked is the one the album
-// page shows and a fetch joins.
-#[tokio::test]
-async fn a_fetch_and_the_album_page_agree_on_a_picked_copy() {
+    // Two copies with files: the newer one a person picked is the one the
+    // album page shows and a fetch joins.
+    let case = "picked copy";
     let (state, db, dispatch) = setup().await;
     seed_edition_album(&db).await;
     let group = MBID_A.to_owned();
@@ -1825,15 +1911,53 @@ async fn a_fetch_and_the_album_page_agree_on_a_picked_copy() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(page.title, "Picked");
+    assert_eq!(page.title, "Picked", "{case}");
     let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::OK, "{case}: {body}");
     let planned = dispatch.take_calls().await[0]
         .planned_album
         .clone()
         .expect("a planned copy");
-    assert_eq!(planned.album_id, "al1");
+    assert_eq!(planned.album_id, "al1", "{case}");
+
+    // With no plan, "Get missing tracks" fetches the whole album for the copy
+    // asked about, on the release its identity names.
+    let case = "no plan";
+    let (mut state, db, dispatch) = setup().await;
+    let seed = format!(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
+           VALUES ('ar1', 'A', 'a', 'person', 0, 0);
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+           album_artist_id, grouping_source, created_at, updated_at)
+           VALUES ('al1', 'r1', 'g', 'T', 't', 'ar1', 'automatic', 0, 0);
+         UPDATE local_albums SET album_artist_name = 'A' WHERE id = 'al1';
+         INSERT INTO local_album_external_identities (local_album_id, provider,
+           release_group_mbid, release_mbid, decision_source, selected_at)
+           VALUES ('al1', 'musicbrainz', '{MBID_A}', 'rel-x', 'automatic', 0);"
+    );
+    db.write("test.seed_library", move |tx| {
+        tx.execute_batch(&seed)?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    state.edition_plans = Some(Arc::new(NoPlan));
+    let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire?album_id=al1");
+    let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
+    assert_eq!(status, StatusCode::OK, "{case}: {body}");
+    let calls = dispatch.take_calls().await;
+    assert_eq!(calls.len(), 1, "{case}: {body}");
+    assert_eq!(calls[0].release_mbid.as_deref(), Some("rel-x"), "{case}");
+    assert_eq!(
+        calls[0].planned_album,
+        Some(PlannedAlbum {
+            album_id: "al1".into(),
+            release_mbid: "rel-x".into(),
+            replace: Vec::new(),
+        }),
+        "{case}"
+    );
 }
 
 // "Get missing tracks" sends one album download on the chosen edition for
@@ -1960,45 +2084,6 @@ impl droppedneedle_library::edition::port::EditionPlans for NoPlan {
             )
         })
     }
-}
-
-// With no plan, "Get missing tracks" fetches the whole album for the copy
-// asked about, on the release its identity names.
-#[tokio::test]
-async fn edition_acquire_without_a_plan_fetches_for_the_named_copy() {
-    let (mut state, db, dispatch) = setup().await;
-    let seed = format!(
-        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
-           VALUES ('ar1', 'A', 'a', 'person', 0, 0);
-         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
-           album_artist_id, grouping_source, created_at, updated_at)
-           VALUES ('al1', 'r1', 'g', 'T', 't', 'ar1', 'automatic', 0, 0);
-         UPDATE local_albums SET album_artist_name = 'A' WHERE id = 'al1';
-         INSERT INTO local_album_external_identities (local_album_id, provider,
-           release_group_mbid, release_mbid, decision_source, selected_at)
-           VALUES ('al1', 'musicbrainz', '{MBID_A}', 'rel-x', 'automatic', 0);"
-    );
-    db.write("test.seed_library", move |tx| {
-        tx.execute_batch(&seed)?;
-        Ok(())
-    })
-    .await
-    .unwrap();
-    state.edition_plans = Some(Arc::new(NoPlan));
-    let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire?album_id=al1");
-    let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let calls = dispatch.take_calls().await;
-    assert_eq!(calls.len(), 1, "{body}");
-    assert_eq!(calls[0].release_mbid.as_deref(), Some("rel-x"));
-    assert_eq!(
-        calls[0].planned_album,
-        Some(PlannedAlbum {
-            album_id: "al1".into(),
-            release_mbid: "rel-x".into(),
-            replace: Vec::new(),
-        })
-    );
 }
 
 // With no download source set up, "Get missing tracks" is held like any
@@ -2357,42 +2442,6 @@ async fn a_request_that_asks_to_follow_follows_the_artist() {
     assert!(
         follow.followed && follow.auto_download,
         "a trusted ask arms itself"
-    );
-}
-
-// An admin's or a trusted user's Weekly Mix grant never waits for review: a
-// pending ask of theirs (filed before their role changed, or brought over
-// from v2) is not in the admin's list, and startup removes it.
-#[tokio::test]
-async fn a_curators_pending_mix_ask_is_neither_listed_nor_kept() {
-    let (state, _db, _) = setup().await;
-    state
-        .mixes
-        .file_pending("u-tris", 1_700_000_000)
-        .await
-        .unwrap();
-    state
-        .mixes
-        .file_pending("u-ada", 1_700_000_001)
-        .await
-        .unwrap();
-
-    let uri = "/api/v3/requests/personal-mix-approvals";
-    let (_, listed) = call(&state, Method::GET, uri, Some(ADMIN), None).await;
-    let users: Vec<&str> = listed["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|item| item["user_id"].as_str().unwrap())
-        .collect();
-    assert_eq!(users, ["u-ada"]);
-
-    let report = RequestsService::new(&state).recover().await.unwrap();
-    assert_eq!(report.mix_asks_cleared, 1);
-    assert_eq!(state.mixes.state("u-tris").await.unwrap(), None);
-    assert_eq!(
-        state.mixes.state("u-ada").await.unwrap(),
-        Some(droppedneedle_acquire::requests::ledger::ApprovalState::Pending)
     );
 }
 

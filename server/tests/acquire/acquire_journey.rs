@@ -1,5 +1,6 @@
-//! Acquire journeys through the whole app: request, approve, land; follow
-//! toggle, approval, armed follow; a request held until a source is added.
+//! Acquire journeys through the whole app: request, approve, land, then
+//! follow toggle, approval, armed follow; a request held until a source is
+//! added.
 //! The app starts with no download client, so the worker holds the queue
 //! and the first journey simulates landing through the journal.
 
@@ -28,16 +29,20 @@ fn journal_tasks(db_path: &Path) -> Vec<(String, String)> {
 }
 
 // ---------------------------------------------------------------------------
-// Journey 1: user requests an album → admin approves → download lands.
-// The scan picks the files up later: the journey asserts the staged state
-// (journal row completed, ask imported), not the library.
+// Journey 1, on one app: a user requests an album, an admin approves, the
+// download lands. The scan picks the files up later: the journey asserts the
+// staged state (journal row completed, ask imported), not the library. Then
+// the follow toggle, the approval queue and the armed follow: the
+// collections legs and the requests mutations share one approval store
+// through the wiring bridges.
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn acquire_request_approve_land() {
+async fn acquire_request_and_follow_approvals() {
     let app = TestApp::start("request").await;
     let admin = app.login_admin().await;
-    let molly = app.login_user("Molly").await.authorization;
+    let molly = app.login_user("Molly").await;
+    let (molly, molly_id) = (molly.authorization, molly.user_id);
     let db_path = app.config.library_db_path.clone();
     let (status, body) = app
         .call(
@@ -124,21 +129,6 @@ async fn acquire_request_approve_land() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["status"], "imported");
     assert_eq!(items[0]["task_id"], Value::String(task_id.clone()));
-    app.stop().await;
-}
-
-// ---------------------------------------------------------------------------
-// Journey 2: follow toggle → approval queue → armed follow. The collections
-// legs and the requests mutations share one approval store through the
-// wiring bridges.
-// ---------------------------------------------------------------------------
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn acquire_follow_approval_arms_auto_download() {
-    let app = TestApp::start("follow").await;
-    let admin = app.login_admin().await;
-    let molly = app.login_user("molly").await;
-    let (molly, molly_id) = (molly.authorization, molly.user_id);
 
     // Molly follows, then asks for auto-download (pending for a plain user).
     let (status, body) = app
@@ -225,7 +215,7 @@ async fn acquire_follow_approval_arms_auto_download() {
 }
 
 // ---------------------------------------------------------------------------
-// Journey 3: no download source → the request is accepted and says it is
+// Journey 2: no download source → the request is accepted and says it is
 // waiting → the admin saves the slskd connection → the request starts.
 // ---------------------------------------------------------------------------
 

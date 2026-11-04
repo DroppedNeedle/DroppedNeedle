@@ -1,7 +1,6 @@
 //! Playback reporting on the playback store over a migrated database: the
-//! start, progress and stop lifecycle, the scrobble threshold rules, dedup
-//! across duplicate and mixed reports, presence visibility, the session
-//! gate, hidden faults, and the MBID warmup loop cadence. Only the outside
+//! start, progress and stop lifecycle, dedup across duplicate and mixed
+//! reports, presence visibility, and hidden faults. Only the outside
 //! services (the now-playing sinks and the media servers) are doubles; a
 //! counted play's scrobbles are read as the jobs written with it. Journeys
 //! run the whole app on its own database: what a play from each kind of
@@ -23,14 +22,10 @@ use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_kernel::clock::{Clock, ManualClock};
 use droppedneedle_media::remotes::models::SourceName;
-use droppedneedle_media::remotes::warmup::{self, WarmupStats};
 use playback::PlaybackDeps;
 use playback::ports::{RemoteReport, RemoteReporters, ReportTrack, ScrobbleSinks, ScrobbleTargets};
 use playback::presence::{PresenceRegistry, presence_key};
 use playback::report::{MixedDedup, ScrobbleDedup, submit_session_scrobble};
-use playback::rules::{
-    meets_subsonic_threshold, should_scrobble_native, subsonic_scrobble_threshold_ms,
-};
 use playback::sessions::{SESSION_TTL_SECS, SessionKey, SessionStore};
 use playback::sqlite::PlaybackStore;
 use serde_json::{Value, json};
@@ -414,36 +409,86 @@ async fn snapshot(rig: &Rig, user: &str) -> Value {
 // Lifecycle
 // ---------------------------------------------------------------------------
 
+/// A web session's play is counted once, never lost or doubled:
+/// - start, progress and a stop past the threshold count it (one play, one
+///   scrobble, presence cleared, the session gone after its lifetime);
+/// - a stop below the threshold counts nothing but still clears presence;
+/// - a second stop of the same session counts nothing more;
+/// - a rewind after a stop opens a fresh session that counts again.
 #[tokio::test]
-async fn lifecycle_start_progress_stop_counts_the_play() {
-    let rig = rig();
-    let (status, body) = start(&rig, "user-1", "track-1", "local").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["accepted"], true);
-    assert_eq!(body["session"], "user-1:web:track-1");
+async fn a_web_session_counts_its_play_once() {
+    {
+        let rig = rig();
+        let (status, body) = start(&rig, "user-1", "track-1", "local").await;
+        assert_eq!(status, StatusCode::OK, "counted");
+        assert_eq!(body["accepted"], true, "counted");
+        assert_eq!(body["session"], "user-1:web:track-1", "counted");
 
-    let (status, _) = progress(&rig, "user-1", "track-1", Some(120_000), false).await;
-    assert_eq!(status, StatusCode::OK);
+        let (status, _) = progress(&rig, "user-1", "track-1", Some(120_000), false).await;
+        assert_eq!(status, StatusCode::OK, "counted");
 
-    let (status, body) = stop(&rig, "user-1", "track-1", "local", Some(230_000)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["accepted"], true);
-    assert_eq!(body["scrobbled"], true);
+        let (status, body) = stop(&rig, "user-1", "track-1", "local", Some(230_000)).await;
+        assert_eq!(status, StatusCode::OK, "counted");
+        assert_eq!(body["accepted"], true, "counted");
+        assert_eq!(body["scrobbled"], true, "counted");
 
-    assert_eq!(rig.plays(), 1);
-    assert_eq!(rig.scrobbles(), 1);
-    assert_eq!(rig.sinks.now_playing_calls(), 1);
-    assert_eq!(rig.remotes.calls(), 0);
-    assert_eq!(
-        snapshot(&rig, "user-1").await["sessions"]
-            .as_array()
-            .unwrap()
-            .len(),
-        0
-    );
-    assert_eq!(rig.deps.sessions.len(NOW), 1);
-    rig.clock.advance((SESSION_TTL_SECS + 1) * 1000);
-    assert_eq!(rig.deps.sessions.len(rig.clock.now_unix()), 0);
+        assert_eq!(rig.plays(), 1, "counted");
+        assert_eq!(rig.scrobbles(), 1, "counted");
+        assert_eq!(rig.sinks.now_playing_calls(), 1, "counted");
+        assert_eq!(rig.remotes.calls(), 0, "counted");
+        assert_eq!(
+            snapshot(&rig, "user-1").await["sessions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0,
+            "counted"
+        );
+        assert_eq!(rig.deps.sessions.len(NOW), 1, "counted");
+        rig.clock.advance((SESSION_TTL_SECS + 1) * 1000);
+        assert_eq!(
+            rig.deps.sessions.len(rig.clock.now_unix()),
+            0,
+            "counted: the session expires"
+        );
+    }
+    {
+        let rig = rig();
+        start(&rig, "user-1", "track-1", "local").await;
+        let (status, body) = stop(&rig, "user-1", "track-1", "local", Some(100_000)).await;
+        assert_eq!(status, StatusCode::OK, "below the threshold");
+        assert_eq!(body["scrobbled"], false, "below the threshold");
+        assert_eq!(rig.plays(), 0, "below the threshold");
+        assert_eq!(rig.scrobbles(), 0, "below the threshold");
+        assert_eq!(
+            snapshot(&rig, "user-1").await["sessions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0,
+            "below the threshold: presence clears"
+        );
+    }
+    {
+        let rig = rig();
+        start(&rig, "user-1", "track-1", "local").await;
+        let (_, first) = stop(&rig, "user-1", "track-1", "local", Some(230_000)).await;
+        assert_eq!(first["scrobbled"], true, "stopped twice");
+        let (_, second) = stop(&rig, "user-1", "track-1", "local", Some(235_000)).await;
+        assert_eq!(second["scrobbled"], false, "stopped twice");
+        assert_eq!(rig.plays(), 1, "stopped twice");
+    }
+    {
+        let rig = rig();
+        start(&rig, "user-1", "track-1", "local").await;
+        let (_, first) = stop(&rig, "user-1", "track-1", "local", Some(230_000)).await;
+        assert_eq!(first["scrobbled"], true, "rewound");
+        rig.clock.advance(300 * 1000);
+        progress(&rig, "user-1", "track-1", Some(10_000), false).await;
+        let (_, second) = stop(&rig, "user-1", "track-1", "local", Some(230_000)).await;
+        assert_eq!(second["scrobbled"], true, "rewound: the replay counts");
+        assert_eq!(rig.plays(), 2, "rewound");
+    }
 }
 
 /// A session that stops while another write holds the lane for two
@@ -480,170 +525,101 @@ async fn a_play_waits_out_a_held_lane_and_lands_once() {
     assert_eq!(rig.scrobbles(), 1);
 }
 
-#[tokio::test]
-async fn stop_below_threshold_skips_but_clears_presence() {
-    let rig = rig();
-    start(&rig, "user-1", "track-1", "local").await;
-    let (status, body) = stop(&rig, "user-1", "track-1", "local", Some(100_000)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["scrobbled"], false);
-
-    assert_eq!(rig.plays(), 0);
-    assert_eq!(rig.scrobbles(), 0);
-    assert_eq!(
-        snapshot(&rig, "user-1").await["sessions"]
-            .as_array()
-            .unwrap()
-            .len(),
-        0
-    );
-}
-
-#[tokio::test]
-async fn stop_counts_once_per_session() {
-    let rig = rig();
-    start(&rig, "user-1", "track-1", "local").await;
-    let (_, first) = stop(&rig, "user-1", "track-1", "local", Some(230_000)).await;
-    assert_eq!(first["scrobbled"], true);
-    let (_, second) = stop(&rig, "user-1", "track-1", "local", Some(235_000)).await;
-    assert_eq!(second["scrobbled"], false);
-    assert_eq!(rig.plays(), 1);
-}
-
-#[tokio::test]
-async fn restart_after_rewind_opens_a_fresh_session() {
-    // A stopped session that rewinds restarts fresh, so
-    // replaying the track counts again.
-    let rig = rig();
-    start(&rig, "user-1", "track-1", "local").await;
-    let (_, first) = stop(&rig, "user-1", "track-1", "local", Some(230_000)).await;
-    assert_eq!(first["scrobbled"], true);
-    rig.clock.advance(300 * 1000);
-    progress(&rig, "user-1", "track-1", Some(10_000), false).await;
-    let (_, second) = stop(&rig, "user-1", "track-1", "local", Some(230_000)).await;
-    assert_eq!(second["scrobbled"], true);
-    assert_eq!(rig.plays(), 2);
-}
-
-// ---------------------------------------------------------------------------
-// Threshold rules
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn scrobble_threshold_rules() {
-    // Native rule: the Jellyfin stop rule, exact.
-    assert!(should_scrobble_native(None, Some(200_000)));
-    assert!(should_scrobble_native(None, None));
-    assert!(should_scrobble_native(Some(181_000), Some(200_000)));
-    assert!(!should_scrobble_native(Some(180_000), Some(200_000)));
-    // Exactly 90% still counts inside the last second (the within-1s
-    // clause firing where the percent clause does not).
-    assert!(should_scrobble_native(Some(9_000), Some(10_000)));
-    assert!(!should_scrobble_native(Some(8_999), Some(10_000)));
-    assert!(!should_scrobble_native(Some(100_000), Some(200_000)));
-    assert!(!should_scrobble_native(Some(100_000), None));
-    assert!(!should_scrobble_native(Some(100_000), Some(0)));
-
-    // Subsonic rule: half the track capped at four minutes, four minutes
-    // flat for unknown durations.
-    assert_eq!(subsonic_scrobble_threshold_ms(600_000), 240_000);
-    assert_eq!(subsonic_scrobble_threshold_ms(200_000), 100_000);
-    assert_eq!(subsonic_scrobble_threshold_ms(0), 240_000);
-    assert!(meets_subsonic_threshold(100_000, 200_000));
-    assert!(!meets_subsonic_threshold(99_999, 200_000));
-}
-
 // ---------------------------------------------------------------------------
 // Native submit
 // ---------------------------------------------------------------------------
 
+/// A play counts once and forwards once:
+/// - a repeated submit counts one play and one scrobble;
+/// - a live report repeated through the mixed-report cache counts once,
+///   while a backdated play with a distinct time counts again;
+/// - with Navidrome handling outside scrobbles, the play is recorded and
+///   nothing is forwarded a second time.
 #[tokio::test]
-async fn duplicate_submits_dedup() {
-    let rig = rig();
-    let body = json!({
-        "track_name": "Roads",
-        "artist_name": "Portishead",
-        "timestamp": NOW,
-        "album_name": "Dummy",
-        "duration_ms": 240_000,
-    });
-    for _ in 0..2 {
+async fn submits_count_once_and_forward_once() {
+    {
+        let rig = rig();
+        let body = json!({
+            "track_name": "Roads",
+            "artist_name": "Portishead",
+            "timestamp": NOW,
+            "album_name": "Dummy",
+            "duration_ms": 240_000,
+        });
+        for _ in 0..2 {
+            let (status, answer, _) = call(
+                app(&rig, Some("user-1")),
+                "POST",
+                "/api/v3/scrobble/submit",
+                Some(body.clone()),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "repeated submit");
+            assert_eq!(answer["accepted"], true, "repeated submit");
+        }
+        assert_eq!(rig.plays(), 1, "repeated submit");
+        assert_eq!(rig.scrobbles(), 1, "repeated submit");
+    }
+    {
+        let rig = rig();
+        let track = rig
+            .deps
+            .store
+            .get_track("track-1")
+            .expect("the track is in the catalog");
+        let key = SessionKey {
+            user_id: "user-1".to_owned(),
+            client: "web".to_owned(),
+            track_id: track.track_id.clone(),
+        };
+        let presence = presence_key("user-1", "web");
+        let first = submit_session_scrobble(
+            &rig.deps, "user-1", &key, &presence, &track, None, None, NOW,
+        );
+        assert!(first.accepted, "mixed report");
+        let second = submit_session_scrobble(
+            &rig.deps, "user-1", &key, &presence, &track, None, None, NOW,
+        );
+        assert!(second.accepted, "mixed report");
+        assert!(second.services.is_empty(), "mixed report");
+        assert_eq!(rig.plays(), 1, "mixed report");
+
+        // Backdated plays bypass the mixed cache; a distinct play
+        // time counts again.
+        let third = submit_session_scrobble(
+            &rig.deps,
+            "user-1",
+            &key,
+            &presence,
+            &track,
+            None,
+            Some(NOW - 100),
+            NOW,
+        );
+        assert!(third.accepted, "backdated");
+        assert_eq!(rig.plays(), 2, "backdated");
+    }
+    {
+        let rig = rig();
+        rig.set_scrobble("user-1", true, true, true);
         let (status, answer, _) = call(
             app(&rig, Some("user-1")),
             "POST",
             "/api/v3/scrobble/submit",
-            Some(body.clone()),
+            Some(json!({
+                "track_name": "Roads",
+                "artist_name": "Portishead",
+                "timestamp": NOW,
+                "duration_ms": 240_000,
+                "source": "Navidrome",
+            })),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(answer["accepted"], true);
+        assert_eq!(status, StatusCode::OK, "navidrome delegation");
+        assert_eq!(answer["accepted"], true, "navidrome delegation");
+        assert_eq!(rig.plays(), 1, "navidrome delegation");
+        assert_eq!(rig.scrobbles(), 0, "navidrome delegation");
     }
-    assert_eq!(rig.plays(), 1);
-    assert_eq!(rig.scrobbles(), 1);
-}
-
-#[tokio::test]
-async fn navidrome_delegation_skips_forwarding_but_records() {
-    let rig = rig();
-    rig.set_scrobble("user-1", true, true, true);
-    let (status, answer, _) = call(
-        app(&rig, Some("user-1")),
-        "POST",
-        "/api/v3/scrobble/submit",
-        Some(json!({
-            "track_name": "Roads",
-            "artist_name": "Portishead",
-            "timestamp": NOW,
-            "duration_ms": 240_000,
-            "source": "Navidrome",
-        })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(answer["accepted"], true);
-    assert_eq!(rig.plays(), 1);
-    assert_eq!(rig.scrobbles(), 0);
-}
-
-#[tokio::test]
-async fn mixed_report_dedup_counts_live_once() {
-    let rig = rig();
-    let track = rig
-        .deps
-        .store
-        .get_track("track-1")
-        .expect("the track is in the catalog");
-    let key = SessionKey {
-        user_id: "user-1".to_owned(),
-        client: "web".to_owned(),
-        track_id: track.track_id.clone(),
-    };
-    let presence = presence_key("user-1", "web");
-    let first = submit_session_scrobble(
-        &rig.deps, "user-1", &key, &presence, &track, None, None, NOW,
-    );
-    assert!(first.accepted);
-    let second = submit_session_scrobble(
-        &rig.deps, "user-1", &key, &presence, &track, None, None, NOW,
-    );
-    assert!(second.accepted);
-    assert!(second.services.is_empty());
-    assert_eq!(rig.plays(), 1);
-
-    // Backdated plays bypass the mixed cache; a distinct play
-    // time counts again.
-    let third = submit_session_scrobble(
-        &rig.deps,
-        "user-1",
-        &key,
-        &presence,
-        &track,
-        None,
-        Some(NOW - 100),
-        NOW,
-    );
-    assert!(third.accepted);
-    assert_eq!(rig.plays(), 2);
 }
 
 /// A live play whose save fails is not remembered as seen: the client's
@@ -694,180 +670,57 @@ async fn a_live_play_whose_save_failed_is_kept_on_retry() {
 // Presence
 // ---------------------------------------------------------------------------
 
+/// A listener's visibility holds in every now-playing list: in the native
+/// feed a `track_hidden` listener (or one whose visibility does not read)
+/// is redacted and an offline one is left out, and the Subsonic list
+/// serves only full sessions, so a `track_hidden` listener stays out of it.
 #[tokio::test]
 async fn presence_visibility_redacts_and_omits() {
-    let rig = rig();
-    rig.set_visibility("user-hidden", "track_hidden");
-    rig.set_visibility("user-offline", "offline");
-    rig.break_visibility("user-broken");
-    for user in ["user-hidden", "user-offline", "user-broken"] {
-        let (status, _, _) = call(
-            app(&rig, Some(user)),
-            "POST",
-            "/api/v3/now-playing",
-            Some(json!({
-                "track_name": "Roads",
-                "artist_name": "Portishead",
-                "progress_ms": 10_000,
-            })),
-        )
-        .await;
-        assert_eq!(status, StatusCode::NO_CONTENT);
-    }
-    let body = snapshot(&rig, "user-1").await;
-    let sessions = body["sessions"].as_array().unwrap();
-    assert_eq!(sessions.len(), 2);
-    for entry in sessions {
-        assert_eq!(entry["track_name"], "");
-        assert_eq!(entry["artist_name"], "");
-        assert_eq!(entry["redacted"], true);
-        assert_eq!(entry["progress_ms"], 10_000);
-    }
-    assert!(
-        sessions
-            .iter()
-            .all(|entry| entry["id"] != "user-offline:web")
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Remote attribution, errors, auth
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn reporting_requires_session() {
-    let rig = rig();
-    let (status, body, headers) = call(app(&rig, None), "GET", "/api/v3/now-playing", None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert_eq!(error_code(&body), "UNAUTHORIZED");
-    assert_eq!(
-        headers
-            .get(axum::http::header::WWW_AUTHENTICATE)
-            .and_then(|value| value.to_str().ok()),
-        Some("Bearer")
-    );
-    let (status, body, _) = call(
-        app(&rig, None),
-        "POST",
-        "/api/v3/playback/start",
-        Some(json!({"track_id": "track-1"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert_eq!(error_code(&body), "UNAUTHORIZED");
-}
-
-// ---------------------------------------------------------------------------
-// Warmup loops (paused time on the loop supervisor)
-// ---------------------------------------------------------------------------
-
-/// Each source waits its startup delay, warms, and warms again every four
-/// hours, give or take the jitter.
-#[tokio::test(start_paused = true)]
-async fn warmup_loops_use_honest_cadences() {
-    use droppedneedle_kernel::jobs::{CancellationToken, Supervisor};
-    use tokio::time::Instant;
-
-    let scratch = crate::common::ScratchDir::new("warmup");
-    let path = scratch.join("app.db");
-    crate::common::migrated_db(&path);
-    let supervisor = Supervisor::start(
-        droppedneedle_kernel::db::Db::open_for_tests(&path).expect("database opens"),
-        Arc::new(droppedneedle_kernel::clock::SystemClock),
-        CancellationToken::new(),
-    )
-    .await
-    .expect("supervisor starts");
-    for (source, delay) in [
-        (SourceName::Jellyfin, Duration::from_secs(8)),
-        (SourceName::Navidrome, Duration::from_secs(12)),
-        (SourceName::Plex, Duration::from_secs(15)),
-    ] {
-        let passes: Arc<Mutex<Vec<Instant>>> = Arc::default();
-        let started = Instant::now();
-        let work_passes = passes.clone();
-        warmup::start(&supervisor, source, move || {
-            let passes = work_passes.clone();
-            async move {
-                passes.lock().expect("lock").push(Instant::now());
-                Ok::<_, String>(WarmupStats {
-                    source,
-                    warmed: 2,
-                    pruned: 1,
-                })
-            }
-        })
-        .expect("warmup starts");
-        // Row writes run on blocking threads while the paused clock jumps,
-        // so the bound is wall-clock time.
-        let bound = std::time::Instant::now() + Duration::from_secs(30);
-        while passes.lock().expect("lock").len() < 2 {
-            assert!(std::time::Instant::now() < bound, "{source:?} warms");
-            tokio::time::sleep(Duration::from_secs(60)).await;
+    {
+        let rig = rig();
+        rig.set_visibility("user-hidden", "track_hidden");
+        rig.set_visibility("user-offline", "offline");
+        rig.break_visibility("user-broken");
+        for user in ["user-hidden", "user-offline", "user-broken"] {
+            let (status, _, _) = call(
+                app(&rig, Some(user)),
+                "POST",
+                "/api/v3/now-playing",
+                Some(json!({
+                    "track_name": "Roads",
+                    "artist_name": "Portishead",
+                    "progress_ms": 10_000,
+                })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::NO_CONTENT, "native: {user}");
         }
-        let at = passes.lock().expect("lock").clone();
-        let first = at[0].duration_since(started);
+        let body = snapshot(&rig, "user-1").await;
+        let sessions = body["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 2, "native: {body}");
+        for entry in sessions {
+            assert_eq!(entry["track_name"], "", "native: {entry}");
+            assert_eq!(entry["artist_name"], "", "native: {entry}");
+            assert_eq!(entry["redacted"], true, "native: {entry}");
+            assert_eq!(entry["progress_ms"], 10_000, "native: {entry}");
+        }
         assert!(
-            first >= delay && first < delay + Duration::from_secs(1),
-            "{source:?} first pass after {first:?}"
-        );
-        let gap = at[1].duration_since(at[0]);
-        assert!(
-            gap >= warmup::WARMUP_INTERVAL
-                && gap <= warmup::WARMUP_INTERVAL + warmup::WARMUP_JITTER + Duration::from_secs(1),
-            "{source:?} rebuilds after {gap:?}"
+            sessions
+                .iter()
+                .all(|entry| entry["id"] != "user-offline:web"),
+            "native: the offline listener is left out"
         );
     }
-    supervisor.shutdown(Duration::from_secs(5)).await;
-}
-
-/// `track_hidden` users stay out of the Subsonic now-playing list.
-#[tokio::test]
-async fn compat_now_playing_serves_full_sessions_only() {
-    let rig = rig();
-    rig.set_visibility("user-hidden", "track_hidden");
-    start(&rig, "user-1", "track-1", "local").await;
-    start(&rig, "user-hidden", "track-1", "local").await;
-
-    let served = rig.deps.presence.compat_now_playing();
-    assert_eq!(served.len(), 1);
-    assert_eq!(served[0].1, "track-1");
-    assert_eq!(served[0].0.track_name, "Roads");
-}
-
-/// A Subsonic app's playback report shows under the app with the position
-/// it reported, and with a cover: the matched release group's, else the
-/// album's own art from the library.
-#[tokio::test]
-async fn subsonic_report_shows_position_and_cover() {
-    let rig = rig();
-    let compat = droppedneedle_compat::playback::CompatPlayback::new(rig.deps.clone());
-    let entry = || {
-        let sessions = rig.deps.presence.snapshot();
-        assert_eq!(sessions.len(), 1, "{sessions:?}");
-        sessions[0].clone()
-    };
-
-    assert!(compat.report_playback("track-1", "user-1", "Symfonium", "starting", 0, false));
-    let started = entry();
-    assert_eq!(started.source, "symfonium");
-    assert_eq!(started.progress_ms, None);
-    assert_eq!(started.cover_url, "/api/v3/covers/release-group/rg-mbid-1");
-
-    rig.sql()
-        .execute(
-            "DELETE FROM local_album_external_identities WHERE local_album_id = 'album-1'",
-            [],
-        )
-        .expect("the album is unmatched");
-    assert!(compat.report_playback("track-1", "user-1", "Symfonium", "paused", 61_000, false));
-    let paused = entry();
-    assert_eq!(paused.progress_ms, Some(61_000));
-    assert!(paused.is_paused);
-    assert_eq!(
-        paused.cover_url,
-        "/api/v3/library/albums/album-1/artwork?size=500"
-    );
+    {
+        let rig = rig();
+        rig.set_visibility("user-hidden", "track_hidden");
+        start(&rig, "user-1", "track-1", "local").await;
+        start(&rig, "user-hidden", "track-1", "local").await;
+        let served = rig.deps.presence.compat_now_playing();
+        assert_eq!(served.len(), 1, "subsonic");
+        assert_eq!(served[0].1, "track-1", "subsonic");
+        assert_eq!(served[0].0.track_name, "Roads", "subsonic");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1666,8 +1519,9 @@ async fn jellyfin_titles(rig: &CompatApp, query: &str, auth: &[(&str, &str)]) ->
 
 /// A play from a Subsonic app, a Jellyfin app and the web player is each
 /// filed under the track, its album and its artist, for the listener
-/// alone. An app's now-playing entry carries the cover the web player's
-/// entry carries.
+/// alone, and player apps see the web play in its track's play count and
+/// the recent albums. An app's now-playing entry carries the cover the web
+/// player's entry carries.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn plays_from_every_player_are_filed_under_the_track() {
     const GROUP: &str = "744c0a9e-5a4e-3b0e-8f0f-6a1f1b2c3d4e";
@@ -1804,6 +1658,42 @@ async fn plays_from_every_player_are_filed_under_the_track() {
     assert_eq!(unplayed.len(), 3, "{unplayed:?}");
     assert!(!unplayed.iter().any(|title| played.contains(title)));
 
+    // Player apps see the web session's play by the track's library ids:
+    // its play count, and its album among the recently played ones.
+    let (status, song) = app
+        .call(
+            "GET",
+            &rest(&format!("getSong?id=tr-{}", teardrop.0), &subsonic),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{song}");
+    assert_eq!(song["subsonic-response"]["song"]["playCount"], 1, "{song}");
+    let (status, recent) = app
+        .call(
+            "GET",
+            &rest("getAlbumList2?type=recent", &subsonic),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{recent}");
+    let mut albums: Vec<&str> = recent["subsonic-response"]["albumList2"]["album"]
+        .as_array()
+        .expect("albums")
+        .iter()
+        .map(|album| album["id"].as_str().expect("id"))
+        .collect();
+    albums.sort_unstable();
+    let mut played_albums: Vec<String> = [&one, &airbag, &teardrop]
+        .iter()
+        .map(|ids| format!("al-{}", ids.1))
+        .collect();
+    played_albums.sort();
+    played_albums.dedup();
+    assert_eq!(albums, played_albums, "{recent}");
+
     // Another user has none of these plays.
     let bob = app.login_user("bob").await;
     let (status, created) = app
@@ -1845,95 +1735,6 @@ async fn plays_from_every_player_are_filed_under_the_track() {
     let song = &song["subsonic-response"]["song"];
     assert_eq!(song["title"], "One", "{song}");
     assert!(song.get("playCount").is_none(), "{song}");
-
-    rig.stop().await;
-}
-
-/// A web player session on a library track (start, progress, stop) is
-/// counted once and player apps see it by the track's library ids: the
-/// track's play count and the recently played albums.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_web_session_counts_in_player_apps() {
-    let rig = CompatApp::start("playback-session").await;
-    let app = &rig.app;
-    let subsonic = rig.subsonic_auth("symfonium");
-    let (status, signed_in) = app
-        .call(
-            "POST",
-            "/api/v3/auth/login",
-            &[],
-            Some(json!({
-                "username": PLAYER,
-                "password": format!("{PLAYER}-password-1234"),
-                "transport": "bearer",
-            })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{signed_in}");
-    let web_value = format!("Bearer {}", signed_in["token"].as_str().expect("token"));
-    let web = [("authorization", web_value.as_str())];
-    let alice: String = app
-        .db()
-        .query_row(
-            "SELECT id FROM auth_users WHERE username = ?1",
-            [PLAYER],
-            |row| row.get(0),
-        )
-        .expect("the player's id");
-    let one = catalog_ids(app, "One");
-
-    for (uri, body) in [
-        (
-            "/api/v3/playback/start",
-            json!({"track_id": one.0, "source": "local", "device": "web"}),
-        ),
-        (
-            "/api/v3/playback/progress",
-            json!({"track_id": one.0, "source": "local", "device": "web",
-                   "position_ms": 1_000, "is_paused": false}),
-        ),
-        (
-            "/api/v3/playback/stop",
-            json!({"track_id": one.0, "source": "local", "device": "web",
-                   "position_ms": 3_600_000}),
-        ),
-    ] {
-        let (status, answer) = app.call("POST", uri, &web, Some(body)).await;
-        assert_eq!(status, StatusCode::OK, "{uri}: {answer}");
-    }
-    let plays = app
-        .until("the session's play is in history", || async {
-            Some(filed_under(app, &alice, "One")).filter(|plays| !plays.is_empty())
-        })
-        .await;
-    assert_eq!(plays, vec![one.clone()]);
-
-    let (status, song) = app
-        .call(
-            "GET",
-            &rest(&format!("getSong?id=tr-{}", one.0), &subsonic),
-            &[],
-            None,
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{song}");
-    assert_eq!(song["subsonic-response"]["song"]["playCount"], 1, "{song}");
-    let (status, recent) = app
-        .call(
-            "GET",
-            &rest("getAlbumList2?type=recent", &subsonic),
-            &[],
-            None,
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{recent}");
-    let albums: Vec<&str> = recent["subsonic-response"]["albumList2"]["album"]
-        .as_array()
-        .expect("albums")
-        .iter()
-        .map(|album| album["id"].as_str().expect("id"))
-        .collect();
-    assert_eq!(albums, [format!("al-{}", one.1)], "{recent}");
 
     rig.stop().await;
 }
@@ -2938,116 +2739,132 @@ fn present_at(rig: &Rig, at: i64) -> bool {
     !rig.deps.presence.snapshot().is_empty()
 }
 
-/// A Subsonic app reports a start, then only pauses, resumes and seeks:
-/// no heartbeat. Last.fm and ListenBrainz hear about each track once, never
-/// about a pause, again after a repeat-one or a stop; and the listener stays
-/// "now playing" for the rest of the track plus the usual 45 s, a pause for
-/// 45 s only, without another report.
+/// One now-playing rule for each reporter: Last.fm and ListenBrainz hear
+/// about each track once, and presence keeps its lifetime without another
+/// report.
+/// - A Subsonic app reports a start, then only pauses, resumes and seeks:
+///   no heartbeat. The services hear about each track once, never about a
+///   pause, again after a repeat-one or a stop; and the listener stays "now
+///   playing" for the rest of the track plus the usual 45 s, a pause for
+///   45 s only.
+/// - A first report that is a pause tells nobody; the classic Subsonic
+///   now-playing call (`scrobble?submission=false`) shares the
+///   once-per-track rule with `reportPlayback`.
+/// - Jellyfin apps report progress every few seconds: their presence keeps
+///   the 45 s lifetime, and every start is still forwarded.
 #[test]
-fn a_subsonic_track_is_forwarded_once_and_present_until_it_ends() {
-    use droppedneedle_compat::playback::CompatPlayback;
-    let rig = rig();
-    rig.sql().execute_batch(SECOND_TRACK).expect("second track");
-    let playback = CompatPlayback::new(rig.deps.clone());
-    let report = |state: &str, position_ms: i64| {
-        assert!(playback.report_playback("track-1", "user-1", "xarif", state, position_ms, true));
-    };
-
-    report("starting", 0);
-    assert_eq!(rig.sinks.now_playing_calls(), 1, "the start is forwarded");
-    rig.clock.advance(30_000);
-    report("playing", 30_000);
-    rig.clock.advance(30_000);
-    report("playing", 120_000); // a seek
-    assert_eq!(rig.sinks.now_playing_calls(), 1, "same track: not again");
-    rig.clock.advance(10_000);
-    report("paused", 130_000);
-    assert_eq!(
-        rig.sinks.now_playing_calls(),
-        1,
-        "a pause is never forwarded"
-    );
-    assert!(present_at(&rig, NOW + 70 + 45), "a pause holds 45 s");
-    assert!(!present_at(&rig, NOW + 70 + 46), "and no longer");
-    rig.clock.advance(20_000);
-    report("playing", 130_000); // resume at NOW + 90
-    assert_eq!(rig.sinks.now_playing_calls(), 1, "a short pause: not again");
-    // 110 s of the 240 s left, plus 45 s
-    assert!(present_at(&rig, NOW + 90 + 110 - 1), "present to the end");
-    assert!(present_at(&rig, NOW + 90 + 110 + 45), "and 45 s past it");
-    assert!(!present_at(&rig, NOW + 90 + 110 + 46), "then gone");
-
-    rig.clock.set((NOW + 300) * 1000);
-    report("starting", 0); // repeat one, past the track's length
-    assert_eq!(rig.sinks.now_playing_calls(), 2, "a repeat is forwarded");
-    assert!(
-        present_at(&rig, NOW + 300 + 239),
-        "a start holds the whole track"
-    );
-    assert!(
-        playback.report_playback("track-2", "user-1", "xarif", "starting", 0, true),
-        "next track"
-    );
-    assert_eq!(
-        rig.sinks.now_playing_calls(),
-        3,
-        "a track change is forwarded"
-    );
-    report("starting", 0); // back to track 1 at once
-    assert_eq!(rig.sinks.now_playing_calls(), 4, "so is the change back");
-    report("stopped", 10_000);
-    assert!(
-        rig.deps.presence.snapshot().is_empty(),
-        "stopped clears presence"
-    );
-    report("starting", 0);
-    assert_eq!(
-        rig.sinks.now_playing_calls(),
-        5,
-        "a start after a stop is forwarded"
-    );
-}
-
-/// A first report that is a pause tells nobody; the classic Subsonic
-/// now-playing call (`scrobble?submission=false`) shares the once-per-track
-/// rule with `reportPlayback`.
-#[test]
-fn a_paused_first_report_and_the_classic_now_playing_follow_the_same_rule() {
+fn compat_now_playing_forwards_once_and_expires() {
     use droppedneedle_compat::playback::{CompatPlayback, Reporter};
-    let rig = rig();
-    let playback = CompatPlayback::new(rig.deps.clone());
-    assert!(playback.report_playback("track-1", "user-1", "xarif", "paused", 5_000, true));
-    assert_eq!(rig.sinks.now_playing_calls(), 0);
-    assert!(
-        rig.deps.presence.snapshot().len() == 1,
-        "presence still shows the pause"
-    );
-    playback.now_playing(
-        Reporter::Subsonic,
-        "track-1",
-        "user-1",
-        Some("xarif"),
-        None,
-        false,
-    );
-    assert_eq!(rig.sinks.now_playing_calls(), 1);
-    assert!(playback.report_playback("track-1", "user-1", "xarif", "playing", 6_000, true));
-    playback.now_playing(
-        Reporter::Subsonic,
-        "track-1",
-        "user-1",
-        Some("xarif"),
-        None,
-        false,
-    );
-    assert_eq!(rig.sinks.now_playing_calls(), 1, "one track, one forward");
-}
+    {
+        let rig = rig();
+        rig.sql().execute_batch(SECOND_TRACK).expect("second track");
+        let playback = CompatPlayback::new(rig.deps.clone());
+        let report = |state: &str, position_ms: i64| {
+            assert!(playback.report_playback(
+                "track-1",
+                "user-1",
+                "xarif",
+                state,
+                position_ms,
+                true
+            ));
+        };
 
-/// Jellyfin apps report progress every few seconds: their presence keeps the
-/// 45 s lifetime, and every start is still forwarded.
-#[test]
-fn jellyfin_reports_keep_their_lifetime_and_every_start_forwards() {
-    use droppedneedle_compat::playback::{CompatPlayback, Reporter};
+        report("starting", 0);
+        assert_eq!(rig.sinks.now_playing_calls(), 1, "the start is forwarded");
+        rig.clock.advance(30_000);
+        report("playing", 30_000);
+        rig.clock.advance(30_000);
+        report("playing", 120_000); // a seek
+        assert_eq!(rig.sinks.now_playing_calls(), 1, "same track: not again");
+        rig.clock.advance(10_000);
+        report("paused", 130_000);
+        assert_eq!(
+            rig.sinks.now_playing_calls(),
+            1,
+            "a pause is never forwarded"
+        );
+        assert!(present_at(&rig, NOW + 70 + 45), "a pause holds 45 s");
+        assert!(!present_at(&rig, NOW + 70 + 46), "and no longer");
+        rig.clock.advance(20_000);
+        report("playing", 130_000); // resume at NOW + 90
+        assert_eq!(rig.sinks.now_playing_calls(), 1, "a short pause: not again");
+        // 110 s of the 240 s left, plus 45 s
+        assert!(present_at(&rig, NOW + 90 + 110 - 1), "present to the end");
+        assert!(present_at(&rig, NOW + 90 + 110 + 45), "and 45 s past it");
+        assert!(!present_at(&rig, NOW + 90 + 110 + 46), "then gone");
+
+        rig.clock.set((NOW + 300) * 1000);
+        report("starting", 0); // repeat one, past the track's length
+        assert_eq!(rig.sinks.now_playing_calls(), 2, "a repeat is forwarded");
+        assert!(
+            present_at(&rig, NOW + 300 + 239),
+            "a start holds the whole track"
+        );
+        assert!(
+            playback.report_playback("track-2", "user-1", "xarif", "starting", 0, true),
+            "next track"
+        );
+        assert_eq!(
+            rig.sinks.now_playing_calls(),
+            3,
+            "a track change is forwarded"
+        );
+        report("starting", 0); // back to track 1 at once
+        assert_eq!(rig.sinks.now_playing_calls(), 4, "so is the change back");
+        report("stopped", 10_000);
+        assert!(
+            rig.deps.presence.snapshot().is_empty(),
+            "stopped clears presence"
+        );
+        report("starting", 0);
+        assert_eq!(
+            rig.sinks.now_playing_calls(),
+            5,
+            "a start after a stop is forwarded"
+        );
+    }
+    {
+        let rig = rig();
+        let playback = CompatPlayback::new(rig.deps.clone());
+        assert!(
+            playback.report_playback("track-1", "user-1", "xarif", "paused", 5_000, true),
+            "paused first"
+        );
+        assert_eq!(
+            rig.sinks.now_playing_calls(),
+            0,
+            "paused first: told nobody"
+        );
+        assert!(
+            rig.deps.presence.snapshot().len() == 1,
+            "presence still shows the pause"
+        );
+        playback.now_playing(
+            Reporter::Subsonic,
+            "track-1",
+            "user-1",
+            Some("xarif"),
+            None,
+            false,
+        );
+        assert_eq!(rig.sinks.now_playing_calls(), 1, "classic now-playing");
+        assert!(
+            playback.report_playback("track-1", "user-1", "xarif", "playing", 6_000, true),
+            "classic now-playing"
+        );
+        playback.now_playing(
+            Reporter::Subsonic,
+            "track-1",
+            "user-1",
+            Some("xarif"),
+            None,
+            false,
+        );
+        assert_eq!(rig.sinks.now_playing_calls(), 1, "one track, one forward");
+    }
+
+    // Jellyfin.
     let rig = rig();
     let playback = CompatPlayback::new(rig.deps.clone());
     playback.now_playing(
@@ -3066,7 +2883,11 @@ fn jellyfin_reports_keep_their_lifetime_and_every_start_forwards() {
         None,
         false,
     );
-    assert_eq!(rig.sinks.now_playing_calls(), 2);
+    assert_eq!(
+        rig.sinks.now_playing_calls(),
+        2,
+        "every Jellyfin start forwards"
+    );
     playback.progress(
         Reporter::Jellyfin,
         "track-1",
@@ -3076,6 +2897,6 @@ fn jellyfin_reports_keep_their_lifetime_and_every_start_forwards() {
         false,
     );
     assert_eq!(rig.sinks.now_playing_calls(), 2, "progress never forwards");
-    assert!(present_at(&rig, NOW + 45));
+    assert!(present_at(&rig, NOW + 45), "a Jellyfin report holds 45 s");
     assert!(!present_at(&rig, NOW + 46), "45 s without a report");
 }

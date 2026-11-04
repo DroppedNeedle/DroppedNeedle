@@ -460,8 +460,10 @@ fn copy_entry(
 mod tests {
     use super::*;
 
+    /// An upload's name stays one safe component of staging and reads as
+    /// the user's own, and disc folders fold into their album.
     #[test]
-    fn staging_names_read_as_the_users_own() {
+    fn upload_names_and_folders() {
         assert_eq!(display_stem(Path::new("/s/003_My Album.zip")), "My Album");
         assert_eq!(display_stem(Path::new("/s/Album.zip")), "Album");
         assert_eq!(safe_component("a/b:c?. "), "a_b_c_");
@@ -469,10 +471,7 @@ mod tests {
         assert!(accepted_upload("x.ZIP"));
         assert!(accepted_upload("01 Song.flac"));
         assert!(!accepted_upload("cover.jpg"));
-    }
 
-    #[test]
-    fn disc_folders_fold_into_their_album() {
         let staging = Path::new("/s/job");
         assert!(is_disc_folder("CD1") && is_disc_folder("Disc 2") && is_disc_folder("disk-3"));
         assert!(!is_disc_folder("Discovery") && !is_disc_folder("CD"));

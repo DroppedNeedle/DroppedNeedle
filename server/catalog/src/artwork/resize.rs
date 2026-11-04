@@ -152,26 +152,3 @@ pub fn mosaic(tiles: &[RgbImage], side: u32) -> Option<Vec<u8>> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn png(width: u32, height: u32) -> Vec<u8> {
-        let image = image::RgbaImage::from_pixel(width, height, image::Rgba([200, 10, 10, 255]));
-        let mut out = Vec::new();
-        image
-            .write_to(&mut Cursor::new(&mut out), ImageFormat::Png)
-            .unwrap();
-        out
-    }
-
-    #[test]
-    fn large_art_shrinks_to_fit_and_small_art_stays() {
-        let (shrunk, content_type) = shrink_to_fit(&png(1000, 600), 250).unwrap();
-        assert_eq!(content_type, "image/png");
-        let decoded = image::load_from_memory(&shrunk).unwrap();
-        assert_eq!((decoded.width(), decoded.height()), (250, 150));
-        assert!(shrink_to_fit(&png(200, 200), 250).is_none());
-    }
-}

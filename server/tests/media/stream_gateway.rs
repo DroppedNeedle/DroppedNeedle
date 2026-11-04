@@ -251,25 +251,16 @@ async fn ranges_return_exact_slices() {
     }
 }
 
-#[tokio::test]
-async fn multi_range_answers_416_like_every_stream_route() {
-    let (_engine, router) = local_app(".mp3", 256);
-    let (status, headers, _) =
-        get(router, "/stream/local/song", &[("range", "bytes=0-1,5-6")]).await;
-    assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
-    assert_eq!(
-        header(&headers, "content-range"),
-        Some("bytes */256".to_owned())
-    );
-}
-
 // ---------------------------------------------------------------------------
 // Range matrix: the 416 set
 // ---------------------------------------------------------------------------
 
+/// Every range the file cannot meet, a multi-range ask included (as on
+/// every stream route), is 416 with the sized `Content-Range`.
 #[tokio::test]
 async fn unsatisfiable_ranges_answer_416_with_sized_content_range() {
     for range in [
+        "bytes=0-1,5-6",
         "bytes=256-",
         "bytes=999-",
         "bytes=50-40",
@@ -300,27 +291,36 @@ async fn unsatisfiable_ranges_answer_416_with_sized_content_range() {
 // HEAD mirrors GET headers with no body
 // ---------------------------------------------------------------------------
 
+/// HEAD answers GET's headers with no body: the whole file, then a suffix
+/// range.
 #[tokio::test]
-async fn head_full_returns_get_headers_without_body() {
+async fn head_mirrors_get_without_body() {
     let (_engine, router) = local_app(".aac", 256);
     let (status, headers, body) = call(router, Method::HEAD, "/stream/local/song", &[]).await;
 
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.is_empty());
+    assert_eq!(status, StatusCode::OK, "full");
+    assert!(body.is_empty(), "full");
     assert_eq!(
         header(&headers, "content-type"),
-        Some("audio/aac".to_owned())
+        Some("audio/aac".to_owned()),
+        "full"
     );
-    assert_eq!(header(&headers, "content-length"), Some("256".to_owned()));
-    assert_eq!(header(&headers, "accept-ranges"), Some("bytes".to_owned()));
+    assert_eq!(
+        header(&headers, "content-length"),
+        Some("256".to_owned()),
+        "full"
+    );
+    assert_eq!(
+        header(&headers, "accept-ranges"),
+        Some("bytes".to_owned()),
+        "full"
+    );
     assert_eq!(
         header(&headers, "content-encoding"),
-        Some("identity".to_owned())
+        Some("identity".to_owned()),
+        "full"
     );
-}
 
-#[tokio::test]
-async fn head_range_returns_206_headers_without_body() {
     let (_engine, router) = local_app(".flac", 256);
     let (status, headers, body) = call(
         router,
@@ -330,41 +330,23 @@ async fn head_range_returns_206_headers_without_body() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::PARTIAL_CONTENT);
-    assert!(body.is_empty());
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT, "suffix range");
+    assert!(body.is_empty(), "suffix range");
     assert_eq!(
         header(&headers, "content-range"),
-        Some("bytes 240-255/256".to_owned())
+        Some("bytes 240-255/256".to_owned()),
+        "suffix range"
     );
-    assert_eq!(header(&headers, "content-length"), Some("16".to_owned()));
+    assert_eq!(
+        header(&headers, "content-length"),
+        Some("16".to_owned()),
+        "suffix range"
+    );
 }
 
 // ---------------------------------------------------------------------------
-// Content types and the WMA cut
+// Remote content types
 // ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn content_type_follows_extension_table() {
-    for (ext, media_type) in [
-        (".flac", "audio/flac"),
-        (".mp3", "audio/mpeg"),
-        (".ogg", "audio/ogg"),
-        (".m4a", "audio/mp4"),
-        (".aac", "audio/aac"),
-        (".wav", "audio/wav"),
-        (".opus", "audio/opus"),
-    ] {
-        let (_engine, router) = local_app(ext, 64);
-        let (status, headers, _body) = get(router, "/stream/local/song", &[]).await;
-
-        assert_eq!(status, StatusCode::OK, "{ext}");
-        assert_eq!(
-            header(&headers, "content-type"),
-            Some(media_type.to_owned()),
-            "{ext}"
-        );
-    }
-}
 
 #[tokio::test]
 async fn scripted_remote_body_keeps_upstream_content_type() {
@@ -425,97 +407,101 @@ async fn query_hints_and_principal_reach_engine() {
 // Fault mapping: 404/403/429/502
 // ---------------------------------------------------------------------------
 
+/// Each engine fault maps to its status, code and safe message: a missing
+/// id is 404 with its source's message, a refusal passes its message
+/// through, a full lease is 429 with Retry-After, and a failed read is 502,
+/// the closed-list `REMOTE_UNAVAILABLE` for a media server and a plain fault
+/// for a local file or a plugin. The request boundary writes the 502 bodies
+/// (see `media_journey`).
 #[tokio::test]
-async fn missing_ids_404_with_source_detail() {
-    let engine = FakeEngine::with(vec![]);
-    let (status, _, body) = get(app(Arc::clone(&engine), true), "/stream/local/gone", &[]).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    let json = envelope(&body);
-    assert_eq!(json["error"]["code"], "STREAM_NOT_FOUND");
-    assert_eq!(json["error"]["message"], "Track file not found");
-
-    let (status, _, body) = get(app(engine, true), "/stream/jellyfin/gone", &[]).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    let json = envelope(&body);
-    assert_eq!(json["error"]["code"], "STREAM_NOT_FOUND");
-    assert_eq!(json["error"]["message"], "Audio item not found");
-}
-
-#[tokio::test]
-async fn forbidden_passes_safe_message_through() {
-    let engine = FakeEngine::with(vec![
-        (
-            "local/nope",
-            Script::Fault(StreamFault::Forbidden {
-                message: "Playback not allowed".to_owned(),
-            }),
-        ),
-        (
-            "local/escape",
-            Script::Fault(StreamFault::Forbidden {
-                message: "Access denied: path is outside the music directory".to_owned(),
-            }),
-        ),
-    ]);
-    for (key, message) in [
-        ("nope", "Playback not allowed"),
-        (
-            "escape",
-            "Access denied: path is outside the music directory",
-        ),
-    ] {
-        let (status, _, body) = get(
-            app(Arc::clone(&engine), true),
-            &format!("/stream/local/{key}"),
-            &[],
-        )
-        .await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{key}");
-        let json = envelope(&body);
-        assert_eq!(json["error"]["code"], "STREAM_FORBIDDEN", "{key}");
-        assert_eq!(json["error"]["message"], message, "{key}");
-    }
-}
-
-#[tokio::test]
-async fn lease_exhaustion_answers_429_with_retry_after() {
-    let engine = FakeEngine::with(vec![(
-        "navidrome/busy",
-        Script::Fault(StreamFault::Capacity),
-    )]);
-    let (status, headers, body) = get(app(engine, true), "/stream/navidrome/busy", &[]).await;
-
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(header(&headers, "retry-after"), Some("1".to_owned()));
-    let json = envelope(&body);
-    assert_eq!(json["error"]["code"], "STREAM_CAPACITY_EXHAUSTED");
-    assert_eq!(json["error"]["details"]["retry_after"], 1);
-}
-
-/// A failed read is a 502: the closed-list `REMOTE_UNAVAILABLE` for a media
-/// server, a plain fault for a local file or a plugin. The request boundary
-/// writes the bodies (see `media_journey`).
-#[tokio::test]
-async fn upstream_failure_answers_502() {
+async fn faults_map_to_status_and_code() {
     let upstream = |source| {
         Script::Fault(StreamFault::Upstream {
             source,
             cause: "scripted".to_owned(),
         })
     };
+    let forbidden = |message: &str| {
+        Script::Fault(StreamFault::Forbidden {
+            message: message.to_owned(),
+        })
+    };
+    let outside = "Access denied: path is outside the music directory";
     let engine = FakeEngine::with(vec![
+        ("local/nope", forbidden("Playback not allowed")),
+        ("local/escape", forbidden(outside)),
+        ("navidrome/busy", Script::Fault(StreamFault::Capacity)),
         ("plex/part-9", upstream(AudioSource::Plex)),
         ("local/song", upstream(AudioSource::Local)),
         ("plugin/mbid", upstream(AudioSource::Plugin)),
     ]);
-    for (uri, code) in [
-        ("/stream/plex/part-9", "REMOTE_UNAVAILABLE"),
-        ("/stream/local/song", "INTERNAL_ERROR"),
-        ("/stream/plugin/mbid", "INTERNAL_ERROR"),
-    ] {
-        let (status, _, body) = get(app(Arc::clone(&engine), true), uri, &[]).await;
-        assert_eq!(status, StatusCode::BAD_GATEWAY, "{uri}");
-        assert_eq!(envelope(&body)["error"]["code"], code, "{uri}");
+    // (uri, status, code, message where the row pins one)
+    let rows = [
+        (
+            "/stream/local/gone",
+            StatusCode::NOT_FOUND,
+            "STREAM_NOT_FOUND",
+            Some("Track file not found"),
+        ),
+        (
+            "/stream/jellyfin/gone",
+            StatusCode::NOT_FOUND,
+            "STREAM_NOT_FOUND",
+            Some("Audio item not found"),
+        ),
+        (
+            "/stream/local/nope",
+            StatusCode::FORBIDDEN,
+            "STREAM_FORBIDDEN",
+            Some("Playback not allowed"),
+        ),
+        (
+            "/stream/local/escape",
+            StatusCode::FORBIDDEN,
+            "STREAM_FORBIDDEN",
+            Some(outside),
+        ),
+        (
+            "/stream/navidrome/busy",
+            StatusCode::TOO_MANY_REQUESTS,
+            "STREAM_CAPACITY_EXHAUSTED",
+            None,
+        ),
+        (
+            "/stream/plex/part-9",
+            StatusCode::BAD_GATEWAY,
+            "REMOTE_UNAVAILABLE",
+            None,
+        ),
+        (
+            "/stream/local/song",
+            StatusCode::BAD_GATEWAY,
+            "INTERNAL_ERROR",
+            None,
+        ),
+        (
+            "/stream/plugin/mbid",
+            StatusCode::BAD_GATEWAY,
+            "INTERNAL_ERROR",
+            None,
+        ),
+    ];
+    for (uri, status, code, message) in rows {
+        let (answered, headers, body) = get(app(Arc::clone(&engine), true), uri, &[]).await;
+        assert_eq!(answered, status, "{uri}");
+        let json = envelope(&body);
+        assert_eq!(json["error"]["code"], code, "{uri}");
+        if let Some(message) = message {
+            assert_eq!(json["error"]["message"], message, "{uri}");
+        }
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            assert_eq!(
+                header(&headers, "retry-after"),
+                Some("1".to_owned()),
+                "{uri}"
+            );
+            assert_eq!(json["error"]["details"]["retry_after"], 1, "{uri}");
+        }
     }
 }
 
@@ -536,8 +522,12 @@ fn transcode_engine() -> Arc<FakeEngine> {
     )])
 }
 
+/// A transcode ignores a range, is never cached, and carries a length only
+/// when the client asks for the estimate. Where none was asked, the "25" is
+/// the router's automatic stamp for the buffered fake body (production
+/// transcode streams have unknown size and stay lengthless).
 #[tokio::test]
-async fn transcode_ignores_range_with_v2_headers() {
+async fn transcode_answers_lengthless_unless_asked() {
     let (status, headers, body) = get(
         app(transcode_engine(), true),
         "/stream/local/song",
@@ -545,42 +535,51 @@ async fn transcode_ignores_range_with_v2_headers() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, b"fake-transcoded-mp3-bytes");
-    assert_eq!(header(&headers, "accept-ranges"), Some("none".to_owned()));
+    assert_eq!(status, StatusCode::OK, "ranged GET");
+    assert_eq!(body, b"fake-transcoded-mp3-bytes", "ranged GET");
+    assert_eq!(
+        header(&headers, "accept-ranges"),
+        Some("none".to_owned()),
+        "ranged GET"
+    );
     assert_eq!(
         header(&headers, "cache-control"),
-        Some("no-store".to_owned())
+        Some("no-store".to_owned()),
+        "ranged GET"
     );
     assert_eq!(
         header(&headers, "content-encoding"),
-        Some("identity".to_owned())
+        Some("identity".to_owned()),
+        "ranged GET"
     );
-    assert_eq!(header(&headers, "content-range"), None);
-    // No estimate was asked, so routes set no length; the "25" below is the
-    // router's automatic stamp for the buffered fake body (production
-    // transcode streams have unknown size and stay lengthless).
-    assert_eq!(header(&headers, "content-length"), Some("25".to_owned()));
-}
+    assert_eq!(header(&headers, "content-range"), None, "ranged GET");
+    assert_eq!(
+        header(&headers, "content-length"),
+        Some("25".to_owned()),
+        "ranged GET"
+    );
 
-#[tokio::test]
-async fn transcode_estimate_header_only_when_asked() {
     let (status, headers, _) = get(
         app(transcode_engine(), true),
         "/stream/local/song?estimate_content_length=true",
         &[],
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(header(&headers, "content-length"), Some("48000".to_owned()));
+    assert_eq!(status, StatusCode::OK, "estimate asked");
+    assert_eq!(
+        header(&headers, "content-length"),
+        Some("48000".to_owned()),
+        "estimate asked"
+    );
 
     let (status, headers, _) = get(app(transcode_engine(), true), "/stream/local/song", &[]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(header(&headers, "content-length"), Some("25".to_owned()));
-}
+    assert_eq!(status, StatusCode::OK, "plain GET");
+    assert_eq!(
+        header(&headers, "content-length"),
+        Some("25".to_owned()),
+        "plain GET"
+    );
 
-#[tokio::test]
-async fn head_transcode_without_estimate_reports_actual_length() {
     let (status, headers, body) = call(
         app(transcode_engine(), true),
         Method::HEAD,
@@ -588,11 +587,18 @@ async fn head_transcode_without_estimate_reports_actual_length() {
         &[],
     )
     .await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.is_empty());
-    assert_eq!(header(&headers, "content-length"), Some("25".to_owned()));
-    assert_eq!(header(&headers, "accept-ranges"), Some("none".to_owned()));
+    assert_eq!(status, StatusCode::OK, "HEAD");
+    assert!(body.is_empty(), "HEAD");
+    assert_eq!(
+        header(&headers, "content-length"),
+        Some("25".to_owned()),
+        "HEAD"
+    );
+    assert_eq!(
+        header(&headers, "accept-ranges"),
+        Some("none".to_owned()),
+        "HEAD"
+    );
 }
 
 // ---------------------------------------------------------------------------

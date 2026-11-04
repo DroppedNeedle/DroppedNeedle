@@ -2007,40 +2007,59 @@ mod tagged_song_count_tests {
         }
     }
 
+    /// The tagged song count adds each disc's total, and is unknown while a
+    /// disc in the run has no files or no total. A disc numbered zero is
+    /// the first.
     #[test]
-    fn one_disc_counts_its_total() {
-        assert_eq!(tagged_song_count(&[disc(1, Some(12), None)]), Some(12));
-        assert_eq!(tagged_song_count(&[disc(1, Some(12), Some(1))]), Some(12));
-    }
-
-    #[test]
-    fn the_discs_totals_add_up() {
-        let both = [disc(1, Some(12), Some(2)), disc(2, Some(9), Some(2))];
-        assert_eq!(tagged_song_count(&both), Some(21));
-        let untold = [disc(1, Some(12), None), disc(2, Some(9), None)];
-        assert_eq!(tagged_song_count(&untold), Some(21));
-    }
-
-    #[test]
-    fn a_disc_without_files_leaves_the_count_unknown() {
-        assert_eq!(tagged_song_count(&[disc(1, Some(12), Some(2))]), None);
-        assert_eq!(tagged_song_count(&[disc(2, Some(9), Some(2))]), None);
-        let gap = [disc(1, Some(12), None), disc(3, Some(10), None)];
-        assert_eq!(tagged_song_count(&gap), None);
-    }
-
-    #[test]
-    fn a_disc_without_a_total_leaves_the_count_unknown() {
-        let untold = [disc(1, Some(12), Some(2)), disc(2, None, Some(2))];
-        assert_eq!(tagged_song_count(&untold), None);
-        assert_eq!(tagged_song_count(&[disc(1, None, None)]), None);
-        assert_eq!(tagged_song_count(&[]), None);
-    }
-
-    #[test]
-    fn a_disc_numbered_zero_is_the_first() {
-        assert_eq!(tagged_song_count(&[disc(0, Some(7), None)]), Some(7));
-        let split = [disc(0, None, None), disc(1, Some(7), None)];
-        assert_eq!(tagged_song_count(&split), Some(7));
+    fn tagged_song_count_follows_the_discs() {
+        let cases: [(&str, Vec<DiscTotals>, Option<u32>); 12] = [
+            ("one disc", vec![disc(1, Some(12), None)], Some(12)),
+            (
+                "one disc of one",
+                vec![disc(1, Some(12), Some(1))],
+                Some(12),
+            ),
+            (
+                "two discs",
+                vec![disc(1, Some(12), Some(2)), disc(2, Some(9), Some(2))],
+                Some(21),
+            ),
+            (
+                "two discs, count untold",
+                vec![disc(1, Some(12), None), disc(2, Some(9), None)],
+                Some(21),
+            ),
+            (
+                "the second disc has no files",
+                vec![disc(1, Some(12), Some(2))],
+                None,
+            ),
+            (
+                "the first disc has no files",
+                vec![disc(2, Some(9), Some(2))],
+                None,
+            ),
+            (
+                "a gap",
+                vec![disc(1, Some(12), None), disc(3, Some(10), None)],
+                None,
+            ),
+            (
+                "a disc without a total",
+                vec![disc(1, Some(12), Some(2)), disc(2, None, Some(2))],
+                None,
+            ),
+            ("no total", vec![disc(1, None, None)], None),
+            ("no discs", vec![], None),
+            ("disc zero", vec![disc(0, Some(7), None)], Some(7)),
+            (
+                "disc zero split",
+                vec![disc(0, None, None), disc(1, Some(7), None)],
+                Some(7),
+            ),
+        ];
+        for (case, discs, want) in cases {
+            assert_eq!(tagged_song_count(&discs), want, "{case}");
+        }
     }
 }

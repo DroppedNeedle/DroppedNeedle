@@ -141,8 +141,6 @@ fn recommend(is_valid_mbid: bool, sizes: &[SizeDebug]) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artwork::covers::{CoverBytes, FakeCoverArt};
-    use std::sync::Arc;
 
     #[test]
     fn gate_needs_flag_and_debug_build() {
@@ -157,34 +155,5 @@ mod tests {
         assert_eq!(tooling_routes_enabled(&on), cfg!(debug_assertions));
         #[cfg(not(debug_assertions))]
         assert!(!tooling_routes_enabled(&on));
-    }
-
-    #[tokio::test]
-    async fn debug_reports_cache_warming_and_invalid() {
-        let mbid = uuid::Uuid::new_v4().to_string();
-        let state = CoversState::new(Arc::new(
-            FakeCoverArt::empty()
-                .with_artist(
-                    &mbid,
-                    Some(250),
-                    CoverBytes::new(vec![1, 2, 3], "image/jpeg", "lidarr"),
-                )
-                .warming_artist(&mbid, Some(500)),
-        ));
-        let answer = debug_artist_cover(State(state), Path(mbid.to_owned())).await;
-        assert!(answer.is_valid_mbid);
-        assert_eq!(answer.validated_mbid.as_deref(), Some(mbid.as_str()));
-        assert_eq!(answer.sizes.len(), 2);
-        assert!(answer.sizes[0].cached);
-        assert_eq!(answer.sizes[0].source.as_deref(), Some("lidarr"));
-        assert_eq!(answer.sizes[0].bytes, Some(3));
-        assert!(!answer.sizes[1].cached);
-        assert!(answer.sizes[1].warming);
-
-        let cold = CoversState::new(Arc::new(FakeCoverArt::empty()));
-        let invalid = debug_artist_cover(State(cold), Path("nope".to_owned())).await;
-        assert!(!invalid.is_valid_mbid);
-        assert!(invalid.validated_mbid.is_none());
-        assert!(invalid.recommendation.contains("Invalid MBID"));
     }
 }

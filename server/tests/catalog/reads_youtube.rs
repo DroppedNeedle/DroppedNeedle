@@ -339,14 +339,14 @@ async fn flag_unconfirmed(app: &TestApp, album: &str) {
     .await;
 }
 
-/// A link already saved at disc 1, track 1 of `GROUP`, as an older version
+/// A link already saved at disc 1, track 1 of `group`, as an older version
 /// left it when `recording` is `None`.
-async fn saved_link(app: &TestApp, title: &str, recording: Option<&str>) {
+async fn saved_link(app: &TestApp, group: &str, title: &str, recording: Option<&str>) {
     app.seed_with(
         "INSERT INTO catalog_youtube_track_links (album_id, track_number, disc_number, \
          album_name, track_name, video_id, artist_name, embed_url, created_at, recording_mbid) \
          VALUES (?1, 1, 1, 'Dummy', ?2, 'hd9OYCqBK88', 'Portishead', 'e', 1, ?3)",
-        [Some(GROUP), Some(title), recording],
+        [Some(group), Some(title), recording],
     )
     .await;
 }
@@ -375,6 +375,17 @@ fn stored_recording(app: &TestApp) -> Option<String> {
         .query_row(
             "SELECT recording_mbid FROM catalog_youtube_track_links",
             [],
+            |row| row.get(0),
+        )
+        .expect("the link is saved")
+}
+
+/// The recording stored on the track link of `album`.
+fn stored_recording_of(app: &TestApp, album: &str) -> Option<String> {
+    app.db()
+        .query_row(
+            "SELECT recording_mbid FROM catalog_youtube_track_links WHERE album_id = ?1",
+            [album],
             |row| row.get(0),
         )
         .expect("the link is saved")
@@ -494,120 +505,135 @@ async fn a_play_of_a_generated_link_is_filed_under_its_recording() {
     app.stop().await;
 }
 
-/// While MusicBrainz is down a new link stores nothing from the library's
-/// copy: it reads the id only under the rule for what the library holds, so
-/// a guess gives none.
+/// While MusicBrainz is down a new link stores no recording it cannot
+/// prove. From the library's copy it reads the id only under the rule for
+/// what the library holds, so a guess gives none; and a tag that is no
+/// MusicBrainz id reads as none. Each case has its own album and group.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_link_made_while_musicbrainz_is_down_stores_no_recording() {
+async fn a_link_stores_only_a_recording_it_can_prove() {
     let (app, user) = searching_app("youtube-mb-down", None).await;
-    hold_album(&app, "al1", GROUP, "Roads", Some(RECORDING)).await;
 
+    hold_album(&app, "al1", GROUP, "Roads", Some(RECORDING)).await;
     let made = generate(&app, &user, GROUP, "Roads").await;
-    assert_eq!(made["track_link"]["recording_mbid"], RECORDING);
-    assert_eq!(stored_recording(&app), None);
-
+    assert_eq!(
+        made["track_link"]["recording_mbid"], RECORDING,
+        "musicbrainz down"
+    );
+    assert_eq!(stored_recording_of(&app, GROUP), None, "musicbrainz down");
     flag_unconfirmed(&app, "al1").await;
-    assert_eq!(listed_recording(&app, &user).await, Value::Null);
+    assert_eq!(
+        recording_listed_for(&app, &user, GROUP).await,
+        Value::Null,
+        "a guess"
+    );
+
+    hold_album(&app, "al2", OTHER_GROUP, "Roads", Some("not-a-recording")).await;
+    generate(&app, &user, OTHER_GROUP, "Roads").await;
+    assert_eq!(
+        stored_recording_of(&app, OTHER_GROUP),
+        None,
+        "a malformed tag"
+    );
+    assert_eq!(
+        recording_listed_for(&app, &user, OTHER_GROUP).await,
+        Value::Null,
+        "a malformed tag"
+    );
     app.stop().await;
 }
 
-/// A tag that is no MusicBrainz id reads as none.
+/// A link from before the column takes a recording only from the one
+/// accepted track it fits, when read, and writes nothing; its play is filed.
+/// A guessed album, the same slot under another title, two editions that
+/// disagree and a slot with no recording give it nothing; one recording on
+/// two tracks leaves its play by name. Each case has its own release group
+/// and user, so their plays are told apart.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_malformed_recording_saves_the_link_with_none() {
-    let (app, user) = searching_app("youtube-malformed", None).await;
-    hold_album(&app, "al1", GROUP, "Roads", Some("not-a-recording")).await;
-
-    generate(&app, &user, GROUP, "Roads").await;
-    assert_eq!(stored_recording(&app), None);
-    assert_eq!(listed_recording(&app, &user).await, Value::Null);
-    app.stop().await;
-}
-
-/// A link from before the column takes the id of the one track it fits when
-/// read, writes nothing, and its play is filed.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_older_link_takes_its_recording_when_read() {
+async fn an_older_link_takes_a_recording_only_from_one_accepted_track() {
     let app = TestApp::start("youtube-older").await;
-    let user = app.login_user("listener").await;
-    hold_album(&app, "al1", GROUP, "Roads", Some(RECORDING)).await;
-    saved_link(&app, " ROADS ", None).await;
+    let group = |n: u8| format!("11111111-1111-4111-8111-1111111111{n:02}");
 
-    let listed = listed_recording(&app, &user).await;
-    assert_eq!(listed, RECORDING);
-    assert_eq!(stored_recording(&app), None);
+    // It takes the id of the one track it fits, and its play is filed. First,
+    // while it is the only track holding the recording.
+    let user = app.login_user("listener-1").await;
+    let fits = group(1);
+    hold_album(&app, "al1", &fits, "Roads", Some(RECORDING)).await;
+    saved_link(&app, &fits, " ROADS ", None).await;
+    let listed = recording_listed_for(&app, &user, &fits).await;
+    assert_eq!(listed, RECORDING, "one track fits");
+    assert_eq!(
+        stored_recording_of(&app, &fits),
+        None,
+        "reading writes nothing"
+    );
     play(&app, &user, "youtube", &listed).await;
-    assert_eq!(filed(&app, &user).0.as_deref(), Some("al1-t"));
-    app.stop().await;
-}
+    assert_eq!(
+        filed(&app, &user).0.as_deref(),
+        Some("al1-t"),
+        "one track fits"
+    );
 
-/// An unconfirmed best guess is not an accepted release group, whatever its
-/// files' tags say.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_guessed_album_gives_an_older_link_nothing() {
-    let app = TestApp::start("youtube-guess").await;
-    let user = app.login_user("listener").await;
-    hold_album(&app, "al1", GROUP, "Roads", Some(RECORDING)).await;
-    flag_unconfirmed(&app, "al1").await;
-    saved_link(&app, "Roads", None).await;
-    assert_eq!(listed_recording(&app, &user).await, Value::Null);
-    app.stop().await;
-}
+    // An unconfirmed best guess is not an accepted release group, whatever
+    // its files' tags say.
+    let guessed = group(2);
+    hold_album(&app, "al2", &guessed, "Roads", Some(RECORDING)).await;
+    flag_unconfirmed(&app, "al2").await;
+    saved_link(&app, &guessed, "Roads", None).await;
+    assert_eq!(
+        recording_listed_for(&app, &user, &guessed).await,
+        Value::Null,
+        "a guessed album"
+    );
 
-/// The same disc and number under another title is another track.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_older_link_under_another_title_takes_nothing() {
-    let app = TestApp::start("youtube-title").await;
-    let user = app.login_user("listener").await;
-    hold_album(&app, "al1", GROUP, "Roads", Some(RECORDING)).await;
-    saved_link(&app, "Sour Times", None).await;
-    assert_eq!(listed_recording(&app, &user).await, Value::Null);
-    app.stop().await;
-}
+    // The same disc and number under another title is another track.
+    let retitled = group(3);
+    hold_album(&app, "al3", &retitled, "Roads", Some(RECORDING)).await;
+    saved_link(&app, &retitled, "Sour Times", None).await;
+    assert_eq!(
+        recording_listed_for(&app, &user, &retitled).await,
+        Value::Null,
+        "another title"
+    );
 
-/// Two editions of the album with different recordings at the slot: which
-/// one the link stands for cannot be told.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn editions_that_disagree_give_an_older_link_nothing() {
-    let app = TestApp::start("youtube-editions").await;
-    let user = app.login_user("listener").await;
-    hold_album(&app, "al1", GROUP, "Roads", Some(RECORDING)).await;
-    hold_album(&app, "al2", GROUP, "Roads", Some(OTHER_RECORDING)).await;
-    saved_link(&app, "Roads", None).await;
-    assert_eq!(listed_recording(&app, &user).await, Value::Null);
-    app.stop().await;
-}
+    // Two editions with different recordings at the slot: which one the
+    // link stands for cannot be told.
+    let editions = group(4);
+    hold_album(&app, "al4", &editions, "Roads", Some(RECORDING)).await;
+    hold_album(&app, "al5", &editions, "Roads", Some(OTHER_RECORDING)).await;
+    saved_link(&app, &editions, "Roads", None).await;
+    assert_eq!(
+        recording_listed_for(&app, &user, &editions).await,
+        Value::Null,
+        "editions that disagree"
+    );
 
-/// One recording held by two tracks has no one track to file under: the
-/// play stays by name, with its id.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_recording_on_two_tracks_stays_by_name() {
-    let app = TestApp::start("youtube-two-tracks").await;
-    let user = app.login_user("listener").await;
-    hold_album(&app, "al1", GROUP, "Roads", Some(RECORDING)).await;
-    hold_album(&app, "al2", OTHER_GROUP, "Roads", Some(RECORDING)).await;
-    saved_link(&app, "Roads", None).await;
-
-    let listed = listed_recording(&app, &user).await;
-    assert_eq!(listed, RECORDING);
+    // One recording held by two tracks has no one track to file under: the
+    // play stays by name, with its id.
+    let user = app.login_user("listener-5").await;
+    let (shared, elsewhere) = (group(5), group(6));
+    hold_album(&app, "al6", &shared, "Roads", Some(RECORDING)).await;
+    hold_album(&app, "al7", &elsewhere, "Roads", Some(RECORDING)).await;
+    saved_link(&app, &shared, "Roads", None).await;
+    let listed = recording_listed_for(&app, &user, &shared).await;
+    assert_eq!(listed, RECORDING, "a recording on two tracks");
     play(&app, &user, "youtube", &listed).await;
-    assert_eq!(filed(&app, &user), (None, Some(RECORDING.to_owned())));
-    app.stop().await;
-}
+    assert_eq!(
+        filed(&app, &user),
+        (None, Some(RECORDING.to_owned())),
+        "a recording on two tracks"
+    );
 
-/// A play with no recording stays by name, and the filing job leaves it,
-/// though its names fit a track.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_play_with_no_recording_stays_by_name() {
-    let app = TestApp::start("youtube-no-id").await;
-    let user = app.login_user("listener").await;
-    hold_album(&app, "al1", GROUP, "Roads", None).await;
-    saved_link(&app, "Roads", None).await;
-
-    let listed = listed_recording(&app, &user).await;
-    assert_eq!(listed, Value::Null);
+    // A play with no recording stays by name, and the filing job leaves it,
+    // though its names fit a track.
+    let user = app.login_user("listener-6").await;
+    let untagged = group(7);
+    hold_album(&app, "al8", &untagged, "Roads", None).await;
+    saved_link(&app, &untagged, "Roads", None).await;
+    let listed = recording_listed_for(&app, &user, &untagged).await;
+    assert_eq!(listed, Value::Null, "no recording");
     play(&app, &user, "youtube", &listed).await;
     run_filing_job(&app).await;
-    assert_eq!(filed(&app, &user), (None, None));
+    assert_eq!(filed(&app, &user), (None, None), "no recording");
     app.stop().await;
 }
 
@@ -617,7 +643,7 @@ async fn a_play_with_no_recording_stays_by_name() {
 async fn a_recording_held_later_is_filed_by_the_job() {
     let app = TestApp::start("youtube-later").await;
     let user = app.login_user("listener").await;
-    saved_link(&app, "Roads", Some(RECORDING)).await;
+    saved_link(&app, GROUP, "Roads", Some(RECORDING)).await;
 
     let listed = listed_recording(&app, &user).await;
     assert_eq!(listed, RECORDING);

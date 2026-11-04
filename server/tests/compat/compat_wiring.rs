@@ -38,8 +38,10 @@ fn cors(headers: &HeaderMap) -> Option<&str> {
 #[tokio::test]
 async fn kill_switches_default_off() {
     let app = TestApp::start("compat-off").await;
+    // First as shipped, then saved off after being on.
     for saved in [false, true] {
         if saved {
+            app.set_compat(true, true).await;
             app.set_compat(false, false).await;
         }
         // Subsonic answers code 0 before auth; Jellyfin 404s every route
@@ -70,6 +72,7 @@ async fn compat_mounts_outside_the_session_gate_with_cors() {
     for uri in [
         "/subsonic/rest/getOpenSubsonicExtensions",
         "/SUBSONIC/rest/getOpenSubsonicExtensions",
+        "/subsonic/rest/getopensubsonicextensions.view",
         "/jellyfin/System/Info/Public",
     ] {
         let (status, headers, _) = oneshot(&on, "GET", uri, &[], b"").await;
@@ -97,16 +100,37 @@ async fn compat_mounts_outside_the_session_gate_with_cors() {
     assert_eq!((status, cors(&headers)), (StatusCode::NOT_FOUND, None));
 
     // Feishin posts lowercase Jellyfin paths: the login handler answers
-    // instead of a 404, refusing the unknown account with its 401.
-    let (status, _, _) = oneshot(
-        &on,
-        "POST",
-        "/jellyfin/users/authenticatebyname",
-        &[("content-type", "application/json")],
-        br#"{"Username":"alice","Pw":"nope"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // instead of a 404, signing a real app password in and refusing the
+    // unknown account with its 401.
+    let dave = on.login_user("dave").await;
+    let (status, created) = on
+        .call_through_busy(
+            "POST",
+            "/api/v3/me/app-passwords",
+            &[("authorization", dave.authorization.as_str())],
+            Some(serde_json::json!({"name": "Feishin"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let secret = created["secret"].as_str().expect("app password");
+    let login = serde_json::json!({"Username": "dave", "Pw": secret}).to_string();
+    for (body, expected) in [
+        (login.as_bytes(), StatusCode::OK),
+        (
+            br#"{"Username":"alice","Pw":"nope"}"#.as_slice(),
+            StatusCode::UNAUTHORIZED,
+        ),
+    ] {
+        let (status, _, _) = oneshot(
+            &on,
+            "POST",
+            "/jellyfin/users/authenticatebyname",
+            &[("content-type", "application/json")],
+            body,
+        )
+        .await;
+        assert_eq!(status, expected, "lowercase login");
+    }
     // Unknown methods on Subsonic answer code 0, never a native 405.
     let (_, _, bytes) = oneshot(&on, "DELETE", "/subsonic/rest/ping?f=json", &[], b"").await;
     assert_eq!(subsonic_code(&bytes), Value::from(0));

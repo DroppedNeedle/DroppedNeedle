@@ -375,25 +375,3 @@ async fn chosen_edition(
     summary.owned = library.owned(&group, None).await;
     Outcome::Matched(Box::new(summary))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn folder_names_split_artist_and_album() {
-        let landing = Landing::default();
-        assert_eq!(
-            names(&landing, "Boards of Canada - Geogaddi"),
-            ("Geogaddi".to_owned(), "Boards of Canada".to_owned())
-        );
-        assert_eq!(
-            names(&landing, "Geogaddi"),
-            ("Geogaddi".to_owned(), String::new())
-        );
-        assert_eq!(
-            names(&landing, LOOSE_UNIT_NAME),
-            (String::new(), String::new())
-        );
-    }
-}

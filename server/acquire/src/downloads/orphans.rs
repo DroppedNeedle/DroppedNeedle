@@ -136,17 +136,6 @@ pub fn evaluate_orphan(
 mod tests {
     use super::*;
 
-    fn settled_old() -> OrphanEvidence {
-        OrphanEvidence {
-            has_cleanup_debt: false,
-            task_active: false,
-            bundles_settled: true,
-            mount_healthy: true,
-            client_job_active: false,
-            age_seconds: 7.0 * 3600.0,
-        }
-    }
-
     #[test]
     fn job_names_split_task_and_job() {
         let (task, job) =
@@ -159,40 +148,5 @@ mod tests {
         assert_eq!(job, "droppedneedle-0123456789abcdef0123456789abcdef-3");
         assert!(job_name_parts("random-folder").is_none());
         assert!(job_name_parts("droppedneedle-short-1").is_none());
-    }
-
-    #[test]
-    fn orphan_rules_fail_closed() {
-        let policy = OrphanPolicy::default();
-        let name = "droppedneedle-0123456789abcdef0123456789abcdef-3";
-        assert_eq!(
-            policy.evaluate(name, false, Some(settled_old())),
-            OrphanDecision::Remove
-        );
-        assert_eq!(policy.evaluate(name, false, None), OrphanDecision::Keep);
-        assert_eq!(
-            policy.evaluate(name, true, Some(settled_old())),
-            OrphanDecision::Ignore
-        );
-        assert_eq!(
-            policy.evaluate("other", false, Some(settled_old())),
-            OrphanDecision::Ignore
-        );
-        let young = OrphanEvidence {
-            age_seconds: 60.0,
-            ..settled_old()
-        };
-        assert_eq!(
-            policy.evaluate(name, false, Some(young)),
-            OrphanDecision::Keep
-        );
-        let owned = OrphanEvidence {
-            has_cleanup_debt: true,
-            ..settled_old()
-        };
-        assert_eq!(
-            policy.evaluate(name, false, Some(owned)),
-            OrphanDecision::Keep
-        );
     }
 }
