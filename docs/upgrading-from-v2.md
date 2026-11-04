@@ -88,7 +88,7 @@ checks the library against your files on its first scan.
      contributions, the addresses those services call back on change in v3,
      and v2's stop working (see [Callback addresses](#before-you-upgrade)).
      The page lists each one, old and new. Change it at the service, then
-     tick it. Upgrade stays greyed out until every one is ticked.
+     tick it. Upgrade stays grayed out until every one is ticked.
    - Press Upgrade. The page lists the steps and shows each one as it runs.
      The upgrade carries on if you close the page; open it again to see where
      it is.
@@ -420,8 +420,8 @@ upgrade again.
 The upgrade copies these saved originals while it runs, so it needs more
 free space if v2 managed a big library.
 
-v3 recognises the files v2 tagged and goes on managing them. A file you
-moved or renamed by hand after v2 last wrote it cannot be recognised, so
+v3 recognizes the files v2 tagged and goes on managing them. A file you
+moved or renamed by hand after v2 last wrote it cannot be recognized, so
 its album may show as left unmanaged after the upgrade. "Manage it again"
 on the album page hands it back.
 

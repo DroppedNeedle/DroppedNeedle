@@ -57,7 +57,7 @@ Settings > Security > Content-security policy has two settings. "Policy" is `Enf
 
 Every other response (the API, covers, streams, files) carries a fixed policy under which nothing runs, unless the policy is `Off`. The Subsonic and Jellyfin APIs are not touched, except that the Subsonic picture address (`/subsonic/img`) always sends its own policy, under which nothing runs, whatever this setting says. If your reverse proxy adds a `Content-Security-Policy` of its own, the browser applies both, so it can only make the rules stricter, never looser.
 
-A proxy that rewrites the page or injects a script into it (an analytics snippet, a script optimiser such as Cloudflare's Rocket Loader) leaves a blank page, because the browser refuses the changed script. To tell, open the browser's developer console: it names the content-security policy for each script it refused. The best fix is to turn the rewriting off for DroppedNeedle's address. Until then, set the policy to `Report only`. The Security tab cannot be reached from a blank page, so change it on the host with the server stopped:
+A proxy that rewrites the page or injects a script into it (an analytics snippet, a script optimizer such as Cloudflare's Rocket Loader) leaves a blank page, because the browser refuses the changed script. To tell, open the browser's developer console: it names the content-security policy for each script it refused. The best fix is to turn the rewriting off for DroppedNeedle's address. Until then, set the policy to `Report only`. The Security tab cannot be reached from a blank page, so change it on the host with the server stopped:
 
 ```bash
 docker compose stop droppedneedle

@@ -138,7 +138,7 @@ Outside pull requests are welcome. Each one is reviewed against the rules in [CL
 - Server: no `unwrap`, `expect` or `panic!` outside tests (clippy enforces it). Services return typed errors; only handlers map them to HTTP status. Blocking file, SQLite or CPU-heavy work runs off the async workers.
 - The server is a single process. Never run two against the same data directory.
 - Frontend: strict TypeScript, no `any`. Svelte 5 runes only. Data fetching goes through TanStack Query hooks and the typed `/api/v3` client.
-- Use existing design tokens (`primary`, `secondary`, etc.) for colours, not hardcoded values.
+- Use existing design tokens (`primary`, `secondary`, etc.) for colors, not hardcoded values.
 - The web UI runs under an enforced content-security policy: no inline scripts, no `eval`, and no static `style="..."` in markup (eslint refuses one; bind styles through Svelte instead). Loading a script, frame, audio clip or connection from a new outside host is an edit to the list in `server/src/security_headers.rs`, with the reason beside it.
 - Run `pnpm run lint` and `pnpm run check` in the frontend before submitting.
 

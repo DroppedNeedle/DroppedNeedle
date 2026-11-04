@@ -7,7 +7,7 @@
     <Privileged>false</Privileged>
     <Support>https://github.com/DroppedNeedle/DroppedNeedle/issues</Support>
     <Project>https://github.com/DroppedNeedle/DroppedNeedle</Project>
-    <Overview>DroppedNeedle is a self-hosted, multi-user music request and discovery app with a native library engine (scan, tag, fingerprint, organise) and multi-source acquisition from Soulseek (via a slskd instance) and Usenet (via SABnzbd with native Newznab indexers). Search the full MusicBrainz catalogue, request albums and individual tracks, discover new music from your listening history, and scrobble to ListenBrainz and Last.fm. It can also emulate Subsonic- and Jellyfin-compatible server APIs so external client apps can stream your library. No Lidarr required.</Overview>
+    <Overview>DroppedNeedle is a self-hosted, multi-user music request and discovery app with a native library engine (scan, tag, fingerprint, organize) and multi-source acquisition from Soulseek (via a slskd instance) and Usenet (via SABnzbd with native Newznab indexers). Search the full MusicBrainz catalog, request albums and individual tracks, discover new music from your listening history, and scrobble to ListenBrainz and Last.fm. It can also emulate Subsonic- and Jellyfin-compatible server APIs so external client apps can stream your library. No Lidarr required.</Overview>
     <Category>MediaApp:Music MediaServer:Music</Category>
     <WebUI>http://[IP]:[PORT:8688]</WebUI>
     <TemplateURL>https://raw.githubusercontent.com/DroppedNeedle/DroppedNeedle/main/templates/droppedneedle.xml</TemplateURL>

@@ -19,7 +19,7 @@ body:
     id: desired-behavior
     attributes:
       label: How should it work?
-      description: Describe the behaviour you'd expect from this feature.
+      description: Describe the behavior you'd expect from this feature.
     validations:
       required: true
   - type: textarea
