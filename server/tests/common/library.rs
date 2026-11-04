@@ -12,9 +12,8 @@ use droppedneedle_kernel::db::writer::Lane;
 use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_library::contrib::ContribProviders;
-use droppedneedle_library::contrib::scripted::{ScriptedDiscogs, ScriptedMusicBrainz};
 use droppedneedle_library::identify::models::{LocalAlbumFacts, RecallResult};
-use droppedneedle_library::identify::providers::{FakeProviders, IdentifyProviders, RecallOutcome};
+use droppedneedle_library::identify::providers::{IdentifyProviders, RecallOutcome};
 use droppedneedle_library::identify::sources::{
     ArtistAnswer, EditionPage, EditionQuery, Prioritised, ReleaseAnswer, ReleaseSource,
     SourceError, Unanswered,
@@ -22,6 +21,8 @@ use droppedneedle_library::identify::sources::{
 use droppedneedle_library::jobs::service::Operations;
 use droppedneedle_library::management::enrich::EnrichmentPort;
 use droppedneedle_library::repairs::service::RepairWorker;
+use droppedneedle_library::test_support::FakeProviders;
+use droppedneedle_library::test_support::{ScriptedDiscogs, ScriptedMusicBrainz};
 use droppedneedle_library::wiring::{LibraryCore, LibraryPorts, LibraryServices, LibrarySetup};
 use droppedneedle_providers::Providers;
 

@@ -79,9 +79,9 @@ impl Verdict {
 }
 
 pub struct VerificationWorker {
-    service: Arc<ContributionService>,
+    pub(crate) service: Arc<ContributionService>,
     musicbrainz: Arc<dyn MusicBrainzContrib>,
-    store: Arc<SqliteContributions>,
+    pub(crate) store: Arc<SqliteContributions>,
 }
 
 impl VerificationWorker {
@@ -156,49 +156,6 @@ impl VerificationWorker {
                 }
             }
         }
-    }
-
-    /// Claim the next due job and run it, as the runner would, for tests.
-    /// The claim's lease ends at once, so a job a retry left running is
-    /// taken back by the next call once the clock reaches its retry time:
-    /// the runner's put-back is the jobs module's, tested there.
-    #[cfg(any(test, feature = "test-support"))]
-    pub async fn run_once(&self) -> Result<Option<Verdict>, ContribError> {
-        let queue = self.store.queue().clone();
-        let spec = SPEC.lease(Duration::from_millis(1));
-        let claimed = {
-            let queue = queue.clone();
-            self.store
-                .db()
-                .write(Lane::Background, "contrib.test_claim", move |tx| {
-                    queue.claim_in(tx, &spec)
-                })
-                .await?
-        };
-        let Some(claimed) = claimed else {
-            return Ok(None);
-        };
-        let lease = claimed.lease.clone();
-        let complete: Completion = {
-            let queue = queue.clone();
-            let lease = lease.clone();
-            Arc::new(move |tx| queue.complete(tx, &lease))
-        };
-        let claim = Claim {
-            contribution_id: claimed.key,
-            attempt: claimed.attempt,
-            complete: complete.clone(),
-        };
-        let verdict = self.run_claimed(&claim, self.service.now()).await?;
-        if verdict.job == Outcome::Done {
-            self.store
-                .db()
-                .write(Lane::Background, "contrib.test_done", move |tx| {
-                    complete(tx).map_err(ContribError::from)
-                })
-                .await?;
-        }
-        Ok(Some(verdict))
     }
 
     pub async fn run_claimed(&self, job: &Claim, now: f64) -> Result<Verdict, ContribError> {

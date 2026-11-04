@@ -102,7 +102,7 @@ pub(crate) struct ManagementParts {
 /// Management jobs over the library setup.
 #[derive(Clone)]
 pub struct Management {
-    pub(super) parts: ManagementParts,
+    pub(crate) parts: ManagementParts,
     /// Cancelled when the server shuts down; the worker then hands its
     /// job back to the queue between albums.
     shutdown: Option<droppedneedle_kernel::jobs::CancellationToken>,

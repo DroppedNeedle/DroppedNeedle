@@ -65,28 +65,5 @@ pub mod settings_models;
 pub mod tags;
 pub mod wiring;
 
-/// Every `sql.rs` of this crate, one line each, for the schema test.
 #[cfg(any(test, feature = "test-support"))]
-pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
-    vec![
-        sql::registered(),
-        activity::sql::registered(),
-        corrections::sql::registered(),
-        identify::sql::registered(),
-        import::sql::registered(),
-        catalog_actions::sql::registered(),
-        edition::sql::registered(),
-        reidentify::sql::registered(),
-        reviews::sql::registered(),
-        reconcile::sql::registered(),
-        repairs::sql::registered(),
-        scan::sql::registered(),
-        scan::sqlite_store::sql::registered(),
-        identity::sql::registered(),
-        contrib::sql::registered(),
-        publish::sql::registered(),
-        catalog_revision::sql::registered(),
-        jobs::sql::registered(),
-        management::sql::registered(),
-    ]
-}
+pub mod test_support;

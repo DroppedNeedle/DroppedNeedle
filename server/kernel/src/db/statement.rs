@@ -347,7 +347,7 @@ macro_rules! __sql_items {
     };
     (
         $schema:ident [$($done:tt)*]
-        $(#[$meta:meta])* $vis:vis row $name:ident for [$($statement:ident),+ $(,)?] {
+        $(#[$meta:meta])* $vis:vis row $name:ident for [$($statement:path),+ $(,)?] {
             $($field:ident : $ty:ty),+ $(,)?
         }
         $($rest:tt)*
@@ -422,7 +422,7 @@ macro_rules! __sql_declared {
     ((family $name:ident $builder:ident)) => {
         $crate::db::statement::Declared::Family($crate::sql_family!($name, $builder))
     };
-    ((row $name:ident [$($statement:ident),+] [$($field:ident),+])) => {
+    ((row $name:ident [$($statement:path),+] [$($field:ident),+])) => {
         $crate::db::statement::Declared::Row($crate::db::statement::RowShape::new(
             concat!(module_path!(), "::", stringify!($name)),
             &[$(stringify!($field)),+],

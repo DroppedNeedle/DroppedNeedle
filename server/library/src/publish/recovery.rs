@@ -335,20 +335,7 @@ pub fn reconcile(
     reconcile_with(db, sandbox, jobs, clock, Seams::default())
 }
 
-/// [`reconcile`] on a filesystem made to lack a placement step. Tests
-/// only; production never calls this.
-#[cfg(any(test, feature = "test-support"))]
-pub fn reconcile_with_seams(
-    db: &Db,
-    sandbox: &Sandbox,
-    jobs: &JobQueue,
-    clock: &dyn Clock,
-    seams: Seams,
-) -> Result<Vec<BundleRecovery>, PublishError> {
-    reconcile_with(db, sandbox, jobs, clock, seams)
-}
-
-fn reconcile_with(
+pub(crate) fn reconcile_with(
     db: &Db,
     sandbox: &Sandbox,
     jobs: &JobQueue,

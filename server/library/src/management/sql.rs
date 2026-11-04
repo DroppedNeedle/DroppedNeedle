@@ -7,8 +7,6 @@ use super::models::{Eligibility, OverrideMode, TagScope};
 use super::takeover::Cause;
 use crate::jobs::{ManagementPhase, OperationState, WorkState};
 use crate::publish::sql::HAS_BYTES_RECORD;
-#[cfg(any(test, feature = "test-support"))]
-use crate::publish::sql::RETRYING_BUNDLES;
 
 droppedneedle_kernel::sql_choice! {
     /// What a kept tag value sits on.
@@ -652,7 +650,10 @@ droppedneedle_kernel::sql! {
         capability_json: String,
         reason_code: Option<String>,
     }
-    pub(super) row AttentionBundleRow for [ATTENTION_BUNDLES, RETRYING_BUNDLES] {
+    pub(super) row AttentionBundleRow for [
+        ATTENTION_BUNDLES,
+        crate::publish::sql::RETRYING_BUNDLES,
+    ] {
         bundle_id: String,
         file_count: i64,
         sample_paths: Option<String>,

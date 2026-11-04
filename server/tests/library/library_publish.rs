@@ -189,7 +189,13 @@ fn reconcile_with_seams(
     sandbox: &Sandbox,
     seams: Seams,
 ) -> Result<Vec<publish::recovery::BundleRecovery>, PublishError> {
-    publish::recovery::reconcile_with_seams(db, sandbox, &jobs(db), &SystemClock, seams)
+    droppedneedle_library::test_support::reconcile_with_seams(
+        db,
+        sandbox,
+        &jobs(db),
+        &SystemClock,
+        seams,
+    )
 }
 
 /// Fixed free-space probe so disk preflight pins exact values.

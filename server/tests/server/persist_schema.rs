@@ -1638,7 +1638,10 @@ const REGISTRIES: &[(&str, StatementFiles)] = &[
     ("auth", droppedneedle_auth::test_support::statement_files),
     ("catalog", droppedneedle_catalog::statement_files),
     ("acquire", droppedneedle_acquire::statement_files),
-    ("library", droppedneedle_library::statement_files),
+    (
+        "library",
+        droppedneedle_library::test_support::statement_files,
+    ),
     ("plugins", droppedneedle_plugins::statement_files),
     ("media", droppedneedle_media::statement_files),
     ("compat", droppedneedle_compat::statement_files),
@@ -2063,7 +2066,7 @@ fn scan_lookups_reach_albums_and_moves_by_key() {
             Regex::new(r"^SEARCH m USING (?:COVERING )?INDEX \w+ \(run_id=\?\)$").unwrap(),
         ),
     ];
-    let texts: BTreeMap<&str, String> = droppedneedle_library::statement_files()
+    let texts: BTreeMap<&str, String> = droppedneedle_library::test_support::statement_files()
         .into_iter()
         .flat_map(|file| file.declared)
         .filter_map(|declared| match declared {

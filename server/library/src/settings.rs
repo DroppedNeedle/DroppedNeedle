@@ -47,7 +47,7 @@ pub struct LibrarySettings {
     pub musicbrainz: Live<MusicBrainzSettings>,
     /// Adding a root and Library Management's settings write here, and
     /// correction previews are signed with its data key.
-    store: ConfigStore,
+    pub(crate) store: ConfigStore,
 }
 
 impl LibrarySettings {
@@ -72,12 +72,6 @@ impl LibrarySettings {
     /// would send every job to review.
     pub fn identification_readable(&self) -> bool {
         self.editions.current().is_some() && self.musicbrainz.read().is_some()
-    }
-
-    /// The store, for tests that save a section the library then reads.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn store(&self) -> &ConfigStore {
-        &self.store
     }
 
     /// Sign `message` for `purpose` with the server's data key.

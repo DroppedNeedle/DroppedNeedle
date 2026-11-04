@@ -26,12 +26,12 @@ use droppedneedle_catalog::collections::db::CollectionsDb;
 use droppedneedle_catalog::collections::store::play_marks::{MarkScope, PlayMarkStore};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::identify::models::{LocalAlbumFacts, RecallResult};
-use droppedneedle_library::identify::providers::FakeProviders;
 use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle_library::management::automatic::{SETTLE_SECONDS, Settle};
 use droppedneedle_library::management::models::ResultState;
 use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseTrack};
 use droppedneedle_library::scan::SqliteScanStore;
+use droppedneedle_library::test_support::FakeProviders;
 use droppedneedle_library::wiring::LibrarySetup;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -10362,7 +10362,8 @@ async fn library_management_tools_journey() {
     use droppedneedle_library::management::tag_edit::TagEditRequest;
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    use droppedneedle_library::management::enrich::{Cover, LyricsFound, ScriptedEnrichment};
+    use droppedneedle_library::management::enrich::{Cover, LyricsFound};
+    use droppedneedle_library::test_support::ScriptedEnrichment;
     let cover = {
         let mut bytes = Vec::new();
         image::RgbImage::from_pixel(8, 8, image::Rgb([200, 30, 30]))
@@ -11391,12 +11392,13 @@ async fn library_management_custom_edition_journey() {
 #[tokio::test]
 async fn library_management_artwork_journey() {
     use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
-    use droppedneedle_library::management::enrich::{Cover, ScriptedEnrichment};
+    use droppedneedle_library::management::enrich::Cover;
     use droppedneedle_library::management::models::{Selection, SelectionKind};
     use droppedneedle_library::management::service::{Management, PreviewRequest};
     use droppedneedle_library::management::settings as lm;
     use droppedneedle_library::tags::save::read_document;
     use droppedneedle_library::tags::{TagEdit, TagField};
+    use droppedneedle_library::test_support::ScriptedEnrichment;
 
     let cover = {
         let mut bytes = Vec::new();
@@ -11681,7 +11683,7 @@ impl ManagedLibrary {
         configure: impl Fn(
             &mut droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
         ),
-        enrichment: Arc<droppedneedle_library::management::enrich::ScriptedEnrichment>,
+        enrichment: Arc<droppedneedle_library::test_support::ScriptedEnrichment>,
     ) -> Self {
         Self::start_with(tag, configure, Some(enrichment)).await
     }
@@ -12875,8 +12877,9 @@ async fn a_mixed_id3v23_file_is_saved_as_v24() {
 #[tokio::test]
 async fn a_scrub_preview_names_the_tags_it_keeps() {
     use crate::library_tags::{flac_inject_pairs, id3_inject_frames};
-    use droppedneedle_library::management::enrich::{Cover, ScriptedEnrichment};
+    use droppedneedle_library::management::enrich::Cover;
     use droppedneedle_library::management::models::{Eligibility, SelectionKind};
+    use droppedneedle_library::test_support::ScriptedEnrichment;
 
     let mut cover = Vec::new();
     image::RgbImage::from_pixel(8, 8, image::Rgb([30, 30, 200]))
@@ -12974,9 +12977,10 @@ async fn a_scrub_preview_names_the_tags_it_keeps() {
 #[tokio::test]
 async fn an_artwork_embed_is_refused_only_when_it_would_lose_a_picture() {
     use crate::library_tags::id3_inject_frames;
-    use droppedneedle_library::management::enrich::{Cover, ScriptedEnrichment};
+    use droppedneedle_library::management::enrich::Cover;
     use droppedneedle_library::management::models::{Eligibility, SelectionKind};
     use droppedneedle_library::tags::save::read_document;
+    use droppedneedle_library::test_support::ScriptedEnrichment;
 
     let mut cover = Vec::new();
     image::RgbImage::from_pixel(8, 8, image::Rgb([30, 30, 200]))
@@ -13234,9 +13238,10 @@ async fn the_picard_profile_writes_its_fields_in_every_format() {
 /// nowhere else). The worker looks, marks the album and writes nothing.
 #[tokio::test]
 async fn a_hand_edit_of_a_managed_field_takes_the_album_over() {
-    use droppedneedle_library::management::enrich::{Cover, ScriptedEnrichment};
+    use droppedneedle_library::management::enrich::Cover;
     use droppedneedle_library::tags::save::{PictureSpec, save_tags_with_pictures};
     use droppedneedle_library::tags::{TagEdit, TagField, read_fields};
+    use droppedneedle_library::test_support::ScriptedEnrichment;
 
     let case = "isrc";
     let managed = ManagedLibrary::start("lib-takeover-isrc", |_| {}).await;
@@ -21532,9 +21537,9 @@ impl ManagedLibrary {
 #[tokio::test]
 async fn the_picard_profile_writes_musicbrainz_credits() {
     use crate::library_tags::{id3_people, id3_txxx_values, mp4_freeform, vorbis_key_values};
-    use droppedneedle_library::management::enrich::ScriptedEnrichment;
     use droppedneedle_library::management::models::SelectionKind;
     use droppedneedle_library::tags::{TagField, read_fields};
+    use droppedneedle_library::test_support::ScriptedEnrichment;
 
     let scripted = Arc::new(ScriptedEnrichment::default());
     let managed = ManagedLibrary::scripted("lib-credits", |_| {}, scripted.clone()).await;
@@ -21722,8 +21727,8 @@ async fn the_picard_profile_writes_musicbrainz_credits() {
 /// worker marks the album and writes nothing.
 #[tokio::test]
 async fn automatic_credits_wait_for_musicbrainz_and_respect_a_hand_edit() {
-    use droppedneedle_library::management::enrich::ScriptedEnrichment;
     use droppedneedle_library::tags::{TagEdit, TagField, read_fields};
+    use droppedneedle_library::test_support::ScriptedEnrichment;
 
     let scripted = Arc::new(ScriptedEnrichment::default());
     let managed = ManagedLibrary::scripted("lib-credits-auto", |_| {}, scripted.clone()).await;
@@ -23369,8 +23374,8 @@ const ID_B: &str = "1d2a3b4c-0000-4000-8000-000000000002";
 #[tokio::test]
 async fn acoustid_ids_come_from_a_lookup_naming_the_files_recording() {
     use droppedneedle_kernel::runtime_config::sections::FieldMode;
-    use droppedneedle_library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
     use droppedneedle_library::management::models::SelectionKind;
+    use droppedneedle_library::test_support::{ScriptedAcoustId, ScriptedEnrichment};
 
     let scripted = Arc::new(ScriptedEnrichment::default());
     let managed = ManagedLibrary::scripted(
@@ -23516,7 +23521,7 @@ async fn acoustid_ids_come_from_a_lookup_naming_the_files_recording() {
 /// album is written with its print and no id.
 #[tokio::test]
 async fn automatic_acoustid_without_an_answer() {
-    use droppedneedle_library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
+    use droppedneedle_library::test_support::{ScriptedAcoustId, ScriptedEnrichment};
     use rusqlite::OptionalExtension as _;
 
     let scripted = Arc::new(ScriptedEnrichment::default());
@@ -23630,7 +23635,7 @@ async fn automatic_acoustid_without_an_answer() {
 /// The production AcoustID lookup beside the scripted other sources.
 struct LiveAcoustId {
     live: droppedneedle_catalog::enrichment::library::LiveEnrichment,
-    scripted: Arc<droppedneedle_library::management::enrich::ScriptedEnrichment>,
+    scripted: Arc<droppedneedle_library::test_support::ScriptedEnrichment>,
 }
 
 impl droppedneedle_library::management::enrich::EnrichmentPort for LiveAcoustId {
@@ -23725,7 +23730,7 @@ async fn automatic_acoustid_waits_while_library_settings_do_not_read() {
     use droppedneedle_catalog::enrichment::library::LiveEnrichment;
     use droppedneedle_catalog::lyrics::OnlineLyrics;
     use droppedneedle_catalog::metadata::upstream::{LiveCatalogSettings, Upstream};
-    use droppedneedle_library::management::enrich::ScriptedEnrichment;
+    use droppedneedle_library::test_support::ScriptedEnrichment;
     use droppedneedle_providers::Providers;
     use droppedneedle_providers::test_support::ScriptedWire;
 
@@ -23797,8 +23802,8 @@ async fn automatic_acoustid_waits_while_library_settings_do_not_read() {
 /// looks up only the file beside it that holds neither.
 #[tokio::test]
 async fn fill_missing_acoustid_looks_up_only_the_file_without_values() {
-    use droppedneedle_library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
     use droppedneedle_library::management::models::SelectionKind;
+    use droppedneedle_library::test_support::{ScriptedAcoustId, ScriptedEnrichment};
 
     let scripted = Arc::new(ScriptedEnrichment::default());
     let managed = ManagedLibrary::scripted("lib-acoustid-fill", |_| {}, scripted.clone()).await;
@@ -24354,10 +24359,10 @@ fn id3_user_values(path: &Path, description: &str) -> Vec<Vec<String>> {
 /// its artist are the same rows.
 #[tokio::test]
 async fn a_translating_profile_writes_english_artist_names() {
-    use droppedneedle_library::management::enrich::ScriptedEnrichment;
     use droppedneedle_library::management::models::SelectionKind;
     use droppedneedle_library::management::service::ApplyRequest;
     use droppedneedle_library::tags::{TagField, read_fields};
+    use droppedneedle_library::test_support::ScriptedEnrichment;
 
     let scripted = Arc::new(ScriptedEnrichment::default());
     let managed = ManagedLibrary::scripted("lib-names", translating, scripted.clone()).await;
@@ -24601,9 +24606,9 @@ fn texts(db: &rusqlite::Connection, sql: &str) -> Vec<String> {
 #[tokio::test]
 async fn a_run_that_adds_ids_and_translates_keeps_the_artist() {
     use droppedneedle_catalog::local::store::LocalCatalog;
-    use droppedneedle_library::management::enrich::ScriptedEnrichment;
     use droppedneedle_library::management::models::SelectionKind;
     use droppedneedle_library::tags::{TagEdit, TagField, save_tags};
+    use droppedneedle_library::test_support::ScriptedEnrichment;
 
     let scripted = Arc::new(ScriptedEnrichment::default());
     let managed = ManagedLibrary::scripted("lib-names-link", translating, scripted.clone()).await;
@@ -25137,9 +25142,9 @@ async fn a_custom_edition_passes_over_the_apps_artist_link() {
 /// answers, waking the queue writes the translated names by itself.
 #[tokio::test]
 async fn translated_names_wait_for_musicbrainz() {
-    use droppedneedle_library::management::enrich::ScriptedEnrichment;
     use droppedneedle_library::management::models::SelectionKind;
     use droppedneedle_library::tags::{TagField, read_fields};
+    use droppedneedle_library::test_support::ScriptedEnrichment;
 
     let scripted = Arc::new(ScriptedEnrichment::default());
     let managed = ManagedLibrary::scripted("lib-names-down", translating, scripted.clone()).await;
@@ -25220,8 +25225,9 @@ async fn translated_names_wait_for_musicbrainz() {
 /// per album, for both parts together.
 #[tokio::test]
 async fn credits_and_names_come_in_one_lookup() {
-    use droppedneedle_library::management::enrich::{ExtrasWanted, ScriptedEnrichment};
+    use droppedneedle_library::management::enrich::ExtrasWanted;
     use droppedneedle_library::management::models::SelectionKind;
+    use droppedneedle_library::test_support::ScriptedEnrichment;
 
     let scripted = Arc::new(ScriptedEnrichment::default());
     let managed = ManagedLibrary::scripted("lib-names-once", translating, scripted.clone()).await;
@@ -27349,8 +27355,9 @@ fn cover_png(colour: [u8; 3]) -> Vec<u8> {
 /// edition's own front, and another cover as the one the pages show.
 fn edition_sources(
     edition: Result<Option<Vec<u8>>, String>,
-) -> Arc<droppedneedle_library::management::enrich::ScriptedEnrichment> {
-    use droppedneedle_library::management::enrich::{Cover, ScriptedEnrichment};
+) -> Arc<droppedneedle_library::test_support::ScriptedEnrichment> {
+    use droppedneedle_library::management::enrich::Cover;
+    use droppedneedle_library::test_support::ScriptedEnrichment;
     let cover = |bytes: Vec<u8>| Cover {
         bytes,
         mime: "image/png".to_owned(),

@@ -52,8 +52,6 @@ pub mod supervisor;
 pub mod walk;
 pub mod watcher;
 
-#[cfg(any(test, feature = "test-support"))]
-pub use coordinator::StaticResolver;
 pub use coordinator::{
     IndexCounts, LibraryScanCoordinator, ResolverSource, ScanEvent, ScanEventPublisher,
     ScanRequestError, SharedResolver,
@@ -71,8 +69,6 @@ pub use roots::{
     LibraryRoot, PolicyResolver, RootRegistry, RootSeamError, StreamRootSeam, fingerprint_roots,
 };
 pub use scheduler::{InclusionRule, ScheduleSettings, scheduled_scopes, seconds_until_due};
-#[cfg(any(test, feature = "test-support"))]
-pub use seams::{ArmableDeferTagReader, NullTagReader};
 pub use seams::{Checkpoint, ScannedTags, TagReadError, TagReader};
 pub use sqlite_store::SqliteScanStore;
 pub use stop::RunStop;

@@ -11,9 +11,9 @@ use std::sync::Mutex;
 use droppedneedle_providers::RequestPriority;
 use futures_util::future::BoxFuture;
 
-use super::error::ContribError;
-use super::models::*;
-use super::seams::*;
+use crate::contrib::error::ContribError;
+use crate::contrib::models::*;
+use crate::contrib::seams::*;
 
 // ---------------------------------------------------------------------------
 // Provider fakes (reads only - the submission POST goes to FakeReleaseEditor)
@@ -26,7 +26,6 @@ pub struct ProviderCall {
     pub bypass_cache: bool,
 }
 
-#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ScriptedDiscogs {
     releases: Mutex<HashMap<String, DiscogsRelease>>,
@@ -35,7 +34,6 @@ pub struct ScriptedDiscogs {
     queries: Mutex<Vec<String>>,
 }
 
-#[cfg(any(test, feature = "test-support"))]
 impl ScriptedDiscogs {
     pub fn new() -> Self {
         Self::default()
@@ -70,7 +68,6 @@ impl ScriptedDiscogs {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
 impl DiscogsContrib for ScriptedDiscogs {
     fn search_releases<'a>(
         &'a self,
@@ -126,7 +123,6 @@ impl DiscogsContrib for ScriptedDiscogs {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ScriptedMusicBrainz {
     resolutions: Mutex<HashMap<(String, UrlRelation), MusicBrainzUrlResolution>>,
@@ -136,7 +132,6 @@ pub struct ScriptedMusicBrainz {
     calls: Mutex<Vec<ProviderCall>>,
 }
 
-#[cfg(any(test, feature = "test-support"))]
 impl ScriptedMusicBrainz {
     pub fn new() -> Self {
         Self::default()
@@ -187,7 +182,6 @@ impl ScriptedMusicBrainz {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
 impl MusicBrainzContrib for ScriptedMusicBrainz {
     fn resolve_url<'a>(
         &'a self,
@@ -273,7 +267,6 @@ impl MusicBrainzContrib for ScriptedMusicBrainz {
 // Mocked submission endpoint (replaces the live MusicBrainz release editor)
 // ---------------------------------------------------------------------------
 
-#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 pub struct FakeSubmission {
     pub fields: Vec<(String, String)>,
@@ -282,14 +275,12 @@ pub struct FakeSubmission {
     pub release_mbid: String,
 }
 
-#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct FakeReleaseEditor {
     submissions: Mutex<Vec<FakeSubmission>>,
     next_release_mbid: Mutex<Option<String>>,
 }
 
-#[cfg(any(test, feature = "test-support"))]
 impl FakeReleaseEditor {
     pub fn new() -> Self {
         Self::default()

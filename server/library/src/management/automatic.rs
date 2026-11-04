@@ -425,19 +425,8 @@ impl Management {
         self.step_at(settle, self.parts.clock.now_secs())
     }
 
-    /// [`Self::automatic_step`] at `now` (unix seconds), so a test can
-    /// move time. Blocking.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn automatic_step_at(
-        &self,
-        settle: &mut Settle,
-        now: f64,
-    ) -> Result<bool, ManagementError> {
-        self.step_at(settle, now)
-    }
-
     /// [`Self::automatic_step`] at `now` (unix seconds). Blocking.
-    fn step_at(&self, settle: &mut Settle, now: f64) -> Result<bool, ManagementError> {
+    pub(crate) fn step_at(&self, settle: &mut Settle, now: f64) -> Result<bool, ManagementError> {
         // Albums a person handed back all at once come first, one a step.
         // That writes no music file, so it waits for neither a scan nor a
         // settled album.
@@ -501,18 +490,15 @@ impl Management {
         self.look_at_due(now, Some(now - SETTLE_SECONDS))
     }
 
-    /// Look at the next waiting album that is due, settled or not, so a
-    /// test need not wait out the settle window. Blocking.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn automatic_next(&self) -> Result<bool, ManagementError> {
-        self.look_at_due(self.parts.clock.now_secs(), None)
-    }
-
     /// Look at the next album due at `now`. With `settled_before`, only
     /// one queued by then whose identification is not live and has not
     /// landed since. A busy read
     /// is an error, never an empty queue. Blocking.
-    fn look_at_due(&self, now: f64, settled_before: Option<f64>) -> Result<bool, ManagementError> {
+    pub(crate) fn look_at_due(
+        &self,
+        now: f64,
+        settled_before: Option<f64>,
+    ) -> Result<bool, ManagementError> {
         if self.library_off() {
             return Ok(false);
         }

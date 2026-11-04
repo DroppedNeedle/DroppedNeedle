@@ -77,28 +77,6 @@ pub trait ResolverSource: Send + Sync {
     fn resolver(&self) -> PolicyResolver;
 }
 
-/// Fixed resolver for tests and single-config runtimes.
-#[cfg(any(test, feature = "test-support"))]
-pub struct StaticResolver {
-    resolver: PolicyResolver,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl StaticResolver {
-    pub fn new(registry: RootRegistry) -> Self {
-        Self {
-            resolver: PolicyResolver::new(registry),
-        }
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ResolverSource for StaticResolver {
-    fn resolver(&self) -> PolicyResolver {
-        self.resolver.clone()
-    }
-}
-
 /// Shared mutable resolver; settings saves swap the registry in place.
 #[derive(Clone)]
 pub struct SharedResolver {
@@ -1885,9 +1863,9 @@ pub struct IndexCounts {
 mod tests {
     use super::super::models::ScanTrigger;
     use super::super::roots::LibraryRoot;
-    use super::super::seams::NullTagReader;
     use super::super::sqlite_store::scratch_store;
     use super::*;
+    use crate::test_support::{NullTagReader, StaticResolver};
     use std::path::PathBuf;
 
     fn coordinator() -> (

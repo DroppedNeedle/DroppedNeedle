@@ -218,12 +218,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::coordinator::{LibraryScanCoordinator, ScanEventPublisher, StaticResolver};
+    use super::super::coordinator::{LibraryScanCoordinator, ScanEventPublisher};
     use super::super::pool::BlockingPool;
     use super::super::roots::LibraryRoot;
-    use super::super::seams::NullTagReader;
     use super::super::sqlite_store::scratch_store;
     use super::*;
+    use crate::test_support::{NullTagReader, StaticResolver};
     use std::sync::atomic::Ordering;
 
     fn coordinator() -> (

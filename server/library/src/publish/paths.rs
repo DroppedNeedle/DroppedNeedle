@@ -247,19 +247,7 @@ impl Sandbox {
         Ok(mode)
     }
 
-    /// Fix a root's placement mode without probing. Tests only.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_placement_mode(&self, root_id: &str, mode: PlacementMode) {
-        self.store_placement_mode(false, root_id, mode);
-    }
-
-    /// Fix a bin's placement mode without probing. Tests only.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_bin_placement_mode(&self, bin_id: &str, mode: PlacementMode) {
-        self.store_placement_mode(true, bin_id, mode);
-    }
-
-    fn store_placement_mode(&self, bin: bool, id: &str, mode: PlacementMode) {
+    pub(crate) fn store_placement_mode(&self, bin: bool, id: &str, mode: PlacementMode) {
         self.modes
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

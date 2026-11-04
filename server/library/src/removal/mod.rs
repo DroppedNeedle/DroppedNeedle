@@ -665,22 +665,10 @@ impl Mutations {
             .map_err(ExtrasError::Remove)
     }
 
-    /// [`Self::remove_extras`] without its edition check, for a test that
-    /// works on files no edition plans. Tests only.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn recycle_album_files(
-        &self,
-        album_id: &str,
-        track_ids: &[String],
-        actor: &str,
-    ) -> Result<Removed, MutationError> {
-        self.recycle_extras(album_id, track_ids, actor)
-    }
-
     /// Move some of one album's files into the recycle bin. The undo
     /// record is written in the same commit that takes the tracks out, so
     /// [`Self::put_back`] can put them back.
-    fn recycle_extras(
+    pub(crate) fn recycle_extras(
         &self,
         album_id: &str,
         track_ids: &[String],

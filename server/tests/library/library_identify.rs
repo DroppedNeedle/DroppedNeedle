@@ -11,13 +11,13 @@ use droppedneedle_library::identify;
 use std::sync::Arc;
 
 use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseTrack};
+use droppedneedle_library::test_support::FakeProviders;
 use identify::models::IdentifyJob;
 use identify::models::JobState;
 use identify::models::{
     AlbumIdentity, AutomaticSeal, DecisionSource, IdentificationOutcome, IdentifyKind,
     IdentityBrief, LocalAlbumFacts, LocalTrackFacts, RecallResult, ReviewState, TrackIdentity,
 };
-use identify::providers::FakeProviders;
 use identify::queue::{
     LEASE_SECONDS, PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY,
     PRIORITY_SUPPORTING_MAINTENANCE, terminally_deferred,

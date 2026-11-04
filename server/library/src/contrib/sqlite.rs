@@ -67,7 +67,7 @@ impl From<JobError> for ContribError {
 /// SQLite contribution store and identity reader.
 #[derive(Clone)]
 pub struct SqliteContributions {
-    db: Db,
+    pub(crate) db: Db,
     queue: JobQueue,
 }
 
@@ -80,11 +80,6 @@ impl SqliteContributions {
     /// The jobs table verification runs on.
     pub fn queue(&self) -> &JobQueue {
         &self.queue
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn db(&self) -> &Db {
-        &self.db
     }
 }
 

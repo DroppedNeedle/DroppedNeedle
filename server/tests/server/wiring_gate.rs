@@ -249,7 +249,7 @@ const LATE_ALLOWED: &[(&str, &str, &str)] = &[
         "a test's hook between two publish steps; production never arms it",
     ),
     (
-        "library/src/publish/publisher.rs",
+        "library/src/test_support/mod.rs",
         "hook",
         "the setter of a test's hook between two publish steps",
     ),

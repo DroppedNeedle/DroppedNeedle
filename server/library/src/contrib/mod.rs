@@ -31,8 +31,6 @@ pub mod live;
 pub mod models;
 pub mod reasons;
 pub mod rules;
-#[cfg(any(test, feature = "test-support"))]
-pub mod scripted;
 pub mod seams;
 pub mod service;
 pub(crate) mod sql;

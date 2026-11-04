@@ -12,9 +12,6 @@
 //! full runs; a tag reader that writes (padding rewrites, mtime restores)
 //! fails that test.
 
-#[cfg(any(test, feature = "test-support"))]
-use std::sync::Mutex;
-
 use crate::tags::TrackFile;
 
 /// Tags plus header properties for one file: everything the catalog
@@ -49,83 +46,6 @@ pub trait TagReader: Send + Sync {
     fn length_measured(&self, file: TrackFile<'_>) -> Result<bool, TagReadError> {
         self.read_tags(file)
             .map(|read| read.header.duration_measured)
-    }
-}
-
-/// Null tag reader: every file reads clean with empty tags, so tests can
-/// measure discovery and indexing without a tag stack.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct NullTagReader {
-    reads: Mutex<u64>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl NullTagReader {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn reads(&self) -> u64 {
-        *self
-            .reads
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl TagReader for NullTagReader {
-    fn read_tags(&self, _file: TrackFile<'_>) -> Result<ScannedTags, TagReadError> {
-        *self
-            .reads
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
-        Ok(ScannedTags::default())
-    }
-}
-
-/// Tag reader that defers armed basenames once, then reads clean.
-/// Tests arm a file mid-suite to reproduce deferral exhaustion against an
-/// already indexed catalog row.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct ArmableDeferTagReader {
-    inner: NullTagReader,
-    armed: Mutex<std::collections::HashSet<String>>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ArmableDeferTagReader {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn arm(&self, basename: &str) {
-        self.armed
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(basename.to_owned());
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl TagReader for ArmableDeferTagReader {
-    fn read_tags(&self, file: TrackFile<'_>) -> Result<ScannedTags, TagReadError> {
-        let basename = file
-            .path()
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned());
-        if let Some(basename) = basename
-            && self
-                .armed
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .remove(&basename)
-        {
-            return Err(TagReadError::Deferred);
-        }
-        self.inner.read_tags(file)
     }
 }
 

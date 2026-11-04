@@ -18,19 +18,19 @@ use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::{Budget, Db, LaneLimits};
 use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_library::identify::models::RecallResult;
-use droppedneedle_library::identify::providers::FakeProviders;
 use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService};
 use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle_library::repairs::hygiene;
 use droppedneedle_library::scan::roots::PolicyRule;
 use droppedneedle_library::scan::{
     BlockingPool, Counter, EffectivePolicy, Event, FailureCode, InclusionRule, LibraryRoot,
-    LibraryScanCoordinator, NullTagReader, Phase, RootRegistry, RootSeamError, RunState, ScanKind,
-    ScanPhase, ScanRequest, ScanRun, ScanScope, ScanState, ScanStoreError, ScanTrigger,
-    ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError, TagReader,
-    WatcherAction, WorkWakeups,
+    LibraryScanCoordinator, Phase, RootRegistry, RootSeamError, RunState, ScanKind, ScanPhase,
+    ScanRequest, ScanRun, ScanScope, ScanState, ScanStoreError, ScanTrigger, ScannedTags,
+    SqliteScanStore, StreamRootSeam, TagReadError, TagReader, WatcherAction, WorkWakeups,
 };
 use droppedneedle_library::scan::{ScanEventPublisher, ScanFailureRecord};
+use droppedneedle_library::test_support::FakeProviders;
+use droppedneedle_library::test_support::{NullTagReader, StaticResolver};
 use droppedneedle_library::tags::TrackFile;
 use droppedneedle_library::wiring::LibrarySetup;
 use sha2::{Digest, Sha256};

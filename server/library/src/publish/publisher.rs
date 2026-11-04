@@ -805,13 +805,13 @@ pub struct Publisher<P: SpaceProbe> {
     /// The jobs table a commit queues its follow-up work on.
     jobs: JobQueue,
     gate: CapabilityGate,
-    injector: Option<CrashPoint>,
-    place_seams: super::place::Seams,
+    pub(crate) injector: Option<CrashPoint>,
+    pub(crate) place_seams: super::place::Seams,
     /// Seams for the move of a replaced file into its bin, so a test can
     /// give the bin a filesystem the library does not share.
-    bin_seams: super::place::Seams,
-    before_place: Option<BeforePlace>,
-    before_set_aside: Option<BeforePlace>,
+    pub(crate) bin_seams: super::place::Seams,
+    pub(crate) before_place: Option<BeforePlace>,
+    pub(crate) before_set_aside: Option<BeforePlace>,
     /// Each put-back temp's identity as this publish wrote it, by journal
     /// id: publish and cleanup check it instead of reading the file again.
     temps: BTreeMap<String, paths::FileStat>,
@@ -932,42 +932,6 @@ impl<P: SpaceProbe> Publisher<P> {
         if days >= 1 {
             self.undo_retention_days = days;
         }
-    }
-
-    /// Arm one crash-injection point. Tests only; production never calls this.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_crash_point(&mut self, point: Option<CrashPoint>) {
-        self.injector = point;
-    }
-
-    /// Make placement behave like a filesystem without one of its steps.
-    /// Tests only; production never calls this.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_place_seams(&mut self, seams: super::place::Seams) {
-        self.place_seams = seams;
-    }
-
-    /// Make the move of a replaced file into its recycle bin behave like a
-    /// filesystem without one of its steps. Tests only; production never
-    /// calls this.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_bin_seams(&mut self, seams: super::place::Seams) {
-        self.bin_seams = seams;
-    }
-
-    /// Run `hook` between the last destination check and the placement.
-    /// Tests only; production never calls this.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_before_place(&mut self, hook: Option<BeforePlace>) {
-        self.before_place = hook;
-    }
-
-    /// Run `hook` with the destination while the file there is being set
-    /// aside, just before it moves. Tests only; production never calls
-    /// this.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_before_set_aside(&mut self, hook: Option<BeforePlace>) {
-        self.before_set_aside = hook;
     }
 
     /// Publish one sealed bundle through prepare, publish, catalog
