@@ -7,8 +7,8 @@ A plugin is a class. DroppedNeedle starts it as its own process with
 (the ``entrypoint`` in ``plugin.toml``), builds one instance with a
 ``PluginContext``, and calls its methods over JSON-RPC on stdin and stdout.
 This module does all of the protocol work, so a plugin only writes the
-methods for its capabilities, with the same names and shapes as in
-DroppedNeedle v2:
+methods for its capabilities, with the names and arguments PLUGINS.md
+lists under Capabilities:
 
     from droppedneedle_plugin import PluginPurchaseLink
 

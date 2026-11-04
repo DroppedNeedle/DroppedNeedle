@@ -8,7 +8,7 @@ installs it.
 
 This page is the reference: how plugins run, what they can do, the manifest,
 and the protocol. If you want to write one, start with
-[docs/PLUGIN-CREATION.md](docs/PLUGIN-CREATION.md).
+[docs/writing-a-plugin.md](docs/writing-a-plugin.md).
 
 ## Read this first: plugins are trusted code
 
