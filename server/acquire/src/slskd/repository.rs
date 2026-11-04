@@ -746,23 +746,16 @@ fn parse_datetime(text: &str) -> Option<i64> {
     let hour: i64 = clock.next()?.parse().ok()?;
     let minute: i64 = clock.next()?.parse().ok()?;
     let second: i64 = clock.next()?.parse().ok()?;
-    if !(1..=12).contains(&month)
-        || !(1..=31).contains(&day)
-        || hour > 23
-        || minute > 59
-        || second > 60
-    {
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) || !(0..=60).contains(&second) {
         return None;
     }
-    // Days-from-civil (Howard Hinnant's algorithm), naive read as UTC.
-    let adjusted_year = if month <= 2 { year - 1 } else { year };
-    let era = adjusted_year.div_euclid(400);
-    let year_of_era = adjusted_year.rem_euclid(400);
-    let month_prime = (month + 9).rem_euclid(12);
-    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    let days = era * 146_097 + day_of_era - 719_468;
-    Some(days * 86_400 + hour * 3600 + minute * 60 + second - offset_seconds)
+    // A naive timestamp reads as UTC; a leap second (`:60`) is kept as given.
+    let month = time::Month::try_from(u8::try_from(month).ok()?).ok()?;
+    let date =
+        time::Date::from_calendar_date(i32::try_from(year).ok()?, month, u8::try_from(day).ok()?)
+            .ok()?;
+    let midnight = date.midnight().assume_utc().unix_timestamp();
+    Some(midnight + hour * 3600 + minute * 60 + second - offset_seconds)
 }
 
 /// Per-file status from matched transfer records.
@@ -917,4 +910,25 @@ fn mount_has_any_file(mount: &std::path::Path) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_datetime;
+
+    /// slskd's timestamps read to unix seconds, naive ones as UTC, with an
+    /// offset taken off and fractions dropped; a date that does not exist
+    /// reads as nothing.
+    #[test]
+    fn slskd_timestamps_read_to_unix_seconds() {
+        const AT: i64 = 1_771_506_245;
+        assert_eq!(parse_datetime("2026-02-19T13:04:05"), Some(AT));
+        assert_eq!(parse_datetime("2026-02-19T13:04:05.1234567Z"), Some(AT));
+        assert_eq!(
+            parse_datetime("2026-02-19 13:04:05+02:00"),
+            Some(AT - 7_200)
+        );
+        assert_eq!(parse_datetime("2026-02-30T13:04:05"), None);
+        assert_eq!(parse_datetime("not a date"), None);
+    }
 }

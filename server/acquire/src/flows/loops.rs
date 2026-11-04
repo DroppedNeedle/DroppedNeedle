@@ -593,8 +593,8 @@ pub const QUIET_DOUBLING_STREAK: u32 = 10;
 pub fn interval_seconds(first_release_date: Option<&str>, quiet_streak: u32, now: i64) -> i64 {
     const DAY: i64 = 86_400;
     let age_days = first_release_date
-        .and_then(parse_partial_date)
-        .map(|(year, month, day)| now.div_euclid(DAY) - days_from_civil(year, month, day))
+        .and_then(partial_date_day)
+        .map(|day| now.div_euclid(DAY) - day)
         .map(|age| age.max(0));
     let days: i64 = match age_days {
         Some(age) if age < 30 => 2,
@@ -606,34 +606,25 @@ pub fn interval_seconds(first_release_date: Option<&str>, quiet_streak: u32, now
     days * DAY
 }
 
-/// Parse a partial MusicBrainz date (`YYYY`, `YYYY-MM`, or `YYYY-MM-DD`)
-/// to the start of its period.
-fn parse_partial_date(value: &str) -> Option<(i64, u32, u32)> {
+/// The day a partial MusicBrainz date (`YYYY`, `YYYY-MM`, or
+/// `YYYY-MM-DD`) starts on, in days from the unix epoch. `None` for a date
+/// that does not exist.
+fn partial_date_day(value: &str) -> Option<i64> {
     let mut parts = value.split('-');
-    let year: i64 = parts.next()?.parse().ok()?;
-    let month: u32 = match parts.next() {
-        None => 1,
-        Some(part) => part.parse::<u32>().ok()?,
-    };
-    let day: u32 = match parts.next() {
-        None => 1,
-        Some(part) => part.parse::<u32>().ok()?,
-    };
-    if parts.next().is_some() || month == 0 || month > 12 || day == 0 || day > 31 {
+    let year: i32 = parts.next()?.parse().ok()?;
+    let mut field = || parts.next().map_or(Some(1), |part| part.parse::<u8>().ok());
+    let month = time::Month::try_from(field()?).ok()?;
+    let day = field()?;
+    if parts.next().is_some() {
         return None;
     }
-    Some((year, month, day))
-}
-
-/// Days from the unix epoch to a civil date (Hinnant's algorithm).
-fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let yoe = year.rem_euclid(400) as u64;
-    let mp = ((i64::from(month) + 9) % 12) as u64;
-    let doy = (153 * mp + 2) / 5 + u64::from(day) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe as i64 - 719_468
+    let date = time::Date::from_calendar_date(year, month, day).ok()?;
+    Some(
+        date.midnight()
+            .assume_utc()
+            .unix_timestamp()
+            .div_euclid(86_400),
+    )
 }
 
 /// What one follow poll accomplished.
@@ -1525,4 +1516,27 @@ pub fn spawn_prune_loop(
         Schedule::new(PRUNE_TICK).with_initial_delay(PRUNE_INITIAL_DELAY),
         IntervalTick::new(supervisor, deps),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{QUIET_DOUBLING_STREAK, interval_seconds};
+
+    /// A release's age picks its recheck band from the start of its
+    /// partial date; a date that does not exist reads as unknown, so old.
+    #[test]
+    fn release_age_picks_the_recheck_band() {
+        const DAY: i64 = 86_400;
+        // 2026-03-11T00:00:00Z.
+        let now = 1_773_187_200;
+        assert_eq!(interval_seconds(Some("2026-03-01"), 0, now), 2 * DAY);
+        assert_eq!(interval_seconds(Some("2026-01"), 0, now), 4 * DAY);
+        assert_eq!(interval_seconds(Some("2025-06-01"), 0, now), 7 * DAY);
+        assert_eq!(interval_seconds(Some("2026"), 0, now), 4 * DAY);
+        assert_eq!(interval_seconds(Some("2026-02-30"), 0, now), 14 * DAY);
+        assert_eq!(
+            interval_seconds(Some("1999"), QUIET_DOUBLING_STREAK, now),
+            28 * DAY
+        );
+    }
 }

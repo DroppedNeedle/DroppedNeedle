@@ -1034,8 +1034,7 @@ async fn newznab_query_ladder() {
 }
 
 /// Fan-out: cross-indexer dedup by (title, size) with priority winning,
-/// one bad member never failing the pool, backoff skips, cache hits, and
-/// the health probe reusing its answer until a search fails.
+/// one bad member never failing the pool, backoff skips and cache hits.
 #[tokio::test]
 async fn newznab_fanout() {
     assert_eq!(
@@ -1142,57 +1141,12 @@ async fn newznab_fanout() {
     );
     assert_eq!(ds_log.calls().len(), before + 1);
 
-    // Health counts reachable members; an empty roster errors.
-    let health = indexer.health_check(USER).await;
-    assert_eq!(health.status, "ok");
-    assert!(health.message.contains("1/1"));
     assert!(indexer.is_configured());
-    // The next probe reuses that answer: it spends no daily API call.
-    let asked = ds_log.statuses().requests();
-    assert_eq!(indexer.health_check(USER).await.status, "ok");
-    assert_eq!(ds_log.statuses().requests(), asked);
-    let empty = newznab_indexer(vec![]);
-    assert_eq!(empty.health_check(USER).await.status, "error");
-
-    // A search the indexer refuses or fails ends the health probe's reuse
-    // of its last answer, so the next probe finds out.
-    let log = NewznabMock::new();
-    let (base, _server) = serve_loopback(log.router(NewznabScenario::DrunkenSlug))
-        .await
-        .expect("mock serves");
-    let indexer = newznab_indexer(vec![entry_for(
-        newznab_client(&base, "ds", "DS"),
-        "ds",
-        "DS",
-        1,
-    )]);
-    assert_eq!(
-        indexer.health_check(USER).await.status,
-        "ok",
-        "failed search"
-    );
-    assert_eq!(
-        indexer.health_check(USER).await.status,
-        "ok",
-        "failed search"
-    );
-    let asked = log.statuses().requests();
-
-    log.statuses().answer_next(401, None);
-    indexer
-        .search_album("Radiohead", "In Rainbows", None, USER)
-        .await;
-    let searched = log.statuses().requests();
-    assert!(searched > asked, "failed search: the search asked");
-    indexer.health_check(USER).await;
-    assert!(
-        log.statuses().requests() > searched,
-        "the probe asked again"
-    );
+    assert!(!newznab_indexer(vec![]).is_configured());
 }
 
 // ---------------------------------------------------------------------------
-// Prowlarr: header auth, mixed-feed mapping, degraded status.
+// Prowlarr: header auth and mixed-feed mapping.
 // ---------------------------------------------------------------------------
 
 fn prowlarr_client(base: &str) -> ProwlarrClient {
@@ -1469,8 +1423,8 @@ fn shown(error: &(impl std::fmt::Display + std::fmt::Debug)) -> String {
 /// A dead client never puts the request URL in an error or a log line.
 /// SABnzbd takes its key as a query parameter on every call, and the NZB
 /// fetch's enclosure URL carries the indexer's key; Newznab takes its key
-/// as a query parameter too, and a dead indexer is logged by the health
-/// check, the caps fetch and the search fan-out; Prowlarr's key travels
+/// as a query parameter too, and a dead indexer is logged by the caps
+/// fetch and the search fan-out; Prowlarr's key travels
 /// in a header, but the base URL is the user's and can hold a secret of
 /// its own (a proxy path, basic-auth userinfo). The clock is paused so
 /// the providers' retry backoff costs no wall time.
@@ -1528,7 +1482,6 @@ async fn transport_errors_never_carry_the_url() {
     assert!(!shown(&err).contains(MARKER), "newznab: {}", shown(&err));
 
     let indexer = newznab_indexer(vec![entry_for(client(), "dead", "Dead", 0)]);
-    assert_eq!(indexer.health_check(USER).await.status, "error", "newznab");
     assert!(
         indexer
             .search_album("Radiohead", "In Rainbows", None, USER)

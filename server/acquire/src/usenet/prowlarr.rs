@@ -19,9 +19,7 @@ use reqwest::Client;
 use serde::Deserialize;
 
 use super::indexer::{Indexer, IndexerQuery};
-use super::newznab::{
-    IndexerHealth, IndexerResult, UsenetRelease, normalize_newznab_query, parse_rfc2822_date,
-};
+use super::newznab::{IndexerResult, UsenetRelease, normalize_newznab_query, parse_rfc2822_date};
 use super::{MAX_INDEXER_BODY_BYTES, read_indexer_body};
 use crate::client_error::{ClientError, Service, retry_after};
 use crate::downloads::source_tag::SourceTag;
@@ -116,7 +114,7 @@ impl std::fmt::Debug for ProwlarrRelease {
 }
 
 /// One `IndexerResource` from `GET /api/v1/indexer`: identity, protocol
-/// and enablement for health and count reporting. Id, name and protocol
+/// and enablement for the settings' connection test. Id, name and protocol
 /// are required; a row without `enable` counts as disabled.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -432,43 +430,6 @@ impl ProwlarrIndexer {
     /// Configured means enabled with a client.
     pub fn is_configured(&self) -> bool {
         self.enabled && self.client.is_some()
-    }
-
-    /// Health never raises. `system_status` is degraded-optional: a `None`
-    /// (404) still counts as reachable when the indexer list answers;
-    /// only enabled rows count (disabled rows are never searched).
-    pub async fn health_check(&self) -> IndexerHealth {
-        if !self.is_configured() {
-            return IndexerHealth {
-                status: "error".to_owned(),
-                version: None,
-                message: "Prowlarr not configured".to_owned(),
-            };
-        }
-        let Some(client) = &self.client else {
-            return IndexerHealth {
-                status: "error".to_owned(),
-                version: None,
-                message: "Prowlarr not configured".to_owned(),
-            };
-        };
-        let status = client.system_status(self.timeout).await;
-        let indexers = client.list_indexers(self.timeout).await;
-        let (Ok(status), Ok(indexers)) = (status, indexers) else {
-            tracing::warn!("prowlarr health: instance unreachable");
-            return IndexerHealth {
-                status: "error".to_owned(),
-                version: None,
-                message: "Prowlarr unreachable".to_owned(),
-            };
-        };
-        let version = status.map(|status| status.version);
-        let enabled = indexers.iter().filter(|indexer| indexer.enable).count();
-        IndexerHealth {
-            status: "ok".to_owned(),
-            version,
-            message: format!("Prowlarr OK - {enabled} enabled indexer(s)"),
-        }
     }
 
     /// Album search: `artist album` free text.
