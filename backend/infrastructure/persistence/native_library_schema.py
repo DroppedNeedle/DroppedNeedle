@@ -1736,6 +1736,8 @@ CREATE INDEX IF NOT EXISTS idx_management_plan_track
 ON library_management_plan_items(job_id, local_track_id);
 CREATE INDEX IF NOT EXISTS idx_management_journal_recovery
 ON library_file_mutation_journal(state, updated_at, id);
+CREATE INDEX IF NOT EXISTS idx_management_import_recovery
+ON library_management_import_bundles(state, updated_at, id);
 CREATE INDEX IF NOT EXISTS idx_management_journal_job
 ON library_file_mutation_journal(job_id, plan_item_ordinal, state);
 CREATE INDEX IF NOT EXISTS idx_management_collision_job
