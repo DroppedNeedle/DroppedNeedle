@@ -174,7 +174,7 @@ impl MediaSetup {
         let http = http_factory.shared().clone();
         crate::stream::plugin_url::sweep_stale_spools(&app_config.temp_dir);
         let library = LibraryFiles::new(db.clone(), library_roots);
-        let download = DownloadState::new(Some(library.clone()), config.live());
+        let download = DownloadState::new(library.clone(), config.live());
         let resolver = remotes;
         let service = RemotesService::new(
             http.clone(),

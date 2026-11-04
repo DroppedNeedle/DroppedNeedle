@@ -69,15 +69,14 @@ pub struct LibraryDownloadAccess {
 /// Everything the download routes read.
 #[derive(Clone)]
 pub struct DownloadState {
-    library: Option<LibraryFiles>,
+    library: LibraryFiles,
     access: Live<SecuritySettings>,
 }
 
 impl DownloadState {
-    /// Downloads from the library catalog and roots. `None` (unwired
-    /// builds) serves nothing. The access setting in `access` is read per
-    /// call.
-    pub fn new(library: Option<LibraryFiles>, access: Live<SecuritySettings>) -> Self {
+    /// Downloads from the library catalog and roots. The access setting in
+    /// `access` is read per call.
+    pub fn new(library: LibraryFiles, access: Live<SecuritySettings>) -> Self {
         Self { library, access }
     }
 }
@@ -206,10 +205,7 @@ pub async fn download_track(
     request_headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     require_allowed(&state, user.role())?;
-    let library = state
-        .library
-        .as_ref()
-        .ok_or(DownloadError::NotFound("Track file not found"))?;
+    let library = &state.library;
     let (_, file) = library
         .locate_track(&id)
         .await
@@ -273,10 +269,7 @@ pub async fn download_album(
     UrlPath(id): UrlPath<String>,
 ) -> Result<Response, ApiError> {
     require_allowed(&state, user.role())?;
-    let library = state
-        .library
-        .as_ref()
-        .ok_or(DownloadError::NotFound("Album or track files not found"))?;
+    let library = &state.library;
     Ok(album_archive(library, &id).await?)
 }
 
@@ -300,10 +293,7 @@ pub async fn download_album_by_mbid(
     UrlPath(mbid): UrlPath<String>,
 ) -> Result<Response, ApiError> {
     require_allowed(&state, user.role())?;
-    let library = state
-        .library
-        .as_ref()
-        .ok_or(DownloadError::NotFound("Album or track files not found"))?;
+    let library = &state.library;
     let album_id = library
         .catalog()
         .album_by_mbid(&mbid)
