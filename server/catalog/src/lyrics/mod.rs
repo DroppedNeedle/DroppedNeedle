@@ -9,6 +9,7 @@
 //! is held until the wait it named has passed. A lookup that failed
 //! stores nothing.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use droppedneedle_kernel::runtime_config::Live;
@@ -77,18 +78,6 @@ impl OnlineLyrics {
         }
     }
 
-    /// Whether the player's lyrics switch is on now. Off when the section
-    /// cannot be read.
-    fn switched_on(&self) -> bool {
-        self.switch
-            .get()
-            .map(|settings| settings.enabled)
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "cannot read lyrics settings; online lyrics off");
-                false
-            })
-    }
-
     /// LRCLIB's exact match for `query` at `priority`. `None` when LRCLIB
     /// has none, and without asking when the length rounds to nothing or
     /// the title or artist is blank: the length is a required match key.
@@ -149,6 +138,42 @@ impl OnlineLyrics {
     }
 }
 
+/// The online answer [`LyricsService`] falls back to: [`OnlineLyrics`] in
+/// the app. A trait because LRCLIB is an outside service, which a test
+/// rig that never reaches it leaves out.
+pub trait OnlineLyricsSource: Send + Sync {
+    /// Whether online lookups are on now.
+    fn switched_on(&self) -> bool;
+
+    /// The match for `query` at `priority` (see [`OnlineLyrics::lookup`]).
+    fn lookup<'a>(
+        &'a self,
+        query: LyricsQuery<'a>,
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<Option<LyricsCandidate>, LyricsError>>;
+}
+
+impl OnlineLyricsSource for OnlineLyrics {
+    /// The player's lyrics switch. Off when the section cannot be read.
+    fn switched_on(&self) -> bool {
+        self.switch
+            .get()
+            .map(|settings| settings.enabled)
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "cannot read lyrics settings; online lyrics off");
+                false
+            })
+    }
+
+    fn lookup<'a>(
+        &'a self,
+        query: LyricsQuery<'a>,
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<Option<LyricsCandidate>, LyricsError>> {
+        Box::pin(OnlineLyrics::lookup(self, query, priority))
+    }
+}
+
 /// The lyrics behind the player route and the compat APIs.
 ///
 /// A track the lyrics sweep marked is read from its file. Otherwise, while
@@ -158,13 +183,17 @@ impl OnlineLyrics {
 pub struct LyricsService {
     catalog: LocalCatalog,
     files: LibraryFiles,
-    online: Option<OnlineLyrics>,
+    online: Arc<dyn OnlineLyricsSource>,
 }
 
 impl LyricsService {
-    /// File lyrics over `catalog` and `files`, then `online` when given.
+    /// File lyrics over `catalog` and `files`, then `online`.
     #[must_use]
-    pub fn new(catalog: LocalCatalog, files: LibraryFiles, online: Option<OnlineLyrics>) -> Self {
+    pub fn new(
+        catalog: LocalCatalog,
+        files: LibraryFiles,
+        online: Arc<dyn OnlineLyricsSource>,
+    ) -> Self {
         Self {
             catalog,
             files,
@@ -172,11 +201,7 @@ impl LyricsService {
         }
     }
 
-    async fn online(
-        &self,
-        online: &OnlineLyrics,
-        track_id: &str,
-    ) -> Result<Option<LyricDoc>, StoreError> {
+    async fn online(&self, track_id: &str) -> Result<Option<LyricDoc>, StoreError> {
         let track = self
             .catalog
             .get_track(track_id)
@@ -194,7 +219,11 @@ impl LyricsService {
             album: &track.album_title,
             duration_secs,
         };
-        let candidate = match online.lookup(query, RequestPriority::UserInitiated).await {
+        let candidate = match self
+            .online
+            .lookup(query, RequestPriority::UserInitiated)
+            .await
+        {
             Ok(Some(candidate)) => candidate,
             Ok(None) => return Ok(None),
             Err(error) => {
@@ -226,10 +255,10 @@ impl LyricsPort for LyricsService {
             if let Some(doc) = file_lyrics::read(&self.catalog, &self.files, track_id).await? {
                 return Ok(Some(doc));
             }
-            match &self.online {
-                Some(online) if online.switched_on() => self.online(online, track_id).await,
-                _ => Ok(None),
+            if !self.online.switched_on() {
+                return Ok(None);
             }
+            self.online(track_id).await
         })
     }
 }

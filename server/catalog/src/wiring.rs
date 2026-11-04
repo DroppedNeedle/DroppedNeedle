@@ -61,7 +61,7 @@ pub struct CatalogPorts {
     /// Acquisition's answer on whether a download source is on.
     pub download_readiness: Arc<dyn discover::content::DownloadReadiness>,
     /// Where discover, home and genre pages queue their image warm.
-    pub cover_warm: Option<art::warm::CoverWarm>,
+    pub cover_warm: art::warm::CoverWarm,
 }
 
 /// The cover and artist image service: local and Cover Art Archive art
@@ -96,14 +96,13 @@ impl CatalogSetup {
     /// `users` gives wrapped its display names and discover its Last.fm
     /// links;
     /// `inputs` carries what the version check, wrapped and discover read
-    /// from the composition root; `enrichment` carries the live provider
-    /// pair (`None` keeps the unconfigured ports: bare enrichment echoes
-    /// and empty lyrics); `ports` are the other areas the modules reach.
+    /// from the composition root; `enrichment` carries the search counts
+    /// and the online lyrics; `ports` are the other areas the modules reach.
     pub fn build(
         platform: &droppedneedle_kernel::platform::Platform,
         users: UsersDeps,
         inputs: CatalogInputs,
-        enrichment: Option<enrichment::live::ProductionEnrichment>,
+        enrichment: enrichment::live::CatalogEnrichment,
         ports: CatalogPorts,
     ) -> Self {
         let (db, settings, ids) = (&platform.db, &*platform.settings, platform.ids.clone());
@@ -146,17 +145,10 @@ impl CatalogSetup {
             catalog.local().clone(),
             catalog.clone(),
             settings,
-            enrichment.as_ref(),
+            enrichment.lyrics,
             library_files,
             artwork.clone(),
         );
-        let search_enrichment: Arc<dyn search::ports::EnrichmentPort> = match &enrichment {
-            Some(pair) => pair.search.clone(),
-            None => Arc::new(search::ports::UnconfiguredEnrichment),
-        };
-        let catalog = catalog.with_follows(Arc::new(CollectionsFollows(
-            collections.stores.follows.clone(),
-        )));
         // Saved links search through discover's YouTube client, so both
         // spend from one daily budget.
         let youtube = youtube::YouTubeLinks::new(
@@ -168,7 +160,7 @@ impl CatalogSetup {
         );
         let search = search::SearchDeps::new(
             search::service::SearchService::new(db.clone()).with_remote(catalog.clone()),
-            search_enrichment,
+            enrichment.search,
         );
         Self {
             local,
@@ -186,19 +178,16 @@ impl CatalogSetup {
 }
 
 /// The library reads: the one local catalog, and tags and lyrics read
-/// from the files first. Without the provider pair a track whose file
-/// carries no lyrics has none (404); with it, the online lyrics answer
-/// while the lyrics setting (read per call) is on. `covers` says which
-/// covers are known missing.
+/// from the files first, then the `online` lyrics while their switch is
+/// on. `covers` says which covers are known missing.
 fn library_deps(
     catalog: local::store::LocalCatalog,
     releases: metadata::Catalog,
     settings: &droppedneedle_kernel::runtime_config::ConfigStore,
-    enrichment: Option<&enrichment::live::ProductionEnrichment>,
+    online: Arc<dyn lyrics::OnlineLyricsSource>,
     files: droppedneedle_media::stream::local_files::LibraryFiles,
     covers: art::ArtworkService,
 ) -> local::LibraryDeps {
-    let online = enrichment.map(|pair| pair.lyrics.clone());
     local::LibraryDeps {
         lyrics: Arc::new(lyrics::LyricsService::new(catalog.clone(), files, online)),
         catalog,
@@ -245,7 +234,14 @@ fn wrapped_state(
 }
 
 /// The artist header's follow state, read from the collections follow
-/// store. A store failure logs and reads as "not followed".
+/// store of `collections`. A store failure logs and reads as "not
+/// followed".
+pub fn collections_follows(
+    collections: &collections::CollectionsState,
+) -> Arc<dyn metadata::ports::FollowLookup> {
+    Arc::new(CollectionsFollows(collections.stores.follows.clone()))
+}
+
 struct CollectionsFollows(collections::store::FollowStore);
 
 impl metadata::ports::FollowLookup for CollectionsFollows {

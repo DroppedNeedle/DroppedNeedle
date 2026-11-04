@@ -55,7 +55,21 @@ pub struct Catalog {
     follows: Arc<dyn ports::FollowLookup>,
     purchase_links: Arc<dyn ports::PurchaseLinkSource>,
     details: Arc<dyn ports::DetailsSource>,
-    cover_warm: Option<CoverWarm>,
+    cover_warm: CoverWarm,
+}
+
+/// What the pages read beyond MusicBrainz and the library, built before
+/// the catalog.
+pub struct PageSources {
+    /// The caller's follow state, for the artist header.
+    pub follows: Arc<dyn ports::FollowLookup>,
+    /// Extra purchase links (the plugins' `purchase_links`).
+    pub purchase_links: Arc<dyn ports::PurchaseLinkSource>,
+    /// What fills gaps in artist and album pages (the plugins'
+    /// `metadata_provider`).
+    pub details: Arc<dyn ports::DetailsSource>,
+    /// Where pages queue the background warm of the images they show.
+    pub cover_warm: CoverWarm,
 }
 
 struct Inner {
@@ -66,56 +80,30 @@ struct Inner {
 }
 
 impl Catalog {
-    /// Serve pages from these upstreams and this library.
-    pub fn new(upstream: Upstream, local: LocalCatalog) -> Self {
+    /// Serve pages from these upstreams, this library and `sources`.
+    pub fn new(upstream: Upstream, local: LocalCatalog, sources: PageSources) -> Self {
+        let PageSources {
+            follows,
+            purchase_links,
+            details,
+            cover_warm,
+        } = sources;
         Self {
             inner: Arc::new(Inner {
                 upstream,
                 local,
                 warming: Mutex::new(HashSet::new()),
             }),
-            follows: Arc::new(ports::NoFollows),
-            purchase_links: Arc::new(ports::NoPurchaseLinks),
-            details: Arc::new(ports::NoDetails),
-            cover_warm: None,
+            follows,
+            purchase_links,
+            details,
+            cover_warm,
         }
     }
 
-    /// Queue a background warm of the images an artist page shows here.
-    #[must_use]
-    pub fn with_cover_warm(mut self, warm: CoverWarm) -> Self {
-        self.cover_warm = Some(warm);
-        self
-    }
-
-    /// Queue a background warm of `targets`, when warming is wired.
+    /// Queue a background warm of `targets`.
     fn warm_covers(&self, page: &'static str, targets: WarmTargets) {
-        if let Some(warm) = &self.cover_warm {
-            warm.queue(page, targets);
-        }
-    }
-
-    /// Add extra purchase links (the plugins' `purchase_links`) from this
-    /// source.
-    #[must_use]
-    pub fn with_purchase_links(mut self, source: Arc<dyn ports::PurchaseLinkSource>) -> Self {
-        self.purchase_links = source;
-        self
-    }
-
-    /// Fill gaps in artist and album pages (the plugins'
-    /// `metadata_provider`) from this source.
-    #[must_use]
-    pub fn with_details(mut self, source: Arc<dyn ports::DetailsSource>) -> Self {
-        self.details = source;
-        self
-    }
-
-    /// Read follow state for the artist header from this store.
-    #[must_use]
-    pub fn with_follows(mut self, follows: Arc<dyn ports::FollowLookup>) -> Self {
-        self.follows = follows;
-        self
+        self.cover_warm.queue(page, targets);
     }
 
     fn follows(&self) -> &dyn ports::FollowLookup {

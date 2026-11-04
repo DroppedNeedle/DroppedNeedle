@@ -556,6 +556,7 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
             rig.deps.clone(),
         ),
         LocalCatalog::new(rig.platform.db.clone()),
+        crate::common::bundles::quiet_page_sources(&rig.platform.db),
     );
     let counts = SearchCounts::new(
         &providers,

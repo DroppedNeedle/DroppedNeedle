@@ -1763,8 +1763,11 @@ async fn a_plugin_that_runs_late_is_asked_again_and_a_whole_answer_is_kept() {
             users.deps.clone(),
         ),
         LocalCatalog::new(rig.platform.db.clone()),
-    )
-    .with_details(Arc::new(PluginDetailsSource(Arc::clone(&rig.host))));
+        droppedneedle_catalog::metadata::PageSources {
+            details: Arc::new(PluginDetailsSource(Arc::clone(&rig.host))),
+            ..crate::common::bundles::quiet_page_sources(&rig.platform.db)
+        },
+    );
 
     for _ in 0..2 {
         let details = catalog.album_plugin_details(ALBUM).await.unwrap();

@@ -55,8 +55,13 @@ fn deps(db: &Db, lyrics: Option<Arc<dyn LyricsPort>>) -> LibraryDeps {
     let catalog = LocalCatalog::new(db.clone());
     let files = LibraryFiles::new(db.clone(), SharedResolver::default());
     LibraryDeps {
-        lyrics: lyrics
-            .unwrap_or_else(|| Arc::new(LyricsService::new(catalog.clone(), files.clone(), None))),
+        lyrics: lyrics.unwrap_or_else(|| {
+            Arc::new(LyricsService::new(
+                catalog.clone(),
+                files.clone(),
+                Arc::new(crate::common::bundles::NoOnlineLyrics),
+            ))
+        }),
         catalog,
         upgrade_policy: None,
         covers: None,

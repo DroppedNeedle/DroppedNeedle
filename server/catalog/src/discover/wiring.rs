@@ -11,9 +11,10 @@ use std::sync::Arc;
 use crate::discover::listening::{ListeningData, ListeningNetwork, LiveNetwork};
 use crate::discover::services::DiscoverDeps;
 use crate::discover::{charts, content, home, page, previews, queue, radio, scheduler, youtube};
-use crate::metadata::Catalog;
 use crate::metadata::library::LocalCatalog;
+use crate::metadata::ports::{NoDetails, NoFollows, NoPurchaseLinks};
 use crate::metadata::upstream::{LiveCatalogSettings, Upstream};
+use crate::metadata::{Catalog, PageSources};
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::ConfigStore;
@@ -46,7 +47,7 @@ pub struct DiscoverInputs {
     /// the page cache.
     pub clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     /// Where built pages queue the warm of their covers and artist images.
-    pub warm: Option<crate::artwork::warm::CoverWarm>,
+    pub warm: crate::artwork::warm::CoverWarm,
     /// Whether a download source is on, for the "set up a download
     /// client" prompts.
     pub download_readiness: Arc<dyn content::DownloadReadiness>,
@@ -118,9 +119,17 @@ pub fn deps_over(
         queue_db: queue::store::QueueDb::new(inputs.db.clone()),
         settings,
         db: inputs.db.clone(),
+        // Radio reads albums and discographies only: no follow state, no
+        // plugin links or details, and nothing it reads warms images.
         catalog: Catalog::new(
             live_upstream(&inputs, config),
             LocalCatalog::new(inputs.db.clone()),
+            PageSources {
+                follows: Arc::new(NoFollows),
+                purchase_links: Arc::new(NoPurchaseLinks),
+                details: Arc::new(NoDetails),
+                cover_warm: inputs.warm.clone(),
+            },
         ),
         previews: inputs.providers.previews.clone(),
         cache: inputs.providers.cache.clone(),
@@ -133,7 +142,7 @@ pub fn deps_over(
         clock: Arc::clone(&inputs.clock),
         advanced: config.live(),
         integrations: content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
-        warm: inputs.warm.clone(),
+        warm: Some(inputs.warm.clone()),
     });
     let (home, genre_art, charts) = home::wire(home::HomeWiring {
         db: inputs.db.clone(),
@@ -141,7 +150,7 @@ pub fn deps_over(
         integrations: content::IntegrationSettings::new(config, inputs.download_readiness.clone()),
         listening: listening.clone(),
         discover: pages.clone(),
-        warm: inputs.warm.clone(),
+        warm: Some(inputs.warm.clone()),
         charts,
     });
     let warm_scheduler = Arc::new(scheduler::WarmScheduler::new(

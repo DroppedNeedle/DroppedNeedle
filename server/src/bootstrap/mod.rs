@@ -64,12 +64,12 @@ use droppedneedle_catalog::{
     enrichment::{library::LiveEnrichment, live::production_enrichment},
     lyrics::OnlineLyrics,
     metadata::{
-        Catalog,
+        Catalog, PageSources,
         library::LocalCatalog,
         plugin_sources::{PluginDetailsSource, PluginPurchaseLinks},
         upstream::{LiveCatalogSettings, Upstream},
     },
-    wiring::{CatalogInputs, CatalogPorts, CatalogSetup},
+    wiring::{CatalogInputs, CatalogPorts, CatalogSetup, collections_follows},
 };
 use droppedneedle_compat::{CompatSetup, setup::CompatDeps};
 use droppedneedle_kernel::{
@@ -382,13 +382,14 @@ pub(crate) async fn build_on(
     let listening = ListeningStore::new(db.clone(), crypto.clone(), p.clock.clone());
     // Read live so turning ListenBrainz, Last.fm or lyrics on or off takes effect
     // at once.
+    let lyrics = OnlineLyrics::new(&providers, config_store.live());
     let enrichment = production_enrichment(
         &providers,
         config_store.live(),
         config_store.live(),
-        config_store.live(),
         listening.clone(),
         auth.users.clone(),
+        lyrics.clone(),
     );
     let catalog_inputs = CatalogInputs {
         covers_dir: config.cache_dir.join("covers"),
@@ -399,27 +400,32 @@ pub(crate) async fn build_on(
         youtube_quota_path: config.cache_dir.join(QUOTA_FILE_NAME),
         discover_warmer: config.discover_warmer,
     };
-    // The artist and album pages, with plugin purchase links and details.
-    // The artwork service names artist images through it, and the library
-    // plans covers through that service.
     // The one local catalog: the catalog pages, the library reads,
     // collections' ratings and the player apps all read through it.
     let local = LocalCatalog::new(db.clone());
+    let collections_db = CollectionsDb::new(db.clone(), p.clock.clone());
+    let collections = Stores::new(&collections_db);
+    let collections_state =
+        CollectionsState::over(collections_db, collections.clone(), local.clone());
+    // The artist and album pages, with the follow state, plugin purchase
+    // links and details. The artwork service names artist images through
+    // it, and the library plans covers through that service.
     let catalog = Catalog::new(
         Upstream::new(
             providers.clone(),
             Arc::new(LiveCatalogSettings::new(config_store)),
             auth.users.clone(),
         ),
-        local.clone(),
-    )
-    .with_purchase_links(Arc::new(PluginPurchaseLinks(plugin_host.clone())))
-    .with_details(Arc::new(PluginDetailsSource(plugin_host.clone())))
-    .with_cover_warm(cover_warm.clone());
+        local,
+        PageSources {
+            follows: collections_follows(&collections_state),
+            purchase_links: Arc::new(PluginPurchaseLinks(plugin_host.clone())),
+            details: Arc::new(PluginDetailsSource(plugin_host.clone())),
+            cover_warm: cover_warm.clone(),
+        },
+    );
     let artwork = droppedneedle_catalog::wiring::artwork(p, &catalog_inputs, catalog.clone());
     let covers = artwork.cache().clone();
-    let collections_db = CollectionsDb::new(db.clone(), p.clock.clone());
-    let collections = Stores::new(&collections_db);
     // Flow outcomes (fulfilled requests among them) go to plugins and the
     // event stream.
     let acquire_stores = AcquireStores::open(
@@ -440,15 +446,7 @@ pub(crate) async fn build_on(
         mb_source.clone(),
         queues.queue().clone(),
         outbound.library(&providers, mb_source.clone(), p.clock.clone()),
-        library_ports(
-            p,
-            &providers,
-            &auth,
-            &artwork,
-            &scans,
-            enrichment.lyrics.clone(),
-            library_core,
-        ),
+        library_ports(p, &providers, &auth, &artwork, &scans, lyrics, library_core),
     )
     .map_err(stage("library setup"))?;
     let library_services = LibraryServices::build(&library);
@@ -474,15 +472,15 @@ pub(crate) async fn build_on(
         p,
         auth.users.clone(),
         catalog_inputs,
-        Some(enrichment),
+        enrichment,
         CatalogPorts {
             remotes: remotes.clone(),
-            collections: CollectionsState::over(collections_db, collections, local),
+            collections: collections_state,
             catalog,
             artwork,
             library_files: LibraryFiles::new(db.clone(), library.core.root_source()),
             download_readiness: Arc::new(acquire.readiness.clone()),
-            cover_warm: Some(cover_warm),
+            cover_warm,
         },
     );
     // Your Weekly Mix: one builder behind the refresh route, the daily

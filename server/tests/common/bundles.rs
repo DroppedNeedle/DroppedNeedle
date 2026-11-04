@@ -11,14 +11,22 @@ use droppedneedle_acquire::landing::ports::LandingLibrary;
 use droppedneedle_acquire::plugin_events::FlowTicks;
 use droppedneedle_acquire::wiring::{AcquirePorts, AcquireStores};
 use droppedneedle_auth::users::UsersDeps;
+use droppedneedle_catalog::artwork::warm::CoverWarm;
 use droppedneedle_catalog::collections::{CollectionsState, db::CollectionsDb, store::Stores};
 use droppedneedle_catalog::discover::content::DownloadReadiness;
+use droppedneedle_catalog::enrichment::live::CatalogEnrichment;
+use droppedneedle_catalog::lyrics::{LyricsError, LyricsQuery, OnlineLyricsSource};
 use droppedneedle_catalog::metadata::{
-    Catalog,
+    Catalog, PageSources,
     library::LocalCatalog,
+    ports::{NoDetails, NoFollows, NoPurchaseLinks},
     upstream::{LiveCatalogSettings, Upstream},
 };
+use droppedneedle_catalog::search::ports::UnconfiguredEnrichment;
 use droppedneedle_catalog::wiring::{CatalogInputs, CatalogPorts, CatalogSetup};
+use droppedneedle_kernel::clock::SystemClock;
+use droppedneedle_kernel::db::Db;
+use droppedneedle_kernel::jobs::queue::JobQueue;
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_library::wiring::{LibraryCore, LibrarySetup};
 use droppedneedle_media::stream::local_files::LibraryFiles;
@@ -188,8 +196,9 @@ pub fn acquire_hosted(
 
 /// The production catalog bundle over `platform`, with no provider pair:
 /// collections in `collections`, the catalog and artwork on closed
-/// upstreams, files read through `library`, and download readiness from
-/// `acquire` when there is one.
+/// upstreams and no plugins, files read through `library`, and download
+/// readiness from `acquire` when there is one. Image warms queue on the
+/// platform's jobs table, where nothing runs them.
 pub fn catalog_setup_at(
     platform: &Platform,
     users: UsersDeps,
@@ -198,6 +207,7 @@ pub fn catalog_setup_at(
     collections: CollectionsState,
     acquire: Option<&AcquireSetup>,
 ) -> CatalogSetup {
+    let cover_warm = cover_warm_at(&platform.db);
     let catalog = Catalog::new(
         Upstream::new(
             Arc::new(Providers::unpaced(Arc::new(
@@ -207,6 +217,10 @@ pub fn catalog_setup_at(
             users.clone(),
         ),
         LocalCatalog::new(platform.db.clone()),
+        PageSources {
+            follows: droppedneedle_catalog::wiring::collections_follows(&collections),
+            ..quiet_page_sources(&platform.db)
+        },
     );
     let artwork = droppedneedle_catalog::wiring::artwork(platform, &inputs, catalog.clone());
     let download_readiness: Arc<dyn DownloadReadiness> = match acquire {
@@ -217,7 +231,7 @@ pub fn catalog_setup_at(
         platform,
         users,
         inputs,
-        None,
+        no_enrichment(),
         CatalogPorts {
             remotes: Arc::new(remotes_resolver(platform)),
             collections,
@@ -225,9 +239,55 @@ pub fn catalog_setup_at(
             artwork,
             library_files: LibraryFiles::new(platform.db.clone(), library.core.root_source()),
             download_readiness,
-            cover_warm: None,
+            cover_warm,
         },
     )
+}
+
+/// What a catalog's pages read beyond MusicBrainz and the library, with no
+/// follow store and no plugins: an artist page queues its image warm on
+/// the jobs table in `db`, where nothing runs it.
+pub fn quiet_page_sources(db: &Db) -> PageSources {
+    PageSources {
+        follows: Arc::new(NoFollows),
+        purchase_links: Arc::new(NoPurchaseLinks),
+        details: Arc::new(NoDetails),
+        cover_warm: cover_warm_at(db),
+    }
+}
+
+/// Image warms queued on the jobs table in `db`, where nothing runs them.
+pub fn cover_warm_at(db: &Db) -> CoverWarm {
+    CoverWarm::new(db.clone(), JobQueue::new(db.clone(), Arc::new(SystemClock)))
+}
+
+/// The catalog's enrichment with no provider behind it: search results
+/// carry no listener counts and there are no online lyrics.
+pub fn no_enrichment() -> CatalogEnrichment {
+    CatalogEnrichment {
+        search: Arc::new(UnconfiguredEnrichment),
+        lyrics: Arc::new(NoOnlineLyrics),
+    }
+}
+
+/// Online lyrics switched off: a track whose file carries none has none.
+pub struct NoOnlineLyrics;
+
+impl OnlineLyricsSource for NoOnlineLyrics {
+    fn switched_on(&self) -> bool {
+        false
+    }
+
+    fn lookup<'a>(
+        &'a self,
+        _query: LyricsQuery<'a>,
+        _priority: droppedneedle_providers::RequestPriority,
+    ) -> droppedneedle_catalog::local::stores::BoxFuture<
+        'a,
+        Result<Option<droppedneedle_providers::lrclib::LyricsCandidate>, LyricsError>,
+    > {
+        Box::pin(async { Ok(None) })
+    }
 }
 
 /// The collections database and stores, opened before acquisition is
