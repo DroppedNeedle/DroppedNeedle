@@ -26,7 +26,7 @@ use droppedneedle_kernel::db::CheckpointService;
 use droppedneedle_kernel::db::cache::CacheError;
 use droppedneedle_kernel::jobs::cache_sync::CacheSyncStatus;
 use droppedneedle_kernel::jobs::checkpoint;
-use droppedneedle_kernel::jobs::discovery_demand::{self, DemandTick, NoDemand};
+use droppedneedle_kernel::jobs::discovery_demand::{self, DemandTick};
 use droppedneedle_kernel::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
 use droppedneedle_kernel::jobs::events_watcher::{self, PollTimeSource};
 use droppedneedle_kernel::jobs::personal_mix::{self, PersonalMixer};
@@ -35,31 +35,18 @@ use droppedneedle_kernel::jobs::playlist_sync;
 use droppedneedle_kernel::jobs::precache::{self, PrecacheLimits};
 use droppedneedle_kernel::jobs::precache_phases::{LibraryPrecache, PrecacheSources};
 use droppedneedle_kernel::jobs::presence;
-use droppedneedle_kernel::jobs::queue::{self, Handlers, JobHandler, JobQueue, KindSpec};
+use droppedneedle_kernel::jobs::queue::{self, Handlers, JobQueue};
 use droppedneedle_kernel::jobs::{
-    AlreadyRunning, BoxFuture, FnTick, Next, Schedule, Supervisor, Tick, TickCtx, TickError,
-    TickResult,
+    AlreadyRunning, FnTick, Next, Schedule, Supervisor, Tick, TickCtx, TickError, TickResult,
 };
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::secret_sections::EventsSettings;
 use droppedneedle_kernel::runtime_config::secret_sections::NavidromeConnection;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
-use droppedneedle_media::MediaSetup;
 use droppedneedle_media::remotes::playlist_sync::{PlaylistSyncState, ProdPlaylistSync};
 use droppedneedle_media::remotes::presence_feed::{MediaJobs, RegistryFeed, RemoteSessionPollers};
 use droppedneedle_media::remotes::warmup::{self, Warmups};
 use droppedneedle_providers::ProviderCacheStore;
-
-/// Personal-mix refresh without a mixer (a boot that wired none): cycles
-/// succeed without rebuilding anything.
-#[derive(Clone, Debug, Default)]
-pub struct UnwiredMixer;
-
-impl PersonalMixer for UnwiredMixer {
-    fn run_for_all_users(&self) -> BoxFuture<'_, Result<(), String>> {
-        Box::pin(async { Ok(()) })
-    }
-}
 
 /// How long a cancel waits for the run to stop before aborting it (v2
 /// waited 30 seconds for the sync task).
@@ -307,21 +294,43 @@ impl QueueSetup {
     }
 }
 
+/// The backends the always-on loops drive, built before the jobs bundle.
+pub struct LoopBackends {
+    /// The checkpoint passes.
+    pub checkpoint: CheckpointService,
+    /// The media feeds: presence and the MBID warmups.
+    pub media: MediaJobs,
+    /// The concerts sweep.
+    pub watcher: ConcertsSweep,
+    /// The lookups library precache warms.
+    pub precache_sources: Arc<dyn PrecacheSources>,
+    /// The personal-mix builder the daily refresh loop drives.
+    pub mixer: Arc<dyn PersonalMixer>,
+    /// The discover warm pass the warm-cycle loop drives.
+    pub demand: Arc<dyn DemandTick>,
+}
+
 impl JobsSetup {
-    /// Bind the backends over the platform's supervisor, settings and
-    /// event hub: live checkpoint passes, the media feeds (presence, MBID
-    /// warmups, playlist export), the concerts sweep, the lookups library
-    /// precache warms, the jobs table whose registered kinds get runners at
-    /// boot, and the count of ended scans the after-scan refresh waits on.
+    /// Bind `loops` over the platform's supervisor, settings and event
+    /// hub, with the playlist export, the jobs table, the count of ended
+    /// scans the after-scan refresh waits on, and `handlers`, each of
+    /// whose kinds gets a runner at boot. Every kind that can be enqueued
+    /// is in `handlers`, so none waits with nothing to run it.
     pub fn build(
         platform: &Platform,
-        checkpoint: CheckpointService,
-        media: MediaJobs,
-        watcher: ConcertsSweep,
-        precache_sources: Arc<dyn PrecacheSources>,
+        loops: LoopBackends,
         queues: QueueSetup,
         scans: ScansEnded,
+        handlers: Handlers,
     ) -> Self {
+        let LoopBackends {
+            checkpoint,
+            media,
+            watcher,
+            precache_sources,
+            mixer,
+            demand,
+        } = loops;
         let config = platform.settings.clone();
         Self {
             supervisor: platform.supervisor.clone(),
@@ -336,40 +345,14 @@ impl JobsSetup {
                 events: config.live(),
             },
             watcher,
-            mixer: Arc::new(UnwiredMixer),
-            demand: Arc::new(NoDemand),
+            mixer,
+            demand,
             cache_sync: CacheSyncStatus::new(platform.events.clone(), platform.clock.clone()),
             precache_sources,
             scans,
             queues,
-            handlers: Handlers::default(),
+            handlers,
         }
-    }
-
-    /// Register one job kind's handler. Every kind that can be enqueued is
-    /// registered, so none waits with nothing to run it.
-    pub fn with_job(mut self, spec: KindSpec, handler: Arc<dyn JobHandler>) -> Self {
-        self.handlers = self.handlers.with(spec, handler);
-        self
-    }
-
-    /// Register several kinds' handlers, as [`JobsSetup::with_job`] does.
-    pub fn with_jobs(self, jobs: Vec<(KindSpec, Arc<dyn JobHandler>)>) -> Self {
-        jobs.into_iter()
-            .fold(self, |setup, (spec, handler)| setup.with_job(spec, handler))
-    }
-
-    /// Register the media-server rescans Library Management queues after a
-    /// run, sent through media's connection resolver.
-    pub fn with_media_refresh(self, platform: &Platform, media: &MediaSetup) -> Self {
-        self.with_job(
-            droppedneedle_media::remotes::refresh::SPEC,
-            Arc::new(droppedneedle_media::remotes::refresh::RefreshJobs::new(
-                media.remotes.service.resolver().clone(),
-                platform.http.shared().clone(),
-                platform.settings.live(),
-            )),
-        )
     }
 
     /// The jobs table.
@@ -381,37 +364,6 @@ impl JobsSetup {
     #[cfg(any(test, feature = "test-support"))]
     pub fn scripted(&self) -> Option<&scripted::ScriptedJobs> {
         self.queues.scripted.as_ref()
-    }
-
-    /// Run the page image warm jobs through the catalog bundle's artwork service.
-    /// Without one the kind is not registered, and the start-up check
-    /// warns about any rows left queued.
-    pub fn with_cover_warm_jobs(
-        self,
-        catalog_setup: &droppedneedle_catalog::wiring::CatalogSetup,
-    ) -> Self {
-        use droppedneedle_catalog::artwork::warm::{self, CoverWarmJobs};
-        match &catalog_setup.artwork {
-            Some(artwork) => {
-                self.with_job(warm::SPEC, Arc::new(CoverWarmJobs::new(artwork.clone())))
-            }
-            None => {
-                tracing::warn!("no artwork service; page images are not warmed");
-                self
-            }
-        }
-    }
-
-    /// The personal-mix builder the daily refresh loop drives.
-    pub fn with_mixer(mut self, mixer: Arc<dyn PersonalMixer>) -> Self {
-        self.mixer = mixer;
-        self
-    }
-
-    /// The discover warm pass the warm-cycle loop drives.
-    pub fn with_discovery_demand(mut self, demand: Arc<dyn DemandTick>) -> Self {
-        self.demand = demand;
-        self
     }
 
     /// The supervisor every loop runs on. The plugins bundle takes a clone so

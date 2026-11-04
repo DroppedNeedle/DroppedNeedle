@@ -259,17 +259,20 @@ impl E2e {
         let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_platform(p, &providers);
         let jobs = droppedneedle::bootstrap::jobs::JobsSetup::build(
             p,
-            self.runtime.checkpoint().clone(),
-            media.jobs(p),
-            concerts.sweep(),
-            droppedneedle::bootstrap::jobs::catalog_precache(
-                &catalog_setup,
-                &p.settings,
-                crate::common::listening_store(p),
-            )
-            .expect("the catalog bundle has its pages and artwork"),
+            crate::common::bundles::quiet_loops(
+                self.runtime.checkpoint().clone(),
+                media.jobs(p),
+                concerts.sweep(),
+                droppedneedle::bootstrap::jobs::catalog_precache(
+                    &catalog_setup,
+                    &p.settings,
+                    crate::common::listening_store(p),
+                )
+                .expect("the catalog bundle has its pages and artwork"),
+            ),
             droppedneedle::bootstrap::jobs::QueueSetup::new(p),
             droppedneedle::bootstrap::jobs::ScansEnded::default(),
+            droppedneedle_kernel::jobs::queue::Handlers::default(),
         );
         let admin = droppedneedle::admin::AdminSetup::new(
             auth.users.clone(),

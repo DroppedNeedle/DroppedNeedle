@@ -80,6 +80,7 @@ use droppedneedle_kernel::{
         error::DbError,
     },
     http_client::HttpClientError,
+    jobs::queue::Handlers,
     platform::Platform,
     runtime_config::crypto::CryptoError,
 };
@@ -426,6 +427,9 @@ pub(crate) async fn build_on(
     );
     let artwork = droppedneedle_catalog::wiring::artwork(p, &catalog_inputs, catalog.clone());
     let covers = artwork.cache().clone();
+    let cover_warm_jobs = Arc::new(droppedneedle_catalog::artwork::warm::CoverWarmJobs::new(
+        artwork.clone(),
+    ));
     // Flow outcomes (fulfilled requests among them) go to plugins and the
     // event stream.
     let acquire_stores = AcquireStores::open(
@@ -548,37 +552,54 @@ pub(crate) async fn build_on(
     let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_platform(p, &providers);
     let precache_sources = jobs::catalog_precache(&catalog_setup, config_store, listening.clone())
         .map_err(stage("jobs setup"))?;
+    // Every kind that can be enqueued, so none waits with nothing to run
+    // it. Library Management queues the media-server rescans after a run,
+    // sent through media's connection resolver; pages queue their image
+    // warms, run through the artwork service.
+    let handlers = media
+        .scrobble_jobs()
+        .into_iter()
+        .fold(Handlers::default(), |handlers, (spec, handler)| {
+            handlers.with(spec, handler)
+        })
+        .with(
+            droppedneedle_media::remotes::refresh::SPEC,
+            Arc::new(droppedneedle_media::remotes::refresh::RefreshJobs::new(
+                media.remotes.service.resolver().clone(),
+                http.shared().clone(),
+                config_store.live(),
+            )),
+        )
+        .with(
+            droppedneedle_library::contrib::worker::SPEC,
+            library.contrib_worker.handler(),
+        )
+        .with(
+            droppedneedle_library::removal::recycle_bin::SPEC,
+            droppedneedle_library::removal::recycle_bin::handler(&library.publishing),
+        )
+        .with(droppedneedle_catalog::artwork::warm::SPEC, cover_warm_jobs)
+        .with(
+            droppedneedle_acquire::imports::jobs::SPEC,
+            acquire.spotify_import_jobs.clone(),
+        )
+        .with(library_removal::SPEC, album_cleanup);
     let jobs = JobsSetup::build(
         p,
-        runtime.checkpoint().clone(),
-        media.jobs(p),
-        concerts.sweep(),
-        precache_sources,
+        jobs::LoopBackends {
+            checkpoint: runtime.checkpoint().clone(),
+            media: media.jobs(p),
+            watcher: concerts.sweep(),
+            precache_sources,
+            mixer: mix_hooks,
+            demand: Arc::new(droppedneedle_catalog::discover::demand::ContentDemand(
+                catalog_setup.discover.content.clone(),
+            )),
+        },
         queues,
         scans.clone(),
-    )
-    .with_jobs(media.scrobble_jobs())
-    .with_media_refresh(p, &media)
-    .with_job(
-        droppedneedle_library::contrib::worker::SPEC,
-        library.contrib_worker.handler(),
-    )
-    .with_job(
-        droppedneedle_library::removal::recycle_bin::SPEC,
-        droppedneedle_library::removal::recycle_bin::handler(&library.publishing),
-    )
-    .with_mixer(mix_hooks)
-    .with_cover_warm_jobs(&catalog_setup)
-    .with_job(
-        droppedneedle_acquire::imports::jobs::SPEC,
-        acquire.spotify_import_jobs.clone(),
-    )
-    .with_job(library_removal::SPEC, album_cleanup)
-    .with_discovery_demand(Arc::new(
-        droppedneedle_catalog::discover::demand::ContentDemand(
-            catalog_setup.discover.content.clone(),
-        ),
-    ));
+        handlers,
+    );
     let admin = AdminSetup::new(
         auth.users.clone(),
         acquire.requests.quota.clone(),

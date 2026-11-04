@@ -525,13 +525,43 @@ pub fn jobs_at(
     );
     droppedneedle::bootstrap::jobs::JobsSetup::build(
         platform,
-        checkpoint,
-        media_jobs(platform),
-        droppedneedle_catalog::concerts::ConcertsSetup::from_platform(platform, &providers).sweep(),
-        sources,
+        quiet_loops(
+            checkpoint,
+            media_jobs(platform),
+            droppedneedle_catalog::concerts::ConcertsSetup::from_platform(platform, &providers)
+                .sweep(),
+            sources,
+        ),
         droppedneedle::bootstrap::jobs::QueueSetup::new(platform),
         scans,
+        droppedneedle_kernel::jobs::queue::Handlers::default(),
     )
+}
+
+/// The loops' backends with no personal mix and no discover warm pass.
+pub fn quiet_loops(
+    checkpoint: droppedneedle_kernel::db::CheckpointService,
+    media: droppedneedle_media::remotes::presence_feed::MediaJobs,
+    watcher: droppedneedle_catalog::concerts::ConcertsSweep,
+    precache_sources: Arc<dyn droppedneedle_kernel::jobs::precache_phases::PrecacheSources>,
+) -> droppedneedle::bootstrap::jobs::LoopBackends {
+    droppedneedle::bootstrap::jobs::LoopBackends {
+        checkpoint,
+        media,
+        watcher,
+        precache_sources,
+        mixer: Arc::new(NoMixer),
+        demand: Arc::new(droppedneedle_kernel::jobs::discovery_demand::NoDemand),
+    }
+}
+
+/// A personal-mix refresh that rebuilds nothing.
+pub struct NoMixer;
+
+impl droppedneedle_kernel::jobs::personal_mix::PersonalMixer for NoMixer {
+    fn run_for_all_users(&self) -> droppedneedle_kernel::jobs::BoxFuture<'_, Result<(), String>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// The cover and artist image cache under the platform's cache folder.
