@@ -42,7 +42,7 @@ Between scheduled scans, DroppedNeedle checks your library folders every few min
 
 A library folder that is away, such as a share that is not mounted, loses nothing: its albums' covers and lyrics come back with it.
 
-Sub-folder rules match folder names without regard to letter case or Unicode form, on every disk. On a case-sensitive disk a rule `Live` also covers a separate `live` folder: a scan treats `live/` as Excluded when the rule is Excluded, and when the rule is included under an excluded folder it walks both. If such a folder is renamed so only its capitals change, a track whose file is at the same place under the new name goes missing at the old one, and its plays and favorites move across when the match is clear. Tracks it can't tell apart stay missing at the old name with their history.
+Sub-folder rules match folder names without regard to letter case or Unicode form, on every disk. On a case-sensitive disk a rule `Live` also covers a separate `live` folder: a scan treats `live/` as Excluded when the rule is Excluded, and when the rule is included under an excluded folder it walks both. If such a folder is renamed so only its capitals change, a track whose file is at the same place under the new name goes missing at the old one, and its plays, favorites and ratings move across when the match is clear. Tracks it can't tell apart stay missing at the old name with their history.
 
 A scan never follows a link. A folder replaced by a link is not read and its tracks stay as they are, on every scan and whichever folders it covers; Recent runs lists it. Put a real folder back and the next scan reads it again.
 
