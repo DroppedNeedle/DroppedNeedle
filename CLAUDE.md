@@ -255,9 +255,10 @@ Run from the repo root. `make help` lists every target.
   (statements, fragments, and families whose builders take only
   `sql_choice!`, `bool` or `ListLen` values);
   `every_registered_statement_prepares` prepares each against the schema.
-  A crate with a `sql.rs` lists it and has a row in that test. An area
-  that moves its SQL there deletes its line from
-  `server/sql-outside-registry.txt`, and a gate then keeps raw SQL out.
+  A crate with a `sql.rs` lists it and has a row in that test. A gate
+  (`raw_sql_stays_in_sql_files`) keeps raw SQL out of every other file;
+  its one permanent exception is the v2 export's bundle builder, which
+  builds each statement at run time from the columns the v2 database has.
   A `sql!` block whose statements read a v2 database starts with
   `schema = V2;` and is prepared against the v2 fixture.
 - A statement that answers more than one column is read through a `row` in its
