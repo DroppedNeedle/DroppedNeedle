@@ -15,7 +15,7 @@
 //! The capability fan-outs live beside their capability in
 //! `capabilities/`; install and update from GitHub live in `install.rs`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -26,7 +26,7 @@ use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::sections::PluginConfig;
 
 use super::capabilities::events::EventState;
-use super::manifest::{Capability, PluginManifest, load_manifest};
+use super::manifest::{Capability, PLUGIN_API_VERSION, PluginManifest, load_manifest};
 use super::models::{PluginHealth, PluginHealthStatus, PluginSource, PluginSourceHealth};
 use super::protocol::{RpcError, codes, methods};
 use super::runtime::{
@@ -210,23 +210,8 @@ impl PluginHost {
             return;
         };
         let mut plugins: HashMap<String, LoadedPlugin> = HashMap::new();
-        if let Ok(entries) = std::fs::read_dir(&self.dir) {
-            let mut children: Vec<PathBuf> = entries
-                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-                .filter(|path| path.is_dir())
-                .collect();
-            children.sort();
-            for child in children {
-                let hidden = child
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .map(|name| name.starts_with('_') || name.starts_with('.'))
-                    .unwrap_or(true);
-                if hidden {
-                    continue;
-                }
-                self.load_one(&child, &mut plugins);
-            }
+        for child in self.plugin_folders() {
+            self.load_one(&child, &mut plugins, true);
         }
         // Stop every runtime the new registry no longer holds.
         let stale: Vec<Arc<dyn PluginConnection>> = match self.running.lock() {
@@ -256,7 +241,71 @@ impl PluginHost {
             .send_modify(|generation| *generation = generation.wrapping_add(1));
     }
 
-    fn load_one(&self, plugin_dir: &Path, plugins: &mut HashMap<String, LoadedPlugin>) {
+    /// Plugin folders on disk, sorted, hidden ones (`.` or `_`) skipped.
+    fn plugin_folders(&self) -> Vec<PathBuf> {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return Vec::new();
+        };
+        let mut children: Vec<PathBuf> = entries
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.is_dir())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| !name.starts_with('_') && !name.starts_with('.'))
+            })
+            .collect();
+        children.sort();
+        children
+    }
+
+    /// Add plugin folders copied in since the last reload, disabled: this
+    /// never launches, relaunches or stops a plugin. A folder whose
+    /// manifest did not load (a copy still under way) is read again.
+    /// Skipped while a reload runs, since that reads every folder anyway.
+    fn discover_new_folders(&self) {
+        let Ok(_reload) = self.reload.try_lock() else {
+            return;
+        };
+        let Ok(held) = self.plugins.lock().map(|guard| guard.clone()) else {
+            return;
+        };
+        let loaded: HashSet<String> = held
+            .values()
+            .filter(|plugin| plugin.manifest.api_version == PLUGIN_API_VERSION)
+            .map(|plugin| plugin.directory.clone())
+            .collect();
+        let mut found: HashMap<String, LoadedPlugin> = held
+            .into_iter()
+            .filter(|(_, plugin)| loaded.contains(&plugin.directory))
+            .collect();
+        for child in self.plugin_folders() {
+            if !loaded.contains(child.to_string_lossy().as_ref()) {
+                self.load_one(&child, &mut found, false);
+            }
+        }
+        found.retain(|_, plugin| !loaded.contains(&plugin.directory));
+        if found.is_empty() {
+            return;
+        }
+        let Ok(mut registry) = self.plugins.lock() else {
+            return;
+        };
+        for (name, plugin) in found {
+            registry.retain(|_, held| held.directory != plugin.directory);
+            registry.entry(name).or_insert(plugin);
+        }
+    }
+
+    /// Read one plugin folder into `plugins`. With `may_launch` false the
+    /// plugin is added disabled whatever its stored state, and nothing
+    /// starts.
+    fn load_one(
+        &self,
+        plugin_dir: &Path,
+        plugins: &mut HashMap<String, LoadedPlugin>,
+        may_launch: bool,
+    ) {
         let dir_name = plugin_dir
             .file_name()
             .and_then(|name| name.to_str())
@@ -301,11 +350,12 @@ impl PluginHost {
             return;
         }
         // Fail closed: unreadable stored state means disabled, never enabled.
-        let enabled = self
-            .config
-            .get_plugin(&manifest.name)
-            .map(|stored| stored.enabled)
-            .unwrap_or(false);
+        let enabled = may_launch
+            && self
+                .config
+                .get_plugin(&manifest.name)
+                .map(|stored| stored.enabled)
+                .unwrap_or(false);
         if !enabled {
             plugins.insert(manifest.name.clone(), disabled(manifest, None));
             return;
@@ -414,9 +464,11 @@ impl PluginHost {
         futures_util::future::join_all(stops).await;
     }
 
-    /// Every discovered plugin, sorted by name. A stale health answer is
-    /// asked again in the background; the list never waits for it.
+    /// Every discovered plugin, sorted by name, a folder copied in since
+    /// the last reload included (disabled). A stale health answer is asked
+    /// again in the background; the list never waits for it.
     pub fn list_plugins(&self) -> Vec<LoadedPlugin> {
+        self.discover_new_folders();
         let mut plugins = self
             .plugins
             .lock()

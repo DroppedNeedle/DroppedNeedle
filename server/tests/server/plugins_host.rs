@@ -211,14 +211,41 @@ fn enable_toy(rig: &Rig, manifest: &str) -> Arc<FakeConnection> {
     rig.launcher.runtime("toy")
 }
 
+/// A folder copied in after start shows on the next list, disabled, and
+/// runs nothing until an admin enables it. A folder whose manifest did not
+/// read (a copy still under way) is read again on the next list.
 #[tokio::test]
-async fn dropped_folder_runs_no_code_until_enabled() {
+async fn dropped_folder_shows_at_once_and_runs_no_code_until_enabled() {
     let rig = rig("no-code").await;
-    write_plugin(&rig.dir, "toy", TOY_MANIFEST);
     rig.host.load_all();
+    write_plugin(&rig.dir, "toy", TOY_MANIFEST);
+    write_plugin(&rig.dir, "half", "[plugin]\nname = \"half\"\n");
+    let listed: Vec<(String, bool)> = rig
+        .host
+        .list_plugins()
+        .iter()
+        .map(|plugin| (plugin.manifest.name.clone(), plugin.error.is_some()))
+        .collect();
+    assert_eq!(
+        listed,
+        [("half".to_owned(), true), ("toy".to_owned(), false)]
+    );
     let plugin = rig.host.get("toy").unwrap();
     assert!(!plugin.enabled);
     assert!(plugin.runtime.is_none());
+    assert!(rig.launcher.launched.lock().unwrap().is_empty());
+
+    write_plugin(
+        &rig.dir,
+        "half",
+        &TOY_MANIFEST.replace("name = \"toy\"", "name = \"half\""),
+    );
+    let half = rig.host.list_plugins();
+    let half = half
+        .iter()
+        .find(|plugin| plugin.manifest.name == "half")
+        .unwrap();
+    assert!(half.error.is_none() && !half.enabled);
     assert!(rig.launcher.launched.lock().unwrap().is_empty());
 
     enable_toy(&rig, TOY_MANIFEST);
