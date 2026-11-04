@@ -1524,9 +1524,9 @@ impl WriteLane {
     /// `grace`, then close the connection and join the lane's thread. A
     /// write that still holds the lane at the bound is named in the log and
     /// left to end by itself; the writes queued behind it are answered
-    /// `LaneClosed`. The first call closes the lane and a later one finds
-    /// nothing to close and returns at once, also when the first gave up on
-    /// a write that is still running.
+    /// `LaneClosed`. A later call returns at once when an earlier one gave
+    /// up on a write that is still running; otherwise it drains again,
+    /// waiting with the first while that one is still draining.
     pub async fn shutdown(&self, grace: Duration) {
         let shared = Arc::clone(&self.shared);
         let closed = tokio::task::spawn_blocking(move || shared.close(grace)).await;
