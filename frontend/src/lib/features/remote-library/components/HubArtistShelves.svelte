@@ -120,11 +120,11 @@
 				{/if}
 				<div class="space-y-2">
 					{#if info.biography}
-						<p class="text-sm text-base-content/70 line-clamp-4">{info.biography}</p>
+						<p class="text-sm text-muted line-clamp-4">{info.biography}</p>
 					{/if}
 					{#if info.similar_artists.length > 0}
 						<div>
-							<p class="text-xs font-semibold text-base-content/50 mb-1">Similar Artists</p>
+							<p class="text-xs font-semibold text-muted mb-1">Similar Artists</p>
 							<div class="flex flex-wrap gap-1">
 								{#each info.similar_artists.slice(0, 8) as similar (similar.id)}
 									<span class="badge badge-sm badge-outline">{similar.name}</span>

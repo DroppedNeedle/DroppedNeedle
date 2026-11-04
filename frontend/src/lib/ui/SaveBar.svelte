@@ -43,7 +43,7 @@
 		status = null
 	}: Props = $props();
 
-	const tones = { success: 'text-success', error: 'text-error', info: 'text-base-content/70' };
+	const tones = { success: 'text-success', error: 'text-error', info: 'text-muted' };
 </script>
 
 <div class="flex flex-wrap items-center gap-3">

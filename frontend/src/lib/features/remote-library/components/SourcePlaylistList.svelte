@@ -35,7 +35,7 @@
 		<div class="min-w-0">
 			<h1 class="text-2xl font-bold">{sourceLabel} Playlists</h1>
 			{#if collection}
-				<p class="text-xs text-base-content/50">
+				<p class="text-xs text-muted">
 					{collection.account_mode === 'linked'
 						? `Available to ${collection.account_label}`
 						: `Using the shared ${sourceLabel} account`}
@@ -60,7 +60,7 @@
 			<h2 class="mt-3 text-lg font-semibold">
 				{relinkRequired ? `Reconnect ${sourceLabel}` : `Couldn't load ${sourceLabel} playlists`}
 			</h2>
-			<p class="mx-auto mt-1 max-w-lg text-sm text-base-content/55">
+			<p class="mx-auto mt-1 max-w-lg text-sm text-muted">
 				{relinkRequired
 					? `Reconnect your ${sourceLabel} account so DroppedNeedle can load its playlists.`
 					: "We couldn't load playlists from this server. Try again in a moment."}
@@ -90,7 +90,7 @@
 		<Card variant="bordered" class="py-6 text-center">
 			<ListMusic class="mx-auto h-10 w-10 text-base-content/25" />
 			<h2 class="mt-3 text-lg font-semibold">No playlists found</h2>
-			<p class="mx-auto mt-1 max-w-lg text-sm text-base-content/50">
+			<p class="mx-auto mt-1 max-w-lg text-sm text-muted">
 				{collection?.account_mode === 'linked'
 					? `${collection.account_label} has no playlists available to import.`
 					: `The shared ${sourceLabel} account has no playlists. Link your account to see yours.`}

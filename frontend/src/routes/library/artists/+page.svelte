@@ -142,7 +142,7 @@
 			<h1 class="text-3xl font-black tracking-tight">
 				{browse.favorites ? 'Favourite Artists' : 'Artists'}
 			</h1>
-			<p class="mt-1 text-sm text-base-content/60">
+			<p class="mt-1 text-sm text-muted">
 				{browse.scope === 'album_artists'
 					? 'The artists who own releases in your library.'
 					: 'Guests, featured artists, and track-level credits.'}
@@ -232,7 +232,7 @@
 							? 'No favourites here yet'
 							: 'Nothing in this view yet'}
 				</h2>
-				<p class="max-w-md text-base-content/65">
+				<p class="max-w-md text-muted">
 					{browse.q
 						? 'Try a different search term.'
 						: browse.favorites
@@ -243,7 +243,7 @@
 				</p>
 			</div>
 		{:else}
-			<p class="mb-3 text-sm text-base-content/55">
+			<p class="mb-3 text-sm text-muted">
 				{total}
 				{total === 1 ? 'artist' : 'artists'} in this view
 			</p>
@@ -279,7 +279,7 @@
 						</figure>
 						<div class="flex flex-col gap-1 p-3 pt-0 text-center">
 							<h2 class="truncate font-semibold">{artist.name}</h2>
-							<p class="text-xs text-base-content/55">
+							<p class="text-xs text-muted">
 								{#if browse.scope === 'album_artists'}
 									{artist.album_count}
 									{artist.album_count === 1 ? 'release' : 'releases'} ·

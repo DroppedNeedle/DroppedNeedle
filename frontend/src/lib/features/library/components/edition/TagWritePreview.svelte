@@ -193,18 +193,18 @@
 							<span
 								class="flex items-center gap-2 border-b border-base-content/10 px-3 py-2 font-medium"
 							>
-								<FileAudio class="h-4 w-4 shrink-0 text-base-content/50" aria-hidden="true" />
+								<FileAudio class="h-4 w-4 shrink-0 text-muted" aria-hidden="true" />
 								<span class="min-w-0 break-all">{fileName(file.path)}</span>
 							</span>
 							<dl class="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-x-3 gap-y-1.5 px-3 py-2">
 								{#each file.changes as change (change.field)}
 									{@const line = tagChange(change)}
-									<dt class="text-base-content/60">{line.label}</dt>
+									<dt class="text-muted">{line.label}</dt>
 									<dd class="flex min-w-0 flex-wrap items-baseline gap-x-1.5 break-words">
 										{#if line.from !== null}
-											<del class="text-base-content/50">{line.from}</del>
+											<del class="text-muted">{line.from}</del>
 											<ArrowRight
-												class="h-3.5 w-3.5 shrink-0 self-center text-base-content/40"
+												class="h-3.5 w-3.5 shrink-0 self-center text-muted"
 												aria-hidden="true"
 											/>
 											<span class="sr-only">becomes</span>
@@ -213,7 +213,7 @@
 									</dd>
 								{/each}
 								{#each fileExtras(file) as extra (extra.label)}
-									<dt class="text-base-content/60">{extra.label}</dt>
+									<dt class="text-muted">{extra.label}</dt>
 									<dd class="min-w-0 break-words">{extra.value}</dd>
 								{/each}
 							</dl>
@@ -231,7 +231,7 @@
 				{/each}
 			{/if}
 			{#if unchanged}
-				<span class="text-base-content/60">{alreadyTaggedSentence(unchanged)}</span>
+				<span class="text-muted">{alreadyTaggedSentence(unchanged)}</span>
 			{/if}
 			{#if changed.length && !blocked.length}
 				<AsyncButton variant="primary" size="sm" onclick={writeTags}

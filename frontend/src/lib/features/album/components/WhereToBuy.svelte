@@ -134,7 +134,7 @@
 					{@const GroupIcon = group.icon}
 					<div>
 						<h3
-							class="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-base-content/50 uppercase"
+							class="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-muted uppercase"
 						>
 							<GroupIcon class="h-3.5 w-3.5" aria-hidden="true" />
 							{group.title}
@@ -161,7 +161,7 @@
 				</Button>
 			{/if}
 
-			<p class="text-[11px] text-base-content/40">
+			<p class="text-[11px] text-muted">
 				Buy it once, own it forever - your purchase supports the artist.
 			</p>
 		</div>

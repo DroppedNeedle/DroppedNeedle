@@ -105,13 +105,13 @@
 	onconfirm={handleRemove}
 	oncancel={onclose}
 >
-	<p class="text-base-content/70">
+	<p class="text-muted">
 		Remove <span class="font-semibold text-base-content">{shownTitle}</span> by
 		<span class="font-semibold text-base-content">{shownArtist}</span> from your library? Its files
 		go to the recycle bin{keptFor}. Put them back from the album page.
 	</p>
 	{#if shownCopy}
-		<p class="mt-2 text-sm text-base-content/70">
+		<p class="mt-2 text-sm text-muted">
 			{#if copies > 1}You hold {copies} copies. This one goes:{/if}
 			{shownCopy}
 		</p>
@@ -125,7 +125,7 @@
 		/>
 		<span>
 			<span class="font-semibold">Stop the Wanted watcher</span>
-			<span class="mt-1 block text-base-content/65">
+			<span class="mt-1 block text-muted">
 				Uncheck this to keep looking for a replacement after the album is removed.
 			</span>
 		</span>

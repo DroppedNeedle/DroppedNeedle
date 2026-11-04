@@ -90,7 +90,7 @@
 				<GitCompareArrows class="mt-0.5 h-5 w-5 text-primary" />
 				<div>
 					<h2 class="font-bold">Compare edition metadata</h2>
-					<p class="text-sm text-base-content/55">
+					<p class="text-sm text-muted">
 						Choose only the Discogs facts that belong to this exact edition.
 					</p>
 				</div>
@@ -114,10 +114,10 @@
 			<div class="bg-base-200 px-4 py-3 font-bold">Use for MusicBrainz</div>
 			{#each rows as row (row.key)}
 				<div class="bg-base-100 px-4 py-3 font-semibold">{row.label}</div>
-				<div class="bg-base-100 px-4 py-3 text-base-content/65">
+				<div class="bg-base-100 px-4 py-3 text-muted">
 					{row.local ?? 'Not in local metadata'}
 				</div>
-				<div class="bg-base-100 px-4 py-3 text-base-content/65">{row.discogs ?? 'Not listed'}</div>
+				<div class="bg-base-100 px-4 py-3 text-muted">{row.discogs ?? 'Not listed'}</div>
 				<div class="grid gap-1 bg-base-100 px-4 py-2">
 					<Button
 						size="xs"
@@ -147,11 +147,11 @@
 					<legend class="font-bold">{row.label}</legend>
 					<dl class="mt-3 space-y-2 text-sm">
 						<div>
-							<dt class="text-xs text-base-content/45">Local metadata</dt>
+							<dt class="text-xs text-muted">Local metadata</dt>
 							<dd>{row.local ?? 'Not listed'}</dd>
 						</div>
 						<div>
-							<dt class="text-xs text-base-content/45">Discogs</dt>
+							<dt class="text-xs text-muted">Discogs</dt>
 							<dd>{row.discogs ?? 'Not listed'}</dd>
 						</div>
 					</dl>
@@ -185,10 +185,10 @@
 					)}
 					<Card variant="bordered" padding="sm">
 						<p class="font-semibold">Medium {medium.position}</p>
-						<p class="mt-1 text-xs text-base-content/55">
+						<p class="mt-1 text-xs text-muted">
 							Local: {localMedium?.title ?? 'No title'} · no format inferred
 						</p>
-						<p class="text-xs text-base-content/55">
+						<p class="text-xs text-muted">
 							Discogs: {providerMedium?.title ?? 'No title'} · {providerMedium?.format ??
 								'No format'}
 						</p>
@@ -223,7 +223,7 @@
 
 		<div class="border-t border-base-content/10 p-5 sm:p-6">
 			<h3 class="font-bold">Track alignment</h3>
-			<p class="mt-1 text-sm text-base-content/55">
+			<p class="mt-1 text-sm text-muted">
 				Local positions are never reordered. Conflicts stay visible for review.
 			</p>
 			<ul class="mt-4 grid gap-2 lg:grid-cols-2">
@@ -263,7 +263,7 @@
 								{alignment.provider_position ?? ''}
 							</span>
 						</div>
-						<div class="mt-2 grid gap-2 text-xs text-base-content/55 sm:grid-cols-2">
+						<div class="mt-2 grid gap-2 text-xs text-muted sm:grid-cols-2">
 							<p>
 								Local: {localTrack?.artist_name ?? 'Artist not listed'} · {durationLabel(
 									localTrack?.duration_seconds

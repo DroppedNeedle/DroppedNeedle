@@ -157,7 +157,7 @@
 		<div transition:slide={{ duration: 300 }} class="col-span-full overflow-hidden">
 			<Card variant="bordered" padding="md" class="mt-3">
 				<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-					<p class="text-sm text-base-content/60">
+					<p class="text-sm text-muted">
 						{#if albumCount}
 							Play the station, or download any albums you're missing.
 						{:else if radioQuery.isFetching}

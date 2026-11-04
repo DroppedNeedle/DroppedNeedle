@@ -42,7 +42,7 @@
 		<div class="min-w-0 flex-1">
 			<p class="management-step">Result evidence</p>
 			<h3 class="mt-1 font-display text-lg font-semibold">{title}</h3>
-			<p class="mt-1 text-sm text-base-content/55">
+			<p class="mt-1 text-sm text-muted">
 				{[artist, album].filter(Boolean).join(' · ') || `Release ${item.plan.bundle_ordinal + 1}`}
 			</p>
 		</div>
@@ -104,11 +104,11 @@
 				<ShieldAlert class="mt-0.5 h-4 w-4 shrink-0 text-error" />
 				<div>
 					<strong>{managementReasonLabel(item.failure_code)}</strong>
-					<p class="mt-1 text-base-content/70">
+					<p class="mt-1 text-muted">
 						{failureReason ?? 'This file was not written.'}
 					</p>
 					{#if failureAction}
-						<p class="mt-1 text-base-content/55">
+						<p class="mt-1 text-muted">
 							<span class="font-semibold">What to do:</span>
 							{failureAction}
 						</p>
@@ -122,12 +122,12 @@
 						>Result payload</strong
 					>
 				</div>
-				<p class="mt-2 break-words font-mono text-xs text-base-content/60">
+				<p class="mt-2 break-words font-mono text-xs text-muted">
 					{formatManagementValue(item.result)}
 				</p>
 			</Card>
 		{:else}
-			<p class="text-sm text-base-content/50">No additional result payload was required.</p>
+			<p class="text-sm text-muted">No additional result payload was required.</p>
 		{/if}
 	</section>
 </div>

@@ -144,7 +144,7 @@
 
 <div class="flex flex-col gap-5">
 	{#if hiddenByFilter}
-		<p class="flex items-center gap-2 text-xs text-base-content/60">
+		<p class="flex items-center gap-2 text-xs text-muted">
 			<EyeOff class="h-3.5 w-3.5" aria-hidden="true" /> Hidden by your filter
 		</p>
 	{/if}
@@ -181,7 +181,7 @@
 					<h3 id="edition-detail-title" class="text-lg font-bold" tabindex="-1">
 						{editionName(plan.edition)}
 					</h3>
-					<p class="text-sm text-base-content/70">
+					<p class="text-sm text-muted">
 						{[
 							plan.artist_name,
 							editionYear(plan.edition.date) ? `Released ${editionYear(plan.edition.date)}` : null,
@@ -191,7 +191,7 @@
 							.filter(Boolean)
 							.join(' · ')}
 					</p>
-					<p class="text-xs text-base-content/55">
+					<p class="text-xs text-muted">
 						{#each [plan.edition.label, plan.edition.catalog_number, plan.edition.barcode].filter(Boolean) as fact (fact)}
 							<span>{fact} · </span>
 						{/each}
@@ -260,7 +260,7 @@
 							/>
 						{/if}
 						{#if !sourceReady}
-							<p class="text-sm text-base-content/70">
+							<p class="text-sm text-muted">
 								{NO_SOURCE_SENTENCE}
 								<a class="link" href={withBasePath('/settings?tab=download-client')}
 									>Download settings</a
@@ -296,7 +296,7 @@
 								{#each extras as file (file.local_track_id)}
 									<li>
 										{file.title || 'Untitled'}
-										<span class="text-base-content/50"
+										<span class="text-muted"
 											>({file.fate === 'duplicate'
 												? 'second copy'
 												: file.fate === 'other_version'
@@ -306,7 +306,7 @@
 									</li>
 								{/each}
 							</ul>
-							<p class="mt-1 text-xs text-base-content/60">
+							<p class="mt-1 text-xs text-muted">
 								Nothing is deleted: the files go to the recycle bin, and you can put them back.
 							</p>
 							<div class="mt-2 flex flex-wrap gap-2">

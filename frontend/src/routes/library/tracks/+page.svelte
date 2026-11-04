@@ -159,7 +159,7 @@
 		/>
 		<div>
 			<h1 class="text-3xl font-bold">{favorites ? 'Favourite Tracks' : 'All Tracks'}</h1>
-			<p class="text-base-content/70 text-sm mt-1">
+			<p class="text-muted text-sm mt-1">
 				{total.toLocaleString()}
 				{total === 1 ? 'track' : 'tracks'}
 			</p>
@@ -221,7 +221,7 @@
 			</div>
 		{/snippet}
 		{#snippet empty()}
-			<div class="flex flex-col items-center justify-center py-20 text-base-content/50">
+			<div class="flex flex-col items-center justify-center py-20 text-muted">
 				<Music2 class="mb-4 h-12 w-12 opacity-20" />
 				<p class="text-lg font-medium">
 					{searchTerm ? 'No matches' : favorites ? 'No favourites yet' : 'No tracks yet'}
@@ -317,8 +317,8 @@
 						<div class="truncate text-sm font-semibold {playing ? 'text-accent' : ''}">
 							{track.title}
 						</div>
-						<div class="truncate text-xs text-base-content/55">
-							{track.artist_name}{#if track.album_title}<span class="ml-1 text-base-content/35"
+						<div class="truncate text-xs text-muted">
+							{track.artist_name}{#if track.album_title}<span class="ml-1 text-muted"
 									>· {track.album_title}</span
 								>{/if}
 						</div>
@@ -327,15 +327,13 @@
 					<div class="flex shrink-0 items-center gap-2">
 						{#if track.format}
 							<span
-								class="hidden text-[10px] font-medium uppercase tracking-wide text-base-content/30 sm:inline"
+								class="hidden text-[10px] font-medium uppercase tracking-wide text-muted sm:inline"
 							>
 								{track.format}
 							</span>
 						{/if}
 						{#if track.duration_seconds != null}
-							<span
-								class="text-xs tabular-nums text-base-content/40 {playing ? 'text-accent/60' : ''}"
-							>
+							<span class="text-xs tabular-nums text-muted {playing ? 'text-accent/60' : ''}">
 								{formatDurationSec(track.duration_seconds)}
 							</span>
 						{/if}

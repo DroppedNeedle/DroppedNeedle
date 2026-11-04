@@ -178,7 +178,7 @@
 			>
 				{#each recommended as group (group.title)}
 					<div class="mb-4">
-						<h3 class="text-sm font-medium text-base-content/70 mb-2">{group.title}</h3>
+						<h3 class="text-sm font-medium text-muted mb-2">{group.title}</h3>
 						<AlbumCarousel albums={group.albums} {onopen} />
 					</div>
 				{/each}

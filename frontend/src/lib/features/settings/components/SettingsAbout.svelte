@@ -35,11 +35,11 @@
 <div class="space-y-6 stagger-fade-in">
 	<div>
 		<h2 class="text-2xl font-bold">About</h2>
-		<p class="text-base-content/60 mt-1">App version, updates, and release notes.</p>
+		<p class="text-muted mt-1">App version, updates, and release notes.</p>
 	</div>
 
 	<Card variant="bordered" padding="md">
-		<p class="text-xs text-base-content/60">
+		<p class="text-xs text-muted">
 			This application uses Discogs’ API but is not affiliated with, sponsored or endorsed by
 			Discogs. ‘Discogs’ is a trademark of Zink Media, LLC.
 		</p>
@@ -52,8 +52,8 @@
 	{:else if versionQuery.isError}
 		<Card variant="bordered" class="text-center">
 			<div class="flex flex-col items-center">
-				<Info class="w-10 h-10 text-base-content/50 mb-2" />
-				<p class="text-base-content/70">Unable to load version information.</p>
+				<Info class="w-10 h-10 text-muted mb-2" />
+				<p class="text-muted">Unable to load version information.</p>
 				<Button variant="primary" size="sm" class="mt-3" onclick={() => versionQuery.refetch()}>
 					Try Again
 				</Button>
@@ -77,7 +77,7 @@
 									{version.version}
 								</span>
 								{#if version.build_date && formatDate(version.build_date)}
-									<span class="flex items-center gap-1 text-xs text-base-content/60">
+									<span class="flex items-center gap-1 text-xs text-muted">
 										<Calendar class="w-3 h-3" />
 										Built {formatDate(version.build_date)}
 									</span>
@@ -173,7 +173,7 @@
 							What's New in <span class="text-accent">{updateCheck.latest_version}</span>
 						</h3>
 						{#if updateCheck.latest_release.published_at}
-							<p class="text-xs text-base-content/60">
+							<p class="text-xs text-muted">
 								Released {formatDate(updateCheck.latest_release.published_at)}
 							</p>
 						{/if}
@@ -209,8 +209,8 @@
 		{:else if releaseHistoryQuery.isError}
 			<Card variant="bordered" class="text-center">
 				<div class="flex flex-col items-center">
-					<Info class="w-8 h-8 text-base-content/50 mb-2" />
-					<p class="text-base-content/70">Unable to load release history.</p>
+					<Info class="w-8 h-8 text-muted mb-2" />
+					<p class="text-muted">Unable to load release history.</p>
 					<Button
 						variant="primary"
 						size="sm"
@@ -242,7 +242,7 @@
 								{/if}
 								<span class="text-sm font-medium">{release.name ?? release.tag_name}</span>
 								{#if release.published_at}
-									<span class="ml-auto text-xs text-base-content/60 flex items-center gap-1">
+									<span class="ml-auto text-xs text-muted flex items-center gap-1">
 										<Calendar class="w-3 h-3" />
 										{formatDate(release.published_at)}
 									</span>
@@ -276,8 +276,8 @@
 		{:else}
 			<Card variant="bordered" class="text-center">
 				<div class="flex flex-col items-center py-2">
-					<Tag class="w-8 h-8 text-base-content/50 mb-2" />
-					<p class="text-base-content/70">No releases found.</p>
+					<Tag class="w-8 h-8 text-muted mb-2" />
+					<p class="text-muted">No releases found.</p>
 				</div>
 			</Card>
 		{/if}

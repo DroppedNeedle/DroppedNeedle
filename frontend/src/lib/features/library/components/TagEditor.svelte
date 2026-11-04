@@ -279,7 +279,7 @@
 							{/each}
 						</div>
 					{:else}
-						<p class="mt-2 rounded-box bg-base-200/50 p-4 text-sm text-base-content/60">
+						<p class="mt-2 rounded-box bg-base-200/50 p-4 text-sm text-muted">
 							This track has no local overrides to reset.
 						</p>
 					{/if}
@@ -289,7 +289,7 @@
 					<div class="flex items-end justify-between gap-3">
 						<div>
 							<h3 id="tag-core-fields" class="font-display text-base font-semibold">Core tags</h3>
-							<p class="text-xs text-base-content/50">Artists and genres use one value per line.</p>
+							<p class="text-xs text-muted">Artists and genres use one value per line.</p>
 						</div>
 						<span class="badge badge-ghost badge-sm">{changedFields.length} changed</span>
 					</div>
@@ -332,7 +332,7 @@
 	</div>
 	{#snippet actions()}
 		<div class="flex flex-wrap items-center justify-between gap-2">
-			<p class="text-xs text-base-content/50">
+			<p class="text-xs text-muted">
 				Using {context?.profile_name ?? 'the root profile'} format compatibility rules.
 			</p>
 			<div class="ml-auto flex gap-2">

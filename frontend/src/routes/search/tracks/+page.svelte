@@ -132,7 +132,7 @@
 </div>
 <section class="px-4 py-4 sm:px-8">
 	{#if !normalizedQuery}
-		<p class="text-center mt-32 text-base-content/50">Enter a search query to get started.</p>
+		<p class="text-center mt-32 text-muted">Enter a search query to get started.</p>
 	{:else}
 		<QueryBoundary query={firstPage} what="songs">
 			{#snippet loading()}
@@ -149,7 +149,7 @@
 				</div>
 			{/snippet}
 			{#snippet empty()}
-				<Card><p class="text-center text-base-content/50">No songs found</p></Card>
+				<Card><p class="text-center text-muted">No songs found</p></Card>
 			{/snippet}
 			{#snippet children(loaded)}
 				<div
@@ -165,7 +165,7 @@
 					{#if loading}
 						<span class="loading loading-spinner loading-md text-primary"></span>
 					{:else if !hasMore}
-						<p class="text-base-content/50 text-sm">No more results</p>
+						<p class="text-muted text-sm">No more results</p>
 					{/if}
 				</div>
 			{/snippet}

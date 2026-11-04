@@ -86,13 +86,13 @@
 		{#if hasStats}
 			<div class="flex flex-wrap gap-4 text-sm">
 				{#if listeners != null && listeners > 0}
-					<span class="flex items-center gap-1.5 text-base-content/70">
+					<span class="flex items-center gap-1.5 text-muted">
 						<Users class="h-4 w-4" />
 						{formatListenCount(listeners, true)} listeners
 					</span>
 				{/if}
 				{#if playcount != null && playcount > 0}
-					<span class="flex items-center gap-1.5 text-base-content/70">
+					<span class="flex items-center gap-1.5 text-muted">
 						<Headphones class="h-4 w-4" />
 						{formatListenCount(playcount)}
 					</span>

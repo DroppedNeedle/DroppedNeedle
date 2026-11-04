@@ -65,15 +65,13 @@
 					/>
 					<span class="min-w-0">
 						<span class="block truncate font-medium">{candidate.album_title}</span>
-						<span class="block truncate text-xs text-base-content/60"
+						<span class="block truncate text-xs text-muted"
 							>{candidate.album_artist_name} · {percent(candidate.lowest_score)} fit or better</span
 						>
 					</span>
 				</label>
 			{/each}
-			<p class="text-xs text-base-content/60">
-				Each album is pinned to it. Undo each from its album page.
-			</p>
+			<p class="text-xs text-muted">Each album is pinned to it. Undo each from its album page.</p>
 		</fieldset>
 	{:else}
 		<p class="text-sm">These albums share no edition. Pick one for each instead.</p>

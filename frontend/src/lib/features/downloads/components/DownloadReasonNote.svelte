@@ -14,7 +14,7 @@
 	// A settled reason (nothing better found, stopped) is a final word, not a fault.
 	const tone = $derived(
 		reason?.kind === 'settled'
-			? 'text-base-content/70'
+			? 'text-muted'
 			: waiting || task.held_for_review || task.status === 'partial'
 				? 'text-warning/85'
 				: 'text-error/80'
@@ -38,11 +38,11 @@
 {#if reason}
 	<div class="mt-1 text-xs" data-reason-code={reason.code}>
 		<p class="line-clamp-2 {tone}">{reason.text}</p>
-		<p class="line-clamp-2 text-base-content/60">{reason.action}</p>
+		<p class="line-clamp-2 text-muted">{reason.action}</p>
 		{#if tally}
-			<p class="text-base-content/50">{tally}</p>
+			<p class="text-muted">{tally}</p>
 		{/if}
 	</div>
 {:else if importNote}
-	<p class="mt-1 text-xs text-base-content/60">{importNote}</p>
+	<p class="mt-1 text-xs text-muted">{importNote}</p>
 {/if}

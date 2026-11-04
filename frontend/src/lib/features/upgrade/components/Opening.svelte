@@ -21,7 +21,7 @@
 		<span>Starting the app.</span>
 	</div>
 	{#if slow}
-		<p class="mt-3 text-sm text-base-content/70" role="status">
+		<p class="mt-3 text-sm text-muted" role="status">
 			This is taking a while. The server log says what it is doing.
 		</p>
 	{/if}

@@ -344,7 +344,7 @@
 		<div class="flex flex-wrap items-center justify-between gap-3">
 			<div>
 				<h2 class="text-lg font-semibold">User Management</h2>
-				<p class="text-sm text-base-content/50 mt-0.5">Manage accounts and roles.</p>
+				<p class="text-sm text-muted mt-0.5">Manage accounts and roles.</p>
 			</div>
 			<div class="flex flex-wrap gap-2">
 				<IconButton
@@ -372,9 +372,7 @@
 
 		{#if showCreateForm}
 			<Card variant="bordered" padding="md">
-				<h3 class="text-sm font-semibold mb-2 text-base-content/70 uppercase tracking-wider">
-					Create User
-				</h3>
+				<h3 class="text-sm font-semibold mb-2 text-muted uppercase tracking-wider">Create User</h3>
 				<form
 					onsubmit={(e) => {
 						e.preventDefault();
@@ -478,12 +476,12 @@
 						<div class="flex-1 min-w-32">
 							<p class="text-sm font-medium truncate">{user.display_name}</p>
 							{#if user.username_display ?? user.username}
-								<p class="text-xs text-base-content/40 truncate">
+								<p class="text-xs text-muted truncate">
 									@{user.username_display ?? user.username}
 								</p>
 							{/if}
 							{#if user.email}
-								<p class="text-xs text-base-content/50 truncate">{user.email}</p>
+								<p class="text-xs text-muted truncate">{user.email}</p>
 							{/if}
 						</div>
 						{#if user.providers.length > 0}
@@ -495,9 +493,9 @@
 										{:else if provider === 'plex'}
 											<PlexIcon class="h-3.5 w-3.5 text-plex" />
 										{:else if provider === 'oidc'}
-											<KeyRound class="h-3.5 w-3.5 text-base-content/40" />
+											<KeyRound class="h-3.5 w-3.5 text-muted" />
 										{:else}
-											<Mail class="h-3.5 w-3.5 text-base-content/40" />
+											<Mail class="h-3.5 w-3.5 text-muted" />
 										{/if}
 									</div>
 								{/each}
@@ -579,7 +577,7 @@
 					disabled={page === 1 || loading}
 					onclick={() => void loadUsers(page - 1)}>Previous</Button
 				>
-				<span class="text-sm text-base-content/60">
+				<span class="text-sm text-muted">
 					Showing {rangeStart}-{rangeEnd} of {total} users (page {page} of {totalPages})
 				</span>
 				<Button
@@ -592,10 +590,8 @@
 		{/if}
 
 		<div class="pt-2 border-t border-base-300 space-y-2">
-			<h3 class="text-xs font-semibold text-base-content/50 uppercase tracking-wider">
-				Quota defaults
-			</h3>
-			<p class="text-xs text-base-content/60">
+			<h3 class="text-xs font-semibold text-muted uppercase tracking-wider">Quota defaults</h3>
+			<p class="text-xs text-muted">
 				Limits for every plain user without an override (admin and trusted are exempt). 0 =
 				unlimited. Requests use a rolling window; storage counts each user's own downloads.
 			</p>
@@ -657,10 +653,8 @@
 		</div>
 
 		<div class="pt-2 border-t border-base-300 space-y-2">
-			<h3 class="text-xs font-semibold text-base-content/50 uppercase tracking-wider">
-				Role guide
-			</h3>
-			<div class="grid gap-2 text-xs text-base-content/60">
+			<h3 class="text-xs font-semibold text-muted uppercase tracking-wider">Role guide</h3>
+			<div class="grid gap-2 text-xs text-muted">
 				<div class="flex gap-2">
 					<ShieldCheck class="h-4 w-4 text-accent shrink-0 mt-0.5" />
 					<span
@@ -676,7 +670,7 @@
 					>
 				</div>
 				<div class="flex gap-2">
-					<UserX class="h-4 w-4 text-base-content/40 shrink-0 mt-0.5" />
+					<UserX class="h-4 w-4 text-muted shrink-0 mt-0.5" />
 					<span
 						><strong class="text-base-content/80">User</strong>, requests need admin approval before
 						downloading.</span
@@ -695,7 +689,7 @@
 	onconfirm={handleDeleteUser}
 	oncancel={() => (userToDelete = null)}
 >
-	<p class="text-base-content/70">
+	<p class="text-muted">
 		Delete <span class="font-semibold text-base-content">{userToDelete?.display_name}</span>? This
 		permanently removes their account, login methods, sessions, and playlists, public ones included.
 		This cannot be undone.
@@ -710,7 +704,7 @@
 	onconfirm={handleSignOut}
 	oncancel={() => (userToSignOut = null)}
 >
-	<p class="text-base-content/70">
+	<p class="text-muted">
 		Signs <span class="font-semibold text-base-content">{userToSignOut?.display_name}</span> out of every
 		browser and device. Their app passwords keep working.
 	</p>
@@ -725,7 +719,7 @@
 >
 	{#if recoveryCode}
 		<div class="space-y-4">
-			<p class="text-sm leading-relaxed text-base-content/65">
+			<p class="text-sm leading-relaxed text-muted">
 				Share this code privately. It can be used once and will not be shown again after you close
 				this window.
 			</p>
@@ -743,14 +737,14 @@
 					{recoveryCopied ? 'Copied' : 'Copy code'}
 				</Button>
 			</Card>
-			<div class="flex items-center gap-2 text-xs text-base-content/50">
+			<div class="flex items-center gap-2 text-xs text-muted">
 				<Clock3 class="h-4 w-4 text-accent" aria-hidden="true" />
 				Expires at {recoveryExpiryLabel(recoveryExpiresAt)}. Creating another code will replace this
 				one.
 			</div>
 		</div>
 	{:else}
-		<p class="text-sm leading-relaxed text-base-content/65">
+		<p class="text-sm leading-relaxed text-muted">
 			Create a 15-minute, single-use code for
 			<span class="font-semibold text-base-content">{recoveryUser?.display_name}</span>? Their
 			current password remains valid until the code is used.

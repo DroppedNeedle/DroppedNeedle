@@ -23,9 +23,9 @@
 <div class="mx-auto w-full {widths[width]} px-4 py-6 sm:px-6 lg:px-8">
 	<header class="mb-6 flex flex-wrap items-start justify-between gap-3">
 		<div class="min-w-0">
-			<h1 class="text-2xl font-bold sm:text-3xl">{title}</h1>
+			<h1 class="font-display text-3xl leading-none text-title uppercase sm:text-4xl">{title}</h1>
 			{#if subtitle}
-				<p class="mt-1 text-sm text-base-content/70 sm:text-base">{subtitle}</p>
+				<p class="mt-2 text-sm text-muted sm:text-base">{subtitle}</p>
 			{/if}
 		</div>
 		{#if actions}

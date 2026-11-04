@@ -127,13 +127,11 @@
 							role="button"
 							aria-label="Play {track.title}"
 						>
-							<td class="text-base-content/50">{i + 1}</td>
+							<td class="text-muted">{i + 1}</td>
 							<td class="font-medium">{track.title}</td>
-							<td class="text-base-content/60">{track.artist_name}</td>
-							<td class="text-base-content/60">{track.album_name}</td>
-							<td class="text-right text-base-content/50"
-								>{formatDurationSec(track.duration_seconds)}</td
-							>
+							<td class="text-muted">{track.artist_name}</td>
+							<td class="text-muted">{track.album_name}</td>
+							<td class="text-right text-muted">{formatDurationSec(track.duration_seconds)}</td>
 						</tr>
 					{/each}
 				</tbody>
@@ -145,8 +143,8 @@
 			</div>
 		{/if}
 	{:else if selectedGenres.length > 0}
-		<p class="text-sm text-base-content/50">No songs found for {selectedGenres.join(', ')}.</p>
+		<p class="text-sm text-muted">No songs found for {selectedGenres.join(', ')}.</p>
 	{:else}
-		<p class="text-sm text-base-content/50">Pick a genre to browse tracks.</p>
+		<p class="text-sm text-muted">Pick a genre to browse tracks.</p>
 	{/if}
 </div>

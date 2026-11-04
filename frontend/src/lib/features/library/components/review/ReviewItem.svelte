@@ -73,9 +73,9 @@
 				/>{/if}
 			<span class="min-w-0">
 				<span class="block truncate font-medium">{review.album_title || 'Unknown album'}</span>
-				<span class="block truncate text-xs text-base-content/55">{review.artist_name}</span>
-				<span class="mt-1 block text-sm text-base-content/70">{review.reason.message}</span>
-				<span class="block text-xs text-base-content/55">{review.reason.action}</span>
+				<span class="block truncate text-xs text-muted">{review.artist_name}</span>
+				<span class="mt-1 block text-sm text-muted">{review.reason.message}</span>
+				<span class="block text-xs text-muted">{review.reason.action}</span>
 			</span>
 		</button>
 		<div class="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">

@@ -42,7 +42,7 @@
 				{label}
 			</label>
 			{#if description}
-				<p id="{id}-description" class="mt-0.5 text-sm text-base-content/60">{description}</p>
+				<p id="{id}-description" class="mt-0.5 text-sm text-muted">{description}</p>
 			{/if}
 		</div>
 		<input

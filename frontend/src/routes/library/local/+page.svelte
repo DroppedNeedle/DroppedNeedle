@@ -304,7 +304,7 @@
 			<Headphones class="h-6 w-6 text-accent" />
 			<div>
 				<h1 class="text-xl font-black tracking-tight sm:text-2xl">The Listening Room</h1>
-				<p class="text-xs text-base-content/50">
+				<p class="text-xs text-muted">
 					{#if stats}{stats.total_tracks.toLocaleString()} tracks &middot; {stats.total_artists} artists
 						&middot; {formatBytes(stats.total_size_bytes)}{:else}Your local music, ready to spin{/if}
 				</p>
@@ -359,7 +359,7 @@
 			</div>
 		</div>
 
-		<div class="flex items-center justify-center py-4 text-base-content/40">
+		<div class="flex items-center justify-center py-4 text-muted">
 			<div class="flex items-center gap-2 text-xs uppercase tracking-[0.2em]">
 				Scroll for more
 				<ChevronDown class="h-4 w-4 {reducedMotion ? '' : 'animate-float'}" />
@@ -441,11 +441,11 @@
 				{#if isMbid(album.artist_mbid)}
 					<a
 						href={withBasePath(`/artist/${album.artist_mbid}`)}
-						class="block truncate text-xs text-base-content/55 transition-colors hover:text-accent hover:underline"
+						class="block truncate text-xs text-muted transition-colors hover:text-accent hover:underline"
 						title={album.artist_name}>{album.artist_name}</a
 					>
 				{:else}
-					<p class="truncate text-xs text-base-content/55">{album.artist_name}</p>
+					<p class="truncate text-xs text-muted">{album.artist_name}</p>
 				{/if}
 			</div>
 		{/snippet}
@@ -494,13 +494,13 @@
 								class="pointer-events-none absolute inset-0 bg-gradient-to-t from-base-100/85 via-base-100/40 to-transparent"
 							></div>
 							<ChevronDown
-								class="absolute right-3 top-3 h-4 w-4 text-base-content/50 transition-transform duration-300 {active
+								class="absolute right-3 top-3 h-4 w-4 text-muted transition-transform duration-300 {active
 									? 'rotate-180 text-accent'
 									: ''}"
 							/>
 							<div class="absolute inset-x-4 bottom-3">
 								<div class="text-2xl font-black tracking-tight">{shelfData.label}</div>
-								<div class="text-xs text-base-content/55">{shelfData.album_count} albums</div>
+								<div class="text-xs text-muted">{shelfData.album_count} albums</div>
 							</div>
 						</button>
 					{/each}
@@ -513,7 +513,7 @@
 					>
 						<div class="mb-3 flex items-baseline gap-2">
 							<h3 class="text-base font-bold text-base-content/85">{openShelf.label}</h3>
-							<span class="text-xs text-base-content/40">{openShelf.album_count} albums</span>
+							<span class="text-xs text-muted">{openShelf.album_count} albums</span>
 						</div>
 						{#if shelfQuery.isLoading}
 							<div class="flex gap-3">
@@ -538,7 +538,7 @@
 				<Headphones class="h-12 w-12 text-base-content/20" />
 				<div>
 					<p class="font-semibold">No local music yet</p>
-					<p class="text-sm text-base-content/55">
+					<p class="text-sm text-muted">
 						Add a music folder in <a
 							href={withBasePath('/settings?tab=library')}
 							class="link link-accent">Settings &rarr; Library</a

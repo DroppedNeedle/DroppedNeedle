@@ -118,7 +118,7 @@
 </script>
 
 <Modal {open} {title} icon={FolderTree} size="lg" focusTitle {onclose}>
-	<p class="text-sm text-base-content/70">
+	<p class="text-sm text-muted">
 		{kind === 'rescan_files'
 			? 'Read file tags again for the selected library scopes. Existing indexed music stays available while the scan runs.'
 			: kind === 'retry_identification'
@@ -149,7 +149,7 @@
 						/>
 						<span class="min-w-0 flex-1">
 							<span class="block truncate font-medium">{root.label}</span>
-							<span class="block truncate text-xs text-base-content/55">{root.path}</span>
+							<span class="block truncate text-xs text-muted">{root.path}</span>
 						</span>
 						<span class="badge badge-outline badge-sm">{root.policy.replace('_', ' ')}</span>
 						{#if !root.available}<span class="badge badge-warning badge-sm">Unavailable</span>{/if}
@@ -181,7 +181,7 @@
 			{#if kind === 'retry_identification' && (pendingReviews.isLoading || retryPreview.isPending)}
 				<span class="skeleton h-4 w-28"></span>
 			{:else if kind === 'retry_identification' && pendingCount === null}
-				<span class="text-base-content/55">Preview to count albums</span>
+				<span class="text-muted">Preview to count albums</span>
 			{:else if kind === 'retry_identification'}
 				<strong
 					>{(pendingCount ?? 0).toLocaleString()}
@@ -198,11 +198,11 @@
 			{:else if estimatedFiles !== null && estimatedFiles !== undefined}
 				<strong>About {estimatedFiles.toLocaleString()} files</strong>
 			{:else}
-				<span class="text-base-content/55">Count not available</span>
+				<span class="text-muted">Count not available</span>
 			{/if}
 		</div>
 		{#if estimateQuery.data?.estimated_at}
-			<p class="mt-1 text-xs text-base-content/50">Approximate count from the latest inventory.</p>
+			<p class="mt-1 text-xs text-muted">Approximate count from the latest inventory.</p>
 		{/if}
 	</div>
 
@@ -227,7 +227,7 @@
 						<span
 							><strong>{group.count.toLocaleString()}</strong> would not start: {group.reason
 								.message}
-							<span class="text-base-content/60">{group.reason.action}</span></span
+							<span class="text-muted">{group.reason.action}</span></span
 						>
 					</li>
 				{/each}

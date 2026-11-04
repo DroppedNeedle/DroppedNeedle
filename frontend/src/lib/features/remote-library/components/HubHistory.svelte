@@ -38,9 +38,9 @@
 								class="hover transition-all duration-200 hover:border-l-2 hover:border-l-primary hover:pl-1"
 							>
 								<td class="font-medium">{entry.track_title}</td>
-								<td class="text-base-content/60">{entry.artist_name}</td>
-								<td class="text-base-content/60">{entry.album_name}</td>
-								<td class="text-base-content/50 text-xs">{formatViewedAt(entry.viewed_at)}</td>
+								<td class="text-muted">{entry.artist_name}</td>
+								<td class="text-muted">{entry.album_name}</td>
+								<td class="text-muted text-xs">{formatViewedAt(entry.viewed_at)}</td>
 							</tr>
 						{/each}
 					</tbody>
@@ -58,9 +58,9 @@
 				</div>
 			{/if}
 		{:else if historyQuery.isError}
-			<p class="text-sm text-base-content/50">Couldn't load the listening history.</p>
+			<p class="text-sm text-muted">Couldn't load the listening history.</p>
 		{:else if !historyQuery.isFetching}
-			<p class="text-sm text-base-content/50">No listening history is available yet.</p>
+			<p class="text-sm text-muted">No listening history is available yet.</p>
 		{/if}
 	</HubShelf>
 </div>

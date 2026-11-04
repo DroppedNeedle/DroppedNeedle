@@ -96,7 +96,7 @@
 
 <Modal bind:open {title} {icon} {iconTone} {focusTitle} dismissible={!busy} onclose={handleClose}>
 	{#if message}
-		<p class="text-base-content/70">{message}</p>
+		<p class="text-muted">{message}</p>
 	{/if}
 	{@render children?.()}
 

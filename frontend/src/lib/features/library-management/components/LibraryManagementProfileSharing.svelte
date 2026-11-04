@@ -238,10 +238,7 @@
 >
 	<div class="space-y-4">
 		{#if exportProfile.isPending}
-			<div
-				class="flex min-h-36 items-center justify-center gap-3 text-sm text-base-content/60"
-				role="status"
-			>
+			<div class="flex min-h-36 items-center justify-center gap-3 text-sm text-muted" role="status">
 				<span class="loading loading-spinner loading-sm text-library-manage"></span>
 				Packaging the saved profile…
 			</div>
@@ -254,7 +251,7 @@
 						<strong class="flex items-center gap-2 text-sm"
 							><PackageCheck class="h-4 w-4 text-library-manage" />Profile file</strong
 						>
-						<p class="mt-1 text-xs text-base-content/55">
+						<p class="mt-1 text-xs text-muted">
 							Attach {shareResult.filename} wherever you share the profile.
 						</p>
 					</div>
@@ -267,7 +264,7 @@
 				<div class="flex flex-wrap items-start justify-between gap-3">
 					<div>
 						<strong class="text-sm">Copyable text code</strong>
-						<p class="mt-1 text-xs text-base-content/55">
+						<p class="mt-1 text-xs text-muted">
 							Use this when you cannot attach a file. Some services may reject long profile codes.
 						</p>
 					</div>
@@ -278,9 +275,7 @@
 					</Button>
 				</div>
 				<details class="mt-3">
-					<summary class="cursor-pointer text-xs font-semibold text-base-content/65"
-						>Show text code</summary
-					>
+					<summary class="cursor-pointer text-xs font-semibold text-muted">Show text code</summary>
 					<TextAreaField
 						label="Profile share code"
 						mono
@@ -290,7 +285,7 @@
 					/>
 				</details>
 			</Card>
-			<p class="flex items-center gap-2 font-mono text-[10px] text-base-content/40">
+			<p class="flex items-center gap-2 font-mono text-[10px] text-muted">
 				<Hash class="h-3.5 w-3.5" /> Bundle checksum: SHA-256 {shareResult.bundle_hash}
 			</p>
 		{/if}
@@ -332,7 +327,7 @@
 						><FileBraces class="h-7 w-7" /></span
 					>
 					<strong class="mt-3 text-sm">Choose or drop a .dnprofile file</strong>
-					<small class="mt-1 text-base-content/50">.dnprofile files up to 1 MiB</small>
+					<small class="mt-1 text-muted">.dnprofile files up to 1 MiB</small>
 					{#if importFilename}<span class="badge badge-outline mt-3 max-w-full truncate"
 							>{importFilename}</span
 						>{/if}
@@ -368,7 +363,7 @@
 					<div>
 						<p class="management-step">Profile preview</p>
 						<h3 class="font-display text-xl font-semibold">{importPreview.profile.name}</h3>
-						<p class="mt-1 max-w-2xl text-sm text-base-content/60">
+						<p class="mt-1 max-w-2xl text-sm text-muted">
 							{importPreview.profile.description || 'No description supplied.'}
 						</p>
 					</div>
@@ -400,7 +395,7 @@
 										class="h-4 w-4 {warning.severity === 'danger' ? 'text-error' : 'text-warning'}"
 									/>{warning.title}</strong
 								>
-								<p class="mt-1 text-xs text-base-content/60">{warning.message}</p>
+								<p class="mt-1 text-xs text-muted">{warning.message}</p>
 							</div>
 						{/each}
 					</div>
@@ -436,7 +431,7 @@
 								</details>
 							{/each}
 						</div>
-					{:else}<p class="mt-2 text-xs text-base-content/50">No tagging scripts included.</p>{/if}
+					{:else}<p class="mt-2 text-xs text-muted">No tagging scripts included.</p>{/if}
 				</div>
 			</section>
 

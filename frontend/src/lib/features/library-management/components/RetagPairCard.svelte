@@ -132,9 +132,7 @@
 	padding="md"
 	aria-label="Might be one album: {oldAlbum.title} and {newAlbum.title}"
 >
-	<p
-		class="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-base-content/60 uppercase"
-	>
+	<p class="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted uppercase">
 		<Combine class="h-3.5 w-3.5" aria-hidden="true" />Might be one album
 	</p>
 	<h3 class="mt-1 font-semibold">These look like one album retagged outside DroppedNeedle</h3>
@@ -197,18 +195,18 @@
 			{/if}
 		{/if}
 
-		<p class="text-base-content/60">
+		<p class="text-muted">
 			Merging keeps {newAlbum.title} and moves {oldAlbum.title}'s favorite, plays and playlist
 			entries to it.
 		</p>
 		{#if pair.reason === 'replaced_hands_off'}
-			<p class="text-base-content/60">
+			<p class="text-muted">
 				Plays of single tracks stay with the old tracks. Merged or kept apart, {newAlbum.title} stays
 				left unmanaged until you choose "Manage it again".
 			</p>
 		{/if}
 		{#if keepsOldEdition}
-			<p class="text-base-content/60">
+			<p class="text-muted">
 				If DroppedNeedle never wrote these files, the album is left unmanaged after the merge until
 				you choose "Manage it again", which writes the tags of {keptEditionName}.
 			</p>

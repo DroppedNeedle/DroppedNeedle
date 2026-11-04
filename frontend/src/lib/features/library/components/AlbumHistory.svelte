@@ -147,7 +147,7 @@
 						<span class="min-w-0 break-words">{line(entry)}</span>
 						<span class="flex shrink-0 items-center gap-3">
 							<time
-								class="text-xs text-base-content/60"
+								class="text-xs text-muted"
 								datetime={at.toISOString()}
 								title={at.toLocaleString()}>{formatRelativeTime(at)}</time
 							>

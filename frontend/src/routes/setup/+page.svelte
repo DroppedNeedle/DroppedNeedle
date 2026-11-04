@@ -7,12 +7,12 @@
 	import { createSetupMutation } from '$lib/features/auth/queries/AuthMutations.svelte';
 	import { toAuthUser } from '$lib/features/auth/queries/types';
 	import ServerLogHint from '$lib/features/auth/components/ServerLogHint.svelte';
-	import { Music, Eye, EyeOff, ShieldCheck } from 'lucide-svelte';
+	import { Music, ShieldCheck } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import Field from '$lib/ui/Field.svelte';
-	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import PasswordField from '$lib/ui/PasswordField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 
 	let displayName = $state('');
@@ -65,7 +65,7 @@
 				<Music class="h-10 w-10 text-primary" />
 			</div>
 			<h1 class="text-3xl font-bold">Welcome to DroppedNeedle</h1>
-			<p class="text-base-content/60 text-sm text-center max-w-xs">
+			<p class="text-muted text-sm text-center max-w-xs">
 				Create your admin account to get started. This only appears once.
 			</p>
 		</div>
@@ -74,7 +74,7 @@
 			<div>
 				<div class="flex items-center gap-2 mb-5 pb-4 border-b border-base-300">
 					<ShieldCheck class="h-4 w-4 text-accent" />
-					<span class="text-sm font-semibold text-base-content/70 uppercase tracking-wider">
+					<span class="text-sm font-semibold text-muted uppercase tracking-wider">
 						Admin Account
 					</span>
 				</div>
@@ -128,31 +128,14 @@
 						autocomplete="email"
 					/>
 
-					<Field label="Password">
-						{#snippet children(control)}
-							<div class="join w-full">
-								<Input
-									{...control}
-									label="Password"
-									type={showPassword ? 'text' : 'password'}
-									class="join-item w-full"
-									placeholder="Min. 12 characters"
-									required
-									autocomplete="new-password"
-									bind:value={password}
-								/>
-								<IconButton
-									label="Show password"
-									icon={showPassword ? EyeOff : Eye}
-									variant="neutral"
-									shape="square"
-									class="join-item"
-									aria-pressed={showPassword}
-									onclick={() => (showPassword = !showPassword)}
-								/>
-							</div>
-						{/snippet}
-					</Field>
+					<PasswordField
+						label="Password"
+						placeholder="Min. 12 characters"
+						required
+						autocomplete="new-password"
+						bind:value={password}
+						bind:shown={showPassword}
+					/>
 
 					<Field label="Confirm Password">
 						{#snippet children(control)}

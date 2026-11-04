@@ -124,7 +124,7 @@
 		<div class="min-w-0 flex-1">
 			<p class="management-step">Inspect exact diff</p>
 			<h3 class="mt-1 font-display text-lg font-semibold">{title}</h3>
-			<p class="mt-1 text-sm text-base-content/55">
+			<p class="mt-1 text-sm text-muted">
 				{[artist, album].filter(Boolean).join(' · ') || `Release ${item.bundle_ordinal + 1}`}
 			</p>
 		</div>
@@ -172,7 +172,7 @@
 				<p class="mt-1 text-base-content/75">{item.reason.message}</p>
 			{/if}
 			{#if item.reason?.action}
-				<p class="mt-1 text-base-content/60">
+				<p class="mt-1 text-muted">
 					<span class="font-semibold">What to do:</span>
 					{item.reason.action}
 				</p>
@@ -189,7 +189,7 @@
 					<Eraser class="mt-0.5 h-4 w-4 shrink-0 text-warning" />
 					<div>
 						<h4 class="management-inspector-section-title">Unmanaged tags to remove</h4>
-						<p class="mt-1 text-xs text-base-content/55">
+						<p class="mt-1 text-xs text-muted">
 							Explicit scrub will delete these native entries because they are not in the profile's
 							preserve list.
 						</p>
@@ -204,19 +204,19 @@
 					<div class="grid gap-2 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
 						<div class="min-w-0">
 							<code class="break-all text-xs font-semibold">{tag.key}</code>
-							<p class="mt-1 break-words text-xs text-base-content/60">
+							<p class="mt-1 break-words text-xs text-muted">
 								{tag.valueKind === 'binary'
 									? 'Binary metadata'
 									: tag.values.join(' · ') || 'Empty value'}
 							</p>
 							{#if tag.truncated}
-								<small class="mt-1 block text-base-content/45">
+								<small class="mt-1 block text-muted">
 									Preview shortened · {tag.valueCount.toLocaleString()} values · {shortFingerprint(
 										tag.sha256
 									)}
 								</small>
 							{:else if tag.valueKind === 'binary'}
-								<small class="mt-1 block font-mono text-base-content/45">
+								<small class="mt-1 block font-mono text-muted">
 									{shortFingerprint(tag.sha256)}
 								</small>
 							{/if}
@@ -266,7 +266,7 @@
 					<RotateCcw class="mt-0.5 h-4 w-4 shrink-0 text-library-manage" />
 					<div>
 						<h4 class="management-inspector-section-title">Sealed restoration snapshot</h4>
-						<p class="mt-1 text-xs text-base-content/55">
+						<p class="mt-1 text-xs text-muted">
 							The staged writer restores this pinned native state, then verifies it before
 							publishing.
 						</p>
@@ -288,7 +288,7 @@
 							{restoration.nativeTags.changed ? 'Restored' : 'Unchanged'}
 						</span>
 					</div>
-					<p class="mt-2 text-xs text-base-content/55">
+					<p class="mt-2 text-xs text-muted">
 						Primary entries {restoration.nativeTags.currentPrimaryEntries.toLocaleString()} →
 						{restoration.nativeTags.restoredPrimaryEntries.toLocaleString()} · auxiliary
 						{restoration.nativeTags.currentAuxiliaryEntries.toLocaleString()} →
@@ -300,7 +300,7 @@
 							{restoration.nativeTags.changedRawKeys.join(' · ')}
 						</p>
 					{/if}
-					<code class="mt-2 block break-all text-[0.65rem] text-base-content/45">
+					<code class="mt-2 block break-all text-[0.65rem] text-muted">
 						{shortFingerprint(restoration.nativeTags.currentFingerprint)} →
 						{shortFingerprint(restoration.nativeTags.restoredFingerprint)}
 					</code>
@@ -319,13 +319,13 @@
 						</span>
 					</div>
 					<dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-						<dt class="text-base-content/45">Modified</dt>
+						<dt class="text-muted">Modified</dt>
 						<dd>
 							{formatNanosecondDate(restoration.fileAttributes.currentMtimeNs)} → {formatNanosecondDate(
 								restoration.fileAttributes.restoredMtimeNs
 							)}
 						</dd>
-						<dt class="text-base-content/45">Permissions</dt>
+						<dt class="text-muted">Permissions</dt>
 						<dd class="font-mono">
 							{formatPermissions(restoration.fileAttributes.currentPermissionBits)} → {formatPermissions(
 								restoration.fileAttributes.restoredPermissionBits
@@ -343,13 +343,13 @@
 					</div>
 					<div class="mt-2 grid gap-2 sm:grid-cols-[1fr_auto_1fr]">
 						<div class="management-diff-value" data-side="before">
-							<small class="font-bold uppercase text-base-content/45">Current</small>
+							<small class="font-bold uppercase text-muted">Current</small>
 							{#if restoration.artwork.current.length}
 								<ul class="mt-1 space-y-1">
 									{#each restoration.artwork.current as artwork (`current:${artwork.sha256}`)}
 										<li class="text-xs">
 											{artworkSnapshotDescription(artwork)}<code
-												class="mt-0.5 block text-[0.65rem] text-base-content/45"
+												class="mt-0.5 block text-[0.65rem] text-muted"
 												>{shortFingerprint(artwork.sha256)}</code
 											>
 										</li>
@@ -359,13 +359,13 @@
 						</div>
 						<ArrowRight class="mt-3 h-4 w-4" />
 						<div class="management-diff-value" data-side="after">
-							<small class="font-bold uppercase text-base-content/45">Restore</small>
+							<small class="font-bold uppercase text-muted">Restore</small>
 							{#if restoration.artwork.restored.length}
 								<ul class="mt-1 space-y-1">
 									{#each restoration.artwork.restored as artwork (`restored:${artwork.sha256}`)}
 										<li class="text-xs">
 											{artworkSnapshotDescription(artwork)}<code
-												class="mt-0.5 block text-[0.65rem] text-base-content/45"
+												class="mt-0.5 block text-[0.65rem] text-muted"
 												>{shortFingerprint(artwork.sha256)}</code
 											>
 										</li>
@@ -450,7 +450,7 @@
 										? ` · ${titleManagementValue(artworkText(choice, 'image_type') ?? '')}`
 										: ''}</strong
 								>
-								<p class="mt-1 text-base-content/55">
+								<p class="mt-1 text-muted">
 									{[
 										artworkText(choice, 'source')
 											? titleManagementValue(artworkText(choice, 'source') ?? '')
@@ -463,7 +463,7 @@
 										.join(' · ') || 'Pinned output details unavailable'}
 								</p>
 								{#if artworkText(choice, 'destination_relative_path')}<code
-										class="mt-1 block break-all text-base-content/45"
+										class="mt-1 block break-all text-muted"
 										>{artworkText(choice, 'destination_relative_path')}</code
 									>{/if}
 							</div>
@@ -480,7 +480,7 @@
 			{#each collisions as collision, index (index)}
 				<div class="rounded-xl border border-error/25 bg-error/5 p-3">
 					<strong class="text-sm">{titleManagementValue(collision.classification)}</strong>
-					<p class="mt-1 text-xs text-base-content/55">
+					<p class="mt-1 text-xs text-muted">
 						No file is assumed safe to delete. Both sides are revalidated in a new preview.
 					</p>
 					{#if collision.requestKind && collision.existingRootId && collision.existingRelativePath}

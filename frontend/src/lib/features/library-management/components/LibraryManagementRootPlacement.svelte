@@ -36,7 +36,7 @@
 		<div class="skeleton mt-3 h-4 w-40" aria-hidden="true"></div>
 	{/snippet}
 	{#snippet failed(_error, retry)}
-		<p class="mt-3 text-xs text-base-content/55">
+		<p class="mt-3 text-xs text-muted">
 			Could not load the overwrite check for this library.
 			<button type="button" class="link" onclick={retry}>Try again</button>
 		</p>
@@ -64,7 +64,7 @@
 				>
 			</div>
 		{:else if mode === 'unknown'}
-			<p class="mt-3 flex flex-wrap items-center gap-2 text-xs text-base-content/60">
+			<p class="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
 				<span>Overwrite check: Not checked yet</span>
 				<AsyncButton
 					variant="ghost"

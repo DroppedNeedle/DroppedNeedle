@@ -63,7 +63,7 @@
 					/>
 				</div>
 				<p class="mt-1.5 line-clamp-1 text-sm font-medium">{album.title}</p>
-				<p class="line-clamp-1 text-xs text-base-content/50">{album.artist_name}</p>
+				<p class="line-clamp-1 text-xs text-muted">{album.artist_name}</p>
 			</button>
 		{/each}
 	</div>

@@ -72,7 +72,7 @@
 </script>
 
 <form class="flex flex-col gap-1" aria-label="Find an edition" onsubmit={submit}>
-	<h3 class="text-xs font-semibold tracking-wide text-base-content/55 uppercase">Not listed?</h3>
+	<h3 class="text-xs font-semibold tracking-wide text-muted uppercase">Not listed?</h3>
 	<TextField
 		label="Paste a MusicBrainz link, or search by title"
 		placeholder="https://musicbrainz.org/release/... or a title"

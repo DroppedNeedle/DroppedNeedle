@@ -60,7 +60,7 @@
 	</figure>
 	<div class="flex flex-col gap-2 px-3 pt-1 pb-3">
 		<h3 class="font-semibold text-sm line-clamp-1">{album.title}</h3>
-		<p class="text-xs text-base-content/50 line-clamp-1">
+		<p class="text-xs text-muted line-clamp-1">
 			{album.artist_name || 'Unknown Artist'}
 			{#if album.release_date}
 				· {album.release_date}

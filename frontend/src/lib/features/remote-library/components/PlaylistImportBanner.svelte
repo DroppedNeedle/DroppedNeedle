@@ -144,9 +144,7 @@
 			<div class="min-w-0 flex-1">
 				<div class="mb-1.5 flex flex-wrap items-center gap-2">
 					{@render sourceIcon()}
-					<span class="text-xs font-medium uppercase tracking-wider text-base-content/50"
-						>{sourceLabel}</span
-					>
+					<span class="text-xs font-medium uppercase tracking-wider text-muted">{sourceLabel}</span>
 					{#if !loading && !hasError}
 						<span class="badge badge-ghost badge-sm">
 							{accountMode === 'linked' ? accountLabel : 'Shared account'}
@@ -161,7 +159,7 @@
 					</div>
 				{:else}
 					<h3 class="text-lg font-bold leading-tight sm:text-xl">{heading}</h3>
-					<p class="mt-1 max-w-2xl text-sm text-base-content/55">{supportingCopy}</p>
+					<p class="mt-1 max-w-2xl text-sm text-muted">{supportingCopy}</p>
 				{/if}
 
 				{#if !loading}
@@ -227,7 +225,7 @@
 						{#if allImported}
 							<CircleCheckBig class="h-6 w-6 text-success" />
 						{:else}
-							<span class="text-xs font-bold tabular-nums text-base-content/70">
+							<span class="text-xs font-bold tabular-nums text-muted">
 								{importedCount}/{totalCount}
 							</span>
 						{/if}

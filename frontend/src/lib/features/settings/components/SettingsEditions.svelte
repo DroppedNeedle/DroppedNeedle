@@ -96,7 +96,7 @@
 		</div>
 	{/snippet}
 	<div class="flex flex-col gap-4">
-		<p class="text-sm text-base-content/60">
+		<p class="text-sm text-muted">
 			Most albums come in several editions: the original CD, a remaster, a deluxe set, a vinyl
 			pressing. DroppedNeedle picks the edition that fits your files best. When two editions fit
 			equally well, or when you request an album you don't have yet, it uses these preferences. An
@@ -110,11 +110,11 @@
 						{@const refusal = section.fieldError(list.key, list.title)}
 						<Card as="section" variant="bordered" padding="md">
 							<h3 class="font-semibold">{list.title}</h3>
-							<p class="grow-0 text-xs text-base-content/55">{list.hint}</p>
+							<p class="grow-0 text-xs text-muted">{list.hint}</p>
 							<ol class="mt-3 space-y-1">
 								{#each draft[list.key] as entry, index (entry)}
 									<li class="flex items-center gap-2 rounded-lg bg-base-200/60 px-2 py-1 text-sm">
-										<span class="w-5 text-xs text-base-content/45">{index + 1}.</span>
+										<span class="w-5 text-xs text-muted">{index + 1}.</span>
 										<span class="min-w-0 flex-1 truncate">{entry}</span>
 										<IconButton
 											size="xs"
@@ -141,7 +141,7 @@
 										/>
 									</li>
 								{:else}
-									<li class="text-xs text-base-content/45">
+									<li class="text-xs text-muted">
 										{list.key === 'countries' ? 'Store region, then worldwide.' : 'No preference.'}
 									</li>
 								{/each}

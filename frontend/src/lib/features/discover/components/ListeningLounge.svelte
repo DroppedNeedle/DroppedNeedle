@@ -120,9 +120,7 @@
 				</span>
 				<div>
 					<h2 class="text-lg font-bold sm:text-xl">Listening Lounge</h2>
-					<p class="text-xs text-base-content/50">
-						Tap a cover to hear it - albums picked for your ears
-					</p>
+					<p class="text-xs text-muted">Tap a cover to hear it - albums picked for your ears</p>
 				</div>
 			</div>
 
@@ -131,7 +129,7 @@
 					<LiveUpdatingBadge label="Updating lounge" className="px-2 py-0.5" />
 				{/if}
 				<Button
-					variant="accent"
+					variant="primary"
 					size="sm"
 					icon={Play}
 					class="[&_svg]:fill-current"
@@ -140,7 +138,7 @@
 					Play all
 				</Button>
 				<label class="flex items-center gap-1.5" title="Preview volume">
-					<Volume2 class="h-3.5 w-3.5 shrink-0 text-base-content/40" />
+					<Volume2 class="h-3.5 w-3.5 shrink-0 text-muted" />
 					<input
 						type="range"
 						min="0"
@@ -227,7 +225,7 @@
 					>
 						{album.title}
 					</svelte:element>
-					<p class="truncate text-xs text-base-content/50">{album.artist_name}</p>
+					<p class="truncate text-xs text-muted">{album.artist_name}</p>
 				</div>
 			{/each}
 		</div>
@@ -240,10 +238,10 @@
 				<p class="min-w-0 flex-1 truncate text-sm">
 					<span class="font-semibold">{activeAlbum.artist_name}</span>
 					{#if deckSampler.currentTrack}
-						<span class="text-base-content/60">- {deckSampler.currentTrack.title}</span>
+						<span class="text-muted">- {deckSampler.currentTrack.title}</span>
 					{/if}
 					{#if deckSampler.provider}
-						<span class="ml-2 text-[0.65rem] uppercase tracking-wide text-base-content/35">
+						<span class="ml-2 text-[0.65rem] uppercase tracking-wide text-muted">
 							via {deckSampler.provider === 'deezer' ? 'Deezer' : 'iTunes'}
 						</span>
 					{/if}

@@ -1,71 +1,13 @@
 @import 'tailwindcss' source(none);
 @import './theme.css';
+@import './fonts.css';
+@import './lib/ui/kit.css';
 @source './routes/login/+page.svelte';
 @source './routes/setup/+page.svelte';
 @source './routes/recover-password/+page.svelte';
 @source './routes/auth/callback/+page.svelte';
 @source './routes/upgrade';
 @source './lib/ui';
-
-/* Auth-free routes keep the established DroppedNeedle type system without loading app.css. */
-@font-face {
-	font-family: 'Space Grotesk';
-	font-style: normal;
-	font-weight: 300 700;
-	font-display: swap;
-	src: url('/fonts/spacegrotesk-latin.woff2') format('woff2');
-	unicode-range:
-		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
-		U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-	font-family: 'Hanken Grotesk';
-	font-style: normal;
-	font-weight: 100 900;
-	font-display: swap;
-	src: url('/fonts/hankengrotesk-latin.woff2') format('woff2');
-	unicode-range:
-		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
-		U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-	font-family: 'Space Mono';
-	font-style: normal;
-	font-weight: 400;
-	font-display: swap;
-	src: url('/fonts/spacemono-400-latin.woff2') format('woff2');
-	unicode-range:
-		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
-		U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@theme {
-	--font-sans: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
-	--font-display: 'Space Grotesk', 'Hanken Grotesk', system-ui, sans-serif;
-	--font-mono: 'Space Mono', ui-monospace, 'SF Mono', Menlo, monospace;
-}
-
-:root {
-	--grain-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='ms-grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23ms-grain)'/%3E%3C/svg%3E");
-}
-
-@utility grain {
-	position: relative;
-	isolation: isolate;
-	&::after {
-		position: absolute;
-		z-index: -1;
-		inset: 0;
-		background-image: var(--grain-texture);
-		background-size: 180px 180px;
-		content: '';
-		mix-blend-mode: overlay;
-		opacity: var(--grain-opacity, 0.06);
-		pointer-events: none;
-	}
-}
 
 html,
 body {

@@ -1,97 +1,10 @@
 @import 'tailwindcss';
 @import './theme.css';
+@import './fonts.css';
+@import './lib/ui/kit.css';
 @plugin "@tailwindcss/typography";
 
-/* Self-hosted (SIL OFL) so no external font calls; Latin + Latin-ext subsets */
-@font-face {
-	font-family: 'Space Grotesk';
-	font-style: normal;
-	font-weight: 300 700;
-	font-display: swap;
-	src: url('/fonts/spacegrotesk-latin.woff2') format('woff2');
-	unicode-range:
-		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
-		U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-	font-family: 'Space Grotesk';
-	font-style: normal;
-	font-weight: 300 700;
-	font-display: swap;
-	src: url('/fonts/spacegrotesk-latinext.woff2') format('woff2');
-	unicode-range:
-		U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
-		U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
-		U+A720-A7FF;
-}
-@font-face {
-	font-family: 'Hanken Grotesk';
-	font-style: normal;
-	font-weight: 100 900;
-	font-display: swap;
-	src: url('/fonts/hankengrotesk-latin.woff2') format('woff2');
-	unicode-range:
-		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
-		U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-	font-family: 'Hanken Grotesk';
-	font-style: normal;
-	font-weight: 100 900;
-	font-display: swap;
-	src: url('/fonts/hankengrotesk-latinext.woff2') format('woff2');
-	unicode-range:
-		U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
-		U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
-		U+A720-A7FF;
-}
-@font-face {
-	font-family: 'Space Mono';
-	font-style: normal;
-	font-weight: 400;
-	font-display: swap;
-	src: url('/fonts/spacemono-400-latin.woff2') format('woff2');
-	unicode-range:
-		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
-		U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-	font-family: 'Space Mono';
-	font-style: normal;
-	font-weight: 400;
-	font-display: swap;
-	src: url('/fonts/spacemono-400-latinext.woff2') format('woff2');
-	unicode-range:
-		U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
-		U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
-		U+A720-A7FF;
-}
-@font-face {
-	font-family: 'Space Mono';
-	font-style: normal;
-	font-weight: 700;
-	font-display: swap;
-	src: url('/fonts/spacemono-700-latin.woff2') format('woff2');
-	unicode-range:
-		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
-		U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-	font-family: 'Space Mono';
-	font-style: normal;
-	font-weight: 700;
-	font-display: swap;
-	src: url('/fonts/spacemono-700-latinext.woff2') format('woff2');
-	unicode-range:
-		U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
-		U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
-		U+A720-A7FF;
-}
-
 @theme {
-	--font-sans: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-	--font-display: 'Space Grotesk', 'Hanken Grotesk', system-ui, sans-serif;
-	--font-mono: 'Space Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 	--color-library-index: var(--color-primary);
 	--color-library-identify: var(--color-accent);
 	--color-library-manage: var(--color-warning);
@@ -284,9 +197,11 @@
 
 :root {
 	/* rgb-triplet mirror of --color-primary; keep in sync with the theme token */
-	--color-primary-rgb: 174 213 242;
-	/* reusable film-grain texture; opacity tuned per-surface via --grain-opacity */
-	--grain-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='ms-grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23ms-grain)'/%3E%3C/svg%3E");
+	--color-primary-rgb: 184 239 100;
+	/* Spotify's own green with dark ink (9.3), for its Connect button */
+	--dn-spotify: #1ed760;
+	--dn-spotify-content: #121a12;
+	--dn-spotify-edge: #1ed760;
 	--brand-library: 34 197 94;
 	--brand-listenbrainz: 251 146 60;
 	--brand-jellyfin: 168 85 247;
@@ -309,7 +224,9 @@
 
 /* Brand hues one step darker so they read as text on light surfaces */
 [data-theme='light'] {
-	--color-primary-rgb: 53 105 141;
+	--color-primary-rgb: 30 106 56;
+	/* the green is 1.7 on paper, so the button gets a dark outline (6.0) */
+	--dn-spotify-edge: #0d6b31;
 	--brand-library: 21 128 61;
 	--brand-listenbrainz: 182 85 0;
 	--brand-jellyfin: 126 34 206;
@@ -336,23 +253,6 @@
 /* colour derives from --color-primary, so a rebrand only needs the theme token changed */
 @utility glow-primary-soft {
 	box-shadow: 0 0 24px oklch(from var(--color-primary) l c h / 0.12);
-}
-
-/* film-grain overlay; sits behind content, opacity set per surface via --grain-opacity */
-@utility grain {
-	position: relative;
-	isolation: isolate;
-	&::after {
-		content: '';
-		position: absolute;
-		inset: 0;
-		z-index: -1;
-		pointer-events: none;
-		background-image: var(--grain-texture);
-		background-size: 180px 180px;
-		opacity: var(--grain-opacity, 0.06);
-		mix-blend-mode: overlay;
-	}
 }
 
 html {
@@ -394,17 +294,6 @@ textarea {
 	):is(:checked, [aria-checked='true']) {
 	--input-color: var(--color-primary);
 	color: var(--color-primary-content);
-}
-
-/* modal titles use the display face, like the app's headings */
-.modal-box :is(h1, h2, h3) {
-	font-family: var(--font-display);
-}
-
-/* structural labels go uppercase; content names keep their case via .hero-title */
-.modal-box :is(h1, h2, h3):not(.hero-title) {
-	text-transform: uppercase;
-	letter-spacing: 0.02em;
 }
 
 /* toast placement for the kit Toaster */

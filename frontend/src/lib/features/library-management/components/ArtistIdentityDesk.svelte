@@ -276,7 +276,7 @@
 			<h1 id="artist-identity-desk-title" class="font-display text-3xl font-bold">
 				Artist identity
 			</h1>
-			<p class="mt-1 max-w-3xl text-sm text-base-content/60">
+			<p class="mt-1 max-w-3xl text-sm text-muted">
 				MusicBrainz release and track credits can prove identity. Similar names alone never merge
 				artists.
 			</p>
@@ -294,22 +294,22 @@
 		<Card as="section" variant="bordered" padding="md" aria-label="Artist identity counts">
 			<div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
 				<div>
-					<span class="block text-xs text-base-content/50">Resolved automatically</span><strong
+					<span class="block text-xs text-muted">Resolved automatically</span><strong
 						>{progressQuery.data.automatically_resolved_count.toLocaleString()}</strong
 					>
 				</div>
 				<div>
-					<span class="block text-xs text-base-content/50">Waiting for identity</span><strong
+					<span class="block text-xs text-muted">Waiting for identity</span><strong
 						>{progressQuery.data.waiting_for_identity_count.toLocaleString()}</strong
 					>
 				</div>
 				<div>
-					<span class="block text-xs text-base-content/50">Needs judgement</span><strong
+					<span class="block text-xs text-muted">Needs judgement</span><strong
 						>{progressQuery.data.genuine_review_count.toLocaleString()}</strong
 					>
 				</div>
 				<div>
-					<span class="block text-xs text-base-content/50">Provider conflicts</span><strong
+					<span class="block text-xs text-muted">Provider conflicts</span><strong
 						>{progressQuery.data.provider_conflict_count.toLocaleString()}</strong
 					>
 				</div>
@@ -333,7 +333,7 @@
 				placeholder="Search names or local artists"
 			/>
 			<label class="select flex items-center gap-2">
-				<ListFilter class="h-4 w-4 text-base-content/45" />
+				<ListFilter class="h-4 w-4 text-muted" />
 				<select bind:value={filterState} aria-label="Evidence state">
 					{#each stateOptions as option (option.value)}
 						<option value={option.value}>{option.label}</option>
@@ -354,7 +354,7 @@
 		>
 			<BadgeCheck class="mx-auto h-10 w-10 text-success" />
 			<h2 class="mt-3 font-display text-xl font-semibold">No matching artist groups</h2>
-			<p class="mx-auto mt-1 max-w-lg text-sm text-base-content/55">
+			<p class="mx-auto mt-1 max-w-lg text-sm text-muted">
 				Try changing the filters. Artists remain separate until provider evidence proves they match
 				or an administrator confirms a merge.
 			</p>
@@ -374,7 +374,7 @@
 						<div class="flex flex-wrap items-start justify-between gap-3">
 							<div class="min-w-0">
 								<p class="font-display text-lg font-semibold">{group.display_name}</p>
-								<p class="mt-1 text-sm text-base-content/55">
+								<p class="mt-1 text-sm text-muted">
 									{group.member_count} local records · {group.affected_reference_count.toLocaleString()}
 									references
 								</p>
@@ -413,9 +413,7 @@
 						<Card variant="bordered" class="text-center">
 							<FingerprintPattern class="mx-auto h-8 w-8 text-base-content/35" />
 							<p class="mt-3 font-semibold">Select a dossier</p>
-							<p class="mt-1 text-sm text-base-content/55">
-								Inspect evidence and persisted references here.
-							</p>
+							<p class="mt-1 text-sm text-muted">Inspect evidence and persisted references here.</p>
 						</Card>
 					{:else if detailQuery.isLoading}
 						<div class="skeleton h-96 rounded-box"></div>
@@ -430,18 +428,18 @@
 							<header class="border-b border-base-content/10 p-4">
 								<div class="flex items-start justify-between gap-3">
 									<div>
-										<p class="font-mono text-xs uppercase tracking-wide text-base-content/45">
+										<p class="font-mono text-xs uppercase tracking-wide text-muted">
 											Evidence dossier
 										</p>
 										<h2 class="mt-1 font-display text-xl font-bold">{detail.display_name}</h2>
 									</div>
 									<span class="badge {stateClass(detail.state)}">{stateLabel(detail.state)}</span>
 								</div>
-								<p class="mt-2 text-sm text-base-content/70">{detail.reason.message}</p>
-								<p class="mt-1 text-sm text-base-content/50">{detail.reason.action}</p>
+								<p class="mt-2 text-sm text-muted">{detail.reason.message}</p>
+								<p class="mt-1 text-sm text-muted">{detail.reason.action}</p>
 								{#if detail.merge_basis}
 									<p class="mt-2 text-sm">
-										<span class="text-base-content/50">Merged on</span>
+										<span class="text-muted">Merged on</span>
 										<strong>{basisLabels[detail.merge_basis]}</strong>
 									</p>
 								{/if}
@@ -466,12 +464,12 @@
 													{/if}
 													<span
 														><strong>{member.name}</strong><span
-															class="block break-all font-mono text-xs text-base-content/50"
+															class="block break-all font-mono text-xs text-muted"
 															>{member.id} · revision {member.row_revision}</span
 														></span
 													>
 												</span>
-												<span class="mt-2 block text-xs text-base-content/60">
+												<span class="mt-2 block text-xs text-muted">
 													{member.album_credit_count} album · {member.track_credit_count} track credits
 													· {member.proven_credit_count}/{member.active_credit_count} proven
 												</span>
@@ -489,7 +487,7 @@
 									<dl class="mt-2 grid grid-cols-2 gap-2 text-sm">
 										{#each Object.entries(detail.reference_counts) as [kind, count] (kind)}
 											<div class="rounded-lg bg-base-100 p-2">
-												<dt class="text-xs text-base-content/50">{kind.replaceAll('_', ' ')}</dt>
+												<dt class="text-xs text-muted">{kind.replaceAll('_', ' ')}</dt>
 												<dd class="font-semibold">{count}</dd>
 											</div>
 										{/each}
@@ -505,7 +503,7 @@
 											{#each detail.evidence as item (`${item.subject_kind}:${item.subject_id}:${item.artist_mbid}`)}
 												<li class="rounded-lg bg-base-100 p-2">
 													<strong>{item.subject_name}</strong>
-													<span class="block text-xs text-base-content/55"
+													<span class="block text-xs text-muted"
 														>{item.subject_kind} credit “{item.credited_name}{item.join_phrase}”</span
 													>
 													<span class="block break-all font-mono text-xs text-primary"
@@ -531,7 +529,7 @@
 													class="flex items-center justify-between gap-2 rounded-lg border border-base-content/10 p-2"
 												>
 													<span
-														>{release.name}<span class="block text-xs text-base-content/50"
+														>{release.name}<span class="block text-xs text-muted"
 															>{release.identity_ready
 																? release.exact_track_mapping_ready
 																	? 'Exact release and tracks matched'
@@ -588,7 +586,7 @@
 			a fresh preview.
 		</div>
 	{:else if previewResult}
-		<p class="text-sm text-base-content/70">
+		<p class="text-sm text-muted">
 			{previewResult.aliases.length} retired IDs will remain aliases. Files, tags, artwork, and paths
 			are untouched.
 		</p>
@@ -597,7 +595,7 @@
 				<p class="text-xs font-semibold uppercase tracking-wide text-primary">Chosen survivor</p>
 				{#if chosenSurvivor}
 					<p class="mt-1 font-semibold">{chosenSurvivor.name}</p>
-					<p class="break-all font-mono text-xs text-base-content/55">
+					<p class="break-all font-mono text-xs text-muted">
 						{chosenSurvivor.id}
 					</p>
 					{#if chosenSurvivor.provider_mbid}
@@ -608,14 +606,14 @@
 				{/if}
 			</div>
 			<div class="rounded-box border border-base-content/10 bg-base-200/60 p-3">
-				<p class="text-xs font-semibold uppercase tracking-wide text-base-content/50">
+				<p class="text-xs font-semibold uppercase tracking-wide text-muted">
 					Retired records · {retiredMembers.length}
 				</p>
 				<ul class="mt-1 space-y-1">
 					{#each retiredMembers as member (member.id)}
 						<li>
 							<span class="font-semibold">{member.name}</span>
-							<span class="block break-all font-mono text-xs text-base-content/55">
+							<span class="block break-all font-mono text-xs text-muted">
 								{member.id}
 							</span>
 						</li>
@@ -626,7 +624,7 @@
 		<dl class="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
 			{#each Object.entries(previewResult.reference_counts) as [kind, count] (kind)}
 				<div class="rounded-lg bg-base-200 p-2">
-					<dt class="text-xs text-base-content/50">{kind.replaceAll('_', ' ')}</dt>
+					<dt class="text-xs text-muted">{kind.replaceAll('_', ' ')}</dt>
 					<dd class="font-semibold">{count}</dd>
 				</div>
 			{/each}

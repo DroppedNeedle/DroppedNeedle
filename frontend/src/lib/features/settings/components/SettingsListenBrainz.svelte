@@ -40,7 +40,7 @@
 				</div>
 				<div>
 					<CardTitle>ListenBrainz</CardTitle>
-					<p class="text-sm text-base-content/60">Instance connection for scrobbling.</p>
+					<p class="text-sm text-muted">Instance connection for scrobbling.</p>
 				</div>
 			</div>
 		{/snippet}
@@ -68,7 +68,7 @@
 						href="https://listenbrainz.org/profile/"
 						target="_blank"
 						rel="noopener noreferrer"
-						class="flex w-fit items-center gap-1 text-xs text-base-content/50 transition-colors hover:text-primary"
+						class="flex w-fit items-center gap-1 text-xs text-muted transition-colors hover:text-primary"
 					>
 						<ExternalLink class="h-3 w-3" /> Find your user token on your ListenBrainz profile
 					</a>

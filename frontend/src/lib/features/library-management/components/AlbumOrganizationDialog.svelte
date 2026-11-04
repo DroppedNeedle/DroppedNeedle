@@ -157,7 +157,7 @@
 	);
 	const trackTitle = (id: string) => tracks.find((track) => track.id === id)?.title ?? id;
 	const editionTone: Record<string, string> = {
-		kept: 'text-base-content/70',
+		kept: 'text-muted',
 		moved: 'text-success',
 		remap_queued: 'text-info',
 		cleared: 'text-warning'
@@ -234,7 +234,7 @@
 								}}
 							/>
 							<span
-								><strong>{item.title}</strong><span class="block text-xs text-base-content/55"
+								><strong>{item.title}</strong><span class="block text-xs text-muted"
 									>{item.artist_name}</span
 								></span
 							>
@@ -248,7 +248,7 @@
 	{#if action === 'split'}
 		<label class="mt-5 block">
 			<span class="font-semibold">New album title</span>
-			<span class="block text-xs text-base-content/55">Leave empty to keep "{album.title}".</span>
+			<span class="block text-xs text-muted">Leave empty to keep "{album.title}".</span>
 			<Input
 				label="New album title"
 				class="mt-2 w-full"
@@ -282,12 +282,12 @@
 			</div>
 		</fieldset>
 	{:else if action === 'merge'}
-		<p class="mt-5 text-sm text-base-content/70">
+		<p class="mt-5 text-sm text-muted">
 			All {tracks.length} tracks of "{album.title}" move to the album you pick, and this album folds
 			into it. Old links to this album keep working.
 		</p>
 	{:else}
-		<p class="mt-5 text-sm text-base-content/70">
+		<p class="mt-5 text-sm text-muted">
 			Every track of "{album.title}" goes back to where a library scan would put it, using its tags
 			and folder. The preview shows where each one lands.
 		</p>
@@ -306,14 +306,14 @@
 						>
 						go to
 						<strong>{group.title}</strong>
-						{#if group.album_artist_name}<span class="text-base-content/60">
+						{#if group.album_artist_name}<span class="text-muted">
 								by {group.album_artist_name}</span
 							>{/if}
 						<span class="badge badge-ghost badge-sm ml-1"
 							>{group.created ? 'new album' : 'existing album'}</span
 						>
 						{#if group.track_ids.length <= 6}
-							<span class="block text-xs text-base-content/55">
+							<span class="block text-xs text-muted">
 								{group.track_ids.map(trackTitle).join(', ')}
 							</span>
 						{/if}
@@ -321,7 +321,7 @@
 				{/each}
 			</ul>
 			{#if result.aliases.length}
-				<p class="mt-2 text-sm text-base-content/70">
+				<p class="mt-2 text-sm text-muted">
 					{result.aliases.length === 1 ? 'One album' : `${result.aliases.length} albums`} will be left
 					empty and fold into the album above. Links to it keep working.
 				</p>
@@ -334,7 +334,7 @@
 							<strong>{change.album_title || 'New album'}:</strong>
 							{change.reason.message}
 							{#if change.change === 'cleared'}
-								<span class="block text-xs text-base-content/60">{change.reason.action}</span>
+								<span class="block text-xs text-muted">{change.reason.action}</span>
 							{/if}
 						</li>
 					{/each}

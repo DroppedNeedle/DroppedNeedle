@@ -791,7 +791,7 @@
 						<p class="alert alert-warning py-2 text-sm" role="note">{LEFT_UNMANAGED_NOTE}</p>
 					{/if}
 					{#if reasonShown}
-						<p class="text-sm text-base-content/70">
+						<p class="text-sm text-muted">
 							{reasonShown}{#if disputed.length}
 								Listen to {disputed.join(', ')}.{/if}
 						</p>
@@ -821,7 +821,7 @@
 						{#if editionsQuery.isLoading}
 							<EditionListSkeleton />
 						{:else if editionsQuery.isError || namedEditionsQuery.isError || pastedEditionsQuery.isError}
-							<p class="text-sm text-base-content/60">
+							<p class="text-sm text-muted">
 								{failureSentence(
 									editionsQuery.error ?? namedEditionsQuery.error ?? pastedEditionsQuery.error,
 									"The other editions can't be listed right now."
@@ -829,11 +829,11 @@
 							</p>
 						{/if}
 						{#if searchQuery.isError}
-							<p class="text-sm text-base-content/60" role="alert">
+							<p class="text-sm text-muted" role="alert">
 								{failureSentence(searchQuery.error, "MusicBrainz couldn't be searched.")}
 							</p>
 						{:else if searchArgs && searchQuery.data && searchQuery.data.items.length === 0}
-							<p class="text-sm text-base-content/60">MusicBrainz found no releases for that.</p>
+							<p class="text-sm text-muted">MusicBrainz found no releases for that.</p>
 						{/if}
 					</QueryBoundary>
 					{#if canEdit}
@@ -939,9 +939,7 @@
 							onunmatch={unmatchTrack}
 						/>
 					{:else if status}
-						<p class="text-sm text-base-content/60">
-							Pick an edition to compare it with your files.
-						</p>
+						<p class="text-sm text-muted">Pick an edition to compare it with your files.</p>
 						{#if actionError}<p class="text-sm text-error" role="alert">{actionError}</p>{/if}
 					{/if}
 					{#if step === 'detail'}
@@ -1032,11 +1030,11 @@
 					<div class="min-w-0">
 						<h3 class="text-lg font-bold">{editionName(facts ?? {})}</h3>
 						{#if facts}
-							<p class="text-sm text-base-content/70">{editionFactsLine(facts)}</p>
+							<p class="text-sm text-muted">{editionFactsLine(facts)}</p>
 						{/if}
 						{#if link}
 							<a
-								class="link inline-flex items-center gap-1 text-xs text-base-content/55"
+								class="link inline-flex items-center gap-1 text-xs text-muted"
 								href={link}
 								target="_blank"
 								rel="noreferrer"
@@ -1052,11 +1050,11 @@
 						<ol class="flex flex-col text-sm" aria-label="Tracks">
 							{#each info.tracks as track (`${track.disc_number}-${track.position}`)}
 								<li class="flex items-baseline gap-3 border-b border-base-content/5 py-1.5">
-									<span class="w-8 shrink-0 text-right text-base-content/50 tabular-nums"
+									<span class="w-8 shrink-0 text-right text-muted tabular-nums"
 										>{discs > 1 ? `${track.disc_number}-${track.position}` : track.position}</span
 									>
 									<span class="min-w-0 flex-1 truncate">{track.title}</span>
-									<span class="shrink-0 text-base-content/50 tabular-nums"
+									<span class="shrink-0 text-muted tabular-nums"
 										>{formatDuration(track.length)}</span
 									>
 								</li>
@@ -1092,7 +1090,7 @@
 			<AsyncButton variant="outline" size="sm" pending={choose.isPending} onclick={useAnyway}
 				>{USE_ANYWAY}</AsyncButton
 			>
-			<span class="hidden text-sm text-base-content/65 md:inline">{USE_ANYWAY_NOTE}</span>
+			<span class="hidden text-sm text-muted md:inline">{USE_ANYWAY_NOTE}</span>
 		{:else}
 			<AsyncButton
 				variant="primary"

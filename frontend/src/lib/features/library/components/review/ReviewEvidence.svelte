@@ -64,7 +64,7 @@
 				{/snippet}
 				{#snippet children(edition)}
 					<p class="font-medium">{IDENTITY[edition.state]}</p>
-					<p class="text-xs text-base-content/60">{edition.reason.message}</p>
+					<p class="text-xs text-muted">{edition.reason.message}</p>
 				{/snippet}
 			</QueryBoundary>
 		</div>
@@ -82,7 +82,7 @@
 										class="badge badge-sm badge-ghost ml-1">Current</span
 									>{/if}
 							</p>
-							<p class="truncate text-xs text-base-content/60">
+							<p class="truncate text-xs text-muted">
 								{[
 									candidate.album_artist_name,
 									fitLine(candidate.supported_tracks, candidate.track_evidence.length),
@@ -105,7 +105,7 @@
 					</div>
 					{#if candidate.track_evidence.length}
 						<details class="mt-1 text-xs">
-							<summary class="cursor-pointer text-base-content/60">How each file fits</summary>
+							<summary class="cursor-pointer text-muted">How each file fits</summary>
 							<ul class="mt-1 space-y-1">
 								{#each candidate.track_evidence as evidence (evidence.local_track_id)}
 									{@const fit = FIT[evidence.classification] ?? UNSURE}
@@ -121,7 +121,7 @@
 			{/each}
 		</ul>
 	{:else}
-		<p class="text-sm text-base-content/60">
+		<p class="text-sm text-muted">
 			No candidates were kept with this review. Look again, or pick an edition from the album page.
 		</p>
 	{/if}

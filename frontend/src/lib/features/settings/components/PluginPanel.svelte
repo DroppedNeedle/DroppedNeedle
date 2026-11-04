@@ -93,11 +93,11 @@
 
 <Card variant="bordered" padding="sm">
 	<div>
-		<p class="mb-2 text-xs font-semibold text-base-content/60">{displayName} panel</p>
+		<p class="mb-2 text-xs font-semibold text-muted">{displayName} panel</p>
 		{#if loading}
 			<div class="skeleton h-24 w-full rounded-lg"></div>
 		{:else if loadError}
-			<p class="text-xs text-base-content/50">Panel unavailable: {loadError}</p>
+			<p class="text-xs text-muted">Panel unavailable: {loadError}</p>
 		{:else}
 			<iframe
 				bind:this={frame}
@@ -106,9 +106,7 @@
 				{src}
 				class="h-48 w-full rounded-lg border border-base-content/10 bg-white"
 			></iframe>
-			<p class="mt-1 text-[11px] text-base-content/40">
-				Sandboxed: no access to this page or your session.
-			</p>
+			<p class="mt-1 text-[11px] text-muted">Sandboxed: no access to this page or your session.</p>
 		{/if}
 	</div>
 </Card>

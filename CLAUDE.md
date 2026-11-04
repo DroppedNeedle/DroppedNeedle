@@ -701,8 +701,8 @@ Run from the repo root. `make help` lists every target.
 - UI: Tailwind v4 with DaisyUI tokens in `src/app.css`, no new hex colors.
   Build on `src/lib/ui` (`Button`, `IconButton`, `Card`, `Input`, `Modal`,
   `CardTitle`, `CardActions`, `ConfirmDialog`, `Field`, `TextField`,
-  `NumberField`, `SecretField`, `SelectField`, `TextAreaField`, `ToggleRow`,
-  `RadioCards`,
+  `NumberField`, `SecretField`, `PasswordField`, `SelectField`, `TextAreaField`,
+  `ToggleRow`, `RadioCards`, `StatusChip`,
   `SaveBar`,
   `AsyncButton`, `QueryBoundary`, `RatingStars`, `PageShell`, `Toaster`,
   `CoverPlaceholder`, `UnsavedChangesGuard`):

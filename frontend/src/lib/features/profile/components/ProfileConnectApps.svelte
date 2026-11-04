@@ -121,7 +121,7 @@
 
 <section>
 	<h2
-		class="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
+		class="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted"
 	>
 		<Waypoints class="h-4 w-4 text-accent" />
 		Connect Apps
@@ -189,7 +189,7 @@
 							{activeCount} / {cap}
 						</span>
 					</div>
-					<p class="mb-4 text-sm text-base-content/60">
+					<p class="mb-4 text-sm text-muted">
 						An app-password lets one app stream your library while keeping your real account
 						password private. Use a different one per device, and revoke it any time.
 					</p>
@@ -231,7 +231,7 @@
 						</div>
 					{:else}
 						<div
-							class="rounded-box border border-dashed border-base-300 p-6 text-center text-base-content/60"
+							class="rounded-box border border-dashed border-base-300 p-6 text-center text-muted"
 						>
 							No app-passwords yet - create one to connect an app.
 						</div>
@@ -317,13 +317,13 @@
 								{/snippet}
 							</Field>
 							<p class="mt-3 text-sm">
-								<span class="text-base-content/60">Username:</span>
+								<span class="text-muted">Username:</span>
 								<span class="font-mono">{username || 'your username'}</span>
 							</p>
-							<p class="mt-1 text-sm text-base-content/60">
+							<p class="mt-1 text-sm text-muted">
 								Use your <strong>app-password</strong> (above) as the password / API key.
 							</p>
-							<p class="mt-1 text-xs text-base-content/50">Tested clients: {proto.clients}</p>
+							<p class="mt-1 text-xs text-muted">Tested clients: {proto.clients}</p>
 						</div>
 					</Card>
 				{/each}
@@ -340,7 +340,7 @@
 		}
 		title="Copy your app-password now"
 	>
-		<p class="pb-2 text-sm text-base-content/70">
+		<p class="pb-2 text-sm text-muted">
 			This is the only time "{revealedName}" will be shown. If you lose it, revoke it and create a
 			new one.
 		</p>

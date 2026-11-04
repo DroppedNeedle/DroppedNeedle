@@ -97,7 +97,7 @@
 		<h3 class="flex items-center gap-2 font-semibold">
 			<FileClock class="h-4 w-4 text-primary" /> Recent runs
 		</h3>
-		<span class="text-xs text-base-content/50">Latest 50 retained</span>
+		<span class="text-xs text-muted">Latest 50 retained</span>
 	</div>
 	{#if historyQuery.isLoading}
 		<div class="space-y-2 p-4">
@@ -107,7 +107,7 @@
 	{:else if historyQuery.isError}
 		<p class="p-4 text-sm text-error">Could not load recent library runs.</p>
 	{:else if runs.length === 0}
-		<p class="p-5 text-sm text-base-content/55">No library runs have finished yet.</p>
+		<p class="p-5 text-sm text-muted">No library runs have finished yet.</p>
 	{:else}
 		<div class="hidden overflow-x-auto md:block">
 			<table class="table table-sm">
@@ -146,9 +146,7 @@
 					<strong>{run.state.replaceAll('_', ' ')}</strong><span class="text-right"
 						>{duration(run)}</span
 					>
-					<span class="text-base-content/55"
-						>{run.trigger.replaceAll('_', ' ')} · {run.aggregate_scope}</span
-					>
+					<span class="text-muted">{run.trigger.replaceAll('_', ' ')} · {run.aggregate_scope}</span>
 					<span class="text-right text-xs"
 						>{(run.counters.changed_count ?? 0).toLocaleString()} changed</span
 					>
@@ -198,12 +196,12 @@
 			<p class="text-sm">{terminalReason(detailRun)}</p>
 		</div>
 		{#if detailRun.terminal_action}
-			<p class="mt-1 text-sm text-base-content/60">{detailRun.terminal_action}</p>
+			<p class="mt-1 text-sm text-muted">{detailRun.terminal_action}</p>
 		{/if}
 		<dl class="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
 			{#each Object.entries(detailRun.counters) as [name, count] (name)}
 				<div class="rounded-box bg-base-200/60 p-3">
-					<dt class="text-xs text-base-content/50">
+					<dt class="text-xs text-muted">
 						{name.replace('_count', '').replaceAll('_', ' ')}
 					</dt>
 					<dd class="mt-1 font-semibold">{count.toLocaleString()}</dd>
@@ -212,7 +210,7 @@
 		</dl>
 		{#if Object.keys(detailRun.phase_timings).length}
 			<h3 class="mt-4 text-sm font-semibold">Phase timings</h3>
-			<ul class="mt-2 space-y-1 text-sm text-base-content/65">
+			<ul class="mt-2 space-y-1 text-sm text-muted">
 				{#each Object.entries(detailRun.phase_timings) as [phase, seconds] (phase)}
 					<li>{phase.replaceAll('_', ' ')} · {phaseDuration(seconds)}</li>
 				{/each}
@@ -221,21 +219,21 @@
 		{#if detailRun.state === 'failed' || (detailRun.counters['errored_count'] ?? 0) > 0 || failureItems.length > 0}
 			<h3 class="mt-4 text-sm font-semibold">Failed paths</h3>
 			{#if failuresQuery.isLoading}
-				<p class="mt-2 text-sm text-base-content/55">Loading failed paths…</p>
+				<p class="mt-2 text-sm text-muted">Loading failed paths…</p>
 			{:else if failuresQuery.isError}
 				<p class="mt-2 text-sm text-error">Could not load failed paths.</p>
 			{:else if failureItems.length === 0}
-				<p class="mt-2 text-sm text-base-content/55">No failed paths were recorded.</p>
+				<p class="mt-2 text-sm text-muted">No failed paths were recorded.</p>
 			{:else}
-				<ul class="mt-2 space-y-1 text-sm text-base-content/65">
+				<ul class="mt-2 space-y-1 text-sm text-muted">
 					{#each failureItems as failure, index (index)}
 						<li class="space-y-0.5">
 							<div class="flex items-center justify-between gap-2">
 								<span class="truncate">{failure.relative_path}</span>
 								<span class="badge badge-error badge-sm shrink-0">{failure.failure_code}</span>
 							</div>
-							<p class="text-xs text-base-content/70">{failure.message}</p>
-							<p class="text-xs text-base-content/55">{failure.action}</p>
+							<p class="text-xs text-muted">{failure.message}</p>
+							<p class="text-xs text-muted">{failure.action}</p>
 						</li>
 					{/each}
 				</ul>

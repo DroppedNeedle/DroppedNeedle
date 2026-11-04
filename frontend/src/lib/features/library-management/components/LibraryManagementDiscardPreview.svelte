@@ -53,11 +53,11 @@
 	pending={discardPreview.isPending}
 	onconfirm={discard}
 >
-	<p class="text-sm text-base-content/70">
+	<p class="text-sm text-muted">
 		This removes <strong>{profileName}</strong> from Ready previews and permanently prevents Apply. No
 		music file, tag, baseline, or completed operation is changed.
 	</p>
-	<p class="mt-2 text-xs text-base-content/55">
+	<p class="mt-2 text-xs text-muted">
 		The discarded plan remains in organization history as an audit record.
 	</p>
 </ConfirmDialog>

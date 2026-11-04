@@ -155,7 +155,7 @@
 {#snippet recoveryForm()}
 	<Card variant="bordered" padding="md">
 		<h3 class="font-semibold">Already submitted the release?</h3>
-		<p class="mt-1 text-sm text-base-content/60">
+		<p class="mt-1 text-sm text-muted">
 			If MusicBrainz did not return you here, paste the release MBID or its full MusicBrainz release
 			URL.
 		</p>
@@ -207,7 +207,7 @@
 		</div>
 		<div>
 			<h2 class="font-bold">Check MusicBrainz</h2>
-			<p class="text-sm text-base-content/55">
+			<p class="text-sm text-muted">
 				Make sure this release does not already exist before opening the editor.
 			</p>
 		</div>
@@ -219,7 +219,7 @@
 				<BadgeCheck class="mt-0.5 h-5 w-5 shrink-0 text-success" />
 				<div>
 					<h3 class="font-bold">Linked to MusicBrainz</h3>
-					<p class="mt-1 text-sm text-base-content/65">
+					<p class="mt-1 text-sm text-muted">
 						This local album keeps its DroppedNeedle identity and now has a verified MusicBrainz
 						match.
 					</p>
@@ -242,7 +242,7 @@
 				<Clock3 class="mt-0.5 h-5 w-5 shrink-0 text-info" />
 				<div class="min-w-0">
 					<h3 class="font-bold">MusicBrainz release returned</h3>
-					<p class="mt-1 text-sm text-base-content/65">
+					<p class="mt-1 text-sm text-muted">
 						DroppedNeedle is waiting for the release to appear in the MusicBrainz API. It will
 						compare the release with the current local album before attaching anything.
 					</p>
@@ -257,7 +257,7 @@
 							<ExternalLink class="h-3.5 w-3.5 shrink-0" />
 						</a>
 					{/if}
-					<p class="mt-3 flex items-center gap-2 text-xs text-base-content/50">
+					<p class="mt-3 flex items-center gap-2 text-xs text-muted">
 						<LoaderCircle class="h-3.5 w-3.5 animate-spin motion-keep" /> This page updates automatically.
 					</p>
 				</div>
@@ -270,12 +270,12 @@
 				<div class="min-w-0 flex-1">
 					<h3 class="font-bold">The returned release needs review</h3>
 					{#if contribution.review_reason}
-						<p class="mt-1 text-sm text-base-content/65">
+						<p class="mt-1 text-sm text-muted">
 							Nothing was attached. {contribution.review_reason.message}
 						</p>
-						<p class="mt-1 text-sm text-base-content/65">{contribution.review_reason.action}</p>
+						<p class="mt-1 text-sm text-muted">{contribution.review_reason.action}</p>
 					{:else}
-						<p class="mt-1 text-sm text-base-content/65">
+						<p class="mt-1 text-sm text-muted">
 							Nothing was attached. The release was unavailable for too long or did not pass the
 							current album evidence checks.
 						</p>
@@ -307,7 +307,7 @@
 			<div class="grid gap-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
 				<div>
 					<h3 class="font-bold">Search before you add</h3>
-					<p class="mt-1 max-w-2xl text-sm text-base-content/60">
+					<p class="mt-1 max-w-2xl text-sm text-muted">
 						DroppedNeedle checks Discogs relationships, release groups, barcodes and similar
 						releases. An exact Discogs match blocks a duplicate submission.
 					</p>
@@ -334,8 +334,8 @@
 								Exact match found
 							</p>
 							<h3 class="mt-1 text-lg font-bold">{candidate.title}</h3>
-							<p class="text-sm text-base-content/65">{candidate.artist_name}</p>
-							<p class="mt-2 text-sm text-base-content/65">
+							<p class="text-sm text-muted">{candidate.artist_name}</p>
+							<p class="mt-2 text-sm text-muted">
 								Discogs already links this release to MusicBrainz. Creating another release is
 								blocked.
 							</p>
@@ -369,7 +369,7 @@
 						<TriangleAlert class="mt-0.5 h-5 w-5 shrink-0 text-error" />
 						<div>
 							<h3 class="font-bold">Discogs points to several MusicBrainz releases</h3>
-							<p class="mt-1 text-sm text-base-content/65">
+							<p class="mt-1 text-sm text-muted">
 								DroppedNeedle cannot safely choose one. Review the relationships upstream, then run
 								the check again.
 							</p>
@@ -381,7 +381,7 @@
 					<ShieldCheck class="mt-0.5 h-5 w-5 shrink-0 text-success" />
 					<div>
 						<h3 class="font-bold">No exact release found</h3>
-						<p class="mt-1 text-sm text-base-content/65">
+						<p class="mt-1 text-sm text-muted">
 							No exact match was found. Review any similar releases below before continuing.
 						</p>
 					</div>
@@ -391,7 +391,7 @@
 			{#if reviewCandidates.length > 0}
 				<div>
 					<div class="mb-3 flex items-center gap-2">
-						<GitCompareArrows class="h-4 w-4 text-base-content/45" />
+						<GitCompareArrows class="h-4 w-4 text-muted" />
 						<h3 class="font-bold">Possible existing entries</h3>
 					</div>
 					<div class="divide-y divide-base-content/10 rounded-box border border-base-content/10">
@@ -402,9 +402,9 @@
 									<p class="mt-2 font-semibold">
 										{candidate.title || contribution.draft.title.value}
 									</p>
-									<p class="text-sm text-base-content/55">{candidate.artist_name}</p>
+									<p class="text-sm text-muted">{candidate.artist_name}</p>
 									{#if candidate.differences.length}
-										<ul class="mt-2 list-inside list-disc text-sm text-base-content/60">
+										<ul class="mt-2 list-inside list-disc text-sm text-muted">
 											{#each candidate.differences as difference (difference)}
 												<li>{difference}</li>
 											{/each}
@@ -438,7 +438,7 @@
 						/>
 						<span>
 							<span class="block font-semibold">These are different editions</span>
-							<span class="mt-1 block text-sm text-base-content/60">
+							<span class="mt-1 block text-sm text-muted">
 								I reviewed the candidates and this local release should be a separate MusicBrainz
 								entry.
 							</span>
@@ -460,22 +460,22 @@
 				<div class="overflow-hidden rounded-box border border-primary/25 bg-primary/5">
 					<div class="grid gap-px bg-base-content/10 sm:grid-cols-3">
 						<div class="bg-base-100/90 p-4">
-							<span class="text-xs text-base-content/45">Release</span>
+							<span class="text-xs text-muted">Release</span>
 							<p class="mt-1 font-bold">{contribution.draft.title.value}</p>
 						</div>
 						<div class="bg-base-100/90 p-4">
-							<span class="text-xs text-base-content/45">Artist credit</span>
+							<span class="text-xs text-muted">Artist credit</span>
 							<p class="mt-1 font-bold">{contribution.draft.artist_credit.value}</p>
 						</div>
 						<div class="bg-base-100/90 p-4">
-							<span class="text-xs text-base-content/45">Destination</span>
+							<span class="text-xs text-muted">Destination</span>
 							<p class="mt-1 font-bold">Official MusicBrainz editor</p>
 						</div>
 					</div>
 					<div class="p-4 sm:flex sm:items-center sm:justify-between sm:gap-5 sm:p-5">
 						<div>
 							<h3 class="font-bold">Ready for your final review</h3>
-							<p class="mt-1 max-w-2xl text-sm text-base-content/60">
+							<p class="mt-1 max-w-2xl text-sm text-muted">
 								You will sign in, review every field and submit on MusicBrainz. DroppedNeedle does
 								not receive your MusicBrainz password.
 							</p>
@@ -497,9 +497,7 @@
 								: 'Continue on MusicBrainz'}</Button
 						>
 					</div>
-					<div
-						class="border-t border-base-content/10 px-4 py-3 text-xs text-base-content/50 sm:px-5"
-					>
+					<div class="border-t border-base-content/10 px-4 py-3 text-xs text-muted sm:px-5">
 						Submits a one-time form to
 						<a class="link" href={MUSICBRAINZ_RELEASE_EDITOR}>musicbrainz.org</a>. Your local files
 						are never changed.

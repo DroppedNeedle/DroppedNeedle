@@ -16,6 +16,6 @@
 	let { as = 'h2', class: className = '', children, ...rest }: Props = $props();
 </script>
 
-<svelte:element this={as} {...rest} class={['card-title', className]}>
+<svelte:element this={as} {...rest} class={['card-title font-sans font-bold', className]}>
 	{@render children?.()}
 </svelte:element>

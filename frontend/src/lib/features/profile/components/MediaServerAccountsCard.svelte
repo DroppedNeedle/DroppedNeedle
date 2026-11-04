@@ -168,7 +168,7 @@
 )}
 	<Card variant="bordered" padding="sm" class="mt-2 animate-fade-in-up">
 		<div class="space-y-2">
-			<p class="text-xs text-base-content/60">{note}</p>
+			<p class="text-xs text-muted">{note}</p>
 			<Input
 				label="{label} username"
 				size="sm"
@@ -209,7 +209,7 @@
 {#if anyEnabled}
 	<section>
 		<h2
-			class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
+			class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted"
 		>
 			<ServerCog class="h-4 w-4 text-accent" />
 			Media Server Accounts
@@ -217,14 +217,14 @@
 
 		<Card variant="bordered" padding="md">
 			<div class="space-y-3">
-				<p class="text-xs text-base-content/60">
+				<p class="text-xs text-muted">
 					Link your own account on each server so plays and scrobbles count as you rather than the
 					shared account.
 				</p>
 
 				{#if connectionsQuery.isPending}
 					<div class="flex items-center justify-center py-10">
-						<LoaderCircle class="h-5 w-5 animate-spin motion-keep text-base-content/40" />
+						<LoaderCircle class="h-5 w-5 animate-spin motion-keep text-muted" />
 					</div>
 				{:else}
 					{#each rows as row (row.service)}
@@ -246,11 +246,11 @@
 												></span>
 											</div>
 											{#if linked}
-												<p class="truncate text-xs text-base-content/50">
+												<p class="truncate text-xs text-muted">
 													Plays count as @{linked.username || 'your account'}
 												</p>
 											{:else}
-												<p class="text-xs text-base-content/30">Plays use the shared account</p>
+												<p class="text-xs text-muted">Plays use the shared account</p>
 											{/if}
 										</div>
 									</div>
@@ -288,7 +288,7 @@
 												<Button variant="ghost" size="xs" pill onclick={cancelPlexLink}>
 													Cancel
 												</Button>
-												<span class="flex items-center gap-1 text-xs text-base-content/50">
+												<span class="flex items-center gap-1 text-xs text-muted">
 													<LoaderCircle class="h-3.5 w-3.5 animate-spin motion-keep" />
 													Waiting for Plex…
 												</span>

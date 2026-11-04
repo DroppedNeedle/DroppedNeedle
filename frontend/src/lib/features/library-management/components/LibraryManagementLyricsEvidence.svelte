@@ -68,7 +68,7 @@
 				<FileText class="mt-0.5 h-4 w-4 shrink-0 text-library-manage" />
 				<div>
 					<h4 class="management-inspector-section-title">Lyrics evidence</h4>
-					<p class="mt-1 text-xs text-base-content/55">
+					<p class="mt-1 text-xs text-muted">
 						{#if projection.status === 'available'}LRCLIB matched the exact title, artist, album,
 							and duration signature.{:else}{projection.reason ??
 								'No exact lyrics result was accepted.'}{/if}
@@ -83,7 +83,7 @@
 		</div>
 		<div class="mt-3 grid gap-2 sm:grid-cols-2">
 			<Card variant="bordered" padding="sm">
-				<small class="block text-base-content/45">Plain lyrics</small>
+				<small class="block text-muted">Plain lyrics</small>
 				<strong class="text-sm"
 					>{writeLabel(
 						projection.plainSelected,
@@ -93,12 +93,12 @@
 				>
 			</Card>
 			<Card variant="bordered" padding="sm">
-				<small class="block text-base-content/45">Synchronized lyrics</small>
+				<small class="block text-muted">Synchronized lyrics</small>
 				<strong class="text-sm">{synchronizedWriteLabel()}</strong>
 			</Card>
 		</div>
 		{#if projection.status !== 'available'}
-			<p class="mt-3 text-xs font-medium text-base-content/65">
+			<p class="mt-3 text-xs font-medium text-muted">
 				No lyrics tag change is planned. Any lyrics already in this file remain untouched.
 			</p>
 		{/if}

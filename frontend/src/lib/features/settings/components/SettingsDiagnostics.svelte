@@ -50,7 +50,7 @@
 			<CardTitle>Diagnostics</CardTitle>
 		</div>
 	{/snippet}
-	<p class="text-sm text-base-content/60">
+	<p class="text-sm text-muted">
 		Live numbers from the server. Counts reset when it restarts. Refreshes every five seconds while
 		open.
 	</p>
@@ -70,11 +70,11 @@
 			)}
 			<section class="mt-2 space-y-3" aria-label="Outbound provider calls">
 				<div class="flex items-center gap-2">
-					<ArrowUpRight class="h-4 w-4 text-base-content/60" aria-hidden="true" />
+					<ArrowUpRight class="h-4 w-4 text-muted" aria-hidden="true" />
 					<h3 class="font-semibold">Outbound provider calls</h3>
 				</div>
 				{#if callGroups.length === 0}
-					<p class="text-sm text-base-content/50">No calls since the server started.</p>
+					<p class="text-sm text-muted">No calls since the server started.</p>
 				{:else}
 					<div class="overflow-x-auto">
 						<table class="table table-sm max-sm:[&_td]:px-2 max-sm:[&_th]:px-2">
@@ -92,7 +92,7 @@
 									<tr class="bg-base-100/60">
 										<th scope="rowgroup" colspan="5">
 											{group.label}
-											<span class="font-normal text-base-content/60">
+											<span class="font-normal text-muted">
 												{formatCount(group.totalCalls)} calls
 											</span>
 										</th>
@@ -112,13 +112,13 @@
 							{/each}
 						</table>
 					</div>
-					<p class="text-xs text-base-content/60">Retries count as calls. Body excludes headers.</p>
+					<p class="text-xs text-muted">Retries count as calls. Body excludes headers.</p>
 				{/if}
 			</section>
 
 			<section class="space-y-3" aria-label="Rate limits">
 				<div class="flex items-center gap-2">
-					<Gauge class="h-4 w-4 text-base-content/60" aria-hidden="true" />
+					<Gauge class="h-4 w-4 text-muted" aria-hidden="true" />
 					<h3 class="font-semibold">Rate limits</h3>
 				</div>
 				<div class="overflow-x-auto">
@@ -149,7 +149,7 @@
 
 	<section class="space-y-3" aria-label="Background jobs">
 		<div class="flex items-center gap-2">
-			<ListChecks class="h-4 w-4 text-base-content/60" aria-hidden="true" />
+			<ListChecks class="h-4 w-4 text-muted" aria-hidden="true" />
 			<h3 class="font-semibold">Background jobs</h3>
 		</div>
 		{#if queueQuery.isLoading}
@@ -163,7 +163,7 @@
 				<span>Couldn't load queue stats.</span>
 			</div>
 		{:else if jobs.length === 0}
-			<p class="text-sm text-base-content/50">No background jobs registered.</p>
+			<p class="text-sm text-muted">No background jobs registered.</p>
 		{:else}
 			<div class="overflow-x-auto">
 				<table class="table table-sm">
@@ -210,7 +210,7 @@
 		<section class="space-y-3" aria-label="Job queues">
 			<h3 class="font-semibold">Job queues</h3>
 			{#if queues.length === 0}
-				<p class="text-sm text-base-content/50">No queued work.</p>
+				<p class="text-sm text-muted">No queued work.</p>
 			{:else}
 				<div class="overflow-x-auto">
 					<table class="table table-sm">

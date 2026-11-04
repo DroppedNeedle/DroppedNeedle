@@ -73,7 +73,7 @@
 
 	const segmentBase =
 		'flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors';
-	const segmentIdle = `${segmentBase} text-base-content/60 hover:bg-base-100/70 hover:text-base-content`;
+	const segmentIdle = `${segmentBase} text-muted hover:bg-base-100/70 hover:text-base-content`;
 
 	function segmentClass(tab: TabId): string {
 		if (tab !== activeTab) return segmentIdle;
@@ -86,10 +86,7 @@
 <svelte:head><title>Library Management · DroppedNeedle</title></svelte:head>
 
 <div class="min-h-[calc(100vh-200px)]">
-	<PageHeader
-		subtitle="Scan, identify, and organize your library from one place."
-		gradientClass="bg-gradient-to-br from-primary/25 via-base-100 to-warning/15"
-	>
+	<PageHeader subtitle="Scan, identify, and organize your library from one place.">
 		{#snippet title()}Library Management{/snippet}
 		{#snippet actions()}
 			<Button

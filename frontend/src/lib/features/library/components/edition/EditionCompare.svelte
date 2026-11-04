@@ -339,7 +339,7 @@
 </script>
 
 {#if showLine}
-	<p id={lineId} class="text-xs text-base-content/65">{MATCH_MAKES_IT_YOURS}</p>
+	<p id={lineId} class="text-xs text-muted">{MATCH_MAKES_IT_YOURS}</p>
 {/if}
 {#if canMatch && onmatch && suggestedRows.length > 0}
 	<div class="flex flex-wrap items-center gap-2">
@@ -355,7 +355,7 @@
 	aria-label="This edition and your files"
 >
 	<div
-		class="hidden grid-cols-[3rem_minmax(0,1fr)_minmax(0,1fr)_8.5rem] gap-3 border-b border-base-content/10 px-3 py-2 text-xs font-semibold text-base-content/55 md:grid"
+		class="hidden grid-cols-[3rem_minmax(0,1fr)_minmax(0,1fr)_8.5rem] gap-3 border-b border-base-content/10 px-3 py-2 text-xs font-semibold text-muted md:grid"
 		role="row"
 	>
 		<span role="columnheader">#</span>
@@ -374,27 +374,22 @@
 				: ''}"
 			role="row"
 		>
-			<span class="text-base-content/50 tabular-nums" role="cell">{row.at}</span>
+			<span class="text-muted tabular-nums" role="cell">{row.at}</span>
 			<span class="min-w-0" role="cell">
 				{#if row.edition}
 					<span class="break-words">{row.edition.title}</span>
-					<span class="ml-1 text-base-content/55 tabular-nums"
-						>{formatDuration(row.edition.length)}</span
-					>
+					<span class="ml-1 text-muted tabular-nums">{formatDuration(row.edition.length)}</span>
 				{/if}
 			</span>
 			<span class="col-start-2 min-w-0 md:col-start-auto" role="cell">
 				{#if row.file}
-					<span class="text-base-content/55 md:hidden">Your file:</span>
+					<span class="text-muted md:hidden">Your file:</span>
 					<span class="break-words">{row.file.title}</span>
-					<span class="ml-1 text-base-content/55 tabular-nums"
-						>{formatDuration(row.file.length)}</span
-					>
+					<span class="ml-1 text-muted tabular-nums">{formatDuration(row.file.length)}</span>
 					{#if canMatch}
 						{@const suggestion = freeTrack(row.suggested)}
 						{#if suggestion}
-							<span class="block text-xs text-base-content/65"
-								>{SUGGESTED}: {freeTrackLabel(suggestion)}</span
+							<span class="block text-xs text-muted">{SUGGESTED}: {freeTrackLabel(suggestion)}</span
 							>
 						{/if}
 					{/if}
@@ -420,7 +415,7 @@
 				<div class="col-start-2 flex flex-col gap-2 pt-1 md:col-end-5" role="cell">
 					{#if hasActions(row)}
 						{#if row.state === 'fits' && row.written}
-							<p class="text-xs text-base-content/65">
+							<p class="text-xs text-muted">
 								{#if authStore.isAdmin}{MATCH_WRITTEN_PARTS[0]}<a
 										class="link"
 										href={withBasePath('/library/management/history')}>{MATCH_WRITTEN_PARTS[1]}</a

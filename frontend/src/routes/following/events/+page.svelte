@@ -128,9 +128,9 @@
 	{:else if !configured}
 		<Card variant="bordered">
 			<div class="text-center">
-				<CalendarClock class="mx-auto mb-3 h-10 w-10 text-base-content/40" aria-hidden="true" />
+				<CalendarClock class="mx-auto mb-3 h-10 w-10 text-muted" aria-hidden="true" />
 				<h2 class="mb-1 text-lg font-semibold">Events aren't set up yet</h2>
-				<p class="mx-auto max-w-md text-sm text-base-content/60">
+				<p class="mx-auto max-w-md text-sm text-muted">
 					Concert listings need an events source (Ticketmaster or Skiddle).
 					{#if authStore.isAdmin}
 						Add an API key in Settings to turn this on.
@@ -162,7 +162,7 @@
 			</span>
 			<h2 class="text-xl font-semibold">Where do you go to gigs?</h2>
 			<CitySearchInput onpick={addFirstCity} autofocus className="w-full" />
-			<p class="text-sm text-base-content/60">
+			<p class="text-sm text-muted">
 				Pick as many cities as you like - we'll show upcoming concerts from artists you follow near
 				each one.
 			</p>
@@ -182,7 +182,7 @@
 			/>
 		{:else}
 			{#each monthGroups as group (group.label)}
-				<h2 class="mt-8 mb-3 text-sm font-semibold uppercase tracking-wider text-base-content/50">
+				<h2 class="mt-8 mb-3 text-sm font-semibold uppercase tracking-wider text-muted">
 					{group.label}
 				</h2>
 				<ul class="flex flex-col gap-2">
@@ -195,13 +195,13 @@
 										class="flex w-12 shrink-0 flex-col items-center rounded-xl bg-base-300/60 py-1.5"
 										aria-hidden="true"
 									>
-										<span class="text-[10px] font-semibold uppercase text-base-content/50">
+										<span class="text-[10px] font-semibold uppercase text-muted">
 											{weekday(concert.local_date)}
 										</span>
 										<span class="text-lg leading-tight font-bold text-primary">
 											{dayOfMonth(concert.local_date)}
 										</span>
-										<span class="text-[10px] font-semibold uppercase text-base-content/50">
+										<span class="text-[10px] font-semibold uppercase text-muted">
 											{monthShort(concert.local_date)}
 										</span>
 									</div>
@@ -237,7 +237,7 @@
 											<p class="truncate text-sm text-base-content/80">{concert.event_name}</p>
 										{/if}
 										<p
-											class="truncate text-sm text-base-content/60"
+											class="truncate text-sm text-muted"
 											class:line-through={concert.status === 'cancelled'}
 										>
 											{venueLine(concert)}

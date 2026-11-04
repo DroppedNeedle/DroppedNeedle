@@ -64,9 +64,9 @@
 		</h3>
 		{#each groups as group (group.id)}
 			<div>
-				<h4 class="mb-2 text-sm font-semibold text-base-content/70">
+				<h4 class="mb-2 text-sm font-semibold text-muted">
 					{group.title}
-					<span class="ml-1 font-normal text-base-content/45">{group.items.length}</span>
+					<span class="ml-1 font-normal text-muted">{group.items.length}</span>
 				</h4>
 				{@render row(group.items)}
 			</div>

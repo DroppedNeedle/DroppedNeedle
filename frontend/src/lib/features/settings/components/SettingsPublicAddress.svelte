@@ -50,14 +50,14 @@
 			</div>
 			<div>
 				<h3 class="font-semibold">Public address</h3>
-				<p class="text-xs text-base-content/50">
+				<p class="text-xs text-muted">
 					Where people open DroppedNeedle, for when saving is refused there.
 				</p>
 			</div>
 		</div>
 	{/snippet}
 	<div class="mt-2 flex flex-col gap-4">
-		<p class="text-sm text-base-content/70">
+		<p class="text-sm text-muted">
 			Behind some reverse proxies the server gets its own address wrong and answers every change
 			with "Origin not allowed". List the address from the browser's address bar here and changes
 			made from it are accepted. Most installs never need this.

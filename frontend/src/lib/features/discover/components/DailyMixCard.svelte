@@ -137,9 +137,7 @@
 	<div transition:slide={{ duration: 300 }} class="col-span-full overflow-hidden">
 		<Card variant="bordered" padding="md" class="mt-3">
 			<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-				<p class="text-sm text-base-content/60">
-					Play the mix, or download any albums you're missing.
-				</p>
+				<p class="text-sm text-muted">Play the mix, or download any albums you're missing.</p>
 				<DiscoveryShelfActions
 					{section}
 					sectionKey="daily_mixes"

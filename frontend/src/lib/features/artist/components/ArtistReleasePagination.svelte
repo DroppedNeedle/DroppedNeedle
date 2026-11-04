@@ -14,7 +14,7 @@
 
 <Card variant="bordered" padding="md">
 	<div class="flex flex-col items-center justify-between gap-3 sm:flex-row">
-		<p id="artist-release-progress" class="text-sm text-base-content/60" aria-live="polite">
+		<p id="artist-release-progress" class="text-sm text-muted" aria-live="polite">
 			{#if totalCount}
 				{loadedCount} of {totalCount} releases loaded
 			{:else}

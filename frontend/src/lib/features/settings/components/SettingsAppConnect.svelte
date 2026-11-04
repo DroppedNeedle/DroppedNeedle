@@ -40,7 +40,7 @@
 			Sign-in from apps
 		</CardTitle>
 	{/snippet}
-	<p class="text-sm text-base-content/60">
+	<p class="text-sm text-muted">
 		Apps listed here can sign people in through the browser and get an app-password. Off while the
 		list is empty.
 	</p>

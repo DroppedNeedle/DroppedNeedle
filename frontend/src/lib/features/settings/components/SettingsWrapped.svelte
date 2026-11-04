@@ -41,7 +41,7 @@
 			</div>
 			<div>
 				<CardTitle class="text-2xl">Wrapped API</CardTitle>
-				<p class="text-sm text-base-content/60">
+				<p class="text-sm text-muted">
 					Lets an external service (e.g. a newsletterr instance) pull year-in-review listening stats
 					for your users.
 				</p>
@@ -49,7 +49,7 @@
 		</div>
 	{/snippet}
 	<div class="mt-2 flex flex-col gap-4">
-		<div class="rounded-xl border border-info/20 bg-info/5 p-3 text-sm text-base-content/70">
+		<div class="rounded-xl border border-info/20 bg-info/5 p-3 text-sm text-muted">
 			Generate a key here, then paste the same value into the other service's settings. It's sent as <code
 				>X-Wrapped-Api-Key</code
 			>

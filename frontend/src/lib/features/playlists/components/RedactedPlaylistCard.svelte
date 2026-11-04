@@ -42,10 +42,8 @@
 			<Lock class="h-10 w-10 text-base-content/30" />
 		</figure>
 		<div class="p-3 opacity-70">
-			<h3 class="text-sm font-semibold italic text-base-content/60 line-clamp-1">
-				Private playlist
-			</h3>
-			<p class="text-xs text-base-content/50 mt-0.5 line-clamp-2">{line}</p>
+			<h3 class="text-sm font-semibold italic text-muted line-clamp-1">Private playlist</h3>
+			<p class="text-xs text-muted mt-0.5 line-clamp-2">{line}</p>
 		</div>
 	</a>
 	{#if playlist.can_delete}

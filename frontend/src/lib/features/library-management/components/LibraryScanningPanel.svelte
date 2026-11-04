@@ -194,7 +194,7 @@
 			<div class="mt-4 flex flex-wrap items-center justify-between gap-4">
 				<div class="max-w-xl">
 					<h2 class="font-display text-2xl font-bold">Scan &amp; identify</h2>
-					<p class="mt-1 text-sm text-base-content/60">
+					<p class="mt-1 text-sm text-muted">
 						Reads your library folders and updates the catalog. Identification then matches albums
 						to MusicBrainz. Nothing here writes to your files.
 					</p>
@@ -219,7 +219,7 @@
 						icon={ScanLine}
 						onclick={() => openWork('rescan_files')}>Rescan files...</Button
 					>
-					<p class="text-base-content/55">
+					<p class="text-muted">
 						Deep re-read of selected folders. Use after fixing files outside DroppedNeedle.
 					</p>
 				</div>
@@ -232,7 +232,7 @@
 						icon={ListChecks}
 						onclick={() => openWork('retry_identification')}>Retry identification...</Button
 					>
-					<p class="text-base-content/55">
+					<p class="text-muted">
 						Re-runs matching for albums still waiting on review or a provider.
 					</p>
 				</div>
@@ -258,7 +258,7 @@
 					</div>
 					<div class="min-w-0 flex-1">
 						<h3 class="font-semibold">Local files</h3>
-						<p class="text-sm text-base-content/55">
+						<p class="text-sm text-muted">
 							{scan ? stateLabel(scan.state) : 'Idle'}{#if activeRun}
 								· {activeRun.trigger.replaceAll('_', ' ')} · {scopeLabel}{/if}
 						</p>
@@ -288,47 +288,47 @@
 					<LibraryWorkLane kind="scan" item={scan} />
 					<div class="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4 lg:grid-cols-9">
 						<div>
-							<span class="block text-xs text-base-content/50">New</span><strong
+							<span class="block text-xs text-muted">New</span><strong
 								>{(counters?.new_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">Elapsed</span><strong
+							<span class="block text-xs text-muted">Elapsed</span><strong
 								>{activeRun?.started_at ? formatDuration(elapsed) : '-'}</strong
 							>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">Changed</span><strong
+							<span class="block text-xs text-muted">Changed</span><strong
 								>{(counters?.changed_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">Unchanged</span><strong
+							<span class="block text-xs text-muted">Unchanged</span><strong
 								>{(counters?.unchanged_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">Excluded</span><strong
+							<span class="block text-xs text-muted">Excluded</span><strong
 								>{(counters?.excluded_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">Missing</span><strong
+							<span class="block text-xs text-muted">Missing</span><strong
 								>{(counters?.missing_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">Errors</span><strong
+							<span class="block text-xs text-muted">Errors</span><strong
 								>{(counters?.errored_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">Rate</span><strong
+							<span class="block text-xs text-muted">Rate</span><strong
 								>{throughput ? `${throughput.toFixed(1)}/s` : '-'}</strong
 							>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">ETA</span><strong
+							<span class="block text-xs text-muted">ETA</span><strong
 								>{eta && elapsed > 30 ? formatDuration(eta) : '-'}</strong
 							>
 						</div>
@@ -336,11 +336,11 @@
 					{#if scopes.length}<details class="text-sm">
 							<summary class="cursor-pointer font-medium">Root progress and phase details</summary>
 							{#if activeRun}
-								<p class="mt-2 text-base-content/60">
+								<p class="mt-2 text-muted">
 									Current phase: <strong>{stateLabel(activeRun.state)}</strong>
 								</p>
 							{/if}
-							<ul class="mt-2 space-y-1 text-base-content/60">
+							<ul class="mt-2 space-y-1 text-muted">
 								{#each scopes as scope (`${scope.root_id}/${scope.relative_path}`)}<li>
 										{roots.find((root) => root.id === scope.root_id)?.label ?? scope.root_id} · {scope.effective_policy.replace(
 											'_',
@@ -349,10 +349,8 @@
 									</li>{/each}
 							</ul>
 							{#if activeRun && Object.keys(activeRun.phase_timings).length}
-								<p class="mt-2 text-xs font-semibold text-base-content/50">
-									Completed phase timings
-								</p>
-								<ul class="mt-2 space-y-1 text-base-content/60">
+								<p class="mt-2 text-xs font-semibold text-muted">Completed phase timings</p>
+								<ul class="mt-2 space-y-1 text-muted">
 									{#each Object.entries(activeRun.phase_timings) as [phase, seconds] (phase)}
 										<li>{phase.replaceAll('_', ' ')} · {formatDuration(seconds)}</li>
 									{/each}
@@ -384,7 +382,7 @@
 					</div>
 					<div class="min-w-0 flex-1">
 						<h3 class="font-semibold">Identification</h3>
-						<p class="text-sm text-base-content/55">
+						<p class="text-sm text-muted">
 							{identification ? stateLabel(identification.state) : 'Idle'}
 						</p>
 					</div>
@@ -408,44 +406,44 @@
 					<LibraryWorkLane kind="identification" item={identification} />
 					<div class="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4 lg:grid-cols-7">
 						<div>
-							<span class="block text-xs text-base-content/50">Complete</span><strong
+							<span class="block text-xs text-muted">Complete</span><strong
 								>{(identification?.processed ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">Identified</span><strong
+							<span class="block text-xs text-muted">Identified</span><strong
 								>{(identification?.identified_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">Waiting</span><strong
+							<span class="block text-xs text-muted">Waiting</span><strong
 								>{(identification?.waiting_count ?? 0).toLocaleString()}</strong
 							>
-							<span class="block text-xs text-base-content/50">will auto-retry</span>
+							<span class="block text-xs text-muted">will auto-retry</span>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">Kept local</span><strong
+							<span class="block text-xs text-muted">Kept local</span><strong
 								>{(identification?.kept_local_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">Failed</span><strong
+							<span class="block text-xs text-muted">Failed</span><strong
 								>{(identification?.failed_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">Needs decision</span><strong
+							<span class="block text-xs text-muted">Needs decision</span><strong
 								>{(identification?.needs_review_count ?? reviewCount).toLocaleString()}</strong
 							>
-							<span class="block text-xs text-base-content/50">will not auto-resolve</span>
+							<span class="block text-xs text-muted">will not auto-resolve</span>
 						</div>
 						<div>
-							<span class="block text-xs text-base-content/50">Deferred</span><strong
+							<span class="block text-xs text-muted">Deferred</span><strong
 								>{(identification?.deferred_count ?? 0).toLocaleString()}</strong
 							>
 						</div>
 					</div>
-					<div class="flex flex-wrap gap-x-5 gap-y-1 text-xs text-base-content/60">
+					<div class="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted">
 						<span>Current work: {identification?.priority_band ?? 'No queued priority'}</span>
 						<span>Oldest waiting: {formatAge(identification?.oldest_backlog_at)}</span>
 					</div>
@@ -472,16 +470,16 @@
 									{#each deferredJobs as job (job.job_id)}
 										<li class="text-xs">
 											<span class="font-medium">{job.album_title ?? 'Track-level work'}</span
-											>{#if job.artist_name}<span class="text-base-content/55">
+											>{#if job.artist_name}<span class="text-muted">
 													- {job.artist_name}</span
 												>{/if}
-											<span class="text-base-content/50">
+											<span class="text-muted">
 												· {deferredReasonLabel(job.last_failure_code)} · attempt {job.attempt_count.toLocaleString()}</span
 											>
 										</li>
 									{/each}
 									{#if hiddenDeferredJobs > 0}
-										<li class="text-xs text-base-content/50">
+										<li class="text-xs text-muted">
 											and {hiddenDeferredJobs.toLocaleString()} more
 										</li>
 									{/if}
@@ -490,7 +488,7 @@
 						</div>
 					{/if}
 					<div class="flex flex-wrap items-center justify-between gap-2 text-sm">
-						<span class="text-base-content/55"
+						<span class="text-muted"
 							>Provider work runs in the background without delaying local playback.</span
 						><a class="link link-primary" href={withBasePath('/library/review?state=needs_review')}
 							>Review identification</a
@@ -508,7 +506,7 @@
 					</div>
 					<div class="min-w-0 flex-1">
 						<h3 class="font-semibold">Artist identity desk</h3>
-						<p class="text-sm text-base-content/55">
+						<p class="text-sm text-muted">
 							Provider-proven reconciliation and duplicate groups that need administrator judgement.
 						</p>
 					</div>
@@ -518,21 +516,21 @@
 								>{(
 									artistReconciliationQuery.data?.automatically_resolved_count ?? 0
 								).toLocaleString()}</strong
-							><span class="block text-xs text-base-content/50">resolved</span></span
+							><span class="block text-xs text-muted">resolved</span></span
 						>
 						<span
 							><strong
 								>{(
 									artistReconciliationQuery.data?.waiting_for_identity_count ?? 0
 								).toLocaleString()}</strong
-							><span class="block text-xs text-base-content/50">waiting</span></span
+							><span class="block text-xs text-muted">waiting</span></span
 						>
 						<span
 							><strong
 								>{(
 									artistReconciliationQuery.data?.genuine_review_count ?? 0
 								).toLocaleString()}</strong
-							><span class="block text-xs text-base-content/50">review</span></span
+							><span class="block text-xs text-muted">review</span></span
 						>
 					</div>
 				</div>

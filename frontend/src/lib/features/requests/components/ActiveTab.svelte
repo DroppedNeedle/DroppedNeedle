@@ -113,7 +113,7 @@
 		{:else}
 			{#if selectedList.length > 0}
 				<div class="flex items-center gap-2 mb-3">
-					<span class="text-xs text-base-content/60">
+					<span class="text-xs text-muted">
 						{selectedList.length} selected
 					</span>
 					<Button

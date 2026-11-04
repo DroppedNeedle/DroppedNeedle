@@ -51,9 +51,9 @@
 			{#if albums.length > 0}
 				<AlbumCarousel {albums} {onopen} />
 			{:else if similarQuery.isError}
-				<p class="text-sm text-base-content/50">Couldn't load similar albums.</p>
+				<p class="text-sm text-muted">Couldn't load similar albums.</p>
 			{:else if !loading}
-				<p class="text-sm text-base-content/50">No similar albums found.</p>
+				<p class="text-sm text-muted">No similar albums found.</p>
 			{/if}
 		</HubShelf>
 	</div>

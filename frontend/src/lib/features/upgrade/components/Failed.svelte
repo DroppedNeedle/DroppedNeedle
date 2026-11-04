@@ -30,7 +30,7 @@
 				<p class="mt-1 font-medium">{failureFix(failure.code)}</p>
 			</div>
 		</div>
-		<p class="text-base-content/70">{V2_FILES[failure.v2_files]}</p>
+		<p class="text-muted">{V2_FILES[failure.v2_files]}</p>
 	</div>
 	{#snippet actions()}
 		<Button variant="primary" onclick={onretry}>Try again</Button>

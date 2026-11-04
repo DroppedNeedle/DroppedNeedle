@@ -121,7 +121,7 @@
 					/>
 					<div class="min-w-0 flex-1">
 						<p class="truncate text-sm font-medium">{album.title}</p>
-						<p class="truncate text-xs text-base-content/50">{album.artist_name}</p>
+						<p class="truncate text-xs text-muted">{album.artist_name}</p>
 					</div>
 					{#if album.in_library}
 						<span class="badge badge-success badge-sm gap-1 shrink-0">

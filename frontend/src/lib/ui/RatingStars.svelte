@@ -41,7 +41,7 @@
 	{#each STARS as star (star)}
 		<button
 			type="button"
-			class="btn btn-ghost btn-square {sizes[size].button}"
+			class="btn btn-ghost dn-btn-ghost btn-square {sizes[size].button}"
 			aria-label={star === 1 ? '1 star' : `${star} stars`}
 			aria-pressed={star === value}
 			title={star === value ? 'Clear rating' : undefined}
@@ -52,9 +52,7 @@
 			onblur={() => (preview = 0)}
 		>
 			<Star
-				class="{sizes[size].icon} {star <= shown
-					? 'fill-warning text-warning'
-					: 'text-base-content/30'}"
+				class="{sizes[size].icon} {star <= shown ? 'fill-warning text-warning' : 'text-edge'}"
 				aria-hidden="true"
 			/>
 		</button>

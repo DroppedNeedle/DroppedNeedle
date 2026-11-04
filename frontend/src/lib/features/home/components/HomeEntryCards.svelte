@@ -169,11 +169,11 @@
 					</div>
 					<div>
 						<h2 class="text-lg font-bold leading-tight sm:text-xl">{card.title}</h2>
-						<p class="text-sm text-base-content/60">{card.subtitle}</p>
+						<p class="text-sm text-muted">{card.subtitle}</p>
 					</div>
 				</div>
 				<ArrowRight
-					class="h-5 w-5 shrink-0 text-base-content/40 transition-transform duration-300 group-hover:translate-x-1 {card.arrow}"
+					class="h-5 w-5 shrink-0 text-muted transition-transform duration-300 group-hover:translate-x-1 {card.arrow}"
 				/>
 			</div>
 
@@ -194,7 +194,7 @@
 							<div class="truncate text-2xl font-extrabold tabular-nums sm:text-3xl">
 								{stat.value}
 							</div>
-							<div class="text-[11px] font-medium tracking-wide text-base-content/50 uppercase">
+							<div class="text-[11px] font-medium tracking-wide text-muted uppercase">
 								{stat.label}
 							</div>
 						</div>
@@ -204,9 +204,7 @@
 					class="mt-auto flex items-center justify-between gap-2 border-t border-base-content/10 pt-3"
 				>
 					<span
-						class="min-w-0 truncate text-xs {card.footerWarning
-							? 'text-warning'
-							: 'text-base-content/60'}"
+						class="min-w-0 truncate text-xs {card.footerWarning ? 'text-warning' : 'text-muted'}"
 					>
 						{card.footer}
 					</span>
@@ -217,7 +215,7 @@
 				<div
 					class="flex items-center gap-2 rounded-xl px-4 py-3 text-sm {isError
 						? 'bg-warning/10 text-warning'
-						: 'bg-base-100/40 text-base-content/70'}"
+						: 'bg-base-100/40 text-muted'}"
 				>
 					{#if isError}
 						<TriangleAlert class="h-4 w-4 shrink-0" />

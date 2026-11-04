@@ -74,7 +74,7 @@
 		<div class="skeleton h-16 w-full rounded-2xl"></div>
 	</div>
 {:else if jobs.length === 0}
-	<p class="py-6 text-center text-sm text-base-content/50">
+	<p class="py-6 text-center text-sm text-muted">
 		Nothing imported yet. Drop a purchase above to get started.
 	</p>
 {:else}
@@ -87,7 +87,7 @@
 							<p class="truncate text-sm font-semibold" title={job.upload_name}>
 								{job.upload_name}
 							</p>
-							<p class="text-xs text-base-content/50">
+							<p class="text-xs text-muted">
 								{formatLastUpdated(new Date(job.created_at * 1000))}
 								{#if showAll && job.user_id !== authStore.user?.id}
 									· by {job.user_name}
@@ -130,10 +130,7 @@
 											{:else if item.status === 'failed'}
 												<CircleAlert class="h-4 w-4 shrink-0 text-error" aria-hidden="true" />
 											{:else if item.status === 'skipped' || item.status === 'discarded'}
-												<SkipForward
-													class="h-4 w-4 shrink-0 text-base-content/40"
-													aria-hidden="true"
-												/>
+												<SkipForward class="h-4 w-4 shrink-0 text-muted" aria-hidden="true" />
 											{:else}
 												<LoaderCircle
 													class="h-4 w-4 shrink-0 animate-spin motion-keep text-info"
@@ -150,13 +147,13 @@
 											<span class="badge badge-sm {badge.cls} shrink-0">{badge.label}</span>
 										</div>
 										{#if item.detail && !entry}
-											<p class="mt-0.5 truncate text-xs text-base-content/50" title={item.detail}>
+											<p class="mt-0.5 truncate text-xs text-muted" title={item.detail}>
 												{item.detail}
 											</p>
 										{/if}
 										{#if item.reason_action && item.status !== 'imported' && !entry}
 											<p
-												class="mt-0.5 truncate text-xs text-base-content/40"
+												class="mt-0.5 truncate text-xs text-muted"
 												data-testid="drop-import-reason-action"
 												title={item.reason_action}
 											>

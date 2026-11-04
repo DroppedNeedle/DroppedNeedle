@@ -74,7 +74,7 @@
 			subtitle="Sizes, formats, replacement and existing covers"
 		>
 			<div class="mt-3 grid gap-3 sm:grid-cols-2">
-				<p class="sm:col-span-2 text-xs text-base-content/55">A size of 0 means no limit.</p>
+				<p class="sm:col-span-2 text-xs text-muted">A size of 0 means no limit.</p>
 				{#if artwork.embedded_enabled}
 					<NumberField
 						label="Embedded maximum size"

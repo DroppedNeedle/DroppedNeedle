@@ -108,7 +108,7 @@
 							<div class="min-w-0">
 								<span class="font-semibold text-sm">{syncStatus.phaseLabel}</span>
 								{#if syncStatus.phaseNumber > 0}
-									<span class="text-xs text-base-content/40 ml-1">
+									<span class="text-xs text-muted ml-1">
 										{syncStatus.phaseNumber}/{syncStatus.totalPhases}
 									</span>
 								{/if}
@@ -146,7 +146,7 @@
 						></div>
 					</div>
 
-					<div class="flex justify-between items-center text-xs text-base-content/50">
+					<div class="flex justify-between items-center text-xs text-muted">
 						{#if syncStatus.totalItems === 0}
 							<span>Cached ✓</span>
 						{:else}
@@ -156,7 +156,7 @@
 					</div>
 
 					{#if syncStatus.currentItem}
-						<div class="text-xs text-base-content/35 truncate mt-1">
+						<div class="text-xs text-muted truncate mt-1">
 							{syncStatus.currentItem}
 						</div>
 					{/if}

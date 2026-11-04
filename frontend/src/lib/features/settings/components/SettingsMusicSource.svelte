@@ -37,7 +37,7 @@
 </script>
 
 <Card title="Primary Music Source">
-	<p class="text-base-content/70 mb-4">
+	<p class="text-muted mb-4">
 		Choose which listening service powers your Home and Discover by default. You can also set this
 		from your profile, and switch it on each page.
 	</p>
@@ -58,7 +58,7 @@
 	{#if saving}
 		<div class="flex items-center gap-2 mt-2">
 			<span class="loading loading-spinner loading-sm"></span>
-			<span class="text-sm text-base-content/70">Saving…</span>
+			<span class="text-sm text-muted">Saving…</span>
 		</div>
 	{/if}
 

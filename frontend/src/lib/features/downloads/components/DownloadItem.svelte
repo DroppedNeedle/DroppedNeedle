@@ -160,7 +160,7 @@
 					{task.album_title}
 				</a>
 			</h3>
-			<p class="truncate text-xs text-base-content/60">
+			<p class="truncate text-xs text-muted">
 				{#if task.artist_mbid}
 					<a href={artistHref(task.artist_mbid)} class="hover:text-primary transition-colors">
 						{task.artist_name}
@@ -190,10 +190,10 @@
 					<span class="badge badge-ghost badge-sm">{task.source}</span>
 				{/if}
 				{#if isOwnedByOther}
-					<span class="text-[11px] text-base-content/50">(another user's download)</span>
+					<span class="text-[11px] text-muted">(another user's download)</span>
 				{/if}
 				{#if cleanupState === 'pending'}
-					<span class="inline-flex items-center gap-1 text-[11px] text-base-content/55">
+					<span class="inline-flex items-center gap-1 text-[11px] text-muted">
 						<Clock3 class="size-3" /> Removing temporary files
 					</span>
 				{:else if cleanupState === 'preserved'}
@@ -233,7 +233,7 @@
 			{#if emptyCopy}
 				<div class="mt-1 rounded-box border border-base-300 bg-base-100 px-2 py-1.5 text-xs">
 					<p class="font-semibold">{emptyCopy.title}</p>
-					<p class="text-base-content/65">{emptyCopy.detail}</p>
+					<p class="text-muted">{emptyCopy.detail}</p>
 				</div>
 			{/if}
 		</div>

@@ -107,7 +107,7 @@
 					<div class="mb-2 last:mb-0">
 						<div class="flex items-center justify-between text-xs mb-1">
 							<span class="font-medium truncate mr-2">{job.artistName}</span>
-							<span class="text-base-content/50 shrink-0">
+							<span class="text-muted shrink-0">
 								{completed}/{job.total}
 							</span>
 						</div>

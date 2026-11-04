@@ -47,7 +47,7 @@
 		<Card variant="bordered" padding="sm" class="lg:col-span-2 text-sm">
 			<strong>{changedGroups.length > 0 ? 'Customized from preset' : 'Matches saved preset'}</strong
 			>
-			<p class="text-xs text-base-content/55">
+			<p class="text-xs text-muted">
 				{changedGroups.length > 0
 					? `Changed sections: ${changedGroups.map((group) => presetGroupLabels[group].toLowerCase()).join(', ')}`
 					: 'No profile sections differ from its recorded preset version.'}

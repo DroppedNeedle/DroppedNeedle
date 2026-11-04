@@ -109,7 +109,7 @@
 								<LiveUpdatingBadge label="Updating picks" className="px-2 py-0.5" />
 							</div>
 						{:else}
-							<p class="text-xs text-base-content/50">Scored against your taste</p>
+							<p class="text-xs text-muted">Scored against your taste</p>
 						{/if}
 					</div>
 				</div>
@@ -121,7 +121,7 @@
 							label="Previous pick"
 							onclick={() => cycle(-1)}
 						/>
-						<span class="font-mono text-xs text-base-content/40">
+						<span class="font-mono text-xs text-muted">
 							{featuredIndex + 1}/{picks.length}
 						</span>
 						<IconButton size="sm" icon={ChevronRight} label="Next pick" onclick={() => cycle(1)} />
@@ -181,9 +181,7 @@
 							</svg>
 							<div class="absolute inset-0 flex flex-col items-center justify-center">
 								<span class="text-xl font-extrabold leading-none">{featured.match_pct}%</span>
-								<span class="text-[0.6rem] uppercase tracking-widest text-base-content/50"
-									>match</span
-								>
+								<span class="text-[0.6rem] uppercase tracking-widest text-muted">match</span>
 							</div>
 						</div>
 
@@ -200,7 +198,7 @@
 							<svelte:element
 								this={featuredArtistHref ? 'a' : 'span'}
 								href={featuredArtistHref ?? undefined}
-								class="text-sm font-semibold uppercase tracking-wide text-base-content/60 {featuredArtistHref
+								class="text-sm font-semibold uppercase tracking-wide text-muted {featuredArtistHref
 									? 'transition-colors hover:text-primary'
 									: ''}"
 							>

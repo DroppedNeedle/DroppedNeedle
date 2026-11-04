@@ -112,7 +112,7 @@
 			</div>
 			<div class="space-y-2">
 				<h1 class="hero-title text-2xl font-bold">{playlist.name}</h1>
-				<p class="text-base-content/60">
+				<p class="text-muted">
 					{playlist.track_count} track{playlist.track_count === 1 ? '' : 's'}
 					{#if playlist.duration_secs}
 						- {formatTotalDurationSec(playlist.duration_secs)}
@@ -162,11 +162,11 @@
 					<tbody>
 						{#each detail.tracks as track, i (track.id)}
 							<tr class="hover:bg-base-200/50">
-								<td class="text-base-content/40">{i + 1}</td>
+								<td class="text-muted">{i + 1}</td>
 								<td class="font-medium">{track.title}</td>
-								<td class="text-base-content/70">{track.artist_name}</td>
-								<td class="text-base-content/70">{track.album_name}</td>
-								<td class="text-right text-base-content/50">
+								<td class="text-muted">{track.artist_name}</td>
+								<td class="text-muted">{track.album_name}</td>
+								<td class="text-right text-muted">
 									{#if track.duration_secs}
 										{Math.floor(track.duration_secs / 60)}:{String(
 											track.duration_secs % 60

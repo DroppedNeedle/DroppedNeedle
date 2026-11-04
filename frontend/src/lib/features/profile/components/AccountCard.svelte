@@ -73,7 +73,7 @@
 
 <section id="account" class="scroll-mt-24 xl:ml-40">
 	<h2
-		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
+		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted"
 	>
 		<UserCog class="h-4 w-4" />
 		Account
@@ -82,14 +82,12 @@
 		<div class="divide-y divide-base-300/30">
 			<div class="flex items-start gap-3 px-5 py-4">
 				<div
-					class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-base-content/70"
+					class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-muted"
 				>
 					<AtSign class="h-4 w-4" />
 				</div>
 				<div class="min-w-0 flex-1">
-					<p class="text-[10px] font-medium uppercase tracking-wider text-base-content/40">
-						Username
-					</p>
+					<p class="text-[10px] font-medium uppercase tracking-wider text-muted">Username</p>
 					{#if editingUsername}
 						<InlineEditField
 							label="Username"
@@ -119,12 +117,12 @@
 
 			<div class="flex items-start gap-3 px-5 py-4">
 				<div
-					class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-base-content/70"
+					class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-muted"
 				>
 					<Mail class="h-4 w-4" />
 				</div>
 				<div class="min-w-0 flex-1">
-					<p class="text-[10px] font-medium uppercase tracking-wider text-base-content/40">Email</p>
+					<p class="text-[10px] font-medium uppercase tracking-wider text-muted">Email</p>
 					{#if editingEmail}
 						<InlineEditField
 							label="Email"
@@ -140,7 +138,7 @@
 					{:else if profile.email}
 						<p class="truncate text-sm font-medium">{profile.email}</p>
 					{:else}
-						<p class="text-sm text-base-content/40">Not set</p>
+						<p class="text-sm text-muted">Not set</p>
 					{/if}
 				</div>
 				{#if !editingEmail}
@@ -156,18 +154,16 @@
 			<div class="px-5 py-4">
 				<div class="flex items-center gap-3">
 					<div
-						class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-base-content/70"
+						class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-muted"
 					>
 						<KeyRound class="h-4 w-4" />
 					</div>
 					<div class="min-w-0 flex-1">
-						<p class="text-[10px] font-medium uppercase tracking-wider text-base-content/40">
-							Password
-						</p>
+						<p class="text-[10px] font-medium uppercase tracking-wider text-muted">Password</p>
 						{#if hasLocalPassword}
 							<p class="text-sm font-medium tracking-widest">••••••••</p>
 						{:else}
-							<p class="text-sm text-base-content/40">No local password</p>
+							<p class="text-sm text-muted">No local password</p>
 						{/if}
 					</div>
 					<Button
@@ -206,7 +202,7 @@
 								bind:value={currentPassword}
 							/>
 						{:else}
-							<p class="text-xs text-base-content/50">
+							<p class="text-xs text-muted">
 								Add a password so you can also sign in with your username.
 							</p>
 						{/if}

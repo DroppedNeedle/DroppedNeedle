@@ -73,12 +73,12 @@
 		>
 	</div>
 	{#if isDaily}
-		<p class="text-xs text-base-content/60">
+		<p class="text-xs text-muted">
 			Scans every day at {dailyTime}{timezone ? ` (${timezone})` : ''}. If the app is offline at
 			that time, it scans the next time it starts.
 		</p>
 	{/if}
 	{#if lastScan != null}
-		<p class="text-xs text-base-content/60">Last scan: {formatLastScan(lastScan)}</p>
+		<p class="text-xs text-muted">Last scan: {formatLastScan(lastScan)}</p>
 	{/if}
 </div>

@@ -121,7 +121,7 @@
 		/>
 		<div>
 			<h1 class="text-3xl font-bold">{params.favorites ? 'Favourite Albums' : 'All Albums'}</h1>
-			<p class="text-base-content/70 text-sm mt-1">
+			<p class="text-muted text-sm mt-1">
 				{total}
 				{total === 1 ? 'album' : 'albums'}
 			</p>
@@ -193,11 +193,11 @@
 		</div>
 	{:else if albums.length === 0}
 		<div class="flex flex-col items-center justify-center min-h-100 text-center">
-			<Disc3 class="h-12 w-12 text-base-content/40 mb-4" strokeWidth={1.5} />
+			<Disc3 class="h-12 w-12 text-muted mb-4" strokeWidth={1.5} />
 			<h2 class="text-2xl font-semibold mb-2">
 				{params.favorites && !params.q && !filtered ? 'No favourites yet' : 'No albums found'}
 			</h2>
-			<p class="text-base-content/70 mb-4">
+			<p class="text-muted mb-4">
 				{params.q || filtered
 					? 'Try a different search or filter.'
 					: params.favorites

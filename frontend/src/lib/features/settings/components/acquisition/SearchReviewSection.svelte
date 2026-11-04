@@ -20,7 +20,7 @@
 			/>
 			<span class="min-w-0">
 				<span>{mode.label}</span>
-				<span class="block text-xs whitespace-normal text-base-content/60">{mode.hint}</span>
+				<span class="block text-xs whitespace-normal text-muted">{mode.hint}</span>
 			</span>
 		</label>
 	{/each}

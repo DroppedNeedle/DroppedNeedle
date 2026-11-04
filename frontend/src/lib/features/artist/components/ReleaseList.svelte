@@ -138,7 +138,7 @@
 							/>
 							<div class="list-col-grow min-w-0">
 								<div class="font-semibold text-sm sm:text-base truncate">{rg.title}</div>
-								<div class="text-xs sm:text-sm text-base-content/60">
+								<div class="text-xs sm:text-sm text-muted">
 									{#if rg.year}{rg.year}{/if}
 									{#if held}
 										{#if rg.year}<span class="opacity-50 mx-1">•</span>{/if}{trackCountLabel(

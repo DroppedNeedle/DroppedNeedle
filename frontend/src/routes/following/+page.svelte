@@ -105,13 +105,13 @@
 					href={withBasePath('/following/new-releases')}
 					class="mb-1 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-box after:content-['']"
 				>
-					<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">
+					<h2 class="text-sm font-semibold uppercase tracking-wider text-muted">
 						New releases
-						<span class="text-base-content/35">· last {RELEASE_WINDOW_DAYS} days</span>
-						{#if releaseTotal > 0}<span class="text-base-content/35">({releaseTotal})</span>{/if}
+						<span class="text-muted">· last {RELEASE_WINDOW_DAYS} days</span>
+						{#if releaseTotal > 0}<span class="text-muted">({releaseTotal})</span>{/if}
 					</h2>
 					<span
-						class="flex items-center gap-1 text-sm font-medium text-base-content/60 transition-colors group-hover/card:text-primary"
+						class="flex items-center gap-1 text-sm font-medium text-muted transition-colors group-hover/card:text-primary"
 					>
 						See all
 						<ArrowRight
@@ -158,14 +158,14 @@
 									>
 										{release.title}
 									</p>
-									<p class="truncate text-xs text-base-content/60">{release.artist_name}</p>
+									<p class="truncate text-xs text-muted">{release.artist_name}</p>
 								</div>
 							</a>
 						{/each}
 					</div>
 				{:else}
 					<p
-						class="flex items-center gap-3 rounded-2xl border border-dashed border-base-300 p-4 text-sm text-base-content/60"
+						class="flex items-center gap-3 rounded-2xl border border-dashed border-base-300 p-4 text-sm text-muted"
 					>
 						<Disc3 class="h-5 w-5 shrink-0" aria-hidden="true" />
 						Nothing released in the last {RELEASE_WINDOW_DAYS} days - quiet month.
@@ -184,12 +184,12 @@
 					href={withBasePath('/following/events')}
 					class="mb-1 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-box after:content-['']"
 				>
-					<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">
+					<h2 class="text-sm font-semibold uppercase tracking-wider text-muted">
 						Coming up
-						{#if concertTotal > 0}<span class="text-base-content/35">({concertTotal})</span>{/if}
+						{#if concertTotal > 0}<span class="text-muted">({concertTotal})</span>{/if}
 					</h2>
 					<span
-						class="flex items-center gap-1 text-sm font-medium text-base-content/60 transition-colors group-hover/card:text-primary"
+						class="flex items-center gap-1 text-sm font-medium text-muted transition-colors group-hover/card:text-primary"
 					>
 						See all
 						<ArrowRight
@@ -211,7 +211,7 @@
 									<span class="text-base leading-tight font-bold text-primary">
 										{dayOfMonth(concert.local_date)}
 									</span>
-									<span class="text-[10px] font-semibold uppercase text-base-content/50">
+									<span class="text-[10px] font-semibold uppercase text-muted">
 										{monthShort(concert.local_date)}
 									</span>
 								</div>
@@ -230,7 +230,7 @@
 									>
 										{concert.artist_name}
 									</a>
-									<p class="truncate text-sm text-base-content/60">{gigLine(concert)}</p>
+									<p class="truncate text-sm text-muted">{gigLine(concert)}</p>
 								</div>
 								{#if outsideLink(concert.ticket_url)}
 									<Button
@@ -253,7 +253,7 @@
 				{:else if eventsConfigured}
 					<!-- the whole card already navigates to /following/events -->
 					<p
-						class="flex items-center gap-3 rounded-2xl border border-dashed border-base-300 p-4 text-sm text-base-content/60"
+						class="flex items-center gap-3 rounded-2xl border border-dashed border-base-300 p-4 text-sm text-muted"
 					>
 						<CalendarClock class="h-5 w-5 shrink-0" aria-hidden="true" />
 						Pick your cities to see gigs near you
@@ -261,7 +261,7 @@
 				{:else if authStore.isAdmin}
 					<a
 						href={withBasePath('/settings?tab=events')}
-						class="relative z-10 flex items-center gap-3 rounded-2xl border border-dashed border-base-300 p-4 text-sm text-base-content/60 transition-colors hover:border-primary hover:text-primary"
+						class="relative z-10 flex items-center gap-3 rounded-2xl border border-dashed border-base-300 p-4 text-sm text-muted transition-colors hover:border-primary hover:text-primary"
 					>
 						<CalendarClock class="h-5 w-5 shrink-0" aria-hidden="true" />
 						Set up an events source to see gigs from artists you follow
@@ -280,11 +280,11 @@
 					href={withBasePath('/following/artists')}
 					class="mb-1 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-box after:content-['']"
 				>
-					<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">
-						Your artists <span class="text-base-content/35">({artists.length})</span>
+					<h2 class="text-sm font-semibold uppercase tracking-wider text-muted">
+						Your artists <span class="text-muted">({artists.length})</span>
 					</h2>
 					<span
-						class="flex items-center gap-1 text-sm font-medium text-base-content/60 transition-colors group-hover/card:text-primary"
+						class="flex items-center gap-1 text-sm font-medium text-muted transition-colors group-hover/card:text-primary"
 					>
 						See all
 						<ArrowRight

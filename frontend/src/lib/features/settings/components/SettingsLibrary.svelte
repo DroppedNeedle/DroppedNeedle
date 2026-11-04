@@ -260,7 +260,7 @@
 <div class="space-y-6">
 	<div>
 		<h2 class="text-xl font-bold">Library</h2>
-		<p class="text-sm text-base-content/60">
+		<p class="text-sm text-muted">
 			Choose how DroppedNeedle observes your library and, separately, whether it may change it.
 		</p>
 	</div>
@@ -278,7 +278,7 @@
 		<div>
 			<p class="library-scanning-kicker">Read-only catalog work</p>
 			<h2 class="font-display text-xl font-semibold">Scanning &amp; identification</h2>
-			<p class="mt-1 text-sm text-base-content/65">
+			<p class="mt-1 text-sm text-muted">
 				Reads files and updates DroppedNeedle. It does not change your music files.
 			</p>
 		</div>
@@ -405,7 +405,7 @@
 		<div class="flex flex-col gap-4">
 			<div>
 				<h3 class="font-semibold">Storage cap</h3>
-				<p class="mt-1 text-xs text-base-content/60">
+				<p class="mt-1 text-xs text-muted">
 					Block new downloads once the library reaches this size. 0 = unlimited. Nothing is deleted,
 					and quality upgrades are exempt because they replace existing files.
 				</p>
@@ -439,11 +439,11 @@
 						value={capPercent}
 						max="100"
 					></progress>
-					<p class="text-xs text-base-content/60">
+					<p class="text-xs text-muted">
 						{usedGb.toFixed(1)} GB of {maxLibraryGb} GB used{#if capPercent >= 100}
 							- new downloads are blocked{/if}
 					</p>
-				</div>{:else}<p class="text-xs text-base-content/40">
+				</div>{:else}<p class="text-xs text-muted">
 					Library size: {usedGb.toFixed(1)} GB (no cap set)
 				</p>{/if}
 		</div>
@@ -453,7 +453,7 @@
 		<div class="flex flex-col gap-5">
 			<section class="space-y-2">
 				<h3 class="font-semibold">Automatic scanning</h3>
-				<p class="text-xs text-base-content/60">
+				<p class="text-xs text-muted">
 					How often DroppedNeedle scans your library for new and changed files.
 				</p>
 				<LibraryScanScheduleControl />
@@ -496,7 +496,7 @@
 			<div class="min-w-0 flex-1">
 				<p class="management-kicker">Administrator workspace</p>
 				<h3 class="font-display text-lg font-semibold">Organize files</h3>
-				<p class="mt-1 text-sm text-base-content/60">
+				<p class="mt-1 text-sm text-muted">
 					Profiles, automatic write access, dry runs, and recovery live in the Library Management
 					workspace under the Automation tab.
 				</p>
@@ -535,7 +535,7 @@
 				</div>{/if}{#if impact.data.queued_work_will_be_cancelled}<p class="text-warning">
 					Queued work in these scopes will be cancelled when the policy is saved.
 				</p>{/if}{#each impact.data.warnings as warning, index (`${index}:${warning}`)}<p
-					class="text-base-content/60"
+					class="text-muted"
 				>
 					{warning}
 				</p>{/each}
@@ -554,7 +554,7 @@
 	pending={requestRun.isPending}
 	onconfirm={confirmApply}
 >
-	{#if applyPreview.data}<p class="text-sm text-base-content/70">
+	{#if applyPreview.data}<p class="text-sm text-muted">
 			About {applyPreview.data.estimated_file_count.toLocaleString()} files will be reconciled. Existing
 			committed catalog changes remain safe if the job is paused or stopped.
 		</p>

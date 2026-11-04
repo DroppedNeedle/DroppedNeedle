@@ -109,7 +109,7 @@
 				<div class="divider my-0"></div>
 				<li class="menu-title is-drawer-close:hidden px-3 pb-1 pt-2">
 					<!-- A trusted user sees only Check albums here. -->
-					<span class="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-base-content/40"
+					<span class="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-muted"
 						>{viewer.isAdmin ? 'Admin' : 'Library'}</span
 					>
 				</li>

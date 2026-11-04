@@ -18,7 +18,7 @@
 		Discover.</span
 	>
 </div>
-<h4 class="font-medium text-sm text-base-content/70 mb-3">Background Generation</h4>
+<h4 class="font-medium text-sm text-muted mb-3">Background Generation</h4>
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 pt-2">
 	<NumberField
 		label="Queue Size"
@@ -41,7 +41,7 @@
 	/>
 </div>
 <div class="divider my-4"></div>
-<h4 class="font-medium text-sm text-base-content/70 mb-3">Queue Tuning</h4>
+<h4 class="font-medium text-sm text-muted mb-3">Queue Tuning</h4>
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
 	<NumberField
 		label="Seed Artists"
@@ -85,7 +85,7 @@
 	/>
 </div>
 <div class="divider my-4"></div>
-<h4 class="font-medium text-sm text-base-content/70 mb-3">Discover Picks</h4>
+<h4 class="font-medium text-sm text-muted mb-3">Discover Picks</h4>
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
 	<NumberField
 		label="Discover Picks Count"
@@ -107,7 +107,7 @@
 	/>
 </div>
 <div class="divider my-4"></div>
-<h4 class="font-medium text-sm text-base-content/70 mb-3">Listening Services</h4>
+<h4 class="font-medium text-sm text-muted mb-3">Listening Services</h4>
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
 	<ToggleRow
 		label="Blend Last.fm and ListenBrainz"

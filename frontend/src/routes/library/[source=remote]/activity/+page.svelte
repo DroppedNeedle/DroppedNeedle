@@ -83,13 +83,11 @@
 							<div class="space-y-2">
 								{#each group.items as item, i (item.name)}
 									<div class="flex items-center gap-3 p-2 rounded-lg hover:bg-base-200">
-										<span class="text-base-content/40 w-5 text-right font-mono text-sm"
-											>{i + 1}</span
-										>
+										<span class="text-muted w-5 text-right font-mono text-sm">{i + 1}</span>
 										<div class="flex-1 min-w-0">
 											<p class="font-medium truncate">{item.name}</p>
 											{#if group.subtitles}
-												<p class="text-xs text-base-content/60 truncate">{item.subtitle}</p>
+												<p class="text-xs text-muted truncate">{item.subtitle}</p>
 											{/if}
 										</div>
 										<span class="badge badge-sm">{item.play_count}</span>
@@ -112,7 +110,7 @@
 				</div>
 			{/snippet}
 			{#snippet empty()}
-				<p class="text-sm text-base-content/50">No listening history is available yet.</p>
+				<p class="text-sm text-muted">No listening history is available yet.</p>
 			{/snippet}
 			{#snippet children(history)}
 				<div class="overflow-x-auto rounded-lg">
@@ -130,10 +128,10 @@
 							{#each history.items as entry (entry.id + entry.viewed_at)}
 								<tr class="hover">
 									<td class="font-medium">{entry.track_title}</td>
-									<td class="text-base-content/60">{entry.artist_name}</td>
-									<td class="text-base-content/60">{entry.album_name}</td>
-									<td class="text-base-content/50 text-xs">{formatViewedAt(entry.viewed_at)}</td>
-									<td class="text-base-content/50 text-xs">{entry.device_name}</td>
+									<td class="text-muted">{entry.artist_name}</td>
+									<td class="text-muted">{entry.album_name}</td>
+									<td class="text-muted text-xs">{formatViewedAt(entry.viewed_at)}</td>
+									<td class="text-muted text-xs">{entry.device_name}</td>
 								</tr>
 							{/each}
 						</tbody>
@@ -148,7 +146,7 @@
 						onclick={() => (historyOffset = Math.max(0, historyOffset - PAGE_SIZE))}
 						>Previous</Button
 					>
-					<span class="text-sm text-base-content/60">
+					<span class="text-sm text-muted">
 						Page {currentPage} of {totalPages} ({historyTotal.toLocaleString()} total plays)
 					</span>
 					<Button

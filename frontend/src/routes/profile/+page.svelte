@@ -191,8 +191,8 @@
 					<ProfileHeader {profile} />
 				{:else if profileQuery.isError}
 					<div class="flex flex-col items-center gap-4 py-12 text-center">
-						<CircleAlert class="h-10 w-10 text-base-content/50" />
-						<p class="text-base-content/70">Failed to load profile</p>
+						<CircleAlert class="h-10 w-10 text-muted" />
+						<p class="text-muted">Failed to load profile</p>
 						<Button
 							variant="primary"
 							size="sm"

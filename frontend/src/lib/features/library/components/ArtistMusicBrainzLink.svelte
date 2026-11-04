@@ -102,7 +102,7 @@
 
 {#if link}
 	<div
-		class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-base-content/65 {className}"
+		class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted {className}"
 		aria-label="MusicBrainz link"
 		role="group"
 	>
@@ -137,7 +137,7 @@
 		pending={setLink.isPending}
 		onconfirm={save}
 	>
-		<p class="text-sm text-base-content/70">
+		<p class="text-sm text-muted">
 			DroppedNeedle keeps a link you set. It never merges artists for you.
 		</p>
 		<div class="mt-3">

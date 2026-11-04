@@ -219,15 +219,15 @@
 				{/if}
 				<p class="truncate text-lg font-bold text-base-content">{np.trackName ?? np.albumName}</p>
 			</div>
-			<p class="truncate text-sm text-base-content/70">
-				{np.artistName}{#if np.albumName}<span class="text-base-content/40">
+			<p class="truncate text-sm text-muted">
+				{np.artistName}{#if np.albumName}<span class="text-muted">
 						&middot; {np.albumName}</span
 					>{/if}
 			</p>
 		</div>
 
 		<div class="flex w-full max-w-md items-center gap-3">
-			<span class="w-10 text-right text-xs tabular-nums text-base-content/60"
+			<span class="w-10 text-right text-xs tabular-nums text-muted"
 				>{fmt(playerStore.progress)}</span
 			>
 			<input
@@ -240,8 +240,7 @@
 				aria-label="Seek"
 				class="range range-xs range-accent flex-1"
 			/>
-			<span class="w-10 text-xs tabular-nums text-base-content/60">{fmt(playerStore.duration)}</span
-			>
+			<span class="w-10 text-xs tabular-nums text-muted">{fmt(playerStore.duration)}</span>
 		</div>
 
 		<div class="flex items-center gap-2">
@@ -362,15 +361,13 @@
 		</div>
 
 		{#if isLocal}
-			<p class="text-[11px] uppercase tracking-wider text-base-content/30">
-				drag a record onto the deck
-			</p>
+			<p class="text-[11px] uppercase tracking-wider text-muted">drag a record onto the deck</p>
 		{/if}
 	{:else}
 		<div class="flex w-full max-w-md flex-col items-center gap-4 text-center">
 			<div>
 				<p class="text-lg font-bold text-base-content">Drop the needle</p>
-				<p class="text-sm text-base-content/60">
+				<p class="text-sm text-muted">
 					Drag a record from the crate onto the deck, or just hit play.
 				</p>
 			</div>
@@ -379,9 +376,7 @@
 				<Button variant="ghost" size="sm" icon={Shuffle} onclick={onShuffleAll}>Shuffle</Button>
 				<Button variant="ghost" size="sm" icon={Dices} onclick={onSurprise}>Surprise me</Button>
 			</div>
-			<div
-				class="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-base-content/30"
-			>
+			<div class="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-muted">
 				<Sparkles class="h-3 w-3" /> your library, ready to spin
 			</div>
 		</div>

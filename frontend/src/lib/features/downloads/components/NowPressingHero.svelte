@@ -42,7 +42,7 @@
 >
 	<div class="now-pressing-glow" aria-hidden="true"></div>
 	{#if showEyebrow}
-		<p class="relative mb-4 text-[11px] font-bold uppercase tracking-[0.18em] text-base-content/45">
+		<p class="relative mb-4 text-[11px] font-bold uppercase tracking-[0.18em] text-muted">
 			Now pressing
 		</p>
 	{/if}
@@ -54,7 +54,7 @@
 					{task.album_title}
 				</a>
 			</h2>
-			<p class="truncate text-sm text-base-content/60">
+			<p class="truncate text-sm text-muted">
 				{#if task.artist_mbid}
 					<a href={artistHref(task.artist_mbid)} class="hover:text-primary transition-colors">
 						{task.artist_name}

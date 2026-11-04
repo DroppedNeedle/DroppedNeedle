@@ -61,7 +61,7 @@
 	{/snippet}
 	{#snippet failed(cause, retry)}
 		<Card variant="bordered" title="The check did not run">
-			<p class="text-sm text-base-content/70">{message(cause)}</p>
+			<p class="text-sm text-muted">{message(cause)}</p>
 			{#snippet actions()}
 				<Button onclick={retry}>Check again</Button>
 			{/snippet}
@@ -78,17 +78,17 @@
 							<dl class="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-3">
 								{#each headlineCounts(check.counts) as [label, count] (label)}
 									<div class="flex justify-between gap-2">
-										<dt class="text-base-content/70">{label}</dt>
+										<dt class="text-muted">{label}</dt>
 										<dd class="font-mono">{count.toLocaleString()}</dd>
 									</div>
 								{/each}
 							</dl>
 							<details class="mt-2 text-sm">
-								<summary class="cursor-pointer text-base-content/60">Everything</summary>
+								<summary class="cursor-pointer text-muted">Everything</summary>
 								<dl class="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3">
 									{#each allCounts(check.counts) as [label, count] (label)}
 										<div class="flex justify-between gap-2">
-											<dt class="text-base-content/70">{label}</dt>
+											<dt class="text-muted">{label}</dt>
 											<dd class="font-mono">{count.toLocaleString()}</dd>
 										</div>
 									{/each}
@@ -121,14 +121,14 @@
 							{#each check.warnings as warning, index (index)}
 								<div class="rounded-box border border-warning/40 bg-warning/5 p-3 text-sm">
 									<p class="font-medium">{FEATURE_LABELS[warning.feature]}</p>
-									<p class="mt-1 text-base-content/70">{warning.message}</p>
+									<p class="mt-1 text-muted">{warning.message}</p>
 									{#if warning.old_address || warning.new_address}
 										<dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-											<dt class="text-base-content/60">Old</dt>
+											<dt class="text-muted">Old</dt>
 											<dd class="break-all font-mono text-xs">
 												{showAddress(warning.old_address, window.location.origin)}
 											</dd>
-											<dt class="text-base-content/60">New</dt>
+											<dt class="text-muted">New</dt>
 											<dd class="break-all font-mono text-xs">
 												{showAddress(warning.new_address, window.location.origin)}
 											</dd>
@@ -151,11 +151,11 @@
 					{/if}
 
 					{#if check.layout !== 'v2' && check.blockers.length === 0}
-						<p class="text-sm text-base-content/70">
+						<p class="text-sm text-muted">
 							The data folders changed since this page opened. Reload the page.
 						</p>
 					{:else if check.blockers.length === 0}
-						<p class="flex items-start gap-2 text-sm text-base-content/70">
+						<p class="flex items-start gap-2 text-sm text-muted">
 							<CircleCheck class="mt-0.5 size-4 shrink-0 text-success" />
 							Your v2 files move into a v2-backup folder, so you can go back.
 						</p>
@@ -183,7 +183,7 @@
 			</Card>
 		{:else}
 			<Card variant="bordered" title="The check did not finish">
-				<p class="text-sm text-base-content/70">
+				<p class="text-sm text-muted">
 					{result.failure?.message ?? 'It ended without an answer.'}
 				</p>
 				{#snippet actions()}

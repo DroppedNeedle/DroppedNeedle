@@ -58,7 +58,7 @@
 				{#if albums.length > 0}
 					<AlbumCarousel {albums} {onopen} />
 				{:else}
-					<p class="text-sm text-base-content/50">No favorite albums yet.</p>
+					<p class="text-sm text-muted">No favorite albums yet.</p>
 				{/if}
 			{:else if tab === 'artists'}
 				{#if artists.length > 0}
@@ -84,7 +84,7 @@
 						{/each}
 					</HorizontalCarousel>
 				{:else}
-					<p class="text-sm text-base-content/50">No favorite artists yet.</p>
+					<p class="text-sm text-muted">No favorite artists yet.</p>
 				{/if}
 			{:else if tracks.length > 0}
 				<div class="max-h-72 overflow-y-auto rounded-lg">
@@ -103,11 +103,11 @@
 								<tr
 									class="hover transition-all duration-200 hover:border-l-2 hover:border-l-primary hover:pl-1"
 								>
-									<td class="text-base-content/50">{i + 1}</td>
+									<td class="text-muted">{i + 1}</td>
 									<td class="font-medium">{track.title}</td>
-									<td class="text-base-content/60">{track.artist_name}</td>
-									<td class="text-base-content/60">{track.album_name}</td>
-									<td class="text-right text-base-content/50"
+									<td class="text-muted">{track.artist_name}</td>
+									<td class="text-muted">{track.album_name}</td>
+									<td class="text-right text-muted"
 										>{formatDurationSec(track.duration_secs ?? 0)}</td
 									>
 								</tr>
@@ -116,7 +116,7 @@
 					</table>
 				</div>
 			{:else}
-				<p class="text-sm text-base-content/50">No favorite tracks yet.</p>
+				<p class="text-sm text-muted">No favorite tracks yet.</p>
 			{/if}
 		</HubShelf>
 	</div>

@@ -153,7 +153,7 @@
 			{/if}
 
 			{#if resultCount != null && !loading}
-				<span class="text-sm text-base-content/50">{resultCount} results</span>
+				<span class="text-sm text-muted">{resultCount} results</span>
 			{/if}
 		</div>
 	{/if}

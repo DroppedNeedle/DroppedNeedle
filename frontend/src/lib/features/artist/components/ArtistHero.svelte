@@ -144,9 +144,7 @@
 
 				<div class="flex-1 text-center sm:text-left min-w-0">
 					{#if artist.type}
-						<span
-							class="text-xs sm:text-sm font-medium text-base-content/70 uppercase tracking-wider"
-						>
+						<span class="text-xs sm:text-sm font-medium text-muted uppercase tracking-wider">
 							{artist.type === 'Group' ? 'Band' : artist.type === 'Person' ? 'Artist' : artist.type}
 						</span>
 					{/if}
@@ -156,7 +154,7 @@
 						{artist.name}
 					</h1>
 					{#if artist.disambiguation}
-						<p class="text-base-content/60 text-sm sm:text-base mb-3">({artist.disambiguation})</p>
+						<p class="text-muted text-sm sm:text-base mb-3">({artist.disambiguation})</p>
 					{/if}
 
 					{#if validLinks.length > 0}
@@ -181,9 +179,7 @@
 	</div>
 
 	{#if credit && creditFileLink}
-		<p
-			class="absolute bottom-2 right-3 left-3 z-10 truncate text-right text-[0.7rem] text-base-content/50"
-		>
+		<p class="absolute bottom-2 right-3 left-3 z-10 truncate text-right text-[0.7rem] text-muted">
 			<a
 				href={creditFileLink}
 				target="_blank"

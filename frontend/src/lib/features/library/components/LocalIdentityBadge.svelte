@@ -70,6 +70,6 @@
 		{content.label}
 	</span>
 	{#if showDescription}
-		<p class="max-w-xl text-sm leading-relaxed text-base-content/55">{content.description}</p>
+		<p class="max-w-xl text-sm leading-relaxed text-muted">{content.description}</p>
 	{/if}
 </div>

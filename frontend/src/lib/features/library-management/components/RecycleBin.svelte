@@ -132,7 +132,7 @@
 			<p class="text-sm text-warning" role="status">Emptying stopped. Try again.</p>
 		{/if}
 		{#if status.data?.last_emptied}
-			<p class="text-sm text-base-content/70">{lastEmptiedLine(status.data.last_emptied)}</p>
+			<p class="text-sm text-muted">{lastEmptiedLine(status.data.last_emptied)}</p>
 		{/if}
 		{#if firstPage && !firstPage.bins_known}
 			<p class="text-sm text-warning" role="status">Can't check the recycle bin right now.</p>
@@ -142,7 +142,7 @@
 		<QueryBoundary query={bin} what="the recycle bin" isEmpty={() => removals.length === 0}>
 			{#snippet empty()}
 				<Card variant="bordered" padding="lg">
-					<p class="text-center text-base-content/70">The recycle bin is empty.</p>
+					<p class="text-center text-muted">The recycle bin is empty.</p>
 				</Card>
 			{/snippet}
 			{#snippet children(data)}
@@ -174,15 +174,15 @@
 											{/if}
 										</p>
 										{#if removal.album?.artist}
-											<p class="truncate text-sm text-base-content/70">{removal.album.artist}</p>
+											<p class="truncate text-sm text-muted">{removal.album.artist}</p>
 										{/if}
 										<p class="text-sm">{binLine(removal, now)}</p>
-										<p class="text-xs text-base-content/60">{removedLine(removal)}</p>
+										<p class="text-xs text-muted">{removedLine(removal)}</p>
 										{#each binNotes(removal) as note (note)}
 											<p class="text-xs text-warning">{note}</p>
 										{/each}
 										{#if removal.held > 0}
-											<p class="text-xs text-base-content/60">
+											<p class="text-xs text-muted">
 												Held: settle it in <a class="link" href={resolve('/library/management')}
 													>Library Management</a
 												>
@@ -234,10 +234,10 @@
 		{@const question = emptyQuestion(summary.data)}
 		<p>{question ?? 'Nothing to delete right now.'}</p>
 		{#if stayingLine(summary.data)}
-			<p class="mt-2 text-sm text-base-content/70">{stayingLine(summary.data)}</p>
+			<p class="mt-2 text-sm text-muted">{stayingLine(summary.data)}</p>
 		{/if}
 		{#if question}
-			<p class="mt-2 text-sm text-base-content/70">Files changed in the bin are kept.</p>
+			<p class="mt-2 text-sm text-muted">Files changed in the bin are kept.</p>
 		{/if}
 	{/if}
 </ConfirmDialog>

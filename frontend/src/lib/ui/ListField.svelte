@@ -72,7 +72,7 @@
 <fieldset class="fieldset">
 	<legend class="fieldset-legend">{label}</legend>
 	{#if values.length === 0 && empty}
-		<p class="text-sm text-base-content/60">{empty}</p>
+		<p class="text-sm text-muted">{empty}</p>
 	{/if}
 	{#each values as value, index (index)}
 		<div class="flex gap-2">
@@ -91,7 +91,7 @@
 			/>
 			<button
 				type="button"
-				class="btn btn-ghost btn-square shrink-0"
+				class="btn btn-ghost dn-btn-ghost btn-square shrink-0"
 				aria-label="Remove {value.trim() || `${itemLabel.toLowerCase()} ${index + 1}`}"
 				{disabled}
 				onclick={() => remove(index)}
@@ -103,7 +103,7 @@
 	<div class="flex flex-wrap gap-2">
 		<button
 			type="button"
-			class="btn btn-sm"
+			class="btn dn-btn-neutral btn-sm"
 			disabled={disabled || full}
 			bind:this={addButton}
 			onclick={add}
@@ -116,7 +116,7 @@
 		{/if}
 	</div>
 	{#if help}
-		<p id={helpId} class="label whitespace-normal text-base-content/60">{help}</p>
+		<p id={helpId} class="label whitespace-normal text-muted">{help}</p>
 	{/if}
 	{#if error}
 		<p id={errorId} class="text-sm text-error" role="alert">{error}</p>

@@ -216,7 +216,7 @@
 
 					<!-- Buffering shows a spinning icon rather than `loading`, which would block a pause. -->
 					<IconButton
-						variant="accent"
+						variant="primary"
 						icon={playPauseIcon}
 						label={playerStore.playbackState === 'error'
 							? 'Close'
@@ -266,9 +266,7 @@
 					>
 				</div>
 				{#if !playerStore.isSeekable}
-					<p class="hidden sm:block text-[10px] text-base-content/60">
-						This stream doesn't support seeking.
-					</p>
+					<p class="hidden sm:block text-[10px] text-muted">This stream doesn't support seeking.</p>
 				{/if}
 			</div>
 

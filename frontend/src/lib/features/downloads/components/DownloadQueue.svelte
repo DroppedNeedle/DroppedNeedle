@@ -106,7 +106,7 @@
 			{ n: sections.wanted.length, label: 'still hunting', cls: 'text-warning' },
 			{ n: sections.needs_you.length, label: 'needs you', cls: 'text-info' },
 			{ n: held.length, label: 'to decide', cls: 'text-warning' },
-			{ n: sections.cueing.length, label: 'cueing up', cls: 'text-base-content/70' },
+			{ n: sections.cueing.length, label: 'cueing up', cls: 'text-muted' },
 			{ n: crateCount, label: 'in your crate', cls: 'text-success' }
 		].filter((p) => p.n > 0)
 	);
@@ -134,7 +134,7 @@
 		/>
 	{:else}
 		{#if pulse.length > 0}
-			<p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-base-content/50">
+			<p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
 				{#each pulse as p, i (p.label)}
 					{#if i > 0}<span class="text-base-content/25">·</span>{/if}
 					<span><span class="font-bold tabular-nums {p.cls}">{p.n}</span> {p.label}</span>
@@ -160,7 +160,7 @@
 			<section class="space-y-3">
 				<div class="flex items-center justify-between gap-2">
 					<h2 class="dl-eyebrow">
-						Still hunting <span class="text-base-content/35">· auto-retrying</span>
+						Still hunting <span class="text-muted">· auto-retrying</span>
 						<span class="dl-count">{sections.wanted.length}</span>
 					</h2>
 					<Button
@@ -186,7 +186,7 @@
 		{#if sections.needs_you.length > 0}
 			<section class="space-y-3">
 				<h2 class="dl-eyebrow">
-					Needs you <span class="text-base-content/35">· pick a release</span>
+					Needs you <span class="text-muted">· pick a release</span>
 					<span class="dl-count">{sections.needs_you.length}</span>
 				</h2>
 				{#each sections.needs_you as task (task.id)}
@@ -200,7 +200,7 @@
 			<section class="space-y-3">
 				<div class="flex items-center justify-between gap-2">
 					<h2 class="dl-eyebrow">
-						To decide <span class="text-base-content/35">· files kept</span>
+						To decide <span class="text-muted">· files kept</span>
 						<span class="dl-count">{held.length}</span>
 					</h2>
 					{#if recheckEntryIds.length > 0}
@@ -239,7 +239,7 @@
 			<section class="space-y-3">
 				<div class="flex flex-wrap items-center justify-between gap-2">
 					<button
-						class="dl-eyebrow flex items-center gap-1.5 hover:text-base-content/70"
+						class="dl-eyebrow flex items-center gap-1.5 hover:text-muted"
 						onclick={() => (historyOpen = !historyOpen)}
 						aria-expanded={historyOpen}
 					>
@@ -249,7 +249,7 @@
 								: '-rotate-90'}"
 						/>
 						History
-						<span class="font-normal normal-case tracking-normal text-base-content/40">
+						<span class="font-normal normal-case tracking-normal text-muted">
 							{historyLabel}
 						</span>
 					</button>
@@ -294,7 +294,7 @@
 		{#if quarantineCount > 0}
 			<section class="space-y-3">
 				<button
-					class="dl-eyebrow flex items-center gap-1.5 hover:text-base-content/70"
+					class="dl-eyebrow flex items-center gap-1.5 hover:text-muted"
 					onclick={() => (quarantineOpen = !quarantineOpen)}
 					aria-expanded={quarantineOpen}
 				>

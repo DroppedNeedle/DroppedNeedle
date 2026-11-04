@@ -60,7 +60,7 @@
 			</div>
 			<div>
 				<CardTitle>Live Events</CardTitle>
-				<p class="text-sm text-base-content/60">
+				<p class="text-sm text-muted">
 					Concert listings for followed artists, shown on the Following page.
 				</p>
 			</div>
@@ -73,9 +73,7 @@
 
 				<Card variant="bordered" padding="md">
 					<fieldset>
-						<legend
-							class="mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50"
-						>
+						<legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-muted">
 							Search for concerts by
 						</legend>
 						<label class="flex cursor-pointer items-center gap-3 py-1">
@@ -88,7 +86,7 @@
 							/>
 							<span class="text-sm">
 								Followed artists only
-								<span class="block text-xs text-base-content/60">
+								<span class="block text-xs text-muted">
 									Checks the artists people follow. Light on API usage.
 								</span>
 							</span>
@@ -103,7 +101,7 @@
 							/>
 							<span class="text-sm">
 								Every artist in the library
-								<span class="block text-xs text-base-content/60">
+								<span class="block text-xs text-muted">
 									Also checks the whole library and shows those gigs to everyone. Very large
 									libraries are spread across several days to respect API limits.
 								</span>
@@ -117,7 +115,7 @@
 						<div class="flex items-center justify-between gap-3">
 							<div>
 								<p class="font-medium">Ticketmaster</p>
-								<p class="text-xs text-base-content/60">
+								<p class="text-xs text-muted">
 									Worldwide coverage (USA + most of Europe). Free key, 5,000 calls/day.
 								</p>
 							</div>
@@ -159,7 +157,7 @@
 							href="https://developer.ticketmaster.com/"
 							target="_blank"
 							rel="noopener noreferrer"
-							class="flex w-fit items-center gap-1 text-xs text-base-content/50 transition-colors hover:text-primary"
+							class="flex w-fit items-center gap-1 text-xs text-muted transition-colors hover:text-primary"
 						>
 							<ExternalLink class="h-3 w-3" aria-hidden="true" /> Get a free Ticketmaster key
 						</a>
@@ -171,7 +169,7 @@
 						<div class="flex items-center justify-between gap-3">
 							<div>
 								<p class="font-medium">Skiddle</p>
-								<p class="text-xs text-base-content/60">
+								<p class="text-xs text-muted">
 									Covers the UK & Ireland: small venues, club nights, festivals.
 								</p>
 							</div>
@@ -213,7 +211,7 @@
 							href="https://www.skiddle.com/api/join.php"
 							target="_blank"
 							rel="noopener noreferrer"
-							class="flex w-fit items-center gap-1 text-xs text-base-content/50 transition-colors hover:text-primary"
+							class="flex w-fit items-center gap-1 text-xs text-muted transition-colors hover:text-primary"
 						>
 							<ExternalLink class="h-3 w-3" aria-hidden="true" /> Get a free Skiddle key
 						</a>
@@ -233,7 +231,7 @@
 								class="w-32"
 								bind:value={draft.poll_time}
 							/>
-							<span class="text-sm text-base-content/60">server time</span>
+							<span class="text-sm text-muted">server time</span>
 						</div>
 					{/snippet}
 				</Field>

@@ -155,7 +155,7 @@
 					</div>
 					<LibraryWorkProgress item={primary} compact />
 				</div>
-				<ArrowRight class="h-4 w-4 shrink-0 text-base-content/45" aria-hidden="true" />
+				<ArrowRight class="h-4 w-4 shrink-0 text-muted" aria-hidden="true" />
 			</a>
 
 			{#if primary.effect === 'attention' && primary.kind !== 'recovery'}
@@ -200,7 +200,7 @@
 							<small>{libraryWorkEffect(item)}</small>
 							<LibraryWorkProgress {item} compact />
 						</span>
-						<ArrowRight class="h-4 w-4 shrink-0 text-base-content/40" aria-hidden="true" />
+						<ArrowRight class="h-4 w-4 shrink-0 text-muted" aria-hidden="true" />
 					</a>
 				{/each}
 			</div>

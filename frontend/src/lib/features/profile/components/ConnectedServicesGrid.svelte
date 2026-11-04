@@ -30,7 +30,7 @@
 
 <section id="connected-services" class="scroll-mt-24 xl:ml-40">
 	<h2
-		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
+		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted"
 	>
 		<ExternalLink class="h-4 w-4" />
 		Connected Services
@@ -70,15 +70,15 @@
 								<span class="status status-error status-sm"></span>
 							{/if}
 							{#if href}
-								<ExternalLink class="h-3.5 w-3.5 text-base-content/40" />
+								<ExternalLink class="h-3.5 w-3.5 text-muted" />
 							{/if}
 						</div>
 						{#if service.enabled && service.username}
-							<p class="mt-0.5 truncate text-xs text-base-content/50">
+							<p class="mt-0.5 truncate text-xs text-muted">
 								{service.username}
 							</p>
 						{:else if !service.enabled}
-							<p class="mt-0.5 text-xs text-base-content/30">Not connected</p>
+							<p class="mt-0.5 text-xs text-muted">Not connected</p>
 						{/if}
 					</div>
 				</div>

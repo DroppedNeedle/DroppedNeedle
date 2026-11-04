@@ -43,7 +43,7 @@
 	<div class="relative px-4 pt-5 pb-1 sm:px-6 sm:pt-6">
 		<div class="flex items-center gap-3 mb-1">
 			<div class="flex items-center gap-2 min-w-0">
-				<span class="text-xs font-semibold uppercase tracking-widest text-base-content/40"
+				<span class="text-xs font-semibold uppercase tracking-widest text-muted"
 					>Because You Listen To</span
 				>
 			</div>

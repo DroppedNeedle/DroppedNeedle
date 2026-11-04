@@ -88,9 +88,9 @@
 		<div class="truncate text-sm font-semibold {playing ? 'text-accent' : ''}">
 			{song.title}
 		</div>
-		<div class="truncate text-xs text-base-content/55">
+		<div class="truncate text-xs text-muted">
 			{#if song.artist}{song.artist}<span class="mx-1 text-base-content/35">·</span>{/if}<span
-				class="text-base-content/35"
+				class="text-muted"
 				><a href={localAlbumHref(song.track.album_id)} class="relative hover:underline"
 					>{song.track.album_title}</a
 				></span
@@ -100,7 +100,7 @@
 
 	<div class="flex shrink-0 items-center gap-2">
 		{#if song.track.duration_seconds != null}
-			<span class="text-xs tabular-nums text-base-content/40 {playing ? 'text-accent/60' : ''}">
+			<span class="text-xs tabular-nums text-muted {playing ? 'text-accent/60' : ''}">
 				{formatDurationSec(song.track.duration_seconds)}
 			</span>
 		{/if}

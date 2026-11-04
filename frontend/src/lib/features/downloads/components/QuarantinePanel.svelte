@@ -64,7 +64,7 @@
 						<p class="truncate text-sm font-medium" title={entry.filename}>
 							{basename(entry.filename)}
 						</p>
-						<p class="truncate text-xs text-base-content/55">
+						<p class="truncate text-xs text-muted">
 							{entry.username}
 							<span class="text-base-content/30"> · </span>{entry.reason_text ?? entry.reason}
 							<span class="text-base-content/30"> · </span>{fmtDate(entry.quarantined_at)}

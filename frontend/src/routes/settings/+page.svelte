@@ -147,7 +147,7 @@
 	<div class="container mx-auto p-4 max-w-7xl lg:flex lg:h-full lg:min-h-0 lg:flex-col">
 		<div class="mb-6 lg:shrink-0">
 			<h1 class="text-3xl font-bold">Settings</h1>
-			<p class="text-base-content/70 mt-2">Manage your preferences and app settings.</p>
+			<p class="text-muted mt-2">Manage your preferences and app settings.</p>
 		</div>
 
 		<div class="flex flex-col lg:flex-row gap-6 lg:min-h-0 lg:flex-1">
@@ -170,12 +170,12 @@
 									class="text-xs font-bold uppercase tracking-widest {tier.id === 'setup'
 										? 'text-accent'
 										: tier.id === 'personalize'
-											? 'text-base-content/55'
-											: 'text-base-content/35'}"
+											? 'text-muted'
+											: 'text-muted'}"
 								>
 									{tier.label}
 								</h3>
-								<p class="text-[10px] text-base-content/35">{tier.hint}</p>
+								<p class="text-[10px] text-muted">{tier.hint}</p>
 							</div>
 							<ul class="menu gap-0.5 p-0">
 								{#each tierTabs as tab (tab.id)}
@@ -185,14 +185,14 @@
 										<button
 											class="group justify-start gap-3 rounded-xl text-base transition-all {isActive
 												? 'glow-primary-soft bg-primary/15 font-semibold text-primary'
-												: 'text-base-content/70 hover:bg-base-300/40'}"
+												: 'text-muted hover:bg-base-300/40'}"
 											aria-current={isActive ? 'page' : undefined}
 											onclick={() => selectTab(tab.id)}
 										>
 											<Icon
 												class="h-5 w-5 {isActive
 													? 'text-primary'
-													: 'text-base-content/50 group-hover:text-base-content/80'}"
+													: 'text-muted group-hover:text-base-content/80'}"
 											/>
 											<span>{tab.label}</span>
 											{#if tab.id in connectionMap}
@@ -223,7 +223,7 @@
 				{/each}
 
 				{#if noMatches}
-					<p class="px-3 py-2 text-sm text-base-content/40">No settings match "{filter}".</p>
+					<p class="px-3 py-2 text-sm text-muted">No settings match "{filter}".</p>
 				{/if}
 			</aside>
 

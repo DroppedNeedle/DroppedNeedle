@@ -53,11 +53,9 @@
 
 <Card as="section" variant="bordered" padding="none" aria-label="Find the exact Discogs release">
 	<div class="border-b border-base-content/10 px-5 py-4 sm:px-6">
-		<p class="text-xs font-bold uppercase tracking-[0.16em] text-base-content/40">
-			Optional source
-		</p>
+		<p class="text-xs font-bold uppercase tracking-[0.16em] text-muted">Optional source</p>
 		<h2 class="mt-1 text-lg font-bold">Find the exact Discogs release</h2>
-		<p class="mt-1 text-sm text-base-content/55">
+		<p class="mt-1 text-sm text-muted">
 			Use a release URL or ID, or search by artist, title, barcode, label, or catalogue number.
 		</p>
 	</div>
@@ -77,7 +75,7 @@
 						>Discogs release #{selectedReference.external_id}</span
 					>
 					<h3 class="mt-2 font-bold">{selected?.title ?? 'Selected release'}</h3>
-					<p class="text-sm text-base-content/60">
+					<p class="text-sm text-muted">
 						{selected?.artist_name ?? 'Refresh to display current Discogs metadata'}
 						{#if selected?.country}
 							· {selected.country}{/if}
@@ -150,7 +148,7 @@
 			{#if searchMutation.data}
 				<div class="mt-5" aria-live="polite">
 					{#if searchMutation.data.results.length === 0}
-						<p class="rounded-box bg-base-100/55 p-4 text-sm text-base-content/60">
+						<p class="rounded-box bg-base-100/55 p-4 text-sm text-muted">
 							No matching Discogs releases. Try an exact release URL or a broader search.
 						</p>
 					{:else}
@@ -160,14 +158,14 @@
 									<div class="flex flex-wrap items-start justify-between gap-3">
 										<div class="min-w-0">
 											<h3 class="font-bold">{result.title}</h3>
-											<p class="text-sm text-base-content/60">
+											<p class="text-sm text-muted">
 												{result.artist_name || 'Artist not listed'}
 												{#if result.year}
 													· {result.year}{/if}
 												{#if result.country}
 													· {result.country}{/if}
 											</p>
-											<p class="mt-1 text-xs text-base-content/45">
+											<p class="mt-1 text-xs text-muted">
 												{result.label ?? 'Label not listed'}
 												{#if result.catalogue_number}
 													· {result.catalogue_number}{/if}

@@ -56,7 +56,7 @@
 				class="text-xs font-bold px-1 py-0.5 rounded transition-colors hover:text-primary {activeLetter ===
 				letter
 					? 'text-primary'
-					: 'text-base-content/50'}"
+					: 'text-muted'}"
 				onclick={() => scrollToLetter(letter)}
 				aria-label="Jump to {letter}">{letter}</button
 			>
@@ -92,7 +92,7 @@
 								<div class="min-w-0">
 									<p class="text-sm font-medium truncate">{artist.name}</p>
 									{#if artist.album_count != null}
-										<p class="text-xs text-base-content/50">
+										<p class="text-xs text-muted">
 											{artist.album_count} album{artist.album_count !== 1 ? 's' : ''}
 										</p>
 									{/if}

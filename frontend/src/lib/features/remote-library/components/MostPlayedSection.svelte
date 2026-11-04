@@ -30,18 +30,18 @@
 </script>
 
 {#if artists.length === 0 && albums.length === 0}
-	<p class="text-sm text-base-content/50">No listening data yet.</p>
+	<p class="text-sm text-muted">No listening data yet.</p>
 {:else}
 	<div class="grid grid-cols-1 gap-6 md:grid-cols-2">
 		{#if artists.length > 0}
 			<div class="space-y-2">
-				<h3 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">Artists</h3>
+				<h3 class="text-sm font-semibold uppercase tracking-wider text-muted">Artists</h3>
 				<ol class="space-y-1">
 					{#each artists as artist (artist.id)}
 						<li
 							class="flex items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-base-200/50"
 						>
-							<span class="w-5 text-right text-xs font-bold text-base-content/40"
+							<span class="w-5 text-right text-xs font-bold text-muted"
 								>{artists.indexOf(artist) + 1}</span
 							>
 							<div class="h-9 w-9 shrink-0 overflow-hidden rounded-full">
@@ -56,7 +56,7 @@
 							</div>
 							<div class="min-w-0 flex-1">
 								<p class="truncate text-sm font-medium">{artist.name}</p>
-								<p class="text-xs text-base-content/50">
+								<p class="text-xs text-muted">
 									{artist.play_count ?? 0} plays{artist.album_count != null
 										? `, ${artist.album_count} album${artist.album_count !== 1 ? 's' : ''}`
 										: ''}
@@ -70,7 +70,7 @@
 
 		{#if albums.length > 0}
 			<div class="space-y-2">
-				<h3 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">Albums</h3>
+				<h3 class="text-sm font-semibold uppercase tracking-wider text-muted">Albums</h3>
 				<ol class="space-y-1">
 					{#each albums as album (album.id)}
 						<li>
@@ -78,7 +78,7 @@
 								class="flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-base-200/50"
 								onclick={() => onAlbumClick?.(album)}
 							>
-								<span class="w-5 text-right text-xs font-bold text-base-content/40"
+								<span class="w-5 text-right text-xs font-bold text-muted"
 									>{albums.indexOf(album) + 1}</span
 								>
 								<div class="h-9 w-9 shrink-0 overflow-hidden rounded-md">
@@ -93,7 +93,7 @@
 								</div>
 								<div class="min-w-0 flex-1">
 									<p class="truncate text-sm font-medium">{album.name}</p>
-									<p class="truncate text-xs text-base-content/50">
+									<p class="truncate text-xs text-muted">
 										{album.artist_name ?? ''}{album.play_count != null
 											? `, ${album.play_count} plays`
 											: ''}

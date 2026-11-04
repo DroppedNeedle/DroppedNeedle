@@ -47,7 +47,7 @@
 			class="rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-200
 				{noneSelected()
 				? 'border-primary/40 bg-primary/15 text-primary shadow-sm shadow-primary/10'
-				: 'border-base-content/10 bg-base-100/50 text-base-content/60 hover:border-base-content/20 hover:bg-base-100/80 hover:text-base-content'}"
+				: 'border-base-content/10 bg-base-100/50 text-muted hover:border-base-content/20 hover:bg-base-100/80 hover:text-base-content'}"
 			disabled={loading}
 			aria-pressed={noneSelected()}
 			onclick={() => onselect(undefined)}
@@ -60,7 +60,7 @@
 			class="rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-200
 				{isActive(genre)
 				? 'border-primary/40 bg-primary/15 text-primary shadow-sm shadow-primary/10'
-				: 'border-base-content/10 bg-base-100/50 text-base-content/60 hover:border-base-content/20 hover:bg-base-100/80 hover:text-base-content'}"
+				: 'border-base-content/10 bg-base-100/50 text-muted hover:border-base-content/20 hover:bg-base-100/80 hover:text-base-content'}"
 			disabled={loading}
 			aria-pressed={isActive(genre)}
 			onclick={() => onselect(genre)}
@@ -70,7 +70,7 @@
 	{/each}
 	{#if hasOverflow && !expanded}
 		<button
-			class="rounded-full border border-base-content/10 bg-base-100/50 px-3.5 py-1.5 text-xs font-medium text-base-content/60 hover:border-base-content/20 hover:bg-base-100/80 hover:text-base-content transition-all duration-200"
+			class="rounded-full border border-base-content/10 bg-base-100/50 px-3.5 py-1.5 text-xs font-medium text-muted hover:border-base-content/20 hover:bg-base-100/80 hover:text-base-content transition-all duration-200"
 			onclick={() => (expanded = true)}
 		>
 			+{genres.length - maxVisible} more

@@ -117,7 +117,7 @@
 						>
 					{/each}
 				</div>
-				<p class="text-xs text-base-content/60">
+				<p class="text-xs text-muted">
 					{formatMode === 'without'
 						? 'Hides the marked formats.'
 						: 'Shows only the marked formats.'}

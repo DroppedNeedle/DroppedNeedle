@@ -104,11 +104,11 @@
 				<CirclePause class="h-5 w-5" />
 			</div>
 			<div class="min-w-0 flex-1">
-				<p class="text-[0.66rem] font-extrabold tracking-[0.12em] text-base-content/55 uppercase">
+				<p class="text-[0.66rem] font-extrabold tracking-[0.12em] text-muted uppercase">
 					Left unmanaged
 				</p>
 				<h3 class="hero-title text-lg font-bold">{holdCopy.heading}</h3>
-				{#if holdCopy.body}<p class="text-xs text-base-content/60">{holdCopy.body}</p>{/if}
+				{#if holdCopy.body}<p class="text-xs text-muted">{holdCopy.body}</p>{/if}
 				{#if handBackStopped}<p class="mt-1 text-xs text-warning" role="status">
 						Handing it back stopped: the files couldn't be read.
 					</p>{/if}
@@ -134,7 +134,7 @@
 							onclick={() => handBack.mutateAsync({ albumId: album.id }).catch(() => undefined)}
 							>{hold.handing_back ? 'Being handed back' : 'Manage it again'}</AsyncButton
 						>
-						<p class="max-w-xl flex-1 text-xs text-base-content/60">{handBackNote}</p>
+						<p class="max-w-xl flex-1 text-xs text-muted">{handBackNote}</p>
 					{/if}
 				</div>
 				{#if handBackRefusal}<div class="mt-2 text-sm text-warning" role="status">

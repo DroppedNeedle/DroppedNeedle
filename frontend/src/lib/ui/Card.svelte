@@ -46,14 +46,14 @@
 	const titleId = $props.id();
 
 	const variants = {
-		flat: 'card bg-base-200',
-		bordered: 'card border border-base-300 bg-base-200',
-		raised: 'card bg-base-100 shadow-sm'
+		flat: 'card border border-base-300 bg-base-200',
+		bordered: 'card border border-line bg-base-200',
+		raised: 'card border border-line bg-base-200'
 	};
 	const linkHover = {
-		flat: 'transition-colors hover:bg-base-300',
-		bordered: 'transition-colors hover:border-primary/40',
-		raised: 'transition hover:shadow-md motion-safe:hover:-translate-y-0.5'
+		flat: 'transition-colors duration-150 hover:bg-neutral',
+		bordered: 'transition-colors duration-150 hover:border-edge hover:bg-neutral',
+		raised: 'transition duration-150 hover:bg-neutral motion-safe:hover:-translate-y-px'
 	};
 	const paddings = {
 		none: 'card-body p-0',
@@ -66,7 +66,7 @@
 		[
 			variants[variant],
 			href !== undefined ? linkHover[variant] : '',
-			href !== undefined ? 'focus-visible:outline-2 focus-visible:outline-primary' : '',
+			href !== undefined ? 'focus-visible:outline-2 focus-visible:outline-focus' : '',
 			className
 		]
 			.filter(Boolean)

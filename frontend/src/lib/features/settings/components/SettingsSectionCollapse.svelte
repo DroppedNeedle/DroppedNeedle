@@ -50,7 +50,7 @@
 			</div>
 			<div>
 				<h3 class="font-semibold text-base">{title}</h3>
-				<p class="text-xs text-base-content/50">{description}</p>
+				<p class="text-xs text-muted">{description}</p>
 			</div>
 		</div>
 	</div>

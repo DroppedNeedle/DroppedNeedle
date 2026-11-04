@@ -88,7 +88,7 @@
 		></span>
 	{/if}
 	<span
-		class="relative z-10 grid h-8 w-8 shrink-0 place-items-center rounded-full border border-base-content/10 bg-base-200 text-base-content/70"
+		class="relative z-10 grid h-8 w-8 shrink-0 place-items-center rounded-full border border-base-content/10 bg-base-200 text-muted"
 		aria-hidden="true"
 	>
 		{#if busy}
@@ -118,14 +118,14 @@
 		<li class="relative grid grid-cols-[2rem_minmax(0,1fr)] gap-x-3">
 			{@render stepIcon(FolderInput, Boolean(placing), true)}
 			<div class="flex min-w-0 flex-col gap-1 pb-5">
-				<h4 class="text-xs font-semibold tracking-wide text-base-content/60 uppercase">Files</h4>
+				<h4 class="text-xs font-semibold tracking-wide text-muted uppercase">Files</h4>
 				<span id="edition-files-sentence">{files}</span>
 			</div>
 		</li>
 		<li class="relative grid grid-cols-[2rem_minmax(0,1fr)] gap-x-3">
 			{@render stepIcon(Tags, tags === 'writing', showTracks)}
 			<div class="flex min-w-0 flex-col gap-1 {showTracks ? 'pb-5' : ''}">
-				<h4 class="text-xs font-semibold tracking-wide text-base-content/60 uppercase">Tags</h4>
+				<h4 class="text-xs font-semibold tracking-wide text-muted uppercase">Tags</h4>
 				{#if tags === 'manual' && choice.retag_files.length}
 					<!-- A new choice starts its own preview. -->
 					{#key choice}
@@ -155,7 +155,7 @@
 			<li class="relative grid grid-cols-[2rem_minmax(0,1fr)] gap-x-3">
 				{@render stepIcon(Download, Boolean(tracks?.pending), false)}
 				<div class="flex min-w-0 flex-col gap-1">
-					<h4 class="text-xs font-semibold tracking-wide text-base-content/60 uppercase">Tracks</h4>
+					<h4 class="text-xs font-semibold tracking-wide text-muted uppercase">Tracks</h4>
 					<EditionTracks
 						{group}
 						localId={album.localId}

@@ -254,9 +254,7 @@
 							Scan complete ({totalTracks.toLocaleString()} files), matching {drainPending.toLocaleString()}
 							{drainPending === 1 ? 'album' : 'albums'}
 						</h2>
-						<p class="mt-1 text-sm text-base-content/60">
-							MusicBrainz 1/s limit, playback unaffected.
-						</p>
+						<p class="mt-1 text-sm text-muted">MusicBrainz 1/s limit, playback unaffected.</p>
 					</div>
 					<Button
 						variant="ghost"
@@ -281,7 +279,7 @@
 							Current work
 						</p>
 						<h2 class="font-display mt-1 text-2xl font-bold">Nothing is running right now</h2>
-						<p class="mt-1 text-sm text-base-content/60">
+						<p class="mt-1 text-sm text-muted">
 							Start a scan or preview file organization below - anything in progress will show up
 							here.
 						</p>
@@ -302,13 +300,13 @@
 							{primary.effect === 'attention' ? 'Needs attention' : 'Current work'}
 						</p>
 						<h2 class="font-display mt-1 text-2xl font-bold">{libraryWorkTitle(primary)}</h2>
-						<div class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-base-content/60">
+						<div class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted">
 							{#if primary.effect !== 'attention'}<span>{libraryWorkEffect(primary)}</span>{/if}
 							<span class="flex items-center gap-1"
 								><Clock3 class="h-3.5 w-3.5" /> {timing(primary)}</span
 							>
 							{#if libraryWorkContext(primary)}<span>{libraryWorkContext(primary)}</span>{/if}
-							{#if scanActive && isQueuedPreview(primary)}<span class="text-base-content/55"
+							{#if scanActive && isQueuedPreview(primary)}<span class="text-muted"
 									>{WAITING_FOR_SCAN_HINT}</span
 								>{/if}
 						</div>
@@ -331,8 +329,8 @@
 								class="flex items-center gap-1.5 text-xs font-medium {step.state === 'current'
 									? 'text-base-content'
 									: step.state === 'complete'
-										? 'text-base-content/55'
-										: 'text-base-content/40'}"
+										? 'text-muted'
+										: 'text-muted'}"
 							>
 								<span
 									class="h-1.5 w-1.5 rounded-full {step.state === 'current'
@@ -349,7 +347,7 @@
 				{#if facts.length}
 					<div class="flex flex-wrap gap-1.5" aria-label="Current work details">
 						{#each facts as fact (fact)}<span
-								class="rounded-full border border-base-content/10 bg-base-100/60 px-2.5 py-1 text-xs text-base-content/70"
+								class="rounded-full border border-base-content/10 bg-base-100/60 px-2.5 py-1 text-xs text-muted"
 								>{fact}</span
 							>{/each}
 					</div>
@@ -357,7 +355,7 @@
 
 				{#if additional.length}
 					<div class="space-y-1.5 border-t border-base-content/10 pt-3">
-						<p class="text-xs font-semibold tracking-widest text-base-content/50 uppercase">
+						<p class="text-xs font-semibold tracking-widest text-muted uppercase">
 							{additional.length} other {additional.length === 1 ? 'task' : 'tasks'}
 						</p>
 						{#each additional as item (item.id)}
@@ -365,15 +363,15 @@
 								href={libraryWorkHref(item)}
 								class="flex items-center gap-2.5 rounded-xl px-2 py-1.5 text-sm transition-colors hover:bg-base-100/70"
 							>
-								<LibraryWorkIcon {item} className="h-4 w-4 text-base-content/60" />
+								<LibraryWorkIcon {item} className="h-4 w-4 text-muted" />
 								<span class="min-w-0 flex-1"
 									><strong class="font-semibold">{libraryWorkTitle(item)}</strong>
-									<span class="text-base-content/50">· {libraryWorkEffect(item)}</span>
-									{#if scanActive && isQueuedPreview(item)}<span
-											class="block text-xs text-base-content/55">{WAITING_FOR_SCAN_HINT}</span
+									<span class="text-muted">· {libraryWorkEffect(item)}</span>
+									{#if scanActive && isQueuedPreview(item)}<span class="block text-xs text-muted"
+											>{WAITING_FOR_SCAN_HINT}</span
 										>{/if}</span
 								>
-								<ArrowRight class="h-4 w-4 text-base-content/40" />
+								<ArrowRight class="h-4 w-4 text-muted" />
 							</a>
 						{/each}
 					</div>
@@ -390,8 +388,7 @@
 			<strong class="font-display mt-3 block text-2xl font-bold tabular-nums"
 				>{totalTracks.toLocaleString()}</strong
 			>
-			<span
-				class="mt-1 block text-xs font-semibold tracking-[0.15em] text-base-content/55 uppercase"
+			<span class="mt-1 block text-xs font-semibold tracking-[0.15em] text-muted uppercase"
 				>Tracks</span
 			>
 		</Card>
@@ -400,8 +397,7 @@
 			variant="bordered"
 			padding="md"
 		>
-			<span
-				class="flex h-9 w-9 items-center justify-center rounded-xl bg-base-content/5 text-base-content/60"
+			<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-base-content/5 text-muted"
 				><History class="h-4 w-4" /></span
 			>
 			<strong class="font-display mt-3 block text-2xl font-bold tabular-nums"
@@ -409,8 +405,7 @@
 					? new Date(latestTerminalRun.terminal_at * 1000).toLocaleDateString()
 					: 'Never'}</strong
 			>
-			<span
-				class="mt-1 block text-xs font-semibold tracking-[0.15em] text-base-content/55 uppercase"
+			<span class="mt-1 block text-xs font-semibold tracking-[0.15em] text-muted uppercase"
 				>Last scan{latestTerminalRun ? ` · ${stateLabel(latestTerminalRun.state)}` : ''}</span
 			>
 		</Card>
@@ -421,11 +416,10 @@
 			<strong class="font-display mt-3 block text-2xl font-bold tabular-nums"
 				>{reviewCount.toLocaleString()}</strong
 			>
-			<span
-				class="mt-1 block text-xs font-semibold tracking-[0.15em] text-base-content/55 uppercase"
+			<span class="mt-1 block text-xs font-semibold tracking-[0.15em] text-muted uppercase"
 				>Needs you</span
 			>
-			<span class="mt-0.5 block text-xs text-base-content/45"
+			<span class="mt-0.5 block text-xs text-muted"
 				>{guessCount.toLocaleString()} best {guessCount === 1 ? 'guess' : 'guesses'} · {localOnlyCount.toLocaleString()}
 				local-only</span
 			>
@@ -438,8 +432,7 @@
 				<strong class="font-display mt-3 block text-2xl font-bold text-warning tabular-nums"
 					>{attentionCount.toLocaleString()}</strong
 				>
-				<span
-					class="mt-1 block text-xs font-semibold tracking-[0.15em] text-base-content/55 uppercase"
+				<span class="mt-1 block text-xs font-semibold tracking-[0.15em] text-muted uppercase"
 					>Needs attention</span
 				>
 			</Card>
@@ -451,8 +444,7 @@
 				<strong class="font-display mt-3 block text-2xl font-bold tabular-nums"
 					>{readyPreviewCount.toLocaleString()}</strong
 				>
-				<span
-					class="mt-1 block text-xs font-semibold tracking-[0.15em] text-base-content/55 uppercase"
+				<span class="mt-1 block text-xs font-semibold tracking-[0.15em] text-muted uppercase"
 					>Ready previews</span
 				>
 			</Card>
@@ -471,7 +463,7 @@
 				>
 				<h3 class="font-display text-lg font-bold">Scan your library</h3>
 			</div>
-			<p class="text-sm text-base-content/60">
+			<p class="text-sm text-muted">
 				Checks for new, changed, and missing files and updates the catalog. Never writes to your
 				music files.
 			</p>
@@ -483,7 +475,7 @@
 					disabled={requestRun.isPending || !policyRevision || !libraryEnabled}
 					onclick={startScan}>Scan for changes</Button
 				>
-				<div class="flex items-center justify-between gap-2 text-xs text-base-content/55">
+				<div class="flex items-center justify-between gap-2 text-xs text-muted">
 					<span>{scheduleText}</span>
 					<a
 						class="link-hover font-semibold text-primary"
@@ -503,7 +495,7 @@
 				>
 				<h3 class="font-display text-lg font-bold">Organize files</h3>
 			</div>
-			<p class="text-sm text-base-content/60">
+			<p class="text-sm text-muted">
 				Preview exactly what would change to tags, names, and paths before anything is written.
 			</p>
 			<div class="mt-auto flex flex-col gap-2">
@@ -513,7 +505,7 @@
 					href={withBasePath('/library/management?tab=organize&runner=manage')}
 					>Preview organization...</Button
 				>
-				<div class="flex items-center justify-end gap-2 text-xs text-base-content/55">
+				<div class="flex items-center justify-end gap-2 text-xs text-muted">
 					<a
 						class="link-hover font-semibold text-warning"
 						href={withBasePath('/library/management?tab=automation')}>Automation & profiles →</a
@@ -532,7 +524,7 @@
 				>
 				<h3 class="font-display text-lg font-bold">Prepare identities</h3>
 			</div>
-			<p class="text-sm text-base-content/60">
+			<p class="text-sm text-muted">
 				Organization needs exact MusicBrainz editions and track maps first.{#if identityShortfall}
 					<strong class="text-base-content"
 						>{identityShortfall.toLocaleString()} albums need preparation.</strong

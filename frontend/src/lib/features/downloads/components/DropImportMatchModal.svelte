@@ -87,20 +87,20 @@
 				/>
 				<div class="min-w-0">
 					<p class="truncate text-sm font-medium">{album.title}</p>
-					<p class="truncate text-xs text-base-content/55">
+					<p class="truncate text-xs text-muted">
 						{album.artist || 'Unknown artist'}{album.year ? ` · ${album.year}` : ''}
 					</p>
 				</div>
 			</button>
 		{:else}
 			{#if searchTerm.trim().length >= 2 && !searchQuery.isFetching}
-				<p class="p-2 text-sm text-base-content/50">No albums found - try another search.</p>
+				<p class="p-2 text-sm text-muted">No albums found - try another search.</p>
 			{/if}
 		{/each}
 	</div>
 
 	{#if match.isPending}
-		<p class="mt-3 text-sm text-base-content/60">
+		<p class="mt-3 text-sm text-muted">
 			<span class="loading loading-spinner loading-xs"></span>
 			Importing your files…
 		</p>

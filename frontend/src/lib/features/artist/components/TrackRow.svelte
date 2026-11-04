@@ -38,7 +38,7 @@
 				class="w-6 shrink-0 flex items-center justify-center cursor-pointer"
 				aria-label="Play {song.title}"
 			>
-				<span class="group-hover:hidden text-sm text-base-content/50">{position}</span>
+				<span class="group-hover:hidden text-sm text-muted">{position}</span>
 				<span class="hidden group-hover:block text-primary">
 					<Play class="w-4 h-4 mx-auto fill-current" />
 				</span>
@@ -62,7 +62,7 @@
 				href={albumHref(song.release_group_mbid ?? '')}
 				class="w-6 shrink-0 flex items-center justify-center"
 			>
-				<span class="group-hover:hidden text-sm text-base-content/50">{position}</span>
+				<span class="group-hover:hidden text-sm text-muted">{position}</span>
 				<span class="hidden group-hover:block">
 					<Play class="w-4 h-4 mx-auto fill-current" />
 				</span>
@@ -85,7 +85,7 @@
 
 			<div class="flex-1 min-w-0 grid grid-cols-2 items-center gap-4">
 				<p class="font-medium text-sm truncate min-w-0">{song.title}</p>
-				<p class="text-xs text-base-content/60 truncate min-w-0 text-right">
+				<p class="text-xs text-muted truncate min-w-0 text-right">
 					{song.release_name || ''}
 				</p>
 			</div>
@@ -103,7 +103,7 @@
 				class="w-6 shrink-0 flex items-center justify-center cursor-pointer"
 				aria-label="Play {song.title}"
 			>
-				<span class="group-hover:hidden text-sm text-base-content/50">{position}</span>
+				<span class="group-hover:hidden text-sm text-muted">{position}</span>
 				<span class="hidden group-hover:block text-primary">
 					<Play class="w-4 h-4 mx-auto fill-current" />
 				</span>
@@ -123,7 +123,7 @@
 				</span>
 			</span>
 		{:else}
-			<span class="w-6 text-center text-sm text-base-content/50">{position}</span>
+			<span class="w-6 text-center text-sm text-muted">{position}</span>
 		{/if}
 
 		<div class="relative w-12 h-12 shrink-0 overflow-hidden rounded">
@@ -132,7 +132,7 @@
 
 		<div class="flex-1 min-w-0 grid grid-cols-2 items-center gap-4">
 			<p class="font-medium text-sm truncate min-w-0">{song.title}</p>
-			<p class="text-xs text-base-content/40 truncate min-w-0 text-right italic"></p>
+			<p class="text-xs text-muted truncate min-w-0 text-right italic"></p>
 		</div>
 	</div>
 {/if}

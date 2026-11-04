@@ -34,7 +34,7 @@
 </script>
 
 <Card title="YouTube">
-	<p class="text-base-content/70 mb-4">
+	<p class="text-muted mb-4">
 		Enable YouTube features across the app: manage album links, search YouTube, and optionally
 		enable the API for automatic link generation.
 	</p>
@@ -55,7 +55,7 @@
 						<h3 class="text-lg font-semibold">YouTube API</h3>
 						<div class="badge badge-sm badge-ghost">Optional</div>
 					</div>
-					<p class="text-xs text-base-content/50 -mt-2">
+					<p class="text-xs text-muted -mt-2">
 						Enable automatic link generation using the YouTube Data API. Get a free key from the
 						<a
 							href="https://console.cloud.google.com/apis/library/youtube.googleapis.com"

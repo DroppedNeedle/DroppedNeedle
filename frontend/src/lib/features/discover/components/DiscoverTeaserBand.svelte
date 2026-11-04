@@ -66,7 +66,7 @@
 				Picked for you
 			</p>
 			<h3 class="mt-0.5 text-base font-bold sm:text-lg">{headline}</h3>
-			<p class="mt-0.5 text-xs text-base-content/50">
+			<p class="mt-0.5 text-xs text-muted">
 				Sample albums, spin a station, and grab what you love.
 			</p>
 		</div>

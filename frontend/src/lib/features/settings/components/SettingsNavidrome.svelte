@@ -77,7 +77,7 @@
 </script>
 
 <Card title="Navidrome Connection">
-	<p class="text-base-content/70 mb-4">
+	<p class="text-muted mb-4">
 		Connect your Navidrome server for music streaming, recently played tracks, and favorites.
 	</p>
 
@@ -120,7 +120,7 @@
 
 				<div>
 					<h3 class="font-medium">Playlist Sync</h3>
-					<p class="text-xs text-base-content/50 mt-1 whitespace-normal">
+					<p class="text-xs text-muted mt-1 whitespace-normal">
 						Sync DroppedNeedle playlists to Navidrome - DroppedNeedle writes an
 						<code>.m3u8</code> file per playlist into a folder Navidrome scans, and refreshes them in
 						the background as playlists change.

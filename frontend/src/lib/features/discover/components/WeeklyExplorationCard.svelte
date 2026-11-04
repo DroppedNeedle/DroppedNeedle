@@ -93,25 +93,25 @@
 			{#if artistHref}
 				<a
 					href={artistHref}
-					class="text-xs text-base-content/60 line-clamp-1 hover:text-primary transition-colors"
+					class="text-xs text-muted line-clamp-1 hover:text-primary transition-colors"
 				>
 					{track.artist_name}
 				</a>
 			{:else}
-				<p class="text-xs text-base-content/60 line-clamp-1">{track.artist_name}</p>
+				<p class="text-xs text-muted line-clamp-1">{track.artist_name}</p>
 			{/if}
 			{#if track.album_name}
 				{#if albumHref}
 					<a
 						href={albumHref}
-						class="text-[11px] text-base-content/40 line-clamp-1 flex items-center gap-1
+						class="text-[11px] text-muted line-clamp-1 flex items-center gap-1
 						hover:text-primary transition-colors"
 					>
 						<Music2 class="h-2.5 w-2.5 shrink-0" />
 						{track.album_name}
 					</a>
 				{:else}
-					<p class="text-[11px] text-base-content/40 line-clamp-1 flex items-center gap-1">
+					<p class="text-[11px] text-muted line-clamp-1 flex items-center gap-1">
 						<Music2 class="h-2.5 w-2.5 shrink-0" />
 						{track.album_name}
 					</p>

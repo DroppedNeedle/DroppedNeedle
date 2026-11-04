@@ -187,7 +187,7 @@
 	<div>
 		{#if showPicker}
 			<Card variant="bordered" padding="md">
-				<p class="text-sm text-base-content/60">
+				<p class="text-sm text-muted">
 					Pick a playlist to get album suggestions based on its contents.
 				</p>
 
@@ -198,7 +198,7 @@
 								{#if playlistsLoading}
 									<div class="flex items-center gap-2 py-2">
 										<span class="loading loading-spinner loading-sm text-primary"></span>
-										<span class="text-sm text-base-content/60">Loading playlists…</span>
+										<span class="text-sm text-muted">Loading playlists…</span>
 									</div>
 								{:else if playlistListQuery.isError}
 									<span class="text-sm text-error/70 py-2">
@@ -207,7 +207,7 @@
 											: 'Failed to load playlists'}
 									</span>
 								{:else if playlists.length === 0}
-									<span class="text-sm text-base-content/50 py-2">
+									<span class="text-sm text-muted py-2">
 										No playlists found. Create one first.
 									</span>
 								{:else}
@@ -253,7 +253,7 @@
 			<div aria-live="polite">
 				{#if !showPicker}
 					<div class="flex items-center gap-2 mb-4 mt-4">
-						<label class="text-sm text-base-content/60" for="count-select-inline">Results:</label>
+						<label class="text-sm text-muted" for="count-select-inline">Results:</label>
 						<select
 							id="count-select-inline"
 							class="select select-sm w-20"
@@ -298,16 +298,14 @@
 					<div class="flex flex-col items-center justify-center py-12 px-8">
 						{#if errorStatus === 422}
 							<ListMusic class="h-10 w-10 text-warning mb-3" />
-							<p class="text-center text-base-content/70 max-w-md">
+							<p class="text-center text-muted max-w-md">
 								This playlist doesn't have enough artist data for discovery. Add more tracks with
 								known artists and try again.
 							</p>
 						{:else if errorStatus === 404}
-							<p class="text-center text-base-content/70">Playlist not found.</p>
+							<p class="text-center text-muted">Playlist not found.</p>
 						{:else}
-							<p class="text-center text-base-content/70 mb-4">
-								Couldn't load suggestions. Try again.
-							</p>
+							<p class="text-center text-muted mb-4">Couldn't load suggestions. Try again.</p>
 						{/if}
 						<Button
 							variant="primary"
@@ -321,13 +319,13 @@
 					</div>
 				{:else if allIgnored}
 					<div class="flex flex-col items-center justify-center py-12 px-8">
-						<p class="text-center text-base-content/60">
+						<p class="text-center text-muted">
 							No more suggestions left. Add more tracks or more varied artists for better results.
 						</p>
 					</div>
 				{:else if suggestions && visibleAlbums.length === 0}
 					<div class="flex flex-col items-center justify-center py-12 px-8">
-						<p class="text-center text-base-content/60">
+						<p class="text-center text-muted">
 							{suggestions.fallback_message ??
 								'No suggestions yet - try adding more songs or more varied artists to generate recommendations.'}
 						</p>
@@ -340,11 +338,11 @@
 							class="mb-5 bg-gradient-to-r from-primary/10 via-base-200/60 to-secondary/10"
 						>
 							<div class="flex flex-wrap items-center gap-4 text-sm">
-								<span class="inline-flex items-center gap-1.5 text-base-content/70">
+								<span class="inline-flex items-center gap-1.5 text-muted">
 									<Music2 class="h-3.5 w-3.5" />
 									{profile.track_count ?? 0} track{(profile.track_count ?? 0) === 1 ? '' : 's'}
 								</span>
-								<span class="inline-flex items-center gap-1.5 text-base-content/70">
+								<span class="inline-flex items-center gap-1.5 text-muted">
 									<Users class="h-3.5 w-3.5" />
 									{(profile.artist_mbids ?? []).length} artist{(profile.artist_mbids ?? [])
 										.length === 1
@@ -352,7 +350,7 @@
 										: 's'}
 								</span>
 								{#if topGenres.length > 0}
-									<span class="inline-flex items-center gap-1.5 text-base-content/70">
+									<span class="inline-flex items-center gap-1.5 text-muted">
 										<Tags class="h-3.5 w-3.5 shrink-0" />
 									</span>
 									<div class="flex flex-wrap gap-1">
@@ -396,11 +394,11 @@
 														<tbody>
 															{#each expandedTracks as track (track.position)}
 																<tr class="hover:bg-base-200/50">
-																	<td class="opacity-70 w-6 text-right pr-2 text-base-content/40"
+																	<td class="opacity-70 w-6 text-right pr-2 text-muted"
 																		>{track.position}</td
 																	>
 																	<td class="truncate max-w-0">{track.title}</td>
-																	<td class="text-base-content/40 text-right w-12 shrink-0"
+																	<td class="text-muted text-right w-12 shrink-0"
 																		>{formatDuration(track.length)}</td
 																	>
 																	<td class="w-8 px-0">
@@ -421,7 +419,7 @@
 													</table>
 												</div>
 											{:else}
-												<p class="text-xs text-base-content/50 py-2">No track listing available.</p>
+												<p class="text-xs text-muted py-2">No track listing available.</p>
 											{/if}
 										</Card>
 									{/if}

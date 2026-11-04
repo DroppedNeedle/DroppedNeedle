@@ -133,7 +133,7 @@
 						{genreName || 'Genre'}
 					</h1>
 					{#if genreData}
-						<p class="text-base-content/50 mt-2 text-sm sm:text-base">
+						<p class="text-muted mt-2 text-sm sm:text-base">
 							{#if hasLibraryContent}
 								{genreData.library?.artist_count ?? 0} artists · {genreData.library?.album_count ??
 									0} albums in your library
@@ -251,8 +251,8 @@
 			/>
 		{:else if error}
 			<div class="flex flex-col items-center justify-center py-24">
-				<CircleAlert class="h-12 w-12 text-base-content/40 mb-4" strokeWidth={1.5} />
-				<p class="text-base-content/70 text-lg">{error}</p>
+				<CircleAlert class="h-12 w-12 text-muted mb-4" strokeWidth={1.5} />
+				<p class="text-muted text-lg">{error}</p>
 			</div>
 		{:else if genreData}
 			{#if hasLibraryContent}
@@ -265,7 +265,7 @@
 						</div>
 						<div>
 							<h2 class="text-2xl font-bold">From Your Library</h2>
-							<p class="text-sm text-base-content/50">
+							<p class="text-sm text-muted">
 								{genreData.library?.artist_count ?? 0} artists · {genreData.library?.album_count ??
 									0} albums
 							</p>
@@ -273,7 +273,7 @@
 					</div>
 
 					{#if (genreData.library?.artists?.length ?? 0) > 0}
-						<h3 class="text-lg font-semibold mb-4 text-base-content/70">Artists</h3>
+						<h3 class="text-lg font-semibold mb-4 text-muted">Artists</h3>
 						<div
 							class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 mb-8"
 						>
@@ -289,7 +289,7 @@
 					{/if}
 
 					{#if (genreData.library?.albums?.length ?? 0) > 0}
-						<h3 class="text-lg font-semibold mb-4 text-base-content/70">Albums</h3>
+						<h3 class="text-lg font-semibold mb-4 text-muted">Albums</h3>
 						<div
 							class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 						>
@@ -316,14 +316,14 @@
 					</div>
 					<div>
 						<h2 class="text-2xl font-bold">Popular Artists</h2>
-						<p class="text-sm text-base-content/50">Top {genreName} artists</p>
+						<p class="text-sm text-muted">Top {genreName} artists</p>
 					</div>
 				</div>
 
 				{#if popularArtists.length === 0}
 					<div class="flex flex-col items-center justify-center py-16">
 						<Mic class="h-10 w-10 text-base-content/30 mb-4" strokeWidth={1.5} />
-						<p class="text-base-content/50">No artists found for this genre</p>
+						<p class="text-muted">No artists found for this genre</p>
 					</div>
 				{:else}
 					<div
@@ -358,14 +358,14 @@
 					</div>
 					<div>
 						<h2 class="text-2xl font-bold">Popular Albums</h2>
-						<p class="text-sm text-base-content/50">Top {genreName} albums</p>
+						<p class="text-sm text-muted">Top {genreName} albums</p>
 					</div>
 				</div>
 
 				{#if popularAlbums.length === 0}
 					<div class="flex flex-col items-center justify-center py-16">
 						<Disc3 class="h-10 w-10 text-base-content/30 mb-4" strokeWidth={1.5} />
-						<p class="text-base-content/50">No albums found for this genre</p>
+						<p class="text-muted">No albums found for this genre</p>
 					</div>
 				{:else}
 					<div

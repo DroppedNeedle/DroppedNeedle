@@ -1,4 +1,7 @@
-/* daisyUI themes, shared by app.css and auth.css so every page switches together */
+/* daisyUI themes, shared by app.css and auth.css so every page switches together.
+   Dark is acid ink on black stock, light forest ink on warm paper. Every text
+   pair here was measured against WCAG AA on the page, surface and subtle
+   surface it sits on. */
 @plugin "daisyui" {
 	themes:
 		dark --default,
@@ -7,42 +10,132 @@
 @plugin "daisyui/theme" {
 	name: 'dark';
 	default: true;
-	--color-base-300: #1f271b;
-	--color-base-200: #161d12;
-	--color-base-100: #0d120a;
-	--color-primary: #aed5f2;
-	--color-primary-content: #071520;
-	--color-accent: #bbdb9b;
-	--color-accent-content: #0f1a0a;
+	color-scheme: dark;
+	--color-base-100: #090e0b;
+	--color-base-200: #121913;
+	--color-base-300: #192219;
+	--color-base-content: #f3f5ef;
+	--color-primary: #b8ef64;
+	--color-primary-content: #121a12;
+	/* a restrained non-green role, rarely used */
+	--color-secondary: #d7b8f0;
+	--color-secondary-content: #121a12;
+	--color-accent: #c6f38c;
+	--color-accent-content: #121a12;
+	/* the raised surface: a step above base-200 */
+	--color-neutral: #263128;
+	--color-neutral-content: #f3f5ef;
+	--color-info: #b6ddf5;
+	--color-info-content: #121a12;
+	/* teal, apart from the brand acid */
+	--color-success: #5fd3a8;
+	--color-success-content: #121a12;
+	--color-warning: #f4bc65;
+	--color-warning-content: #121a12;
+	--color-error: #ff837a;
+	--color-error-content: #121a12;
+	--radius-selector: 0.5rem;
+	--radius-field: 0.5rem;
+	--radius-box: 0.75rem;
+	--size-selector: 0.25rem;
+	--size-field: 0.25rem;
+	--border: 1px;
+	--depth: 0;
+	--noise: 0;
 }
-/* Same hues as dark, darkened until text on base-100 passes WCAG AA. Every
-   role is set, including the status colours: daisyUI's stock values are
-   tuned for dark surfaces and fail as text here. */
 @plugin "daisyui/theme" {
 	name: 'light';
-	--color-base-300: #e0e6d9;
-	--color-base-200: #edf1e8;
-	--color-base-100: #f6f8f3;
-	--color-base-content: #1c2418;
-	--color-primary: #35698d;
-	--color-primary-content: #f4f9fd;
-	--color-secondary: #c22879;
-	--color-secondary-content: #f6f8f3;
-	--color-accent: #586f40;
-	--color-accent-content: #f3f8ee;
-	/* dark's neutral sits a shade below the page (active menu items, count
-	   badges); light keeps that role instead of daisyUI's near-black */
-	--color-neutral: #d3dbca;
-	--color-neutral-content: #1c2418;
-	--color-info: #00759f;
-	--color-info-content: #f6f8f3;
-	--color-success: #0f7c55;
-	--color-success-content: #f6f8f3;
-	--color-warning: #976200;
-	--color-warning-content: #f6f8f3;
-	--color-error: #c12440;
-	--color-error-content: #f6f8f3;
+	color-scheme: light;
+	--color-base-100: #f6f3e8;
+	--color-base-200: #fffdf5;
+	--color-base-300: #eeefe2;
+	--color-base-content: #0e2e1d;
+	/* forest, not acid: primary is text in many places and acid on paper is 1.2:1 */
+	--color-primary: #1e6a38;
+	--color-primary-content: #fffdf5;
+	--color-secondary: #6a3d8f;
+	--color-secondary-content: #fffdf5;
+	--color-accent: #175a2d;
+	--color-accent-content: #fffdf5;
+	/* a step below paper */
+	--color-neutral: #e7eddf;
+	--color-neutral-content: #0e2e1d;
+	--color-info: #175a84;
+	--color-info-content: #fffdf5;
+	--color-success: #08695c;
+	--color-success-content: #fffdf5;
+	--color-warning: #855000;
+	--color-warning-content: #fffdf5;
+	--color-error: #a32628;
+	--color-error-content: #fffdf5;
+	--radius-selector: 0.5rem;
+	--radius-field: 0.5rem;
+	--radius-box: 0.75rem;
+	--size-selector: 0.25rem;
+	--size-field: 0.25rem;
+	--border: 1px;
+	--depth: 0;
+	--noise: 0;
 }
+
+/* Colours daisyUI has no slot for, as Tailwind colours (text-muted, bg-action,
+   border-edge, ...). Here rather than in app.css so the sign-in pages, which
+   load auth.css alone, have them too. */
+@theme inline {
+	--color-muted: var(--dn-muted);
+	--color-title: var(--dn-title);
+	--color-action: var(--dn-action);
+	--color-action-content: var(--dn-action-content);
+	--color-action-edge: var(--dn-action-edge);
+	--color-paper: var(--dn-paper);
+	--color-paper-content: var(--dn-paper-content);
+	--color-paper-border: var(--dn-paper-border);
+	--color-focus: var(--dn-focus);
+	--color-edge: var(--dn-edge);
+	--color-line: var(--dn-line);
+	--color-selected: var(--dn-selected);
+}
+
+:root,
+[data-theme='dark'] {
+	/* secondary text: 11.2 on the page, 7.8 on the raised surface */
+	--dn-muted: #bac9b8;
+	/* display headings */
+	--dn-title: #b8ef64;
+	/* the one main action: acid fill, dark ink, edge in the fill */
+	--dn-action: #b8ef64;
+	--dn-action-content: #121a12;
+	--dn-action-edge: #b8ef64;
+	/* the light island (the album track list, Home's Your Music card) */
+	--dn-paper: #f6f3e8;
+	--dn-paper-content: #142016;
+	--dn-paper-border: #c9d1c4;
+	--dn-focus: #d9f69a;
+	/* input and toggle edges: 3.6 on the surface, 4.0 on the page */
+	--dn-edge: #627662;
+	/* plain dividers */
+	--dn-line: #4d604d;
+	--dn-selected: #1f3222;
+}
+
+[data-theme='light'] {
+	/* 7.2 on paper, 6.7 on the raised surface */
+	--dn-muted: #3f5649;
+	--dn-title: #07331e;
+	--dn-action: #b8ef64;
+	--dn-action-content: #121a12;
+	/* acid on paper is 1.2, so the button carries a forest outline (6.0) */
+	--dn-action-edge: #1e6a38;
+	--dn-paper: #fffdf5;
+	--dn-paper-content: #0e2e1d;
+	--dn-paper-border: #aebeaa;
+	--dn-focus: #1e6a38;
+	/* 3.6 on paper, 3.9 on the surface */
+	--dn-edge: #6f8570;
+	--dn-line: #9fb49c;
+	--dn-selected: #e5f5cf;
+}
+
 /* Dark is the base look; `light:` overrides the few raw palette colours that
    are too pale on a light background. */
 @custom-variant light (&:where([data-theme=light], [data-theme=light] *));
@@ -50,4 +143,22 @@
 /* The logo PNGs are drawn in the dark theme's pale blue */
 [data-theme='light'] .dn-logo {
 	filter: brightness(0.45) saturate(1.6);
+}
+
+/* The placeholder cover's palette, the same in both themes. It mirrors
+   PLACEHOLDER_PALETTE in server/compat/src/subsonic/stream.rs, which draws the
+   same pair for Subsonic clients; keep the two in step. */
+:root {
+	--color-cover-1: #aed5f2;
+	--color-cover-2: #f43098;
+	--color-cover-3: #bbdb9b;
+	--color-cover-4: #00bafe;
+	--color-cover-5: #00d390;
+	--color-cover-6: #fcb700;
+	--color-cover-7: #ff627d;
+	--color-cover-neutral-from: #1f271b;
+	--color-cover-neutral-to: #09090b;
+	/* the mark on top: dark on the bright pairs, pale on the dark one */
+	--color-cover-ink: #121a12;
+	--color-cover-ink-pale: #f3f5ef;
 }

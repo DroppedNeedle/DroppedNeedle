@@ -65,24 +65,24 @@
 
 		<Card variant="bordered" padding="sm">
 			<div class="flex flex-wrap items-center gap-x-6 gap-y-2 px-2 text-sm">
-				<div class="flex items-center gap-2 text-base-content/55">
-					<HardDrive class="h-4 w-4 text-base-content/40" />
+				<div class="flex items-center gap-2 text-muted">
+					<HardDrive class="h-4 w-4 text-muted" />
 					<span class="font-semibold text-base-content/80"
 						>{formatBytes(stats.total_size_bytes)}</span
 					>
 					on disk
 				</div>
 				<span class="hidden h-4 w-px bg-base-content/10 sm:block"></span>
-				<div class="flex items-center gap-2 text-base-content/55">
-					<Clock class="h-4 w-4 text-base-content/40" />
+				<div class="flex items-center gap-2 text-muted">
+					<Clock class="h-4 w-4 text-muted" />
 					Last scan
 					<span class="font-semibold text-base-content/80"
 						>{lastScan ? formatLastUpdated(lastScan) : 'never'}</span
 					>
 				</div>
 				<span class="hidden h-4 w-px bg-base-content/10 sm:block"></span>
-				<div class="flex min-w-0 items-center gap-2 text-base-content/55">
-					<Layers class="h-4 w-4 shrink-0 text-base-content/40" />
+				<div class="flex min-w-0 items-center gap-2 text-muted">
+					<Layers class="h-4 w-4 shrink-0 text-muted" />
 					<span class="truncate font-semibold text-base-content/80">{formatSummary || '-'}</span>
 				</div>
 			</div>

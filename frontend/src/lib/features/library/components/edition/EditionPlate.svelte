@@ -251,7 +251,7 @@
 		</div>
 	</div>
 {:else if statusQuery.isError && !status}
-	<p class="flex items-center gap-2 text-sm text-base-content/60">
+	<p class="flex items-center gap-2 text-sm text-muted">
 		The album's edition couldn't be loaded.
 		<Button variant="ghost" size="xs" onclick={() => statusQuery.refetch()}>Retry</Button>
 	</p>
@@ -260,7 +260,7 @@
 	{#if reason || (canEdit && reviewId) || (!canEdit && status)}
 		<div class="mt-2 flex max-w-xl flex-wrap items-center gap-x-3 gap-y-1 text-sm">
 			{#if reason}
-				<p class="text-base-content/70">{reason}</p>
+				<p class="text-muted">{reason}</p>
 			{/if}
 			{#if canEdit && reviewId}
 				<a
@@ -310,10 +310,10 @@
 	<span class="min-w-0 flex-1">
 		<span class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
 			<span class="font-semibold">{wantedCopy.name}</span>
-			<span class="text-xs font-medium text-base-content/70">{wantedCopy.state}</span>
+			<span class="text-xs font-medium text-muted">{wantedCopy.state}</span>
 		</span>
 		{#if wantedCopy.facts}
-			<span class="block text-xs text-base-content/65">{wantedCopy.facts}</span>
+			<span class="block text-xs text-muted">{wantedCopy.facts}</span>
 		{/if}
 	</span>
 	{#if wantedCopy.canChange}
@@ -332,23 +332,23 @@
 				<span
 					class="inline-flex items-center gap-1 text-xs font-medium {copyLines.chip.kind === 'guess'
 						? 'text-warning'
-						: 'text-base-content/70'}"
+						: 'text-muted'}"
 				>
 					{#if copyLines.chip.kind === 'yours'}<Hand class="h-3 w-3" aria-hidden="true" />{/if}
 					{copyLines.chip.label}
 				</span>
 			{/if}
 		</span>
-		<span class="block text-xs text-base-content/65">
+		<span class="block text-xs text-muted">
 			{copyLines.line2}{#each copyLines.warnings as warning (warning)}<span class="text-warning"
 					>{` · ${warning}`}</span
 				>{/each}
 		</span>
 		{#if status?.keeps_own_tags}
-			<span class="block text-xs text-base-content/55">Folder keeps its own tags</span>
+			<span class="block text-xs text-muted">Folder keeps its own tags</span>
 		{/if}
 		{#if copies.length > 1}
-			<span class="block text-xs text-base-content/55">{moreCopies(copies.length - 1)}</span>
+			<span class="block text-xs text-muted">{moreCopies(copies.length - 1)}</span>
 		{/if}
 	</span>
 	{#if canEdit}

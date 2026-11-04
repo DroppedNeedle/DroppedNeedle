@@ -136,7 +136,7 @@
 				/>
 			</section>
 
-			<p class="text-xs leading-relaxed text-base-content/60">
+			<p class="text-xs leading-relaxed text-muted">
 				SABnzbd downloads the NZBs your indexers find. Use the <strong>full</strong> API key (Config →
 				General), not the NZB key - the NZB key can't manage the queue.
 			</p>
@@ -151,18 +151,16 @@
 
 			<section class="space-y-2">
 				<div class="flex items-center gap-2 text-sm font-semibold">
-					<FolderTree class="size-4 text-base-content/70" aria-hidden="true" /> Downloads mount
+					<FolderTree class="size-4 text-muted" aria-hidden="true" /> Downloads mount
 				</div>
 				<Card variant="bordered" padding="sm">
 					<div class="space-y-1.5">
 						<label class="text-sm font-medium" for="sab-mount">Downloads mount</label>
-						<p class="text-xs text-base-content/60">
+						<p class="text-xs text-muted">
 							Where DroppedNeedle sees SABnzbd's completed folder (its <code>complete</code> dir),
 							mounted read-write into this container on the same disk as your library.
 							{#if testResult?.complete_dir}
-								SABnzbd's complete dir is <code class="text-base-content/70"
-									>{testResult.complete_dir}</code
-								>.
+								SABnzbd's complete dir is <code class="text-muted">{testResult.complete_dir}</code>.
 							{/if}
 						</p>
 						<Input

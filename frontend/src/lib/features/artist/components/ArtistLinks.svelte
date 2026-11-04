@@ -85,7 +85,7 @@
 	import { Globe } from 'lucide-svelte';
 	import type { components } from '$lib/api/v3/openapi';
 	import { outsideLink } from '$lib/ui/outsideLink';
-	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	type ExternalLink = components['schemas']['ExternalLink'];
 
@@ -183,31 +183,26 @@
 				<div class="hidden sm:block w-px h-6 bg-base-content/20"></div>
 			{/if}
 			<div class="flex items-center gap-2">
-				<span class="text-xs font-semibold uppercase tracking-widest text-base-content/70 mr-1">
+				<span class="text-xs font-semibold uppercase tracking-widest text-muted mr-1">
 					{group.label}
 				</span>
 				{#each group.links as link (link.label)}
 					{@const icon = BRAND_ICONS[link.label]}
-					<Button
-						variant="ghost"
-						pill
+					{#snippet brand(size: string)}
+						<svg viewBox="0 0 24 24" class={size} fill={icon?.fill} aria-hidden="true">
+							{#each icon?.paths ?? [] as d (d)}
+								<path {d} />
+							{/each}
+						</svg>
+					{/snippet}
+					<IconButton
 						href={link.url}
 						target="_blank"
 						rel="noopener noreferrer"
-						class="tooltip tooltip-bottom"
-						data-tip={link.label}
-						aria-label={link.label}
-					>
-						{#if icon}
-							<svg viewBox="0 0 24 24" class="w-5 h-5" fill={icon.fill} aria-hidden="true">
-								{#each icon.paths as d (d)}
-									<path {d} />
-								{/each}
-							</svg>
-						{:else}
-							<Globe class="w-5 h-5 text-base-content" aria-hidden="true" />
-						{/if}
-					</Button>
+						label={link.label}
+						icon={Globe}
+						glyph={icon ? brand : undefined}
+					/>
 				{/each}
 			</div>
 		{/each}

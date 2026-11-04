@@ -3,10 +3,12 @@
 	tooltip, so it is required.
 	`image` shows a picture (an avatar) in place of the icon, cropped to the
 	button's shape and decorative, since `label` names the button.
+	`glyph` draws a mark the icon set lacks (a service's brand mark): a
+	snippet handed the size class, in place of `icon`.
 	Replaces the hand-written `btn-circle` and `btn-square` buttons.
 -->
 <script lang="ts">
-	import type { ComponentProps } from 'svelte';
+	import type { ComponentProps, Snippet } from 'svelte';
 	import Button, { type ButtonSize, type KitIcon } from './Button.svelte';
 
 	interface Props extends Omit<
@@ -14,7 +16,9 @@
 		'icon' | 'iconPosition' | 'pill' | 'children' | 'aria-label' | 'title'
 	> {
 		label: string;
-		icon: KitIcon;
+		icon?: KitIcon;
+		/** A custom mark, drawn by the snippet at the size class it is handed. */
+		glyph?: Snippet<[string]>;
 		/** A picture shown in place of the icon, which stays as its fallback. */
 		image?: string | null;
 		shape?: 'circle' | 'square';
@@ -23,6 +27,7 @@
 	let {
 		label,
 		icon: Icon,
+		glyph,
 		image,
 		variant = 'ghost',
 		size = 'md',
@@ -63,7 +68,9 @@
 				alt=""
 				class="{imageSizes[size]} {shape === 'circle' ? 'rounded-full' : 'rounded-sm'} object-cover"
 			/>
-		{:else}
+		{:else if glyph}
+			{@render glyph(iconSizes[size])}
+		{:else if Icon}
 			<Icon class={iconSizes[size]} aria-hidden="true" />
 		{/if}
 	{/if}

@@ -40,7 +40,7 @@
 </script>
 
 <IconButton
-	variant="accent"
+	variant="primary"
 	{size}
 	icon={Download}
 	label="Request {albumName}"

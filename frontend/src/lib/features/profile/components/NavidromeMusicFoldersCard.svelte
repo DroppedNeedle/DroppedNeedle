@@ -66,7 +66,7 @@
 				</div>
 				<div>
 					<h2 id="navidrome-music-folders-heading" class="text-sm font-semibold">Music folders</h2>
-					<p class="mt-0.5 text-xs text-base-content/50">
+					<p class="mt-0.5 text-xs text-muted">
 						Choose which Navidrome folders appear in your DroppedNeedle catalog.
 					</p>
 				</div>
@@ -137,7 +137,7 @@
 							/>
 							<span>
 								<span class="block text-sm font-medium">All folders</span>
-								<span class="mt-1 block text-xs text-base-content/50">
+								<span class="mt-1 block text-xs text-muted">
 									Include current and future folders from the shared Navidrome server.
 								</span>
 							</span>
@@ -155,7 +155,7 @@
 							/>
 							<span>
 								<span class="block text-sm font-medium">Selected folders</span>
-								<span class="mt-1 block text-xs text-base-content/50">
+								<span class="mt-1 block text-xs text-muted">
 									Use only the folders checked below for browsing and matching.
 								</span>
 							</span>
@@ -164,7 +164,7 @@
 						{#if mode === 'selected'}
 							<div class="ml-0 space-y-2 rounded-lg bg-base-300/20 p-3 sm:ml-8">
 								{#if preference.available_folders.length === 0 && staleIds.length === 0}
-									<div class="flex items-center gap-2 px-2 py-3 text-sm text-base-content/60">
+									<div class="flex items-center gap-2 px-2 py-3 text-sm text-muted">
 										<Folder class="h-4 w-4" />
 										<span>No music folders were returned by Navidrome.</span>
 									</div>
@@ -180,7 +180,7 @@
 												onchange={(event) => toggleFolder(folder.id, event.currentTarget.checked)}
 											/>
 											<span class="min-w-0 flex-1 truncate text-sm">{folder.name}</span>
-											<span class="text-xs text-base-content/35">{folder.id}</span>
+											<span class="text-xs text-muted">{folder.id}</span>
 										</label>
 									{/each}
 									{#each staleIds as folderId (folderId)}
@@ -194,7 +194,7 @@
 												onchange={(event) => toggleFolder(folderId, event.currentTarget.checked)}
 											/>
 											<span class="min-w-0 flex-1 text-sm">Unavailable folder</span>
-											<span class="text-xs text-base-content/45">{folderId}</span>
+											<span class="text-xs text-muted">{folderId}</span>
 										</label>
 									{/each}
 								{/if}
@@ -203,7 +203,7 @@
 					</fieldset>
 
 					{#if preference.available_folders.length === 1}
-						<p class="text-xs text-base-content/50">
+						<p class="text-xs text-muted">
 							Navidrome currently exposes one folder, so both choices show the same catalog.
 						</p>
 					{/if}

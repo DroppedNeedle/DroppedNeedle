@@ -35,12 +35,12 @@
 <Card variant="bordered" {title}>
 	<div class="flex flex-col gap-5 text-sm">
 		{#if result?.outcome === 'started_fresh'}
-			<p class="text-base-content/70">
+			<p class="text-muted">
 				Nothing came across from v2. Continue to create the first admin account, with the code from
 				the server log.
 			</p>
 		{:else if !result || result.outcome !== 'upgraded'}
-			<p class="text-base-content/70">The data folders hold v3 data.</p>
+			<p class="text-muted">The data folders hold v3 data.</p>
 		{/if}
 
 		{#if summary}
@@ -50,17 +50,17 @@
 				<dl class="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3">
 					{#each moved as [label, count] (label)}
 						<div class="flex justify-between gap-2">
-							<dt class="text-base-content/70">{label}</dt>
+							<dt class="text-muted">{label}</dt>
 							<dd class="font-mono">{count.toLocaleString()}</dd>
 						</div>
 					{/each}
 				</dl>
 				<details class="mt-2">
-					<summary class="cursor-pointer text-base-content/60">Everything</summary>
+					<summary class="cursor-pointer text-muted">Everything</summary>
 					<dl class="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3">
 						{#each allCounts(summary.moved) as [label, count] (label)}
 							<div class="flex justify-between gap-2">
-								<dt class="text-base-content/70">{label}</dt>
+								<dt class="text-muted">{label}</dt>
 								<dd class="font-mono">{count.toLocaleString()}</dd>
 							</div>
 						{/each}
@@ -109,7 +109,7 @@
 		{#if result?.backup}
 			<section aria-label="v2 backup">
 				<h3 class="mb-1 font-semibold">Your v2 files</h3>
-				<p class="mb-1 text-base-content/70">Kept so you can go back:</p>
+				<p class="mb-1 text-muted">Kept so you can go back:</p>
 				<p class="break-all font-mono text-xs">{result.backup.config}</p>
 				<p class="break-all font-mono text-xs">{result.backup.cache}</p>
 			</section>

@@ -97,7 +97,7 @@
 			</div>
 		{/snippet}
 		{#snippet empty()}
-			<div class="flex flex-col items-center justify-center py-20 text-base-content/50">
+			<div class="flex flex-col items-center justify-center py-20 text-muted">
 				<remote.icon class="mb-4 h-12 w-12 opacity-20" />
 				<p class="text-lg font-medium">{search ? 'No results found' : 'No artists found'}</p>
 				<p class="mt-1 text-sm">

@@ -476,7 +476,7 @@
 				{#if downloadableReleaseCount > 0}
 					<div class="flex justify-center sm:justify-start">
 						<Button
-							variant="accent"
+							variant="primary"
 							size="sm"
 							icon={Download}
 							onclick={() => openDiscographyModal()}
@@ -607,7 +607,7 @@
 		</div>
 	{:else}
 		<div class="flex items-center justify-center min-h-[50vh]">
-			<p class="text-base-content/60">Artist not found</p>
+			<p class="text-muted">Artist not found</p>
 		</div>
 	{/if}
 </div>

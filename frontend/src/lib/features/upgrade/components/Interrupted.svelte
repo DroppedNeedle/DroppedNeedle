@@ -24,9 +24,7 @@
 </script>
 
 <Card variant="bordered" title="An upgrade didn't finish">
-	<p class="text-sm text-base-content/70">
-		Finishing puts your v2 files back first, then upgrades again.
-	</p>
+	<p class="text-sm text-muted">Finishing puts your v2 files back first, then upgrades again.</p>
 	{#if error}
 		<div class="alert alert-error mt-3 py-2 text-sm" role="alert">{error}</div>
 	{/if}

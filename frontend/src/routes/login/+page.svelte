@@ -21,14 +21,11 @@
 		type SessionUserLike
 	} from '$lib/features/auth/queries/types';
 	import { onDestroy } from 'svelte';
-	import { Eye, EyeOff } from 'lucide-svelte';
 	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
 	import PlexIcon from '$lib/media/icons/PlexIcon.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import Field from '$lib/ui/Field.svelte';
-	import IconButton from '$lib/ui/IconButton.svelte';
-	import Input from '$lib/ui/Input.svelte';
+	import PasswordField from '$lib/ui/PasswordField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 
 	type Tab = 'local' | 'plex' | 'jellyfin' | 'oidc';
@@ -177,7 +174,7 @@
 	<title>Sign in - DroppedNeedle</title>
 </svelte:head>
 
-<div class="login-wrap grain min-h-screen flex items-center justify-center p-4">
+<div class="login-wrap min-h-screen flex items-center justify-center p-4">
 	<div class="w-full max-w-md">
 		<div class="login-brand">
 			<img
@@ -232,13 +229,13 @@
 								autocomplete="username"
 							/>
 							<div>
-								{@render passwordField(
-									'Password',
-									() => password,
-									(value) => (password = value),
-									showPassword,
-									() => (showPassword = !showPassword)
-								)}
+								<PasswordField
+									label="Password"
+									placeholder="Password"
+									required
+									bind:value={password}
+									bind:shown={showPassword}
+								/>
 								<div class="mt-1 flex justify-end">
 									<a
 										href={withBasePath('/recover-password')}
@@ -274,13 +271,13 @@
 								required
 								autocomplete="username"
 							/>
-							{@render passwordField(
-								'Password',
-								() => jfPassword,
-								(value) => (jfPassword = value),
-								jfShowPassword,
-								() => (jfShowPassword = !jfShowPassword)
-							)}
+							<PasswordField
+								label="Password"
+								placeholder="Password"
+								required
+								bind:value={jfPassword}
+								bind:shown={jfShowPassword}
+							/>
 							{#if jfError}
 								<div class="alert alert-error py-2 text-sm">{jfError}</div>
 							{/if}
@@ -299,7 +296,7 @@
 								<PlexIcon class="h-5 w-5 text-[rgb(var(--brand-plex))]" />
 								<span class="text-sm font-medium">Sign in with your Plex account</span>
 							</div>
-							<p class="text-sm text-base-content/60">
+							<p class="text-sm text-muted">
 								A Plex login window will open. Sign in there and return to this page.
 							</p>
 							{#if plexError}
@@ -321,7 +318,7 @@
 						</div>
 					{:else if activeTab === 'oidc'}
 						<div class="flex flex-col gap-4">
-							<p class="text-sm text-base-content/60">
+							<p class="text-sm text-muted">
 								Sign in using your organisation's single sign-on provider.
 							</p>
 							{#if oidcError}
@@ -342,40 +339,6 @@
 		</Card>
 	</div>
 </div>
-
-{#snippet passwordField(
-	label: string,
-	get: () => string,
-	set: (value: string) => void,
-	shown: boolean,
-	toggle: () => void
-)}
-	<Field {label}>
-		{#snippet children(control)}
-			<div class="join w-full">
-				<Input
-					{...control}
-					{label}
-					type={shown ? 'text' : 'password'}
-					class="join-item w-full"
-					placeholder="Password"
-					required
-					autocomplete="current-password"
-					bind:value={get, set}
-				/>
-				<IconButton
-					label="Show password"
-					icon={shown ? EyeOff : Eye}
-					variant="neutral"
-					shape="square"
-					class="join-item"
-					aria-pressed={shown}
-					onclick={toggle}
-				/>
-			</div>
-		{/snippet}
-	</Field>
-{/snippet}
 
 <style>
 	.tab-btn {
@@ -404,16 +367,9 @@
 	}
 
 	.login-wrap {
-		--grain-opacity: 0.1;
 		position: relative;
 		isolation: isolate;
-		background:
-			radial-gradient(
-				circle at 50% -8rem,
-				oklch(from var(--color-primary) l c h / 0.08),
-				transparent 22rem
-			),
-			var(--color-base-100);
+		background: var(--color-base-100);
 	}
 
 	.login-brand {

@@ -75,7 +75,7 @@
 		{#if hasAnyTracks}
 			<div class="flex items-center gap-2 flex-wrap ml-auto">
 				<Button
-					variant="accent"
+					variant="primary"
 					size="sm"
 					icon={Play}
 					class="[&_svg]:fill-current"

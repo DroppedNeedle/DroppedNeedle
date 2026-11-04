@@ -57,7 +57,7 @@
 					disabled={busy}
 					class="toggle toggle-sm toggle-primary"
 				/>
-				<span class="text-sm text-base-content/70">Auto-download new releases</span>
+				<span class="text-sm text-muted">Auto-download new releases</span>
 			</label>
 
 			{#if status.auto_download && status.auto_download_state === 'pending'}
@@ -66,7 +66,7 @@
 					Pending admin approval
 				</span>
 			{:else if declined}
-				<span class="text-xs text-base-content/50">Approval declined</span>
+				<span class="text-xs text-muted">Approval declined</span>
 			{/if}
 		</div>
 	{/if}

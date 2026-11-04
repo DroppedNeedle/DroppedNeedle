@@ -53,13 +53,13 @@
 	<div>
 		<div class="flex items-center gap-3 px-5 py-4">
 			<div
-				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-base-content/70"
+				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-muted"
 			>
 				<KeyRound class="h-4 w-4" />
 			</div>
 			<div class="min-w-0 flex-1">
 				<h2 class="text-sm font-semibold">Sessions</h2>
-				<p class="text-xs text-base-content/50">
+				<p class="text-xs text-muted">
 					{#if sessionsQuery.isPending}
 						Loading signed-in devices
 					{:else if sessions.length === 1}
@@ -92,13 +92,13 @@
 				</div>
 			</div>
 		{:else if sessions.length === 0}
-			<p class="px-5 pb-5 text-sm text-base-content/50">No active sessions found.</p>
+			<p class="px-5 pb-5 text-sm text-muted">No active sessions found.</p>
 		{:else}
 			<ul class="divide-y divide-base-300/30 border-t border-base-300/30">
 				{#each sessions as session (session.id)}
 					<li class="flex items-start gap-3 px-5 py-4">
 						<div
-							class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-base-content/70"
+							class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-muted"
 						>
 							{#if session.kind === 'companion'}
 								<Smartphone class="h-4 w-4" />
@@ -108,7 +108,7 @@
 						</div>
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-medium">{session.label}</p>
-							<p class="mt-0.5 text-xs text-base-content/50">
+							<p class="mt-0.5 text-xs text-muted">
 								Last seen {relativeTime(session.last_seen_at)} · Signed in {formatDate(
 									session.created_at
 								)} · Expires {formatDate(session.expires_at)}

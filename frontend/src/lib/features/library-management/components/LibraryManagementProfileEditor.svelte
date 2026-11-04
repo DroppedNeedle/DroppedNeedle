@@ -174,7 +174,7 @@
 				<span class="management-editor-state" data-active={dirty}
 					>{dirty ? 'Unsaved' : 'Saved'}</span
 				>
-				<p class="text-xs text-base-content/45">
+				<p class="text-xs text-muted">
 					{dirty
 						? 'Saving validates the full profile. If it expands write access, active roots need a new dry run.'
 						: 'This profile has no unsaved changes.'}

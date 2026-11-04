@@ -66,7 +66,7 @@
 		{preview.isPending ? 'Checking…' : 'Preview'}
 	</Button>
 </form>
-<p class="text-xs text-base-content/45">
+<p class="text-xs text-muted">
 	Takes the latest release, or the version in the URL (a <code>/releases/tag/…</code>,
 	<code>/tree/…</code> or <code>/commit/…</code> link). Nothing is written until you confirm, and nothing
 	runs until you enable it.
@@ -80,28 +80,28 @@
 		<div>
 			<div class="flex flex-wrap items-baseline gap-2">
 				<h3 class="font-semibold">{shown.display_name}</h3>
-				<span class="text-xs text-base-content/50">v{shown.version}</span>
+				<span class="text-xs text-muted">v{shown.version}</span>
 				{#if shown.author}
-					<span class="text-xs text-base-content/50">by {shown.author}</span>
+					<span class="text-xs text-muted">by {shown.author}</span>
 				{/if}
 			</div>
 			{#if shown.description}
-				<p class="mt-0.5 text-xs text-base-content/60">{shown.description}</p>
+				<p class="mt-0.5 text-xs text-muted">{shown.description}</p>
 			{/if}
-			<p class="mt-1 text-xs text-base-content/50">
+			<p class="mt-1 text-xs text-muted">
 				{shown.repository} · {shown.ref_kind === 'branch' && shown.reference === 'HEAD'
 					? 'default branch'
 					: `${shown.ref_kind} ${shown.reference}`} · commit
 				<code>{shown.commit.slice(0, 12)}</code>
 			</p>
 			{#if shown.installed_version}
-				<p class="mt-1 text-xs text-base-content/60">
+				<p class="mt-1 text-xs text-muted">
 					Replaces the installed version {shown.installed_version}. Its settings and data stay.
 				</p>
 			{/if}
 
-			<h4 class="mt-3 text-xs font-semibold text-base-content/70">This plugin asks to</h4>
-			<ul class="mt-1 list-disc space-y-0.5 pl-5 text-xs text-base-content/70">
+			<h4 class="mt-3 text-xs font-semibold text-muted">This plugin asks to</h4>
+			<ul class="mt-1 list-disc space-y-0.5 pl-5 text-xs text-muted">
 				{#each shown.permissions as permission (permission)}
 					<li>{permission}</li>
 				{/each}

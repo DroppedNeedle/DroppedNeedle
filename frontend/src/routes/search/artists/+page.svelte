@@ -172,7 +172,7 @@
 		</div>
 	{/if}
 	{#if !normalizedQuery}
-		<p class="text-center mt-32 text-base-content/50">Enter a search query to get started.</p>
+		<p class="text-center mt-32 text-muted">Enter a search query to get started.</p>
 	{:else if loading && artists.length === 0}
 		<Card padding="md">
 			<div
@@ -184,7 +184,7 @@
 			</div>
 		</Card>
 	{:else if artists.length === 0 && !loading}
-		<Card><p class="text-center text-base-content/50">No artists found</p></Card>
+		<Card><p class="text-center text-muted">No artists found</p></Card>
 	{:else}
 		{#if topArtist}
 			<div class="mb-4">
@@ -209,7 +209,7 @@
 			{#if loading}
 				<span class="loading loading-spinner loading-md text-primary"></span>
 			{:else if !hasMore}
-				<p class="text-base-content/50 text-sm">No more results</p>
+				<p class="text-muted text-sm">No more results</p>
 			{/if}
 		</div>
 	{/if}

@@ -42,9 +42,7 @@
 	const isUsenet = $derived(candidate.source === 'usenet');
 	const recommended = $derived(candidate.tier === 'recommended');
 	const refusal = $derived(candidate.refusal?.[0] ?? null);
-	const noteTone = $derived(
-		recommended ? 'text-success' : refusal ? 'text-base-content/60' : 'text-warning'
-	);
+	const noteTone = $derived(recommended ? 'text-success' : refusal ? 'text-muted' : 'text-warning');
 	const scoreLabel = $derived(
 		candidate.score != null ? `score ${Math.round(candidate.score * 100)}%` : null
 	);
@@ -92,17 +90,17 @@
 			aria-hidden="true"
 		>
 			{#if isSoulseek}
-				<Disc3 class="size-7 text-base-content/60" />
+				<Disc3 class="size-7 text-muted" />
 			{:else if isUsenet}
-				<Download class="size-7 text-base-content/60" />
+				<Download class="size-7 text-muted" />
 			{:else}
-				<Puzzle class="size-7 text-base-content/60" />
+				<Puzzle class="size-7 text-muted" />
 			{/if}
 		</div>
 
 		<div class="min-w-0 flex-1">
 			<p class="truncate text-base font-semibold" title={candidate.title}>{candidate.title}</p>
-			<p class="truncate text-sm text-base-content/60" title={subtitle}>{subtitle}</p>
+			<p class="truncate text-sm text-muted" title={subtitle}>{subtitle}</p>
 			{#if refusal}
 				<p
 					class="mt-1 flex items-center gap-1 text-xs font-medium text-error"

@@ -40,7 +40,7 @@
 
 <section>
 	<h2
-		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
+		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted"
 	>
 		<SpotifyIcon class="h-4 w-4 text-spotify" />
 		Spotify
@@ -62,9 +62,9 @@
 								<span class="status {spotify ? 'status-success' : 'status-error'} status-sm"></span>
 							</div>
 							{#if spotify}
-								<p class="truncate text-xs text-base-content/50">@{spotify.username || 'linked'}</p>
+								<p class="truncate text-xs text-muted">@{spotify.username || 'linked'}</p>
 							{:else}
-								<p class="text-xs text-base-content/30">Not connected</p>
+								<p class="text-xs text-muted">Not connected</p>
 							{/if}
 						</div>
 					</div>
@@ -82,7 +82,7 @@
 							</Button>
 						{:else}
 							<Button
-								variant="primary"
+								variant="spotify"
 								size="xs"
 								pill
 								loading={connectMutation.isPending}
@@ -99,13 +99,13 @@
 			</Card>
 
 			{#if spotify}
-				<p class="px-1 text-xs text-base-content/50">
+				<p class="px-1 text-xs text-muted">
 					Connected. Go to your <a href={withBasePath('/playlists')} class="link link-primary"
 						>Playlists</a
 					> to import from Spotify.
 				</p>
 			{:else}
-				<p class="px-1 text-xs text-base-content/40">
+				<p class="px-1 text-xs text-muted">
 					Connect your Spotify account to import your personal playlists into DroppedNeedle.
 				</p>
 			{/if}

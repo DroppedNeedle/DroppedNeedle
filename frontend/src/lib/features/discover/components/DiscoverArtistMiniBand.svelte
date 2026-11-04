@@ -64,7 +64,7 @@
 		</div>
 		<div class="flex-1 min-w-0">
 			<div
-				class="text-[10px] sm:text-xs font-semibold uppercase tracking-widest text-base-content/40 leading-none mb-1"
+				class="text-[10px] sm:text-xs font-semibold uppercase tracking-widest text-muted leading-none mb-1"
 			>
 				More like
 			</div>

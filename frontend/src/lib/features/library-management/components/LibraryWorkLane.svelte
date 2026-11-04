@@ -29,7 +29,7 @@
 <div class="library-work-lane" class:library-work-lane--compact={compact} data-kind={kind}>
 	<div class="flex min-w-0 items-baseline justify-between gap-3 text-xs">
 		<span class="truncate font-semibold text-base-content/80">{label}</span>
-		<span class="shrink-0 font-mono text-[0.7rem] text-base-content/60">{status}</span>
+		<span class="shrink-0 font-mono text-[0.7rem] text-muted">{status}</span>
 	</div>
 	<div
 		class="library-work-lane__track"

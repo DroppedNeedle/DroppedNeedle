@@ -265,7 +265,7 @@
 						out:fly={{ y: -16, duration: reducedMotion ? 0 : 260 }}
 					>
 						<GripVertical
-							class="h-4 w-4 shrink-0 cursor-grab text-base-content/25 group-hover:text-base-content/50"
+							class="h-4 w-4 shrink-0 cursor-grab text-base-content/25 group-hover:text-muted"
 						/>
 						<div
 							class="relative h-12 w-12 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
@@ -286,7 +286,7 @@
 						</div>
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-semibold text-base-content">{t.title}</p>
-							<p class="truncate text-xs text-base-content/55">{t.artist_name}</p>
+							<p class="truncate text-xs text-muted">{t.artist_name}</p>
 							<span class="badge badge-xs {meta.badge} mt-1 gap-1 border-none">
 								<Icon class="h-2.5 w-2.5" />
 								{meta.label}
@@ -334,13 +334,13 @@
 		<div
 			class="grid h-9 w-9 shrink-0 place-items-center rounded-full transition-colors {dragOverQueue
 				? 'bg-accent/20 text-accent'
-				: 'bg-base-content/5 text-base-content/55'}"
+				: 'bg-base-content/5 text-muted'}"
 		>
 			<ArrowDownToLine class="h-4 w-4 {dragOverQueue || reducedMotion ? '' : 'animate-float'}" />
 		</div>
 		<div class="min-w-0 text-left">
 			<p class="text-xs font-bold uppercase tracking-wider text-base-content/75">Up Next</p>
-			<p class="truncate text-[11px] text-base-content/45">Drop a song or album to queue</p>
+			<p class="truncate text-[11px] text-muted">Drop a song or album to queue</p>
 		</div>
 		{#if upcomingCount > 0}
 			<span

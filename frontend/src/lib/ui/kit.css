@@ -1,0 +1,228 @@
+/* The kit's shared look over daisyUI's classes, for app.css and auth.css.
+   daisyUI's components sit in sub-layers of `utilities`, so a rule written
+   straight in `utilities` wins over them. Selectors that only colour a
+   control are wrapped in :where() so a caller's own utility still wins. */
+
+@layer base {
+	body {
+		font-size: 1rem;
+	}
+
+	/* one focus ring everywhere: 2px with a 2px gap */
+	:focus-visible {
+		outline: 2px solid var(--dn-focus);
+		outline-offset: 2px;
+	}
+
+	/* Anton has one weight; never let a browser fake a bold one */
+	h1,
+	h2,
+	.font-display {
+		font-synthesis: none;
+	}
+}
+
+@layer utilities {
+	/* Anton is always uppercase, a little open at small sizes */
+	.font-display {
+		text-transform: uppercase;
+		letter-spacing: 0.015em;
+	}
+	/* and for big headings only; a small one reads in Inter instead */
+	.font-display:is(.text-xs, .text-sm, .text-base) {
+		font-family: var(--font-sans);
+		font-weight: 700;
+		letter-spacing: 0.03em;
+	}
+
+	/* Buttons. Button.svelte puts one dn-btn-* class beside `btn`. */
+	:where(.btn) {
+		outline-color: var(--dn-focus);
+		text-shadow: none;
+		transition-duration: 150ms;
+	}
+	:where(.btn):active:not(.btn-active, :disabled, [aria-disabled='true']) {
+		translate: 0 1px;
+	}
+	.dn-btn-md {
+		--fontsize: 0.9375rem;
+		--btn-p: 1.125rem;
+	}
+	.dn-btn-action {
+		--btn-color: var(--dn-action);
+		--btn-fg: var(--dn-action-content);
+		--btn-border: var(--dn-action-edge);
+	}
+	.dn-btn-neutral {
+		--btn-color: var(--color-base-200);
+		--btn-fg: var(--color-base-content);
+		--btn-border: var(--dn-edge);
+	}
+	.dn-btn-outline {
+		--btn-color: var(--color-base-200);
+		--btn-fg: var(--color-base-content);
+		--btn-border: var(--color-base-content);
+	}
+	.dn-btn-ghost {
+		--btn-bg: transparent;
+		--btn-border: transparent;
+		color: var(--btn-fg, var(--color-base-content));
+	}
+	.dn-btn-spotify {
+		--btn-color: var(--dn-spotify);
+		--btn-fg: var(--dn-spotify-content);
+		--btn-border: var(--dn-spotify-edge);
+	}
+	@media (hover: hover) {
+		.dn-btn-action:hover {
+			--btn-bg: color-mix(in oklab, var(--dn-action), #000 9%);
+		}
+		.dn-btn-neutral:hover,
+		.dn-btn-outline:hover {
+			--btn-bg: var(--color-neutral);
+		}
+		.dn-btn-ghost:hover {
+			--btn-bg: color-mix(in oklab, var(--color-base-content) 9%, transparent);
+		}
+	}
+	/* disabled is plainly off, but still readable */
+	:where(.btn):is(:disabled, [aria-disabled='true'], .btn-disabled):not(.dn-btn-loading) {
+		color: var(--dn-muted);
+		--btn-border: var(--dn-line);
+		opacity: 0.7;
+	}
+	/* a button at work keeps its colours */
+	.btn.dn-btn-loading {
+		--btn-bg: var(--btn-color, var(--color-base-200));
+		background-color: var(--btn-bg);
+		color: var(--btn-fg, var(--color-base-content));
+		cursor: progress;
+	}
+	.btn.dn-btn-ghost.dn-btn-loading {
+		--btn-bg: transparent;
+	}
+
+	/* Text inputs, dropdowns and text areas: a solid surface, a 3:1 edge */
+	:where(.input, .select, .textarea) {
+		background-color: var(--color-base-200);
+		--input-color: var(--dn-edge);
+		box-shadow: none;
+	}
+	:where(.input, .select, .textarea):not(
+		.input-xs,
+		.input-sm,
+		.select-xs,
+		.select-sm,
+		.textarea-xs,
+		.textarea-sm
+	) {
+		--font-size-min: 1rem;
+	}
+	:where(.input, .select, .textarea):is(:focus, :focus-within) {
+		--input-color: var(--dn-focus);
+	}
+	:where(.input-error, .select-error, .textarea-error) {
+		--input-color: var(--color-error);
+	}
+	:where(.input, .textarea, .input input)::placeholder {
+		color: var(--dn-muted);
+		opacity: 1;
+	}
+
+	/* a form row's label reads as the field's name */
+	:where(.fieldset-legend) {
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--color-base-content);
+	}
+	:where(.fieldset .label) {
+		color: var(--dn-muted);
+	}
+
+	/* switches, ticks and radios get the same edge while off */
+	:where(.toggle, .checkbox, .radio):not(:checked, [aria-checked='true']) {
+		--input-color: var(--dn-edge);
+	}
+	:where(.toggle):not(:checked) {
+		color: var(--dn-edge);
+	}
+
+	/* Cards and dialogs: flat tone steps with a hairline */
+	:where(.card) {
+		border-radius: var(--radius-box);
+	}
+	:where(.modal-box) {
+		background-color: var(--color-base-200);
+		border: 1px solid var(--dn-line);
+		box-shadow: 0 24px 64px -24px rgb(0 0 0 / 0.6);
+	}
+	:where(.modal-box) :is(h1, h2, h3) {
+		font-family: var(--font-display);
+		font-weight: 400;
+		text-transform: uppercase;
+		letter-spacing: 0.01em;
+		color: var(--dn-title);
+	}
+
+	/* Tabs: the chosen one is inked in, like a label on a sleeve */
+	:where(.tabs-box) {
+		background-color: var(--color-base-200);
+		border: 1px solid var(--dn-line);
+		box-shadow: none;
+	}
+	:where(.tabs-box > .tab) {
+		color: var(--dn-muted);
+		font-weight: 600;
+	}
+	:where(.tabs-box > .tab):hover {
+		color: var(--color-base-content);
+	}
+	.tabs-box > :is(.tab-active, [aria-selected='true']):not(.tab-disabled, [disabled]) {
+		--tab-bg: var(--color-base-content);
+		color: var(--color-base-100);
+		box-shadow: none;
+	}
+	:where(.tabs-border > .tab) {
+		color: var(--dn-muted);
+		font-weight: 600;
+	}
+	.tabs-border > :is(.tab-active, [aria-selected='true']) {
+		color: var(--color-base-content);
+		--tab-border-color: var(--dn-title);
+	}
+
+	/* menus: the current item reads as a raised step; keep the focus ring */
+	:where(.menu) .menu-active {
+		background-color: var(--color-neutral);
+		color: var(--color-base-content);
+	}
+	.menu li > :focus-visible {
+		outline: 2px solid var(--dn-focus);
+		outline-offset: -2px;
+	}
+
+	/* status labels: bold, readable, never colour alone */
+	:where(.badge) {
+		font-weight: 600;
+		letter-spacing: 0.02em;
+	}
+}
+
+/* Touch screens get 44px controls */
+@media (pointer: coarse) {
+	[data-theme] {
+		--size-field: 0.275rem;
+	}
+}
+
+/* High contrast and forced colours: no decoration at all */
+@media (prefers-contrast: more) {
+	.dn-decor {
+		display: none !important;
+	}
+}
+@media (forced-colors: active) {
+	.dn-decor {
+		display: none !important;
+	}
+}

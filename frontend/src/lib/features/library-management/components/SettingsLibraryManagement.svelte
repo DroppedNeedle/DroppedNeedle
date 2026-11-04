@@ -281,7 +281,7 @@
 			>
 				Automation
 			</h2>
-			<p class="mt-1 text-sm text-base-content/65">
+			<p class="mt-1 text-sm text-muted">
 				Writes tags and moves files. It is separate from scanning and remains off until an
 				administrator confirms a dry run.
 			</p>
@@ -337,7 +337,7 @@
 						<h3 id="management-roots-title" class="font-display text-lg font-semibold">
 							Choose where writes are allowed
 						</h3>
-						<p class="text-xs text-base-content/55">
+						<p class="text-xs text-muted">
 							Scanning reads and identifies. These controls separately allow future writes in each
 							root.
 						</p>
@@ -357,8 +357,8 @@
 					<summary
 						><span class="management-editor-icon"><History class="h-4 w-4" /></span><span
 							class="flex flex-col"
-							><strong>Recycle bin, retention and refresh</strong><small
-								class="text-xs text-base-content/55">Advanced recovery settings</small
+							><strong>Recycle bin, retention and refresh</strong><small class="text-xs text-muted"
+								>Advanced recovery settings</small
 							></span
 						><ChevronRight class="ml-auto h-4 w-4 management-editor-chevron" /></summary
 					>
@@ -441,7 +441,7 @@
 										run queued{:else if activationPreview?.state === 'running'}Dry run planning{:else if ['failed', 'stopped', 'cancelled'].includes(activationPreview?.state ?? '')}Dry
 										run needs attention{:else}Activation dry run continues{/if}
 								</strong>
-								<p class="text-xs text-base-content/50">
+								<p class="text-xs text-muted">
 									{#if !wizard.coversDraft}The existing result cannot authorize the settings now
 										shown. Restart the review to create one current dry run.{:else if currentActivationRoot}{currentActivationRoot.label}
 										{#if (activationPreview?.summary.item_count ?? 0) > 0}
@@ -482,7 +482,7 @@
 										? 'Write-access dry run ready'
 										: 'Write-access dry run in progress'}
 								</strong>
-								<p class="text-xs text-base-content/50">
+								<p class="text-xs text-muted">
 									{roots.find((root) => root.id === remoteActivation.target_root_id)?.label ??
 										'This root'} · {remoteActivation.profile_name} · {remoteActivation.operation
 										.state === 'ready'
@@ -503,7 +503,7 @@
 						<div class="management-save-bar__notice">
 							<div>
 								<strong class="text-sm">Could not check activation status</strong>
-								<p class="text-xs text-base-content/50">
+								<p class="text-xs text-muted">
 									Automatic writes may be paused. Retry the status check.
 								</p>
 							</div>
@@ -519,7 +519,7 @@
 						<div class="management-save-bar__notice">
 							<div>
 								<strong class="text-sm">Checking activation status…</strong>
-								<p class="text-xs text-base-content/50">
+								<p class="text-xs text-muted">
 									Confirming every automatic root still matches its dry run.
 								</p>
 							</div>
@@ -528,7 +528,7 @@
 						<div class="management-save-bar__notice">
 							<div>
 								<strong class="text-sm">Automatic writes paused: needs attention</strong>
-								<p class="text-xs text-base-content/50">
+								<p class="text-xs text-muted">
 									{#if blockedActivationRootLabels.length === 1}
 										{blockedActivationRootLabels[0]} needs attention before automatic writes can resume.
 										Check the library roots and the assignment below, then recheck.
@@ -538,7 +538,7 @@
 									{/if}
 								</p>
 								{#if blockedActivationReason}
-									<p class="mt-1 text-xs text-base-content/50">{blockedActivationReason}</p>
+									<p class="mt-1 text-xs text-muted">{blockedActivationReason}</p>
 								{/if}
 							</div>
 							<Button
@@ -553,7 +553,7 @@
 						<div class="management-save-bar__notice">
 							<div>
 								<strong class="text-sm">Automatic writes paused: dry run needed</strong>
-								<p class="text-xs text-base-content/50">
+								<p class="text-xs text-muted">
 									{#if staleActivationRootLabels.length === 1}
 										{staleActivationRootLabels[0]} no longer matches its confirmed dry run. Run a fresh
 										dry run to resume automatic writes.

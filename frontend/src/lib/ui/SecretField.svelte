@@ -65,7 +65,7 @@
 			/>
 			<button
 				type="button"
-				class="btn join-item"
+				class="btn dn-btn-neutral join-item"
 				aria-label={shown ? `Hide ${label}` : `Show ${label}`}
 				aria-pressed={shown}
 				disabled={disabled || stored}

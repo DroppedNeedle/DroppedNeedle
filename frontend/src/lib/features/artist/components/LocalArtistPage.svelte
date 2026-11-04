@@ -114,7 +114,7 @@
 					className="mt-3"
 				/>
 				<ArtistMusicBrainzLink artistId={artist.id} className="mt-2" />
-				<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-base-content/55">
+				<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
 					{#if artist.album_count > 0}
 						<span>
 							{artist.album_count}
@@ -173,7 +173,7 @@
 						</div>
 						<div>
 							<h2 class="font-bold">Contribute through an album</h2>
-							<p class="mt-1 max-w-3xl text-sm text-base-content/65">
+							<p class="mt-1 max-w-3xl text-sm text-muted">
 								Use one of this artist's local albums to check MusicBrainz. If the release matches,
 								DroppedNeedle can also verify and link its artist credit.
 							</p>
@@ -189,7 +189,7 @@
 								<a class="font-semibold hover:underline" href={withBasePath(`/album/${album.id}`)}
 									>{album.title}</a
 								>
-								<p class="mt-0.5 text-xs text-base-content/55">
+								<p class="mt-0.5 text-xs text-muted">
 									{album.year ?? 'Year unknown'} · {contributionLabel(album.contribution_state)}
 								</p>
 							</div>
@@ -224,7 +224,7 @@
 					{#each Array(5) as _, index (index)}<div class="skeleton aspect-square"></div>{/each}
 				</div>{:else if albumsQuery.isError}<div class="alert alert-error mt-4">
 					Couldn't load this artist's albums.
-				</div>{:else if !albumsQuery.data?.items.length}<p class="mt-4 text-base-content/55">
+				</div>{:else if !albumsQuery.data?.items.length}<p class="mt-4 text-muted">
 					No albums in your library are credited to this artist.
 				</p>{:else}<div
 					class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"

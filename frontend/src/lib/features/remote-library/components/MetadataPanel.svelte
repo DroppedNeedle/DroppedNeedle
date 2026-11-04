@@ -43,7 +43,7 @@
 			<!-- Last.fm wiki text relayed by Navidrome. Anyone can edit it. -->
 			<SafeHtml html={notes} class="text-sm leading-relaxed text-base-content/80" />
 		{:else}
-			<p class="text-center text-base-content/40 py-4">No notes available for this release.</p>
+			<p class="text-center text-muted py-4">No notes available for this release.</p>
 		{/if}
 
 		{#if lastfmLink || musicbrainzUrl}

@@ -21,7 +21,7 @@
 </script>
 
 <Modal bind:open title="Remove File" dismissible={!removing} {onclose}>
-	<p class="text-base-content/70">
+	<p class="text-muted">
 		Remove <span class="font-semibold text-base-content">{trackTitle}</span> from your library? Its file
 		goes to the recycle bin. Put it back from the album page.
 	</p>

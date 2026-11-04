@@ -110,7 +110,7 @@
 				Import all ({unimportedCount})
 			</Button>
 		{:else if importingAll}
-			<div class="flex shrink-0 items-center gap-2 text-sm text-base-content/60">
+			<div class="flex shrink-0 items-center gap-2 text-sm text-muted">
 				<LoaderCircle class="h-4 w-4 animate-spin motion-keep" />
 				{importAllProgress.done}/{importAllProgress.total}
 			</div>
@@ -144,7 +144,7 @@
 	{:else if (playlistsQuery.data?.playlists ?? []).length === 0}
 		<div class="flex flex-col items-center justify-center gap-4 py-20">
 			<SpotifyIcon class="h-16 w-16 text-base-content/20" />
-			<p class="text-base-content/50">No Spotify playlists found.</p>
+			<p class="text-muted">No Spotify playlists found.</p>
 		</div>
 	{:else}
 		<div class={gridClass}>
@@ -219,7 +219,7 @@
 					<div class="min-w-0 px-0.5">
 						<p class="truncate text-sm font-semibold leading-tight">{playlist.name}</p>
 						{#if playlist.owner}
-							<p class="truncate text-xs text-base-content/40">{playlist.owner}</p>
+							<p class="truncate text-xs text-muted">{playlist.owner}</p>
 						{/if}
 					</div>
 				</div>

@@ -74,6 +74,6 @@
 			{/if}
 		</div>
 	{:else}
-		<p class="text-base-content/50 italic text-sm">No biography available</p>
+		<p class="text-muted italic text-sm">No biography available</p>
 	{/if}
 </Card>

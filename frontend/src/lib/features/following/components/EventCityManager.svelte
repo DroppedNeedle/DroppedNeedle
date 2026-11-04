@@ -56,9 +56,7 @@
 </script>
 
 <div class="flex flex-wrap items-center gap-2">
-	<span class="text-xs font-semibold uppercase tracking-wider text-base-content/50">
-		Your cities
-	</span>
+	<span class="text-xs font-semibold uppercase tracking-wider text-muted"> Your cities </span>
 	{#each cities as city, index (city.latitude + ':' + city.longitude)}
 		<div class="dropdown dropdown-bottom">
 			<button
@@ -68,7 +66,7 @@
 				title="Within {radiusLabel(city.radius_km)} of {city.city_name}"
 			>
 				<span class="font-medium">{city.city_name}</span>
-				<span class="text-xs text-base-content/50">{radiusLabel(city.radius_km)}</span>
+				<span class="text-xs text-muted">{radiusLabel(city.radius_km)}</span>
 			</button>
 			<ul
 				class="menu dropdown-content z-20 mt-1 w-44 rounded-xl border border-base-300 bg-base-200 p-1 shadow-lg"
@@ -99,7 +97,7 @@
 	{:else}
 		<button
 			type="button"
-			class="badge badge-lg gap-1 border-dashed border-base-300 bg-transparent py-3 text-base-content/60 hover:border-primary hover:text-primary"
+			class="badge badge-lg gap-1 border-dashed border-base-300 bg-transparent py-3 text-muted hover:border-primary hover:text-primary"
 			onclick={() => (adding = true)}
 		>
 			<Plus class="h-3.5 w-3.5" aria-hidden="true" /> Add city

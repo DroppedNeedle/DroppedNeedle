@@ -103,7 +103,7 @@
 			{#if headerLink}
 				<a
 					href={withBasePath(headerLink)}
-					class="text-sm text-base-content/50 hover:text-primary transition-colors flex items-center gap-1"
+					class="text-sm text-muted hover:text-primary transition-colors flex items-center gap-1"
 				>
 					See all
 					<ArrowRight class="w-3.5 h-3.5" />
@@ -126,7 +126,7 @@
 						<Sparkles class="h-5 w-5" />
 					{/if}
 				</div>
-				<p class="text-base-content/70 text-sm">{section.fallback_message}</p>
+				<p class="text-muted text-sm">{section.fallback_message}</p>
 				{#if section.connect_service}
 					<Button variant="primary" size="sm" href={withBasePath('/settings')} class="mt-2">
 						Connect {section.connect_service === 'listenbrainz'
@@ -195,7 +195,7 @@
 							<div class="flex flex-col items-center gap-2 px-2 pb-2 text-center">
 								<CardTitle as="h3" class="text-xs line-clamp-1">{item.name}</CardTitle>
 								{#if item.listen_count}
-									<p class="text-xs text-base-content/50">{formatListenCount(item.listen_count)}</p>
+									<p class="text-xs text-muted">{formatListenCount(item.listen_count)}</p>
 								{/if}
 							</div>
 						</Card>
@@ -252,7 +252,7 @@
 							<div class="flex flex-col gap-2 px-2 pb-2">
 								<CardTitle as="h3" class="text-xs line-clamp-1">{item.title}</CardTitle>
 								{#if item.artist_name}
-									<p class="text-xs text-base-content/50 line-clamp-1">{item.artist_name}</p>
+									<p class="text-xs text-muted line-clamp-1">{item.artist_name}</p>
 								{/if}
 							</div>
 						</Card>
@@ -309,10 +309,10 @@
 								<div class="flex min-w-0 flex-1 flex-col justify-center gap-2 p-2">
 									<CardTitle as="h3" class="text-xs line-clamp-1">{item.title}</CardTitle>
 									{#if item.artist_name}
-										<p class="text-xs text-base-content/50 line-clamp-1">{item.artist_name}</p>
+										<p class="text-xs text-muted line-clamp-1">{item.artist_name}</p>
 									{/if}
 									{#if item.listened_at}
-										<p class="text-xs text-base-content/40">{formatListenedAt(item.listened_at)}</p>
+										<p class="text-xs text-muted">{formatListenedAt(item.listened_at)}</p>
 									{/if}
 									{#if !item.artist_id}
 										<div class="flex justify-end pt-1">

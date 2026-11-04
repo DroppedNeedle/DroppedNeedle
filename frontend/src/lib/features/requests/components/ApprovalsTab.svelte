@@ -110,20 +110,20 @@
 												{item.track_title ?? 'Unknown track'}
 											</p>
 										</div>
-										<p class="text-base-content/60 text-xs truncate">
+										<p class="text-muted text-xs truncate">
 											Album: {item.album_title}
 										</p>
 									{:else}
 										<p class="font-semibold text-sm truncate">{item.album_title}</p>
 									{/if}
-									<p class="text-base-content/60 text-xs truncate">{item.artist_name}</p>
+									<p class="text-muted text-xs truncate">{item.artist_name}</p>
 									<div class="flex items-center gap-1.5 flex-wrap">
 										{#if item.year}
-											<span class="text-base-content/40 text-xs">{item.year}</span>
+											<span class="text-muted text-xs">{item.year}</span>
 										{/if}
 										{#if item.requested_by_name}
 											{#if item.year}<span class="text-base-content/20 text-xs">•</span>{/if}
-											<span class="text-base-content/40 text-xs">
+											<span class="text-muted text-xs">
 												Requested by {item.requested_by_name}
 											</span>
 										{/if}

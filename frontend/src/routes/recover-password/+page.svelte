@@ -86,7 +86,7 @@
 	<title>Recover account - DroppedNeedle</title>
 </svelte:head>
 
-<div class="recovery-wrap grain min-h-screen flex items-center justify-center p-4 py-10">
+<div class="recovery-wrap min-h-screen flex items-center justify-center p-4 py-10">
 	<div class="w-full max-w-lg">
 		<div class="recovery-brand">
 			<img
@@ -110,11 +110,11 @@
 							<Check class="h-7 w-7 text-success" aria-hidden="true" />
 						</div>
 						<h2 class="font-display text-2xl font-bold">Password changed</h2>
-						<p class="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-base-content/60">
+						<p class="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-muted">
 							All other DroppedNeedle browser sessions have been signed out. Sign in with your new
 							password.
 						</p>
-						<p class="mx-auto mt-3 max-w-sm text-xs leading-relaxed text-base-content/45">
+						<p class="mx-auto mt-3 max-w-sm text-xs leading-relaxed text-muted">
 							Connect Apps passwords were not changed. Review them after signing in if you suspect
 							that someone accessed your account.
 						</p>
@@ -132,7 +132,7 @@
 							</div>
 							<div>
 								<h2 class="font-display text-xl font-bold">Recover your local account</h2>
-								<p class="mt-1 text-sm leading-relaxed text-base-content/60">
+								<p class="mt-1 text-sm leading-relaxed text-muted">
 									Enter the one-time code from your DroppedNeedle administrator.
 								</p>
 							</div>
@@ -202,7 +202,7 @@
 							</Field>
 						</div>
 
-						<label class="flex cursor-pointer items-center gap-2 text-xs text-base-content/55">
+						<label class="flex cursor-pointer items-center gap-2 text-xs text-muted">
 							<input type="checkbox" class="checkbox checkbox-sm" bind:checked={showPasswords} />
 							{#if showPasswords}<EyeOff class="h-3.5 w-3.5" />{:else}<Eye
 									class="h-3.5 w-3.5"
@@ -234,14 +234,14 @@
 				<summary class="flex cursor-pointer list-none items-center gap-3 p-4 text-sm font-semibold">
 					<ShieldCheck class="h-4 w-4 text-accent" aria-hidden="true" />
 					<span class="flex-1">Recover as server owner</span>
-					<ChevronDown class="h-4 w-4 text-base-content/40 group-open:rotate-180" />
+					<ChevronDown class="h-4 w-4 text-muted group-open:rotate-180" />
 				</summary>
 				<div class="border-t border-base-300 px-4 pb-4 pt-3">
-					<p class="text-xs leading-relaxed text-base-content/60">
+					<p class="text-xs leading-relaxed text-muted">
 						If no other administrator can help, use the machine running DroppedNeedle to create a
 						recovery code. Only someone with host access can run this command.
 					</p>
-					<p class="mt-2 text-xs leading-relaxed text-base-content/60">
+					<p class="mt-2 text-xs leading-relaxed text-muted">
 						Stop the server first (<code class="font-mono">docker compose stop droppedneedle</code
 						>): the command refuses to run while it is up. Then run this from the folder with your
 						compose file.
@@ -262,18 +262,18 @@
 						</Button>
 					</div>
 					{#if !commandReady}
-						<p class="mt-2 text-xs text-base-content/50">
+						<p class="mt-2 text-xs text-muted">
 							Enter your username above to copy a ready-to-run command.
 						</p>
 					{/if}
-					<p class="mt-2 text-xs leading-relaxed text-base-content/60">
+					<p class="mt-2 text-xs leading-relaxed text-muted">
 						It prints a code that works once, for 15 minutes. Start the server again (<code
 							class="font-mono">docker compose up -d droppedneedle</code
 						>) and enter the username, the code and a new password above. An account that only signs
 						in through single sign-on, Plex or Jellyfin gets its first password this way and keeps
 						its other sign-in.
 					</p>
-					<p class="mt-2 text-xs leading-relaxed text-base-content/60">
+					<p class="mt-2 text-xs leading-relaxed text-muted">
 						The username is the DroppedNeedle one, which can differ from the name you have with a
 						single sign-on provider. To see the admin usernames, run
 						<code class="break-all font-mono">{toolCommand} --list-admins</code>.
@@ -285,7 +285,7 @@
 		{/if}
 		<a
 			href={withBasePath('/login')}
-			class="mx-auto mt-5 flex w-fit items-center gap-2 text-sm text-base-content/50 hover:text-primary"
+			class="mx-auto mt-5 flex w-fit items-center gap-2 text-sm text-muted hover:text-primary"
 		>
 			<ArrowLeft class="h-4 w-4" aria-hidden="true" /> Back to sign in
 		</a>
@@ -294,16 +294,9 @@
 
 <style>
 	.recovery-wrap {
-		--grain-opacity: 0.1;
 		position: relative;
 		isolation: isolate;
-		background:
-			radial-gradient(
-				circle at 50% -8rem,
-				oklch(from var(--color-primary) l c h / 0.08),
-				transparent 22rem
-			),
-			var(--color-base-100);
+		background: var(--color-base-100);
 	}
 
 	.recovery-brand {

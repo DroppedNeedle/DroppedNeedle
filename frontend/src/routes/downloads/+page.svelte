@@ -38,7 +38,7 @@
 			<Download class="h-6 w-6 text-primary" aria-hidden="true" />
 			<h1 class="text-2xl font-bold sm:text-3xl">Downloads</h1>
 		</div>
-		<p class="text-base-content/50 text-sm mt-0.5">
+		<p class="text-muted text-sm mt-0.5">
 			The engine room - live transfers, retries, and things needing your call
 		</p>
 	</div>
@@ -67,7 +67,7 @@
 	{#if activeTab === 'import' && canImport}
 		<DropImportZone className="mb-6" />
 		{#if isAdmin}
-			<label class="mb-3 flex items-center justify-end gap-2 text-xs text-base-content/60">
+			<label class="mb-3 flex items-center justify-end gap-2 text-xs text-muted">
 				<input
 					type="checkbox"
 					class="toggle toggle-sm toggle-primary"

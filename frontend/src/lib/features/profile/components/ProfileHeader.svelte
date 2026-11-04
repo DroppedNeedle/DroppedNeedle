@@ -43,7 +43,7 @@
 			<div
 				class="flex h-full w-full items-center justify-center bg-linear-to-br from-primary/30 to-accent/20"
 			>
-				<UserRound class="h-16 w-16 text-base-content/40 sm:h-20 sm:w-20" />
+				<UserRound class="h-16 w-16 text-muted sm:h-20 sm:w-20" />
 			</div>
 		{/if}
 		<div
@@ -55,9 +55,7 @@
 
 	<div class="flex w-full max-w-md flex-col items-center gap-2 pb-2">
 		<div class="flex items-center gap-2">
-			<span class="text-xs font-semibold uppercase tracking-widest text-base-content/40"
-				>Profile</span
-			>
+			<span class="text-xs font-semibold uppercase tracking-widest text-muted">Profile</span>
 			{#if authStore.user}
 				{#if authStore.user.role === 'admin'}
 					<span class="badge badge-accent badge-sm gap-1">

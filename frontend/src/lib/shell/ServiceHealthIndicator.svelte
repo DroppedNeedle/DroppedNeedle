@@ -126,12 +126,12 @@
 							<div class="flex items-center gap-2">
 								<span class="h-2 w-2 shrink-0 rounded-full bg-warning"></span>
 								<span class="text-sm font-medium">{serviceLabel(item.service)}</span>
-								<span class="text-xs text-base-content/40">· {item.capability}</span>
+								<span class="text-xs text-muted">· {item.capability}</span>
 							</div>
-							<p class="mt-1 pl-4 text-xs text-base-content/60">{item.message}</p>
+							<p class="mt-1 pl-4 text-xs text-muted">{item.message}</p>
 							{#if fb}
-								<p class="mt-0.5 pl-4 text-xs text-base-content/45">
-									Using <span class="font-medium text-base-content/70">{fb}</span> instead. Auto-retrying.
+								<p class="mt-0.5 pl-4 text-xs text-muted">
+									Using <span class="font-medium text-muted">{fb}</span> instead. Auto-retrying.
 								</p>
 							{/if}
 						</li>

@@ -395,7 +395,7 @@
 
 		{#if trackCount > 0}
 			<div class="mt-4 flex flex-wrap items-center gap-2">
-				<Button variant="accent" size="sm" onclick={() => playAll(false)}>
+				<Button variant="primary" size="sm" onclick={() => playAll(false)}>
 					<Play class="size-4 fill-current" aria-hidden="true" />
 					Play All
 				</Button>

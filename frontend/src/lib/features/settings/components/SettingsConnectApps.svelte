@@ -69,11 +69,11 @@
 				<Waypoints class="h-5 w-5" aria-hidden="true" />
 				<h2 class="text-xl font-bold tracking-tight">Connect Apps</h2>
 			</div>
-			<p class="max-w-2xl text-base text-base-content/70">
+			<p class="max-w-2xl text-base text-muted">
 				Let music apps like Symfonium and Finamp stream this library over the OpenSubsonic or
 				Jellyfin protocols.
 			</p>
-			<p class="max-w-2xl text-sm text-base-content/50">
+			<p class="max-w-2xl text-sm text-muted">
 				These are server-wide switches. Each person creates their own app-password from their
 				<a href={withBasePath('/profile#connect-apps')} class="link link-accent"
 					>Profile → Connect Apps</a
@@ -146,7 +146,7 @@
 					{rosterCount} active
 				</span>
 			</div>
-			<p class="text-sm text-base-content/60">
+			<p class="text-sm text-muted">
 				Every app-password across all users. You can revoke any of them, but the secret itself is
 				never shown to anyone after it's created.
 			</p>
@@ -177,7 +177,7 @@
 								<tr>
 									<td>
 										<span class="font-medium">{pw.owner_display_name}</span>
-										<span class="block text-xs text-base-content/50">@{pw.owner_username}</span>
+										<span class="block text-xs text-muted">@{pw.owner_username}</span>
 									</td>
 									<td class="font-medium">{pw.name}</td>
 									<td>{formatDate(pw.created_at)}</td>
@@ -200,9 +200,7 @@
 					</table>
 				</div>
 			{:else}
-				<div
-					class="rounded-box border border-dashed border-base-300 p-6 text-center text-base-content/60"
-				>
+				<div class="rounded-box border border-dashed border-base-300 p-6 text-center text-muted">
 					No app-passwords have been created yet.
 				</div>
 			{/if}

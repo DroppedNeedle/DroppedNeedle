@@ -369,7 +369,7 @@
 </script>
 
 <div class="space-y-4">
-	<p class="max-w-3xl text-sm text-base-content/65">
+	<p class="max-w-3xl text-sm text-muted">
 		Cases that wait on a person: an undone edition with nothing to go back to, editions dropped when
 		albums were combined, and repair findings.
 	</p>
@@ -517,14 +517,14 @@
 											aria-label="Reviews handled"
 										></progress>
 									{/if}
-									<p class="text-xs text-base-content/60">
+									<p class="text-xs text-muted">
 										{job.completed_count.toLocaleString()} of {plural(
 											job.expected_work_count,
 											'review'
 										)}{left ? ` · ${left.toLocaleString()} left alone` : ''}
 									</p>
 									{#if !active && job.skipped.length}
-										<ul class="space-y-0.5 text-xs text-base-content/70">
+										<ul class="space-y-0.5 text-xs text-muted">
 											{#each job.skipped as group (group.reason.code)}
 												<li class="flex gap-1.5">
 													<CircleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
@@ -558,7 +558,7 @@
 				</div>
 			{/snippet}
 			{#snippet empty()}
-				<Card class="text-center text-base-content/60">{EMPTY[filters.state]}</Card>
+				<Card class="text-center text-muted">{EMPTY[filters.state]}</Card>
 			{/snippet}
 			{#snippet children(loaded)}
 				<ul class="space-y-2" bind:this={list}>
@@ -607,9 +607,7 @@
 				</ul>
 				{#if total > PAGE}
 					<div class="mt-2 flex items-center justify-between text-sm">
-						<span class="text-base-content/60"
-							>{reviews.length} of {loaded.pages[0]?.total ?? 0}</span
-						>
+						<span class="text-muted">{reviews.length} of {loaded.pages[0]?.total ?? 0}</span>
 						{#if query.hasNextPage}
 							<Button
 								size="sm"
@@ -662,7 +660,7 @@
 				{#each plan.skipped as group (group.reason.code)}
 					<li>
 						<strong>{group.count}</strong> left alone: {group.reason.message}
-						<span class="text-base-content/60">{group.reason.action}</span>
+						<span class="text-muted">{group.reason.action}</span>
 					</li>
 				{/each}
 			</ul>
@@ -695,7 +693,7 @@
 				{#each plan.skipped as group (group.reason.code)}
 					<li>
 						<strong>{group.count}</strong> would not start: {group.reason.message}
-						<span class="text-base-content/60">{group.reason.action}</span>
+						<span class="text-muted">{group.reason.action}</span>
 					</li>
 				{/each}
 			</ul>

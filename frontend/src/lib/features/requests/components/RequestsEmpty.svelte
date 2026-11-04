@@ -23,7 +23,7 @@
 	<div class="w-16 h-16 rounded-full {tones[tone].ring} flex items-center justify-center mb-4">
 		<Icon class={tones[tone].icon} />
 	</div>
-	<h2 class="text-lg font-semibold mb-1.5 text-base-content/50">{title}</h2>
-	<p class="text-base-content/30 text-sm max-w-xs">{@render children()}</p>
+	<h2 class="text-lg font-semibold mb-1.5 text-muted">{title}</h2>
+	<p class="text-muted text-sm max-w-xs">{@render children()}</p>
 	{@render action?.()}
 </div>

@@ -76,19 +76,19 @@
 			</div>
 			<div>
 				<CardTitle>Spotify</CardTitle>
-				<p class="text-sm text-base-content/60">App credentials for the whole instance.</p>
+				<p class="text-sm text-muted">App credentials for the whole instance.</p>
 			</div>
 		</div>
 	{/snippet}
 	<div class="mt-2 flex flex-col gap-4">
-		<div class="rounded-xl border border-info/20 bg-info/5 p-3 text-sm text-base-content/70">
+		<div class="rounded-xl border border-info/20 bg-info/5 p-3 text-sm text-muted">
 			These are the shared app credentials for one registered Spotify application. Each user links
 			<span class="font-medium">their own</span> Spotify account from their
 			<a href={withBasePath('/profile')} class="link link-primary">profile</a> to import their personal
 			playlists.
 		</div>
 
-		<div class="rounded-xl border border-warning/20 bg-warning/5 p-3 text-sm text-base-content/70">
+		<div class="rounded-xl border border-warning/20 bg-warning/5 p-3 text-sm text-muted">
 			<p class="font-medium text-warning/80">Development mode restriction</p>
 			<p class="mt-1">
 				Spotify apps in development mode only allow up to 5 explicitly allowlisted users. Each user
@@ -133,7 +133,7 @@
 
 					<Card variant="bordered" padding="sm">
 						<div>
-							<p class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/50">
+							<p class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted">
 								Redirect URI: add this in your Spotify app dashboard
 							</p>
 							<div class="flex items-center gap-2">
@@ -167,7 +167,7 @@
 						href="https://developer.spotify.com/dashboard"
 						target="_blank"
 						rel="noopener noreferrer"
-						class="flex w-fit items-center gap-1 text-xs text-base-content/50 transition-colors hover:text-primary"
+						class="flex w-fit items-center gap-1 text-xs text-muted transition-colors hover:text-primary"
 					>
 						<ExternalLink class="h-3 w-3" /> Create a Spotify app to get Client ID + Secret
 					</a>

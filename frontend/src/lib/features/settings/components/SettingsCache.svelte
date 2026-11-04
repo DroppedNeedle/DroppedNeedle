@@ -96,7 +96,7 @@
 	{#snippet header()}
 		<CardTitle class="text-2xl mb-4">Cache management</CardTitle>
 	{/snippet}
-	<p class="text-base-content/70 mb-6">
+	<p class="text-muted mb-6">
 		Provider data and images are kept on disk. Anything cleared is fetched again on demand.
 	</p>
 
@@ -158,7 +158,7 @@
 
 		<div class="space-y-2 mb-6">
 			<h3 class="text-xl font-semibold">Library images</h3>
-			<p class="text-sm text-base-content/70">
+			<p class="text-sm text-muted">
 				Fetch artist images, album covers and page details for your whole library now, so pages load
 				fast later. It runs in the background and skips anything already cached.
 			</p>

@@ -67,7 +67,7 @@
 	const badgeTones = {
 		info: 'bg-info/15 text-info',
 		warning: 'bg-warning/15 text-warning',
-		muted: 'bg-base-content/8 text-base-content/50'
+		muted: 'bg-base-content/8 text-muted'
 	};
 
 	interface TabEntry {
@@ -139,12 +139,10 @@
 	<div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
 		<div>
 			<h1 class="text-2xl sm:text-3xl font-bold text-base-content">Requests</h1>
-			<p class="text-base-content/50 text-sm mt-0.5">
-				What you've asked for and where each one stands
-			</p>
+			<p class="text-muted text-sm mt-0.5">What you've asked for and where each one stands</p>
 		</div>
 		{#if activeSummary.count > 0}
-			<div class="flex items-center gap-3 text-xs text-base-content/50">
+			<div class="flex items-center gap-3 text-xs text-muted">
 				{#if activeSummary.downloading > 0}
 					<span class="flex items-center gap-1.5">
 						<Download class="h-3.5 w-3.5 text-info" />

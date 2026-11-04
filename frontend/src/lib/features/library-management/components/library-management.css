@@ -311,6 +311,7 @@ details[open] > summary .management-editor-chevron {
 .management-summary-card strong {
 	font-family: var(--font-display);
 	font-size: 1.25rem;
+	text-transform: uppercase;
 }
 
 .management-inspector-content {

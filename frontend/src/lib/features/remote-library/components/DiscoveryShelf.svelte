@@ -45,7 +45,7 @@
 		{#if actions}{@render actions()}{/if}
 		{#if empty}
 			<Card>
-				<p class="text-center text-sm text-base-content/50">{emptyMessage}</p>
+				<p class="text-center text-sm text-muted">{emptyMessage}</p>
 			</Card>
 		{:else}
 			{@render children()}

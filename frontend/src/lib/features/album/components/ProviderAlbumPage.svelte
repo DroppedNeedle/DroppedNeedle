@@ -204,7 +204,7 @@
 			{#if localCopies.length > 1}
 				<Card variant="bordered" padding="md" as="section" aria-label="Copies in your library">
 					<h2 class="text-lg font-bold">Copies in your library</h2>
-					<p class="mt-1 max-w-2xl text-sm text-base-content/55">
+					<p class="mt-1 max-w-2xl text-sm text-muted">
 						This MusicBrainz release matches more than one local album. Choose the copy you want to
 						open.
 					</p>
@@ -383,7 +383,7 @@
 		</div>
 	{:else}
 		<div class="flex items-center justify-center min-h-[50vh]">
-			<p class="text-base-content/60">Album not found</p>
+			<p class="text-muted">Album not found</p>
 		</div>
 	{/if}
 </div>

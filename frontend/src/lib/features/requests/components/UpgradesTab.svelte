@@ -109,7 +109,7 @@
 			</RequestsEmpty>
 		{:else}
 			{@const cutoff = tierLabel(cutoffUnmetQuery.data.cutoff)}
-			<p class="text-xs text-base-content/40 mb-3">
+			<p class="text-xs text-muted mb-3">
 				Albums whose worst track is below your cutoff ({cutoff}). "Find a better copy" only replaces
 				a file when the new one is better quality; replaced files go to the recycle bin.
 			</p>
@@ -138,13 +138,13 @@
 									>
 										{item.album_title ?? 'Unknown album'}
 									</a>
-									<p class="text-base-content/60 text-xs truncate">
+									<p class="text-muted text-xs truncate">
 										{item.artist_name ?? 'Unknown artist'}{item.year ? ` • ${item.year}` : ''}
 									</p>
-									<p class="text-base-content/40 text-xs mt-0.5">
+									<p class="text-muted text-xs mt-0.5">
 										<span class="text-warning/80">{tierLabel(item.current_tier)}</span>
-										<span class="text-base-content/25"> → {cutoff}</span>
-										<span class="text-base-content/25"> • {item.track_count} tracks</span>
+										<span class="text-muted"> → {cutoff}</span>
+										<span class="text-muted"> • {item.track_count} tracks</span>
 									</p>
 								</div>
 								<div class="shrink-0">

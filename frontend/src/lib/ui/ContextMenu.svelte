@@ -146,7 +146,7 @@
 	<ul
 		bind:this={menuEl}
 		use:portal
-		class="menu bg-base-200/95 backdrop-blur-md rounded-box shadow-lg w-52 p-2"
+		class="menu w-52 rounded-box border border-line bg-base-200 p-2 shadow-lg"
 		style="position: fixed; top: {menuTop}px; left: {menuLeft}px; z-index: 9999;"
 		role="menu"
 		onclick={(e: MouseEvent) => e.stopPropagation()}

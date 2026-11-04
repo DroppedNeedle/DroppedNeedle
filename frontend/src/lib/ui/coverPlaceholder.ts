@@ -2,15 +2,13 @@
 // when there is no id) always gets the same pair of tokens and angle, so an
 // item looks the same on every screen. Used by CoverPlaceholder.svelte.
 
-// Saturated theme tokens only. Neutral is left out: it is pale on light and
-// dark on dark, so no icon colour reads on it in both themes.
-const PALETTE = ['primary', 'secondary', 'accent', 'info', 'success', 'warning', 'error'] as const;
+// The cover tokens in theme.css, the same in both themes, so the Subsonic
+// placeholder the server draws (compat's PLACEHOLDER_PALETTE) matches.
+const PALETTE = ['1', '2', '3', '4', '5', '6', '7'] as const;
 const ANGLES = [45, 135, 225, 315] as const;
 
-// base-100 is the page colour inverted: it reads on every palette token in both
-// themes.
-const SATURATED_INK = 'text-base-100';
-const NEUTRAL_INK = 'text-base-content';
+const SATURATED_INK = 'text-(--color-cover-ink)';
+const NEUTRAL_INK = 'text-(--color-cover-ink-pale)';
 
 export interface CoverPlaceholderLook {
 	/** CSS background-image value built from theme tokens. */
@@ -20,7 +18,8 @@ export interface CoverPlaceholderLook {
 }
 
 const NEUTRAL: CoverPlaceholderLook = {
-	background: 'linear-gradient(135deg, var(--color-base-300), var(--color-neutral))',
+	background:
+		'linear-gradient(135deg, var(--color-cover-neutral-from), var(--color-cover-neutral-to))',
 	ink: NEUTRAL_INK
 };
 
@@ -47,7 +46,7 @@ export function coverPlaceholder(seed: string): CoverPlaceholderLook {
 	const to = (from + 1 + (Math.floor(h / count) % (count - 1))) % count;
 	const angle = ANGLES[Math.floor(h / (count * (count - 1))) % ANGLES.length];
 	return {
-		background: `linear-gradient(${angle}deg, var(--color-${PALETTE[from]}), var(--color-${PALETTE[to]}))`,
+		background: `linear-gradient(${angle}deg, var(--color-cover-${PALETTE[from]}), var(--color-cover-${PALETTE[to]}))`,
 		ink: SATURATED_INK
 	};
 }

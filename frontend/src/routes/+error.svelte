@@ -26,7 +26,7 @@
 	<title>{status} - DroppedNeedle</title>
 </svelte:head>
 
-<div class="err-wrap grain">
+<div class="err-wrap">
 	<span class="err-code" aria-hidden="true">{status}</span>
 	<h1 class="err-head">{heading}</h1>
 	<p class="err-blurb">{blurb}</p>
@@ -40,7 +40,6 @@
 
 <style>
 	.err-wrap {
-		--grain-opacity: 0.12;
 		position: relative;
 		display: flex;
 		flex-direction: column;

@@ -235,9 +235,9 @@
 				<span class="status {linked ? 'status-success' : 'status-error'} status-sm"></span>
 			</div>
 			{#if linked}
-				<p class="truncate text-xs text-base-content/50">@{username || 'linked'}</p>
+				<p class="truncate text-xs text-muted">@{username || 'linked'}</p>
 			{:else}
-				<p class="text-xs text-base-content/30">Not connected</p>
+				<p class="text-xs text-muted">Not connected</p>
 			{/if}
 		</div>
 	</div>
@@ -245,7 +245,7 @@
 
 <section>
 	<h2
-		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
+		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted"
 	>
 		<RadioTower class="h-4 w-4 text-accent" />
 		Scrobbling &amp; Discovery
@@ -255,7 +255,7 @@
 		<div class="space-y-3">
 			{#if loading}
 				<div class="flex items-center justify-center py-10">
-					<LoaderCircle class="h-5 w-5 animate-spin motion-keep text-base-content/40" />
+					<LoaderCircle class="h-5 w-5 animate-spin motion-keep text-muted" />
 				</div>
 			{:else}
 				<div>
@@ -296,7 +296,7 @@
 					{#if !lb && lbFormOpen}
 						<Card variant="bordered" padding="sm" class="mt-2 animate-fade-in-up">
 							<div class="space-y-2">
-								<p class="text-xs text-base-content/60">
+								<p class="text-xs text-muted">
 									Paste your ListenBrainz user token and username to link your account.
 								</p>
 								<Input
@@ -401,7 +401,7 @@
 					{#if !lfmLinked && lfmCredentialsOpen}
 						<Card variant="bordered" padding="sm" class="mt-2 animate-fade-in-up">
 							<div class="space-y-2">
-								<p class="text-xs text-base-content/60">
+								<p class="text-xs text-muted">
 									Enter the API key and shared secret of your own
 									<a
 										href="https://www.last.fm/api/account/create"
@@ -451,7 +451,7 @@
 						</Card>
 					{/if}
 					{#if lfmPendingToken && !lfmLinked}
-						<p class="mt-2 px-1 text-xs text-base-content/60 animate-fade-in-up">
+						<p class="mt-2 px-1 text-xs text-muted animate-fade-in-up">
 							Approve DroppedNeedle in the Last.fm window that opened, then choose Finish.
 						</p>
 					{/if}
@@ -510,7 +510,7 @@
 				<div class="flex flex-wrap items-center justify-between gap-3 px-1">
 					<div>
 						<span class="text-sm font-medium">Primary source</span>
-						<p class="text-xs text-base-content/40">Powers your Home &amp; Discover by default.</p>
+						<p class="text-xs text-muted">Powers your Home &amp; Discover by default.</p>
 					</div>
 					<div
 						class="inline-flex gap-1 rounded-full bg-base-300/50 p-1"
@@ -537,9 +537,7 @@
 				<div class="flex flex-wrap items-center justify-between gap-3 px-1">
 					<div>
 						<label for={visibilityId} class="text-sm font-medium">Now Playing visibility</label>
-						<p class="text-xs text-base-content/40">
-							How your listening appears to others on the home page.
-						</p>
+						<p class="text-xs text-muted">How your listening appears to others on the home page.</p>
 					</div>
 					<select
 						id={visibilityId}
@@ -561,7 +559,7 @@
 						<Sparkles class="h-4 w-4 text-accent" />
 						<span class="text-sm font-semibold">Your Weekly Mix</span>
 					</div>
-					<p class="text-xs text-base-content/40">
+					<p class="text-xs text-muted">
 						A playlist built from your ListenBrainz listening history, refreshed weekly.
 					</p>
 					<ToggleRow
@@ -588,7 +586,7 @@
 							Refresh my mix
 						</Button>
 						{#if mixRefreshMessage}
-							<p class="grow-0 text-xs text-base-content/50">{mixRefreshMessage}</p>
+							<p class="grow-0 text-xs text-muted">{mixRefreshMessage}</p>
 						{/if}
 					</div>
 				</div>

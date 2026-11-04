@@ -127,7 +127,7 @@
 		</div>
 
 		<Card padding="sm" class="mb-4">
-			<p class="text-xs font-medium text-base-content/50 uppercase tracking-wider">Include</p>
+			<p class="text-xs font-medium text-muted uppercase tracking-wider">Include</p>
 			<div class="flex flex-wrap gap-3">
 				{#if albumCount > 0}
 					<label class="label cursor-pointer gap-2 p-0">
@@ -152,7 +152,7 @@
 
 		{#if filteredReleases.length > 0}
 			<div class="mb-4">
-				<p class="text-xs font-medium text-base-content/50 uppercase tracking-wider mb-2">
+				<p class="text-xs font-medium text-muted uppercase tracking-wider mb-2">
 					{filteredReleases.length} album{filteredReleases.length !== 1 ? 's' : ''} to request
 				</p>
 				<div
@@ -181,7 +181,7 @@
 					{/each}
 					{#if filteredReleases.length > 40}
 						<div class="aspect-square rounded-lg bg-base-300 flex items-center justify-center">
-							<span class="text-xs text-base-content/50">+{filteredReleases.length - 40}</span>
+							<span class="text-xs text-muted">+{filteredReleases.length - 40}</span>
 						</div>
 					{/if}
 				</div>
@@ -189,7 +189,7 @@
 		{:else}
 			<Card padding="md" class="text-center mb-4">
 				<Library class="h-8 w-8 mx-auto text-base-content/30" />
-				<p class="text-sm text-base-content/50">
+				<p class="text-sm text-muted">
 					{#if inLibraryCount === totalReleases}
 						All releases are already in your library
 					{:else}
@@ -200,7 +200,7 @@
 		{/if}
 
 		<Card padding="sm">
-			<p class="text-xs font-medium text-base-content/50 uppercase tracking-wider">Options</p>
+			<p class="text-xs font-medium text-muted uppercase tracking-wider">Options</p>
 			<label class="label cursor-pointer justify-start gap-3 p-0">
 				<input
 					type="checkbox"

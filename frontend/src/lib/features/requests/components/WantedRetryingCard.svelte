@@ -53,7 +53,7 @@
 			>
 				{item.album_title}
 			</a>
-			<p class="text-base-content/60 text-xs truncate">
+			<p class="text-muted text-xs truncate">
 				{item.artist_name}{item.year ? ` • ${item.year}` : ''}
 			</p>
 			<div class="flex items-center gap-1.5 flex-wrap text-xs mt-0.5">
@@ -62,13 +62,13 @@
 					Still hunting
 				</span>
 				<span class="text-base-content/20">•</span>
-				<span class="text-base-content/40">retry {attempt} of {item.max_attempts}</span>
+				<span class="text-muted">retry {attempt} of {item.max_attempts}</span>
 				{#if nextTryLabel}
 					<span class="text-base-content/20">•</span>
-					<span class="text-base-content/40">next try {nextTryLabel}</span>
+					<span class="text-muted">next try {nextTryLabel}</span>
 				{/if}
 				{#if ownerName}
-					<span class="flex items-center gap-1.5 text-base-content/40">
+					<span class="flex items-center gap-1.5 text-muted">
 						<span class="text-base-content/20">•</span>
 						requested by {ownerName}
 					</span>

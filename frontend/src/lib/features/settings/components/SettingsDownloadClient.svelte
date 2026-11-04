@@ -132,7 +132,7 @@
 				/>
 			</section>
 
-			<p class="text-xs leading-relaxed text-base-content/60">
+			<p class="text-xs leading-relaxed text-muted">
 				DroppedNeedle only orchestrates your own slskd instance over its local HTTP API; it never
 				joins or distributes on the Soulseek network. You supply, run, and are responsible for slskd
 				and its shared folders.
@@ -148,12 +148,12 @@
 
 			<section class="space-y-2">
 				<div class="flex items-center gap-2 text-sm font-semibold">
-					<FolderTree class="size-4 text-base-content/70" aria-hidden="true" /> Downloads mount
+					<FolderTree class="size-4 text-muted" aria-hidden="true" /> Downloads mount
 				</div>
 				{#if mount?.path}
-					<p class="text-xs text-base-content/60">
+					<p class="text-xs text-muted">
 						DroppedNeedle looks in
-						<code class="text-base-content/70" data-testid="effective-downloads-path"
+						<code class="text-muted" data-testid="effective-downloads-path"
 							>{joinSubpath(mount.path, draft.downloads_subpath ?? '')}</code
 						>. The mount itself comes from <code>SLSKD_DOWNLOADS_PATH</code> in docker-compose. Recreate
 						the container after changing it.
@@ -167,7 +167,7 @@
 							<TriangleAlert class="size-5 shrink-0" aria-hidden="true" />
 							<div class="space-y-1">
 								<p>{mountAdvisory}</p>
-								{#if mount?.path}<code class="text-base-content/60">{mount?.path}</code>{/if}
+								{#if mount?.path}<code class="text-muted">{mount?.path}</code>{/if}
 							</div>
 						</div>
 					{/if}
@@ -179,11 +179,11 @@
 									>relative to the mount</span
 								>
 							</label>
-							<p class="text-xs text-base-content/60">
+							<p class="text-xs text-muted">
 								The folder inside your mount where slskd saves completed downloads.
 								{#if slskdDownloadsDir}
-									slskd saves to <code class="text-base-content/70">{slskdDownloadsDir}</code>. Set
-									this to the part of that path inside your mount.
+									slskd saves to <code class="text-muted">{slskdDownloadsDir}</code>. Set this to
+									the part of that path inside your mount.
 								{/if}
 							</p>
 							{#if slskdDownloadsDir && slskdDownloadsDir === mount?.path && !draft.downloads_subpath?.trim()}
@@ -230,7 +230,7 @@
 					<div class="flex items-center gap-2 text-sm text-success">
 						<CircleCheck class="size-4" aria-hidden="true" />
 						Fast move available
-						{#if mount.path}<code class="text-base-content/60">{mount.path}</code>{/if}
+						{#if mount.path}<code class="text-muted">{mount.path}</code>{/if}
 					</div>
 				{:else if mount?.reason === 'different_mount' || mount?.reason === 'different_filesystem'}
 					<div class="alert alert-info items-start text-sm">
@@ -241,9 +241,9 @@
 								will copy each file into the library and remove the source after the copy succeeds.
 								This is slower and temporarily needs room for both copies.
 							</p>
-							<p class="text-base-content/70">
+							<p class="text-muted">
 								For fast moves, expose both folders through one common-parent container mount.
-								{#if mount.path}<code class="text-base-content/60">{mount.path}</code>{/if}
+								{#if mount.path}<code class="text-muted">{mount.path}</code>{/if}
 							</p>
 						</div>
 					</div>
@@ -274,7 +274,7 @@
 							</p>
 							<details class="text-xs">
 								<summary class="cursor-pointer font-semibold">How to set this up</summary>
-								<p class="mt-1 text-base-content/70">
+								<p class="mt-1 text-muted">
 									Expose slskd's completed-downloads directory to DroppedNeedle
 									<strong>read-write</strong>. For fast moves, keep it and the library inside one
 									common-parent container mount. See the slskd setup section in the README.
@@ -291,7 +291,7 @@
 						Incomplete folder (optional)
 						<span class="badge badge-ghost badge-xs ml-1 align-middle">absolute path</span>
 					</label>
-					<p class="text-xs text-base-content/60">
+					<p class="text-xs text-muted">
 						The absolute container path where slskd keeps unfinished downloads. When set,
 						DroppedNeedle spots stranded partial bytes there and retries the missing file instead of
 						reporting it lost. Leave empty to disable.

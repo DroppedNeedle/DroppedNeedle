@@ -19,7 +19,7 @@
 <Modal bind:open title="Hidden albums" closeButton>
 	<QueryBoundary query={ignoredQuery} what="your hidden albums">
 		{#snippet empty()}
-			<p class="py-6 text-center text-sm text-base-content/70">Nothing hidden.</p>
+			<p class="py-6 text-center text-sm text-muted">Nothing hidden.</p>
 		{/snippet}
 		{#snippet children(data)}
 			<ul class="divide-y divide-base-content/5">
@@ -33,7 +33,7 @@
 						/>
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-semibold">{album.release_name}</p>
-							<p class="truncate text-xs text-base-content/70">{album.artist_name}</p>
+							<p class="truncate text-xs text-muted">{album.artist_name}</p>
 						</div>
 						<AsyncButton
 							variant="ghost"

@@ -51,7 +51,7 @@
 				Files and changes
 			</h2>
 		</div>
-		<span class="text-xs text-base-content/45">Root labels and relative paths only</span>
+		<span class="text-xs text-muted">Root labels and relative paths only</span>
 	</div>
 	<div class="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
 		<label class="grid gap-1 text-xs"
@@ -135,7 +135,7 @@
 						>
 							Could not search artists and releases.
 						</div>{:else if catalogSearchQuery.data && catalogSearchQuery.data.artists.length + catalogSearchQuery.data.albums.length === 0}<p
-							class="rounded-xl border border-dashed border-base-content/15 p-3 text-xs text-base-content/50"
+							class="rounded-xl border border-dashed border-base-content/15 p-3 text-xs text-muted"
 						>
 							No matching artists or releases.
 						</p>{:else if catalogSearchQuery.data}<div

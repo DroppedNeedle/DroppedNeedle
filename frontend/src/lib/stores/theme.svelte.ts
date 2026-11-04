@@ -7,7 +7,7 @@ const STORAGE_KEY = 'droppedneedle_theme';
 const LIGHT_QUERY = '(prefers-color-scheme: light)';
 // Browser chrome colour per theme: each theme's base-100 in src/theme.css.
 // Hardcoded because the theme is applied before any stylesheet has loaded.
-const THEME_COLOR: Record<Theme, string> = { dark: '#0d120a', light: '#f6f8f3' };
+const THEME_COLOR: Record<Theme, string> = { dark: '#090e0b', light: '#f6f3e8' };
 
 export function parseThemePreference(raw: string | null): ThemePreference {
 	return raw === 'system' || raw === 'light' ? raw : 'dark';

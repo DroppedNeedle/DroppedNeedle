@@ -76,15 +76,15 @@
 			</div>
 			<div>
 				<h3 class="text-lg font-bold">Artist sync</h3>
-				<p class="text-sm text-base-content/60">Sync your monitored artists into your follows.</p>
+				<p class="text-sm text-muted">Sync your monitored artists into your follows.</p>
 			</div>
 		</div>
 
 		<div class="space-y-4 border-t border-base-300 p-5">
 			{#if !unlocked}
 				<div class="flex items-center gap-3 rounded-box bg-base-300/30 p-4 opacity-60">
-					<Lock class="size-5 shrink-0 text-base-content/50" aria-hidden="true" />
-					<p class="text-sm text-base-content/60">Connect Lidarr above to unlock artist sync.</p>
+					<Lock class="size-5 shrink-0 text-muted" aria-hidden="true" />
+					<p class="text-sm text-muted">Connect Lidarr above to unlock artist sync.</p>
 				</div>
 			{:else if candidatesQuery.isPending}
 				<div class="space-y-1.5" aria-label="Loading monitored artists">
@@ -102,7 +102,7 @@
 				</div>
 				<Button size="sm" onclick={() => void candidatesQuery.refetch()}>Retry</Button>
 			{:else if total === 0}
-				<p class="py-6 text-center text-sm text-base-content/50">No monitored artists in Lidarr.</p>
+				<p class="py-6 text-center text-sm text-muted">No monitored artists in Lidarr.</p>
 				<Button size="sm" onclick={() => void candidatesQuery.refetch()}>Check again</Button>
 			{:else if newCount > 0}
 				<div class="alert py-2 text-sm">
@@ -121,7 +121,7 @@
 							/>
 							Select all
 						</label>
-						<span class="text-sm text-base-content/60">
+						<span class="text-sm text-muted">
 							{selected.length} of {selectable.length} selected
 						</span>
 					</div>

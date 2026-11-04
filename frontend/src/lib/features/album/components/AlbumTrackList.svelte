@@ -284,7 +284,7 @@
 						<div
 							class="font-medium w-8 text-center shrink-0 {isCurrentlyPlaying
 								? 'text-accent'
-								: 'text-base-content/60'}"
+								: 'text-muted'}"
 						>
 							{#if isCurrentlyPlaying}
 								<NowPlayingIndicator />
@@ -304,7 +304,7 @@
 								{track.title}
 							</div>
 							{#if libMeta?.artist_name && libMeta.artist_name !== album.artist_name}
-								<div class="truncate text-xs text-base-content/60">{libMeta.artist_name}</div>
+								<div class="truncate text-xs text-muted">{libMeta.artist_name}</div>
 							{/if}
 						</div>
 
@@ -334,11 +334,11 @@
 								{/if}
 							</div>
 						{/if}
-						<div class="text-base-content/60 text-sm shrink-0">
+						<div class="text-muted text-sm shrink-0">
 							{formatDuration(editionRow ? editionRow.lengthMs : track.length)}
 						</div>
 
-						<div class="text-base-content/40 text-xs tabular-nums shrink-0 w-16 text-right">
+						<div class="text-muted text-xs tabular-nums shrink-0 w-16 text-right">
 							{localTrack && localTrack.size_bytes > 0 ? formatBytes(localTrack.size_bytes) : '—'}
 						</div>
 
@@ -515,7 +515,7 @@
 								: 'sm:hidden'}"
 						>
 							{#if editionRow?.yourVersionMs}
-								<span class="text-base-content/60"
+								<span class="text-muted"
 									>Your version {formatDuration(editionRow.yourVersionMs)}</span
 								>
 							{/if}

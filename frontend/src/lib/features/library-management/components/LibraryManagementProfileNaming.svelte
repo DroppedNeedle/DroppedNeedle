@@ -71,7 +71,7 @@
 				bind:checked={organization.move_sidecars}
 			/>
 		</div>
-		<p class="text-xs font-semibold uppercase tracking-wider text-base-content/55">
+		<p class="text-xs font-semibold uppercase tracking-wider text-muted">
 			Scripts used by this profile
 		</p>
 		<div class="mb-3 grid gap-3 sm:grid-cols-2">
@@ -89,7 +89,7 @@
 				}
 			/>
 		</div>
-		<p class="mb-3 text-xs text-base-content/60">
+		<p class="mb-3 text-xs text-muted">
 			Releases with more than one MusicBrainz audio medium use the multi-disc script.
 		</p>
 		<LibraryManagementScriptEditor

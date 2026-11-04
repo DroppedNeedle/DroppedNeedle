@@ -43,7 +43,7 @@
 	</figure>
 	<div class="p-3">
 		<h3 class="text-sm font-semibold line-clamp-1">{playlist.name}</h3>
-		<p class="text-xs text-base-content/60 mt-0.5">{subtitle}</p>
+		<p class="text-xs text-muted mt-0.5">{subtitle}</p>
 		{#if playlist.is_smart}
 			<span class="badge badge-xs badge-info mt-1">Smart playlist</span>
 		{/if}

@@ -85,7 +85,7 @@
 						{deckSampler.isStation ? 'Preview station' : 'Now sampling'}
 					</span>
 					{#if deckSampler.isStation}
-						<span class="text-[0.6rem] text-base-content/40">
+						<span class="text-[0.6rem] text-muted">
 							{deckSampler.stationPosition.index + 1}/{deckSampler.stationPosition.total}
 						</span>
 					{/if}
@@ -103,11 +103,11 @@
 				<svelte:element
 					this={artistHref ? 'a' : 'span'}
 					href={artistHref ?? undefined}
-					class="block truncate text-xs text-base-content/55 {artistHref
+					class="block truncate text-xs text-muted {artistHref
 						? 'transition-colors hover:text-secondary'
 						: ''}"
 				>
-					{entry.artist}{#if providerLabel}<span class="text-base-content/30">
+					{entry.artist}{#if providerLabel}<span class="text-muted">
 							· via {providerLabel}</span
 						>{/if}
 				</svelte:element>
@@ -139,7 +139,7 @@
 
 		<!-- volume -->
 		<div class="flex items-center gap-2 px-3 pb-2.5">
-			<Volume2 class="h-3.5 w-3.5 shrink-0 text-base-content/40" />
+			<Volume2 class="h-3.5 w-3.5 shrink-0 text-muted" />
 			<input
 				type="range"
 				min="0"

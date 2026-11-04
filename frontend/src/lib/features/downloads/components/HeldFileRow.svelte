@@ -162,14 +162,14 @@
 	{#if showTitle}
 		<p class="truncate text-sm font-semibold" title={file.original_name}>{title}</p>
 	{/if}
-	<p class="text-xs text-base-content/60">
+	<p class="text-xs text-muted">
 		{file.reason_text}{#if evidence}{` ${evidence}.`}{/if}
 	</p>
 	{#if file.reason_action}
-		<p class="text-xs text-base-content/70">{file.reason_action}</p>
+		<p class="text-xs text-muted">{file.reason_action}</p>
 	{/if}
 	{#if meta}
-		<p class="text-[11px] tabular-nums text-base-content/50">{meta}</p>
+		<p class="text-[11px] tabular-nums text-muted">{meta}</p>
 	{/if}
 
 	<div class="flex items-center gap-2">
@@ -192,7 +192,7 @@
 			disabled={failed}
 			aria-label="Scrub {title}"
 		/>
-		<span class="shrink-0 text-[11px] tabular-nums text-base-content/50">
+		<span class="shrink-0 text-[11px] tabular-nums text-muted">
 			{fmt(currentTime)} / {fmt(total)}
 		</span>
 		<audio
@@ -213,7 +213,7 @@
 		></audio>
 	</div>
 	{#if failed}
-		<p class="text-[11px] text-base-content/45">Can't play this one here.</p>
+		<p class="text-[11px] text-muted">Can't play this one here.</p>
 	{/if}
 
 	<div class="flex flex-wrap items-center gap-1.5">

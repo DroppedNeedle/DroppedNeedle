@@ -22,7 +22,7 @@
 			onclick={() => ongo(page - 1)}
 			aria-label="Previous page"
 		/>
-		<span class="text-sm text-base-content/70">
+		<span class="text-sm text-muted">
 			Page {page + 1} of {pages}
 		</span>
 		<Button

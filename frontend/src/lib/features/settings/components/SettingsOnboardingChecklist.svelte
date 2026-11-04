@@ -108,9 +108,9 @@
 	>
 		<div>
 			<h3 class="font-semibold">Setup checklist</h3>
-			<p class="text-sm text-base-content/60">{doneCount}/{items.length} complete</p>
+			<p class="text-sm text-muted">{doneCount}/{items.length} complete</p>
 		</div>
-		<span class="text-sm text-base-content/60">{expanded ? 'Hide' : 'Show'}</span>
+		<span class="text-sm text-muted">{expanded ? 'Hide' : 'Show'}</span>
 	</button>
 	{#if expanded}
 		<ul class="space-y-2 px-6 pb-5">
@@ -121,8 +121,7 @@
 					{:else}
 						<Circle class="size-4 shrink-0 text-base-content/30" aria-hidden="true" />
 					{/if}
-					<span class={item.optional && !item.done ? 'text-base-content/50' : ''}>{item.label}</span
-					>
+					<span class={item.optional && !item.done ? 'text-muted' : ''}>{item.label}</span>
 					{#if item.optional}<span class="badge badge-ghost badge-xs">optional</span>{/if}
 				</li>
 			{/each}

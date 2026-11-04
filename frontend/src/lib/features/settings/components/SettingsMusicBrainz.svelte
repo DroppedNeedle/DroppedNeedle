@@ -427,7 +427,7 @@
 </script>
 
 <Card title="MusicBrainz">
-	<p class="mb-4 text-base-content/70">
+	<p class="mb-4 text-muted">
 		Choose where MusicBrainz data comes from. BrainzMash is the built-in default and is active
 		unless you choose a custom mirror or community server.
 	</p>
@@ -502,7 +502,7 @@
 									<span class="flex items-center justify-between gap-2">
 										<span class="flex items-center gap-2 font-semibold">
 											<CardIcon
-												class="h-4 w-4 {isSelected ? 'text-primary' : 'text-base-content/60'}"
+												class="h-4 w-4 {isSelected ? 'text-primary' : 'text-muted'}"
 												aria-hidden="true"
 											/>
 											{card.title}
@@ -513,7 +513,7 @@
 									</span>
 									<span
 										id={`musicbrainz-source-${card.mode}-description`}
-										class="block text-xs text-base-content/60"
+										class="block text-xs text-muted"
 									>
 										{card.blurb}
 									</span>
@@ -524,9 +524,9 @@
 				</fieldset>
 
 				<details
-					class="rounded-box border border-base-content/10 bg-base-100/40 p-3 text-xs text-base-content/70"
+					class="rounded-box border border-base-content/10 bg-base-100/40 p-3 text-xs text-muted"
 				>
-					<summary class="cursor-pointer select-none font-medium text-base-content/70">
+					<summary class="cursor-pointer select-none font-medium text-muted">
 						{MORE_INFO_SUMMARY}: {selectedCard.title}
 					</summary>
 					<div class="mt-3 space-y-2">
@@ -559,12 +559,12 @@
 								<Network class="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
 								<div class="min-w-0 space-y-1">
 									<h3 id="brainzmash-pending-heading" class="font-semibold">BrainzMash setup</h3>
-									<p class="text-sm text-base-content/70">
+									<p class="text-sm text-muted">
 										Built-in endpoint: <code
 											>{pendingBrainzMash?.endpoint ?? BRAINZMASH_ENDPOINT_URL}</code
 										>
 									</p>
-									<p class="text-xs text-base-content/60">
+									<p class="text-xs text-muted">
 										Supported read-only route families: {BRAINZMASH_SUPPORTED_ROUTE_FAMILIES.join(
 											', '
 										)}.
@@ -573,7 +573,7 @@
 							</div>
 
 							{#if selectedModeNeedsStage}
-								<p class="text-sm text-base-content/70">
+								<p class="text-sm text-muted">
 									Stage the built-in endpoint locally to receive a fresh pending access revision and
 									source identity.
 								</p>
@@ -595,18 +595,15 @@
 										<p class="font-medium">
 											Privacy disclosure {pendingBrainzMash.disclosure_version}
 										</p>
-										<p class="mt-1 text-base-content/70">{BRAINZMASH_PRIVACY_DISCLOSURE}</p>
+										<p class="mt-1 text-muted">{BRAINZMASH_PRIVACY_DISCLOSURE}</p>
 									</div>
-									<p class="text-sm text-base-content/70">{BRAINZMASH_LOCAL_POLICY_COPY}</p>
+									<p class="text-sm text-muted">{BRAINZMASH_LOCAL_POLICY_COPY}</p>
 									{#if activeBrainzMash}
-										<p
-											class="text-sm text-base-content/70"
-											data-testid="pending-brainzmash-disabled"
-										>
+										<p class="text-sm text-muted" data-testid="pending-brainzmash-disabled">
 											{BRAINZMASH_PENDING_TRANSPORT_COPY}
 										</p>
 									{:else}
-										<p class="text-sm text-base-content/70">{BRAINZMASH_TRANSPORT_DISABLED_COPY}</p>
+										<p class="text-sm text-muted">{BRAINZMASH_TRANSPORT_DISABLED_COPY}</p>
 									{/if}
 
 									<label
@@ -686,7 +683,7 @@
 									error={section.fieldError('api_url', 'API endpoint URL')}
 								/>
 								{#if selectedMode === 'mirror'}
-									<p class="mt-1 ml-1 text-xs text-base-content/50">
+									<p class="mt-1 ml-1 text-xs text-muted">
 										Test Connection checks the server is alive. Data vintage is documented in the
 										<a
 											href={MUSICBRAINZ_GUIDE_HREF}
@@ -701,8 +698,8 @@
 							<Card variant="bordered" padding="md">
 								<div>
 									<p class="font-medium">Official endpoint</p>
-									<p class="mt-1 text-base-content/70">{OFFICIAL_ENDPOINT_URL}</p>
-									<p class="mt-1 text-xs text-base-content/50">
+									<p class="mt-1 text-muted">{OFFICIAL_ENDPOINT_URL}</p>
+									<p class="mt-1 text-xs text-muted">
 										Endpoint editing is disabled for the official source.
 									</p>
 								</div>
@@ -813,7 +810,7 @@
 							</div>
 						</div>
 						{#if saveHint && (section.dirty || needsSave)}
-							<p class="text-xs text-base-content/60">{saveHint}</p>
+							<p class="text-xs text-muted">{saveHint}</p>
 						{/if}
 					</div>
 				{/if}

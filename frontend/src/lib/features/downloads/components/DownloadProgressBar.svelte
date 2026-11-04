@@ -27,7 +27,7 @@
 	<div class="dl-track">
 		<div class="dl-fill" style="width:{clamped}%"></div>
 	</div>
-	<div class="flex items-center justify-between text-[11px] text-base-content/50 tabular-nums">
+	<div class="flex items-center justify-between text-[11px] text-muted tabular-nums">
 		<span>{clamped.toFixed(0)}%</span>
 		<span>
 			{#if bytesTotal > 0}{fmtSize(bytesDownloaded)} / {fmtSize(bytesTotal)}{/if}

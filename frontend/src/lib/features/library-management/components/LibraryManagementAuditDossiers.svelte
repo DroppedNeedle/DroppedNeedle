@@ -173,7 +173,7 @@
 </div>
 
 {#if incomplete}
-	<p class="mb-3 rounded-xl bg-info/10 px-3 py-2 text-xs text-base-content/65" role="status">
+	<p class="mb-3 rounded-xl bg-info/10 px-3 py-2 text-xs text-muted" role="status">
 		More files are available. Dossier counts below describe the files loaded so far.
 	</p>
 {/if}
@@ -181,9 +181,7 @@
 {#if visibleDossiers.length === 0}
 	<div class="rounded-2xl border border-dashed border-base-content/15 p-8 text-center">
 		<strong>No exceptions in the loaded files.</strong>
-		<p class="mt-1 text-sm text-base-content/50">
-			Turn off “Only exceptions” to review the full plan.
-		</p>
+		<p class="mt-1 text-sm text-muted">Turn off “Only exceptions” to review the full plan.</p>
 	</div>
 {:else}
 	<div
@@ -233,7 +231,7 @@
 							>
 								{dossier.title}
 							</h3>
-							<p class="truncate text-sm text-base-content/55">
+							<p class="truncate text-sm text-muted">
 								{dossier.artist} · {#if dossier.entries.length < originalEntryCount(dossier)}{dossier.entries.length.toLocaleString()}
 									of {originalEntryCount(dossier).toLocaleString()}
 								{:else}{dossier.entries.length.toLocaleString()}{/if}
@@ -258,7 +256,7 @@
 								{/if}
 							</div>
 							{#if top}
-								<p class="mt-1 text-xs text-base-content/55">
+								<p class="mt-1 text-xs text-muted">
 									{#if top.code === 'BUNDLE_BLOCKED'}
 										Held by a blocked file in this release (Release {dossier.bundleOrdinal + 1}) · {top.label}
 										({top.count.toLocaleString()})
@@ -303,7 +301,7 @@
 									<span class="min-w-0 flex-1 text-left">
 										<strong class="block truncate text-sm">{entry.title}</strong>
 										{#if entry.artist && entry.artist !== dossier.artist}
-											<small class="block truncate text-base-content/50">{entry.artist}</small>
+											<small class="block truncate text-muted">{entry.artist}</small>
 										{/if}
 										{#if entry.reason && active}
 											<small class="block truncate font-semibold text-error">{entry.reason}</small>

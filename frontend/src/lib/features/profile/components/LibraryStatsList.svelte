@@ -33,7 +33,7 @@
 
 {#snippet stat(Icon: typeof Disc3, label: string, value: number)}
 	<div class="flex flex-col items-center gap-1">
-		<div class="flex items-center gap-1.5 text-base-content/50">
+		<div class="flex items-center gap-1.5 text-muted">
 			<Icon class="h-3.5 w-3.5" />
 			<span class="text-[10px] font-medium uppercase tracking-wider">{label}</span>
 		</div>
@@ -43,7 +43,7 @@
 
 <section id="libraries" class="scroll-mt-24 xl:ml-40">
 	<h2
-		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
+		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted"
 	>
 		<Database class="h-4 w-4" />
 		Your Libraries
@@ -72,8 +72,8 @@
 						<div
 							class="flex items-center justify-center gap-2 border-t border-base-300/30 px-5 py-3"
 						>
-							<HardDrive class="h-3.5 w-3.5 text-base-content/40" />
-							<span class="text-xs text-base-content/50">
+							<HardDrive class="h-3.5 w-3.5 text-muted" />
+							<span class="text-xs text-muted">
 								{stats.total_size_human} used
 							</span>
 						</div>

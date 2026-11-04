@@ -21,7 +21,7 @@
 			disabled={current === 1}
 			onclick={() => onchange(Math.max(1, current - 1))}
 		/>
-		<span class="text-sm">{current} / {total}</span>
+		<span class="font-mono text-sm tabular-nums">{current} / {total}</span>
 		<IconButton
 			variant="neutral"
 			size="sm"

@@ -213,7 +213,7 @@
 			<h3 id="identity-readiness-title" class="font-display text-lg font-semibold">
 				Identity readiness
 			</h3>
-			<p class="mt-1 max-w-3xl text-sm text-base-content/60">
+			<p class="mt-1 max-w-3xl text-sm text-muted">
 				Give file organization the exact MusicBrainz edition and per-track map it needs. The check
 				never changes tags, paths, or audio.
 			</p>
@@ -238,19 +238,19 @@
 	{:else if wholeLibraryEstimate.data}
 		<div class="grid gap-px border-t border-primary/10 bg-primary/10 sm:grid-cols-3">
 			<div class="bg-base-100/95 p-3 sm:px-4">
-				<span class="text-xs text-base-content/50">Ready now</span>
+				<span class="text-xs text-muted">Ready now</span>
 				<strong class="mt-1 block text-lg"
 					>{wholeLibraryEstimate.data.ready_album_count.toLocaleString()}</strong
 				>
 			</div>
 			<div class="bg-base-100/95 p-3 sm:px-4">
-				<span class="text-xs text-base-content/50">Need exact track maps</span>
+				<span class="text-xs text-muted">Need exact track maps</span>
 				<strong class="mt-1 block text-lg"
 					>{wholeLibraryEstimate.data.mapping_required_count.toLocaleString()}</strong
 				>
 			</div>
 			<div class="bg-base-100/95 p-3 sm:px-4">
-				<span class="text-xs text-base-content/50">Need an exact edition</span>
+				<span class="text-xs text-muted">Need an exact edition</span>
 				<strong class="mt-1 block text-lg"
 					>{wholeLibraryEstimate.data.exact_release_required_count.toLocaleString()}</strong
 				>
@@ -263,7 +263,7 @@
 			<span class="management-live-dot" aria-hidden="true"></span>
 			<div class="min-w-0 flex-1">
 				<strong>Checking release identities</strong>
-				<p class="text-sm text-base-content/55">
+				<p class="text-sm text-muted">
 					{active.completed_count.toLocaleString()} of {active.expected_work_count.toLocaleString()}
 					releases checked
 				</p>
@@ -296,7 +296,7 @@
 					<h4 class="font-semibold">
 						{report.state === 'succeeded' ? 'Mappings accepted' : 'Ready for review'}
 					</h4>
-					<p class="mt-1 text-sm text-base-content/55">
+					<p class="mt-1 text-sm text-muted">
 						{report.repair_summary.total_identities.toLocaleString()} releases checked · {report.repair_summary.mapping_candidate_count.toLocaleString()}
 						exact track maps can be accepted
 					</p>
@@ -351,7 +351,7 @@
 					>
 				{/each}
 			</div>
-			<p class="mt-3 text-xs leading-5 text-base-content/50">
+			<p class="mt-3 text-xs leading-5 text-muted">
 				Only current findings are listed. Resolved and superseded ones stay in the audit history.
 			</p>
 
@@ -360,7 +360,7 @@
 			{:else if findingsQuery.isError}
 				<div class="alert alert-error mt-3 text-sm">Could not load these identity findings.</div>
 			{:else if findings.length === 0}
-				<p class="mt-3 rounded-box bg-base-200/50 p-4 text-sm text-base-content/55">
+				<p class="mt-3 rounded-box bg-base-200/50 p-4 text-sm text-muted">
 					No releases in this category.
 				</p>
 			{:else}
@@ -381,15 +381,15 @@
 								<div class="flex min-w-0 items-baseline gap-2">
 									<strong class="truncate text-sm">{finding.album_title}</strong>
 									{#if finding.album_year}
-										<span class="shrink-0 text-xs text-base-content/40">{finding.album_year}</span>
+										<span class="shrink-0 text-xs text-muted">{finding.album_year}</span>
 									{/if}
 								</div>
-								<p class="truncate text-xs text-base-content/60">
+								<p class="truncate text-xs text-muted">
 									{finding.album_artist_name || 'Unknown release artist'}
 								</p>
 								{#if finding.suggested_edition}
 									<div class="mt-1 flex min-w-0 items-center gap-2">
-										<p class="truncate text-xs text-base-content/55">
+										<p class="truncate text-xs text-muted">
 											Suggested: {finding.suggested_edition.title} · {finding.suggested_edition
 												.date ?? 'date unknown'}{finding.suggested_edition.country
 												? ` · ${finding.suggested_edition.country}`
@@ -411,11 +411,11 @@
 											.toLowerCase()})
 									</p>
 								{/if}
-								<p class="mt-1 text-xs text-base-content/70">
+								<p class="mt-1 text-xs text-muted">
 									{finding.reason?.message ?? findingTitle(finding.reason_code)}
 								</p>
 								{#if finding.reason?.action}
-									<p class="mt-0.5 text-xs text-base-content/50">{finding.reason.action}</p>
+									<p class="mt-0.5 text-xs text-muted">{finding.reason.action}</p>
 								{/if}
 								{#if finding.state === 'stale'}
 									<p class="mt-0.5 text-xs text-warning">Changed after this report</p>
@@ -474,7 +474,7 @@
 </section>
 
 <Modal bind:open={startOpen} title="Prepare identities" icon={ShieldCheck} size="lg" focusTitle>
-	<p class="text-sm text-base-content/70">
+	<p class="text-sm text-muted">
 		This dry run checks exact MusicBrainz editions and track mappings. It reads the catalog and
 		MusicBrainz; it does not write music files.
 	</p>
@@ -489,7 +489,7 @@
 				onchange={() => (scopeMode = 'all')}
 			/>
 			<span
-				><strong>Whole library</strong><small class="block text-base-content/55"
+				><strong>Whole library</strong><small class="block text-muted"
 					>Every active release in every root.</small
 				></span
 			>
@@ -503,7 +503,7 @@
 				onchange={chooseSelectedRoots}
 			/>
 			<span
-				><strong>Selected roots</strong><small class="block text-base-content/55"
+				><strong>Selected roots</strong><small class="block text-muted"
 					>Limit the check to specific library roots.</small
 				></span
 			>
@@ -520,7 +520,7 @@
 						onchange={(event) => toggleRoot(root.id, event.currentTarget.checked)}
 					/>
 					<span class="min-w-0"
-						><strong>{root.label}</strong><small class="block truncate text-base-content/50"
+						><strong>{root.label}</strong><small class="block truncate text-muted"
 							>{root.path}</small
 						></span
 					>
@@ -559,13 +559,13 @@
 	onconfirm={confirmReportAction}
 >
 	{#if confirmAction === 'apply'}
-		<p class="text-sm text-base-content/70">
+		<p class="text-sm text-muted">
 			This writes only verified MusicBrainz identities to DroppedNeedle's catalog. It does not
 			change tags, paths, or audio. Releases may become eligible for a future organization preview.
 		</p>
-		<p class="mt-2 text-sm text-base-content/70">{applySealSummary}</p>
+		<p class="mt-2 text-sm text-muted">{applySealSummary}</p>
 	{:else}
-		<p class="text-sm text-base-content/70">
+		<p class="text-sm text-muted">
 			This removes the report from the active workspace. Its audit record remains, and no music file
 			or catalog identity is changed.
 		</p>

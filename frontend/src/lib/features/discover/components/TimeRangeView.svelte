@@ -103,7 +103,7 @@
 		<IconButton icon={ChevronLeft} label="Back to home" onclick={() => goto(withBasePath('/'))} />
 		<div>
 			<h1 class="text-3xl font-bold">{title}</h1>
-			<p class="mt-1 text-sm text-base-content/70">{subtitle}</p>
+			<p class="mt-1 text-sm text-muted">{subtitle}</p>
 		</div>
 	</div>
 
@@ -115,12 +115,12 @@
 		<div class="flex min-h-100 flex-col items-center justify-center text-center">
 			{#if errorIcon}
 				{@const SvelteComponent = errorIcon}
-				<SvelteComponent class="h-12 w-12 text-base-content/40 mb-4" strokeWidth={1.5} />
+				<SvelteComponent class="h-12 w-12 text-muted mb-4" strokeWidth={1.5} />
 			{:else}
-				<CircleAlert class="h-12 w-12 text-base-content/40 mb-4" strokeWidth={1.5} />
+				<CircleAlert class="h-12 w-12 text-muted mb-4" strokeWidth={1.5} />
 			{/if}
 			<h2 class="mb-2 text-2xl font-semibold">Unable to load {itemType}s</h2>
-			<p class="mb-4 text-base-content/70">Please try again later.</p>
+			<p class="mb-4 text-muted">Please try again later.</p>
 			<Button variant="primary" onclick={loadOverview}>Retry</Button>
 		</div>
 	{:else}
@@ -138,7 +138,7 @@
 					>
 						<h2 class="text-xl font-bold sm:text-2xl">{range.label}</h2>
 						<div class="flex items-center gap-2">
-							<span class="text-sm text-base-content/50">
+							<span class="text-sm text-muted">
 								{isExpanded ? 'Show less' : 'View all'}
 							</span>
 							<ChevronDown class="h-5 w-5 transition-transform {isExpanded ? 'rotate-180' : ''}" />

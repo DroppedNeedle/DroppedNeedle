@@ -289,7 +289,7 @@
 				{trackTitle}
 			</p>
 			{#if isTrackRequest}
-				<p class="text-xs sm:text-sm text-base-content/70 line-clamp-1 text-left">
+				<p class="text-xs sm:text-sm text-muted line-clamp-1 text-left">
 					<span class="badge badge-ghost badge-xs align-middle">Track</span>
 					<span class="ml-1">Album: {item.album_title}</span>
 				</p>
@@ -297,26 +297,26 @@
 			{#if item.artist_mbid}
 				<a
 					href={artistHref(item.artist_mbid)}
-					class="text-xs sm:text-sm text-base-content/70 hover:text-primary transition-colors line-clamp-1 text-left pointer-events-auto"
+					class="text-xs sm:text-sm text-muted hover:text-primary transition-colors line-clamp-1 text-left pointer-events-auto"
 				>
 					{item.artist_name}
 				</a>
 			{:else}
-				<p class="text-xs sm:text-sm text-base-content/70 line-clamp-1 text-left">
+				<p class="text-xs sm:text-sm text-muted line-clamp-1 text-left">
 					{item.artist_name}
 				</p>
 			{/if}
 			<div class="flex items-center gap-1.5 mt-0.5 flex-wrap">
-				<span class="text-xs text-base-content/40">
+				<span class="text-xs text-muted">
 					{formatRelativeTime(item.requested_at)}
 				</span>
 				{#if item.year}
 					<span class="text-base-content/20">•</span>
-					<span class="text-xs text-base-content/40">{item.year}</span>
+					<span class="text-xs text-muted">{item.year}</span>
 				{/if}
 				{#if item.origin === 'follow'}
 					<span class="text-base-content/20">•</span>
-					<span class="text-xs text-base-content/40">Followed artist</span>
+					<span class="text-xs text-muted">Followed artist</span>
 				{/if}
 				{#if isActive && item.quality}
 					<span class="text-base-content/20">•</span>
@@ -324,17 +324,17 @@
 				{/if}
 				{#if isActive && item.protocol}
 					<span class="text-base-content/20">•</span>
-					<span class="text-xs text-base-content/40 capitalize">{item.protocol}</span>
+					<span class="text-xs text-muted capitalize">{item.protocol}</span>
 				{/if}
 				{#if item.requester_count > 0}
 					<span class="text-base-content/20">•</span>
-					<span class="text-xs text-base-content/40">
+					<span class="text-xs text-muted">
 						+{item.requester_count} other{item.requester_count === 1 ? '' : 's'}
 					</span>
 				{/if}
 				{#if !isActive && item.reviewed_by_name}
 					<span class="text-base-content/20">•</span>
-					<span class="text-xs text-base-content/40">
+					<span class="text-xs text-muted">
 						{item.status === 'rejected' ? 'Rejected' : 'Approved'} by {item.reviewed_by_name}
 					</span>
 				{/if}
@@ -373,13 +373,11 @@
 						<div class="progress-track flex-1">
 							<div class="progress-fill" style="width: {item.progress ?? 0}%"></div>
 						</div>
-						<span
-							class="text-xs text-base-content/70 min-w-[3ch] text-right tabular-nums font-medium"
-						>
+						<span class="text-xs text-muted min-w-[3ch] text-right tabular-nums font-medium">
 							{item.progress?.toFixed(0) ?? 0}%
 						</span>
 					</div>
-					<div class="flex items-center gap-2 text-xs text-base-content/40">
+					<div class="flex items-center gap-2 text-xs text-muted">
 						{#if item.eta}
 							<span>{formatEta(item.eta)}</span>
 						{/if}
@@ -394,7 +392,7 @@
 					</div>
 				</div>
 			{:else if waitingNote}
-				<span class="text-xs text-base-content/70 max-w-44 text-right">
+				<span class="text-xs text-muted max-w-44 text-right">
 					{waitingNote}
 				</span>
 			{:else if isActive && isFailedState && item.error_message}
@@ -402,11 +400,11 @@
 					>{item.error_message}</span
 				>
 			{:else if !isActive && item.album_version_only}
-				<span class="text-xs text-base-content/70 max-w-44 text-right">
+				<span class="text-xs text-muted max-w-44 text-right">
 					Only the album version was found
 				</span>
 			{:else if !isActive && item.completed_at}
-				<span class="text-xs text-base-content/40">{formatDate(item.completed_at)}</span>
+				<span class="text-xs text-muted">{formatDate(item.completed_at)}</span>
 			{/if}
 
 			<div class="flex gap-1 items-center">
@@ -425,7 +423,7 @@
 				{/if}
 				{#if isActive}
 					{#if confirmingCancel}
-						<span class="text-xs text-base-content/60 mr-0.5" role="alert">Cancel?</span>
+						<span class="text-xs text-muted mr-0.5" role="alert">Cancel?</span>
 						<Button variant="danger" size="xs" onclick={handleCancelClick}>Yes</Button>
 						<Button variant="ghost" size="xs" onclick={handleCancelNo}>No</Button>
 					{:else}
@@ -514,7 +512,7 @@
 			>
 				{#each item.status_messages ?? [] as msg, i (`${msg.title}-${i}`)}
 					{#if msg.title}
-						<div class="font-medium text-base-content/70 mt-2 first:mt-0">{msg.title}</div>
+						<div class="font-medium text-muted mt-2 first:mt-0">{msg.title}</div>
 					{/if}
 					{#each msg.messages as message, j (`${message}-${j}`)}
 						<div class="text-error/70 ml-3 mt-0.5">• {message}</div>

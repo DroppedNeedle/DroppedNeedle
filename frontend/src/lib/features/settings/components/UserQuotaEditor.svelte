@@ -79,14 +79,14 @@
 	{:else if quotaQuery.data}
 		{@const d = quotaQuery.data}
 		{#if d.exempt}
-			<p class="text-xs text-base-content/60">
+			<p class="text-xs text-muted">
 				Admin and trusted accounts are exempt from per-user quotas (the global storage cap still
 				applies).
 			</p>
 		{:else}
 			<div class="grid gap-3 sm:grid-cols-2">
 				<div class="space-y-1">
-					<p class="text-xs text-base-content/60">
+					<p class="text-xs text-muted">
 						Requests: {d.requests_in_window}
 						{#if d.effective_request_quota_count > 0}
 							of {d.effective_request_quota_count} per {d.effective_request_quota_days} days
@@ -108,7 +108,7 @@
 					{/if}
 				</div>
 				<div class="space-y-1">
-					<p class="text-xs text-base-content/60">
+					<p class="text-xs text-muted">
 						Downloads: {storageGbUsed(d).toFixed(1)} GB
 						{#if d.effective_storage_quota_gb > 0}
 							of {d.effective_storage_quota_gb} GB
@@ -183,6 +183,6 @@
 				Save
 			</Button>
 		</div>
-		<p class="text-[11px] text-base-content/40">Blank = use the global default. 0 = unlimited.</p>
+		<p class="text-[11px] text-muted">Blank = use the global default. 0 = unlimited.</p>
 	{/if}
 </Card>

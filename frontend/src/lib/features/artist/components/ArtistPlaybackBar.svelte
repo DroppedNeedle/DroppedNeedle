@@ -131,9 +131,7 @@
 	<Card variant="bordered" padding="sm" role="toolbar" aria-label="Artist playback controls">
 		<div class="flex flex-col sm:flex-row sm:items-center gap-3">
 			<div class="flex items-center gap-2.5 min-w-0">
-				<span class="text-xs font-medium text-base-content/50 whitespace-nowrap select-none"
-					>Play from:</span
-				>
+				<span class="text-xs font-medium text-muted whitespace-nowrap select-none">Play from:</span>
 				{#if availableSources.length > 1}
 					<div class="join">
 						{#each availableSources as source (source)}
@@ -166,7 +164,7 @@
 
 			<div class="flex items-center gap-2 sm:ml-auto">
 				<Button
-					variant="accent"
+					variant="primary"
 					size="sm"
 					icon={Play}
 					class="[&_svg]:fill-current"
@@ -193,7 +191,7 @@
 		</div>
 
 		{#if loader.progressText}
-			<p class="text-xs text-base-content/40 mt-2 animate-pulse" aria-live="polite">
+			<p class="text-xs text-muted mt-2 animate-pulse" aria-live="polite">
 				{loader.progressText}
 			</p>
 		{/if}

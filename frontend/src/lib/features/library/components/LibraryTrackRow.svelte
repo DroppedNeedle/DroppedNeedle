@@ -37,33 +37,33 @@
 
 	<dl class="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
 		<div>
-			<dt class="inline text-base-content/50">Duration:</dt>
+			<dt class="inline text-muted">Duration:</dt>
 			{formatDurationSec(meta.duration_seconds)}
 		</div>
 		<div>
-			<dt class="inline text-base-content/50">Size:</dt>
+			<dt class="inline text-muted">Size:</dt>
 			{formatBytes(meta.file_size_bytes)}
 		</div>
 		{#if meta.bit_rate}
 			<div>
-				<dt class="inline text-base-content/50">Bitrate:</dt>
+				<dt class="inline text-muted">Bitrate:</dt>
 				{meta.bit_rate} kbps
 			</div>
 		{/if}
 		{#if meta.sample_rate}
 			<div>
-				<dt class="inline text-base-content/50">Sample rate:</dt>
+				<dt class="inline text-muted">Sample rate:</dt>
 				{meta.sample_rate} Hz
 			</div>
 		{/if}
 		{#if meta.recording_mbid}
 			<div class="truncate sm:col-span-2">
-				<dt class="inline text-base-content/50">Recording MBID:</dt>
+				<dt class="inline text-muted">Recording MBID:</dt>
 				<span class="font-mono">{meta.recording_mbid}</span>
 			</div>
 		{/if}
 		<div class="break-all sm:col-span-2">
-			<dt class="inline text-base-content/50">Local track ID:</dt>
+			<dt class="inline text-muted">Local track ID:</dt>
 			<span class="font-mono">{meta.id}</span>
 		</div>
 	</dl>

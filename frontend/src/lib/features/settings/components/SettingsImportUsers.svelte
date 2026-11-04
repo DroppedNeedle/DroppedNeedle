@@ -114,7 +114,7 @@
 		{:else if candidatesQuery.isError}
 			<div class="alert alert-error py-2 text-sm">Couldn't load accounts from this service.</div>
 		{:else if candidates.length === 0}
-			<div class="text-center py-10 text-sm text-base-content/50">
+			<div class="text-center py-10 text-sm text-muted">
 				No {activeProvider === 'plex' ? 'Plex' : 'Jellyfin'} accounts found. Check that this service is
 				configured.
 			</div>
@@ -149,7 +149,7 @@
 					<div class="flex-1 min-w-0">
 						<p class="text-sm font-medium truncate">{candidate.display_name}</p>
 						{#if candidate.email}
-							<p class="text-xs text-base-content/50 truncate">{candidate.email}</p>
+							<p class="text-xs text-muted truncate">{candidate.email}</p>
 						{/if}
 					</div>
 					{#if candidate.already_imported}

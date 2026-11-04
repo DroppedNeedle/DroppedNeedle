@@ -139,7 +139,7 @@
 			<div class="flex min-w-0 flex-col gap-4">
 				<div>
 					<h2 class="font-semibold">Acquisition quality</h2>
-					<p class="text-sm text-base-content/70">
+					<p class="text-sm text-muted">
 						Set which complete-album format and quality DroppedNeedle tries first, then arrange the
 						fallbacks. New work uses saved changes.
 					</p>
@@ -173,7 +173,7 @@
 
 				<div>
 					<h3 class="font-medium">Picking a copy</h3>
-					<p class="text-xs text-base-content/60">
+					<p class="text-xs text-muted">
 						When an album should wait for you to pick which copy to download.
 					</p>
 					<SearchReviewSection bind:searchReview={draft.search_review} />

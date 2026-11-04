@@ -50,7 +50,7 @@
 			</div>
 			<div>
 				<h2 class="font-semibold">Jellyfin</h2>
-				<p class="text-sm text-base-content/60">Recently played and favorites from your server.</p>
+				<p class="text-sm text-muted">Recently played and favorites from your server.</p>
 			</div>
 		</div>
 	{/snippet}

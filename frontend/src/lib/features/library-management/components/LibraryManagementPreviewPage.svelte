@@ -259,7 +259,7 @@
 						<h1 class="mt-1 font-display text-2xl font-bold sm:text-3xl">
 							{managementPreviewHeading(preview.mode)}
 						</h1>
-						<p class="mt-2 text-sm text-base-content/60">
+						<p class="mt-2 text-sm text-muted">
 							{preview.profile_name} · {titleManagementValue(preview.origin)} · created {formatManagementDate(
 								preview.created_at
 							)}
@@ -276,22 +276,22 @@
 				</div>
 				<div class="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
 					<div class="management-summary-card">
-						<span class="text-xs text-base-content/50">Eligible to write</span><strong
+						<span class="text-xs text-muted">Eligible to write</span><strong
 							>{preview.summary.eligible_count + preview.summary.warning_count}</strong
 						><small>{preview.summary.warning_count} with warnings</small>
 					</div>
 					<div class="management-summary-card">
-						<span class="text-xs text-base-content/50">Blocked / unchanged</span><strong
+						<span class="text-xs text-muted">Blocked / unchanged</span><strong
 							>{preview.summary.blocked_count} / {preview.summary.no_change_count}</strong
 						><small>Never implicitly included</small>
 					</div>
 					<div class="management-summary-card">
-						<span class="text-xs text-base-content/50">Bundles / files</span><strong
+						<span class="text-xs text-muted">Bundles / files</span><strong
 							>{preview.summary.bundle_count} / {preview.summary.item_count}</strong
 						><small>{preview.summary.expanded_track_count} tracks added by expansion</small>
 					</div>
 					<div class="management-summary-card">
-						<span class="text-xs text-base-content/50">Temporary disk</span><strong
+						<span class="text-xs text-muted">Temporary disk</span><strong
 							>{formatManagementBytes(preview.summary.estimated_temporary_bytes)}</strong
 						><small>Required for staging and recovery</small>
 					</div>
@@ -449,7 +449,7 @@
 				<div class="alert alert-error" role="alert">Could not load preview items.</div>
 			{:else if items.length === 0}
 				<div
-					class="rounded-2xl border border-dashed border-base-content/15 p-8 text-center text-base-content/50"
+					class="rounded-2xl border border-dashed border-base-content/15 p-8 text-center text-muted"
 				>
 					No files match these filters.
 					<div class="mt-3">
@@ -483,7 +483,7 @@
 							<ShieldAlert class="mt-0.5 h-5 w-5 text-library-manage" />
 							<div>
 								<strong>Activation dry run</strong>
-								<p class="text-xs text-base-content/55">
+								<p class="text-xs text-muted">
 									This page is read-only. Return to the Automation tab to use this dry run when
 									enabling file organization.
 								</p>
@@ -509,7 +509,7 @@
 							<ShieldAlert class="mt-0.5 h-5 w-5 text-library-manage" />
 							<div>
 								<strong>{applyCopy.barTitle}</strong>
-								<p class="text-xs text-base-content/55">{applyCopy.barDetail}</p>
+								<p class="text-xs text-muted">{applyCopy.barDetail}</p>
 								{#if applyDisabledReason}
 									<p class="mt-1 text-xs text-warning">{applyDisabledReason}</p>
 								{/if}
@@ -519,9 +519,7 @@
 											Retry token resume
 										</Button>
 									{:else if token.resuming}
-										<p class="mt-1 text-xs text-base-content/55">
-											Resuming your private apply token…
-										</p>
+										<p class="mt-1 text-xs text-muted">Resuming your private apply token…</p>
 									{/if}
 								{/if}
 							</div>

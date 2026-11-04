@@ -83,7 +83,7 @@
 		{@const activationProfile = wizard.profileFor(currentRoot.id)}
 		<Card as="section" variant="bordered" padding="md" class="mt-5">
 			<h3 class="font-semibold">Dry run · {currentRoot.label}</h3>
-			<p class="mt-1 text-xs text-base-content/55">
+			<p class="mt-1 text-xs text-muted">
 				Previews the selected profile against this root. It reads files and writes only the saved
 				preview.
 			</p>
@@ -95,7 +95,7 @@
 								class="management-aspect">{aspect}</span
 							>{/each}
 					</div>
-					<p class="mt-2 text-base-content/55">
+					<p class="mt-2 text-muted">
 						Organization remains inside this root. Only files with an accepted MusicBrainz release
 						and per-track mapping are eligible.
 					</p>
@@ -138,17 +138,17 @@
 						class="mt-4 flex flex-wrap items-baseline justify-between gap-x-5 gap-y-1 rounded-lg border border-library-manage/20 bg-library-manage/5 px-3.5 py-3"
 						aria-live="polite"
 					>
-						<span class="text-xs font-semibold uppercase tracking-[0.16em] text-base-content/45"
+						<span class="text-xs font-semibold uppercase tracking-[0.16em] text-muted"
 							>Planning progress</span
 						>
 						<span class="font-semibold text-base-content/80"
 							>{(preview.summary.item_count ?? 0).toLocaleString()} files</span
 						>
-						<span class="text-sm text-base-content/55"
+						<span class="text-sm text-muted"
 							>{(preview.summary.bundle_count ?? 0).toLocaleString()} release bundles</span
 						>
 					</div>{:else if !wizard.ready}<div
-						class="mt-4 flex items-center gap-3 rounded-lg border border-library-manage/20 bg-library-manage/5 px-3.5 py-3 text-sm text-base-content/60"
+						class="mt-4 flex items-center gap-3 rounded-lg border border-library-manage/20 bg-library-manage/5 px-3.5 py-3 text-sm text-muted"
 						aria-live="polite"
 					>
 						<span class="loading loading-spinner loading-sm text-library-manage" aria-hidden="true"
@@ -217,7 +217,7 @@
 						onclick={() => wizard.discard()}>Run a fresh dry run</Button
 					>
 				{:else if preview.control_request === 'stop'}<div
-						class="mt-3 flex items-center gap-3 rounded-lg border border-warning/20 bg-warning/5 px-3 py-2.5 text-sm text-base-content/65"
+						class="mt-3 flex items-center gap-3 rounded-lg border border-warning/20 bg-warning/5 px-3 py-2.5 text-sm text-muted"
 						role="status"
 						aria-live="polite"
 					>
@@ -239,7 +239,7 @@
 						>
 					</div>
 				{:else if preview.state === 'queued'}<div
-						class="mt-3 flex items-center gap-3 rounded-lg border border-base-content/10 bg-base-200/45 px-3 py-2.5 text-sm text-base-content/60"
+						class="mt-3 flex items-center gap-3 rounded-lg border border-base-content/10 bg-base-200/45 px-3 py-2.5 text-sm text-muted"
 						role="status"
 						aria-live="polite"
 					>
@@ -250,7 +250,7 @@
 						>
 					</div>
 				{:else if !wizard.ready}<div
-						class="mt-3 flex items-center gap-3 rounded-lg border border-base-content/10 bg-base-200/45 px-3 py-2.5 text-sm text-base-content/60"
+						class="mt-3 flex items-center gap-3 rounded-lg border border-base-content/10 bg-base-200/45 px-3 py-2.5 text-sm text-muted"
 						role="status"
 						aria-live="polite"
 					>

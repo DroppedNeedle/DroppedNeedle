@@ -138,7 +138,7 @@
 	</SourceHubHeader>
 
 	{#if sourceOff}
-		<p class="text-sm text-base-content/70">{remote.label} isn't set up.</p>
+		<p class="text-sm text-muted">{remote.label} isn't set up.</p>
 	{:else}
 		<BrowseHeroCards cards={browseCards} />
 
@@ -194,7 +194,7 @@
 									onAlbumClick={openAlbum}
 								/>
 							{:else}
-								<p class="text-sm text-base-content/50">Nothing new yet.</p>
+								<p class="text-sm text-muted">Nothing new yet.</p>
 							{/if}
 						</HubShelf>
 					</div>
@@ -250,9 +250,9 @@
 								}}
 							/>
 						{:else if artistIndexQuery.isError}
-							<p class="text-sm text-base-content/50">Couldn't load the artists.</p>
+							<p class="text-sm text-muted">Couldn't load the artists.</p>
 						{:else if !artistIndexQuery.isFetching}
-							<p class="text-sm text-base-content/50">No artists found.</p>
+							<p class="text-sm text-muted">No artists found.</p>
 						{/if}
 					</HubShelf>
 
@@ -260,7 +260,7 @@
 						{#if hub.all_albums_preview.length > 0}
 							<AlbumCarousel albums={hub.all_albums_preview} onopen={openAlbum} />
 						{:else}
-							<p class="text-sm text-base-content/50">No albums found.</p>
+							<p class="text-sm text-muted">No albums found.</p>
 						{/if}
 					</HubShelf>
 				</div>

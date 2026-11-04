@@ -94,7 +94,7 @@
 			<h3 id="management-profiles-title" class="font-display text-lg font-semibold">
 				Choose what "managed" means
 			</h3>
-			<p class="text-xs text-base-content/55">
+			<p class="text-xs text-muted">
 				Choose one library default below. Profiles do nothing until you assign one to a root.
 			</p>
 		</div>
@@ -124,7 +124,7 @@
 									>{profile.preset_origin ? 'Preset' : 'Custom'}</span
 								>
 							</div>
-							<p class="mt-1 line-clamp-2 text-xs text-base-content/55">
+							<p class="mt-1 line-clamp-2 text-xs text-muted">
 								{profile.description || 'No description.'}
 							</p>
 						</div>
@@ -159,7 +159,7 @@
 								>
 							</label>
 							<span
-								class="text-xs font-medium text-base-content/55"
+								class="text-xs font-medium text-muted"
 								title={rootLabels.length ? `Assigned to: ${rootLabels.join(', ')}` : undefined}
 								>{#if rootLabels.length}<Link2
 										class="mr-1 inline h-3.5 w-3.5 align-text-bottom text-library-manage"
@@ -208,7 +208,7 @@
 		<div class="management-create-row">
 			<div>
 				<strong class="text-sm">Copy an existing profile</strong>
-				<p class="text-xs text-base-content/50">
+				<p class="text-xs text-muted">
 					Copies every saved value without changing root assignments or enabling automation.
 				</p>
 			</div>

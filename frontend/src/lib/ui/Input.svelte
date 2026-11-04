@@ -54,7 +54,7 @@
 
 {#if Icon}
 	<label class={box}>
-		<Icon class="size-4 shrink-0 opacity-60" aria-hidden="true" />
+		<Icon class="size-4 shrink-0 text-muted" aria-hidden="true" />
 		<input
 			{...rest}
 			bind:this={ref}

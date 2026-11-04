@@ -209,7 +209,7 @@
 		<div class="flex gap-2 flex-wrap">
 			{#if hasAnyTrackLinks}
 				<Button
-					variant="accent"
+					variant="primary"
 					size="sm"
 					icon={Play}
 					class="[&_svg]:fill-current"

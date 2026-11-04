@@ -96,7 +96,7 @@
 							<p class="text-sm font-semibold truncate">{trackName}</p>
 						{/if}
 						{#if artistName}
-							<p class="text-xs text-base-content/60 truncate">{artistName}</p>
+							<p class="text-xs text-muted truncate">{artistName}</p>
 						{/if}
 					</div>
 				</div>
@@ -119,12 +119,12 @@
 				{#if isLoading}
 					<div class="flex flex-col items-center justify-center py-12 gap-3">
 						<LoaderCircle class="h-6 w-6 animate-spin motion-keep text-primary" />
-						<p class="text-sm text-base-content/50">Loading lyrics...</p>
+						<p class="text-sm text-muted">Loading lyrics...</p>
 					</div>
 				{:else if hasError}
 					<div class="flex flex-col items-center justify-center py-8 gap-2">
 						<CircleAlert class="h-5 w-5 text-warning" />
-						<p class="text-center text-base-content/50 text-sm">
+						<p class="text-center text-muted text-sm">
 							Couldn't load the lyrics. Try again in a bit.
 						</p>
 					</div>
@@ -146,9 +146,7 @@
 					<pre
 						class="whitespace-pre-wrap font-sans text-sm leading-relaxed text-base-content/80">{lyricsText}</pre>
 				{:else}
-					<p class="text-center text-base-content/40 py-8">
-						Lyrics aren't available for this track.
-					</p>
+					<p class="text-center text-muted py-8">Lyrics aren't available for this track.</p>
 				{/if}
 			</div>
 

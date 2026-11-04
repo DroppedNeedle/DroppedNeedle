@@ -151,9 +151,7 @@
 <div class="space-y-6">
 	<div>
 		<h2 class="text-2xl font-bold">Security</h2>
-		<p class="text-base-content/60 mt-1">
-			Configure password security and HTTPS enforcement headers.
-		</p>
+		<p class="text-muted mt-1">Configure password security and HTTPS enforcement headers.</p>
 	</div>
 
 	<QueryBoundary query={security} what="the security settings">
@@ -168,9 +166,7 @@
 							</div>
 							<div>
 								<h3 class="font-semibold">Password Security</h3>
-								<p class="text-xs text-base-content/50">
-									Controls applied when accounts are created.
-								</p>
+								<p class="text-xs text-muted">Controls applied when accounts are created.</p>
 							</div>
 						</div>
 					{/snippet}
@@ -220,7 +216,7 @@
 										</div>
 									{/snippet}
 								</Field>
-								<p class="text-xs text-base-content/50 mt-1.5 ml-1 space-y-1">
+								<p class="text-xs text-muted mt-1.5 ml-1 space-y-1">
 									Absolute path to a local copy of the HIBP
 									<a
 										href="https://haveibeenpwned.com/Passwords"
@@ -249,7 +245,7 @@
 							{/if}
 
 							{#if !draft.hibp_local_path.trim()}
-								<p class="text-xs text-base-content/40 ml-1">
+								<p class="text-xs text-muted ml-1">
 									No local path set, will use the HIBP k-anonymity API for each new account.
 								</p>
 							{/if}
@@ -266,7 +262,7 @@
 							</div>
 							<div>
 								<h3 class="font-semibold">Library downloads</h3>
-								<p class="text-xs text-base-content/50">
+								<p class="text-xs text-muted">
 									Who can download library files and full-album archives. Holds for Subsonic apps
 									and download addresses. Streaming is never restricted, so an app that saves
 									through its play address is not stopped.
@@ -287,7 +283,7 @@
 								/>
 								<span>
 									<span class="block text-sm font-medium">{option.label}</span>
-									<span class="mt-0.5 block text-xs text-base-content/50">{option.help}</span>
+									<span class="mt-0.5 block text-xs text-muted">{option.help}</span>
 								</span>
 							</label>
 						{/each}
@@ -303,7 +299,7 @@
 							</div>
 							<div>
 								<h3 class="font-semibold">HTTP Strict Transport Security (HSTS)</h3>
-								<p class="text-xs text-base-content/50">
+								<p class="text-xs text-muted">
 									Tells browsers to only connect over HTTPS. Leave disabled for local HTTP installs.
 								</p>
 							</div>
@@ -352,7 +348,7 @@
 									</div>
 								{/snippet}
 							</Field>
-							<p class="text-xs text-base-content/50 mt-1 ml-1">
+							<p class="text-xs text-muted mt-1 ml-1">
 								Recommended starting value when behind HTTPS: <strong>1 month</strong>. Increase
 								gradually after confirming everything works.
 							</p>
@@ -379,7 +375,7 @@
 									{security.fieldError('hsts_preload', 'Preload')}
 								</p>
 							{/if}
-							<p class="mt-0.5 text-sm text-base-content/60">
+							<p class="mt-0.5 text-sm text-muted">
 								Only enable after registering your domain at
 								<a
 									href="https://hstspreload.org"
@@ -408,7 +404,7 @@
 							</div>
 							<div>
 								<h3 class="font-semibold">Content-security policy</h3>
-								<p class="text-xs text-base-content/50">
+								<p class="text-xs text-muted">
 									Tells the browser what the web UI may load and run, and who may show it in a
 									frame.
 								</p>
@@ -424,7 +420,7 @@
 							error={security.fieldError('content_security_policy', 'Policy')}
 						/>
 
-						<p class="text-sm text-base-content/70">
+						<p class="text-sm text-muted">
 							A reverse proxy that rewrites the page can leave the web UI blank while the policy is
 							enforced. If that happens, stop the server and run
 							<code class="text-xs">droppedneedle-tool content-security-policy report-only</code> on the
@@ -479,7 +475,7 @@
 				</div>
 				<div>
 					<h3 class="font-semibold">Single Sign-On (OIDC)</h3>
-					<p class="text-xs text-base-content/50">
+					<p class="text-xs text-muted">
 						Let users sign in with an external OpenID Connect provider.
 					</p>
 				</div>

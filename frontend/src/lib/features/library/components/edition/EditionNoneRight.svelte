@@ -25,10 +25,7 @@
 
 {#if album || canLeave || done || error}
 	<section class="flex flex-col gap-3" aria-labelledby="edition-none-right">
-		<h3
-			id="edition-none-right"
-			class="text-xs font-semibold tracking-wide text-base-content/55 uppercase"
-		>
+		<h3 id="edition-none-right" class="text-xs font-semibold tracking-wide text-muted uppercase">
 			None of these is right
 		</h3>
 		{#if album}
@@ -36,7 +33,7 @@
 				<AsyncButton variant="outline" size="sm" onclick={onkeep}
 					>Keep your own track list</AsyncButton
 				>
-				<p class="text-sm text-base-content/65">{customEditionSentence(album)}</p>
+				<p class="text-sm text-muted">{customEditionSentence(album)}</p>
 			</div>
 		{/if}
 		{#if canLeave}
@@ -44,7 +41,7 @@
 				<AsyncButton variant="outline" size="sm" onclick={onleave}
 					>Leave this album unmanaged</AsyncButton
 				>
-				<p class="text-sm text-base-content/65">{LEAVE_UNMANAGED_SENTENCE}</p>
+				<p class="text-sm text-muted">{LEAVE_UNMANAGED_SENTENCE}</p>
 			</div>
 		{/if}
 		{#if error}

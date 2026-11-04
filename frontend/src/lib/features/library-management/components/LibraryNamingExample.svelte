@@ -8,7 +8,7 @@
 	let { example }: Props = $props();
 </script>
 
-<div class="mt-1 break-all rounded-box bg-base-200 p-2 font-mono text-xs text-base-content/70">
+<div class="mt-1 break-all rounded-box bg-base-200 p-2 font-mono text-xs text-muted">
 	<span class="font-sans">Example:</span>
 	{example ?? 'none'}
 </div>

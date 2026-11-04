@@ -250,7 +250,7 @@
 	</div>
 
 	<div class="flex flex-col gap-1.5 flex-1 min-w-0 lg:justify-end">
-		<span class="text-xs sm:text-sm font-semibold text-base-content/50 uppercase tracking-wider">
+		<span class="text-xs sm:text-sm font-semibold text-muted uppercase tracking-wider">
 			Playlist
 		</span>
 
@@ -293,7 +293,7 @@
 			</h1>
 		{/if}
 
-		<div class="flex flex-wrap items-center gap-2 text-sm text-base-content/60">
+		<div class="flex flex-wrap items-center gap-2 text-sm text-muted">
 			<span>{playlist.track_count} track{playlist.track_count === 1 ? '' : 's'}</span>
 			{#if playlist.total_duration}
 				<span class="opacity-50">-</span>
@@ -321,7 +321,7 @@
 
 		<div class="flex items-center gap-3 pt-4">
 			<Button
-				variant="accent"
+				variant="primary"
 				icon={Play}
 				onclick={onplayall}
 				disabled={playlist.track_count === 0}
@@ -353,11 +353,9 @@
 					{#if playlist.is_public}
 						<Globe class="h-4 w-4 text-success" />
 					{:else}
-						<Lock class="h-4 w-4 text-base-content/50" />
+						<Lock class="h-4 w-4 text-muted" />
 					{/if}
-					<span class="text-sm text-base-content/70"
-						>{playlist.is_public ? 'Public' : 'Private'}</span
-					>
+					<span class="text-sm text-muted">{playlist.is_public ? 'Public' : 'Private'}</span>
 					<input
 						type="checkbox"
 						class="toggle toggle-sm toggle-primary"
@@ -368,7 +366,7 @@
 					/>
 				</label>
 			{:else if !playlist.is_owner && playlist.owner_name}
-				<span class="ml-1 inline-flex items-center gap-1.5 text-sm text-base-content/60">
+				<span class="ml-1 inline-flex items-center gap-1.5 text-sm text-muted">
 					<span class="avatar avatar-placeholder">
 						<span class="w-5 h-5 rounded-full bg-accent text-accent-content">
 							<span class="text-[9px] font-semibold leading-none">{ownerInitials}</span>

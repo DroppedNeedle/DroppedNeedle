@@ -199,7 +199,6 @@
 <div class="min-h-[calc(100vh-200px)]">
 	<PageHeader
 		subtitle="Music recommendations based on what you listen to."
-		gradientClass="bg-gradient-to-br from-info/30 via-primary/20 to-secondary/10"
 		{loading}
 		isUpdating={isUpdating || isUpdatingInBackground}
 		refreshing={refreshing || isUpdatingInBackground}
@@ -234,12 +233,12 @@
 					<div class="mb-8 flex flex-col items-center justify-center gap-2 px-4 text-center">
 						<div class="flex items-center justify-center gap-3">
 							<LiveUpdatingBadge label="Preparing your Discover page" />
-							<p class="text-sm text-base-content/60">
+							<p class="text-sm text-muted">
 								Your recommendations will appear here as each section becomes ready.
 							</p>
 						</div>
 						{#if degradedSources.length > 0}
-							<p class="text-xs text-base-content/50">
+							<p class="text-xs text-muted">
 								{degradedLabel}
 								{degradedVerb} temporarily unavailable, so this may take longer than usual.
 							</p>
@@ -332,7 +331,7 @@
 											</div>
 											<div class="flex-1 min-w-0">
 												<h3 class="font-bold text-sm sm:text-base">Discover for a Playlist</h3>
-												<p class="text-xs text-base-content/50 mt-0.5">
+												<p class="text-xs text-muted mt-0.5">
 													Get album suggestions based on any playlist.
 												</p>
 											</div>
@@ -357,7 +356,7 @@
 									{#if dailyMixes.length}
 										<div>
 											<h3
-												class="section-title text-sm font-semibold text-base-content/70 mb-3 flex items-center gap-2"
+												class="section-title text-sm font-semibold text-muted mb-3 flex items-center gap-2"
 											>
 												<Music2 class="h-4 w-4" />
 												Daily Mixes
@@ -373,7 +372,7 @@
 									{#if radioSections.length}
 										<div>
 											<h3
-												class="section-title text-sm font-semibold text-base-content/70 mb-3 flex items-center gap-2"
+												class="section-title text-sm font-semibold text-muted mb-3 flex items-center gap-2"
 											>
 												<Radio class="h-4 w-4" />
 												Radio Stations
@@ -513,11 +512,11 @@
 
 						{#if !hasContent && servicePrompts.length > 0}
 							<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-								<Compass class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-base-content/50" />
+								<Compass class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
 								<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">
 									Nothing to Discover Yet
 								</h2>
-								<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
+								<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
 									Connect a music service to get recommendations. The more you connect, the better
 									they get.
 								</p>
@@ -529,11 +528,11 @@
 							</div>
 						{:else if !hasContent && degradedSources.length > 0}
 							<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-								<CircleAlert class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-base-content/50" />
+								<CircleAlert class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
 								<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">
 									Recommendations Unavailable
 								</h2>
-								<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
+								<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
 									{degradedLabel}
 									{degradedVerb} temporarily unavailable, so we couldn't build recommendations. We'll
 									keep retrying in the background - your page will fill in as soon as it recovers.
@@ -544,13 +543,11 @@
 							</div>
 						{:else if !hasContent && !queueEnabled}
 							<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-								<SlidersHorizontal
-									class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-base-content/50"
-								/>
+								<SlidersHorizontal class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
 								<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">
 									You've hidden every section
 								</h2>
-								<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
+								<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
 									Turn some discovery sections back on to fill this page.
 								</p>
 								<Button
@@ -563,9 +560,9 @@
 							</div>
 						{:else if !hasContent}
 							<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-								<Compass class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-base-content/50" />
+								<Compass class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
 								<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">Still Loading</h2>
-								<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
+								<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
 									Your recommendations are still loading. Try refreshing.
 								</p>
 								<Button variant="primary" loading={refreshing} onclick={() => void handleRefresh()}>
@@ -577,9 +574,9 @@
 
 					{#snippet failed(_error, reset)}
 						<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-							<CircleAlert class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-base-content/50" />
+							<CircleAlert class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
 							<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">Something Went Wrong</h2>
-							<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
+							<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
 								Part of the Discover page failed to render. The rest of the app still works.
 							</p>
 							<Button variant="primary" onclick={() => reset()}>Try Again</Button>

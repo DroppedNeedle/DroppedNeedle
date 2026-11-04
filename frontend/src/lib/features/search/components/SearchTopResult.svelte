@@ -100,12 +100,12 @@
 			</span>
 			<h3 class="text-lg sm:text-xl font-bold line-clamp-1">{title}</h3>
 			{#if subtitle}
-				<p class="text-sm text-base-content/60 line-clamp-1">{subtitle}</p>
+				<p class="text-sm text-muted line-clamp-1">{subtitle}</p>
 			{/if}
 		</div>
 
 		<div class="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-			<ArrowRight class="h-5 w-5 text-base-content/40" />
+			<ArrowRight class="h-5 w-5 text-muted" />
 		</div>
 	</div>
 </a>

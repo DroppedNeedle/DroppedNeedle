@@ -97,7 +97,7 @@
 					Import from Spotify
 				</Button>
 			{/if}
-			<Button variant="accent" size="sm" icon={Plus} onclick={() => (showNewInput = true)}>
+			<Button variant="primary" size="sm" icon={Plus} onclick={() => (showNewInput = true)}>
 				New Playlist
 			</Button>
 		</div>
@@ -115,7 +115,7 @@
 				onkeydown={handleCreateKeydown}
 			/>
 			<Button
-				variant="accent"
+				variant="primary"
 				size="sm"
 				loading={createMutation.isPending}
 				disabled={!newName.trim()}
@@ -150,17 +150,15 @@
 	{:else if items.length === 0}
 		<div class="flex flex-col items-center justify-center py-20 gap-4">
 			<ListMusic class="h-16 w-16 text-base-content/20" />
-			<h2 class="text-lg font-semibold text-base-content/60">No playlists yet</h2>
-			<Button variant="accent" size="sm" icon={Plus} onclick={() => (showNewInput = true)}>
+			<h2 class="text-lg font-semibold text-muted">No playlists yet</h2>
+			<Button variant="primary" size="sm" icon={Plus} onclick={() => (showNewInput = true)}>
 				Create your first playlist
 			</Button>
 		</div>
 	{:else}
 		{#if myPlaylists.length > 0}
 			<section class="space-y-3">
-				<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/60">
-					My Playlists
-				</h2>
+				<h2 class="text-sm font-semibold uppercase tracking-wider text-muted">My Playlists</h2>
 				<div class={gridClass}>
 					{#each myPlaylists as playlist (playlist.id)}
 						<PlaylistCard {playlist} ondelete={handleCardDelete} />
@@ -171,9 +169,7 @@
 
 		{#if sharedPlaylists.length > 0}
 			<section class="space-y-3">
-				<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/60">
-					Shared with you
-				</h2>
+				<h2 class="text-sm font-semibold uppercase tracking-wider text-muted">Shared with you</h2>
 				<div class={gridClass}>
 					{#each sharedPlaylists as playlist (playlist.id)}
 						<PlaylistCard {playlist} ondelete={handleCardDelete} />
@@ -185,7 +181,7 @@
 		{#if redactedPlaylists.length > 0}
 			<section class="space-y-3">
 				<h2
-					class="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wider text-base-content/40"
+					class="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wider text-muted"
 				>
 					<Lock class="h-3.5 w-3.5" />
 					Private

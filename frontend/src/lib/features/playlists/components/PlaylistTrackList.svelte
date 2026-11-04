@@ -358,14 +358,14 @@
 {#if playlist.tracks.length === 0}
 	<div class="flex flex-col items-center justify-center py-16 gap-3">
 		<Music class="h-12 w-12 text-base-content/20" />
-		<h2 class="text-base font-semibold text-base-content/60">This playlist is empty</h2>
-		<p class="text-sm text-base-content/40">Add tracks from album pages using the context menu</p>
+		<h2 class="text-base font-semibold text-muted">This playlist is empty</h2>
+		<p class="text-sm text-muted">Add tracks from album pages using the context menu</p>
 	</div>
 {:else}
 	<ul class="list bg-base-200 rounded-box overflow-visible">
 		{#if playlist.tracks.length > 1 && !readonly}
 			<li class="px-3 sm:px-4 py-2 border-b border-base-300/50">
-				<label class="flex items-center gap-2 cursor-pointer text-xs text-base-content/50">
+				<label class="flex items-center gap-2 cursor-pointer text-xs text-muted">
 					<input
 						type="checkbox"
 						class="checkbox checkbox-sm"
@@ -438,7 +438,7 @@
 						</div>
 					{:else}
 						<span
-							class="text-base-content/40 text-sm w-6 text-center tabular-nums shrink-0 group-hover:hidden"
+							class="text-muted text-sm w-6 text-center tabular-nums shrink-0 group-hover:hidden"
 							>{i + 1}</span
 						>
 						<button
@@ -477,7 +477,7 @@
 								>{track.track_name}</span
 							>
 						{/if}
-						<span class="text-xs text-base-content/60 truncate block">
+						<span class="text-xs text-muted truncate block">
 							{#if track.artist_id}
 								<a href={withBasePath(`/artist/${track.artist_id}`)} class="hover:underline"
 									>{track.artist_name}</a
@@ -490,16 +490,16 @@
 								{#if isValidMbid(track.album_id)}
 									<a
 										href={withBasePath(`/album/${track.album_id}`)}
-										class="text-base-content/40 hover:underline">{track.album_name}</a
+										class="text-muted hover:underline">{track.album_name}</a
 									>
 								{:else}
-									<span class="text-base-content/40">{track.album_name}</span>
+									<span class="text-muted">{track.album_name}</span>
 								{/if}
 							{/if}
 						</span>
 					</div>
 
-					<span class="text-sm text-base-content/40 tabular-nums shrink-0">
+					<span class="text-sm text-muted tabular-nums shrink-0">
 						{formatDurationSec(track.duration)}
 					</span>
 

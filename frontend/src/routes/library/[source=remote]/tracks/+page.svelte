@@ -181,7 +181,7 @@
 			</div>
 		{/snippet}
 		{#snippet empty()}
-			<div class="flex flex-col items-center justify-center py-20 text-base-content/50">
+			<div class="flex flex-col items-center justify-center py-20 text-muted">
 				<remote.icon class="mb-4 h-12 w-12 opacity-20" />
 				<p class="text-lg font-medium">{search ? 'No matches' : 'No tracks yet'}</p>
 				<p class="mt-1 text-sm">
@@ -229,7 +229,7 @@
 			<div class="rounded-xl bg-base-100/40 shadow-sm overflow-hidden" use:reveal>
 				<table class="table table-sm w-full table-fixed">
 					<thead>
-						<tr class="text-base-content/50 border-b border-base-content/5">
+						<tr class="text-muted border-b border-base-content/5">
 							<th scope="col" class="w-12 text-center">#</th>
 							<th scope="col">Title</th>
 							<th scope="col" class="hidden md:table-cell">Artist</th>
@@ -263,14 +263,13 @@
 										{#if playing}
 											<NowPlayingIndicator />
 										{:else if playable}
-											<span class="text-base-content/40 text-sm tabular-nums group-hover:hidden"
-												>{i + 1}</span
+											<span class="text-muted text-sm tabular-nums group-hover:hidden">{i + 1}</span
 											>
 											<Play
 												class="h-3.5 w-3.5 fill-current text-primary hidden group-hover:block"
 											/>
 										{:else}
-											<span class="text-base-content/30 text-sm tabular-nums">{i + 1}</span>
+											<span class="text-muted text-sm tabular-nums">{i + 1}</span>
 										{/if}
 									</div>
 								</td>
@@ -278,27 +277,20 @@
 									<div class="font-medium truncate text-sm {playing ? 'text-accent' : ''}">
 										{track.title}
 									</div>
-									<div class="text-xs text-base-content/50 md:hidden truncate">
+									<div class="text-xs text-muted md:hidden truncate">
 										{track.artist_name}
 									</div>
 								</td>
 								<td class="hidden md:table-cell overflow-hidden">
-									<span
-										class="text-sm text-base-content/60 truncate block {playing
-											? 'text-accent/70'
-											: ''}">{track.artist_name}</span
+									<span class="text-sm text-muted truncate block {playing ? 'text-accent/70' : ''}"
+										>{track.artist_name}</span
 									>
 								</td>
 								<td class="hidden lg:table-cell overflow-hidden">
-									<span class="text-sm text-base-content/50 truncate block">{track.album_name}</span
-									>
+									<span class="text-sm text-muted truncate block">{track.album_name}</span>
 								</td>
 								<td class="text-right hidden sm:table-cell">
-									<span
-										class="text-sm text-base-content/40 tabular-nums {playing
-											? 'text-accent/60'
-											: ''}"
-									>
+									<span class="text-sm text-muted tabular-nums {playing ? 'text-accent/60' : ''}">
 										{formatDurationSec(track.duration_secs ?? 0)}
 									</span>
 								</td>

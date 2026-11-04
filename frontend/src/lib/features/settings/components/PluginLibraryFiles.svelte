@@ -50,7 +50,7 @@
 		<div class="skeleton h-10 w-full rounded-lg"></div>
 	{/snippet}
 	{#snippet empty()}
-		<p class="text-xs text-base-content/55">No files yet.</p>
+		<p class="text-xs text-muted">No files yet.</p>
 	{/snippet}
 	{#snippet children(data)}
 		<ul class="divide-y divide-base-content/10">
@@ -59,17 +59,17 @@
 					<div class="min-w-0 flex-1">
 						<p
 							class="font-mono text-xs break-all {file.state === 'taken_back'
-								? 'text-base-content/45 line-through'
+								? 'text-muted line-through'
 								: ''}"
 						>
 							{file.relative_path}
 						</p>
-						<p class="mt-0.5 text-xs text-base-content/55">
+						<p class="mt-0.5 text-xs text-muted">
 							{formatRelativeTime(new Date(file.added_at))} · {formatBytes(file.size)}
 						</p>
 					</div>
 					{#if file.state === 'taken_back'}
-						<span class="shrink-0 px-2 text-xs text-base-content/50 italic">Undone</span>
+						<span class="shrink-0 px-2 text-xs text-muted italic">Undone</span>
 					{:else}
 						<Button
 							variant="ghost"

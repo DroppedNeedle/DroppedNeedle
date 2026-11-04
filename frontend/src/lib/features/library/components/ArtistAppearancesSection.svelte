@@ -42,9 +42,7 @@
 		<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 			<div>
 				<h2 id="library-appearances-title" class="font-bold">Appears in your library</h2>
-				<p class="mt-1 text-sm text-base-content/60">
-					Couldn't load this artist's local track appearances.
-				</p>
+				<p class="mt-1 text-sm text-muted">Couldn't load this artist's local track appearances.</p>
 			</div>
 			<Button variant="outline" size="sm" onclick={() => appearancesQuery.refetch()}>Retry</Button>
 		</div>
@@ -65,13 +63,13 @@
 						<MicVocal class="h-5 w-5" />
 					</div>
 					<div>
-						<p class="text-[10px] font-bold uppercase tracking-[0.18em] text-base-content/45">
+						<p class="text-[10px] font-bold uppercase tracking-[0.18em] text-muted">
 							Local credits
 						</p>
 						<h2 id="library-appearances-title" class="mt-0.5 text-xl font-black tracking-tight">
 							Appears in your library
 						</h2>
-						<p class="mt-1 max-w-2xl text-sm text-base-content/60">
+						<p class="mt-1 max-w-2xl text-sm text-muted">
 							Exact local tracks credited to this artist, grouped by the release you own.
 						</p>
 					</div>
@@ -121,7 +119,7 @@
 									class="mt-0.5 block truncate text-lg font-bold hover:underline"
 									>{appearance.album.title}</a
 								>
-								<p class="mt-0.5 truncate text-xs text-base-content/50">
+								<p class="mt-0.5 truncate text-xs text-muted">
 									{appearance.album.artist_name || 'Unknown album artist'}
 									{#if appearance.album.year}
 										<span aria-hidden="true"> · </span>{appearance.album.year}
@@ -139,7 +137,7 @@
 			<footer
 				class="flex flex-col items-center justify-between gap-3 border-t border-base-content/10 bg-base-100/35 px-4 py-3 sm:flex-row"
 			>
-				<p class="text-xs text-base-content/50">
+				<p class="text-xs text-muted">
 					Showing {appearances.length} of {releaseCount} local releases
 				</p>
 				<Button

@@ -56,7 +56,7 @@
 	<div class="flex flex-col items-center gap-1 p-2 pt-0 text-center">
 		<CardTitle class="text-xs line-clamp-1 min-h-[1.25rem]">{name}</CardTitle>
 		{#if albumCount !== undefined}
-			<p class="text-xs text-base-content/50">{albumCount} album{albumCount !== 1 ? 's' : ''}</p>
+			<p class="text-xs text-muted">{albumCount} album{albumCount !== 1 ? 's' : ''}</p>
 		{/if}
 	</div>
 </Card>

@@ -126,9 +126,7 @@
 		</div>
 		<div class="min-w-0 flex-1">
 			<h3 class="font-semibold">Repair</h3>
-			<p class="text-sm text-base-content/55">
-				Re-check albums matched by older identification rules.
-			</p>
+			<p class="text-sm text-muted">Re-check albums matched by older identification rules.</p>
 		</div>
 		<Button variant="outline" size="sm" onclick={openStart}>Check existing matches</Button>
 	</div>
@@ -144,13 +142,13 @@
 							<strong>Identity recheck</strong>
 							<span class="badge badge-ghost badge-sm">{visibleState(repair)}</span>
 						</div>
-						<p class="mt-1 text-sm text-base-content/60">
+						<p class="mt-1 text-sm text-muted">
 							{repair.completed_count.toLocaleString()} of {repair.expected_work_count.toLocaleString()}
 							checked · {repair.failed_count.toLocaleString()} failed · {repair.skipped_count.toLocaleString()}
 							stale
 						</p>
 						{#if repair.repair_summary}
-							<p class="mt-1 text-xs text-base-content/50">
+							<p class="mt-1 text-xs text-muted">
 								{repair.repair_summary.estimated_apply_changes.toLocaleString()} safe to detach · {repair.repair_summary.remaining_identities.toLocaleString()}
 								identities remain
 							</p>
@@ -213,25 +211,25 @@
 			</div>
 			<dl class="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
 				<div class="rounded-box bg-base-100/50 p-3">
-					<dt class="text-xs text-base-content/55">Identities evaluated</dt>
+					<dt class="text-xs text-muted">Identities evaluated</dt>
 					<dd class="mt-1 font-semibold">
 						{selected.repair_summary.total_identities.toLocaleString()}
 					</dd>
 				</div>
 				<div class="rounded-box bg-base-100/50 p-3">
-					<dt class="text-xs text-base-content/55">Still being checked</dt>
+					<dt class="text-xs text-muted">Still being checked</dt>
 					<dd class="mt-1 font-semibold">
 						{selected.repair_summary.remaining_identities.toLocaleString()}
 					</dd>
 				</div>
 				<div class="rounded-box bg-base-100/50 p-3">
-					<dt class="text-xs text-base-content/55">Tracks that stay playable</dt>
+					<dt class="text-xs text-muted">Tracks that stay playable</dt>
 					<dd class="mt-1 font-semibold">
 						{selected.repair_summary.playable_after_detach_track_count.toLocaleString()} of {selected.repair_summary.input_track_count.toLocaleString()}
 					</dd>
 				</div>
 				<div class="rounded-box bg-base-100/50 p-3">
-					<dt class="text-xs text-base-content/55">Evidence unavailable</dt>
+					<dt class="text-xs text-muted">Evidence unavailable</dt>
 					<dd class="mt-1 font-semibold">
 						{(
 							selected.repair_summary.provider_deferred_count +
@@ -240,7 +238,7 @@
 					</dd>
 				</div>
 			</dl>
-			<p class="mt-3 text-xs text-base-content/55">
+			<p class="mt-3 text-xs text-muted">
 				{Object.entries(selected.repair_summary.album_counts_by_root)
 					.map(([rootId, count]) => `${rootLabels[rootId] ?? rootId}: ${count.toLocaleString()}`)
 					.join(' · ')}
@@ -266,7 +264,7 @@
 				></div>{:else if findingsQuery.isError}<div class="alert alert-error mt-3 text-sm">
 					Could not load the repair findings.
 				</div>{:else if findings.length === 0}<p
-					class="mt-3 rounded-box bg-base-100/50 p-4 text-sm text-base-content/60"
+					class="mt-3 rounded-box bg-base-100/50 p-4 text-sm text-muted"
 				>
 					No findings in this result.
 				</p>{:else}<div
@@ -286,9 +284,9 @@
 										finding.reason_code.replaceAll('_', ' ').toLowerCase()}
 								</p>
 								{#if finding.reason?.action}
-									<p class="mt-0.5 text-xs text-base-content/60">{finding.reason.action}</p>
+									<p class="mt-0.5 text-xs text-muted">{finding.reason.action}</p>
 								{/if}
-								<p class="mt-1 text-xs text-base-content/45">
+								<p class="mt-1 text-xs text-muted">
 									{finding.state === 'applied'
 										? 'Applied'
 										: finding.state === 'stale'
@@ -320,7 +318,7 @@
 </Card>
 
 <Modal bind:open={startOpen} title="Check existing matches" icon={ShieldCheck} focusTitle>
-	<p class="text-sm text-base-content/70">
+	<p class="text-sm text-muted">
 		Check current album identities against the latest matching rules. This scan does not change your
 		library or files.
 	</p>
@@ -337,7 +335,7 @@
 				onchange={() => (scopeMode = 'all')}
 			/>
 			<span
-				><strong>Whole library</strong><span class="block text-xs text-base-content/55"
+				><strong>Whole library</strong><span class="block text-xs text-muted"
 					>Check every imported identity.</span
 				></span
 			>
@@ -353,7 +351,7 @@
 				onchange={chooseSelectedRoots}
 			/>
 			<span
-				><strong>Selected roots</strong><span class="block text-xs text-base-content/55"
+				><strong>Selected roots</strong><span class="block text-xs text-muted"
 					>Limit this check to chosen library roots.</span
 				></span
 			>
@@ -384,7 +382,7 @@
 		{:else if estimateQuery.data}
 			<strong>{estimateQuery.data.identity_count.toLocaleString()} identities</strong> will be
 			checked.
-			<span class="mt-1 block text-xs text-base-content/60">
+			<span class="mt-1 block text-xs text-muted">
 				{estimateQuery.data.queued_repair_count === 0
 					? 'No other repair checks are waiting.'
 					: `${estimateQuery.data.queued_repair_count.toLocaleString()} other repair checks are queued or active.`}

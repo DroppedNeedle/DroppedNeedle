@@ -79,7 +79,7 @@
 					{task.album_title}
 				</a>
 			</h3>
-			<p class="truncate text-xs text-base-content/60">
+			<p class="truncate text-xs text-muted">
 				{#if task.artist_mbid}
 					<a href={artistHref(task.artist_mbid)} class="hover:text-primary transition-colors">
 						{task.artist_name}
@@ -111,7 +111,7 @@
 				</div>
 			{/if}
 
-			<p class="mt-1.5 text-xs text-base-content/55">
+			<p class="mt-1.5 text-xs text-muted">
 				{#if isPartial && task.files_total > 0}
 					Got {task.files_completed}/{task.files_total} tracks{#if lastTried}
 						· last tried {lastTried}{/if}
@@ -120,10 +120,10 @@
 				{/if}
 			</p>
 			{#if task.reason}
-				<p class="mt-0.5 line-clamp-2 text-xs text-base-content/45">{task.reason.text}</p>
+				<p class="mt-0.5 line-clamp-2 text-xs text-muted">{task.reason.text}</p>
 			{/if}
 			{#if task.maybe_have}
-				<p class="mt-1 text-xs text-base-content/70">
+				<p class="mt-1 text-xs text-muted">
 					You may have this: {task.maybe_have.title} is a guess.
 					<a class="link" href={maybeHaveHref(task.maybe_have.album_id)}>Check it</a>
 				</p>

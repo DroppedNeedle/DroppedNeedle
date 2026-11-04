@@ -60,14 +60,14 @@
 				size="sm"
 				onclick={() => playerStore.playQueue(buildDiscoveryQueueFromLocal(tracks), index, false)}
 			/>
-			<span class="w-9 shrink-0 text-right text-xs tabular-nums text-base-content/40"
+			<span class="w-9 shrink-0 text-right text-xs tabular-nums text-muted"
 				>{track.disc_number}.{track.track_number}</span
 			>
 			<div class="min-w-0 flex-1">
 				<p class="truncate font-medium">{track.title}</p>
 				<a
 					href={artistHref(track.artist_mbid ?? track.artist_id ?? '')}
-					class="truncate text-xs text-base-content/55 hover:underline"
+					class="truncate text-xs text-muted hover:underline"
 					>{track.artist_name || 'Unknown artist'}</a
 				>
 				{#if notes?.get(track.id)}
@@ -77,16 +77,16 @@
 					<div class="flex items-center sm:hidden">{@render rateAndHeart(track)}</div>
 				{/if}
 			</div>
-			{#if track.format}<span class="hidden text-xs uppercase text-base-content/40 sm:block"
+			{#if track.format}<span class="hidden text-xs uppercase text-muted sm:block"
 					>{track.format}</span
 				>{/if}
 			{#if onRateTrack || onFavoriteTrack}
 				<div class="hidden items-center sm:flex">{@render rateAndHeart(track)}</div>
 			{/if}
-			<span class="text-xs tabular-nums text-base-content/45"
+			<span class="text-xs tabular-nums text-muted"
 				>{formatDurationSec(track.duration_seconds)}</span
 			>
-			<span class="w-16 shrink-0 text-right text-xs tabular-nums text-base-content/40"
+			<span class="w-16 shrink-0 text-right text-xs tabular-nums text-muted"
 				>{track.file_size_bytes > 0 ? formatBytes(track.file_size_bytes) : '—'}</span
 			>
 			{#if getTrackMenuItems}

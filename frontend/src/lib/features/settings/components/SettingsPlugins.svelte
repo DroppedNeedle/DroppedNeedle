@@ -68,7 +68,7 @@
 			<CardTitle>Plugins</CardTitle>
 		</div>
 	{/snippet}
-	<p class="text-sm text-base-content/60">
+	<p class="text-sm text-muted">
 		Plugins add download sources, scrobble webhooks, streaming and more. Each one runs as its own
 		program on your server, with the same file and network access as DroppedNeedle. It is not
 		sandboxed: only install plugins you trust. See PLUGINS.md in the repository.
@@ -79,7 +79,7 @@
 	{#if pluginsQuery.isLoading}
 		<div class="skeleton h-20 w-full rounded-xl"></div>
 	{:else if plugins.length === 0}
-		<p class="py-4 text-sm text-base-content/50">
+		<p class="py-4 text-sm text-muted">
 			No plugins yet. Install one above, or drop a folder into <code>plugins/</code> and reload.
 		</p>
 	{:else}
@@ -93,13 +93,13 @@
 								<div class="min-w-0">
 									<div class="flex items-center gap-2">
 										<h3 class="font-semibold">{plugin.display_name}</h3>
-										<span class="text-xs text-base-content/40">v{plugin.version}</span>
+										<span class="text-xs text-muted">v{plugin.version}</span>
 										{#if outsideLink(plugin.homepage)}
 											<a
 												href={outsideLink(plugin.homepage)}
 												target="_blank"
 												rel="noopener noreferrer"
-												class="text-base-content/40 hover:text-primary"
+												class="text-muted hover:text-primary"
 												aria-label="Plugin homepage"
 											>
 												<ExternalLink class="h-3.5 w-3.5" aria-hidden="true" />
@@ -110,7 +110,7 @@
 												href={outsideLink(plugin.ui_external_url)}
 												target="_blank"
 												rel="noopener noreferrer"
-												class="text-base-content/40 hover:text-primary"
+												class="text-muted hover:text-primary"
 												aria-label="Plugin site"
 											>
 												<ExternalLink class="h-3.5 w-3.5" aria-hidden="true" />
@@ -118,7 +118,7 @@
 										{/if}
 									</div>
 									{#if plugin.description}
-										<p class="mt-0.5 text-xs text-base-content/55">{plugin.description}</p>
+										<p class="mt-0.5 text-xs text-muted">{plugin.description}</p>
 									{/if}
 									<div class="mt-1.5 flex flex-wrap gap-1">
 										{#each plugin.capabilities ?? [] as capability (capability)}
@@ -141,7 +141,7 @@
 									</div>
 								</div>
 								<label class="flex cursor-pointer items-center gap-2">
-									<span class="text-xs text-base-content/60">Enabled</span>
+									<span class="text-xs text-muted">Enabled</span>
 									<input
 										type="checkbox"
 										class="toggle toggle-primary toggle-sm"
@@ -151,7 +151,7 @@
 							</div>
 
 							{#if plugin.runtime}
-								<p class="mt-2 text-xs text-base-content/55">
+								<p class="mt-2 text-xs text-muted">
 									Process: {runtimeLabels[plugin.runtime.state] ?? plugin.runtime.state}
 									{#if plugin.runtime.restarts > 0}
 										· restarted {plugin.runtime.restarts}×
@@ -168,7 +168,7 @@
 											<span class="badge badge-ghost badge-sm">Not configured</span>
 										{/if}
 										{#if health?.message}
-											<span class="min-w-0 break-words text-base-content/60">{health.message}</span>
+											<span class="min-w-0 break-words text-muted">{health.message}</span>
 										{/if}
 									</div>
 								{/if}
@@ -187,7 +187,7 @@
 								{/if}
 							{/if}
 							{#if plugin.install}
-								<p class="mt-1 text-xs text-base-content/45">
+								<p class="mt-1 text-xs text-muted">
 									From {plugin.install.repository}
 									{plugin.install.ref_kind === 'branch' && plugin.install.reference === 'HEAD'
 										? '(default branch)'
@@ -227,7 +227,7 @@
 							{/if}
 							{#if authStore.isAdmin && plugin.enabled && plugin.ui_entry && !plugin.error}
 								<details class="mt-3 rounded-xl border border-base-content/10 p-3">
-									<summary class="cursor-pointer text-xs font-semibold text-base-content/65">
+									<summary class="cursor-pointer text-xs font-semibold text-muted">
 										Plugin panel
 									</summary>
 									<div class="mt-2">
@@ -241,7 +241,7 @@
 									class="mt-3 rounded-xl border border-base-content/10 p-3"
 									ontoggle={(event) => (filesOpen[plugin.name] = event.currentTarget.open)}
 								>
-									<summary class="cursor-pointer text-xs font-semibold text-base-content/65">
+									<summary class="cursor-pointer text-xs font-semibold text-muted">
 										Library files
 									</summary>
 									{#if filesOpen[plugin.name]}
@@ -254,7 +254,7 @@
 
 							<div class="mt-3 flex items-center justify-end gap-2">
 								{#if confirmingRemoval === plugin.name}
-									<span class="text-xs text-base-content/60">Remove this plugin?</span>
+									<span class="text-xs text-muted">Remove this plugin?</span>
 									<Button
 										variant="ghost"
 										size="xs"

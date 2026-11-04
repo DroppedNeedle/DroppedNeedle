@@ -74,7 +74,7 @@
 		</span>
 		<span class="management-profile-picker-status">
 			{#if changed}<span class="management-unsaved-badge">Unsaved choice</span>{/if}
-			<span class="text-xs font-semibold text-base-content/55">
+			<span class="text-xs font-semibold text-muted">
 				{inheritsDefault ? 'Inherited' : 'Selected'}
 			</span>
 			<ChevronDown class="management-profile-picker-chevron h-4 w-4" aria-hidden="true" />
@@ -84,7 +84,7 @@
 	{#if expanded}<div class="management-profile-picker-body" id={`management-profile-options-${id}`}>
 			<div>
 				<h5 class="text-sm font-semibold">{label}</h5>
-				<p class="mt-1 text-xs text-base-content/55">{description}</p>
+				<p class="mt-1 text-xs text-muted">{description}</p>
 			</div>
 			<fieldset class="management-profile-options" aria-label={`${label} choices`}>
 				{#if inheritedProfile}

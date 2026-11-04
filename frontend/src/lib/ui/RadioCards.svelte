@@ -32,10 +32,10 @@
 	<legend class="sr-only">{label}</legend>
 	{#each options as option (option.value)}
 		<label
-			class="flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors {value ===
+			class="flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors duration-150 {value ===
 			option.value
-				? 'border-primary/50 bg-primary/5'
-				: 'border-base-300/50 bg-base-100/30 hover:border-base-content/20'}"
+				? 'border-primary bg-selected'
+				: 'border-line bg-base-200 hover:border-edge'}"
 		>
 			<input
 				class="radio radio-primary radio-sm mt-0.5"
@@ -48,7 +48,7 @@
 			<span>
 				<span class="block text-sm font-medium">{option.label}</span>
 				{#if option.description}
-					<span class="mt-1 block text-xs text-base-content/60">{option.description}</span>
+					<span class="mt-1 block text-xs text-muted">{option.description}</span>
 				{/if}
 			</span>
 		</label>

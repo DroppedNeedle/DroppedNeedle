@@ -270,12 +270,10 @@
 			{:else if playlists.length === 0}
 				<div class="flex flex-col items-center gap-2 py-10 text-center">
 					<div class="crate-disc crate-disc--lg" aria-hidden="true">
-						<Disc3 class="h-7 w-7 text-base-content/45" />
+						<Disc3 class="h-7 w-7 text-muted" />
 					</div>
-					<p class="text-sm font-semibold text-base-content/70">
-						You haven't created any playlists yet.
-					</p>
-					<p class="max-w-[16rem] text-xs text-base-content/45">
+					<p class="text-sm font-semibold text-muted">You haven't created any playlists yet.</p>
+					<p class="max-w-[16rem] text-xs text-muted">
 						Name one above and press your first record.
 					</p>
 				</div>
@@ -333,7 +331,7 @@
 							</div>
 							<div class="sleeve-meta">
 								<p class="truncate text-sm font-semibold text-base-content">{playlist.name}</p>
-								<p class="truncate text-[11px] text-base-content/45">
+								<p class="truncate text-[11px] text-muted">
 									{playlist.track_count} track{playlist.track_count === 1 ? '' : 's'}{state ===
 									'partial'
 										? ` · ${existingCount(playlist.id)} here`
@@ -344,7 +342,7 @@
 					{/each}
 				</div>
 				{#if filteredPlaylists.length === 0}
-					<p class="py-8 text-center text-sm text-base-content/45">
+					<p class="py-8 text-center text-sm text-muted">
 						No playlists match "{search}".
 					</p>
 				{/if}

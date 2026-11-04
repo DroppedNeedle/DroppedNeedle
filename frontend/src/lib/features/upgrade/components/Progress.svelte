@@ -33,9 +33,9 @@
 
 <Card variant="bordered" title={TITLES[run.task]}>
 	{#if rollingBack}
-		<p class="text-sm text-base-content/70">Something went wrong. Putting your v2 files back.</p>
+		<p class="text-sm text-muted">Something went wrong. Putting your v2 files back.</p>
 	{:else}
-		<p class="text-sm text-base-content/70">This carries on if you close the page.</p>
+		<p class="text-sm text-muted">This carries on if you close the page.</p>
 	{/if}
 	<ol class="mt-3 flex flex-col gap-3" aria-label="Steps">
 		{#each steps as step, index (step)}
@@ -47,10 +47,10 @@
 					<span class="loading loading-spinner loading-xs motion-keep mt-0.5 shrink-0 text-primary"
 					></span>
 				{:else}
-					<Circle class="mt-0.5 size-4 shrink-0 text-base-content/30" aria-label="Waiting" />
+					<Circle class="mt-0.5 size-4 shrink-0 text-muted" aria-label="Waiting" />
 				{/if}
 				<div class="min-w-0 flex-1">
-					<p class={state === 'waiting' ? 'text-base-content/50' : ''}>{STEP_LABELS[step]}</p>
+					<p class={state === 'waiting' ? 'text-muted' : ''}>{STEP_LABELS[step]}</p>
 					{#if state === 'current'}
 						{#if run.total}
 							<div class="mt-1 flex items-center gap-2">
@@ -59,7 +59,7 @@
 									value={run.done ?? 0}
 									max={run.total}
 								></progress>
-								<span class="shrink-0 whitespace-nowrap font-mono text-xs text-base-content/60">
+								<span class="shrink-0 whitespace-nowrap font-mono text-xs text-muted">
 									{run.done ?? 0} / {run.total}
 								</span>
 							</div>

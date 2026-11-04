@@ -46,7 +46,7 @@
 	{:else if !configured}
 		<Card>
 			<div class="text-center">
-				<p class="text-base-content/70">Connect a music service to see recommendations</p>
+				<p class="text-muted">Connect a music service to see recommendations</p>
 				<Button variant="primary" size="sm" href={withBasePath('/profile#scrobbling')} class="mt-3">
 					Configure
 				</Button>
@@ -54,7 +54,7 @@
 		</Card>
 	{:else if albums.length === 0}
 		<Card>
-			<p class="text-center text-base-content/70">{emptyMessage}</p>
+			<p class="text-center text-muted">{emptyMessage}</p>
 		</Card>
 	{:else}
 		<HorizontalCarousel>

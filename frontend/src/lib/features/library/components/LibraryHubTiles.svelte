@@ -211,7 +211,7 @@
 					{stats.total_albums.toLocaleString()}
 				</div>
 				<div
-					class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-base-content/55 uppercase"
+					class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-muted uppercase"
 				>
 					<Disc3 class="h-3.5 w-3.5 text-primary" /> Albums
 				</div>
@@ -246,7 +246,7 @@
 					{stats.total_artists.toLocaleString()}
 				</div>
 				<div
-					class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-base-content/55 uppercase"
+					class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-muted uppercase"
 				>
 					<Users class="h-3.5 w-3.5 text-accent" /> Artists
 				</div>
@@ -279,7 +279,7 @@
 				{stats.total_tracks.toLocaleString()}
 			</div>
 			<div
-				class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-base-content/55 uppercase"
+				class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-muted uppercase"
 			>
 				<Music2 class="h-3.5 w-3.5 text-info" /> Tracks
 			</div>
@@ -303,7 +303,7 @@
 				{stats.favorite_albums.toLocaleString()}
 			</div>
 			<div
-				class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-base-content/55 uppercase"
+				class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-muted uppercase"
 			>
 				<Heart class="h-3.5 w-3.5 fill-current text-error" /> Favourites
 			</div>

@@ -88,12 +88,11 @@
 				alt="Preview"
 				class="h-24 w-24 rounded-full object-cover ring-2 ring-base-content/10"
 			/>
-			<span class="text-xs text-base-content/60">{avatarFile?.name}</span>
+			<span class="text-xs text-muted">{avatarFile?.name}</span>
 		{:else}
 			<ImagePlus class="h-10 w-10 text-base-content/30" />
-			<span class="text-sm text-base-content/60">Drag & drop an image here, or click to browse</span
-			>
-			<span class="text-xs text-base-content/40">JPEG, PNG, WebP, or GIF, max 5 MB</span>
+			<span class="text-sm text-muted">Drag & drop an image here, or click to browse</span>
+			<span class="text-xs text-muted">JPEG, PNG, WebP, or GIF, max 5 MB</span>
 		{/if}
 	</button>
 

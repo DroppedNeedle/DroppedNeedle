@@ -97,7 +97,7 @@
 	<div class="space-y-3">
 		<div>
 			<h3 class="font-semibold">Source priority</h3>
-			<p class="text-sm text-base-content/70">
+			<p class="text-sm text-muted">
 				Drag (or use ↑/↓) to set which source is tried first for automatic downloads. The top
 				enabled source is tried first; the next is the fallback.
 			</p>
@@ -116,7 +116,7 @@
 				>
 					<button
 						type="button"
-						class="cursor-grab text-base-content/40 hover:text-base-content"
+						class="cursor-grab text-muted hover:text-base-content"
 						aria-label={`Reorder ${meta.label}`}
 						draggable="true"
 						ondragstart={() => (dragSource = source)}
@@ -134,16 +134,14 @@
 						<GripVertical class="size-4" aria-hidden="true" />
 					</button>
 					<span
-						class="grid size-8 shrink-0 place-items-center rounded-lg bg-base-300/60 text-base-content/70"
+						class="grid size-8 shrink-0 place-items-center rounded-lg bg-base-300/60 text-muted"
 					>
 						<Icon class="size-4" aria-hidden="true" />
 					</span>
 					<span class="badge badge-ghost badge-sm tabular-nums">{index + 1}</span>
 					<span class="min-w-0 flex-1">
-						<span class="font-medium {meta.missing ? 'text-base-content/50' : ''}"
-							>{meta.label}</span
-						>
-						{#if meta.sub}<span class="text-sm text-base-content/50"> · {meta.sub}</span>{/if}
+						<span class="font-medium {meta.missing ? 'text-muted' : ''}">{meta.label}</span>
+						{#if meta.sub}<span class="text-sm text-muted"> · {meta.sub}</span>{/if}
 					</span>
 					<div class="flex items-center gap-1">
 						<IconButton

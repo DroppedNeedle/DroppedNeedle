@@ -151,13 +151,13 @@
 				</p>
 			{/if}
 			{#if counts.held}
-				<p class="text-base-content/70">
+				<p class="text-muted">
 					{tracksWord(counts.held)} held for you to check.
 					<a class="link" href={withBasePath('/downloads')}>Review</a>
 				</p>
 			{/if}
 			{#if latest.state === 'waiting' && !sourceReady}
-				<p class="text-base-content/70">{NO_SOURCE_SENTENCE} {@render settingsLink()}</p>
+				<p class="text-muted">{NO_SOURCE_SENTENCE} {@render settingsLink()}</p>
 			{/if}
 			{#if latest.tracks.length}
 				<ul
@@ -166,7 +166,7 @@
 				>
 					{#each latest.tracks as track (`${track.disc}-${track.position}`)}
 						<li class="flex items-center gap-3 px-3 py-1.5">
-							<span class="w-7 shrink-0 text-right text-base-content/60 tabular-nums">
+							<span class="w-7 shrink-0 text-right text-muted tabular-nums">
 								{multiDisc ? `${track.disc}-${track.position}` : track.position}
 							</span>
 							<span class="min-w-0 flex-1 truncate">
@@ -219,11 +219,11 @@
 				{/if}
 			</div>
 			{#if missing > 0 && versions > 0}
-				<p class="text-xs text-base-content/60">{REPLACE_ALSO_GETS_MISSING}</p>
+				<p class="text-xs text-muted">{REPLACE_ALSO_GETS_MISSING}</p>
 			{/if}
 		{/if}
 		{#if !sourceReady}
-			<p class="text-base-content/70">{NO_SOURCE_SENTENCE} {@render settingsLink()}</p>
+			<p class="text-muted">{NO_SOURCE_SENTENCE} {@render settingsLink()}</p>
 		{/if}
 	{/if}
 </div>

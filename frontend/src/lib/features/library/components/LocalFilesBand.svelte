@@ -122,7 +122,7 @@
 				</div>
 				<div>
 					<h2 class="text-xl font-black tracking-tight sm:text-2xl">Local Files</h2>
-					<p class="text-sm text-base-content/60">
+					<p class="text-sm text-muted">
 						{#if stats}
 							{stats.total_tracks.toLocaleString()} tracks · {stats.total_artists.toLocaleString()} artists
 							· {formatBytes(stats.total_size_bytes)}
@@ -149,10 +149,11 @@
 
 		<div class="flex flex-wrap items-center gap-3">
 			<Button
+				variant="primary"
 				size="lg"
 				icon={Play}
 				loading={busy === 'play'}
-				class="pointer-events-auto border-0 bg-localfiles text-base-100 shadow-lg transition-transform hover:scale-[1.02]"
+				class="pointer-events-auto"
 				onclick={playAll}>Play All</Button
 			>
 			<Button

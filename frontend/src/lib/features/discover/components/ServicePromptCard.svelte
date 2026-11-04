@@ -97,7 +97,7 @@
 		</div>
 		<div class="min-w-0 flex-1 pr-6">
 			<CardTitle as="h3" class="mb-1 text-base sm:text-lg">{prompt.title}</CardTitle>
-			<p class="mb-2 text-xs text-base-content/70 sm:mb-3 sm:text-sm">
+			<p class="mb-2 text-xs text-muted sm:mb-3 sm:text-sm">
 				{prompt.description}
 			</p>
 			<div class="flex flex-wrap gap-1 sm:gap-2">

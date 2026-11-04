@@ -27,6 +27,7 @@
 	import type { Snippet } from 'svelte';
 	import { X } from 'lucide-svelte';
 	import type { KitIcon } from './Button.svelte';
+	import IconButton from './IconButton.svelte';
 
 	interface Props {
 		open: boolean;
@@ -144,7 +145,7 @@
 		{#if titleHref}
 			<a
 				href={titleHref}
-				class="rounded-sm transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+				class="rounded-sm transition-colors hover:text-accent"
 				onclick={() => dialog?.close()}>{title}</a
 			>
 		{:else}
@@ -167,21 +168,22 @@
 			data-testid="modal-sheet"
 		>
 			<header
-				class="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-base-content/10 bg-base-100 px-4 py-3 md:static md:px-6 md:py-4"
+				class="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-line bg-base-200 px-4 py-3 md:static md:px-6 md:py-4"
 			>
 				<div class="min-w-0">
-					{@render heading('text-lg font-bold')}
+					{@render heading('text-xl leading-tight')}
 					{#if description}
-						<p id={descriptionId} class="mt-0.5 text-sm text-base-content/65">{description}</p>
+						<p id={descriptionId} class="mt-0.5 text-sm text-muted">{description}</p>
 					{/if}
 				</div>
 				{#if dismissible}
-					<button
-						type="button"
-						class="btn btn-square btn-ghost btn-sm"
-						aria-label="Close"
-						onclick={() => requestClose()}><X class="h-4 w-4" /></button
-					>
+					<IconButton
+						shape="square"
+						size="sm"
+						icon={X}
+						label="Close"
+						onclick={() => requestClose()}
+					/>
 				{/if}
 			</header>
 			<div class="flex-1 md:min-h-0">
@@ -189,7 +191,7 @@
 			</div>
 			{#if actions}
 				<div
-					class="sticky bottom-0 z-10 border-t border-base-content/10 bg-base-100 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] md:static md:px-6 md:pb-3"
+					class="sticky bottom-0 z-10 border-t border-line bg-base-200 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] md:static md:px-6 md:pb-3"
 				>
 					{@render actions()}
 				</div>
@@ -214,18 +216,20 @@
 					</div>
 				{/if}
 				<div class={['min-w-0 flex-1', Icon && 'self-center']}>
-					{@render heading('text-lg font-bold')}
+					{@render heading('text-xl leading-tight')}
 					{#if description}
-						<p id={descriptionId} class="mt-1 text-sm text-base-content/65">{description}</p>
+						<p id={descriptionId} class="mt-1 text-sm text-muted">{description}</p>
 					{/if}
 				</div>
 				{#if closeButton && dismissible}
-					<button
-						type="button"
-						class="btn btn-square btn-ghost btn-sm -mt-1 -mr-2 shrink-0"
-						aria-label="Close"
-						onclick={() => requestClose()}><X class="h-4 w-4" /></button
-					>
+					<IconButton
+						shape="square"
+						size="sm"
+						icon={X}
+						label="Close"
+						class="-mt-1 -mr-2 shrink-0"
+						onclick={() => requestClose()}
+					/>
 				{/if}
 			</div>
 			<div class="pt-4">

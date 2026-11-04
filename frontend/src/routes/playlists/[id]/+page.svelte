@@ -304,7 +304,7 @@
 			<Lock class="h-16 w-16 text-base-content/20" />
 			<div class="space-y-1">
 				<h2 class="text-lg font-semibold text-base-content/80">Private playlist</h2>
-				<p class="text-sm text-base-content/60">{privatePlaylistLine(locked)}</p>
+				<p class="text-sm text-muted">{privatePlaylistLine(locked)}</p>
 			</div>
 			<BackButton fallback={withBasePath('/playlists')} />
 		</div>
@@ -312,7 +312,7 @@
 		<div class="flex flex-col items-center justify-center py-20 gap-4 text-center">
 			<Music class="h-16 w-16 text-base-content/20" />
 			<h2 class="text-lg font-semibold text-base-content/80">Couldn't load this playlist</h2>
-			<p class="text-sm text-base-content/60">{loadError}</p>
+			<p class="text-sm text-muted">{loadError}</p>
 			<div class="flex items-center gap-2">
 				<Button variant="accent" size="sm" onclick={() => void detailQuery.refetch()}>Retry</Button>
 				<BackButton fallback={withBasePath('/playlists')} />
@@ -321,7 +321,7 @@
 	{:else if !playlist}
 		<div class="flex flex-col items-center justify-center py-20 gap-4">
 			<Music class="h-16 w-16 text-base-content/20" />
-			<h2 class="text-lg font-semibold text-base-content/60">Playlist not found</h2>
+			<h2 class="text-lg font-semibold text-muted">Playlist not found</h2>
 			<BackButton fallback={withBasePath('/playlists')} />
 		</div>
 	{:else}
@@ -368,13 +368,13 @@
 			{#if isOwner && missingAlbumCount > 0}
 				<Card variant="bordered" padding="sm">
 					<div class="flex items-center gap-3">
-						<Download class="h-4 w-4 shrink-0 text-base-content/50" />
-						<p class="flex-1 text-sm text-base-content/70">
+						<Download class="h-4 w-4 shrink-0 text-muted" />
+						<p class="flex-1 text-sm text-muted">
 							{missingAlbumCount}
 							{missingAlbumCount === 1 ? 'album' : 'albums'} not in your library
 						</p>
 						<Button
-							variant="accent"
+							variant="primary"
 							size="sm"
 							icon={Download}
 							loading={requesting}

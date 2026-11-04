@@ -72,7 +72,7 @@
 		<div class="flex flex-wrap items-start justify-between gap-3">
 			<div class="min-w-0">
 				<CardTitle class="text-2xl">Backups</CardTitle>
-				<p class="mt-1 text-sm text-base-content/70">
+				<p class="mt-1 text-sm text-muted">
 					Copies of the database, settings included.
 					{#if backupsQuery.data}The newest {backupsQuery.data.keep} are kept.{/if}
 				</p>
@@ -89,7 +89,7 @@
 		isEmpty={(data) => data.backups.length === 0}
 	>
 		{#snippet empty()}
-			<p class="py-4 text-sm text-base-content/60">No backups yet.</p>
+			<p class="py-4 text-sm text-muted">No backups yet.</p>
 		{/snippet}
 		{#snippet children(data)}
 			<ul class="divide-y divide-base-300/40">
@@ -97,7 +97,7 @@
 					<li class="flex items-center gap-3 py-3">
 						<div class="min-w-0 flex-1">
 							<p class="font-mono text-xs break-all sm:text-sm">{backup.name}</p>
-							<p class="mt-0.5 text-xs text-base-content/60">{details(backup)}</p>
+							<p class="mt-0.5 text-xs text-muted">{details(backup)}</p>
 						</div>
 						<Button
 							variant="outline"
@@ -113,7 +113,7 @@
 		{/snippet}
 	</QueryBoundary>
 
-	<p class="mt-4 text-xs text-base-content/60">
+	<p class="mt-4 text-xs text-muted">
 		Restoring runs on the host with the server stopped.
 		<a
 			class="link whitespace-nowrap"
@@ -140,7 +140,7 @@
 						{/if}
 						<div class="min-w-0">
 							<p class="font-mono text-xs">{check.name}</p>
-							<p class="text-base-content/70">{check.detail}</p>
+							<p class="text-muted">{check.detail}</p>
 						</div>
 					</li>
 				{/each}

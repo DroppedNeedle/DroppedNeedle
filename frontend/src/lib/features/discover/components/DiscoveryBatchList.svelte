@@ -79,7 +79,7 @@
 		<div class="mb-3 flex items-center gap-2">
 			<Sparkles class="h-4 w-4 text-primary" />
 			<h2 class="text-lg font-bold">Discovery Batches</h2>
-			<span class="text-xs text-base-content/40">
+			<span class="text-xs text-muted">
 				Sections you grabbed in one go - removable in one go, too
 			</span>
 		</div>
@@ -96,7 +96,7 @@
 							>
 								<div class="min-w-0 flex-1">
 									<p class="truncate font-semibold">{batch.name}</p>
-									<p class="text-xs text-base-content/50">
+									<p class="text-xs text-muted">
 										{#if batch.created_at}{new Date(batch.created_at).toLocaleDateString()} ·{/if}
 										{batch.imported_count}/{batch.item_count} imported
 										{#if batch.pending_count}
@@ -105,9 +105,7 @@
 									</p>
 								</div>
 								<ChevronDown
-									class="h-4 w-4 shrink-0 text-base-content/40 transition-transform {expanded.has(
-										batch.id
-									)
+									class="h-4 w-4 shrink-0 text-muted transition-transform {expanded.has(batch.id)
 										? 'rotate-180'
 										: ''}"
 								/>
@@ -139,7 +137,7 @@
 													class="min-w-0 flex-1 truncate {href ? 'hover:text-primary' : ''}"
 												>
 													{item.title}
-													<span class="text-base-content/50">· {item.artist_name}</span>
+													<span class="text-muted">· {item.artist_name}</span>
 												</svelte:element>
 												{#if item.outcome !== 'requested'}
 													<span class="badge badge-ghost badge-sm shrink-0">Already yours</span>
@@ -157,7 +155,7 @@
 									</ul>
 								{:else}
 									<div class="flex justify-center py-4">
-										<LoaderCircle class="h-5 w-5 animate-spin motion-keep text-base-content/40" />
+										<LoaderCircle class="h-5 w-5 animate-spin motion-keep text-muted" />
 									</div>
 								{/if}
 							</div>
@@ -175,7 +173,7 @@
 	onclose={() => (confirming = null)}
 >
 	{#if confirming}
-		<p class="text-sm text-base-content/70">
+		<p class="text-sm text-muted">
 			Removes the {confirming.imported_count} downloaded album{confirming.imported_count === 1
 				? ''
 				: 's'} to the <strong>recycle bin</strong> (restorable), cancels anything still pending, and never

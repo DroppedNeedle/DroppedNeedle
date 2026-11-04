@@ -25,7 +25,7 @@
 <div class="max-h-[32rem] overflow-y-auto rounded-xl">
 	<table class="table table-sm w-full">
 		<thead class="sticky top-0 z-10 bg-base-200/80 backdrop-blur-sm">
-			<tr class="text-xs uppercase tracking-wider text-base-content/40">
+			<tr class="text-xs uppercase tracking-wider text-muted">
 				<th class="w-10">#</th>
 				<th>Title</th>
 				<th class="hidden sm:table-cell">Album</th>
@@ -46,9 +46,7 @@
 					aria-label="Play {track.title}"
 				>
 					<td class="w-10">
-						<span class="text-base-content/40 group-hover:hidden group-focus-visible:hidden"
-							>{i + 1}</span
-						>
+						<span class="text-muted group-hover:hidden group-focus-visible:hidden">{i + 1}</span>
 						<span class="hidden text-primary group-hover:inline group-focus-visible:inline">
 							<Play class="h-3.5 w-3.5 fill-current" />
 						</span>
@@ -69,16 +67,16 @@
 								<p class="truncate text-sm font-medium text-base-content">
 									{track.title}
 								</p>
-								<p class="truncate text-xs text-base-content/50">
+								<p class="truncate text-xs text-muted">
 									{track.artist_name}
 								</p>
 							</div>
 						</div>
 					</td>
-					<td class="hidden text-sm text-base-content/50 sm:table-cell">
+					<td class="hidden text-sm text-muted sm:table-cell">
 						<span class="line-clamp-1">{track.album_name}</span>
 					</td>
-					<td class="w-16 text-right font-mono text-xs text-base-content/40">
+					<td class="w-16 text-right font-mono text-xs text-muted">
 						{formatDuration(track.duration_seconds)}
 					</td>
 				</tr>

@@ -44,7 +44,7 @@
 <div class="space-y-6">
 	<div>
 		<h2 class="text-2xl font-bold">Advanced Settings</h2>
-		<p class="text-base-content/60 mt-1">Control the Discover Queue and image loading.</p>
+		<p class="text-muted mt-1">Control the Discover Queue and image loading.</p>
 	</div>
 
 	<QueryBoundary query={section} what="the advanced settings">

@@ -109,7 +109,7 @@
 			</RequestsEmpty>
 		{:else}
 			<div class="flex items-start justify-between gap-3 mb-3">
-				<p class="text-xs text-base-content/40">
+				<p class="text-xs text-muted">
 					Albums that couldn't be found are re-checked on a schedule. A copy that passes
 					verification downloads by itself; near misses show up as candidates for you to review.
 				</p>

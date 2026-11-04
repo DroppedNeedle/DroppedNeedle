@@ -20,14 +20,14 @@
 	{#if view.kind === 'rate_limited'}
 		<Clock class="mb-4 h-10 w-10 text-warning" />
 	{:else if view.kind === 'not_configured'}
-		<Settings class="mb-4 h-10 w-10 text-base-content/50" />
+		<Settings class="mb-4 h-10 w-10 text-muted" />
 	{:else if view.kind === 'offline'}
-		<WifiOff class="mb-4 h-10 w-10 text-base-content/50" />
+		<WifiOff class="mb-4 h-10 w-10 text-muted" />
 	{:else}
-		<CircleAlert class="mb-4 h-10 w-10 text-base-content/50" />
+		<CircleAlert class="mb-4 h-10 w-10 text-muted" />
 	{/if}
 	<h2 class="text-lg font-semibold">{view.title}</h2>
-	<p class="mt-1 max-w-md text-base-content/70">{view.message}</p>
+	<p class="mt-1 max-w-md text-muted">{view.message}</p>
 	<div class="mt-4 flex gap-2">
 		{#if view.settingsHref && authStore.isAdmin}
 			<Button variant="primary" href={withBasePath(view.settingsHref)}>Open settings</Button>
@@ -37,8 +37,6 @@
 		{/if}
 	</div>
 	{#if view.settingsHref && !authStore.isAdmin}
-		<p class="mt-3 text-sm text-base-content/55">
-			Ask the person who runs this server to set it up.
-		</p>
+		<p class="mt-3 text-sm text-muted">Ask the person who runs this server to set it up.</p>
 	{/if}
 </div>

@@ -235,7 +235,7 @@
 <section class="space-y-4">
 	<header class="space-y-1">
 		<h2 class="text-lg font-semibold">Indexers / Prowlarr</h2>
-		<p class="max-w-prose text-sm text-base-content/70">
+		<p class="max-w-prose text-sm text-muted">
 			Usenet search sources. Pick one backend: your prioritized Newznab list, or a single Prowlarr
 			connection. The other side stays saved for later.
 		</p>
@@ -245,7 +245,7 @@
 		<div class="flex flex-col gap-3">
 			<div>
 				<h3 class="font-semibold">Search via</h3>
-				<p class="text-sm text-base-content/60">Only the selected backend is searched.</p>
+				<p class="text-sm text-muted">Only the selected backend is searched.</p>
 			</div>
 			<div class="grid gap-2 sm:grid-cols-2">
 				<label
@@ -262,7 +262,7 @@
 					/>
 					<span>
 						<span class="font-medium">Individual indexers</span>
-						<span class="block text-sm text-base-content/60">
+						<span class="block text-sm text-muted">
 							Search the prioritized Newznab list below. {enabledCount} enabled.
 						</span>
 					</span>
@@ -281,7 +281,7 @@
 					/>
 					<span>
 						<span class="font-medium">Prowlarr</span>
-						<span class="block text-sm text-base-content/60">
+						<span class="block text-sm text-muted">
 							Search everything through one Prowlarr connection. {prowlarrStatus}.
 						</span>
 					</span>
@@ -308,7 +308,7 @@
 					<Rss class="size-7 text-accent" aria-hidden="true" />
 				</div>
 				<p class="mt-4 font-semibold">No indexers yet</p>
-				<p class="mx-auto mt-1 max-w-md text-sm text-base-content/70">
+				<p class="mx-auto mt-1 max-w-md text-sm text-muted">
 					Add a Newznab indexer (its URL + your API key) to search Usenet. DroppedNeedle bundles
 					none - bring your own. Run Prowlarr instead? Select it above and configure it below.
 				</p>
@@ -331,7 +331,7 @@
 								<div class="flex flex-wrap items-center gap-3 p-4">
 									<button
 										type="button"
-										class="cursor-grab text-base-content/40 hover:text-base-content"
+										class="cursor-grab text-muted hover:text-base-content"
 										aria-label="Drag to reorder"
 										draggable="true"
 										ondragstart={() => (dragId = indexer.id)}
@@ -368,7 +368,7 @@
 												</span>
 											{/if}
 										</div>
-										<div class="flex items-center gap-2 text-sm text-base-content/70">
+										<div class="flex items-center gap-2 text-sm text-muted">
 											<span
 												class="orb"
 												class:is-connected={indexer.enabled}
@@ -432,10 +432,8 @@
 			{#if pluginIndexers.length > 0}
 				<Card variant="bordered" padding="sm">
 					<div>
-						<p class="text-xs font-semibold uppercase tracking-wide text-base-content/50">
-							Plugin indexers
-						</p>
-						<p class="mt-1 text-xs text-base-content/60">
+						<p class="text-xs font-semibold uppercase tracking-wide text-muted">Plugin indexers</p>
+						<p class="mt-1 text-xs text-muted">
 							Plugins provide these. Configure them under Plugins; you cannot edit them here. A
 							plugin indexer for Usenet appears with Usenet results; any other target gets its own
 							group in review.
@@ -452,7 +450,7 @@
 									{/if}
 									<PluginHealthBadge health={source.health} />
 									{#if source.health_message}
-										<span class="basis-full text-xs text-base-content/60">
+										<span class="basis-full text-xs text-muted">
 											{source.health_message}
 										</span>
 									{/if}

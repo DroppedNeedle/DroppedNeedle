@@ -97,7 +97,7 @@
 						<ShieldAlert class="h-3.5 w-3.5" /> Administrator audit trail
 					</p>
 					<h1 class="mt-1 font-display text-2xl font-bold sm:text-3xl">Organization history</h1>
-					<p class="mt-2 text-sm text-base-content/60">
+					<p class="mt-2 text-sm text-muted">
 						Previews, writes, undo, baseline restores, and collision resolutions. Scans are not
 						included here.
 					</p>
@@ -193,7 +193,7 @@
 			<div class="rounded-2xl border border-dashed border-base-content/15 p-10 text-center">
 				<FolderCog class="mx-auto h-7 w-7 text-base-content/35" />
 				<p class="mt-2 font-semibold">No matching management work</p>
-				<p class="text-sm text-base-content/50">
+				<p class="text-sm text-muted">
 					Change the filters or create a manual preview from the Organize files tab.
 				</p>
 			</div>
@@ -230,7 +230,7 @@
 									isRecord(item.selection) ? item.selection : {},
 									item.target_root_id ?? null
 								)}</small
-							><small class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-base-content/55"
+							><small class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted"
 								><span>Started {formatDate(item.operation.created_at)}</span><span
 									aria-hidden="true">·</span
 								><span

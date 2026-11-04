@@ -92,7 +92,7 @@
 						: root.policy.replace('_', ' ')}</span
 				>
 			</div>
-			<p class="mt-1 font-mono text-xs text-base-content/40">{root.path}</p>
+			<p class="mt-1 font-mono text-xs text-muted">{root.path}</p>
 		</div>
 		<span class="management-status-badge" data-active={assignment.enabled}>{status}</span>
 	</div>

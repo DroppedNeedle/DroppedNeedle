@@ -71,13 +71,13 @@
 		>
 			<div class="flex items-start gap-3">
 				<div
-					class="grid size-9 shrink-0 place-items-center rounded-xl bg-base-200 text-base-content/70"
+					class="grid size-9 shrink-0 place-items-center rounded-xl bg-base-200 text-muted"
 					aria-hidden="true"
 				>
 					<Trash2 class="h-5 w-5" />
 				</div>
 				<div class="min-w-0 flex-1">
-					<p class="text-[0.66rem] font-extrabold tracking-[0.12em] text-base-content/55 uppercase">
+					<p class="text-[0.66rem] font-extrabold tracking-[0.12em] text-muted uppercase">
 						In the recycle bin
 					</p>
 					<ul class="mt-2 flex flex-col gap-3">
@@ -85,9 +85,7 @@
 							<li class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
 								<span class="text-sm">{removalLine(removal)}</span>
 								{#if removal.held}
-									<span class="text-xs text-base-content/60"
-										>Waits for an admin on Library Management</span
-									>
+									<span class="text-xs text-muted">Waits for an admin on Library Management</span>
 								{:else}
 									<AsyncButton
 										variant="outline"

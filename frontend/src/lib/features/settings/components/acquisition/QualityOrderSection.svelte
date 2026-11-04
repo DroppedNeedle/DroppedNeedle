@@ -305,7 +305,7 @@
 					{migrationMessage ||
 						'Your saved policy is unchanged until you choose a replacement preset.'}
 				</p>
-				<p class="mt-1 text-xs text-base-content/70">
+				<p class="mt-1 text-xs text-muted">
 					Choose a replacement preset below to create a valid FLAC and MP3 recipe.
 				</p>
 			</div>
@@ -326,7 +326,7 @@
 				>
 					<span class="min-w-0">
 						<span class="block font-medium">{preset.label}</span>
-						<span class="mt-0.5 block text-xs font-normal leading-4 text-base-content/60"
+						<span class="mt-0.5 block text-xs font-normal leading-4 text-muted"
 							>{preset.descriptor}</span
 						>
 					</span>
@@ -344,9 +344,7 @@
 
 	<section class="min-w-0 border-y border-base-300 py-4" aria-label="Quality recipe summary">
 		<div class="flex flex-wrap items-center justify-between gap-2">
-			<p class="text-xs font-semibold uppercase tracking-[0.12em] text-base-content/55">
-				Live recipe
-			</p>
+			<p class="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Live recipe</p>
 			{#if dirty}
 				<span class="badge badge-warning badge-sm">Unsaved changes</span>
 			{/if}
@@ -356,7 +354,7 @@
 			<div class="mt-2 flex flex-wrap items-center gap-1.5" aria-hidden="true">
 				{#each qualityRecipe as entry, index (entry.id)}
 					{#if index > 0}
-						<ChevronRight class="size-3.5 shrink-0 text-base-content/40" aria-hidden="true" />
+						<ChevronRight class="size-3.5 shrink-0 text-muted" aria-hidden="true" />
 					{/if}
 					<span
 						class="rounded-full border border-base-300 bg-base-200/60 px-2.5 py-1 text-xs whitespace-nowrap"
@@ -366,7 +364,7 @@
 				{/each}
 			</div>
 		{:else}
-			<p class="mt-2 text-xs text-base-content/55">No recipe entries yet.</p>
+			<p class="mt-2 text-xs text-muted">No recipe entries yet.</p>
 		{/if}
 	</section>
 
@@ -374,14 +372,12 @@
 		<div class="mb-3 flex flex-wrap items-end justify-between gap-2">
 			<div>
 				<h4 class="font-semibold">Try in this order</h4>
-				<p class="text-sm text-base-content/60">
+				<p class="text-sm text-muted">
 					Soulseek prefers earlier entries when copies are equally complete. Anything not listed
 					here is only downloaded if you pick it.
 				</p>
 			</div>
-			<span class="text-xs uppercase tracking-[0.12em] text-base-content/45"
-				>First to last resort</span
-			>
+			<span class="text-xs uppercase tracking-[0.12em] text-muted">First to last resort</span>
 		</div>
 
 		{#if qualityRecipe.length}
@@ -429,8 +425,7 @@
 							</span>
 							<div class="min-w-0 flex-1">
 								<div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-									<span
-										class="text-xs font-semibold uppercase tracking-[0.12em] text-base-content/50"
+									<span class="text-xs font-semibold uppercase tracking-[0.12em] text-muted"
 										>{entry.format}</span
 									>
 									<span class="break-words font-medium">{recipeEntryLabel(entry)}</span>
@@ -441,9 +436,9 @@
 										>{/if}
 								</div>
 								{#if entry.format === 'mp3' && entry.quality === 'custom'}
-									<p class="mt-1 text-xs text-base-content/55">Inclusive range</p>
+									<p class="mt-1 text-xs text-muted">Inclusive range</p>
 								{:else if entry.format === 'flac' && entry.quality === 'custom'}
-									<p class="mt-1 text-xs text-base-content/55">Exact detail match</p>
+									<p class="mt-1 text-xs text-muted">Exact detail match</p>
 								{/if}
 							</div>
 							<div class="flex shrink-0 flex-wrap items-center gap-1">
@@ -489,7 +484,7 @@
 			</ol>
 		{:else}
 			<div
-				class="rounded-box border border-dashed border-warning/60 bg-warning/5 p-4 text-sm text-base-content/70"
+				class="rounded-box border border-dashed border-warning/60 bg-warning/5 p-4 text-sm text-muted"
 			>
 				No valid entries yet. Choose a preset or add at least one format below.
 			</div>
@@ -514,7 +509,7 @@
 						/>
 						<span class="min-w-0">
 							<span class="block text-sm font-medium">{option.label}</span>
-							<span class="block text-xs leading-4 text-base-content/55">{option.detail}</span>
+							<span class="block text-xs leading-4 text-muted">{option.detail}</span>
 						</span>
 					</label>
 				{/each}
@@ -531,8 +526,7 @@
 					/>
 					<span class="min-w-0"
 						><span class="block text-sm font-medium">Custom</span><span
-							class="block text-xs leading-4 text-base-content/55"
-							>Exact bit depth and sample rate</span
+							class="block text-xs leading-4 text-muted">Exact bit depth and sample rate</span
 						></span
 					>
 				</label>
@@ -540,7 +534,7 @@
 			{#if flacQuality === 'custom'}
 				<div class="grid min-w-0 gap-2 sm:grid-cols-2">
 					<label class="flex min-w-0 flex-col gap-1">
-						<span class="text-xs text-base-content/70">Bit depth</span>
+						<span class="text-xs text-muted">Bit depth</span>
 						<Input
 							label="Custom FLAC bit depth"
 							type="number"
@@ -554,7 +548,7 @@
 						/>
 					</label>
 					<label class="flex min-w-0 flex-col gap-1">
-						<span class="text-xs text-base-content/70">Sample rate (Hz)</span>
+						<span class="text-xs text-muted">Sample rate (Hz)</span>
 						<Input
 							label="Custom FLAC sample rate"
 							type="number"
@@ -571,7 +565,7 @@
 			{/if}
 			<div class="mt-auto flex flex-wrap items-center justify-between gap-2 pt-2">
 				<p
-					class="text-xs leading-4 {flacFormError ? 'text-error' : 'text-base-content/55'}"
+					class="text-xs leading-4 {flacFormError ? 'text-error' : 'text-muted'}"
 					role={flacFormError ? 'alert' : undefined}
 				>
 					{addHelpText('flac', flacFormError)}
@@ -608,7 +602,7 @@
 						/>
 						<span class="min-w-0"
 							><span class="block text-sm font-medium">{option.label} kbps</span><span
-								class="block text-xs leading-4 text-base-content/55"
+								class="block text-xs leading-4 text-muted"
 								>{position ? `Already at position ${position}` : option.detail}</span
 							></span
 						>
@@ -627,8 +621,7 @@
 					/>
 					<span class="min-w-0"
 						><span class="block text-sm font-medium">Custom</span><span
-							class="block text-xs leading-4 text-base-content/55"
-							>Inclusive minimum and maximum</span
+							class="block text-xs leading-4 text-muted">Inclusive minimum and maximum</span
 						></span
 					>
 				</label>
@@ -636,7 +629,7 @@
 			{#if mp3Quality === 'custom'}
 				<div class="grid min-w-0 gap-2 sm:grid-cols-2">
 					<label class="flex min-w-0 flex-col gap-1"
-						><span class="text-xs text-base-content/70">Minimum (kbps)</span><Input
+						><span class="text-xs text-muted">Minimum (kbps)</span><Input
 							label="Custom MP3 minimum bitrate"
 							type="number"
 							size="sm"
@@ -649,7 +642,7 @@
 						/></label
 					>
 					<label class="flex min-w-0 flex-col gap-1"
-						><span class="text-xs text-base-content/70">Maximum (kbps)</span><Input
+						><span class="text-xs text-muted">Maximum (kbps)</span><Input
 							label="Custom MP3 maximum bitrate"
 							type="number"
 							size="sm"
@@ -665,7 +658,7 @@
 			{/if}
 			<div class="mt-auto flex flex-wrap items-center justify-between gap-2 pt-2">
 				<p
-					class="text-xs leading-4 {mp3FormError ? 'text-error' : 'text-base-content/55'}"
+					class="text-xs leading-4 {mp3FormError ? 'text-error' : 'text-muted'}"
 					role={mp3FormError ? 'alert' : undefined}
 				>
 					{addHelpText('mp3', mp3FormError)}
@@ -709,7 +702,7 @@
 		confirmLabel="Apply preset"
 		onconfirm={confirmPreset}
 	>
-		<p class="text-sm text-base-content/70">
+		<p class="text-sm text-muted">
 			You have unsaved recipe changes. Applying <strong>{pendingPresetLabel}</strong> replaces the current
 			order and quality entries.
 		</p>

@@ -49,7 +49,7 @@
 			<ServerLogHint />
 			<TextField label="Code" bind:value={code} mono required autocomplete="one-time-code" />
 		{:else}
-			<p class="text-sm text-base-content/70">Use a v2 admin account.</p>
+			<p class="text-sm text-muted">Use a v2 admin account.</p>
 			<TextField label="Username" bind:value={username} required autocomplete="username" />
 			<Field label="Password">
 				{#snippet children(control)}

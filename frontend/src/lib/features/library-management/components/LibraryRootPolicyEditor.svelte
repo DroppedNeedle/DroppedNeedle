@@ -126,7 +126,7 @@
 	<div class="flex flex-wrap items-center justify-between gap-3">
 		<div>
 			<h3 id="library-roots-title" class="font-semibold">Library roots</h3>
-			<p class="text-xs text-base-content/55">
+			<p class="text-xs text-muted">
 				Set the default identification policy for each root, then add directory overrides only where
 				needed.
 			</p>
@@ -138,7 +138,7 @@
 
 	{#if roots.length === 0}
 		<div
-			class="rounded-box border border-dashed border-base-content/20 p-6 text-center text-sm text-base-content/55"
+			class="rounded-box border border-dashed border-base-content/20 p-6 text-center text-sm text-muted"
 		>
 			No library roots configured.
 		</div>
@@ -155,10 +155,10 @@
 								>Unavailable</span
 							>{/if}
 					</div>
-					<p class="truncate font-mono text-xs text-base-content/55" title={root.path}>
+					<p class="truncate font-mono text-xs text-muted" title={root.path}>
 						{root.path}
 					</p>
-					<p class="mt-1 text-xs text-base-content/45">
+					<p class="mt-1 text-xs text-muted">
 						{treeRoot?.indexed_file_count?.toLocaleString() ?? '-'} indexed · {treeRoot?.on_disk_file_count?.toLocaleString() ??
 							'-'} on disk
 					</p>
@@ -178,7 +178,7 @@
 							>Automatic identification</option
 						><option value="excluded">Excluded</option>
 					</select>
-					<span class="mt-1 text-xs text-base-content/50">{policyCopy[root.policy]}</span>
+					<span class="mt-1 text-xs text-muted">{policyCopy[root.policy]}</span>
 				</label>
 				<div class="flex gap-1 lg:justify-end">
 					<Button
@@ -211,7 +211,7 @@
 							>Add override</Button
 						>
 					</div>
-					{#if effectiveRows.length === 0}<p class="text-xs text-base-content/50">
+					{#if effectiveRows.length === 0}<p class="text-xs text-muted">
 							Every directory inherits {root.policy.replace('_', ' ')}.
 						</p>{/if}
 					<div class="space-y-1">
@@ -222,7 +222,7 @@
 							>
 								<div class="min-w-0">
 									<p class="truncate font-mono text-xs" title={node.path}>{node.path}</p>
-									<p class="mt-0.5 text-xs text-base-content/50">
+									<p class="mt-0.5 text-xs text-muted">
 										{inheritanceSource(node, root)} · {node.indexed_file_count?.toLocaleString() ??
 											'-'}
 										indexed{#if !node.available}
@@ -309,7 +309,7 @@
 				bind:value={newRootPolicy}
 				options={POLICY_OPTIONS}
 			/>
-			<span class="rounded-box bg-base-200/70 px-3 py-2 text-xs text-base-content/60">
+			<span class="rounded-box bg-base-200/70 px-3 py-2 text-xs text-muted">
 				{policyCopy[newRootPolicy]}
 			</span>
 		</div>

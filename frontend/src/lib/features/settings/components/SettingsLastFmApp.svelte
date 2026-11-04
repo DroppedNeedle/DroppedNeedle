@@ -45,12 +45,12 @@
 			</div>
 			<div>
 				<CardTitle>Last.fm</CardTitle>
-				<p class="text-sm text-base-content/60">App credentials for the whole server.</p>
+				<p class="text-sm text-muted">App credentials for the whole server.</p>
 			</div>
 		</div>
 	{/snippet}
 	<div class="mt-2 flex flex-col gap-4">
-		<div class="rounded-xl border border-info/20 bg-info/5 p-3 text-sm text-base-content/70">
+		<div class="rounded-xl border border-info/20 bg-info/5 p-3 text-sm text-muted">
 			Register one Last.fm API application and save its key and shared secret here; every user links
 			with it. Each user then links <span class="font-medium">their own</span> Last.fm account and
 			toggles scrobbling from their
@@ -84,7 +84,7 @@
 						href="https://www.last.fm/api/account/create"
 						target="_blank"
 						rel="noopener noreferrer"
-						class="flex w-fit items-center gap-1 text-xs text-base-content/50 transition-colors hover:text-primary"
+						class="flex w-fit items-center gap-1 text-xs text-muted transition-colors hover:text-primary"
 					>
 						<ExternalLink class="h-3 w-3" /> Register an app to get a key and secret
 					</a>

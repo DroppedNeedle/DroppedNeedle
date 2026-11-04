@@ -135,7 +135,7 @@
 		<p class="text-sm text-error">Couldn't load this search. Try searching again.</p>
 	{:else if job}
 		{#if job.status === 'searching'}
-			<div class="flex items-center gap-2 text-sm text-base-content/70">
+			<div class="flex items-center gap-2 text-sm text-muted">
 				<span class="loading loading-spinner loading-sm"></span>
 				Searching your download sources for {job.album_title}. This can take a minute or two.
 			</div>
@@ -144,16 +144,16 @@
 				Downloading your pick. Its progress shows in the queue above.
 			</p>
 		{:else if job.status === 'cancelled'}
-			<p class="text-sm text-base-content/60">This search was closed.</p>
+			<p class="text-sm text-muted">This search was closed.</p>
 		{:else if job.reason}
 			<div class="rounded-box border border-base-300 bg-base-100 px-3 py-2 text-sm">
 				<p class="font-semibold">{job.reason.text}</p>
-				<p class="text-base-content/65">{job.reason.action}</p>
+				<p class="text-muted">{job.reason.action}</p>
 			</div>
 		{/if}
 
 		{#if job.status === 'completed' && candidates.length > 0}
-			<p class="text-xs text-base-content/50">
+			<p class="text-xs text-muted">
 				{candidates.length}
 				{candidates.length === 1 ? 'candidate' : 'candidates'}{job.tracks_total
 					? `, compared with the ${job.tracks_total}-track edition`
@@ -162,7 +162,7 @@
 			{#each groups as group (group.key)}
 				{@const visible = showAll ? group.items : group.items.slice(0, 3)}
 				<div class="space-y-2">
-					<p class="text-xs font-semibold uppercase tracking-wide text-base-content/50">
+					<p class="text-xs font-semibold uppercase tracking-wide text-muted">
 						{group.label}
 					</p>
 					{#each visible as candidate (candidate.candidate_index)}
@@ -204,7 +204,7 @@
 			</div>
 		</div>
 	{:else}
-		<p class="flex items-center gap-2 text-sm text-base-content/60">
+		<p class="flex items-center gap-2 text-sm text-muted">
 			<Search class="h-4 w-4" /> No search to show.
 		</p>
 	{/if}

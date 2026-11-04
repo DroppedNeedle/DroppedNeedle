@@ -13,17 +13,17 @@
 
 <div class="flex items-center gap-3 pt-6 pb-2 sm:pt-8 sm:pb-3">
 	{#if icon}
-		<span class="text-base-content/30">
+		<span class="text-muted" aria-hidden="true">
 			{@render icon()}
 		</span>
 	{/if}
 	<span
-		class="font-display text-[12px] font-semibold uppercase tracking-[0.18em] text-base-content/40 whitespace-nowrap select-none"
+		class="font-mono text-xs font-semibold uppercase tracking-[0.16em] text-muted whitespace-nowrap select-none"
 	>
 		{label}
 	</span>
 	{#if updating}
 		<LiveUpdatingBadge label="Updating" className="px-2 py-0.5 text-[11px]" />
 	{/if}
-	<div class="h-px flex-1 bg-gradient-to-r from-base-content/8 to-transparent"></div>
+	<div class="h-px flex-1 bg-line" aria-hidden="true"></div>
 </div>

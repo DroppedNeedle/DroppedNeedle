@@ -129,7 +129,7 @@
 		<div class="flex items-start justify-between gap-3">
 			<div>
 				<CardTitle class="text-2xl">{title}</CardTitle>
-				<p class="text-base-content/70">{description}</p>
+				<p class="text-muted">{description}</p>
 			</div>
 			<div
 				class="flex items-center gap-1.5 text-xs text-success transition-opacity duration-300"
@@ -157,7 +157,7 @@
 		>
 			<span class="min-w-0">
 				<span class="block text-sm font-semibold">All sections</span>
-				<span class="mt-0.5 block text-xs text-base-content/50">
+				<span class="mt-0.5 block text-xs text-muted">
 					{enabledCount} of {sections.length} sections shown
 				</span>
 			</span>
@@ -173,9 +173,7 @@
 		<div class="mt-2 space-y-5">
 			{#each zones as group (group.zone)}
 				<div>
-					<h3
-						class="mb-1 px-1 text-xs font-semibold uppercase tracking-widest text-base-content/40"
-					>
+					<h3 class="mb-1 px-1 text-xs font-semibold uppercase tracking-widest text-muted">
 						{group.zone}
 					</h3>
 					<div class="divide-y divide-base-content/5 rounded-xl bg-base-100/40">
@@ -198,7 +196,7 @@
 											<ExternalLink class="h-3 w-3" />
 										</a>
 									{:else}
-										<p class="mt-1 text-xs text-base-content/60">Ask an admin to set this up.</p>
+										<p class="mt-1 text-xs text-muted">Ask an admin to set this up.</p>
 									{/if}
 								{/if}
 							</div>

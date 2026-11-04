@@ -18,7 +18,7 @@
 </script>
 
 <Modal bind:open title={`Delete "${playlistName}"?`} dismissible={!deleting}>
-	<p class="text-base-content/70">
+	<p class="text-muted">
 		This will permanently remove the playlist and all its tracks. This action cannot be undone.
 	</p>
 	{#snippet actions()}

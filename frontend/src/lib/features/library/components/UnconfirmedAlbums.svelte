@@ -164,10 +164,10 @@
 			</div>
 		{/snippet}
 		{#snippet empty()}
-			<Card class="text-center text-base-content/60">{EMPTY[view]}</Card>
+			<Card class="text-center text-muted">{EMPTY[view]}</Card>
 		{/snippet}
 		{#snippet children(loaded)}
-			<p class="text-sm text-base-content/60">
+			<p class="text-sm text-muted">
 				{count(loaded.pages[0]?.total ?? 0, 'album', 'albums')}
 			</p>
 			<ul class="space-y-2" bind:this={list}>
@@ -186,15 +186,13 @@
 								className="h-14 w-14 shrink-0 border border-base-content/10"
 							/>
 							<div class="min-w-0">
-								<p class="text-xs font-semibold tracking-wide text-base-content/50 uppercase">
-									Your files
-								</p>
+								<p class="text-xs font-semibold tracking-wide text-muted uppercase">Your files</p>
 								<a
 									data-row-focus
 									class="block truncate font-medium hover:underline"
 									href={withBasePath(`/album/${encodeURIComponent(item.album_id)}`)}>{item.title}</a
 								>
-								<p class="truncate text-xs text-base-content/55">
+								<p class="truncate text-xs text-muted">
 									{[item.artist_name, count(item.file_count, 'file', 'files')]
 										.filter(Boolean)
 										.join(' · ')}
@@ -232,15 +230,15 @@
 								</p>
 								{#if guess}
 									<p class="truncate font-medium">{guess.title}</p>
-									<p class="truncate text-xs text-base-content/55">
+									<p class="truncate text-xs text-muted">
 										{[guess.artist_name, fitLine(guess.matched_files, item.file_count)]
 											.filter(Boolean)
 											.join(' · ')}
 									</p>
 								{/if}
-								<p class="mt-1 text-sm text-base-content/70">{item.reason.message}</p>
+								<p class="mt-1 text-sm text-muted">{item.reason.message}</p>
 								{#if item.looks_wrong_count > 0}
-									<p class="mt-1 flex items-center gap-1 text-xs text-base-content/60">
+									<p class="mt-1 flex items-center gap-1 text-xs text-muted">
 										<Flag class="h-3 w-3 shrink-0" aria-hidden="true" />
 										{item.looks_wrong_count === 1
 											? '1 person says it looks wrong'
@@ -283,7 +281,7 @@
 			</ul>
 			{#if query.hasNextPage}
 				<div class="flex items-center justify-between text-sm">
-					<span class="text-base-content/60">{items.length} of {total}</span>
+					<span class="text-muted">{items.length} of {total}</span>
 					<Button
 						size="sm"
 						loading={query.isFetchingNextPage}

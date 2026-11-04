@@ -82,9 +82,7 @@
 			{#if showVinyl}
 				<VinylProgress percent={livePct} {indeterminate} spinning size={44} />
 			{:else}
-				<div
-					class="grid size-11 place-items-center rounded-full bg-base-300/70 text-base-content/70"
-				>
+				<div class="grid size-11 place-items-center rounded-full bg-base-300/70 text-muted">
 					{#if isHeld}
 						<FolderLock class="h-5 w-5 text-warning" aria-hidden="true" />
 					{:else}
@@ -98,7 +96,7 @@
 			{#if isHeld}
 				<p class="text-xs font-bold text-warning">{keptFileLabel}</p>
 				{#if heldReason}
-					<p class="mt-1 line-clamp-2 text-xs leading-relaxed text-base-content/65">
+					<p class="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">
 						{heldReason}
 					</p>
 				{/if}
@@ -117,7 +115,7 @@
 				</div>
 			{/if}
 			{#if isRetrying}
-				<p class="mt-1 text-xs text-base-content/60">Trying another source…</p>
+				<p class="mt-1 text-xs text-muted">Trying another source…</p>
 			{/if}
 			{#if !isReview}
 				<DownloadSourceStatus

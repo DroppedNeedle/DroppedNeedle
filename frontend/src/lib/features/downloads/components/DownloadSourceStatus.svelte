@@ -126,7 +126,7 @@
 			{#if quality}
 				<p class="truncate text-xs font-bold tracking-wide text-base-content/85">{quality}</p>
 			{/if}
-			<p class="mt-0.5 text-xs text-base-content/65">
+			<p class="mt-0.5 text-xs text-muted">
 				{isQueued ? `Waiting for Soulseek · ${queueLabel}` : 'Downloading from Soulseek'}
 			</p>
 		</div>

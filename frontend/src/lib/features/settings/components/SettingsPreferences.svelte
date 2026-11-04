@@ -163,7 +163,7 @@
 							/>
 						</td>
 						<td class="font-medium">{type.title}</td>
-						<td class="text-base-content/70 hidden sm:table-cell">{type.description}</td>
+						<td class="text-muted hidden sm:table-cell">{type.description}</td>
 					</tr>
 				{/each}
 			</tbody>
@@ -175,7 +175,7 @@
 	{#snippet header()}
 		<CardTitle class="text-2xl mb-2">Release Types</CardTitle>
 	{/snippet}
-	<p class="text-base-content/70 mb-6">
+	<p class="text-muted mb-6">
 		Choose which release types appear on artist pages and in search. The same choices apply to
 		automatic downloads for followed artists. Saving a different selection starts a new baseline, so
 		releases already present are not queued.
@@ -183,15 +183,13 @@
 
 	<div class="mb-8">
 		<h3 class="text-xl font-semibold mb-1">Primary Types</h3>
-		<p class="text-base-content/60 mb-4 text-sm">
-			Choose the main MusicBrainz release formats to include.
-		</p>
+		<p class="text-muted mb-4 text-sm">Choose the main MusicBrainz release formats to include.</p>
 		{@render typeTable(primaryTypes, 'primary_types')}
 	</div>
 
 	<div class="mb-8">
 		<h3 class="text-xl font-semibold mb-1">Secondary Types</h3>
-		<p class="text-base-content/60 mb-4 text-sm">
+		<p class="text-muted mb-4 text-sm">
 			Choose which additional release classifications to include.
 		</p>
 		{@render typeTable(secondaryTypes, 'secondary_types')}

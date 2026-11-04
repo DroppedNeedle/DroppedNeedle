@@ -172,11 +172,11 @@
 					{/if}
 				</h3>
 			{/if}
-			<p class="text-xs text-base-content/60">
+			<p class="text-xs text-muted">
 				{subtitle} · <span class="whitespace-nowrap">{expiry}</span>
 			</p>
 			{#if retrying}
-				<p class="mt-0.5 flex items-center gap-1.5 text-xs text-base-content/60">
+				<p class="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
 					<RefreshCw
 						class="size-3 shrink-0 {entry.state === 'placing' ? 'animate-spin' : ''}"
 						aria-hidden="true"
@@ -212,7 +212,7 @@
 				<ul class="mt-2 space-y-0.5 text-sm text-base-content/75">
 					{#each reasons as reason (reason.text)}
 						<li>
-							{reason.text}{#if reasons.length > 1}<span class="text-base-content/45"
+							{reason.text}{#if reasons.length > 1}<span class="text-muted"
 									>{` (${reason.count})`}</span
 								>{/if}
 						</li>
@@ -287,7 +287,7 @@
 				<div class="mt-3 border-t border-base-content/8 pt-3">
 					<button
 						type="button"
-						class="flex w-full items-center justify-between gap-3 text-left text-xs font-semibold text-base-content/60 hover:text-base-content"
+						class="flex w-full items-center justify-between gap-3 text-left text-xs font-semibold text-muted hover:text-base-content"
 						onclick={() => (filesOpen = !filesOpen)}
 						aria-expanded={filesOpen}
 					>

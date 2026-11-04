@@ -82,7 +82,7 @@
 								>
 									<span></span><span></span><span></span>
 								</div>
-								<span class="text-[10px] font-medium uppercase tracking-wide text-base-content/50">
+								<span class="text-[10px] font-medium uppercase tracking-wide text-muted">
 									{session.is_paused ? 'Paused' : 'Now Playing'}
 									{#if session.source}
 										<span class="opacity-60"
@@ -93,18 +93,18 @@
 							</div>
 
 							{#if session.redacted}
-								<p class="truncate text-sm font-medium italic leading-tight text-base-content/50">
+								<p class="truncate text-sm font-medium italic leading-tight text-muted">
 									Private listening
 								</p>
 							{:else}
 								<p class="truncate text-sm font-semibold leading-tight text-base-content">
 									{session.track_name}
 								</p>
-								<p class="truncate text-xs text-base-content/60">{session.artist_name}</p>
+								<p class="truncate text-xs text-muted">{session.artist_name}</p>
 							{/if}
 
 							<div
-								class="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] text-base-content/50"
+								class="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] text-muted"
 							>
 								{#if session.user_name}
 									<span
@@ -135,7 +135,7 @@
 										></div>
 									</div>
 									{#if session.progress_ms != null && session.duration_ms != null}
-										<span class="shrink-0 text-[10px] tabular-nums text-base-content/40">
+										<span class="shrink-0 text-[10px] tabular-nums text-muted">
 											{formatTime(session.progress_ms)}/{formatTime(session.duration_ms)}
 										</span>
 									{/if}

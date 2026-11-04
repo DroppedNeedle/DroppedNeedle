@@ -49,7 +49,7 @@
 	<div class="flex flex-col items-center gap-0.5 px-3 pb-3 text-center">
 		<h2 class="font-semibold text-sm line-clamp-1">{artist.title}</h2>
 
-		<p class="text-xs text-base-content/60 line-clamp-1 min-h-[1rem]">
+		<p class="text-xs text-muted line-clamp-1 min-h-[1rem]">
 			{#if artist.disambiguation}{artist.disambiguation}{:else}&nbsp;{/if}
 		</p>
 

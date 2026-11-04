@@ -116,7 +116,7 @@
 					<div class="management-field-row">
 						<span class="flex min-w-0 flex-col">
 							<span class="text-xs font-medium">{field.label}</span>
-							<small class="text-[0.7rem] text-base-content/55">{sourceNote(field)}</small>
+							<small class="text-[0.7rem] text-muted">{sourceNote(field)}</small>
 						</span>
 						<SelectField
 							bare

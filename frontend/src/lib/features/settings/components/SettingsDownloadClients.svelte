@@ -20,7 +20,7 @@
 <div class="space-y-6">
 	<div>
 		<h2 class="text-xl font-bold">Download clients</h2>
-		<p class="text-sm text-base-content/60">
+		<p class="text-sm text-muted">
 			Soulseek and Usenet are two ways to acquire music. Configure either or both, set which is
 			tried first, and tune the shared policy.
 		</p>
@@ -31,7 +31,7 @@
 		<div class="space-y-3">
 			<div>
 				<h3 class="font-semibold">Plugin sources</h3>
-				<p class="text-sm text-base-content/70">
+				<p class="text-sm text-muted">
 					Plugins provide extra acquisition sources. Once configured, they join the same priority
 					order below.
 				</p>
@@ -39,7 +39,7 @@
 			{#if sourcesQuery.isLoading}
 				<div class="skeleton h-16 w-full rounded-box"></div>
 			{:else if pluginSources.length === 0}
-				<p class="text-sm text-base-content/50">
+				<p class="text-sm text-muted">
 					No plugin sources installed.
 					<a
 						href={withBasePath('/settings?tab=plugins')}
@@ -55,15 +55,15 @@
 							class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-box border border-base-300 bg-base-100 p-2.5"
 						>
 							<span
-								class="grid size-8 shrink-0 place-items-center rounded-lg bg-base-300/60 text-base-content/70"
+								class="grid size-8 shrink-0 place-items-center rounded-lg bg-base-300/60 text-muted"
 							>
 								<Puzzle class="size-4" aria-hidden="true" />
 							</span>
 							<span class="min-w-0 flex-1 basis-40">
 								<span class="block truncate font-medium">{source.display_name || source.key}</span>
-								<span class="block truncate text-xs text-base-content/50">{source.key}</span>
+								<span class="block truncate text-xs text-muted">{source.key}</span>
 								{#if source.health_message}
-									<span class="block truncate text-xs text-base-content/60">
+									<span class="block truncate text-xs text-muted">
 										{source.health_message}
 									</span>
 								{/if}

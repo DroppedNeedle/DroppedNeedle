@@ -366,7 +366,7 @@
 				<section class="space-y-4">
 					<div>
 						<h3 class="font-display text-lg font-semibold">Choose scope</h3>
-						<p class="text-sm text-base-content/55">
+						<p class="text-sm text-muted">
 							Release organization expands selected tracks to complete release bundles before
 							planning.
 						</p>
@@ -414,7 +414,7 @@
 									>{/if}
 							</div>
 							{#if currentScopeItems().length === 0}
-								<p class="text-sm text-base-content/45">Nothing is selected yet.</p>
+								<p class="text-sm text-muted">Nothing is selected yet.</p>
 							{:else}
 								<div class="management-selected-scope__items">
 									{#each currentScopeItems() as item (item.id)}
@@ -513,7 +513,7 @@
 							placeholder={`Search library ${selectionNoun(selectionKind)}`}
 							bind:value={searchTerm}
 						/>
-						{#if searchTerm.trim().length < 2}<p class="text-sm text-base-content/45">
+						{#if searchTerm.trim().length < 2}<p class="text-sm text-muted">
 								Type at least two characters, then select one or more results.
 							</p>{:else if searchQuery.isLoading}<div
 								class="space-y-2"
@@ -528,7 +528,7 @@
 							>
 								Could not search the library. Check the connection and try again.
 							</div>{:else if resultItems().length === 0}<p
-								class="rounded-xl border border-dashed border-base-content/15 p-4 text-sm text-base-content/50"
+								class="rounded-xl border border-dashed border-base-content/15 p-4 text-sm text-muted"
 							>
 								No matching {selectionNoun(selectionKind)} found.
 							</p>{:else}<div class="grid gap-2">
@@ -567,7 +567,7 @@
 				<section class="space-y-4">
 					<div>
 						<h3 class="font-display text-lg font-semibold">Choose profile</h3>
-						<p class="text-sm text-base-content/55">
+						<p class="text-sm text-muted">
 							The profile is pinned into the preview. Editing it later makes this preview stale.
 						</p>
 					</div>
@@ -593,7 +593,7 @@
 				<section class="space-y-4">
 					<div>
 						<h3 class="font-display text-lg font-semibold">Choose work</h3>
-						<p class="text-sm text-base-content/55">
+						<p class="text-sm text-muted">
 							Use the profile unchanged or make temporary one-run choices. The saved profile is
 							never edited.
 						</p>
@@ -624,7 +624,7 @@
 				<section class="space-y-4">
 					<div>
 						<h3 class="font-display text-lg font-semibold">Review expansion</h3>
-						<p class="text-sm text-base-content/55">
+						<p class="text-sm text-muted">
 							Generating the preview only reads files and saves a plan.
 						</p>
 					</div>
@@ -665,7 +665,7 @@
 								is separate from Undo; restored files stay unmanaged until you enable them again.</span
 							>
 						</div>{/if}
-					<p class="text-sm text-base-content/55">
+					<p class="text-sm text-muted">
 						Applying is the first write action: the next page lists every file marked eligible,
 						warning, blocked, stale, preserved, or unchanged.
 					</p>

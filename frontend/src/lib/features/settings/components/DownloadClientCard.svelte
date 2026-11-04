@@ -47,7 +47,7 @@
 					<h3 class="text-lg font-bold">{title}</h3>
 					<span class="badge badge-ghost badge-sm">{sourceLabel}</span>
 				</div>
-				<div class="flex items-center gap-2 text-sm text-base-content/70">
+				<div class="flex items-center gap-2 text-sm text-muted">
 					<span
 						class="orb"
 						class:is-connected={connected}

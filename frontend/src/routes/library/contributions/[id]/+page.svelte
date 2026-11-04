@@ -269,15 +269,13 @@
 		<div class="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:items-start">
 			<aside class="lg:sticky lg:top-5" aria-label="Contribution progress">
 				<Card variant="bordered" padding="md">
-					<p class="text-xs font-bold uppercase tracking-[0.18em] text-base-content/45">
-						Contribution steps
-					</p>
+					<p class="text-xs font-bold uppercase tracking-[0.18em] text-muted">Contribution steps</p>
 					<ol class="mt-2 space-y-1">
 						{#each stages as stage, index (stage.label)}
 							<li
 								class="grid grid-cols-[1.5rem_1fr] gap-2 rounded-box px-2 py-2.5 {stage.available
 									? 'bg-base-100 text-base-content'
-									: 'text-base-content/40'}"
+									: 'text-muted'}"
 							>
 								<span
 									class="grid h-6 w-6 place-items-center rounded-full border text-xs font-bold {index ===
@@ -303,20 +301,20 @@
 							<h1 class="mt-1 text-2xl font-black tracking-tight sm:text-4xl">
 								{contribution.local_snapshot.title || 'Untitled local album'}
 							</h1>
-							<p class="mt-2 max-w-2xl text-sm text-base-content/60">
+							<p class="mt-2 max-w-2xl text-sm text-muted">
 								Check what DroppedNeedle read from your files. Your corrections are saved to this
 								draft only and won't change the album or its files.
 							</p>
 						</div>
 						<div class="grid gap-px bg-base-content/10 sm:grid-cols-3">
 							<div class="bg-base-100/75 px-5 py-3">
-								<span class="block text-xs text-base-content/45">Artist credit</span>
+								<span class="block text-xs text-muted">Artist credit</span>
 								<span class="block truncate text-sm font-semibold">
 									{contribution.local_snapshot.album_artist_name || 'Missing'}
 								</span>
 							</div>
 							<div class="bg-base-100/75 px-5 py-3">
-								<span class="block text-xs text-base-content/45">Media and tracks</span>
+								<span class="block text-xs text-muted">Media and tracks</span>
 								<span class="block text-sm font-semibold"
 									>{mediaCount}
 									{mediaCount === 1 ? 'medium' : 'media'} · {trackCount}
@@ -324,7 +322,7 @@
 								>
 							</div>
 							<div class="bg-base-100/75 px-5 py-3">
-								<span class="block text-xs text-base-content/45">Local snapshot</span>
+								<span class="block text-xs text-muted">Local snapshot</span>
 								<span class="block truncate text-sm font-semibold">{capturedAt}</span>
 							</div>
 						</div>
@@ -340,7 +338,7 @@
 							<History class="mt-0.5 h-5 w-5 shrink-0 text-warning" />
 							<div class="min-w-0 flex-1">
 								<h2 id="stale-title" class="font-bold">The local album changed</h2>
-								<p class="mt-1 text-sm text-base-content/65">
+								<p class="mt-1 text-sm text-muted">
 									Rebuild the draft before continuing. The previous version stays in the audit
 									history.
 								</p>
@@ -363,9 +361,7 @@
 					<Card variant="bordered" as="section" class="text-center">
 						<Trash2 class="mx-auto h-8 w-8 text-base-content/30" />
 						<h2 class="mt-1 text-lg font-bold">This contribution was cancelled</h2>
-						<p class="text-sm text-base-content/55">
-							You can start a fresh draft from the album page.
-						</p>
+						<p class="text-sm text-muted">You can start a fresh draft from the album page.</p>
 					</Card>
 				{:else if draft}
 					{@const currentDraft = draft}
@@ -391,7 +387,7 @@
 								</div>
 								<div>
 									<h2 class="font-bold">Local metadata</h2>
-									<p class="text-sm text-base-content/55">Read from the indexed audio files</p>
+									<p class="text-sm text-muted">Read from the indexed audio files</p>
 								</div>
 							</div>
 							<span class="badge badge-success badge-outline gap-1"
@@ -432,14 +428,14 @@
 							<ListMusic class="h-5 w-5 text-primary" />
 							<div>
 								<h2 class="font-bold">Track list</h2>
-								<p class="text-sm text-base-content/55">Positions stay tied to the local album</p>
+								<p class="text-sm text-muted">Positions stay tied to the local album</p>
 							</div>
 						</div>
 						<div class="divide-y divide-base-content/10">
 							{#each currentDraft.media as medium (medium.position)}
 								<div class="p-5 sm:p-6">
 									<div class="mb-3 flex items-center gap-2">
-										<Disc3 class="h-4 w-4 text-base-content/45" />
+										<Disc3 class="h-4 w-4 text-muted" />
 										<h3 class="text-sm font-bold uppercase tracking-wide">
 											Medium {medium.position}
 										</h3>
@@ -456,7 +452,7 @@
 											<div
 												class="grid gap-2 rounded-box bg-base-100/60 p-3 sm:grid-cols-[3rem_minmax(0,1fr)_minmax(10rem,0.65fr)] sm:items-center"
 											>
-												<span class="text-sm font-bold tabular-nums text-base-content/45">
+												<span class="text-sm font-bold tabular-nums text-muted">
 													{track.disc_number}.{track.track_number || '–'}
 												</span>
 												<Input
@@ -492,7 +488,7 @@
 							<h2 id="validation-title" class="flex items-center gap-2 font-bold">
 								<TriangleAlert class="h-4 w-4 text-warning" /> Still needed
 							</h2>
-							<ul class="mt-2 list-inside list-disc text-sm text-base-content/65">
+							<ul class="mt-2 list-inside list-disc text-sm text-muted">
 								{#each contribution.validation as issue (issue.code + issue.field)}
 									<li>{issue.message}</li>
 								{/each}
@@ -506,7 +502,7 @@
 						<div
 							class="sticky bottom-3 z-10 flex flex-wrap items-center justify-between gap-3 rounded-box border border-base-content/15 bg-base-100/95 p-3 shadow-xl backdrop-blur sm:p-4"
 						>
-							<div class="flex items-center gap-2 text-sm text-base-content/55">
+							<div class="flex items-center gap-2 text-sm text-muted">
 								<FilePenLine class="h-4 w-4" /> Changes stay in this contribution draft
 							</div>
 							<div class="flex items-center gap-2">

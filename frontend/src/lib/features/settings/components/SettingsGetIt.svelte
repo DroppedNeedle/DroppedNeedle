@@ -37,7 +37,7 @@
 			<CardTitle>Buy links</CardTitle>
 		</div>
 	{/snippet}
-	<p class="text-sm text-base-content/60">
+	<p class="text-sm text-muted">
 		Album pages show a "Where to buy" section: Bandcamp first, then other stores, with an iTunes
 		fallback when MusicBrainz has no links.
 	</p>
@@ -61,7 +61,7 @@
 
 	<div class="mt-2 border-t border-base-content/10 pt-4">
 		<p class="text-sm font-medium">Support development</p>
-		<p class="mt-1 text-xs text-base-content/50">
+		<p class="mt-1 text-xs text-muted">
 			DroppedNeedle is free to use. If you'd like to help with development, you can donate directly
 			through Ko-fi or GitHub Sponsors.
 		</p>

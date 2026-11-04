@@ -37,7 +37,7 @@
 	<label class="fieldset-legend" for={id}>{label}</label>
 	{@render children({ id, 'aria-describedby': describedBy, 'aria-invalid': Boolean(error) })}
 	{#if help}
-		<p id={helpId} class="label whitespace-normal text-base-content/60">{help}</p>
+		<p id={helpId} class="label whitespace-normal text-muted">{help}</p>
 	{/if}
 	{#if error}
 		<p id={errorId} class="text-sm text-error" role="alert">{error}</p>

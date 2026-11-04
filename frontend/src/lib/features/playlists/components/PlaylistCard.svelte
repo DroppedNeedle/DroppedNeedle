@@ -191,14 +191,14 @@
 					{#if playlist.is_public}
 						<Globe class="h-3 w-3 text-success" />
 					{:else}
-						<Lock class="h-3 w-3 text-base-content/60" />
+						<Lock class="h-3 w-3 text-muted" />
 					{/if}
 				</div>
 			{/if}
 		</figure>
 		<div class="px-3 pt-3 pb-1">
 			<h3 class="text-sm font-semibold line-clamp-1">{playlist.name}</h3>
-			<p class="text-xs text-base-content/60 mt-0.5">{subtitle}</p>
+			<p class="text-xs text-muted mt-0.5">{subtitle}</p>
 			{#if !playlist.is_owner && playlist.is_public}
 				<div class="mt-1.5 flex items-center gap-1.5">
 					<div class="avatar avatar-placeholder">
@@ -206,7 +206,7 @@
 							<span class="text-[8px] font-semibold leading-none">{ownerInitials}</span>
 						</div>
 					</div>
-					<span class="text-[10px] text-base-content/60 line-clamp-1">
+					<span class="text-[10px] text-muted line-clamp-1">
 						{playlist.owner_name ? `Shared by ${playlist.owner_name}` : 'No owner'}
 					</span>
 				</div>

@@ -126,7 +126,7 @@
 			<div class="flex flex-wrap items-center justify-between gap-2">
 				<div class="flex items-center gap-2">
 					<FileCode class="h-4 w-4 text-library-manage" />
-					<span class="text-xs text-base-content/55">
+					<span class="text-xs text-muted">
 						{kind === 'naming' ? 'Changes paths, never tags.' : 'Changes metadata, never paths.'}
 					</span>
 				</div>
@@ -188,7 +188,7 @@
 				</div>
 			{/if}
 
-			<details class="mt-3 text-xs text-base-content/60">
+			<details class="mt-3 text-xs text-muted">
 				<summary class="cursor-pointer font-semibold">Language reference</summary>
 				{#if kind === 'naming'}
 					<p class="mt-2">
@@ -251,15 +251,13 @@
 				</p>
 			</details>
 			{#if selectedScript.preset_origin === 'legacy_naming_template'}
-				<p class="mt-3 rounded-lg border border-info/20 bg-info/5 p-2 text-xs text-base-content/60">
+				<p class="mt-3 rounded-lg border border-info/20 bg-info/5 p-2 text-xs text-muted">
 					Carried over from v2. Imports use the script in Settings &gt; Library.
 				</p>
 			{/if}
 		</div>
 	{:else}
-		<div
-			class="rounded-xl border border-dashed border-base-content/15 p-4 text-sm text-base-content/55"
-		>
+		<div class="rounded-xl border border-dashed border-base-content/15 p-4 text-sm text-muted">
 			No {kind} scripts exist yet. Create one to begin.
 		</div>
 	{/if}

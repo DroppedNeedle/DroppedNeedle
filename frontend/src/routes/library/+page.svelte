@@ -82,7 +82,7 @@
 					<Waypoints class="hidden h-6 w-6 shrink-0 text-accent sm:block" aria-hidden="true" />
 					<div class="min-w-0 flex-1">
 						<p class="font-semibold">Stream this library in your favourite app</p>
-						<p class="text-sm text-base-content/60">
+						<p class="text-sm text-muted">
 							Connect Symfonium, Finamp and more over the OpenSubsonic or Jellyfin protocols.
 						</p>
 					</div>

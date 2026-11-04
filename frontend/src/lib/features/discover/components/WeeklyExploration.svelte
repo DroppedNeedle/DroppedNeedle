@@ -34,7 +34,7 @@
 		</div>
 
 		{#if formattedDate}
-			<span class="badge badge-ghost badge-sm text-base-content/50">
+			<span class="badge badge-ghost badge-sm text-muted">
 				{formattedDate}
 			</span>
 		{/if}
@@ -47,7 +47,7 @@
 				href={sourceLink}
 				target="_blank"
 				rel="noopener noreferrer"
-				class="ml-auto flex items-center gap-1 text-xs text-base-content/40
+				class="ml-auto flex items-center gap-1 text-xs text-muted
 					hover:text-primary transition-colors"
 				title="View on ListenBrainz"
 			>

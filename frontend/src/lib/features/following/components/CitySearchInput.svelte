@@ -73,7 +73,7 @@
 					City search is unavailable right now - try again in a moment.
 				</li>
 			{:else if results.length === 0 && !searching}
-				<li class="px-3 py-2 text-sm text-base-content/60">No cities match "{debounced}".</li>
+				<li class="px-3 py-2 text-sm text-muted">No cities match "{debounced}".</li>
 			{:else}
 				{#each results as city (city.name + city.latitude + city.longitude)}
 					<li>
@@ -86,7 +86,7 @@
 							<span class="truncate">
 								<span class="font-medium">{city.name}</span>
 								{#if subtitle(city)}
-									<span class="text-sm text-base-content/60"> · {subtitle(city)}</span>
+									<span class="text-sm text-muted"> · {subtitle(city)}</span>
 								{/if}
 							</span>
 						</button>

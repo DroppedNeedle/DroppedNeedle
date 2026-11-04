@@ -93,7 +93,7 @@
 	{:else if !configured}
 		<Card padding="md" class="flex-1 text-center">
 			<div class="my-auto">
-				<p class="text-base-content/70 text-sm">Connect a music service to see popular albums</p>
+				<p class="text-muted text-sm">Connect a music service to see popular albums</p>
 				<Button variant="primary" size="xs" href={withBasePath('/profile#scrobbling')} class="mt-2">
 					Configure
 				</Button>
@@ -101,7 +101,7 @@
 		</Card>
 	{:else if albums.length === 0}
 		<Card padding="md" class="flex-1 text-center">
-			<p class="my-auto text-base-content/70 text-sm">No album data available</p>
+			<p class="my-auto text-muted text-sm">No album data available</p>
 		</Card>
 	{:else}
 		<div class="space-y-1">
@@ -142,7 +142,7 @@
 
 						<div class="flex-1 min-w-0">
 							<p class="font-medium text-sm truncate">{album.title}</p>
-							<p class="text-xs text-base-content/50 truncate">
+							<p class="text-xs text-muted truncate">
 								{#if album.year}{album.year}{/if}
 								{#if album.year && album.listen_count}<span class="mx-1">•</span>{/if}
 								{#if album.listen_count}
@@ -153,7 +153,7 @@
 
 						{#if !isInLibrary(album) && !isRequested(album)}
 							<IconButton
-								variant="accent"
+								variant="primary"
 								size="sm"
 								icon={Download}
 								label="Request album"
@@ -179,7 +179,7 @@
 
 						<div class="flex-1 min-w-0">
 							<p class="font-medium text-sm truncate">{album.title}</p>
-							<p class="text-xs text-base-content/50 truncate">
+							<p class="text-xs text-muted truncate">
 								{#if album.listen_count}
 									{album.listen_count.toLocaleString()} plays
 								{/if}

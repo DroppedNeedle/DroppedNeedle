@@ -129,10 +129,10 @@
 {#if showToc}
 	<aside class="hidden xl:block {className}">
 		<nav class="sticky top-24" aria-label="Page sections">
-			<p class="mb-2 pl-3 text-[10px] font-semibold uppercase tracking-widest text-base-content/40">
+			<p class="mb-2 pl-3 font-mono text-xs font-semibold uppercase tracking-widest text-muted">
 				On this page
 			</p>
-			<ul class="flex flex-col border-l border-base-content/10">
+			<ul class="flex flex-col border-l border-line">
 				{#each sections as section (section.id)}
 					<li>
 						<a
@@ -141,7 +141,7 @@
 							class="-ml-px block border-l-2 py-1.5 pl-3 text-xs transition-colors duration-150
 								{activeSectionId === section.id
 								? 'border-primary text-primary font-semibold'
-								: 'border-transparent text-base-content/50 hover:text-base-content/80 hover:border-base-content/30'}"
+								: 'border-transparent text-muted hover:text-base-content/80 hover:border-base-content/30'}"
 							aria-current={activeSectionId === section.id ? 'true' : undefined}
 						>
 							{section.label}
@@ -159,12 +159,12 @@
 		<details bind:this={mobileMenu} class="dropdown dropdown-top dropdown-end">
 			<IconButton as="summary" variant="primary" icon={List} label="Open section navigation" />
 			<div
-				class="dropdown-content z-[1] mb-2 w-52 rounded-box border border-base-content/10 bg-base-200/95 p-3 shadow-xl backdrop-blur-md"
+				class="dropdown-content z-[1] mb-2 w-52 rounded-box border border-line bg-base-200 p-3 shadow-xl"
 			>
-				<p class="mb-2 text-[10px] font-semibold uppercase tracking-widest text-base-content/40">
+				<p class="mb-2 font-mono text-xs font-semibold uppercase tracking-widest text-muted">
 					Jump to
 				</p>
-				<ul class="flex flex-col border-l border-base-content/10">
+				<ul class="flex flex-col border-l border-line">
 					{#each sections as section (section.id)}
 						<li>
 							<a
@@ -173,7 +173,7 @@
 								class="-ml-px block border-l-2 py-1.5 pl-3 text-sm transition-colors duration-150
 									{activeSectionId === section.id
 									? 'border-primary text-primary font-semibold'
-									: 'border-transparent text-base-content/60 hover:text-base-content hover:border-base-content/30'}"
+									: 'border-transparent text-muted hover:text-base-content hover:border-base-content/30'}"
 								aria-current={activeSectionId === section.id ? 'true' : undefined}
 							>
 								{section.label}

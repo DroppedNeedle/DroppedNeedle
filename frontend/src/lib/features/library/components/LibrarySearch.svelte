@@ -131,7 +131,7 @@
 				class="flex min-w-0 flex-1 cursor-text items-center gap-4 sm:gap-5"
 			>
 				<span
-					class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-base-100/50 text-base-content/50 ring-1 ring-base-content/10 transition-colors group-focus-within/bar:bg-primary/15 group-focus-within/bar:text-primary group-focus-within/bar:ring-primary/30 sm:h-14 sm:w-14"
+					class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-base-100/50 text-muted ring-1 ring-base-content/10 transition-colors group-focus-within/bar:bg-primary/15 group-focus-within/bar:text-primary group-focus-within/bar:ring-primary/30 sm:h-14 sm:w-14"
 				>
 					<Search class="h-5 w-5 sm:h-6 sm:w-6" />
 				</span>
@@ -143,7 +143,7 @@
 									<span
 										in:fade={{ duration: 420 }}
 										out:fade={{ duration: 320 }}
-										class="absolute inset-0 flex items-center text-lg font-semibold text-base-content/40 sm:text-xl"
+										class="absolute inset-0 flex items-center text-lg font-semibold text-muted sm:text-xl"
 									>
 										<span class="truncate">{hint}</span>
 									</span>
@@ -163,7 +163,7 @@
 							class="absolute inset-0 text-lg font-semibold text-base-content sm:text-xl"
 						/>
 					</span>
-					<span class="mt-1 block truncate text-sm text-base-content/55">
+					<span class="mt-1 block truncate text-sm text-muted">
 						Find any artist, album or track instantly
 					</span>
 				</span>
@@ -172,7 +172,7 @@
 				<IconButton label="Clear search" icon={X} class="shrink-0" onclick={clear} />
 			{:else}
 				<kbd
-					class="hidden shrink-0 self-start rounded-lg border border-base-content/15 bg-base-100/50 px-2 py-1 text-sm font-medium text-base-content/45 sm:inline-block"
+					class="hidden shrink-0 self-start rounded-lg border border-base-content/15 bg-base-100/50 px-2 py-1 text-sm font-medium text-muted sm:inline-block"
 					>/</kbd
 				>
 			{/if}
@@ -200,7 +200,7 @@
 				<div class="max-h-[58vh] overflow-y-auto p-2">
 					{#if results.artists.length}
 						<div
-							class="px-2 pt-2 pb-1 text-[11px] font-semibold tracking-wider text-base-content/40 uppercase"
+							class="px-2 pt-2 pb-1 text-[11px] font-semibold tracking-wider text-muted uppercase"
 						>
 							Artists
 						</div>
@@ -220,7 +220,7 @@
 								</div>
 								<div class="min-w-0 flex-1">
 									<div class="truncate text-sm font-semibold">{artist.name}</div>
-									<div class="truncate text-xs text-base-content/50">
+									<div class="truncate text-xs text-muted">
 										{artist.album_count}
 										{artist.album_count === 1 ? 'album' : 'albums'} · {artist.led_track_count}
 										{artist.led_track_count === 1 ? 'track' : 'tracks'}
@@ -233,7 +233,7 @@
 
 					{#if results.albums.length}
 						<div
-							class="px-2 pt-3 pb-1 text-[11px] font-semibold tracking-wider text-base-content/40 uppercase"
+							class="px-2 pt-3 pb-1 text-[11px] font-semibold tracking-wider text-muted uppercase"
 						>
 							Albums
 						</div>
@@ -256,11 +256,11 @@
 								</div>
 								<div class="min-w-0 flex-1">
 									<div class="truncate text-sm font-semibold">{album.title}</div>
-									<div class="truncate text-xs text-base-content/50">
+									<div class="truncate text-xs text-muted">
 										{album.year ?? 'Unknown'}{album.artist_name ? ` · ${album.artist_name}` : ''}
 									</div>
 								</div>
-								<span class="shrink-0 text-xs text-base-content/40">
+								<span class="shrink-0 text-xs text-muted">
 									{album.track_count}
 									{album.track_count === 1 ? 'track' : 'tracks'}
 								</span>
@@ -270,7 +270,7 @@
 
 					{#if results.tracks.length}
 						<div
-							class="px-2 pt-3 pb-1 text-[11px] font-semibold tracking-wider text-base-content/40 uppercase"
+							class="px-2 pt-3 pb-1 text-[11px] font-semibold tracking-wider text-muted uppercase"
 						>
 							Tracks
 						</div>
@@ -298,7 +298,7 @@
 								</div>
 								<div class="min-w-0 flex-1">
 									<div class="truncate text-sm font-semibold">{track.title}</div>
-									<div class="truncate text-xs text-base-content/50">
+									<div class="truncate text-xs text-muted">
 										{track.artist_name}{track.album_title ? ` · ${track.album_title}` : ''}
 									</div>
 								</div>
@@ -308,7 +308,7 @@
 					{/if}
 				</div>
 			{:else}
-				<div class="px-4 py-6 text-center text-sm text-base-content/55">
+				<div class="px-4 py-6 text-center text-sm text-muted">
 					No matches in your library for "<span class="font-medium text-base-content/80"
 						>{debounced}</span
 					>".
@@ -319,7 +319,7 @@
 				href={discoverHref}
 				class="flex items-center justify-between gap-2 border-t border-base-content/10 bg-base-100/40 px-4 py-3 text-sm transition-colors hover:bg-base-100/70"
 			>
-				<span class="text-base-content/60">Not in your library?</span>
+				<span class="text-muted">Not in your library?</span>
 				<span class="flex items-center gap-1.5 font-semibold text-primary">
 					Search everywhere <ArrowUpRight class="h-4 w-4" />
 				</span>

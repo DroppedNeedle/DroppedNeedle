@@ -55,7 +55,7 @@
 	<div class="flex flex-wrap items-center justify-between gap-3">
 		<div>
 			<strong class="text-sm">Original baselines</strong>
-			<p class="text-xs text-base-content/55">
+			<p class="text-xs text-muted">
 				Independent of Undo. Purging permanently removes the oldest restoration point.
 			</p>
 		</div>

@@ -97,7 +97,7 @@
 				max={progress.total || 1}
 				aria-label="Upload progress"
 			></progress>
-			<p class="text-xs tabular-nums text-base-content/60">
+			<p class="text-xs tabular-nums text-muted">
 				{megabytes(progress.sent)} of {megabytes(progress.total)} MB
 			</p>
 		</div>
@@ -117,7 +117,7 @@
 			</div>
 			<div>
 				<p class="font-semibold {compact ? 'text-base' : 'text-lg'}">Drop your purchases here</p>
-				<p class="mt-0.5 text-xs text-base-content/60">
+				<p class="mt-0.5 text-xs text-muted">
 					Zips or audio files from Bandcamp, Qobuz, or anywhere else. Click to browse.
 				</p>
 			</div>

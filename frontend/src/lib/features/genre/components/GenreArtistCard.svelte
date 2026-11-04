@@ -55,7 +55,7 @@
 	<div class="flex flex-col items-center gap-2 px-3 pt-1 pb-3 text-center">
 		<h3 class="font-semibold text-sm line-clamp-1">{artist.name}</h3>
 		{#if artist.listen_count}
-			<p class="text-xs text-base-content/50">
+			<p class="text-xs text-muted">
 				{artist.listen_count} album{artist.listen_count !== 1 ? 's' : ''}
 			</p>
 		{/if}

@@ -297,7 +297,7 @@
 				<h3 class="text-xl font-bold">
 					{deck.phase === 'finished' ? "That's your queue - fresh one brewing" : 'Discover Queue'}
 				</h3>
-				<p class="mt-1 text-sm text-base-content/60">
+				<p class="mt-1 text-sm text-muted">
 					{deck.phase === 'finished'
 						? 'Nice digging. New recommendations are building now.'
 						: 'Building your personalised queue…'}
@@ -310,7 +310,7 @@
 			<Flag class="h-10 w-10 text-base-content/30" />
 			<div>
 				<h3 class="text-xl font-bold">We couldn't build your queue</h3>
-				<p class="mt-1 text-sm text-base-content/60">{deck.errorMessage}</p>
+				<p class="mt-1 text-sm text-muted">{deck.errorMessage}</p>
 			</div>
 			<div class="flex gap-2">
 				<Button variant="primary" size="sm" icon={RefreshCw} onclick={() => deck.retryBuild()}>
@@ -324,9 +324,7 @@
 			<Disc3 class="h-10 w-10 text-base-content/30" strokeWidth={1.5} />
 			<div>
 				<h3 class="text-xl font-bold">Nothing to discover right now</h3>
-				<p class="mt-1 text-sm text-base-content/60">
-					Listen to more music, or try again in a moment.
-				</p>
+				<p class="mt-1 text-sm text-muted">Listen to more music, or try again in a moment.</p>
 			</div>
 			<Button variant="primary" size="sm" icon={RefreshCw} onclick={() => deck.retryBuild()}>
 				Try again
@@ -345,7 +343,7 @@
 						{/if}
 					</span>
 					<span
-						class="shrink-0 rounded-full border border-base-content/10 bg-base-content/5 px-2 py-0.5 font-mono text-xs text-base-content/50"
+						class="shrink-0 rounded-full border border-base-content/10 bg-base-content/5 px-2 py-0.5 font-mono text-xs text-muted"
 					>
 						{progressText}
 					</span>
@@ -481,12 +479,12 @@
 						{#if artistMbid}
 							<a
 								href={withBasePath(`/artist/${artistMbid}`)}
-								class="w-fit text-sm font-semibold uppercase tracking-wide text-base-content/60 transition-colors hover:text-primary"
+								class="w-fit text-sm font-semibold uppercase tracking-wide text-muted transition-colors hover:text-primary"
 							>
 								{current.artist_name}
 							</a>
 						{:else}
-							<span class="text-sm font-semibold uppercase tracking-wide text-base-content/60">
+							<span class="text-sm font-semibold uppercase tracking-wide text-muted">
 								{current.artist_name}
 							</span>
 						{/if}
@@ -498,9 +496,7 @@
 								<div class="skeleton h-4 w-40 rounded"></div>
 							</div>
 						{:else}
-							<div
-								class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-base-content/60"
-							>
+							<div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
 								{#if releaseYear}<span>{releaseYear}</span>{/if}
 								{#if enrichment?.country}<span>{enrichment.country}</span>{/if}
 								{#if enrichment?.listen_count}
@@ -530,7 +526,7 @@
 							{/if}
 
 							{#if enrichment?.artist_description}
-								<p class="mt-4 max-w-2xl text-xs leading-relaxed text-base-content/55">
+								<p class="mt-4 max-w-2xl text-xs leading-relaxed text-muted">
 									{bioExpanded
 										? enrichment.artist_description
 										: truncate(enrichment.artist_description, 280)}
@@ -546,7 +542,7 @@
 							{/if}
 						{/if}
 						{#if ytError}
-							<p class="mt-2 text-xs text-base-content/60" role="status">
+							<p class="mt-2 text-xs text-muted" role="status">
 								{ytError === 'request_failed'
 									? 'Video lookup failed. Try again.'
 									: ytError === 'unavailable'
@@ -592,7 +588,7 @@
 										{sampling ? 'Stop sample' : 'Sample album'}
 									</Button>
 									<label class="flex items-center gap-1.5 px-1" title="Preview volume">
-										<Volume2 class="h-3 w-3 shrink-0 text-base-content/40" />
+										<Volume2 class="h-3 w-3 shrink-0 text-muted" />
 										<input
 											type="range"
 											min="0"
@@ -662,7 +658,7 @@
 							aria-label="Queue items"
 						>
 							<span
-								class="mr-1 shrink-0 text-[0.65rem] font-semibold uppercase tracking-widest text-base-content/35"
+								class="mr-1 shrink-0 text-[0.65rem] font-semibold uppercase tracking-widest text-muted"
 							>
 								Up next
 							</span>

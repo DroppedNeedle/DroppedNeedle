@@ -219,10 +219,10 @@
 				{itemName}
 			</CardTitle>
 			{#if isAlbum(item) && item.artist_name}
-				<p class="line-clamp-1 text-xs text-base-content/50">{item.artist_name}</p>
+				<p class="line-clamp-1 text-xs text-muted">{item.artist_name}</p>
 			{/if}
 			{#if item.listen_count !== null && item.listen_count !== undefined}
-				<p class="text-xs text-base-content/40">{formatListenCount(item.listen_count)}</p>
+				<p class="text-xs text-muted">{formatListenCount(item.listen_count)}</p>
 			{/if}
 		</div>
 	{/if}

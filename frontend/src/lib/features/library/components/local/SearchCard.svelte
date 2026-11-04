@@ -102,7 +102,7 @@
 	</div>
 	<div class="min-w-0 flex-1">
 		<p class="truncate text-sm font-semibold text-base-content">{a.title}</p>
-		<p class="truncate text-xs text-base-content/55">{a.artist_name}</p>
+		<p class="truncate text-xs text-muted">{a.artist_name}</p>
 		<span class="badge badge-xs badge-primary mt-1 gap-1 border-none">
 			<Disc3 class="h-2.5 w-2.5" /> Album
 		</span>
@@ -127,9 +127,7 @@
 		/>
 		<div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center">
 			{#if isActive && isFetching}
-				<Loader
-					class="mr-1 h-4 w-4 shrink-0 animate-spin text-base-content/40 motion-reduce:animate-none"
-				/>
+				<Loader class="mr-1 h-4 w-4 shrink-0 animate-spin text-muted motion-reduce:animate-none" />
 			{:else if term}
 				<IconButton size="xs" icon={X} label="Clear search" onclick={() => (term = '')} />
 			{/if}
@@ -139,7 +137,7 @@
 	<div class="flex-1 space-y-2 overflow-y-auto pr-0.5">
 		{#if !isActive}
 			<div
-				class="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-base-content/40"
+				class="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-muted"
 			>
 				<Search class="h-8 w-8 opacity-40" />
 				<p class="text-xs">
@@ -152,11 +150,11 @@
 			{/each}
 		{:else if showEmpty}
 			<div
-				class="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-base-content/45"
+				class="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-muted"
 			>
 				<Disc3 class="h-8 w-8 opacity-40" />
 				<p class="text-xs">
-					No matches for <span class="font-semibold text-base-content/70">“{trimmed}”</span>
+					No matches for <span class="font-semibold text-muted">“{trimmed}”</span>
 				</p>
 			</div>
 		{:else}
@@ -181,7 +179,7 @@
 						in:fly={{ y: 10, duration: reducedMotion ? 0 : 200 }}
 					>
 						<GripVertical
-							class="h-4 w-4 shrink-0 cursor-grab text-base-content/25 group-hover:text-base-content/50"
+							class="h-4 w-4 shrink-0 cursor-grab text-base-content/25 group-hover:text-muted"
 						/>
 						{@render albumRowBody(a)}
 						<div
@@ -217,7 +215,7 @@
 						in:fly={{ y: 10, duration: reducedMotion ? 0 : 200 }}
 					>
 						<GripVertical
-							class="h-4 w-4 shrink-0 cursor-grab text-base-content/25 group-hover:text-base-content/50"
+							class="h-4 w-4 shrink-0 cursor-grab text-base-content/25 group-hover:text-muted"
 						/>
 						<div
 							class="relative h-11 w-11 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
@@ -238,8 +236,8 @@
 						</div>
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-semibold text-base-content">{t.title}</p>
-							<p class="truncate text-xs text-base-content/55">
-								{t.artist_name}<span class="text-base-content/35"> · {t.album_name}</span>
+							<p class="truncate text-xs text-muted">
+								{t.artist_name}<span class="text-muted"> · {t.album_name}</span>
 							</p>
 							<span class="badge badge-xs badge-accent mt-1 gap-1 border-none">
 								<Music2 class="h-2.5 w-2.5" /> Song

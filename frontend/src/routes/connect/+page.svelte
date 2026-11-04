@@ -102,7 +102,7 @@
 </svelte:head>
 
 {#snippet problem(found: Problem)}
-	<p class="text-sm text-base-content/70" role="alert">{found.error}</p>
+	<p class="text-sm text-muted" role="alert">{found.error}</p>
 	{#if found.backToApp}
 		<Button href={found.backToApp} variant="outline" size="sm">Back to the app</Button>
 	{/if}
@@ -116,7 +116,7 @@
 			</div>
 
 			{#if handedBack}
-				<p class="text-sm text-base-content/70">Returning to the app.</p>
+				<p class="text-sm text-muted">Returning to the app.</p>
 				<Button href={handedBack} variant="primary" size="sm">Open the app</Button>
 			{:else if inFrame}
 				{@render problem({
@@ -138,13 +138,13 @@
 						</p>
 						<dl class="w-full text-left text-sm">
 							{#if view.device_name}
-								<dt class="text-base-content/60">Device</dt>
+								<dt class="text-muted">Device</dt>
 								<dd class="mb-2 break-words">{view.device_name}</dd>
 							{/if}
-							<dt class="text-base-content/60">App-password</dt>
+							<dt class="text-muted">App-password</dt>
 							<dd class="break-words">{view.password_name}</dd>
 						</dl>
-						<p class="text-xs text-base-content/60">
+						<p class="text-xs text-muted">
 							Revoke it any time under Profile, Connect Apps.
 							{#if view.replaces_existing}
 								It replaces your app-password of that name.

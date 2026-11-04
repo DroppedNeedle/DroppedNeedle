@@ -31,7 +31,7 @@
 		<CarouselSkeleton count={8} cardWidth="w-32" rounded="full" showSubtitle={false} />
 	{:else if !configured}
 		<Card class="text-center">
-			<p class="text-base-content/70">Connect a music service to see similar artists</p>
+			<p class="text-muted">Connect a music service to see similar artists</p>
 			<Button
 				variant="primary"
 				size="sm"
@@ -43,7 +43,7 @@
 		</Card>
 	{:else if artists.length === 0}
 		<Card class="text-center">
-			<p class="text-base-content/70">No similar artists found</p>
+			<p class="text-muted">No similar artists found</p>
 		</Card>
 	{:else}
 		<HorizontalCarousel>

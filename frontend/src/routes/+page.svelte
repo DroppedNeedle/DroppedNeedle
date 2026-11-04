@@ -154,7 +154,7 @@
 							<CardTitle class="block text-2xl sm:text-4xl lg:text-5xl font-bold mb-2">
 								Welcome to <span class="text-primary">DroppedNeedle</span>!
 							</CardTitle>
-							<p class="text-base-content/70 max-w-lg mb-6">
+							<p class="text-muted max-w-lg mb-6">
 								Connect a download source to fetch your requests. Until then, requests wait.
 							</p>
 							<div class="flex flex-wrap justify-center gap-2 mb-6">
@@ -296,7 +296,7 @@
 							Welcome to <span class="text-primary">DroppedNeedle</span>
 						</h2>
 						{#if authStore.isAdmin}
-							<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
+							<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
 								Your library is empty. Add a library path and start a scan to fill it.
 							</p>
 							<div class="flex flex-wrap justify-center gap-2">
@@ -306,7 +306,7 @@
 								<Button variant="ghost" href={withBasePath('/library')}>Go to Library</Button>
 							</div>
 						{:else}
-							<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
+							<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
 								Your library is being prepared. An admin is setting things up - check back soon.
 							</p>
 							<Button variant="ghost" href={withBasePath('/library')}>Go to Library</Button>
@@ -317,9 +317,9 @@
 
 			{#snippet failed(_error, reset)}
 				<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-					<CircleAlert class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-base-content/50" />
+					<CircleAlert class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
 					<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">Something Went Wrong</h2>
-					<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
+					<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
 						Part of the Home page failed to render. The rest of the app still works.
 					</p>
 					<Button variant="primary" onclick={() => reset()}>Try Again</Button>

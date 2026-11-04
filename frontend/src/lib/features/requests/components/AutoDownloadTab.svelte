@@ -126,7 +126,7 @@
 										class="block font-semibold text-sm truncate hover:text-accent hover:underline"
 										title={item.artist_name}>{item.artist_name}</a
 									>
-									<div class="flex items-center gap-1.5 flex-wrap text-xs text-base-content/40">
+									<div class="flex items-center gap-1.5 flex-wrap text-xs text-muted">
 										<span>{item.user_name ?? 'A user'}</span>
 										<span class="text-base-content/20">•</span>
 										<span>requested {timeAgo(item.requested_at)}</span>
@@ -182,13 +182,13 @@
 										{batch.user_name ?? 'A user'} wants auto-download on {batch.artist_count} imported
 										{batch.artist_count === 1 ? 'artist' : 'artists'}
 									</span>
-									<div class="flex items-center gap-1.5 flex-wrap text-xs text-base-content/40">
+									<div class="flex items-center gap-1.5 flex-wrap text-xs text-muted">
 										<span>from Lidarr import</span>
 										<span class="text-base-content/20">•</span>
 										<span>requested {timeAgo(batch.requested_at)}</span>
 									</div>
 									{#if batch.sample_names.length > 0}
-										<p class="mt-0.5 text-xs text-base-content/50 truncate">
+										<p class="mt-0.5 text-xs text-muted truncate">
 											{batch.sample_names.join(', ')}{batch.artist_count > batch.sample_names.length
 												? `, +${batch.artist_count - batch.sample_names.length} more`
 												: ''}
@@ -242,7 +242,7 @@
 								</div>
 								<div class="flex-1 min-w-0">
 									<span class="block font-semibold text-sm truncate">Weekly Mix auto-requests</span>
-									<div class="flex items-center gap-1.5 flex-wrap text-xs text-base-content/40">
+									<div class="flex items-center gap-1.5 flex-wrap text-xs text-muted">
 										<span>{item.user_name ?? 'A user'}</span>
 										<span class="text-base-content/20">•</span>
 										<span>requested {timeAgo(item.requested_at)}</span>
@@ -277,7 +277,7 @@
 					</div>
 				{/each}
 				{#if grantedAuto.length > 0 || grantedMix.length > 0}
-					<h3 class="mt-4 text-sm font-semibold text-base-content/60">Approved</h3>
+					<h3 class="mt-4 text-sm font-semibold text-muted">Approved</h3>
 				{/if}
 				{#each grantedAuto as item (item.user_id + item.artist_mbid)}
 					<Card padding="none">
@@ -297,9 +297,7 @@
 									class="block font-semibold text-sm truncate hover:text-accent hover:underline"
 									title={item.artist_name}>{item.artist_name}</a
 								>
-								<span class="block truncate text-xs text-base-content/40"
-									>{item.user_name ?? 'A user'}</span
-								>
+								<span class="block truncate text-xs text-muted">{item.user_name ?? 'A user'}</span>
 							</div>
 							<Button
 								variant="danger-ghost"
@@ -329,7 +327,7 @@
 							</div>
 							<div class="flex-1 min-w-0">
 								<span class="block font-semibold text-sm truncate">Weekly Mix auto-requests</span>
-								<span class="block truncate text-xs text-base-content/40">{item.user_name}</span>
+								<span class="block truncate text-xs text-muted">{item.user_name}</span>
 							</div>
 							<Button
 								variant="danger-ghost"

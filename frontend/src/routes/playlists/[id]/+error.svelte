@@ -13,7 +13,7 @@
 	<div class="flex flex-col items-center justify-center py-20 gap-4 text-center">
 		<Music class="h-16 w-16 text-base-content/20" />
 		<h1 class="text-lg font-semibold text-base-content/80">Couldn't load this playlist</h1>
-		<p class="text-sm text-base-content/60">
+		<p class="text-sm text-muted">
 			{page.error?.message ?? 'Please try again'}
 			{#if page.error && 'status' in page.error && page.error.status}
 				({page.error.status})

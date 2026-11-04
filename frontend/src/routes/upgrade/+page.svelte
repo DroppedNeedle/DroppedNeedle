@@ -69,7 +69,7 @@
 	<title>Upgrade - DroppedNeedle</title>
 </svelte:head>
 
-<div class="upgrade-wrap grain min-h-screen px-4 py-10">
+<div class="upgrade-wrap min-h-screen px-4 py-10">
 	<div class="mx-auto flex w-full max-w-xl flex-col gap-6">
 		<div class="upgrade-brand">
 			<img
@@ -86,14 +86,14 @@
 			{#snippet failed(cause, retry)}
 				{#if notUpgradeMode(cause)}
 					<Card variant="bordered" title="Nothing to upgrade">
-						<p class="text-sm text-base-content/70">This server already runs v3.</p>
+						<p class="text-sm text-muted">This server already runs v3.</p>
 						{#snippet actions()}
 							<Button variant="primary" href={withBasePath('/')}>Open DroppedNeedle</Button>
 						{/snippet}
 					</Card>
 				{:else}
 					<Card variant="bordered" title="Can't reach the server">
-						<p class="text-sm text-base-content/70">Check that it is running, then try again.</p>
+						<p class="text-sm text-muted">Check that it is running, then try again.</p>
 						{#snippet actions()}
 							<Button onclick={retry}>Try again</Button>
 						{/snippet}
@@ -108,7 +108,7 @@
 				{:else if !progress.data}
 					{#if progress.isError}
 						<Card variant="bordered" title="Can't reach the server">
-							<p class="text-sm text-base-content/70">Check that it is running, then try again.</p>
+							<p class="text-sm text-muted">Check that it is running, then try again.</p>
 							{#snippet actions()}
 								<Button onclick={() => void progress.refetch()}>Try again</Button>
 							{/snippet}
@@ -147,16 +147,9 @@
 
 <style>
 	.upgrade-wrap {
-		--grain-opacity: 0.1;
 		position: relative;
 		isolation: isolate;
-		background:
-			radial-gradient(
-				circle at 50% -8rem,
-				oklch(from var(--color-primary) l c h / 0.08),
-				transparent 22rem
-			),
-			var(--color-base-100);
+		background: var(--color-base-100);
 	}
 
 	.upgrade-brand {

@@ -43,10 +43,6 @@
 	}
 </script>
 
-<Button {...rest} bind:ref loading={busy} onclick={handleClick}>
-	{#if busy && pendingLabel}
-		{pendingLabel}
-	{:else}
-		{@render children()}
-	{/if}
+<Button {...rest} bind:ref loading={busy} loadingLabel={pendingLabel} onclick={handleClick}>
+	{@render children()}
 </Button>

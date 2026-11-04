@@ -164,12 +164,12 @@
 				<div class="mx-auto h-10 w-24 animate-glow-pulse rounded-lg bg-base-200/40 sm:h-12"></div>
 			{/if}
 
-			<div class="mt-2 text-sm font-medium uppercase tracking-[0.15em] text-base-content/60">
+			<div class="mt-2 text-sm font-medium uppercase tracking-[0.15em] text-muted">
 				{card.label}
 			</div>
 
 			{#if card.subtitle}
-				<div class="mt-0.5 text-xs text-base-content/40">{card.subtitle}</div>
+				<div class="mt-0.5 text-xs text-muted">{card.subtitle}</div>
 			{/if}
 
 			<div

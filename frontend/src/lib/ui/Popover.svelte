@@ -122,7 +122,7 @@
 	{#if open}
 		<div
 			id={panelId}
-			class="absolute top-full z-30 mt-2 space-y-4 rounded-box border border-base-300 bg-base-100 p-4 shadow-xl"
+			class="absolute top-full z-30 mt-2 space-y-4 rounded-box border border-line bg-base-200 p-4 shadow-xl"
 			style:left="{left}px"
 			style:width="{width}px"
 			role="dialog"

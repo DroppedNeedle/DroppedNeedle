@@ -233,7 +233,7 @@
 					</div>
 				</Card>
 			{:else}
-				<Card><p class="text-center text-base-content/50">No artists found</p></Card>
+				<Card><p class="text-center text-muted">No artists found</p></Card>
 			{/if}
 		</div>
 
@@ -282,10 +282,10 @@
 					</div>
 				</Card>
 			{:else}
-				<Card><p class="text-center text-base-content/50">No albums found</p></Card>
+				<Card><p class="text-center text-muted">No albums found</p></Card>
 			{/if}
 		</div>
 	</section>
 {:else}
-	<p class="text-center mt-32 text-base-content/50">Enter a search query to get started.</p>
+	<p class="text-center mt-32 text-muted">Enter a search query to get started.</p>
 {/if}

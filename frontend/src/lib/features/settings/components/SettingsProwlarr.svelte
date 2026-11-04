@@ -38,7 +38,7 @@
 					</div>
 					<div class="min-w-0 flex-1 basis-56">
 						<h3 class="text-lg font-bold">Connection</h3>
-						<p class="text-sm text-base-content/60">
+						<p class="text-sm text-muted">
 							Searches run through Prowlarr when it is the selected backend. Prowlarr only finds
 							releases - SABnzbd still downloads them.
 						</p>

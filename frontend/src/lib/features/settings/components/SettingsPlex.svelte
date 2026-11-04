@@ -119,7 +119,7 @@
 </script>
 
 <Card title="Plex Connection">
-	<p class="text-base-content/70 mb-4">
+	<p class="text-muted mb-4">
 		Connect Plex to browse your library, play music, and keep your listening history in sync.
 	</p>
 
@@ -146,7 +146,7 @@
 				<div class="flex items-center gap-3">
 					{#if oauthPending}
 						<span class="loading loading-spinner loading-sm"></span>
-						<span class="text-sm text-base-content/70">Finish signing in to Plex to continue.</span>
+						<span class="text-sm text-muted">Finish signing in to Plex to continue.</span>
 						{#if oauthUrl}
 							<a href={oauthUrl} target="_blank" rel="noopener" class="link link-primary text-sm">
 								Open sign-in page
@@ -188,11 +188,9 @@
 								{/each}
 							</div>
 						{:else}
-							<p class="text-sm text-base-content/50">
-								Run a connection test to load your Plex libraries.
-							</p>
+							<p class="text-sm text-muted">Run a connection test to load your Plex libraries.</p>
 						{/if}
-						<p class="label whitespace-normal text-base-content/60">
+						<p class="label whitespace-normal text-muted">
 							Choose the Plex libraries that contain your music.
 						</p>
 					</fieldset>

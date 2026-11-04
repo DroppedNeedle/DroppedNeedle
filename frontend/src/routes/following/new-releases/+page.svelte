@@ -67,7 +67,7 @@
 		<h1 class="text-2xl font-bold sm:text-3xl">New Releases</h1>
 
 		<div class="ml-auto flex items-center gap-3">
-			<label class="flex cursor-pointer items-center gap-2 text-sm text-base-content/70">
+			<label class="flex cursor-pointer items-center gap-2 text-sm text-muted">
 				<input type="checkbox" class="toggle toggle-sm toggle-primary" bind:checked={hideOwned} />
 				Hide owned
 			</label>
@@ -131,15 +131,13 @@
 					</a>
 					<a
 						href={withBasePath(`/artist/${item.artist_mbid}`)}
-						class="truncate text-sm text-base-content/70 hover:underline"
+						class="truncate text-sm text-muted hover:underline"
 					>
 						{item.artist_name}
 					</a>
 					<div class="flex items-center justify-between gap-2">
 						{#if item.first_release_date}
-							<span class="text-xs text-base-content/50 tabular-nums"
-								>{item.first_release_date}</span
-							>
+							<span class="text-xs text-muted tabular-nums">{item.first_release_date}</span>
 						{:else}
 							<span></span>
 						{/if}

@@ -59,7 +59,7 @@
 			<section aria-labelledby="edition-group-{group.id}">
 				<h3
 					id="edition-group-{group.id}"
-					class="mb-1.5 text-xs font-semibold tracking-wide text-base-content/55 uppercase"
+					class="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase"
 				>
 					{group.label}
 				</h3>
@@ -114,7 +114,7 @@
 			{#if row.current}<span class="badge badge-primary badge-xs">{currentLabel}</span>{/if}
 			{#if row.bestGuess}<span class="badge badge-warning badge-xs">Best guess</span>{/if}
 		</span>
-		{#if row.facts}<span class="block text-xs text-base-content/60">{row.facts}</span>{/if}
+		{#if row.facts}<span class="block text-xs text-muted">{row.facts}</span>{/if}
 		{#if row.fit}<span class="block text-xs text-base-content/75">{row.fit}</span>{/if}
 	</span>
 {/snippet}

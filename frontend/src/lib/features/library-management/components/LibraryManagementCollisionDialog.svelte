@@ -188,7 +188,7 @@
 				mono
 				bind:value={alternateRelativePath}
 				placeholder="Artist/Album/02 Track (alternate).flac"
-			/><small class="text-base-content/45"
+			/><small class="text-muted"
 				>Relative to the planned destination root; absolute paths are rejected.</small
 			></label
 		>{/if}

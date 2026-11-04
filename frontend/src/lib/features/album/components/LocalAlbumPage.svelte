@@ -184,7 +184,7 @@
 				<h1 class="mt-3 text-3xl font-black tracking-tight sm:text-5xl">{album.title}</h1>
 				<a
 					href={artistHref(album.artist_mbid ?? album.artist_id)}
-					class="mt-2 inline-block text-lg text-base-content/65 hover:underline"
+					class="mt-2 inline-block text-lg text-muted hover:underline"
 					>{album.artist_name || 'Unknown album artist'}</a
 				>
 				<LocalIdentityBadge
@@ -194,7 +194,7 @@
 					showDescription
 					className="mt-3"
 				/>
-				<p class="mt-2 text-sm text-base-content/50">
+				<p class="mt-2 text-sm text-muted">
 					{album.year ?? 'Year unknown'} · {album.track_count}
 					{album.track_count === 1 ? 'track' : 'tracks'}
 				</p>
@@ -280,7 +280,7 @@
 			{:else if tracksQuery.isError}
 				<div class="alert alert-error mt-3">Couldn't load tracks.</div>
 			{:else if !tracks.length}
-				<Card class="mt-3 text-center text-base-content/55">
+				<Card class="mt-3 text-center text-muted">
 					<Disc3 class="mx-auto h-8 w-8 opacity-30" />
 					<p>No playable tracks are attached to this album.</p>
 				</Card>

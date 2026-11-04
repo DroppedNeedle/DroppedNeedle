@@ -49,11 +49,11 @@
 
 		{#if error}
 			<div class="flex flex-col items-center gap-3 max-w-sm">
-				<p class="text-base-content/70 text-sm">{error}</p>
+				<p class="text-muted text-sm">{error}</p>
 				<Button href={withBasePath('/login')} variant="primary" size="sm">Back to sign in</Button>
 			</div>
 		{:else}
-			<p class="text-base-content/60 text-sm">Completing sign-in…</p>
+			<p class="text-muted text-sm">Completing sign-in…</p>
 			<span class="loading loading-spinner loading-md text-primary"></span>
 		{/if}
 	</div>

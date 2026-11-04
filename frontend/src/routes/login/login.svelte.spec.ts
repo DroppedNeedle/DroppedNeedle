@@ -62,8 +62,8 @@ describe('login local tab uses a username field', () => {
 		await expect.element(submit).toBeVisible();
 		const wrapper = heading.element().parentElement?.parentElement?.parentElement;
 		expect(wrapper).toBeInstanceOf(HTMLElement);
-		expect(getComputedStyle(heading.element()).fontFamily).toContain('Space Grotesk');
-		expect(getComputedStyle(wrapper as HTMLElement).backgroundImage).not.toBe('none');
+		expect(getComputedStyle(heading.element()).fontFamily).toContain('Anton');
+		expect(getComputedStyle(wrapper as HTMLElement).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
 		expect(getComputedStyle(submit.element()).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
 	});
 

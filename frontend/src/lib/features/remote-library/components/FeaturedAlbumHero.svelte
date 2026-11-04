@@ -89,13 +89,13 @@
 				</button>
 
 				<div class="min-w-0 space-y-1">
-					<p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-base-content/50">
+					<p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted">
 						Continue Listening
 					</p>
 					<h3 class="line-clamp-2 text-xl font-bold text-base-content sm:text-2xl">
 						{hero.title}
 					</h3>
-					<p class="line-clamp-1 text-sm text-base-content/70">{hero.artist_name}</p>
+					<p class="line-clamp-1 text-sm text-muted">{hero.artist_name}</p>
 					{#if hero.year}
 						<span class="badge badge-sm badge-ghost mt-1">{hero.year}</span>
 					{/if}

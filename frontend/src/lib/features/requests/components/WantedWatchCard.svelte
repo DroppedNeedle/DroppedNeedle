@@ -68,7 +68,7 @@
 			>
 				{item.album_title}
 			</a>
-			<p class="text-base-content/60 text-xs truncate">
+			<p class="text-muted text-xs truncate">
 				{item.artist_name}{item.year ? ` • ${item.year}` : ''}
 			</p>
 
@@ -81,35 +81,35 @@
 					</span>
 					{#if nextCheckLabel}
 						<span class="text-base-content/20">•</span>
-						<span class="text-base-content/40">next check {nextCheckLabel}</span>
+						<span class="text-muted">next check {nextCheckLabel}</span>
 					{/if}
 					<span class="text-base-content/20">•</span>
-					<span class="text-base-content/40">{checkedLabel}</span>
+					<span class="text-muted">{checkedLabel}</span>
 					{#if item.last_outcome === 'outside_settings'}
 						<span class="text-base-content/20">•</span>
-						<span class="text-base-content/60">only copies your settings refuse</span>
+						<span class="text-muted">only copies your settings refuse</span>
 					{/if}
 				{:else if item.state === 'stopped'}
-					<span class="text-base-content/50 flex items-center gap-1">
+					<span class="text-muted flex items-center gap-1">
 						<CircleStop class="h-3 w-3" />
 						Stopped
 					</span>
 					<span class="text-base-content/20">•</span>
-					<span class="text-base-content/40">not being searched</span>
+					<span class="text-muted">not being searched</span>
 				{:else}
 					<span class="text-success/80 flex items-center gap-1">
 						<CircleCheck class="h-3 w-3" />
 						Found
 					</span>
 					<span class="text-base-content/20">•</span>
-					<span class="text-base-content/40">in your library</span>
+					<span class="text-muted">in your library</span>
 				{/if}
 				{#if item.kind === 'partial' && item.state !== 'fulfilled'}
 					<span class="text-base-content/20">•</span>
-					<span class="text-base-content/40">finding missing tracks</span>
+					<span class="text-muted">finding missing tracks</span>
 				{/if}
 				{#if ownerName}
-					<span class="flex items-center gap-1.5 text-base-content/40">
+					<span class="flex items-center gap-1.5 text-muted">
 						<span class="text-base-content/20">•</span>
 						watched for {ownerName}
 					</span>

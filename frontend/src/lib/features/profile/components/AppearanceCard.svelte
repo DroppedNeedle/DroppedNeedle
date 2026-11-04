@@ -17,7 +17,7 @@
 
 <section>
 	<h2
-		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
+		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted"
 	>
 		<SunMoon class="h-4 w-4" />
 		Appearance
@@ -31,6 +31,6 @@
 			onchange={(value) => themeStore.set(value)}
 			class="sm:grid-cols-3"
 		/>
-		<p class="mt-3 px-1 text-xs text-base-content/40">Saved in this browser only.</p>
+		<p class="mt-3 px-1 text-xs text-muted">Saved in this browser only.</p>
 	</Card>
 </section>
