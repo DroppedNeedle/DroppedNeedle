@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '$lib/features/library-management/components/library-management.css';
 	import { goto } from '$app/navigation';
-	import { Check, ChevronDown, ListPlus, RotateCcw, ShieldAlert, Tags, X } from 'lucide-svelte';
+	import { Check, ChevronDown, ListPlus, RotateCcw, ShieldAlert } from 'lucide-svelte';
 
 	import { createLibraryManagementTagEditPreviewMutation } from '$lib/features/library-management/queries/LibraryManagementMutations.svelte';
 	import { rememberLibraryManagementPreviewToken } from '$lib/features/library-management/queries/LibraryManagementPreviewTokens';
@@ -16,8 +16,8 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { createUuid } from '$lib/utils/uuid';
 	import Button from '$lib/ui/Button.svelte';
-	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 
 	interface Props {
 		track: TrackView;
@@ -25,8 +25,6 @@
 	}
 
 	let { track, open = $bindable(false) }: Props = $props();
-	let dialog: HTMLDialogElement;
-	let heading: HTMLHeadingElement;
 	let mode = $state<LibraryManagementTagEditMode>('save_override');
 	let drafts = $state<Record<string, string>>({});
 	let originals = $state<Record<string, string>>({});
@@ -84,15 +82,6 @@
 	);
 
 	$effect(() => {
-		if (open) {
-			dialog?.showModal();
-			queueMicrotask(() => heading?.focus());
-		} else if (dialog?.open && !pending) {
-			dialog.close();
-		}
-	});
-
-	$effect(() => {
 		if (!context || context.track_revision === seededTrackRevision) return;
 		const next = Object.fromEntries(
 			context.fields.map((field) => [field.field_name, formatValue(field)])
@@ -146,10 +135,6 @@
 			: [...resetFields, fieldName];
 	}
 
-	function close() {
-		if (!pending) dialog.close();
-	}
-
 	async function preview() {
 		if (!context || !context.accepted_identity) return;
 		const selected =
@@ -185,204 +170,173 @@
 	}
 </script>
 
-<dialog
-	bind:this={dialog}
-	class="modal"
-	aria-labelledby="tag-editor-title"
-	onclose={() => (open = false)}
-	oncancel={(event) => {
-		if (pending) event.preventDefault();
-	}}
+<Modal
+	bind:open
+	size="sheet"
+	title="Edit tags for {track.title}"
+	description="Changes are previewed, journalled, validated, and published through file organization."
+	focusTitle
+	dismissible={!pending}
 >
-	<div class="modal-box management-tag-editor max-w-4xl p-0">
-		<header class="management-profile-editor__header">
-			<div>
-				<p class="management-kicker"><Tags class="h-3.5 w-3.5" /> Staged metadata edit</p>
-				<h2
-					bind:this={heading}
-					id="tag-editor-title"
-					tabindex="-1"
-					class="font-display text-xl font-semibold"
-				>
-					Edit tags for {track.title}
-				</h2>
-				<p class="mt-1 text-sm text-base-content/55">
-					Changes are previewed, journalled, validated, and published through file organization.
-				</p>
+	<div class="p-4 md:h-full md:overflow-y-auto md:p-6">
+		{#if contextQuery.isError}
+			<div class="alert alert-error" role="alert">Could not load the file's current metadata.</div>
+		{:else if contextQuery.isPending || !context}
+			<div class="grid gap-3" aria-label="Loading tag editor">
+				<div class="skeleton h-20 w-full"></div>
+				<div class="skeleton h-72 w-full"></div>
 			</div>
-			<IconButton
-				label="Close tag editor"
-				icon={X}
-				size="sm"
-				shape="square"
-				disabled={pending}
-				onclick={close}
-			/>
-		</header>
+		{:else}
+			<div class="management-write-notice">
+				<ShieldAlert class="h-5 w-5" />
+				<div>
+					<strong>This writes to the audio file.</strong>
+					<p>
+						No write occurs here. The next page shows the exact before/after diff and requires
+						confirmation.
+					</p>
+				</div>
+			</div>
 
-		<div class="max-h-[72vh] overflow-y-auto p-5 sm:p-6">
-			{#if contextQuery.isError}
-				<div class="alert alert-error" role="alert">
-					Could not load the file's current metadata.
-				</div>
-			{:else if contextQuery.isPending || !context}
-				<div class="grid gap-3" aria-label="Loading tag editor">
-					<div class="skeleton h-20 w-full"></div>
-					<div class="skeleton h-72 w-full"></div>
-				</div>
-			{:else}
-				<div class="management-write-notice">
+			{#if !context.accepted_identity}
+				<div class="alert alert-warning mt-4">
 					<ShieldAlert class="h-5 w-5" />
-					<div>
-						<strong>This writes to the audio file.</strong>
-						<p>
-							No write occurs here. The next page shows the exact before/after diff and requires
-							confirmation.
-						</p>
-					</div>
+					<span>
+						This file needs an accepted MusicBrainz release and track mapping before tags can be
+						written ({context.identity_reason?.replaceAll('_', ' ').toLowerCase()}).
+					</span>
 				</div>
+			{/if}
 
-				{#if !context.accepted_identity}
-					<div class="alert alert-warning mt-4">
-						<ShieldAlert class="h-5 w-5" />
-						<span>
-							This file needs an accepted MusicBrainz release and track mapping before tags can be
-							written ({context.identity_reason?.replaceAll('_', ' ').toLowerCase()}).
-						</span>
-					</div>
-				{/if}
+			<section class="mt-5" aria-labelledby="tag-save-behavior">
+				<h3 id="tag-save-behavior" class="font-display text-base font-semibold">
+					Choose future behavior
+				</h3>
+				<div class="management-tag-modes mt-2">
+					<button
+						type="button"
+						class:active={mode === 'save_override'}
+						aria-pressed={mode === 'save_override'}
+						onclick={() => chooseMode('save_override')}
+					>
+						<Check class="h-4 w-4" />
+						<span
+							><strong>Save as local override</strong><small
+								>Recommended. Future management preserves your value.</small
+							></span
+						>
+					</button>
+					<button
+						type="button"
+						class:active={mode === 'write_once'}
+						aria-pressed={mode === 'write_once'}
+						onclick={() => chooseMode('write_once')}
+					>
+						<ListPlus class="h-4 w-4" />
+						<span
+							><strong>Write once</strong><small
+								>A later authoritative run may replace this value.</small
+							></span
+						>
+					</button>
+					<button
+						type="button"
+						class:active={mode === 'reset_canonical'}
+						aria-pressed={mode === 'reset_canonical'}
+						onclick={() => chooseMode('reset_canonical')}
+					>
+						<RotateCcw class="h-4 w-4" />
+						<span
+							><strong>Reset to canonical</strong><small
+								>Remove selected overrides and preview MusicBrainz values.</small
+							></span
+						>
+					</button>
+				</div>
+			</section>
 
-				<section class="mt-5" aria-labelledby="tag-save-behavior">
-					<h3 id="tag-save-behavior" class="font-display text-base font-semibold">
-						Choose future behavior
+			{#if mode === 'reset_canonical'}
+				<section class="mt-5" aria-labelledby="tag-reset-fields">
+					<h3 id="tag-reset-fields" class="font-display text-base font-semibold">
+						Select overrides to reset
 					</h3>
-					<div class="management-tag-modes mt-2">
-						<button
-							type="button"
-							class:active={mode === 'save_override'}
-							aria-pressed={mode === 'save_override'}
-							onclick={() => chooseMode('save_override')}
-						>
-							<Check class="h-4 w-4" />
-							<span
-								><strong>Save as local override</strong><small
-									>Recommended. Future management preserves your value.</small
-								></span
-							>
-						</button>
-						<button
-							type="button"
-							class:active={mode === 'write_once'}
-							aria-pressed={mode === 'write_once'}
-							onclick={() => chooseMode('write_once')}
-						>
-							<ListPlus class="h-4 w-4" />
-							<span
-								><strong>Write once</strong><small
-									>A later authoritative run may replace this value.</small
-								></span
-							>
-						</button>
-						<button
-							type="button"
-							class:active={mode === 'reset_canonical'}
-							aria-pressed={mode === 'reset_canonical'}
-							onclick={() => chooseMode('reset_canonical')}
-						>
-							<RotateCcw class="h-4 w-4" />
-							<span
-								><strong>Reset to canonical</strong><small
-									>Remove selected overrides and preview MusicBrainz values.</small
-								></span
-							>
-						</button>
+					{#if overriddenFields.length}
+						<div class="mt-2 grid gap-2 sm:grid-cols-2">
+							{#each overriddenFields as field (field.field_name)}
+								<label class="management-selection-card">
+									<input
+										type="checkbox"
+										class="checkbox checkbox-sm"
+										checked={resetFields.includes(field.field_name)}
+										onchange={() => toggleReset(field.field_name)}
+									/>
+									<span
+										><strong>{fieldLabel(field.field_name)}</strong><small
+											>{field.scope}-level override</small
+										></span
+									>
+								</label>
+							{/each}
+						</div>
+					{:else}
+						<p class="mt-2 rounded-box bg-base-200/50 p-4 text-sm text-base-content/60">
+							This track has no local overrides to reset.
+						</p>
+					{/if}
+				</section>
+			{:else}
+				<section class="mt-5" aria-labelledby="tag-core-fields">
+					<div class="flex items-end justify-between gap-3">
+						<div>
+							<h3 id="tag-core-fields" class="font-display text-base font-semibold">Core tags</h3>
+							<p class="text-xs text-base-content/50">Artists and genres use one value per line.</p>
+						</div>
+						<span class="badge badge-ghost badge-sm">{changedFields.length} changed</span>
+					</div>
+					<div class="management-tag-fields mt-3">
+						{#each commonFields as field (field.field_name)}
+							{@render fieldControl(field)}
+						{/each}
 					</div>
 				</section>
 
-				{#if mode === 'reset_canonical'}
-					<section class="mt-5" aria-labelledby="tag-reset-fields">
-						<h3 id="tag-reset-fields" class="font-display text-base font-semibold">
-							Select overrides to reset
-						</h3>
-						{#if overriddenFields.length}
-							<div class="mt-2 grid gap-2 sm:grid-cols-2">
-								{#each overriddenFields as field (field.field_name)}
-									<label class="management-selection-card">
-										<input
-											type="checkbox"
-											class="checkbox checkbox-sm"
-											checked={resetFields.includes(field.field_name)}
-											onchange={() => toggleReset(field.field_name)}
-										/>
-										<span
-											><strong>{fieldLabel(field.field_name)}</strong><small
-												>{field.scope}-level override</small
-											></span
-										>
-									</label>
-								{/each}
-							</div>
-						{:else}
-							<p class="mt-2 rounded-box bg-base-200/50 p-4 text-sm text-base-content/60">
-								This track has no local overrides to reset.
-							</p>
-						{/if}
-					</section>
-				{:else}
-					<section class="mt-5" aria-labelledby="tag-core-fields">
-						<div class="flex items-end justify-between gap-3">
-							<div>
-								<h3 id="tag-core-fields" class="font-display text-base font-semibold">Core tags</h3>
-								<p class="text-xs text-base-content/50">
-									Artists and genres use one value per line.
-								</p>
-							</div>
-							<span class="badge badge-ghost badge-sm">{changedFields.length} changed</span>
-						</div>
+				<details class="management-disclosure mt-5">
+					<summary><span>Advanced managed fields</span><ChevronDown class="h-4 w-4" /></summary>
+					<div class="p-4">
+						<label class="grid gap-1 text-sm">
+							<span>Find a field</span>
+							<Input
+								size="sm"
+								label="Find a field"
+								bind:value={advancedSearch}
+								placeholder="Composer, ISRC, sort name…"
+							/>
+						</label>
 						<div class="management-tag-fields mt-3">
-							{#each commonFields as field (field.field_name)}
+							{#each advancedFields as field (field.field_name)}
 								{@render fieldControl(field)}
 							{/each}
 						</div>
-					</section>
-
-					<details class="management-disclosure mt-5">
-						<summary><span>Advanced managed fields</span><ChevronDown class="h-4 w-4" /></summary>
-						<div class="p-4">
-							<label class="grid gap-1 text-sm">
-								<span>Find a field</span>
-								<Input
-									size="sm"
-									label="Find a field"
-									bind:value={advancedSearch}
-									placeholder="Composer, ISRC, sort name…"
-								/>
-							</label>
-							<div class="management-tag-fields mt-3">
-								{#each advancedFields as field (field.field_name)}
-									{@render fieldControl(field)}
-								{/each}
-							</div>
-						</div>
-					</details>
-				{/if}
-
-				{#if albumExpansion}
-					<div class="alert alert-info mt-4 text-sm">
-						Album-level fields apply consistently to every mapped track in this album. The preview
-						will show that expansion before anything is written.
 					</div>
-				{/if}
-				{#if localError}<div class="alert alert-error mt-4 text-sm">{localError}</div>{/if}
+				</details>
 			{/if}
-		</div>
 
-		<footer class="management-profile-editor__footer">
+			{#if albumExpansion}
+				<div class="alert alert-info mt-4 text-sm">
+					Album-level fields apply consistently to every mapped track in this album. The preview
+					will show that expansion before anything is written.
+				</div>
+			{/if}
+			{#if localError}<div class="alert alert-error mt-4 text-sm">{localError}</div>{/if}
+		{/if}
+	</div>
+	{#snippet actions()}
+		<div class="flex flex-wrap items-center justify-between gap-2">
 			<p class="text-xs text-base-content/50">
 				Using {context?.profile_name ?? 'the root profile'} format compatibility rules.
 			</p>
-			<div class="flex gap-2">
-				<Button variant="ghost" disabled={pending} onclick={close}>Cancel</Button>
+			<div class="ml-auto flex gap-2">
+				<Button variant="ghost" disabled={pending} onclick={() => (open = false)}>Cancel</Button>
 				<Button
 					variant="warning"
 					loading={pending}
@@ -393,12 +347,9 @@
 					{selectionCount === 1 ? 'change' : 'changes'}
 				</Button>
 			</div>
-		</footer>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close tag editor" disabled={pending}>close</button>
-	</form>
-</dialog>
+		</div>
+	{/snippet}
+</Modal>
 
 {#snippet fieldControl(field: LibraryManagementTagEditorField)}
 	<label
@@ -435,17 +386,6 @@
 {/snippet}
 
 <style>
-	.management-tag-editor {
-		border: 1px solid color-mix(in oklab, var(--color-library-manage) 24%, transparent);
-		background:
-			linear-gradient(
-				145deg,
-				color-mix(in oklab, var(--color-library-manage) 5%, var(--color-base-100)),
-				var(--color-base-100) 18rem
-			),
-			var(--color-base-100);
-	}
-
 	.management-write-notice {
 		display: flex;
 		align-items: flex-start;

@@ -14,6 +14,7 @@
 	import type { LibraryRootSettings } from '$lib/features/library-management/queries/LibraryOperationsTypes';
 	import type { LibraryManagementProfile } from '$lib/features/library-management/queries/types';
 	import Button from '$lib/ui/Button.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
@@ -36,11 +37,9 @@
 	const deleteProfile = createDeleteLibraryManagementProfileMutation();
 
 	let newProfileName = $state('Picard-style Organizer copy');
-	let deleteDialog: HTMLDialogElement;
-	let deleteHeading: HTMLHeadingElement;
+	let deleteOpen = $state(false);
 	let deleteOpener: HTMLElement | null = null;
 	let deleteTarget = $state<LibraryManagementProfile | null>(null);
-	let deleteError = $state('');
 
 	async function createProfileCopy(): Promise<void> {
 		if (!settings.draft || !settings.copySourceProfileId || !newProfileName.trim()) return;
@@ -62,29 +61,23 @@
 
 	function requestDelete(profile: LibraryManagementProfile, opener: HTMLElement): void {
 		deleteTarget = profile;
-		deleteError = '';
 		deleteOpener = opener;
-		deleteDialog.showModal();
-		deleteHeading.focus();
+		deleteOpen = true;
 	}
 
 	async function confirmDelete(): Promise<void> {
 		if (!deleteTarget) return;
 		const deletedProfileId = deleteTarget.id;
-		try {
-			const saved = await deleteProfile.mutateAsync({
-				profileId: deleteTarget.id,
-				request: { expected_settings_revision: settings.revision }
-			});
-			settings.acceptDelete(saved, deletedProfileId);
-			deleteDialog.close();
-			deleteTarget = null;
-		} catch (error) {
-			deleteError = error instanceof Error ? error.message : 'Could not delete the profile.';
-		}
+		const saved = await deleteProfile.mutateAsync({
+			profileId: deleteTarget.id,
+			request: { expected_settings_revision: settings.revision }
+		});
+		settings.acceptDelete(saved, deletedProfileId);
 	}
 
+	// A deleted profile's row, and the button that opened this, are gone.
 	function restoreDeleteFocus(): void {
+		deleteTarget = null;
 		if (deleteOpener?.isConnected) {
 			deleteOpener.focus();
 			return;
@@ -255,47 +248,17 @@
 	</section>
 {/if}
 
-<dialog
-	bind:this={deleteDialog}
-	class="modal"
-	aria-labelledby="delete-management-profile-title"
+<ConfirmDialog
+	bind:open={deleteOpen}
+	title="Delete {deleteTarget?.name ?? 'profile'}?"
+	message="This removes only the profile. Assigned profiles cannot be deleted, and no music file is touched."
+	confirmLabel="Delete profile"
+	tone="danger"
+	focusTitle
+	pending={deleteProfile.isPending}
+	onconfirm={confirmDelete}
 	onclose={restoreDeleteFocus}
-	oncancel={(event) => {
-		if (deleteProfile.isPending) event.preventDefault();
-	}}
->
-	<div class="modal-box max-w-md">
-		<h2
-			bind:this={deleteHeading}
-			id="delete-management-profile-title"
-			tabindex="-1"
-			class="text-lg font-bold"
-		>
-			Delete {deleteTarget?.name ?? 'profile'}?
-		</h2>
-		<p class="mt-3 text-sm text-base-content/65">
-			This removes only the profile. Assigned profiles cannot be deleted, and no music file is
-			touched.
-		</p>
-		{#if deleteError}<div class="alert alert-error mt-3 text-sm" role="alert">
-				{deleteError}
-			</div>{/if}
-		<div class="modal-action">
-			<Button
-				variant="ghost"
-				disabled={deleteProfile.isPending}
-				onclick={() => deleteDialog.close()}>Cancel</Button
-			><Button
-				variant="danger"
-				loading={deleteProfile.isPending}
-				onclick={() => void confirmDelete()}>Delete profile</Button
-			>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Cancel profile deletion" disabled={deleteProfile.isPending}>close</button>
-	</form>
-</dialog>
+/>
 
 <style>
 	.management-profile-grid {

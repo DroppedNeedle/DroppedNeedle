@@ -1,4 +1,4 @@
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
@@ -249,7 +249,8 @@ describe('LibraryManagementActivationDialog', () => {
 		await page.getByRole('checkbox', { name: /Acquisitions/ }).click();
 		await page.getByRole('button', { name: 'Validate and save' }).click();
 		await page.getByRole('button', { name: 'Run dry run' }).click();
-		await page.getByRole('button', { name: 'Close', exact: true }).click();
+		// The dialog's backdrop is a second "Close"; the first is the action.
+		await page.getByRole('button', { name: 'Close', exact: true }).first().click();
 
 		await page.getByRole('checkbox', { name: /Drop & Free imports/ }).click();
 		await expect
@@ -315,8 +316,9 @@ describe('LibraryManagementActivationDialog', () => {
 		await page.getByRole('button', { name: 'Validate and save' }).click();
 
 		await expect.element(page.getByRole('button', { name: 'Close', exact: true })).toBeDisabled();
+		await userEvent.keyboard('{Escape}');
 		await expect
-			.element(page.getByRole('button', { name: 'Close organization activation' }))
-			.toBeDisabled();
+			.element(page.getByRole('heading', { name: 'Enable file organization' }))
+			.toBeVisible();
 	});
 });

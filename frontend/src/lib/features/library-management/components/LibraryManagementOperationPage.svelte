@@ -27,6 +27,7 @@
 	import { rememberLibraryManagementPreviewToken } from '$lib/features/library-management/queries/LibraryManagementPreviewTokens';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { createUuid } from '$lib/utils/uuid';
 	import {
@@ -61,13 +62,8 @@
 	}
 
 	let { jobId }: Props = $props();
-	let stopDialog: HTMLDialogElement;
-	let stopHeading: HTMLHeadingElement;
-	let stopOpener: HTMLElement | null = null;
-	let undoDialog: HTMLDialogElement;
-	let undoHeading: HTMLHeadingElement;
-	let undoOpener: HTMLElement | null = null;
-	let undoError = $state('');
+	let stopOpen = $state(false);
+	let undoOpen = $state(false);
 	let nowSeconds = $state(Date.now() / 1000);
 	let redirectingReadyPreview = $state(false);
 
@@ -233,34 +229,23 @@
 
 	async function stop(): Promise<void> {
 		if (!operation) return;
-		try {
-			await stopOperation.mutateAsync({
-				jobId,
-				expectedRevision: operation.operation_row_revision
-			});
-			stopDialog.close();
-		} catch {
-			return;
-		}
+		await stopOperation.mutateAsync({
+			jobId,
+			expectedRevision: operation.operation_row_revision
+		});
 	}
 
 	async function previewUndo(): Promise<void> {
 		if (!operation || !undoAvailable) return;
-		undoError = '';
-		try {
-			const handle = await createUndo.mutateAsync({
-				jobId,
-				request: {
-					expected_operation_row_revision: operation.operation_row_revision,
-					idempotency_key: createUuid()
-				}
-			});
-			rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
-			undoDialog.close();
-			await goto(withBasePath(`/library/management/previews/${encodeURIComponent(handle.job_id)}`));
-		} catch (error) {
-			undoError = error instanceof Error ? error.message : 'Could not create the undo preview.';
-		}
+		const handle = await createUndo.mutateAsync({
+			jobId,
+			request: {
+				expected_operation_row_revision: operation.operation_row_revision,
+				idempotency_key: createUuid()
+			}
+		});
+		rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
+		await goto(withBasePath(`/library/management/previews/${encodeURIComponent(handle.job_id)}`));
 	}
 
 	function formatDate(value: number): string {
@@ -429,11 +414,7 @@
 					status={operation.state}
 					onpause={() => control('pause')}
 					onresume={() => control('resume')}
-					onstop={(opener) => {
-						stopOpener = opener;
-						stopDialog.showModal();
-						stopHeading.focus();
-					}}
+					onstop={() => (stopOpen = true)}
 					confirmStop
 				/>
 			</header>
@@ -538,12 +519,7 @@
 						size="sm"
 						class="mt-3 self-start"
 						disabled={!undoAvailable}
-						onclick={(event) => {
-							undoOpener = event.currentTarget;
-							undoError = '';
-							undoDialog.showModal();
-							undoHeading.focus();
-						}}>Preview Undo...</Button
+						onclick={() => (undoOpen = true)}>Preview Undo...</Button
 					>{#if operation.undo_available_count > 0 && !undoAvailable && (operation.undo_expires_at == null || operation.undo_expires_at > nowSeconds)}<p
 							class="mt-2 text-xs text-base-content/45"
 						>
@@ -573,85 +549,34 @@
 	</main>
 </div>
 
-<dialog
-	bind:this={stopDialog}
-	class="modal"
-	aria-labelledby="stop-management-title"
-	onclose={() => stopOpener?.focus()}
-	oncancel={(event) => {
-		if (stopOperation.isPending) event.preventDefault();
-	}}
->
-	<div class="modal-box max-w-md">
-		<h2
-			bind:this={stopHeading}
-			id="stop-management-title"
-			tabindex="-1"
-			class="font-display text-xl font-semibold"
-		>
-			Stop after the current safe boundary?
-		</h2>
-		<p class="mt-3 text-sm text-base-content/65">
-			Stopping keeps completed changes. It does not roll them back. Use Undo after the job finishes
-			or stops.
-		</p>
-		<div class="modal-action">
-			<Button variant="ghost" disabled={stopOperation.isPending} onclick={() => stopDialog.close()}
-				>Keep working</Button
-			><Button variant="danger" loading={stopOperation.isPending} onclick={() => void stop()}
-				>Stop operation</Button
-			>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Cancel stopping management operation" disabled={stopOperation.isPending}
-			>close</button
-		>
-	</form>
-</dialog>
+<ConfirmDialog
+	bind:open={stopOpen}
+	title="Stop after the current safe boundary?"
+	message="Stopping keeps completed changes. It does not roll them back. Use Undo after the job finishes or stops."
+	confirmLabel="Stop operation"
+	cancelLabel="Keep working"
+	tone="danger"
+	focusTitle
+	pending={stopOperation.isPending}
+	onconfirm={stop}
+/>
 
-<dialog
-	bind:this={undoDialog}
-	class="modal"
-	aria-labelledby="undo-management-title"
-	onclose={() => undoOpener?.focus()}
-	oncancel={(event) => {
-		if (createUndo.isPending) event.preventDefault();
-	}}
+<ConfirmDialog
+	bind:open={undoOpen}
+	title="Generate an Undo preview?"
+	message="This does not immediately change files. A full preview will show restorable, changed, expired, and blocked items before a separate Apply confirmation."
+	confirmLabel="Generate Undo preview"
+	tone="warning"
+	icon={RotateCcw}
+	focusTitle
+	pending={createUndo.isPending}
+	canConfirm={undoAvailable}
+	onconfirm={previewUndo}
 >
-	<div class="modal-box max-w-md">
-		<p class="management-kicker">Operation-specific recovery</p>
-		<h2
-			bind:this={undoHeading}
-			id="undo-management-title"
-			tabindex="-1"
-			class="font-display text-xl font-semibold"
+	{#if operation}<p class="mt-2 text-xs text-base-content/55">{undoStatus}</p>{/if}
+	<div class="alert alert-info mt-3 text-sm">
+		<span
+			><strong>Undo is not baseline restore.</strong> It targets only this operation's completed changes.</span
 		>
-			Generate an Undo preview?
-		</h2>
-		<p class="mt-3 text-sm text-base-content/65">
-			This does not immediately change files. A full preview will show restorable, changed, expired,
-			and blocked items before a separate Apply confirmation.
-		</p>
-		{#if operation}<p class="mt-2 text-xs text-base-content/55">{undoStatus}</p>{/if}
-		<div class="mt-3 alert alert-info text-sm">
-			<RotateCcw class="h-5 w-5" /><span
-				><strong>Undo is not baseline restore.</strong> It targets only this operation's completed changes.</span
-			>
-		</div>
-		{#if undoError}<div class="alert alert-error mt-3 text-sm" role="alert">{undoError}</div>{/if}
-		<div class="modal-action">
-			<Button variant="ghost" disabled={createUndo.isPending} onclick={() => undoDialog.close()}
-				>Cancel</Button
-			><Button
-				variant="warning"
-				loading={createUndo.isPending}
-				disabled={!undoAvailable}
-				onclick={() => void previewUndo()}>Generate Undo preview</Button
-			>
-		</div>
 	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Cancel undo preview" disabled={createUndo.isPending}>close</button>
-	</form>
-</dialog>
+</ConfirmDialog>

@@ -34,6 +34,8 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
@@ -76,11 +78,8 @@
 		surviving_artist_id: string;
 		expected_revisions: Record<string, number>;
 	} | null>(null);
-	let mergeDialog: HTMLDialogElement;
-	let mergeHeading: HTMLHeadingElement;
-	let dismissDialog: HTMLDialogElement;
-	let dismissHeading: HTMLHeadingElement;
-	let actionOpener: HTMLElement | null = null;
+	let mergeOpen = $state(false);
+	let dismissOpen = $state(false);
 
 	const progressQuery = getArtistReconciliationProgressQuery(() => authStore.isAdmin);
 	const groupsQuery = getArtistDuplicateGroupsQuery(() => ({
@@ -194,10 +193,9 @@
 		};
 	}
 
-	async function openMerge(event: MouseEvent & { currentTarget: HTMLElement }): Promise<void> {
+	async function openMerge(): Promise<void> {
 		const request = mergeRequest();
 		if (!request) return;
-		actionOpener = event.currentTarget;
 		providerChoice = 'retain_survivor';
 		confirmed = false;
 		stalePreview = false;
@@ -209,8 +207,7 @@
 				...request,
 				provider_choice: providerChoice
 			});
-			mergeDialog.showModal();
-			mergeHeading.focus();
+			mergeOpen = true;
 		} catch {
 			previewResult = null;
 			previewRequest = null;
@@ -245,7 +242,7 @@
 				preview_token: previewResult.preview_token,
 				provider_choice: providerChoice
 			});
-			mergeDialog.close();
+			mergeOpen = false;
 			selectedGroupId = null;
 			updateUrl({ clearGroup: true });
 		} catch {
@@ -255,25 +252,14 @@
 		}
 	}
 
-	function openDismiss(event: MouseEvent & { currentTarget: HTMLElement }): void {
-		actionOpener = event.currentTarget;
-		dismissDialog.showModal();
-		dismissHeading.focus();
-	}
-
 	async function dismissGroup(): Promise<void> {
 		if (!detail) return;
-		try {
-			await dismissMutation.mutateAsync({
-				groupId: detail.id,
-				expectedMemberRevisions: detail.member_revisions
-			});
-			dismissDialog.close();
-			selectedGroupId = null;
-			updateUrl({ clearGroup: true });
-		} catch {
-			return;
-		}
+		await dismissMutation.mutateAsync({
+			groupId: detail.id,
+			expectedMemberRevisions: detail.member_revisions
+		});
+		selectedGroupId = null;
+		updateUrl({ clearGroup: true });
 	}
 
 	const previewArtist = createPreviewArtistMergeMutation();
@@ -572,13 +558,13 @@
 											variant="primary"
 											icon={Merge}
 											disabled={!survivingId || previewArtist.isPending}
-											onclick={(event) => void openMerge(event)}>Preview group merge</Button
+											onclick={() => void openMerge()}>Preview group merge</Button
 										>
 										<Button
 											variant="ghost"
 											icon={Split}
 											disabled={dismissMutation.isPending}
-											onclick={openDismiss}>Mark records as distinct</Button
+											onclick={() => (dismissOpen = true)}>Mark records as distinct</Button
 										>
 									</div>
 								{/if}
@@ -595,141 +581,100 @@
 	{/if}
 </section>
 
-<dialog
-	bind:this={mergeDialog}
-	class="modal"
-	aria-labelledby="artist-group-merge-title"
-	onclose={() => actionOpener?.focus()}
->
-	<div class="modal-box max-w-2xl">
-		<h2
-			bind:this={mergeHeading}
-			id="artist-group-merge-title"
-			tabindex="-1"
-			class="font-display text-xl font-bold"
-		>
-			Confirm artist group merge
-		</h2>
-		{#if stalePreview}
-			<div class="alert alert-warning mt-4">
-				<CircleAlert class="h-4 w-4" /> The records changed after preview. Close this dialog and create
-				a fresh preview.
-			</div>
-		{:else if previewResult}
-			<p class="mt-2 text-sm text-base-content/65">
-				{previewResult.aliases.length} retired IDs will remain aliases. Files, tags, artwork, and paths
-				are untouched.
-			</p>
-			<div class="mt-4 grid gap-3 sm:grid-cols-2" aria-label="Artist merge identities">
-				<div class="rounded-box border border-primary/25 bg-primary/5 p-3">
-					<p class="text-xs font-semibold uppercase tracking-wide text-primary">Chosen survivor</p>
-					{#if chosenSurvivor}
-						<p class="mt-1 font-semibold">{chosenSurvivor.name}</p>
-						<p class="break-all font-mono text-xs text-base-content/55">
-							{chosenSurvivor.id}
-						</p>
-						{#if chosenSurvivor.provider_mbid}
-							<p class="mt-1 break-all font-mono text-xs text-primary">
-								MusicBrainz {chosenSurvivor.provider_mbid}
-							</p>
-						{/if}
-					{/if}
-				</div>
-				<div class="rounded-box border border-base-content/10 bg-base-200/60 p-3">
-					<p class="text-xs font-semibold uppercase tracking-wide text-base-content/50">
-						Retired records · {retiredMembers.length}
-					</p>
-					<ul class="mt-1 space-y-1">
-						{#each retiredMembers as member (member.id)}
-							<li>
-								<span class="font-semibold">{member.name}</span>
-								<span class="block break-all font-mono text-xs text-base-content/55">
-									{member.id}
-								</span>
-							</li>
-						{/each}
-					</ul>
-				</div>
-			</div>
-			<dl class="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
-				{#each Object.entries(previewResult.reference_counts) as [kind, count] (kind)}
-					<div class="rounded-lg bg-base-200 p-2">
-						<dt class="text-xs text-base-content/50">{kind.replaceAll('_', ' ')}</dt>
-						<dd class="font-semibold">{count}</dd>
-					</div>
-				{/each}
-			</dl>
-			{#if previewResult.identity_conflicts.length}
-				<fieldset class="mt-4 rounded-box border border-warning/30 p-3">
-					<legend class="px-1 font-semibold">Provider identity conflict</legend>
-					<label class="mt-2 flex gap-2 text-sm"
-						><input
-							type="radio"
-							class="radio radio-sm"
-							name="provider-choice"
-							checked={providerChoice === 'retain_survivor'}
-							onchange={() => void chooseProvider('retain_survivor')}
-						/> Keep the chosen survivor's provider identity</label
-					>
-					<label class="mt-2 flex gap-2 text-sm"
-						><input
-							type="radio"
-							class="radio radio-sm"
-							name="provider-choice"
-							checked={providerChoice === 'detach'}
-							onchange={() => void chooseProvider('detach')}
-						/> Detach conflicting provider identities</label
-					>
-				</fieldset>
-			{/if}
-			<label class="mt-4 flex items-start gap-2 text-sm"
-				><input type="checkbox" class="checkbox checkbox-sm mt-0.5" bind:checked={confirmed} /> Merge
-				all records in this dossier and preserve retired IDs as aliases.</label
-			>
-		{/if}
-		<div class="modal-action">
-			<Button variant="ghost" onclick={() => mergeDialog.close()}>Cancel</Button>
-			<Button
-				variant="primary"
-				disabled={!previewResult || !confirmed || applyArtist.isPending || previewArtist.isPending}
-				onclick={() => void mergeArtists()}>Merge artists</Button
-			>
+<Modal bind:open={mergeOpen} title="Confirm artist group merge" size="lg" focusTitle>
+	{#if stalePreview}
+		<div class="alert alert-warning">
+			<CircleAlert class="h-4 w-4" /> The records changed after preview. Close this dialog and create
+			a fresh preview.
 		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close merge confirmation">close</button>
-	</form>
-</dialog>
-
-<dialog
-	bind:this={dismissDialog}
-	class="modal"
-	aria-labelledby="artist-group-dismiss-title"
-	onclose={() => actionOpener?.focus()}
->
-	<div class="modal-box max-w-md">
-		<h2
-			bind:this={dismissHeading}
-			id="artist-group-dismiss-title"
-			tabindex="-1"
-			class="font-display text-xl font-bold"
-		>
-			Keep these artists distinct?
-		</h2>
-		<p class="mt-3 text-sm text-base-content/65">
-			This dismisses the current record revisions as a candidate group. If any of these records
-			changes, the evidence can be reviewed again.
+	{:else if previewResult}
+		<p class="text-sm text-base-content/70">
+			{previewResult.aliases.length} retired IDs will remain aliases. Files, tags, artwork, and paths
+			are untouched.
 		</p>
-		<div class="modal-action">
-			<Button variant="ghost" onclick={() => dismissDialog.close()}>Cancel</Button>
-			<Button
-				variant="primary"
-				disabled={dismissMutation.isPending}
-				onclick={() => void dismissGroup()}>Mark as distinct</Button
-			>
+		<div class="mt-4 grid gap-3 sm:grid-cols-2" aria-label="Artist merge identities">
+			<div class="rounded-box border border-primary/25 bg-primary/5 p-3">
+				<p class="text-xs font-semibold uppercase tracking-wide text-primary">Chosen survivor</p>
+				{#if chosenSurvivor}
+					<p class="mt-1 font-semibold">{chosenSurvivor.name}</p>
+					<p class="break-all font-mono text-xs text-base-content/55">
+						{chosenSurvivor.id}
+					</p>
+					{#if chosenSurvivor.provider_mbid}
+						<p class="mt-1 break-all font-mono text-xs text-primary">
+							MusicBrainz {chosenSurvivor.provider_mbid}
+						</p>
+					{/if}
+				{/if}
+			</div>
+			<div class="rounded-box border border-base-content/10 bg-base-200/60 p-3">
+				<p class="text-xs font-semibold uppercase tracking-wide text-base-content/50">
+					Retired records · {retiredMembers.length}
+				</p>
+				<ul class="mt-1 space-y-1">
+					{#each retiredMembers as member (member.id)}
+						<li>
+							<span class="font-semibold">{member.name}</span>
+							<span class="block break-all font-mono text-xs text-base-content/55">
+								{member.id}
+							</span>
+						</li>
+					{/each}
+				</ul>
+			</div>
 		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close distinct confirmation">close</button>
-	</form>
-</dialog>
+		<dl class="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+			{#each Object.entries(previewResult.reference_counts) as [kind, count] (kind)}
+				<div class="rounded-lg bg-base-200 p-2">
+					<dt class="text-xs text-base-content/50">{kind.replaceAll('_', ' ')}</dt>
+					<dd class="font-semibold">{count}</dd>
+				</div>
+			{/each}
+		</dl>
+		{#if previewResult.identity_conflicts.length}
+			<fieldset class="mt-4 rounded-box border border-warning/30 p-3">
+				<legend class="px-1 font-semibold">Provider identity conflict</legend>
+				<label class="mt-2 flex gap-2 text-sm"
+					><input
+						type="radio"
+						class="radio radio-sm"
+						name="provider-choice"
+						checked={providerChoice === 'retain_survivor'}
+						onchange={() => void chooseProvider('retain_survivor')}
+					/> Keep the chosen survivor's provider identity</label
+				>
+				<label class="mt-2 flex gap-2 text-sm"
+					><input
+						type="radio"
+						class="radio radio-sm"
+						name="provider-choice"
+						checked={providerChoice === 'detach'}
+						onchange={() => void chooseProvider('detach')}
+					/> Detach conflicting provider identities</label
+				>
+			</fieldset>
+		{/if}
+		<label class="mt-4 flex items-start gap-2 text-sm"
+			><input type="checkbox" class="checkbox checkbox-sm mt-0.5" bind:checked={confirmed} /> Merge all
+			records in this dossier and preserve retired IDs as aliases.</label
+		>
+	{/if}
+	{#snippet actions()}
+		<Button variant="ghost" onclick={() => (mergeOpen = false)}>Cancel</Button>
+		<Button
+			variant="primary"
+			disabled={!previewResult || !confirmed || applyArtist.isPending || previewArtist.isPending}
+			onclick={() => void mergeArtists()}>Merge artists</Button
+		>
+	{/snippet}
+</Modal>
+
+<ConfirmDialog
+	bind:open={dismissOpen}
+	title="Keep these artists distinct?"
+	message="This dismisses the current record revisions as a candidate group. If any of these records changes, the evidence can be reviewed again."
+	confirmLabel="Mark as distinct"
+	focusTitle
+	pending={dismissMutation.isPending}
+	onconfirm={dismissGroup}
+/>

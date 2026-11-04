@@ -1,17 +1,7 @@
 <script lang="ts">
 	import '$lib/features/library-management/components/library-management.css';
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
-	import {
-		ArrowLeft,
-		ArrowRight,
-		Check,
-		FolderCog,
-		Search,
-		ShieldAlert,
-		Sparkles,
-		X
-	} from 'lucide-svelte';
+	import { ArrowLeft, ArrowRight, Check, Search, ShieldAlert, Sparkles, X } from 'lucide-svelte';
 
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
@@ -32,6 +22,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -60,8 +51,7 @@
 	}
 
 	let { mode = 'manage', roots, settings, policyRevision, onclose }: Props = $props();
-	let dialog: HTMLDialogElement;
-	let heading: HTMLHeadingElement;
+	let shown = $state(true);
 	let step = $state(1);
 	let selectionKind = $state<ManagementSelectionKind>('roots');
 	const initialRootIds = (): string[] => roots.map((root) => root.id);
@@ -136,10 +126,10 @@
 		seededProfileId = profile.id;
 	});
 
-	onMount(() => {
-		dialog.showModal();
-		heading.focus();
-	});
+	function close(): void {
+		shown = false;
+		onclose();
+	}
 
 	function selectKind(kind: ManagementSelectionKind): void {
 		selectionKind = kind;
@@ -319,7 +309,7 @@
 							overrides: overrides()
 						});
 			rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
-			dialog.close();
+			close();
 			await goto(withBasePath(`/library/management/previews/${encodeURIComponent(handle.job_id)}`));
 		} catch (error) {
 			localError = error instanceof Error ? error.message : 'Could not create the preview.';
@@ -352,41 +342,16 @@
 	}
 </script>
 
-<dialog
-	bind:this={dialog}
-	class="modal"
-	aria-labelledby="management-runner-title"
+<Modal
+	bind:open={shown}
+	size="sheet"
+	title={mode === 'baseline_restore' ? 'Restore original state' : 'Preview file organization'}
+	description="This creates a saved read-only preview. No music file changes."
+	focusTitle
+	dismissible={!pending}
 	{onclose}
-	oncancel={(event) => {
-		if (pending) event.preventDefault();
-	}}
 >
-	<div class="modal-box management-runner max-w-5xl p-0">
-		<header class="management-profile-editor__header">
-			<div>
-				<p class="management-kicker"><FolderCog class="h-3.5 w-3.5" /> Manual write planning</p>
-				<h2
-					bind:this={heading}
-					id="management-runner-title"
-					tabindex="-1"
-					class="font-display text-xl font-semibold"
-				>
-					{mode === 'baseline_restore' ? 'Restore original state' : 'Preview file organization'}
-				</h2>
-				<p class="mt-1 text-sm text-base-content/55">
-					This creates a saved read-only preview. No music file changes.
-				</p>
-			</div>
-			<IconButton
-				size="sm"
-				shape="square"
-				icon={X}
-				label="Close manual management runner"
-				disabled={pending}
-				onclick={() => dialog.close()}
-			/>
-		</header>
-
+	<div class="flex flex-col md:h-full md:min-h-0">
 		<div class="management-runner-progress" aria-label="Runner progress">
 			{#each progressSteps as value (value.step)}
 				<span data-state={step === value.step ? 'current' : step > value.step ? 'done' : 'waiting'}
@@ -396,8 +361,7 @@
 				>
 			{/each}
 		</div>
-
-		<div class="max-h-[68dvh] min-h-80 overflow-y-auto p-5 sm:p-6">
+		<div class="min-h-80 p-4 md:min-h-0 md:flex-1 md:overflow-y-auto md:p-6">
 			{#if step === 1}
 				<section class="space-y-4">
 					<div>
@@ -711,13 +675,14 @@
 					{localError}
 				</div>{/if}
 		</div>
-
-		<footer class="management-profile-editor__footer">
+	</div>
+	{#snippet actions()}
+		<div class="flex items-center justify-between gap-2">
 			<Button variant="ghost" icon={ArrowLeft} disabled={step === 1 || pending} onclick={back}
 				>Back</Button
 			>
 			<div class="flex gap-2">
-				<Button variant="ghost" disabled={pending} onclick={() => dialog.close()}>Cancel</Button
+				<Button variant="ghost" disabled={pending} onclick={close}>Cancel</Button
 				>{#if step < 4}<Button
 						variant="warning"
 						icon={ArrowRight}
@@ -732,12 +697,9 @@
 						onclick={() => void generate()}>Generate preview</Button
 					>{/if}
 			</div>
-		</footer>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close management runner" disabled={pending}>close</button>
-	</form>
-</dialog>
+		</div>
+	{/snippet}
+</Modal>
 
 <style>
 	.management-review-grid span {
@@ -746,11 +708,6 @@
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
 		color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
-	}
-
-	.management-runner {
-		border: 1px solid color-mix(in oklab, var(--color-library-manage) 25%, transparent);
-		background: var(--color-base-100);
 	}
 
 	.management-runner-progress {

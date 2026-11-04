@@ -3,6 +3,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 	import type { AlbumDetailView, TrackView } from '$lib/features/library/queries/types';
 	import type { MembershipPreviewResponse } from '$lib/features/library-management/queries/LibraryOperationsTypes';
 	import {
@@ -21,9 +22,7 @@
 		tracks: TrackView[];
 	}
 	let { album, tracks }: Props = $props();
-	let dialog: HTMLDialogElement;
-	let dialogHeading: HTMLHeadingElement;
-	let opener: HTMLButtonElement | null = null;
+	let shown = $state(false);
 	let action = $state<Action>('split');
 	let selectedTrackIds = $state<string[]>([]);
 	let targetSearch = $state('');
@@ -69,8 +68,7 @@
 					: resetApply
 	);
 
-	function open(next: Action, event: MouseEvent & { currentTarget: HTMLButtonElement }): void {
-		opener = event.currentTarget;
+	function open(next: Action): void {
 		action = next;
 		selectedTrackIds = next === 'reset' || next === 'merge' ? tracks.map((track) => track.id) : [];
 		targetSearch = '';
@@ -81,8 +79,7 @@
 		stalePreview = false;
 		previewMutation.reset();
 		previewResult = null;
-		dialog.showModal();
-		dialogHeading.focus();
+		shown = true;
 	}
 
 	function toggleTrack(trackId: string, selected: boolean): void {
@@ -142,7 +139,7 @@
 				request: request(),
 				previewToken: previewResult.preview_token
 			});
-			dialog.close();
+			shown = false;
 		} catch {
 			confirmed = false;
 			stalePreview = true;
@@ -184,233 +181,218 @@
 		Album organization <ChevronDown class="h-3.5 w-3.5" aria-hidden="true" />
 	</Button>
 	<ul class="menu dropdown-content z-30 mt-2 w-64 rounded-box bg-base-100 p-2 shadow-xl">
-		<li><button onclick={(event) => open('split', event)}>Split album...</button></li>
+		<li><button onclick={() => open('split')}>Split album...</button></li>
 		<li>
-			<button onclick={(event) => open('merge', event)}>Merge with another local album...</button>
+			<button onclick={() => open('merge')}>Merge with another local album...</button>
 		</li>
-		<li><button onclick={(event) => open('move', event)}>Move tracks...</button></li>
-		<li><button onclick={(event) => open('reset', event)}>Reset manual grouping...</button></li>
+		<li><button onclick={() => open('move')}>Move tracks...</button></li>
+		<li><button onclick={() => open('reset')}>Reset manual grouping...</button></li>
 	</ul>
 </details>
 
-<dialog
-	bind:this={dialog}
-	class="modal"
-	aria-labelledby="album-organization-title"
-	onclose={() => opener?.focus()}
+<Modal
+	bind:open={shown}
+	{title}
+	description="This changes local album membership only. It will not move files or rewrite tags."
+	size="xl"
+	focusTitle
 >
-	<div class="modal-box max-w-4xl">
-		<h2
-			bind:this={dialogHeading}
-			id="album-organization-title"
-			tabindex="-1"
-			class="text-xl font-bold"
-		>
-			{title}
-		</h2>
-		<p class="mt-1 text-sm text-base-content/60">
-			This changes local album membership only. It will not move files or rewrite tags.
-		</p>
-		{#if stalePreview}
-			<div class="alert alert-warning mt-4 text-sm">
-				The local grouping changed after this preview. Review the current tracks and preview the
-				change again.
-			</div>
-		{/if}
-		{#if previewMutation.isError}
-			<div class="alert alert-error mt-4 text-sm">
-				{previewError} Nothing has been changed.
-			</div>
-		{/if}
+	{#if stalePreview}
+		<div class="alert alert-warning text-sm">
+			The local grouping changed after this preview. Review the current tracks and preview the
+			change again.
+		</div>
+	{/if}
+	{#if previewMutation.isError}
+		<div class="alert alert-error mt-4 text-sm">
+			{previewError} Nothing has been changed.
+		</div>
+	{/if}
 
-		{#if needsTarget}
-			<section class="mt-5" aria-labelledby="target-album-title">
-				<h3 id="target-album-title" class="font-semibold">Choose the other local album</h3>
-				<Input
-					label="Search local albums"
-					class="mt-2 w-full"
-					placeholder="Search local albums"
-					bind:value={targetSearch}
-				/>
-				{#if targetSearch.trim().length >= 2}
-					<div class="mt-2 max-h-44 overflow-auto rounded-box border border-base-content/10 p-2">
-						{#each (targetAlbums.data?.items ?? []).filter((item) => item.id !== album.id) as item (item.id)}
-							<label
-								class="flex cursor-pointer items-center gap-3 rounded-lg p-2 hover:bg-base-200"
-							>
-								<input
-									type="radio"
-									name="target-local-album"
-									class="radio radio-sm"
-									checked={targetAlbumId === item.id}
-									onchange={() => {
-										targetAlbumId = item.id;
-										previewMutation.reset();
-										previewResult = null;
-									}}
-								/>
-								<span
-									><strong>{item.title}</strong><span class="block text-xs text-base-content/55"
-										>{item.artist_name}</span
-									></span
-								>
-							</label>
-						{/each}
-					</div>
-				{/if}
-			</section>
-		{/if}
-
-		{#if action === 'split'}
-			<label class="mt-5 block">
-				<span class="font-semibold">New album title</span>
-				<span class="block text-xs text-base-content/55">Leave empty to keep "{album.title}".</span>
-				<Input
-					label="New album title"
-					class="mt-2 w-full"
-					placeholder={album.title}
-					bind:value={newTitle}
-					oninput={() => {
-						previewMutation.reset();
-						previewResult = null;
-					}}
-				/>
-			</label>
-		{/if}
-
-		{#if action === 'split' || action === 'move'}
-			<fieldset class="mt-5">
-				<legend class="font-semibold">Tracks included</legend>
-				<div
-					class="mt-2 grid max-h-64 gap-1 overflow-auto rounded-box border border-base-content/10 p-2 md:grid-cols-2"
-				>
-					{#each tracks as track (track.id)}
-						<label class="flex cursor-pointer items-center gap-2 rounded-lg p-2 hover:bg-base-200">
+	{#if needsTarget}
+		<section class="mt-5" aria-labelledby="target-album-title">
+			<h3 id="target-album-title" class="font-semibold">Choose the other local album</h3>
+			<Input
+				label="Search local albums"
+				class="mt-2 w-full"
+				placeholder="Search local albums"
+				bind:value={targetSearch}
+			/>
+			{#if targetSearch.trim().length >= 2}
+				<div class="mt-2 max-h-44 overflow-auto rounded-box border border-base-content/10 p-2">
+					{#each (targetAlbums.data?.items ?? []).filter((item) => item.id !== album.id) as item (item.id)}
+						<label class="flex cursor-pointer items-center gap-3 rounded-lg p-2 hover:bg-base-200">
 							<input
-								type="checkbox"
-								class="checkbox checkbox-sm"
-								checked={selectedTrackIds.includes(track.id)}
-								onchange={(event) => toggleTrack(track.id, event.currentTarget.checked)}
+								type="radio"
+								name="target-local-album"
+								class="radio radio-sm"
+								checked={targetAlbumId === item.id}
+								onchange={() => {
+									targetAlbumId = item.id;
+									previewMutation.reset();
+									previewResult = null;
+								}}
 							/>
-							<span class="truncate">{track.disc_number}.{track.track_number} {track.title}</span>
+							<span
+								><strong>{item.title}</strong><span class="block text-xs text-base-content/55"
+									>{item.artist_name}</span
+								></span
+							>
 						</label>
 					{/each}
 				</div>
-			</fieldset>
-		{:else if action === 'merge'}
-			<p class="mt-5 text-sm text-base-content/70">
-				All {tracks.length} tracks of "{album.title}" move to the album you pick, and this album
-				folds into it. Old links to this album keep working.
-			</p>
-		{:else}
-			<p class="mt-5 text-sm text-base-content/70">
-				Every track of "{album.title}" goes back to where a library scan would put it, using its
-				tags and folder. The preview shows where each one lands.
-			</p>
-		{/if}
+			{/if}
+		</section>
+	{/if}
 
-		{#if previewResult}
-			{@const result = previewResult}
-			<Card as="section" padding="md" class="mt-5" aria-label="Preview">
-				<h3 class="font-semibold">Preview</h3>
-				<ul class="mt-2 space-y-2 text-sm">
-					{#each result.automatic_groups as group, index (group.local_album_id ?? `new-${index}`)}
-						<li>
-							<span class="font-semibold"
-								>{group.track_ids.length}
-								{group.track_ids.length === 1 ? 'track' : 'tracks'}</span
-							>
-							go to
-							<strong>{group.title}</strong>
-							{#if group.album_artist_name}<span class="text-base-content/60">
-									by {group.album_artist_name}</span
-								>{/if}
-							<span class="badge badge-ghost badge-sm ml-1"
-								>{group.created ? 'new album' : 'existing album'}</span
-							>
-							{#if group.track_ids.length <= 6}
-								<span class="block text-xs text-base-content/55">
-									{group.track_ids.map(trackTitle).join(', ')}
-								</span>
+	{#if action === 'split'}
+		<label class="mt-5 block">
+			<span class="font-semibold">New album title</span>
+			<span class="block text-xs text-base-content/55">Leave empty to keep "{album.title}".</span>
+			<Input
+				label="New album title"
+				class="mt-2 w-full"
+				placeholder={album.title}
+				bind:value={newTitle}
+				oninput={() => {
+					previewMutation.reset();
+					previewResult = null;
+				}}
+			/>
+		</label>
+	{/if}
+
+	{#if action === 'split' || action === 'move'}
+		<fieldset class="mt-5">
+			<legend class="font-semibold">Tracks included</legend>
+			<div
+				class="mt-2 grid max-h-64 gap-1 overflow-auto rounded-box border border-base-content/10 p-2 md:grid-cols-2"
+			>
+				{#each tracks as track (track.id)}
+					<label class="flex cursor-pointer items-center gap-2 rounded-lg p-2 hover:bg-base-200">
+						<input
+							type="checkbox"
+							class="checkbox checkbox-sm"
+							checked={selectedTrackIds.includes(track.id)}
+							onchange={(event) => toggleTrack(track.id, event.currentTarget.checked)}
+						/>
+						<span class="truncate">{track.disc_number}.{track.track_number} {track.title}</span>
+					</label>
+				{/each}
+			</div>
+		</fieldset>
+	{:else if action === 'merge'}
+		<p class="mt-5 text-sm text-base-content/70">
+			All {tracks.length} tracks of "{album.title}" move to the album you pick, and this album folds
+			into it. Old links to this album keep working.
+		</p>
+	{:else}
+		<p class="mt-5 text-sm text-base-content/70">
+			Every track of "{album.title}" goes back to where a library scan would put it, using its tags
+			and folder. The preview shows where each one lands.
+		</p>
+	{/if}
+
+	{#if previewResult}
+		{@const result = previewResult}
+		<Card as="section" padding="md" class="mt-5" aria-label="Preview">
+			<h3 class="font-semibold">Preview</h3>
+			<ul class="mt-2 space-y-2 text-sm">
+				{#each result.automatic_groups as group, index (group.local_album_id ?? `new-${index}`)}
+					<li>
+						<span class="font-semibold"
+							>{group.track_ids.length}
+							{group.track_ids.length === 1 ? 'track' : 'tracks'}</span
+						>
+						go to
+						<strong>{group.title}</strong>
+						{#if group.album_artist_name}<span class="text-base-content/60">
+								by {group.album_artist_name}</span
+							>{/if}
+						<span class="badge badge-ghost badge-sm ml-1"
+							>{group.created ? 'new album' : 'existing album'}</span
+						>
+						{#if group.track_ids.length <= 6}
+							<span class="block text-xs text-base-content/55">
+								{group.track_ids.map(trackTitle).join(', ')}
+							</span>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+			{#if result.aliases.length}
+				<p class="mt-2 text-sm text-base-content/70">
+					{result.aliases.length === 1 ? 'One album' : `${result.aliases.length} albums`} will be left
+					empty and fold into the album above. Links to it keep working.
+				</p>
+			{/if}
+			{#if result.edition_changes.length}
+				<h4 class="mt-4 text-sm font-semibold">Editions</h4>
+				<ul class="mt-1 space-y-1 text-sm">
+					{#each result.edition_changes as change, index (`${change.local_album_id}-${change.change}-${index}`)}
+						<li class={editionTone[change.change] ?? ''}>
+							<strong>{change.album_title || 'New album'}:</strong>
+							{change.reason.message}
+							{#if change.change === 'cleared'}
+								<span class="block text-xs text-base-content/60">{change.reason.action}</span>
 							{/if}
 						</li>
 					{/each}
 				</ul>
-				{#if result.aliases.length}
-					<p class="mt-2 text-sm text-base-content/70">
-						{result.aliases.length === 1 ? 'One album' : `${result.aliases.length} albums`} will be left
-						empty and fold into the album above. Links to it keep working.
-					</p>
-				{/if}
-				{#if result.edition_changes.length}
-					<h4 class="mt-4 text-sm font-semibold">Editions</h4>
-					<ul class="mt-1 space-y-1 text-sm">
-						{#each result.edition_changes as change, index (`${change.local_album_id}-${change.change}-${index}`)}
-							<li class={editionTone[change.change] ?? ''}>
-								<strong>{change.album_title || 'New album'}:</strong>
-								{change.reason.message}
-								{#if change.change === 'cleared'}
-									<span class="block text-xs text-base-content/60">{change.reason.action}</span>
-								{/if}
-							</li>
-						{/each}
-					</ul>
-				{/if}
-				{#if result.identity_conflicts.length}
-					<div class="alert alert-warning mt-3 text-sm">
-						<div class="w-full">
-							<p>
-								These albums are matched to different editions. Choose what the album that receives
-								the tracks keeps; the preview updates.
-							</p>
-							<label class="mt-2 flex items-center gap-2"
-								><input
-									type="radio"
-									name="identity-choice"
-									class="radio radio-sm"
-									checked={identityChoice === 'detach'}
-									onchange={() => chooseIdentity('detach')}
-								/> Drop all of them and let DroppedNeedle identify the album again</label
-							>
-							<label class="mt-2 flex items-center gap-2"
-								><input
-									type="radio"
-									name="identity-choice"
-									class="radio radio-sm"
-									checked={identityChoice === 'retain_manual'}
-									onchange={() => chooseIdentity('retain_manual')}
-								/> Keep the edition of the album that receives the tracks</label
-							>
-						</div>
-					</div>
-				{/if}
-				<label class="mt-4 flex items-start gap-2 text-sm">
-					<input type="checkbox" class="checkbox checkbox-sm mt-0.5" bind:checked={confirmed} />
-					<span>I understand this changes local grouping and preserves files and tags.</span>
-				</label>
-			</Card>
-		{/if}
-
-		<div class="modal-action">
-			<form method="dialog"><Button type="submit" variant="ghost">Cancel</Button></form>
-			{#if previewResult}
-				<Button
-					variant="primary"
-					disabled={!confirmed || applyMutation.isPending}
-					onclick={() => void apply()}
-				>
-					Apply {title.toLowerCase()}
-				</Button>
-			{:else}
-				<Button
-					variant="primary"
-					disabled={!canPreview || previewMutation.isPending}
-					onclick={() => void preview()}
-				>
-					Preview changes
-				</Button>
 			{/if}
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop"><button>close</button></form>
-</dialog>
+			{#if result.identity_conflicts.length}
+				<div class="alert alert-warning mt-3 text-sm">
+					<div class="w-full">
+						<p>
+							These albums are matched to different editions. Choose what the album that receives
+							the tracks keeps; the preview updates.
+						</p>
+						<label class="mt-2 flex items-center gap-2"
+							><input
+								type="radio"
+								name="identity-choice"
+								class="radio radio-sm"
+								checked={identityChoice === 'detach'}
+								onchange={() => chooseIdentity('detach')}
+							/> Drop all of them and let DroppedNeedle identify the album again</label
+						>
+						<label class="mt-2 flex items-center gap-2"
+							><input
+								type="radio"
+								name="identity-choice"
+								class="radio radio-sm"
+								checked={identityChoice === 'retain_manual'}
+								onchange={() => chooseIdentity('retain_manual')}
+							/> Keep the edition of the album that receives the tracks</label
+						>
+					</div>
+				</div>
+			{/if}
+			<label class="mt-4 flex items-start gap-2 text-sm">
+				<input type="checkbox" class="checkbox checkbox-sm mt-0.5" bind:checked={confirmed} />
+				<span>I understand this changes local grouping and preserves files and tags.</span>
+			</label>
+		</Card>
+	{/if}
+
+	{#snippet actions()}
+		<Button variant="ghost" onclick={() => (shown = false)}>Cancel</Button>
+		{#if previewResult}
+			<Button
+				variant="primary"
+				disabled={!confirmed || applyMutation.isPending}
+				onclick={() => void apply()}
+			>
+				Apply {title.toLowerCase()}
+			</Button>
+		{:else}
+			<Button
+				variant="primary"
+				disabled={!canPreview || previewMutation.isPending}
+				onclick={() => void preview()}
+			>
+				Preview changes
+			</Button>
+		{/if}
+	{/snippet}
+</Modal>

@@ -11,6 +11,7 @@
 	} from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getLibraryActivityQuery } from '$lib/features/library-management/queries/LibraryActivityQueries.svelte';
 	import {
@@ -78,9 +79,7 @@
 			? (scan.total - scan.processed) / throughput
 			: null
 	);
-	let stopDialog: HTMLDialogElement;
-	let stopHeading: HTMLHeadingElement;
-	let stopOpener: HTMLElement | null = null;
+	let stopOpen = $state(false);
 	let workDialogOpen = $state(false);
 	let workKind = $state<'rescan_files' | 'policy_reconcile' | 'retry_identification'>(
 		'rescan_files'
@@ -281,11 +280,7 @@
 								resumeRun
 									.mutateAsync({ runId: activeRun.id, expectedRevision: activeRun.row_revision })
 									.catch(() => undefined)}
-							onstop={(opener) => {
-								stopOpener = opener;
-								stopDialog.showModal();
-								stopHeading.focus();
-							}}
+							onstop={() => (stopOpen = true)}
 						/>
 					{/if}
 				</div>
@@ -557,44 +552,24 @@
 		workKind === 'retry_identification' ? Promise.resolve() : startRun(workKind, scopeIds)}
 />
 
-<dialog
-	bind:this={stopDialog}
-	class="modal"
-	aria-labelledby="stop-scan-title"
-	onclose={() => stopOpener?.focus()}
->
-	<div class="modal-box max-w-md">
-		<h2 bind:this={stopHeading} id="stop-scan-title" tabindex="-1" class="text-lg font-bold">
-			Stop this scan?
-		</h2>
-		<p class="mt-3 text-sm text-base-content/70">
-			Files already indexed will stay available. Unfinished work is discarded; the next scan
-			compares the library again.
-		</p>
-		<div class="modal-action">
-			<Button variant="ghost" onclick={() => stopDialog.close()}>Keep scanning</Button><Button
-				variant="danger"
-				loading={stopRun.isPending}
-				disabled={!activeRun}
-				onclick={async () => {
-					try {
-						if (activeRun)
-							await stopRun.mutateAsync({
-								runId: activeRun.id,
-								expectedRevision: activeRun.row_revision
-							});
-					} catch {
-						return;
-					}
-					stopDialog.close();
-				}}>Stop scan</Button
-			>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close stop dialog">close</button>
-	</form>
-</dialog>
+<ConfirmDialog
+	bind:open={stopOpen}
+	title="Stop this scan?"
+	message="Files already indexed will stay available. Unfinished work is discarded; the next scan compares the library again."
+	confirmLabel="Stop scan"
+	cancelLabel="Keep scanning"
+	tone="danger"
+	focusTitle
+	pending={stopRun.isPending}
+	canConfirm={Boolean(activeRun)}
+	onconfirm={async () => {
+		if (activeRun)
+			await stopRun.mutateAsync({
+				runId: activeRun.id,
+				expectedRevision: activeRun.row_revision
+			});
+	}}
+/>
 
 <style>
 	.library-scanning-schedule {

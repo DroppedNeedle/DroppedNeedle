@@ -147,7 +147,7 @@ describe('TagEditor.svelte', () => {
 
 	it('defaults to a local override and submits list-valued fields to a durable preview', async () => {
 		await renderEditor();
-		await expect.element(page.getByText('Staged metadata edit')).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'Edit tags for Airbag' })).toHaveFocus();
 		await expect
 			.element(page.getByRole('button', { name: /Save as local override/ }))
 			.toHaveAttribute('aria-pressed', 'true');

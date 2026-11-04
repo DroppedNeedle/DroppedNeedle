@@ -2,6 +2,8 @@
 	import { ShieldCheck, Wrench } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 	import OperationJobStrip from './OperationJobStrip.svelte';
 	import {
 		getLibraryRepairEstimateQuery,
@@ -22,10 +24,7 @@
 	const policyTreeQuery = getLibraryPolicyTreeQuery();
 	const createRepair = createLibraryRepairMutation();
 	const applyRepair = createApplyLibraryRepairMutation();
-	let startDialog: HTMLDialogElement;
-	let applyDialog: HTMLDialogElement;
-	let startHeading: HTMLHeadingElement;
-	let applyHeading: HTMLHeadingElement;
+	let applyOpen = $state(false);
 	let selected = $state<OperationResponse | null>(null);
 	let startOpen = $state(false);
 	let showOlder = $state(false);
@@ -64,8 +63,6 @@
 		startOpen = true;
 		scopeMode = 'all';
 		selectedRootIds = [];
-		startDialog.showModal();
-		startHeading.focus();
 	}
 
 	function chooseSelectedRoots(): void {
@@ -95,8 +92,7 @@
 
 	function openApply(repair: OperationResponse): void {
 		selected = repair;
-		applyDialog.showModal();
-		applyHeading.focus();
+		applyOpen = true;
 	}
 
 	async function startCheck(): Promise<void> {
@@ -105,20 +101,15 @@
 		} catch {
 			return;
 		}
-		startDialog.close();
+		startOpen = false;
 	}
 
 	async function applySelected(): Promise<void> {
 		if (!selected) return;
-		try {
-			await applyRepair.mutateAsync({
-				jobId: selected.id,
-				expectedRevision: selected.row_revision
-			});
-		} catch {
-			return;
-		}
-		applyDialog.close();
+		await applyRepair.mutateAsync({
+			jobId: selected.id,
+			expectedRevision: selected.row_revision
+		});
 	}
 
 	function visibleState(repair: OperationResponse): string {
@@ -328,130 +319,103 @@
 	{/if}
 </Card>
 
-<dialog
-	bind:this={startDialog}
-	class="modal"
-	aria-labelledby="repair-start-title"
-	onclose={() => (startOpen = false)}
->
-	<div class="modal-box max-w-lg">
-		<h2
-			bind:this={startHeading}
-			id="repair-start-title"
-			tabindex="-1"
-			class="flex items-center gap-2 text-lg font-bold"
+<Modal bind:open={startOpen} title="Check existing matches" icon={ShieldCheck} focusTitle>
+	<p class="text-sm text-base-content/70">
+		Check current album identities against the latest matching rules. This scan does not change your
+		library or files.
+	</p>
+	<fieldset class="mt-4 space-y-2">
+		<legend class="text-sm font-semibold">Scope</legend>
+		<label
+			class="flex cursor-pointer items-center gap-2 rounded-box border border-base-content/10 p-3 text-sm"
 		>
-			<ShieldCheck class="h-5 w-5 text-primary" /> Check existing matches
-		</h2>
-		<p class="mt-3 text-sm text-base-content/70">
-			Check current album identities against the latest matching rules. This scan does not change
-			your library or files.
-		</p>
-		<fieldset class="mt-4 space-y-2">
-			<legend class="text-sm font-semibold">Scope</legend>
-			<label
-				class="flex cursor-pointer items-center gap-2 rounded-box border border-base-content/10 p-3 text-sm"
+			<input
+				type="radio"
+				class="radio radio-sm"
+				name="repair-scope"
+				checked={scopeMode === 'all'}
+				onchange={() => (scopeMode = 'all')}
+			/>
+			<span
+				><strong>Whole library</strong><span class="block text-xs text-base-content/55"
+					>Check every imported identity.</span
+				></span
 			>
-				<input
-					type="radio"
-					class="radio radio-sm"
-					name="repair-scope"
-					checked={scopeMode === 'all'}
-					onchange={() => (scopeMode = 'all')}
-				/>
-				<span
-					><strong>Whole library</strong><span class="block text-xs text-base-content/55"
-						>Check every imported identity.</span
-					></span
-				>
-			</label>
-			<label
-				class="flex cursor-pointer items-center gap-2 rounded-box border border-base-content/10 p-3 text-sm"
+		</label>
+		<label
+			class="flex cursor-pointer items-center gap-2 rounded-box border border-base-content/10 p-3 text-sm"
+		>
+			<input
+				type="radio"
+				class="radio radio-sm"
+				name="repair-scope"
+				checked={scopeMode === 'selected'}
+				onchange={chooseSelectedRoots}
+			/>
+			<span
+				><strong>Selected roots</strong><span class="block text-xs text-base-content/55"
+					>Limit this check to chosen library roots.</span
+				></span
 			>
-				<input
-					type="radio"
-					class="radio radio-sm"
-					name="repair-scope"
-					checked={scopeMode === 'selected'}
-					onchange={chooseSelectedRoots}
-				/>
-				<span
-					><strong>Selected roots</strong><span class="block text-xs text-base-content/55"
-						>Limit this check to chosen library roots.</span
-					></span
-				>
-			</label>
-			{#if scopeMode === 'selected'}
-				<div class="ml-4 space-y-1 border-l border-base-content/15 pl-3">
-					{#each roots as root (root.id)}
-						<label class="flex items-center gap-2 py-1 text-sm" class:opacity-50={!root.available}>
-							<input
-								type="checkbox"
-								class="checkbox checkbox-sm"
-								checked={selectedRootIds.includes(root.id)}
-								disabled={!root.available}
-								onchange={(event) => toggleRoot(root.id, event.currentTarget.checked)}
-							/>
-							{root.label}{#if !root.available}
-								<span class="text-xs">Unavailable</span>{/if}
-						</label>
-					{/each}
-				</div>
-			{/if}
-		</fieldset>
-		<div class="mt-3 rounded-box bg-base-200 p-3 text-sm" aria-live="polite">
-			{#if estimateQuery.isLoading}
-				<span class="skeleton block h-5 w-48"></span>
-			{:else if estimateQuery.isError}
-				<span class="text-error">Could not estimate this check.</span>
-			{:else if estimateQuery.data}
-				<strong>{estimateQuery.data.identity_count.toLocaleString()} identities</strong> will be
-				checked.
-				<span class="mt-1 block text-xs text-base-content/60">
-					{estimateQuery.data.queued_repair_count === 0
-						? 'No other repair checks are waiting.'
-						: `${estimateQuery.data.queued_repair_count.toLocaleString()} other repair checks are queued or active.`}
-					This is a dry run and joins the repair work queue.
-				</span>
-			{/if}
-		</div>
-		<div class="modal-action">
-			<Button variant="ghost" onclick={() => startDialog.close()}>Cancel</Button>
-			<Button
-				variant="primary"
-				loading={createRepair.isPending}
-				disabled={estimateQuery.isLoading || !estimateQuery.data}
-				onclick={() => void startCheck()}>Start check</Button
-			>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close repair dialog">close</button>
-	</form>
-</dialog>
-
-<dialog bind:this={applyDialog} class="modal" aria-labelledby="repair-apply-title">
-	<div class="modal-box max-w-lg">
-		<h2 bind:this={applyHeading} id="repair-apply-title" tabindex="-1" class="text-lg font-bold">
-			Apply safe identity repairs?
-		</h2>
-		<p class="mt-3 text-sm text-base-content/70">
-			External identities will be removed from these albums. Local files, album IDs, playlists, and
-			playback will stay unchanged.
-		</p>
-		{#if selected?.repair_summary}
-			<p class="mt-3 rounded-box bg-base-200 p-3 font-semibold">
-				{selected.repair_summary.estimated_apply_changes.toLocaleString()} identities are eligible.
-			</p>
+		</label>
+		{#if scopeMode === 'selected'}
+			<div class="ml-4 space-y-1 border-l border-base-content/15 pl-3">
+				{#each roots as root (root.id)}
+					<label class="flex items-center gap-2 py-1 text-sm" class:opacity-50={!root.available}>
+						<input
+							type="checkbox"
+							class="checkbox checkbox-sm"
+							checked={selectedRootIds.includes(root.id)}
+							disabled={!root.available}
+							onchange={(event) => toggleRoot(root.id, event.currentTarget.checked)}
+						/>
+						{root.label}{#if !root.available}
+							<span class="text-xs">Unavailable</span>{/if}
+					</label>
+				{/each}
+			</div>
 		{/if}
-		<div class="modal-action">
-			<Button variant="ghost" onclick={() => applyDialog.close()}>Cancel</Button>
-			<Button variant="warning" loading={applyRepair.isPending} onclick={() => void applySelected()}
-				>Apply safe repairs</Button
-			>
-		</div>
+	</fieldset>
+	<div class="mt-3 rounded-box bg-base-200 p-3 text-sm" aria-live="polite">
+		{#if estimateQuery.isLoading}
+			<span class="skeleton block h-5 w-48"></span>
+		{:else if estimateQuery.isError}
+			<span class="text-error">Could not estimate this check.</span>
+		{:else if estimateQuery.data}
+			<strong>{estimateQuery.data.identity_count.toLocaleString()} identities</strong> will be
+			checked.
+			<span class="mt-1 block text-xs text-base-content/60">
+				{estimateQuery.data.queued_repair_count === 0
+					? 'No other repair checks are waiting.'
+					: `${estimateQuery.data.queued_repair_count.toLocaleString()} other repair checks are queued or active.`}
+				This is a dry run and joins the repair work queue.
+			</span>
+		{/if}
 	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close apply dialog">close</button>
-	</form>
-</dialog>
+	{#snippet actions()}
+		<Button variant="ghost" onclick={() => (startOpen = false)}>Cancel</Button>
+		<Button
+			variant="primary"
+			loading={createRepair.isPending}
+			disabled={estimateQuery.isLoading || !estimateQuery.data}
+			onclick={() => void startCheck()}>Start check</Button
+		>
+	{/snippet}
+</Modal>
+
+<ConfirmDialog
+	bind:open={applyOpen}
+	title="Apply safe identity repairs?"
+	message="External identities will be removed from these albums. Local files, album IDs, playlists, and playback will stay unchanged."
+	confirmLabel="Apply safe repairs"
+	tone="warning"
+	focusTitle
+	pending={applyRepair.isPending}
+	onconfirm={applySelected}
+>
+	{#if selected?.repair_summary}
+		<p class="mt-3 rounded-box bg-base-200 p-3 font-semibold">
+			{selected.repair_summary.estimated_apply_changes.toLocaleString()} identities are eligible.
+		</p>
+	{/if}
+</ConfirmDialog>

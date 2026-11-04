@@ -531,7 +531,7 @@ describe('LibraryManagementControlRoom', () => {
 		await expect
 			.element(page.getByRole('heading', { name: 'Discard this preview?' }))
 			.toHaveFocus();
-		await expect.element(page.getByText(/No music file, tag, baseline/)).toBeVisible();
+		await expect.element(page.getByText(/No\s+music file, tag, baseline/)).toBeVisible();
 		await page.getByRole('button', { name: 'Discard preview', exact: true }).click();
 
 		expect(h.discard).toHaveBeenCalledWith({

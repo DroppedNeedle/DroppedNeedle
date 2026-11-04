@@ -232,7 +232,7 @@
 			{jobId}
 			{roots}
 			reasonLabel={(code) => qualifiedManagementReasonLabel(code)}
-			onresolve={(item, collision, opener) => collisionDialog?.open(item, collision, opener)}
+			onresolve={(item, collision) => collisionDialog?.open(item, collision)}
 		/>
 	{/if}
 {/snippet}

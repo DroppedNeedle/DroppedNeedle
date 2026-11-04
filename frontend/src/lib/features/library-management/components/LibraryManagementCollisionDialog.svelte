@@ -6,7 +6,7 @@
 <script lang="ts">
 	import '$lib/features/library-management/components/library-management.css';
 	import { goto } from '$app/navigation';
-	import { HardDrive, X } from 'lucide-svelte';
+	import { HardDrive } from 'lucide-svelte';
 
 	import { createLibraryManagementDuplicateResolutionMutation } from '$lib/features/library-management/queries/LibraryManagementMutations.svelte';
 	import { rememberLibraryManagementPreviewToken } from '$lib/features/library-management/queries/LibraryManagementPreviewTokens';
@@ -16,8 +16,8 @@
 		LibraryManagementPreviewDetailResponse
 	} from '$lib/features/library-management/queries/types';
 	import Button from '$lib/ui/Button.svelte';
-	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { createUuid } from '$lib/utils/uuid';
 	import {
@@ -41,7 +41,7 @@
 		collision: ManagementCollision;
 	}
 
-	const actions: Array<{
+	const resolutions: Array<{
 		value: DuplicateResolutionAction;
 		title: string;
 		detail: string;
@@ -73,9 +73,7 @@
 		}
 	];
 
-	let dialog: HTMLDialogElement;
-	let heading: HTMLHeadingElement;
-	let opener: HTMLElement | null = null;
+	let shown = $state(false);
 	let selection = $state<Selection | null>(null);
 	let action = $state<DuplicateResolutionAction | ''>('');
 	let alternateRelativePath = $state('');
@@ -92,18 +90,12 @@
 		)
 	);
 
-	export function open(
-		item: LibraryManagementPlanItem,
-		collision: ManagementCollision,
-		button: HTMLElement
-	): void {
-		opener = button;
+	export function open(item: LibraryManagementPlanItem, collision: ManagementCollision): void {
 		selection = { item, collision };
 		action = '';
 		alternateRelativePath = '';
 		error = '';
-		dialog.showModal();
-		heading.focus();
+		shown = true;
 	}
 
 	async function resolve(): Promise<void> {
@@ -137,7 +129,7 @@
 					action === 'keep_incoming_alternate' ? alternateRelativePath.trim() : null
 			});
 			rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
-			dialog.close();
+			shown = false;
 			await goto(withBasePath(`/library/management/previews/${encodeURIComponent(handle.job_id)}`));
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Could not create a resolution preview.';
@@ -145,105 +137,73 @@
 	}
 </script>
 
-<dialog
-	bind:this={dialog}
-	class="modal"
-	aria-labelledby="resolve-management-collision"
-	onclose={() => opener?.focus()}
-	oncancel={(event) => {
-		if (createResolution.isPending) event.preventDefault();
-	}}
+<Modal
+	bind:open={shown}
+	title="Choose a collision resolution"
+	description="No option is preselected. DroppedNeedle rechecks both files before it offers another Apply action."
+	size="lg"
+	focusTitle
+	closeButton
+	dismissible={!createResolution.isPending}
 >
-	<div class="modal-box max-w-2xl border border-error/25">
-		<div class="flex items-start justify-between gap-3">
-			<div>
-				<p class="management-kicker">Fresh preview required</p>
-				<h2
-					bind:this={heading}
-					id="resolve-management-collision"
-					tabindex="-1"
-					class="font-display text-xl font-semibold"
-				>
-					Choose a collision resolution
-				</h2>
-				<p class="mt-1 text-sm text-base-content/55">
-					No option is preselected. DroppedNeedle rechecks both files before it offers another Apply
-					action.
-				</p>
-			</div>
-			<IconButton
-				size="sm"
-				shape="square"
-				icon={X}
-				label="Close collision resolution"
-				disabled={createResolution.isPending}
-				onclick={() => dialog.close()}
-			/>
-		</div>
-		{#if selection}<div class="mt-4 rounded-xl border border-base-content/10 p-3 text-sm">
-				<p>
-					<strong>Incoming:</strong>
-					{managementDisplayPath(
-						roots,
-						selection.item.source_root_id ?? null,
-						selection.item.source_relative_path ?? null
-					)}
-				</p>
-				<p class="mt-1">
-					<strong>Existing:</strong>
-					{managementDisplayPath(
-						roots,
-						selection.collision.existingRootId,
-						selection.collision.existingRelativePath
-					)}
-				</p>
-				<p class="mt-1">
-					<strong>Evidence:</strong>
-					{titleManagementValue(selection.collision.classification)}
-				</p>
-			</div>{/if}
-		<fieldset class="mt-4 grid gap-2">
-			<legend class="mb-2 text-sm font-semibold">Resolution</legend>
-			{#each actions as option (option.value)}
-				<label class="management-selection-card"
-					><input
-						type="radio"
-						class="radio radio-sm"
-						name="collision-action"
-						value={option.value}
-						bind:group={action}
-					/><span><strong>{option.title}</strong><small>{option.detail}</small></span></label
-				>
-			{/each}
-		</fieldset>
-		{#if action === 'keep_incoming_alternate'}<label class="mt-3 grid gap-1 text-sm"
-				><span>Alternate relative path</span><Input
-					label="Alternate relative path"
-					mono
-					bind:value={alternateRelativePath}
-					placeholder="Artist/Album/02 Track (alternate).flac"
-				/><small class="text-base-content/45"
-					>Relative to the planned destination root; absolute paths are rejected.</small
-				></label
-			>{/if}
-		{#if error}<div class="alert alert-error mt-3 text-sm" role="alert">
-				{error}
-			</div>{/if}
-		<div class="modal-action">
-			<Button variant="ghost" disabled={createResolution.isPending} onclick={() => dialog.close()}
-				>Cancel</Button
-			><Button
-				variant="warning"
-				icon={HardDrive}
-				loading={createResolution.isPending}
-				disabled={!requestReady}
-				onclick={() => void resolve()}>Generate resolution preview</Button
+	{#if selection}<div class="rounded-xl border border-base-content/10 p-3 text-sm">
+			<p>
+				<strong>Incoming:</strong>
+				{managementDisplayPath(
+					roots,
+					selection.item.source_root_id ?? null,
+					selection.item.source_relative_path ?? null
+				)}
+			</p>
+			<p class="mt-1">
+				<strong>Existing:</strong>
+				{managementDisplayPath(
+					roots,
+					selection.collision.existingRootId,
+					selection.collision.existingRelativePath
+				)}
+			</p>
+			<p class="mt-1">
+				<strong>Evidence:</strong>
+				{titleManagementValue(selection.collision.classification)}
+			</p>
+		</div>{/if}
+	<fieldset class="mt-4 grid gap-2">
+		<legend class="mb-2 text-sm font-semibold">Resolution</legend>
+		{#each resolutions as option (option.value)}
+			<label class="management-selection-card"
+				><input
+					type="radio"
+					class="radio radio-sm"
+					name="collision-action"
+					value={option.value}
+					bind:group={action}
+				/><span><strong>{option.title}</strong><small>{option.detail}</small></span></label
 			>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Cancel collision resolution" disabled={createResolution.isPending}
-			>close</button
+		{/each}
+	</fieldset>
+	{#if action === 'keep_incoming_alternate'}<label class="mt-3 grid gap-1 text-sm"
+			><span>Alternate relative path</span><Input
+				label="Alternate relative path"
+				mono
+				bind:value={alternateRelativePath}
+				placeholder="Artist/Album/02 Track (alternate).flac"
+			/><small class="text-base-content/45"
+				>Relative to the planned destination root; absolute paths are rejected.</small
+			></label
+		>{/if}
+	{#if error}<div class="alert alert-error mt-3 text-sm" role="alert">
+			{error}
+		</div>{/if}
+	{#snippet actions()}
+		<Button variant="ghost" disabled={createResolution.isPending} onclick={() => (shown = false)}
+			>Cancel</Button
+		><Button
+			variant="warning"
+			icon={HardDrive}
+			loading={createResolution.isPending}
+			disabled={!requestReady}
+			onclick={() => void resolve()}>Generate resolution preview</Button
 		>
-	</form>
-</dialog>
+	{/snippet}
+</Modal>

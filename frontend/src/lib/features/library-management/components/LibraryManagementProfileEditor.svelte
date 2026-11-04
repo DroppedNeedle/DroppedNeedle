@@ -5,8 +5,7 @@
 -->
 <script lang="ts">
 	import '$lib/features/library-management/components/library-management.css';
-	import { onMount } from 'svelte';
-	import { RotateCcw, ShieldCheck, Tags, X } from 'lucide-svelte';
+	import { RotateCcw } from 'lucide-svelte';
 
 	import LibraryManagementProfileArtwork from './LibraryManagementProfileArtwork.svelte';
 	import LibraryManagementProfileCredits from './LibraryManagementProfileCredits.svelte';
@@ -27,7 +26,8 @@
 	} from '$lib/features/library-management/queries/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import IconButton from '$lib/ui/IconButton.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 
 	interface Props {
 		profile: LibraryManagementProfile;
@@ -53,14 +53,9 @@
 		onclose,
 		onsave
 	}: Props = $props();
-	let dialog: HTMLDialogElement;
-	let heading: HTMLHeadingElement;
-	let resetDialog: HTMLDialogElement;
-	let resetHeading: HTMLHeadingElement;
-	let resetOpener: HTMLElement | null = null;
-	let discardDialog: HTMLDialogElement;
-	let discardHeading: HTMLHeadingElement;
-	let closeOpener: HTMLElement | null = null;
+	let shown = $state(true);
+	let resetOpen = $state(false);
+	let discardOpen = $state(false);
 	const initialProfile = (): LibraryManagementProfile => structuredClone($state.snapshot(profile));
 	const initialScripts = (): ManagementScriptSettings[] =>
 		structuredClone($state.snapshot(namingScripts));
@@ -92,22 +87,9 @@
 			JSON.stringify(tagScripts) !== JSON.stringify(originalTaggingScripts)
 	);
 
-	onMount(() => {
-		dialog.showModal();
-		heading.focus();
-	});
-
-	function requestReset(group: PresetGroup, opener: HTMLElement): void {
+	function requestReset(group: PresetGroup): void {
 		resetGroup = group;
-		resetOpener = opener;
-		resetDialog.showModal();
-		resetHeading.focus();
-	}
-
-	function restoreResetFocus(): void {
-		resetOpener?.focus();
-		resetOpener = null;
-		resetGroup = null;
+		resetOpen = true;
 	}
 
 	function copyGroup<K extends PresetGroup>(group: K, preset: LibraryManagementProfile): void {
@@ -122,28 +104,17 @@
 		if (presetDiff.version_upgrade_groups.includes(resetGroup)) {
 			draft.preset_version = preset.preset_version;
 		}
-		resetDialog.close();
 	}
 
-	function requestClose(opener: HTMLElement | null = null): void {
+	function close(): void {
+		shown = false;
+		onclose();
+	}
+
+	function requestClose(): void {
 		if (saving) return;
-		if (!dirty) {
-			dialog.close();
-			return;
-		}
-		closeOpener = opener;
-		discardDialog.showModal();
-		discardHeading.focus();
-	}
-
-	function restoreCloseFocus(): void {
-		closeOpener?.focus();
-		closeOpener = null;
-	}
-
-	function discardChanges(): void {
-		discardDialog.close();
-		dialog.close();
+		if (dirty) discardOpen = true;
+		else close();
 	}
 
 	async function save(): Promise<void> {
@@ -160,73 +131,45 @@
 	}
 </script>
 
-<dialog
-	bind:this={dialog}
-	class="modal"
-	aria-labelledby="management-profile-title"
-	{onclose}
-	oncancel={(event) => {
-		event.preventDefault();
-		requestClose();
-	}}
+<Modal
+	bind:open={shown}
+	size="sheet"
+	title={draft.name}
+	description="Controls what DroppedNeedle may write, rename, and move. Editing never enables a root."
+	focusTitle
+	dismissible={!saving}
+	onrequestclose={requestClose}
 >
-	<div class="modal-box management-profile-editor max-w-5xl p-0">
-		<header class="management-profile-editor__header">
-			<div class="min-w-0">
-				<p class="management-kicker"><Tags class="h-3.5 w-3.5" /> Management profile</p>
-				<h2
-					bind:this={heading}
-					id="management-profile-title"
-					tabindex="-1"
-					class="font-display text-2xl font-semibold"
-				>
-					{draft.name}
-				</h2>
-				<p class="mt-1 text-sm text-base-content/55">
-					Controls what DroppedNeedle may write, rename, and move. Editing never enables a root.
-				</p>
-			</div>
-			<IconButton
-				label="Close profile editor"
-				icon={X}
-				size="sm"
-				shape="square"
-				disabled={saving}
-				onclick={(event: MouseEvent & { currentTarget: HTMLElement }) =>
-					requestClose(event.currentTarget)}
-			/>
-		</header>
+	<div class="space-y-4 p-4 md:h-full md:overflow-y-auto md:p-6">
+		<LibraryManagementProfileName
+			bind:draft
+			changedGroups={presetDiffQuery.data ? changedPresetGroups : null}
+			compareFailed={presetDiffQuery.isError}
+			onreset={requestReset}
+		/>
+		<LibraryManagementProfileMetadata
+			bind:metadata={draft.metadata}
+			bind:genres={draft.genres}
+			{managedFields}
+		/>
+		<LibraryManagementProfileLyrics bind:enrichment={draft.enrichment} />
+		<LibraryManagementProfileTagScripts
+			bind:scripts={tagScripts}
+			bind:selectedIds={draft.metadata.tagging_script_ids}
+		/>
+		<LibraryManagementProfileCredits bind:metadata={draft.metadata} bind:genres={draft.genres} />
+		<LibraryManagementProfileArtwork bind:artwork={draft.artwork} />
+		<LibraryManagementProfileNaming bind:organization={draft.organization} bind:scripts />
+		<LibraryManagementProfileSafety
+			bind:metadata={draft.metadata}
+			bind:identity={draft.identity}
+			bind:notification={draft.notification}
+		/>
 
-		<div class="max-h-[72vh] space-y-4 overflow-y-auto p-5 sm:p-6">
-			<LibraryManagementProfileName
-				bind:draft
-				changedGroups={presetDiffQuery.data ? changedPresetGroups : null}
-				compareFailed={presetDiffQuery.isError}
-				onreset={requestReset}
-			/>
-			<LibraryManagementProfileMetadata
-				bind:metadata={draft.metadata}
-				bind:genres={draft.genres}
-				{managedFields}
-			/>
-			<LibraryManagementProfileLyrics bind:enrichment={draft.enrichment} />
-			<LibraryManagementProfileTagScripts
-				bind:scripts={tagScripts}
-				bind:selectedIds={draft.metadata.tagging_script_ids}
-			/>
-			<LibraryManagementProfileCredits bind:metadata={draft.metadata} bind:genres={draft.genres} />
-			<LibraryManagementProfileArtwork bind:artwork={draft.artwork} />
-			<LibraryManagementProfileNaming bind:organization={draft.organization} bind:scripts />
-			<LibraryManagementProfileSafety
-				bind:metadata={draft.metadata}
-				bind:identity={draft.identity}
-				bind:notification={draft.notification}
-			/>
-
-			{#if localError}<div class="alert alert-error text-sm" role="alert">{localError}</div>{/if}
-		</div>
-
-		<footer class="management-profile-editor__footer">
+		{#if localError}<div class="alert alert-error text-sm" role="alert">{localError}</div>{/if}
+	</div>
+	{#snippet actions()}
+		<div class="flex flex-wrap items-center justify-between gap-2">
 			<div class="flex min-w-0 items-center gap-2">
 				<span class="management-editor-state" data-active={dirty}
 					>{dirty ? 'Unsaved' : 'Saved'}</span
@@ -237,99 +180,35 @@
 						: 'This profile has no unsaved changes.'}
 				</p>
 			</div>
-			<div class="flex gap-2">
-				<Button
-					variant="ghost"
-					disabled={saving}
-					onclick={(event: MouseEvent & { currentTarget: HTMLElement }) =>
-						requestClose(event.currentTarget)}>Cancel</Button
-				>
+			<div class="ml-auto flex gap-2">
+				<Button variant="ghost" disabled={saving} onclick={requestClose}>Cancel</Button>
 				<Button variant="warning" loading={saving} disabled={!dirty} onclick={() => void save()}
 					>Save profile</Button
 				>
 			</div>
-		</footer>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button
-			aria-label="Close profile editor"
-			disabled={saving}
-			onclick={(event) => {
-				event.preventDefault();
-				requestClose();
-			}}>close</button
-		>
-	</form>
-</dialog>
-
-<dialog
-	bind:this={resetDialog}
-	class="modal"
-	aria-labelledby="management-profile-reset-title"
-	onclose={restoreResetFocus}
->
-	<div class="modal-box max-w-md">
-		<p class="management-kicker"><RotateCcw class="h-3.5 w-3.5" /> Preset values</p>
-		<h2
-			bind:this={resetHeading}
-			id="management-profile-reset-title"
-			tabindex="-1"
-			class="font-display text-xl font-semibold"
-		>
-			Reset {resetGroup ? presetGroupLabels[resetGroup] : 'section'}?
-		</h2>
-		<p class="mt-3 text-sm text-base-content/65">
-			This replaces only this section in the editor. Review the values, then save the profile to
-			apply the reset. No files or root settings are changed here.
-		</p>
-		<div class="modal-action">
-			<Button variant="ghost" onclick={() => resetDialog.close()}>Cancel</Button>
-			<Button variant="warning" onclick={resetSection}>Reset section</Button>
 		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Cancel preset reset">close</button>
-	</form>
-</dialog>
+	{/snippet}
+</Modal>
 
-<dialog
-	bind:this={discardDialog}
-	class="modal"
-	aria-labelledby="management-profile-discard-title"
-	onclose={restoreCloseFocus}
->
-	<div class="modal-box max-w-md">
-		<p class="management-kicker"><ShieldCheck class="h-3.5 w-3.5" /> Unsaved profile</p>
-		<h2
-			bind:this={discardHeading}
-			id="management-profile-discard-title"
-			tabindex="-1"
-			class="font-display text-xl font-semibold"
-		>
-			Discard your changes?
-		</h2>
-		<p class="mt-3 text-sm text-base-content/65">
-			The profile has unsaved changes. Closing now will discard them.
-		</p>
-		<div class="modal-action">
-			<Button variant="ghost" onclick={() => discardDialog.close()}>Keep editing</Button>
-			<Button variant="danger" onclick={discardChanges}>Discard changes</Button>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close discard confirmation">close</button>
-	</form>
-</dialog>
+<ConfirmDialog
+	bind:open={resetOpen}
+	title="Reset {resetGroup ? presetGroupLabels[resetGroup] : 'section'}?"
+	message="This replaces only this section in the editor. Review the values, then save the profile to apply the reset. No files or root settings are changed here."
+	confirmLabel="Reset section"
+	tone="warning"
+	icon={RotateCcw}
+	focusTitle
+	onconfirm={resetSection}
+	onclose={() => (resetGroup = null)}
+/>
 
-<style>
-	.management-profile-editor {
-		border: 1px solid color-mix(in oklab, var(--color-library-manage) 24%, transparent);
-		background:
-			linear-gradient(
-				145deg,
-				color-mix(in oklab, var(--color-library-manage) 5%, var(--color-base-100)),
-				var(--color-base-100) 18rem
-			),
-			var(--color-base-100);
-	}
-</style>
+<ConfirmDialog
+	bind:open={discardOpen}
+	title="Discard your changes?"
+	message="The profile has unsaved changes. Closing now will discard them."
+	confirmLabel="Discard changes"
+	cancelLabel="Keep editing"
+	tone="danger"
+	focusTitle
+	onconfirm={close}
+/>

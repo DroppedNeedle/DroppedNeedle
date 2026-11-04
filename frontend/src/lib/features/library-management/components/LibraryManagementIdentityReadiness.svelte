@@ -5,6 +5,8 @@
 	import { createControlLibraryOperationMutation } from '$lib/features/library-management/queries/LibraryOperationMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import OperationJobStrip from './OperationJobStrip.svelte';
 	import {
@@ -28,13 +30,8 @@
 	}
 
 	let { roots }: Props = $props();
-	let startDialog: HTMLDialogElement;
-	let confirmDialog: HTMLDialogElement;
-	let startHeading: HTMLHeadingElement;
-	let confirmHeading: HTMLHeadingElement;
-	let startOpener: HTMLElement | null = null;
-	let confirmOpener: HTMLElement | null = null;
 	let startOpen = $state(false);
+	let confirmOpen = $state(false);
 	let scopeMode = $state<'all' | 'selected'>('all');
 	let selectedRootIds = $state<string[]>([]);
 	let confirmAction = $state<'apply' | 'discard'>('apply');
@@ -120,19 +117,10 @@
 		{ id: 'unverifiable', label: 'Try again later' }
 	] as const;
 
-	function openStart(opener: HTMLElement): void {
-		startOpener = opener;
+	function openStart(): void {
 		scopeMode = 'all';
 		selectedRootIds = [];
 		startOpen = true;
-		startDialog.showModal();
-		startHeading.focus();
-	}
-
-	function restoreStartFocus(): void {
-		startOpen = false;
-		startOpener?.focus();
-		startOpener = null;
 	}
 
 	async function undoAutoAccepted(albumId: string): Promise<void> {
@@ -163,7 +151,7 @@
 		} catch {
 			return;
 		}
-		startDialog.close();
+		startOpen = false;
 	}
 
 	function tabCount(item: OperationResponse, tab: (typeof tabs)[number]['id']): number {
@@ -175,36 +163,16 @@
 				: (counts[tab] ?? 0);
 	}
 
-	function openConfirmation(action: 'apply' | 'discard', opener: HTMLElement): void {
-		confirmOpener = opener;
+	function openConfirmation(action: 'apply' | 'discard'): void {
 		confirmAction = action;
-		confirmDialog.showModal();
-		confirmHeading.focus();
-	}
-
-	function restoreConfirmFocus(): void {
-		confirmOpener?.focus();
-		confirmOpener = null;
+		confirmOpen = true;
 	}
 
 	async function confirmReportAction(): Promise<void> {
 		if (!report) return;
-		try {
-			if (confirmAction === 'apply') {
-				await applyPreparation.mutateAsync({
-					jobId: report.id,
-					expectedRevision: report.row_revision
-				});
-			} else {
-				await discardPreparation.mutateAsync({
-					jobId: report.id,
-					expectedRevision: report.row_revision
-				});
-			}
-		} catch {
-			return;
-		}
-		confirmDialog.close();
+		const request = { jobId: report.id, expectedRevision: report.row_revision };
+		if (confirmAction === 'apply') await applyPreparation.mutateAsync(request);
+		else await discardPreparation.mutateAsync(request);
 	}
 
 	function findingTitle(reasonCode: string): string {
@@ -255,7 +223,7 @@
 			size="sm"
 			icon={ShieldCheck}
 			disabled={Boolean(active)}
-			onclick={(event) => openStart(event.currentTarget)}>Prepare identities...</Button
+			onclick={openStart}>Prepare identities...</Button
 		>
 	</div>
 
@@ -339,15 +307,11 @@
 							variant="primary"
 							size="sm"
 							icon={Database}
-							onclick={(event) => openConfirmation('apply', event.currentTarget)}
-							>Accept mappings...</Button
+							onclick={() => openConfirmation('apply')}>Accept mappings...</Button
 						>
 					{/if}
 					{#if report.state === 'ready' && !refreshRequired && suggestedCount > 0}
-						<Button
-							variant="primary"
-							size="sm"
-							onclick={(event) => openConfirmation('apply', event.currentTarget)}
+						<Button variant="primary" size="sm" onclick={() => openConfirmation('apply')}
 							>Accept editions ({suggestedCount})...</Button
 						>
 					{/if}
@@ -356,8 +320,7 @@
 							variant="ghost"
 							size="sm"
 							icon={Trash2}
-							onclick={(event) => openConfirmation('discard', event.currentTarget)}
-							>Dismiss report</Button
+							onclick={() => openConfirmation('discard')}>Dismiss report</Button
 						>
 					{/if}
 				</div>
@@ -510,140 +473,101 @@
 	{/if}
 </section>
 
-<dialog
-	bind:this={startDialog}
-	class="modal"
-	aria-labelledby="identity-preparation-dialog-title"
-	onclose={restoreStartFocus}
->
-	<div class="modal-box max-w-xl">
-		<h2
-			id="identity-preparation-dialog-title"
-			bind:this={startHeading}
-			tabindex="-1"
-			class="flex items-center gap-2 text-lg font-bold"
-		>
-			<ShieldCheck class="h-5 w-5 text-primary" /> Prepare identities
-		</h2>
-		<p class="mt-3 text-sm text-base-content/65">
-			This dry run checks exact MusicBrainz editions and track mappings. It reads the catalog and
-			MusicBrainz; it does not write music files.
+<Modal bind:open={startOpen} title="Prepare identities" icon={ShieldCheck} size="lg" focusTitle>
+	<p class="text-sm text-base-content/70">
+		This dry run checks exact MusicBrainz editions and track mappings. It reads the catalog and
+		MusicBrainz; it does not write music files.
+	</p>
+	<fieldset class="mt-4 space-y-2">
+		<legend class="text-sm font-semibold">Scope</legend>
+		<label class="flex cursor-pointer gap-3 rounded-box border border-base-content/10 p-3 text-sm">
+			<input
+				type="radio"
+				class="radio radio-sm"
+				name="identity-preparation-scope"
+				checked={scopeMode === 'all'}
+				onchange={() => (scopeMode = 'all')}
+			/>
+			<span
+				><strong>Whole library</strong><small class="block text-base-content/55"
+					>Every active release in every root.</small
+				></span
+			>
+		</label>
+		<label class="flex cursor-pointer gap-3 rounded-box border border-base-content/10 p-3 text-sm">
+			<input
+				type="radio"
+				class="radio radio-sm"
+				name="identity-preparation-scope"
+				checked={scopeMode === 'selected'}
+				onchange={chooseSelectedRoots}
+			/>
+			<span
+				><strong>Selected roots</strong><small class="block text-base-content/55"
+					>Limit the check to specific library roots.</small
+				></span
+			>
+		</label>
+	</fieldset>
+	{#if scopeMode === 'selected'}
+		<div class="mt-3 max-h-48 space-y-1 overflow-y-auto rounded-box bg-base-200/50 p-2">
+			{#each roots as root (root.id)}
+				<label class="flex items-center gap-2 rounded-lg px-2 py-2 text-sm">
+					<input
+						type="checkbox"
+						class="checkbox checkbox-sm"
+						checked={selectedRootIds.includes(root.id)}
+						onchange={(event) => toggleRoot(root.id, event.currentTarget.checked)}
+					/>
+					<span class="min-w-0"
+						><strong>{root.label}</strong><small class="block truncate text-base-content/50"
+							>{root.path}</small
+						></span
+					>
+				</label>
+			{/each}
+		</div>
+	{/if}
+	{#if startEstimate.data}
+		<p class="mt-4 rounded-box bg-base-200/60 p-3 text-sm">
+			<strong>{startEstimate.data.album_count.toLocaleString()} releases</strong> · {startEstimate.data.mapping_required_count.toLocaleString()}
+			need track maps · {startEstimate.data.exact_release_required_count.toLocaleString()} need an exact
+			edition
 		</p>
-		<fieldset class="mt-4 space-y-2">
-			<legend class="text-sm font-semibold">Scope</legend>
-			<label
-				class="flex cursor-pointer gap-3 rounded-box border border-base-content/10 p-3 text-sm"
-			>
-				<input
-					type="radio"
-					class="radio radio-sm"
-					name="identity-preparation-scope"
-					checked={scopeMode === 'all'}
-					onchange={() => (scopeMode = 'all')}
-				/>
-				<span
-					><strong>Whole library</strong><small class="block text-base-content/55"
-						>Every active release in every root.</small
-					></span
-				>
-			</label>
-			<label
-				class="flex cursor-pointer gap-3 rounded-box border border-base-content/10 p-3 text-sm"
-			>
-				<input
-					type="radio"
-					class="radio radio-sm"
-					name="identity-preparation-scope"
-					checked={scopeMode === 'selected'}
-					onchange={chooseSelectedRoots}
-				/>
-				<span
-					><strong>Selected roots</strong><small class="block text-base-content/55"
-						>Limit the check to specific library roots.</small
-					></span
-				>
-			</label>
-		</fieldset>
-		{#if scopeMode === 'selected'}
-			<div class="mt-3 max-h-48 space-y-1 overflow-y-auto rounded-box bg-base-200/50 p-2">
-				{#each roots as root (root.id)}
-					<label class="flex items-center gap-2 rounded-lg px-2 py-2 text-sm">
-						<input
-							type="checkbox"
-							class="checkbox checkbox-sm"
-							checked={selectedRootIds.includes(root.id)}
-							onchange={(event) => toggleRoot(root.id, event.currentTarget.checked)}
-						/>
-						<span class="min-w-0"
-							><strong>{root.label}</strong><small class="block truncate text-base-content/50"
-								>{root.path}</small
-							></span
-						>
-					</label>
-				{/each}
-			</div>
-		{/if}
-		{#if startEstimate.data}
-			<p class="mt-4 rounded-box bg-base-200/60 p-3 text-sm">
-				<strong>{startEstimate.data.album_count.toLocaleString()} releases</strong> · {startEstimate.data.mapping_required_count.toLocaleString()}
-				need track maps · {startEstimate.data.exact_release_required_count.toLocaleString()} need an exact
-				edition
-			</p>
-		{/if}
-		<div class="modal-action">
-			<form method="dialog"><Button variant="ghost" type="submit">Cancel</Button></form>
-			<Button
-				variant="primary"
-				loading={createPreparation.isPending}
-				disabled={startEstimate.isLoading ||
-					(scopeMode === 'selected' && selectedRootIds.length === 0)}
-				onclick={() => void startPreparation()}
-			>
-				Start read-only check
-			</Button>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop"><button>Close</button></form>
-</dialog>
-
-<dialog
-	bind:this={confirmDialog}
-	class="modal"
-	aria-labelledby="identity-confirmation-dialog-title"
-	onclose={restoreConfirmFocus}
->
-	<div class="modal-box max-w-lg">
-		<h2
-			id="identity-confirmation-dialog-title"
-			bind:this={confirmHeading}
-			tabindex="-1"
-			class="text-lg font-bold"
+	{/if}
+	{#snippet actions()}
+		<Button variant="ghost" onclick={() => (startOpen = false)}>Cancel</Button>
+		<Button
+			variant="primary"
+			loading={createPreparation.isPending}
+			disabled={startEstimate.isLoading ||
+				(scopeMode === 'selected' && selectedRootIds.length === 0)}
+			onclick={() => void startPreparation()}
 		>
-			{confirmAction === 'apply' ? 'Accept exact-release mappings?' : 'Dismiss this report?'}
-		</h2>
-		{#if confirmAction === 'apply'}
-			<p class="mt-3 text-sm text-base-content/65">
-				This writes only verified MusicBrainz identities to DroppedNeedle's catalog. It does not
-				change tags, paths, or audio. Releases may become eligible for a future organization
-				preview.
-			</p>
-			<p class="mt-2 text-sm text-base-content/65">{applySealSummary}</p>
-		{:else}
-			<p class="mt-3 text-sm text-base-content/65">
-				This removes the report from the active workspace. Its audit record remains, and no music
-				file or catalog identity is changed.
-			</p>
-		{/if}
-		<div class="modal-action">
-			<form method="dialog"><Button variant="ghost" type="submit">Cancel</Button></form>
-			<Button
-				variant={confirmAction === 'apply' ? 'primary' : 'danger'}
-				loading={applyPreparation.isPending || discardPreparation.isPending}
-				onclick={() => void confirmReportAction()}
-			>
-				{confirmAction === 'apply' ? 'Accept identities' : 'Dismiss report'}
-			</Button>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop"><button>Close</button></form>
-</dialog>
+			Start read-only check
+		</Button>
+	{/snippet}
+</Modal>
+
+<ConfirmDialog
+	bind:open={confirmOpen}
+	title={confirmAction === 'apply' ? 'Accept exact-release mappings?' : 'Dismiss this report?'}
+	confirmLabel={confirmAction === 'apply' ? 'Accept identities' : 'Dismiss report'}
+	tone={confirmAction === 'apply' ? 'primary' : 'danger'}
+	focusTitle
+	pending={applyPreparation.isPending || discardPreparation.isPending}
+	onconfirm={confirmReportAction}
+>
+	{#if confirmAction === 'apply'}
+		<p class="text-sm text-base-content/70">
+			This writes only verified MusicBrainz identities to DroppedNeedle's catalog. It does not
+			change tags, paths, or audio. Releases may become eligible for a future organization preview.
+		</p>
+		<p class="mt-2 text-sm text-base-content/70">{applySealSummary}</p>
+	{:else}
+		<p class="text-sm text-base-content/70">
+			This removes the report from the active workspace. Its audit record remains, and no music file
+			or catalog identity is changed.
+		</p>
+	{/if}
+</ConfirmDialog>

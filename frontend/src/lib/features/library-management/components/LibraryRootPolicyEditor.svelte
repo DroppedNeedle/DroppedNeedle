@@ -3,6 +3,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 	import { getLibraryPolicyTreeQuery } from '$lib/features/library-management/queries/LibraryPolicyQueries.svelte';
@@ -20,12 +21,9 @@
 
 	let { roots, onchange }: Props = $props();
 	const treeQuery = getLibraryPolicyTreeQuery();
-	let rootDialog: HTMLDialogElement;
-	let ruleDialog: HTMLDialogElement;
-	let rootHeading: HTMLHeadingElement;
-	let ruleHeading: HTMLHeadingElement;
-	let rootOpener: HTMLElement | null = null;
-	let ruleOpener: HTMLElement | null = null;
+	let rootOpen = $state(false);
+	let ruleOpen = $state(false);
+	const rootFormId = $props.id();
 	let expanded = $state<string[]>([]);
 	let ruleRootId = $state<string | null>(null);
 	let newRootPath = $state('');
@@ -69,7 +67,7 @@
 		newRootPath = '';
 		newRootLabel = '';
 		newRootPolicy = 'automatic';
-		rootDialog.close();
+		rootOpen = false;
 	}
 
 	function addRule(): void {
@@ -83,20 +81,12 @@
 		}));
 		newRulePath = '';
 		newRulePolicy = 'automatic';
-		ruleDialog.close();
+		ruleOpen = false;
 	}
 
-	function openRoot(event: MouseEvent & { currentTarget: HTMLElement }): void {
-		rootOpener = event.currentTarget;
-		rootDialog.showModal();
-		rootHeading.focus();
-	}
-
-	function openRule(rootId: string, event: MouseEvent & { currentTarget: HTMLElement }): void {
-		ruleOpener = event.currentTarget;
+	function openRule(rootId: string): void {
 		ruleRootId = rootId;
-		ruleDialog.showModal();
-		ruleHeading.focus();
+		ruleOpen = true;
 	}
 
 	function policyRows(
@@ -141,7 +131,9 @@
 				needed.
 			</p>
 		</div>
-		<Button variant="outline" size="sm" icon={FolderPlus} onclick={openRoot}>Add root</Button>
+		<Button variant="outline" size="sm" icon={FolderPlus} onclick={() => (rootOpen = true)}
+			>Add root</Button
+		>
 	</div>
 
 	{#if roots.length === 0}
@@ -215,11 +207,8 @@
 				<div class="border-t border-base-content/10 p-3">
 					<div class="mb-2 flex items-center justify-between">
 						<h5 class="text-sm font-semibold">Directory overrides</h5>
-						<Button
-							variant="ghost"
-							size="xs"
-							icon={Plus}
-							onclick={(event) => openRule(root.id, event)}>Add override</Button
+						<Button variant="ghost" size="xs" icon={Plus} onclick={() => openRule(root.id)}
+							>Add override</Button
 						>
 					</div>
 					{#if effectiveRows.length === 0}<p class="text-xs text-base-content/50">
@@ -285,110 +274,82 @@
 	{/each}
 </section>
 
-<dialog
-	bind:this={rootDialog}
-	class="modal"
-	aria-labelledby="add-root-title"
-	onclose={() => rootOpener?.focus()}
+<Modal
+	bind:open={rootOpen}
+	title="Add library root"
+	description="Choose the folder DroppedNeedle should index and how new albums should be identified."
+	icon={FolderPlus}
+	size="lg"
+	focusTitle
 >
-	<div class="modal-box max-w-xl overflow-hidden p-0">
-		<header class="border-b border-base-content/10 bg-base-200/70 px-6 py-5">
-			<div class="flex items-start gap-3">
-				<div class="rounded-xl bg-primary/12 p-2.5 text-primary">
-					<FolderPlus class="h-5 w-5" aria-hidden="true" />
-				</div>
-				<div>
-					<h2 bind:this={rootHeading} id="add-root-title" tabindex="-1" class="text-lg font-bold">
-						Add library root
-					</h2>
-					<p class="mt-1 text-sm text-base-content/60">
-						Choose the folder DroppedNeedle should index and how new albums should be identified.
-					</p>
-				</div>
-			</div>
-		</header>
-		<form
-			onsubmit={(event) => {
-				event.preventDefault();
-				addRoot();
-			}}
-		>
-			<div class="space-y-5 px-6 py-5">
-				<TextField
-					label="Name"
-					bind:value={newRootLabel}
-					placeholder="Main library"
-					help="A short name shown in Library settings."
-				/>
-				<TextField
-					label="Folder path"
-					mono
-					bind:value={newRootPath}
-					placeholder="/music"
-					help="Use the path as DroppedNeedle sees it inside the container."
-				/>
-				<div class="grid gap-2">
-					<SelectField
-						label="Default identification"
-						bind:value={newRootPolicy}
-						options={POLICY_OPTIONS}
-					/>
-					<span class="rounded-box bg-base-200/70 px-3 py-2 text-xs text-base-content/60">
-						{policyCopy[newRootPolicy]}
-					</span>
-				</div>
-			</div>
-			<div class="modal-action mt-0 border-t border-base-content/10 bg-base-200/40 px-6 py-4">
-				<Button variant="ghost" onclick={() => rootDialog.close()}>Cancel</Button>
-				<Button
-					type="submit"
-					variant="primary"
-					disabled={!newRootLabel.trim() || !newRootPath.trim()}>Add root</Button
-				>
-			</div>
-		</form>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close add root dialog">close</button>
-	</form>
-</dialog>
-
-<dialog
-	bind:this={ruleDialog}
-	class="modal"
-	aria-labelledby="add-rule-title"
-	onclose={() => ruleOpener?.focus()}
->
-	<div class="modal-box max-w-lg">
-		<h2 bind:this={ruleHeading} id="add-rule-title" tabindex="-1" class="text-lg font-bold">
-			Add directory override
-		</h2>
-		<p class="mt-2 text-sm text-base-content/60">
-			Enter a path relative to this library root. Globs and regular expressions are not used.
-		</p>
-		<div class="mt-4 space-y-3">
-			<TextField
-				label="Relative path"
-				mono
-				bind:value={newRulePath}
-				placeholder="Compilations/Live"
-			/>
+	<form
+		id={rootFormId}
+		class="space-y-5"
+		onsubmit={(event) => {
+			event.preventDefault();
+			addRoot();
+		}}
+	>
+		<TextField
+			label="Name"
+			bind:value={newRootLabel}
+			placeholder="Main library"
+			help="A short name shown in Library settings."
+		/>
+		<TextField
+			label="Folder path"
+			mono
+			bind:value={newRootPath}
+			placeholder="/music"
+			help="Use the path as DroppedNeedle sees it inside the container."
+		/>
+		<div class="grid gap-2">
 			<SelectField
-				label="Policy"
-				bind:value={newRulePolicy}
+				label="Default identification"
+				bind:value={newRootPolicy}
 				options={POLICY_OPTIONS}
-				help={policyCopy[newRulePolicy]}
 			/>
+			<span class="rounded-box bg-base-200/70 px-3 py-2 text-xs text-base-content/60">
+				{policyCopy[newRootPolicy]}
+			</span>
 		</div>
-		<div class="modal-action">
-			<Button variant="ghost" onclick={() => ruleDialog.close()}>Cancel</Button><Button
-				variant="primary"
-				disabled={!newRulePath.trim()}
-				onclick={addRule}>Add override</Button
-			>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close add override dialog">close</button>
 	</form>
-</dialog>
+	{#snippet actions()}
+		<Button variant="ghost" onclick={() => (rootOpen = false)}>Cancel</Button>
+		<Button
+			type="submit"
+			form={rootFormId}
+			variant="primary"
+			disabled={!newRootLabel.trim() || !newRootPath.trim()}>Add root</Button
+		>
+	{/snippet}
+</Modal>
+
+<Modal
+	bind:open={ruleOpen}
+	title="Add directory override"
+	description="Enter a path relative to this library root. Globs and regular expressions are not used."
+	focusTitle
+>
+	<div class="space-y-3">
+		<TextField
+			label="Relative path"
+			mono
+			bind:value={newRulePath}
+			placeholder="Compilations/Live"
+		/>
+		<SelectField
+			label="Policy"
+			bind:value={newRulePolicy}
+			options={POLICY_OPTIONS}
+			help={policyCopy[newRulePolicy]}
+		/>
+	</div>
+	{#snippet actions()}
+		<Button variant="ghost" onclick={() => (ruleOpen = false)}>Cancel</Button><Button
+			variant="primary"
+			disabled={!newRulePath.trim()}
+			onclick={addRule}>Add override</Button
+		>
+	{/snippet}
+</Modal>

@@ -197,26 +197,6 @@ details[open] > summary .management-editor-chevron {
 	}
 }
 
-.management-profile-editor__header,
-.management-profile-editor__footer {
-	display: flex;
-	align-items: flex-start;
-	justify-content: space-between;
-	gap: 1rem;
-	padding: 1.25rem 1.5rem;
-	border-color: color-mix(in oklab, var(--color-library-manage) 16%, transparent);
-}
-
-.management-profile-editor__header {
-	border-bottom-width: 1px;
-}
-
-.management-profile-editor__footer {
-	align-items: center;
-	border-top-width: 1px;
-	background: color-mix(in oklab, var(--color-base-200) 46%, transparent);
-}
-
 .management-choice-grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
@@ -380,11 +360,6 @@ details[open] > summary .management-editor-chevron {
 }
 
 @media (max-width: 639px) {
-	.management-profile-editor__footer {
-		align-items: stretch;
-		flex-direction: column;
-	}
-
 	.management-settings-header .management-status-badge {
 		align-self: flex-start;
 	}

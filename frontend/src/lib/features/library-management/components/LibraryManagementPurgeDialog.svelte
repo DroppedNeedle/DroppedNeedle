@@ -12,7 +12,7 @@
 	} from '$lib/features/library-management/queries/LibraryManagementMutations.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import Input from '$lib/ui/Input.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import { createUuid } from '$lib/utils/uuid';
 
 	interface Props {
@@ -25,24 +25,16 @@
 	const purgeImpact = createPreviewLibraryManagementBaselinePurgeMutation();
 	const purgeBaselines = createPurgeLibraryManagementBaselinesMutation();
 
-	let purgeDialog: HTMLDialogElement;
-	let purgeHeading: HTMLHeadingElement;
-	let purgeOpener: HTMLElement | null = null;
-	let purgePhrase = $state('');
-	let purgeError = $state('');
+	let purgeOpen = $state(false);
 
 	const blocked = $derived(
 		Boolean(purgeImpact.data?.blocked_journal_count || purgeImpact.data?.active_restore_count)
 	);
 
-	async function openPurge(opener: HTMLElement): Promise<void> {
-		purgePhrase = '';
-		purgeError = '';
-		purgeOpener = opener;
+	async function openPurge(): Promise<void> {
 		try {
 			await purgeImpact.mutateAsync();
-			purgeDialog.showModal();
-			purgeHeading.focus();
+			purgeOpen = true;
 		} catch (error) {
 			onerror(error instanceof Error ? error.message : 'Could not inspect baseline usage.');
 		}
@@ -50,17 +42,12 @@
 
 	async function confirmPurge(): Promise<void> {
 		const impact = purgeImpact.data;
-		if (!impact || purgePhrase !== LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE) return;
-		try {
-			await purgeBaselines.mutateAsync({
-				impact_token: impact.impact_token,
-				typed_confirmation: purgePhrase,
-				idempotency_key: createUuid()
-			});
-			purgeDialog.close();
-		} catch (error) {
-			purgeError = error instanceof Error ? error.message : 'Could not purge the baselines.';
-		}
+		if (!impact) return;
+		await purgeBaselines.mutateAsync({
+			impact_token: impact.impact_token,
+			typed_confirmation: LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE,
+			idempotency_key: createUuid()
+		});
 	}
 </script>
 
@@ -77,65 +64,33 @@
 			size="sm"
 			icon={ArchiveRestore}
 			disabled={purgeImpact.isPending}
-			onclick={(event: MouseEvent & { currentTarget: HTMLElement }) =>
-				void openPurge(event.currentTarget)}>Purge baselines...</Button
+			onclick={() => void openPurge()}>Purge baselines...</Button
 		>
 	</div>
 </Card>
 
-<dialog
-	bind:this={purgeDialog}
-	class="modal"
-	aria-labelledby="purge-management-baselines-title"
-	onclose={() => purgeOpener?.focus()}
-	oncancel={(event) => {
-		if (purgeBaselines.isPending) event.preventDefault();
-	}}
+<ConfirmDialog
+	bind:open={purgeOpen}
+	title="Purge original baselines?"
+	confirmLabel="Purge baselines"
+	tone="danger"
+	focusTitle
+	phrase={LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE}
+	pending={purgeBaselines.isPending}
+	canConfirm={!blocked}
+	onconfirm={confirmPurge}
 >
-	<div class="modal-box max-w-lg">
-		<h2
-			bind:this={purgeHeading}
-			id="purge-management-baselines-title"
-			tabindex="-1"
-			class="text-lg font-bold"
-		>
-			Purge original baselines?
-		</h2>
-		{#if purgeImpact.data}<div class="mt-3 space-y-3 text-sm">
-				<p>
-					This permanently removes <strong
-						>{purgeImpact.data.baseline_count.toLocaleString()} baselines</strong
-					>
-					and may clean {purgeImpact.data.referenced_blob_count.toLocaleString()} unreferenced snapshot
-					files.
-				</p>
-				{#if blocked}<div class="alert alert-error">
-						Recovery or restore work is active. Purge is blocked.
-					</div>{/if}<label class="grid gap-1.5"
-					><span>Type <strong>{LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE}</strong></span><Input
-						label={`Type ${LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE}`}
-						bind:value={purgePhrase}
-						autocomplete="off"
-					/></label
-				>
-			</div>{/if}
-		{#if purgeError}<div class="alert alert-error mt-3 text-sm" role="alert">
-				{purgeError}
-			</div>{/if}
-		<div class="modal-action">
-			<Button
-				variant="ghost"
-				disabled={purgeBaselines.isPending}
-				onclick={() => purgeDialog.close()}>Cancel</Button
-			><Button
-				variant="danger"
-				loading={purgeBaselines.isPending}
-				disabled={purgePhrase !== LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE || blocked}
-				onclick={() => void confirmPurge()}>Purge baselines</Button
+	{#if purgeImpact.data}
+		<p class="text-sm">
+			This permanently removes <strong
+				>{purgeImpact.data.baseline_count.toLocaleString()} baselines</strong
 			>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Cancel baseline purge" disabled={purgeBaselines.isPending}>close</button>
-	</form>
-</dialog>
+			and may clean {purgeImpact.data.referenced_blob_count.toLocaleString()} unreferenced snapshot files.
+		</p>
+		{#if blocked}
+			<div class="alert alert-error mt-3 text-sm">
+				Recovery or restore work is active. Purge is blocked.
+			</div>
+		{/if}
+	{/if}
+</ConfirmDialog>
