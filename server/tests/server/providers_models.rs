@@ -6,14 +6,15 @@
 use std::sync::Arc;
 
 use crate::common::ScratchDir;
-use droppedneedle_kernel::clock::ManualClock;
+use droppedneedle_kernel::test_support::ManualClock;
 use droppedneedle_providers::acoustid::{self, BatchOutcome, Unanswered};
-use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
+use droppedneedle_providers::executor::Method;
 use droppedneedle_providers::geocoding::DEFAULT_CITY_COUNT;
 use droppedneedle_providers::lastfm::{ArtistInfo, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
 use droppedneedle_providers::listenbrainz::models::ListenCountAnswer;
 use droppedneedle_providers::musicbrainz::{self, Criticality, MbSource};
+use droppedneedle_providers::test_support::{Scripted, ScriptedWire};
 use droppedneedle_providers::youtube::{YouTubeClient, YouTubeSettings, YoutubeError};
 use droppedneedle_providers::{
     PayloadKind, ProviderEndpoints, ProviderError, Providers, RequestPriority,

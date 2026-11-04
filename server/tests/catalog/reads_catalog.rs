@@ -1124,7 +1124,7 @@ async fn lastfm_reads_fall_back_to_the_instance_key() {
     let rig = AuthRig::new("reads-catalog").await;
     let upstream = Upstream::new(
         Arc::new(Providers::unpaced(Arc::new(
-            droppedneedle_providers::executor::ScriptedWire::new(),
+            droppedneedle_providers::test_support::ScriptedWire::new(),
         ))),
         Arc::new(TestSettings {
             mb_url: String::new(),
@@ -1223,7 +1223,7 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
 async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
     use droppedneedle_catalog::artwork::ArtistImageSource as _;
     use droppedneedle_catalog::metadata::precache::CatalogArtistImages;
-    use droppedneedle_providers::executor::ScriptedWire;
+    use droppedneedle_providers::test_support::ScriptedWire;
     use droppedneedle_providers::{
         ProviderEndpoints, RequestPriority, audiodb, musicbrainz, wikidata,
     };
@@ -1325,7 +1325,7 @@ async fn a_commons_portrait_answers_its_credit_as_plain_text() {
         ArtworkService, cache::ArtworkCache, local::LocalArtwork,
     };
     use droppedneedle_catalog::metadata::precache::CatalogArtistImages;
-    use droppedneedle_providers::executor::ScriptedWire;
+    use droppedneedle_providers::test_support::ScriptedWire;
     use droppedneedle_providers::{ProviderEndpoints, wikidata};
 
     const PNG: &[u8] = &[
@@ -1444,7 +1444,8 @@ async fn a_commons_portrait_answers_its_credit_as_plain_text() {
 async fn a_passing_failure_is_not_cached_as_a_short_section() {
     use droppedneedle_catalog::metadata::models::AlbumRef;
     use droppedneedle_kernel::runtime_config::sections::ListenSource;
-    use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
+    use droppedneedle_providers::executor::Method;
+    use droppedneedle_providers::test_support::{Scripted, ScriptedWire};
     use droppedneedle_providers::{
         ProviderEndpoints, RequestPriority, TransportKind, listenbrainz,
     };
@@ -1693,9 +1694,9 @@ impl CatalogSettings for KeyedSettings {
 /// artist page does not search for it again before then, and does after.
 #[tokio::test]
 async fn a_song_nothing_places_is_asked_again_after_a_day() {
-    use droppedneedle_kernel::clock::ManualClock;
     use droppedneedle_kernel::runtime_config::sections::ListenSource;
-    use droppedneedle_providers::executor::ScriptedWire;
+    use droppedneedle_kernel::test_support::ManualClock;
+    use droppedneedle_providers::test_support::ScriptedWire;
     use droppedneedle_providers::{ProviderEndpoints, Source, listenbrainz};
     use std::time::Duration;
 

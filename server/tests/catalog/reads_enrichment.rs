@@ -115,7 +115,8 @@ async fn acoustid_answers_are_reused_and_failures_are_not() {
         AcoustIdAnswer, AcoustIdPrint, EnrichmentPort as _,
     };
     use droppedneedle_providers::acoustid::{self, Unanswered};
-    use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
+    use droppedneedle_providers::executor::Method;
+    use droppedneedle_providers::test_support::{Scripted, ScriptedWire};
     use droppedneedle_providers::{ProviderEndpoints, Providers};
     use std::sync::Arc;
 

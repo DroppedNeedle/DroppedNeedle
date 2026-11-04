@@ -168,7 +168,7 @@ enum Op {
 /// The provider cache file. Cloning shares it.
 #[derive(Clone)]
 pub struct CacheDb {
-    inner: Arc<Inner>,
+    pub(in crate::db) inner: Arc<Inner>,
 }
 
 impl std::fmt::Debug for CacheDb {
@@ -180,13 +180,11 @@ impl std::fmt::Debug for CacheDb {
     }
 }
 
-struct Inner {
-    shared: Arc<Shared>,
+pub(in crate::db) struct Inner {
+    pub(in crate::db) shared: Arc<Shared>,
     queue: Mutex<Option<mpsc::Sender<Op>>>,
     writer: Mutex<Option<JoinHandle<()>>>,
     readers: Arc<Semaphore>,
-    #[cfg(any(test, feature = "test-support"))]
-    _scratch: Option<super::scratch::ScratchDir>,
 }
 
 impl Drop for Inner {
@@ -203,7 +201,7 @@ impl Drop for Inner {
 }
 
 /// What the writer and the readers share.
-struct Shared {
+pub(in crate::db) struct Shared {
     path: PathBuf,
     off: AtomicBool,
     idle: Mutex<Vec<Connection>>,
@@ -324,24 +322,7 @@ impl CacheDb {
         }
     }
 
-    /// A cache in a scratch folder removed when the last handle drops.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn scratch() -> Self {
-        let dir = match super::scratch::ScratchDir::new("provider-cache") {
-            Ok(dir) => dir,
-            Err(error) => {
-                tracing::warn!(%error, "no scratch folder for the provider cache");
-                return Self::off(PathBuf::new());
-            }
-        };
-        let mut cache = Self::open_blocking(dir.path(), &dir.path().join("library.db"));
-        if let Some(inner) = Arc::get_mut(&mut cache.inner) {
-            inner._scratch = Some(dir);
-        }
-        cache
-    }
-
-    fn off(path: PathBuf) -> Self {
+    pub(in crate::db) fn off(path: PathBuf) -> Self {
         Self {
             inner: Arc::new(Inner {
                 shared: Arc::new(Shared {
@@ -356,8 +337,6 @@ impl CacheDb {
                 queue: Mutex::new(None),
                 writer: Mutex::new(None),
                 readers: Arc::new(Semaphore::new(READERS)),
-                #[cfg(any(test, feature = "test-support"))]
-                _scratch: None,
             }),
         }
     }
@@ -421,8 +400,6 @@ impl CacheDb {
                 queue: Mutex::new(Some(sender)),
                 writer: Mutex::new(Some(writer)),
                 readers: Arc::new(Semaphore::new(READERS)),
-                #[cfg(any(test, feature = "test-support"))]
-                _scratch: None,
             }),
         })
     }

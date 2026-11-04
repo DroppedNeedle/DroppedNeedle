@@ -100,6 +100,8 @@ pub mod scratch;
 mod spelled;
 pub(crate) mod sql;
 pub mod statement;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod time;
 #[cfg(test)]
 mod time_tests;
@@ -129,9 +131,9 @@ pub use migrate::{Chain, Migration, Plan, SchemaError, Stamp, migrate, migrate_f
 pub use read_pool::{LONG_READERS, OldestRead, ReadActivity};
 pub use savepoint::savepoint;
 pub use scope::block_on;
-pub use undo_dir::UndoDir;
 #[cfg(any(test, feature = "test-support"))]
-pub use writer::TEST_PATIENCE;
+pub use test_support::TEST_PATIENCE;
+pub use undo_dir::UndoDir;
 pub use writer::{
     BACKGROUND_CHUNK_ROWS, BACKGROUND_HARD_BUDGET, BACKGROUND_QUEUE_CAPACITY,
     BACKGROUND_SOFT_BUDGET, Budget, CancelFlag, Durable, DurableLane, FOREGROUND_BURST,

@@ -21,7 +21,7 @@ use crate::{
     clock::SystemClock,
     db::durable::list_loops,
     jobs::{CancellationToken, Supervisor, checkpoint},
-    schema::template::copy_to,
+    test_support::template::copy_to,
 };
 
 /// Unique scratch directory per brief, removed on drop.

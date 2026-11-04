@@ -21,10 +21,11 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::common::{ScratchDir, track_file};
-use droppedneedle_kernel::clock::{ManualClock, SystemClock};
+use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::undo_dir::{self, Stored, UndoDir};
 use droppedneedle_kernel::db::{Db, DurableLane, Lane};
 use droppedneedle_kernel::jobs::queue::JobQueue;
+use droppedneedle_kernel::test_support::ManualClock;
 use publish::add::{Added, AddedFile, Origin, TakeBackRefusal};
 use publish::paths::Root;
 use publish::place::{PlacementMode, Seams};

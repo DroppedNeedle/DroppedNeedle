@@ -23,7 +23,7 @@ use droppedneedle_kernel::db::{DbError, DbRuntime, Lane};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_library::scan::SqliteScanStore;
 use droppedneedle_providers::coverart::COVER_ART_ARCHIVE_BASE;
-use droppedneedle_providers::executor::ScriptedWire;
+use droppedneedle_providers::test_support::ScriptedWire;
 use droppedneedle_providers::{ProviderEndpoints, Providers};
 use tower::ServiceExt as _;
 
@@ -300,7 +300,8 @@ async fn archive_failures_are_remembered_for_as_long_as_they_mean() {
 #[tokio::test]
 async fn a_cover_the_archive_cannot_give_yet_is_warming_until_it_can() {
     use droppedneedle_providers::TransportKind;
-    use droppedneedle_providers::executor::{Method, Scripted};
+    use droppedneedle_providers::executor::Method;
+    use droppedneedle_providers::test_support::Scripted;
 
     let rig = rig(None).await;
     let mbid = "0a1b2c3d-0000-4000-8000-000000000201";

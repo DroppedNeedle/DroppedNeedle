@@ -8901,8 +8901,9 @@ async fn a_management_token_confirms_only_for_its_admin_until_the_preview_expire
     use axum::body::Body;
     use axum::http::Request;
     use droppedneedle_auth::users::roles::{Role, SessionKind};
-    use droppedneedle_kernel::clock::{Clock, ManualClock};
+    use droppedneedle_kernel::clock::Clock;
     use droppedneedle_kernel::runtime_config::sections::LibraryManagementRootAssignment;
+    use droppedneedle_kernel::test_support::ManualClock;
     use droppedneedle_library::management::service::Management;
     use droppedneedle_library::management::settings as lm;
     use tower::ServiceExt as _;
@@ -23726,7 +23727,7 @@ async fn automatic_acoustid_waits_while_library_settings_do_not_read() {
     use droppedneedle_catalog::metadata::upstream::{LiveCatalogSettings, Upstream};
     use droppedneedle_library::management::enrich::ScriptedEnrichment;
     use droppedneedle_providers::Providers;
-    use droppedneedle_providers::executor::ScriptedWire;
+    use droppedneedle_providers::test_support::ScriptedWire;
 
     let rig = crate::common::auth::AuthRig::new("acoustid-unreadable").await;
     let dir = ScratchDir::new("acoustid-unreadable-settings");

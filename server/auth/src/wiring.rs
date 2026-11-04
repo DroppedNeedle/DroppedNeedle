@@ -132,7 +132,7 @@ impl AuthSetup {
         // saved list and share its one warning.
         let trusted = platform.config.trusted_proxies.clone();
         let checks = CallerChecks {
-            limits: Arc::new(RateLimiter::new().with_trusted_proxies(trusted.clone())),
+            limits: Arc::new(RateLimiter::new(clock.clone()).with_trusted_proxies(trusted.clone())),
             trusted_proxies: trusted,
             stated: StatedAddresses::new(config_store.live()),
         };

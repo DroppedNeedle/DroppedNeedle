@@ -84,13 +84,13 @@ pub struct DbConfig {
     /// [`crate::config::DEFAULT_SHUTDOWN_GRACE`].
     pub shutdown_grace: Duration,
     /// The lane's time limits. Not a setting: only a test changes them.
-    lane_limits: LaneLimits,
+    pub(in crate::db) lane_limits: LaneLimits,
     /// The WAL sizes, high then low, at which bulk writes are held and let
     /// go. Not a setting: only a test changes them.
-    wal_water: (i64, i64),
+    pub(in crate::db) wal_water: (i64, i64),
     /// How long a request read waits for a pooled connection before `Busy`.
     /// Not a setting: only a test changes it.
-    read_wait: Duration,
+    pub(in crate::db) read_wait: Duration,
 }
 
 impl DbConfig {
@@ -112,30 +112,6 @@ impl DbConfig {
     /// Bound shutdown's wait for queued writes by the deployment's grace.
     pub fn with_shutdown_grace(mut self, grace: Duration) -> Self {
         self.shutdown_grace = grace;
-        self
-    }
-
-    /// Other lane time limits, so a test can reach them without waiting out
-    /// the real ones.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn with_lane_limits(mut self, limits: LaneLimits) -> Self {
-        self.lane_limits = limits;
-        self
-    }
-
-    /// Lower water marks for the WAL hold, so a test fills the WAL with
-    /// kilobytes.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn with_wal_water(mut self, high: i64, low: i64) -> Self {
-        self.wal_water = (high, low);
-        self
-    }
-
-    /// A shorter wait for a pooled connection, so a test reaches `Busy`
-    /// without waiting out the real one.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn with_read_wait(mut self, wait: Duration) -> Self {
-        self.read_wait = wait;
         self
     }
 }
@@ -426,7 +402,7 @@ impl DbRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{db::scratch::ScratchDir, schema::template::copy_to};
+    use crate::{db::scratch::ScratchDir, test_support::template::copy_to};
 
     /// Shutdown returns at its grace while a watch pass is still running.
     /// The pass holds until the test releases it, and shutdown must not wait

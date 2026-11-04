@@ -20,7 +20,8 @@ use axum::{
 use droppedneedle_auth::Principal;
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_kernel::clock::{Clock, ManualClock};
+use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::test_support::ManualClock;
 use droppedneedle_media::remotes::models::SourceName;
 use playback::PlaybackDeps;
 use playback::ports::{RemoteReport, RemoteReporters, ReportTrack, ScrobbleSinks, ScrobbleTargets};

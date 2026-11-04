@@ -94,15 +94,10 @@ impl Sessions {
         self.insert_record(self.standard_row(session)).await
     }
 
-    /// Store a row exactly as given, its id included. Tests seed with it;
-    /// the server stores sessions through [`Sessions::insert`] and the
-    /// other writers, which take the id from the generator.
-    #[cfg(any(test, feature = "test-support"))]
-    pub async fn seed(&self, record: SessionRecord) -> Result<(), SessionStoreError> {
-        self.insert_record(record).await
-    }
-
-    async fn insert_record(&self, record: SessionRecord) -> Result<(), SessionStoreError> {
+    pub(crate) async fn insert_record(
+        &self,
+        record: SessionRecord,
+    ) -> Result<(), SessionStoreError> {
         let issued_at = record.issued_at;
         let outcome = self
             .db

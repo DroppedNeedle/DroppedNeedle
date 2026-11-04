@@ -25,16 +25,5 @@ pub mod page;
 pub mod platform;
 pub mod runtime_config;
 pub mod schema;
-
-/// Every `sql.rs` of this crate, one line each, for the schema test.
 #[cfg(any(test, feature = "test-support"))]
-pub fn statement_files() -> Vec<db::statement::StatementFile> {
-    vec![
-        db::sql::registered(),
-        db::cache::sql::registered(),
-        jobs::queue::sql::registered(),
-        events::sql::registered(),
-        jobs::sql::registered(),
-        runtime_config::sql::registered(),
-    ]
-}
+pub mod test_support;

@@ -814,7 +814,7 @@ impl ProviderCacheStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use droppedneedle_kernel::clock::ManualClock;
+    use droppedneedle_kernel::test_support::ManualClock;
 
     fn store() -> (ProviderCacheStore, ManualClock) {
         let clock = ManualClock::at(1_000_000);

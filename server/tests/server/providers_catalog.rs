@@ -6,7 +6,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
+use droppedneedle_providers::executor::Method;
+use droppedneedle_providers::test_support::{Scripted, ScriptedWire};
 use droppedneedle_providers::{
     PayloadKind, ProviderEndpoints, ProviderError, Providers, RequestPriority, TransportKind,
 };

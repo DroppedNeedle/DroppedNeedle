@@ -256,7 +256,7 @@ pub fn library_with(
     outbound.identify_providers = Port::given(identify);
     outbound.contribution_providers = Port::given(ScriptedContrib::default().providers());
     let providers = Arc::new(Providers::unpaced(Arc::new(
-        droppedneedle_providers::executor::ScriptedWire::new(),
+        droppedneedle_providers::test_support::ScriptedWire::new(),
     )));
     let mb_source = providers.musicbrainz.live_source(platform.settings.live());
     let queue = droppedneedle_kernel::jobs::queue::JobQueue::new(

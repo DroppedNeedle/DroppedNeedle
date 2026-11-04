@@ -1631,8 +1631,11 @@ type StatementFiles = fn() -> Vec<StatementFile>;
 /// Every crate that holds a `sql.rs`, by its folder under `server/` (`.`
 /// for the server crate), with the function that lists its files.
 const REGISTRIES: &[(&str, StatementFiles)] = &[
-    ("kernel", droppedneedle_kernel::statement_files),
-    ("auth", droppedneedle_auth::statement_files),
+    (
+        "kernel",
+        droppedneedle_kernel::test_support::statement_files,
+    ),
+    ("auth", droppedneedle_auth::test_support::statement_files),
     ("catalog", droppedneedle_catalog::statement_files),
     ("acquire", droppedneedle_acquire::statement_files),
     ("library", droppedneedle_library::statement_files),

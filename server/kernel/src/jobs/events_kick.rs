@@ -19,16 +19,6 @@ pub trait EventsKick: Send + Sync {
     fn kick(&self);
 }
 
-/// A kick that does nothing, for test states.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct NoopKick;
-
-#[cfg(any(test, feature = "test-support"))]
-impl EventsKick for NoopKick {
-    fn kick(&self) {}
-}
-
 /// A kick from a closure.
 pub struct FnKick<F> {
     /// What a kick runs.

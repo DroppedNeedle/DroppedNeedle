@@ -6,9 +6,6 @@
 //! the next number, added here in order; a file on `v3` is never edited,
 //! renumbered or removed.
 
-#[cfg(any(test, feature = "test-support"))]
-pub mod template;
-
 use crate::db::migrate::{Chain, Migration};
 
 macro_rules! migration {

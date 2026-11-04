@@ -822,7 +822,9 @@ mod tests {
             std::process::id(),
             droppedneedle_kernel::clock::SystemClock.now_ms()
         ));
-        let clock = Arc::new(droppedneedle_kernel::clock::ManualClock::at(1_000_000));
+        let clock = Arc::new(droppedneedle_kernel::test_support::ManualClock::at(
+            1_000_000,
+        ));
         let cache = ArtworkCache::new(root.clone(), 1024 * 1024, clock.clone());
         let key = "caa:release-group:aff0622e-7bd3-4fb6-9ca3-0fa19dd2340b:500";
         assert!(!cache.loaded_or_start(), "nothing is known before the load");

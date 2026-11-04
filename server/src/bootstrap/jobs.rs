@@ -262,7 +262,8 @@ impl QueueSetup {
         let db = platform.db.clone();
         #[cfg(any(test, feature = "test-support"))]
         if platform.config.test_hooks {
-            use droppedneedle_kernel::clock::{Clock, ManualClock, SystemClock};
+            use droppedneedle_kernel::clock::{Clock, SystemClock};
+            use droppedneedle_kernel::test_support::ManualClock;
             let clock = ManualClock::at(SystemClock.now_ms());
             return Self {
                 queue: JobQueue::new(db, Arc::new(clock.clone())),
@@ -469,11 +470,11 @@ pub mod scripted {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
-    use droppedneedle_kernel::clock::ManualClock;
     use droppedneedle_kernel::jobs::BoxFuture;
     use droppedneedle_kernel::jobs::queue::{
         JobCtx, JobHandler, JobKind, KindSpec, Outcome, PAYLOAD_INVALID,
     };
+    use droppedneedle_kernel::test_support::ManualClock;
     use serde::Deserialize;
     use tokio::sync::Semaphore;
 

@@ -211,7 +211,7 @@ pub fn catalog_setup_at(
     let catalog = Catalog::new(
         Upstream::new(
             Arc::new(Providers::unpaced(Arc::new(
-                droppedneedle_providers::executor::ScriptedWire::new(),
+                droppedneedle_providers::test_support::ScriptedWire::new(),
             ))),
             Arc::new(LiveCatalogSettings::new(&platform.settings)),
             users.clone(),
@@ -586,7 +586,7 @@ pub fn settings_at(
     let (effects, _) = Effects::new(
         store.clone(),
         Arc::new(LiveSaveEffects::new(
-            Arc::new(droppedneedle_kernel::jobs::events_kick::NoopKick),
+            Arc::new(droppedneedle_kernel::test_support::NoopKick),
             Arc::new(|| {}),
             Arc::new(|| {}),
         )),

@@ -223,9 +223,9 @@ async fn scan_catalogs_tags_without_touching_files() {
 /// both sides of a daylight-saving change, and not a minute before.
 #[tokio::test]
 async fn daily_scans_run_at_local_time_across_a_clock_change() {
-    use droppedneedle_kernel::clock::ManualClock;
     use droppedneedle_kernel::config::AppConfig;
     use droppedneedle_kernel::runtime_config::sections::{LibraryScanSchedule, ScanFrequency};
+    use droppedneedle_kernel::test_support::ManualClock;
     // London moves from GMT to BST at 01:00 UTC on Sunday 30 March 2025.
     const SATURDAY_0300_GMT: i64 = 1_743_217_200_000;
     const SUNDAY_0300_BST: i64 = 1_743_300_000_000;
@@ -1210,7 +1210,7 @@ async fn an_end_pass_that_fails_or_runs_long_still_ends() {
         ..LaneLimits::default()
     };
     let db = Db::open_for_tests_with(&path, limits).expect("database opens");
-    let clock = Arc::new(droppedneedle_kernel::clock::ManualClock::at(
+    let clock = Arc::new(droppedneedle_kernel::test_support::ManualClock::at(
         1_800_000_000_000,
     ));
     let registry = RootRegistry::new(
@@ -10902,7 +10902,7 @@ async fn a_new_copy_at_a_path_needs_the_same_recording_and_new_audio() {
 /// same server after a restart.
 async fn watched(
     scratch: &Path,
-    clock: Arc<droppedneedle_kernel::clock::ManualClock>,
+    clock: Arc<droppedneedle_kernel::test_support::ManualClock>,
 ) -> (droppedneedle_kernel::platform::Platform, LibrarySetup) {
     migrated_db(&scratch.join("app.db"));
     let db = Db::open_for_tests(&scratch.join("app.db")).expect("database opens");
@@ -10949,7 +10949,7 @@ async fn the_folder_watcher_scans_the_changed_folder_across_a_restart() {
             std::fs::create_dir_all(&folder).expect("mkdir");
             std::fs::write(folder.join("cover.jpg"), b"x").expect("write");
         }
-        let clock = Arc::new(droppedneedle_kernel::clock::ManualClock::at(
+        let clock = Arc::new(droppedneedle_kernel::test_support::ManualClock::at(
             1_700_000_000_000,
         ));
         let (_platform, library) = watched(&scratch, clock.clone()).await;
@@ -10983,7 +10983,7 @@ async fn the_folder_watcher_scans_the_changed_folder_across_a_restart() {
     let music = scratch.join("music");
     std::fs::create_dir_all(music.join("A")).expect("mkdir");
     std::fs::write(music.join("A/notes.txt"), b"x").expect("write");
-    let clock = Arc::new(droppedneedle_kernel::clock::ManualClock::at(
+    let clock = Arc::new(droppedneedle_kernel::test_support::ManualClock::at(
         1_700_000_000_000,
     ));
     let (platform, library) = watched(&scratch, clock.clone()).await;

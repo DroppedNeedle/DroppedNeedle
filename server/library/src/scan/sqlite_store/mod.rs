@@ -217,7 +217,7 @@ pub(crate) fn scratch_store() -> (
 ) {
     let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("scan-store").unwrap();
     let path = dir.path().join("app.db");
-    droppedneedle_kernel::schema::template::copy_to(&path).unwrap();
+    droppedneedle_kernel::test_support::template::copy_to(&path).unwrap();
     let db = Db::open_for_tests(&path).unwrap();
     (
         dir,

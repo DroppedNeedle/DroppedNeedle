@@ -7,7 +7,7 @@ use super::*;
 fn settling_two_different_chosen_matches_is_refused() {
     let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("settle-match").unwrap();
     let path = dir.path().join("app.db");
-    droppedneedle_kernel::schema::template::copy_to(&path).unwrap();
+    droppedneedle_kernel::test_support::template::copy_to(&path).unwrap();
     let db = Db::open_for_tests(&path).unwrap();
     let seed = |tx: &Transaction<'_>| {
         tx.execute_batch(

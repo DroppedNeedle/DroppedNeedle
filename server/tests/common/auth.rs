@@ -22,12 +22,13 @@ use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::models::{LocalCredential, UserRecord};
 use droppedneedle_auth::users::roles::{Admin, Principal, Role};
 use droppedneedle_auth::wiring::AuthSetup;
-use droppedneedle_kernel::clock::{Clock, ManualClock};
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::DbRuntime;
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Secret};
+use droppedneedle_kernel::test_support::ManualClock;
 
 use super::{ScratchDir, TestPlatform, scratch_runtime};
 

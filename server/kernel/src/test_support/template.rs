@@ -37,7 +37,7 @@ pub fn copy_to(path: &Path) -> Result<(), String> {
 fn build() -> Result<Vec<u8>, String> {
     let dir = ScratchDir::new("db-template").map_err(|error| error.to_string())?;
     let path = dir.path().join("app.db");
-    crate::db::migrate_file(&path, &super::CHAIN)
+    crate::db::migrate_file(&path, &crate::schema::CHAIN)
         .map_err(|error| format!("template migrations: {error}"))?;
     let mut wal = path.clone().into_os_string();
     wal.push("-wal");

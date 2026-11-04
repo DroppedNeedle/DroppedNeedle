@@ -45,7 +45,7 @@ async fn seed_small() -> Fixture {
     let dir = droppedneedle_kernel::db::scratch::ScratchDir::new(&format!("reads-perf-{seq}"))
         .expect("scratch dir");
     let path = dir.join("app.db");
-    droppedneedle_kernel::schema::template::copy_to(&path).expect("migrated database copies");
+    droppedneedle_kernel::test_support::template::copy_to(&path).expect("migrated database copies");
     let runtime = open_runtime(&DbConfig::new(
         &path,
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),

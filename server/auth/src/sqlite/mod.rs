@@ -41,7 +41,7 @@ mod lastfm;
 mod oidc;
 mod recovery;
 mod sessions;
-mod sql;
+pub(crate) mod sql;
 mod users;
 
 use std::sync::Arc;
@@ -59,12 +59,6 @@ pub use oidc::OidcStates;
 pub use recovery::RecoveryCodes;
 pub use sessions::{LoginWrite, Sessions};
 pub use users::Users;
-
-/// Every `sql.rs` of this crate, one line each, for the schema test.
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
-    vec![sql::registered()]
-}
 
 /// What [`forget_sealed`] cleared.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

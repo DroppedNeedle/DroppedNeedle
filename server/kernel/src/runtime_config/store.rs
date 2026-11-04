@@ -90,8 +90,8 @@ struct Inner {
 
 /// One section as last committed. A write replaces the entry whole, so the
 /// opened value cached here always belongs to this revision.
-struct Entry {
-    value: serde_json::Value,
+pub(crate) struct Entry {
+    pub(crate) value: serde_json::Value,
     revision: i64,
     opened: OnceLock<Arc<dyn Any + Send + Sync>>,
     /// Set once a failed read of this revision has been logged.
@@ -146,7 +146,7 @@ impl std::fmt::Debug for ConfigStore {
 }
 
 /// What a change decided about its row.
-enum Change<R> {
+pub(crate) enum Change<R> {
     /// Store this value.
     Write(serde_json::Value, R),
     /// Leave the row as it is.
@@ -826,7 +826,7 @@ impl ConfigStore {
     /// text equals the stored text is not written. After the commit the
     /// snapshot takes the written value at its new revision and the
     /// section's notice fires.
-    fn change<R, E, F>(
+    pub(crate) fn change<R, E, F>(
         &self,
         lane: DurableLane,
         name: &'static str,
@@ -929,7 +929,7 @@ impl ConfigStore {
         Ok(Sealed(normalized))
     }
 
-    fn entry(&self, key: &str) -> Option<Arc<Entry>> {
+    pub(crate) fn entry(&self, key: &str) -> Option<Arc<Entry>> {
         // Entries are replaced whole, so a writer that panicked left none
         // half-written.
         self.inner
@@ -957,45 +957,6 @@ impl ConfigStore {
             field.value.open(cleaned);
         }
         Ok(())
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ConfigStore {
-    /// A store for tests over `settings.db` in `dir`: a fresh migrated copy,
-    /// or the one an earlier call left there, so a test can open it again.
-    /// A `config.json` the test wrote in `dir` is copied in as at a first
-    /// start, which is how a test stores a section exactly as written.
-    pub fn scratch(dir: &std::path::Path, crypto: Crypto) -> Result<Self, String> {
-        std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
-        let path = dir.join("settings.db");
-        if !path.exists() {
-            crate::schema::template::copy_to(&path)?;
-        }
-        let db = Db::open_for_tests(&path).map_err(|error| error.to_string())?;
-        Self::open_blocking(
-            db,
-            crypto,
-            Arc::new(crate::clock::SystemClock),
-            &LegacyConfig::at(dir, false),
-        )
-        .map_err(|error| error.to_string())
-    }
-
-    /// Store `text` as one section, undecoded, for tests of a row that does
-    /// not read.
-    pub fn replace_stored_for_test(&self, key: &str, text: &str) -> Result<(), ConfigError> {
-        let value = decode_text(text)?;
-        self.change(DurableLane::Foreground, "config.test_replace", key, |_| {
-            Ok::<_, ConfigError>(Change::Write(value, ()))
-        })
-    }
-
-    /// The stored text of one section, for tests that check what reaches
-    /// the database.
-    pub fn stored_text(&self, key: &str) -> Option<String> {
-        self.entry(key)
-            .and_then(|entry| serde_json::to_string(&entry.value).ok())
     }
 }
 

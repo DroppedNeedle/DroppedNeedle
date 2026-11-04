@@ -94,7 +94,7 @@ enum Origin {
 pub struct Principal {
     user_id: String,
     username: Option<String>,
-    username_display: Option<String>,
+    pub(crate) username_display: Option<String>,
     role: Role,
     session_id: String,
     session_kind: SessionKind,
@@ -149,33 +149,6 @@ impl Principal {
             transport: Transport::Bearer,
             origin: Origin::ActingFor,
         }
-    }
-
-    /// A signed-in principal for the test sign-in layer, which stands in for
-    /// the session gate on a slice router.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(
-        user_id: &str,
-        role: Role,
-        session_id: &str,
-        session_kind: SessionKind,
-    ) -> Self {
-        Self::from_session(
-            user_id.to_owned(),
-            None,
-            None,
-            role,
-            session_id.to_owned(),
-            session_kind,
-            Transport::Bearer,
-        )
-    }
-
-    /// The same test principal shown under `username_display`.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn with_username_display(mut self, username_display: &str) -> Self {
-        self.username_display = Some(username_display.to_owned());
-        self
     }
 
     /// Owning user id.

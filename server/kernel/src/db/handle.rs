@@ -13,8 +13,6 @@ use std::{path::Path, sync::Arc};
 
 use rusqlite::{Connection, Transaction};
 
-#[cfg(any(test, feature = "test-support"))]
-use super::writer::LaneLimits;
 use super::{
     error::{ChunkedError, DbError},
     read_pool::ReadPools,
@@ -40,38 +38,6 @@ impl std::fmt::Debug for Db {
 impl Db {
     pub(in crate::db) fn new(lane: WriteLane, reads: Arc<ReadPools>) -> Self {
         Self { lane, reads }
-    }
-
-    /// A handle on an existing, migrated database file with no runtime
-    /// behind it: the writer lane and both read pools, opened on the
-    /// calling thread. For tests only. It starts no watch, so a waiting
-    /// write or read gets no `Busy` answer and a stuck write is not logged,
-    /// and nothing holds bulk writes for the WAL.
-    /// Writes run on [`LaneLimits::patient`], so a loaded host slows a
-    /// test without aborting its writes.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn open_for_tests(path: &Path) -> Result<Self, DbError> {
-        Self::on_test_lane(path, WriteLane::open_limited(path, LaneLimits::patient())?)
-    }
-
-    /// [`Db::open_for_tests`] with other lane time limits, so a test can
-    /// run a write past its budget without waiting out the real one.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn open_for_tests_with(path: &Path, limits: LaneLimits) -> Result<Self, DbError> {
-        Self::on_test_lane(path, WriteLane::open_limited(path, limits)?)
-    }
-
-    /// A test handle over `lane` and both read pools.
-    #[cfg(any(test, feature = "test-support"))]
-    fn on_test_lane(path: &Path, lane: WriteLane) -> Result<Self, DbError> {
-        let reads = ReadPools::open(
-            path,
-            lane.database(),
-            super::MAX_READERS as usize,
-            super::BUSY_TIMEOUT,
-            super::ACQUIRE_TIMEOUT,
-        )?;
-        Ok(Self::new(lane, reads))
     }
 
     pub(in crate::db) fn lane(&self) -> &WriteLane {

@@ -12,11 +12,6 @@
 //! Transport errors carry only a [`TransportKind`]: the URL, which can
 //! hold a key in its path or query, never reaches an error or a log line.
 
-#[cfg(any(test, feature = "test-support"))]
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::Mutex,
-};
 use std::{sync::Arc, time::Duration};
 
 use droppedneedle_kernel::clock::Clock;
@@ -117,10 +112,10 @@ pub fn never_foreign(_: &Url) -> bool {
 /// values added as segments, never joined as text.
 #[derive(Clone)]
 pub struct Request {
-    method: Method,
+    pub(crate) method: Method,
     url: Url,
-    headers: Vec<(&'static str, String)>,
-    body: Body,
+    pub(crate) headers: Vec<(&'static str, String)>,
+    pub(crate) body: Body,
     idempotent: bool,
     max_body: Option<usize>,
     redirects: Redirects,
@@ -976,170 +971,6 @@ fn unit_random() -> f64 {
         return 0.5;
     }
     (u64::from_le_bytes(bytes) >> 11) as f64 / (1u64 << 53) as f64
-}
-
-/// A scripted wire for tests: answers queue per method and URL (without
-/// the query), the last one repeating, and every request is recorded. An
-/// unscripted request gets no answer, as if nothing listened.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct ScriptedWire {
-    script: Mutex<HashMap<(Method, String), VecDeque<Scripted>>>,
-    sent: Mutex<Vec<Sent>>,
-}
-
-/// One scripted outcome.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone)]
-pub enum Scripted {
-    /// An answer.
-    Answer {
-        /// The status.
-        status: u16,
-        /// The headers.
-        headers: Vec<(String, String)>,
-        /// The body.
-        body: Vec<u8>,
-    },
-    /// No answer, for this reason.
-    Transport(TransportKind),
-    /// No answer, ever: the deadline decides.
-    Hang,
-}
-
-/// One request the scripted wire saw.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone)]
-pub struct Sent {
-    /// The method.
-    pub method: Method,
-    /// The full URL, query included.
-    pub url: Url,
-    /// The headers.
-    pub headers: Vec<(String, String)>,
-    /// The body.
-    pub body: Body,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Sent {
-    /// One query value.
-    #[must_use]
-    pub fn query(&self, key: &str) -> Option<String> {
-        self.url
-            .query_pairs()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| value.into_owned())
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ScriptedWire {
-    /// A wire with nothing scripted.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Queue `outcome` for `method` requests to `url`.
-    pub fn on(&self, method: Method, url: &str, outcome: Scripted) {
-        self.script
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .entry((method, url.to_owned()))
-            .or_default()
-            .push_back(outcome);
-    }
-
-    /// Queue an answer for GETs of `url`.
-    pub fn answer(
-        &self,
-        url: &str,
-        status: u16,
-        headers: &[(&str, &str)],
-        body: impl Into<Vec<u8>>,
-    ) {
-        self.on(
-            Method::Get,
-            url,
-            Scripted::Answer {
-                status,
-                headers: headers
-                    .iter()
-                    .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
-                    .collect(),
-                body: body.into(),
-            },
-        );
-    }
-
-    /// Every request sent so far, in order.
-    #[must_use]
-    pub fn sent(&self) -> Vec<Sent> {
-        self.sent
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .clone()
-    }
-
-    fn next(&self, method: Method, url: &Url) -> Option<Scripted> {
-        let mut bare = url.clone();
-        bare.set_query(None);
-        let mut script = self
-            .script
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        let queue = script.get_mut(&(method, bare.to_string()))?;
-        if queue.len() > 1 {
-            queue.pop_front()
-        } else {
-            queue.front().cloned()
-        }
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Wire for ScriptedWire {
-    fn send<'a>(&'a self, prepared: Prepared<'a>) -> BoxFuture<'a, Result<WireAnswer, WireError>> {
-        Box::pin(async move {
-            let request = prepared.request;
-            self.sent
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .push(Sent {
-                    method: request.method,
-                    url: prepared.url.clone(),
-                    headers: request
-                        .headers
-                        .iter()
-                        .map(|(name, value)| ((*name).to_owned(), value.clone()))
-                        .collect(),
-                    body: request.body.clone(),
-                });
-            match self.next(request.method, prepared.url) {
-                Some(Scripted::Answer {
-                    status,
-                    headers,
-                    body,
-                }) => {
-                    if body.len() > prepared.max_body {
-                        return Err(WireError::TooLarge);
-                    }
-                    Ok(WireAnswer {
-                        status,
-                        headers,
-                        body,
-                    })
-                }
-                Some(Scripted::Transport(kind)) => Err(WireError::Transport(kind)),
-                Some(Scripted::Hang) => std::future::pending().await,
-                None => {
-                    tracing::warn!(host = ?prepared.url.host_str(), "unscripted provider request");
-                    Err(WireError::Transport(TransportKind::Connect))
-                }
-            }
-        })
-    }
 }
 
 #[cfg(test)]

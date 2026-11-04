@@ -18,11 +18,7 @@ pub mod passwords;
 pub mod prod;
 pub mod routes;
 pub mod sqlite;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod times;
 pub mod wiring;
-
-/// Every `sql.rs` of this crate, one line each, for the schema test.
-#[cfg(any(test, feature = "test-support"))]
-pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
-    sqlite::statement_files()
-}

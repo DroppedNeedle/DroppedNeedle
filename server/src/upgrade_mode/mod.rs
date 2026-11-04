@@ -209,8 +209,11 @@ impl UpgradeMode {
             dirs,
             base_path: config.base_path.clone(),
             trusted_proxies: config.trusted_proxies.clone(),
+            // Upgrade mode runs before the platform opens, so its limiter
+            // reads the system clock itself.
             limits: Arc::new(
-                RateLimiter::new().with_trusted_proxies(config.trusted_proxies.clone()),
+                RateLimiter::new(Arc::new(droppedneedle_kernel::clock::SystemClock))
+                    .with_trusted_proxies(config.trusted_proxies.clone()),
             ),
             sign_in,
             tool,

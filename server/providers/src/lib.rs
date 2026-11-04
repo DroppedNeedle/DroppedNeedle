@@ -68,6 +68,8 @@ pub mod rates;
 pub mod singleflight;
 pub mod skiddle;
 pub mod spotify;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod ticketmaster;
 pub mod web_address;
 pub mod wikidata;
@@ -150,43 +152,7 @@ pub struct ProviderEndpoints {
     pub pwned_passwords: String,
 }
 
-impl ProviderEndpoints {
-    /// Every address on the discard port, where nothing listens, so a
-    /// test can never reach a real provider.
-    #[cfg(any(test, feature = "test-support"))]
-    #[must_use]
-    pub fn closed() -> Self {
-        Self {
-            musicbrainz: "http://127.0.0.1:9/musicbrainz/ws/2".to_owned(),
-            brainzmash: "http://127.0.0.1:9/brainzmash/ws/2".to_owned(),
-            coverart: "http://127.0.0.1:9/coverart".to_owned(),
-            listenbrainz: "http://127.0.0.1:9/listenbrainz".to_owned(),
-            lastfm: "http://127.0.0.1:9/lastfm/".to_owned(),
-            audiodb: "http://127.0.0.1:9/audiodb".to_owned(),
-            acoustid: "http://127.0.0.1:9/acoustid".to_owned(),
-            discogs: "http://127.0.0.1:9/discogs".to_owned(),
-            itunes: "http://127.0.0.1:9/itunes/search".to_owned(),
-            deezer: "http://127.0.0.1:9/deezer".to_owned(),
-            lrclib: "http://127.0.0.1:9/lrclib".to_owned(),
-            wikidata: "http://127.0.0.1:9/wikidata".to_owned(),
-            wikipedia: "http://127.0.0.1:9/wikipedia-{lang}".to_owned(),
-            commons: "http://127.0.0.1:9/commons".to_owned(),
-            ticketmaster: "http://127.0.0.1:9/ticketmaster".to_owned(),
-            skiddle: "http://127.0.0.1:9/skiddle".to_owned(),
-            geocoding: "http://127.0.0.1:9/geocoding".to_owned(),
-            youtube: "http://127.0.0.1:9/youtube".to_owned(),
-            github_releases: "http://127.0.0.1:9/releases".to_owned(),
-            github_api: "http://127.0.0.1:9/github".to_owned(),
-            github_codeload: "http://127.0.0.1:9/codeload".to_owned(),
-            spotify_api: "http://127.0.0.1:9/spotify".to_owned(),
-            spotify_accounts: "http://127.0.0.1:9/spotify-accounts".to_owned(),
-            spotify_cover_cdn: None,
-            deezer_images: "http://127.0.0.1:9".to_owned(),
-            plex_tv: "http://127.0.0.1:9/plex".to_owned(),
-            pwned_passwords: "http://127.0.0.1:9/range".to_owned(),
-        }
-    }
-}
+impl ProviderEndpoints {}
 
 /// The shared provider dependencies, built once at boot and shared by
 /// every area: the limiters of the rate table, the provider answer cache,
@@ -271,64 +237,7 @@ impl Providers {
         )
     }
 
-    /// The providers over `wire`, reading wall time from `clock`, with a
-    /// cache in a scratch file. Tests pass a scripted wire or one that
-    /// reaches a loopback server.
-    #[cfg(any(test, feature = "test-support"))]
-    #[must_use]
-    pub fn over_wire(
-        wire: Arc<dyn Wire>,
-        clock: Arc<dyn Clock>,
-        endpoints: ProviderEndpoints,
-    ) -> Self {
-        Self::assemble(
-            wire,
-            clock,
-            endpoints,
-            LimiterSet::new(),
-            CacheDb::scratch(),
-        )
-    }
-
-    /// The providers over `wire` with every limiter unpaced, for suites
-    /// that do not care about pacing: cooldowns and in-flight caps still
-    /// hold, rates do not. Every address is on the discard port.
-    #[cfg(any(test, feature = "test-support"))]
-    #[must_use]
-    pub fn unpaced(wire: Arc<dyn Wire>) -> Self {
-        Self::unpaced_at(wire, ProviderEndpoints::closed())
-    }
-
-    /// [`unpaced`](Self::unpaced) with the providers at `endpoints`.
-    #[cfg(any(test, feature = "test-support"))]
-    #[must_use]
-    pub fn unpaced_at(wire: Arc<dyn Wire>, endpoints: ProviderEndpoints) -> Self {
-        Self::unpaced_on(
-            wire,
-            Arc::new(droppedneedle_kernel::clock::SystemClock),
-            endpoints,
-        )
-    }
-
-    /// [`unpaced_at`](Self::unpaced_at) reading wall time from `clock`, so
-    /// a journey can age the cache.
-    #[cfg(any(test, feature = "test-support"))]
-    #[must_use]
-    pub fn unpaced_on(
-        wire: Arc<dyn Wire>,
-        clock: Arc<dyn Clock>,
-        endpoints: ProviderEndpoints,
-    ) -> Self {
-        Self::assemble(
-            wire,
-            clock,
-            endpoints,
-            LimiterSet::unpaced(),
-            CacheDb::scratch(),
-        )
-    }
-
-    fn assemble(
+    pub(crate) fn assemble(
         wire: Arc<dyn Wire>,
         clock: Arc<dyn Clock>,
         endpoints: ProviderEndpoints,
@@ -476,18 +385,6 @@ impl Providers {
             hibp,
             oidc,
         }
-    }
-
-    /// The providers over a wire nothing answers on, for tests that never
-    /// reach a provider through the executor.
-    #[cfg(any(test, feature = "test-support"))]
-    #[must_use]
-    pub fn closed() -> Self {
-        Self::over_wire(
-            Arc::new(executor::ScriptedWire::new()),
-            Arc::new(droppedneedle_kernel::clock::SystemClock),
-            ProviderEndpoints::closed(),
-        )
     }
 
     /// One provider's limiter, or `None` for providers without a row.

@@ -161,7 +161,7 @@ pub async fn break_schema(db: &droppedneedle_kernel::db::Db, sql: &'static str) 
 /// Write a private copy of the migrated database to `path`, which must not
 /// exist yet. The migrations run once per test binary, not once per test.
 pub fn migrated_db(path: &Path) {
-    droppedneedle_kernel::schema::template::copy_to(path).expect("migrated database copies");
+    droppedneedle_kernel::test_support::template::copy_to(path).expect("migrated database copies");
 }
 
 /// A private migrated database file, to probe with [`Probe`]. Hold the

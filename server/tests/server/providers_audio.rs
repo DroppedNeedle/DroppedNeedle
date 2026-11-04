@@ -4,7 +4,8 @@
 //! code becomes is pinned in `providers_core`; the decode of each recorded
 //! answer in `providers_models`.
 
-use droppedneedle_providers::executor::{Body, Method, Scripted, ScriptedWire, Sent};
+use droppedneedle_providers::executor::{Body, Method};
+use droppedneedle_providers::test_support::{Scripted, ScriptedWire, Sent};
 use droppedneedle_providers::{ProviderEndpoints, ProviderError, Providers, RequestPriority};
 use droppedneedle_providers::{acoustid, audiodb, lastfm, listenbrainz};
 
@@ -444,7 +445,7 @@ async fn lastfm_calls_carry_the_callers_own_credentials() {
 
 /// The providers over `wire`, with ListenBrainz at its real address.
 fn listenbrainz_providers(
-    wire: &Arc<droppedneedle_providers::executor::ScriptedWire>,
+    wire: &Arc<droppedneedle_providers::test_support::ScriptedWire>,
 ) -> droppedneedle_providers::Providers {
     droppedneedle_providers::Providers::unpaced_at(
         wire.clone(),
@@ -481,7 +482,7 @@ const LB_PRIORITY: droppedneedle_providers::RequestPriority =
 /// (a newline, a space, or past the length cap) is refused before the wire.
 #[tokio::test]
 async fn listenbrainz_tokens_go_out_only_in_a_safe_header() {
-    let wire = Arc::new(droppedneedle_providers::executor::ScriptedWire::new());
+    let wire = Arc::new(droppedneedle_providers::test_support::ScriptedWire::new());
     wire.answer(
         &lb_url("/1/user/listener/listens"),
         200,
@@ -515,7 +516,7 @@ async fn listenbrainz_tokens_go_out_only_in_a_safe_header() {
         "safe token: Token scheme, exactly like v2"
     );
 
-    let wire = Arc::new(droppedneedle_providers::executor::ScriptedWire::new());
+    let wire = Arc::new(droppedneedle_providers::test_support::ScriptedWire::new());
     wire.answer(
         &lb_url("/1/user/listener/listens"),
         200,
@@ -585,7 +586,7 @@ async fn listenbrainz_user_listens_found_with_mbid_mapping() {
         {"listened_at": 1, "track_metadata": {"artist_name": "No Track"}},
         {"listened_at": 2, "track_metadata": {"track_name": "No Artist"}}
     ]}});
-    let wire = Arc::new(droppedneedle_providers::executor::ScriptedWire::new());
+    let wire = Arc::new(droppedneedle_providers::test_support::ScriptedWire::new());
     wire.answer(
         &lb_url("/1/user/listener/listens"),
         200,
@@ -621,11 +622,11 @@ async fn listenbrainz_user_listens_found_with_mbid_mapping() {
 #[tokio::test]
 async fn listenbrainz_answers_missing_their_field_give_no_verdict() {
     let popularity = lb_url("/1/popularity/release-group");
-    let wire = Arc::new(droppedneedle_providers::executor::ScriptedWire::new());
+    let wire = Arc::new(droppedneedle_providers::test_support::ScriptedWire::new());
     wire.on(
         droppedneedle_providers::executor::Method::Post,
         &popularity,
-        droppedneedle_providers::executor::Scripted::Answer {
+        droppedneedle_providers::test_support::Scripted::Answer {
             status: 200,
             headers: Vec::new(),
             body: br#"{"oops": true}"#.to_vec(),
@@ -634,7 +635,7 @@ async fn listenbrainz_answers_missing_their_field_give_no_verdict() {
     wire.on(
         droppedneedle_providers::executor::Method::Post,
         &popularity,
-        droppedneedle_providers::executor::Scripted::Answer {
+        droppedneedle_providers::test_support::Scripted::Answer {
             status: 200,
             headers: Vec::new(),
             body: b"[]".to_vec(),

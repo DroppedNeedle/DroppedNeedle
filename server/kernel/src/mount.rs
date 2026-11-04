@@ -220,29 +220,6 @@ impl<S: Clone + Send + Sync + 'static> Routes<S> {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-impl Routes<()> {
-    /// Every group in one router with no layers, for tests that mount one
-    /// area alone.
-    pub fn into_router(self) -> axum::Router {
-        let Postures {
-            public,
-            user,
-            curator,
-            admin,
-            wrapped_key,
-            upgrade_session,
-        } = self.into_postures();
-        public
-            .merge(user)
-            .merge(curator)
-            .merge(admin)
-            .merge(wrapped_key)
-            .merge(upgrade_session)
-            .into()
-    }
-}
-
 /// Mount `routes` with its last `{x}` turned into `{*x}`, and document it
 /// at the annotated path.
 fn with_rest_parameter<S: Clone + Send + Sync + 'static>(

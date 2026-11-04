@@ -6,11 +6,11 @@ use std::sync::Arc;
 
 use rusqlite::named_params;
 
-use super::{JobKind, JobQueue, KindSpec, Outcome, State, lease};
-use crate::clock::ManualClock;
+use super::{JobKind, JobQueue, KindSpec, Outcome, State};
 use crate::db::scratch::ScratchDir;
 use crate::db::{DbConfig, DbRuntime, Lane, open_runtime};
-use crate::schema::template::copy_to;
+use crate::test_support::ManualClock;
+use crate::test_support::template::copy_to;
 
 const KIND: JobKind = JobKind::new("test.unit");
 
@@ -32,7 +32,7 @@ async fn open(name: &str) -> (DbRuntime, ScratchDir) {
 #[tokio::test]
 async fn the_jobs_table_statements_keep_the_lease_promises() {
     let (runtime, _dir) = open("conformance").await;
-    lease::check_conformance(runtime.db(), super::STATEMENTS, "test.unit", |tx| {
+    crate::test_support::check_conformance(runtime.db(), super::STATEMENTS, "test.unit", |tx| {
         tx.query_row(
             "INSERT INTO durable_jobs (kind, idempotency_key, state, not_before_at, payload_json, created_at, updated_at) \
              VALUES (:kind, 'k', 'queued', 0, '{}', 0, 0) RETURNING id",

@@ -72,8 +72,36 @@ impl E2e {
         Self::open_with(tag, |config| config).await
     }
 
+    /// As [`E2e::open`], on a clock that stands still, so no rate bucket
+    /// refills while a test counts refusals, however slowly the host runs
+    /// the requests.
+    pub(crate) async fn open_held(tag: &str) -> Self {
+        let now =
+            droppedneedle_kernel::clock::Clock::now_ms(&droppedneedle_kernel::clock::SystemClock);
+        Self::open_on(
+            tag,
+            |config| config,
+            Arc::new(droppedneedle_kernel::test_support::ManualClock::at(now)),
+        )
+        .await
+    }
+
     /// As [`E2e::open`], with the database tuned by `tune`.
     pub(crate) async fn open_with(tag: &str, tune: impl FnOnce(DbConfig) -> DbConfig) -> Self {
+        Self::open_on(
+            tag,
+            tune,
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        )
+        .await
+    }
+
+    /// As [`E2e::open_with`], with `clock` as the platform's clock.
+    async fn open_on(
+        tag: &str,
+        tune: impl FnOnce(DbConfig) -> DbConfig,
+        clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    ) -> Self {
         let scratch = crate::common::ScratchDir::new(&format!("auth-e2e-{tag}"));
         let dir = scratch.to_path_buf();
         crate::common::migrated_db(&dir.join("app.db"));
@@ -87,6 +115,7 @@ impl E2e {
         config.root_app_dir = dir.clone();
         let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
             .config(config)
+            .clock(clock)
             .build()
             .await;
         let store = Arc::clone(&platform.settings);
@@ -211,7 +240,7 @@ impl E2e {
                 // pacing would only add whole seconds of waiting to rows
                 // that are bound to answer "provider down" anyway.
                 providers: Arc::new(Providers::unpaced(Arc::new(
-                    droppedneedle_providers::executor::ScriptedWire::new(),
+                    droppedneedle_providers::test_support::ScriptedWire::new(),
                 ))),
                 ..crate::common::catalog_inputs(p)
             },
@@ -220,7 +249,7 @@ impl E2e {
             Some(&acquire),
         );
         let providers = Arc::new(Providers::unpaced(Arc::new(
-            droppedneedle_providers::executor::ScriptedWire::new(),
+            droppedneedle_providers::test_support::ScriptedWire::new(),
         )));
         let (media, _worker) = droppedneedle_media::MediaSetup::build(
             p,
@@ -1934,14 +1963,6 @@ async fn concurrent_setups_yield_exactly_one_admin() {
 // Rate limits and edge failures
 // ---------------------------------------------------------------------------
 
-/// The app with its limiter's clock held, so no bucket refills while a
-/// test counts refusals, however slowly the host runs the requests.
-fn held_clock_router(e2e: &E2e) -> Router {
-    let state = e2e.state();
-    state.auth.limits.hold_clock();
-    create_app(state)
-}
-
 /// One request from a given client address (as `ConnectInfo` would carry),
 /// asked again while the app answers busy.
 async fn call_from(app: Router, peer: &str, uri: &str, body: Option<Value>) -> StatusCode {
@@ -1979,8 +2000,8 @@ async fn call_from_once(
 
 #[tokio::test]
 async fn rate_limits_key_by_client_and_username() {
-    let e2e = E2e::open("rate-limits").await;
-    let app = held_clock_router(&e2e);
+    let e2e = E2e::open_held("rate-limits").await;
+    let app = e2e.router();
 
     // One client burning the setup budget (burst 3) leaves others alone.
     // An empty body fails validation, so no request does real work.
@@ -2072,8 +2093,8 @@ async fn rate_limits_key_by_client_and_username() {
 /// own class before it can spend the provider row every client shares.
 #[tokio::test]
 async fn a_burst_at_the_sign_in_routes_stops_at_the_clients_own_class() {
-    let e2e = E2e::open("sign-in-burst").await;
-    let app = held_clock_router(&e2e);
+    let e2e = E2e::open_held("sign-in-burst").await;
+    let app = e2e.router();
     for uri in ["/api/v3/auth/oidc/authorize", "/api/v3/auth/plex/start"] {
         let mut limited = 0;
         for _ in 0..30 {
@@ -2088,8 +2109,8 @@ async fn a_burst_at_the_sign_in_routes_stops_at_the_clients_own_class() {
 
 #[tokio::test]
 async fn login_guesses_from_fresh_addresses_meet_the_username_wall() {
-    let e2e = E2e::open("username-wall").await;
-    let app = held_clock_router(&e2e);
+    let e2e = E2e::open_held("username-wall").await;
+    let app = e2e.router();
 
     // No address repeats, so no per-client bucket ever fills: only the
     // username's own budget (burst 50) can refuse these, and with the
@@ -2122,8 +2143,8 @@ async fn login_guesses_from_fresh_addresses_meet_the_username_wall() {
 
 #[tokio::test]
 async fn failed_authentications_are_throttled_per_client() {
-    let e2e = E2e::open("auth-failures").await;
-    let app = held_clock_router(&e2e);
+    let e2e = E2e::open_held("auth-failures").await;
+    let app = e2e.router();
 
     // The gate answers before the request limiter, so it charges its own
     // per-address bucket (burst 20) for every failed authentication.

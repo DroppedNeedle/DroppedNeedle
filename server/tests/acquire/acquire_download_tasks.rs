@@ -664,7 +664,7 @@ async fn queued_past_the_wait(
     use droppedneedle_acquire::search_jobs::store::{
         JobPayload, JobStore, NewJob, PickedTask, ReviewOutcome,
     };
-    use droppedneedle_kernel::clock::ManualClock;
+    use droppedneedle_kernel::test_support::ManualClock;
 
     let scratch = AcquireDb::scratch().unwrap();
     let clock = Arc::new(ManualClock::at(1_800_000_000_000));
@@ -789,7 +789,7 @@ async fn a_queued_copy_gives_way_only_to_a_copy_that_is_queued() {
 // deadline would blocklist it.
 #[tokio::test]
 async fn a_restart_measures_a_copy_from_its_own_enqueue() {
-    use droppedneedle_kernel::clock::ManualClock;
+    use droppedneedle_kernel::test_support::ManualClock;
 
     let now = 1_800_000_000.0;
     let scratch = AcquireDb::scratch().unwrap();

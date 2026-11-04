@@ -33,7 +33,7 @@ struct Rule {
 }
 
 const TEMPLATE: (&str, &str) = (
-    "kernel/src/schema/template.rs",
+    "kernel/src/test_support/template.rs",
     "the migrated test template, built once per test process",
 );
 const OBSERVABILITY: (&str, &str) = (

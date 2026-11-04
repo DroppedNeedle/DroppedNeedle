@@ -20,8 +20,8 @@ use droppedneedle_catalog::discover::models::{
 use droppedneedle_catalog::discover::page::shelves::shelf_of;
 use droppedneedle_catalog::discover::page::{DiscoverPages, PageInputs};
 use droppedneedle_catalog::discover::queue::store::QueueDb;
-use droppedneedle_kernel::clock::ManualClock;
 use droppedneedle_kernel::db::{DbError, Lane};
+use droppedneedle_kernel::test_support::ManualClock;
 
 use crate::discover_queue::{Script, after_commits};
 

@@ -96,7 +96,7 @@ impl AcquireDb {
         );
         let dir = scratch.to_path_buf();
         let path = dir.join("app.db");
-        droppedneedle_kernel::schema::template::copy_to(&path)?;
+        droppedneedle_kernel::test_support::template::copy_to(&path)?;
         let db = Db::open_for_tests(&path).map_err(|error| error.to_string())?;
         Ok(Self {
             db,

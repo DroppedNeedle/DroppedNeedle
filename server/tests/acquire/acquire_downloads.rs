@@ -1161,7 +1161,7 @@ const MINUTE: i64 = 60_000;
 /// The held list over a real library on a scratch database, with
 /// MusicBrainz as `releases` and the clock in the test's hands.
 struct HeldRig {
-    clock: Arc<droppedneedle_kernel::clock::ManualClock>,
+    clock: Arc<droppedneedle_kernel::test_support::ManualClock>,
     db: AcquireDb,
     acquire: droppedneedle_acquire::AcquireSetup,
     music: std::path::PathBuf,
@@ -1172,8 +1172,8 @@ struct HeldRig {
 
 impl HeldRig {
     async fn new(releases: Vec<droppedneedle_library::matching::Release>) -> Self {
-        use droppedneedle_kernel::clock::ManualClock;
         use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+        use droppedneedle_kernel::test_support::ManualClock;
 
         let scratch = AcquireDb::scratch().expect("scratch db");
         let clock = Arc::new(ManualClock::at(1_800_000_000_000));

@@ -51,8 +51,8 @@ use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::SlskdConnection;
 use droppedneedle_kernel::runtime_config::sections::{DownloadPolicy, WantedWatcher};
 use droppedneedle_providers::RequestPriority;
-use droppedneedle_providers::executor::ScriptedWire;
 use droppedneedle_providers::musicbrainz::MbSource;
+use droppedneedle_providers::test_support::ScriptedWire;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 
 const NOW: i64 = 1_700_000_000;

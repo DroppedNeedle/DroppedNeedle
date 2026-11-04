@@ -49,7 +49,7 @@ use droppedneedle_plugins::models::PluginRefKind;
 use droppedneedle_plugins::protocol::methods;
 use droppedneedle_plugins::runtime::{CallError, PublishPayload, ScrobbleEvent};
 use droppedneedle_plugins::ticks::{HostTickAdapter, PluginTickLoops, TICK_CANCEL_GRACE};
-use droppedneedle_providers::executor::ScriptedWire;
+use droppedneedle_providers::test_support::ScriptedWire;
 use droppedneedle_providers::{ProviderEndpoints, Providers, musicbrainz};
 use serde_json::json;
 use tower::ServiceExt as _;

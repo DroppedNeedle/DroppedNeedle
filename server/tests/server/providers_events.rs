@@ -4,13 +4,13 @@
 //! before HTTP, charged for dispatched calls, kept across restarts).
 
 use crate::common::ScratchDir;
-use droppedneedle_providers::executor::{ScriptedWire, Sent};
+use droppedneedle_providers::test_support::{ScriptedWire, Sent};
 use droppedneedle_providers::{PayloadKind, ProviderError, Providers, RequestPriority};
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use droppedneedle_kernel::clock::ManualClock;
+use droppedneedle_kernel::test_support::ManualClock;
 use droppedneedle_providers::geocoding::DEFAULT_CITY_COUNT;
 use droppedneedle_providers::youtube::{SearchKind, YouTubeClient, YouTubeSettings, YoutubeError};
 use serde_json::json;

@@ -7,10 +7,10 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use droppedneedle_kernel::clock::ManualClock;
 use droppedneedle_kernel::db::DbRuntime;
 use droppedneedle_kernel::jobs::events_watcher::{self, EventsWatcher, PollTimeSource, SweepEnd};
 use droppedneedle_kernel::jobs::{BoxFuture, CancellationToken, Schedule, Supervisor};
+use droppedneedle_kernel::test_support::ManualClock;
 
 use crate::common::{ScratchDir, scratch_runtime};
 

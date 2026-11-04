@@ -222,10 +222,6 @@ pub enum JobError {
     /// The database failed.
     #[error(transparent)]
     Db(#[from] DbError),
-    /// A lease statement broke its promise (the conformance check).
-    #[cfg(any(test, feature = "test-support"))]
-    #[error("{0}")]
-    Conformance(String),
 }
 
 impl From<rusqlite::Error> for JobError {
@@ -400,9 +396,9 @@ impl JobCtx {
 /// the wake channel.
 #[derive(Clone)]
 pub struct JobQueue {
-    db: Db,
+    pub(crate) db: Db,
     clock: Arc<dyn Clock>,
-    owners: Owner,
+    pub(crate) owners: Owner,
     wake: Arc<watch::Sender<u64>>,
 }
 
@@ -423,7 +419,7 @@ impl JobQueue {
         }
     }
 
-    fn now(&self) -> i64 {
+    pub(crate) fn now(&self) -> i64 {
         self.clock.now_ms()
     }
 
@@ -552,25 +548,6 @@ impl JobQueue {
                 } else {
                     Err(JobError::LeaseLost)
                 }
-            })
-            .await
-    }
-
-    /// Recover expired leases and claim one due job, on the caller's
-    /// transaction, for a test that stands in for a worker.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn claim_in(&self, tx: &Transaction, spec: &KindSpec) -> Result<Option<Claimed>, JobError> {
-        claim_on(tx, spec, &self.owners.mint(), self.now())
-    }
-
-    /// Requeue rows of a kind whose lease ran out, as a runner pass does.
-    #[cfg(any(test, feature = "test-support"))]
-    pub async fn recover_expired(&self, spec: &KindSpec) -> Result<u64, JobError> {
-        let spec = *spec;
-        let now = self.now();
-        self.db
-            .write(Lane::Background, "jobs-recover", move |tx| {
-                recover(tx, &spec, false, now)
             })
             .await
     }
@@ -752,7 +729,7 @@ fn status_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobStatus> {
 }
 
 /// Recover expired rows (or, at start, every running row), then claim one.
-fn claim_on(
+pub(crate) fn claim_on(
     tx: &Transaction,
     spec: &KindSpec,
     owner: &Arc<str>,
@@ -782,7 +759,12 @@ fn claim_on(
 /// Requeue running rows of a kind: every one at start, else those whose
 /// lease ran out. A row at its limit fails; a row whose key has a queued
 /// row folds into it; the rest go back through the lease statements.
-fn recover(tx: &Transaction, spec: &KindSpec, all: bool, now: i64) -> Result<u64, JobError> {
+pub(crate) fn recover(
+    tx: &Transaction,
+    spec: &KindSpec,
+    all: bool,
+    now: i64,
+) -> Result<u64, JobError> {
     let code = if all { INTERRUPTED } else { LEASE_EXPIRED };
     let kind = spec.kind.name();
     let rows: Vec<(i64, String, u32)> = {

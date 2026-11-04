@@ -492,7 +492,7 @@ async fn a_paced_oidc_callback_keeps_its_login_state() {
     use droppedneedle_auth::federated::FederatedError;
     use droppedneedle_auth::federated::oidc::{OidcConfig, OidcLogin};
     use droppedneedle_auth::federated::oidc_http::OidcHttp;
-    use droppedneedle_providers::executor::ScriptedWire;
+    use droppedneedle_providers::test_support::ScriptedWire;
     use droppedneedle_providers::{ProviderEndpoints, Providers, oidc};
 
     let e2e = E2e::open("oidc-paced").await;
@@ -586,7 +586,7 @@ async fn a_declined_plex_start_says_how_long_to_wait() {
 async fn oidc_calls_are_paced_by_their_rate_row() {
     use droppedneedle_auth::federated::FederatedError;
     use droppedneedle_auth::federated::oidc_http::OidcHttp;
-    use droppedneedle_providers::executor::ScriptedWire;
+    use droppedneedle_providers::test_support::ScriptedWire;
     use droppedneedle_providers::{
         CallOutcome, ProviderEndpoints, Providers, RequestPriority, oidc,
     };

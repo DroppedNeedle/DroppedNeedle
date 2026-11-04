@@ -32,8 +32,10 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::Instant;
+
+use droppedneedle_kernel::clock::Clock;
 
 use axum::{
     extract::{ConnectInfo, Request, State},
@@ -291,75 +293,44 @@ pub struct AcquireOutcome {
 }
 
 /// The native limiter: keyed buckets plus the proxy trust used to find the
-/// client address.
-#[derive(Debug)]
+/// client address. Buckets refill by the kernel clock it is handed.
 pub struct RateLimiter {
-    buckets: Mutex<BoundedMap<TokenBucket>>,
-    started: Instant,
+    pub(crate) buckets: Mutex<BoundedMap<TokenBucket>>,
+    clock: Arc<dyn Clock>,
+    started_ms: i64,
     trusted_proxies: TrustedProxies,
-    /// A test's fixed reading of the clock, so no bucket refills while it
-    /// counts refusals on a slow host.
-    #[cfg(any(test, feature = "test-support"))]
-    held_at: Mutex<Option<f64>>,
 }
 
-impl Default for RateLimiter {
-    fn default() -> Self {
-        Self::new()
+impl std::fmt::Debug for RateLimiter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RateLimiter")
+            .field("trusted_proxies", &self.trusted_proxies)
+            .finish_non_exhaustive()
     }
 }
 
 impl RateLimiter {
-    /// Empty limiter trusting loopback proxies only.
-    pub fn new() -> Self {
+    /// Empty limiter on `clock`, trusting loopback proxies only.
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             buckets: Mutex::new(BoundedMap::default()),
-            started: Instant::now(),
+            started_ms: clock.now_ms(),
+            clock,
             trusted_proxies: TrustedProxies::default(),
-            #[cfg(any(test, feature = "test-support"))]
-            held_at: Mutex::new(None),
         }
     }
 
-    /// Stop the limiter's clock where it is: from now on no bucket refills.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn hold_clock(&self) {
-        let now = self.started.elapsed().as_secs_f64();
-        *self
-            .held_at
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner()) = Some(now);
-    }
-
-    /// Seconds since the limiter started.
+    /// Seconds since the limiter started, never less than zero. A clock
+    /// set back only stops buckets refilling until it passes where they
+    /// were last seen.
     fn now(&self) -> f64 {
-        #[cfg(any(test, feature = "test-support"))]
-        if let Some(held) = *self
-            .held_at
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-        {
-            return held;
-        }
-        self.started.elapsed().as_secs_f64()
+        (self.clock.now_ms() - self.started_ms).max(0) as f64 / 1000.0
     }
 
     /// Trust the given proxies when reading the client address.
     pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
         self.trusted_proxies = trusted;
         self
-    }
-
-    /// Drop every bucket, as a freshly built limiter would start. Test
-    /// rigs that drive one shared router through hundreds of requests
-    /// call this between requests instead of rebuilding the whole app.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn reset(&self) {
-        let mut buckets = self
-            .buckets
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        *buckets = BoundedMap::default();
     }
 
     /// Take one token for `key` in `class` now.
@@ -547,7 +518,7 @@ mod tests {
     #[test]
     fn a_browser_polling_a_plex_pin_is_never_limited() {
         let client = classify("/api/v3/auth/plex/poll/login");
-        let limiter = RateLimiter::new();
+        let limiter = RateLimiter::new(Arc::new(droppedneedle_kernel::clock::SystemClock));
         assert!(
             limiter
                 .check_at(classify("/api/v3/auth/plex/start"), "ip:a", 0.0)
@@ -565,7 +536,7 @@ mod tests {
 
     #[test]
     fn callers_get_separate_buckets() {
-        let limiter = RateLimiter::new();
+        let limiter = RateLimiter::new(Arc::new(droppedneedle_kernel::clock::SystemClock));
         for _ in 0..5 {
             assert!(limiter.check_at(LOGIN_CLASS, "ip:10.0.0.1", 0.0).allowed);
         }
@@ -589,7 +560,7 @@ mod tests {
 
         // One client trying ten times a second for a minute gets through at
         // its own 2/s and never empties the username's budget.
-        let limiter = RateLimiter::new();
+        let limiter = RateLimiter::new(Arc::new(droppedneedle_kernel::clock::SystemClock));
         let admitted = (0..600)
             .filter(|tick| attempt(&limiter, 1, f64::from(*tick) / 10.0))
             .count();
@@ -598,7 +569,7 @@ mod tests {
 
         // Guessing from a fresh address each time stops paying after the
         // username's burst, until it refills.
-        let limiter = RateLimiter::new();
+        let limiter = RateLimiter::new(Arc::new(droppedneedle_kernel::clock::SystemClock));
         for client in 0..50 {
             assert!(attempt(&limiter, client, 0.0), "client {client}");
         }
@@ -622,7 +593,7 @@ mod tests {
         let wide = username_key(&format!("a{}", "\u{e9}".repeat(100)));
         assert_eq!(wide.len(), "username:".len() + USERNAME_KEY_BYTES - 1);
 
-        let limiter = RateLimiter::new();
+        let limiter = RateLimiter::new(Arc::new(droppedneedle_kernel::clock::SystemClock));
         for n in 0..1000 {
             limiter.check_login_at(&format!("{}{n}", "a".repeat(64)), 0.0);
         }
@@ -641,7 +612,7 @@ mod tests {
         assert_eq!(key("198.51.100.1"), "ip:198.51.100.1");
 
         // Hopping addresses inside one /64 buys no fresh bucket.
-        let limiter = RateLimiter::new();
+        let limiter = RateLimiter::new(Arc::new(droppedneedle_kernel::clock::SystemClock));
         let from = |peer: &str| {
             let peer: SocketAddr = peer.parse().unwrap();
             limiter.client_key(Some(peer), &HeaderMap::new())

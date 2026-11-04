@@ -6,7 +6,8 @@
 
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::runtime_config::sections::{MbSourceMode, MusicBrainzSettings};
-use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire, Sent};
+use droppedneedle_providers::executor::Method;
+use droppedneedle_providers::test_support::{Scripted, ScriptedWire, Sent};
 use droppedneedle_providers::{
     PayloadKind, ProviderEndpoints, ProviderError, Providers, RequestPriority, TransportKind,
     coverart, musicbrainz,

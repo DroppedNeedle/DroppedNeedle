@@ -8,12 +8,12 @@ use std::time::Duration;
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_providers::coverart::{self, DownloadSize, EntityKind};
 use droppedneedle_providers::executor::{
-    Backoff, Executor, Method, RedirectRule, Redirects, Request, Scripted, ScriptedWire, Spec, Url,
-    standard_classify,
+    Backoff, Executor, Method, RedirectRule, Redirects, Request, Spec, Url, standard_classify,
 };
 use droppedneedle_providers::health::ServiceHealth;
 use droppedneedle_providers::musicbrainz::{self, Criticality, MbSource};
 use droppedneedle_providers::rates::{RATES, Rate};
+use droppedneedle_providers::test_support::{Scripted, ScriptedWire};
 use droppedneedle_providers::{
     LimiterSet, PayloadKind, ProviderEndpoints, ProviderError, Providers, RateLimiter, RatePolicy,
     RequestPriority, TransportKind,
@@ -1307,8 +1307,8 @@ async fn github_follows_a_renamed_repository() {
 /// UTC, and the rest of that day sends nothing.
 #[tokio::test]
 async fn youtube_refusals_answer_honestly() {
-    use droppedneedle_kernel::clock::ManualClock;
     use droppedneedle_kernel::error::ApiError;
+    use droppedneedle_kernel::test_support::ManualClock;
     use droppedneedle_providers::youtube::{YouTubeClient, YouTubeSettings, YoutubeError};
 
     const SEARCH: &str = "http://127.0.0.1:9/youtube/youtube/v3/search";
@@ -1432,7 +1432,7 @@ fn a_key_in_the_url_never_reaches_an_error_or_a_log() {
 /// row, and is not sent once the cap is reached.
 #[tokio::test]
 async fn a_newznab_indexer_holds_to_its_daily_caps() {
-    use droppedneedle_kernel::clock::ManualClock;
+    use droppedneedle_kernel::test_support::ManualClock;
     use droppedneedle_providers::newznab::NewznabError;
 
     const NOW: i64 = 1_800_000_000;
