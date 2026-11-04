@@ -158,7 +158,7 @@ async fn acoustid_answers_are_reused_and_failures_are_not() {
             Arc::new(LiveCatalogSettings::new(&rig.config)),
             rig.deps.clone(),
         ),
-        None,
+        droppedneedle_catalog::test_support::artwork(&rig.platform, &providers),
         OnlineLyrics::new(&providers, rig.config.live()),
         providers.acoustid.clone(),
         rig.config.live(),

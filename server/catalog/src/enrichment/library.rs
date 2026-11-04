@@ -48,7 +48,7 @@ type PrintKey = (String, u32);
 /// AcoustID on identification's rate limit.
 pub struct LiveEnrichment {
     upstream: Upstream,
-    artwork: Option<ArtworkService>,
+    artwork: ArtworkService,
     lyrics: OnlineLyrics,
     acoustid: droppedneedle_providers::acoustid::AcoustIdClient,
     /// The library settings the AcoustID key is read from, per lookup.
@@ -64,7 +64,7 @@ impl LiveEnrichment {
     #[must_use]
     pub fn new(
         upstream: Upstream,
-        artwork: Option<ArtworkService>,
+        artwork: ArtworkService,
         lyrics: OnlineLyrics,
         acoustid: droppedneedle_providers::acoustid::AcoustIdClient,
         library: droppedneedle_kernel::runtime_config::Live<
@@ -225,11 +225,8 @@ impl EnrichmentPort for LiveEnrichment {
         background: bool,
     ) -> BoxFuture<'a, Result<Option<Cover>, String>> {
         Box::pin(async move {
-            let artwork = self
+            match self
                 .artwork
-                .as_ref()
-                .ok_or_else(|| "artwork is switched off".to_owned())?;
-            match artwork
                 .front_cover(
                     release_mbid,
                     release_group_mbid,
@@ -257,11 +254,8 @@ impl EnrichmentPort for LiveEnrichment {
         background: bool,
     ) -> BoxFuture<'a, Result<Option<Cover>, String>> {
         Box::pin(async move {
-            let artwork = self
+            match self
                 .artwork
-                .as_ref()
-                .ok_or_else(|| "artwork is switched off".to_owned())?;
-            match artwork
                 .edition_front_cover(
                     release_mbid,
                     if background {

@@ -728,7 +728,7 @@ fn library_ports(
             Arc::new(LiveCatalogSettings::new(&p.settings)),
             auth.users.clone(),
         ),
-        Some(artwork.clone()),
+        artwork.clone(),
         lyrics,
         providers.acoustid.clone(),
         p.settings.live(),
