@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '$lib/features/player/components/now-playing.css';
 	import { browser } from '$app/environment';
-	import { Disc3, Search, Plus, Check, CircleCheck, X } from 'lucide-svelte';
+	import { Disc3, Search, Plus, Check, CircleCheck } from 'lucide-svelte';
 	import { fly } from '$lib/ui/motion';
 	import {
 		queueItemToTrackData,
@@ -23,6 +23,7 @@
 	import PlaylistMosaic from '$lib/media/PlaylistMosaic.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import type { QueueItem } from '$lib/features/player/playback/types';
 
@@ -33,7 +34,7 @@
 	const addTracksMutation = createAddPlaylistTracksV3Mutation();
 	const checkTracksMutation = createCheckPlaylistTracksV3Mutation();
 
-	let dialogEl: HTMLDialogElement | undefined = $state();
+	let shown = $state(false);
 	let pendingTracks: QueueItem[] = [];
 	let trackCount = $state(0);
 	let playlists = $state<PlaylistSummary[]>([]);
@@ -76,12 +77,12 @@
 		fetchError = null;
 		statusMessage = null;
 		loading = true;
-		dialogEl?.showModal();
+		shown = true;
 		loadPlaylists();
 	}
 
 	export function close() {
-		dialogEl?.close();
+		shown = false;
 	}
 
 	async function loadPlaylists() {
@@ -209,215 +210,163 @@
 		return `Add to ${p.name}`;
 	}
 
-	const titleId = $props.id();
-
 	let trackLabel = $derived(trackCount === 1 ? '1 track' : `${trackCount} tracks`);
 	let canAdd = $derived(trackCount > 0);
 </script>
 
-<dialog bind:this={dialogEl} class="modal crate-modal" aria-labelledby={titleId}>
-	<div class="modal-box crate-box max-w-2xl overflow-hidden p-0">
-		<div class="crate-halo" aria-hidden="true"></div>
+<Modal
+	bind:open={shown}
+	title="Add to the crate"
+	description="{trackLabel} ready to file"
+	icon={Disc3}
+	size="lg"
+	closeButton
+>
+	<div class="flex flex-col gap-4">
+		<div class="flex items-center gap-2">
+			<Input
+				icon={Disc3}
+				label="New playlist name"
+				placeholder="New playlist name"
+				class="grow"
+				bind:value={newName}
+				onkeydown={handleKeydown}
+				disabled={creating}
+			/>
+			<IconButton
+				variant="accent"
+				size="sm"
+				icon={Plus}
+				label="Create playlist"
+				class="shrink-0"
+				loading={creating}
+				onclick={handleCreate}
+				disabled={!newName.trim() || !canAdd}
+			/>
+		</div>
 
-		<div class="relative flex flex-col gap-4 p-5 sm:p-6">
-			<header class="flex items-center gap-3">
-				<div class="crate-disc" aria-hidden="true">
-					<Disc3 class="h-6 w-6 {reducedMotion ? '' : 'vinyl-spin'}" />
+		{#if playlists.length > 0}
+			<Input
+				size="sm"
+				icon={Search}
+				label="Search your crate"
+				placeholder="Search your crate…"
+				class="w-full"
+				bind:value={search}
+			/>
+		{/if}
+
+		<div class="crate-scroll scrollbar-hide -mx-1 max-h-[min(56vh,27rem)] overflow-y-auto px-1">
+			{#if loading}
+				<div class="crate-grid">
+					{#each Array(8) as _, i (i)}
+						<div class="sleeve-skel" data-testid="playlist-skeleton"></div>
+					{/each}
 				</div>
-				<div class="min-w-0 flex-1">
-					<h3 id={titleId} class="text-lg font-extrabold leading-tight tracking-tight">
-						Add to the crate
-					</h3>
-					<p class="text-xs text-base-content/55">{trackLabel} ready to file</p>
+			{:else if fetchError}
+				<div role="alert" class="alert alert-error">
+					<span>{fetchError}</span>
 				</div>
-				<form method="dialog">
-					<IconButton type="submit" size="sm" icon={X} label="Close" />
-				</form>
-			</header>
-
-			<div class="flex items-center gap-2">
-				<Input
-					icon={Disc3}
-					label="New playlist name"
-					placeholder="New playlist name"
-					class="grow"
-					bind:value={newName}
-					onkeydown={handleKeydown}
-					disabled={creating}
-				/>
-				<IconButton
-					variant="accent"
-					size="sm"
-					icon={Plus}
-					label="Create playlist"
-					class="shrink-0"
-					loading={creating}
-					onclick={handleCreate}
-					disabled={!newName.trim() || !canAdd}
-				/>
-			</div>
-
-			{#if playlists.length > 0}
-				<Input
-					size="sm"
-					icon={Search}
-					label="Search your crate"
-					placeholder="Search your crate…"
-					class="w-full"
-					bind:value={search}
-				/>
-			{/if}
-
-			<div class="crate-scroll scrollbar-hide -mx-1 max-h-[min(56vh,27rem)] overflow-y-auto px-1">
-				{#if loading}
-					<div class="crate-grid">
-						{#each Array(8) as _, i (i)}
-							<div class="sleeve-skel" data-testid="playlist-skeleton"></div>
-						{/each}
+			{:else if playlists.length === 0}
+				<div class="flex flex-col items-center gap-2 py-10 text-center">
+					<div class="crate-disc crate-disc--lg" aria-hidden="true">
+						<Disc3 class="h-7 w-7 text-base-content/45" />
 					</div>
-				{:else if fetchError}
-					<div role="alert" class="alert alert-error">
-						<span>{fetchError}</span>
-					</div>
-				{:else if playlists.length === 0}
-					<div class="flex flex-col items-center gap-2 py-10 text-center">
-						<div class="crate-disc crate-disc--lg" aria-hidden="true">
-							<Disc3 class="h-7 w-7 text-base-content/45" />
-						</div>
-						<p class="text-sm font-semibold text-base-content/70">
-							You haven't created any playlists yet.
-						</p>
-						<p class="max-w-[16rem] text-xs text-base-content/45">
-							Name one above and press your first record.
-						</p>
-					</div>
-				{:else}
-					<div class="crate-grid">
-						{#each filteredPlaylists as playlist, i (playlist.id)}
-							{@const state = sleeveState(playlist.id)}
-							<button
-								type="button"
-								class="sleeve {state === 'added'
-									? 'is-added'
-									: state === 'adding'
-										? 'is-adding'
-										: state === 'partial'
-											? 'is-partial'
-											: ''}"
-								onclick={() => handleAdd(playlist)}
-								disabled={state === 'added' || state === 'adding' || !canAdd}
-								aria-label={sleeveAria(playlist)}
-								title={state === 'partial'
-									? `${existingCount(playlist.id)} of ${trackCount} already in "${playlist.name}"`
-									: sleeveAria(playlist)}
-								in:fly={{
-									y: reducedMotion ? 0 : 14,
-									duration: reducedMotion ? 0 : 260,
-									delay: reducedMotion ? 0 : Math.min(i, 11) * 35
-								}}
-							>
-								<div class="sleeve-art">
-									<div class="vinyl-wrap" aria-hidden="true">
-										<div class="vinyl-disc"></div>
-									</div>
-									<div class="sleeve-cover">
-										<PlaylistMosaic
-											coverUrls={playlist.cover_urls}
-											customCoverUrl={playlist.custom_cover_url}
-											size="w-full h-full"
-											rounded="rounded-none"
-										/>
-									</div>
-									{#if state === 'adding'}
-										<div class="sleeve-sweep pointer-events-none absolute inset-0 z-20"></div>
+					<p class="text-sm font-semibold text-base-content/70">
+						You haven't created any playlists yet.
+					</p>
+					<p class="max-w-[16rem] text-xs text-base-content/45">
+						Name one above and press your first record.
+					</p>
+				</div>
+			{:else}
+				<div class="crate-grid">
+					{#each filteredPlaylists as playlist, i (playlist.id)}
+						{@const state = sleeveState(playlist.id)}
+						<button
+							type="button"
+							class="sleeve {state === 'added'
+								? 'is-added'
+								: state === 'adding'
+									? 'is-adding'
+									: state === 'partial'
+										? 'is-partial'
+										: ''}"
+							onclick={() => handleAdd(playlist)}
+							disabled={state === 'added' || state === 'adding' || !canAdd}
+							aria-label={sleeveAria(playlist)}
+							title={state === 'partial'
+								? `${existingCount(playlist.id)} of ${trackCount} already in "${playlist.name}"`
+								: sleeveAria(playlist)}
+							in:fly={{
+								y: reducedMotion ? 0 : 14,
+								duration: reducedMotion ? 0 : 260,
+								delay: reducedMotion ? 0 : Math.min(i, 11) * 35
+							}}
+						>
+							<div class="sleeve-art">
+								<div class="vinyl-wrap" aria-hidden="true">
+									<div class="vinyl-disc"></div>
+								</div>
+								<div class="sleeve-cover">
+									<PlaylistMosaic
+										coverUrls={playlist.cover_urls}
+										customCoverUrl={playlist.custom_cover_url}
+										size="w-full h-full"
+										rounded="rounded-none"
+									/>
+								</div>
+								{#if state === 'adding'}
+									<div class="sleeve-sweep pointer-events-none absolute inset-0 z-20"></div>
+								{/if}
+								<div class="sleeve-badge sleeve-badge--{state}">
+									{#if state === 'added'}
+										<Check class="h-3.5 w-3.5" />
+									{:else if state === 'adding'}
+										<span class="loading loading-spinner loading-xs"></span>
+									{:else if state === 'partial'}
+										<CircleCheck class="h-3.5 w-3.5" />
+									{:else}
+										<Plus class="h-3.5 w-3.5" />
 									{/if}
-									<div class="sleeve-badge sleeve-badge--{state}">
-										{#if state === 'added'}
-											<Check class="h-3.5 w-3.5" />
-										{:else if state === 'adding'}
-											<span class="loading loading-spinner loading-xs"></span>
-										{:else if state === 'partial'}
-											<CircleCheck class="h-3.5 w-3.5" />
-										{:else}
-											<Plus class="h-3.5 w-3.5" />
-										{/if}
-									</div>
 								</div>
-								<div class="sleeve-meta">
-									<p class="truncate text-sm font-semibold text-base-content">{playlist.name}</p>
-									<p class="truncate text-[11px] text-base-content/45">
-										{playlist.track_count} track{playlist.track_count === 1 ? '' : 's'}{state ===
-										'partial'
-											? ` · ${existingCount(playlist.id)} here`
-											: ''}
-									</p>
-								</div>
-							</button>
-						{/each}
-					</div>
-					{#if filteredPlaylists.length === 0}
-						<p class="py-8 text-center text-sm text-base-content/45">
-							No playlists match "{search}".
-						</p>
-					{/if}
-				{/if}
-			</div>
-
-			{#if statusMessage}
-				<div
-					role="alert"
-					class="status-strip {statusMessage.type === 'success'
-						? 'status-strip--ok'
-						: 'status-strip--err'}"
-					transition:fly={{ y: 8, duration: reducedMotion ? 0 : 200 }}
-				>
-					<span class="text-sm">{statusMessage.text}</span>
+							</div>
+							<div class="sleeve-meta">
+								<p class="truncate text-sm font-semibold text-base-content">{playlist.name}</p>
+								<p class="truncate text-[11px] text-base-content/45">
+									{playlist.track_count} track{playlist.track_count === 1 ? '' : 's'}{state ===
+									'partial'
+										? ` · ${existingCount(playlist.id)} here`
+										: ''}
+								</p>
+							</div>
+						</button>
+					{/each}
 				</div>
+				{#if filteredPlaylists.length === 0}
+					<p class="py-8 text-center text-sm text-base-content/45">
+						No playlists match "{search}".
+					</p>
+				{/if}
 			{/if}
 		</div>
+
+		{#if statusMessage}
+			<div
+				role="alert"
+				class="status-strip {statusMessage.type === 'success'
+					? 'status-strip--ok'
+					: 'status-strip--err'}"
+				transition:fly={{ y: 8, duration: reducedMotion ? 0 : 200 }}
+			>
+				<span class="text-sm">{statusMessage.text}</span>
+			</div>
+		{/if}
 	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button>Close</button>
-	</form>
-</dialog>
+</Modal>
 
 <style>
-	/* Blurred, dimmed backdrop so the crate floats. */
-	.crate-modal::backdrop {
-		background: oklch(from var(--color-base-100) l c h / 0.55);
-		backdrop-filter: blur(8px) saturate(0.9);
-		-webkit-backdrop-filter: blur(8px) saturate(0.9);
-	}
-
-	.crate-box {
-		position: relative;
-		border: 1px solid oklch(from var(--color-base-content) l c h / 0.08);
-		border-radius: 1.5rem;
-		background: linear-gradient(
-			180deg,
-			oklch(from var(--color-base-300) l c h / 0.92),
-			oklch(from var(--color-base-100) l c h / 0.97)
-		);
-		box-shadow:
-			0 32px 70px -28px oklch(from var(--color-base-100) l c h / 0.95),
-			inset 0 1px 0 oklch(from var(--color-base-content) l c h / 0.06);
-	}
-
-	/* Soft accent halo bleeding from the top, matching the app's hero glow. */
-	.crate-halo {
-		position: absolute;
-		inset: -30% -20% auto -20%;
-		height: 60%;
-		background: radial-gradient(
-			60% 80% at 50% 0%,
-			oklch(from var(--color-primary) l c h / 0.16),
-			transparent 70%
-		);
-		pointer-events: none;
-		z-index: 0;
-	}
-
-	/* Spinning label disc in the header / empty state. */
+	/* The label disc in the empty state. */
 	.crate-disc {
 		display: grid;
 		place-items: center;

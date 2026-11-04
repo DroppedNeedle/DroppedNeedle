@@ -2,23 +2,14 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
-	import { X } from 'lucide-svelte';
-	import IconButton from '$lib/ui/IconButton.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 	import SearchSuggestions from '$lib/features/search/components/SearchSuggestions.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import type { SuggestResult } from '$lib/features/search/queries/types';
 
 	let { open = $bindable(false) }: { open: boolean } = $props();
 
-	const titleId = $props.id();
-	let dialog = $state<HTMLDialogElement>();
 	let query = $state('');
-
-	$effect(() => {
-		if (!dialog) return;
-		if (open && !dialog.open) dialog.showModal();
-		else if (!open && dialog.open) dialog.close();
-	});
 
 	function handleSearch() {
 		if (!query.trim()) return;
@@ -37,22 +28,13 @@
 	}
 </script>
 
-<dialog bind:this={dialog} class="modal" aria-labelledby={titleId} onclose={() => (open = false)}>
-	<div class="modal-box overflow-visible">
-		<form method="dialog">
-			<IconButton type="submit" size="sm" icon={X} label="Close" class="absolute right-2 top-2" />
-		</form>
-		<h3 id={titleId} class="font-bold text-lg mb-4">Search</h3>
-		<SearchSuggestions
-			bind:query
-			onSearch={handleSearch}
-			onSelect={handleSelect}
-			placeholder="Search albums or artists..."
-			autofocus={true}
-			id="modal-suggest"
-		/>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close modal">close</button>
-	</form>
-</dialog>
+<Modal bind:open title="Search" closeButton overflowVisible>
+	<SearchSuggestions
+		bind:query
+		onSearch={handleSearch}
+		onSelect={handleSelect}
+		placeholder="Search albums or artists..."
+		autofocus={true}
+		id="modal-suggest"
+	/>
+</Modal>
