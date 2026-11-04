@@ -350,10 +350,15 @@ impl Imports {
                 &[],
             ));
         }
+        let replaced_ids: Vec<String> = sources
+            .iter()
+            .flat_map(|(_, _, replaces)| replaces.iter().cloned())
+            .collect();
+        let indexed = self.indexed_copies("import.replaced_rows", &replaced_ids)?;
         let old_copies: Vec<Result<Vec<Target>, String>> = sources
             .iter()
-            .map(|(_, _, replaces)| self.old_copies(&registry, replaces))
-            .collect::<Result<_, _>>()?;
+            .map(|(_, _, replaces)| old_copies(&registry, &indexed, replaces))
+            .collect();
         let mut formats = Vec::with_capacity(sources.len());
         for (path, _, _) in &sources {
             formats.push(
@@ -721,19 +726,26 @@ impl Imports {
         }
         let bundle_id = self.core.ids.new_id();
         // A replaced track that left the catalog since it was read has no
-        // file to take away.
-        let wanted: Vec<String> = placements
+        // file to take away. One indexed again since then has a file the
+        // plan did not read, which would stay beside the new one: the
+        // import is planned again.
+        let still_indexed = self.indexed_copies("import.replaced_indexed", &replaced_ids)?;
+        let read_before: std::collections::HashSet<&str> =
+            indexed.iter().map(|copy| copy.id.as_str()).collect();
+        if let Some(back) = still_indexed
             .iter()
-            .filter_map(|placement| placement.replaces.as_ref().ok())
-            .flatten()
-            .map(|target| target.track_id.clone())
-            .collect();
-        let still_indexed = self
-            .db
-            .read_blocking("import.replaced_indexed", |conn| {
-                Ok::<_, PublishError>(indexed_among(conn, &wanted)?)
-            })
-            .map_err(store_fault)?;
+            .find(|copy| !read_before.contains(copy.id.as_str()))
+        {
+            tracing::info!(
+                track_id = back.id,
+                "an import is planned again: a track it replaces is back in the library"
+            );
+            return Err(ImportError::LibraryChanged(
+                "a track this import replaces is back in the library".to_owned(),
+            ));
+        }
+        let still_indexed: std::collections::HashSet<&str> =
+            still_indexed.iter().map(|copy| copy.id.as_str()).collect();
         // Files bound for a taken destination are held on their own (the
         // first of two files bound for one path keeps it); the rest import.
         // A file whose replaced tracks cannot be taken away is held too,
@@ -748,7 +760,7 @@ impl Imports {
             let targets: Vec<Target> = match &placement.replaces {
                 Ok(targets) => targets
                     .iter()
-                    .filter(|target| still_indexed.contains(&target.track_id))
+                    .filter(|target| still_indexed.contains(target.track_id.as_str()))
                     .cloned()
                     .collect(),
                 Err(reason) => {
@@ -1111,60 +1123,61 @@ impl Imports {
         .unwrap_or_else(|| self.core.ids.new_id())))
     }
 
-    /// The files of the indexed tracks in `replaces`, each read once before
-    /// the publish lock (see [`remove::probe`]), or why one of them cannot
-    /// be taken away. A track no longer indexed has no file to take away.
-    fn old_copies(
+    /// The indexed tracks among `ids`, with their files, in one read.
+    fn indexed_copies(
         &self,
-        registry: &RootRegistry,
-        replaces: &[String],
-    ) -> Result<Result<Vec<Target>, String>, ImportError> {
-        use rusqlite::OptionalExtension as _;
-        if replaces.is_empty() {
-            return Ok(Ok(Vec::new()));
+        name: &'static str,
+        ids: &[String],
+    ) -> Result<Vec<sql::IndexedCopy>, ImportError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
         }
-        let rows = self
-            .db
-            .read_blocking("import.replaced_rows", |conn| {
-                let mut statement = conn.prepare_cached(crate::import::sql::OLD_COPIES.text())?;
-                let mut rows = Vec::with_capacity(replaces.len());
-                for id in replaces {
-                    if let Some((root, rel)) = statement
-                        .query_row([id], |row| {
-                            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                        })
-                        .optional()?
-                    {
-                        rows.push((id.clone(), root, rel));
-                    }
-                }
+        let ids = serde_json::to_string(ids)
+            .map_err(|error| ImportError::LocalFault(error.to_string()))?;
+        self.db
+            .read_blocking(name, |conn| {
+                let mut statement = conn.prepare_cached(sql::INDEXED_COPIES.text())?;
+                let rows = statement
+                    .query_map([&ids], sql::IndexedCopy::read)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok::<_, PublishError>(rows)
             })
-            .map_err(store_fault)?;
-        let mut targets = Vec::with_capacity(rows.len());
-        for (track_id, root_id, relative_path) in rows {
-            let path = registry.resolve(&root_id).and_then(|root| {
-                crate::removal::join_inside(&root.path, &relative_path).map(|path| (root, path))
-            });
-            let Some((root, path)) = path else {
-                return Ok(Err(OUTSIDE_ROOT.to_owned()));
-            };
-            match remove::probe(&root.path, &path) {
-                Ok(probe) => targets.push(Target {
-                    track_id,
-                    root_id,
-                    relative_path,
-                    probe,
-                    expect_sha256: None,
-                }),
-                Err(error) => {
-                    tracing::warn!(%error, track_id, "the copy an imported file replaces could not be read");
-                    return Ok(Err("Your copy could not be read.".to_owned()));
-                }
+            .map_err(store_fault)
+    }
+}
+
+/// The files of the tracks in `replaces` that `indexed` lists, each probed
+/// once before the publish lock (see [`remove::probe`]), or why one of
+/// them cannot be taken away. A track no longer indexed has no file to
+/// take away.
+fn old_copies(
+    registry: &RootRegistry,
+    indexed: &[sql::IndexedCopy],
+    replaces: &[String],
+) -> Result<Vec<Target>, String> {
+    let mut targets = Vec::with_capacity(replaces.len());
+    for copy in indexed.iter().filter(|copy| replaces.contains(&copy.id)) {
+        let path = registry.resolve(&copy.root_id).and_then(|root| {
+            crate::removal::join_inside(&root.path, &copy.relative_path).map(|path| (root, path))
+        });
+        let Some((root, path)) = path else {
+            return Err(OUTSIDE_ROOT.to_owned());
+        };
+        match remove::probe(&root.path, &path) {
+            Ok(probe) => targets.push(Target {
+                track_id: copy.id.clone(),
+                root_id: copy.root_id.clone(),
+                relative_path: copy.relative_path.clone(),
+                probe,
+                expect_sha256: None,
+            }),
+            Err(error) => {
+                tracing::warn!(%error, track_id = copy.id, "the copy an imported file replaces could not be read");
+                return Err("Your copy could not be read.".to_owned());
             }
         }
-        Ok(Ok(targets))
     }
+    Ok(targets)
 }
 
 /// Whether something other than the files in `leaving` sits at `dest`, or,
@@ -1215,21 +1228,6 @@ fn excluded_refusal(root: &LibraryRoot, dest: &str) -> ImportError {
         "{dest} is in an excluded folder of {}",
         root.path.display()
     ))
-}
-
-/// The tracks among `ids` the catalog lists as indexed.
-fn indexed_among(
-    conn: &rusqlite::Connection,
-    ids: &[String],
-) -> rusqlite::Result<std::collections::HashSet<String>> {
-    let mut statement = conn.prepare_cached(crate::import::sql::INDEXED_AMONG.text())?;
-    let mut indexed = std::collections::HashSet::new();
-    for id in ids {
-        if statement.exists([id])? {
-            indexed.insert(id.clone());
-        }
-    }
-    Ok(indexed)
 }
 
 /// Why a file is held when a track it replaces cannot be taken away: one

@@ -4677,6 +4677,113 @@ async fn an_upgrade_held_for_one_file_keeps_that_files_old_copy() {
     );
 }
 
+/// A track an upgrade replaces that comes back into the library between
+/// the plan and the publish lock is never left beside the new file: the
+/// import is refused as changed, and planned again it replaces that copy.
+#[tokio::test]
+async fn an_upgrade_plans_again_when_a_replaced_track_comes_back() {
+    use droppedneedle_library::import::{DownloadImport, ImportError, ImportOrigin, ImportSource};
+
+    let (scratch, library, music) = bare_library("lib-upgrade-back").await;
+    std::fs::create_dir_all(&music).expect("music folder");
+    add_music_root(&library, &music).await;
+    let release = Release {
+        id: "20000000-0000-4000-8000-00000000000d".to_owned(),
+        release_group_id: "20000000-0000-4000-8000-00000000000e".to_owned(),
+        title: "Came Back".to_owned(),
+        artists: vec![CreditedArtist {
+            id: "20000000-0000-4000-8000-00000000000a".to_owned(),
+            name: "The Band".to_owned(),
+            sort_name: None,
+            join: String::new(),
+        }],
+        tracks: vec![ReleaseTrack {
+            id: "20000000-0000-4000-8000-00000000000b".to_owned(),
+            recording_id: "20000000-0000-4000-8000-00000000000c".to_owned(),
+            title: "Song".to_owned(),
+            disc: 1,
+            position: 1,
+            absolute_position: 1,
+            ..ReleaseTrack::default()
+        }],
+        ..Release::default()
+    };
+    let import = |task: &str, fixture: &str, replaces: Vec<String>| {
+        let source = scratch
+            .to_path_buf()
+            .join(format!("incoming/{task}/{fixture}"));
+        std::fs::create_dir_all(source.parent().expect("parent")).expect("mkdir");
+        std::fs::copy(fixtures_dir().join(fixture), &source).expect("download planted");
+        DownloadImport {
+            task_id: task.to_owned(),
+            origin: ImportOrigin::Download,
+            staging: None,
+            release: release.clone(),
+            files: vec![ImportSource {
+                path: source,
+                track: 0,
+                replaces,
+            }],
+            extras: Vec::new(),
+            actor: None,
+        }
+    };
+    let first = library
+        .imports
+        .import_download(&import("task-mp3", "management_full.mp3", Vec::new()))
+        .expect("imported");
+    let old = first.paths[0]
+        .strip_prefix(&music)
+        .expect("under the root")
+        .to_string_lossy()
+        .into_owned();
+    let track = indexed_at(&library, &old);
+    let db = scratch_db(&scratch);
+    let set = |availability: &str| {
+        db.execute(
+            "UPDATE local_tracks SET availability = ?2 WHERE id = ?1",
+            [track.as_str(), availability],
+        )
+        .expect("availability set");
+    };
+    set("missing");
+
+    // The plan reads the track as missing; it is back before the lock.
+    let upgrade = import("task-flac", "flac_full_02.flac", vec![track.clone()]);
+    let came_back = std::cell::Cell::new(false);
+    let refused = library
+        .imports
+        .import_download_from(&upgrade, None, &|path| {
+            if !came_back.replace(true) {
+                set("indexed");
+            }
+            std::fs::File::open(path)
+        })
+        .expect_err("the import is planned again");
+    assert!(
+        matches!(refused, ImportError::LibraryChanged(_)),
+        "{refused:?}"
+    );
+    let new = music.join(old.replace(".mp3", ".flac"));
+    assert!(!new.exists(), "the new file is not placed");
+    assert!(music.join(&old).exists(), "the old copy stays");
+
+    let landed = library
+        .imports
+        .import_download(&upgrade)
+        .expect("imported on the next plan");
+    assert_eq!(landed.paths, std::slice::from_ref(&new));
+    assert!(!music.join(&old).exists(), "the old copy left");
+    let availability: String = db
+        .query_row(
+            "SELECT availability FROM local_tracks WHERE id = ?1",
+            [&track],
+            |row| row.get(0),
+        )
+        .expect("track row");
+    assert_eq!(availability, "missing");
+}
+
 /// "Put back" never replaces a file that now sits where the removed one
 /// was: it is refused, the newer file is untouched and the removed file
 /// stays in the recycle bin, where a later "Put back" finds it once the
