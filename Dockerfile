@@ -144,16 +144,21 @@ RUN mkdir -p /app/cache /app/config /app/plugins /app/imports \
     && chmod 0755 /app/entrypoint.sh
 
 # The server reads these two at start and the About page shows them. They come
-# last so a new tag or date reuses every layer above.
+# last so a new tag or date reuses every layer above. VCS_REF is the commit,
+# for the revision label only.
 ARG COMMIT_TAG=dev
 ARG BUILD_DATE=
+ARG VCS_REF=
 ENV COMMIT_TAG=${COMMIT_TAG} BUILD_DATE=${BUILD_DATE}
 
-LABEL org.opencontainers.image.title="DroppedNeedle v3" \
-      org.opencontainers.image.description="DroppedNeedle v3 server: music requests, library management and streaming" \
+LABEL org.opencontainers.image.title="DroppedNeedle" \
+      org.opencontainers.image.description="Self-hosted music requests, discovery and library management, with Subsonic and Jellyfin APIs for music apps" \
       org.opencontainers.image.url="https://github.com/DroppedNeedle/DroppedNeedle" \
       org.opencontainers.image.source="https://github.com/DroppedNeedle/DroppedNeedle" \
+      org.opencontainers.image.documentation="https://github.com/DroppedNeedle/DroppedNeedle/tree/v3/docs" \
+      org.opencontainers.image.vendor="DroppedNeedle" \
       org.opencontainers.image.version="${COMMIT_TAG}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later"
 

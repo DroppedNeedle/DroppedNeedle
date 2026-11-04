@@ -46,9 +46,11 @@ jobs:
         id: sha
         run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Get build date
+      - name: Get build date and commit
         id: date
-        run: echo "timestamp=$(git log -1 --pretty=%cI)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "timestamp=$(git log -1 --pretty=%cI)" >> "$GITHUB_OUTPUT"
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Warm cache (${{ matrix.platform }})
         uses: docker/build-push-action@v7
@@ -59,6 +61,7 @@ jobs:
           build-args: |
             COMMIT_TAG=dev-${{ steps.sha.outputs.short }}
             BUILD_DATE=${{ steps.date.outputs.timestamp }}
+            VCS_REF=${{ steps.date.outputs.revision }}
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
           provenance: false
@@ -102,9 +105,11 @@ jobs:
         id: sha
         run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Get build date
+      - name: Get build date and commit
         id: date
-        run: echo "timestamp=$(git log -1 --pretty=%cI)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "timestamp=$(git log -1 --pretty=%cI)" >> "$GITHUB_OUTPUT"
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set image tags
         env:
@@ -131,6 +136,7 @@ jobs:
           build-args: |
             COMMIT_TAG=dev-${{ steps.sha.outputs.short }}
             BUILD_DATE=${{ steps.date.outputs.timestamp }}
+            VCS_REF=${{ steps.date.outputs.revision }}
           cache-from: |
             type=gha,scope=linux/amd64
             type=gha,scope=linux/arm64
