@@ -294,8 +294,9 @@ request, or a failed request whose download still exists, is not settled
 when its files arrive some other way, and an event is lost if the server
 stops between saving the change and sending it.
 
-`scrobble` and `playback_started` fire together, where scrobbling happens, so
-very short tracks and Navidrome-handled plays raise neither.
+`scrobble` and `playback_started` fire together and reach each plugin one after
+the other, so neither is skipped for the other. They fire where scrobbling
+happens, so very short tracks and Navidrome-handled plays raise neither.
 
 ### publisher
 

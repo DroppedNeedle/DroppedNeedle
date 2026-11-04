@@ -11,7 +11,8 @@ use droppedneedle_plugins::runtime::{
 
 /// Accepted plays from playback, as plugin events: a `scrobble` event
 /// (which also reaches `scrobbler` plugins) and a `playback_started`
-/// event. Both are sent from this one place.
+/// event. Both are sent from this one place, as one delivery per plugin,
+/// so the second never finds a plugin busy with the first.
 pub struct PluginPlayEvents(pub Arc<PluginHost>);
 
 impl PlayEvents for PluginPlayEvents {
@@ -20,7 +21,7 @@ impl PlayEvents for PluginPlayEvents {
             return;
         }
         let causation = uuid::Uuid::new_v4().simple().to_string();
-        self.0.dispatch_event(PluginEvent {
+        let scrobble = PluginEvent {
             kind: EventKind::Scrobble,
             payload: EventPayload::Scrobble(ScrobbleEvent {
                 artist: report.artist_name.clone(),
@@ -31,8 +32,8 @@ impl PlayEvents for PluginPlayEvents {
                 recording_mbid: report.mbid.clone(),
             }),
             causation_id: causation.clone(),
-        });
-        self.0.dispatch_event(PluginEvent {
+        };
+        let started = PluginEvent {
             kind: EventKind::PlaybackStarted,
             payload: EventPayload::Playback(PlaybackEvent {
                 artist: report.artist_name.clone(),
@@ -41,6 +42,7 @@ impl PlayEvents for PluginPlayEvents {
                 user_id: user_id.to_owned(),
             }),
             causation_id: format!("{causation}-playback"),
-        });
+        };
+        self.0.dispatch_events(vec![scrobble, started]);
     }
 }

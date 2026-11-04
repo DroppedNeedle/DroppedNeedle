@@ -1,10 +1,13 @@
 //! `scrobbler`, `subscriber` and `publisher`: events out to plugins, and
 //! hints from plugins back in.
 //!
-//! Delivery is fire-and-forget: every notification is its own task under
-//! a 5 second budget, so a slow plugin never delays the flow that raised
-//! the event. Each plugin has at most one event in flight; an event that
-//! arrives while it is busy is skipped and counted.
+//! Delivery is fire-and-forget: each plugin's delivery is its own task,
+//! with a 5 second budget per event, so a slow plugin never delays the
+//! flow that raised the event. Each plugin has at most one delivery in
+//! flight; an event that arrives while it is busy is skipped and counted.
+//! Events raised together (a play's `scrobble` and `playback_started`) go
+//! to each plugin as one delivery, in order, so the second never finds the
+//! plugin busy with the first.
 //!
 //! Loop guards for publishing: a plugin may publish while handling an
 //! engine event, and the resulting notice reaches the other subscribers
@@ -113,52 +116,81 @@ impl PluginHost {
     /// Fan one engine event out to every subscriber without waiting on
     /// any of them. `scrobble` events also reach `scrobbler` plugins.
     pub fn dispatch_event(self: &Arc<Self>, event: PluginEvent) {
-        if event.kind == EventKind::Scrobble
-            && let EventPayload::Scrobble(scrobble) = &event.payload
-        {
-            self.dispatch_scrobble(scrobble);
-        }
-        self.deliver(event, 0);
+        self.dispatch_events(vec![event]);
     }
 
-    fn deliver(self: &Arc<Self>, mut event: PluginEvent, depth: u32) {
+    /// Fan events raised together out to every subscriber, each plugin
+    /// getting them as one delivery in the order given. `scrobble` events
+    /// also reach `scrobbler` plugins.
+    pub fn dispatch_events(self: &Arc<Self>, events: Vec<PluginEvent>) {
+        for event in &events {
+            if event.kind == EventKind::Scrobble
+                && let EventPayload::Scrobble(scrobble) = &event.payload
+            {
+                self.dispatch_scrobble(scrobble);
+            }
+        }
+        self.deliver(events, 0);
+    }
+
+    fn deliver(self: &Arc<Self>, mut events: Vec<PluginEvent>, depth: u32) {
         self.sweep_seen();
-        if event.causation_id.is_empty() {
-            event.causation_id = uuid::Uuid::new_v4().simple().to_string();
+        for event in &mut events {
+            if event.causation_id.is_empty() {
+                event.causation_id = uuid::Uuid::new_v4().simple().to_string();
+            }
         }
         for plugin in self.serving(Capability::Subscriber) {
             let name = plugin.manifest.name.clone();
-            if self.seen_before(&event.causation_id, &name) {
+            let fresh: Vec<PluginEvent> = events
+                .iter()
+                .filter(|event| !self.seen_before(&event.causation_id, &name))
+                .cloned()
+                .collect();
+            let Some(first) = fresh.first() else {
                 continue;
-            }
-            if !self.mark_inflight(&name, &event.causation_id, depth) {
-                tracing::warn!(plugin = %name, kind = event.kind.as_str(), "plugin event skipped: previous one still running");
+            };
+            if !self.mark_inflight(&name, &first.causation_id, depth) {
+                for event in &fresh {
+                    tracing::warn!(plugin = %name, kind = event.kind.as_str(), "plugin event skipped: previous one still running");
+                }
                 if let Ok(mut dropped) = self.events.dropped.lock() {
-                    *dropped.entry(name).or_insert(0) += 1;
+                    *dropped.entry(name).or_insert(0) += fresh.len() as u64;
                 }
                 continue;
             }
-            self.remember(&event.causation_id, &name);
+            for event in &fresh {
+                self.remember(&event.causation_id, &name);
+            }
             let host = Arc::clone(self);
-            let event = event.clone();
-            tokio::spawn(async move { host.notify_one(&plugin, &event).await });
+            tokio::spawn(async move { host.notify_one(&plugin, &fresh, depth).await });
         }
     }
 
-    async fn notify_one(&self, plugin: &LoadedPlugin, event: &PluginEvent) {
+    /// Send one delivery to one plugin, an event at a time, then mark it
+    /// free. While each event runs, the plugin is marked as handling that
+    /// event's causation, which the publish loop guard reads.
+    async fn notify_one(&self, plugin: &LoadedPlugin, events: &[PluginEvent], depth: u32) {
         let name = &plugin.manifest.name;
-        let started = Instant::now();
-        if let Ok(params) = serde_json::to_value(event)
-            && call(plugin, methods::EVENT, params, EVENT_TIMEOUT)
-                .await
-                .is_ok()
-        {
-            tracing::debug!(
-                plugin = %name,
-                kind = event.kind.as_str(),
-                duration_ms = started.elapsed().as_millis() as u64,
-                "plugin event delivered"
-            );
+        for (index, event) in events.iter().enumerate() {
+            if index > 0
+                && let Ok(mut inflight) = self.events.inflight.lock()
+            {
+                inflight.insert(name.clone(), (event.causation_id.clone(), depth));
+            }
+            let started = Instant::now();
+            if let Ok(params) = serde_json::to_value(event)
+                && call(plugin, methods::EVENT, params, EVENT_TIMEOUT)
+                    .await
+                    .is_ok()
+            {
+                tracing::debug!(
+                    plugin = %name,
+                    kind = event.kind.as_str(),
+                    duration_ms = started.elapsed().as_millis() as u64,
+                    "plugin event delivered"
+                );
+            }
         }
         if let Ok(mut inflight) = self.events.inflight.lock() {
             inflight.remove(name);
@@ -315,7 +347,7 @@ impl PluginHost {
                     causation_id: record.causation_id.clone(),
                 };
                 tracing::info!(plugin = %record.source_plugin, title = %field("title"), "plugin notice");
-                self.deliver(event, record.depth);
+                self.deliver(vec![event], record.depth);
             }
             "download_note" => {
                 tracing::info!(

@@ -1132,6 +1132,46 @@ async fn fanout_reaches_subscribers_once_per_causation() {
     assert_eq!(runtime.calls_to(methods::SCROBBLE).len(), 2);
 }
 
+/// An accepted play reaches a subscriber as both of its events, `scrobble`
+/// then `playback_started`, and neither is skipped as arriving while the
+/// plugin was busy with the other.
+#[tokio::test]
+async fn an_accepted_play_reaches_a_subscriber_as_both_events() {
+    use droppedneedle_media::playback::plugin_events::PluginPlayEvents;
+    use droppedneedle_media::playback::ports::{PlayEvents as _, ReportTrack};
+
+    let rig = rig("play-events").await;
+    let manifest = "[plugin]\n\
+         name = \"toy\"\n\
+         api_version = 2\n\
+         entrypoint = \"plugin:Toy\"\n\
+         capabilities = [\"subscriber\"]\n";
+    let runtime = enable_toy(&rig, manifest);
+    let report = ReportTrack {
+        track_name: "T".to_owned(),
+        artist_name: "A".to_owned(),
+        album_name: Some("B".to_owned()),
+        duration_ms: 200_000,
+        mbid: None,
+        release_group_mbid: None,
+        source: None,
+        played_at: Some(1_704_067_200),
+    };
+    PluginPlayEvents(Arc::clone(&rig.host)).play_accepted("user-1", &report, 1_704_067_200);
+    turns_until(|| runtime.calls_to(methods::EVENT).len() == 2).await;
+    let kinds: Vec<serde_json::Value> = runtime
+        .calls_to(methods::EVENT)
+        .iter()
+        .map(|event| event["kind"].clone())
+        .collect();
+    assert_eq!(kinds, [json!("scrobble"), json!("playback_started")]);
+    assert_eq!(
+        runtime.calls_to(methods::EVENT)[1]["payload"]["user_id"],
+        "user-1"
+    );
+    assert!(rig.host.dropped_event_counts().is_empty());
+}
+
 #[tokio::test]
 async fn ticks_run_through_the_jobs_loop_and_state_persists() {
     let rig = rig("ticks").await;
