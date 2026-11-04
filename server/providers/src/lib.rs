@@ -152,8 +152,6 @@ pub struct ProviderEndpoints {
     pub pwned_passwords: String,
 }
 
-impl ProviderEndpoints {}
-
 /// The shared provider dependencies, built once at boot and shared by
 /// every area: the limiters of the rate table, the provider answer cache,
 /// the service health registry, and the clients that send through the
