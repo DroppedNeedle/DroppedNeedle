@@ -319,15 +319,19 @@ const IDENTITY_RULES: &[Rule] = &[
 /// Album and track identities, match state, their undo rows and their
 /// satellites are written only through `library/src/identity/`. Shipping
 /// code outside it never names one of the tables right after `INSERT
-/// INTO`, `UPDATE`, `DELETE FROM` or `REPLACE INTO`, nor as a string of its
-/// own (the table loop a `format!` statement runs over). Migrations are
-/// SQL files and not read here.
+/// INTO`, `UPDATE`, `DELETE FROM` or `REPLACE INTO`, in any case and
+/// quoted or not, nor as a string of its own (the table loop a `format!`
+/// statement runs over). Migrations are SQL files and not read here.
 #[test]
 fn only_the_identity_module_writes_identity_rows() {
     let tables = IDENTITY_TABLES.join("|");
+    // An identifier may be quoted as SQLite allows: "x", `x` or [x], with
+    // the double quote escaped inside a Rust string.
+    let quote = r#"(?:\\?["`\[])?"#;
+    let unquote = r#"(?:\\?["`\]])?"#;
     let patterns = [
         Regex::new(&format!(
-            r#"(?s)\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM|REPLACE\s+INTO)[\s\\]+(?:main\.)?(?:{tables})\b"#
+            r#"(?is)\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM|REPLACE\s+INTO)[\s\\]+(?:{quote}main{unquote}\s*\.\s*)?{quote}(?:{tables})\b"#
         ))
         .unwrap(),
         Regex::new(&format!(r#""(?:{tables})""#)).unwrap(),
@@ -437,11 +441,89 @@ const IDENTITY_USES: &[(&str, &str)] = &[
     ),
 ];
 
+/// The use tree that starts `rest`: a path, ending in a name, `*` or a
+/// brace group, which is taken whole however deep its groups nest.
+fn use_tree(rest: &str) -> &str {
+    let mut depth = 0usize;
+    for (at, letter) in rest.char_indices() {
+        match letter {
+            '{' => depth += 1,
+            '}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    return &rest[..=at];
+                }
+            }
+            _ if depth > 0 => {}
+            letter if letter.is_alphanumeric() || matches!(letter, '_' | ':' | '*') => {}
+            _ => return &rest[..at],
+        }
+    }
+    rest
+}
+
+/// Every path a use tree names, its groups expanded, a rename dropped and
+/// `self` read as the group's own path.
+fn expand_use_tree(tree: &str) -> Vec<String> {
+    let tree = tree.trim();
+    let Some((prefix, inner)) = tree.strip_suffix('}').and_then(|head| head.split_once('{')) else {
+        return tree
+            .split_whitespace()
+            .next()
+            .map(|path| vec![path.to_owned()])
+            .unwrap_or_default();
+    };
+    let mut parts = Vec::new();
+    let (mut depth, mut start) = (0usize, 0);
+    for (at, letter) in inner.char_indices() {
+        match letter {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&inner[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&inner[start..]);
+    parts
+        .into_iter()
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .flat_map(|part| {
+            if part == "self" || part.starts_with("self ") {
+                vec![prefix.trim_end_matches("::").to_owned()]
+            } else {
+                expand_use_tree(part)
+                    .into_iter()
+                    .map(|path| format!("{prefix}{path}"))
+                    .collect()
+            }
+        })
+        .collect()
+}
+
+/// The module a source file is, as a path from its crate's root:
+/// `library/src/identity/sql.rs` is `identity::sql`, a `mod.rs` its folder.
+fn module_of(path: &str) -> Vec<&str> {
+    let within = path.split_once("/src/").map_or(path, |(_, within)| within);
+    let mut module: Vec<&str> = within.split('/').collect();
+    if let Some(file) = module.pop() {
+        let name = file.trim_end_matches(".rs");
+        if !matches!(name, "mod" | "lib" | "main") {
+            module.push(name);
+        }
+    }
+    module
+}
+
 /// The identity module uses only what [`IDENTITY_USES`] lists from the
-/// rest of the crate, and every listed use is still made.
+/// rest of the crate, and every listed use is still made. A path is read
+/// from `crate::` or resolved from `super::`, its groups expanded.
 #[test]
 fn the_identity_module_uses_only_what_it_lists() {
-    let path = Regex::new(r"\bcrate::((?:\w+::)*)(\{[^}]*\}|\w+)").unwrap();
+    let path = Regex::new(r"\b(?:crate|((?:super::)*super))::").unwrap();
     let mut used = vec![false; IDENTITY_USES.len()];
     let mut wrong = Vec::new();
     for source in workspace_sources() {
@@ -449,19 +531,32 @@ fn the_identity_module_uses_only_what_it_lists() {
             continue;
         }
         let code = source.shipping_code();
+        let module = module_of(&source.path);
         for found in path.captures_iter(&code) {
-            let prefix = &found[1];
-            let items: Vec<String> = match found[2].strip_prefix('{') {
-                Some(group) => group
-                    .trim_end_matches('}')
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|item| !item.is_empty() && *item != "self")
-                    .map(|item| format!("{prefix}{item}"))
-                    .collect(),
-                None => vec![format!("{prefix}{}", &found[2])],
+            let whole = found.get(0).unwrap();
+            let line = code[..whole.start()].matches('\n').count() + 1;
+            let base: Vec<&str> = match found.get(1) {
+                None => Vec::new(),
+                Some(supers) => {
+                    let up = supers.as_str().matches("super").count();
+                    let Some(kept) = module.len().checked_sub(up) else {
+                        wrong.push(format!(
+                            "{}:{line}: `super::` above the crate root",
+                            source.path
+                        ));
+                        continue;
+                    };
+                    module[..kept].to_vec()
+                }
             };
-            for item in items {
+            let tree = use_tree(&code[whole.end()..]);
+            for item in expand_use_tree(tree) {
+                let item = base
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(item.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("::");
                 if item == "identity" || item.starts_with("identity::") {
                     continue;
                 }
@@ -470,10 +565,7 @@ fn the_identity_module_uses_only_what_it_lists() {
                 });
                 match allowed {
                     Some(at) => used[at] = true,
-                    None => {
-                        let line = code[..found.get(0).unwrap().start()].matches('\n').count() + 1;
-                        wrong.push(format!("{}:{line}: uses crate::{item}", source.path));
-                    }
+                    None => wrong.push(format!("{}:{line}: uses crate::{item}", source.path)),
                 }
             }
         }

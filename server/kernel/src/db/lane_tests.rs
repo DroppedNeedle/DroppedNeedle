@@ -58,6 +58,16 @@ impl Hold {
     }
 }
 
+/// Captured by a write's closure, so refusing that write panics when it
+/// drops the closure, as a caller's code may.
+struct PanicOnDrop;
+
+impl Drop for PanicOnDrop {
+    fn drop(&mut self) {
+        panic!("brief: dropping this closure panics");
+    }
+}
+
 /// A hold, the signal that the write is inside its transaction, and the
 /// release.
 fn hold() -> (
@@ -467,7 +477,8 @@ fn durable_write_syncs_fully_and_the_next_write_does_not() {
 
 /// Shutdown behind a write that does not return gives up at its bound: it
 /// comes back, and the writes still queued, from a thread and from an async
-/// caller, are answered `LaneClosed` and never run.
+/// caller, are answered `LaneClosed` and never run. One whose refusal
+/// panics does not stop the rest being answered.
 #[test]
 fn shutdown_gives_up_on_a_holder_that_does_not_return() {
     let (lane, _dir) = scratch_lane("shutdown-stuck");
@@ -482,6 +493,12 @@ fn shutdown_gives_up_on_a_holder_that_does_not_return() {
     inside.blocking_recv().unwrap();
 
     let mut cx = Context::from_waker(Waker::noop());
+    let bomb = PanicOnDrop;
+    let mut panics = Box::pin(lane.write(Lane::Background, "brief-panics", move |tx| {
+        let _bomb = &bomb;
+        insert_label(tx, "panics")
+    }));
+    assert!(panics.as_mut().poll(&mut cx).is_pending());
     let mut queued = Box::pin(lane.write(Lane::Background, "brief-queued", |tx| {
         insert_label(tx, "queued")
     }));
@@ -492,16 +509,34 @@ fn shutdown_gives_up_on_a_holder_that_does_not_return() {
             insert_label(tx, "parked")
         })
     });
-    wait_queued(&lane, 2);
+    wait_queued(&lane, 3);
 
     let (down_tx, down) = std::sync::mpsc::channel();
     let closing = lane.clone();
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&buffer);
     std::thread::spawn(move || {
-        current_thread_runtime().block_on(closing.shutdown(Duration::from_millis(100)));
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || LogSink(Arc::clone(&sink)))
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            current_thread_runtime().block_on(closing.shutdown(Duration::from_millis(100)));
+        });
         let _ = down_tx.send(());
     });
     down.recv_timeout(Duration::from_secs(10))
         .expect("shutdown must give up on a write that does not return");
+    let logged = String::from_utf8_lossy(&buffer.lock().unwrap()).into_owned();
+    assert!(
+        !logged.contains("did not stop cleanly"),
+        "a refusal that panics does not end the shutdown early: {logged}"
+    );
+    let refused = panics.as_mut().poll(&mut cx);
+    assert!(
+        matches!(refused, Poll::Ready(Err(DbError::LaneClosed))),
+        "the write whose refusal panicked hears LaneClosed, got {refused:?}"
+    );
     let refused = queued.as_mut().poll(&mut cx);
     assert!(
         matches!(refused, Poll::Ready(Err(DbError::LaneClosed))),
@@ -1451,13 +1486,6 @@ fn write_connection_keeps_its_prepared_statements() {
 /// logged before any of it.
 #[test]
 fn a_refusal_that_panics_still_answers_the_rest_of_the_pass() {
-    struct PanicOnDrop;
-    impl Drop for PanicOnDrop {
-        fn drop(&mut self) {
-            panic!("brief: dropping this closure panics");
-        }
-    }
-
     let (lane, _dir) = scratch_lane_with(
         "refusal-panics",
         LaneLimits {
