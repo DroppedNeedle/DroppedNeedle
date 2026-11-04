@@ -9,7 +9,7 @@ use std::time::Duration;
 use droppedneedle_compat::jellyfin::ids::{IdKind, JellyfinIds};
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_library::scan::naming::artist_key;
-use droppedneedle_tool::tooling::fixture::{V2_ALBUM_ID, V2_TRACK_ID};
+use droppedneedle_tool::test_support::fixture::{V2_ALBUM_ID, V2_TRACK_ID};
 use rusqlite::{Connection, params};
 
 use crate::common::ScratchDir;

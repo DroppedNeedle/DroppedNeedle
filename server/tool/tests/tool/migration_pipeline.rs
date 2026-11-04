@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::{Crypto, Secret};
-use droppedneedle_tool::tooling::fixture::{UNKNOWN_USER_ID, build_v2_fixture, delete_orphan_rows};
+use droppedneedle_tool::test_support::fixture::{
+    UNKNOWN_USER_ID, build_v2_fixture, delete_orphan_rows,
+};
 
 /// Scratch directory per brief, removed on drop.
 fn scratch_dir(tag: &str) -> crate::common::ScratchDir {
@@ -40,7 +42,7 @@ fn issue_codes(report: &droppedneedle_tool::r#import::ValidationReport) -> (Vec<
 const PASSPHRASE: &str = "operator-passphrase";
 
 /// A fixture plus its first export, orphans included.
-fn orphaned_export(root: &Path) -> (droppedneedle_tool::tooling::fixture::V2Fixture, String) {
+fn orphaned_export(root: &Path) -> (droppedneedle_tool::test_support::fixture::V2Fixture, String) {
     let v2_root = root.join("v2");
     let fixture = build_v2_fixture(&v2_root).expect("fixture builds");
     let export_path = root.join("export.json");
@@ -55,7 +57,7 @@ fn orphaned_export(root: &Path) -> (droppedneedle_tool::tooling::fixture::V2Fixt
 
 /// A fixture plus its export after the operator repair: the orphan rows
 /// are dropped from v2 and the file is re-exported clean.
-fn repaired_export(root: &Path) -> (droppedneedle_tool::tooling::fixture::V2Fixture, String) {
+fn repaired_export(root: &Path) -> (droppedneedle_tool::test_support::fixture::V2Fixture, String) {
     let (fixture, _) = orphaned_export(root);
     let export_path = root.join("export.json");
     assert_eq!(
@@ -440,7 +442,7 @@ async fn top_level_config_keys_reach_the_import() {
 /// writes nothing at all and brings back nothing the user deleted.
 #[tokio::test]
 async fn user_data_carries_resumes_and_repeats_as_noop() {
-    use droppedneedle_tool::tooling::fixture::{AVATAR_BYTES, COVER_BYTES, PLAYLIST_ID};
+    use droppedneedle_tool::test_support::fixture::{AVATAR_BYTES, COVER_BYTES, PLAYLIST_ID};
 
     let root = scratch_dir("carry");
     let (fixture, text) = repaired_export(&root);
@@ -562,7 +564,7 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
     let dormant: (String, i64, i64) = target_db.row(
         "SELECT state, created_at, next_check_at FROM wanted_watches \
          WHERE release_group_mbid_lower = ?",
-        rusqlite::params![droppedneedle_tool::tooling::fixture::DORMANT_WATCH_MBID],
+        rusqlite::params![droppedneedle_tool::test_support::fixture::DORMANT_WATCH_MBID],
     );
     assert_eq!(
         (dormant.0.as_str(), dormant.1),
@@ -582,7 +584,7 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
     );
     assert_eq!(
         history.as_deref(),
-        Some(droppedneedle_tool::tooling::fixture::V2_TRACK_ID)
+        Some(droppedneedle_tool::test_support::fixture::V2_TRACK_ID)
     );
     let made: i64 = target_db.one(
         "SELECT created_at FROM catalog_playlists WHERE id = ?",
@@ -1273,7 +1275,7 @@ async fn login_rehashes(target_db: &Path, db: &Db, username: &str, user_id: &str
 /// Every imported follow reads back with its v2 values.
 fn assert_follows_intact(
     target_db: &Path,
-    fixture: &droppedneedle_tool::tooling::fixture::V2Fixture,
+    fixture: &droppedneedle_tool::test_support::fixture::V2Fixture,
 ) {
     let rows: Vec<(String, String, String, i64, i64, i64)> = target_db.rows(
         "SELECT user_id, artist_mbid, artist_name, auto_download, followed_at, updated_at
@@ -1302,7 +1304,7 @@ fn assert_follows_intact(
 async fn assert_compat_reauth(
     db: &Db,
     v3_root: &Path,
-    fixture: &droppedneedle_tool::tooling::fixture::V2Fixture,
+    fixture: &droppedneedle_tool::test_support::fixture::V2Fixture,
 ) {
     use droppedneedle_auth::session::tokens::hash_token;
     use droppedneedle_auth::sqlite::{AppPasswords, AuthDb};
@@ -1356,7 +1358,7 @@ async fn assert_compat_reauth(
 /// under the v3 key, dropped fields stayed behind, order and ids survived.
 fn assert_settings_landed(
     v3_root: &Path,
-    fixture: &droppedneedle_tool::tooling::fixture::V2Fixture,
+    fixture: &droppedneedle_tool::test_support::fixture::V2Fixture,
 ) {
     let config = v3_settings(v3_root);
     assert_eq!(

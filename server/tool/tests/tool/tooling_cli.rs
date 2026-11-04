@@ -74,10 +74,13 @@ fn passphrase_file(dir: &std::path::Path, passphrase: &str) -> PathBuf {
 /// A repaired (orphan-free) export file plus its fixture, via the library.
 fn repaired_export(
     root: &std::path::Path,
-) -> (droppedneedle_tool::tooling::fixture::V2Fixture, PathBuf) {
-    let fixture = droppedneedle_tool::tooling::fixture::build_v2_fixture(&root.join("v2"))
+) -> (
+    droppedneedle_tool::test_support::fixture::V2Fixture,
+    PathBuf,
+) {
+    let fixture = droppedneedle_tool::test_support::fixture::build_v2_fixture(&root.join("v2"))
         .expect("fixture builds");
-    droppedneedle_tool::tooling::fixture::delete_orphan_rows(
+    droppedneedle_tool::test_support::fixture::delete_orphan_rows(
         &fixture.root.join("cache").join("library.db"),
     )
     .expect("repair runs");
@@ -96,7 +99,7 @@ fn repaired_export(
 #[test]
 fn export_writes_then_refuses_a_keyless_instance() {
     let root = scratch_dir("export");
-    let fixture = droppedneedle_tool::tooling::fixture::build_v2_fixture(&root.join("v2"))
+    let fixture = droppedneedle_tool::test_support::fixture::build_v2_fixture(&root.join("v2"))
         .expect("fixture builds");
     let out = root.join("out.json");
 
@@ -245,7 +248,7 @@ fn validate_accepts_rejects_and_cross_checks() {
     }
 
     // The optional --v2-root cross-check catches an instance mismatch.
-    let other = droppedneedle_tool::tooling::fixture::build_v2_fixture(&root.join("other-v2"))
+    let other = droppedneedle_tool::test_support::fixture::build_v2_fixture(&root.join("other-v2"))
         .expect("second fixture builds");
     let status = Command::new(tool())
         .args(["validate"])
@@ -529,8 +532,8 @@ fn json_lines(output: &std::process::Output) -> Vec<Line> {
 /// A v2 data directory without orphan rows. Upgrading it never changes
 /// the v2 database, so its files can be compared byte for byte.
 pub(crate) fn clean_v2(root: &Path) {
-    droppedneedle_tool::tooling::fixture::build_v2_fixture(root).expect("fixture builds");
-    droppedneedle_tool::tooling::fixture::delete_orphan_rows(
+    droppedneedle_tool::test_support::fixture::build_v2_fixture(root).expect("fixture builds");
+    droppedneedle_tool::test_support::fixture::delete_orphan_rows(
         &root.join("cache").join("library.db"),
     )
     .expect("repair runs");
@@ -631,7 +634,7 @@ fn upgrade_turns_a_v2_directory_into_v3_in_place() {
     let scratch = scratch_dir("upgrade");
     let root = scratch.join("data");
     let fixture =
-        droppedneedle_tool::tooling::fixture::build_v2_fixture(&root).expect("fixture builds");
+        droppedneedle_tool::test_support::fixture::build_v2_fixture(&root).expect("fixture builds");
     let config_path = root.join("config").join("config.json");
     let mut config: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&config_path).expect("config reads"))
@@ -828,7 +831,7 @@ fn upgrade_turns_a_v2_directory_into_v3_in_place() {
 fn upgrade_stops_until_callback_addresses_are_changed() {
     let scratch = scratch_dir("callbacks");
     let root = scratch.join("data");
-    droppedneedle_tool::tooling::fixture::build_v2_fixture_with_callbacks(&root)
+    droppedneedle_tool::test_support::fixture::build_v2_fixture_with_callbacks(&root)
         .expect("fixture builds");
     let oidc_v3 = "https://music.example.com/api/v3/auth/oidc/callback";
     let spotify_v3 = "https://music.example.com/api/v3/acquire/spotify/auth/callback";
@@ -840,7 +843,7 @@ fn upgrade_stops_until_callback_addresses_are_changed() {
     for line in [
         format!(
             "  from  {}",
-            droppedneedle_tool::tooling::fixture::CALLBACKS_OIDC_REDIRECT
+            droppedneedle_tool::test_support::fixture::CALLBACKS_OIDC_REDIRECT
         ),
         format!("  to    {oidc_v3}"),
         format!("  to    {spotify_v3}"),
@@ -932,7 +935,7 @@ fn sealed_values(db: &Path) -> Vec<String> {
 async fn reset_key_clears_every_secret_of_a_lost_key() {
     let scratch = scratch_dir("reset-key");
     let root = scratch.join("data");
-    droppedneedle_tool::tooling::fixture::build_v2_fixture(&root).expect("fixture builds");
+    droppedneedle_tool::test_support::fixture::build_v2_fixture(&root).expect("fixture builds");
     let upgraded = tool_in(&root, &["upgrade"]);
     assert!(
         upgraded.status.success(),
@@ -1044,7 +1047,7 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
     const NEW_PASSWORD: &str = "a brand new password 99";
     let scratch = scratch_dir("recovery-code");
     let root = scratch.join("data");
-    droppedneedle_tool::tooling::fixture::build_v2_fixture(&root).expect("fixture builds");
+    droppedneedle_tool::test_support::fixture::build_v2_fixture(&root).expect("fixture builds");
     let upgraded = tool_in(&root, &["upgrade"]);
     assert!(
         upgraded.status.success(),

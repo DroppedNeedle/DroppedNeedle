@@ -1657,8 +1657,8 @@ const REGISTRIES: &[(&str, StatementFiles)] = &[
         "compat",
         droppedneedle_compat::test_support::statement_files,
     ),
-    ("tool", droppedneedle_tool::statement_files),
-    (".", droppedneedle::statement_files),
+    ("tool", droppedneedle_tool::test_support::statement_files),
+    (".", droppedneedle::test_support::statement_files),
 ];
 
 /// The crate name of a folder under `server/`.
@@ -1844,7 +1844,8 @@ fn every_registered_statement_prepares() {
     crate::common::migrated_db(&path);
     let app = rusqlite::Connection::open(&path).expect("template copy opens");
     let v2_root = dir.join("v2");
-    droppedneedle_tool::tooling::fixture::build_v2_fixture(&v2_root).expect("v2 fixture builds");
+    droppedneedle_tool::test_support::fixture::build_v2_fixture(&v2_root)
+        .expect("v2 fixture builds");
     let v2 = rusqlite::Connection::open(v2_root.join("cache").join("library.db"))
         .expect("v2 fixture opens");
     let cache =
@@ -2313,7 +2314,7 @@ fn exempt(path: &str) -> bool {
     path.ends_with("/tests.rs")
         || path.ends_with("_tests.rs")
         || path.contains("/tests/")
-        || path == "tool/src/tooling/fixture.rs"
+        || path == "tool/src/test_support/fixture.rs"
         || EXPORT_BUNDLE.iter().any(|place| path.starts_with(place))
 }
 

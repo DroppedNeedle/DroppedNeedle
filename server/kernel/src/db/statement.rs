@@ -328,14 +328,14 @@ macro_rules! __sql_items {
     };
     (
         $schema:ident [$($done:tt)*]
-        $(#[$meta:meta])* family $name:ident = $builder:ident ;
+        $(#[$meta:meta])* family $name:ident = $builder:path ;
         $($rest:tt)*
     ) => {
         $crate::__sql_items! { $schema [$($done)* (family $name $builder)] $($rest)* }
     };
     (
         $schema:ident [$($done:tt)*]
-        $(#[$meta:meta])* $vis:vis row $name:ident for family [$($builder:ident),+ $(,)?] {
+        $(#[$meta:meta])* $vis:vis row $name:ident for family [$($builder:path),+ $(,)?] {
             $($field:ident : $ty:ty),+ $(,)?
         }
         $($rest:tt)*
@@ -419,7 +419,7 @@ macro_rules! __sql_declared {
     ((statement $name:ident)) => {
         $crate::db::statement::Declared::Statement($name)
     };
-    ((family $name:ident $builder:ident)) => {
+    ((family $name:ident $builder:path)) => {
         $crate::db::statement::Declared::Family($crate::sql_family!($name, $builder))
     };
     ((row $name:ident [$($statement:path),+] [$($field:ident),+])) => {
@@ -430,14 +430,14 @@ macro_rules! __sql_declared {
             &[],
         ))
     };
-    ((family_row $name:ident [$($builder:ident),+] [$($field:ident),+])) => {
+    ((family_row $name:ident [$($builder:path),+] [$($field:ident),+])) => {
         $crate::db::statement::Declared::Row($crate::db::statement::RowShape::new(
             concat!(module_path!(), "::", stringify!($name)),
             &[$(stringify!($field)),+],
             &[],
             {
                 const FAMILIES: &[$crate::db::statement::Family] =
-                    &[$($crate::sql_family!($builder, $builder)),+];
+                    &[$($crate::sql_family!(@row $builder)),+];
                 FAMILIES
             },
         ))
@@ -448,10 +448,16 @@ macro_rules! __sql_declared {
 /// combination of its choices. Written by `sql!` for each `family` line.
 #[macro_export]
 macro_rules! sql_family {
-    ($name:ident, $builder:ident) => {
+    ($name:ident, $builder:path) => {
         $crate::db::statement::Family::new(concat!(module_path!(), "::", stringify!($name)), || {
             $crate::db::statement::Builder::every_text(&$builder)
         })
+    };
+    (@row $builder:path) => {
+        $crate::db::statement::Family::new(
+            concat!(module_path!(), "::", stringify!($builder)),
+            || $crate::db::statement::Builder::every_text(&$builder),
+        )
     };
 }
 

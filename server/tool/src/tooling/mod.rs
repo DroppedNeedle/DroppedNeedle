@@ -21,8 +21,6 @@
 //!
 //! Everything here is offline: file and SQLite reads/writes only.
 
-#[cfg(any(test, feature = "test-support"))]
-pub mod fixture;
 pub mod host_settings;
 pub mod recovery_code;
 pub mod reset_key;

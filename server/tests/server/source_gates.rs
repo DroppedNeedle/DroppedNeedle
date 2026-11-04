@@ -55,7 +55,11 @@ const OPENS: &[Place] = &[
     DB,
     place(
         "tool/src/tooling/",
-        "the offline tool's upgrade, fixture and recovery steps",
+        "the offline tool's upgrade and recovery steps",
+    ),
+    place(
+        "tool/src/test_support/fixture.rs",
+        "the v2 data folder the tool's tests build and upgrade",
     ),
     place(
         "tool/src/export/",

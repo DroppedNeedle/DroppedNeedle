@@ -11,7 +11,7 @@ use droppedneedle_library::scan::naming::{UNKNOWN_ARTIST_ID, artist_key};
 use droppedneedle_library::tags::TagField;
 use droppedneedle_library::tags::save::{TagEdit, save_tags};
 use droppedneedle_tool::r#import::{ExitCode, ImportReport};
-use droppedneedle_tool::tooling::fixture::{
+use droppedneedle_tool::test_support::fixture::{
     MUSIC_ROOT_ID, V2_ALBUM_ID, V2_ARTIST_ID, V2_TRACK_ID, V2_TRACK_REL, build_v2_fixture,
     delete_orphan_rows,
 };

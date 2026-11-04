@@ -71,20 +71,20 @@ droppedneedle_kernel::sql! {
     /// A section's rows sorted into what the import does with them: all of
     /// them, those whose parent is not in v3, those that land, and those
     /// v3 already holds whole.
-    family SECTION_COUNTS = every_column_count;
+    family SECTION_COUNTS = crate::test_support::carry::every_column_count;
     /// Insert a section's new rows.
-    family SECTION_INSERTS = every_column_insert;
+    family SECTION_INSERTS = crate::test_support::carry::every_column_insert;
     /// Record a section's unresolved library references.
-    family LINK_INSERTS = every_link_insert;
+    family LINK_INSERTS = crate::test_support::carry::every_link_insert;
     /// Count a section's unresolved library references.
-    family LINK_COUNTS = every_link_count;
+    family LINK_COUNTS = crate::test_support::carry::every_link_count;
     /// The rows in one bundle section.
     family SECTION_ROWS = section_rows;
     /// A bundle section's rows that name a user outside the list in ?1.
     family SECTION_DANGLING = section_dangling;
 
     /// What a section's rows come to.
-    pub(super) row SectionCounts for family [every_column_count] {
+    pub(super) row SectionCounts for family [crate::test_support::carry::every_column_count] {
         total: i64,
         orphans: i64,
         new: i64,
@@ -271,9 +271,9 @@ droppedneedle_kernel::sql! {
     /// When a carried entry expires: 90 days from now or from ?2, the later.
     fragment HELD_EXPIRY = "MAX(?2, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)) + 7776000000";
     /// Open a held entry for a carried row (?1) unless its user has one.
-    family HELD_ENTRY_INSERTS = held_entry_insert_holding;
+    family HELD_ENTRY_INSERTS = crate::test_support::carry::held_entry_insert_holding;
     /// Add a carried row's (?1) file (?2), held since ?3, to its entry.
-    family HELD_FILE_INSERTS = held_file_insert_holding;
+    family HELD_FILE_INSERTS = crate::test_support::carry::held_file_insert_holding;
     /// Keep the entry of a carried file (?1) long enough for it.
     pub(super) HELD_EXTEND_ENTRY = "UPDATE main.acquire_held_entries \
              SET expires_at = MAX(expires_at, " + HELD_EXPIRY + ") \
@@ -353,84 +353,6 @@ impl Choice for WaitingColumn {
         }
         all
     }
-}
-
-/// A section that lands in a v3 table.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone, Copy)]
-struct TableTarget {
-    section: &'static TableSection,
-    table: &'static str,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Choice for TableTarget {
-    fn all() -> Vec<Self> {
-        ALL.iter()
-            .copied()
-            .filter_map(|section| match section.target {
-                Target::Table(table) => Some(Self { section, table }),
-                Target::AvatarFiles | Target::HeldFiles | Target::BundleOnly => None,
-            })
-            .collect()
-    }
-}
-
-/// A library reference column of a section that lands in a v3 table.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone, Copy)]
-struct LinkColumn {
-    target: TableTarget,
-    column: &'static Column,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Choice for LinkColumn {
-    fn all() -> Vec<Self> {
-        let mut all = Vec::new();
-        for target in TableTarget::all() {
-            for column in target.section.columns {
-                if column.link.is_some() {
-                    all.push(Self { target, column });
-                }
-            }
-        }
-        all
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-fn every_column_count(target: TableTarget, dry_run: bool) -> String {
-    let every: Vec<&Column> = target.section.columns.iter().collect();
-    section_count(target.section, target.table, &every, dry_run)
-}
-
-#[cfg(any(test, feature = "test-support"))]
-fn every_column_insert(target: TableTarget, dry_run: bool) -> String {
-    let every: Vec<&Column> = target.section.columns.iter().collect();
-    section_insert(target.section, target.table, &every, dry_run)
-}
-
-#[cfg(any(test, feature = "test-support"))]
-fn every_link_insert(link: LinkColumn, dry_run: bool) -> String {
-    let LinkColumn { target, column } = link;
-    link_insert(target.section, target.table, column, dry_run).unwrap_or_default()
-}
-
-#[cfg(any(test, feature = "test-support"))]
-fn every_link_count(link: LinkColumn, dry_run: bool) -> String {
-    let LinkColumn { target, column } = link;
-    link_count(target.section, column, dry_run).unwrap_or_default()
-}
-
-#[cfg(any(test, feature = "test-support"))]
-fn held_entry_insert_holding(every_column: bool) -> String {
-    held_entry_insert(&|_| every_column)
-}
-
-#[cfg(any(test, feature = "test-support"))]
-fn held_file_insert_holding(every_column: bool) -> String {
-    held_file_insert(&|_| every_column)
 }
 
 /// How many rows a bundle section holds.
@@ -648,7 +570,7 @@ fn section_source(section: &TableSection) -> String {
 /// One row, read as [`SectionCounts`]: total, orphans (their parent row is
 /// not in v3), new (parent present, no key or uniqueness clash), identical
 /// (every column equal in v3). `present` is the columns the bundle holds.
-pub(super) fn section_count(
+pub(crate) fn section_count(
     section: &TableSection,
     table: &str,
     present: &[&Column],
@@ -701,7 +623,7 @@ fn pending_where(
 
 /// Record the unresolved references of a section's new rows in
 /// `import_pending_links`. `None` for a column that holds no reference.
-pub(super) fn link_insert(
+pub(crate) fn link_insert(
     section: &TableSection,
     table: &str,
     column: &Column,
@@ -729,7 +651,7 @@ pub(super) fn link_insert(
 }
 
 /// [`link_insert`]'s references counted, for dry runs.
-pub(super) fn link_count(section: &TableSection, column: &Column, dry_run: bool) -> Option<String> {
+pub(crate) fn link_count(section: &TableSection, column: &Column, dry_run: bool) -> Option<String> {
     let (pending, ..) = pending_where(section, column, dry_run)?;
     Some(format!(
         "SELECT COUNT(*) FROM {source} WHERE {pending}",
@@ -740,7 +662,7 @@ pub(super) fn link_count(section: &TableSection, column: &Column, dry_run: bool)
 /// Insert a section's new rows. A plain insert: the new-row test already
 /// excludes every key and uniqueness clash, so any other constraint failure
 /// is a real error and fails the section.
-pub(super) fn section_insert(
+pub(crate) fn section_insert(
     section: &TableSection,
     table: &str,
     present: &[&Column],
@@ -901,7 +823,7 @@ fn held_group_key(has: &dyn Fn(&str) -> bool) -> String {
 
 /// Open a held entry for a carried row (?1), held since ?2, unless its user
 /// has one open. `has` says which held columns the bundle holds.
-pub(super) fn held_entry_insert(has: &dyn Fn(&str) -> bool) -> String {
+pub(crate) fn held_entry_insert(has: &dyn Fn(&str) -> bool) -> String {
     let col = |column: &str| held_column(has, column);
     let key = held_group_key(has);
     format!(
@@ -923,7 +845,7 @@ pub(super) fn held_entry_insert(has: &dyn Fn(&str) -> bool) -> String {
 
 /// Add a carried row's (?1) file (?2), held since ?3, to its entry. `has`
 /// says which held columns the bundle holds.
-pub(super) fn held_file_insert(has: &dyn Fn(&str) -> bool) -> String {
+pub(crate) fn held_file_insert(has: &dyn Fn(&str) -> bool) -> String {
     let col = |column: &str| held_column(has, column);
     format!(
         "INSERT INTO main.acquire_held_files (entry_id, root, path, original_name, \

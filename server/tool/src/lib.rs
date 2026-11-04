@@ -7,15 +7,6 @@
 pub(crate) mod allowlist;
 pub mod export;
 pub mod import;
-pub mod tooling;
-
-/// Every `sql.rs` of this crate, one line each, for the schema test.
 #[cfg(any(test, feature = "test-support"))]
-pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
-    vec![
-        export::sql::registered(),
-        import::sql::registered(),
-        import::carry::sql::registered(),
-        tooling::sql::registered(),
-    ]
-}
+pub mod test_support;
+pub mod tooling;

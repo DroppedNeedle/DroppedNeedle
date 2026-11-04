@@ -55,7 +55,7 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
     use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
     use droppedneedle_library::identify::models::RecallResult;
     use droppedneedle_library::matching::{Release, ReleaseTrack};
-    use droppedneedle_tool::tooling::fixture::{
+    use droppedneedle_tool::test_support::fixture::{
         MUSIC_ROOT_ID, V2_ALBUM_ID, build_v2_fixture, delete_orphan_rows,
     };
 

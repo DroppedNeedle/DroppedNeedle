@@ -37,7 +37,7 @@ use crate::common::{PATIENCE, ScratchDir, TestApp, logs};
 /// user with one.
 fn v2_dir(tag: &str) -> (ScratchDir, AppConfig) {
     let dir = ScratchDir::new(&format!("upgrade-mode-{tag}"));
-    droppedneedle_tool::tooling::fixture::build_v2_fixture(&dir).expect("fixture builds");
+    droppedneedle_tool::test_support::fixture::build_v2_fixture(&dir).expect("fixture builds");
     let config = AppConfig::with_root(0, &dir);
     (dir, config)
 }
