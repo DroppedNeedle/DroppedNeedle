@@ -135,11 +135,17 @@ Outside pull requests are welcome. Each one is reviewed against the rules in [CL
 - The web UI runs under an enforced content-security policy: no inline scripts, no `eval`, and no static `style="..."` in markup (eslint refuses one; bind styles through Svelte instead). Loading a script, frame, audio clip or connection from a new outside host is an edit to the list in `server/src/security_headers.rs`, with the reason beside it.
 - Run `pnpm run lint` and `pnpm run check` in the frontend before submitting.
 
-## AI-assisted contributions
+## Using AI
 
-If you used AI tools (Copilot, ChatGPT, Claude, etc.) to write code in your PR, please mention it. This isn't a problem and won't get your PR rejected, but it helps reviewers calibrate how much scrutiny to apply. A quick note like "Claude helped with the caching logic" is enough.
+DroppedNeedle is built with a lot of help from AI, and AI-assisted contributions are welcome, including pull requests an AI agent wrote most of.
 
-You're still responsible for understanding and testing the code you submit.
+What we ask is the same as for any pull request:
+
+- A clear description of what changed and why.
+- A change you thought through and talked through with your tools, not a first draft pasted in.
+- Tests that pass, and code you understand well enough to answer questions about.
+
+If you used AI, say so in the pull request: the tool and model (for example Claude Opus 5.5), and roughly how you worked with it. It doesn't change how the pull request is judged. We ask because we're curious what people use. Commit trailers your tool adds, such as `Co-Authored-By`, are fine to keep.
 
 ## Releases
 

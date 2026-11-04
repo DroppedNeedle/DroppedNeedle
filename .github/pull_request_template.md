@@ -7,9 +7,9 @@
 - [ ] I have tested these changes locally
 - [ ] I have added or updated tests
 
-## AI-Assisted Contributions
+## Did you use AI?
 
-If any part of this PR was generated or assisted by AI (Copilot, ChatGPT, etc.), describe which sections and how the AI was used. See `CONTRIBUTING.md` for the full policy.
+AI-assisted pull requests are welcome. If you used AI, tell us which tool and model, and roughly how you worked with it. We're curious what people use. See [Using AI](../CONTRIBUTING.md#using-ai).
 
 ## Checklist
 
