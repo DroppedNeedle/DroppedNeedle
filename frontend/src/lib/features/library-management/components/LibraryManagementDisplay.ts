@@ -609,7 +609,6 @@ export interface ManagementApplyCopy {
 	barTitle: string;
 	barDetail: string;
 	button: string;
-	kicker: string;
 	title: string;
 	detail: string;
 	confirmButton: string;
@@ -629,7 +628,6 @@ export function managementApplyCopy(
 				barTitle: 'Undo changes only after confirmation',
 				barDetail: 'Files changed again later, blocked rows, and expired snapshots are excluded.',
 				button: `Undo this operation for ${files}`,
-				kicker: 'Undo confirmation',
 				title: 'Undo this operation from this exact preview?',
 				detail: `DroppedNeedle will restore this operation's before-state for ${files}. Later edits are preserved and this does not restore the broader original baseline.`,
 				confirmButton: 'Undo operation'
@@ -640,7 +638,6 @@ export function managementApplyCopy(
 				barDetail:
 					'Restored files leave file organization and can be managed again only through a new preview.',
 				button: `Restore original state for ${files}`,
-				kicker: 'Original baseline confirmation',
 				title: 'Restore these original baselines?',
 				detail: `DroppedNeedle will restore ${files} to their earliest saved state from before it first managed them. This is broader than Undo and leaves those files unmanaged.`,
 				confirmButton: 'Restore original state'
@@ -651,7 +648,6 @@ export function managementApplyCopy(
 				barDetail:
 					'Only the explicitly selected resolution is included; no duplicate is deleted automatically.',
 				button: `Apply collision resolution for ${files}`,
-				kicker: 'Collision-resolution confirmation',
 				title: 'Apply this exact collision resolution?',
 				detail: `DroppedNeedle will carry out the explicitly previewed collision resolution for ${files}. No destination is overwritten and no duplicate is deleted automatically.`,
 				confirmButton: 'Apply collision resolution'
@@ -661,7 +657,6 @@ export function managementApplyCopy(
 				barTitle: 'Applying is the first write action',
 				barDetail: 'Blocked, stale, and no-change rows are excluded.',
 				button: `Write tags and organize ${files}`,
-				kicker: 'Write confirmation',
 				title: 'Apply this exact preview?',
 				detail: `DroppedNeedle will write tags and organize ${eligible} eligible files plus ${warnings} files with warnings. No destination is overwritten automatically.`,
 				confirmButton: 'Apply exact preview'

@@ -23,6 +23,7 @@
 	} from '$lib/features/youtube/queries/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 
 	interface Props {
 		albumId: string;
@@ -58,10 +59,17 @@
 	const generateTrackLinks = createGenerateYouTubeTrackLinksMutation();
 	let batchGenerating = $state(false);
 	let generatingAlbumLink = $state(false);
+	let confirmingTracks = $state(false);
 
 	const hasAnyTrackLinks = $derived(trackLinks.length > 0);
 	const allTracksGenerated = $derived(trackLinks.length === tracks.length);
 	const generatedCount = $derived(trackLinks.length);
+	const ungeneratedTracks = $derived(
+		tracks.filter((t) => !trackLinks.some((tl) => getDiscTrackKey(tl) === getDiscTrackKey(t)))
+	);
+	const quotaUnits = $derived(
+		`${ungeneratedTracks.length} ${ungeneratedTracks.length === 1 ? 'unit' : 'units'}`
+	);
 
 	const youtubeSearchUrl = $derived(
 		`https://www.youtube.com/results?search_query=${encodeURIComponent(`${artistName} ${albumName} full album`)}`
@@ -106,16 +114,12 @@
 		}
 	}
 
+	function askGenerateAllTracks(): void {
+		if (ungeneratedTracks.length > 0) confirmingTracks = true;
+	}
+
 	async function generateAllTracks(): Promise<void> {
-		const ungeneratedTracks = tracks.filter(
-			(t) => !trackLinks.some((tl) => getDiscTrackKey(tl) === getDiscTrackKey(t))
-		);
 		if (ungeneratedTracks.length === 0) return;
-
-		const cost = ungeneratedTracks.length;
-		if (!confirm(`This will use ${cost} YouTube API quota unit${cost > 1 ? 's' : ''}. Continue?`))
-			return;
-
 		batchGenerating = true;
 		try {
 			const data = await generateTrackLinks.mutateAsync({
@@ -240,7 +244,12 @@
 
 			{#if !allTracksGenerated}
 				{#if apiConfigured}
-					<Button size="sm" icon={Download} loading={batchGenerating} onclick={generateAllTracks}>
+					<Button
+						size="sm"
+						icon={Download}
+						loading={batchGenerating}
+						onclick={askGenerateAllTracks}
+					>
 						All Tracks
 					</Button>
 				{:else}
@@ -266,3 +275,11 @@
 		</div>
 	</div>
 </Card>
+
+<ConfirmDialog
+	bind:open={confirmingTracks}
+	title="Find every track on YouTube?"
+	message="This uses {quotaUnits} of your YouTube API quota."
+	confirmLabel="Find tracks"
+	onconfirm={() => void generateAllTracks()}
+/>

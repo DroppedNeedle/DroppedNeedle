@@ -12,10 +12,16 @@
 	with no Cancel of its own.
 	`titleHref` makes the title a link to the thing the dialog shows; it still
 	names the dialog, and following it closes the dialog.
+	`icon` sets a tinted mark beside the title, in `iconTone`.
+	`bottomSheet` rises from the bottom edge on a phone and sits centred from
+	`sm` up.
+	`focusTitle` puts focus on the title when it opens, for a dialog that is
+	read before it is acted on; otherwise focus goes to its first control.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { X } from 'lucide-svelte';
+	import type { KitIcon } from './Button.svelte';
 
 	interface Props {
 		open: boolean;
@@ -25,6 +31,12 @@
 		/** One line under the title; the dialog's accessible description. */
 		description?: string;
 		size?: 'sm' | 'md' | 'lg' | 'xl' | 'sheet';
+		/** A lucide icon shown in a tinted mark beside the title. */
+		icon?: KitIcon;
+		iconTone?: 'accent' | 'warning' | 'error';
+		/** On a phone, rise from the bottom edge. */
+		bottomSheet?: boolean;
+		focusTitle?: boolean;
 		/** False keeps Escape and the backdrop from closing it, for work in flight. */
 		dismissible?: boolean;
 		/** A close button beside the title; `sheet` always has one. */
@@ -40,6 +52,10 @@
 		titleHref,
 		description,
 		size = 'md',
+		icon: Icon,
+		iconTone = 'accent',
+		bottomSheet = false,
+		focusTitle = false,
 		dismissible = true,
 		closeButton = false,
 		onclose,
@@ -51,6 +67,11 @@
 	const descriptionId = `${titleId}-description`;
 	const widths = { sm: 'max-w-sm', md: 'max-w-md', lg: 'max-w-2xl', xl: 'max-w-4xl' };
 	const sheet = $derived(size === 'sheet');
+	const iconTones = {
+		accent: 'bg-accent/10 text-accent',
+		warning: 'bg-warning/12 text-warning',
+		error: 'bg-error/12 text-error'
+	};
 
 	let dialog = $state<HTMLDialogElement>();
 
@@ -61,6 +82,7 @@
 		if (open && !dialog.open) {
 			opener = document.activeElement;
 			dialog.showModal();
+			if (focusTitle) document.getElementById(titleId)?.focus();
 		} else if (!open && dialog.open) {
 			dialog.close();
 		}
@@ -89,7 +111,9 @@
 </script>
 
 {#snippet heading(className: string)}
-	<h2 id={titleId} class={className}>
+	<!-- The title is focusable only for focusTitle, and only by script (-1). -->
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+	<h2 id={titleId} class={className} tabindex={focusTitle ? -1 : undefined}>
 		{#if titleHref}
 			<a
 				href={titleHref}
@@ -104,7 +128,7 @@
 
 <dialog
 	bind:this={dialog}
-	class="modal"
+	class={['modal', bottomSheet && 'modal-bottom sm:modal-middle']}
 	aria-labelledby={titleId}
 	aria-describedby={description ? descriptionId : undefined}
 	onclose={handleClose}
@@ -145,23 +169,37 @@
 			{/if}
 		</div>
 	{:else}
-		<div class="modal-box {widths[size as keyof typeof widths]}">
-			{#if closeButton && dismissible}
-				<div class="flex items-start justify-between gap-3">
-					{@render heading('min-w-0 text-lg font-bold')}
+		<div
+			class={[
+				'modal-box',
+				widths[size as keyof typeof widths],
+				bottomSheet && 'max-sm:max-w-none pb-[calc(env(safe-area-inset-bottom)+1.5rem)] sm:pb-6'
+			]}
+		>
+			<div class="flex items-start gap-3">
+				{#if Icon}
+					<div
+						class="grid h-11 w-11 shrink-0 place-items-center rounded-xl {iconTones[iconTone]}"
+						aria-hidden="true"
+					>
+						<Icon class="h-5 w-5" />
+					</div>
+				{/if}
+				<div class={['min-w-0 flex-1', Icon && 'self-center']}>
+					{@render heading('text-lg font-bold')}
+					{#if description}
+						<p id={descriptionId} class="mt-1 text-sm text-base-content/65">{description}</p>
+					{/if}
+				</div>
+				{#if closeButton && dismissible}
 					<button
 						type="button"
 						class="btn btn-square btn-ghost btn-sm -mt-1 -mr-2 shrink-0"
 						aria-label="Close"
 						onclick={() => dialog?.close()}><X class="h-4 w-4" /></button
 					>
-				</div>
-			{:else}
-				{@render heading('text-lg font-bold')}
-			{/if}
-			{#if description}
-				<p id={descriptionId} class="mt-1 text-sm text-base-content/65">{description}</p>
-			{/if}
+				{/if}
+			</div>
 			<div class="pt-4">
 				{@render children()}
 			</div>

@@ -533,10 +533,7 @@
 								profileName={preview.profile_name}
 								ondiscard={() => goto(withBasePath('/library/management?tab=organize'))}
 							/>
-							<Button
-								variant="warning"
-								disabled={!canApply}
-								onclick={(event) => applyDialog?.open(event.currentTarget)}
+							<Button variant="warning" disabled={!canApply} onclick={() => applyDialog?.open()}
 								>{applyCopy.button}</Button
 							>
 						</div>

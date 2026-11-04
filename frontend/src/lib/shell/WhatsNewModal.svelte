@@ -4,9 +4,9 @@
 	import { isWhatsNewDismissed, dismissWhatsNew } from '$lib/stores/version.svelte';
 	import SafeHtml from '$lib/ui/SafeHtml.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import IconButton from '$lib/ui/IconButton.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { X, Sparkles, ExternalLink } from 'lucide-svelte';
+	import { Sparkles, ExternalLink } from 'lucide-svelte';
 	import type { GitHubRelease } from '$lib/shell/version.svelte';
 
 	interface Props {
@@ -16,7 +16,7 @@
 	}
 	let { currentVersion, buildDate, releases }: Props = $props();
 
-	let dialogEl: HTMLDialogElement | undefined = $state();
+	let open = $state(false);
 
 	const isDev = $derived(currentVersion === 'dev');
 	const latestRelease = $derived(releases.length > 0 ? releases[0] : null);
@@ -40,140 +40,67 @@
 	);
 
 	$effect(() => {
-		if (shouldShow && dialogEl && !dialogEl.open) {
-			dialogEl.showModal();
-		}
+		if (shouldShow) open = true;
 	});
 
-	function handleDismiss() {
-		if (dismissKey) {
-			dismissWhatsNew(dismissKey);
-		}
-		dialogEl?.close();
+	// However it closes, this release has been seen.
+	function dismiss() {
+		if (dismissKey) dismissWhatsNew(dismissKey);
 	}
 
-	function onDialogClose() {
-		if (dismissKey && !isWhatsNewDismissed(dismissKey)) {
-			dismissWhatsNew(dismissKey);
-		}
+	function close() {
+		dismiss();
+		open = false;
 	}
 
 	function handleViewChangelog() {
-		handleDismiss();
+		close();
 		goto(withBasePath('/settings?tab=about'));
 	}
 </script>
 
-<dialog
-	bind:this={dialogEl}
-	class="modal whats-new-modal"
-	onclose={onDialogClose}
-	aria-labelledby="whats-new-title"
+<Modal
+	bind:open
+	title="What's New"
+	description={currentVersion ?? undefined}
+	icon={Sparkles}
+	size="lg"
+	closeButton
+	onclose={dismiss}
 >
-	<div
-		class="modal-box whats-new-box max-w-2xl animate-fade-in-up border border-accent/10 p-5 sm:p-8"
-	>
-		<IconButton
-			size="sm"
-			shape="square"
-			icon={X}
-			label="Close"
-			class="absolute right-2 top-2"
-			onclick={handleDismiss}
-		/>
-
-		<div class="mb-6 flex items-center gap-4">
-			<div
-				class="whats-new-icon-wrap relative flex h-11 w-11 items-center justify-center rounded-xl bg-accent/10 animate-glow-pulse"
-			>
-				<Sparkles class="text-accent h-5 w-5" />
-			</div>
-			<div>
-				<h3 id="whats-new-title" class="text-xl font-bold tracking-tight">What's New</h3>
-				{#if currentVersion}
-					<p class="text-primary/70 mt-0.5 text-xs font-medium tracking-wide uppercase">
-						{currentVersion}
-					</p>
+	{#if sections.length > 0}
+		<div
+			class="whats-new-content release-notes-prose max-h-[55vh] overflow-y-auto rounded-lg border border-base-content/5 bg-base-200/50 p-4"
+		>
+			{#each sections as section, i (section.tag)}
+				{#if i > 0}
+					<div class="divider my-4 opacity-20"></div>
 				{/if}
-			</div>
+				<p class="mb-3 border-l-2 border-accent/50 pl-3 text-sm font-semibold text-base-content">
+					{section.name ?? section.tag}
+				</p>
+				<SafeHtml markdown={section.body} class="prose prose-sm max-w-none text-base-content/75" />
+			{/each}
 		</div>
+	{/if}
 
-		<div class="divider my-0 opacity-10"></div>
-
-		{#if sections.length > 0}
-			<div
-				class="whats-new-content release-notes-prose max-h-[55vh] max-w-none overflow-y-auto rounded-lg border border-base-content/5 bg-base-100/50 p-4 mt-4"
-			>
-				{#each sections as section, i (section.tag)}
-					{#if i > 0}
-						<div class="divider my-4 opacity-20"></div>
-					{/if}
-					<p
-						class="text-base-content text-sm font-semibold border-l-2 border-accent/50 pl-3 {i > 0
-							? ''
-							: 'mt-0'} mb-3"
-					>
-						{section.name ?? section.tag}
-					</p>
-					<SafeHtml
-						markdown={section.body}
-						class="prose prose-sm max-w-none text-base-content/75"
-					/>
-				{/each}
-			</div>
-		{/if}
-
-		<div class="modal-action mt-6 gap-3">
-			<Button
-				variant="ghost"
-				size="sm"
-				icon={ExternalLink}
-				iconPosition="end"
-				onclick={handleViewChangelog}
-			>
-				View full changelog
-			</Button>
-			<Button variant="accent" size="sm" onclick={handleDismiss}>Got it</Button>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button>close</button>
-	</form>
-</dialog>
+	{#snippet actions()}
+		<Button
+			variant="ghost"
+			size="sm"
+			icon={ExternalLink}
+			iconPosition="end"
+			onclick={handleViewChangelog}
+		>
+			View full changelog
+		</Button>
+		<Button variant="accent" size="sm" onclick={close}>Got it</Button>
+	{/snippet}
+</Modal>
 
 <style>
-	.whats-new-box {
-		background:
-			radial-gradient(
-				ellipse at top left,
-				oklch(from var(--color-accent) l c h / 0.04),
-				transparent 50%
-			),
-			radial-gradient(
-				ellipse at bottom right,
-				oklch(from var(--color-primary) l c h / 0.03),
-				transparent 50%
-			),
-			var(--color-base-200);
-		box-shadow:
-			0 0 0 1px oklch(from var(--color-accent) l c h / 0.06),
-			0 24px 80px -12px rgba(0, 0, 0, 0.6);
-	}
-
 	.whats-new-content {
 		scrollbar-width: thin;
 		scrollbar-color: oklch(from var(--color-accent) l c h / 0.15) transparent;
-	}
-
-	dialog.whats-new-modal::backdrop {
-		backdrop-filter: blur(16px) saturate(0.8);
-		-webkit-backdrop-filter: blur(16px) saturate(0.8);
-		background: rgba(0, 0, 0, 0.6);
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.whats-new-modal .modal-box {
-			opacity: 1 !important;
-		}
 	}
 </style>

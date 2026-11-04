@@ -127,10 +127,10 @@ describe('LibraryRunHistory', () => {
 					type: 'success'
 				});
 			} else {
-				expect(h.toast).toHaveBeenCalledWith({
-					message: 'Could not prepare the diagnostic report',
-					type: 'error'
-				});
+				await expect
+					.element(page.getByRole('alert'))
+					.toHaveTextContent('Could not prepare the diagnostic report');
+				expect(h.toast).not.toHaveBeenCalled();
 				expect(document.body.textContent).not.toContain('/secret/path');
 			}
 			view.unmount();

@@ -247,7 +247,9 @@ describe('LibraryManagementApplyDialog', () => {
 		await page.getByRole('button', { name: example.button }).click();
 		await expect.element(page.getByRole('heading', { name: example.title })).toHaveFocus();
 		await expect.element(page.getByText(example.detail)).toBeVisible();
-		await expect.element(page.getByRole('textbox', { name: 'Type CONFIRM' })).toBeVisible();
+		await expect
+			.element(page.getByRole('textbox', { name: 'Type CONFIRM to continue' }))
+			.toBeVisible();
 		await expect
 			.element(page.getByRole('button', { name: example.confirm, exact: true }))
 			.toBeDisabled();

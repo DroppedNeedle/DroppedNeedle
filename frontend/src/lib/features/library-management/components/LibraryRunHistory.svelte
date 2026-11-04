@@ -2,6 +2,8 @@
 	import { Download, FileClock } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 	import { createScanDiagnosticsExportMutation } from '$lib/features/library-management/queries/LibraryOperationMutations.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import {
@@ -9,7 +11,6 @@
 		getLibraryRunHistoryQuery
 	} from '$lib/features/library-management/queries/LibraryOperationQueries.svelte';
 	import type { ScanRun } from '$lib/features/library-management/queries/LibraryOperationsTypes';
-	import { tick } from 'svelte';
 
 	const DEFAULT_VISIBLE_RUNS = 3;
 	const exportDiagnostics = createScanDiagnosticsExportMutation();
@@ -21,14 +22,9 @@
 	let detailRun = $state<ScanRun | null>(null);
 	const failuresQuery = getLibraryRunFailuresQuery(() => detailRun?.id ?? null);
 	const failureItems = $derived(failuresQuery.data?.pages.flatMap((page) => page.items) ?? []);
+	let detailOpen = $state(false);
 	let exportRun = $state<ScanRun | null>(null);
-	let exporting = $state(false);
-	let detailDialog: HTMLDialogElement;
-	let detailHeading = $state<HTMLHeadingElement>();
-	let detailOpener: HTMLElement | null = null;
-	let exportDialog: HTMLDialogElement;
-	let exportHeading: HTMLHeadingElement;
-	let exportOpener: HTMLElement | null = null;
+	let exportOpen = $state(false);
 
 	function formatTime(value: number | null | undefined): string {
 		return value ? new Date(value * 1000).toLocaleString() : '-';
@@ -60,52 +56,39 @@
 			: '-';
 	}
 
-	function openExport(run: ScanRun, event: MouseEvent & { currentTarget: HTMLElement }): void {
-		exportOpener = detailOpener ?? event.currentTarget;
-		exportRun = run;
-		if (detailDialog.open) detailDialog.close();
-		exportDialog.showModal();
-		exportHeading.focus();
-	}
+	$effect(() => {
+		if (!detailOpen) detailRun = null;
+	});
 
-	async function openDetails(
-		run: ScanRun,
-		event: MouseEvent & { currentTarget: HTMLElement }
-	): Promise<void> {
-		detailOpener = event.currentTarget;
+	function openDetails(run: ScanRun): void {
 		detailRun = run;
-		await tick();
-		detailDialog.showModal();
-		detailHeading?.focus();
+		detailOpen = true;
 	}
 
-	function closeDetails(): void {
-		detailDialog.close();
-	}
-
-	function openDetailExport(event: MouseEvent & { currentTarget: HTMLElement }): void {
+	// The export confirm takes the details dialog's place, so focus goes back
+	// to the run's Details button when it closes.
+	function openDetailExport(): void {
 		if (!detailRun) return;
-		openExport(detailRun, event);
+		exportRun = detailRun;
+		detailOpen = false;
+		exportOpen = true;
 	}
 
 	async function downloadDiagnostic(): Promise<void> {
 		if (!exportRun) return;
-		exporting = true;
+		let report: { blob: Blob; filename: string };
 		try {
-			const { blob, filename } = await exportDiagnostics.mutateAsync(exportRun.id);
-			const url = URL.createObjectURL(blob);
-			const link = document.createElement('a');
-			link.href = url;
-			link.download = filename;
-			link.click();
-			URL.revokeObjectURL(url);
-			exportDialog.close();
-			toastStore.show({ message: 'Diagnostic report ready', type: 'success' });
+			report = await exportDiagnostics.mutateAsync(exportRun.id);
 		} catch {
-			toastStore.show({ message: 'Could not prepare the diagnostic report', type: 'error' });
-		} finally {
-			exporting = false;
+			throw new Error('Could not prepare the diagnostic report');
 		}
+		const url = URL.createObjectURL(report.blob);
+		const link = document.createElement('a');
+		link.href = url;
+		link.download = report.filename;
+		link.click();
+		URL.revokeObjectURL(url);
+		toastStore.show({ message: 'Diagnostic report ready', type: 'success' });
 	}
 </script>
 
@@ -150,9 +133,7 @@
 								).toLocaleString()} errors</td
 							><td>{duration(run)}</td>
 							<td class="text-right">
-								<Button variant="ghost" size="xs" onclick={(event) => void openDetails(run, event)}
-									>Details</Button
-								>
+								<Button variant="ghost" size="xs" onclick={() => openDetails(run)}>Details</Button>
 							</td>
 						</tr>
 					{/each}
@@ -175,7 +156,7 @@
 						variant="ghost"
 						size="xs"
 						class="col-span-2 justify-self-start"
-						onclick={(event) => void openDetails(run, event)}>Details</Button
+						onclick={() => openDetails(run)}>Details</Button
 					>
 				</div>
 			{/each}
@@ -202,135 +183,96 @@
 	{/if}
 </Card>
 
-<dialog
-	bind:this={detailDialog}
-	class="modal"
-	aria-labelledby="run-details-title"
-	onclose={() => {
-		detailRun = null;
-		detailOpener?.focus();
-	}}
+<Modal
+	bind:open={detailOpen}
+	title="Run details"
+	description={detailRun
+		? `${detailRun.trigger.replaceAll('_', ' ')} · ${detailRun.aggregate_scope} · ${duration(detailRun)}`
+		: undefined}
+	size="lg"
+	focusTitle
 >
 	{#if detailRun}
-		<div class="modal-box max-w-xl">
-			<div class="flex items-start justify-between gap-4">
-				<div>
-					<h2
-						bind:this={detailHeading}
-						id="run-details-title"
-						tabindex="-1"
-						class="text-lg font-bold"
-					>
-						Run details
-					</h2>
-					<p class="mt-1 text-sm text-base-content/60">
-						{detailRun.trigger.replaceAll('_', ' ')} · {detailRun.aggregate_scope} · {duration(
-							detailRun
-						)}
-					</p>
+		<div class="flex flex-wrap items-center gap-2">
+			<span class="badge badge-ghost badge-sm">{detailRun.state.replaceAll('_', ' ')}</span>
+			<p class="text-sm">{terminalReason(detailRun)}</p>
+		</div>
+		{#if detailRun.terminal_action}
+			<p class="mt-1 text-sm text-base-content/60">{detailRun.terminal_action}</p>
+		{/if}
+		<dl class="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+			{#each Object.entries(detailRun.counters) as [name, count] (name)}
+				<div class="rounded-box bg-base-200/60 p-3">
+					<dt class="text-xs text-base-content/50">
+						{name.replace('_count', '').replaceAll('_', ' ')}
+					</dt>
+					<dd class="mt-1 font-semibold">{count.toLocaleString()}</dd>
 				</div>
-				<span class="badge badge-ghost badge-sm">{detailRun.state.replaceAll('_', ' ')}</span>
-			</div>
-			<p class="mt-4 text-sm">{terminalReason(detailRun)}</p>
-			{#if detailRun.terminal_action}
-				<p class="mt-1 text-sm text-base-content/60">{detailRun.terminal_action}</p>
-			{/if}
-			<dl class="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-				{#each Object.entries(detailRun.counters) as [name, count] (name)}
-					<div class="rounded-box bg-base-200/60 p-3">
-						<dt class="text-xs text-base-content/50">
-							{name.replace('_count', '').replaceAll('_', ' ')}
-						</dt>
-						<dd class="mt-1 font-semibold">{count.toLocaleString()}</dd>
-					</div>
+			{/each}
+		</dl>
+		{#if Object.keys(detailRun.phase_timings).length}
+			<h3 class="mt-4 text-sm font-semibold">Phase timings</h3>
+			<ul class="mt-2 space-y-1 text-sm text-base-content/65">
+				{#each Object.entries(detailRun.phase_timings) as [phase, seconds] (phase)}
+					<li>{phase.replaceAll('_', ' ')} · {phaseDuration(seconds)}</li>
 				{/each}
-			</dl>
-			{#if Object.keys(detailRun.phase_timings).length}
-				<h3 class="mt-4 text-sm font-semibold">Phase timings</h3>
+			</ul>
+		{/if}
+		{#if detailRun.state === 'failed' || (detailRun.counters['errored_count'] ?? 0) > 0 || failureItems.length > 0}
+			<h3 class="mt-4 text-sm font-semibold">Failed paths</h3>
+			{#if failuresQuery.isLoading}
+				<p class="mt-2 text-sm text-base-content/55">Loading failed paths…</p>
+			{:else if failuresQuery.isError}
+				<p class="mt-2 text-sm text-error">Could not load failed paths.</p>
+			{:else if failureItems.length === 0}
+				<p class="mt-2 text-sm text-base-content/55">No failed paths were recorded.</p>
+			{:else}
 				<ul class="mt-2 space-y-1 text-sm text-base-content/65">
-					{#each Object.entries(detailRun.phase_timings) as [phase, seconds] (phase)}
-						<li>{phase.replaceAll('_', ' ')} · {phaseDuration(seconds)}</li>
+					{#each failureItems as failure, index (index)}
+						<li class="space-y-0.5">
+							<div class="flex items-center justify-between gap-2">
+								<span class="truncate">{failure.relative_path}</span>
+								<span class="badge badge-error badge-sm shrink-0">{failure.failure_code}</span>
+							</div>
+							<p class="text-xs text-base-content/70">{failure.message}</p>
+							<p class="text-xs text-base-content/55">{failure.action}</p>
+						</li>
 					{/each}
 				</ul>
-			{/if}
-			{#if detailRun.state === 'failed' || (detailRun.counters['errored_count'] ?? 0) > 0 || failureItems.length > 0}
-				<h3 class="mt-4 text-sm font-semibold">Failed paths</h3>
-				{#if failuresQuery.isLoading}
-					<p class="mt-2 text-sm text-base-content/55">Loading failed paths…</p>
-				{:else if failuresQuery.isError}
-					<p class="mt-2 text-sm text-error">Could not load failed paths.</p>
-				{:else if failureItems.length === 0}
-					<p class="mt-2 text-sm text-base-content/55">No failed paths were recorded.</p>
-				{:else}
-					<ul class="mt-2 space-y-1 text-sm text-base-content/65">
-						{#each failureItems as failure, index (index)}
-							<li class="space-y-0.5">
-								<div class="flex items-center justify-between gap-2">
-									<span class="truncate">{failure.relative_path}</span>
-									<span class="badge badge-error badge-sm shrink-0">{failure.failure_code}</span>
-								</div>
-								<p class="text-xs text-base-content/70">{failure.message}</p>
-								<p class="text-xs text-base-content/55">{failure.action}</p>
-							</li>
-						{/each}
-					</ul>
-					{#if failuresQuery.hasNextPage}
-						<div class="mt-2 text-center">
-							<Button
-								variant="ghost"
-								size="sm"
-								loading={failuresQuery.isFetchingNextPage}
-								onclick={() => failuresQuery.fetchNextPage()}>Load more</Button
-							>
-						</div>
-					{/if}
+				{#if failuresQuery.hasNextPage}
+					<div class="mt-2 text-center">
+						<Button
+							variant="ghost"
+							size="sm"
+							loading={failuresQuery.isFetchingNextPage}
+							onclick={() => failuresQuery.fetchNextPage()}>Load more</Button
+						>
+					</div>
 				{/if}
 			{/if}
-			<div class="modal-action">
-				<Button
-					variant="outline"
-					size="sm"
-					icon={Download}
-					class="mr-auto"
-					onclick={openDetailExport}
-					aria-label={`Export diagnostics for run ${detailRun.id}`}>Export diagnostics</Button
-				>
-				<Button variant="ghost" onclick={closeDetails}>Close</Button>
-			</div>
-		</div>
+		{/if}
 	{/if}
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close run details">close</button>
-	</form>
-</dialog>
-
-<dialog
-	bind:this={exportDialog}
-	class="modal"
-	aria-labelledby="diagnostic-export-title"
-	onclose={() => exportOpener?.focus()}
->
-	<div class="modal-box max-w-lg">
-		<h2
-			bind:this={exportHeading}
-			id="diagnostic-export-title"
-			tabindex="-1"
-			class="text-lg font-bold"
-		>
-			Export diagnostic report?
-		</h2>
-		<p class="mt-3 text-sm text-base-content/70">
-			The report excludes credentials, raw provider responses, and full filesystem paths. Relative
-			paths are replaced with non-reversible hashes.
-		</p>
-		<div class="modal-action">
-			<Button variant="ghost" onclick={() => exportDialog.close()}>Cancel</Button>
-			<Button variant="primary" loading={exporting} onclick={() => void downloadDiagnostic()}
-				>Export report</Button
+	{#snippet actions()}
+		{#if detailRun}
+			<Button
+				variant="outline"
+				size="sm"
+				icon={Download}
+				class="mr-auto"
+				onclick={openDetailExport}
+				aria-label={`Export diagnostics for run ${detailRun.id}`}>Export diagnostics</Button
 			>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close export dialog">close</button>
-	</form>
-</dialog>
+		{/if}
+		<Button variant="ghost" onclick={() => (detailOpen = false)}>Close</Button>
+	{/snippet}
+</Modal>
+
+<ConfirmDialog
+	bind:open={exportOpen}
+	title="Export diagnostic report?"
+	message="The report excludes credentials, raw provider responses, and full filesystem paths. Relative paths are replaced with non-reversible hashes."
+	confirmLabel="Export report"
+	focusTitle
+	pending={exportDiagnostics.isPending}
+	onconfirm={downloadDiagnostic}
+/>
