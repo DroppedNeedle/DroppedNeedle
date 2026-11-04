@@ -1,5 +1,4 @@
-//! Operator tooling: the offline CLI helpers and the v2 fixture behind the
-//! pipeline tests.
+//! Operator tooling: the offline CLI helpers.
 //!
 //! The export engine lives in [`crate::export`] and the validate/import
 //! engines in [`crate::import`]; this module wires them
@@ -16,8 +15,6 @@
 //!   key, clearing every secret the old one sealed.
 //! - [`restore`] wraps the backup mechanism as an offline restore command.
 //!   There is no HTTP route for restore, on purpose.
-//! - [`fixture`] builds a scratch v2 instance dir carrying every entity
-//!   plus conflict and deleted-ID cases for the pipeline tests.
 //!
 //! Everything here is offline: file and SQLite reads/writes only.
 
