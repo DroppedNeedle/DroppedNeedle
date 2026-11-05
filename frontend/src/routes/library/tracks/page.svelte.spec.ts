@@ -145,7 +145,7 @@ describe('library tracks page', () => {
 		expect(sent?.get('format_mode')).toBe('without');
 		expect(sent?.get('rating')).toBe('4');
 		expect(sent?.get('rating_mode')).toBe('at_most');
-		expect(JSON.parse(localStorage.getItem('library.filters.tracks') ?? '{}')).toEqual({
+		expect(JSON.parse(localStorage.getItem('library.filters.user-1.tracks') ?? '{}')).toEqual({
 			formats: 'flac',
 			format_mode: 'without',
 			rating: '4',

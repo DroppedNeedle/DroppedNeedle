@@ -38,6 +38,9 @@ use droppedneedle_kernel::{
         droppedneedle_catalog::local::models::ArtistListScope,
         droppedneedle_catalog::local::models::TrackListSort,
         droppedneedle_catalog::local::models::ListOrder,
+        droppedneedle_catalog::local::models::FormatMode,
+        droppedneedle_catalog::local::models::TracksMode,
+        droppedneedle_catalog::local::models::RatingMode,
     )),
     info(
         title = "DroppedNeedle v3",

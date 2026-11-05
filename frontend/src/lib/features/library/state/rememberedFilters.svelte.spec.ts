@@ -3,19 +3,29 @@ import { render } from 'vitest-browser-svelte';
 
 const h = vi.hoisted(() => ({
 	page: { url: new URL('http://localhost/library/albums') },
-	goto: vi.fn()
+	goto: vi.fn(),
+	auth: { user: { id: 'user-1' } as { id: string } | null },
+	resets: [] as (() => void)[]
 }));
 vi.mock('$app/state', () => ({ page: h.page }));
 vi.mock('$app/navigation', () => ({ goto: h.goto }));
+vi.mock('$lib/stores/authStore.svelte', () => ({ authStore: h.auth }));
+vi.mock('$lib/utils/userSessionCleanup', () => ({
+	registerUserSessionReset: (reset: () => void) => {
+		h.resets.push(reset);
+		return () => {};
+	}
+}));
 
 import RememberedFiltersTestHarness from './RememberedFiltersTestHarness.svelte';
 
-const KEY = 'library.filters.albums';
+const KEY = 'library.filters.user-1.albums';
 
 describe('rememberFilters', () => {
 	beforeEach(() => {
 		localStorage.clear();
 		h.goto.mockReset();
+		h.auth.user = { id: 'user-1' };
 	});
 
 	it('keeps the filters the address names', async () => {
@@ -50,5 +60,19 @@ describe('rememberFilters', () => {
 			expect(JSON.parse(localStorage.getItem(KEY) ?? '{}')).toEqual({ formats: 'flac' })
 		);
 		expect(h.goto).not.toHaveBeenCalled();
+	});
+
+	it("keeps one person's filters from the next, and forgets them on sign-out", async () => {
+		localStorage.setItem(KEY, JSON.stringify({ rating: '3' }));
+		localStorage.setItem('other', 'kept');
+		h.auth.user = { id: 'user-2' };
+		h.page.url = new URL('http://localhost/library/albums');
+		render(RememberedFiltersTestHarness);
+
+		await vi.waitFor(() => expect(h.resets).toHaveLength(1));
+		expect(h.goto).not.toHaveBeenCalled();
+		for (const reset of h.resets) reset();
+		expect(localStorage.getItem(KEY)).toBeNull();
+		expect(localStorage.getItem('other')).toBe('kept');
 	});
 });

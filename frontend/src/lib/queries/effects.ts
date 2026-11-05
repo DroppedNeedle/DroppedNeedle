@@ -348,8 +348,11 @@ export const EFFECTS = {
 	pluginFilesChanged: (name: string): Sweep[] => [{ key: PluginQueryKeyFactory.files(name) }],
 	/** One account's profile. */
 	profileChanged: (userId: string): Sweep[] => [{ key: ProfileQueryKeyFactory.profile(userId) }],
-	/** The caller's ratings. */
-	ratingsChanged: (userId: UserId): Sweep[] => [{ key: RatingQueryKeyFactory.user(userId) }],
+	/** The caller's ratings, and the library lists a rating filter narrows. */
+	ratingsChanged: (userId: UserId): Sweep[] => [
+		{ key: RatingQueryKeyFactory.user(userId) },
+		{ key: LibraryQueryKeyFactory.catalog.root(userId), mark: true }
+	],
 	/** Which copies the caller's media servers hold of each album. */
 	albumMatchesChanged: (userId: UserId): Sweep[] => [{ key: AlbumMatchKeyFactory.user(userId) }],
 	/** Everything shown for one of the caller's media servers. */

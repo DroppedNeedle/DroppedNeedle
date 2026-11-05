@@ -13,10 +13,10 @@
 	// filters as it goes; the list follows. A category is shown only when
 	// the page passes its handler. On the album list the button reads as
 	// the format select it leads with.
-	import { Check, Layers, ListFilter, Star, X } from 'lucide-svelte';
+	import { Check, Layers, ListFilter, X } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import IconButton from '$lib/ui/IconButton.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
+	import RatingStars from '$lib/ui/RatingStars.svelte';
 	import type { components } from '$lib/api/v3/openapi';
 
 	type FormatCount = components['schemas']['AlbumFormatCount'];
@@ -58,7 +58,6 @@
 
 	const PRESETS = [1, 2, 3, 5, 10];
 	const MAX = 20;
-	const STARS = [1, 2, 3, 4, 5];
 	const sliderId = $props.id();
 
 	const active = $derived(
@@ -220,23 +219,14 @@
 						aria-pressed={rating === 0}
 						onclick={() => onRating(0, ratingMode)}>Any</Button
 					>
-					{#each STARS as star (star)}
-						{@const lit =
-							rating > 0 && (ratingMode === 'atLeast' ? star >= rating : star <= rating)}
-						<IconButton
-							icon={Star}
-							shape="square"
-							size="sm"
-							label={star === 1 ? '1 star' : `${star} stars`}
-							aria-pressed={star === rating}
-							class="[&_svg]:size-5 {lit
-								? '[&_svg]:fill-warning [&_svg]:text-warning'
-								: '[&_svg]:text-base-content/30'}"
-							onclick={() => onRating(star, ratingMode)}
-						/>
-					{/each}
+					<RatingStars
+						value={rating}
+						label="Rating filter"
+						size="md"
+						onchange={(stars) => onRating(stars, ratingMode)}
+					/>
 				</div>
-				<p class="text-xs text-base-content/60">
+				<p class="text-xs text-muted">
 					{rating === 0
 						? 'Rated or not.'
 						: ratingMode === 'atLeast'

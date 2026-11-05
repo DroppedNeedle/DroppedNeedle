@@ -143,7 +143,7 @@ export interface LibraryArtistsParams {
 	tracksBelow?: boolean;
 	/** Only artists the caller rated: this many stars, see `ratingMode`. */
 	rating?: number;
-	ratingMode?: 'at_least' | 'at_most';
+	ratingMode?: LibraryV3ArtistsParams['ratingMode'];
 	favorites?: boolean;
 }
 

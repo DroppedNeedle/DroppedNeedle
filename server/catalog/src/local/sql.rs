@@ -447,16 +447,17 @@ droppedneedle_kernel::sql! {
             ON tbi.local_artist_id = tal.album_artist_id AND tbi.provider = 'musicbrainz'";
     /// The album, artist, genre, format and rating filters of the track
     /// list, after its text filter: the album twice, the artist twice, the
-    /// genre three times, the formats (`,flac,mp3,`) twice and whether the
-    /// track must be in one of them (1) or none (0), then the user whose
-    /// stars it keeps (or NULL) and [`rated_within!`]'s binds.
+    /// genre three times, the formats (`,flac,alac,`, as [`track_codec!`]
+    /// names them) twice and whether the track must be in one of them (1)
+    /// or none (0), then the user whose stars it keeps (or NULL) and
+    /// [`rated_within!`]'s binds.
     pub(crate) fragment TRACK_SCOPE = " AND (? IS NULL OR t.local_album_id = ?) \
         AND (? IS NULL OR EXISTS (SELECT 1 FROM local_track_artists x \
         WHERE x.local_track_id = t.id AND x.local_artist_id = ?)) \
         AND (? IS NULL OR EXISTS (SELECT 1 FROM local_track_genres g \
         WHERE g.local_track_id = t.id AND g.folded_name = ?) \
         OR t.genre_folded = ?) \
-        AND (? IS NULL OR (instr(?, ',' || LOWER(t.file_format) || ',') > 0) = ?) \
+        AND (? IS NULL OR (instr(?, ',' || LOWER(" + (track_codec!("t")) + ") || ',') > 0) = ?) \
         AND (? IS NULL OR " + (rated_within!("track", "t.id")) + ")";
     /// A live track `t`: indexed, on a live album.
     pub(crate) fragment LIVE_TRACK = (live_track!("t"));

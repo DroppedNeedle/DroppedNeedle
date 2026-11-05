@@ -14382,6 +14382,11 @@ export interface components {
             /** @description Followed artists. */
             artists: components["schemas"]["FollowedArtist"][];
         };
+        /**
+         * @description Whether a list keeps the items in its `formats` or the ones in none.
+         * @enum {string}
+         */
+        FormatMode: "with" | "without";
         /** @description One genre alias. */
         GenreAlias: {
             /**
@@ -20216,6 +20221,11 @@ export interface components {
                 [key: string]: number;
             };
         };
+        /**
+         * @description Which side of `rating` a list keeps.
+         * @enum {string}
+         */
+        RatingMode: "at_least" | "at_most";
         /** @description Rating-status answer. */
         RatingStatusResponse: {
             /**
@@ -23514,6 +23524,11 @@ export interface components {
              */
             year?: number | null;
         };
+        /**
+         * @description Which side of `min_tracks` a list keeps.
+         * @enum {string}
+         */
+        TracksMode: "at_least" | "below";
         /**
          * @description Credential handoff for session-issuing routes. Mirrors the session login
          *     `TransportParam` (which owns the mechanism) so this layer stays the only
@@ -30578,31 +30593,22 @@ export interface operations {
                  *     case-insensitive. See `format_mode`.
                  */
                 formats?: string;
-                /**
-                 * @description `with` (default): only albums in one of `formats`; `without`: only
-                 *     albums in none of them.
-                 */
-                format_mode?: string;
+                /** @description Default `with`. */
+                format_mode?: components["schemas"]["FormatMode"];
                 /**
                  * @description Only albums with at least this many indexed tracks, 1-10000. See
                  *     `tracks_mode`.
                  */
                 min_tracks?: number;
-                /**
-                 * @description `at_least` (default): albums with `min_tracks` or more; `below`:
-                 *     albums with fewer.
-                 */
-                tracks_mode?: string;
+                /** @description Default `at_least`. */
+                tracks_mode?: components["schemas"]["TracksMode"];
                 /**
                  * @description Only albums the caller rated, 1-5 stars. See `rating_mode`; albums
                  *     they did not rate are left out.
                  */
                 rating?: number;
-                /**
-                 * @description `at_least` (default): `rating` stars or more; `at_most`: `rating`
-                 *     stars or fewer.
-                 */
-                rating_mode?: string;
+                /** @description Default `at_least`. */
+                rating_mode?: components["schemas"]["RatingMode"];
                 /**
                  * @description Only the caller's favourites. Without `sort`, the newest favourite
                  *     comes first, and `order=asc` puts the oldest first.
@@ -33289,21 +33295,15 @@ export interface operations {
                  *     `tracks_mode`.
                  */
                 min_tracks?: number;
-                /**
-                 * @description `at_least` (default): artists with `min_tracks` or more; `below`:
-                 *     artists with fewer.
-                 */
-                tracks_mode?: string;
+                /** @description Default `at_least`. */
+                tracks_mode?: components["schemas"]["TracksMode"];
                 /**
                  * @description Only artists the caller rated, 1-5 stars. See `rating_mode`;
                  *     artists they did not rate are left out.
                  */
                 rating?: number;
-                /**
-                 * @description `at_least` (default): `rating` stars or more; `at_most`: `rating`
-                 *     stars or fewer.
-                 */
-                rating_mode?: string;
+                /** @description Default `at_least`. */
+                rating_mode?: components["schemas"]["RatingMode"];
                 /**
                  * @description Only the caller's favourites. Without `sort`, the newest favourite
                  *     comes first, and `order=asc` puts the oldest first.
@@ -39512,21 +39512,15 @@ export interface operations {
                  *     case-insensitive. See `format_mode`.
                  */
                 formats?: string;
-                /**
-                 * @description `with` (default): only tracks in one of `formats`; `without`: only
-                 *     tracks in none of them.
-                 */
-                format_mode?: string;
+                /** @description Default `with`. */
+                format_mode?: components["schemas"]["FormatMode"];
                 /**
                  * @description Only tracks the caller rated, 1-5 stars. See `rating_mode`; tracks
                  *     they did not rate are left out.
                  */
                 rating?: number;
-                /**
-                 * @description `at_least` (default): `rating` stars or more; `at_most`: `rating`
-                 *     stars or fewer.
-                 */
-                rating_mode?: string;
+                /** @description Default `at_least`. */
+                rating_mode?: components["schemas"]["RatingMode"];
                 /**
                  * @description Only the caller's favourites. Without `sort`, the newest favourite
                  *     comes first, and `order=asc` puts the oldest first.

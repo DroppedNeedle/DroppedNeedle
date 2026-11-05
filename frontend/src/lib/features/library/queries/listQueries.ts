@@ -42,7 +42,7 @@ function boundQuery(params: { minTracks?: number; tracksBelow?: boolean }) {
 	};
 }
 
-function ratingQuery(params: { rating?: number; ratingMode?: 'at_least' | 'at_most' }) {
+function ratingQuery(params: Pick<LibraryV3AlbumsParams, 'rating' | 'ratingMode'>) {
 	if (!params.rating) return {};
 	return {
 		rating: params.rating,

@@ -105,7 +105,8 @@ droppedneedle_kernel::sql_choice! {
         All,
         /// Artists leading at least one album.
         AlbumArtists,
-        /// Artists appearing without leading.
+        /// Artists appearing without leading, and album artists who also
+        /// appear on albums someone else leads.
         Contributors,
         /// Artists leading an album or credited on a streamable track, which
         /// leaves out empty rows such as an unused placeholder.

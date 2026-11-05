@@ -10,11 +10,12 @@ use super::edition_tracks::{self, AlbumTracks, group_tracks};
 use super::models::{
     AlbumDetailView, AlbumFormatCount, AlbumFormatCounts, AlbumListSort, AlbumPage, AlbumQuery,
     AlbumView, ArtistListScope, ArtistListSort, ArtistPage, ArtistQuery, ArtistView, CursorQuery,
-    DecadeShelf, DecadesResponse, HeldTracks, LibraryAlbumStatus, LibraryMembershipRequest,
-    LibraryMembershipResponse, LibraryStatusTrack, ListOrder, LyricLine, LyricsView,
-    ManagementHoldView, PageQuery, RecentQuery, ResolveTracksRequest, ResolveTracksResponse,
-    ResolvedTrack, StatsView, SuggestionReason, SuggestionTrack, SuggestionsQuery,
-    SuggestionsResponse, TrackListPage, TrackListSort, TrackPage, TrackQuery, TrackView,
+    DecadeShelf, DecadesResponse, FormatMode, HeldTracks, LibraryAlbumStatus,
+    LibraryMembershipRequest, LibraryMembershipResponse, LibraryStatusTrack, ListOrder, LyricLine,
+    LyricsView, ManagementHoldView, PageQuery, RatingMode, RecentQuery, ResolveTracksRequest,
+    ResolveTracksResponse, ResolvedTrack, StatsView, SuggestionReason, SuggestionTrack,
+    SuggestionsQuery, SuggestionsResponse, TrackListPage, TrackListSort, TrackPage, TrackQuery,
+    TrackView, TracksMode,
 };
 use super::sql;
 use super::stores::{
@@ -331,17 +332,6 @@ fn clean_formats(formats: Option<&str>, format: Option<&str>) -> Vec<String> {
     cleaned
 }
 
-/// Whether `format_mode` hides the formats: `with` (default) or `without`.
-fn without_formats(mode: Option<&str>) -> Result<bool, LibraryFailure> {
-    match mode.map(str::trim) {
-        None | Some("" | "with") => Ok(false),
-        Some("without") => Ok(true),
-        Some(other) => Err(LibraryFailure::InvalidInput(format!(
-            "unknown format_mode '{other}': want with or without"
-        ))),
-    }
-}
-
 /// A minimum track count is 1-10000; 1 keeps everything, so it reads as
 /// absent.
 fn check_min_tracks(min: Option<u32>) -> Result<Option<u32>, LibraryFailure> {
@@ -354,36 +344,15 @@ fn check_min_tracks(min: Option<u32>) -> Result<Option<u32>, LibraryFailure> {
     }
 }
 
-/// Whether `tracks_mode` reads the track bound as "fewer than": `at_least`
-/// (default) or `below`.
-fn tracks_below(mode: Option<&str>) -> Result<bool, LibraryFailure> {
-    match mode.map(str::trim) {
-        None | Some("" | "at_least") => Ok(false),
-        Some("below") => Ok(true),
-        Some(other) => Err(LibraryFailure::InvalidInput(format!(
-            "unknown tracks_mode '{other}': want at_least or below"
-        ))),
-    }
-}
-
-/// The caller's star span a list keeps: `rating` 1-5, `rating_mode`
-/// `at_least` (default: that many stars or more) or `at_most` (that many
-/// or fewer). Items the caller did not rate are never kept. No `rating`
-/// keeps everything.
+/// The caller's star span a list keeps: `rating` 1-5, and that many stars
+/// or more, or with `at_most` that many or fewer. Items the caller did not
+/// rate are never kept. No `rating` keeps everything.
 fn rating_bound(
     rating: Option<u8>,
-    mode: Option<&str>,
+    mode: Option<RatingMode>,
     user_id: &str,
 ) -> Result<Option<RatingBound>, LibraryFailure> {
-    let at_most = match mode.map(str::trim) {
-        None | Some("" | "at_least") => false,
-        Some("at_most") => true,
-        Some(other) => {
-            return Err(LibraryFailure::InvalidInput(format!(
-                "unknown rating_mode '{other}': want at_least or at_most"
-            )));
-        }
-    };
+    let at_most = mode == Some(RatingMode::AtMost);
     match rating {
         None => Ok(None),
         Some(stars @ 1..=5) => {
@@ -498,10 +467,10 @@ pub async fn list_albums(
         artist_id: query.artist_id.clone(),
         decade: check_decade(query.decade)?,
         formats: clean_formats(query.formats.as_deref(), query.format.as_deref()),
-        without_formats: without_formats(query.format_mode.as_deref())?,
+        without_formats: query.format_mode == Some(FormatMode::Without),
         min_tracks: check_min_tracks(query.min_tracks)?,
-        tracks_below: tracks_below(query.tracks_mode.as_deref())?,
-        rating: rating_bound(query.rating, query.rating_mode.as_deref(), user_id)?,
+        tracks_below: query.tracks_mode == Some(TracksMode::Below),
+        rating: rating_bound(query.rating, query.rating_mode, user_id)?,
         favorites_of: favorites_of(query.favorites, user_id),
     };
     let favorites = filter.favorites_of.is_some();
@@ -662,8 +631,8 @@ pub async fn list_artists(
             &after,
             &ArtistBounds {
                 min_tracks: check_min_tracks(query.min_tracks)?,
-                below: tracks_below(query.tracks_mode.as_deref())?,
-                rating: rating_bound(query.rating, query.rating_mode.as_deref(), user_id)?,
+                below: query.tracks_mode == Some(TracksMode::Below),
+                rating: rating_bound(query.rating, query.rating_mode, user_id)?,
             },
         )
         .await?;
@@ -761,8 +730,8 @@ pub async fn list_tracks(
         artist_id: query.artist_id.clone(),
         genre: clean_q(query.genre.as_deref()),
         formats: clean_formats(query.formats.as_deref(), None),
-        without_formats: without_formats(query.format_mode.as_deref())?,
-        rating: rating_bound(query.rating, query.rating_mode.as_deref(), user_id)?,
+        without_formats: query.format_mode == Some(FormatMode::Without),
+        rating: rating_bound(query.rating, query.rating_mode, user_id)?,
         favorites_of: favorites_of(query.favorites, user_id),
     };
     let favorites = filter.favorites_of.is_some();
@@ -1244,9 +1213,6 @@ mod tests {
             ["flac", "mp3"],
             "the list wins over the one format, deduplicated"
         );
-        assert_eq!(without_formats(Some("without")).ok(), Some(true));
-        assert_eq!(without_formats(None).ok(), Some(false));
-        assert!(without_formats(Some("except")).is_err());
         assert_eq!(check_min_tracks(Some(1)).ok(), Some(None));
         assert!(check_min_tracks(Some(0)).is_err());
     }

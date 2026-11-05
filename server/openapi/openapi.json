@@ -8722,10 +8722,10 @@
           {
             "name": "format_mode",
             "in": "query",
-            "description": "`with` (default): only albums in one of `formats`; `without`: only\nalbums in none of them.",
+            "description": "Default `with`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/FormatMode"
             }
           },
           {
@@ -8742,10 +8742,10 @@
           {
             "name": "tracks_mode",
             "in": "query",
-            "description": "`at_least` (default): albums with `min_tracks` or more; `below`:\nalbums with fewer.",
+            "description": "Default `at_least`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/TracksMode"
             }
           },
           {
@@ -8762,10 +8762,10 @@
           {
             "name": "rating_mode",
             "in": "query",
-            "description": "`at_least` (default): `rating` stars or more; `at_most`: `rating`\nstars or fewer.",
+            "description": "Default `at_least`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/RatingMode"
             }
           },
           {
@@ -12556,10 +12556,10 @@
           {
             "name": "tracks_mode",
             "in": "query",
-            "description": "`at_least` (default): artists with `min_tracks` or more; `below`:\nartists with fewer.",
+            "description": "Default `at_least`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/TracksMode"
             }
           },
           {
@@ -12576,10 +12576,10 @@
           {
             "name": "rating_mode",
             "in": "query",
-            "description": "`at_least` (default): `rating` stars or more; `at_most`: `rating`\nstars or fewer.",
+            "description": "Default `at_least`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/RatingMode"
             }
           },
           {
@@ -21450,10 +21450,10 @@
           {
             "name": "format_mode",
             "in": "query",
-            "description": "`with` (default): only tracks in one of `formats`; `without`: only\ntracks in none of them.",
+            "description": "Default `with`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/FormatMode"
             }
           },
           {
@@ -21470,10 +21470,10 @@
           {
             "name": "rating_mode",
             "in": "query",
-            "description": "`at_least` (default): `rating` stars or more; `at_most`: `rating`\nstars or fewer.",
+            "description": "Default `at_least`.",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/RatingMode"
             }
           },
           {
@@ -45553,6 +45553,14 @@
           }
         }
       },
+      "FormatMode": {
+        "type": "string",
+        "description": "Whether a list keeps the items in its `formats` or the ones in none.",
+        "enum": [
+          "with",
+          "without"
+        ]
+      },
       "GenreAlias": {
         "type": "object",
         "description": "One genre alias.",
@@ -58374,6 +58382,14 @@
           }
         }
       },
+      "RatingMode": {
+        "type": "string",
+        "description": "Which side of `rating` a list keeps.",
+        "enum": [
+          "at_least",
+          "at_most"
+        ]
+      },
       "RatingStatusResponse": {
         "type": "object",
         "description": "Rating-status answer.",
@@ -66028,6 +66044,14 @@
             "description": "Release year, when known."
           }
         }
+      },
+      "TracksMode": {
+        "type": "string",
+        "description": "Which side of `min_tracks` a list keeps.",
+        "enum": [
+          "at_least",
+          "below"
+        ]
       },
       "TransportDto": {
         "type": "string",

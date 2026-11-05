@@ -120,7 +120,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	pluginsChanged: [every('plugins')],
 	pluginFilesChanged: [key('admin', 'plugins', 'files', 'u')],
 	profileChanged: [key(U, 'profile')],
-	ratingsChanged: [key(U, 'ratings')],
+	ratingsChanged: [key(U, 'ratings'), { key: [U, 'library', 'catalog'], mark: true }],
 	albumMatchesChanged: [key(U, 'album-match')],
 	remoteSourceChanged: [key(U, 'remotes', 'job')],
 	anyLibraryChanged: [every('library')],
