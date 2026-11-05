@@ -10,8 +10,10 @@
 	the title that wraps on a phone, and `stroke` draws a short brush stroke
 	after the title in place of the rule. `longSubtitle` sets a sentence-long
 	subtitle smaller and lets it wrap on a phone; `snugTitle` keeps a wide
-	one-word title on one line on a phone, sized to its column. The record, ticket and stroke are
-	decoration.
+	one-word title on one line on a phone, sized to its column. `tagline` is
+	a hub's short statement in spaced mono caps beside the title, underlined
+	by an acid brush stroke; the ticket then sits on the title's lower right.
+	The record, ticket and strokes are decoration.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -44,6 +46,8 @@
 		longSubtitle?: boolean;
 		/** A wide one-word title: on a phone it shrinks to fit rather than break. */
 		snugTitle?: boolean;
+		/** A hub's short statement beside the title. */
+		tagline?: string;
 	}
 
 	let {
@@ -60,7 +64,8 @@
 		lede,
 		stroke = false,
 		longSubtitle = false,
-		snugTitle = false
+		snugTitle = false,
+		tagline
 	}: Props = $props();
 
 	const titleScale = $derived(
@@ -79,6 +84,7 @@
 	class:dn-lph--back={backHref}
 	class:dn-lph--actions={actions}
 	class:dn-lph--snug={snugTitle}
+	class:dn-lph--tagline={tagline}
 	style:--dn-lph-scale={titleScale}
 >
 	<div class="dn-lph__row">
@@ -111,12 +117,29 @@
 					{subtitle}
 				</p>{/if}
 			{#if lede}<p class="dn-lph__lede">{lede}</p>{/if}
+			{#if tagline}<BarcodeTicket label={ticket} class="dn-lph__ticket" />{/if}
 		</div>
-		{#if !stroke}<span class="dn-decor dn-lph__rule" aria-hidden="true"></span>{/if}
-		<div class="dn-lph__meta">
-			{#if count}<p class="dn-lph__count">{count}</p>{/if}
-			<BarcodeTicket label={ticket} class="dn-lph__ticket" />
-		</div>
+		{#if tagline}
+			<p class="dn-lph__tagline">
+				{tagline}
+				<svg
+					class="dn-decor dn-lph__brush"
+					viewBox="0 0 120 8"
+					preserveAspectRatio="none"
+					aria-hidden="true"
+				>
+					<path
+						d="M1 5.6C14 4.2 30 3.4 52 3.1S96 2.6 119 1.4L118.4 4.6C98 5.4 74 5.6 50 6.1S16 6.9 2.2 7.4Z"
+					/>
+				</svg>
+			</p>
+		{:else}
+			{#if !stroke}<span class="dn-decor dn-lph__rule" aria-hidden="true"></span>{/if}
+			<div class="dn-lph__meta">
+				{#if count}<p class="dn-lph__count">{count}</p>{/if}
+				<BarcodeTicket label={ticket} class="dn-lph__ticket" />
+			</div>
+		{/if}
 		<div class="dn-lph__deck" aria-hidden="true">
 			<VinylRecord sheen="acid" class="dn-lph__record" />
 		</div>
@@ -193,6 +216,40 @@
 
 	.dn-lph__titles {
 		min-width: 0;
+	}
+
+	/* a hub's statement: the ticket pinned to the title's lower right, the
+	   words in a narrow mono column beside it */
+	.dn-lph--tagline .dn-lph__titles {
+		position: relative;
+		padding-right: 5.5rem;
+		padding-bottom: 1.5rem;
+	}
+	.dn-lph--tagline .dn-lph__titles :global(.dn-lph__ticket) {
+		position: absolute;
+		right: 0;
+		bottom: 0;
+		width: 9.25rem;
+	}
+	.dn-lph__tagline {
+		flex: none;
+		align-self: flex-start;
+		max-width: 15.5rem;
+		margin-top: 1.25rem;
+		font-family: var(--font-mono);
+		font-size: 0.9375rem;
+		font-weight: 600;
+		line-height: 1.55;
+		letter-spacing: 0.22em;
+		text-transform: uppercase;
+		color: var(--color-base-content);
+	}
+	.dn-lph__brush {
+		display: block;
+		width: 8rem;
+		height: 0.5rem;
+		margin-top: 0.75rem;
+		fill: var(--dn-title);
 	}
 
 	.dn-lph__title {
@@ -416,6 +473,29 @@
 		.dn-lph__lede {
 			margin-top: 0.25rem;
 			font-size: 0.875rem;
+		}
+		.dn-lph.dn-lph--tagline .dn-lph__titles {
+			grid-column: 1 / 3;
+			grid-row: 1;
+			justify-self: start;
+			padding-right: 3.5rem;
+			padding-bottom: 0.875rem;
+		}
+		.dn-lph--tagline .dn-lph__titles :global(.dn-lph__ticket) {
+			width: 6.25rem;
+		}
+		.dn-lph__tagline {
+			grid-column: 1 / 3;
+			grid-row: 2;
+			max-width: none;
+			margin-top: 1rem;
+			font-size: 0.6875rem;
+			line-height: 1.5;
+			letter-spacing: 0.16em;
+		}
+		.dn-lph__brush {
+			width: 5.5rem;
+			margin-top: 0.5rem;
 		}
 		.dn-lph__actions {
 			grid-area: actions;

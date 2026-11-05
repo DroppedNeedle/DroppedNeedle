@@ -705,8 +705,8 @@ Run from the repo root. `make help` lists every target.
   `CardTitle`, `CardActions`, `ConfirmDialog`, `Field`, `TextField`,
   `NumberField`, `SecretField`, `PasswordField`, `SelectField`, `TextAreaField`,
   `ToggleRow`, `RadioCards`, `StatusChip`, `SectionHead` (a shelf's title
-  row), `ListPageHeader` (a browse page's title, count or lede, ticket and
-  record, with an optional brush stroke after the title),
+  row), `ListPageHeader` (a browse page's title, count, lede or a hub's
+  tagline, ticket and record, with an optional brush stroke after the title),
   `SaveBar`, `AsyncButton`, `QueryBoundary`, `RatingStars` (`quiet`
   in list rows), `StatRow` (counts split by rules), `JumpTabs` (a page's
   sticky section strip; `look="pills"` fills the current link, `actions` sit at
@@ -721,7 +721,8 @@ Run from the repo root. `make help` lists every target.
   and the decoration `FritFrame` (the page's dot frame, mounted once by the
   shell), `FritEdge`, `VinylSleeve`, `VinylRecord`, `BarcodeOrnament`,
   `BarcodeTicket`, `Illustration` (turntable, dripping heart, folder
-  sticker); in `src/lib/media` the one
+  sticker), `HalftoneArt` (a record, crowd or map printed in dots, for an
+  empty card's corner); in `src/lib/media` the one
   album and artist tile, `MediaTile` (`wrapName` in a dense artist grid) and
   `MediaTileSkeleton`):
   do not hand-write a button, a card, a text input, a modal, a confirm, a

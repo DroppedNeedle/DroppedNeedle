@@ -1,9 +1,13 @@
 <script lang="ts">
-	import { Heart, ArrowRight, CalendarClock, Check, Disc3, ExternalLink } from 'lucide-svelte';
+	import { CalendarDays, Check, Disc3, ExternalLink, Heart, MapPin, Users } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
-	import EmptyState from '$lib/ui/EmptyState.svelte';
+	import MediaTile from '$lib/media/MediaTile.svelte';
 	import { outsideLink } from '$lib/ui/outsideLink';
+	import ListPageHeader from '$lib/ui/ListPageHeader.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import FollowPanel from '$lib/features/following/components/FollowPanel.svelte';
+	import FollowEmpty from '$lib/features/following/components/FollowEmpty.svelte';
 	import {
 		getConcertsQuery,
 		getFollowedArtistsQuery,
@@ -13,8 +17,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { KM_PER_MILE } from '$lib/constants';
 	import { withBasePath } from '$lib/utils/basePath';
-	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 
 	const RELEASE_STRIP = 7; // 1 large + 6 small covers
 	const RELEASE_WINDOW_DAYS = 30;
@@ -37,6 +40,7 @@
 	const loading = $derived(
 		artistsQuery.isPending || recentReleasesQuery.isPending || concertsQuery.isPending
 	);
+	const heroGrid = $derived(releases.length >= 3);
 
 	function parseLocalDate(value: string): Date {
 		const [year, month, day] = value.split('-').map(Number);
@@ -62,257 +66,385 @@
 	<title>Following - DroppedNeedle</title>
 </svelte:head>
 
-<div class="mx-auto w-full max-w-5xl px-2 py-4 sm:px-4 sm:py-8 lg:px-8">
-	<div class="mb-6 flex items-center gap-2">
-		<Heart class="h-6 w-6 text-primary" aria-hidden="true" />
-		<h1 class="text-2xl font-bold sm:text-3xl">Following</h1>
-	</div>
+<div class="min-h-[calc(100vh-200px)]">
+	<ListPageHeader
+		title="Following"
+		tagline="New releases, gigs and the artists you follow."
+		ticket="DN / CC 3.2"
+	/>
 
-	{#if loading}
-		<div class="flex flex-col gap-8" aria-hidden="true">
-			<div class="grid grid-cols-3 gap-3 sm:grid-cols-5">
-				<div
-					class="col-span-2 row-span-2 aspect-square animate-pulse rounded-2xl bg-base-200"
-				></div>
-				{#each Array(6) as _, i (i)}
-					<div class="aspect-square animate-pulse rounded-2xl bg-base-200"></div>
-				{/each}
+	<div class="px-4 pb-10 sm:px-6 lg:px-8">
+		{#if loading}
+			<div class="fl-hub" aria-hidden="true">
+				<div class="fl-skel">
+					<div class="skeleton skeleton-shimmer h-8 w-2/3"></div>
+					<div class="fl-covers fl-covers--hero">
+						{#each Array(RELEASE_STRIP) as _, i (i)}
+							<div class="skeleton skeleton-shimmer aspect-square w-full rounded-lg"></div>
+						{/each}
+					</div>
+				</div>
+				<div class="fl-skel">
+					<div class="skeleton skeleton-shimmer h-8 w-1/2"></div>
+					{#each Array(3) as _, i (i)}
+						<div class="skeleton skeleton-shimmer h-14 w-full rounded-lg"></div>
+					{/each}
+				</div>
+				<div class="fl-skel fl-hub__wide">
+					<div class="skeleton skeleton-shimmer h-8 w-1/3"></div>
+					<div class="skeleton skeleton-shimmer h-16 w-full rounded-lg"></div>
+				</div>
 			</div>
-			{#each Array(3) as _, i (i)}
-				<div class="h-16 animate-pulse rounded-2xl bg-base-200"></div>
-			{/each}
-		</div>
-	{:else if artists.length === 0}
-		<EmptyState
-			icon={Heart}
-			title="You're not following anyone yet"
-			description="Follow artists you love and this page fills with their new releases and gigs near you."
-			ctaLabel="Discover artists"
-			ctaHref={withBasePath('/discover')}
-		/>
-	{:else}
-		<div class="flex flex-col gap-5">
-			<!-- each section is one big click target: the header link stretches
-			     over the whole card via ::after; inner links sit above on z-10 -->
-			<Card
-				as="section"
-				variant="bordered"
-				padding="md"
-				aria-label="New releases"
-				class="group/card transition-colors hover:border-primary"
-			>
-				<a
+		{:else}
+			<div class="fl-hub">
+				<FollowPanel
+					title="New releases · last {RELEASE_WINDOW_DAYS} days"
+					count={releaseTotal}
 					href={withBasePath('/following/new-releases')}
-					class="mb-1 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-box after:content-['']"
+					icon={Disc3}
 				>
-					<h2 class="text-sm font-semibold uppercase tracking-wider text-muted">
-						New releases
-						<span class="text-muted">· last {RELEASE_WINDOW_DAYS} days</span>
-						{#if releaseTotal > 0}<span class="text-muted">({releaseTotal})</span>{/if}
-					</h2>
-					<span
-						class="flex items-center gap-1 text-sm font-medium text-muted transition-colors group-hover/card:text-primary"
-					>
-						See all
-						<ArrowRight
-							class="h-3.5 w-3.5 transition-transform group-hover/card:translate-x-0.5"
-							aria-hidden="true"
+					{#if releases.length > 0}
+						<div class="fl-covers" class:fl-covers--hero={heroGrid}>
+							{#each releases as release (release.release_group_mbid)}
+								<MediaTile
+									title={release.title}
+									href={albumHref(release.release_group_mbid)}
+									label="Open {release.title} by {release.artist_name}{release.in_library
+										? ', in your library'
+										: ''}"
+									class="dn-follow-over"
+								>
+									{#snippet art()}
+										<AlbumImage
+											mbid={release.release_group_mbid}
+											alt={release.title}
+											size="full"
+											requestSize={heroGrid ? 500 : 250}
+											className="h-full w-full"
+										/>
+									{/snippet}
+									{#snippet meta()}{release.artist_name}{/snippet}
+									{#snippet overlay()}
+										{#if release.in_library}
+											<span class="fl-tick" title="In your library">
+												<Check class="size-3.5" strokeWidth={3} aria-hidden="true" />
+											</span>
+										{/if}
+									{/snippet}
+								</MediaTile>
+							{/each}
+						</div>
+					{:else}
+						<FollowEmpty
+							icon={Disc3}
+							title="Nothing released yet"
+							description="When an artist you follow puts out something new, it shows up here."
 						/>
-					</span>
-				</a>
-				{#if releases.length > 0}
-					{@const heroGrid = releases.length >= 3}
-					<div class="relative z-10 grid grid-cols-3 gap-3 sm:grid-cols-5">
-						{#each releases as release, index (release.release_group_mbid)}
-							<a
-								href={withBasePath(`/album/${release.release_group_mbid}`)}
-								class="group flex flex-col gap-1.5 {heroGrid && index === 0
-									? 'col-span-2 row-span-2'
-									: ''}"
-								aria-label="Open {release.title} by {release.artist_name}"
-							>
-								<div class="relative aspect-square w-full overflow-hidden rounded-2xl">
-									<AlbumImage
-										mbid={release.release_group_mbid}
-										alt={release.title}
+					{/if}
+				</FollowPanel>
+
+				<FollowPanel
+					title="Coming up"
+					count={concertTotal}
+					href={withBasePath('/following/events')}
+					icon={CalendarDays}
+				>
+					{#if concerts.length > 0}
+						<ul class="fl-gigs">
+							{#each concerts as concert (concert.source + concert.source_event_id + concert.artist_mbid)}
+								<li class="fl-gig">
+									<div class="fl-gig__date" aria-hidden="true">
+										<span class="fl-gig__day">{dayOfMonth(concert.local_date)}</span>
+										<span class="fl-gig__month">{monthShort(concert.local_date)}</span>
+									</div>
+									<a
+										href={artistHref(concert.artist_mbid)}
+										class="dn-follow-over fl-gig__face shrink-0 rounded-full"
+										tabindex="-1"
+										aria-hidden="true"
+									>
+										<ArtistImage
+											mbid={concert.artist_mbid}
+											alt=""
+											size="sm"
+											className="size-11"
+											rounded="full"
+										/>
+									</a>
+									<div class="min-w-0 flex-1">
+										<a href={artistHref(concert.artist_mbid)} class="dn-follow-over fl-gig__name">
+											{concert.artist_name}
+										</a>
+										<p class="fl-gig__line">{gigLine(concert)}</p>
+									</div>
+									{#if outsideLink(concert.ticket_url)}
+										<Button
+											variant="outline"
+											size="sm"
+											icon={ExternalLink}
+											iconPosition="end"
+											href={outsideLink(concert.ticket_url)}
+											target="_blank"
+											rel="noopener noreferrer"
+											class="dn-follow-over shrink-0"
+										>
+											Tickets
+										</Button>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+					{:else if eventsConfigured}
+						<FollowEmpty
+							look="dark"
+							icon={MapPin}
+							title="Pick your cities to see gigs near you"
+							description="Add one or more cities to see upcoming gigs from the artists you follow."
+							ctaLabel="Set your cities"
+							ctaHref={withBasePath('/following/events')}
+						/>
+					{:else if authStore.isAdmin}
+						<FollowEmpty
+							look="dark"
+							icon={CalendarDays}
+							title="Set up an events source"
+							description="Then gigs from the artists you follow show up here."
+							ctaLabel="Set up events"
+							ctaHref={withBasePath('/settings?tab=events')}
+						/>
+					{/if}
+				</FollowPanel>
+
+				<FollowPanel
+					title="Your artists"
+					count={artists.length}
+					href={withBasePath('/following/artists')}
+					icon={Users}
+					class="fl-hub__wide"
+				>
+					{#if artists.length > 0}
+						<div class="fl-faces">
+							{#each artists.slice(0, AVATAR_ROW) as artist (artist.mbid)}
+								<a
+									href={artistHref(artist.mbid)}
+									title={artist.name}
+									aria-label="Open {artist.name}"
+									class="dn-follow-over fl-face"
+								>
+									<ArtistImage
+										mbid={artist.mbid}
+										alt={artist.name}
 										size="full"
 										requestSize={250}
 										className="h-full w-full"
-										rounded="xl"
-									/>
-									{#if release.in_library}
-										<span
-											class="badge badge-success badge-sm absolute top-2 right-2 gap-0.5 border-0 font-medium"
-											title="In your library"
-										>
-											<Check class="h-3 w-3" aria-hidden="true" />
-											<span class="sr-only">In your library</span>
-										</span>
-									{/if}
-								</div>
-								<div class="min-w-0">
-									<p
-										class="truncate font-medium group-hover:text-primary {heroGrid && index === 0
-											? 'text-base'
-											: 'text-sm'}"
-									>
-										{release.title}
-									</p>
-									<p class="truncate text-xs text-muted">{release.artist_name}</p>
-								</div>
-							</a>
-						{/each}
-					</div>
-				{:else}
-					<p
-						class="flex items-center gap-3 rounded-2xl border border-dashed border-base-300 p-4 text-sm text-muted"
-					>
-						<Disc3 class="h-5 w-5 shrink-0" aria-hidden="true" />
-						Nothing released in the last {RELEASE_WINDOW_DAYS} days - quiet month.
-					</p>
-				{/if}
-			</Card>
-
-			<Card
-				as="section"
-				variant="bordered"
-				padding="md"
-				aria-label="Coming up"
-				class="group/card transition-colors hover:border-primary"
-			>
-				<a
-					href={withBasePath('/following/events')}
-					class="mb-1 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-box after:content-['']"
-				>
-					<h2 class="text-sm font-semibold uppercase tracking-wider text-muted">
-						Coming up
-						{#if concertTotal > 0}<span class="text-muted">({concertTotal})</span>{/if}
-					</h2>
-					<span
-						class="flex items-center gap-1 text-sm font-medium text-muted transition-colors group-hover/card:text-primary"
-					>
-						See all
-						<ArrowRight
-							class="h-3.5 w-3.5 transition-transform group-hover/card:translate-x-0.5"
-							aria-hidden="true"
-						/>
-					</span>
-				</a>
-				{#if concerts.length > 0}
-					<ul class="relative z-10 flex flex-col gap-2">
-						{#each concerts as concert (concert.source + concert.source_event_id + concert.artist_mbid)}
-							<li
-								class="flex items-center gap-3 rounded-2xl border border-base-300 bg-base-200 p-3"
-							>
-								<div
-									class="flex w-11 shrink-0 flex-col items-center rounded-xl bg-base-300/60 py-1"
-									aria-hidden="true"
-								>
-									<span class="text-base leading-tight font-bold text-primary">
-										{dayOfMonth(concert.local_date)}
-									</span>
-									<span class="text-[10px] font-semibold uppercase text-muted">
-										{monthShort(concert.local_date)}
-									</span>
-								</div>
-								<a href={withBasePath(`/artist/${concert.artist_mbid}`)} class="shrink-0">
-									<ArtistImage
-										mbid={concert.artist_mbid}
-										alt={concert.artist_name}
-										size="xs"
 										rounded="full"
 									/>
 								</a>
-								<div class="min-w-0 flex-1">
-									<a
-										href={withBasePath(`/artist/${concert.artist_mbid}`)}
-										class="block truncate font-semibold hover:text-primary"
-									>
-										{concert.artist_name}
-									</a>
-									<p class="truncate text-sm text-muted">{gigLine(concert)}</p>
-								</div>
-								{#if outsideLink(concert.ticket_url)}
-									<Button
-										variant="ghost"
-										size="xs"
-										pill
-										icon={ExternalLink}
-										iconPosition="end"
-										href={outsideLink(concert.ticket_url)}
-										target="_blank"
-										rel="noopener noreferrer"
-										class="shrink-0"
-									>
-										Tickets
-									</Button>
-								{/if}
-							</li>
-						{/each}
-					</ul>
-				{:else if eventsConfigured}
-					<!-- the whole card already navigates to /following/events -->
-					<p
-						class="flex items-center gap-3 rounded-2xl border border-dashed border-base-300 p-4 text-sm text-muted"
-					>
-						<CalendarClock class="h-5 w-5 shrink-0" aria-hidden="true" />
-						Pick your cities to see gigs near you
-					</p>
-				{:else if authStore.isAdmin}
-					<a
-						href={withBasePath('/settings?tab=events')}
-						class="relative z-10 flex items-center gap-3 rounded-2xl border border-dashed border-base-300 p-4 text-sm text-muted transition-colors hover:border-primary hover:text-primary"
-					>
-						<CalendarClock class="h-5 w-5 shrink-0" aria-hidden="true" />
-						Set up an events source to see gigs from artists you follow
-					</a>
-				{/if}
-			</Card>
-
-			<Card
-				as="section"
-				variant="bordered"
-				padding="md"
-				aria-label="Your artists"
-				class="group/card transition-colors hover:border-primary"
-			>
-				<a
-					href={withBasePath('/following/artists')}
-					class="mb-1 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-box after:content-['']"
-				>
-					<h2 class="text-sm font-semibold uppercase tracking-wider text-muted">
-						Your artists <span class="text-muted">({artists.length})</span>
-					</h2>
-					<span
-						class="flex items-center gap-1 text-sm font-medium text-muted transition-colors group-hover/card:text-primary"
-					>
-						See all
-						<ArrowRight
-							class="h-3.5 w-3.5 transition-transform group-hover/card:translate-x-0.5"
-							aria-hidden="true"
+							{/each}
+							{#if artists.length > AVATAR_ROW}
+								<a
+									href={withBasePath('/following/artists')}
+									class="dn-follow-over fl-face fl-face--more"
+									aria-label="{artists.length - AVATAR_ROW} more artists"
+								>
+									+{artists.length - AVATAR_ROW}
+								</a>
+							{/if}
+						</div>
+					{:else}
+						<FollowEmpty
+							look="band"
+							icon={Heart}
+							title="You're not following anyone yet"
+							description="Follow artists you love and this page fills with their new releases and gigs near you."
+							ctaLabel="Discover artists"
+							ctaHref={withBasePath('/discover')}
 						/>
-					</span>
-				</a>
-				<div class="relative z-10 flex flex-wrap items-center gap-2">
-					{#each artists.slice(0, AVATAR_ROW) as artist (artist.mbid)}
-						<a
-							href={withBasePath(`/artist/${artist.mbid}`)}
-							title={artist.name}
-							aria-label="Open {artist.name}"
-						>
-							<ArtistImage mbid={artist.mbid} alt={artist.name} size="xs" rounded="full" />
-						</a>
-					{/each}
-					{#if artists.length > AVATAR_ROW}
-						<a
-							href={withBasePath('/following/artists')}
-							class="badge badge-lg border-base-300 bg-base-200 py-4 font-medium hover:border-primary hover:text-primary"
-						>
-							+{artists.length - AVATAR_ROW}
-						</a>
 					{/if}
-				</div>
-			</Card>
-		</div>
-	{/if}
+				</FollowPanel>
+			</div>
+		{/if}
+	</div>
 </div>
+
+<style>
+	.fl-hub {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 1.25rem;
+	}
+	@media (min-width: 1100px) {
+		.fl-hub {
+			grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+		}
+		.fl-hub :global(.fl-hub__wide) {
+			grid-column: 1 / -1;
+		}
+	}
+
+	.fl-skel {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		padding: 1.25rem;
+		border: 1px solid var(--dn-line);
+		border-radius: 0.875rem;
+	}
+
+	/* up to seven covers, the first one large when there are three or more */
+	.fl-covers {
+		display: grid;
+		grid-template-columns: repeat(5, minmax(0, 1fr));
+		gap: 1rem 0.875rem;
+	}
+	.fl-covers--hero > :global(:first-child) {
+		grid-column: span 2;
+		grid-row: span 2;
+	}
+	@media (max-width: 639px) {
+		.fl-covers {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			gap: 0.75rem 0.625rem;
+		}
+		/* a phone shows two even rows of three */
+		.fl-covers--hero > :global(:first-child) {
+			grid-column: auto;
+			grid-row: auto;
+		}
+		.fl-covers > :global(:nth-child(7)) {
+			display: none;
+		}
+	}
+
+	.fl-tick {
+		position: absolute;
+		top: 0.375rem;
+		right: 0.375rem;
+		display: grid;
+		place-items: center;
+		width: 1.5rem;
+		height: 1.5rem;
+		border: 1px solid var(--dn-action-edge);
+		border-radius: 9999px;
+		background-color: var(--dn-action);
+		color: var(--dn-action-content);
+		box-shadow: 0 2px 6px rgb(0 0 0 / 0.35);
+	}
+
+	.fl-gigs {
+		display: flex;
+		flex-direction: column;
+	}
+	.fl-gig {
+		display: flex;
+		align-items: center;
+		gap: 0.875rem;
+		padding: 0.75rem 0.25rem;
+	}
+	.fl-gig + .fl-gig {
+		border-top: 1px solid var(--dn-line);
+	}
+	.fl-gig__date {
+		display: flex;
+		flex: none;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		width: 3.25rem;
+		height: 3.25rem;
+		border: 1px solid var(--dn-edge);
+		border-radius: 0.5rem;
+		background-color: var(--color-base-100);
+	}
+	.fl-gig__day {
+		font-family: var(--font-display);
+		font-size: 1.5rem;
+		line-height: 1;
+		color: var(--dn-title);
+		font-synthesis: none;
+	}
+	.fl-gig__month {
+		margin-top: 0.125rem;
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+	}
+	.fl-gig__name {
+		display: block;
+		overflow: hidden;
+		font-weight: 700;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		transition: color 150ms;
+	}
+	.fl-gig__name:hover {
+		color: var(--dn-title);
+	}
+	.fl-gig__line {
+		overflow: hidden;
+		margin-top: 0.125rem;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--color-muted);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.fl-faces {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.25rem;
+	}
+	.fl-face {
+		display: grid;
+		place-items: center;
+		width: 4.5rem;
+		height: 4.5rem;
+		overflow: hidden;
+		border-radius: 9999px;
+		box-shadow: 0 0 0 2px var(--color-base-100);
+		transition: box-shadow 150ms;
+	}
+	.fl-face:hover,
+	.fl-face:focus-visible {
+		box-shadow:
+			0 0 0 2px var(--color-base-100),
+			0 0 0 4px var(--dn-title);
+	}
+	.fl-face--more {
+		border: 2px dashed var(--dn-edge);
+		font-family: var(--font-mono);
+		font-size: 1rem;
+		font-weight: 700;
+		color: var(--color-base-content);
+	}
+	.fl-face--more:hover {
+		color: var(--dn-title);
+	}
+	@media (max-width: 639px) {
+		.fl-face {
+			width: 3.5rem;
+			height: 3.5rem;
+		}
+		.fl-gig {
+			gap: 0.625rem;
+		}
+		.fl-gig__line {
+			display: -webkit-box;
+			-webkit-box-orient: vertical;
+			-webkit-line-clamp: 2;
+			line-clamp: 2;
+			white-space: normal;
+		}
+	}
+	/* a narrow phone drops the gig's picture (its name links the artist) */
+	@media (max-width: 379px) {
+		.fl-gig__face {
+			display: none;
+		}
+	}
+</style>
