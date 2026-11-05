@@ -82,7 +82,7 @@
 </script>
 
 <script lang="ts">
-	import { Globe } from 'lucide-svelte';
+	import { Disc3, ExternalLink as OutIcon, Globe } from 'lucide-svelte';
 	import type { components } from '$lib/api/v3/openapi';
 	import { outsideLink } from '$lib/ui/outsideLink';
 	import IconButton from '$lib/ui/IconButton.svelte';
@@ -91,9 +91,11 @@
 
 	interface Props {
 		links: ExternalLink[];
+		/** The artist's MusicBrainz page, first in the Info list. */
+		musicbrainzUrl?: string | null;
 	}
 
-	let { links }: Props = $props();
+	let { links, musicbrainzUrl = null }: Props = $props();
 
 	// Client-side detection mirrors backend _PLATFORM_PATTERNS for cache resilience.
 	// When backend has correct categories, these act as a safety net for stale cached data.
@@ -112,7 +114,8 @@
 		['//x.com', 'Twitter', 'social'],
 		['facebook.com', 'Facebook', 'social'],
 		['last.fm', 'Last.fm', 'info'],
-		['wikipedia.org', 'Wikipedia', 'info']
+		['wikipedia.org', 'Wikipedia', 'info'],
+		['discogs.com', 'Discogs', 'info']
 	];
 
 	const ALLOWED_LABELS = new Set([
@@ -129,6 +132,7 @@
 		'Facebook',
 		'Official Website',
 		'Wikipedia',
+		'Discogs',
 		'Last.fm'
 	]);
 
@@ -144,7 +148,7 @@
 	const CATEGORY_ORDER = ['music', 'social', 'info'] as const;
 
 	const CATEGORY_LABELS: Record<string, string> = {
-		music: 'Listen',
+		music: 'Listen on',
 		social: 'Social',
 		info: 'Info'
 	};
@@ -174,37 +178,106 @@
 			links: groups[c]
 		}));
 	});
+
+	// Info pages as a list, then social and listening sites as rows of marks.
+	const rows = $derived(groupedLinks.filter((group) => group.category === 'info'));
+	const marks = $derived(
+		(['social', 'music'] as const).flatMap((c) => groupedLinks.filter((g) => g.category === c))
+	);
 </script>
 
-{#if groupedLinks.length > 0}
-	<div class="flex flex-wrap items-center gap-x-6 gap-y-3 mt-4">
-		{#each groupedLinks as group, i (group.category)}
-			{#if i > 0}
-				<div class="hidden sm:block w-px h-6 bg-base-content/20"></div>
-			{/if}
-			<div class="flex items-center gap-2">
-				<span class="text-xs font-semibold uppercase tracking-widest text-muted mr-1">
-					{group.label}
-				</span>
-				{#each group.links as link (link.label)}
-					{@const icon = BRAND_ICONS[link.label]}
-					{#snippet brand(size: string)}
-						<svg viewBox="0 0 24 24" class={size} fill={icon?.fill} aria-hidden="true">
-							{#each icon?.paths ?? [] as d (d)}
-								<path {d} />
-							{/each}
-						</svg>
-					{/snippet}
-					<IconButton
-						href={link.url}
-						target="_blank"
-						rel="noopener noreferrer"
-						label={link.label}
-						icon={Globe}
-						glyph={icon ? brand : undefined}
-					/>
+{#snippet brand(label: string, size: string)}
+	{@const icon = BRAND_ICONS[label]}
+	{#if icon}
+		<svg viewBox="0 0 24 24" class={size} fill={icon.fill} aria-hidden="true">
+			{#each icon.paths as d (d)}
+				<path {d} />
+			{/each}
+		</svg>
+	{:else if label === 'Discogs'}
+		<Disc3 class={size} aria-hidden="true" />
+	{:else}
+		<Globe class={size} aria-hidden="true" />
+	{/if}
+{/snippet}
+
+{#if musicbrainzUrl || rows.length > 0 || marks.length > 0}
+	<div class="dn-artist-links">
+		{#if musicbrainzUrl || rows.length > 0}
+			<ul class="dn-artist-links__list">
+				{#if musicbrainzUrl}
+					<li>
+						<a href={musicbrainzUrl} target="_blank" rel="noopener noreferrer">
+							<OutIcon class="size-4.5" aria-hidden="true" />
+							MusicBrainz
+						</a>
+					</li>
+				{/if}
+				{#each rows as group (group.category)}
+					{#each group.links as link (link.label)}
+						<li>
+							<a href={link.url} target="_blank" rel="noopener noreferrer">
+								{@render brand(link.label, 'size-4.5')}
+								{link.label}
+							</a>
+						</li>
+					{/each}
 				{/each}
+			</ul>
+		{/if}
+		{#each marks as group (group.category)}
+			<div class="dn-artist-links__marks">
+				<span class="dn-artist-links__label">{group.label}</span>
+				<div class="flex flex-wrap items-center gap-1">
+					{#each group.links as link (link.label)}
+						{#snippet glyph(size: string)}
+							{@render brand(link.label, size)}
+						{/snippet}
+						<IconButton
+							href={link.url}
+							target="_blank"
+							rel="noopener noreferrer"
+							size="sm"
+							label={link.label}
+							icon={Globe}
+							{glyph}
+						/>
+					{/each}
+				</div>
 			</div>
 		{/each}
 	</div>
 {/if}
+
+<style>
+	.dn-artist-links__list li {
+		border-bottom: 1px solid var(--dn-line);
+	}
+	.dn-artist-links__list a {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding-block: 0.5rem;
+		font-size: 0.9375rem;
+		font-weight: 500;
+		transition: color 150ms;
+	}
+	.dn-artist-links__list a:hover {
+		color: var(--dn-title);
+	}
+	.dn-artist-links__marks {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.25rem 0.75rem;
+		margin-top: 0.625rem;
+	}
+	.dn-artist-links__label {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--dn-muted);
+	}
+</style>

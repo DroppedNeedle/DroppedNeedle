@@ -85,7 +85,9 @@
 </script>
 
 <div class="flex flex-col min-w-0">
-	<h3 class="text-lg font-semibold mb-3">Popular Songs</h3>
+	<h3 class="mb-3 font-mono text-xs font-semibold tracking-[0.14em] text-muted uppercase">
+		Popular songs
+	</h3>
 
 	{#if loading}
 		<div class="space-y-2">

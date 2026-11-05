@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import { Disc3, MicVocal } from 'lucide-svelte';
+	import { MicVocal } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import LocalAlbumTrackList from '$lib/features/library/components/LocalAlbumTrackList.svelte';
 	import ArtistAppearancesSectionSkeleton from './ArtistAppearancesSectionSkeleton.svelte';
@@ -34,114 +34,93 @@
 		<ArtistAppearancesSectionSkeleton />
 	</div>
 {:else if appearancesQuery.isError && !notInLibrary}
-	<section
+	<Card
+		as="section"
+		variant="bordered"
+		padding="md"
 		id="section-library-appearances"
-		class="scroll-mt-24 rounded-2xl border border-error/20 bg-error/5 p-5 {className}"
+		class="scroll-mt-32 {className}"
 		aria-labelledby="library-appearances-title"
 	>
 		<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 			<div>
-				<h2 id="library-appearances-title" class="font-bold">Appears in your library</h2>
-				<p class="mt-1 text-sm text-muted">Couldn't load this artist's local track appearances.</p>
+				<h2 id="library-appearances-title" class="dn-appear__title">Appears on</h2>
+				<p class="mt-1 text-sm text-error">Couldn't load this artist's local track appearances.</p>
 			</div>
 			<Button variant="outline" size="sm" onclick={() => appearancesQuery.refetch()}>Retry</Button>
 		</div>
-	</section>
+	</Card>
 {:else if appearances.length > 0}
-	<section
+	<Card
+		as="section"
+		variant="bordered"
+		padding="none"
 		id="section-library-appearances"
-		class="appearance-ledger scroll-mt-24 overflow-hidden rounded-2xl border border-base-content/10 bg-base-200/30 {className}"
+		class="scroll-mt-32 {className}"
 		aria-labelledby="library-appearances-title"
 	>
-		<header class="border-b border-base-content/10 px-4 py-5 sm:px-6">
-			<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-				<div class="flex items-start gap-3">
-					<div
-						class="appearance-mark grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-accent/20 bg-accent/10 text-accent"
-						aria-hidden="true"
-					>
-						<MicVocal class="h-5 w-5" />
-					</div>
-					<div>
-						<p class="text-[10px] font-bold uppercase tracking-[0.18em] text-muted">
-							Local credits
-						</p>
-						<h2 id="library-appearances-title" class="mt-0.5 text-xl font-black tracking-tight">
-							Appears in your library
-						</h2>
-						<p class="mt-1 max-w-2xl text-sm text-muted">
-							Exact local tracks credited to this artist, grouped by the release you own.
-						</p>
-					</div>
-				</div>
-				<div class="flex shrink-0 items-center gap-2 text-xs">
-					<span class="badge badge-outline gap-1.5">
-						<Disc3 class="h-3.5 w-3.5" />
-						{releaseCount}
-						{releaseCount === 1 ? 'release' : 'releases'}
-					</span>
-					<span class="badge badge-outline badge-accent">
-						{trackCount}
-						{trackCount === 1 ? 'track' : 'tracks'}
-					</span>
-				</div>
+		<header class="dn-appear__head">
+			<div class="min-w-0">
+				<p class="dn-appear__kicker">
+					<MicVocal class="size-3.5" aria-hidden="true" />
+					Local credits
+				</p>
+				<h2 id="library-appearances-title" class="dn-appear__title">Appears on</h2>
+				<p class="mt-2 max-w-2xl text-sm text-muted">
+					Exact local tracks credited to this artist, grouped by the release you own.
+				</p>
 			</div>
+			<p class="dn-appear__count">
+				<span>{releaseCount} {releaseCount === 1 ? 'release' : 'releases'}</span>
+				<span aria-hidden="true">·</span>
+				<span>{trackCount} {trackCount === 1 ? 'track' : 'tracks'}</span>
+			</p>
 		</header>
 
-		<div class="space-y-3 p-3 sm:p-4">
+		<div class="dn-appear__list">
 			{#each appearances as appearance (appearance.album.id)}
-				<Card as="article" variant="bordered" padding="sm">
-					<div class="grid gap-4 sm:grid-cols-[7rem_minmax(0,1fr)]">
+				<article class="dn-appear__album">
+					<a
+						href={albumHref(appearance.album.release_group_mbid ?? appearance.album.id)}
+						class="dn-appear__cover"
+						aria-label={`Open ${appearance.album.title}`}
+					>
+						<AlbumImage
+							albumId={appearance.album.id}
+							mbid={appearance.album.release_group_mbid ?? ''}
+							available={appearance.album.cover_available}
+							alt={`Cover for ${appearance.album.title}`}
+							size="full"
+							requestSize={250}
+							rounded="none"
+							className="h-full w-full"
+						/>
+					</a>
+
+					<div class="min-w-0">
 						<a
 							href={albumHref(appearance.album.release_group_mbid ?? appearance.album.id)}
-							class="appearance-cover group/cover relative mx-auto block aspect-square w-28 overflow-hidden rounded-lg shadow-md sm:mx-0 sm:w-full"
-							aria-label={`Open ${appearance.album.title}`}
+							class="dn-appear__album-title">{appearance.album.title}</a
 						>
-							<AlbumImage
-								albumId={appearance.album.id}
-								mbid={appearance.album.release_group_mbid ?? ''}
-								available={appearance.album.cover_available}
-								alt={`Cover for ${appearance.album.title}`}
-								size="full"
-								requestSize={250}
-								rounded="none"
-								className="h-full w-full transition-transform duration-300 group-hover/cover:scale-[1.03]"
-							/>
-						</a>
-
-						<div class="min-w-0">
-							<div class="min-w-0">
-								<p class="text-[10px] font-bold uppercase tracking-[0.16em] text-accent/75">
-									Appears on
-								</p>
-								<a
-									href={albumHref(appearance.album.release_group_mbid ?? appearance.album.id)}
-									class="mt-0.5 block truncate text-lg font-bold hover:underline"
-									>{appearance.album.title}</a
-								>
-								<p class="mt-0.5 truncate text-xs text-muted">
-									{appearance.album.artist_name || 'Unknown album artist'}
-									{#if appearance.album.year}
-										<span aria-hidden="true"> · </span>{appearance.album.year}
-									{/if}
-								</p>
-							</div>
-							<LocalAlbumTrackList tracks={appearance.tracks} />
-						</div>
+						<p class="mt-0.5 truncate font-mono text-xs text-muted">
+							{appearance.album.artist_name || 'Unknown album artist'}
+							{#if appearance.album.year}
+								<span aria-hidden="true"> · </span>{appearance.album.year}
+							{/if}
+						</p>
+						<LocalAlbumTrackList tracks={appearance.tracks} />
 					</div>
-				</Card>
+				</article>
 			{/each}
 		</div>
 
 		{#if appearancesQuery.hasNextPage}
-			<footer
-				class="flex flex-col items-center justify-between gap-3 border-t border-base-content/10 bg-base-100/35 px-4 py-3 sm:flex-row"
-			>
-				<p class="text-xs text-muted">
+			<footer class="dn-appear__foot">
+				<p class="font-mono text-xs tracking-wide text-muted uppercase">
 					Showing {appearances.length} of {releaseCount} local releases
 				</p>
 				<Button
-					variant="ghost"
+					variant="outline"
 					size="sm"
 					loading={appearancesQuery.isFetchingNextPage}
 					onclick={() => void appearancesQuery.fetchNextPage()}
@@ -151,26 +130,102 @@
 				>
 			</footer>
 		{/if}
-	</section>
+	</Card>
 {/if}
 
 <style>
-	.appearance-ledger {
-		background-image: linear-gradient(
-			145deg,
-			color-mix(in oklab, var(--color-accent) 4%, transparent),
-			transparent 38%
-		);
+	.dn-appear__head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: 0.75rem 1.5rem;
+		padding: 1.25rem 1.25rem 1rem;
+		border-bottom: 1px solid var(--dn-line);
 	}
 
-	.appearance-mark {
-		box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-accent) 8%, transparent);
+	.dn-appear__kicker {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--dn-muted);
 	}
 
-	@media (prefers-reduced-motion: reduce) {
-		.appearance-cover :global(img) {
-			transition: none !important;
-			transform: none !important;
+	.dn-appear__title {
+		margin-top: 0.25rem;
+		font-family: var(--font-display);
+		font-size: 2rem;
+		line-height: 1;
+		color: var(--color-base-content);
+	}
+
+	.dn-appear__count {
+		display: flex;
+		gap: 0.5rem;
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+	}
+
+	.dn-appear__list {
+		display: grid;
+		gap: 0;
+	}
+
+	.dn-appear__album {
+		display: grid;
+		grid-template-columns: 4.5rem minmax(0, 1fr);
+		gap: 1rem;
+		padding: 1rem 1.25rem;
+	}
+	.dn-appear__album + .dn-appear__album {
+		border-top: 1px solid var(--dn-line);
+	}
+
+	.dn-appear__cover {
+		display: block;
+		aspect-ratio: 1;
+		overflow: hidden;
+		border-radius: 0.375rem;
+	}
+
+	.dn-appear__album-title {
+		display: block;
+		overflow: hidden;
+		font-size: 1.0625rem;
+		font-weight: 700;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.dn-appear__album-title:hover {
+		text-decoration: underline;
+	}
+
+	.dn-appear__foot {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		padding: 0.875rem 1.25rem;
+		border-top: 1px solid var(--dn-line);
+	}
+
+	@media (min-width: 640px) {
+		.dn-appear__head,
+		.dn-appear__album,
+		.dn-appear__foot {
+			padding-inline: 1.5rem;
+		}
+		.dn-appear__album {
+			grid-template-columns: 7rem minmax(0, 1fr);
+			gap: 1.25rem;
 		}
 	}
 </style>

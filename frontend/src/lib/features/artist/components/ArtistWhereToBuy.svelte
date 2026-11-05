@@ -3,7 +3,6 @@
 	import { outsideLink } from '$lib/ui/outsideLink';
 	import { getArtistPurchaseOptionsQuery } from '$lib/features/album/queries/GetItQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		artistMbid: string;
@@ -19,35 +18,36 @@
 	const links = $derived((options?.links ?? []).filter((link) => outsideLink(link.url)));
 </script>
 
-<!-- The artist's own storefronts, one line. Always renders a way to buy: the
-     Bandcamp artist search is the floor when MusicBrainz knows no store. -->
-<Card as="section" padding="sm" aria-label="Support the artist">
-	<div class="flex flex-wrap items-center gap-2">
-		<div class="flex items-center gap-1.5">
-			<ShoppingBag class="h-4 w-4 text-primary" aria-hidden="true" />
-			<h2 class="text-sm font-semibold">Support the artist</h2>
-		</div>
+<!-- The artist's own storefronts, in the About card. Always offers a way to
+     buy: the Bandcamp artist search is the floor when MusicBrainz knows no store. -->
+<section class="flex flex-wrap items-center gap-2" aria-labelledby="artist-support-title">
+	<h3
+		id="artist-support-title"
+		class="mr-1 flex items-center gap-1.5 font-mono text-xs font-semibold tracking-[0.14em] text-muted uppercase"
+	>
+		<ShoppingBag class="size-3.5" aria-hidden="true" />
+		Support the artist
+	</h3>
 
-		{#if optionsQuery.isLoading}
-			<div class="skeleton h-6 w-28 rounded-full"></div>
-		{:else if options}
-			{#each links as link (link.url)}
-				<Button size="xs" pill href={link.url} target="_blank" rel="noopener noreferrer">
-					{link.label}
-				</Button>
-			{/each}
-			{#if options.bandcamp_search_url}
-				<Button
-					size="xs"
-					pill
-					icon={Search}
-					href={options.bandcamp_search_url}
-					target="_blank"
-					rel="noopener noreferrer"
-				>
-					{links.length ? 'More on Bandcamp' : 'Search Bandcamp'}
-				</Button>
-			{/if}
+	{#if optionsQuery.isLoading}
+		<div class="skeleton h-6 w-28 rounded-full"></div>
+	{:else if options}
+		{#each links as link (link.url)}
+			<Button size="xs" pill href={link.url} target="_blank" rel="noopener noreferrer">
+				{link.label}
+			</Button>
+		{/each}
+		{#if options.bandcamp_search_url}
+			<Button
+				size="xs"
+				pill
+				icon={Search}
+				href={options.bandcamp_search_url}
+				target="_blank"
+				rel="noopener noreferrer"
+			>
+				{links.length ? 'More on Bandcamp' : 'Search Bandcamp'}
+			</Button>
 		{/if}
-	</div>
-</Card>
+	{/if}
+</section>

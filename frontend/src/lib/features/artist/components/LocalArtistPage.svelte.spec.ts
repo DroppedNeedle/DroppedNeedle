@@ -85,7 +85,7 @@ describe('local artist page', () => {
 		await expect.element(page.getByText('1 album · 2 tracks')).toBeVisible();
 		await expect.element(page.getByText('Appears on 2 local tracks')).toBeVisible();
 		await expect
-			.element(page.getByRole('heading', { name: 'Appears in your library' }))
+			.element(page.getByRole('heading', { name: 'Appears on', exact: true }))
 			.toBeVisible();
 	});
 });

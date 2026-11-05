@@ -4,10 +4,11 @@
 	import HorizontalCarousel from '$lib/ui/HorizontalCarousel.svelte';
 	import CarouselSkeleton from '$lib/ui/CarouselSkeleton.svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
+	import MediaTile from '$lib/media/MediaTile.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { artistHref } from '$lib/utils/entityRoutes';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		artists: ArtistRef[];
@@ -24,52 +25,42 @@
 	);
 </script>
 
-<div>
-	<h3 class="text-lg font-semibold mb-3">Similar Artists</h3>
-
-	{#if loading}
-		<CarouselSkeleton count={8} cardWidth="w-32" rounded="full" showSubtitle={false} />
-	{:else if !configured}
-		<Card class="text-center">
-			<p class="text-muted">Connect a music service to see similar artists</p>
-			<Button
-				variant="primary"
-				size="sm"
-				href={withBasePath('/profile#scrobbling')}
-				class="mt-1 self-center"
+{#if loading}
+	<CarouselSkeleton count={8} cardWidth="w-32" rounded="full" showSubtitle={false} />
+{:else if !configured}
+	<div class="flex flex-wrap items-center gap-3 text-sm text-muted">
+		<p>Connect a music service to see similar artists</p>
+		<Button variant="primary" size="sm" href={withBasePath('/profile#scrobbling')}>Configure</Button
+		>
+	</div>
+{:else if artists.length === 0}
+	<p class="text-sm text-muted">No similar artists found</p>
+{:else}
+	<HorizontalCarousel>
+		{#each linked as artist (artist.musicbrainz_id)}
+			<MediaTile
+				kind="artist"
+				title={artist.name}
+				href={artistHref(artist.musicbrainz_id)}
+				class="w-32 shrink-0 sm:w-36"
 			>
-				Configure
-			</Button>
-		</Card>
-	{:else if artists.length === 0}
-		<Card class="text-center">
-			<p class="text-muted">No similar artists found</p>
-		</Card>
-	{:else}
-		<HorizontalCarousel>
-			{#each linked as artist (artist.musicbrainz_id)}
-				<a href={artistHref(artist.musicbrainz_id)} class="w-32 shrink-0 cursor-pointer">
-					<div class="relative group">
-						<div
-							class="aspect-square rounded-full overflow-hidden transition-transform group-hover:scale-105"
-						>
-							<ArtistImage
-								mbid={artist.musicbrainz_id}
-								alt={artist.name}
-								size="full"
-								requestSize={250}
-								className="w-full h-full object-cover"
-							/>
-						</div>
-						{#if artist.in_library}
-							<div class="absolute bottom-1 right-1 rounded-full bg-accent p-1 text-accent-content">
-								<Check class="w-3 h-3" strokeWidth={3} />
-							</div>
-						{/if}
-					</div>
-					<p class="text-center text-sm mt-2 truncate font-medium">{artist.name}</p>
-				</a>
-			{/each}
-		</HorizontalCarousel>
-	{/if}
-</div>
+				{#snippet art()}
+					<ArtistImage
+						mbid={artist.musicbrainz_id}
+						alt={artist.name}
+						size="full"
+						requestSize={250}
+						className="h-full w-full"
+					/>
+				{/snippet}
+				{#snippet overlay()}
+					{#if artist.in_library}
+						<StatusChip tone="action" size="xs" icon={Check} class="absolute right-3 bottom-1">
+							<span class="sr-only">In library</span>
+						</StatusChip>
+					{/if}
+				{/snippet}
+			</MediaTile>
+		{/each}
+	</HorizontalCarousel>
+{/if}
