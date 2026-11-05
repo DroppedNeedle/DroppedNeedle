@@ -1,0 +1,98 @@
+{
+  "release-offset": 0,
+  "release-count": 2,
+  "releases": [
+    {
+      "disambiguation": "",
+      "release-group": {
+        "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "secondary-type-ids": [],
+        "first-release-date": "2011-10-20",
+        "primary-type": "Album",
+        "disambiguation": "",
+        "title": "In the Time of the Great Remembering",
+        "id": "deb08635-0f11-4b87-b211-66479b61385f",
+        "secondary-types": []
+      },
+      "title": "In the Time of the Great Remembering",
+      "barcode": "",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "release-events": [
+        {
+          "date": "2011-10-20",
+          "area": {
+            "iso-3166-1-codes": [
+              "CA"
+            ],
+            "sort-name": "Canada",
+            "type": null,
+            "type-id": null,
+            "id": "71bbafaa-e825-3e15-8ca9-017dcad1748b",
+            "disambiguation": "",
+            "name": "Canada"
+          }
+        }
+      ],
+      "packaging": "None",
+      "packaging-id": "119eba76-b343-3e02-a292-f0f00644bb9b",
+      "cover-art-archive": {
+        "artwork": true,
+        "count": 3,
+        "front": true,
+        "darkened": false,
+        "back": true
+      },
+      "quality": "normal",
+      "id": "317fc4d1-b805-49fd-9058-3068e28ddcce",
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "status": "Official",
+      "asin": null,
+      "date": "2011-10-20",
+      "country": "CA"
+    },
+    {
+      "packaging-id": null,
+      "packaging": null,
+      "release-events": [
+        {
+          "date": "2011-10-20",
+          "area": null
+        }
+      ],
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "title": "In the Time of the Great Remembering",
+      "barcode": null,
+      "disambiguation": "",
+      "release-group": {
+        "secondary-types": [],
+        "id": "deb08635-0f11-4b87-b211-66479b61385f",
+        "disambiguation": "",
+        "title": "In the Time of the Great Remembering",
+        "first-release-date": "2011-10-20",
+        "primary-type": "Album",
+        "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "secondary-type-ids": []
+      },
+      "date": "2011-10-20",
+      "country": null,
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "status": "Official",
+      "asin": null,
+      "quality": "normal",
+      "id": "713c7a9e-d756-448b-87a3-c25bf1171fe1",
+      "cover-art-archive": {
+        "back": false,
+        "darkened": false,
+        "front": true,
+        "count": 1,
+        "artwork": true
+      }
+    }
+  ]
+}

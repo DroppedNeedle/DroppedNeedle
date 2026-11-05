@@ -15,6 +15,10 @@ them. None is known to be made up, and none is marked as recorded.
 - `mb_release_group.json`: OK Computer, for `release-group/{mbid}` with
   `inc=artist-credits+media+releases+url-rels`.
 - `mb_search_artists.json`: an artist search, with no include.
+- `mb_artist_releases_band.json`: Ben Caplan & The Casual Smokers' releases, for
+  `release?artist={mbid}` with `inc=release-groups`, recorded from musicbrainz.org on
+  2026-11-05. The band is credited on both releases, its album's release group on
+  Ben Caplan alone, so the band has no release group of its own.
 - `mb_search_release_groups.json`: a release-group search, with no include.
 
 None is re-recorded here. The answers recorded on 2026-10-21 come from the
