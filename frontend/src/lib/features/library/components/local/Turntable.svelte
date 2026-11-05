@@ -1,16 +1,27 @@
+<!--
+	The Listening Room's deck: one brushed-metal panel holding the room's
+	title plate, the platter with its tonearm, and the controls (volume and
+	tone knobs, the transport tray). The record spins while something plays
+	and runs down when paused; the tonearm swings on with the music, lifts
+	on a pause and goes back to its rest when nothing is loaded. Dropping a
+	crate or search row anywhere on the deck plays it.
+-->
 <script lang="ts">
 	import '$lib/features/player/components/now-playing.css';
-	import '$lib/features/library/components/local/deck.css';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { eqStore } from '$lib/features/player/state/eq.svelte';
 	import { scrobbleManager } from '$lib/features/player/state/scrobble.svelte';
 	import EqPanel from '$lib/features/player/components/EqPanel.svelte';
 	import LyricsPanel from '$lib/features/player/components/LyricsPanel.svelte';
 	import AudioQualityBadge from '$lib/features/player/components/AudioQualityBadge.svelte';
+	import DeckVisualiser from '$lib/features/library/components/local/DeckVisualiser.svelte';
+	import { coverTint } from '$lib/features/library/components/local/coverTint';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
+	import BarcodeOrnament from '$lib/ui/BarcodeOrnament.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import Knob from '$lib/ui/Knob.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { getLyricsQuery } from '$lib/features/player/queries/lyrics.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { navidromeFolderScope } from '$lib/features/remote-library/queries/RemoteQueries.svelte';
@@ -28,15 +39,17 @@
 		Sparkles,
 		Dices,
 		ListMusic,
-		Volume2,
-		VolumeX,
 		SlidersHorizontal,
 		Music2,
 		Check,
-		CircleX
+		CircleX,
+		Headphones
 	} from 'lucide-svelte';
 
 	interface Props {
+		/** The library's counts for the title plate; null until they load. */
+		stats: { tracks: number; artists: number; size: string } | null;
+		reducedMotion?: boolean;
 		onDropPlay: (track: CrateTrack) => void;
 		onDropAlbum: (album: SpinAlbum) => void;
 		onPlayAll: () => void;
@@ -45,9 +58,19 @@
 		onOpenQueue: () => void;
 	}
 
-	let { onDropPlay, onDropAlbum, onPlayAll, onShuffleAll, onSurprise, onOpenQueue }: Props =
-		$props();
+	let {
+		stats,
+		reducedMotion = false,
+		onDropPlay,
+		onDropAlbum,
+		onPlayAll,
+		onShuffleAll,
+		onSurprise,
+		onOpenQueue
+	}: Props = $props();
 
+	const uid = $props.id();
+	const arcId = `dn-deck-arc-${uid}`;
 	const np = $derived(playerStore.nowPlaying);
 	const isLocal = $derived(np?.sourceType === 'local');
 	const isPlaying = $derived(playerStore.isPlaying);
@@ -70,9 +93,56 @@
 		lyricsPanelOpen = false;
 	});
 
-	function onVolume(e: Event) {
-		playerStore.setVolume(Number((e.currentTarget as HTMLInputElement).value));
-	}
+	// the glow behind the platter takes the playing cover's colour
+	let tint = $state<string | null>(null);
+	$effect(() => {
+		const url = np?.coverUrl;
+		if (!url) {
+			tint = null;
+			return;
+		}
+		let live = true;
+		void coverTint(url).then((t) => {
+			if (live) tint = t;
+		});
+		return () => {
+			live = false;
+		};
+	});
+
+	// The platter runs up to speed and coasts down rather than snapping.
+	// slower than a real 33 so the sleeve on the label stays readable
+	const DEG_PER_S = 100;
+	let spinner = $state<HTMLDivElement>();
+	let angle = 0;
+	let speed = 0;
+	$effect(() => {
+		const el = spinner;
+		const running = isPlaying && !reducedMotion;
+		if (!el || reducedMotion) return;
+		const target = running ? DEG_PER_S : 0;
+		let raf = 0;
+		let last = performance.now();
+		const tick = (now: number) => {
+			const dt = Math.min(0.1, (now - last) / 1000);
+			last = now;
+			const ease = running ? 2.6 : 1.4;
+			speed += (target - speed) * Math.min(1, dt * ease);
+			if (!running && speed < 0.5) speed = 0;
+			angle = (angle + speed * dt) % 360;
+			el.style.rotate = `${angle}deg`;
+			if (running || speed > 0) raf = requestAnimationFrame(tick);
+		};
+		raf = requestAnimationFrame(tick);
+		return () => cancelAnimationFrame(raf);
+	});
+
+	// The arm rides inward through the track: 13 degrees is the lead-in groove, 28 the run-out.
+	const progressRatio = $derived(
+		playerStore.duration > 0 ? Math.min(1, playerStore.progress / playerStore.duration) : 0
+	);
+	const armAngle = $derived(np ? 13 + progressRatio * 15 : 0);
+	const armState = $derived(!np ? 'rest' : isPlaying ? 'play' : 'cue');
 
 	function fmt(seconds: number): string {
 		if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -81,31 +151,25 @@
 		return `${m}:${s.toString().padStart(2, '0')}`;
 	}
 
-	const progressPct = $derived(
-		playerStore.duration > 0 ? (playerStore.progress / playerStore.duration) * 100 : 0
-	);
-
 	function onSeek(e: Event) {
-		const target = e.currentTarget as HTMLInputElement;
-		const ratio = Number(target.value) / 1000;
+		const ratio = Number((e.currentTarget as HTMLInputElement).value) / 1000;
 		if (playerStore.duration > 0) playerStore.seekTo(ratio * playerStore.duration);
 	}
 
-	function readTrack(e: DragEvent): CrateTrack | null {
-		const raw = e.dataTransfer?.getData('application/x-crate-track');
-		if (!raw) return null;
-		try {
-			return JSON.parse(raw) as CrateTrack;
-		} catch {
-			return null;
-		}
+	// Tone knobs drive one band each of the player's equaliser and switch it on.
+	const BASS_BAND = 1;
+	const TREBLE_BAND = 8;
+	function setBand(band: number, dB: number) {
+		if (!eqStore.enabled) eqStore.toggleEq();
+		eqStore.setBandGain(band, dB);
 	}
+	const dB = (v: number) => `${v > 0 ? '+' : ''}${v} dB`;
 
-	function readAlbum(e: DragEvent): SpinAlbum | null {
-		const raw = e.dataTransfer?.getData('application/x-crate-album');
+	function readJson<T>(e: DragEvent, type: string): T | null {
+		const raw = e.dataTransfer?.getData(type);
 		if (!raw) return null;
 		try {
-			return JSON.parse(raw) as SpinAlbum;
+			return JSON.parse(raw) as T;
 		} catch {
 			return null;
 		}
@@ -122,266 +186,341 @@
 		}
 	}
 
+	function handleDragLeave(e: DragEvent) {
+		const next = e.relatedTarget as Node | null;
+		if (next && (e.currentTarget as HTMLElement).contains(next)) return;
+		dragOver = false;
+	}
+
 	function handleDrop(e: DragEvent) {
 		e.preventDefault();
 		dragOver = false;
-		const track = readTrack(e);
+		const track = readJson<CrateTrack>(e, 'application/x-crate-track');
 		if (track) {
 			onDropPlay(track);
 			return;
 		}
-		const album = readAlbum(e);
+		const album = readJson<SpinAlbum>(e, 'application/x-crate-album');
 		if (album) onDropAlbum(album);
 	}
 </script>
 
-<div
-	class="deck-droptarget relative flex flex-col items-center gap-6 rounded-3xl border border-base-content/5 bg-base-200/40 p-6 backdrop-blur-sm sm:p-8"
+<section
+	class="dn-deck"
 	class:is-over={dragOver}
-	role="region"
+	style:--cover-tint={tint}
 	aria-label="Now playing turntable - drop a track here to play it"
 	ondragover={handleDragOver}
-	ondragleave={() => (dragOver = false)}
+	ondragleave={handleDragLeave}
 	ondrop={handleDrop}
 >
-	<div class="relative aspect-square w-full max-w-[32rem] lg:max-w-[36rem]">
-		<!-- Glow inset-0 must match the record's edge so the circles align. -->
-		<div
-			class="deck-halo absolute inset-0 -z-10 rounded-full"
-			class:animate-glow-pulse={isPlaying}
-		></div>
+	<span class="dn-deck__screw" data-at="tl" aria-hidden="true"></span>
+	<span class="dn-deck__screw" data-at="tr" aria-hidden="true"></span>
+	<span class="dn-deck__screw" data-at="bl" aria-hidden="true"></span>
+	<span class="dn-deck__screw" data-at="br" aria-hidden="true"></span>
 
-		<!-- Records are black in every theme: the platter always takes dark's tokens. -->
-		<div
-			data-theme="dark"
-			class="turntable-platter vinyl-spin absolute inset-0 rounded-full"
-			class:is-paused={!isPlaying}
-		>
-			<div
-				class="pointer-events-none absolute inset-[9%] rounded-full border border-base-content/[0.06]"
-			></div>
-			<div
-				class="pointer-events-none absolute inset-[18%] rounded-full border border-base-content/[0.07]"
-			></div>
-			<div
-				class="pointer-events-none absolute inset-[27%] rounded-full border border-base-content/[0.08]"
-			></div>
-			<!-- AlbumImage so the URL matches browse carousels and hits cache. -->
-			<div
-				class="absolute inset-[33.5%] overflow-hidden rounded-full ring-1 ring-base-content/25 shadow-[0_0_0_2px_oklch(from_var(--color-base-100)_l_c_h_/_0.55),0_2px_8px_oklch(from_var(--color-base-100)_l_c_h_/_0.6)]"
-			>
-				{#if np}
-					<AlbumImage
-						mbid={isValidMbid(np.albumId) ? np.albumId : ''}
-						remoteUrl={np.coverRemoteUrl?.startsWith('http') ? np.coverRemoteUrl : null}
-						customUrl={np.coverUrl}
-						alt={np.albumName ?? 'Album'}
-						size="full"
-						requestSize={250}
-						responsiveSizes="(max-width: 639px) 30vw, 190px"
-						lazy={false}
-						rounded="none"
-						className="h-full w-full object-cover"
-					/>
+	<div class="dn-deck__grid">
+		<!-- the title plate -->
+		<div class="dn-deck__plate">
+			<Headphones class="dn-deck__plate-icon" aria-hidden="true" />
+			<h1 class="dn-deck__title">The Listening Room</h1>
+			<p class="dn-deck__stats">
+				{#if stats}
+					<span>{stats.tracks.toLocaleString()} tracks</span><span class="dn-deck__dot"
+						>&middot;</span
+					><span>{stats.artists.toLocaleString()} artists</span><span class="dn-deck__dot"
+						>&middot;</span
+					><span>{stats.size}</span>
 				{:else}
-					<CoverPlaceholder />
+					Your local music, ready to spin
 				{/if}
+			</p>
+			<div class="dn-deck__badge" aria-hidden="true">
+				<BarcodeOrnament class="h-7 text-base-content" />
+				<span>DN / CC 3.2</span>
 			</div>
-			<div
-				class="absolute inset-[48.5%] rounded-full bg-base-100 ring-1 ring-base-content/30"
-			></div>
-		</div>
-
-		<div
-			class="tonearm pointer-events-none absolute -right-1 -top-1 h-1/2 w-1/2"
-			class:is-playing={isPlaying}
-		>
-			<div
-				class="absolute right-[4.5%] top-[4.5%] h-4 w-4 rounded-full bg-base-300 ring-2 ring-base-content/20"
-			></div>
-			<div
-				class="absolute right-[6.8%] top-[6.8%] h-1.5 w-[84%] origin-right rotate-[28deg] rounded-full bg-gradient-to-l from-base-content/40 to-base-content/15"
-			>
-				<div
-					class="absolute -left-1 top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-sm bg-base-content/55 ring-1 ring-base-content/25"
-				></div>
-			</div>
-		</div>
-	</div>
-
-	{#if np}
-		<div class="flex w-full max-w-md flex-col items-center gap-1 text-center">
-			<div class="flex items-center gap-2">
-				{#if isPlaying}
-					<div class="now-playing-bars now-playing-bars--sm">
-						<span></span><span></span><span></span>
-					</div>
-				{/if}
-				<p class="truncate text-lg font-bold text-base-content">{np.trackName ?? np.albumName}</p>
-			</div>
-			<p class="truncate text-sm text-muted">
-				{np.artistName}{#if np.albumName}<span class="text-muted">
-						&middot; {np.albumName}</span
-					>{/if}
+			<p class="dn-deck__model" aria-hidden="true">
+				DroppedNeedle<br />Listening component<br />Model LR-3.2
 			</p>
 		</div>
 
-		<div class="flex w-full max-w-md items-center gap-3">
-			<span class="w-10 text-right text-xs tabular-nums text-muted"
-				>{fmt(playerStore.progress)}</span
-			>
-			<input
-				type="range"
-				min="0"
-				max="1000"
-				value={Math.round(progressPct * 10)}
-				oninput={onSeek}
-				disabled={!playerStore.isSeekable}
-				aria-label="Seek"
-				class="range range-xs range-accent flex-1"
-			/>
-			<span class="w-10 text-xs tabular-nums text-muted">{fmt(playerStore.duration)}</span>
-		</div>
-
-		<div class="flex items-center gap-2">
-			<IconButton
-				icon={Shuffle}
-				label="Shuffle"
-				active={playerStore.shuffleEnabled}
-				onclick={() => playerStore.toggleShuffle()}
-			/>
-			<IconButton
-				size="sm"
-				icon={ChevronsLeft}
-				label="Previous album"
-				disabled={!playerStore.hasPreviousAlbum}
-				onclick={() => playerStore.previousAlbum()}
-			/>
-			<IconButton
-				icon={SkipBack}
-				label="Previous"
-				disabled={!playerStore.hasPrevious}
-				onclick={() => playerStore.previousTrack()}
-			/>
-			<IconButton
-				variant="primary"
-				size="lg"
-				icon={isPlaying ? Pause : Play}
-				label={isPlaying ? 'Pause' : 'Play'}
-				class="shadow-lg"
-				onclick={() => playerStore.togglePlay()}
-			/>
-			<IconButton
-				icon={SkipForward}
-				label="Next"
-				disabled={!playerStore.hasNext}
-				onclick={() => playerStore.nextTrack()}
-			/>
-			<IconButton
-				size="sm"
-				icon={ChevronsRight}
-				label="Next album"
-				disabled={!playerStore.hasNextAlbum}
-				onclick={() => playerStore.nextAlbum()}
-			/>
-			<div class="indicator">
-				{#if playerStore.upcomingQueueLength > 0}
-					<span class="badge indicator-item badge-xs badge-accent"
-						>{playerStore.upcomingQueueLength}</span
-					>
-				{/if}
-				<IconButton icon={ListMusic} label="Open queue" onclick={onOpenQueue} />
-			</div>
-		</div>
-
-		<div class="flex w-full max-w-md items-center justify-between gap-4">
-			<div class="flex min-w-0 items-center gap-2">
-				{#if format}
-					<AudioQualityBadge codec={format} />
-				{/if}
-				{#if scrobbleManager.enabled && scrobbleManager.status !== 'idle'}
-					<div class="tooltip tooltip-top" data-tip={scrobbleManager.tooltip}>
-						{#if scrobbleManager.status === 'scrobbled'}
-							<Check class="h-4 w-4 text-success" />
-						{:else if scrobbleManager.status === 'error'}
-							<CircleX class="h-4 w-4 text-error" />
-						{:else}
-							<span class="badge badge-info badge-sm gap-1 font-semibold">
-								<span class="status status-md status-info"></span>
-								Tracking
-							</span>
-						{/if}
+		<!-- the platter and its tonearm -->
+		<div class="dn-deck__stage">
+			<div class="dn-deck__glow" class:is-on={isPlaying} aria-hidden="true"></div>
+			<div class="dn-platter" data-theme="dark">
+				<div bind:this={spinner} class="dn-platter__spin">
+					<div class="dn-platter__strobe" aria-hidden="true"></div>
+					<div class="dn-platter__record">
+						<div class="dn-platter__label">
+							{#if np}
+								<AlbumImage
+									mbid={isValidMbid(np.albumId) ? np.albumId : ''}
+									remoteUrl={np.coverRemoteUrl?.startsWith('http') ? np.coverRemoteUrl : null}
+									customUrl={np.coverUrl}
+									alt={np.albumName ?? 'Album'}
+									size="full"
+									requestSize={250}
+									responsiveSizes="(max-width: 639px) 40vw, 220px"
+									lazy={false}
+									rounded="none"
+									className="h-full w-full object-cover"
+								/>
+							{:else}
+								<svg class="dn-platter__blank" viewBox="0 0 100 100" aria-hidden="true">
+									<defs>
+										<path id={arcId} d="M50 50 m-35 0 a35 35 0 1 1 70 0 a35 35 0 1 1 -70 0" />
+									</defs>
+									<text>
+										<textPath href="#{arcId}">DROPPEDNEEDLE · THE LISTENING ROOM ·</textPath>
+									</text>
+									<circle cx="50" cy="50" r="22" class="dn-platter__blank-ring" />
+								</svg>
+							{/if}
+						</div>
 					</div>
-				{/if}
-			</div>
-			<div class="flex shrink-0 items-center gap-2">
-				<div class="flex items-center gap-1.5">
-					{#if playerStore.volume === 0}
-						<VolumeX class="h-4 w-4 shrink-0 opacity-60" />
-					{:else}
-						<Volume2 class="h-4 w-4 shrink-0 opacity-60" />
-					{/if}
-					<input
-						type="range"
-						min="0"
-						max="100"
-						value={playerStore.volume}
-						oninput={onVolume}
-						aria-label="Volume"
-						class="range range-xs range-accent w-20 sm:w-24"
-					/>
 				</div>
-				{#if supportsLyrics}
-					<div class="tooltip tooltip-top" data-tip="Lyrics">
+				<div class="dn-platter__sheen" aria-hidden="true"></div>
+				<div class="dn-platter__spindle" aria-hidden="true"></div>
+			</div>
+
+			<svg class="dn-arm" data-state={armState} viewBox="0 0 100 100" aria-hidden="true">
+				<circle class="dn-arm__rest" cx="92" cy="50" r="2" />
+				<rect class="dn-arm__rest" x="91" y="50" width="2" height="6" rx="0.6" />
+				<circle class="dn-arm__base" cx="92" cy="8" r="5.6" />
+				<circle class="dn-arm__base-ring" cx="92" cy="8" r="3.8" />
+				<g class="dn-arm__swing" style:--arm-angle="{armAngle}deg">
+					<rect class="dn-arm__weight" x="89" y="-1.5" width="6" height="6.5" rx="1.4" />
+					<path class="dn-arm__tube" d="M92 8 L92 58 L89 65" />
+					<g transform="translate(88.6 66) rotate(24)">
+						<rect class="dn-arm__shell" x="-2.4" y="-2.6" width="4.8" height="7.4" rx="0.9" />
+						<path class="dn-arm__lift" d="M2.4 -1.6 l2.8 -1.4" />
+					</g>
+					<circle class="dn-arm__pivot" cx="92" cy="8" r="2.4" />
+				</g>
+			</svg>
+
+			{#if dragOver}
+				<div class="dn-deck__drop" aria-hidden="true">
+					<span>Drop to play</span>
+				</div>
+			{/if}
+		</div>
+
+		<!-- the controls -->
+		<div class="dn-deck__controls">
+			<div class="dn-deck__knobs">
+				<Knob
+					label="Volume"
+					value={playerStore.volume}
+					onchange={(v) => playerStore.setVolume(v)}
+					keyStep={5}
+					marks={[
+						{ at: 0, text: '0' },
+						{ at: 50, text: '5' },
+						{ at: 100, text: '10' }
+					]}
+					format={(v) => `${Math.round(v)}%`}
+				/>
+				<div class="dn-deck__tone">
+					<Knob
+						size="sm"
+						label="Bass"
+						value={eqStore.gains[BASS_BAND] ?? 0}
+						onchange={(v) => setBand(BASS_BAND, v)}
+						min={-12}
+						max={12}
+						origin={0}
+						resetTo={0}
+						dots={9}
+						format={dB}
+						disabled={isYouTube}
+						disabledReason="EQ unavailable for YouTube"
+					/>
+					<Knob
+						size="sm"
+						label="Treble"
+						value={eqStore.gains[TREBLE_BAND] ?? 0}
+						onchange={(v) => setBand(TREBLE_BAND, v)}
+						min={-12}
+						max={12}
+						origin={0}
+						resetTo={0}
+						dots={9}
+						format={dB}
+						disabled={isYouTube}
+						disabledReason="EQ unavailable for YouTube"
+					/>
+					<div
+						class="tooltip tooltip-top dn-deck__eq"
+						data-tip={isYouTube ? 'EQ unavailable for YouTube' : 'Equalizer'}
+					>
 						<IconButton
 							size="sm"
-							icon={Music2}
-							label="Toggle lyrics"
-							active={lyricsPanelOpen}
-							aria-expanded={lyricsPanelOpen}
-							onclick={() => (lyricsPanelOpen = !lyricsPanelOpen)}
+							icon={SlidersHorizontal}
+							label="Toggle equalizer"
+							active={eqStore.enabled && !isYouTube}
+							disabled={isYouTube}
+							aria-expanded={eqPanelOpen}
+							onclick={() => (eqPanelOpen = !eqPanelOpen)}
 						/>
 					</div>
-				{/if}
-				<div
-					class="tooltip tooltip-top"
-					data-tip={isYouTube ? 'EQ unavailable for YouTube' : 'Equalizer'}
-				>
-					<IconButton
-						size="sm"
-						icon={SlidersHorizontal}
-						label="Toggle equalizer"
-						active={eqStore.enabled && !isYouTube}
-						disabled={isYouTube}
-						aria-expanded={eqPanelOpen}
-						onclick={() => (eqPanelOpen = !eqPanelOpen)}
-					/>
 				</div>
 			</div>
-		</div>
 
-		{#if isLocal}
-			<p class="text-[11px] uppercase tracking-wider text-muted">drag a record onto the deck</p>
-		{/if}
-	{:else}
-		<div class="flex w-full max-w-md flex-col items-center gap-4 text-center">
-			<div>
-				<p class="text-lg font-bold text-base-content">Drop the needle</p>
-				<p class="text-sm text-muted">
-					Drag a record from the crate onto the deck, or just hit play.
-				</p>
-			</div>
-			<div class="flex flex-wrap items-center justify-center gap-2">
-				<Button variant="primary" size="sm" icon={Play} onclick={onPlayAll}>Play All</Button>
-				<Button variant="ghost" size="sm" icon={Shuffle} onclick={onShuffleAll}>Shuffle</Button>
-				<Button variant="ghost" size="sm" icon={Dices} onclick={onSurprise}>Surprise me</Button>
-			</div>
-			<div class="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-muted">
-				<Sparkles class="h-3 w-3" /> your library, ready to spin
+			<div class="dn-deck__tray">
+				{#if np}
+					<div class="dn-deck__display" data-theme="dark">
+						<DeckVisualiser {reducedMotion} />
+						<div class="dn-deck__now">
+							<div class="dn-deck__thumb">
+								<AlbumImage
+									mbid={isValidMbid(np.albumId) ? np.albumId : ''}
+									remoteUrl={np.coverRemoteUrl?.startsWith('http') ? np.coverRemoteUrl : null}
+									customUrl={np.coverUrl}
+									alt=""
+									size="full"
+									requestSize={250}
+									lazy={false}
+									rounded="none"
+									className="h-full w-full object-cover"
+								/>
+							</div>
+							<div class="min-w-0 flex-1">
+								<p class="dn-deck__track">
+									{#if isPlaying}
+										<span class="now-playing-bars now-playing-bars--sm" aria-hidden="true">
+											<span></span><span></span><span></span>
+										</span>
+									{/if}
+									<span class="truncate">{np.trackName ?? np.albumName}</span>
+								</p>
+								<p class="dn-deck__artist">
+									{np.artistName}{#if np.albumName}<span>&nbsp;&middot; {np.albumName}</span>{/if}
+								</p>
+							</div>
+						</div>
+					</div>
+					<div class="dn-deck__seek">
+						<span>{fmt(playerStore.progress)}</span>
+						<input
+							type="range"
+							min="0"
+							max="1000"
+							value={Math.round(progressRatio * 1000)}
+							oninput={onSeek}
+							disabled={!playerStore.isSeekable}
+							aria-label="Seek"
+							class="range range-xs range-primary flex-1"
+						/>
+						<span>{fmt(playerStore.duration)}</span>
+					</div>
+
+					<div class="dn-deck__transport">
+						<IconButton
+							size="sm"
+							icon={ChevronsLeft}
+							label="Previous album"
+							disabled={!playerStore.hasPreviousAlbum}
+							onclick={() => playerStore.previousAlbum()}
+						/>
+						<IconButton
+							icon={SkipBack}
+							label="Previous"
+							disabled={!playerStore.hasPrevious}
+							onclick={() => playerStore.previousTrack()}
+						/>
+						<IconButton
+							variant="primary"
+							size="lg"
+							icon={isPlaying ? Pause : Play}
+							label={isPlaying ? 'Pause' : 'Play'}
+							onclick={() => playerStore.togglePlay()}
+						/>
+						<IconButton
+							icon={SkipForward}
+							label="Next"
+							disabled={!playerStore.hasNext}
+							onclick={() => playerStore.nextTrack()}
+						/>
+						<IconButton
+							size="sm"
+							icon={ChevronsRight}
+							label="Next album"
+							disabled={!playerStore.hasNextAlbum}
+							onclick={() => playerStore.nextAlbum()}
+						/>
+					</div>
+
+					<div class="dn-deck__utility">
+						<IconButton
+							size="sm"
+							icon={Shuffle}
+							label="Shuffle"
+							active={playerStore.shuffleEnabled}
+							aria-pressed={playerStore.shuffleEnabled}
+							onclick={() => playerStore.toggleShuffle()}
+						/>
+						<div class="indicator">
+							{#if playerStore.upcomingQueueLength > 0}
+								<span class="badge indicator-item badge-xs badge-primary"
+									>{playerStore.upcomingQueueLength}</span
+								>
+							{/if}
+							<IconButton size="sm" icon={ListMusic} label="Open queue" onclick={onOpenQueue} />
+						</div>
+						{#if supportsLyrics}
+							<div class="tooltip tooltip-top" data-tip="Lyrics">
+								<IconButton
+									size="sm"
+									icon={Music2}
+									label="Toggle lyrics"
+									active={lyricsPanelOpen}
+									aria-expanded={lyricsPanelOpen}
+									onclick={() => (lyricsPanelOpen = !lyricsPanelOpen)}
+								/>
+							</div>
+						{/if}
+						<div class="ml-auto flex min-w-0 items-center gap-1.5">
+							{#if format}
+								<AudioQualityBadge codec={format} compact />
+							{/if}
+							{#if scrobbleManager.enabled && scrobbleManager.status !== 'idle'}
+								<div class="tooltip tooltip-top" data-tip={scrobbleManager.tooltip}>
+									{#if scrobbleManager.status === 'scrobbled'}
+										<Check class="size-4 text-success" aria-label="Scrobbled" />
+									{:else if scrobbleManager.status === 'error'}
+										<CircleX class="size-4 text-error" aria-label="Scrobble failed" />
+									{:else}
+										<StatusChip tone="info" size="xs">Tracking</StatusChip>
+									{/if}
+								</div>
+							{/if}
+						</div>
+					</div>
+
+					{#if isLocal}
+						<p class="dn-deck__hint">drag a record onto the deck</p>
+					{/if}
+				{:else}
+					<h2 class="dn-deck__cue">Drop the needle</h2>
+					<p class="dn-deck__lede">Drag a record from the crate onto the deck, or just hit play.</p>
+					<div class="dn-deck__buttons">
+						<Button variant="primary" size="display-sm" icon={Play} onclick={onPlayAll}
+							>Play All</Button
+						>
+						<Button variant="outline" size="sm" icon={Shuffle} onclick={onShuffleAll}
+							>Shuffle</Button
+						>
+						<Button variant="ghost" size="sm" icon={Dices} onclick={onSurprise}>Surprise me</Button>
+					</div>
+					<p class="dn-deck__hint">
+						<Sparkles class="size-3" aria-hidden="true" /> your library, ready to spin
+					</p>
+				{/if}
 			</div>
 		</div>
-	{/if}
-</div>
+	</div>
+</section>
 
 <EqPanel bind:open={eqPanelOpen} onclose={() => (eqPanelOpen = false)} />
 <LyricsPanel
@@ -398,42 +537,744 @@
 />
 
 <style>
-	.turntable-platter {
+	/* ---- the panel: brushed metal in the theme's own colours ---- */
+	.dn-deck {
+		--metal: var(--color-base-200);
+		--metal-hi: var(--color-base-300);
+		--bevel-hi: rgb(255 255 255 / 0.07);
+		--bevel-lo: rgb(0 0 0 / 0.55);
+		--brush: rgb(255 255 255 / 0.018);
+		position: relative;
+		container: deck / inline-size;
+		outline: 2px solid transparent;
+		outline-offset: 4px;
+		transition: outline-color 0.2s ease;
+		border-radius: 1.25rem;
+		border: 1px solid var(--dn-line);
+		padding: 1.25rem;
 		background:
-			repeating-radial-gradient(
-				circle at center,
-				oklch(from var(--color-base-content) l c h / 0.05) 0px,
-				oklch(from var(--color-base-content) l c h / 0.05) 1px,
-				transparent 2px,
-				transparent 4px
+			repeating-linear-gradient(
+				0deg,
+				var(--brush) 0 1px,
+				transparent 1px 3px,
+				rgb(0 0 0 / 0.02) 3px 4px
 			),
-			radial-gradient(
-				circle at 33% 27%,
-				oklch(from var(--color-base-content) l c h / 0.1),
+			linear-gradient(
+				172deg,
+				color-mix(in oklab, var(--metal-hi) 100%, rgb(255 255 255 / 0.04)) 0%,
+				var(--metal) 46%,
+				color-mix(in oklab, var(--metal) 80%, var(--color-base-100)) 100%
+			);
+		box-shadow:
+			inset 0 1px 0 var(--bevel-hi),
+			inset 0 -2px 0 var(--bevel-lo),
+			inset 0 0 0 4px color-mix(in oklab, var(--metal) 60%, transparent),
+			0 28px 50px -32px rgb(0 0 0 / 0.9);
+	}
+	:global([data-theme='light']) .dn-deck {
+		--metal: var(--color-base-300);
+		--metal-hi: var(--color-base-200);
+		--bevel-hi: rgb(255 255 255 / 0.9);
+		--bevel-lo: rgb(0 0 0 / 0.08);
+		--brush: rgb(0 0 0 / 0.025);
+		box-shadow:
+			inset 0 1px 0 var(--bevel-hi),
+			inset 0 -2px 0 var(--bevel-lo),
+			0 24px 40px -30px rgb(0 0 0 / 0.35);
+	}
+	@media (min-width: 640px) {
+		.dn-deck {
+			padding: 1.75rem;
+		}
+	}
+	.dn-deck.is-over {
+		outline-color: var(--dn-action);
+	}
+
+	.dn-deck__screw {
+		position: absolute;
+		width: 0.75rem;
+		height: 0.75rem;
+		border-radius: 9999px;
+		background:
+			linear-gradient(
+				var(--slot, 45deg),
+				transparent 42%,
+				rgb(0 0 0 / 0.55) 42% 58%,
 				transparent 58%
 			),
-			radial-gradient(circle at center, var(--color-base-300), var(--color-base-100) 95%);
+			radial-gradient(circle at 35% 30%, rgb(255 255 255 / 0.35), transparent 70%),
+			color-mix(in oklab, var(--color-base-content) 30%, var(--metal));
 		box-shadow:
-			inset 0 0 0 1px oklch(from var(--color-base-content) l c h / 0.08),
-			inset 0 0 40px oklch(from var(--color-base-100) l c h / 0.9),
-			0 30px 60px -22px oklch(from var(--color-base-100) l c h / 0.85);
+			inset 0 0 0 1px rgb(0 0 0 / 0.35),
+			0 1px 0 var(--bevel-hi);
+		pointer-events: none;
+	}
+	.dn-deck__screw[data-at='tl'] {
+		top: 0.625rem;
+		left: 0.625rem;
+		--slot: 30deg;
+	}
+	.dn-deck__screw[data-at='tr'] {
+		top: 0.625rem;
+		right: 0.625rem;
+		--slot: 115deg;
+	}
+	.dn-deck__screw[data-at='bl'] {
+		bottom: 0.625rem;
+		left: 0.625rem;
+		--slot: 160deg;
+	}
+	.dn-deck__screw[data-at='br'] {
+		bottom: 0.625rem;
+		right: 0.625rem;
+		--slot: 70deg;
 	}
 
-	.tonearm {
-		transform-origin: 88% 12%;
-		transform: rotate(-148deg);
-		transition: transform 0.9s var(--ease-overshoot);
+	/* ---- layout: stacked, then plate | platter | controls when there is room ---- */
+	.dn-deck__grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-areas: 'plate' 'stage' 'controls';
+		gap: 1.25rem;
+	}
+	.dn-deck__plate {
+		grid-area: plate;
+	}
+	.dn-deck__stage {
+		grid-area: stage;
+	}
+	.dn-deck__controls {
+		grid-area: controls;
 	}
 
-	.tonearm.is-playing {
-		transform: rotate(-117deg);
+	@container deck (min-width: 54rem) {
+		.dn-deck__grid {
+			grid-template-columns: 8.75rem minmax(0, 1fr) 15rem;
+			grid-template-areas: 'plate stage controls';
+			align-items: stretch;
+			gap: 1.5rem;
+		}
 	}
 
-	.deck-halo {
+	/* ---- title plate ---- */
+	.dn-deck__plate {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		column-gap: 0.75rem;
+		align-items: center;
+	}
+	.dn-deck__plate :global(.dn-deck__plate-icon) {
+		grid-row: span 2;
+		width: 2rem;
+		height: 2rem;
+		color: var(--dn-title);
+	}
+	.dn-deck__title {
+		font-family: var(--font-display);
+		font-weight: 400;
+		font-size: 2rem;
+		line-height: 0.95;
+		letter-spacing: 0.01em;
+		text-transform: uppercase;
+		font-synthesis: none;
+		color: var(--dn-title);
+	}
+	.dn-deck__stats {
+		margin-top: 0.375rem;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--color-muted);
+		font-variant-numeric: tabular-nums;
+	}
+	.dn-deck__dot {
+		margin-inline: 0.4em;
+	}
+	.dn-deck__badge,
+	.dn-deck__model {
+		display: none;
+	}
+
+	@container deck (min-width: 54rem) {
+		.dn-deck__plate {
+			display: flex;
+			flex-direction: column;
+			align-items: flex-start;
+			padding-top: 0.25rem;
+		}
+		.dn-deck__plate :global(.dn-deck__plate-icon) {
+			width: 2.25rem;
+			height: 2.25rem;
+			margin-bottom: 0.875rem;
+		}
+		.dn-deck__title {
+			font-size: 2.35rem;
+			line-height: 0.92;
+		}
+		.dn-deck__stats {
+			margin-top: 1rem;
+			display: flex;
+			flex-direction: column;
+			gap: 0.2rem;
+			line-height: 1.35;
+		}
+		.dn-deck__dot {
+			display: none;
+		}
+		.dn-deck__badge {
+			display: flex;
+			flex-direction: column;
+			gap: 0.375rem;
+			width: 100%;
+			margin-top: 1.25rem;
+			padding-top: 1.25rem;
+			border-top: 1px solid var(--dn-line);
+			font-family: var(--font-mono);
+			font-size: 0.6875rem;
+			font-weight: 600;
+			letter-spacing: 0.14em;
+			color: var(--color-base-content);
+		}
+		.dn-deck__model {
+			display: block;
+			margin-top: auto;
+			padding-top: 1.5rem;
+			font-family: var(--font-mono);
+			font-size: 0.625rem;
+			line-height: 1.6;
+			letter-spacing: 0.16em;
+			text-transform: uppercase;
+			color: var(--color-muted);
+		}
+	}
+
+	/* ---- the platter: a black record on a strobed metal platter ---- */
+	.dn-deck__stage {
+		position: relative;
+		width: min(100%, 34rem);
+		margin-inline: auto;
+		aspect-ratio: 1;
+	}
+	@container deck (min-width: 54rem) {
+		.dn-deck__stage {
+			width: calc(100% + 3rem);
+			max-width: 46rem;
+			margin-inline: -1.5rem;
+			align-self: center;
+		}
+	}
+
+	/* record: 88% of the stage, left of centre, so the arm has its corner */
+	.dn-platter,
+	.dn-deck__glow,
+	.dn-deck__drop {
+		position: absolute;
+		left: 0;
+		top: 8%;
+		width: 90%;
+		aspect-ratio: 1;
+		border-radius: 9999px;
+	}
+
+	.dn-deck__glow {
+		inset-inline-start: -6%;
+		top: 2%;
+		width: 100%;
 		background: radial-gradient(
-			circle at center,
-			oklch(from var(--color-accent) l c h / 0.16),
-			transparent 66%
+			circle,
+			color-mix(in oklab, var(--cover-tint, var(--color-primary)) 26%, transparent) 30%,
+			transparent 70%
 		);
+		opacity: 0.35;
+		transition: opacity 1.2s ease;
+		pointer-events: none;
+	}
+	.dn-deck__glow.is-on {
+		opacity: 1;
+	}
+
+	.dn-platter {
+		background:
+			radial-gradient(circle, transparent 0 94.5%, rgb(0 0 0 / 0.5) 95%, transparent 96%),
+			conic-gradient(
+				from 30deg,
+				transparent 0deg,
+				rgb(255 255 255 / 0.14) 40deg,
+				transparent 90deg,
+				rgb(255 255 255 / 0.06) 200deg,
+				transparent 260deg
+			),
+			radial-gradient(circle, var(--color-base-300) 0 80%, var(--color-neutral) 100%);
+		box-shadow:
+			0 1.5rem 2.5rem -1rem rgb(0 0 0 / 0.85),
+			0 0 0 1px rgb(0 0 0 / 0.6),
+			inset 0 0 0 1px rgb(255 255 255 / 0.1);
+	}
+
+	.dn-platter__spin {
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		will-change: rotate;
+	}
+
+	/* the strobe marks round the platter's edge */
+	.dn-platter__strobe {
+		position: absolute;
+		inset: 0.6%;
+		border-radius: inherit;
+		background: repeating-conic-gradient(
+			rgb(255 255 255 / 0.2) 0 0.45deg,
+			transparent 0.45deg 2.4deg
+		);
+		mask: radial-gradient(circle closest-side, transparent 95%, black 95.5% 98.5%, transparent 99%);
+		-webkit-mask: radial-gradient(
+			circle closest-side,
+			transparent 95%,
+			black 95.5% 98.5%,
+			transparent 99%
+		);
+	}
+
+	.dn-platter__record {
+		container-type: inline-size;
+		position: absolute;
+		inset: 7%;
+		border-radius: inherit;
+		background:
+			repeating-radial-gradient(
+				circle closest-side,
+				rgb(255 255 255 / 0.045) 0 0.18cqw,
+				transparent 0.18cqw 0.55cqw
+			),
+			repeating-radial-gradient(
+				circle closest-side,
+				transparent 0 4.6cqw,
+				rgb(0 0 0 / 0.5) 4.6cqw 5cqw,
+				transparent 5cqw 8.2cqw
+			),
+			radial-gradient(
+				circle closest-side,
+				var(--dn-vinyl) 0 34%,
+				color-mix(in oklab, var(--dn-vinyl-groove) 50%, var(--dn-vinyl)) 70%,
+				var(--dn-vinyl) 96%,
+				var(--dn-vinyl-groove) 99%,
+				var(--dn-vinyl) 100%
+			);
+		box-shadow:
+			0 0 0 1px rgb(0 0 0 / 0.7),
+			0 0.4rem 1rem rgb(0 0 0 / 0.6);
+	}
+
+	.dn-platter__label {
+		position: absolute;
+		inset: 33%;
+		overflow: hidden;
+		border-radius: 9999px;
+		box-shadow:
+			0 0 0 0.25cqw rgb(0 0 0 / 0.8),
+			0 0 0 0.9cqw color-mix(in oklab, var(--dn-vinyl-groove) 70%, var(--dn-vinyl));
+	}
+	/* nothing loaded: the house label, acid with a printed ring of type */
+	.dn-platter__blank {
+		width: 100%;
+		height: 100%;
+		background:
+			radial-gradient(circle at 35% 30%, rgb(255 255 255 / 0.2), transparent 60%),
+			color-mix(in oklab, var(--dn-action) 78%, var(--dn-vinyl-groove));
+		rotate: -24deg;
+	}
+	.dn-platter__blank text {
+		fill: color-mix(in oklab, var(--dn-action-content) 75%, transparent);
+		font-family: var(--font-mono);
+		font-size: 6.6px;
+		font-weight: 700;
+		letter-spacing: 0.12em;
+	}
+	.dn-platter__blank-ring {
+		fill: none;
+		stroke: color-mix(in oklab, var(--dn-action-content) 35%, transparent);
+		stroke-width: 0.6;
+	}
+
+	/* light that stays put while the record turns under it */
+	.dn-platter__sheen {
+		position: absolute;
+		inset: 7%;
+		border-radius: inherit;
+		pointer-events: none;
+		background: conic-gradient(
+			from 20deg,
+			transparent 0deg,
+			rgb(255 255 255 / 0.1) 24deg,
+			transparent 52deg,
+			transparent 196deg,
+			rgb(255 255 255 / 0.07) 222deg,
+			transparent 252deg
+		);
+		mask: radial-gradient(circle closest-side, transparent 34%, black 35%);
+		-webkit-mask: radial-gradient(circle closest-side, transparent 34%, black 35%);
+	}
+
+	.dn-platter__spindle {
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		width: 2.2%;
+		aspect-ratio: 1;
+		translate: -50% -50%;
+		border-radius: 9999px;
+		background: radial-gradient(
+			circle at 35% 30%,
+			rgb(255 255 255 / 0.9),
+			color-mix(in oklab, var(--color-base-content) 50%, black) 70%
+		);
+		box-shadow: 0 1px 2px rgb(0 0 0 / 0.8);
+	}
+
+	/* ---- tonearm ---- */
+	.dn-arm {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		overflow: visible;
+		pointer-events: none;
+		filter: drop-shadow(0 0.35rem 0.35rem rgb(0 0 0 / 0.55));
+		transition: filter 0.5s ease;
+	}
+	.dn-arm[data-state='cue'] {
+		filter: drop-shadow(0.4rem 0.9rem 0.5rem rgb(0 0 0 / 0.45));
+	}
+	.dn-arm__swing {
+		transform-origin: 92px 8px;
+		transform-box: view-box;
+		transform: rotate(0deg);
+		transition: transform 1.4s var(--ease-spring);
+	}
+	.dn-arm[data-state='play'] .dn-arm__swing,
+	.dn-arm[data-state='cue'] .dn-arm__swing {
+		transform: rotate(var(--arm-angle));
+	}
+	.dn-arm__base {
+		fill: color-mix(in oklab, var(--color-base-content) 22%, var(--metal));
+		stroke: rgb(0 0 0 / 0.45);
+		stroke-width: 0.4;
+	}
+	.dn-arm__base-ring {
+		fill: var(--dn-vinyl);
+		stroke: rgb(255 255 255 / 0.18);
+		stroke-width: 0.35;
+	}
+	.dn-arm__rest {
+		fill: color-mix(in oklab, var(--color-base-content) 35%, var(--metal));
+	}
+	.dn-arm__weight {
+		fill: var(--dn-vinyl-groove);
+		stroke: rgb(255 255 255 / 0.25);
+		stroke-width: 0.35;
+	}
+	.dn-arm__tube {
+		fill: none;
+		stroke: color-mix(in oklab, white 62%, var(--color-base-300));
+		stroke-width: 1.25;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+	:global([data-theme='light']) .dn-arm__tube {
+		stroke: color-mix(in oklab, var(--color-base-content) 70%, white);
+	}
+	.dn-arm__shell {
+		fill: var(--dn-vinyl);
+		stroke: rgb(255 255 255 / 0.3);
+		stroke-width: 0.35;
+	}
+	.dn-arm__lift {
+		fill: none;
+		stroke: color-mix(in oklab, white 70%, var(--color-base-content));
+		stroke-width: 0.8;
+		stroke-linecap: round;
+	}
+	.dn-arm__pivot {
+		fill: var(--dn-action);
+	}
+
+	/* ---- drop target ---- */
+	.dn-deck__drop {
+		display: grid;
+		place-items: center;
+		pointer-events: none;
+		border: 3px dashed var(--dn-action);
+		background: color-mix(in oklab, var(--dn-action) 12%, transparent);
+	}
+	.dn-deck__drop span {
+		padding: 0.5rem 1rem;
+		border-radius: 9999px;
+		background: var(--dn-action);
+		color: var(--dn-action-content);
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+	}
+
+	/* ---- controls ---- */
+	.dn-deck__controls {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		min-width: 0;
+	}
+	.dn-deck__knobs {
+		display: flex;
+		align-items: flex-start;
+		justify-content: center;
+		gap: 0.75rem;
+	}
+	.dn-deck__tone {
+		display: grid;
+		grid-template-columns: auto auto;
+		gap: 0.5rem 0.75rem;
+		align-items: start;
+		justify-items: center;
+	}
+	.dn-deck__eq {
+		grid-column: span 2;
+	}
+
+	@container deck (min-width: 34rem) and (max-width: 53.99rem) {
+		.dn-deck__controls {
+			display: grid;
+			grid-template-columns: auto minmax(0, 1fr);
+			gap: 1.5rem;
+			align-items: start;
+		}
+	}
+	@container deck (max-width: 33.99rem) {
+		.dn-deck__tone {
+			grid-template-columns: auto auto auto;
+			align-items: center;
+		}
+		.dn-deck__eq {
+			grid-column: auto;
+			grid-row: 1;
+			grid-column-start: 3;
+			align-self: center;
+		}
+		.dn-deck__knobs :global(.dn-knob[data-size='lg']) {
+			--knob-size: 7rem;
+		}
+	}
+	@container deck (max-width: 21.99rem) {
+		.dn-deck__knobs {
+			gap: 0.5rem;
+		}
+		.dn-deck__tone {
+			grid-template-columns: auto auto;
+			gap: 0.25rem 0.5rem;
+		}
+		.dn-deck__eq {
+			grid-row: auto;
+			grid-column: span 2;
+		}
+		.dn-deck__knobs :global(.dn-knob[data-size='lg']) {
+			--knob-size: 5.75rem;
+		}
+		.dn-deck__knobs :global(.dn-knob[data-size='sm']) {
+			--knob-size: 3.75rem;
+		}
+	}
+	@container deck (min-width: 54rem) {
+		.dn-deck__knobs {
+			justify-content: space-between;
+			gap: 0.5rem;
+		}
+		.dn-deck__tone {
+			grid-template-columns: auto;
+			gap: 0.25rem;
+		}
+		.dn-deck__tone :global(.dn-knob[data-size='sm']) {
+			--knob-size: 4.25rem;
+		}
+		.dn-deck__eq {
+			grid-column: auto;
+		}
+	}
+
+	/* the inset tray for what's on the deck */
+	.dn-deck__tray {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		padding: 1rem;
+		border-radius: 0.875rem;
+		background: color-mix(in oklab, var(--color-base-100) 70%, transparent);
+		box-shadow:
+			inset 0 2px 6px rgb(0 0 0 / 0.45),
+			inset 0 0 0 1px rgb(0 0 0 / 0.35),
+			0 1px 0 var(--bevel-hi);
+	}
+	:global([data-theme='light']) .dn-deck__tray {
+		background: color-mix(in oklab, var(--color-base-100) 80%, var(--color-base-300));
+		box-shadow:
+			inset 0 2px 5px rgb(0 0 0 / 0.1),
+			inset 0 0 0 1px rgb(0 0 0 / 0.08),
+			0 1px 0 var(--bevel-hi);
+	}
+	@container deck (min-width: 54rem) {
+		.dn-deck__controls {
+			justify-content: space-between;
+		}
+		.dn-deck__tray {
+			padding: 0.875rem;
+		}
+	}
+
+	.dn-deck__cue {
+		font-family: var(--font-display);
+		font-weight: 400;
+		font-size: 1.75rem;
+		line-height: 1;
+		letter-spacing: 0.01em;
+		text-transform: uppercase;
+		font-synthesis: none;
+		color: var(--color-base-content);
+	}
+	.dn-deck__lede {
+		margin-top: -0.25rem;
+		font-size: 0.875rem;
+		line-height: 1.4;
+		color: var(--color-muted);
+	}
+	.dn-deck__buttons {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.375rem;
+	}
+	@container deck (min-width: 34rem) and (max-width: 53.99rem) {
+		.dn-deck__buttons {
+			grid-template-columns: 1fr 1fr;
+		}
+		.dn-deck__buttons > :global(:first-child) {
+			grid-column: span 2;
+		}
+	}
+	.dn-deck__hint {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.375rem;
+		margin-top: auto;
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		text-align: center;
+		color: var(--color-muted);
+	}
+
+	/* the display window: dark glass in both themes, the spectrum behind */
+	.dn-deck__display {
+		position: relative;
+		isolation: isolate;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+		gap: 0.625rem;
+		padding: 0.75rem;
+		border-radius: 0.625rem;
+		background:
+			linear-gradient(180deg, rgb(255 255 255 / 0.04), transparent 40%), var(--color-base-100);
+		color: var(--color-base-content);
+		box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
+	}
+	.dn-deck__now {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		min-width: 0;
+	}
+	.dn-deck__thumb {
+		width: 2.75rem;
+		height: 2.75rem;
+		flex: none;
+		overflow: hidden;
+		border-radius: 0.25rem;
+		box-shadow: 0 0 0 1px rgb(255 255 255 / 0.12);
+	}
+	.dn-deck__track {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		min-width: 0;
+		font-size: 0.9375rem;
+		font-weight: 700;
+		line-height: 1.25;
+	}
+	.dn-deck__artist {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 0.8125rem;
+		color: var(--dn-muted);
+	}
+	.dn-deck__seek {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--dn-muted);
+	}
+	.dn-deck__seek span {
+		min-width: 2.25rem;
+	}
+	.dn-deck__seek span:last-child {
+		text-align: right;
+	}
+
+	.dn-deck__transport {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.25rem;
+	}
+	.dn-deck__utility {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		min-width: 0;
+	}
+
+	@media (forced-colors: active) {
+		.dn-deck:not(.is-over) {
+			outline: none;
+		}
+		.dn-platter,
+		.dn-platter__record,
+		.dn-platter__label {
+			border: 2px solid CanvasText;
+		}
+		.dn-deck__screw,
+		.dn-deck__glow,
+		.dn-platter__sheen {
+			display: none;
+		}
+	}
+	@media (prefers-contrast: more) {
+		.dn-deck__screw,
+		.dn-deck__glow,
+		.dn-platter__sheen,
+		.dn-platter__strobe {
+			display: none;
+		}
+		.dn-deck {
+			background: var(--color-base-200);
+			border-color: var(--color-base-content);
+		}
 	}
 </style>

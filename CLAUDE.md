@@ -710,7 +710,8 @@ Run from the repo root. `make help` lists every target.
   in list rows), `StatRow` (counts split by rules), `JumpTabs` (a page's
   sticky section strip; `look="pills"` fills the current link, `actions` sit at
   its end), `HalftonePhoto` (a photo printed as a fading
-  halftone), `PageShell`, `Toaster`, `CoverPlaceholder`,
+  halftone), `Knob` (a rotary slider: a dial over a dotted scale),
+  `PageShell`, `Toaster`, `CoverPlaceholder`,
   `UnsavedChangesGuard`, `Logo`, `PaperPanel` (the light island), `Card`'s
   `torn` paper, `Button`'s condensed caps sizes (`display`, `display-sm`)
   and `paper` outline (a button on a paper card),

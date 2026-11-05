@@ -16,13 +16,14 @@
 			playerStore.nowPlaying.sourceType !== 'youtube'
 	);
 
-	const BARS = 56;
-	const PEAK = 0.5;
+	const BARS = 32;
+	const PEAK = 0.85;
 	// Only the lower ~70% of bins carry useful energy; top bins sit near zero.
 	const USABLE_FRACTION = 0.7;
 
-	function cssVar(name: string, fallback: string): string {
-		const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+	// read from the canvas, so a dark display window inside a light page gets dark's colours
+	function cssVar(el: Element, name: string, fallback: string): string {
+		const v = getComputedStyle(el).getPropertyValue(name).trim();
 		return v || fallback;
 	}
 
@@ -53,8 +54,8 @@
 			return () => ro.disconnect();
 		}
 
-		const accent = cssVar('--color-accent', '#bbdb9b');
-		const primary = cssVar('--color-primary', '#aed5f2');
+		const accent = cssVar(el, '--color-accent', '#bbdb9b');
+		const primary = cssVar(el, '--color-primary', '#aed5f2');
 		const heights = new Float32Array(BARS);
 		let raf = 0;
 
@@ -108,14 +109,13 @@
 <style>
 	.deck-visualiser {
 		opacity: 0;
-		filter: blur(2px);
 		transition: opacity 0.9s ease;
-		-webkit-mask-image: linear-gradient(to top, #000 0%, #000 42%, transparent 78%);
-		mask-image: linear-gradient(to top, #000 0%, #000 42%, transparent 78%);
+		-webkit-mask-image: linear-gradient(to top, #000 0%, transparent 70%);
+		mask-image: linear-gradient(to top, #000 0%, transparent 70%);
 	}
 
 	.deck-visualiser.is-active {
-		opacity: 0.2;
+		opacity: 0.32;
 	}
 
 	@media (prefers-reduced-motion: reduce) {

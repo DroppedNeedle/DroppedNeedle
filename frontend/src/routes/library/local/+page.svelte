@@ -15,9 +15,11 @@
 	import Crate from '$lib/features/library/components/local/Crate.svelte';
 	import QueueDrawer from '$lib/features/player/components/QueueDrawer.svelte';
 	import SearchCard from '$lib/features/library/components/local/SearchCard.svelte';
-	import DeckVisualiser from '$lib/features/library/components/local/DeckVisualiser.svelte';
 	import HorizontalCarousel from '$lib/ui/HorizontalCarousel.svelte';
+	import SectionHead from '$lib/ui/SectionHead.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
+	import MediaTile from '$lib/media/MediaTile.svelte';
 	import NoFilesBadge from '$lib/features/library/components/NoFilesBadge.svelte';
 	import {
 		getLocalRecentV3Query,
@@ -36,7 +38,7 @@
 		suggestionToCrateTrack,
 		type SpinAlbum
 	} from '$lib/features/library/queries/LocalV3Adapters';
-	import { ChevronDown, Headphones, Play, Shuffle, Clock } from 'lucide-svelte';
+	import { ChevronDown, Headphones, Play } from 'lucide-svelte';
 
 	const MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 	const isMbid = (id?: string | null): id is string => !!id && MBID_RE.test(id);
@@ -80,6 +82,15 @@
 	const rediscoverAlbums = $derived(rediscoverQuery.data?.items ?? []);
 	const decades = $derived(decadesQuery.data?.items ?? []);
 	const stats = $derived(statsQuery.data ?? null);
+	const plateStats = $derived(
+		stats
+			? {
+					tracks: stats.total_tracks,
+					artists: stats.total_artists,
+					size: formatBytes(stats.total_size_bytes)
+				}
+			: null
+	);
 	const shelfAlbums = $derived(shelfQuery.data?.items ?? []);
 	const openShelf = $derived.by(() => {
 		const shelf = decades.find((d) => d.decade === openDecade) ?? null;
@@ -120,7 +131,6 @@
 	);
 
 	const isPlaying = $derived(playerStore.isPlaying);
-	const heroCover = $derived(playerStore.nowPlaying?.coverUrl ?? null);
 	const upcomingCount = $derived(playerStore.upcomingQueueLength);
 
 	// measured because the deck is content-sized, so a fixed rem value can't track it
@@ -277,208 +287,138 @@
 
 <svelte:head><title>Listening Room &middot; DroppedNeedle</title></svelte:head>
 
-<div
-	class="listening-room relative isolate h-[calc(100dvh-3.5rem)] overflow-y-auto overscroll-contain {reducedMotion
-		? ''
-		: 'snap-y snap-proximity'}"
->
-	{#if heroCover}
-		<div
-			class="pointer-events-none fixed inset-0 -z-10 bg-cover bg-center transition-opacity duration-1000"
-			style="background-image:url({heroCover}); opacity:{dimmed
-				? 0.22
-				: 0.1}; filter:blur(64px) saturate(1.1);"
-		></div>
-	{/if}
+<div class="listening-room px-4 pt-4 pb-16 sm:px-6 sm:pt-6 lg:px-8">
 	<div
-		class="pointer-events-none fixed inset-0 -z-10 bg-gradient-to-b from-base-100/60 via-base-100/80 to-base-100"
-	></div>
-
-	<section
-		bind:this={heroEl}
-		class="relative isolate flex min-h-[calc(100dvh-3.5rem)] snap-start flex-col px-4 pt-5 sm:px-6 lg:px-8"
+		class="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_20rem] 2xl:grid-cols-[minmax(0,1fr)_24rem]"
 	>
-		<DeckVisualiser {reducedMotion} />
-
-		<header class="mb-4 flex items-center gap-3">
-			<Headphones class="h-6 w-6 text-accent" />
-			<div>
-				<h1 class="text-xl font-black tracking-tight sm:text-2xl">The Listening Room</h1>
-				<p class="text-xs text-muted">
-					{#if stats}{stats.total_tracks.toLocaleString()} tracks &middot; {stats.total_artists} artists
-						&middot; {formatBytes(stats.total_size_bytes)}{:else}Your local music, ready to spin{/if}
-				</p>
+		<div bind:this={heroEl} bind:clientHeight={deckHeight} class="min-w-0 self-start">
+			<Turntable
+				stats={plateStats}
+				{reducedMotion}
+				onDropPlay={playCrateTrack}
+				onDropAlbum={(a) => playAlbum(a)}
+				onPlayAll={playAll}
+				onShuffleAll={shuffleAll}
+				onSurprise={surprise}
+				onOpenQueue={() => (queueDrawerOpen = true)}
+			/>
+		</div>
+		<div
+			class="flex flex-col gap-4 lg:h-[var(--deck-h)]"
+			style:--deck-h={deckHeight ? `${deckHeight}px` : '44rem'}
+		>
+			<div class="h-[30rem] min-h-0 lg:h-auto lg:flex-[5]">
+				<Crate
+					tracks={crateTracks}
+					isLoading={suggestionsQuery.isLoading || suggestionsQuery.isFetching}
+					{reducedMotion}
+					{countdownFraction}
+					refreshNonce={suggestionsQuery.dataUpdatedAt ?? 0}
+					refreshIntervalMs={CRATE_REFRESH_MS}
+					{upcomingCount}
+					onRefresh={() => suggestionsQuery.refetch()}
+					onPlay={playCrateTrack}
+					onQueue={queueCrateTrack}
+					onQueueAlbum={queueAlbum}
+				/>
 			</div>
-		</header>
-
-		<div class="grid flex-1 grid-cols-1 items-center gap-6 lg:grid-cols-12">
-			<div class="lg:col-span-7 xl:col-span-8">
-				<div bind:clientHeight={deckHeight}>
-					<Turntable
-						onDropPlay={playCrateTrack}
-						onDropAlbum={(a) => playAlbum(a)}
-						onPlayAll={playAll}
-						onShuffleAll={shuffleAll}
-						onSurprise={surprise}
-						onOpenQueue={() => (queueDrawerOpen = true)}
-					/>
-				</div>
-			</div>
-			<div
-				class="flex flex-col gap-4 lg:col-span-5 lg:h-[var(--deck-h)] xl:col-span-4"
-				style:--deck-h={deckHeight ? `${deckHeight}px` : '44rem'}
-			>
-				<div
-					class="min-h-0 flex-[3] rounded-3xl border border-base-content/5 bg-base-200/30 p-3 backdrop-blur-sm"
-				>
-					<Crate
-						tracks={crateTracks}
-						isLoading={suggestionsQuery.isLoading || suggestionsQuery.isFetching}
-						{reducedMotion}
-						{countdownFraction}
-						refreshNonce={suggestionsQuery.dataUpdatedAt ?? 0}
-						refreshIntervalMs={CRATE_REFRESH_MS}
-						{upcomingCount}
-						onRefresh={() => suggestionsQuery.refetch()}
-						onPlay={playCrateTrack}
-						onQueue={queueCrateTrack}
-						onQueueAlbum={queueAlbum}
-					/>
-				</div>
-				<div
-					class="min-h-0 flex-[2] rounded-3xl border border-base-content/5 bg-base-200/30 p-3 backdrop-blur-sm"
-				>
-					<SearchCard
-						{reducedMotion}
-						onPlayTrack={searchPlayTrack}
-						onQueueTrack={searchQueueTrack}
-						onPlayAlbum={(a) => playAlbum(a)}
-						onQueueAlbum={queueAlbum}
-					/>
-				</div>
+			<div class="h-[22rem] min-h-0 lg:h-auto lg:flex-[4]">
+				<SearchCard
+					{reducedMotion}
+					onPlayTrack={searchPlayTrack}
+					onQueueTrack={searchQueueTrack}
+					onPlayAlbum={(a) => playAlbum(a)}
+					onQueueAlbum={queueAlbum}
+				/>
 			</div>
 		</div>
+	</div>
 
-		<div class="flex items-center justify-center py-4 text-muted">
-			<div class="flex items-center gap-2 text-xs uppercase tracking-[0.2em]">
-				Scroll for more
-				<ChevronDown class="h-4 w-4 {reducedMotion ? '' : 'animate-float'}" />
-			</div>
-		</div>
-	</section>
-
-	<section
-		class="snap-start space-y-10 px-4 pb-24 pt-6 transition-opacity duration-700 sm:px-6 lg:px-8 {dimmed
-			? 'opacity-60'
-			: 'opacity-100'}"
+	<div
+		class="mt-12 space-y-12 transition-opacity duration-700 {dimmed ? 'opacity-60' : 'opacity-100'}"
 	>
-		{#snippet shelf(title: string, icon: typeof Play, albums: AlbumCardV3[])}
+		{#snippet shelf(title: string, albums: AlbumCardV3[])}
 			{#if albums.length}
-				{@const Icon = icon}
-				<div>
-					<div class="mb-3 flex items-center gap-2">
-						<Icon class="h-4 w-4 text-accent" />
-						<h2 class="text-lg font-bold">{title}</h2>
-					</div>
+				<section>
+					<SectionHead {title} />
 					<HorizontalCarousel>
 						{#each albums as album, i (`${album.id}:${i}`)}
 							{@render albumTile(album)}
 						{/each}
 					</HorizontalCarousel>
-				</div>
+				</section>
 			{/if}
 		{/snippet}
 
 		{#snippet albumTile(album: AlbumCardV3)}
-			<div class="group w-36 shrink-0 sm:w-40">
-				{#if album.track_count === 0}
-					<div
-						class="relative block aspect-square w-full overflow-hidden rounded-xl ring-1 ring-base-content/10"
-					>
+			<div class="w-36 shrink-0 sm:w-40 lg:w-44">
+				<MediaTile
+					title={album.title}
+					href={isMbid(album.release_group_mbid)
+						? withBasePath(`/album/${album.release_group_mbid}`)
+						: undefined}
+					class="w-full"
+				>
+					{#snippet art()}
 						<AlbumImage
 							customUrl={albumCoverUrl(album)}
 							alt={album.title}
 							size="full"
 							requestSize={250}
-							rounded="none"
+							rounded="md"
 							className="h-full w-full object-cover"
 						/>
-						<NoFilesBadge className="absolute right-2 top-2 z-10" />
-					</div>
-				{:else}
-					<button
-						class="relative block aspect-square w-full overflow-hidden rounded-xl ring-1 ring-base-content/10 transition-transform group-hover:scale-[1.03]"
-						onclick={() => playAlbum(album)}
-						title="Play {album.title}"
-					>
-						<AlbumImage
-							customUrl={albumCoverUrl(album)}
-							alt={album.title}
-							size="full"
-							requestSize={250}
-							rounded="none"
-							className="h-full w-full object-cover"
-						/>
-						<div
-							class="absolute inset-0 flex items-center justify-center bg-base-100/40 opacity-0 backdrop-blur-[2px] transition-opacity group-hover:opacity-100"
-						>
-							<span
-								class="grid size-8 place-items-center rounded-full bg-primary text-primary-content shadow-lg"
-								aria-hidden="true"><Play class="h-4 w-4" /></span
-							>
-						</div>
-					</button>
-				{/if}
-				{#if isMbid(album.release_group_mbid)}
-					<a
-						href={withBasePath(`/album/${album.release_group_mbid}`)}
-						class="mt-2 block truncate text-sm font-semibold transition-colors hover:text-accent hover:underline"
-						title={album.title}>{album.title}</a
-					>
-				{:else}
-					<p class="mt-2 truncate text-sm font-semibold">{album.title}</p>
-				{/if}
+					{/snippet}
+					{#snippet overlay()}
+						{#if album.track_count === 0}
+							<NoFilesBadge className="absolute right-2 top-2" />
+						{:else}
+							<IconButton
+								variant="primary"
+								size="sm"
+								icon={Play}
+								label="Play {album.title}"
+								class="tile-play absolute right-2 bottom-2 shadow-lg"
+								onclick={() => playAlbum(album)}
+							/>
+						{/if}
+					{/snippet}
+				</MediaTile>
 				{#if isMbid(album.artist_mbid)}
-					<a
-						href={withBasePath(`/artist/${album.artist_mbid}`)}
-						class="block truncate text-xs text-muted transition-colors hover:text-accent hover:underline"
-						title={album.artist_name}>{album.artist_name}</a
-					>
+					<a href={withBasePath(`/artist/${album.artist_mbid}`)} class="tile-artist">
+						{album.artist_name}
+					</a>
 				{:else}
-					<p class="truncate text-xs text-muted">{album.artist_name}</p>
+					<p class="tile-artist">{album.artist_name}</p>
 				{/if}
 			</div>
 		{/snippet}
 
-		{@render shelf('Recently Added', Clock, recentAlbums)}
-		{@render shelf('Rediscover', Shuffle, rediscoverAlbums)}
+		{@render shelf('Recently Added', recentAlbums)}
+		{@render shelf('Rediscover', rediscoverAlbums)}
 
 		{#if decades.length}
-			<div>
-				<div class="mb-3 flex items-center gap-2">
-					<Headphones class="h-4 w-4 text-accent" />
-					<h2 class="text-lg font-bold">By Decade</h2>
-				</div>
-
-				<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+			<section>
+				<SectionHead title="By Decade" />
+				<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6">
 					{#each decades as shelfData (shelfData.decade)}
 						{@const active = openDecade === shelfData.decade}
 						{@const face =
 							active && shelfAlbums.length ? shelfAlbums[0] : faceByDecade.get(shelfData.decade)}
 						{@const faceCover = face ? albumCoverUrl(face) : null}
 						<button
-							class="decade-card group relative aspect-[4/3] overflow-hidden rounded-2xl border p-4 text-left {active
-								? 'border-accent/60 ring-1 ring-accent/40'
-								: 'border-base-content/10 bg-base-200/40'}"
+							type="button"
+							class="decade-card"
+							class:is-open={active}
 							onclick={() => (openDecade = active ? null : shelfData.decade)}
 							aria-expanded={active}
 							title="Browse {shelfData.label}"
 						>
+							<span class="decade-card__label">{shelfData.label}</span>
+							<span class="decade-card__count">{shelfData.album_count} albums</span>
+							<ChevronDown class="decade-card__chevron" aria-hidden="true" />
 							{#if faceCover}
-								<div
-									class="pointer-events-none absolute inset-0 scale-110 opacity-20 blur-[2px] transition-opacity duration-300 group-hover:opacity-30"
-									aria-hidden="true"
-								>
+								<span class="decade-card__sleeve" aria-hidden="true">
 									<AlbumImage
 										customUrl={faceCover}
 										alt=""
@@ -486,39 +426,29 @@
 										requestSize={250}
 										rounded="none"
 										showPlaceholder={false}
-										className="h-full w-full"
+										className="h-full w-full object-cover"
 									/>
-								</div>
+								</span>
 							{/if}
-							<div
-								class="pointer-events-none absolute inset-0 bg-gradient-to-t from-base-100/85 via-base-100/40 to-transparent"
-							></div>
-							<ChevronDown
-								class="absolute right-3 top-3 h-4 w-4 text-muted transition-transform duration-300 {active
-									? 'rotate-180 text-accent'
-									: ''}"
-							/>
-							<div class="absolute inset-x-4 bottom-3">
-								<div class="text-2xl font-black tracking-tight">{shelfData.label}</div>
-								<div class="text-xs text-muted">{shelfData.album_count} albums</div>
-							</div>
 						</button>
 					{/each}
 				</div>
 
 				{#if openShelf}
-					<div
-						class="mt-4 rounded-2xl border border-base-content/5 bg-base-200/30 p-4 backdrop-blur-sm"
-						transition:slide={{ duration: reducedMotion ? 0 : 280 }}
-					>
-						<div class="mb-3 flex items-baseline gap-2">
-							<h3 class="text-base font-bold text-base-content/85">{openShelf.label}</h3>
-							<span class="text-xs text-muted">{openShelf.album_count} albums</span>
-						</div>
+					<div class="decade-shelf" transition:slide={{ duration: reducedMotion ? 0 : 280 }}>
+						<SectionHead title={openShelf.label} as="h3">
+							{#snippet chips()}
+								<span class="decade-card__count">{openShelf.album_count} albums</span>
+							{/snippet}
+						</SectionHead>
 						{#if shelfQuery.isLoading}
-							<div class="flex gap-3">
+							<div class="flex gap-4 overflow-hidden">
 								{#each Array(6) as _, i (`shelf-skeleton-${i}`)}
-									<div class="h-36 w-36 shrink-0 animate-pulse rounded-xl bg-base-200/60"></div>
+									<div class="w-36 shrink-0 sm:w-40 lg:w-44">
+										<div class="skeleton aspect-square w-full rounded-md"></div>
+										<div class="skeleton mt-2.5 h-3.5 w-3/4"></div>
+										<div class="skeleton mt-1.5 h-3 w-1/2"></div>
+									</div>
 								{/each}
 							</div>
 						{:else}
@@ -530,12 +460,12 @@
 						{/if}
 					</div>
 				{/if}
-			</div>
+			</section>
 		{/if}
 
 		{#if !recentAlbums.length && !rediscoverAlbums.length && !decades.length && !recentQuery.isLoading}
 			<div class="flex flex-col items-center gap-3 py-16 text-center">
-				<Headphones class="h-12 w-12 text-base-content/20" />
+				<Headphones class="size-12 text-muted" aria-hidden="true" />
 				<div>
 					<p class="font-semibold">No local music yet</p>
 					<p class="text-sm text-muted">
@@ -547,21 +477,149 @@
 				</div>
 			</div>
 		{/if}
-	</section>
+	</div>
 </div>
 
 <QueueDrawer bind:open={queueDrawerOpen} onclose={() => (queueDrawerOpen = false)} />
 
 <style>
-	.decade-card {
-		transition:
-			transform 0.2s var(--ease-spring),
-			box-shadow 0.2s var(--ease-spring),
-			border-color 0.2s ease;
+	.tile-artist {
+		display: block;
+		margin-top: -0.125rem;
+		padding-inline: 0.25rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		line-height: 1.35;
+		color: var(--color-muted);
+	}
+	a.tile-artist {
+		border-radius: 0.25rem;
+		transition: color 150ms;
+	}
+	a.tile-artist:hover {
+		color: var(--dn-title);
+		text-decoration: underline;
 	}
 
+	/* on a mouse the play button shows on hover and focus; on touch it stays */
+	@media (hover: hover) {
+		.listening-room :global(.tile-play) {
+			opacity: 0;
+			transition: opacity 150ms;
+		}
+		.listening-room :global(.dn-tile:hover .tile-play),
+		.listening-room :global(.tile-play:focus-visible) {
+			opacity: 1;
+		}
+	}
+
+	/* a decade is a crate divider: the years big, the count in mono, one sleeve standing up */
+	.decade-card {
+		position: relative;
+		display: flex;
+		min-height: 8.5rem;
+		flex-direction: column;
+		align-items: flex-start;
+		justify-content: flex-end;
+		overflow: hidden;
+		padding: 1rem;
+		border: 1px solid var(--dn-line);
+		border-radius: 0.875rem;
+		background-color: var(--color-base-200);
+		text-align: left;
+		transition:
+			border-color 150ms,
+			background-color 150ms,
+			translate 200ms var(--ease-spring);
+	}
 	.decade-card:hover {
-		transform: translateY(-2px);
-		box-shadow: 0 14px 28px -18px oklch(from var(--color-base-100) l c h / 0.9);
+		border-color: var(--dn-edge);
+		translate: 0 -2px;
+	}
+	.decade-card:focus-visible {
+		outline: 2px solid var(--dn-focus);
+		outline-offset: 2px;
+	}
+	.decade-card.is-open {
+		border-color: var(--color-primary);
+		background-color: var(--dn-selected);
+	}
+	.decade-card__label {
+		position: relative;
+		z-index: 1;
+		font-family: var(--font-display);
+		font-size: 2.25rem;
+		line-height: 1;
+		letter-spacing: 0.01em;
+		text-transform: uppercase;
+		font-synthesis: none;
+		color: var(--dn-title);
+	}
+	.decade-card__count {
+		position: relative;
+		z-index: 1;
+		margin-top: 0.25rem;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--color-muted);
+	}
+	.decade-card :global(.decade-card__chevron) {
+		position: absolute;
+		top: 0.875rem;
+		left: 1rem;
+		width: 1.125rem;
+		height: 1.125rem;
+		color: var(--color-muted);
+		transition: rotate 250ms var(--ease-spring);
+	}
+	.decade-card.is-open :global(.decade-card__chevron) {
+		rotate: 180deg;
+		color: var(--color-primary);
+	}
+	.decade-card__sleeve {
+		position: absolute;
+		top: 0.875rem;
+		right: 0.875rem;
+		width: 4.25rem;
+		height: 4.25rem;
+		overflow: hidden;
+		border-radius: 0.25rem;
+		rotate: 5deg;
+		box-shadow:
+			0 0 0 1px color-mix(in oklab, var(--color-base-content) 14%, transparent),
+			0 10px 18px -10px rgb(0 0 0 / 0.7);
+		transition: rotate 200ms var(--ease-spring);
+	}
+	@media (max-width: 639px) {
+		.decade-card {
+			min-height: 7.5rem;
+			padding: 0.875rem;
+		}
+		.decade-card__label {
+			font-size: 1.875rem;
+		}
+		.decade-card__sleeve {
+			width: 3.25rem;
+			height: 3.25rem;
+			top: 0.75rem;
+			right: 0.75rem;
+		}
+	}
+	.decade-card:hover .decade-card__sleeve {
+		rotate: 1deg;
+	}
+
+	.decade-shelf {
+		margin-top: 1rem;
+		padding: 1.25rem 1.25rem 0.5rem;
+		border: 1px solid var(--dn-line);
+		border-radius: 1rem;
+		background-color: var(--color-base-200);
 	}
 </style>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/features/library/components/local/deck.css';
 	import type { CrateTrack } from '$lib/features/library/queries/types';
 	import { getLibrarySearchV3Query } from '$lib/features/library/queries/LocalV3Queries.svelte';
 	import {
@@ -14,6 +15,7 @@
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 
 	interface Props {
 		reducedMotion?: boolean;
@@ -83,39 +85,12 @@
 	}
 </script>
 
-{#snippet albumRowBody(a: SpinAlbum)}
-	{@const cover = albumCoverUrl(a)}
-	<div class="relative h-11 w-11 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10">
-		{#if cover}
-			<AlbumImage
-				customUrl={cover}
-				alt={a.title}
-				size="full"
-				rounded="none"
-				className="h-full w-full"
-			/>
-		{:else}
-			<div class="relative h-full w-full overflow-hidden">
-				<CoverPlaceholder id={a.id} name={a.title} />
-			</div>
-		{/if}
-	</div>
-	<div class="min-w-0 flex-1">
-		<p class="truncate text-sm font-semibold text-base-content">{a.title}</p>
-		<p class="truncate text-xs text-muted">{a.artist_name}</p>
-		<span class="badge badge-xs badge-primary mt-1 gap-1 border-none">
-			<Disc3 class="h-2.5 w-2.5" /> Album
-		</span>
-	</div>
-{/snippet}
-
-<section class="flex h-full flex-col gap-3">
-	<header class="flex items-center gap-2 px-1">
-		<Search class="h-4 w-4 text-accent" />
-		<h2 class="text-sm font-bold uppercase tracking-wider text-base-content/80">Search library</h2>
+<section class="lr-panel">
+	<header class="lr-panel__head">
+		<h2 class="lr-panel__title">Search library</h2>
 	</header>
 
-	<div class="relative">
+	<div class="lr-search relative px-0.5">
 		<Input
 			type="search"
 			size="sm"
@@ -125,52 +100,53 @@
 			class="w-full pr-9"
 			bind:value={term}
 		/>
-		<div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center">
+		<div class="absolute right-2 top-1/2 flex -translate-y-1/2 items-center">
 			{#if isActive && isFetching}
-				<Loader class="mr-1 h-4 w-4 shrink-0 animate-spin text-muted motion-reduce:animate-none" />
+				<Loader class="mr-1 size-4 shrink-0 animate-spin text-muted motion-reduce:animate-none" />
 			{:else if term}
 				<IconButton size="xs" icon={X} label="Clear search" onclick={() => (term = '')} />
 			{/if}
 		</div>
 	</div>
 
-	<div class="flex-1 space-y-2 overflow-y-auto pr-0.5">
+	<div class="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
 		{#if !isActive}
-			<div
-				class="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-muted"
-			>
-				<Search class="h-8 w-8 opacity-40" />
-				<p class="text-xs">
-					Search your whole library - drag a song or a whole album onto the deck.
-				</p>
+			<div class="search-idle">
+				<Search class="size-6 text-muted" aria-hidden="true" />
+				<p>Search your whole library - drag a song or a whole album onto the deck.</p>
 			</div>
 		{:else if rows.length === 0 && isFetching}
 			{#each Array(4) as _, i (i)}
-				<div class="h-[3.75rem] animate-pulse rounded-xl bg-base-200/60"></div>
+				<div class="flex items-center gap-2.5 px-1.5 py-[0.4375rem]">
+					<div class="skeleton size-12 shrink-0 rounded"></div>
+					<div class="flex-1 space-y-1.5">
+						<div class="skeleton h-3.5 w-3/5"></div>
+						<div class="skeleton h-3 w-2/5"></div>
+					</div>
+				</div>
 			{/each}
 		{:else if showEmpty}
-			<div
-				class="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-muted"
-			>
-				<Disc3 class="h-8 w-8 opacity-40" />
-				<p class="text-xs">
-					No matches for <span class="font-semibold text-muted">“{trimmed}”</span>
-				</p>
+			<div class="search-idle">
+				<Disc3 class="size-6 text-muted" aria-hidden="true" />
+				<p>No matches for <span class="font-semibold text-base-content">“{trimmed}”</span></p>
 			</div>
 		{:else}
 			{#each rows as row (row.key)}
 				{#if row.kind === 'album'}
 					{@const a = row.album}
+					{@const cover = albumCoverUrl(a)}
 					<div
-						class="search-row group flex items-center gap-3 rounded-xl border border-base-content/5 bg-base-200/70 p-2 backdrop-blur-sm"
+						class="lr-row"
 						class:is-dragging={draggingId === row.key}
 						draggable="true"
 						role="button"
 						tabindex="0"
+						aria-label="{a.title} by {a.artist_name}, album"
 						ondragstart={(e) => onAlbumDragStart(e, a)}
 						ondragend={() => (draggingId = null)}
 						ondblclick={() => onPlayAlbum(a)}
 						onkeydown={(e) => {
+							if (e.target !== e.currentTarget) return;
 							if (e.key === 'Enter' || e.key === ' ') {
 								e.preventDefault();
 								onPlayAlbum(a);
@@ -178,16 +154,29 @@
 						}}
 						in:fly={{ y: 10, duration: reducedMotion ? 0 : 200 }}
 					>
-						<GripVertical
-							class="h-4 w-4 shrink-0 cursor-grab text-base-content/25 group-hover:text-muted"
-						/>
-						{@render albumRowBody(a)}
-						<div
-							class="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-						>
-							<IconButton size="xs" icon={Play} label="Play album" onclick={() => onPlayAlbum(a)} />
+						<GripVertical class="size-4 shrink-0 text-muted" aria-hidden="true" />
+						<div class="lr-row__cover">
+							{#if cover}
+								<AlbumImage
+									customUrl={cover}
+									alt={a.title}
+									size="full"
+									rounded="none"
+									className="h-full w-full"
+								/>
+							{:else}
+								<CoverPlaceholder id={a.id} name={a.title} />
+							{/if}
+						</div>
+						<div class="min-w-0 flex-1">
+							<p class="lr-row__title">{a.title}</p>
+							<p class="lr-row__sub">{a.artist_name}</p>
+							<StatusChip size="xs" icon={Disc3} class="mt-1">Album</StatusChip>
+						</div>
+						<div class="lr-row__actions">
+							<IconButton size="sm" icon={Play} label="Play album" onclick={() => onPlayAlbum(a)} />
 							<IconButton
-								size="xs"
+								size="sm"
 								icon={ListPlus}
 								label="Queue album"
 								onclick={() => onQueueAlbum(a)}
@@ -198,15 +187,17 @@
 					{@const t = row.track}
 					{@const trackCover = crateCoverUrl(t)}
 					<div
-						class="search-row group flex items-center gap-3 rounded-xl border border-base-content/5 bg-base-200/70 p-2 backdrop-blur-sm"
+						class="lr-row"
 						class:is-dragging={draggingId === row.key}
 						draggable="true"
 						role="button"
 						tabindex="0"
+						aria-label="{t.title} by {t.artist_name}, song"
 						ondragstart={(e) => onTrackDragStart(e, t)}
 						ondragend={() => (draggingId = null)}
 						ondblclick={() => onPlayTrack(t)}
 						onkeydown={(e) => {
+							if (e.target !== e.currentTarget) return;
 							if (e.key === 'Enter' || e.key === ' ') {
 								e.preventDefault();
 								onPlayTrack(t);
@@ -214,12 +205,8 @@
 						}}
 						in:fly={{ y: 10, duration: reducedMotion ? 0 : 200 }}
 					>
-						<GripVertical
-							class="h-4 w-4 shrink-0 cursor-grab text-base-content/25 group-hover:text-muted"
-						/>
-						<div
-							class="relative h-11 w-11 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
-						>
+						<GripVertical class="size-4 shrink-0 text-muted" aria-hidden="true" />
+						<div class="lr-row__cover">
 							{#if trackCover}
 								<AlbumImage
 									customUrl={trackCover}
@@ -229,26 +216,18 @@
 									className="h-full w-full"
 								/>
 							{:else}
-								<div class="relative h-full w-full overflow-hidden">
-									<CoverPlaceholder id={t.album_id} name={t.album_name} />
-								</div>
+								<CoverPlaceholder id={t.album_id} name={t.album_name} />
 							{/if}
 						</div>
 						<div class="min-w-0 flex-1">
-							<p class="truncate text-sm font-semibold text-base-content">{t.title}</p>
-							<p class="truncate text-xs text-muted">
-								{t.artist_name}<span class="text-muted"> · {t.album_name}</span>
-							</p>
-							<span class="badge badge-xs badge-accent mt-1 gap-1 border-none">
-								<Music2 class="h-2.5 w-2.5" /> Song
-							</span>
+							<p class="lr-row__title">{t.title}</p>
+							<p class="lr-row__sub">{t.artist_name} · {t.album_name}</p>
+							<StatusChip tone="action" size="xs" icon={Music2} class="mt-1">Song</StatusChip>
 						</div>
-						<div
-							class="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-						>
-							<IconButton size="xs" icon={Play} label="Play now" onclick={() => onPlayTrack(t)} />
+						<div class="lr-row__actions">
+							<IconButton size="sm" icon={Play} label="Play now" onclick={() => onPlayTrack(t)} />
 							<IconButton
-								size="xs"
+								size="sm"
 								icon={ListPlus}
 								label="Add to queue"
 								onclick={() => onQueueTrack(t)}
@@ -262,19 +241,24 @@
 </section>
 
 <style>
-	.search-row {
-		transition:
-			transform 0.2s var(--ease-spring),
-			box-shadow 0.2s var(--ease-spring),
-			border-color 0.2s ease;
+	/* the panel draws its own clear button */
+	.lr-search :global(input::-webkit-search-cancel-button) {
+		-webkit-appearance: none;
+		display: none;
 	}
 
-	.search-row:hover {
-		transform: translateY(-2px);
-		box-shadow: 0 12px 24px -14px oklch(from var(--color-base-100) l c h / 0.9);
-	}
-
-	.search-row.is-dragging {
-		opacity: 0.4;
+	.search-idle {
+		display: flex;
+		height: 100%;
+		min-height: 6rem;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		padding: 0.75rem 1.5rem;
+		text-align: center;
+		font-size: 0.8125rem;
+		line-height: 1.45;
+		color: var(--color-muted);
 	}
 </style>

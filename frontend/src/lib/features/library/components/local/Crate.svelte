@@ -18,6 +18,7 @@
 	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 
 	interface Props {
 		tracks: CrateTrack[];
@@ -129,12 +130,19 @@
 		RING_CIRCUMFERENCE * (1 - Math.max(0, Math.min(1, countdownFraction)))
 	);
 
-	const REASONS: Record<CrateReason, { label: string; icon: typeof Sparkles; badge: string }> = {
-		recent: { label: 'Recently Added', icon: Sparkles, badge: 'badge-accent' },
-		rediscover: { label: 'Rediscover', icon: RotateCcw, badge: 'badge-primary' },
-		surprise: { label: 'Surprise', icon: Dices, badge: 'badge-warning' },
-		same_era: { label: 'Same era', icon: Clock, badge: 'badge-info' }
+	const REASONS: Record<
+		CrateReason,
+		{ label: string; icon: typeof Sparkles; tone: 'action' | 'neutral' }
+	> = {
+		recent: { label: 'Recently Added', icon: Sparkles, tone: 'action' },
+		rediscover: { label: 'Rediscover', icon: RotateCcw, tone: 'neutral' },
+		surprise: { label: 'Surprise', icon: Dices, tone: 'neutral' },
+		same_era: { label: 'Same era', icon: Clock, tone: 'neutral' }
 	};
+
+	const secondsLeft = $derived(
+		Math.max(0, Math.ceil((Math.max(0, Math.min(1, countdownFraction)) * refreshIntervalMs) / 1000))
+	);
 
 	const flipDur = $derived(reducedMotion ? 0 : 340);
 	let draggingId = $state<string | null>(null);
@@ -188,73 +196,69 @@
 	}
 </script>
 
-<section class="flex h-full flex-col gap-3">
-	<header class="flex items-center justify-between px-1">
+<section class="lr-panel">
+	<header class="lr-panel__head">
+		<h2 class="lr-panel__title">In the crate</h2>
 		<div class="flex items-center gap-2">
-			<div class="now-playing-bars now-playing-bars--sm" aria-hidden="true">
-				<span></span><span></span><span></span>
+			<span class="crate-countdown" aria-hidden="true">Refresh in {secondsLeft}s</span>
+			<div class="relative grid size-8 place-items-center" title="Next mix loads automatically">
+				<svg
+					class="pointer-events-none absolute inset-0 h-full w-full -rotate-90"
+					viewBox="0 0 36 36"
+					aria-hidden="true"
+				>
+					<circle cx="18" cy="18" r="16" fill="none" stroke-width="2" class="crate-ring-track" />
+					<circle
+						cx="18"
+						cy="18"
+						r="16"
+						fill="none"
+						stroke-width="2.5"
+						stroke-linecap="round"
+						class="countdown-ring"
+						stroke-dasharray={RING_CIRCUMFERENCE}
+						stroke-dashoffset={ringOffset}
+					/>
+				</svg>
+				<IconButton
+					size="xs"
+					icon={RefreshCw}
+					label="Shuffle the crate now"
+					loading={isLoading}
+					onclick={onRefresh}
+				/>
 			</div>
-			<h2 class="text-sm font-bold uppercase tracking-wider text-base-content/80">In the crate</h2>
-		</div>
-		<div class="relative grid h-7 w-7 place-items-center" title="Next mix loads automatically">
-			<svg
-				class="pointer-events-none absolute inset-0 h-full w-full -rotate-90"
-				viewBox="0 0 36 36"
-				aria-hidden="true"
-			>
-				<circle
-					cx="18"
-					cy="18"
-					r="16"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					class="text-base-content/10"
-				/>
-				<circle
-					cx="18"
-					cy="18"
-					r="16"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2.5"
-					stroke-linecap="round"
-					class="countdown-ring text-accent"
-					stroke-dasharray={RING_CIRCUMFERENCE}
-					stroke-dashoffset={ringOffset}
-				/>
-			</svg>
-			<IconButton
-				size="xs"
-				icon={RefreshCw}
-				label="Shuffle the crate now"
-				loading={isLoading}
-				onclick={onRefresh}
-			/>
 		</div>
 	</header>
 
-	<div class="relative flex-1 overflow-hidden">
-		<div bind:this={scrollEl} class="h-full space-y-2 overflow-y-auto pr-0.5">
+	<div class="relative min-h-0 flex-1 overflow-hidden">
+		<div bind:this={scrollEl} class="h-full space-y-0.5 overflow-y-auto">
 			{#if tracks.length === 0 && isLoading}
 				{#each Array(5) as _, i (i)}
-					<div class="h-[4.25rem] animate-pulse rounded-xl bg-base-200/60"></div>
+					<div class="flex items-center gap-2.5 px-1.5 py-[0.4375rem]">
+						<div class="skeleton size-12 shrink-0 rounded"></div>
+						<div class="flex-1 space-y-1.5">
+							<div class="skeleton h-3.5 w-3/5"></div>
+							<div class="skeleton h-3 w-2/5"></div>
+						</div>
+					</div>
 				{/each}
 			{:else}
 				{#each tracks as t, i (t.track_file_id)}
 					{@const meta = REASONS[t.reason]}
-					{@const Icon = meta.icon}
 					{@const cover = crateCoverUrl(t)}
 					<div
-						class="crate-card group flex items-center gap-3 rounded-xl border border-base-content/5 bg-base-200/70 p-2.5 backdrop-blur-sm"
+						class="lr-row group"
 						class:is-dragging={draggingId === t.track_file_id}
 						draggable="true"
 						role="button"
 						tabindex="0"
+						aria-label="{t.title} by {t.artist_name}"
 						ondragstart={(e) => onDragStart(e, t)}
 						ondragend={() => (draggingId = null)}
 						ondblclick={() => onPlay(t)}
 						onkeydown={(e) => {
+							if (e.target !== e.currentTarget) return;
 							if (e.key === 'Enter' || e.key === ' ') {
 								e.preventDefault();
 								onPlay(t);
@@ -264,12 +268,8 @@
 						in:fly={{ y: 16, duration: reducedMotion ? 0 : 280, delay: reducedMotion ? 0 : i * 45 }}
 						out:fly={{ y: -16, duration: reducedMotion ? 0 : 260 }}
 					>
-						<GripVertical
-							class="h-4 w-4 shrink-0 cursor-grab text-base-content/25 group-hover:text-muted"
-						/>
-						<div
-							class="relative h-12 w-12 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
-						>
+						<GripVertical class="size-4 shrink-0 text-muted" aria-hidden="true" />
+						<div class="lr-row__cover">
 							{#if cover}
 								<AlbumImage
 									customUrl={cover}
@@ -279,25 +279,20 @@
 									className="h-full w-full"
 								/>
 							{:else}
-								<div class="relative h-full w-full overflow-hidden">
-									<CoverPlaceholder name={t.album_name} />
-								</div>
+								<CoverPlaceholder name={t.album_name} />
 							{/if}
 						</div>
 						<div class="min-w-0 flex-1">
-							<p class="truncate text-sm font-semibold text-base-content">{t.title}</p>
-							<p class="truncate text-xs text-muted">{t.artist_name}</p>
-							<span class="badge badge-xs {meta.badge} mt-1 gap-1 border-none">
-								<Icon class="h-2.5 w-2.5" />
+							<p class="lr-row__title">{t.title}</p>
+							<p class="lr-row__sub">{t.artist_name}</p>
+							<StatusChip tone={meta.tone} size="xs" icon={meta.icon} class="mt-1">
 								{meta.label}
-							</span>
+							</StatusChip>
 						</div>
-						<div
-							class="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-						>
-							<IconButton size="xs" icon={Play} label="Play now" onclick={() => onPlay(t)} />
+						<div class="lr-row__actions">
+							<IconButton size="sm" icon={Play} label="Play now" onclick={() => onPlay(t)} />
 							<IconButton
-								size="xs"
+								size="sm"
 								icon={ListPlus}
 								label="Add to queue"
 								onclick={() => onQueue(t)}
@@ -316,9 +311,7 @@
 	</div>
 
 	<div
-		class="upnext-zone deck-droptarget flex items-center gap-3 overflow-hidden rounded-2xl border-2 border-dashed bg-gradient-to-r from-base-200/55 via-base-200/25 to-base-200/55 px-4 py-3 {dragOverQueue
-			? 'border-accent/70'
-			: 'border-base-content/15'}"
+		class="upnext-zone deck-droptarget"
 		class:is-over={dragOverQueue}
 		role="region"
 		aria-label="Up Next - drop a song or album here to add it to the queue"
@@ -331,47 +324,46 @@
 		ondragleave={() => (dragOverQueue = false)}
 		ondrop={onQueueDrop}
 	>
-		<div
-			class="grid h-9 w-9 shrink-0 place-items-center rounded-full transition-colors {dragOverQueue
-				? 'bg-accent/20 text-accent'
-				: 'bg-base-content/5 text-muted'}"
-		>
-			<ArrowDownToLine class="h-4 w-4 {dragOverQueue || reducedMotion ? '' : 'animate-float'}" />
+		<div class="upnext-zone__icon">
+			<ArrowDownToLine class="size-4 {dragOverQueue || reducedMotion ? '' : 'animate-float'}" />
 		</div>
 		<div class="min-w-0 text-left">
-			<p class="text-xs font-bold uppercase tracking-wider text-base-content/75">Up Next</p>
-			<p class="truncate text-[11px] text-muted">Drop a song or album to queue</p>
+			<p class="upnext-zone__title">Up Next</p>
+			<p class="truncate text-xs text-muted">Drop a song or album to queue</p>
 		</div>
 		{#if upcomingCount > 0}
-			<span
-				class="badge badge-sm badge-accent ml-auto shrink-0 font-semibold"
-				title="{upcomingCount} in the queue"
-			>
-				{upcomingCount}
-			</span>
+			<StatusChip tone="action" size="sm" class="ml-auto">
+				{upcomingCount}<span class="sr-only"> in the queue</span>
+			</StatusChip>
 		{/if}
 	</div>
 </section>
 
 <style>
-	.crate-card {
-		transition:
-			transform 0.2s var(--ease-spring),
-			box-shadow 0.2s var(--ease-spring),
-			border-color 0.2s ease;
+	.crate-countdown {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-muted);
+		white-space: nowrap;
 	}
 
-	.crate-card:hover {
-		transform: translateY(-2px);
-		box-shadow: 0 12px 24px -14px oklch(from var(--color-base-100) l c h / 0.9);
+	@media (max-width: 379px) {
+		.crate-countdown {
+			display: none;
+		}
 	}
 
-	.crate-card.is-dragging {
-		opacity: 0.4;
+	.crate-ring-track {
+		stroke: var(--dn-line);
 	}
 
 	/* transition matches the 250ms tick interval that updates it */
 	.countdown-ring {
+		stroke: var(--color-primary);
 		transition: stroke-dashoffset 0.25s linear;
 	}
 
@@ -379,9 +371,47 @@
 		background: linear-gradient(
 			115deg,
 			transparent 28%,
-			oklch(from var(--color-accent) l c h / 0.18) 50%,
+			oklch(from var(--dn-action) l c h / 0.14) 50%,
 			transparent 72%
 		);
-		animation: crate-sweep 0.75s ease-out;
+		opacity: 0;
+		animation: crate-sweep 0.75s ease-out forwards;
+	}
+
+	.upnext-zone {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.625rem 0.875rem;
+		border: 2px dashed var(--dn-edge);
+		border-radius: 0.75rem;
+	}
+	.upnext-zone.is-over {
+		border-color: var(--dn-action);
+	}
+	.upnext-zone__icon {
+		display: grid;
+		place-items: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		flex: none;
+		border-radius: 9999px;
+		background-color: var(--color-base-300);
+		color: var(--color-muted);
+		transition:
+			background-color 150ms,
+			color 150ms;
+	}
+	.upnext-zone.is-over .upnext-zone__icon {
+		background-color: var(--dn-action);
+		color: var(--dn-action-content);
+	}
+	.upnext-zone__title {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--color-base-content);
 	}
 </style>
