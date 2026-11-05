@@ -1,10 +1,11 @@
 <!--
-	The MusicBrainz biography in the About card: four lines, then "Read more"
-	opens the rest in place.
+	The MusicBrainz biography in the About card: it fills the card's height
+	(four lines at least), then "Read more" opens the rest in place.
 -->
 <script lang="ts">
 	import { ArrowRight, ChevronUp } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import FillText from '$lib/ui/FillText.svelte';
 
 	interface Props {
 		description: string | null | undefined;
@@ -14,19 +15,7 @@
 	let { description, loading = false }: Props = $props();
 
 	let expanded = $state(false);
-	let element = $state<HTMLElement | null>(null);
 	let clipped = $state(false);
-
-	// Measure once the text has rendered; a new description measures again.
-	$effect(() => {
-		if (!description || loading) return;
-		const timer = setTimeout(() => {
-			if (!element || expanded) return;
-			const lineHeight = parseFloat(getComputedStyle(element).lineHeight);
-			clipped = element.scrollHeight > lineHeight * 4;
-		}, 50);
-		return () => clearTimeout(timer);
-	});
 </script>
 
 {#if loading}
@@ -36,17 +25,15 @@
 		<div class="skeleton h-4 w-3/4"></div>
 	</div>
 {:else if description}
-	<div class="leading-relaxed">
-		<div bind:this={element} class="whitespace-pre-line" class:line-clamp-4={!expanded}>
-			{description}
-		</div>
+	<div class="flex min-h-0 flex-1 flex-col">
+		<FillText text={description} {expanded} bind:clipped class="whitespace-pre-line" />
 		{#if expanded}
 			<Button
 				variant="outline"
 				size="sm"
 				icon={ChevronUp}
 				iconPosition="end"
-				class="mt-4"
+				class="mt-4 self-start"
 				onclick={() => (expanded = false)}
 			>
 				Show less
@@ -57,7 +44,7 @@
 				size="sm"
 				icon={ArrowRight}
 				iconPosition="end"
-				class="mt-4"
+				class="mt-4 self-start"
 				onclick={() => (expanded = true)}
 			>
 				Read more

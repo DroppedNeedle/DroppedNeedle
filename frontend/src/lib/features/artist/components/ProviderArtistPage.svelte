@@ -812,6 +812,8 @@
 	@media (min-width: 1280px) {
 		.dn-artist-row--pair {
 			grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+			/* About runs as tall as the library column beside it */
+			align-items: stretch;
 		}
 	}
 	@media (min-width: 1024px) {

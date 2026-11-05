@@ -62,9 +62,9 @@
 	aria-labelledby="artist-about-title"
 >
 	<div class="dn-about__grid" class:dn-about__grid--side={hasSide}>
-		<div class="min-w-0">
+		<div class="dn-about__main">
 			<h2 id="artist-about-title" class="dn-about__title">About {name}</h2>
-			<div class="mt-4 space-y-4 text-[0.9375rem] text-base-content">
+			<div class="dn-about__text mt-4 text-[0.9375rem] text-base-content">
 				{#if !lastfm?.bio}
 					<ArtistDescription {description} loading={descriptionLoading} />
 				{/if}
@@ -95,10 +95,29 @@
 </Card>
 
 <style>
+	/* the biography fills whatever height the card is given */
+	:global(.dn-about) {
+		display: flex;
+		flex-direction: column;
+	}
 	.dn-about__grid {
 		display: grid;
+		flex: 1 1 auto;
 		gap: 1.5rem;
 		padding: 1.25rem;
+	}
+	.dn-about__main {
+		display: flex;
+		min-width: 0;
+		min-height: 0;
+		flex-direction: column;
+	}
+	.dn-about__text {
+		display: flex;
+		flex: 1 1 auto;
+		min-height: 0;
+		flex-direction: column;
+		gap: 1rem;
 	}
 	@media (min-width: 640px) {
 		.dn-about__grid {

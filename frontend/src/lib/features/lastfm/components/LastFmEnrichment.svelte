@@ -1,6 +1,6 @@
 <!--
 	An artist's Last.fm text in the artist page's About card: the biography
-	(four lines, "Read more" opens the rest), listeners and plays in mono,
+	(it fills the card's height, four lines at least; "Read more" opens the rest), listeners and plays in mono,
 	and "View on Last.fm". Its tags join the page's genre chips, so they are
 	not repeated here.
 -->
@@ -10,6 +10,7 @@
 	import { outsideLink } from '$lib/ui/outsideLink';
 	import { formatListenCount } from '$lib/utils/formatting';
 	import Button from '$lib/ui/Button.svelte';
+	import FillText from '$lib/ui/FillText.svelte';
 
 	type LastFmArtistEnrichment = components['schemas']['LastFmArtistEnrichment'];
 
@@ -26,18 +27,7 @@
 	const playcount = $derived(enrichment?.playcount ?? 0);
 
 	let expanded = $state(false);
-	let element = $state<HTMLElement | null>(null);
 	let clipped = $state(false);
-
-	$effect(() => {
-		if (!text) return;
-		const timer = setTimeout(() => {
-			if (!element || expanded) return;
-			const lineHeight = parseFloat(getComputedStyle(element).lineHeight);
-			clipped = element.scrollHeight > lineHeight * 4;
-		}, 50);
-		return () => clearTimeout(timer);
-	});
 </script>
 
 {#if loading}
@@ -47,11 +37,9 @@
 		<div class="skeleton h-4 w-3/4"></div>
 	</div>
 {:else if enrichment}
-	<div class="space-y-4">
+	<div class="flex min-h-0 flex-col gap-4" class:flex-1={!!text}>
 		{#if text}
-			<div class="leading-relaxed">
-				<div bind:this={element} class:line-clamp-4={!expanded}>{text}</div>
-			</div>
+			<FillText {text} {expanded} bind:clipped />
 		{/if}
 		{#if listeners > 0 || playcount > 0}
 			<p class="font-mono text-xs tracking-[0.12em] text-muted uppercase">

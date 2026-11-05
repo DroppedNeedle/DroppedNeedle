@@ -713,7 +713,8 @@ Run from the repo root. `make help` lists every target.
   sticky section strip; `look="pills"` fills the current link, `actions` sit at
   its end, `look="rail"` stands it in a left column with icons, `onjump`
   opens a folded section first), `HalftonePhoto` (a photo printed as a fading
-  halftone), `Knob` (a rotary slider: a dial over a dotted scale),
+  halftone), `FillText` (text that fills its flex parent's height and fades
+  where it is cut), `Knob` (a rotary slider: a dial over a dotted scale),
   `SideDrawer` (a panel from the right over a dimmed page, with `Tabs`'
   `caps` look for its tabs), `PageShell`, `Toaster`, `CoverPlaceholder`,
   `UnsavedChangesGuard`, `Logo`, `PaperPanel` (the light island), `Card`'s
