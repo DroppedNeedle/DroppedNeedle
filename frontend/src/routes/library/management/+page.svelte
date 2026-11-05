@@ -12,7 +12,7 @@
 	import { page } from '$app/state';
 	import { SvelteURL } from 'svelte/reactivity';
 
-	import PageHeader from '$lib/ui/PageHeader.svelte';
+	import ListPageHeader from '$lib/ui/ListPageHeader.svelte';
 	import LibraryScanningPanel from '$lib/features/library-management/components/LibraryScanningPanel.svelte';
 	import LibraryManagementControlRoom from '$lib/features/library-management/components/LibraryManagementControlRoom.svelte';
 	import LibraryOverviewPanel from '$lib/features/library-management/components/LibraryOverviewPanel.svelte';
@@ -71,95 +71,84 @@
 		void goto(url, { replaceState: true, noScroll: true, keepFocus: true });
 	}
 
-	const segmentBase =
-		'flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors';
-	const segmentIdle = `${segmentBase} text-muted hover:bg-base-100/70 hover:text-base-content`;
-
-	function segmentClass(tab: TabId): string {
-		if (tab !== activeTab) return segmentIdle;
-		if (tab === 'scanning') return `${segmentBase} bg-primary/15 text-primary glow-primary-soft`;
-		if (tab === 'organize') return `${segmentBase} bg-warning/15 text-warning`;
-		return `${segmentBase} bg-base-100 text-base-content shadow-sm`;
+	function tabClass(tab: TabId): string {
+		return tab === activeTab ? 'lm-tab lm-tab--on' : 'lm-tab';
 	}
 </script>
 
 <svelte:head><title>Library Management · DroppedNeedle</title></svelte:head>
 
 <div class="min-h-[calc(100vh-200px)]">
-	<PageHeader subtitle="Scan, identify, and organize your library from one place.">
-		{#snippet title()}Library Management{/snippet}
+	<ListPageHeader
+		title="Library Management"
+		lede="Scan, identify, and organize your library from one place."
+		ticket="DN / CC 3.2"
+		fitTitle
+	>
 		{#snippet actions()}
-			<Button
-				variant="ghost"
-				size="sm"
-				pill
-				icon={ArrowLeft}
-				class="gap-2"
-				href={withBasePath('/library')}
-			>
+			<Button variant="outline" icon={ArrowLeft} href={withBasePath('/library')}>
 				<span class="hidden sm:inline">Back to Library</span>
 				<span class="sm:hidden">Library</span>
 			</Button>
 		{/snippet}
-	</PageHeader>
+	</ListPageHeader>
 
 	<main class="space-y-6 px-4 pb-14 sm:px-6 lg:px-8">
-		<div
-			role="tablist"
-			aria-label="Library Management areas"
-			class="flex flex-wrap gap-1 rounded-2xl border border-base-content/10 bg-base-200/50 p-1.5"
-		>
-			<button
-				role="tab"
-				id="management-tab-overview"
-				aria-controls="management-panel-overview"
-				class={segmentClass('overview')}
-				aria-selected={activeTab === 'overview'}
-				onclick={() => selectTab('overview')}
-			>
-				<LayoutDashboard class="h-4 w-4" />
-				Overview
-			</button>
-			<button
-				role="tab"
-				id="management-tab-scanning"
-				aria-controls="management-panel-scanning"
-				class={segmentClass('scanning')}
-				aria-selected={activeTab === 'scanning'}
-				onclick={() => selectTab('scanning')}
-			>
-				<ScanSearch class="h-4 w-4" />
-				Scanning
-				{#if scanBadge}<span class="badge badge-sm">{scanBadge}</span>{/if}
-			</button>
-			<button
-				role="tab"
-				id="management-tab-organize"
-				aria-controls="management-panel-organize"
-				class={segmentClass('organize')}
-				aria-selected={activeTab === 'organize'}
-				onclick={() => selectTab('organize')}
-			>
-				<FolderCog class="h-4 w-4" />
-				Organize files
-				{#if managementBadge}<span class="badge badge-sm">{managementBadge}</span>{/if}
-			</button>
-			<button
-				role="tab"
-				id="management-tab-automation"
-				aria-controls="management-panel-automation"
-				class={segmentClass('automation')}
-				aria-selected={activeTab === 'automation'}
-				onclick={() => selectTab('automation')}
-			>
-				<Settings2 class="h-4 w-4" />
-				Automation
-			</button>
-			<a role="tab" class={segmentIdle} href={withBasePath('/library/management/history')}>
-				<History class="h-4 w-4" />
-				Organization history
-				<ArrowUpRight class="h-3.5 w-3.5 opacity-60" />
-			</a>
+		<div class="lm-tabs-scroll">
+			<div role="tablist" aria-label="Library Management areas" class="lm-tabs">
+				<button
+					role="tab"
+					id="management-tab-overview"
+					aria-controls="management-panel-overview"
+					class={tabClass('overview')}
+					aria-selected={activeTab === 'overview'}
+					onclick={() => selectTab('overview')}
+				>
+					<LayoutDashboard class="size-5" aria-hidden="true" />
+					Overview
+				</button>
+				<button
+					role="tab"
+					id="management-tab-scanning"
+					aria-controls="management-panel-scanning"
+					class={tabClass('scanning')}
+					aria-selected={activeTab === 'scanning'}
+					onclick={() => selectTab('scanning')}
+				>
+					<ScanSearch class="size-5" aria-hidden="true" />
+					Scanning
+					{#if scanBadge}<span class="lm-tab__badge">{scanBadge}</span>{/if}
+				</button>
+				<button
+					role="tab"
+					id="management-tab-organize"
+					aria-controls="management-panel-organize"
+					class={tabClass('organize')}
+					aria-selected={activeTab === 'organize'}
+					onclick={() => selectTab('organize')}
+				>
+					<FolderCog class="size-5" aria-hidden="true" />
+					Organize files
+					{#if managementBadge}<span class="lm-tab__badge">{managementBadge}</span>{/if}
+				</button>
+				<button
+					role="tab"
+					id="management-tab-automation"
+					aria-controls="management-panel-automation"
+					class={tabClass('automation')}
+					aria-selected={activeTab === 'automation'}
+					onclick={() => selectTab('automation')}
+				>
+					<Settings2 class="size-5" aria-hidden="true" />
+					Automation
+				</button>
+				<span class="lm-tabs__rule" aria-hidden="true"></span>
+				<a role="tab" class="lm-tab" href={withBasePath('/library/management/history')}>
+					<History class="size-5" aria-hidden="true" />
+					Organization history
+					<ArrowUpRight class="size-4" aria-hidden="true" />
+				</a>
+			</div>
 		</div>
 
 		{#if activeTab === 'overview'}
@@ -224,3 +213,85 @@
 		{/if}
 	</main>
 </div>
+
+<style>
+	/* one bordered bar of condensed caps tabs; on a phone it scrolls sideways */
+	.lm-tabs-scroll {
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+	.lm-tabs {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		min-width: max-content;
+		padding: 0.375rem;
+		border: 1.5px solid var(--dn-edge);
+		border-radius: 0.625rem;
+		background-color: var(--color-base-100);
+	}
+	.lm-tab {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.625rem;
+		min-height: 2.75rem;
+		padding: 0.5rem 1.25rem;
+		border: 1.5px solid transparent;
+		border-radius: 0.375rem;
+		font-family: var(--font-display);
+		font-size: 1.125rem;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		font-synthesis: none;
+		white-space: nowrap;
+		color: var(--color-base-content);
+		transition:
+			background-color 150ms,
+			color 150ms;
+	}
+	.lm-tab:hover {
+		background-color: var(--dn-selected);
+	}
+	.lm-tab--on,
+	.lm-tab--on:hover {
+		border-color: var(--dn-action-edge);
+		background-color: var(--dn-action);
+		color: var(--dn-action-content);
+	}
+	.lm-tab:focus-visible {
+		outline: 2px solid var(--dn-focus);
+		outline-offset: 2px;
+	}
+	.lm-tab__badge {
+		padding: 0.125rem 0.5rem;
+		border: 1px solid currentColor;
+		border-radius: 9999px;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+	}
+	.lm-tabs__rule {
+		flex: none;
+		width: 1.5px;
+		height: 1.75rem;
+		margin-inline: 0.5rem;
+		background-color: var(--dn-edge);
+	}
+
+	@media (max-width: 767px) {
+		.lm-tabs-scroll {
+			margin-inline: -1rem;
+			padding-inline: 1rem;
+		}
+		.lm-tab {
+			gap: 0.5rem;
+			min-height: 2.5rem;
+			padding: 0.375rem 0.875rem;
+			font-size: 1rem;
+		}
+		.lm-tab :global(svg) {
+			display: none;
+		}
+	}
+</style>

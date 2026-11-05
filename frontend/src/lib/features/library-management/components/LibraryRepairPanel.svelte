@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/features/library-management/components/library-management.css';
 	import { ShieldCheck, Wrench } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -119,13 +120,19 @@
 	}
 </script>
 
-<Card as="section" variant="bordered" padding="none" aria-label="Repair">
-	<div class="flex flex-wrap items-center gap-3 p-4">
-		<div class="flex h-9 w-9 items-center justify-center rounded-xl bg-warning/10 text-warning">
-			<Wrench class="h-4 w-4" aria-hidden="true" />
-		</div>
+<Card
+	as="section"
+	id="library-repair"
+	tabindex={-1}
+	variant="bordered"
+	padding="none"
+	class="lm-bordered"
+	aria-label="Repair"
+>
+	<div class="flex flex-wrap items-center gap-4 p-4 sm:px-5">
+		<Wrench class="size-7 flex-none text-warning" aria-hidden="true" />
 		<div class="min-w-0 flex-1">
-			<h3 class="font-semibold">Repair</h3>
+			<h3 class="lm-cap-title">Repair</h3>
 			<p class="text-sm text-muted">Re-check albums matched by older identification rules.</p>
 		</div>
 		<Button variant="outline" size="sm" onclick={openStart}>Check existing matches</Button>

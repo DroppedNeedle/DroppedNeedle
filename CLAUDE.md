@@ -719,15 +719,18 @@ Run from the repo root. `make help` lists every target.
   `SideDrawer` (a panel from the right over a dimmed page, with `Tabs`'
   `caps` look for its tabs), `PageShell`, `Toaster`, `CoverPlaceholder`,
   `UnsavedChangesGuard`, `Logo`, `PaperPanel` (the light island), `Card`'s
-  `torn` paper, `Button`'s condensed caps sizes (`display`, `display-sm`)
-  and `paper` outline (a button on a paper card) and `danger-outline` (a red
-  outline beside outline buttons), `AuthFrame` and `AuthCard`
-  (a signed-out page's frame and its torn paper card with folder tabs),
+  `torn` paper and `acid` torn sheet, `Modal`'s and `ConfirmDialog`'s
+  `paper` stock (a confirm that starts a write), `Button`'s condensed caps
+  sizes (`display`, `display-sm`), `paper` outline (a button on a paper card)
+  and `danger-outline` (a red outline beside outline buttons), `AuthFrame`
+  and `AuthCard` (a signed-out page's frame and its torn paper card with
+  folder tabs),
   the `dn-toolbar` and `dn-list-grid` classes for a list's controls and grid,
   and the decoration `FritFrame` (the page's dot frame, mounted once by the
   shell and once by `AuthFrame`), `FritEdge`, `VinylSleeve`, `VinylRecord`, `BarcodeOrnament`,
   `BarcodeTicket`, `Illustration` (turntable, dripping heart, folder
-  sticker), `HalftoneArt` (a record, crowd or map printed in dots, for an
+  sticker, and the halftone prints record crate, tag boxes and
+  fingerprint), `HalftoneArt` (a record, crowd or map printed in dots, for an
   empty card's corner); in `src/lib/media` the one
   album and artist tile, `MediaTile` (`wrapName` in a dense artist grid) and
   `MediaTileSkeleton`):

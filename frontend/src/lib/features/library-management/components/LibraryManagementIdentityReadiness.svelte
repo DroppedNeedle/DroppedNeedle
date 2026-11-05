@@ -1,6 +1,13 @@
 <script lang="ts">
 	import '$lib/features/library-management/components/library-management.css';
-	import { ArrowRight, BookOpenCheck, Database, ShieldCheck, Tags, Trash2 } from 'lucide-svelte';
+	import {
+		ArrowRight,
+		Database,
+		FingerprintPattern,
+		ShieldCheck,
+		Tags,
+		Trash2
+	} from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import { createControlLibraryOperationMutation } from '$lib/features/library-management/queries/LibraryOperationMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -199,20 +206,14 @@
 <section
 	id="identity-readiness"
 	tabindex="-1"
-	class="rounded-box border border-primary/20 bg-primary/[0.035]"
+	class="lm-bordered ir-panel"
 	aria-labelledby="identity-readiness-title"
 >
-	<div class="flex flex-wrap items-start gap-3 p-4 sm:p-5">
-		<div
-			class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"
-		>
-			<BookOpenCheck class="h-5 w-5" aria-hidden="true" />
-		</div>
+	<div class="flex flex-wrap items-start gap-4 p-4 sm:p-5">
+		<FingerprintPattern class="ir-mark" aria-hidden="true" />
 		<div class="min-w-0 flex-1">
 			<p class="management-step">Safe prerequisite</p>
-			<h3 id="identity-readiness-title" class="font-display text-lg font-semibold">
-				Identity readiness
-			</h3>
+			<h3 id="identity-readiness-title" class="lm-title ir-title">Identity readiness</h3>
 			<p class="mt-1 max-w-3xl text-sm text-muted">
 				Give file organization the exact MusicBrainz edition and per-track map it needs. The check
 				never changes tags, paths, or audio.
@@ -228,28 +229,28 @@
 	</div>
 
 	{#if wholeLibraryEstimate.isLoading}
-		<div class="grid gap-2 border-t border-primary/10 p-4 sm:grid-cols-3">
+		<div class="grid gap-2 border-t border-line p-4 sm:grid-cols-3">
 			{#each Array(3) as _, index (index)}<div class="skeleton h-16"></div>{/each}
 		</div>
 	{:else if wholeLibraryEstimate.isError}
-		<div class="border-t border-primary/10 p-4 text-sm text-error">
+		<div class="border-t border-line p-4 text-sm text-error">
 			Identity readiness could not be counted right now.
 		</div>
 	{:else if wholeLibraryEstimate.data}
-		<div class="grid gap-px border-t border-primary/10 bg-primary/10 sm:grid-cols-3">
-			<div class="bg-base-100/95 p-3 sm:px-4">
+		<div class="ir-counts grid gap-px border-t border-line bg-line sm:grid-cols-3">
+			<div class="bg-base-200 p-3 sm:px-4">
 				<span class="text-xs text-muted">Ready now</span>
 				<strong class="mt-1 block text-lg"
 					>{wholeLibraryEstimate.data.ready_album_count.toLocaleString()}</strong
 				>
 			</div>
-			<div class="bg-base-100/95 p-3 sm:px-4">
+			<div class="bg-base-200 p-3 sm:px-4">
 				<span class="text-xs text-muted">Need exact track maps</span>
 				<strong class="mt-1 block text-lg"
 					>{wholeLibraryEstimate.data.mapping_required_count.toLocaleString()}</strong
 				>
 			</div>
-			<div class="bg-base-100/95 p-3 sm:px-4">
+			<div class="bg-base-200 p-3 sm:px-4">
 				<span class="text-xs text-muted">Need an exact edition</span>
 				<strong class="mt-1 block text-lg"
 					>{wholeLibraryEstimate.data.exact_release_required_count.toLocaleString()}</strong
@@ -259,7 +260,7 @@
 	{/if}
 
 	{#if active}
-		<div class="flex flex-wrap items-center gap-3 border-t border-primary/10 p-4">
+		<div class="flex flex-wrap items-center gap-3 border-t border-line p-4">
 			<span class="management-live-dot" aria-hidden="true"></span>
 			<div class="min-w-0 flex-1">
 				<strong>Checking release identities</strong>
@@ -289,7 +290,7 @@
 	{/if}
 
 	{#if report?.repair_summary}
-		<div class="border-t border-primary/10 p-4 sm:p-5">
+		<div class="border-t border-line p-4 sm:p-5">
 			<div class="flex flex-wrap items-start justify-between gap-3">
 				<div>
 					<p class="management-step">Latest identity report</p>
@@ -571,3 +572,31 @@
 		</p>
 	{/if}
 </ConfirmDialog>
+
+<style>
+	.ir-panel {
+		background-color: var(--color-base-200);
+	}
+	.ir-panel :global(.ir-mark) {
+		flex: none;
+		width: 3rem;
+		height: 3rem;
+		color: var(--dn-title);
+		stroke-width: 1.25;
+	}
+	.ir-title {
+		margin-top: 0.25rem;
+		font-size: 1.75rem;
+		color: var(--color-base-content);
+	}
+	.ir-panel :global(.ir-counts span.text-xs) {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+	}
+	.ir-panel :global(.ir-counts strong) {
+		font-family: var(--font-mono);
+		font-size: 1.25rem;
+	}
+</style>

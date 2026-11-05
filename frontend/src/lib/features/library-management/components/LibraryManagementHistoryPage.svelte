@@ -1,6 +1,6 @@
 <script lang="ts">
 	import '$lib/features/library-management/components/library-management.css';
-	import { ArrowRight, FolderCog, History, ShieldAlert } from 'lucide-svelte';
+	import { ChevronRight, FolderCog, ShieldAlert } from 'lucide-svelte';
 
 	import BackButton from '$lib/ui/BackButton.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/features/library-management/queries/LibraryPolicyQueries.svelte';
@@ -10,8 +10,8 @@
 		getLibraryManagementSettingsQuery
 	} from '$lib/features/library-management/queries/LibraryManagementQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { isRecord, titleManagementValue } from './LibraryManagementDisplay';
 
@@ -81,34 +81,36 @@
 		if (state === 'ready') return 'Ready';
 		return 'Updated';
 	}
+
+	function stateTone(state: string): 'success' | 'warning' | 'error' | 'neutral' {
+		if (state === 'failed') return 'error';
+		if (state === 'succeeded') return 'success';
+		if (state === 'ready') return 'warning';
+		return 'neutral';
+	}
 </script>
 
 <svelte:head><title>Organization history · DroppedNeedle</title></svelte:head>
 
 <div class="management-preview-shell px-4 py-8 sm:px-6 lg:px-8">
-	<main class="mx-auto max-w-6xl space-y-5">
+	<main class="mx-auto max-w-7xl space-y-6">
 		<BackButton fallback="/library/management?tab=organize" />
 
-		<header class="management-control-room p-5 sm:p-7">
-			<div class="flex items-start gap-4">
-				<div class="management-write-mark"><History class="h-6 w-6" /></div>
-				<div>
-					<p class="management-kicker">
-						<ShieldAlert class="h-3.5 w-3.5" /> Administrator audit trail
-					</p>
-					<h1 class="mt-1 font-display text-2xl font-bold sm:text-3xl">Organization history</h1>
-					<p class="mt-2 text-sm text-muted">
-						Previews, writes, undo, baseline restores, and collision resolutions. Scans are not
-						included here.
-					</p>
-				</div>
-			</div>
+		<header>
+			<p class="management-kicker">
+				<ShieldAlert class="h-3.5 w-3.5" /> Administrator audit trail
+			</p>
+			<h1 class="lm-page-title mt-2">Organization history</h1>
+			<p class="mt-3 max-w-3xl text-muted">
+				Previews, writes, undo, baseline restores, and collision resolutions. Scans are not included
+				here.
+			</p>
 		</header>
 
-		<Card as="section" variant="bordered" padding="md" aria-labelledby="management-history-filters">
-			<h2 id="management-history-filters" class="font-semibold">Filter write-system history</h2>
-			<div class="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-				<label class="grid gap-1 text-xs"
+		<section class="lm-bordered hp-filters" aria-labelledby="management-history-filters">
+			<h2 id="management-history-filters" class="lm-cap-title">Filter write-system history</h2>
+			<div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+				<label class="hp-field"
 					><span>Origin</span><select class="select select-sm" bind:value={origin}
 						><option value="">All origins</option><option value="manual">Manual</option><option
 							value="acquisition">Acquisition</option
@@ -117,7 +119,7 @@
 						></select
 					></label
 				>
-				<label class="grid gap-1 text-xs"
+				<label class="hp-field"
 					><span>Profile</span><select class="select select-sm" bind:value={profileId}
 						><option value="">All profiles</option
 						>{#each settingsQuery.data?.profiles ?? [] as profile (profile.id)}<option
@@ -125,14 +127,14 @@
 							>{/each}</select
 					></label
 				>
-				<label class="grid gap-1 text-xs"
+				<label class="hp-field"
 					><span>Root scope</span><select class="select select-sm" bind:value={rootId}
 						><option value="">All roots</option>{#each roots as root (root.id)}<option
 								value={root.id}>{root.label}</option
 							>{/each}</select
 					></label
 				>
-				<label class="grid gap-1 text-xs"
+				<label class="hp-field"
 					><span>State</span><select class="select select-sm" bind:value={operationState}
 						><option value="">All states</option
 						>{#each ['queued', 'running', 'paused', 'ready', 'succeeded', 'failed', 'cancelled', 'stopped'] as option (option)}<option
@@ -140,7 +142,7 @@
 							>{/each}</select
 					></label
 				>
-				<label class="grid gap-1 text-xs"
+				<label class="hp-field"
 					><span>Mode</span><select class="select select-sm" bind:value={mode}
 						><option value="">All modes</option
 						>{#each ['preview', 'apply', 'automatic_apply', 'undo', 'baseline_restore', 'duplicate_resolution'] as option (option)}<option
@@ -148,7 +150,7 @@
 							>{/each}</select
 					></label
 				>
-				<label class="grid gap-1 text-xs"
+				<label class="hp-field"
 					><span>From date</span><Input
 						type="date"
 						size="sm"
@@ -156,7 +158,7 @@
 						bind:value={createdFrom}
 					/></label
 				>
-				<label class="grid gap-1 text-xs"
+				<label class="hp-field"
 					><span>To date</span><Input
 						type="date"
 						size="sm"
@@ -166,7 +168,7 @@
 				>
 				<div class="flex items-end">
 					<Button
-						variant="ghost"
+						variant="caps"
 						size="sm"
 						onclick={() => {
 							origin = '';
@@ -180,7 +182,7 @@
 					>
 				</div>
 			</div>
-		</Card>
+		</section>
 
 		{#if historyQuery.isLoading || settingsQuery.isLoading || policyQuery.isLoading}
 			<div class="space-y-2" role="status" aria-label="Loading organization history">
@@ -190,75 +192,75 @@
 		{:else if historyQuery.isError || settingsQuery.isError || policyQuery.isError}
 			<div class="alert alert-error" role="alert">Could not load organization history.</div>
 		{:else if historyItems.length === 0}
-			<div class="rounded-2xl border border-dashed border-base-content/15 p-10 text-center">
-				<FolderCog class="mx-auto h-7 w-7 text-base-content/35" />
-				<p class="mt-2 font-semibold">No matching management work</p>
-				<p class="text-sm text-muted">
+			<div class="lm-bordered p-10 text-center">
+				<FolderCog class="mx-auto h-8 w-8 text-muted" />
+				<p class="lm-title mt-3 text-2xl">No matching management work</p>
+				<p class="mt-1 text-sm text-muted">
 					Change the filters or create a manual preview from the Organize files tab.
 				</p>
 			</div>
 		{:else}
-			<div class="space-y-2">
+			<div class="lm-bordered hp-table">
+				<div class="hp-cols hp-cols--head" aria-hidden="true">
+					<span>Date &amp; time</span><span>Operation</span><span>Profile &amp; scope</span><span
+						>Result</span
+					><span>Changes</span><span></span>
+				</div>
 				{#each historyItems as item (item.operation.id)}
 					<a
-						class="management-history-row"
+						class="hp-cols hp-row"
 						href={operationHref(
 							item.operation.id,
 							item.operation.state,
 							item.operation.terminal_code ?? null
 						)}
-						><History class="h-4 w-4 text-library-manage" /><span class="min-w-0 flex-1"
-							><span class="flex flex-wrap items-center gap-2"
-								><strong>{item.profile_name}</strong><span class="badge badge-outline badge-sm"
-									>{item.activation_preview
-										? 'Activation dry run'
-										: titleManagementValue(item.mode)}</span
-								><span
-									class="badge badge-sm {item.operation.state === 'failed'
-										? 'badge-error'
-										: item.operation.state === 'succeeded'
-											? 'badge-success'
-											: item.operation.state === 'ready'
-												? 'badge-warning'
-												: 'badge-outline'}">{titleManagementValue(item.operation.state)}</span
-								>{#if item.operation.state === 'ready' && item.expires_at}
-									<span class="badge badge-outline badge-sm"
-										>Expires {formatDate(item.expires_at)}</span
-									>{/if}</span
-							><small
+					>
+						<span class="hp-when"
+							><span>Started {formatDate(item.operation.created_at)}</span><small
+								>{latestTimestampLabel(item.operation.state)}
+								{formatDate(item.operation.updated_at)}</small
+							></span
+						>
+						<span class="hp-mode"
+							>{item.activation_preview
+								? 'Activation dry run'
+								: titleManagementValue(item.mode)}</span
+						>
+						<span class="min-w-0"
+							><strong>{item.profile_name}</strong><small
 								>{titleManagementValue(item.origin)} · {scopeLabel(
 									isRecord(item.selection) ? item.selection : {},
 									item.target_root_id ?? null
 								)}</small
-							><small class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted"
-								><span>Started {formatDate(item.operation.created_at)}</span><span
-									aria-hidden="true">·</span
-								><span
-									>{latestTimestampLabel(item.operation.state)}
-									{formatDate(item.operation.updated_at)}</span
-								></small
-							><span class="mt-1 flex flex-wrap gap-1"
-								>{#if item.operation.state === 'ready'}
-									{#if (item.eligible_count ?? 0) > 0}<span class="badge badge-success badge-sm"
-											>{item.eligible_count} eligible</span
-										>{/if}{#if (item.warning_count ?? 0) > 0}<span
-											class="badge badge-warning badge-sm">{item.warning_count} warning</span
-										>{/if}{#if (item.blocked_count ?? 0) > 0}<span
-											class="badge badge-error badge-sm">{item.blocked_count} blocked</span
-										>{/if}
-								{:else}
-									{#if item.operation.succeeded_count}<span class="badge badge-success badge-sm"
-											>{item.operation.succeeded_count} succeeded</span
-										>{/if}{#if item.operation.failed_count}<span class="badge badge-error badge-sm"
-											>{item.operation.failed_count} failed</span
-										>{/if}{#if item.operation.skipped_count}<span
-											class="badge badge-warning badge-sm"
-											>{item.operation.skipped_count} skipped</span
-										>{/if}
-								{/if}</span
 							></span
-						><ArrowRight class="h-4 w-4" /></a
-					>
+						>
+						<span class="flex flex-wrap items-center gap-1"
+							><StatusChip tone={stateTone(item.operation.state)}
+								>{titleManagementValue(item.operation.state)}</StatusChip
+							>{#if item.operation.state === 'ready' && item.expires_at}
+								<span class="hp-expires">Expires {formatDate(item.expires_at)}</span>{/if}</span
+						>
+						<span class="flex flex-wrap gap-1"
+							>{#if item.operation.state === 'ready'}
+								{#if (item.eligible_count ?? 0) > 0}<span class="badge badge-success badge-sm"
+										>{item.eligible_count} eligible</span
+									>{/if}{#if (item.warning_count ?? 0) > 0}<span
+										class="badge badge-warning badge-sm">{item.warning_count} warning</span
+									>{/if}{#if (item.blocked_count ?? 0) > 0}<span class="badge badge-error badge-sm"
+										>{item.blocked_count} blocked</span
+									>{/if}
+							{:else}
+								{#if item.operation.succeeded_count}<span class="badge badge-success badge-sm"
+										>{item.operation.succeeded_count} succeeded</span
+									>{/if}{#if item.operation.failed_count}<span class="badge badge-error badge-sm"
+										>{item.operation.failed_count} failed</span
+									>{/if}{#if item.operation.skipped_count}<span class="badge badge-warning badge-sm"
+										>{item.operation.skipped_count} skipped</span
+									>{/if}
+							{/if}</span
+						>
+						<ChevronRight class="hp-go size-5" aria-hidden="true" />
+					</a>
 				{/each}
 			</div>
 			{#if historyQuery.hasNextPage}<Button
@@ -270,3 +272,97 @@
 		{/if}
 	</main>
 </div>
+
+<style>
+	.hp-filters {
+		padding: 1.25rem;
+		background-color: var(--color-base-200);
+	}
+	.hp-field {
+		display: grid;
+		gap: 0.375rem;
+		font-size: 0.8125rem;
+		font-weight: 600;
+	}
+
+	.hp-table {
+		overflow: hidden;
+		background-color: var(--color-base-200);
+	}
+	.hp-cols {
+		display: grid;
+		grid-template-columns: 12rem 9rem minmax(0, 1fr) 11rem 13rem 1.25rem;
+		align-items: center;
+		gap: 1rem;
+		padding: 0.875rem 1.25rem;
+	}
+	.hp-cols--head {
+		padding-block: 0.625rem;
+		background-color: var(--dn-paper);
+		color: var(--dn-paper-content);
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+	}
+	:global([data-theme='light']) .hp-cols--head {
+		background-color: var(--dn-selected);
+		color: var(--color-base-content);
+	}
+	.hp-row {
+		border-top: 1px solid var(--dn-line);
+		font-size: 0.875rem;
+		transition: background-color 150ms;
+	}
+	.hp-cols--head + .hp-row {
+		border-top: 0;
+	}
+	.hp-row:hover {
+		background-color: var(--dn-selected);
+	}
+	.hp-row:focus-visible {
+		outline: 2px solid var(--dn-focus);
+		outline-offset: -2px;
+	}
+	.hp-row small {
+		display: block;
+		margin-top: 0.125rem;
+		color: var(--dn-muted);
+	}
+	.hp-when {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+	}
+	.hp-mode {
+		font-weight: 600;
+	}
+	.hp-expires {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--dn-muted);
+	}
+
+	@media (max-width: 1023px) {
+		.hp-cols--head {
+			display: none;
+		}
+		.hp-cols {
+			grid-template-columns: minmax(0, 1fr) auto;
+			gap: 0.375rem 1rem;
+		}
+		.hp-cols > :global(*) {
+			grid-column: 1;
+		}
+		.hp-cols > :global(.hp-go) {
+			grid-column: 2;
+			grid-row: 1 / span 5;
+		}
+		.hp-row {
+			border-top-width: 1px;
+		}
+		.hp-cols--head + .hp-row {
+			border-top: 0;
+		}
+	}
+</style>

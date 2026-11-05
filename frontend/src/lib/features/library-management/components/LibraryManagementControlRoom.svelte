@@ -7,7 +7,10 @@
 	import {
 		TriangleAlert,
 		ArrowRight,
+		CircleCheck,
+		FolderOpen,
 		History,
+		Layers,
 		RotateCcw,
 		Settings2,
 		Sparkles
@@ -303,14 +306,13 @@
 </script>
 
 <section id="management-controls" class="space-y-5" aria-label="Organize files">
-	<div
-		class="rounded-3xl border border-warning/20 bg-gradient-to-br from-warning/8 via-base-200/50 to-base-200/40 p-5 sm:p-6"
-	>
-		<p class="management-kicker">Optional write access</p>
-		<div class="mt-2 flex flex-wrap items-center justify-between gap-4">
+	<div class="lm-paper-card cr-head">
+		<FolderOpen class="cr-head__mark" aria-hidden="true" />
+		<div class="cr-head__body">
 			<div class="max-w-2xl">
-				<h2 class="font-display text-2xl font-bold">Organize files</h2>
-				<p class="mt-1 text-sm text-muted">
+				<p class="management-kicker">Optional write access</p>
+				<h2 class="lm-title cr-head__title">Organize files</h2>
+				<p class="mt-1 text-sm">
 					Writes tags and organizes files on disk - nothing changes until you review and apply a
 					preview.
 				</p>
@@ -318,20 +320,22 @@
 			<div class="flex flex-wrap items-center gap-2">
 				<Button
 					variant="warning"
+					size="display-sm"
 					icon={Sparkles}
 					disabled={recoveryUnavailable || !settingsQuery.data || !policyQuery.data}
 					onclick={(event) => openRunner('manage', event.currentTarget)}
 					>Preview organization...</Button
 				>
 				<Button
-					variant="outline"
+					variant="paper"
+					size="display-sm"
 					icon={RotateCcw}
 					disabled={recoveryUnavailable || !settingsQuery.data || !policyQuery.data}
 					onclick={(event) => openRunner('baseline_restore', event.currentTarget)}
 					>Restore original state...</Button
 				>
 				<Button
-					variant="ghost"
+					variant="paper"
 					size="sm"
 					icon={Settings2}
 					href={withBasePath('/library/management?tab=automation')}>Automation</Button
@@ -350,25 +354,31 @@
 	{:else if settingsQuery.data && policyQuery.data}
 		<div class="space-y-5">
 			<div class="grid gap-3 sm:grid-cols-3">
-				<div class="management-control-stat">
-					<span>Automatic write access</span><strong
+				<div class="lm-tile">
+					<span class="lm-tile__label"
+						><Layers class="size-4" aria-hidden="true" />Automatic write access</span
+					><strong class="lm-tile__value"
 						>{activeAssignments.length
 							? `${activeAssignments.length} active root${activeAssignments.length === 1 ? '' : 's'}`
 							: 'Off everywhere'}</strong
-					><small>Manual previews remain available whether automation is on or off.</small>
+					><small class="lm-tile__note"
+						>Manual previews remain available whether automation is on or off.</small
+					>
 				</div>
-				<div class="management-control-stat">
-					<span>Ready previews</span><strong>{readyPreviews.length}</strong><small
+				<div class="lm-tile">
+					<span class="lm-tile__label"
+						><CircleCheck class="size-4" aria-hidden="true" />Ready previews</span
+					><strong class="lm-tile__value">{readyPreviews.length}</strong><small
+						class="lm-tile__note"
 						>Nothing writes until an administrator opens and applies one.</small
 					>
 				</div>
-				<div
-					class="management-control-stat"
-					data-attention={attentionCount > 0 || recoveryUnavailable}
-				>
-					<span>Needs attention</span><strong
+				<div class="lm-tile" data-attention={attentionCount > 0 || recoveryUnavailable}>
+					<span class="lm-tile__label"
+						><TriangleAlert class="size-4" aria-hidden="true" />Needs attention</span
+					><strong class="lm-tile__value"
 						>{recoveryUnavailable ? 'Status unavailable' : attentionCount}</strong
-					><small
+					><small class="lm-tile__note"
 						>{recoveryUnavailable
 							? 'Recovery diagnostics could not be loaded.'
 							: `${recoveryQuery.data?.nonterminal_journal_count ?? 0} nonterminal recovery journals.`}</small
@@ -388,7 +398,7 @@
 							<p class="management-step">
 								{active.activation_preview ? 'Write-access dry run' : 'Active write work'}
 							</p>
-							<h3 class="font-semibold">{active.profile_name}</h3>
+							<h3 class="lm-title cr-section-title">{active.profile_name}</h3>
 							<p class="text-sm text-muted">
 								{title(active.mode)} · {title(active.phase)} · {activeProgressLabel}
 							</p>
@@ -429,10 +439,12 @@
 
 			{#if readyPreviews.length}
 				<section class="space-y-2" aria-labelledby="ready-management-previews">
-					<div class="flex items-end justify-between">
+					<div class="flex flex-wrap items-end justify-between gap-2">
 						<div>
 							<p class="management-step">Awaiting review</p>
-							<h3 id="ready-management-previews" class="font-semibold">Ready previews</h3>
+							<h3 id="ready-management-previews" class="lm-title cr-section-title">
+								Ready previews
+							</h3>
 						</div>
 						<span class="text-xs text-muted">Applying is the first write action</span>
 					</div>
@@ -473,11 +485,15 @@
 			{/if}
 
 			<section class="space-y-2" aria-labelledby="recent-management-work">
-				<div class="flex items-end justify-between">
+				<div class="flex flex-wrap items-end justify-between gap-2">
 					<div>
 						<p class="management-step">Audit trail</p>
-						<h3 id="recent-management-work" class="font-semibold">Recent management work</h3>
+						<h3 id="recent-management-work" class="lm-title cr-section-title">
+							Recent management work
+						</h3>
 					</div>
+				</div>
+				<div class="space-y-2">
 					{#if recent.length > 0}
 						{#each recentRunning as item (item.operation.id)}<a
 								href={operationHref(
@@ -857,46 +873,54 @@
 {/if}
 
 <style>
-	.management-control-stat {
-		display: grid;
-		gap: 0.2rem;
-		min-height: 7rem;
-		padding: 1rem;
-		border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
-		border-radius: 1rem;
-		background: color-mix(in oklab, var(--color-base-200) 40%, transparent);
+	/* the cream header card: its mark, then the title block and the buttons */
+	.cr-head {
+		display: flex;
+		align-items: flex-start;
+		gap: 1.25rem;
+		padding: 1.5rem;
 	}
-
-	.management-control-stat[data-attention='true'] {
-		border-color: color-mix(in oklab, var(--color-warning) 40%, transparent);
+	.cr-head :global(.cr-head__mark) {
+		flex: none;
+		width: 3rem;
+		height: 3rem;
+		stroke-width: 1.5;
 	}
-
-	.management-control-stat span {
-		font-size: 0.7rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
+	.cr-head__body {
+		display: flex;
+		flex: 1;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem 1.5rem;
+		min-width: 0;
 	}
-
-	.management-control-stat strong {
-		font-family: var(--font-display);
-		font-size: 1.15rem;
-		text-transform: uppercase;
+	.cr-head__title {
+		margin-top: 0.25rem;
+		font-size: clamp(2.25rem, 4vw, 3rem);
 	}
-
-	.management-control-stat small {
-		align-self: end;
-		color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
+	.cr-section-title {
+		margin-top: 0.375rem;
+		font-size: 1.75rem;
+		color: var(--dn-title);
 	}
 
 	.management-active-card {
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-		border: 1px solid color-mix(in oklab, var(--color-library-manage) 20%, transparent);
-		border-radius: 1rem;
-		background: color-mix(in oklab, var(--color-library-manage) 6%, var(--color-base-100));
+		border: 1.5px solid var(--color-warning);
+		border-radius: 0.625rem;
+		background: var(--color-base-200);
+	}
+
+	@media (max-width: 639px) {
+		.cr-head {
+			padding: 1.25rem 1rem;
+		}
+		.cr-head :global(.cr-head__mark) {
+			display: none;
+		}
 	}
 
 	.management-active-card {

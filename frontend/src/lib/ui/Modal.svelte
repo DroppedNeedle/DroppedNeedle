@@ -23,6 +23,8 @@
 	changes. The caller closes it by setting `open` to false.
 	`overflowVisible` lets a dropdown inside reach past the box's edge, for a
 	short dialog that holds one.
+	`paper` prints a non-sheet dialog on paper stock (the light theme inside,
+	an Anton title), for a confirm that starts a write to files.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -52,6 +54,8 @@
 		onrequestclose?: () => void;
 		/** Lets a dropdown inside reach past the box's edge. */
 		overflowVisible?: boolean;
+		/** Cream paper stock with an Anton title, for a confirm that starts a write. */
+		paper?: boolean;
 		onclose?: () => void;
 		children: Snippet;
 		actions?: Snippet;
@@ -71,6 +75,7 @@
 		closeButton = false,
 		onrequestclose,
 		overflowVisible = false,
+		paper = false,
 		onclose,
 		children,
 		actions
@@ -213,8 +218,10 @@
 				'modal-box',
 				widths[size as keyof typeof widths],
 				overflowVisible && 'overflow-visible',
+				paper && 'border-2 border-paper-content',
 				bottomSheet && 'max-sm:max-w-none pb-[calc(env(safe-area-inset-bottom)+1.5rem)] sm:pb-6'
 			]}
+			data-theme={paper ? 'light' : undefined}
 		>
 			<div class="flex items-start gap-3">
 				{#if Icon}
@@ -226,7 +233,11 @@
 					</div>
 				{/if}
 				<div class={['min-w-0 flex-1', Icon && 'self-center']}>
-					{@render heading('text-xl leading-tight')}
+					{@render heading(
+						paper
+							? 'font-display text-3xl leading-none font-normal uppercase'
+							: 'text-xl leading-tight'
+					)}
 					{#if description}
 						<p id={descriptionId} class="mt-1 text-sm text-muted">{description}</p>
 					{/if}

@@ -5,6 +5,7 @@
 	first. `icon` sets a mark beside the title, tinted by `tone`, and
 	`focusTitle` puts focus on the title rather than the first control.
 	`onclose` runs on every close, confirmed or not, once focus is back.
+	`paper` passes Modal's paper stock through.
 	Replaces `window.confirm`, the one-off confirm modals such as
 	DeleteAlbumModal, and the typed-phrase confirmations in library management.
 -->
@@ -31,6 +32,8 @@
 		pending?: boolean;
 		/** False when there turns out to be nothing to confirm: only the cancel button shows. */
 		canConfirm?: boolean;
+		/** Paper stock and an Anton title (Modal's `paper`). */
+		paper?: boolean;
 		onconfirm: () => unknown;
 		oncancel?: () => void;
 		onclose?: () => void;
@@ -49,6 +52,7 @@
 		phrase,
 		pending = false,
 		canConfirm = true,
+		paper = false,
 		onconfirm,
 		oncancel,
 		onclose,
@@ -94,7 +98,16 @@
 	}
 </script>
 
-<Modal bind:open {title} {icon} {iconTone} {focusTitle} dismissible={!busy} onclose={handleClose}>
+<Modal
+	bind:open
+	{title}
+	{icon}
+	{iconTone}
+	{focusTitle}
+	{paper}
+	dismissible={!busy}
+	onclose={handleClose}
+>
 	{#if message}
 		<p class="text-muted">{message}</p>
 	{/if}

@@ -155,9 +155,7 @@
 </script>
 
 <section id="scanning-controls" class="space-y-5" aria-label="Scanning and identification">
-	<div
-		class="rounded-3xl border border-primary/15 bg-gradient-to-br from-primary/10 via-base-200/50 to-base-200/40 p-5 sm:p-6"
-	>
+	<div class="lm-bordered sp-head">
 		<div class="flex flex-wrap items-center justify-between gap-3">
 			<p class="library-scanning-kicker">Read-only catalog work</p>
 			<div class="flex flex-wrap items-center gap-2">
@@ -193,18 +191,16 @@
 		{:else}
 			<div class="mt-4 flex flex-wrap items-center justify-between gap-4">
 				<div class="max-w-xl">
-					<h2 class="font-display text-2xl font-bold">Scan &amp; identify</h2>
-					<p class="mt-1 text-sm text-muted">
+					<h2 class="lm-title sp-title">Scan &amp; identify</h2>
+					<p class="mt-2 text-muted">
 						Reads your library folders and updates the catalog. Identification then matches albums
 						to MusicBrainz. Nothing here writes to your files.
 					</p>
 				</div>
 				<Button
 					variant="primary"
-					size="lg"
-					pill
+					size="display"
 					icon={RefreshCw}
-					class="shadow-lg shadow-primary/25 glow-primary-soft"
 					disabled={requestRun.isPending || !policyRevision}
 					onclick={() => void startRun('incremental')}>Scan for changes</Button
 				>
@@ -249,7 +245,7 @@
 		<div class="alert alert-error">Could not load library operations.</div>
 	{:else}
 		<div class="space-y-3">
-			<Card as="article" variant="bordered" padding="none" class="overflow-hidden">
+			<Card as="article" variant="bordered" padding="none" class="lm-bordered overflow-hidden">
 				<div class="flex flex-wrap items-center gap-3 border-b border-base-content/10 px-4 py-3">
 					<div
 						class="flex h-9 w-9 items-center justify-center rounded-xl bg-[color-mix(in_oklab,var(--color-library-index)_16%,transparent)] text-[var(--color-library-index)]"
@@ -257,7 +253,7 @@
 						<FolderSync class="h-4 w-4" />
 					</div>
 					<div class="min-w-0 flex-1">
-						<h3 class="font-semibold">Local files</h3>
+						<h3 class="lm-cap-title">Local files</h3>
 						<p class="text-sm text-muted">
 							{scan ? stateLabel(scan.state) : 'Idle'}{#if activeRun}
 								· {activeRun.trigger.replaceAll('_', ' ')} · {scopeLabel}{/if}
@@ -286,7 +282,7 @@
 				</div>
 				<div class="space-y-3 p-4">
 					<LibraryWorkLane kind="scan" item={scan} />
-					<div class="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4 lg:grid-cols-9">
+					<div class="sp-counts grid grid-cols-2 gap-2 text-sm sm:grid-cols-4 lg:grid-cols-9">
 						<div>
 							<span class="block text-xs text-muted">New</span><strong
 								>{(counters?.new_count ?? 0).toLocaleString()}</strong
@@ -373,7 +369,7 @@
 				</div>
 			</Card>
 
-			<Card as="article" variant="bordered" padding="none" class="overflow-hidden">
+			<Card as="article" variant="bordered" padding="none" class="lm-bordered overflow-hidden">
 				<div class="flex flex-wrap items-center gap-3 border-b border-base-content/10 px-4 py-3">
 					<div
 						class="flex h-9 w-9 items-center justify-center rounded-xl bg-[color-mix(in_oklab,var(--color-library-identify)_16%,transparent)] text-[var(--color-library-identify)]"
@@ -381,7 +377,7 @@
 						<ScanLine class="h-4 w-4" />
 					</div>
 					<div class="min-w-0 flex-1">
-						<h3 class="font-semibold">Identification</h3>
+						<h3 class="lm-cap-title">Identification</h3>
 						<p class="text-sm text-muted">
 							{identification ? stateLabel(identification.state) : 'Idle'}
 						</p>
@@ -404,7 +400,7 @@
 				</div>
 				<div class="space-y-3 p-4">
 					<LibraryWorkLane kind="identification" item={identification} />
-					<div class="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4 lg:grid-cols-7">
+					<div class="sp-counts grid grid-cols-2 gap-2 text-sm sm:grid-cols-4 lg:grid-cols-7">
 						<div>
 							<span class="block text-xs text-muted">Complete</span><strong
 								>{(identification?.processed ?? 0).toLocaleString()}</strong
@@ -505,7 +501,7 @@
 						<FingerprintPattern class="h-5 w-5" />
 					</div>
 					<div class="min-w-0 flex-1">
-						<h3 class="font-semibold">Artist identity desk</h3>
+						<h3 class="lm-cap-title">Artist identity desk</h3>
 						<p class="text-sm text-muted">
 							Provider-proven reconciliation and duplicate groups that need administrator judgement.
 						</p>
@@ -570,19 +566,51 @@
 />
 
 <style>
+	.sp-head {
+		padding: 1.5rem;
+		background-color: var(--color-base-200);
+	}
+	.sp-title {
+		font-size: clamp(2.25rem, 4vw, 3rem);
+		color: var(--dn-title);
+	}
 	.library-scanning-schedule {
 		min-height: 1.75rem;
 		flex: none;
-		padding: 0.35rem 0.7rem;
-		border: 1px solid color-mix(in oklab, var(--color-library-index) 20%, transparent);
+		padding: 0.35rem 0.875rem;
+		border: 1.5px solid var(--dn-edge);
 		border-radius: 9999px;
-		background: color-mix(in oklab, var(--color-library-index) 7%, var(--color-base-100));
-		color: color-mix(in oklab, var(--color-base-content) 58%, transparent);
+		font-family: var(--font-mono);
 		font-size: 0.75rem;
-		font-weight: 650;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+	}
+
+	/* counts: mono caps labels over Anton numbers */
+	.sp-counts > :global(div) {
+		padding: 0.5rem 0.75rem;
+		border-left: 1.5px solid var(--dn-line);
+	}
+	.sp-counts :global(span.text-xs) {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+	}
+	.sp-counts :global(strong) {
+		font-family: var(--font-display);
+		font-weight: 400;
+		font-size: 1.625rem;
+		line-height: 1.1;
+		font-synthesis: none;
+		font-variant-numeric: tabular-nums;
 	}
 
 	@media (max-width: 639px) {
+		.sp-head {
+			padding: 1.25rem 1rem;
+		}
 		.library-scanning-schedule {
 			align-self: flex-start;
 		}

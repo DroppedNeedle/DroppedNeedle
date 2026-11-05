@@ -249,32 +249,28 @@
 		{:else if previewQuery.isError || settingsQuery.isError || policyQuery.isError}
 			<div class="alert alert-error" role="alert">Could not load this Organization preview.</div>
 		{:else if preview}
-			<header class="management-control-room p-5 sm:p-7">
+			<header class="pv-head">
 				<div class="flex flex-wrap items-start gap-4">
-					<div class="management-write-mark"><FolderCog class="h-6 w-6" /></div>
 					<div class="min-w-0 flex-1">
 						<p class="management-kicker">
 							<ShieldAlert class="h-3.5 w-3.5" /> Applying is the first write action · no files changed
 						</p>
-						<h1 class="mt-1 font-display text-2xl font-bold sm:text-3xl">
+						<h1 class="lm-page-title mt-2">
 							{managementPreviewHeading(preview.mode)}
 						</h1>
-						<p class="mt-2 text-sm text-muted">
+						<p class="mt-3 text-muted">
 							{preview.profile_name} · {titleManagementValue(preview.origin)} · created {formatManagementDate(
 								preview.created_at
 							)}
 						</p>
 					</div>
-					<span
-						class="badge badge-lg {preview.ready_for_confirmation
-							? 'badge-success'
-							: 'badge-outline'}"
+					<span class="pv-phase" data-ready={preview.ready_for_confirmation}
 						>{preview.terminal_code === 'PREVIEW_DISCARDED'
 							? 'Discarded'
 							: titleManagementValue(preview.phase)}</span
 					>
 				</div>
-				<div class="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+				<div class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
 					<div class="management-summary-card">
 						<span class="text-xs text-muted">Eligible to write</span><strong
 							>{preview.summary.eligible_count + preview.summary.warning_count}</strong
@@ -297,26 +293,26 @@
 					</div>
 				</div>
 				<div class="mt-3 flex flex-wrap gap-2 text-xs">
-					<span class="badge badge-outline"
+					<span class="pv-pill"
 						><Tags class="h-3 w-3" />
 						{managementQuantity(preview.summary.tag_change_count, 'tag change')}</span
 					>
-					<span class="badge badge-outline"
+					<span class="pv-pill"
 						><Sparkles class="h-3 w-3" />
 						{managementQuantity(preview.summary.artwork_change_count, 'artwork change')}</span
 					>
-					<span class="badge badge-outline"
+					<span class="pv-pill"
 						><FolderCog class="h-3 w-3" />
 						{managementQuantity(preview.summary.path_change_count, 'path change')}</span
 					>
-					<span class="badge badge-outline"
+					<span class="pv-pill"
 						><Layers class="h-3 w-3" />
 						{managementQuantity(preview.summary.sidecar_change_count, 'sidecar change')}</span
 					>
-					<span class="badge badge-outline"
+					<span class="pv-pill"
 						><Clock3 class="h-3 w-3" /> Expires {formatManagementDate(preview.expires_at)}</span
 					>
-					<span class="badge badge-outline"
+					<span class="pv-pill"
 						><HardDrive class="h-3 w-3" /> {managementProviderStatus(preview)}</span
 					>
 				</div>
@@ -531,8 +527,11 @@
 								profileName={preview.profile_name}
 								ondiscard={() => goto(withBasePath('/library/management?tab=organize'))}
 							/>
-							<Button variant="warning" disabled={!canApply} onclick={() => applyDialog?.open()}
-								>{applyCopy.button}</Button
+							<Button
+								variant="warning"
+								size="display-sm"
+								disabled={!canApply}
+								onclick={() => applyDialog?.open()}>{applyCopy.button}</Button
 							>
 						</div>
 					</div>{/if}
@@ -571,12 +570,42 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.75rem;
-		padding: 0.85rem;
-		border: 1px solid color-mix(in oklab, var(--color-library-manage) 32%, transparent);
-		border-radius: 1rem;
-		background: color-mix(in oklab, var(--color-base-100) 92%, transparent);
-		box-shadow: 0 1rem 2.5rem color-mix(in oklab, var(--color-base-content) 15%, transparent);
-		backdrop-filter: blur(12px);
+		padding: 0.875rem 1.125rem;
+		border: 1.5px solid var(--color-warning);
+		border-radius: 0.625rem;
+		background: var(--color-base-200);
+		box-shadow: 0 1rem 2.5rem -0.5rem rgb(0 0 0 / 0.45);
+	}
+
+	.pv-head {
+		padding-bottom: 0.5rem;
+	}
+	.pv-phase {
+		padding: 0.375rem 0.875rem;
+		border: 1.5px solid var(--dn-edge);
+		border-radius: 9999px;
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+	}
+	.pv-phase[data-ready='true'] {
+		border-color: var(--dn-action-edge);
+		background-color: var(--dn-action);
+		color: var(--dn-action-content);
+	}
+	.pv-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		padding: 0.3125rem 0.75rem;
+		border: 1.5px solid var(--dn-line);
+		border-radius: 9999px;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.06em;
 	}
 
 	@media (max-width: 639px) {

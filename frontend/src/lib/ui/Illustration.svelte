@@ -1,6 +1,8 @@
 <!--
 	The kit's small drawings, on the theme's tokens: a turntable with its
-	tonearm, a dripping acid heart and a torn acid sticker with a folder.
+	tonearm, a dripping acid heart, a torn acid sticker with a folder, and
+	three printed in halftone ink for a paper card: a crate of records, two
+	taped boxes marked TAGS and ARTWORK, and a fingerprint.
 	Decoration only: hidden from screen readers and pointers, gone under
 	high contrast. `class` sizes it; the drawing keeps its proportions
 	(`fit="cover"` fills the box and lets the edges go, for a drawing that
@@ -8,7 +10,8 @@
 -->
 <script lang="ts">
 	interface Props {
-		name: 'turntable' | 'drip-heart' | 'folder-sticker';
+		name:
+			'turntable' | 'drip-heart' | 'folder-sticker' | 'record-crate' | 'tag-boxes' | 'fingerprint';
 		fit?: 'contain' | 'cover';
 		/** Layout only: size and position. */
 		class?: string;
@@ -36,7 +39,25 @@
 		[70, 88, 5, 26],
 		[84, 70, 6, 12]
 	] as const;
+	// the halftone prints share one dot screen, named per drawing
+	const dotsId = $props.id();
+	const sleeves = [
+		[10, 26, -14],
+		[28, 20, -8],
+		[46, 16, -3],
+		[64, 16, 3],
+		[80, 22, 9]
+	] as const;
+	const ridges = Array.from({ length: 9 }, (_, i) => i);
 </script>
+
+{#snippet dots()}
+	<defs>
+		<pattern id={dotsId} width="3.2" height="3.2" patternUnits="userSpaceOnUse">
+			<circle cx="1.6" cy="1.6" r="0.95" class="ink" />
+		</pattern>
+	</defs>
+{/snippet}
 
 {#if name === 'turntable'}
 	<svg
@@ -82,6 +103,84 @@
 		{/each}
 		{#each spray as [x, y, r] (`${x}-${y}`)}
 			<circle cx={x} cy={y} {r} class="ink" />
+		{/each}
+	</svg>
+{:else if name === 'record-crate'}
+	<svg
+		class="dn-decor dn-illo dn-illo--print {className}"
+		viewBox="0 0 130 120"
+		preserveAspectRatio={aspect}
+		aria-hidden="true"
+		focusable="false"
+	>
+		{@render dots()}
+		{#each sleeves as [x, y, turn] (x)}
+			<g transform="rotate({turn} {x + 22} 100)">
+				<rect {x} {y} width="44" height="70" class="sleeve" />
+				<rect {x} {y} width="44" height="70" class="screen" fill="url(#{dotsId})" />
+				<rect {x} {y} width="44" height="70" class="line" />
+				<circle cx={x + 22} cy={y + 24} r="12" class="line" />
+				<circle cx={x + 22} cy={y + 24} r="3" class="ink" />
+			</g>
+		{/each}
+		<path d="M4 68 L126 68 L120 116 L10 116 Z" class="crate" />
+		<path d="M4 68 L126 68 L120 116 L10 116 Z" class="screen" fill="url(#{dotsId})" />
+		<path d="M4 68 L126 68 L120 116 L10 116 Z" class="line heavy" />
+		<path d="M7 84 L123 84 M9 100 L121 100" class="line" />
+		<rect x="48" y="73" width="34" height="7" rx="3.5" class="ink" />
+	</svg>
+{:else if name === 'tag-boxes'}
+	<svg
+		class="dn-decor dn-illo dn-illo--print {className}"
+		viewBox="0 0 130 130"
+		preserveAspectRatio={aspect}
+		aria-hidden="true"
+		focusable="false"
+	>
+		{@render dots()}
+		<g transform="rotate(-4 64 40)">
+			<path d="M20 12 L104 6 L108 64 L24 70 Z" class="crate" />
+			<path d="M20 12 L104 6 L108 64 L24 70 Z" class="screen" fill="url(#{dotsId})" />
+			<path d="M20 12 L104 6 L108 64 L24 70 Z" class="line heavy" />
+			<path d="M58 9 L66 8.5 L70 66 L62 66.6 Z" class="tape" />
+			<g transform="rotate(-8 64 38)">
+				<rect x="38" y="28" width="50" height="19" class="label" />
+				<rect x="38" y="28" width="50" height="19" class="line" />
+				<text x="63" y="42.5" class="stencil">TAGS</text>
+			</g>
+		</g>
+		<g transform="rotate(5 66 98)">
+			<path d="M10 72 L118 74 L116 126 L12 124 Z" class="crate" />
+			<path d="M10 72 L118 74 L116 126 L12 124 Z" class="screen" fill="url(#{dotsId})" />
+			<path d="M10 72 L118 74 L116 126 L12 124 Z" class="line heavy" />
+			<path d="M10 72 L118 74 L117.8 81 L10.2 79 Z" class="tape" />
+			<g transform="rotate(-6 64 100)">
+				<rect x="26" y="91" width="76" height="19" class="label" />
+				<rect x="26" y="91" width="76" height="19" class="line" />
+				<text x="64" y="105.5" class="stencil">ARTWORK</text>
+			</g>
+		</g>
+	</svg>
+{:else if name === 'fingerprint'}
+	<svg
+		class="dn-decor dn-illo dn-illo--print {className}"
+		viewBox="0 0 110 130"
+		preserveAspectRatio={aspect}
+		aria-hidden="true"
+		focusable="false"
+	>
+		{@render dots()}
+		<ellipse cx="55" cy="66" rx="52" ry="62" class="screen" fill="url(#{dotsId})" />
+		{#each ridges as i (i)}
+			<ellipse
+				cx="55"
+				cy={70 - i * 0.6}
+				rx={5 + i * 5.3}
+				ry={8 + i * 6.5}
+				class="ridge"
+				stroke-dasharray="{18 + i * 9} {3 + (i % 3) * 2}"
+				stroke-dashoffset={i * 7}
+			/>
 		{/each}
 	</svg>
 {:else}
@@ -178,6 +277,48 @@
 
 	.sticker {
 		fill: var(--dn-action);
+	}
+
+	/* the halftone prints: dark ink on the paper they sit on */
+	.dn-illo--print {
+		color: var(--dn-paper-content);
+	}
+	.dn-illo--print .ink {
+		fill: currentColor;
+	}
+	.dn-illo--print .sleeve,
+	.dn-illo--print .label {
+		fill: var(--dn-paper);
+	}
+	.dn-illo--print .crate {
+		fill: color-mix(in oklab, currentColor 10%, var(--dn-paper));
+	}
+	.dn-illo--print .screen {
+		opacity: 0.5;
+	}
+	.dn-illo--print .tape {
+		fill: color-mix(in oklab, currentColor 28%, var(--dn-paper));
+	}
+	.dn-illo--print .line,
+	.dn-illo--print .ridge {
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.6;
+		stroke-linejoin: round;
+	}
+	.dn-illo--print .heavy {
+		stroke-width: 2.4;
+	}
+	.dn-illo--print .ridge {
+		stroke-width: 3.2;
+		stroke-linecap: round;
+	}
+	.dn-illo--print .stencil {
+		fill: currentColor;
+		font-family: var(--font-display);
+		font-size: 12px;
+		letter-spacing: 0.06em;
+		text-anchor: middle;
 	}
 	.folder {
 		fill: none;

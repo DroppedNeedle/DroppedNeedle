@@ -8,7 +8,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { ApiError } from '$lib/api/errors';
-	import { ShieldAlert } from 'lucide-svelte';
+	import { FolderCog, Image as ImageIcon, Layers, ShieldAlert, Tags } from 'lucide-svelte';
 
 	import { LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE } from '$lib/features/library-management/queries/LibraryManagementConfirmation';
 	import { createApplyLibraryManagementPreviewMutation } from '$lib/features/library-management/queries/LibraryManagementMutations.svelte';
@@ -31,6 +31,11 @@
 
 	let { jobId, preview, token, replaceToken, canApply, copy }: Props = $props();
 	let shown = $state(false);
+	const summary = $derived(preview.summary);
+
+	function count(value: number, noun: string): string {
+		return `${value.toLocaleString()} ${noun}${value === 1 ? '' : 's'}`;
+	}
 
 	const applyPreview = createApplyLibraryManagementPreviewMutation();
 
@@ -73,8 +78,64 @@
 	tone="warning"
 	icon={ShieldAlert}
 	focusTitle
+	paper
 	phrase={LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE}
 	pending={applyPreview.isPending}
 	canConfirm={canApply}
 	onconfirm={apply}
-/>
+>
+	<dl class="apply-counts">
+		<div>
+			<dt><Tags class="size-4" aria-hidden="true" />Tags</dt>
+			<dd>{count(summary.tag_change_count, 'change')}</dd>
+		</div>
+		<div>
+			<dt><FolderCog class="size-4" aria-hidden="true" />File paths</dt>
+			<dd>{count(summary.path_change_count, 'change')}</dd>
+		</div>
+		<div>
+			<dt><ImageIcon class="size-4" aria-hidden="true" />Artwork</dt>
+			<dd>{count(summary.artwork_change_count, 'change')}</dd>
+		</div>
+		<div>
+			<dt><Layers class="size-4" aria-hidden="true" />Sidecars</dt>
+			<dd>{count(summary.sidecar_change_count, 'change')}</dd>
+		</div>
+		<div class="apply-counts__total">
+			<dt>Files to write</dt>
+			<dd>{count(summary.eligible_count + summary.warning_count, 'file')}</dd>
+		</div>
+	</dl>
+</ConfirmDialog>
+
+<style>
+	.apply-counts {
+		display: grid;
+		margin-top: 1rem;
+		border-top: 1px solid var(--dn-line);
+	}
+	.apply-counts > div {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.5rem 0.25rem;
+		border-bottom: 1px solid var(--dn-line);
+		font-size: 0.9375rem;
+	}
+	.apply-counts dt {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.625rem;
+	}
+	.apply-counts dd {
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+	}
+	.apply-counts__total {
+		font-weight: 700;
+	}
+	.apply-counts > .apply-counts__total {
+		border-bottom: 0;
+	}
+</style>

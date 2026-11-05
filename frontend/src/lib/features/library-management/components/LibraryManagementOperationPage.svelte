@@ -7,7 +7,6 @@
 		TriangleAlert,
 		CircleCheckBig,
 		Clock3,
-		FolderCog,
 		History,
 		RotateCcw,
 		ServerCog,
@@ -28,6 +27,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { createUuid } from '$lib/utils/uuid';
 	import {
@@ -333,33 +333,33 @@
 		{:else if operationQuery.isError}
 			<div class="alert alert-error" role="alert">Could not load this Organization operation.</div>
 		{:else if operation}
-			<header class="management-control-room p-5 sm:p-7">
+			<header class="op-head">
 				<div class="flex flex-wrap items-start gap-4">
-					<div class="management-write-mark"><FolderCog class="h-6 w-6" /></div>
 					<div class="min-w-0 flex-1">
 						<p class="management-kicker">
 							<ShieldAlert class="h-3.5 w-3.5" /> File-writing operation
 						</p>
-						<h1 class="mt-1 font-display text-2xl font-bold sm:text-3xl">
+						<h1 class="lm-page-title mt-2">
 							{titleManagementValue(operation.mode)}
 						</h1>
-						<p class="mt-2 text-sm text-muted">
+						<p class="mt-3 text-muted">
 							{operation.profile_name} · {titleManagementValue(operation.origin)} · started {formatDate(
 								operation.created_at
 							)}
 						</p>
 					</div>
-					<span
-						class="badge badge-lg {operation.state === 'failed'
-							? 'badge-error'
+					<StatusChip
+						size="md"
+						tone={operation.state === 'failed'
+							? 'error'
 							: operation.state === 'succeeded'
-								? 'badge-success'
+								? 'success'
 								: operation.state === 'paused'
-									? 'badge-warning'
-									: 'badge-outline'}">{titleManagementValue(operation.state)}</span
+									? 'warning'
+									: 'neutral'}>{titleManagementValue(operation.state)}</StatusChip
 					>
 				</div>
-				<div class="mt-5">
+				<div class="lm-bordered op-progress mt-6">
 					<span class="sr-only" role="status" aria-live="polite"
 						>Operation phase: {activePhaseLabel}</span
 					>
@@ -573,3 +573,16 @@
 		>
 	</div>
 </ConfirmDialog>
+
+<style>
+	.op-progress {
+		padding: 1rem 1.25rem;
+		background-color: var(--color-base-200);
+	}
+	.op-progress > div:first-of-type {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+</style>
