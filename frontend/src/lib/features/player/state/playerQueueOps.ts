@@ -47,6 +47,25 @@ export function computeUpcomingLength(
 	return Math.max(0, queueLength - currentIndex - 1);
 }
 
+/** The queue indexes still to play after the current one, in play order. */
+export function upcomingIndexes(
+	queueLength: number,
+	currentIndex: number,
+	shuffleEnabled: boolean,
+	shuffleOrder: number[]
+): number[] {
+	if (shuffleEnabled) {
+		const shuffleIdx = shuffleOrder.indexOf(currentIndex);
+		return shuffleIdx < 0
+			? shuffleOrder.filter((index) => index !== currentIndex)
+			: shuffleOrder.slice(shuffleIdx + 1);
+	}
+	return Array.from(
+		{ length: Math.max(0, queueLength - currentIndex - 1) },
+		(_, i) => currentIndex + 1 + i
+	);
+}
+
 // Album tracks sit in consecutive runs sharing a non-empty albumId; no albumId means a solo block.
 function albumKeyAt(queue: QueueItem[], idx: number): string {
 	const id = queue[idx]?.albumId;

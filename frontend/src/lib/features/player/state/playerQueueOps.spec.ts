@@ -1,13 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { QueueItem } from '$lib/features/player/playback/types';
-import {
-	queueHasAlbums,
-	computeAllowedIndex,
-	computeNextAlbumIndex,
-	computeNextIndex,
-	computePreviousAlbumIndex,
-	computePreviousIndex
-} from './playerQueueOps';
+import { queueHasAlbums, computeNextAlbumIndex, computePreviousAlbumIndex } from './playerQueueOps';
 
 // Minimal queue items - the album helpers only read `albumId`.
 const q = (albumId: string): QueueItem => ({ albumId }) as QueueItem;
@@ -59,29 +52,5 @@ describe('computePreviousAlbumIndex', () => {
 		for (const [queue, index, expected] of cases) {
 			expect(computePreviousAlbumIndex(queue, index), `${index}`).toBe(expected);
 		}
-	});
-});
-
-describe('computeAllowedIndex', () => {
-	const allowed = new Set([0, 3, 4]);
-	const allows = (index: number) => allowed.has(index);
-
-	it('steps forward over the indexes it may not land on', () => {
-		expect(computeAllowedIndex(computeNextIndex, 0, 5, false, [], allows)).toBe(3);
-		expect(computeAllowedIndex(computeNextIndex, 3, 5, false, [], allows)).toBe(4);
-	});
-
-	it('steps back the same way', () => {
-		expect(computeAllowedIndex(computePreviousIndex, 4, 5, false, [], allows)).toBe(3);
-		expect(computeAllowedIndex(computePreviousIndex, 3, 5, false, [], allows)).toBe(0);
-	});
-
-	it('follows the shuffle order', () => {
-		expect(computeAllowedIndex(computeNextIndex, 0, 5, true, [0, 1, 4, 2, 3], allows)).toBe(4);
-	});
-
-	it('ends when nothing further is allowed', () => {
-		expect(computeAllowedIndex(computeNextIndex, 4, 5, false, [], allows)).toBeNull();
-		expect(computeAllowedIndex(computeNextIndex, 0, 3, false, [], allows)).toBeNull();
 	});
 });

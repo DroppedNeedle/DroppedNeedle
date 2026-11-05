@@ -1,74 +1,69 @@
 <!--
-	The heart and the stars of the track playing, beside the player's
-	controls. Only a library track has them; other sources show nothing.
-	The star shows the listener's rating in it and opens a bar of five
-	stars to change it.
+	The heart and stars of the track playing, in the player bar. A track
+	from a media server rates its library copy; one with no library copy
+	shows nothing. `stars={false}` shows the heart alone.
 -->
 <script lang="ts">
-	import { Heart, Star } from 'lucide-svelte';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
-	import { createQuery } from '@tanstack/svelte-query';
-	import { getLibraryAlbumStatusQueryOptions } from '$lib/features/library/queries/LibraryQueries.svelte';
+	import { libraryTrackId } from '$lib/features/player/state/skipByRating.svelte';
+	import { getTrackFavoriteQuery } from '$lib/features/player/queries/favoriteTrack.svelte';
+	import FavoriteHeart from '$lib/features/library/components/FavoriteHeart.svelte';
 	import { createSetFavoriteMutation } from '$lib/features/library/queries/FavoriteMutations.svelte';
 	import {
 		createSetRatingMutation,
 		getRatingsQuery,
 		ratingOf
 	} from '$lib/features/library/queries/ratings.svelte';
-	import IconButton from '$lib/ui/IconButton.svelte';
-	import StarPicker from './StarPicker.svelte';
+	import RatingStars from '$lib/ui/RatingStars.svelte';
 
-	const trackId = $derived(
-		playerStore.nowPlaying?.sourceType === 'local'
-			? (playerStore.nowPlaying.trackSourceId ?? null)
-			: null
-	);
+	interface Props {
+		/** The stars beside the heart, from the large width up. */
+		stars?: boolean;
+		class?: string;
+	}
 
-	// The player names the album by its local id or its release group; the
-	// album's status answers to both and carries its tracks' hearts. It is
-	// the album page's own read, so a heart given there or here shows in
-	// both.
-	const albumId = $derived(trackId ? (playerStore.nowPlaying?.albumId ?? '') : '');
-	const statusQuery = createQuery(() => ({
-		...getLibraryAlbumStatusQueryOptions(albumId),
-		enabled: albumId !== ''
-	}));
-	const ratingsQuery = getRatingsQuery(() => (trackId ? { trackIds: [trackId] } : null));
-	const favoriteMutation = createSetFavoriteMutation();
-	const ratingMutation = createSetRatingMutation();
+	let { stars = true, class: className = '' }: Props = $props();
 
+	const trackId = $derived.by(() => {
+		const np = playerStore.nowPlaying;
+		const item = playerStore.currentQueueItem;
+		if (item && item.trackSourceId === np?.trackSourceId) return libraryTrackId(item);
+		return np?.sourceType === 'local' ? (np.trackSourceId ?? null) : null;
+	});
+	const title = $derived(playerStore.nowPlaying?.trackName ?? 'This track');
+
+	const favoriteQuery = getTrackFavoriteQuery(() => trackId);
+	const ratingsQuery = getRatingsQuery(() => (trackId && stars ? { trackIds: [trackId] } : null));
+	const heart = createSetFavoriteMutation();
+	const rate = createSetRatingMutation();
+
+	// A heart given here shows at once, until the favourites list is read again.
+	let given = $state<{ id: string; favorite: boolean; readAt: number } | null>(null);
 	const favorite = $derived(
-		statusQuery.data?.tracks.find((track) => track.id === trackId)?.favorite ?? false
+		given && given.id === trackId && given.readAt === favoriteQuery.readAt
+			? given.favorite
+			: favoriteQuery.favorite
 	);
-	const stars = $derived(trackId ? ratingOf(ratingsQuery.data, 'track', trackId) : 0);
+
+	function setFavorite(id: string, favorited: boolean): void {
+		given = { id, favorite: favorited, readAt: favoriteQuery.readAt };
+		heart.mutate({ kind: 'track', itemId: id, favorited }, { onError: () => (given = null) });
+	}
+	const rating = $derived(trackId ? ratingOf(ratingsQuery.data, 'track', trackId) : 0);
 </script>
 
 {#if trackId}
-	<div class="hidden sm:flex items-center gap-1 ml-2 sm:ml-4">
-		<IconButton
-			icon={Heart}
-			variant={favorite ? 'danger-ghost' : 'ghost'}
-			label={favorite ? 'Remove from favourites' : 'Add to favourites'}
-			aria-pressed={favorite}
-			class={favorite ? '[&_svg]:fill-current' : ''}
-			onclick={() =>
-				favoriteMutation.mutate({ kind: 'track', itemId: trackId, favorited: !favorite })}
-		/>
-		<StarPicker
-			label={stars > 0 ? `Your rating: ${stars} of 5 stars` : 'Rate this track'}
-			value={stars}
-			clear="remove"
-			active={stars > 0}
-			onpick={(picked) => ratingMutation.mutate({ kind: 'track', itemId: trackId, rating: picked })}
-		>
-			<span class="relative inline-flex size-6 items-center justify-center">
-				<Star class="size-6 {stars > 0 ? 'fill-warning text-warning' : ''}" aria-hidden="true" />
-				{#if stars > 0}
-					<span class="absolute text-[10px] font-bold leading-none text-warning-content"
-						>{stars}</span
-					>
-				{/if}
-			</span>
-		</StarPicker>
-	</div>
+	{@const id = trackId}
+	<span class="inline-flex items-center {className}">
+		<FavoriteHeart {favorite} onchange={(favorited) => setFavorite(id, favorited)} />
+		{#if stars}
+			<RatingStars
+				class="hidden lg:inline-flex"
+				quiet
+				label={title}
+				value={rating}
+				onchange={(value) => rate.mutate({ kind: 'track', itemId: id, rating: value })}
+			/>
+		{/if}
+	</span>
 {/if}

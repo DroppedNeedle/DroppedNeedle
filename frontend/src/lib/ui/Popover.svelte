@@ -4,6 +4,9 @@
 	back to the button) and through the `close` its content is given. The
 	button says how many settings in the panel are on, and turns primary
 	while any is. The panel stays inside the window on a phone.
+	`look="icon"` makes the button an icon alone (`label` is its name), with
+	an optional short mono `tag` beside it; `on` fills it. `side="above"`
+	opens the panel over the button, for one along the bottom of the window.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -22,6 +25,14 @@
 		caret?: boolean;
 		/** Which edge of the button the panel lines up with. */
 		align?: 'start' | 'end';
+		/** Where the panel opens. */
+		side?: 'below' | 'above';
+		/** An icon button in place of the labelled one. */
+		look?: 'button' | 'icon';
+		/** A short mono mark beside the icon, in `look="icon"`; `label` stays the name. */
+		tag?: Snippet;
+		/** Fills the button; by default, while `count` is above 0. */
+		on?: boolean;
 		/** Layout only: width, margin, flex. */
 		class?: string;
 		children: Snippet<[close: () => void]>;
@@ -34,6 +45,10 @@
 		count = 0,
 		caret = false,
 		align = 'end',
+		side = 'below',
+		look = 'button',
+		tag = undefined,
+		on = undefined,
 		class: className = '',
 		children
 	}: Props = $props();
@@ -47,9 +62,12 @@
 	let left = $state(0);
 	let width = $state(WIDTH);
 	const panelId = $props.id();
+	const filled = $derived(on ?? count > 0);
 
+	// Shut the panel with focus back on the button, as Escape does.
 	function close(): void {
 		open = false;
+		root?.querySelector<HTMLButtonElement>('button')?.focus();
 	}
 
 	// Line the panel up with the button, then keep it inside the window: a
@@ -97,9 +115,7 @@
 			if (root && !root.contains(event.target as Node)) open = false;
 		};
 		const escape = (event: KeyboardEvent) => {
-			if (event.key !== 'Escape') return;
-			open = false;
-			root?.querySelector<HTMLButtonElement>('button')?.focus();
+			if (event.key === 'Escape') close();
 		};
 		document.addEventListener('pointerdown', away);
 		document.addEventListener('keydown', escape);
@@ -113,22 +129,42 @@
 </script>
 
 <div class="relative {className}" bind:this={root} onfocusout={leave}>
-	<Button
-		variant={count > 0 ? 'primary' : 'outline'}
-		{icon}
-		class={caret ? 'w-full justify-start' : ''}
-		aria-expanded={open}
-		aria-haspopup="dialog"
-		aria-controls={open ? panelId : undefined}
-		onclick={toggle}
-	>
-		{label}{#if count > 0}<span class="badge badge-sm ml-1">{count}</span
-			>{/if}{#if caret}<ChevronDown class="ml-auto size-4" aria-hidden="true" />{/if}
-	</Button>
+	{#if look === 'icon'}
+		<Button
+			variant={filled ? 'primary' : 'ghost'}
+			{icon}
+			pill
+			class="[&>svg]:size-5 {tag ? '' : 'btn-circle'}"
+			aria-label={label}
+			title={label}
+			aria-expanded={open}
+			aria-haspopup="dialog"
+			aria-controls={open ? panelId : undefined}
+			onclick={toggle}
+		>
+			{#if tag}<span class="font-mono text-xs font-bold">{@render tag()}</span>{/if}
+		</Button>
+	{:else}
+		<Button
+			variant={filled ? 'primary' : 'outline'}
+			{icon}
+			class={caret ? 'w-full justify-start' : ''}
+			aria-expanded={open}
+			aria-haspopup="dialog"
+			aria-controls={open ? panelId : undefined}
+			onclick={toggle}
+		>
+			{label}{#if count > 0}<span class="badge badge-sm ml-1">{count}</span
+				>{/if}{#if caret}<ChevronDown class="ml-auto size-4" aria-hidden="true" />{/if}
+		</Button>
+	{/if}
 	{#if open}
 		<div
 			id={panelId}
-			class="absolute top-full z-30 mt-2 space-y-4 rounded-box border border-line bg-base-200 p-4 shadow-xl"
+			class="absolute z-30 space-y-4 rounded-box border border-line bg-base-200 p-4 shadow-xl {side ===
+			'above'
+				? 'bottom-full mb-2'
+				: 'top-full mt-2'}"
 			style:left="{left}px"
 			style:width="{width}px"
 			role="dialog"

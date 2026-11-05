@@ -38,13 +38,20 @@ import {
 	computeNextIndex,
 	computePreviousIndex,
 	computeUpcomingLength,
+	upcomingIndexes,
 	computeNextAlbumIndex,
 	computePreviousAlbumIndex,
 	queueHasAlbums,
 	performCleanup
 } from './playerQueueOps';
 import { buildNowPlayingMetadata } from './playerSourceResolver';
-import { skipByRating } from './skipByRating.svelte';
+import { libraryTrackId, skipByRating, skippedRating } from './skipByRating.svelte';
+import {
+	cachedTrackRatings,
+	readTrackRatings,
+	warmTrackRatings,
+	type TrackRatings
+} from '$lib/features/library/queries/ratings.svelte';
 import { resumeAudioEngine } from '$lib/features/player/playback/audioElement';
 import { registerUserSessionReset } from '$lib/utils/userSessionCleanup';
 import {
@@ -79,6 +86,8 @@ const MAX_SESSION_REPORT_FAILURES = 3;
 const REARM_AFTER_PLAYED_S = 30;
 // Progress arrives a few times a second; a bigger jump is a seek, not listening.
 const MAX_PROGRESS_STEP_S = 5;
+// How long a pick waits for the queue's ratings before it plays on without them.
+const RATINGS_WAIT_MS = 5000;
 
 /**
  * How the current item is recovering. A failed item is reloaded once (as a transcode when the
@@ -128,6 +137,14 @@ const NOT_CONVERTING = 'NOT_CONVERTING';
 
 const CONNECT_APPS_SETTINGS = '/settings?tab=connect-apps';
 
+function withinTime<T>(promise: Promise<T>, ms: number): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new Error('timed out')), ms);
+	});
+	return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
 function itemKey(item: QueueItem): string {
 	return `${item.sourceType}:${item.trackSourceId}`;
 }
@@ -156,6 +173,10 @@ function createPlayerStore() {
 	let unplayable = $state<Record<string, UnplayableReason>>({});
 	// The current load is a conversion for this browser.
 	let converting = $state(false);
+	// Playback stopped at a track's end because the rating floor passes over the rest.
+	let floorStopped = $state(false);
+	// A failed ratings read was told once; the next good read clears it.
+	let ratingsReadFailed = false;
 	const recovery: Recovery = {
 		phase: 'idle',
 		generation: 0,
@@ -180,6 +201,7 @@ function createPlayerStore() {
 		recovery.phase = phase;
 		recovery.heard = 0;
 		recovery.lastPosition = 0;
+		floorStopped = false;
 		return ++recovery.generation;
 	}
 
@@ -190,21 +212,23 @@ function createPlayerStore() {
 	const isPlaying = $derived(playbackState === 'playing');
 	const isBuffering = $derived(playbackState === 'buffering' || playbackState === 'loading');
 	const hasQueue = $derived(queue.length > 0);
-	const hasNext = $derived.by(() => {
-		if (queue.length <= 1) return false;
-		if (shuffleEnabled) {
-			const si = shuffleOrder.indexOf(currentIndex);
-			return si < shuffleOrder.length - 1;
+	// The library tracks the rating floor judges; none while it is off.
+	const floorTrackIds = $derived(
+		skipByRating.on ? queue.map(libraryTrackId).filter((id): id is string => id !== null) : []
+	);
+	// What the cache holds of their ratings, followed as it changes.
+	const cachedRatings = $derived(
+		floorTrackIds.length > 0 ? cachedTrackRatings(floorTrackIds) : null
+	);
+	const hasNext = $derived(getNextIndex() !== null);
+	const hasPrevious = $derived(getPreviousIndex() !== null);
+	const upcomingLength = $derived.by(() => {
+		if (cachedRatings === null) {
+			return computeUpcomingLength(queue.length, currentIndex, shuffleEnabled, shuffleOrder);
 		}
-		return currentIndex < queue.length - 1;
-	});
-	const hasPrevious = $derived.by(() => {
-		if (queue.length <= 1) return false;
-		if (shuffleEnabled) {
-			const si = shuffleOrder.indexOf(currentIndex);
-			return si > 0;
-		}
-		return currentIndex > 0;
+		return upcomingIndexes(queue.length, currentIndex, shuffleEnabled, shuffleOrder).filter(
+			plays(cachedRatings)
+		).length;
 	});
 	const currentQueueItem = $derived(queue.length > 0 ? queue[currentIndex] : null);
 	const queueLength = $derived(queue.length);
@@ -229,26 +253,101 @@ function createPlayerStore() {
 		duration: () => duration
 	});
 
-	// Next and previous pass over the tracks the rating floor skips.
-	function getNextIndex(): number | null {
+	$effect.root(() => {
+		$effect(() => {
+			// Reads only what no lookup holds, again after the cache lets one go.
+			if (cachedRatings !== null) warmTrackRatings(floorTrackIds);
+		});
+	});
+
+	/** Whether the queue item at an index plays under the floor, given these ratings. */
+	function plays(ratings: TrackRatings | null): (index: number) => boolean {
+		const floor = skipByRating.floor;
+		return (index) => skippedRating(floor, ratings, queue[index]) === null;
+	}
+
+	// Next and previous pass over the tracks the rating floor skips, by the
+	// ratings given, else by what the cache holds.
+	function getNextIndex(ratings: TrackRatings | null = cachedRatings): number | null {
 		return computeAllowedIndex(
 			computeNextIndex,
 			currentIndex,
 			queue.length,
 			shuffleEnabled,
 			shuffleOrder,
-			(index) => skipByRating.allows(queue[index])
+			plays(ratings)
 		);
 	}
-	function getPreviousIndex(): number | null {
+	function getPreviousIndex(ratings: TrackRatings | null = cachedRatings): number | null {
 		return computeAllowedIndex(
 			computePreviousIndex,
 			currentIndex,
 			queue.length,
 			shuffleEnabled,
 			shuffleOrder,
-			(index) => skipByRating.allows(queue[index])
+			plays(ratings)
 		);
+	}
+
+	/**
+	 * The queue's ratings for a pick, waiting for a read the cache lacks. A
+	 * read that fails or is slow lets everything play, with one note.
+	 */
+	async function ratingsForPick(): Promise<TrackRatings | null> {
+		if (floorTrackIds.length === 0) return null;
+		try {
+			const ratings = await withinTime(readTrackRatings(floorTrackIds), RATINGS_WAIT_MS);
+			ratingsReadFailed = false;
+			return ratings;
+		} catch {
+			if (!ratingsReadFailed) {
+				toastStore.notify("Couldn't read your ratings, so nothing was skipped.", 'warning');
+			}
+			ratingsReadFailed = true;
+			return null;
+		}
+	}
+
+	interface Pick {
+		index: number | null;
+		/** Tracks are left that the floor passes over. */
+		floorStopped: boolean;
+	}
+
+	/**
+	 * Hands `use` the next (or previous) track to play: at once while the
+	 * floor is off, else once the ratings are read, and never when another
+	 * track loaded meanwhile.
+	 */
+	function pick(step: 'next' | 'previous', use: (picked: Pick) => void): void {
+		const find = step === 'next' ? getNextIndex : getPreviousIndex;
+		const any = find(null);
+		if (any === null || floorTrackIds.length === 0) {
+			use({ index: any, floorStopped: false });
+			return;
+		}
+		const gen = recovery.generation;
+		void ratingsForPick().then((ratings) => {
+			if (!isCurrent(gen)) return;
+			const index = find(ratings);
+			use({ index, floorStopped: index === null });
+		});
+	}
+
+	function loadAndTidy(index: number): void {
+		void loadQueueItem(index).then(() => {
+			const c = performCleanup(
+				queue,
+				currentIndex,
+				shuffleEnabled,
+				shuffleOrder,
+				MAX_HISTORY_LENGTH
+			);
+			queue = c.newQueue;
+			currentIndex = c.newIndex;
+			shuffleOrder = c.newShuffleOrder;
+			persist();
+		});
 	}
 	function persist(): void {
 		doPersistSession(nowPlaying, queue, currentIndex, progress, shuffleEnabled, shuffleOrder);
@@ -273,6 +372,7 @@ function createPlayerStore() {
 		recovery.failed = [];
 		unplayable = {};
 		converting = false;
+		floorStopped = false;
 		session.clear();
 		storeSessionData(null);
 	}
@@ -526,6 +626,7 @@ function createPlayerStore() {
 			if (!isCurrent(gen)) return;
 			playbackState = state;
 			if (state === 'playing') {
+				floorStopped = false;
 				recovery.failed = [];
 				session.playing();
 				prefetchNext();
@@ -533,24 +634,17 @@ function createPlayerStore() {
 			if (state === 'paused') session.paused(progress);
 			if (state === 'ended') {
 				void session.end(progress);
-				const nextIdx = getNextIndex();
-				if (nextIdx !== null) {
-					void loadQueueItem(nextIdx).then(() => {
-						const c = performCleanup(
-							queue,
-							currentIndex,
-							shuffleEnabled,
-							shuffleOrder,
-							MAX_HISTORY_LENGTH
-						);
-						queue = c.newQueue;
-						currentIndex = c.newIndex;
-						shuffleOrder = c.newShuffleOrder;
-						persist();
-					});
-				} else {
-					applyResetState();
-				}
+				pick('next', (next) => {
+					if (!isCurrent(gen)) return;
+					if (next.index !== null) {
+						loadAndTidy(next.index);
+					} else if (next.floorStopped) {
+						// The rest of the queue stays, for the floor to be lowered or a track picked.
+						floorStopped = true;
+					} else {
+						applyResetState();
+					}
+				});
 			}
 		});
 		source.onProgress((t, d) => {
@@ -640,8 +734,21 @@ function createPlayerStore() {
 		get queueLength() {
 			return queueLength;
 		},
+		/** The tracks still to play, less those the rating floor passes over. */
 		get upcomingQueueLength() {
-			return computeUpcomingLength(queue.length, currentIndex, shuffleEnabled, shuffleOrder);
+			return upcomingLength;
+		},
+		/** The library tracks the rating floor judges; empty while it is off. */
+		get floorTrackIds() {
+			return floorTrackIds;
+		},
+		/** What the cache holds of the queue's ratings while the floor is on, else null. */
+		get floorRatings() {
+			return cachedRatings;
+		},
+		/** Playback stopped because the rating floor passes over the rest of the queue. */
+		get floorStopped() {
+			return floorStopped;
 		},
 		get currentTrackNumber() {
 			return currentTrackNumber;
@@ -695,26 +802,15 @@ function createPlayerStore() {
 		},
 
 		nextTrack(): void {
-			const idx = getNextIndex();
-			if (idx !== null)
-				void loadQueueItem(idx).then(() => {
-					const c = performCleanup(
-						queue,
-						currentIndex,
-						shuffleEnabled,
-						shuffleOrder,
-						MAX_HISTORY_LENGTH
-					);
-					queue = c.newQueue;
-					currentIndex = c.newIndex;
-					shuffleOrder = c.newShuffleOrder;
-					persist();
-				});
+			pick('next', ({ index }) => {
+				if (index !== null) loadAndTidy(index);
+			});
 		},
 
 		previousTrack(): void {
-			const idx = getPreviousIndex();
-			if (idx !== null) void loadQueueItem(idx);
+			pick('previous', ({ index }) => {
+				if (index !== null) void loadQueueItem(index);
+			});
 		},
 
 		nextAlbum(): void {

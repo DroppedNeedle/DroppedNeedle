@@ -3,17 +3,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeApi, type RouteData } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 
-const RELEASE_GROUP = 'f1390eec-a192-4d96-9943-bbc42a819588';
-
+// A Jellyfin track whose library copy is track-1: the heart and stars are the copy's.
 vi.mock('$lib/features/player/state/player.svelte', () => ({
 	playerStore: {
 		nowPlaying: {
-			albumId: 'f1390eec-a192-4d96-9943-bbc42a819588',
+			albumId: 'album-1',
 			albumName: 'Bloom',
 			artistName: 'Beach House',
 			coverUrl: null,
-			sourceType: 'local',
-			trackSourceId: 'track-1'
+			sourceType: 'jellyfin',
+			trackSourceId: 'jf-1',
+			trackName: 'Myth'
+		},
+		currentQueueItem: {
+			trackSourceId: 'jf-1',
+			trackName: 'Myth',
+			artistName: 'Beach House',
+			trackNumber: 1,
+			albumId: 'album-1',
+			albumName: 'Bloom',
+			coverUrl: null,
+			sourceType: 'jellyfin',
+			sourceIds: { jellyfin: 'jf-1', local: 'track-1' }
 		}
 	}
 }));
@@ -21,47 +32,48 @@ vi.mock('$lib/features/player/state/player.svelte', () => ({
 import PlayerTrackMarks from './PlayerTrackMarks.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toAuthUser } from '$lib/features/auth/queries/types';
+import { queryClient } from '$lib/queries/QueryClient';
 
-type Status = RouteData<'GET /api/v3/library/albums/{id}/status'>;
+type TrackPage = RouteData<'GET /api/v3/library/tracks'>;
 
-const status = (favorite: boolean): Status => ({
-	in_library: true,
-	album_id: 'album-1',
-	track_count: 1,
-	tracks: [
-		{
-			id: 'track-1',
-			title: 'Myth',
-			album_id: 'album-1',
-			album_title: 'Bloom',
-			artist_id: 'artist-1',
-			artist_name: 'Beach House',
-			album_artist_id: 'artist-1',
-			album_artist_name: 'Beach House',
-			row_revision: 1,
-			disc_number: 1,
-			track_number: 1,
-			year: 2012,
-			genre: null,
-			duration_seconds: 258,
-			format: 'mp3',
-			bit_rate: 320,
-			sample_rate: 44100,
-			bit_depth: null,
-			channels: 2,
-			file_size_bytes: 1,
-			date_added: 1,
-			cover_available: true,
-			art_missing: false,
-			favorite,
-			current_tier: 'mp3_320',
-			below_cutoff: true
-		}
-	]
+const favorites = (hearted: boolean): TrackPage => ({
+	total: hearted ? 1 : 0,
+	next: null,
+	items: hearted
+		? [
+				{
+					id: 'track-1',
+					title: 'Myth',
+					album_id: 'album-1',
+					album_title: 'Bloom',
+					artist_id: 'artist-1',
+					artist_name: 'Beach House',
+					album_artist_id: 'artist-1',
+					album_artist_name: 'Beach House',
+					row_revision: 1,
+					disc_number: 1,
+					track_number: 1,
+					year: 2012,
+					genre: null,
+					duration_seconds: 258,
+					format: 'mp3',
+					bit_rate: 320,
+					sample_rate: 44100,
+					bit_depth: null,
+					channels: 2,
+					file_size_bytes: 1,
+					date_added: 1,
+					cover_available: true,
+					art_missing: false,
+					favorite: true
+				}
+			]
+		: []
 });
 
 beforeEach(() => {
 	localStorage.clear();
+	queryClient.clear();
 	authStore.setUser(
 		toAuthUser({
 			id: 'user-1',
@@ -76,41 +88,41 @@ beforeEach(() => {
 });
 
 describe('the player heart and stars', () => {
-	it('reads the heart through the album named by its release group', async () => {
+	it('hearts and rates the library copy of the track playing', async () => {
+		let hearted = false;
+		let rating = 0;
 		const api = fakeApi({
-			'GET /api/v3/library/albums/{id}/status': status(true),
-			'POST /api/v3/ratings/lookup': { albums: {}, artists: {}, tracks: { 'track-1': 3 } }
+			'GET /api/v3/library/tracks': () => favorites(hearted),
+			'POST /api/v3/ratings/lookup': () => {
+				const tracks: Record<string, number> = rating ? { 'track-1': rating } : {};
+				return { albums: {}, artists: {}, tracks };
+			},
+			'PUT /api/v3/favorites/{kind}/{item_id}': () => {
+				hearted = true;
+				return { kind: 'track', item_id: 'track-1', favorited: true };
+			},
+			'PUT /api/v3/ratings/{kind}/{item_id}': () => {
+				rating = 4;
+				return { kind: 'track', item_id: 'track-1', rating: 4 };
+			}
 		});
-		await renderWithQuery(PlayerTrackMarks, {});
+		await renderWithQuery(PlayerTrackMarks, {}, { client: queryClient });
 
+		await page.getByRole('button', { name: 'Add to favourites' }).click();
 		await expect
 			.element(page.getByRole('button', { name: 'Remove from favourites' }))
 			.toBeVisible();
+		expect(api.calls('PUT /api/v3/favorites/{kind}/{item_id}')[0].params.item_id).toBe('track-1');
+		// The favourites list is read again, so the heart stays once the save settles.
+		await expect.poll(() => api.calls('GET /api/v3/library/tracks').length).toBe(2);
 		await expect
-			.element(page.getByRole('button', { name: 'Your rating: 3 of 5 stars' }))
+			.element(page.getByRole('button', { name: 'Remove from favourites' }))
 			.toBeVisible();
-		expect(api.calls('GET /api/v3/library/albums/{id}/status')[0].params.id).toBe(RELEASE_GROUP);
-	});
 
-	it('hearts the track and clears its rating with the bin', async () => {
-		const api = fakeApi({
-			'GET /api/v3/library/albums/{id}/status': status(false),
-			'POST /api/v3/ratings/lookup': { albums: {}, artists: {}, tracks: { 'track-1': 4 } },
-			'PUT /api/v3/favorites/{kind}/{item_id}': {
-				kind: 'track',
-				item_id: 'track-1',
-				favorited: true
-			},
-			'PUT /api/v3/ratings/{kind}/{item_id}': { kind: 'track', item_id: 'track-1', rating: 0 }
-		});
-		await renderWithQuery(PlayerTrackMarks, {});
-
-		await page.getByRole('button', { name: 'Add to favourites' }).click();
-		await expect.poll(() => api.calls('PUT /api/v3/favorites/{kind}/{item_id}').length).toBe(1);
-
-		await page.getByRole('button', { name: 'Your rating: 4 of 5 stars' }).click();
-		await page.getByRole('button', { name: 'Remove rating' }).click();
-		await expect.poll(() => api.calls('PUT /api/v3/ratings/{kind}/{item_id}').length).toBe(1);
-		expect(api.calls('PUT /api/v3/ratings/{kind}/{item_id}')[0].body).toEqual({ rating: 0 });
+		await page.getByRole('button', { name: '4 stars' }).click();
+		await expect.element(page.getByRole('group')).toHaveAccessibleName('Myth: 4 of 5 stars');
+		const rated = api.calls('PUT /api/v3/ratings/{kind}/{item_id}');
+		expect(rated[0].params.item_id).toBe('track-1');
+		expect(rated[0].body).toEqual({ rating: 4 });
 	});
 });
