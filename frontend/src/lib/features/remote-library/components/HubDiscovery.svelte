@@ -6,7 +6,8 @@
 	import GenreSongsBrowser, {
 		type BrowseTrack
 	} from '$lib/features/remote-library/components/GenreSongsBrowser.svelte';
-	import Button from '$lib/ui/Button.svelte';
+	import { Box, Radio, Sparkles } from 'lucide-svelte';
+	import type { Snippet } from 'svelte';
 	import {
 		fetchRemoteGenreSongs,
 		getRemoteDiscoveryQuery,
@@ -25,9 +26,11 @@
 		remote: RemoteSourceDescriptor;
 		genres: string[];
 		onopen: (album: RemoteAlbum) => void;
+		/** A shelf drawn beside the first discovery shelf on a wide screen (Favorites). */
+		lead?: Snippet;
 	}
 
-	let { remote, genres, onopen }: Props = $props();
+	let { remote, genres, onopen, lead }: Props = $props();
 	const caps = $derived(remote.capabilities);
 
 	let mixGenre = $state('');
@@ -53,6 +56,7 @@
 	const mixTracks = $derived(mixQuery.data?.items ?? []);
 	const randomTracks = $derived(randomQuery.data?.items ?? []);
 	const recommended = $derived(discoveryQuery.data?.hubs ?? []);
+	const showMix = $derived(caps.mix && (genres.length > 0 || mixTracks.length > 0));
 
 	function play(tracks: RemoteTrack[], startIndex = 0, shuffle = false) {
 		if (tracks.length === 0) return;
@@ -91,109 +95,116 @@
 	}
 </script>
 
-{#if !caps.mix || genres.length > 0 || mixTracks.length > 0}
-	<DiscoveryZone>
-		{#if caps.mix}
-			<DiscoveryShelf
-				title="Instant Mix"
-				loading={mixQuery.isFetching}
-				empty={!mixQuery.isFetching && mixTracks.length === 0}
-				emptyMessage={mixQuery.isError ? "Couldn't build the mix." : 'Pick a genre to build a mix.'}
-				onrefresh={mixGenre ? () => void mixQuery.refetch() : undefined}
-			>
-				{#snippet actions()}
-					{#if genres.length > 0}
-						<GenrePillFilter
-							genres={genres.slice(0, 12)}
-							selected={mixGenre || undefined}
-							loading={mixQuery.isFetching}
-							onselect={(g) => {
-								if (g) mixGenre = g;
-							}}
-						/>
-					{/if}
-				{/snippet}
-				{#if mixTracks.length > 0}
-					<div class="flex items-center gap-2 mb-3 mt-3">
-						<Button variant="primary" size="sm" onclick={() => play(mixTracks)}>Play all</Button>
-						<Button variant="ghost" size="sm" onclick={() => play(mixTracks, 0, true)}>
-							Shuffle
-						</Button>
-					</div>
-					<DiscoveryTrackTable
-						tracks={mixTracks.map(toDiscoveryTrack)}
-						onplay={(i) => play(mixTracks, i)}
-						{formatDuration}
-					/>
-				{/if}
-			</DiscoveryShelf>
-		{/if}
+{#snippet mixShelf()}
+	<DiscoveryShelf
+		title="Instant Mix"
+		icon={Radio}
+		loading={mixQuery.isFetching}
+		empty={!mixQuery.isFetching && mixTracks.length === 0}
+		emptyMessage={mixQuery.isError ? "Couldn't build the mix." : 'Pick a genre to build a mix.'}
+		onrefresh={mixGenre ? () => void mixQuery.refetch() : undefined}
+		onplayall={() => play(mixTracks)}
+		onshuffle={() => play(mixTracks, 0, true)}
+	>
+		{#snippet filters()}
+			{#if genres.length > 0}
+				<GenrePillFilter
+					genres={genres.slice(0, 12)}
+					selected={mixGenre || undefined}
+					loading={mixQuery.isFetching}
+					onselect={(g) => {
+						if (g) mixGenre = g;
+					}}
+				/>
+			{/if}
+		{/snippet}
+		<DiscoveryTrackTable
+			tracks={mixTracks.map(toDiscoveryTrack)}
+			onplay={(i) => play(mixTracks, i)}
+			{formatDuration}
+		/>
+	</DiscoveryShelf>
+{/snippet}
 
-		{#if caps.random}
-			<DiscoveryShelf
-				title="Surprise Me"
-				loading={randomQuery.isFetching}
-				empty={!randomQuery.isFetching && randomTracks.length === 0}
-				emptyMessage={randomQuery.isError
-					? "Couldn't load random tracks."
-					: 'Refresh to load a new batch of random tracks.'}
-				onrefresh={() => void randomQuery.refetch()}
-			>
-				{#snippet actions()}
-					{#if genres.length > 0}
-						<GenrePillFilter
-							genres={genres.slice(0, 12)}
-							selected={randomGenre}
-							loading={randomQuery.isFetching}
-							showAll={true}
-							onselect={(g) => (randomGenre = g)}
-						/>
-					{/if}
-				{/snippet}
-				{#if randomTracks.length > 0}
-					<div class="flex items-center gap-2 mb-3 mt-3">
-						<Button variant="primary" size="sm" onclick={() => play(randomTracks)}>Play all</Button>
-						<Button variant="ghost" size="sm" onclick={() => play(randomTracks, 0, true)}>
-							Shuffle
-						</Button>
-					</div>
-					<DiscoveryTrackTable
-						tracks={randomTracks.map(toDiscoveryTrack)}
-						onplay={(i) => play(randomTracks, i)}
-						{formatDuration}
-					/>
-				{/if}
-			</DiscoveryShelf>
-		{/if}
+{#snippet randomShelf()}
+	<DiscoveryShelf
+		title="Surprise Me"
+		icon={Box}
+		sub="20 random tracks"
+		loading={randomQuery.isFetching}
+		empty={!randomQuery.isFetching && randomTracks.length === 0}
+		emptyMessage={randomQuery.isError
+			? "Couldn't load random tracks."
+			: 'Refresh to load a new batch of random tracks.'}
+		onrefresh={() => void randomQuery.refetch()}
+		onplayall={() => play(randomTracks)}
+		onshuffle={() => play(randomTracks, 0, true)}
+	>
+		{#snippet filters()}
+			{#if genres.length > 0}
+				<GenrePillFilter
+					genres={genres.slice(0, 12)}
+					selected={randomGenre}
+					loading={randomQuery.isFetching}
+					showAll={true}
+					onselect={(g) => (randomGenre = g)}
+				/>
+			{/if}
+		{/snippet}
+		<DiscoveryTrackTable
+			tracks={randomTracks.map(toDiscoveryTrack)}
+			onplay={(i) => play(randomTracks, i)}
+			{formatDuration}
+		/>
+	</DiscoveryShelf>
+{/snippet}
 
-		{#if caps.recommendations}
-			<DiscoveryShelf
-				title="Recommended for you"
-				loading={discoveryQuery.isFetching}
-				empty={!discoveryQuery.isFetching && recommended.length === 0}
-				emptyMessage={discoveryQuery.isError
-					? "Couldn't load recommendations."
-					: 'No recommendations available right now.'}
-				onrefresh={() => void discoveryQuery.refetch()}
-			>
+<DiscoveryZone>
+	{#if lead || showMix || caps.random}
+		<!-- Favorites beside the first discovery shelf; either runs full width alone -->
+		<div class="hub-pair">
+			{@render lead?.()}
+			{#if showMix}
+				{@render mixShelf()}
+			{:else if caps.random}
+				{@render randomShelf()}
+			{/if}
+		</div>
+	{/if}
+
+	{#if showMix && caps.random}
+		{@render randomShelf()}
+	{/if}
+
+	{#if caps.recommendations}
+		<DiscoveryShelf
+			title="Recommended for you"
+			icon={Sparkles}
+			bare
+			loading={discoveryQuery.isFetching}
+			empty={!discoveryQuery.isFetching && recommended.length === 0}
+			emptyMessage={discoveryQuery.isError
+				? "Couldn't load recommendations."
+				: 'No recommendations available right now.'}
+			onrefresh={() => void discoveryQuery.refetch()}
+		>
+			<div class="space-y-6">
 				{#each recommended as group (group.title)}
-					<div class="mb-4">
-						<h3 class="text-sm font-medium text-muted mb-2">{group.title}</h3>
+					<div>
+						<h3 class="hub-sub mb-2">{group.title}</h3>
 						<AlbumCarousel albums={group.albums} {onopen} />
 					</div>
 				{/each}
-			</DiscoveryShelf>
-		{/if}
+			</div>
+		</DiscoveryShelf>
+	{/if}
 
-		{#if genres.length > 0}
-			<DiscoveryShelf title="Browse by Genre" emptyMessage="Pick a genre to browse tracks.">
-				<GenreSongsBrowser
-					{genres}
-					fetchSongs={fetchGenreSongs}
-					buildQueue={genreQueue}
-					multiSelect={caps.multiGenre}
-				/>
-			</DiscoveryShelf>
-		{/if}
-	</DiscoveryZone>
-{/if}
+	{#if genres.length > 0}
+		<GenreSongsBrowser
+			{genres}
+			fetchSongs={fetchGenreSongs}
+			buildQueue={genreQueue}
+			multiSelect={caps.multiGenre}
+		/>
+	{/if}
+</DiscoveryZone>

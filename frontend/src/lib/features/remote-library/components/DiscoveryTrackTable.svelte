@@ -1,5 +1,10 @@
+<!--
+	A hub track table: #, title, artist, album and duration; on a phone the
+	artist goes under the title. With `onplay` a row plays the list from
+	there; without it the rows only list.
+-->
 <script lang="ts">
-	import AlbumImage from '$lib/media/AlbumImage.svelte';
+	import './hub.css';
 	import { formatDurationSec } from '$lib/utils/formatting';
 	import { Play } from 'lucide-svelte';
 
@@ -15,72 +20,118 @@
 
 	interface Props {
 		tracks: DiscoveryTrack[];
-		onplay: (index: number) => void;
+		onplay?: (index: number) => void;
 		formatDuration?: (seconds: number) => string;
+		/** Cap the height and scroll inside (long lists). */
+		scroll?: boolean;
 	}
 
-	let { tracks, onplay, formatDuration = formatDurationSec }: Props = $props();
+	let { tracks, onplay, formatDuration = formatDurationSec, scroll = true }: Props = $props();
 </script>
 
-<div class="max-h-[32rem] overflow-y-auto rounded-xl">
-	<table class="table table-sm w-full">
-		<thead class="sticky top-0 z-10 bg-base-200/80 backdrop-blur-sm">
-			<tr class="text-xs uppercase tracking-wider text-muted">
-				<th class="w-10">#</th>
+<div class="hub-tt" class:hub-tt--scroll={scroll}>
+	<table class="hub-table">
+		<thead>
+			<tr>
+				<th class="hub-num">#</th>
 				<th>Title</th>
-				<th class="hidden sm:table-cell">Album</th>
-				<th class="w-16 text-right">Time</th>
+				<th class="hub-tt__wide">Artist</th>
+				<th class="hub-tt__wide">Album</th>
+				<th class="hub-time">Duration</th>
+				{#if onplay}<th class="hub-tt__go"><span class="sr-only">Play</span></th>{/if}
 			</tr>
 		</thead>
 		<tbody>
-			{#each tracks as track, i (track.id)}
-				<tr
-					class="group cursor-pointer border-l-2 border-l-transparent transition-all duration-150 hover:border-l-primary hover:bg-base-content/[0.03] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
-					onclick={() => onplay(i)}
-					onkeydown={(e) =>
-						e.target === e.currentTarget &&
-						(e.key === 'Enter' || e.key === ' ') &&
-						(e.preventDefault(), onplay(i))}
-					tabindex="0"
-					role="button"
-					aria-label="Play {track.title}"
-				>
-					<td class="w-10">
-						<span class="text-muted group-hover:hidden group-focus-visible:hidden">{i + 1}</span>
-						<span class="hidden text-primary group-hover:inline group-focus-visible:inline">
-							<Play class="h-3.5 w-3.5 fill-current" />
-						</span>
-					</td>
-					<td>
-						<div class="flex items-center gap-3">
-							<div class="hidden h-8 w-8 shrink-0 overflow-hidden rounded sm:block">
-								<AlbumImage
-									mbid={track.album_id ?? track.id}
-									customUrl={track.image_url}
-									alt={track.album_name}
-									size="xs"
-									rounded="none"
-									className="h-full w-full object-cover"
-								/>
-							</div>
-							<div class="min-w-0">
-								<p class="truncate text-sm font-medium text-base-content">
-									{track.title}
-								</p>
-								<p class="truncate text-xs text-muted">
-									{track.artist_name}
-								</p>
-							</div>
-						</div>
-					</td>
-					<td class="hidden text-sm text-muted sm:table-cell">
-						<span class="line-clamp-1">{track.album_name}</span>
-					</td>
-					<td class="w-16 text-right font-mono text-xs text-muted">
-						{formatDuration(track.duration_seconds)}
-					</td>
-				</tr>
+			{#each tracks as track, i (track.id + '-' + i)}
+				{#if onplay}
+					<tr
+						class="hub-row"
+						onclick={() => onplay(i)}
+						onkeydown={(e) =>
+							e.target === e.currentTarget &&
+							(e.key === 'Enter' || e.key === ' ') &&
+							(e.preventDefault(), onplay(i))}
+						tabindex="0"
+						role="button"
+						aria-label="Play {track.title}"
+					>
+						{@render cells(track, i)}
+						<td class="hub-tt__go"><Play class="size-3.5 fill-current" aria-hidden="true" /></td>
+					</tr>
+				{:else}
+					<tr>{@render cells(track, i)}</tr>
+				{/if}
 			{/each}
 		</tbody>
 	</table>
 </div>
+
+{#snippet cells(track: DiscoveryTrack, i: number)}
+	<td class="hub-num">{i + 1}</td>
+	<td class="hub-clip">
+		<span class="hub-tt__title">{track.title}</span>
+		<span class="hub-tt__under">{track.artist_name}</span>
+	</td>
+	<td class="hub-clip hub-tt__wide">{track.artist_name}</td>
+	<td class="hub-clip hub-tt__wide hub-dim">{track.album_name}</td>
+	<td class="hub-time">{formatDuration(track.duration_seconds)}</td>
+{/snippet}
+
+<style>
+	.hub-tt {
+		container-type: inline-size;
+	}
+	.hub-tt--scroll {
+		max-height: 32rem;
+		overflow-y: auto;
+	}
+	.hub-tt thead th {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		background: var(--color-base-200);
+	}
+	.hub-tt table {
+		table-layout: fixed;
+	}
+	@container (min-width: 50rem) {
+		th.hub-tt__wide {
+			width: 25%;
+		}
+	}
+	.hub-tt__title {
+		display: block;
+		overflow: hidden;
+		font-weight: 500;
+		text-overflow: ellipsis;
+	}
+	.hub-tt__under {
+		display: none;
+		overflow: hidden;
+		font-size: 0.75rem;
+		text-overflow: ellipsis;
+		color: var(--dn-muted);
+	}
+	.hub-tt__go {
+		width: 2.5rem;
+		text-align: center;
+		color: var(--dn-muted);
+	}
+	.hub-tt tr.hub-row:hover .hub-tt__go {
+		color: var(--dn-title);
+	}
+
+	@container (max-width: 34rem) {
+		.hub-tt__wide {
+			display: none;
+		}
+		.hub-tt__under {
+			display: block;
+		}
+	}
+	@container (max-width: 24rem) {
+		.hub-time {
+			display: none;
+		}
+	}
+</style>

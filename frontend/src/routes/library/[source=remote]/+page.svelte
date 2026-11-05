@@ -16,7 +16,11 @@
 	import HubPageSkeleton from '$lib/features/remote-library/components/HubPageSkeleton.svelte';
 	import HubShelf from '$lib/features/remote-library/components/HubShelf.svelte';
 	import MostPlayedSection from '$lib/features/remote-library/components/MostPlayedSection.svelte';
-	import NowPlayingWidget from '$lib/features/player/components/NowPlayingWidget.svelte';
+	import HubNowPlaying from '$lib/features/remote-library/components/HubNowPlaying.svelte';
+	import HubNotSetUp from '$lib/features/remote-library/components/HubNotSetUp.svelte';
+	import { playRemoteAlbum } from '$lib/features/remote-library/components/playRemoteAlbum';
+	import { authStore } from '$lib/stores/authStore.svelte';
+	import { CircleDashed, Disc3, LibraryBig } from 'lucide-svelte';
 	import PlaylistImportBanner from '$lib/features/remote-library/components/PlaylistImportBanner.svelte';
 	import SourceAlbumModal from '$lib/features/remote-library/components/SourceAlbumModal.svelte';
 	import SourceHubHeader from '$lib/features/remote-library/components/SourceHubHeader.svelte';
@@ -83,7 +87,6 @@
 			value: hub?.stats?.total_albums ?? null,
 			href: withBasePath(`${base}/albums`),
 			subtitle: 'in your library',
-			colorScheme: 'primary',
 			icon: 'disc'
 		},
 		{
@@ -91,7 +94,6 @@
 			value: hub?.stats?.total_artists ?? null,
 			href: withBasePath(`${base}/artists`),
 			subtitle: 'in your library',
-			colorScheme: 'secondary',
 			icon: 'users'
 		},
 		{
@@ -99,7 +101,6 @@
 			value: hub?.stats?.total_tracks ?? null,
 			href: withBasePath(`${base}/tracks`),
 			subtitle: 'in your library',
-			colorScheme: 'accent',
 			icon: 'music'
 		}
 	]);
@@ -121,119 +122,148 @@
 		selectedAlbum = album;
 		modalOpen = true;
 	}
+
+	// The album dialog says what went wrong when the tracks cannot be read or played.
+	async function continueAlbum(album: RemoteAlbum) {
+		const played = await playRemoteAlbum(album).catch(() => false);
+		if (!played) openAlbum(album);
+	}
+
+	// Plex's amber takes dark ink; the others light.
+	const brandInk = $derived(
+		remote.source === 'plex' ? 'var(--dn-action-content)' : 'var(--dn-paper)'
+	);
 </script>
 
-<div class="container mx-auto space-y-6 p-6">
-	<BrandLine {remote} />
+<div
+	class="hub"
+	style:--hub-brand="rgb(var(--brand-{remote.source}))"
+	style:--hub-brand-ink={brandInk}
+>
+	<BrandLine {remote} class="hub__line" />
 
 	<SourceHubHeader
-		title="{remote.label} Library"
+		{remote}
 		albumCount={hub?.stats?.total_albums ?? null}
+		off={sourceOff}
 		onrefresh={refreshHub}
 		{refreshing}
-	>
-		{#snippet icon()}
-			<remote.icon class="h-8 w-8 {remote.tone}" />
-		{/snippet}
-	</SourceHubHeader>
+	/>
 
-	{#if sourceOff}
-		<p class="text-sm text-muted">{remote.label} isn't set up.</p>
-	{:else}
-		<BrowseHeroCards cards={browseCards} />
+	<div class="hub__body">
+		{#if sourceOff}
+			<HubNotSetUp {remote} isAdmin={authStore.isAdmin} />
+		{:else}
+			<div class="hub__top">
+				<BrowseHeroCards cards={browseCards} />
 
-		<PlaylistImportBanner
-			playlists={playlists?.playlists ?? []}
-			accountMode={playlists?.account_mode}
-			accountLabel={playlists?.account_label}
-			loading={playlistsQuery.isPending}
-			errorCode={playlistErrorCode}
-			onretry={() => void playlistsQuery.refetch()}
-			sourceLabel={remote.label}
-			playlistsHref={withBasePath(`${base}/playlists`)}
-		>
-			{#snippet sourceIcon()}
-				<remote.icon class="h-4 w-4 {remote.tone}" />
-			{/snippet}
-		</PlaylistImportBanner>
+				<PlaylistImportBanner
+					playlists={playlists?.playlists ?? []}
+					accountMode={playlists?.account_mode}
+					accountLabel={playlists?.account_label}
+					loading={playlistsQuery.isPending}
+					errorCode={playlistErrorCode}
+					onretry={() => void playlistsQuery.refetch()}
+					sourceLabel={remote.label}
+					playlistsHref={withBasePath(`${base}/playlists`)}
+				>
+					{#snippet sourceIcon()}
+						<remote.icon class="h-4 w-4 {remote.tone}" />
+					{/snippet}
+				</PlaylistImportBanner>
+			</div>
 
-		<NowPlayingWidget {sessions} />
+			{#if !hub}
+				<HubNowPlaying {sessions} sourceLabel={remote.label} />
+			{/if}
 
-		<QueryBoundary query={hubQuery} what="{remote.label} library">
-			{#snippet loading()}
-				<HubPageSkeleton />
-			{/snippet}
-			{#snippet children(hub)}
-				<FeaturedAlbumHero albums={hub.recently_played} onAlbumClick={openAlbum} />
-
-				{#if caps.similarAlbums}
-					<HubSimilarAlbums
-						{remote}
-						seed={hub.recently_played[0] ?? favoritesQuery.data?.albums[0] ?? null}
-						onopen={openAlbum}
-					/>
-				{/if}
-
-				{#if caps.favorites}
-					<HubFavorites
-						favorites={favoritesQuery.data}
-						loading={favoritesQuery.isFetching}
-						onopen={openAlbum}
-					/>
-				{/if}
-
-				<HubDiscovery {remote} genres={hub.genres} onopen={openAlbum} />
-
-				{#if caps.recentlyAdded}
-					<div use:reveal>
-						<HubShelf title="Recently Added" seeAllHref={recentlyAddedHref}>
-							{#if hub.recently_added.length > 0}
-								<AlbumGrid
-									albums={hub.recently_added}
-									seeAllHref={recentlyAddedHref}
-									onAlbumClick={openAlbum}
-								/>
-							{:else}
-								<p class="text-sm text-muted">Nothing new yet.</p>
-							{/if}
-						</HubShelf>
-					</div>
-				{/if}
-
-				{#if caps.artistInfo}
-					<HubArtistShelves
-						{remote}
-						artist={hub.favorite_artists[0] ?? null}
-						track={favoritesQuery.data?.tracks[0] ?? null}
-					/>
-				{/if}
-
-				{#if caps.playCounts && hub.most_played_artists.length > 0}
-					<div use:reveal>
-						<HubShelf title="Most Played">
-							<MostPlayedSection
-								artists={hub.most_played_artists.map((a) => ({
-									id: a.id,
-									name: a.name,
-									image_url: a.image_url,
-									musicbrainz_id: a.artist_mbid,
-									album_count: a.album_count ?? undefined
-								}))}
-								albums={[]}
+			<QueryBoundary query={hubQuery} what="{remote.label} library">
+				{#snippet loading()}
+					<HubPageSkeleton />
+				{/snippet}
+				{#snippet children(hub)}
+					{#if sessions.length > 0 || hub.recently_played.length > 0}
+						<div class="hub-pair">
+							<HubNowPlaying {sessions} sourceLabel={remote.label} />
+							<FeaturedAlbumHero
+								albums={hub.recently_played}
+								onAlbumClick={openAlbum}
+								onplay={continueAlbum}
 							/>
-						</HubShelf>
-					</div>
-				{/if}
+						</div>
+					{/if}
 
-				{#if caps.activity}
-					<div class="section-divider-glow"></div>
-					<HubHistory {remote} />
-				{/if}
+					{#if caps.similarAlbums}
+						<HubSimilarAlbums
+							{remote}
+							seed={hub.recently_played[0] ?? favoritesQuery.data?.albums[0] ?? null}
+							onopen={openAlbum}
+						/>
+					{/if}
 
-				<div class="section-divider-glow"></div>
+					<HubDiscovery {remote} genres={hub.genres} onopen={openAlbum}>
+						{#snippet lead()}
+							{#if caps.favorites}
+								<HubFavorites
+									favorites={favoritesQuery.data}
+									loading={favoritesQuery.isFetching}
+									onopen={openAlbum}
+								/>
+							{/if}
+						{/snippet}
+					</HubDiscovery>
 
-				<div class="mt-10 mb-6 rounded-2xl bg-base-200/20 p-6 space-y-6">
-					<HubShelf title="Artists A-Z" loading={artistIndexQuery.isFetching}>
+					{#if caps.recentlyAdded}
+						<div use:reveal>
+							<HubShelf
+								title="Recently Added"
+								icon={CircleDashed}
+								seeAllHref={recentlyAddedHref}
+								bare
+							>
+								{#if hub.recently_added.length > 0}
+									<AlbumGrid
+										albums={hub.recently_added}
+										seeAllHref={recentlyAddedHref}
+										onAlbumClick={openAlbum}
+									/>
+								{:else}
+									<p class="text-sm text-muted">Nothing new yet.</p>
+								{/if}
+							</HubShelf>
+						</div>
+					{/if}
+
+					{#if caps.artistInfo}
+						<HubArtistShelves
+							{remote}
+							artist={hub.favorite_artists[0] ?? null}
+							track={favoritesQuery.data?.tracks[0] ?? null}
+						/>
+					{/if}
+
+					{#if caps.playCounts && hub.most_played_artists.length > 0}
+						<div use:reveal>
+							<HubShelf title="Most Played" icon={Disc3}>
+								<MostPlayedSection
+									artists={hub.most_played_artists.map((a) => ({
+										id: a.id,
+										name: a.name,
+										image_url: a.image_url,
+										musicbrainz_id: a.artist_mbid,
+										album_count: a.album_count ?? undefined
+									}))}
+									albums={[]}
+								/>
+							</HubShelf>
+						</div>
+					{/if}
+
+					{#if caps.activity}
+						<HubHistory {remote} />
+					{/if}
+
+					<HubShelf title="Artists A-Z" icon={LibraryBig} loading={artistIndexQuery.isFetching}>
 						{#if artistIndex.length > 0}
 							<ArtistIndexSidebar
 								index={artistIndex}
@@ -256,17 +286,22 @@
 						{/if}
 					</HubShelf>
 
-					<HubShelf title="Browse Albums" seeAllHref={withBasePath(`${base}/albums`)}>
+					<HubShelf
+						title="Browse Albums"
+						icon={Disc3}
+						seeAllHref={withBasePath(`${base}/albums`)}
+						bare
+					>
 						{#if hub.all_albums_preview.length > 0}
 							<AlbumCarousel albums={hub.all_albums_preview} onopen={openAlbum} />
 						{:else}
 							<p class="text-sm text-muted">No albums found.</p>
 						{/if}
 					</HubShelf>
-				</div>
-			{/snippet}
-		</QueryBoundary>
-	{/if}
+				{/snippet}
+			</QueryBoundary>
+		{/if}
+	</div>
 </div>
 
 <SourceAlbumModal
@@ -278,3 +313,47 @@
 		selectedAlbum = null;
 	}}
 />
+
+<style>
+	.hub :global(.hub__line) {
+		margin: 0 2rem;
+	}
+	.hub__body {
+		display: flex;
+		flex-direction: column;
+		gap: 3rem;
+		padding: 0.5rem 2rem 3rem;
+	}
+	.hub__top {
+		display: grid;
+		gap: 1.25rem;
+		container: hub-top / inline-size;
+	}
+	@media (min-width: 1280px) {
+		.hub__top {
+			grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+			align-items: stretch;
+		}
+	}
+	.hub :global(.dn-section-head__icon) {
+		color: var(--dn-title);
+	}
+
+	@media (max-width: 1023px) {
+		.hub :global(.hub__line) {
+			margin: 0 1.5rem;
+		}
+		.hub__body {
+			padding-inline: 1.5rem;
+		}
+	}
+	@media (max-width: 767px) {
+		.hub :global(.hub__line) {
+			margin: 0 1rem;
+		}
+		.hub__body {
+			gap: 2.25rem;
+			padding: 0.25rem 1rem 2rem;
+		}
+	}
+</style>

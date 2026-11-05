@@ -14,7 +14,8 @@
 	one-word title on one line on a phone, sized to its column. `tagline` is
 	a hub's short statement in spaced mono caps beside the title, underlined
 	by an acid brush stroke; the ticket then sits on the title's lower right.
-	The record, ticket and strokes are decoration.
+	`mark` sits before the title (a media server's round icon badge). The
+	record, ticket and strokes are decoration.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -51,6 +52,8 @@
 		snugTitle?: boolean;
 		/** A hub's short statement beside the title. */
 		tagline?: string;
+		/** A badge before the title, such as a server's icon. */
+		mark?: Snippet;
 	}
 
 	let {
@@ -69,7 +72,8 @@
 		stroke = false,
 		longSubtitle = false,
 		snugTitle = false,
-		tagline
+		tagline,
+		mark
 	}: Props = $props();
 
 	const titleScale = $derived(
@@ -89,6 +93,7 @@
 	class:dn-lph--actions={actions}
 	class:dn-lph--snug={snugTitle}
 	class:dn-lph--tagline={tagline}
+	class:dn-lph--mark={mark}
 	style:--dn-lph-scale={titleScale}
 >
 	<div class="dn-lph__row">
@@ -96,6 +101,9 @@
 			<a href={backHref} class="dn-lph__back" aria-label={backLabel} title={backLabel}>
 				<ArrowLeft class="size-6" aria-hidden="true" />
 			</a>
+		{/if}
+		{#if mark}
+			<div class="dn-lph__mark">{@render mark()}</div>
 		{/if}
 		<div class="dn-lph__titles">
 			{#if backHref && backStyle === 'link'}
@@ -278,6 +286,10 @@
 	.dn-lph__backlink:hover {
 		color: var(--dn-title);
 	}
+	.dn-lph__mark {
+		flex: none;
+		align-self: flex-start;
+	}
 
 	.dn-lph__title {
 		font-family: var(--font-display);
@@ -434,6 +446,14 @@
 		}
 		.dn-lph__titles {
 			grid-area: title;
+		}
+		.dn-lph__mark {
+			grid-column: 1;
+			grid-row: 1 / 3;
+			align-self: center;
+		}
+		.dn-lph.dn-lph--mark:not(.dn-lph--back) .dn-lph__titles {
+			grid-column: 2 / 3;
 		}
 		.dn-lph:not(.dn-lph--back) .dn-lph__titles {
 			grid-column: 1 / 3;

@@ -1,9 +1,10 @@
 <script lang="ts">
+	import './hub.css';
+	import { Blend, MicVocal, TrendingUp } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import DiscoveryShelf from '$lib/features/remote-library/components/DiscoveryShelf.svelte';
 	import DiscoveryTrackTable from '$lib/features/remote-library/components/DiscoveryTrackTable.svelte';
 	import HubShelf from '$lib/features/remote-library/components/HubShelf.svelte';
-	import Button from '$lib/ui/Button.svelte';
 	import { reveal } from '$lib/actions/reveal';
 	import {
 		getRemoteInfoArtistQuery,
@@ -52,62 +53,56 @@
 	}
 </script>
 
-{#if artistName}
-	<div use:reveal>
-		<DiscoveryShelf
-			title="Top Songs for {artistName}"
-			loading={topQuery.isFetching}
-			empty={!topQuery.isFetching && topSongs.length === 0}
-			emptyMessage={topQuery.isError
-				? "Couldn't load top songs."
-				: 'Connect Last.fm to see top songs.'}
-			onrefresh={() => void topQuery.refetch()}
-		>
-			{#if topSongs.length > 0}
-				<div class="flex items-center gap-2 mb-3">
-					<Button variant="primary" size="sm" onclick={() => play(topSongs)}>Play all</Button>
-				</div>
+{#if artistName || track}
+	<div use:reveal class="hub-pair">
+		{#if artistName}
+			<DiscoveryShelf
+				title="Top Songs for {artistName}"
+				icon={TrendingUp}
+				loading={topQuery.isFetching}
+				empty={!topQuery.isFetching && topSongs.length === 0}
+				emptyMessage={topQuery.isError
+					? "Couldn't load top songs."
+					: 'Connect Last.fm to see top songs.'}
+				onrefresh={() => void topQuery.refetch()}
+				onplayall={() => play(topSongs)}
+			>
 				<DiscoveryTrackTable
 					tracks={topSongs.map(toDiscoveryTrack)}
 					onplay={(i) => play(topSongs, i)}
 					{formatDuration}
 				/>
-			{/if}
-		</DiscoveryShelf>
-	</div>
-{/if}
+			</DiscoveryShelf>
+		{/if}
 
-{#if track}
-	<div use:reveal>
-		<DiscoveryShelf
-			title="Similar Songs"
-			loading={similarQuery.isFetching}
-			empty={!similarQuery.isFetching && similarSongs.length === 0}
-			emptyMessage={similarQuery.isError
-				? "Couldn't load similar songs."
-				: 'Connect Last.fm to see similar songs.'}
-			onrefresh={() => void similarQuery.refetch()}
-		>
-			{#if similarSongs.length > 0}
-				<div class="flex items-center gap-2 mb-3">
-					<Button variant="primary" size="sm" onclick={() => play(similarSongs)}>Play all</Button>
-				</div>
+		{#if track}
+			<DiscoveryShelf
+				title="Similar Songs"
+				icon={Blend}
+				loading={similarQuery.isFetching}
+				empty={!similarQuery.isFetching && similarSongs.length === 0}
+				emptyMessage={similarQuery.isError
+					? "Couldn't load similar songs."
+					: 'Connect Last.fm to see similar songs.'}
+				onrefresh={() => void similarQuery.refetch()}
+				onplayall={() => play(similarSongs)}
+			>
 				<DiscoveryTrackTable
 					tracks={similarSongs.map(toDiscoveryTrack)}
 					onplay={(i) => play(similarSongs, i)}
 					{formatDuration}
 				/>
-			{/if}
-		</DiscoveryShelf>
+			</DiscoveryShelf>
+		{/if}
 	</div>
 {/if}
 
 {#if info}
 	<div use:reveal>
-		<HubShelf title="About {artistName}" loading={infoQuery.isFetching}>
-			<div class="flex gap-4 items-start">
+		<HubShelf title="About {artistName}" icon={MicVocal} loading={infoQuery.isFetching}>
+			<div class="about">
 				{#if info.image_url}
-					<div class="h-24 w-24 shrink-0">
+					<div class="about__photo">
 						<AlbumImage
 							customUrl={info.image_url}
 							alt={artistName}
@@ -118,18 +113,18 @@
 						/>
 					</div>
 				{/if}
-				<div class="space-y-2">
+				<div class="min-w-0 space-y-4">
 					{#if info.biography}
-						<p class="text-sm text-muted line-clamp-4">{info.biography}</p>
+						<p class="about__bio">{info.biography}</p>
 					{/if}
 					{#if info.similar_artists.length > 0}
 						<div>
-							<p class="text-xs font-semibold text-muted mb-1">Similar Artists</p>
-							<div class="flex flex-wrap gap-1">
+							<p class="hub-sub mb-2">Similar Artists</p>
+							<ul class="hub-pills">
 								{#each info.similar_artists.slice(0, 8) as similar (similar.id)}
-									<span class="badge badge-sm badge-outline">{similar.name}</span>
+									<li class="about__chip">{similar.name}</li>
 								{/each}
-							</div>
+							</ul>
 						</div>
 					{/if}
 				</div>
@@ -137,3 +132,46 @@
 		</HubShelf>
 	</div>
 {/if}
+
+<style>
+	.about {
+		display: flex;
+		align-items: flex-start;
+		gap: 1.5rem;
+		padding: 0.25rem;
+	}
+	.about__photo {
+		flex: none;
+		width: 7.5rem;
+		height: 7.5rem;
+		overflow: hidden;
+		border-radius: 999px;
+	}
+	.about__bio {
+		display: -webkit-box;
+		max-width: 75ch;
+		overflow: hidden;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 4;
+		line-clamp: 4;
+		line-height: 1.6;
+	}
+	.about__chip {
+		padding: 0.25rem 0.75rem;
+		border: 1px solid var(--dn-line);
+		border-radius: 999px;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		letter-spacing: 0.06em;
+	}
+	@media (max-width: 639px) {
+		.about {
+			flex-direction: column;
+			gap: 1rem;
+		}
+		.about__photo {
+			width: 5.5rem;
+			height: 5.5rem;
+		}
+	}
+</style>

@@ -5,6 +5,23 @@
 		$props();
 </script>
 
+<!-- the server's brand colour, as a hairline under the page top -->
 <div
-	class="h-[2px] rounded-full bg-gradient-to-r from-transparent to-transparent opacity-40 {remote.line} {className}"
+	class="hub-brand-line {className}"
+	style:--brand="rgb(var(--brand-{remote.source}))"
+	aria-hidden="true"
 ></div>
+
+<style>
+	.hub-brand-line {
+		height: 3px;
+		border-radius: 999px;
+		background: linear-gradient(
+			to right,
+			transparent,
+			var(--brand) 10%,
+			var(--brand) 90%,
+			transparent
+		);
+	}
+</style>

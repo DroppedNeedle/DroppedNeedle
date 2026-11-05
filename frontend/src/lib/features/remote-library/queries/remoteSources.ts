@@ -62,8 +62,6 @@ export interface RemoteSourceDescriptor {
 	icon: Component<{ class?: string }>;
 	/** Text colour in the server's brand. */
 	tone: string;
-	/** The hairline under the page top, in the server's brand. */
-	line: string;
 	/** The badge on an album card. */
 	badge: string;
 	sorts: {
@@ -122,7 +120,6 @@ export const remoteSources: Record<RemoteSource, RemoteSourceDescriptor> = {
 		label: 'Plex',
 		icon: PlexIcon,
 		tone: 'text-plex',
-		line: 'via-plex',
 		badge: 'border-0 bg-plex text-black',
 		sorts: {
 			albums: [
@@ -162,7 +159,6 @@ export const remoteSources: Record<RemoteSource, RemoteSourceDescriptor> = {
 		label: 'Jellyfin',
 		icon: JellyfinIcon,
 		tone: 'text-jellyfin',
-		line: 'via-jellyfin',
 		badge: 'badge-info',
 		sorts: {
 			albums: [
@@ -203,7 +199,6 @@ export const remoteSources: Record<RemoteSource, RemoteSourceDescriptor> = {
 		label: 'Navidrome',
 		icon: NavidromeIcon,
 		tone: 'text-navidrome',
-		line: 'via-navidrome',
 		badge: 'badge-primary',
 		sorts: {
 			albums: [

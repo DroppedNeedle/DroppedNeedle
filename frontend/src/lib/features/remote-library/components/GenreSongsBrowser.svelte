@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { playerStore } from '$lib/features/player/state/player.svelte';
-	import { formatDurationSec } from '$lib/utils/formatting';
 	import GenrePillFilter from './GenrePillFilter.svelte';
 	import type { QueueItem } from '$lib/features/player/playback/types';
+	import { Layers } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import DiscoveryShelf from './DiscoveryShelf.svelte';
+	import DiscoveryTrackTable from './DiscoveryTrackTable.svelte';
 
 	export type BrowseTrack = {
 		id: string;
@@ -84,67 +86,33 @@
 	}
 </script>
 
-<div class="space-y-3">
-	<GenrePillFilter
-		{genres}
-		selected={multiSelect ? undefined : selectedGenres[0]}
-		selectedMultiple={multiSelect ? selectedGenres : undefined}
-		{loading}
-		{multiSelect}
-		onselect={handleSelect}
-	/>
-
-	{#if loading && songs.length === 0}
-		<div class="flex justify-center py-4">
-			<span class="loading loading-spinner loading-md"></span>
+<DiscoveryShelf
+	title="Browse by Genre"
+	icon={Layers}
+	sub={multiSelect ? 'Pick one genre or several.' : 'One genre at a time.'}
+	loading={loading && songs.length === 0}
+	empty={songs.length === 0}
+	emptyMessage={selectedGenres.length > 0
+		? `No songs found for ${selectedGenres.join(', ')}.`
+		: 'Pick a genre to browse tracks.'}
+	onplayall={() => playSongs()}
+	playAllLabel="Play All"
+	onshuffle={shuffleSongs}
+>
+	{#snippet filters()}
+		<GenrePillFilter
+			{genres}
+			selected={multiSelect ? undefined : selectedGenres[0]}
+			selectedMultiple={multiSelect ? selectedGenres : undefined}
+			{loading}
+			{multiSelect}
+			onselect={handleSelect}
+		/>
+	{/snippet}
+	<DiscoveryTrackTable tracks={songs} onplay={(i) => playSongs(i)} />
+	{#if songs.length >= offset + PAGE_SIZE}
+		<div class="flex justify-center py-2">
+			<Button variant="outline" size="display-sm" {loading} onclick={loadMore}>Show more</Button>
 		</div>
-	{:else if selectedGenres.length > 0 && songs.length > 0}
-		<div class="flex items-center gap-2 mb-2">
-			<Button variant="primary" size="sm" onclick={() => playSongs()}>Play All</Button>
-			<Button variant="ghost" size="sm" onclick={shuffleSongs}>Shuffle</Button>
-		</div>
-		<div class="max-h-[32rem] overflow-y-auto overflow-x-auto rounded-lg">
-			<table class="table table-sm">
-				<thead>
-					<tr>
-						<th>#</th>
-						<th>Title</th>
-						<th>Artist</th>
-						<th>Album</th>
-						<th class="text-right">Duration</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each songs as track, i (track.id + '-' + i)}
-						<tr
-							class="hover cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
-							onclick={() => playSongs(i)}
-							onkeydown={(e) =>
-								e.target === e.currentTarget &&
-								(e.key === 'Enter' || e.key === ' ') &&
-								(e.preventDefault(), playSongs(i))}
-							tabindex="0"
-							role="button"
-							aria-label="Play {track.title}"
-						>
-							<td class="text-muted">{i + 1}</td>
-							<td class="font-medium">{track.title}</td>
-							<td class="text-muted">{track.artist_name}</td>
-							<td class="text-muted">{track.album_name}</td>
-							<td class="text-right text-muted">{formatDurationSec(track.duration_seconds)}</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
-		{#if songs.length >= offset + PAGE_SIZE}
-			<div class="flex justify-center">
-				<Button variant="ghost" size="sm" {loading} onclick={loadMore}>Show more</Button>
-			</div>
-		{/if}
-	{:else if selectedGenres.length > 0}
-		<p class="text-sm text-muted">No songs found for {selectedGenres.join(', ')}.</p>
-	{:else}
-		<p class="text-sm text-muted">Pick a genre to browse tracks.</p>
 	{/if}
-</div>
+</DiscoveryShelf>

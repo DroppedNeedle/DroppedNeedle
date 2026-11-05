@@ -22,7 +22,6 @@ export type BrowseHeroCard = {
 	value: number | null;
 	href: string;
 	subtitle?: string;
-	colorScheme: 'primary' | 'secondary' | 'accent';
 	icon: 'disc' | 'users' | 'music';
 };
 

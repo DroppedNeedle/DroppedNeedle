@@ -1,55 +1,70 @@
+<!--
+	One hub shelf: the Anton heading (a link with "View all" when the shelf
+	has a page), then its content in the bordered panel, or bare for a row of
+	covers.
+-->
 <script lang="ts">
+	import './hub.css';
 	import CarouselSkeleton from '$lib/ui/CarouselSkeleton.svelte';
-	import { ChevronRight } from 'lucide-svelte';
+	import SectionHead from '$lib/ui/SectionHead.svelte';
+	import type { KitIcon } from '$lib/ui/Button.svelte';
 	import type { Snippet } from 'svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		title: string;
+		icon?: KitIcon;
 		seeAllHref?: string;
 		loading?: boolean;
+		/** No panel: a row of covers sits on the page. */
+		bare?: boolean;
+		/** A mono line beside the title. */
+		sub?: string;
+		actions?: Snippet;
 		children: Snippet;
 	}
 
-	let { title, seeAllHref, loading = false, children }: Props = $props();
+	let {
+		title,
+		icon,
+		seeAllHref,
+		loading = false,
+		bare = false,
+		sub,
+		actions,
+		children
+	}: Props = $props();
 </script>
 
-<section class="space-y-3">
-	<div class="flex items-center justify-between px-1">
-		{#if seeAllHref}
-			<a
-				href={withBasePath(seeAllHref)}
-				class="group/title flex items-center gap-1 transition-colors hover:text-primary"
-			>
-				<h2
-					class="text-lg font-semibold text-base-content group-hover/title:text-primary sm:text-xl"
-				>
-					{title}
-				</h2>
-			</a>
-		{:else}
-			<h2 class="text-lg font-semibold text-base-content sm:text-xl">{title}</h2>
-		{/if}
-		{#if seeAllHref}
-			<Button
-				variant="ghost"
-				size="sm"
-				icon={ChevronRight}
-				iconPosition="end"
-				href={withBasePath(seeAllHref)}
-			>
-				View all
-			</Button>
-		{/if}
-	</div>
+<section class="hub-shelf">
+	<SectionHead
+		{title}
+		{icon}
+		href={seeAllHref ? withBasePath(seeAllHref) : null}
+		moreLabel="View all"
+		{actions}
+	>
+		{#snippet chips()}
+			{#if sub}<p class="hub-sub">{sub}</p>{/if}
+		{/snippet}
+	</SectionHead>
 
-	<Card variant="raised" padding="md">
+	<div class={bare ? '' : 'hub-panel'}>
 		{#if loading}
 			<CarouselSkeleton />
 		{:else}
 			{@render children()}
 		{/if}
-	</Card>
+	</div>
 </section>
+
+<style>
+	.hub-shelf {
+		display: flex;
+		min-width: 0;
+		flex-direction: column;
+	}
+	.hub-shelf > div {
+		flex: 1;
+	}
+</style>
