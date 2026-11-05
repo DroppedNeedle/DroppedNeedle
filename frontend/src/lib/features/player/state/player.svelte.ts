@@ -34,6 +34,7 @@ import {
 	type StoredSession
 } from './playerUtils';
 import {
+	computeAllowedIndex,
 	computeNextIndex,
 	computePreviousIndex,
 	computeUpcomingLength,
@@ -43,6 +44,7 @@ import {
 	performCleanup
 } from './playerQueueOps';
 import { buildNowPlayingMetadata } from './playerSourceResolver';
+import { skipByRating } from './skipByRating.svelte';
 import { resumeAudioEngine } from '$lib/features/player/playback/audioElement';
 import { registerUserSessionReset } from '$lib/utils/userSessionCleanup';
 import {
@@ -227,11 +229,26 @@ function createPlayerStore() {
 		duration: () => duration
 	});
 
+	// Next and previous pass over the tracks the rating floor skips.
 	function getNextIndex(): number | null {
-		return computeNextIndex(currentIndex, queue.length, shuffleEnabled, shuffleOrder);
+		return computeAllowedIndex(
+			computeNextIndex,
+			currentIndex,
+			queue.length,
+			shuffleEnabled,
+			shuffleOrder,
+			(index) => skipByRating.allows(queue[index])
+		);
 	}
 	function getPreviousIndex(): number | null {
-		return computePreviousIndex(currentIndex, queue.length, shuffleEnabled, shuffleOrder);
+		return computeAllowedIndex(
+			computePreviousIndex,
+			currentIndex,
+			queue.length,
+			shuffleEnabled,
+			shuffleOrder,
+			(index) => skipByRating.allows(queue[index])
+		);
 	}
 	function persist(): void {
 		doPersistSession(nowPlaying, queue, currentIndex, progress, shuffleEnabled, shuffleOrder);
