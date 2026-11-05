@@ -1,11 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { ArrowLeft, CalendarClock, ExternalLink, Settings } from 'lucide-svelte';
-	import ArtistImage from '$lib/media/ArtistImage.svelte';
-	import EmptyState from '$lib/ui/EmptyState.svelte';
-	import { outsideLink } from '$lib/ui/outsideLink';
-	import CitySearchInput from '$lib/features/following/components/CitySearchInput.svelte';
+	import { CalendarClock, Settings, Users } from 'lucide-svelte';
 	import EventCityManager from '$lib/features/following/components/EventCityManager.svelte';
+	import EventRow from '$lib/features/following/components/EventRow.svelte';
+	import EventsSetup from '$lib/features/following/components/EventsSetup.svelte';
 	import {
 		getConcertsQuery,
 		getEventCitiesQuery
@@ -16,11 +14,11 @@
 	} from '$lib/features/following/queries/FollowMutations.svelte';
 	import type { CitySearchResult, Concert } from '$lib/features/following/queries/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { KM_PER_MILE } from '$lib/constants';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import IconButton from '$lib/ui/IconButton.svelte';
+	import ListPageHeader from '$lib/ui/ListPageHeader.svelte';
+	import SectionHead from '$lib/ui/SectionHead.svelte';
 
 	const concertsQuery = getConcertsQuery();
 	const citiesQuery = getEventCitiesQuery();
@@ -73,79 +71,61 @@
 		}
 		return groups;
 	});
-
-	function weekday(value: string): string {
-		return parseLocalDate(value).toLocaleDateString(undefined, { weekday: 'short' });
-	}
-
-	function dayOfMonth(value: string): string {
-		return String(parseLocalDate(value).getDate());
-	}
-
-	function monthShort(value: string): string {
-		return parseLocalDate(value).toLocaleDateString(undefined, { month: 'short' });
-	}
-
-	function venueLine(concert: Concert): string {
-		const distance =
-			concert.distance_km != null ? `${Math.round(concert.distance_km / KM_PER_MILE)} mi` : null;
-		return [concert.venue_name, concert.city, distance].filter(Boolean).join(' · ');
-	}
 </script>
 
 <svelte:head>
 	<title>Upcoming Events - DroppedNeedle</title>
 </svelte:head>
 
-<div class="mx-auto w-full max-w-4xl px-2 py-4 sm:px-4 sm:py-8 lg:px-8">
-	<div class="mb-6 flex items-center gap-3">
-		<IconButton
-			size="sm"
-			icon={ArrowLeft}
-			label="Back to Following"
-			href={withBasePath('/following')}
-		/>
-		<CalendarClock class="h-6 w-6 text-primary" aria-hidden="true" />
-		<h1 class="text-2xl font-bold sm:text-3xl">Upcoming Events</h1>
-	</div>
+<ListPageHeader
+	title="Upcoming Events"
+	ticket="DN / CC 3.2"
+	backHref={withBasePath('/following')}
+	backLabel="Back to Following"
+	backStyle="link"
+/>
 
+<div class="dn-gigs">
 	{#if loading}
-		<div class="flex flex-col gap-3" aria-hidden="true">
-			<div class="h-8 w-40 animate-pulse rounded-lg bg-base-200"></div>
+		<div class="flex max-w-5xl flex-col gap-3" aria-hidden="true">
+			<div class="mb-5 flex items-center gap-3">
+				<div class="skeleton h-4 w-28"></div>
+				<div class="skeleton h-11 w-40 rounded-full"></div>
+			</div>
 			{#each Array(6) as _, i (i)}
-				<Card variant="bordered" padding="md">
-					<div class="flex items-center gap-4">
-						<div class="h-14 w-12 animate-pulse rounded-xl bg-base-300"></div>
-						<div class="h-10 w-10 animate-pulse rounded-full bg-base-300"></div>
-						<div class="flex-1 space-y-2">
-							<div class="h-4 w-1/3 animate-pulse rounded bg-base-300"></div>
-							<div class="h-3 w-1/2 animate-pulse rounded bg-base-300"></div>
-						</div>
+				<div class="dn-gigs__skeleton">
+					<div class="skeleton h-full w-[6.25rem] rounded-none"></div>
+					<div class="skeleton size-14 rounded-full"></div>
+					<div class="flex flex-1 flex-col gap-2">
+						<div class="skeleton h-4 w-1/3"></div>
+						<div class="skeleton h-3 w-1/2"></div>
 					</div>
-				</Card>
+				</div>
 			{/each}
 		</div>
 	{:else if !configured}
-		<Card variant="bordered">
-			<div class="text-center">
-				<CalendarClock class="mx-auto mb-3 h-10 w-10 text-muted" aria-hidden="true" />
-				<h2 class="mb-1 text-lg font-semibold">Events aren't set up yet</h2>
-				<p class="mx-auto max-w-md text-sm text-muted">
-					Concert listings need an events source (Ticketmaster or Skiddle).
-					{#if authStore.isAdmin}
-						Add an API key in Settings to turn this on.
-					{:else}
-						Ask your admin to add one in Settings.
-					{/if}
-				</p>
+		<Card variant="paper" padding="none" class="dn-gigs__notice">
+			<div class="dn-gigs__notice-body">
+				<span class="dn-gigs__notice-icon" aria-hidden="true">
+					<CalendarClock class="size-7" strokeWidth={1.75} />
+				</span>
+				<div class="min-w-0 flex-1">
+					<h2 class="dn-gigs__notice-title">Events aren't set up yet</h2>
+					<p class="dn-gigs__notice-text">
+						Concert listings need an events source (Ticketmaster or Skiddle).
+						{#if authStore.isAdmin}
+							Add an API key in Settings to turn this on.
+						{:else}
+							Ask your admin to add one in Settings.
+						{/if}
+					</p>
+				</div>
 				{#if authStore.isAdmin}
 					<Button
 						variant="primary"
-						size="sm"
-						pill
+						size="display-sm"
 						icon={Settings}
 						href={withBasePath('/settings')}
-						class="mt-4"
 					>
 						Open Settings
 					</Button>
@@ -153,118 +133,131 @@
 			</div>
 		</Card>
 	{:else if cities.length === 0}
-		<!-- first run: the empty screen IS the setup step -->
-		<div class="mx-auto flex max-w-md flex-col items-center gap-4 py-16 text-center">
-			<span
-				class="flex h-16 w-16 items-center justify-center rounded-full bg-primary/15 text-primary"
-			>
-				<CalendarClock class="h-8 w-8" aria-hidden="true" />
-			</span>
-			<h2 class="text-xl font-semibold">Where do you go to gigs?</h2>
-			<CitySearchInput onpick={addFirstCity} autofocus className="w-full" />
-			<p class="text-sm text-muted">
-				Pick as many cities as you like - we'll show upcoming concerts from artists you follow near
-				each one.
-			</p>
-		</div>
+		<EventsSetup onpick={addFirstCity} />
 	{:else}
-		<Card variant="bordered" padding="md" class="mb-6">
-			<EventCityManager {cities} />
-		</Card>
+		<EventCityManager {cities} />
 
 		{#if concerts.length === 0}
-			<EmptyState
-				icon={CalendarClock}
-				title="No gigs found in your cities yet"
-				description="When an artist you follow announces a show near one of your cities, it shows up here."
-				ctaHref={withBasePath('/following/artists')}
-				ctaLabel="Your Artists"
-			/>
+			<Card variant="paper" padding="none" class="dn-gigs__notice mt-10">
+				<div class="dn-gigs__notice-body">
+					<span class="dn-gigs__notice-icon" aria-hidden="true">
+						<CalendarClock class="size-7" strokeWidth={1.75} />
+					</span>
+					<div class="min-w-0 flex-1">
+						<h2 class="dn-gigs__notice-title">No gigs found in your cities yet</h2>
+						<p class="dn-gigs__notice-text">
+							When an artist you follow announces a show near one of your cities, it shows up here.
+						</p>
+					</div>
+					<Button
+						variant="paper"
+						size="display-sm"
+						icon={Users}
+						href={withBasePath('/following/artists')}
+					>
+						Your Artists
+					</Button>
+				</div>
+			</Card>
 		{:else}
 			{#each monthGroups as group (group.label)}
-				<h2 class="mt-8 mb-3 text-sm font-semibold uppercase tracking-wider text-muted">
-					{group.label}
-				</h2>
-				<ul class="flex flex-col gap-2">
-					{#each group.items as concert (concert.source + concert.source_event_id + concert.artist_mbid)}
-						<li>
-							<Card variant="bordered" padding="sm">
-								<div class="flex items-center gap-4">
-									<!-- calendar date block -->
-									<div
-										class="flex w-12 shrink-0 flex-col items-center rounded-xl bg-base-300/60 py-1.5"
-										aria-hidden="true"
-									>
-										<span class="text-[10px] font-semibold uppercase text-muted">
-											{weekday(concert.local_date)}
-										</span>
-										<span class="text-lg leading-tight font-bold text-primary">
-											{dayOfMonth(concert.local_date)}
-										</span>
-										<span class="text-[10px] font-semibold uppercase text-muted">
-											{monthShort(concert.local_date)}
-										</span>
-									</div>
-
-									<a
-										href={withBasePath(`/artist/${concert.artist_mbid}`)}
-										aria-label="Open {concert.artist_name}"
-										class="shrink-0"
-									>
-										<ArtistImage
-											mbid={concert.artist_mbid}
-											alt={concert.artist_name}
-											size="xs"
-											rounded="full"
-										/>
-									</a>
-
-									<div class="min-w-0 flex-1">
-										<div class="flex items-center gap-2">
-											<a
-												href={withBasePath(`/artist/${concert.artist_mbid}`)}
-												class="truncate font-semibold hover:text-primary"
-											>
-												{concert.artist_name}
-											</a>
-											{#if concert.status === 'cancelled'}
-												<span class="badge badge-error badge-sm">Cancelled</span>
-											{:else if concert.status === 'rescheduled'}
-												<span class="badge badge-warning badge-sm">Rescheduled</span>
-											{/if}
-										</div>
-										{#if concert.event_name && concert.event_name !== concert.artist_name}
-											<p class="truncate text-sm text-base-content/80">{concert.event_name}</p>
-										{/if}
-										<p
-											class="truncate text-sm text-muted"
-											class:line-through={concert.status === 'cancelled'}
-										>
-											{venueLine(concert)}
-										</p>
-									</div>
-
-									{#if outsideLink(concert.ticket_url)}
-										<Button
-											variant="ghost"
-											size="sm"
-											pill
-											icon={ExternalLink}
-											iconPosition="end"
-											href={outsideLink(concert.ticket_url)}
-											target="_blank"
-											rel="noopener noreferrer"
-											class="shrink-0"
-										>
-											Tickets
-										</Button>
-									{/if}
-								</div>
-							</Card>
-						</li>
-					{/each}
-				</ul>
+				<section class="dn-gigs__month" aria-label={group.label}>
+					<SectionHead title={group.label} />
+					<ul class="flex flex-col gap-3">
+						{#each group.items as concert (concert.source + concert.source_event_id + concert.artist_mbid)}
+							<li><EventRow {concert} /></li>
+						{/each}
+					</ul>
+				</section>
 			{/each}
 		{/if}
 	{/if}
 </div>
+
+<style>
+	.dn-gigs {
+		padding: 0.5rem 2rem 4rem;
+	}
+
+	.dn-gigs__month {
+		max-width: 64rem;
+		margin-top: 2.75rem;
+	}
+	.dn-gigs__month :global(.dn-section-head) {
+		margin-bottom: 1rem;
+	}
+
+	.dn-gigs__skeleton {
+		display: flex;
+		height: 6.5rem;
+		align-items: center;
+		gap: 1.25rem;
+		overflow: hidden;
+		padding-right: 1.25rem;
+		border: 1px solid var(--dn-line);
+		border-radius: 0.625rem;
+		background-color: var(--color-base-200);
+	}
+
+	.dn-gigs :global(.dn-gigs__notice) {
+		max-width: 48rem;
+	}
+	.dn-gigs__notice-body {
+		display: flex;
+		align-items: center;
+		gap: 1.25rem;
+		padding: 1.5rem 1.75rem;
+	}
+	.dn-gigs__notice-icon {
+		display: grid;
+		width: 3.5rem;
+		height: 3.5rem;
+		flex: none;
+		place-items: center;
+		border-radius: 9999px;
+		background-color: var(--dn-paper-content);
+		color: var(--dn-action);
+	}
+	.dn-gigs__notice-title {
+		font-family: var(--font-display);
+		font-size: 1.75rem;
+		font-weight: 400;
+		line-height: 1.05;
+		text-transform: uppercase;
+		font-synthesis: none;
+	}
+	.dn-gigs__notice-text {
+		margin-top: 0.375rem;
+		font-size: 0.9375rem;
+		color: var(--dn-muted);
+	}
+
+	@media (max-width: 1023px) {
+		.dn-gigs {
+			padding-inline: 1.5rem;
+		}
+	}
+	@media (max-width: 767px) {
+		.dn-gigs {
+			padding: 0.5rem 1rem 3rem;
+		}
+		.dn-gigs__notice-body {
+			display: grid;
+			grid-template-columns: auto minmax(0, 1fr);
+			align-items: start;
+			gap: 1rem;
+			padding: 1.25rem;
+		}
+		.dn-gigs__notice-body > :global(.btn) {
+			grid-column: 1 / -1;
+			justify-self: start;
+		}
+		.dn-gigs__notice-icon {
+			width: 2.75rem;
+			height: 2.75rem;
+		}
+		.dn-gigs__notice-title {
+			font-size: 1.375rem;
+		}
+	}
+</style>

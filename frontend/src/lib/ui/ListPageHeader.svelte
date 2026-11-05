@@ -2,8 +2,9 @@
 	A browse page's header: the huge Anton title, a thin rule, the count in
 	bold italic mono (or a spaced mono subtitle under the title), the barcode
 	ticket, and a big record with acid light at the top right. `backHref`
-	adds the square back button before the title; `actions` holds the
-	page's condensed caps buttons at the right. `eyebrow` is a spaced mono
+	adds the square back button before the title, or with `backStyle="link"`
+	an underlined mono caps link over it ("BACK TO FOLLOWING"); `actions`
+	holds the page's condensed caps buttons at the right. `eyebrow` is a spaced mono
 	line over the title ("SEARCH RESULTS FOR"), `fitTitle` steps a long,
 	typed title (a search) down so it wraps less, and `below` holds a row
 	under the title (search's tab chips). `lede` is a plain sentence under
@@ -31,6 +32,8 @@
 		ticket: string;
 		backHref?: string;
 		backLabel?: string;
+		/** The square button before the title, or a mono caps link over it. */
+		backStyle?: 'button' | 'link';
 		actions?: Snippet;
 		/** A spaced mono line over the title. */
 		eyebrow?: string;
@@ -57,6 +60,7 @@
 		ticket,
 		backHref,
 		backLabel = 'Back',
+		backStyle = 'button',
 		actions,
 		eyebrow,
 		fitTitle = false,
@@ -81,19 +85,24 @@
 
 <header
 	class="dn-lph"
-	class:dn-lph--back={backHref}
+	class:dn-lph--back={backHref && backStyle === 'button'}
 	class:dn-lph--actions={actions}
 	class:dn-lph--snug={snugTitle}
 	class:dn-lph--tagline={tagline}
 	style:--dn-lph-scale={titleScale}
 >
 	<div class="dn-lph__row">
-		{#if backHref}
+		{#if backHref && backStyle === 'button'}
 			<a href={backHref} class="dn-lph__back" aria-label={backLabel} title={backLabel}>
 				<ArrowLeft class="size-6" aria-hidden="true" />
 			</a>
 		{/if}
 		<div class="dn-lph__titles">
+			{#if backHref && backStyle === 'link'}
+				<a href={backHref} class="dn-lph__backlink">
+					<ArrowLeft class="size-4" aria-hidden="true" />{backLabel}
+				</a>
+			{/if}
 			{#if eyebrow}<p class="dn-lph__eyebrow">{eyebrow}</p>{/if}
 			{#if stroke}
 				<div class="dn-lph__line">
@@ -250,6 +259,24 @@
 		height: 0.5rem;
 		margin-top: 0.75rem;
 		fill: var(--dn-title);
+	}
+	.dn-lph__backlink {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-bottom: 0.75rem;
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		letter-spacing: 0.2em;
+		text-transform: uppercase;
+		text-decoration: underline;
+		text-decoration-thickness: 1px;
+		text-underline-offset: 0.4em;
+		color: var(--color-base-content);
+	}
+	.dn-lph__backlink:hover {
+		color: var(--dn-title);
 	}
 
 	.dn-lph__title {
@@ -431,6 +458,11 @@
 		.dn-lph__title,
 		.dn-lph:not(.dn-lph--back) .dn-lph__title {
 			font-size: calc(clamp(2.75rem, 15vw, 3.75rem) * var(--dn-lph-scale, 1));
+		}
+		.dn-lph__backlink {
+			margin-bottom: 0.5rem;
+			font-size: 0.6875rem;
+			letter-spacing: 0.16em;
 		}
 		.dn-lph__eyebrow {
 			margin-bottom: 0.125rem;

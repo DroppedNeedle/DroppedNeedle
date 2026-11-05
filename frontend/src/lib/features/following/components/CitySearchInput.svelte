@@ -1,5 +1,10 @@
+<!--
+	The city search: a dark pill with an acid edge, and the matches in a
+	list under it. Picking a match hands it to `onpick` and clears the box.
+-->
 <script lang="ts">
 	import { MapPin, Search } from 'lucide-svelte';
+	import Input from '$lib/ui/Input.svelte';
 	import { getCitySearchQuery } from '$lib/features/following/queries/FollowQueries.svelte';
 	import type { CitySearchResult } from '$lib/features/following/queries/types';
 
@@ -7,6 +12,7 @@
 		onpick: (city: CitySearchResult) => void;
 		placeholder?: string;
 		autofocus?: boolean;
+		/** Layout only: width, flex. */
 		className?: string;
 	}
 
@@ -45,29 +51,28 @@
 	function subtitle(city: CitySearchResult): string {
 		return [city.region, city.country].filter(Boolean).join(', ');
 	}
-	import Input from '$lib/ui/Input.svelte';
 </script>
 
-<div class="relative {className}">
-	<Input
-		label="Search a city"
-		icon={Search}
-		class="w-full pr-9"
-		{placeholder}
-		{autofocus}
-		bind:value={input}
-		{oninput}
-		onfocus={() => (open = debounced.trim().length >= 2)}
-	/>
-	{#if searching}
-		<span class="loading loading-spinner loading-xs absolute right-3 top-3" aria-hidden="true"
-		></span>
-	{/if}
+<div class="dn-city-search {className}">
+	<div class="dn-city-search__pill">
+		<Search class="size-5 shrink-0" aria-hidden="true" />
+		<Input
+			label="Search a city"
+			borderless
+			class="dn-city-search__input"
+			{placeholder}
+			{autofocus}
+			bind:value={input}
+			{oninput}
+			onfocus={() => (open = debounced.trim().length >= 2)}
+		/>
+		{#if searching}
+			<span class="loading loading-spinner loading-xs shrink-0" aria-hidden="true"></span>
+		{/if}
+	</div>
 
 	{#if open && debounced.trim().length >= 2}
-		<ul
-			class="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-xl border border-base-300 bg-base-200 p-1 shadow-lg"
-		>
+		<ul class="dn-city-search__list">
 			{#if failed}
 				<li class="px-3 py-2 text-sm text-error">
 					City search is unavailable right now - try again in a moment.
@@ -77,14 +82,10 @@
 			{:else}
 				{#each results as city (city.name + city.latitude + city.longitude)}
 					<li>
-						<button
-							type="button"
-							class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-base-300"
-							onclick={() => pick(city)}
-						>
-							<MapPin class="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+						<button type="button" class="dn-city-search__match" onclick={() => pick(city)}>
+							<MapPin class="size-4 shrink-0 text-title" aria-hidden="true" />
 							<span class="truncate">
-								<span class="font-medium">{city.name}</span>
+								<span class="font-semibold">{city.name}</span>
 								{#if subtitle(city)}
 									<span class="text-sm text-muted"> · {subtitle(city)}</span>
 								{/if}
@@ -96,3 +97,69 @@
 		</ul>
 	{/if}
 </div>
+
+<style>
+	.dn-city-search {
+		position: relative;
+	}
+
+	/* the same dark pill on the page and on a paper card */
+	.dn-city-search__pill {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		height: 3.25rem;
+		padding-inline: 1.25rem;
+		border: 2px solid var(--dn-action);
+		border-radius: 9999px;
+		background-color: var(--dn-paper-content);
+		color: var(--dn-paper);
+		transition: box-shadow 150ms;
+	}
+	:global([data-theme='light']) .dn-city-search__pill {
+		border-color: var(--dn-action-edge);
+		box-shadow: inset 0 0 0 2px var(--dn-action);
+	}
+	.dn-city-search__pill:focus-within {
+		outline: 2px solid var(--dn-focus);
+		outline-offset: 3px;
+	}
+	.dn-city-search__pill :global(.dn-city-search__input) {
+		min-width: 0;
+		font-size: 1rem;
+		color: var(--dn-paper);
+	}
+	.dn-city-search__pill :global(.dn-city-search__input::placeholder) {
+		color: color-mix(in oklab, var(--dn-paper) 72%, var(--dn-paper-content));
+		opacity: 1;
+	}
+
+	.dn-city-search__list {
+		position: absolute;
+		z-index: 20;
+		inset-inline: 0;
+		top: calc(100% + 0.375rem);
+		max-height: 16rem;
+		overflow: auto;
+		padding: 0.25rem;
+		border: 1px solid var(--dn-edge);
+		border-radius: var(--radius-box);
+		background-color: var(--color-base-200);
+		color: var(--color-base-content);
+		text-align: left;
+		box-shadow: 0 18px 32px -16px rgb(0 0 0 / 0.55);
+	}
+	.dn-city-search__match {
+		display: flex;
+		width: 100%;
+		align-items: center;
+		gap: 0.625rem;
+		padding: 0.5rem 0.75rem;
+		border-radius: calc(var(--radius-box) - 0.25rem);
+		text-align: left;
+	}
+	.dn-city-search__match:hover,
+	.dn-city-search__match:focus-visible {
+		background-color: var(--color-neutral);
+	}
+</style>
