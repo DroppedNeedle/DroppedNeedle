@@ -8731,12 +8731,41 @@
           {
             "name": "min_tracks",
             "in": "query",
-            "description": "Only albums with at least this many indexed tracks, 1-10000.",
+            "description": "Only albums with at least this many indexed tracks, 1-10000. See\n`tracks_mode`.",
             "required": false,
             "schema": {
               "type": "integer",
               "format": "int32",
               "minimum": 0
+            }
+          },
+          {
+            "name": "tracks_mode",
+            "in": "query",
+            "description": "`at_least` (default): albums with `min_tracks` or more; `below`:\nalbums with fewer.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rating",
+            "in": "query",
+            "description": "Only albums the caller rated, 1-5 stars. See `rating_mode`; albums\nthey did not rate are left out.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "rating_mode",
+            "in": "query",
+            "description": "`at_least` (default): `rating` stars or more; `at_most`: `rating`\nstars or fewer.",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -12516,12 +12545,41 @@
           {
             "name": "min_tracks",
             "in": "query",
-            "description": "Only artists with at least this many indexed tracks in the library,\n1-10000: the tracks credited to them and the tracks on the albums\nthey lead, each once. The scope totals count the same artists.",
+            "description": "Only artists with at least this many indexed tracks in the library,\n1-10000: the tracks credited to them and the tracks on the albums\nthey lead, each once. The scope totals count the same artists. See\n`tracks_mode`.",
             "required": false,
             "schema": {
               "type": "integer",
               "format": "int32",
               "minimum": 0
+            }
+          },
+          {
+            "name": "tracks_mode",
+            "in": "query",
+            "description": "`at_least` (default): artists with `min_tracks` or more; `below`:\nartists with fewer.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rating",
+            "in": "query",
+            "description": "Only artists the caller rated, 1-5 stars. See `rating_mode`;\nartists they did not rate are left out.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "rating_mode",
+            "in": "query",
+            "description": "`at_least` (default): `rating` stars or more; `at_most`: `rating`\nstars or fewer.",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -21296,6 +21354,44 @@
             "name": "genre",
             "in": "query",
             "description": "Restrict to one genre tag, case folded.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "formats",
+            "in": "query",
+            "description": "Track formats, comma-separated, e.g. `flac,mp3`; matching is\ncase-insensitive. See `format_mode`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format_mode",
+            "in": "query",
+            "description": "`with` (default): only tracks in one of `formats`; `without`: only\ntracks in none of them.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rating",
+            "in": "query",
+            "description": "Only tracks the caller rated, 1-5 stars. See `rating_mode`; tracks\nthey did not rate are left out.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "rating_mode",
+            "in": "query",
+            "description": "`at_least` (default): `rating` stars or more; `at_most`: `rating`\nstars or fewer.",
             "required": false,
             "schema": {
               "type": "string"

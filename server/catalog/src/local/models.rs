@@ -250,8 +250,18 @@ pub struct AlbumQuery {
     /// `with` (default): only albums in one of `formats`; `without`: only
     /// albums in none of them.
     pub format_mode: Option<String>,
-    /// Only albums with at least this many indexed tracks, 1-10000.
+    /// Only albums with at least this many indexed tracks, 1-10000. See
+    /// `tracks_mode`.
     pub min_tracks: Option<u32>,
+    /// `at_least` (default): albums with `min_tracks` or more; `below`:
+    /// albums with fewer.
+    pub tracks_mode: Option<String>,
+    /// Only albums the caller rated, 1-5 stars. See `rating_mode`; albums
+    /// they did not rate are left out.
+    pub rating: Option<u8>,
+    /// `at_least` (default): `rating` stars or more; `at_most`: `rating`
+    /// stars or fewer.
+    pub rating_mode: Option<String>,
     /// Only the caller's favourites. Without `sort`, the newest favourite
     /// comes first, and `order=asc` puts the oldest first.
     pub favorites: Option<bool>,
@@ -365,8 +375,18 @@ pub struct ArtistQuery {
     pub scope: Option<ArtistListScope>,
     /// Only artists with at least this many indexed tracks in the library,
     /// 1-10000: the tracks credited to them and the tracks on the albums
-    /// they lead, each once. The scope totals count the same artists.
+    /// they lead, each once. The scope totals count the same artists. See
+    /// `tracks_mode`.
     pub min_tracks: Option<u32>,
+    /// `at_least` (default): artists with `min_tracks` or more; `below`:
+    /// artists with fewer.
+    pub tracks_mode: Option<String>,
+    /// Only artists the caller rated, 1-5 stars. See `rating_mode`;
+    /// artists they did not rate are left out.
+    pub rating: Option<u8>,
+    /// `at_least` (default): `rating` stars or more; `at_most`: `rating`
+    /// stars or fewer.
+    pub rating_mode: Option<String>,
     /// Only the caller's favourites. Without `sort`, the newest favourite
     /// comes first, and `order=asc` puts the oldest first.
     pub favorites: Option<bool>,
@@ -519,6 +539,18 @@ pub struct TrackQuery {
     pub artist_id: Option<String>,
     /// Restrict to one genre tag, case folded.
     pub genre: Option<String>,
+    /// Track formats, comma-separated, e.g. `flac,mp3`; matching is
+    /// case-insensitive. See `format_mode`.
+    pub formats: Option<String>,
+    /// `with` (default): only tracks in one of `formats`; `without`: only
+    /// tracks in none of them.
+    pub format_mode: Option<String>,
+    /// Only tracks the caller rated, 1-5 stars. See `rating_mode`; tracks
+    /// they did not rate are left out.
+    pub rating: Option<u8>,
+    /// `at_least` (default): `rating` stars or more; `at_most`: `rating`
+    /// stars or fewer.
+    pub rating_mode: Option<String>,
     /// Only the caller's favourites. Without `sort`, the newest favourite
     /// comes first, and `order=asc` puts the oldest first.
     pub favorites: Option<bool>,

@@ -40,9 +40,10 @@ use super::store::{
     track_row, unsigned,
 };
 use super::stores::{
-    After, AlbumFilter, AlbumPageState, AlbumRecord, AlbumSort, ArtistKeyedListing, ArtistListing,
-    ArtistRecord, ArtistScope, ArtistSort, DecadeRecord, GenreRecord, KeyedPage,
-    ManagementHoldRecord, StatsRecord, StoreError, TrackFilter, TrackRecord, TrackSort,
+    After, AlbumFilter, AlbumPageState, AlbumRecord, AlbumSort, ArtistBounds, ArtistKeyedListing,
+    ArtistListing, ArtistRecord, ArtistScope, ArtistSort, DecadeRecord, GenreRecord, KeyedPage,
+    ManagementHoldRecord, RatingBound, StatsRecord, StoreError, TrackFilter, TrackRecord,
+    TrackSort,
 };
 
 /// Escape the LIKE metacharacters in a folded filter, then wrap for
@@ -139,28 +140,53 @@ fn album_filter_values(filter: &AlbumFilter) -> Vec<Value> {
         formats,
         Value::Integer(i64::from(!filter.without_formats)),
     ];
-    values.extend(min_tracks_values(filter.min_tracks));
+    let place = filter
+        .min_tracks
+        .map_or(0, |min| i64::from(min.saturating_sub(1)));
+    values.extend([
+        int(filter.min_tracks.map(i64::from)),
+        Value::Integer(place),
+        Value::Integer(i64::from(!filter.tracks_below)),
+    ]);
+    values.extend(rating_values(filter.rating.as_ref()));
     values
 }
 
-/// A minimum-tracks test's binds: the minimum or NULL, then the minimum
-/// less one, as `album_min_tracks!` and each artist test read them.
-fn min_tracks_values(min_tracks: Option<u32>) -> [Value; 2] {
-    let place = min_tracks.map_or(0, |min| i64::from(min.saturating_sub(1)));
-    [int(min_tracks.map(i64::from)), Value::Integer(place)]
+/// A list's rating binds, as its NULL-guarded rating test reads them: the
+/// user or NULL, then `rated_within!`'s user and span.
+fn rating_values(rating: Option<&RatingBound>) -> [Value; 4] {
+    let user = text(rating.map(|bound| bound.user_id.as_str()));
+    let (low, high) = rating.map_or((1, 5), |bound| (bound.low, bound.high));
+    [
+        user.clone(),
+        user,
+        Value::Integer(i64::from(low)),
+        Value::Integer(i64::from(high)),
+    ]
 }
 
-/// An artist list's minimum-tracks binds for `scope`, as
-/// `sql::min_tracks_test` reads them: one test, or two for the scopes that
-/// take either count.
-fn artist_min_values(scope: ArtistScope, min_tracks: Option<u32>) -> Vec<Value> {
-    let tests = match scope {
-        ArtistScope::AlbumArtists | ArtistScope::Contributors => 1,
-        ArtistScope::All | ArtistScope::WithMusic => 2,
-    };
-    (0..tests)
-        .flat_map(|_| min_tracks_values(min_tracks))
-        .collect()
+/// The binds of `sql::artist_tests` for `scope`: the bound less one once
+/// per count the scope tests and the direction, then the rating's user and
+/// span. Nothing for what does not filter.
+fn artist_bound_values(bounds: &ArtistBounds, scope: ArtistScope) -> Vec<Value> {
+    let mut values = Vec::new();
+    if let Some(min) = bounds.min_tracks {
+        let counts = match scope {
+            ArtistScope::AlbumArtists | ArtistScope::Contributors => 1,
+            ArtistScope::All | ArtistScope::WithMusic => 2,
+        };
+        let place = Value::Integer(i64::from(min.saturating_sub(1)));
+        values.extend(std::iter::repeat_n(place, counts));
+        values.push(Value::Integer(i64::from(!bounds.below)));
+    }
+    if let Some(bound) = &bounds.rating {
+        values.extend([
+            Value::Text(bound.user_id.clone()),
+            Value::Integer(i64::from(bound.low)),
+            Value::Integer(i64::from(bound.high)),
+        ]);
+    }
+    values
 }
 
 /// The track list's text and scope values: the search's binds, or the
@@ -179,6 +205,11 @@ fn track_filter_values(
     let album = text(filter.album_id.as_deref());
     let artist = text(filter.artist_id.as_deref());
     let genre = text(genre);
+    let formats = if filter.formats.is_empty() {
+        Value::Null
+    } else {
+        Value::Text(format!(",{},", filter.formats.join(",")))
+    };
     values.extend([
         album.clone(),
         album,
@@ -187,7 +218,11 @@ fn track_filter_values(
         genre.clone(),
         genre.clone(),
         genre,
+        formats.clone(),
+        formats,
+        Value::Integer(i64::from(!filter.without_formats)),
     ]);
+    values.extend(rating_values(filter.rating.as_ref()));
     values
 }
 
@@ -287,7 +322,7 @@ impl LocalCatalog {
         let total = self
             .list_totals(
                 format!("albums {filter:?}"),
-                favorites_of.is_some(),
+                favorites_of.is_some() || filter.rating.is_some(),
                 "library.albums.count",
                 move |conn| {
                     let total: i64 = match favorites_of {
@@ -479,7 +514,9 @@ impl LocalCatalog {
             })
             .await?;
         let artists = self.hydrate_artists(&ids).await?;
-        let (total, led, contributors) = self.artist_totals(scope, q, None, None).await?;
+        let (total, led, contributors) = self
+            .artist_totals(scope, q, None, ArtistBounds::default())
+            .await?;
         Ok((artists, total, led, contributors))
     }
 
@@ -499,7 +536,7 @@ impl LocalCatalog {
         descending: bool,
         limit: u64,
         after: &After,
-        min_tracks: Option<u32>,
+        bounds: &ArtistBounds,
     ) -> Result<ArtistKeyedListing, StoreError> {
         let keys = if favorites_of.is_some() {
             sql::favorite_artist_keys(sort, descending)
@@ -514,15 +551,13 @@ impl LocalCatalog {
         if let Some(key) = &after.key {
             values.extend(sql::after_values(&keys, key));
         }
-        // The page names the minimum only when it filters by one, after
-        // its walk.
-        if min_tracks.is_some() {
-            values.extend(artist_min_values(scope, min_tracks));
-        }
+        // The page names the bounds only when they filter, after its walk.
+        values.extend(artist_bound_values(bounds, scope));
         values.push(count(limit.saturating_add(1)));
         let shape = sql::ArtistPageShape {
             after_cursor: after.key.is_some(),
-            min_tracks: min_tracks.is_some(),
+            min_tracks: bounds.min_tracks.is_some(),
+            rated: bounds.rating.is_some(),
         };
         let text = if favorites_of.is_some() {
             sql::favorite_artist_page_shapes(scope, sort, descending, shape)
@@ -542,7 +577,7 @@ impl LocalCatalog {
         let (ids, next) = split_page(keyed, limit);
         let items = self.hydrate_artists(&ids).await?;
         let (total, led, contributors) = self
-            .artist_totals(scope, q, favorites_of, min_tracks)
+            .artist_totals(scope, q, favorites_of, bounds.clone())
             .await?;
         Ok((KeyedPage { items, total, next }, led, contributors))
     }
@@ -555,7 +590,7 @@ impl LocalCatalog {
         scope: ArtistScope,
         q: Option<&str>,
         favorites_of: Option<&str>,
-        min_tracks: Option<u32>,
+        bounds: ArtistBounds,
     ) -> Result<(u64, u64, u64), StoreError> {
         let mut names: Vec<Value> = favorites_of
             .map(|user| text(Some(user)))
@@ -563,27 +598,28 @@ impl LocalCatalog {
             .collect();
         names.extend(name_filter(q));
         let favorites = favorites_of.is_some();
+        // A rating does not move the catalog revision either.
+        let uncached = favorites || bounds.rating.is_some();
+        let (min_tracks, rated) = (bounds.min_tracks.is_some(), bounds.rating.is_some());
         let totals = self
             .list_totals(
-                format!("artists {scope:?} {q:?} {min_tracks:?}"),
-                favorites,
+                format!("artists {scope:?} {q:?} {bounds:?}"),
+                uncached,
                 "library.artists.count",
                 move |conn| {
                     let count_of = |scope: ArtistScope| {
                         let text = if favorites {
-                            sql::favorite_artist_scope_count(scope, min_tracks.is_some())
+                            sql::favorite_artist_scope_count(scope, min_tracks, rated)
                         } else {
-                            sql::artist_scope_count(scope, min_tracks.is_some())
+                            sql::artist_scope_count(scope, min_tracks, rated)
                         };
                         let mut values = names.clone();
-                        if min_tracks.is_some() {
-                            values.extend(artist_min_values(scope, min_tracks));
-                        }
+                        values.extend(artist_bound_values(&bounds, scope));
                         scalar(conn, &text, &values).map(unsigned)
                     };
                     // Each tab counts its artists by the number its cards
-                    // show, so with a minimum each is counted on its own.
-                    if min_tracks.is_some() {
+                    // show, so with a bound each is counted on its own.
+                    if !bounds.is_empty() {
                         return Ok(vec![
                             count_of(scope)?,
                             count_of(ArtistScope::AlbumArtists)?,
@@ -878,6 +914,8 @@ impl LocalCatalog {
             && filter.album_id.is_none()
             && filter.artist_id.is_none()
             && filter.genre.is_none()
+            && filter.formats.is_empty()
+            && filter.rating.is_none()
             && favorites_of.is_none();
         // Unfiltered, the maintained exact count of indexed tracks
         // (`catalog_track_format_stats`) answers.
@@ -890,12 +928,14 @@ impl LocalCatalog {
             unsigned(total)
         } else {
             let favorites = favorites_of.is_some();
+            // A rating does not move the catalog revision either.
+            let uncached = favorites || filter.rating.is_some();
             let mut count_values: Vec<Value> = favorites_of.map(Value::Text).into_iter().collect();
             count_values.extend(filter_values);
             let totals = self
                 .list_totals(
                     format!("tracks {filter:?}"),
-                    favorites,
+                    uncached,
                     "library.tracks.count",
                     move |conn| {
                         let text = match (short, favorites) {

@@ -16,12 +16,19 @@ export type LibraryTrackPage = Pick<
 	'items' | 'total' | 'next'
 >;
 
+/** The track list's format and rating filters. */
+export type LibraryTrackFilters = Pick<
+	LibraryV3TracksParams,
+	'formats' | 'formatMode' | 'rating' | 'ratingMode'
+>;
+
 /** The track list's params for one order and search, the cursor aside. */
 export function libraryTrackParams(
 	limit: number,
 	sort: LibraryTrackSort,
 	q: string = '',
-	favorites = false
+	favorites = false,
+	filters: LibraryTrackFilters = {}
 ): LibraryV3TracksParams {
 	return {
 		limit,
@@ -32,6 +39,18 @@ export function libraryTrackParams(
 					order: sort === 'recent' ? 'desc' : 'asc'
 				}),
 		...(q ? { q } : {}),
+		...(filters.formats?.length
+			? {
+					formats: filters.formats,
+					...(filters.formatMode === 'without' ? { formatMode: 'without' as const } : {})
+				}
+			: {}),
+		...(filters.rating
+			? {
+					rating: filters.rating,
+					...(filters.ratingMode === 'at_most' ? { ratingMode: 'at_most' as const } : {})
+				}
+			: {}),
 		...(favorites ? { favorites: true } : {})
 	};
 }

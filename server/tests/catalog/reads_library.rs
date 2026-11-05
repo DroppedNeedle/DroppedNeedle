@@ -1247,6 +1247,124 @@ async fn lists_filter_by_formats_and_minimum_tracks() {
     );
 }
 
+/// The lists keep what the caller rated within a span of stars, at least
+/// or at most so many, and leave out what they did not rate or only
+/// someone else did; the track bound reads either way. Each list's total
+/// and each artist tab's total count the same items as the page.
+#[tokio::test]
+async fn lists_filter_by_your_rating_and_by_fewer_tracks() {
+    let fixture = sqlite_fixture().await;
+    seed(
+        &fixture,
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('user-ada', 'Ada', 'user', 1); \
+         INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at) VALUES \
+         ('user-ada', 'album', 'al1', 5, 1), ('user-ada', 'album', 'al2', 2, 1), \
+         ('user-ada', 'album', 'al3', 4, 1), ('u1', 'album', 'al4', 5, 1), \
+         ('user-ada', 'artist', 'a1', 4, 1), ('user-ada', 'artist', 'a2', 1, 1), \
+         ('u1', 'artist', 'a3', 5, 1), \
+         ('user-ada', 'track', 't1', 5, 1), ('user-ada', 'track', 't2', 3, 1), \
+         ('user-ada', 'track', 't6', 1, 1), ('u1', 'track', 't4', 5, 1)",
+    )
+    .await;
+    let beside = AuthRig::new("reads-library-rating").await;
+    let app = || app(deps(&beside, fixture.runtime.db(), None), Some(ADA));
+    let ids = |page: &Value| sorted_ids(&page["items"], "id");
+
+    for (query, want) in [
+        ("min_tracks=2&tracks_mode=below", vec!["al2", "al3", "al4"]),
+        ("min_tracks=2&tracks_mode=at_least", vec!["al1"]),
+        ("rating=4", vec!["al1", "al3"]),
+        ("rating=4&rating_mode=at_least", vec!["al1", "al3"]),
+        ("rating=2&rating_mode=at_most", vec!["al2"]),
+        ("rating=5", vec!["al1"]),
+        ("rating=1", vec!["al1", "al2", "al3"]),
+        ("rating=4&min_tracks=2&tracks_mode=below", vec!["al3"]),
+        ("rating=1&formats=flac&format_mode=without", vec!["al2"]),
+        ("rating=1&sort=name&order=desc", vec!["al1", "al2", "al3"]),
+    ] {
+        let (status, page) = get(app(), &format!("/api/v3/library/albums?{query}")).await;
+        assert_eq!(status, StatusCode::OK, "{query}: {page}");
+        assert_eq!(ids(&page), want, "{query}");
+        assert_eq!(page["total"], serde_json::json!(want.len()), "{query}");
+    }
+
+    for (query, want, (led, contributing)) in [
+        (
+            "scope=album_artists&min_tracks=2&tracks_mode=below",
+            vec!["a2"],
+            (1, 1),
+        ),
+        (
+            "scope=album_artists&sort=album_count&order=desc&min_tracks=2&tracks_mode=below",
+            vec!["a2"],
+            (1, 1),
+        ),
+        (
+            "scope=contributors&min_tracks=2&tracks_mode=below",
+            vec!["a3"],
+            (1, 1),
+        ),
+        ("scope=album_artists&rating=4", vec!["a1"], (1, 0)),
+        (
+            "scope=album_artists&sort=album_count&order=desc&rating=4",
+            vec!["a1"],
+            (1, 0),
+        ),
+        (
+            "scope=album_artists&rating=1&rating_mode=at_most",
+            vec!["a2"],
+            (1, 0),
+        ),
+        ("scope=contributors&rating=1", Vec::new(), (2, 0)),
+        (
+            "scope=album_artists&rating=1&min_tracks=2",
+            vec!["a1"],
+            (1, 0),
+        ),
+    ] {
+        let (status, page) = get(app(), &format!("/api/v3/library/artists?{query}")).await;
+        assert_eq!(status, StatusCode::OK, "{query}: {page}");
+        assert_eq!(ids(&page), want, "{query}");
+        assert_eq!(page["total"], serde_json::json!(want.len()), "{query}");
+        assert_eq!(
+            (
+                page["album_artist_total"].as_u64().unwrap(),
+                page["contributor_total"].as_u64().unwrap()
+            ),
+            (led, contributing),
+            "{query}"
+        );
+    }
+
+    for (query, want) in [
+        ("formats=flac", vec!["t1", "t2", "t6"]),
+        ("formats=FLAC&format_mode=without", vec!["t4"]),
+        ("rating=3", vec!["t1", "t2"]),
+        ("rating=3&rating_mode=at_most", vec!["t2", "t6"]),
+        ("rating=1&formats=mp3", Vec::new()),
+        ("rating=1&q=closer", vec!["t2"]),
+    ] {
+        let (status, page) = get(app(), &format!("/api/v3/library/tracks?{query}")).await;
+        assert_eq!(status, StatusCode::OK, "{query}: {page}");
+        assert_eq!(ids(&page), want, "{query}");
+        assert_eq!(page["total"], serde_json::json!(want.len()), "{query}");
+    }
+
+    for path in [
+        "/api/v3/library/albums?rating=6",
+        "/api/v3/library/albums?rating=0",
+        "/api/v3/library/albums?rating=3&rating_mode=exactly",
+        "/api/v3/library/albums?min_tracks=2&tracks_mode=above",
+        "/api/v3/library/artists?rating=9",
+        "/api/v3/library/artists?min_tracks=2&tracks_mode=fewer",
+        "/api/v3/library/tracks?rating=6",
+        "/api/v3/library/tracks?formats=flac&format_mode=except",
+    ] {
+        let (status, body) = get(app(), path).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}: {body}");
+    }
+}
+
 async fn seed(fixture: &SqliteFixture, sql: &'static str) {
     fixture
         .runtime

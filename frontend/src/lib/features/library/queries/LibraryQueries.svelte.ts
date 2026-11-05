@@ -139,6 +139,11 @@ export interface LibraryArtistsParams {
 	scope: LibraryArtistScope;
 	/** Only artists with at least this many tracks in the library. */
 	minTracks?: number;
+	/** Read `minTracks` the other way: only artists with fewer. */
+	tracksBelow?: boolean;
+	/** Only artists the caller rated: this many stars, see `ratingMode`. */
+	rating?: number;
+	ratingMode?: 'at_least' | 'at_most';
 	favorites?: boolean;
 }
 
@@ -150,7 +155,15 @@ function artistParams(params: LibraryArtistsParams): LibraryV3ArtistsParams {
 		...(params.sortBy === 'hearted' ? {} : { sort: params.sortBy, order: params.sortOrder }),
 		q: params.q || undefined,
 		scope: params.scope,
-		...(params.minTracks && params.minTracks > 1 ? { minTracks: params.minTracks } : {}),
+		...(params.minTracks && params.minTracks > 1
+			? { minTracks: params.minTracks, ...(params.tracksBelow ? { tracksBelow: true } : {}) }
+			: {}),
+		...(params.rating
+			? {
+					rating: params.rating,
+					...(params.ratingMode === 'at_most' ? { ratingMode: 'at_most' as const } : {})
+				}
+			: {}),
 		...(params.favorites ? { favorites: true } : {})
 	};
 }

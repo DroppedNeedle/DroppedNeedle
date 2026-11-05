@@ -18,8 +18,9 @@ use super::models::{
 };
 use super::sql;
 use super::stores::{
-    After, AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, KeyedPage,
-    StoreError, TrackFilter, TrackRecord, TrackSort, UpgradePolicy,
+    After, AlbumFilter, AlbumRecord, AlbumSort, ArtistBounds, ArtistRecord, ArtistScope,
+    ArtistSort, KeyedPage, RatingBound, StoreError, TrackFilter, TrackRecord, TrackSort,
+    UpgradePolicy,
 };
 use crate::artwork::KnownMissing;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
@@ -353,6 +354,52 @@ fn check_min_tracks(min: Option<u32>) -> Result<Option<u32>, LibraryFailure> {
     }
 }
 
+/// Whether `tracks_mode` reads the track bound as "fewer than": `at_least`
+/// (default) or `below`.
+fn tracks_below(mode: Option<&str>) -> Result<bool, LibraryFailure> {
+    match mode.map(str::trim) {
+        None | Some("" | "at_least") => Ok(false),
+        Some("below") => Ok(true),
+        Some(other) => Err(LibraryFailure::InvalidInput(format!(
+            "unknown tracks_mode '{other}': want at_least or below"
+        ))),
+    }
+}
+
+/// The caller's star span a list keeps: `rating` 1-5, `rating_mode`
+/// `at_least` (default: that many stars or more) or `at_most` (that many
+/// or fewer). Items the caller did not rate are never kept. No `rating`
+/// keeps everything.
+fn rating_bound(
+    rating: Option<u8>,
+    mode: Option<&str>,
+    user_id: &str,
+) -> Result<Option<RatingBound>, LibraryFailure> {
+    let at_most = match mode.map(str::trim) {
+        None | Some("" | "at_least") => false,
+        Some("at_most") => true,
+        Some(other) => {
+            return Err(LibraryFailure::InvalidInput(format!(
+                "unknown rating_mode '{other}': want at_least or at_most"
+            )));
+        }
+    };
+    match rating {
+        None => Ok(None),
+        Some(stars @ 1..=5) => {
+            let (low, high) = if at_most { (1, stars) } else { (stars, 5) };
+            Ok(Some(RatingBound {
+                user_id: user_id.to_owned(),
+                low,
+                high,
+            }))
+        }
+        Some(other) => Err(LibraryFailure::InvalidInput(format!(
+            "rating {other} out of range: want 1-5"
+        ))),
+    }
+}
+
 /// Decade start years are multiples of ten in a sane range.
 fn check_decade(decade: Option<i64>) -> Result<Option<i64>, LibraryFailure> {
     match decade {
@@ -453,6 +500,8 @@ pub async fn list_albums(
         formats: clean_formats(query.formats.as_deref(), query.format.as_deref()),
         without_formats: without_formats(query.format_mode.as_deref())?,
         min_tracks: check_min_tracks(query.min_tracks)?,
+        tracks_below: tracks_below(query.tracks_mode.as_deref())?,
+        rating: rating_bound(query.rating, query.rating_mode.as_deref(), user_id)?,
         favorites_of: favorites_of(query.favorites, user_id),
     };
     let favorites = filter.favorites_of.is_some();
@@ -611,7 +660,11 @@ pub async fn list_artists(
             descending,
             limit,
             &after,
-            check_min_tracks(query.min_tracks)?,
+            &ArtistBounds {
+                min_tracks: check_min_tracks(query.min_tracks)?,
+                below: tracks_below(query.tracks_mode.as_deref())?,
+                rating: rating_bound(query.rating, query.rating_mode.as_deref(), user_id)?,
+            },
         )
         .await?;
     let ids: Vec<String> = page.items.iter().map(|record| record.id.clone()).collect();
@@ -707,6 +760,9 @@ pub async fn list_tracks(
         album_id: query.album_id.clone(),
         artist_id: query.artist_id.clone(),
         genre: clean_q(query.genre.as_deref()),
+        formats: clean_formats(query.formats.as_deref(), None),
+        without_formats: without_formats(query.format_mode.as_deref())?,
+        rating: rating_bound(query.rating, query.rating_mode.as_deref(), user_id)?,
         favorites_of: favorites_of(query.favorites, user_id),
     };
     let favorites = filter.favorites_of.is_some();

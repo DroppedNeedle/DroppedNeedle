@@ -4,6 +4,7 @@ import type { LibraryV3TracksParams } from './LibraryQueryKeyFactory';
 import {
 	fetchLibraryTracks,
 	libraryTrackParams,
+	type LibraryTrackFilters,
 	type LibraryTrackPage,
 	type LibraryTrackSort
 } from './libraryTracks';
@@ -80,12 +81,13 @@ export function createLibraryTrackQueue(hooks: LibraryTrackQueueHooks) {
 		q: string,
 		favorites: boolean,
 		shuffle: boolean,
-		first: LibraryTrackPage | null
+		first: LibraryTrackPage | null,
+		filters: LibraryTrackFilters
 	): Promise<LibraryTrackQueueStart> {
 		abort();
 		const ac = new AbortController();
 		controller = ac;
-		const params = libraryTrackParams(BATCH_SIZE, sort, q, favorites);
+		const params = libraryTrackParams(BATCH_SIZE, sort, q, favorites, filters);
 		let page: LibraryTrackPage;
 		try {
 			page = first ?? (await fetchLibraryTracks(params, null, ac.signal));
@@ -120,17 +122,19 @@ export function createLibraryTrackQueue(hooks: LibraryTrackQueueHooks) {
 			return loading ? `Loading ${loaded.toLocaleString()} of ${total.toLocaleString()}` : null;
 		},
 		/**
-		 * Plays the list in `sort` order, only the favourites when asked,
-		 * continuing after `first` when given.
+		 * Plays the list in `sort` order, only the favourites and what
+		 * `filters` keep when asked, continuing after `first` when given.
 		 */
 		playAll: (
 			sort: LibraryTrackSort,
 			q: string,
 			first: LibraryTrackPage | null = null,
-			favorites = false
-		) => play(sort, q, favorites, false, first),
-		/** Plays the list shuffled, only the favourites when asked. */
-		shuffleAll: (q: string, favorites = false) => play('random', q, favorites, true, null),
+			favorites = false,
+			filters: LibraryTrackFilters = {}
+		) => play(sort, q, favorites, false, first, filters),
+		/** Plays the list shuffled, only the favourites and what `filters` keep when asked. */
+		shuffleAll: (q: string, favorites = false, filters: LibraryTrackFilters = {}) =>
+			play('random', q, favorites, true, null, filters),
 		abort
 	};
 }
