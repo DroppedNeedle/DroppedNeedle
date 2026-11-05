@@ -159,3 +159,24 @@ export function reorderShuffleItems(
 	newOrder.splice(toPos, 0, moved);
 	return newOrder;
 }
+
+/**
+ * The next (or previous) index from `currentIndex` whose item `allows`
+ * keeps, stepping with `step` (computeNextIndex or computePreviousIndex);
+ * null when none is left.
+ */
+export function computeAllowedIndex(
+	step: typeof computeNextIndex,
+	currentIndex: number,
+	queueLength: number,
+	shuffleEnabled: boolean,
+	shuffleOrder: number[],
+	allows: (index: number) => boolean
+): number | null {
+	let index = step(currentIndex, queueLength, shuffleEnabled, shuffleOrder);
+	for (let seen = 0; index !== null && seen < queueLength; seen++) {
+		if (allows(index)) return index;
+		index = step(index, queueLength, shuffleEnabled, shuffleOrder);
+	}
+	return null;
+}

@@ -144,6 +144,8 @@ You can give an album 1 to 5 stars on its page, and each of its tracks that has 
 
 Ratings are kept per account, and they are the same ratings Subsonic apps show and set: a rating given in either place shows in the other. In a Subsonic app, setting 0 stars clears your rating. Subsonic apps also show the average of every user's rating of an item. Once two or more users have rated it, the average can give your rating away to the others: with two users, the other one can work it out from the average and their own. The web app shows only your own.
 
+While a library track plays, the player shows its heart and its stars beside the controls: the heart adds it to your favourites, the star shows your rating and opens five stars to change it, or a bin to clear it. The button left of Shuffle skips by rating: pick a number of stars and Next, Previous and the end of a track pass over the library tracks in the queue you rated lower, unrated ones too; Off plays everything again. The track you start plays whatever its rating, and tracks from other sources, which can't be rated, always play. The setting stays in your browser.
+
 The "highest rated" album list in Subsonic apps shows the albums you rated, best first. When albums, artists or tracks are merged, their ratings move to the one that stays; if you rated both, the one that stays keeps its rating. Jellyfin apps don't show ratings.
 
 ## Favorites
