@@ -212,7 +212,7 @@ fn routes() -> Vec<Route> {
         ),
         route(
             "/mb/ws/2/release".to_owned(),
-            Some(("artist", BAND)),
+            Some(("inc", "artist-credits")),
             fixture("mb_artist_releases_band.json"),
         ),
         route(
@@ -864,7 +864,8 @@ async fn owned_releases_list_every_held_group_whatever_its_type() {
 
 /// An artist credited on releases but on no release group (a band whose
 /// album MusicBrainz credits to its singer) lists the groups of its
-/// releases, once each, and the one the library holds is owned.
+/// releases, once each, named by their own credit, and the one the
+/// library holds is owned.
 #[tokio::test]
 async fn an_artist_without_release_groups_lists_those_of_its_releases() {
     let fixtures = Fixtures::start().await;
@@ -892,13 +893,24 @@ async fn an_artist_without_release_groups_lists_those_of_its_releases() {
     let owned = get(&app, &format!("/api/v3/artists/{BAND}/owned-releases")).await;
     assert_eq!(owned["items"][0]["id"], BAND_ALBUM, "{owned}");
     assert_eq!(owned["complete"], true);
+
+    let more = get(
+        &app,
+        &format!("/api/v3/albums/{OK_COMPUTER}/more-by-artist?artist_id={BAND}&count=2"),
+    )
+    .await;
+    assert_eq!(
+        more["artist_name"], "Ben Caplan",
+        "a group names the artist its own credit names, as a browsed group does"
+    );
+    assert_eq!(more["albums"][0]["artist_name"], "Ben Caplan", "{more}");
     assert_eq!(
         (
             fixtures.hits("/mb/ws/2/release-group"),
             fixtures.hits("/mb/ws/2/release")
         ),
         (1, 1),
-        "one browse of each serves both"
+        "one browse of each serves all three"
     );
 }
 

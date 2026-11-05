@@ -854,7 +854,8 @@ pub struct ReleaseGroupBrowsePage {
 }
 
 /// One page of an artist's releases from the browse endpoint
-/// (`/release?artist=`) with the `release-groups` include. The envelope is
+/// (`/release?artist=`) with the `release-groups` and `artist-credits`
+/// includes. The envelope is
 /// `{"release-count", "release-offset", "releases"}`. Only each release's
 /// group is read: an artist credited on releases but on no release group
 /// (a band whose album MusicBrainz credits to its singer) has its

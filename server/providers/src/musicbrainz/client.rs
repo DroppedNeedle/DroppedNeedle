@@ -286,7 +286,8 @@ impl MusicBrainzView {
 
     /// One page of an artist's releases with their release groups
     /// (browse), for an artist credited on releases but on no release
-    /// group. Missing artists browse as empty.
+    /// group. With artist credits each group carries its own, as the
+    /// release-group browse's rows do. Missing artists browse as empty.
     pub async fn browse_artist_releases(
         &self,
         artist_mbid: &str,
@@ -296,7 +297,7 @@ impl MusicBrainzView {
     ) -> Result<ReleaseBrowsePage, ProviderError> {
         let params = vec![
             ("artist".to_owned(), normalize_mb_id(artist_mbid)),
-            ("inc".to_owned(), "release-groups".to_owned()),
+            ("inc".to_owned(), "release-groups+artist-credits".to_owned()),
             ("limit".to_owned(), limit.min(MAX_PAGE_LIMIT).to_string()),
             ("offset".to_owned(), offset.to_string()),
         ];
