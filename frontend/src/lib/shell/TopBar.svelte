@@ -1,12 +1,12 @@
 <!--
-	The bar along the top: logo, search, service health and the profile link.
-	On phones the search field gives way to an icon that opens the search
-	dialog, so the logo keeps its full width.
+	The bar along the top: logo, search, service health, the theme toggle and the
+	profile link. On phones the search field gives way to an icon that opens the
+	search dialog, so the logo keeps its full width.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
-	import { Search, UserRound } from 'lucide-svelte';
+	import { Moon, Search, Sun, UserRound } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Logo from '$lib/ui/Logo.svelte';
@@ -14,6 +14,7 @@
 	import ServiceHealthIndicator from '$lib/shell/ServiceHealthIndicator.svelte';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import { themeStore } from '$lib/stores/theme.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import type { SuggestResult } from '$lib/features/search/queries/types';
 
@@ -25,6 +26,13 @@
 	let { onsearch }: Props = $props();
 
 	let query = $state('');
+
+	const theme = $derived(themeStore.resolved);
+	const themeLabel = $derived(theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+
+	function toggleTheme() {
+		themeStore.set(theme === 'dark' ? 'light' : 'dark');
+	}
 
 	function handleSearch() {
 		if (query.trim()) {
@@ -40,6 +48,17 @@
 		);
 	}
 </script>
+
+{#snippet themeGlyph(size: string)}
+	<span class="theme-glyph" aria-hidden="true">
+		<span class="theme-glyph__face" class:is-away={theme !== 'dark'}>
+			<Moon class={size} />
+		</span>
+		<span class="theme-glyph__face theme-glyph__face--sun" class:is-away={theme !== 'light'}>
+			<Sun class={size} />
+		</span>
+	</span>
+{/snippet}
 
 <div class="droppedneedle-topbar navbar sticky top-0 z-50 border-b border-base-300 bg-base-100">
 	<div class="navbar-start w-auto grow sm:grow-0">
@@ -60,6 +79,7 @@
 	<div class="navbar-end w-auto gap-1 pr-1 sm:pr-2">
 		<IconButton label="Search" icon={Search} class="sm:hidden" onclick={onsearch} />
 		<ServiceHealthIndicator />
+		<IconButton label={themeLabel} glyph={themeGlyph} onclick={toggleTheme} />
 		<IconButton
 			href={withBasePath('/profile')}
 			label="Profile"
@@ -81,5 +101,27 @@
 			min-height: 4rem;
 			padding-top: 0;
 		}
+	}
+
+	/* The moon and the sun share one cell; the one away turns and fades out. */
+	.theme-glyph {
+		display: grid;
+	}
+
+	.theme-glyph__face {
+		display: grid;
+		grid-area: 1 / 1;
+		transition:
+			opacity 300ms ease,
+			transform 300ms ease;
+	}
+
+	.theme-glyph__face.is-away {
+		opacity: 0;
+		transform: rotate(90deg) scale(0.6);
+	}
+
+	.theme-glyph__face--sun.is-away {
+		transform: rotate(-90deg) scale(0.6);
 	}
 </style>

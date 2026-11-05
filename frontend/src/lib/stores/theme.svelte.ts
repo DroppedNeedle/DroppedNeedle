@@ -27,23 +27,26 @@ function readPreference(): ThemePreference {
 	}
 }
 
-function apply(preference: ThemePreference): void {
+function apply(preference: ThemePreference): Theme {
 	const theme = resolveTheme(preference, matchMedia(LIGHT_QUERY).matches);
 	document.documentElement.dataset.theme = theme;
 	document.querySelector('meta[name="theme-color"]')?.setAttribute('content', THEME_COLOR[theme]);
+	return theme;
 }
 
 function createThemeStore() {
 	const initial = readPreference();
 	let preference = $state(initial);
+	// The theme showing now: the preference with 'system' resolved
+	let resolved = $state<Theme>('dark');
 
 	// The root layout imports this module, and the app's stylesheets only
 	// arrive with the lazily loaded shell, so the stored theme is in place
 	// before anything themed paints.
 	if (browser) {
-		apply(initial);
+		resolved = apply(initial);
 		matchMedia(LIGHT_QUERY).addEventListener('change', () => {
-			if (preference === 'system') apply(preference);
+			if (preference === 'system') resolved = apply(preference);
 		});
 	}
 
@@ -54,12 +57,15 @@ function createThemeStore() {
 		} catch {
 			// private mode: the choice lasts for this page only
 		}
-		apply(next);
+		resolved = apply(next);
 	}
 
 	return {
 		get preference() {
 			return preference;
+		},
+		get resolved() {
+			return resolved;
 		},
 		set
 	};
