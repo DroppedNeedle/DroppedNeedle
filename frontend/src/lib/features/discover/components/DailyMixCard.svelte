@@ -54,10 +54,10 @@
 		<button
 			use:tilt={{ shadowColorVar: 'var(--color-primary)' }}
 			type="button"
-			class="group relative w-full overflow-hidden rounded-2xl border cursor-pointer text-left
+			class="group relative w-full overflow-hidden rounded-xl border bg-base-200 cursor-pointer text-left
 				focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100
 				active:scale-[0.98]
-				{expanded ? 'border-primary/30' : 'border-base-content/10'}"
+				{expanded ? 'border-action' : 'border-line'}"
 			style:transform-style="preserve-3d"
 			style:transform="var(--tilt-transform, rotateX(0) rotateY(0))"
 			style:box-shadow="var(--tilt-shadow)"
@@ -68,65 +68,55 @@
 				? 'Collapse'
 				: 'Expand'} to browse."
 		>
-			<div class="absolute inset-0 grid h-[160px] grid-cols-2 grid-rows-2">
-				{#each mosaicAlbums as album, i (album.musicbrainz_id ?? `${album.title}-${i}`)}
-					<div class="relative overflow-hidden">
-						<AlbumImage
-							mbid={album.musicbrainz_id || ''}
-							alt={album.title}
-							size="sm"
-							rounded="none"
-							className="w-full h-full"
-							customUrl={album.cover_url || null}
-						/>
-					</div>
-				{:else}
-					{#each Array(4) as _, i (i)}
-						<div class="relative overflow-hidden">
-							<CoverPlaceholder name={`${section.title}-${i}`} />
-						</div>
-					{/each}
-				{/each}
-			</div>
-
 			<div
-				class="absolute inset-0 h-[160px] bg-gradient-to-t from-black/70 via-black/40 to-black/20"
-			></div>
-
-			<div
-				class="pointer-events-none absolute inset-0 h-[160px] rounded-2xl bg-gradient-to-br from-white/[0.04] to-transparent"
-			></div>
-
-			<div
-				class="pointer-events-none absolute inset-0 h-[160px] rounded-2xl"
+				class="pointer-events-none absolute inset-0 rounded-xl"
 				style:background="var(--tilt-specular-bg, transparent)"
 			></div>
 
-			<div class="relative flex h-[160px] items-end justify-between p-4">
-				<div class="flex flex-col gap-1.5 min-w-0 flex-1 mr-3">
-					<h3
-						class="text-sm sm:text-base font-bold text-white leading-tight line-clamp-2 drop-shadow-lg"
-					>
-						{section.title}
-					</h3>
-					<div class="flex items-center gap-2">
+			<div class="relative flex h-32 items-stretch">
+				<div class="grid aspect-square h-full shrink-0 grid-cols-2 grid-rows-2">
+					{#each mosaicAlbums as album, i (album.musicbrainz_id ?? `${album.title}-${i}`)}
+						<div class="relative overflow-hidden">
+							<AlbumImage
+								mbid={album.musicbrainz_id || ''}
+								alt={album.title}
+								size="sm"
+								rounded="none"
+								className="w-full h-full"
+								customUrl={album.cover_url || null}
+							/>
+						</div>
+					{:else}
+						{#each Array(4) as _, i (i)}
+							<div class="relative overflow-hidden">
+								<CoverPlaceholder name={`${section.title}-${i}`} />
+							</div>
+						{/each}
+					{/each}
+				</div>
+
+				<div class="flex min-w-0 flex-1 items-center gap-3 px-4">
+					<div class="flex min-w-0 flex-1 flex-col gap-2">
+						<h3 class="font-display text-xl leading-none uppercase line-clamp-2 sm:text-2xl">
+							{section.title}
+						</h3>
 						<span
-							class="inline-flex items-center gap-1 rounded-full bg-black/40 backdrop-blur-sm px-2 py-0.5 text-xs text-white/70"
+							class="inline-flex w-fit items-center gap-1 rounded-full border border-edge px-2 py-0.5 font-mono text-[0.6875rem] font-semibold tracking-wide"
 						>
-							<Disc3 class="h-3 w-3" />
+							<Disc3 class="h-3 w-3" aria-hidden="true" />
 							{albumCount} album{albumCount !== 1 ? 's' : ''}
 						</span>
 					</div>
-				</div>
 
-				<div
-					class="flex items-center justify-center h-8 w-8 rounded-full bg-black/40 backdrop-blur-sm border border-white/10 transition-all
-						group-hover:bg-primary/20 group-hover:border-primary/30"
-				>
-					<ChevronDown
-						class="h-4 w-4 text-white/80 transition-transform duration-300
-							{expanded ? 'rotate-180' : ''}"
-					/>
+					<span
+						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-edge transition-colors
+							group-hover:border-action group-hover:bg-action group-hover:text-action-content
+							{expanded ? 'border-action bg-action text-action-content' : ''}"
+					>
+						<ChevronDown
+							class="h-4 w-4 transition-transform duration-300 {expanded ? 'rotate-180' : ''}"
+						/>
+					</span>
 				</div>
 			</div>
 		</button>
@@ -135,7 +125,7 @@
 
 {#if expanded}
 	<div transition:slide={{ duration: 300 }} class="col-span-full overflow-hidden">
-		<Card variant="bordered" padding="md" class="mt-3">
+		<Card variant="bordered" padding="md" class="mt-1">
 			<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
 				<p class="text-sm text-muted">Play the mix, or download any albums you're missing.</p>
 				<DiscoveryShelfActions

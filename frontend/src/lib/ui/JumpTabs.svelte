@@ -4,7 +4,9 @@
 	jump (they are not tabs that swap content). On a narrow screen the strip
 	scrolls sideways and keeps the current link in view. A section's own
 	`scroll-margin-top` should clear the top bar and this strip
-	(`scroll-mt-32`).
+	(`scroll-mt-32`). `pills` marks the current link as a filled acid pill
+	in place of the underline; `actions` holds a page's own controls at the
+	strip's right end (they stay in view while the links scroll).
 -->
 <script lang="ts" module>
 	export interface JumpSection {
@@ -14,17 +16,28 @@
 </script>
 
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { browser } from '$app/environment';
 
 	interface Props {
 		sections: JumpSection[];
 		/** The strip's name, for screen readers. */
 		label?: string;
+		/** How the current link is marked. */
+		look?: 'underline' | 'pills';
+		/** Controls at the right end of the strip. */
+		actions?: Snippet;
 		/** Layout only: margin. */
 		class?: string;
 	}
 
-	let { sections, label = 'Page sections', class: className = '' }: Props = $props();
+	let {
+		sections,
+		label = 'Page sections',
+		look = 'underline',
+		actions,
+		class: className = ''
+	}: Props = $props();
 
 	let current = $state('');
 	let strip = $state<HTMLElement | null>(null);
@@ -86,21 +99,26 @@
 	}
 </script>
 
-{#if sections.length > 1}
-	<nav class="dn-jump {className}" aria-label={label}>
-		<ul class="dn-jump__list" bind:this={strip}>
-			{#each sections as section (section.id)}
-				<li>
-					<a
-						href={`#${section.id}`}
-						data-section={section.id}
-						class="dn-jump__link"
-						aria-current={current === section.id ? 'true' : undefined}
-						onclick={(event) => jump(event, section.id)}>{section.label}</a
-					>
-				</li>
-			{/each}
-		</ul>
+{#if sections.length > 1 || actions}
+	<nav class="dn-jump {className}" class:dn-jump--pills={look === 'pills'} aria-label={label}>
+		<div class="dn-jump__row">
+			<ul class="dn-jump__list" bind:this={strip}>
+				{#each sections as section (section.id)}
+					<li>
+						<a
+							href={`#${section.id}`}
+							data-section={section.id}
+							class="dn-jump__link"
+							aria-current={current === section.id ? 'true' : undefined}
+							onclick={(event) => jump(event, section.id)}>{section.label}</a
+						>
+					</li>
+				{/each}
+			</ul>
+			{#if actions}
+				<div class="dn-jump__actions">{@render actions()}</div>
+			{/if}
+		</div>
 	</nav>
 {/if}
 
@@ -116,23 +134,30 @@
 		.dn-jump {
 			top: 4rem;
 		}
-		.dn-jump__list {
+		.dn-jump__row {
 			padding-inline: 1.5rem;
 		}
 	}
 	@media (min-width: 1024px) {
-		.dn-jump__list {
+		.dn-jump__row {
 			padding-inline: 2rem;
 		}
 	}
 
 	/* the links line up with the page's 80rem column */
-	.dn-jump__list {
+	.dn-jump__row {
 		display: flex;
-		gap: 0.25rem;
+		align-items: center;
+		gap: 0.5rem;
 		max-width: 80rem;
 		margin: 0 auto;
 		padding-inline: 1rem;
+	}
+	.dn-jump__list {
+		display: flex;
+		flex: 1 1 auto;
+		min-width: 0;
+		gap: 0.25rem;
 		overflow-x: auto;
 		scrollbar-width: none;
 		overscroll-behavior-x: contain;
@@ -172,6 +197,33 @@
 	}
 	li:first-child .dn-jump__link[aria-current='true']::after {
 		left: 0;
+	}
+
+	.dn-jump__actions {
+		display: flex;
+		flex: none;
+		align-items: center;
+		gap: 0.25rem;
+	}
+
+	/* pills: the current link filled acid, the rest quiet */
+	.dn-jump--pills .dn-jump__list {
+		align-items: center;
+		padding-block: 0.5rem;
+	}
+	.dn-jump--pills .dn-jump__link,
+	.dn-jump--pills li:first-child .dn-jump__link {
+		padding: 0.375rem 0.875rem;
+		border-radius: 9999px;
+		font-size: 0.875rem;
+	}
+	.dn-jump--pills .dn-jump__link[aria-current='true'] {
+		background-color: var(--dn-action);
+		color: var(--dn-action-content);
+		box-shadow: inset 0 0 0 1px var(--dn-action-edge);
+	}
+	.dn-jump--pills .dn-jump__link[aria-current='true']::after {
+		content: none;
 	}
 
 	@media (forced-colors: active) {

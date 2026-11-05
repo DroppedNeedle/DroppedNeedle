@@ -708,7 +708,8 @@ Run from the repo root. `make help` lists every target.
   row), `ListPageHeader` (a browse page's title, count, ticket and record),
   `SaveBar`, `AsyncButton`, `QueryBoundary`, `RatingStars` (`quiet`
   in list rows), `StatRow` (counts split by rules), `JumpTabs` (a page's
-  sticky section strip), `HalftonePhoto` (a photo printed as a fading
+  sticky section strip; `look="pills"` fills the current link, `actions` sit at
+  its end), `HalftonePhoto` (a photo printed as a fading
   halftone), `PageShell`, `Toaster`, `CoverPlaceholder`,
   `UnsavedChangesGuard`, `Logo`, `PaperPanel` (the light island), `Card`'s
   `torn` paper, `Button`'s condensed caps sizes (`display`, `display-sm`)

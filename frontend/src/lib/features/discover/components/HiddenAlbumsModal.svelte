@@ -22,7 +22,7 @@
 			<p class="py-6 text-center text-sm text-muted">Nothing hidden.</p>
 		{/snippet}
 		{#snippet children(data)}
-			<ul class="divide-y divide-base-content/5">
+			<ul class="divide-y divide-line">
 				{#each data.items as album (album.release_group_mbid)}
 					<li class="flex items-center gap-3 py-2">
 						<AlbumImage
@@ -32,11 +32,11 @@
 							className="shrink-0"
 						/>
 						<div class="min-w-0 flex-1">
-							<p class="truncate text-sm font-semibold">{album.release_name}</p>
-							<p class="truncate text-xs text-muted">{album.artist_name}</p>
+							<p class="truncate text-sm font-bold">{album.release_name}</p>
+							<p class="truncate font-mono text-xs text-muted">{album.artist_name}</p>
 						</div>
 						<AsyncButton
-							variant="ghost"
+							variant="outline"
 							size="sm"
 							aria-label="Un-hide {album.release_name}"
 							onclick={() => unhide.mutateAsync(album.release_group_mbid).catch(() => undefined)}

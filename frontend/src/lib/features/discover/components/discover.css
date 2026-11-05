@@ -1,0 +1,32 @@
+/* Discover's panel styles, shared by Top Picks, the Listening Lounge and
+   the page's own bands. A class one component uses lives in that
+   component instead. */
+
+/* a section's square icon tile beside its title */
+.dn-panel__icon {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 2.5rem;
+	height: 2.5rem;
+	border: 1.5px solid var(--dn-title);
+	border-radius: 0.5rem;
+	color: var(--dn-title);
+}
+
+/* a panel's Anton title, a step under a shelf's */
+.dn-panel__title {
+	font-family: var(--font-display);
+	font-weight: 400;
+	font-size: 1.625rem;
+	line-height: 1;
+	letter-spacing: 0.01em;
+	text-transform: uppercase;
+	color: var(--color-base-content);
+	font-synthesis: none;
+}
+@media (min-width: 640px) {
+	.dn-panel__title {
+		font-size: 1.875rem;
+	}
+}

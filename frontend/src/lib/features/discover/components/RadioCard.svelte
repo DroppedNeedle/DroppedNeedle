@@ -125,13 +125,13 @@
 				<div class="relative flex h-[140px] items-end justify-between p-4">
 					<div class="mr-3 flex min-w-0 flex-1 flex-col gap-1.5">
 						<h3
-							class="line-clamp-2 text-sm font-bold leading-tight text-white drop-shadow-lg sm:text-base"
+							class="line-clamp-2 font-display text-xl leading-none text-white uppercase drop-shadow-lg sm:text-2xl"
 						>
 							{section.title}
 						</h3>
 						<div class="flex items-center gap-2">
 							<span
-								class="inline-flex items-center gap-1 rounded-full bg-black/40 px-2 py-0.5 text-xs text-white/70 backdrop-blur-sm"
+								class="inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 font-mono text-[0.6875rem] font-semibold tracking-wide text-white"
 							>
 								<Radio class="h-3 w-3" />
 								{albumCount ? `${albumCount} album${albumCount === 1 ? '' : 's'}` : 'Ready to play'}

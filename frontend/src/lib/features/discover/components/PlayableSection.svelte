@@ -17,9 +17,17 @@
 		/** stable section key for batch attribution ("daily_mixes", "top_picks", ...) */
 		sectionKey?: string;
 		downloadable?: boolean;
+		/** Smaller tiles, for a shelf that shares its row. */
+		compact?: boolean;
 	}
 
-	let { section, headerLink = null, sectionKey = '', downloadable = true }: Props = $props();
+	let {
+		section,
+		headerLink = null,
+		sectionKey = '',
+		downloadable = true,
+		compact = false
+	}: Props = $props();
 
 	let batchModalOpen = $state(false);
 
@@ -45,7 +53,7 @@
 	});
 </script>
 
-<HomeSection {section} {headerLink}>
+<HomeSection {section} {headerLink} {compact}>
 	{#snippet headerActions()}
 		<div class="flex items-center gap-1">
 			{#if seedItems.length > 0}

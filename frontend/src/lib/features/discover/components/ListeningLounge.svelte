@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/features/discover/components/discover.css';
 	import { Check, Download, Headphones, LoaderCircle, Play, Volume2 } from 'lucide-svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
@@ -108,26 +109,26 @@
 </script>
 
 {#if pool.length > 0}
-	<Card
-		as="section"
-		variant="bordered"
-		class="relative overflow-hidden bg-gradient-to-br from-secondary/8 via-base-200/50 to-primary/6"
-	>
-		<div class="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
-			<div class="flex items-center gap-2">
-				<span class="animate-glow-pulse rounded-lg p-1">
-					<Headphones class="h-5 w-5 text-secondary" />
+	<Card as="section" variant="bordered" class="h-full" aria-labelledby="lounge-title">
+		<div class="mb-4 flex flex-wrap items-start gap-x-4 gap-y-3">
+			<div class="flex min-w-0 flex-[1_1_15rem] items-start gap-3">
+				<span class="dn-panel__icon" aria-hidden="true">
+					<Headphones class="size-5" />
 				</span>
-				<div>
-					<h2 class="text-lg font-bold sm:text-xl">Listening Lounge</h2>
-					<p class="text-xs text-muted">Tap a cover to hear it - albums picked for your ears</p>
+				<div class="min-w-0">
+					<h2 id="lounge-title" class="dn-panel__title">Listening Lounge</h2>
+					<p class="mt-1 text-xs text-muted">
+						Tap a cover to hear it - albums picked for your ears
+					</p>
+					{#if updating}
+						<div class="mt-1.5">
+							<LiveUpdatingBadge label="Updating lounge" className="px-2 py-0.5" />
+						</div>
+					{/if}
 				</div>
 			</div>
 
-			<div class="ml-auto flex items-center gap-3">
-				{#if updating}
-					<LiveUpdatingBadge label="Updating lounge" className="px-2 py-0.5" />
-				{/if}
+			<div class="flex items-center gap-3">
 				<Button
 					variant="primary"
 					size="sm"
@@ -138,7 +139,7 @@
 					Play all
 				</Button>
 				<label class="flex items-center gap-1.5" title="Preview volume">
-					<Volume2 class="h-3.5 w-3.5 shrink-0 text-muted" />
+					<Volume2 class="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden="true" />
 					<input
 						type="range"
 						min="0"
@@ -146,7 +147,7 @@
 						step="0.05"
 						value={deckSampler.volume}
 						oninput={(e) => deckSampler.setVolume(Number(e.currentTarget.value))}
-						class="range range-secondary range-xs w-20"
+						class="range range-primary range-xs w-20"
 						aria-label="Preview volume"
 					/>
 				</label>
@@ -158,11 +159,11 @@
 				{@const isActive =
 					album.musicbrainz_id === deckSampler.activeKey && deckSampler.status !== 'idle'}
 				{@const href = albumHrefOrNull(album.musicbrainz_id)}
-				<div class="w-40 shrink-0 sm:w-48">
+				<div class="w-36 shrink-0 xl:w-48">
 					<button
-						class="lounge-cover group/card relative w-full overflow-hidden rounded-xl shadow-md transition-all duration-300 {isActive
-							? 'ring-2 ring-secondary ring-offset-2 ring-offset-base-100'
-							: 'hover:-translate-y-1 hover:shadow-xl'}"
+						class="lounge-cover group/card relative w-full overflow-hidden rounded-sm shadow-md transition-all duration-300 {isActive
+							? 'ring-2 ring-action ring-offset-2 ring-offset-base-200'
+							: 'motion-safe:hover:-translate-y-1 hover:shadow-xl'}"
 						onclick={() => sample(album)}
 						aria-label="{isActive ? 'Stop' : 'Preview'} {album.title} by {album.artist_name}"
 						title={isActive ? 'Stop preview' : 'Preview this album'}
@@ -219,22 +220,20 @@
 					<svelte:element
 						this={href ? 'a' : 'span'}
 						href={href ?? undefined}
-						class="mt-1.5 block truncate text-xs font-semibold {href
-							? 'transition-colors hover:text-secondary'
+						class="mt-2 block truncate text-xs font-bold uppercase tracking-wide {href
+							? 'transition-colors hover:text-title'
 							: ''}"
 					>
 						{album.title}
 					</svelte:element>
-					<p class="truncate text-xs text-muted">{album.artist_name}</p>
+					<p class="mt-0.5 truncate font-mono text-[0.6875rem] text-muted">{album.artist_name}</p>
 				</div>
 			{/each}
 		</div>
 
 		{#if activeAlbum}
-			<div
-				class="mt-1 flex items-center gap-3 rounded-xl border border-secondary/15 bg-base-100/60 px-4 py-2 backdrop-blur-sm"
-			>
-				<span class="text-secondary">♪</span>
+			<div class="mt-3 flex items-center gap-3 rounded-lg border border-line bg-base-100 px-4 py-2">
+				<span class="text-title" aria-hidden="true">♪</span>
 				<p class="min-w-0 flex-1 truncate text-sm">
 					<span class="font-semibold">{activeAlbum.artist_name}</span>
 					{#if deckSampler.currentTrack}

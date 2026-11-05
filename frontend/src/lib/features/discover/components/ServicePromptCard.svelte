@@ -53,9 +53,11 @@
 	interface Props {
 		prompt: ServicePrompt;
 		ondismiss?: ((service: string) => void) | undefined;
+		/** A short card for a row of three: title and Connect on one line. */
+		compact?: boolean;
 	}
 
-	let { prompt, ondismiss = undefined }: Props = $props();
+	let { prompt, ondismiss = undefined, compact = false }: Props = $props();
 
 	const brand = $derived(serviceBrands[prompt.service] ?? otherBrand);
 
@@ -78,37 +80,62 @@
 	const ServiceIcon = $derived(serviceIcons[prompt.service] || Music);
 </script>
 
-<Card variant="bordered" padding="none" class="overflow-hidden border-l-4 {brand.edge}">
-	<IconButton
-		size="xs"
-		icon={X}
-		label="Dismiss {prompt.title}"
-		class="absolute top-2 right-2"
-		onclick={handleDismiss}
-	/>
-	<div class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:gap-5 sm:p-5">
-		<div class="flex min-w-0 flex-1 gap-4">
-			<div class="shrink-0 pt-0.5 {brand.mark}">
-				<ServiceIcon class="size-9 sm:size-11" aria-hidden="true" />
+{#if compact}
+	<Card variant="bordered" padding="none" class="h-full overflow-hidden border-l-4 {brand.edge}">
+		<div class="flex h-full flex-col gap-2.5 p-4">
+			<div class="flex items-center gap-3">
+				<ServiceIcon class="size-8 shrink-0 {brand.mark}" aria-hidden="true" />
+				<h3 class="min-w-0 flex-1 font-display text-xl leading-none uppercase">{prompt.title}</h3>
+				<Button variant="primary" size="xs" icon={Link} href={getSettingsLink(prompt.service)}>
+					Connect
+				</Button>
+				<IconButton size="xs" icon={X} label="Dismiss {prompt.title}" onclick={handleDismiss} />
 			</div>
-			<div class="min-w-0 flex-1 pr-6">
-				<h3 class="font-display text-xl leading-none sm:text-2xl">{prompt.title}</h3>
-				<p class="mt-1.5 text-sm text-muted">{prompt.description}</p>
-				<ul class="mt-2.5 hidden flex-wrap gap-x-5 gap-y-1.5 sm:flex">
-					{#each prompt.features as feature, i (`${feature}-${i}`)}
-						{@const FeatureIcon = featureIcon(feature)}
-						<li class="flex items-center gap-1.5 text-xs font-semibold">
-							<FeatureIcon class="size-3.5 text-title" aria-hidden="true" />
-							{feature}
-						</li>
-					{/each}
-				</ul>
+			<p class="text-xs leading-relaxed text-muted">{prompt.description}</p>
+			<ul class="mt-auto hidden flex-wrap gap-x-4 gap-y-1 pt-0.5 sm:flex">
+				{#each prompt.features as feature, i (`${feature}-${i}`)}
+					{@const FeatureIcon = featureIcon(feature)}
+					<li class="flex items-center gap-1.5 text-[0.6875rem] font-semibold">
+						<FeatureIcon class="size-3 text-title" aria-hidden="true" />
+						{feature}
+					</li>
+				{/each}
+			</ul>
+		</div>
+	</Card>
+{:else}
+	<Card variant="bordered" padding="none" class="overflow-hidden border-l-4 {brand.edge}">
+		<IconButton
+			size="xs"
+			icon={X}
+			label="Dismiss {prompt.title}"
+			class="absolute top-2 right-2"
+			onclick={handleDismiss}
+		/>
+		<div class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:gap-5 sm:p-5">
+			<div class="flex min-w-0 flex-1 gap-4">
+				<div class="shrink-0 pt-0.5 {brand.mark}">
+					<ServiceIcon class="size-9 sm:size-11" aria-hidden="true" />
+				</div>
+				<div class="min-w-0 flex-1 pr-6">
+					<h3 class="font-display text-xl leading-none sm:text-2xl">{prompt.title}</h3>
+					<p class="mt-1.5 text-sm text-muted">{prompt.description}</p>
+					<ul class="mt-2.5 hidden flex-wrap gap-x-5 gap-y-1.5 sm:flex">
+						{#each prompt.features as feature, i (`${feature}-${i}`)}
+							{@const FeatureIcon = featureIcon(feature)}
+							<li class="flex items-center gap-1.5 text-xs font-semibold">
+								<FeatureIcon class="size-3.5 text-title" aria-hidden="true" />
+								{feature}
+							</li>
+						{/each}
+					</ul>
+				</div>
+			</div>
+			<div class="shrink-0 self-end sm:self-center sm:pt-4">
+				<Button variant="primary" size="sm" icon={Link} href={getSettingsLink(prompt.service)}>
+					Connect
+				</Button>
 			</div>
 		</div>
-		<div class="shrink-0 self-end sm:self-center sm:pt-4">
-			<Button variant="primary" size="sm" icon={Link} href={getSettingsLink(prompt.service)}>
-				Connect
-			</Button>
-		</div>
-	</div>
-</Card>
+	</Card>
+{/if}

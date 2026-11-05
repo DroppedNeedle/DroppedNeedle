@@ -44,6 +44,8 @@
 		showPreview?: boolean;
 		/** The row is in the first screen: its first images load without waiting. */
 		eager?: boolean;
+		/** Smaller tiles, for a shelf that shares its row with another. */
+		compact?: boolean;
 	}
 
 	let {
@@ -53,8 +55,11 @@
 		headerActions,
 		hideHeader = false,
 		showPreview = true,
-		eager = false
+		eager = false,
+		compact = false
 	}: Props = $props();
+
+	const tileWidth = $derived(compact ? 'w-28 sm:w-32 md:w-36' : 'w-32 sm:w-36 md:w-44');
 
 	const lazyAt = (i: number) => !eager || i >= EAGER_IMAGE_COUNT;
 
@@ -151,7 +156,7 @@
 						kind="artist"
 						title={item.name}
 						href={artistHref ?? undefined}
-						class="w-32 shrink-0 sm:w-36 md:w-44 {artistHref ? '' : 'opacity-80'}"
+						class="{tileWidth} shrink-0 {artistHref ? '' : 'opacity-80'}"
 					>
 						{#snippet art()}
 							<ArtistImage
@@ -184,7 +189,7 @@
 						albumHrefOrNull(item.musicbrainz_id) ??
 						(item.local_id ? localAlbumHref(item.local_id) : null)}
 					{@const isItemRequested = item.requested || libraryStore.isRequested(item.musicbrainz_id)}
-					<div class="w-32 sm:w-36 md:w-44 shrink-0">
+					<div class="{tileWidth} shrink-0">
 						<MediaTile
 							title={item.title}
 							href={albumHref ?? undefined}

@@ -3,6 +3,7 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -99,7 +100,7 @@
 				<label
 					class="flex items-center gap-3 rounded-lg px-2 py-1.5 {album.in_library ||
 					isRequested(album)
-						? 'opacity-60'
+						? 'text-muted'
 						: 'cursor-pointer hover:bg-base-content/5'}"
 				>
 					<input
@@ -124,11 +125,9 @@
 						<p class="truncate text-xs text-muted">{album.artist_name}</p>
 					</div>
 					{#if album.in_library}
-						<span class="badge badge-success badge-sm gap-1 shrink-0">
-							<Check class="h-3 w-3" /> Owned
-						</span>
+						<StatusChip tone="action" size="xs" icon={Check} class="shrink-0">Owned</StatusChip>
 					{:else if isRequested(album)}
-						<span class="badge badge-info badge-sm shrink-0">Requested</span>
+						<StatusChip tone="info" size="xs" class="shrink-0">Requested</StatusChip>
 					{/if}
 				</label>
 			{/each}

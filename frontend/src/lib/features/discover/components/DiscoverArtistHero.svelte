@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { coverSrc } from '$lib/api/covers';
 	import { useDirectRemoteImages } from '$lib/features/settings/queries/AdvancedSettingsReads.svelte';
 	import type { BecauseYouListenTo } from '$lib/features/discover/queries/types';
 	import HomeSection from './HomeSection.svelte';
-	import HeroBackdrop from '$lib/media/HeroBackdrop.svelte';
+	import ArtistImage from '$lib/media/ArtistImage.svelte';
+	import HalftonePhoto from '$lib/ui/HalftonePhoto.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { Headphones } from 'lucide-svelte';
 
 	const directRemoteImages = useDirectRemoteImages();
@@ -14,52 +15,49 @@
 
 	let { entry }: Props = $props();
 
-	let hasDirectBackdrop = $derived(
-		directRemoteImages.current && !!(entry.banner_url || entry.wide_thumb_url || entry.fanart_url)
+	// a wide picture the provider gave, when remote images may load directly;
+	// otherwise the artist's own picture through the server
+	let photoUrl = $derived(
+		directRemoteImages.current
+			? (entry.banner_url ?? entry.wide_thumb_url ?? entry.fanart_url ?? null)
+			: null
 	);
-
-	let backdropUrl = $derived.by(() => {
-		if (directRemoteImages.current) {
-			if (entry.banner_url) return entry.banner_url;
-			if (entry.wide_thumb_url) return entry.wide_thumb_url;
-			if (entry.fanart_url) return entry.fanart_url;
-		}
-		return entry.seed_artist_mbid ? coverSrc('artist', entry.seed_artist_mbid, 500) : null;
-	});
+	let photoLoaded = $state(false);
 </script>
 
-<article
-	class="discover-hero group relative overflow-hidden rounded-2xl transition-all duration-500 hover:shadow-[0_0_40px_rgb(var(--brand-discover)/0.12)]"
->
-	<HeroBackdrop
-		imageUrl={backdropUrl}
-		opacity={hasDirectBackdrop ? 0.2 : 0.12}
-		hoverOpacity={hasDirectBackdrop ? 0.3 : 0.18}
-		blur={hasDirectBackdrop ? 0 : 2}
-		hoverBlur={hasDirectBackdrop ? 0 : 1}
-		position="full"
-	/>
+<article class="dn-because relative overflow-hidden rounded-xl border border-line bg-base-200">
+	{#if photoUrl || entry.seed_artist_mbid}
+		<HalftonePhoto
+			class="dn-because__photo"
+			loaded={photoLoaded}
+			fallback={entry.seed_artist.slice(0, 2)}
+		>
+			<ArtistImage
+				mbid={entry.seed_artist_mbid}
+				alt=""
+				size="full"
+				requestSize={1200}
+				rounded="none"
+				showPlaceholder={false}
+				remoteUrl={photoUrl}
+				className="h-full w-full bg-transparent!"
+				onload={() => (photoLoaded = true)}
+			/>
+		</HalftonePhoto>
+	{/if}
 
 	<div class="relative px-4 pt-5 pb-1 sm:px-6 sm:pt-6">
-		<div class="flex items-center gap-3 mb-1">
-			<div class="flex items-center gap-2 min-w-0">
-				<span class="text-xs font-semibold uppercase tracking-widest text-muted"
-					>Because You Listen To</span
-				>
-			</div>
-		</div>
-
-		<div class="flex items-center gap-3 mb-1">
-			<h2 class="text-xl sm:text-2xl font-bold text-primary truncate">
+		<p class="font-mono text-xs font-semibold tracking-[0.2em] text-muted uppercase">
+			Because You Listen To
+		</p>
+		<div class="mt-1.5 mb-3 flex flex-wrap items-center gap-3">
+			<h2 class="font-display text-4xl leading-none text-title uppercase sm:text-5xl">
 				{entry.seed_artist}
 			</h2>
 			{#if entry.listen_count}
-				<span
-					class="inline-flex items-center gap-1.5 shrink-0 rounded-full px-3 py-1 text-xs font-medium bg-[rgb(var(--brand-discover)/0.12)] text-[rgb(var(--brand-discover))]"
-				>
-					<Headphones class="w-3 h-3" />
+				<StatusChip tone="action" size="sm" icon={Headphones}>
 					{entry.listen_count} listens this week
-				</span>
+				</StatusChip>
 			{/if}
 		</div>
 	</div>
@@ -75,24 +73,17 @@
 </article>
 
 <style>
-	.discover-hero {
-		--hero-glow-color: var(--brand-discover);
-		background: linear-gradient(
-			135deg,
-			rgb(var(--brand-discover) / 0.06) 0%,
-			rgb(var(--brand-discover) / 0.02) 40%,
-			transparent 100%
-		);
-		border: 1px solid rgb(var(--brand-discover) / 0.08);
-		animation: hero-glow 4s ease-in-out infinite;
+	/* the artist printed as a halftone at the band's right, fading left */
+	.dn-because :global(.dn-because__photo) {
+		position: absolute;
+		inset: 0 0 auto auto;
+		width: min(60%, 36rem);
+		height: 15rem;
 	}
-	.discover-hero:hover {
-		border-color: rgb(var(--brand-discover) / 0.2);
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.discover-hero {
-			animation: none;
+	@media (max-width: 639px) {
+		.dn-because :global(.dn-because__photo) {
+			width: 100%;
+			height: 10rem;
 		}
 	}
 </style>

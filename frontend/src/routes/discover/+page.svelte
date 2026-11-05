@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/features/discover/components/discover.css';
 	import HomeSection from '$lib/features/discover/components/HomeSection.svelte';
 	import ServiceErrorState from '$lib/ui/ServiceErrorState.svelte';
 	import DailyMixCard from '$lib/features/discover/components/DailyMixCard.svelte';
@@ -6,7 +7,12 @@
 	import TopPicksDeck from '$lib/features/discover/components/TopPicksDeck.svelte';
 	import PlayableSection from '$lib/features/discover/components/PlayableSection.svelte';
 	import ListeningLounge from '$lib/features/discover/components/ListeningLounge.svelte';
-	import DiscoverZoneNav from '$lib/features/discover/components/DiscoverZoneNav.svelte';
+	import JumpTabs from '$lib/ui/JumpTabs.svelte';
+	import DiscoverHeader from '$lib/features/discover/components/DiscoverHeader.svelte';
+	import DiscoverPlaylistBand from '$lib/features/discover/components/DiscoverPlaylistBand.svelte';
+	import DiscoverBecauseEmpty from '$lib/features/discover/components/DiscoverBecauseEmpty.svelte';
+	import SectionHead from '$lib/ui/SectionHead.svelte';
+	import SourceBadge from '$lib/features/discover/components/SourceBadge.svelte';
 	import GenrePills from '$lib/features/genre/components/GenrePills.svelte';
 	import GenreGrid from '$lib/features/genre/components/GenreGrid.svelte';
 	import DiscoverQueueDeck from '$lib/features/discover/components/DiscoverQueueDeck.svelte';
@@ -18,8 +24,6 @@
 	import DiscoverArtistMiniBand from '$lib/features/discover/components/DiscoverArtistMiniBand.svelte';
 	import SectionDivider from '$lib/ui/SectionDivider.svelte';
 	import CarouselSkeleton from '$lib/ui/CarouselSkeleton.svelte';
-	import EmptyState from '$lib/ui/EmptyState.svelte';
-	import PageHeader from '$lib/ui/PageHeader.svelte';
 	import LiveUpdatingBadge from '$lib/ui/LiveUpdatingBadge.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { isDismissed } from '$lib/features/discover/state/dismissedPrompts';
@@ -31,13 +35,11 @@
 		CircleAlert,
 		Sparkles,
 		Music,
-		Music2,
-		Radio,
 		Library,
 		TrendingUp,
 		LayoutGrid,
-		WandSparkles,
 		Heart,
+		Globe,
 		SlidersHorizontal
 	} from 'lucide-svelte';
 	import { getDiscoverHomeV3Query } from '$lib/features/discover/queries/DiscoverV3Queries.svelte';
@@ -46,7 +48,13 @@
 		createRefreshDiscoverV3Mutation
 	} from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
 	import { useDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
-	import type { SectionZone, TopPickItem } from '$lib/features/discover/queries/types';
+	import type {
+		ChartSection,
+		SectionKey,
+		SectionZone,
+		TopPickItem
+	} from '$lib/features/discover/queries/types';
+	import type { KitIcon } from '$lib/ui/Button.svelte';
 	import { getSectionPrefsQuery } from '$lib/features/settings/queries/section-prefs.svelte';
 	import {
 		becauseOf,
@@ -56,7 +64,7 @@
 		weeklyOf,
 		zoneSections
 	} from '$lib/features/discover/queries/sections';
-	import { genreRows } from '$lib/features/discover/components/sectionRows';
+	import { albumRows, genreRows } from '$lib/features/discover/components/sectionRows';
 
 	useDiscoverActivity(() => ({ feature: 'discover' }));
 
@@ -103,17 +111,9 @@
 	const because = $derived(becauseOf(sections));
 	const artistsYouMightLike = $derived(shelfOf(sections, 'artists_you_might_like'));
 	const popularInYourGenres = $derived(shelfOf(sections, 'popular_in_your_genres'));
-	const freshReleases = $derived(shelfOf(sections, 'fresh_releases'));
-	const newFromFollowed = $derived(shelfOf(sections, 'new_from_followed'));
 	const missingEssentials = $derived(shelfOf(sections, 'missing_essentials'));
 	const unexploredGenres = $derived(shelfOf(sections, 'unexplored_genres'));
 	const genreList = $derived(shelfOf(sections, 'genre_list'));
-	const zoneShelves = (zone: SectionZone) =>
-		zoneSections(sections, zone).flatMap((section) =>
-			section.content.shape === 'shelf' ? [section.content.shelf] : []
-		);
-	const libraryShelves = $derived(zoneShelves('from_your_library'));
-	const trendingShelves = $derived(zoneShelves('trending_now'));
 
 	let hasContent = $derived((sections?.length ?? 0) > 0);
 	// build-time degradation summary; explains an empty or slow page instead of
@@ -136,35 +136,207 @@
 
 	let queueEnabled = $derived(discoverData?.discover_queue_enabled ?? true);
 
-	let hasMadeForYou = $derived(zoneSections(sections, 'made_for_you').length > 0);
-
 	let hasLounge = $derived(!!lounge || (topPicks?.items.length ?? 0) > 3);
-
-	let zones = $derived.by(() => {
-		const list: { id: string; label: string }[] = [];
-		if (queueEnabled) list.push({ id: 'zone-queue', label: 'Queue' });
-		if (topPicks) list.push({ id: 'zone-picks', label: 'Top Picks' });
-		if (hasLounge) list.push({ id: 'zone-lounge', label: 'Lounge' });
-		if (weekly) list.push({ id: 'zone-weekly', label: 'Weekly' });
-		if (playlistDiscoveryEnabled) list.push({ id: 'zone-playlist', label: 'Playlist' });
-		if (hasMadeForYou) list.push({ id: 'zone-made', label: 'Made For You' });
-		list.push({ id: 'zone-because', label: 'For You' });
-		if (hasNewFresh) list.push({ id: 'zone-fresh', label: 'New' });
-		if (hasFromYourLibrary) list.push({ id: 'zone-library', label: 'Your Library' });
-		if (hasBrowseGenres) list.push({ id: 'zone-genres', label: 'Genres' });
-		if (hasTrending) list.push({ id: 'zone-trending', label: 'Trending' });
-		return list;
-	});
 
 	let hasBecauseYouListened = $derived(zoneSections(sections, 'because_you_listened').length > 0);
 
-	let hasNewFresh = $derived(zoneSections(sections, 'new_and_fresh').length > 0);
+	// Each section is a block with a width: a wide block takes a row of its
+	// own, and two half blocks next to each other share one. Blocks follow the
+	// order the server sends; the queue and the playlist band are the page's
+	// own and keep their places among them.
+	type Kicker = { label: string; icon: KitIcon };
+	type Block = {
+		id: string;
+		width: 'wide' | 'half';
+		/** The zone strip's link, for the first block of a zone. */
+		nav?: { id: string; label: string };
+		kicker?: Kicker;
+	} & (
+		| { kind: 'queue' | 'picks' | 'lounge' | 'weekly' | 'playlist' | 'because' }
+		| { kind: 'mixes' | 'radio' | 'genres-explore' | 'genres-browse' }
+		| { kind: 'shelf'; shelf: ChartSection; key: SectionKey; playable: boolean; link?: string }
+		| { kind: 'trending-lead'; shelf: ChartSection }
+	);
 
-	let hasFromYourLibrary = $derived(libraryShelves.length > 0);
+	const ZONES: Partial<Record<SectionZone, { id: string; nav: string } & Kicker>> = {
+		made_for_you: { id: 'zone-made', nav: 'Made For You', label: 'Made For You', icon: Sparkles },
+		because_you_listened: {
+			id: 'zone-because',
+			nav: 'For You',
+			label: 'Because You Listened',
+			icon: Heart
+		},
+		new_and_fresh: { id: 'zone-fresh', nav: 'New', label: 'New & Fresh', icon: Music },
+		from_your_library: {
+			id: 'zone-library',
+			nav: 'Your Library',
+			label: 'From Your Library',
+			icon: Library
+		},
+		browse_genres: { id: 'zone-genres', nav: 'Genres', label: 'Browse Genres', icon: LayoutGrid },
+		trending_now: { id: 'zone-trending', nav: 'Trending', label: 'Trending Now', icon: TrendingUp }
+	};
 
-	let hasBrowseGenres = $derived(zoneSections(sections, 'browse_genres').length > 0);
+	const SHELF_LINKS: Partial<Record<SectionKey, string>> = {
+		new_from_followed: '/following/new-releases'
+	};
 
-	let hasTrending = $derived(trendingShelves.length > 0);
+	// zones that come before the playlist band and Because You Listened
+	const EARLY_ZONES = new Set<SectionZone>(['essentials', 'for_you']);
+
+	let blocks = $derived.by(() => {
+		const list: Block[] = [];
+		const seenZones: SectionZone[] = [];
+		let playlistPlaced = false;
+		let becausePlaced = false;
+		const placePlaylist = () => {
+			if (playlistPlaced) return;
+			playlistPlaced = true;
+			if (playlistDiscoveryEnabled)
+				list.push({
+					id: 'zone-playlist',
+					kind: 'playlist',
+					width: 'wide',
+					nav: { id: 'zone-playlist', label: 'Playlist' }
+				});
+		};
+		// For You always shows, with its empty state when nothing is there yet
+		const placeBecause = () => {
+			if (becausePlaced) return;
+			becausePlaced = true;
+			seenZones.push('because_you_listened');
+			list.push({
+				id: 'zone-because',
+				kind: 'because',
+				width: 'wide',
+				nav: { id: 'zone-because', label: 'For You' }
+			});
+		};
+
+		if (queueEnabled)
+			list.push({
+				id: 'zone-queue',
+				kind: 'queue',
+				width: 'wide',
+				nav: { id: 'zone-queue', label: 'Queue' }
+			});
+
+		for (const section of sections ?? []) {
+			const { key, zone, content } = section;
+			if (!EARLY_ZONES.has(zone)) placePlaylist();
+			if (!EARLY_ZONES.has(zone) && zone !== 'made_for_you') placeBecause();
+
+			const zoneInfo = ZONES[zone];
+			const id = `section-${key}`;
+			const kicker = zoneInfo ? { label: zoneInfo.label, icon: zoneInfo.icon } : undefined;
+			// the first block a zone places carries its strip link; a zone's
+			// later wide blocks drop the repeated kicker
+			const place = (block: Block) => {
+				if (zoneInfo && !seenZones.includes(zone)) {
+					seenZones.push(zone);
+					block.id = zoneInfo.id;
+					block.nav = { id: zoneInfo.id, label: zoneInfo.nav };
+				} else if (block.width === 'wide') {
+					block.kicker = undefined;
+				}
+				list.push(block);
+			};
+
+			if (key === 'top_picks') {
+				if (topPicks)
+					list.push({
+						id: 'zone-picks',
+						kind: 'picks',
+						width: 'half',
+						nav: { id: 'zone-picks', label: 'Top Picks' }
+					});
+				// the lounge also plays Top Picks' runners-up when it has no shelf
+				if (!lounge && hasLounge)
+					list.push({
+						id: 'zone-lounge',
+						kind: 'lounge',
+						width: 'half',
+						nav: { id: 'zone-lounge', label: 'Lounge' }
+					});
+			} else if (key === 'listeners_like_you') {
+				if (hasLounge)
+					list.push({
+						id: 'zone-lounge',
+						kind: 'lounge',
+						width: 'half',
+						nav: { id: 'zone-lounge', label: 'Lounge' }
+					});
+			} else if (key === 'weekly_exploration') {
+				if (weekly)
+					list.push({
+						id: 'zone-weekly',
+						kind: 'weekly',
+						width: 'half',
+						nav: { id: 'zone-weekly', label: 'Weekly' }
+					});
+			} else if (key === 'daily_mixes' || key === 'radio_sections') {
+				if ((key === 'daily_mixes' ? dailyMixes : radioSections).length)
+					place({
+						id,
+						kind: key === 'daily_mixes' ? 'mixes' : 'radio',
+						width: 'wide',
+						kicker
+					});
+			} else if (zone === 'because_you_listened') {
+				// its shelves sit inside the Because You Listened block
+				placeBecause();
+			} else if (key === 'unexplored_genres') {
+				if (unexploredGenres && shuffledGenres.length > 0)
+					place({ id, kind: 'genres-explore', width: 'half', kicker });
+			} else if (key === 'genre_list') {
+				if (genreList) place({ id, kind: 'genres-browse', width: 'half', kicker });
+			} else if (content.shape === 'shelf' && key === 'globally_trending') {
+				place({ id, kind: 'trending-lead', width: 'wide', shelf: content.shelf });
+			} else if (content.shape === 'shelf') {
+				place({
+					id,
+					kind: 'shelf',
+					width: 'half',
+					kicker,
+					shelf: content.shelf,
+					key,
+					playable: zone === 'new_and_fresh',
+					link: SHELF_LINKS[key]
+				});
+			}
+		}
+		placePlaylist();
+		placeBecause();
+		return list;
+	});
+
+	// consecutive half blocks pair up; a half with no half neighbour runs wide
+	let rows = $derived.by(() => {
+		const out: Block[][] = [];
+		for (let i = 0; i < blocks.length; i++) {
+			const block = blocks[i];
+			const next = blocks[i + 1];
+			if (block.width === 'half' && next?.width === 'half') {
+				out.push([block, next]);
+				i++;
+			} else {
+				out.push([block]);
+			}
+		}
+		return out;
+	});
+
+	let zones = $derived(blocks.flatMap((block) => (block.nav ? [block.nav] : [])));
+
+	// covers the page already shows, for the playlist band's sleeves
+	let bandCovers = $derived.by(() => {
+		const ids = [
+			...(topPicks?.items.map((pick) => pick.album.musicbrainz_id) ?? []),
+			...albumRows(lounge).map((album) => album.musicbrainz_id),
+			...albumRows(missingEssentials).map((album) => album.musicbrainz_id)
+		].filter((id): id is string => !!id);
+		return ids.filter((id, i) => ids.indexOf(id) === i).slice(0, 4);
+	});
 
 	let shuffledGenres = $state<
 		{ name: string; listen_count?: number | null; artist_count?: number | null }[]
@@ -197,20 +369,13 @@
 </svelte:head>
 
 <div class="min-h-[calc(100vh-200px)]">
-	<PageHeader
-		subtitle="Music recommendations based on what you listen to."
+	<DiscoverHeader
 		{loading}
 		isUpdating={isUpdating || isUpdatingInBackground}
 		refreshing={refreshing || isUpdatingInBackground}
 		{lastUpdated}
 		onRefresh={() => void handleRefresh()}
-		refreshLabel="Refresh recommendations"
-	>
-		{#snippet title()}
-			<Compass class="inline h-8 w-8 sm:h-10 sm:w-10 lg:h-12 lg:w-12 mr-2 align-text-bottom" />
-			Discover
-		{/snippet}
-	</PageHeader>
+	/>
 
 	{#if discoverQuery.error && !discoverData}
 		<ServiceErrorState
@@ -219,16 +384,16 @@
 			onretry={() => discoverQuery.refetch()}
 		/>
 	{:else}
-		<div class="px-4 sm:px-6 lg:px-8">
-			{#if servicePrompts.length > 0}
-				<div class="space-y-3 mb-6">
-					{#each servicePrompts as prompt, i (`service-prompt-${prompt.service}-${i}`)}
-						<ServicePromptCard {prompt} ondismiss={handlePromptDismiss} />
-					{/each}
-				</div>
-			{/if}
+		{#if servicePrompts.length > 0}
+			<div class="dn-discover-col mb-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+				{#each servicePrompts as prompt, i (`service-prompt-${prompt.service}-${i}`)}
+					<ServicePromptCard {prompt} compact ondismiss={handlePromptDismiss} />
+				{/each}
+			</div>
+		{/if}
 
-			{#if (loading && !discoverData) || isBuilding}
+		{#if (loading && !discoverData) || isBuilding}
+			<div class="dn-discover-col">
 				{#if isBuilding}
 					<div class="mb-8 flex flex-col items-center justify-center gap-2 px-4 text-center">
 						<div class="flex items-center justify-center gap-3">
@@ -253,336 +418,330 @@
 						</section>
 					{/each}
 				</div>
-			{:else if discoverData}
-				<!-- a render error in any section degrades to the failed card below instead
-				     of crashing the whole SPA (the #147 freeze) -->
-				<svelte:boundary>
-					<DiscoverZoneNav {zones}>
-						{#snippet action()}
-							<div class="flex items-center gap-1">
-								<Button
-									variant="ghost"
-									size="xs"
-									icon={EyeOff}
-									title="Hidden albums"
-									onclick={() => (hiddenAlbumsOpen = true)}
+			</div>
+		{:else if discoverData}
+			<!-- a render error in any section degrades to the failed card below instead
+			     of crashing the whole SPA (the #147 freeze) -->
+			<svelte:boundary>
+				<JumpTabs sections={zones} look="pills" label="Jump to a discover section">
+					{#snippet actions()}
+						<Button
+							variant="ghost"
+							size="xs"
+							icon={EyeOff}
+							title="Hidden albums"
+							onclick={() => (hiddenAlbumsOpen = true)}
+						>
+							<span class="hidden sm:inline">Hidden</span>
+						</Button>
+						<Button
+							variant="ghost"
+							size="xs"
+							icon={SlidersHorizontal}
+							href={withBasePath('/settings?tab=discover')}
+							title="Choose which sections appear here"
+						>
+							<span class="hidden sm:inline">Customise</span>
+						</Button>
+					{/snippet}
+				</JumpTabs>
+
+				<div class="dn-discover-col dn-discover-rows" class:is-refreshing={isUpdatingInBackground}>
+					{#each rows as row (row.map((block) => block.id).join('+'))}
+						<div class="dn-discover-row" class:dn-discover-row--pair={row.length === 2}>
+							{#each row as block, i (block.id)}
+								<div
+									id={block.id}
+									class="dn-discover-block scroll-mt-32"
+									class:dn-discover-block--ruled={i === 1 && block.kind === 'genres-browse'}
 								>
-									<span class="hidden sm:inline">Hidden</span>
-								</Button>
-								<Button
-									variant="ghost"
-									size="xs"
-									icon={SlidersHorizontal}
-									href={withBasePath('/settings?tab=discover')}
-									title="Choose which sections appear here"
-								>
-									<span class="hidden sm:inline">Customise</span>
-								</Button>
-							</div>
-						{/snippet}
-					</DiscoverZoneNav>
-					<div class="space-y-10 sm:space-y-12" class:is-refreshing={isUpdatingInBackground}>
-						{#if queueEnabled}
-							<div id="zone-queue" class="scroll-mt-28">
-								<DiscoverQueueDeck
-									youtubeEnabled={discoverData.integration_status?.youtube ?? false}
-								/>
-							</div>
-						{/if}
-
-						{#if topPicks}
-							<div id="zone-picks" class="scroll-mt-28">
-								<TopPicksDeck
-									section={topPicks}
-									updating={sectionsUpdating}
-									onignore={handleIgnoreTopPick}
-								/>
-							</div>
-						{/if}
-
-						{#if hasLounge}
-							<div id="zone-lounge" class="scroll-mt-28">
-								<ListeningLounge section={lounge} {topPicks} updating={sectionsUpdating} />
-							</div>
-						{/if}
-
-						{#if weekly}
-							<div id="zone-weekly" class="scroll-mt-28">
-								<WeeklyExploration section={weekly} updating={sectionsUpdating} />
-							</div>
-						{/if}
-
-						<div id="zone-playlist" class="scroll-mt-28">
-							<div class="grid grid-cols-1 gap-4">
-								{#if playlistDiscoveryEnabled}
-									<button
-										type="button"
-										class="group relative w-full overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/8 via-base-200/50 to-secondary/8 px-5 py-7 backdrop-blur-sm shadow-[0_4px_24px_oklch(from_var(--color-primary)_l_c_h_/_0.06)] transition-all duration-300 cursor-pointer text-left motion-safe:hover:-translate-y-0.5 hover:shadow-[0_8px_32px_oklch(from_var(--color-primary)_l_c_h_/_0.15)] hover:border-primary/25 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100"
-										onclick={() => (playlistDiscoverOpen = true)}
-									>
-										<div
-											class="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-br from-white/[0.03] to-transparent"
-										></div>
-										<div class="flex items-center gap-4">
-											<div
-												class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/15 shadow-[0_0_16px_oklch(from_var(--color-primary)_l_c_h_/_0.15)]"
-											>
-												<WandSparkles class="h-5 w-5 text-primary" />
-											</div>
-											<div class="flex-1 min-w-0">
-												<h3 class="font-bold text-sm sm:text-base">Discover for a Playlist</h3>
-												<p class="text-xs text-muted mt-0.5">
-													Get album suggestions based on any playlist.
-												</p>
-											</div>
-											<div
-												class="shrink-0 text-primary/50 transition-transform duration-300 group-hover:translate-x-1"
-											>
-												<Sparkles class="h-5 w-5" />
-											</div>
-										</div>
-									</button>
-								{/if}
-							</div>
+									{@render blockBody(block, row.length === 2)}
+								</div>
+							{/each}
 						</div>
+					{/each}
 
-						{#if hasMadeForYou}
-							<div id="zone-made" class="scroll-mt-28">
-								<SectionDivider label="Made For You" updating={sectionsUpdating}>
-									{#snippet icon()}<Sparkles class="w-3.5 h-3.5" />{/snippet}
-								</SectionDivider>
-
-								<div class="space-y-8 sm:space-y-10">
-									{#if dailyMixes.length}
-										<div>
-											<h3
-												class="section-title text-sm font-semibold text-muted mb-3 flex items-center gap-2"
-											>
-												<Music2 class="h-4 w-4" />
-												Daily Mixes
-											</h3>
-											<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-												{#each dailyMixes as mix, i (`${mix.title}-${i}`)}
-													<DailyMixCard section={mix} />
-												{/each}
-											</div>
-										</div>
-									{/if}
-
-									{#if radioSections.length}
-										<div>
-											<h3
-												class="section-title text-sm font-semibold text-muted mb-3 flex items-center gap-2"
-											>
-												<Radio class="h-4 w-4" />
-												Radio Stations
-											</h3>
-											<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-												{#each radioSections as radio, i (`radio-${radio.radio_seed_id}-${i}`)}
-													<RadioCard
-														seedType={radio.radio_seed_type ?? 'artist'}
-														seedId={radio.radio_seed_id ?? ''}
-														initialSection={radio}
-													/>
-												{/each}
-											</div>
-										</div>
-									{/if}
-								</div>
-							</div>
-						{/if}
-
-						<div id="zone-because" class="scroll-mt-28">
-							<SectionDivider label="Because You Listened" updating={sectionsUpdating}>
-								{#snippet icon()}<Heart class="w-3.5 h-3.5" />{/snippet}
-							</SectionDivider>
-
-							{#if hasBecauseYouListened}
-								<div class="space-y-5 sm:space-y-6">
-									{#each because as entry, i (`${entry.seed_artist_mbid || entry.seed_artist}-${i}`)}
-										<div>
-											{#if i === 0}
-												<DiscoverArtistHero {entry} />
-											{:else}
-												<DiscoverArtistMiniBand {entry} />
-											{/if}
-										</div>
-									{/each}
-
-									{#if artistsYouMightLike}
-										<div><HomeSection section={artistsYouMightLike} /></div>
-									{/if}
-
-									{#if popularInYourGenres}
-										<div><HomeSection section={popularInYourGenres} /></div>
-									{/if}
-								</div>
-							{:else}
-								<EmptyState
-									icon={Heart}
-									title="Listen to more music to see recommendations"
-									description="As you build up your listening history, we'll surface artists and albums based on what you love."
-								/>
-							{/if}
+					{#if !hasContent && servicePrompts.length > 0}
+						<div class="flex flex-col items-center justify-center py-12 sm:py-16">
+							<Compass class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
+							<h2 class="dn-panel__title mb-3 text-center">Nothing to Discover Yet</h2>
+							<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
+								Connect a music service to get recommendations. The more you connect, the better
+								they get.
+							</p>
+							<Button
+								variant="primary"
+								href={withBasePath(authStore.isAdmin ? '/settings' : '/profile#scrobbling')}
+								>Connect Services</Button
+							>
 						</div>
-
-						{#if hasNewFresh}
-							<div id="zone-fresh" class="scroll-mt-28">
-								<SectionDivider label="New & Fresh" updating={sectionsUpdating}>
-									{#snippet icon()}<Music class="w-3.5 h-3.5" />{/snippet}
-								</SectionDivider>
-
-								<div class="space-y-2">
-									{#if freshReleases}
-										<PlayableSection section={freshReleases} sectionKey="fresh_releases" />
-									{/if}
-
-									{#if newFromFollowed}
-										<PlayableSection
-											section={newFromFollowed}
-											headerLink="/following/new-releases"
-											sectionKey="new_from_followed"
-										/>
-									{/if}
-
-									{#if missingEssentials}
-										<PlayableSection section={missingEssentials} sectionKey="missing_essentials" />
-									{/if}
-								</div>
-							</div>
-						{/if}
-
-						{#if hasFromYourLibrary}
-							<div id="zone-library" class="scroll-mt-28">
-								<SectionDivider label="From Your Library" updating={sectionsUpdating}>
-									{#snippet icon()}<Library class="w-3.5 h-3.5" />{/snippet}
-								</SectionDivider>
-
-								<div class="space-y-2">
-									{#each libraryShelves as shelf, i (`${shelf.title}-${i}`)}
-										<HomeSection section={shelf} />
-									{/each}
-								</div>
-							</div>
-						{/if}
-
-						{#if hasBrowseGenres}
-							<div id="zone-genres" class="scroll-mt-28">
-								<SectionDivider label="Browse Genres" updating={sectionsUpdating}>
-									{#snippet icon()}<LayoutGrid class="w-3.5 h-3.5" />{/snippet}
-								</SectionDivider>
-
-								<div class="space-y-2">
-									{#if unexploredGenres && shuffledGenres.length > 0}
-										<div class="mt-4 mb-4">
-											<GenrePills
-												title={unexploredGenres.title}
-												genres={shuffledGenres}
-												onShuffle={shuffleGenres}
-											/>
-										</div>
-									{/if}
-
-									{#if genreList}
-										<div class="mt-4 mb-4">
-											<GenreGrid title={genreList.title} genres={genreRows(genreList)} />
-										</div>
-									{/if}
-								</div>
-							</div>
-						{/if}
-
-						{#if hasTrending}
-							<div id="zone-trending" class="scroll-mt-28">
-								<SectionDivider label="Trending Now" updating={sectionsUpdating}>
-									{#snippet icon()}<TrendingUp class="w-3.5 h-3.5" />{/snippet}
-								</SectionDivider>
-
-								<div class="space-y-2">
-									{#each trendingShelves as shelf, i (`${shelf.title}-${i}`)}
-										<HomeSection section={shelf} />
-									{/each}
-								</div>
-							</div>
-						{/if}
-
-						{#if !hasContent && servicePrompts.length > 0}
-							<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-								<Compass class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
-								<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">
-									Nothing to Discover Yet
-								</h2>
-								<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
-									Connect a music service to get recommendations. The more you connect, the better
-									they get.
-								</p>
-								<Button
-									variant="primary"
-									href={withBasePath(authStore.isAdmin ? '/settings' : '/profile#scrobbling')}
-									>Connect Services</Button
-								>
-							</div>
-						{:else if !hasContent && degradedSources.length > 0}
-							<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-								<CircleAlert class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
-								<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">
-									Recommendations Unavailable
-								</h2>
-								<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
-									{degradedLabel}
-									{degradedVerb} temporarily unavailable, so we couldn't build recommendations. We'll
-									keep retrying in the background - your page will fill in as soon as it recovers.
-								</p>
-								<Button variant="primary" loading={refreshing} onclick={() => void handleRefresh()}>
-									Retry Now
-								</Button>
-							</div>
-						{:else if !hasContent && !queueEnabled}
-							<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-								<SlidersHorizontal class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
-								<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">
-									You've hidden every section
-								</h2>
-								<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
-									Turn some discovery sections back on to fill this page.
-								</p>
-								<Button
-									variant="primary"
-									icon={SlidersHorizontal}
-									href={withBasePath('/settings?tab=discover')}
-								>
-									Customise Sections
-								</Button>
-							</div>
-						{:else if !hasContent}
-							<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-								<Compass class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
-								<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">Still Loading</h2>
-								<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
-									Your recommendations are still loading. Try refreshing.
-								</p>
-								<Button variant="primary" loading={refreshing} onclick={() => void handleRefresh()}>
-									Refresh Recommendations
-								</Button>
-							</div>
-						{/if}
-					</div>
-
-					{#snippet failed(_error, reset)}
+					{:else if !hasContent && degradedSources.length > 0}
 						<div class="flex flex-col items-center justify-center py-12 sm:py-16">
 							<CircleAlert class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
-							<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">Something Went Wrong</h2>
+							<h2 class="dn-panel__title mb-3 text-center">Recommendations Unavailable</h2>
 							<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
-								Part of the Discover page failed to render. The rest of the app still works.
+								{degradedLabel}
+								{degradedVerb} temporarily unavailable, so we couldn't build recommendations. We'll keep
+								retrying in the background - your page will fill in as soon as it recovers.
 							</p>
-							<Button variant="primary" onclick={() => reset()}>Try Again</Button>
+							<Button variant="primary" loading={refreshing} onclick={() => void handleRefresh()}>
+								Retry Now
+							</Button>
 						</div>
-					{/snippet}
-				</svelte:boundary>
-			{/if}
-		</div>
+					{:else if !hasContent && !queueEnabled}
+						<div class="flex flex-col items-center justify-center py-12 sm:py-16">
+							<SlidersHorizontal class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
+							<h2 class="dn-panel__title mb-3 text-center">You've hidden every section</h2>
+							<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
+								Turn some discovery sections back on to fill this page.
+							</p>
+							<Button
+								variant="primary"
+								icon={SlidersHorizontal}
+								href={withBasePath('/settings?tab=discover')}
+							>
+								Customise Sections
+							</Button>
+						</div>
+					{:else if !hasContent}
+						<div class="flex flex-col items-center justify-center py-12 sm:py-16">
+							<Compass class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
+							<h2 class="dn-panel__title mb-3 text-center">Still Loading</h2>
+							<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
+								Your recommendations are still loading. Try refreshing.
+							</p>
+							<Button variant="primary" loading={refreshing} onclick={() => void handleRefresh()}>
+								Refresh Recommendations
+							</Button>
+						</div>
+					{/if}
+				</div>
+
+				{#snippet failed(_error, reset)}
+					<div class="flex flex-col items-center justify-center py-12 sm:py-16">
+						<CircleAlert class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
+						<h2 class="dn-panel__title mb-3 text-center">Something Went Wrong</h2>
+						<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
+							Part of the Discover page failed to render. The rest of the app still works.
+						</p>
+						<Button variant="primary" onclick={() => reset()}>Try Again</Button>
+					</div>
+				{/snippet}
+			</svelte:boundary>
+		{/if}
 	{/if}
 </div>
 
+{#snippet kickerRow(kicker: Kicker | undefined)}
+	{#if kicker}
+		{@const Icon = kicker.icon}
+		<SectionDivider label={kicker.label} updating={sectionsUpdating}>
+			{#snippet icon()}<Icon class="h-3.5 w-3.5" />{/snippet}
+		</SectionDivider>
+	{/if}
+{/snippet}
+
+{#snippet blockBody(block: Block, paired: boolean)}
+	{#if block.kind === 'queue'}
+		<DiscoverQueueDeck youtubeEnabled={discoverData?.integration_status?.youtube ?? false} />
+	{:else if block.kind === 'picks' && topPicks}
+		<TopPicksDeck section={topPicks} updating={sectionsUpdating} onignore={handleIgnoreTopPick} />
+	{:else if block.kind === 'lounge'}
+		<ListeningLounge section={lounge} {topPicks} updating={sectionsUpdating} />
+	{:else if block.kind === 'weekly' && weekly}
+		<WeeklyExploration section={weekly} updating={sectionsUpdating} />
+	{:else if block.kind === 'playlist'}
+		<DiscoverPlaylistBand covers={bandCovers} onopen={() => (playlistDiscoverOpen = true)} />
+	{:else if block.kind === 'mixes'}
+		{@render kickerRow(block.kicker)}
+		<SectionHead title="Daily Mixes" />
+		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+			{#each dailyMixes as mix, i (`${mix.title}-${i}`)}
+				<DailyMixCard section={mix} />
+			{/each}
+		</div>
+	{:else if block.kind === 'radio'}
+		{@render kickerRow(block.kicker)}
+		<SectionHead title="Radio Stations" />
+		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+			{#each radioSections as radio, i (`radio-${radio.radio_seed_id}-${i}`)}
+				<RadioCard
+					seedType={radio.radio_seed_type ?? 'artist'}
+					seedId={radio.radio_seed_id ?? ''}
+					initialSection={radio}
+				/>
+			{/each}
+		</div>
+	{:else if block.kind === 'because'}
+		{#if hasBecauseYouListened}
+			{@render kickerRow({ label: 'Because You Listened', icon: Heart })}
+			<div class="space-y-5 sm:space-y-6">
+				{#each because as entry, i (`${entry.seed_artist_mbid || entry.seed_artist}-${i}`)}
+					{#if i === 0}
+						<DiscoverArtistHero {entry} />
+					{:else}
+						<DiscoverArtistMiniBand {entry} />
+					{/if}
+				{/each}
+				{#if artistsYouMightLike || popularInYourGenres}
+					<div
+						class="dn-discover-row"
+						class:dn-discover-row--pair={!!artistsYouMightLike && !!popularInYourGenres}
+					>
+						{#if artistsYouMightLike}
+							<div>
+								<HomeSection section={artistsYouMightLike} compact={!!popularInYourGenres} />
+							</div>
+						{/if}
+						{#if popularInYourGenres}
+							<div>
+								<HomeSection section={popularInYourGenres} compact={!!artistsYouMightLike} />
+							</div>
+						{/if}
+					</div>
+				{/if}
+			</div>
+		{:else}
+			<DiscoverBecauseEmpty updating={sectionsUpdating} />
+		{/if}
+	{:else if block.kind === 'shelf'}
+		{@render kickerRow(block.kicker)}
+		{#if block.playable}
+			<PlayableSection
+				section={block.shelf}
+				headerLink={block.link ?? null}
+				sectionKey={block.key}
+				compact={paired}
+			/>
+		{:else}
+			<HomeSection section={block.shelf} compact={paired} />
+		{/if}
+	{:else if block.kind === 'genres-explore' && unexploredGenres}
+		{@render kickerRow(block.kicker)}
+		<GenrePills title={unexploredGenres.title} genres={shuffledGenres} onShuffle={shuffleGenres} />
+	{:else if block.kind === 'genres-browse' && genreList}
+		{@render kickerRow(block.kicker)}
+		<div class="dn-discover-genres" class:dn-discover-genres--paired={paired}>
+			<GenreGrid title={genreList.title} genres={genreRows(genreList)} />
+		</div>
+	{:else if block.kind === 'trending-lead'}
+		{@render kickerRow({ label: 'Trending Now', icon: TrendingUp })}
+		<div class="dn-trending">
+			<div class="dn-trending__head">
+				<Globe class="size-9 text-title" aria-hidden="true" />
+				<h2 class="dn-trending__title">{block.shelf.title}</h2>
+				<SourceBadge source={block.shelf.source ?? undefined} />
+			</div>
+			<div class="min-w-0 flex-1">
+				<HomeSection section={block.shelf} hideHeader />
+			</div>
+		</div>
+	{/if}
+{/snippet}
+
 <PlaylistDiscoveryModal bind:open={playlistDiscoverOpen} />
 <HiddenAlbumsModal bind:open={hiddenAlbumsOpen} />
+
+<style>
+	/* the page's column: the zone strip's 80rem, with its side padding */
+	.dn-discover-col {
+		max-width: 80rem;
+		margin-inline: auto;
+		padding-inline: 1rem;
+	}
+	@media (min-width: 768px) {
+		.dn-discover-col {
+			padding-inline: 1.5rem;
+		}
+	}
+	@media (min-width: 1024px) {
+		.dn-discover-col {
+			padding-inline: 2rem;
+		}
+	}
+
+	.dn-discover-rows {
+		display: flex;
+		flex-direction: column;
+		gap: 2.5rem;
+		padding-top: 1.5rem;
+	}
+
+	/* two half sections share a row on a wide screen; one column on a phone */
+	.dn-discover-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 2.5rem 2rem;
+	}
+	@media (min-width: 1024px) {
+		.dn-discover-row--pair {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+
+	.dn-discover-block {
+		min-width: 0;
+	}
+	/* a section's divider starts the block, so it needs no space above */
+	.dn-discover-block > :global(:first-child.flex) {
+		padding-top: 0;
+	}
+
+	/* the genre tiles beside the pills sit past a rule */
+	@media (min-width: 1024px) {
+		.dn-discover-block--ruled {
+			padding-left: 2rem;
+			margin-left: -1rem;
+			border-left: 1px solid var(--dn-line);
+		}
+		.dn-discover-genres--paired :global(.genre-grid) {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+
+	/* Globally Trending: its title stacked at the left of the artists */
+	.dn-trending {
+		display: flex;
+		align-items: flex-start;
+		gap: 2rem;
+	}
+	.dn-trending__head {
+		display: flex;
+		flex: none;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.75rem;
+		width: 11rem;
+		padding-top: 0.5rem;
+	}
+	.dn-trending__title {
+		font-family: var(--font-display);
+		font-weight: 400;
+		font-size: 2.5rem;
+		line-height: 0.95;
+		text-transform: uppercase;
+		color: var(--color-base-content);
+		font-synthesis: none;
+		overflow-wrap: anywhere;
+	}
+	@media (max-width: 767px) {
+		.dn-trending {
+			flex-direction: column;
+			gap: 0.75rem;
+		}
+		.dn-trending__head {
+			flex-direction: row;
+			flex-wrap: wrap;
+			align-items: center;
+			width: auto;
+			padding-top: 0;
+		}
+		.dn-trending__head :global(svg) {
+			width: 1.5rem;
+			height: 1.5rem;
+		}
+		.dn-trending__title {
+			font-size: 1.625rem;
+		}
+	}
+</style>
