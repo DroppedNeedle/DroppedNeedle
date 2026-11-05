@@ -12,8 +12,9 @@
 	import type { RequestItem, RequestKind } from '$lib/features/requests/queries/types';
 	import { getWantedWatchesQuery } from '$lib/features/requests/queries/wanted.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import Button from '$lib/ui/Button.svelte';
+	import RequestsAlert from './RequestsAlert.svelte';
 	import RequestsEmpty from './RequestsEmpty.svelte';
+	import RequestSkeleton from './RequestSkeleton.svelte';
 	import { itemKind, itemRequestKey } from './requestItems';
 
 	interface Props {
@@ -100,9 +101,9 @@
 
 {#if active}
 	<div in:fade={{ duration: 150 }}>
-		<div class="flex flex-wrap items-center gap-2 mb-4">
+		<div class="dn-toolbar">
 			<select
-				class="select select-sm"
+				class="select dn-toolbar__select"
 				aria-label="Filter by status"
 				value={historyFilter ?? ''}
 				onchange={handleFilterChange}
@@ -119,7 +120,7 @@
 			</select>
 
 			<select
-				class="select select-sm"
+				class="select dn-toolbar__select"
 				aria-label="Sort order"
 				value={historySort ?? ''}
 				onchange={handleSortChange}
@@ -129,49 +130,33 @@
 				<option value="status">By status</option>
 			</select>
 
-			<div class="flex-1"></div>
-
 			{#if historyTotalPages > 1}
-				<Pagination
-					current={historyPage}
-					total={historyTotalPages}
-					onchange={handleHistoryPageChange}
-				/>
+				<div class="ml-auto">
+					<Pagination
+						current={historyPage}
+						total={historyTotalPages}
+						onchange={handleHistoryPageChange}
+					/>
+				</div>
 			{/if}
 		</div>
 
 		{#if historyError}
-			<div class="alert alert-error mb-4">
-				<span>{historyError}</span>
-				<Button size="sm" onclick={() => void historyQuery.refetch()}>Retry</Button>
-			</div>
+			<RequestsAlert
+				message={historyError}
+				tone="error"
+				onretry={() => void historyQuery.refetch()}
+			/>
 		{/if}
 
 		{#if historyLoading && historyItems.length === 0}
-			<div class="flex flex-col gap-2.5">
-				{#each Array(5) as _, i (`history-loading-${i}`)}
-					<div
-						class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box animate-pulse"
-						style:animation-delay="{i * 80}ms"
-					>
-						<div class="w-14 h-14 sm:w-18 sm:h-18 bg-base-300 rounded-lg"></div>
-						<div class="flex-1">
-							<div class="h-4 bg-base-300 rounded w-44 mb-2"></div>
-							<div class="h-3 bg-base-300 rounded w-28"></div>
-						</div>
-						<div class="flex flex-col items-end gap-2">
-							<div class="h-5 bg-base-300 rounded-full w-20"></div>
-							<div class="h-3 bg-base-300 rounded w-28"></div>
-						</div>
-					</div>
-				{/each}
-			</div>
+			<RequestSkeleton count={5} />
 		{:else if historyItems.length === 0}
 			<RequestsEmpty icon={Clock} tone="muted" title="No history yet">
 				Completed and failed requests will appear here.
 			</RequestsEmpty>
 		{:else}
-			<div class="flex flex-col gap-2.5">
+			<div class="flex flex-col gap-4">
 				{#each historyItems as item (itemRequestKey(item))}
 					<RequestCard
 						{item}
@@ -190,7 +175,7 @@
 			</div>
 
 			{#if historyTotalPages > 1}
-				<div class="flex justify-center mt-6">
+				<div class="mt-8 flex justify-center">
 					<Pagination
 						current={historyPage}
 						total={historyTotalPages}

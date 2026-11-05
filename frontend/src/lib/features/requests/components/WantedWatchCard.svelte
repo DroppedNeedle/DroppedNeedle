@@ -14,9 +14,9 @@
 	import type { WantedWatchItem } from '$lib/features/requests/queries/wanted.svelte';
 	import { nowSeconds, startSharedClock } from '$lib/stores/clock.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import RequestRow from './RequestRow.svelte';
 
 	interface Props {
 		item: WantedWatchItem;
@@ -47,151 +47,161 @@
 	);
 </script>
 
-<Card padding="none">
-	<div class="flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-4 p-3 sm:p-4">
-		<div class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg overflow-hidden bg-base-300">
-			<AlbumImage
-				mbid={item.musicbrainz_id}
-				customUrl={item.cover_url ?? null}
-				alt={item.album_title}
-				size="sm"
-				rounded="lg"
-				className="w-full h-full"
-			/>
-		</div>
+{#snippet cover()}
+	<AlbumImage
+		mbid={item.musicbrainz_id}
+		customUrl={item.cover_url ?? null}
+		alt={item.album_title}
+		size="sm"
+		rounded="none"
+		className="w-full h-full"
+	/>
+{/snippet}
 
-		<div class="flex-1 min-w-0">
-			<a
-				href={withBasePath(`/album/${item.musicbrainz_id}`)}
-				class="block font-semibold text-sm truncate hover:text-accent hover:underline"
-				title={item.album_title}
-			>
-				{item.album_title}
-			</a>
-			<p class="text-muted text-xs truncate">
-				{item.artist_name}{item.year ? ` • ${item.year}` : ''}
-			</p>
-
-			<div class="flex items-center gap-1.5 flex-wrap text-xs mt-0.5">
-				{#if item.state === 'watching'}
-					<span class="watch-dot shrink-0" aria-hidden="true"></span>
-					<span class="text-info/80 flex items-center gap-1">
-						<Radar class="h-3 w-3" />
-						Watching
-					</span>
-					{#if nextCheckLabel}
-						<span class="text-base-content/20">•</span>
-						<span class="text-muted">next check {nextCheckLabel}</span>
-					{/if}
-					<span class="text-base-content/20">•</span>
-					<span class="text-muted">{checkedLabel}</span>
-					{#if item.last_outcome === 'outside_settings'}
-						<span class="text-base-content/20">•</span>
-						<span class="text-muted">only copies your settings refuse</span>
-					{/if}
-				{:else if item.state === 'stopped'}
-					<span class="text-muted flex items-center gap-1">
-						<CircleStop class="h-3 w-3" />
-						Stopped
-					</span>
-					<span class="text-base-content/20">•</span>
-					<span class="text-muted">not being searched</span>
-				{:else}
-					<span class="text-success/80 flex items-center gap-1">
-						<CircleCheck class="h-3 w-3" />
-						Found
-					</span>
-					<span class="text-base-content/20">•</span>
-					<span class="text-muted">in your library</span>
-				{/if}
-				{#if item.kind === 'partial' && item.state !== 'fulfilled'}
-					<span class="text-base-content/20">•</span>
-					<span class="text-muted">finding missing tracks</span>
-				{/if}
-				{#if ownerName}
-					<span class="flex items-center gap-1.5 text-muted">
-						<span class="text-base-content/20">•</span>
-						watched for {ownerName}
-					</span>
-				{/if}
-			</div>
-
-			{#if item.new_candidate_count > 0}
-				<a
-					href={withBasePath(`/album/${item.musicbrainz_id}`)}
-					class="inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-full bg-accent/15 text-accent text-xs font-medium hover:bg-accent/25"
-					onclick={() => onseen?.(item)}
-				>
-					<Sparkles class="h-3 w-3" />
-					{item.new_candidate_count} new {item.new_candidate_count === 1
-						? 'candidate'
-						: 'candidates'} to review
-				</a>
-			{/if}
-		</div>
-
-		<div class="flex w-full sm:w-auto justify-end gap-2 shrink-0">
-			{#if item.state === 'watching'}
-				{#if onresume}
-					<Button
-						variant="ghost"
-						size="sm"
-						icon={RefreshCw}
-						class="gap-1"
-						disabled={busy}
-						onclick={() => onresume?.(item)}
-						title="Check for this album again soon"
-						aria-label="Check now"
-					>
-						<span class="hidden sm:inline">Check now</span>
-					</Button>
-				{/if}
-				{#if onstop}
-					<Button
-						variant="danger-ghost"
-						size="sm"
-						icon={X}
-						class="gap-1"
-						disabled={busy}
-						onclick={() => onstop?.(item)}
-						title="Stop hunting for this - it won't be watched"
-						aria-label="Stop"
-					>
-						<span class="hidden sm:inline">Stop</span>
-					</Button>
-				{/if}
-			{:else if item.state === 'stopped' && onresume}
+{#snippet aside()}
+	<div class="rq-watch-actions flex flex-wrap items-center justify-end gap-2.5">
+		{#if item.state === 'watching'}
+			{#if onresume}
 				<Button
 					variant="outline"
-					size="sm"
-					icon={Play}
-					class="gap-1"
+					size="display-sm"
+					icon={RefreshCw}
 					disabled={busy}
 					onclick={() => onresume?.(item)}
+					title="Check for this album again soon"
+					aria-label="Check now"
 				>
-					Resume
+					<span class="max-sm:hidden">Check now</span>
 				</Button>
 			{/if}
-			{#if onremove}
-				<IconButton
-					variant="danger-ghost"
-					size="sm"
-					icon={Trash2}
-					label="Remove from the list"
+			{#if onstop}
+				<Button
+					variant="outline"
+					size="display-sm"
+					icon={X}
 					disabled={busy}
-					onclick={() => onremove?.(item)}
-				/>
+					onclick={() => onstop?.(item)}
+					title="Stop hunting for this - it won't be watched"
+					aria-label="Stop"
+				>
+					<span class="max-sm:hidden">Stop</span>
+				</Button>
 			{/if}
-		</div>
+		{:else if item.state === 'stopped' && onresume}
+			<Button
+				variant="outline"
+				size="display-sm"
+				icon={Play}
+				disabled={busy}
+				onclick={() => onresume?.(item)}
+			>
+				Resume
+			</Button>
+		{/if}
+		{#if onremove}
+			<IconButton
+				variant="outline"
+				size="display-sm"
+				shape="square"
+				icon={Trash2}
+				label="Remove from the list"
+				disabled={busy}
+				onclick={() => onremove?.(item)}
+			/>
+		{/if}
 	</div>
-</Card>
+{/snippet}
+
+<RequestRow {cover} {aside}>
+	<div class="rq-head">
+		<a
+			href={withBasePath(`/album/${item.musicbrainz_id}`)}
+			class="rq-title"
+			title={item.album_title}
+		>
+			{item.album_title}
+		</a>
+		{#if item.state === 'watching'}
+			<span class="rq-pill rq-pill--info">
+				<span class="watch-dot" aria-hidden="true"></span>
+				<Radar aria-hidden="true" />
+				Watching
+			</span>
+		{:else if item.state === 'stopped'}
+			<span class="rq-pill rq-pill--neutral rq-pill--outline">
+				<CircleStop aria-hidden="true" />
+				Stopped
+			</span>
+		{:else}
+			<span class="rq-pill rq-pill--success rq-pill--outline">
+				<CircleCheck aria-hidden="true" />
+				Found
+			</span>
+		{/if}
+	</div>
+	<p class="rq-artist">
+		{item.artist_name}{item.year ? ` • ${item.year}` : ''}
+	</p>
+	<p class="rq-meta mt-2">
+		{#if item.state === 'watching'}
+			{#if nextCheckLabel}
+				<span>Next check {nextCheckLabel}</span>
+			{/if}
+			<span>{checkedLabel}</span>
+			{#if item.last_outcome === 'outside_settings'}
+				<span>only copies your settings refuse</span>
+			{/if}
+		{:else if item.state === 'stopped'}
+			<span>not being searched</span>
+		{:else}
+			<span>in your library</span>
+		{/if}
+		{#if item.kind === 'partial' && item.state !== 'fulfilled'}
+			<span>finding missing tracks</span>
+		{/if}
+		{#if ownerName}
+			<span>watched for {ownerName}</span>
+		{/if}
+	</p>
+
+	{#if item.new_candidate_count > 0}
+		<a
+			href={withBasePath(`/album/${item.musicbrainz_id}`)}
+			class="rq-pill rq-pill--action mt-3"
+			onclick={() => onseen?.(item)}
+		>
+			<Sparkles aria-hidden="true" />
+			{item.new_candidate_count} new {item.new_candidate_count === 1 ? 'candidate' : 'candidates'} to
+			review
+		</a>
+	{/if}
+</RequestRow>
 
 <style>
+	.rq-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.375rem 1.25rem;
+		margin-bottom: 0.25rem;
+	}
+	.rq-head .rq-title {
+		min-width: 0;
+	}
+
+	/* on a phone Check now and Stop show their icons only, as squares */
+	@media (max-width: 639px) {
+		.rq-watch-actions :global(.btn[aria-label]) {
+			width: var(--size);
+			padding: 0;
+		}
+	}
+
 	.watch-dot {
-		width: 6px;
-		height: 6px;
+		width: 7px;
+		height: 7px;
 		border-radius: 50%;
-		background: oklch(from var(--color-info) l c h / 0.7);
+		background-color: currentColor;
 		animation: watch-dot-pulse 2.5s ease-in-out infinite;
 	}
 

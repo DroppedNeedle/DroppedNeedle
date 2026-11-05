@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { fade, fly } from '$lib/ui/motion';
-	import { Radar, Trash2, TriangleAlert } from 'lucide-svelte';
+	import { Radar, Trash2 } from 'lucide-svelte';
 	import WantedRetryingCard from '$lib/features/requests/components/WantedRetryingCard.svelte';
 	import WantedWatchCard from '$lib/features/requests/components/WantedWatchCard.svelte';
 	import { getWantedWatchesQuery } from '$lib/features/requests/queries/wanted.svelte';
@@ -14,7 +14,10 @@
 	import type { WantedWatchItem } from '$lib/features/requests/queries/wanted.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
+	import RequestsAlert from './RequestsAlert.svelte';
 	import RequestsEmpty from './RequestsEmpty.svelte';
+	import RequestSkeleton from './RequestSkeleton.svelte';
+	import './requests.css';
 
 	interface Props {
 		active: boolean;
@@ -77,46 +80,27 @@
 {#if active}
 	<div in:fade={{ duration: 150 }}>
 		{#if wantedQuery.isError}
-			<div class="alert alert-warning mb-4">
-				<TriangleAlert class="h-5 w-5" />
-				<span>Could not load the watchlist.</span>
-				<Button size="sm" onclick={() => void wantedQuery.refetch()}>Retry</Button>
-			</div>
+			<RequestsAlert
+				message="Could not load the watchlist."
+				onretry={() => void wantedQuery.refetch()}
+			/>
 		{:else if wantedQuery.isPending}
-			<div class="flex flex-col gap-2.5">
-				{#each Array(3) as _, i (`wanted-loading-${i}`)}
-					<div
-						class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box animate-pulse"
-						style:animation-delay="{i * 100}ms"
-					>
-						<div class="w-14 h-14 sm:w-16 sm:h-16 bg-base-300 rounded-lg"></div>
-						<div class="flex-1">
-							<div class="h-4 bg-base-300 rounded w-44 mb-2"></div>
-							<div class="h-3 bg-base-300 rounded w-28 mb-1"></div>
-							<div class="h-2.5 bg-base-300 rounded w-52"></div>
-						</div>
-						<div class="flex gap-2">
-							<div class="h-8 bg-base-300 rounded-btn w-24"></div>
-							<div class="h-8 bg-base-300 rounded-btn w-16"></div>
-						</div>
-					</div>
-				{/each}
-			</div>
+			<RequestSkeleton count={3} buttons={2} />
 		{:else if wantedItems.length === 0 && wantedRetrying.length === 0}
 			<RequestsEmpty icon={Radar} tone="muted" title="Nothing on the watchlist">
 				When a request can't be found anywhere, DroppedNeedle keeps checking for it and lists it
 				here.
 			</RequestsEmpty>
 		{:else}
-			<div class="flex items-start justify-between gap-3 mb-3">
-				<p class="text-xs text-muted">
+			<div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+				<p class="rq-intro">
 					Albums that couldn't be found are re-checked on a schedule. A copy that passes
 					verification downloads by itself; near misses show up as candidates for you to review.
 				</p>
 				{#if finishedCount > 0}
 					<Button
-						variant="ghost"
-						size="sm"
+						variant="outline"
+						size="display-sm"
 						icon={Trash2}
 						class="shrink-0"
 						onclick={() => (clearOpen = true)}
@@ -125,7 +109,7 @@
 					</Button>
 				{/if}
 			</div>
-			<div class="flex flex-col gap-2.5">
+			<div class="flex flex-col gap-4">
 				{#each wantedRetrying as item, i (`retrying-${item.musicbrainz_id}`)}
 					<div in:fly={{ y: 12, duration: 200, delay: i * 30 }}>
 						<WantedRetryingCard {item} ownerName={item.user_name ?? undefined} />

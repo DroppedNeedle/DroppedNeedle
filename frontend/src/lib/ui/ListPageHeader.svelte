@@ -6,7 +6,9 @@
 	page's condensed caps buttons at the right. `eyebrow` is a spaced mono
 	line over the title ("SEARCH RESULTS FOR"), `fitTitle` steps a long,
 	typed title (a search) down so it wraps less, and `below` holds a row
-	under the title (search's tab chips). The record and ticket are
+	under the title (search's tab chips). `lede` is a plain sentence under
+	the title that wraps on a phone, and `stroke` draws a short brush stroke
+	after the title in place of the rule. The record, ticket and stroke are
 	decoration.
 -->
 <script lang="ts">
@@ -32,6 +34,10 @@
 		fitTitle?: boolean;
 		/** A row under the title, such as tab chips. */
 		below?: Snippet;
+		/** A plain sentence under the title (Inter, wraps). */
+		lede?: string;
+		/** A short brush stroke after the title, in place of the rule. */
+		stroke?: boolean;
 	}
 
 	let {
@@ -44,7 +50,9 @@
 		actions,
 		eyebrow,
 		fitTitle = false,
-		below
+		below,
+		lede,
+		stroke = false
 	}: Props = $props();
 
 	const titleScale = $derived(
@@ -72,10 +80,28 @@
 		{/if}
 		<div class="dn-lph__titles">
 			{#if eyebrow}<p class="dn-lph__eyebrow">{eyebrow}</p>{/if}
-			<h1 class="dn-lph__title">{title}</h1>
+			{#if stroke}
+				<div class="dn-lph__line">
+					<h1 class="dn-lph__title">{title}</h1>
+					<svg
+						class="dn-decor dn-lph__stroke"
+						viewBox="0 0 120 16"
+						preserveAspectRatio="none"
+						aria-hidden="true"
+						><path
+							d="M1 8.6C9 5.4 24 5.8 41 5.1 62 4.3 86 4.6 104 5.5l12 .6.9 1.4-9 .6c-14 .9-30 1.2-47 2.1C40 11.1 21 11.9 6 12.4 2.6 12.4.4 10.8 1 8.6Z"
+						/><path d="M64 13.1c16-.6 34-1 50-.3l-.4 1c-17 .1-33 .3-49.6.1Z" /><path
+							d="M92 2.6c8 .1 17 .3 25 1l-.6.9c-8-.4-16-.6-24.6-.8Z"
+						/></svg
+					>
+				</div>
+			{:else}
+				<h1 class="dn-lph__title">{title}</h1>
+			{/if}
 			{#if subtitle}<p class="dn-lph__sub">{subtitle}</p>{/if}
+			{#if lede}<p class="dn-lph__lede">{lede}</p>{/if}
 		</div>
-		<span class="dn-decor dn-lph__rule" aria-hidden="true"></span>
+		{#if !stroke}<span class="dn-decor dn-lph__rule" aria-hidden="true"></span>{/if}
 		<div class="dn-lph__meta">
 			{#if count}<p class="dn-lph__count">{count}</p>{/if}
 			<BarcodeTicket label={ticket} class="dn-lph__ticket" />
@@ -194,6 +220,27 @@
 		font-weight: 600;
 		letter-spacing: 0.25em;
 		text-transform: uppercase;
+		color: var(--color-base-content);
+	}
+
+	.dn-lph__line {
+		display: flex;
+		align-items: center;
+		gap: 1.25rem;
+	}
+	.dn-lph__stroke {
+		flex: none;
+		width: 6.5rem;
+		height: 1.125rem;
+		margin-top: 1.5rem;
+		fill: var(--dn-title);
+	}
+
+	.dn-lph__lede {
+		margin-top: 0.5rem;
+		max-width: 42ch;
+		font-size: 1.125rem;
+		line-height: 1.4;
 		color: var(--color-base-content);
 	}
 
@@ -333,6 +380,13 @@
 		}
 		.dn-lph__rule {
 			display: none;
+		}
+		.dn-lph__stroke {
+			display: none;
+		}
+		.dn-lph__lede {
+			margin-top: 0.25rem;
+			font-size: 0.875rem;
 		}
 		.dn-lph__actions {
 			grid-area: actions;

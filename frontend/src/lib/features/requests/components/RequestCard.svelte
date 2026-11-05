@@ -10,10 +10,12 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import RequestRow from './RequestRow.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import {
 		ChevronDown,
 		ChevronUp,
+		Info,
 		X,
 		RotateCcw,
 		Trash2,
@@ -109,10 +111,9 @@
 	}
 
 	type StatusConfig = {
-		badgeClass: string;
+		tone: 'warning' | 'info' | 'neutral' | 'success' | 'error';
 		label: string;
 		icon: typeof Clock;
-		glow?: string;
 	};
 
 	const waitingNote = $derived.by((): string | null => {
@@ -137,45 +138,43 @@
 
 	const statusConfig = $derived.by((): StatusConfig => {
 		if (waiting) {
-			return { badgeClass: 'badge-warning', label: 'Waiting', icon: Clock };
+			return { tone: 'warning', label: 'Waiting', icon: Clock };
 		}
 		switch (status) {
 			case 'pending':
 				return {
-					badgeClass: 'badge-warning',
+					tone: 'warning',
 					label: 'Searching',
-					icon: Clock,
-					glow: 'shadow-warning/20'
+					icon: Clock
 				};
 			case 'queued':
-				return { badgeClass: 'badge-warning', label: 'Queued', icon: Clock };
+				return { tone: 'warning', label: 'Queued', icon: Clock };
 			case 'downloading':
 				return {
-					badgeClass: 'badge-info',
+					tone: 'info',
 					label: 'Downloading',
-					icon: Download,
-					glow: 'shadow-info/20'
+					icon: Download
 				};
 			case 'importing':
-				return { badgeClass: 'badge-info', label: 'Importing', icon: Upload };
+				return { tone: 'info', label: 'Importing', icon: Upload };
 			case 'cancelling':
-				return { badgeClass: 'badge-ghost', label: 'Cancelling', icon: Loader };
+				return { tone: 'neutral', label: 'Cancelling', icon: Loader };
 			case 'incomplete':
-				return { badgeClass: 'badge-warning', label: 'Incomplete', icon: TriangleAlert };
+				return { tone: 'warning', label: 'Incomplete', icon: TriangleAlert };
 			case 'imported':
-				return { badgeClass: 'badge-success', label: 'Imported', icon: CircleCheckBig };
+				return { tone: 'success', label: 'Imported', icon: CircleCheckBig };
 			case 'failed':
-				return { badgeClass: 'badge-error', label: 'Failed', icon: CircleX };
+				return { tone: 'error', label: 'Failed', icon: CircleX };
 			case 'cancelled':
-				return { badgeClass: 'badge-ghost', label: 'Cancelled', icon: Ban };
+				return { tone: 'neutral', label: 'Cancelled', icon: Ban };
 			case 'awaiting_approval':
-				return { badgeClass: 'badge-warning', label: 'Awaiting Approval', icon: Clock };
+				return { tone: 'warning', label: 'Awaiting Approval', icon: Clock };
 			case 'awaiting_review':
-				return { badgeClass: 'badge-warning', label: 'Awaiting Review', icon: Eye };
+				return { tone: 'warning', label: 'Awaiting Review', icon: Eye };
 			case 'rejected':
-				return { badgeClass: 'badge-error', label: 'Rejected', icon: Ban };
+				return { tone: 'error', label: 'Rejected', icon: Ban };
 			default:
-				return { badgeClass: 'badge-ghost', label: status, icon: Music };
+				return { tone: 'neutral', label: status, icon: Music };
 		}
 	});
 
@@ -245,283 +244,274 @@
 	);
 </script>
 
-<Card
-	padding="none"
-	class="relative transition-colors hover:bg-base-300 {isFailedState ? 'border border-error' : ''}"
->
-	{#if albumContextMbid}
+{#snippet cover()}
+	<div class="relative size-full">
+		<AlbumImage
+			mbid={artworkMbid}
+			customUrl={item.cover_url ?? null}
+			alt={item.album_title}
+			size="sm"
+			rounded="none"
+			className="w-full h-full"
+		/>
+		{#if isActive && status === 'pending' && !waiting}
+			<div class="absolute inset-0 grid place-items-center bg-base-300/60">
+				<Loader class="size-6 text-warning animate-spin motion-keep" aria-hidden="true" />
+			</div>
+		{/if}
+	</div>
+{/snippet}
+
+{#snippet lead()}
+	<input
+		type="checkbox"
+		class="checkbox"
+		checked={selected}
+		onclick={handleSelect}
+		aria-label="Select {trackTitle}"
+	/>
+{/snippet}
+
+{#snippet details()}
+	<Card variant="torn" padding="none" class="rq-slip">
+		<div class="rq-details">
+			<section class="rq-details__part">
+				<h3 class="rq-details__head">Request details</h3>
+				<dl class="rq-details__list">
+					<dt>Type</dt>
+					<dd>{isTrackRequest ? 'Track' : 'Album'}</dd>
+					<dt>Requested</dt>
+					<dd>{formatDate(item.requested_at)}</dd>
+					{#if item.quality}
+						<dt>Quality</dt>
+						<dd>{item.quality}</dd>
+					{/if}
+					{#if item.protocol}
+						<dt>Protocol</dt>
+						<dd class="capitalize">{item.protocol}</dd>
+					{/if}
+					<dt>Status</dt>
+					<dd>{statusConfig.label}</dd>
+				</dl>
+			</section>
+			<section class="rq-details__part rq-details__part--messages">
+				<h3 class="rq-details__head">Messages</h3>
+				<ul class="rq-details__messages">
+					{#each item.status_messages ?? [] as msg, i (`${msg.title}-${i}`)}
+						<li class="rq-details__group">
+							<Info class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+							<div class="min-w-0">
+								{#if msg.title}
+									<p class="rq-details__title">{msg.title}</p>
+								{/if}
+								{#each msg.messages as message, j (`${message}-${j}`)}
+									<p class="rq-details__line">{message}</p>
+								{/each}
+							</div>
+						</li>
+					{/each}
+				</ul>
+			</section>
+		</div>
+	</Card>
+{/snippet}
+
+{#snippet aside()}
+	{#if !isActive && watchState}
 		<a
-			href={albumHref(albumContextMbid)}
-			class="absolute inset-0 z-0 rounded-box"
-			aria-label={isTrackRequest
-				? `Open album context for ${item.album_title}`
-				: `Open ${item.album_title}`}
-		></a>
+			href={withBasePath('/requests?tab=wanted')}
+			class="rq-pill rq-pill--outline rq-pill--info"
+			title={watchState === 'retrying'
+				? 'Auto-retrying - see the Wanted tab'
+				: 'The watcher keeps checking for this - see the Wanted tab'}
+		>
+			<Radar aria-hidden="true" />
+			{watchState === 'retrying' ? 'Still hunting' : 'On the watchlist'}
+		</a>
 	{/if}
 
-	<div class="relative z-10 flex items-center gap-3 sm:gap-4 p-3 sm:p-4 pointer-events-none">
-		{#if selectable}
-			<input
-				type="checkbox"
-				class="checkbox checkbox-sm shrink-0 pointer-events-auto"
-				checked={selected}
-				onclick={handleSelect}
-				aria-label="Select {trackTitle}"
-			/>
-		{/if}
-		<div class="w-14 h-14 sm:w-18 sm:h-18 shrink-0 rounded-lg overflow-hidden relative">
-			<AlbumImage
-				mbid={artworkMbid}
-				customUrl={item.cover_url ?? null}
-				alt={item.album_title}
-				size="sm"
-				rounded="lg"
-				className="w-full h-full"
-			/>
-			{#if isActive && status === 'pending' && !waiting}
-				<div class="absolute inset-0 bg-base-300/60 flex items-center justify-center">
-					<Loader class="h-5 w-5 text-warning animate-spin motion-keep" />
+	{#if hasProgress}
+		<div class="rq-progress" role="status" aria-label="Download progress">
+			<div class="rq-progress__bar">
+				<div class="rq-progress__track">
+					<div class="rq-progress__fill" style:width="{item.progress ?? 0}%"></div>
 				</div>
-			{/if}
-		</div>
-		<div class="min-w-0 flex-1">
-			<p class="font-semibold text-base-content text-sm sm:text-base line-clamp-1">
-				{trackTitle}
-			</p>
-			{#if isTrackRequest}
-				<p class="text-xs sm:text-sm text-muted line-clamp-1 text-left">
-					<span class="badge badge-ghost badge-xs align-middle">Track</span>
-					<span class="ml-1">Album: {item.album_title}</span>
-				</p>
-			{/if}
-			{#if item.artist_mbid}
-				<a
-					href={artistHref(item.artist_mbid)}
-					class="text-xs sm:text-sm text-muted hover:text-primary transition-colors line-clamp-1 text-left pointer-events-auto"
-				>
-					{item.artist_name}
-				</a>
-			{:else}
-				<p class="text-xs sm:text-sm text-muted line-clamp-1 text-left">
-					{item.artist_name}
-				</p>
-			{/if}
-			<div class="flex items-center gap-1.5 mt-0.5 flex-wrap">
-				<span class="text-xs text-muted">
-					{formatRelativeTime(item.requested_at)}
-				</span>
-				{#if item.year}
-					<span class="text-base-content/20">•</span>
-					<span class="text-xs text-muted">{item.year}</span>
+				<span class="rq-progress__pct">{item.progress?.toFixed(0) ?? 0}%</span>
+			</div>
+			<div class="rq-progress__meta">
+				{#if item.eta}
+					<span>{formatEta(item.eta)}</span>
 				{/if}
-				{#if item.origin === 'follow'}
-					<span class="text-base-content/20">•</span>
-					<span class="text-xs text-muted">Followed artist</span>
-				{/if}
-				{#if isActive && item.quality}
-					<span class="text-base-content/20">•</span>
-					<span class="text-xs text-primary/70 font-medium">{item.quality}</span>
-				{/if}
-				{#if isActive && item.protocol}
-					<span class="text-base-content/20">•</span>
-					<span class="text-xs text-muted capitalize">{item.protocol}</span>
-				{/if}
-				{#if item.requester_count > 0}
-					<span class="text-base-content/20">•</span>
-					<span class="text-xs text-muted">
-						+{item.requester_count} other{item.requester_count === 1 ? '' : 's'}
-					</span>
-				{/if}
-				{#if !isActive && item.reviewed_by_name}
-					<span class="text-base-content/20">•</span>
-					<span class="text-xs text-muted">
-						{item.status === 'rejected' ? 'Rejected' : 'Approved'} by {item.reviewed_by_name}
+				{#if item.size && item.size_remaining != null}
+					<span>
+						{formatSize(item.size - (item.size_remaining ?? 0))}/{formatSize(item.size)}
 					</span>
 				{/if}
 			</div>
 		</div>
+	{:else if waitingNote}
+		<span class="rq-note">{waitingNote}</span>
+	{:else if isActive && isFailedState && item.error_message}
+		<span class="rq-note rq-note--error line-clamp-2">{item.error_message}</span>
+	{:else if !isActive && item.album_version_only}
+		<span class="rq-note">Only the album version was found</span>
+	{:else if !isActive && item.completed_at}
+		<span class="rq-date">{formatDate(item.completed_at)}</span>
+	{/if}
 
-		<div class="flex flex-col items-end gap-1.5 shrink-0 pointer-events-auto">
-			<span
-				class="badge {statusConfig.badgeClass} badge-sm gap-1"
-				aria-label="Status: {statusConfig.label}"
+	<div class="rq-actions">
+		{#if isActive && hasStatusMessages}
+			<Button
+				variant="outline"
+				size="display-sm"
+				icon={showStatusDetails ? ChevronUp : ChevronDown}
+				iconPosition="end"
+				aria-expanded={showStatusDetails}
+				onclick={(e: MouseEvent) => {
+					e.stopPropagation();
+					showStatusDetails = !showStatusDetails;
+				}}
 			>
-				<statusConfig.icon class="h-3 w-3" />
-				{statusConfig.label}
-			</span>
-
-			{#if !isActive && watchState}
-				<a
-					href={withBasePath('/requests?tab=wanted')}
-					class="badge badge-sm badge-outline gap-1 border-info/30 text-info/80 hover:bg-info/10"
-					title={watchState === 'retrying'
-						? 'Auto-retrying - see the Wanted tab'
-						: 'The watcher keeps checking for this - see the Wanted tab'}
-				>
-					<Radar class="h-3 w-3" />
-					{watchState === 'retrying' ? 'Still hunting' : 'On the watchlist'}
-				</a>
+				{showStatusDetails ? 'Hide details' : 'Show details'}
+			</Button>
+		{/if}
+		{#if isActive}
+			{#if confirmingCancel}
+				<span class="rq-confirm" role="alert">Cancel?</span>
+				<Button variant="danger" size="display-sm" onclick={handleCancelClick}>Yes</Button>
+				<Button variant="outline" size="display-sm" onclick={handleCancelNo}>No</Button>
+			{:else}
+				<Button variant="outline" size="display-sm" icon={X} onclick={handleCancelClick}>
+					Cancel download
+				</Button>
 			{/if}
-
-			{#if hasProgress}
-				<div
-					class="flex flex-col items-end gap-1 w-28 sm:w-44"
-					role="status"
-					aria-label="Download progress"
+		{:else}
+			{#if item.album_version_only && onretry}
+				<Button
+					variant="outline"
+					size="display-sm"
+					icon={Disc3}
+					onclick={(e: MouseEvent) => {
+						e.stopPropagation();
+						fromAlbum.mutate(item.musicbrainz_id);
+					}}
+					disabled={fromAlbum.isPending}
 				>
-					<div class="flex items-center gap-2 w-full">
-						<div class="progress-track flex-1">
-							<div class="progress-fill" style="width: {item.progress ?? 0}%"></div>
-						</div>
-						<span class="text-xs text-muted min-w-[3ch] text-right tabular-nums font-medium">
-							{item.progress?.toFixed(0) ?? 0}%
-						</span>
-					</div>
-					<div class="flex items-center gap-2 text-xs text-muted">
-						{#if item.eta}
-							<span>{formatEta(item.eta)}</span>
-						{/if}
-						{#if item.eta && item.size && item.size_remaining != null}
-							<span class="text-base-content/20">•</span>
-						{/if}
-						{#if item.size && item.size_remaining != null}
-							<span class="tabular-nums">
-								{formatSize(item.size - (item.size_remaining ?? 0))}/{formatSize(item.size)}
-							</span>
-						{/if}
-					</div>
-				</div>
-			{:else if waitingNote}
-				<span class="text-xs text-muted max-w-44 text-right">
-					{waitingNote}
-				</span>
-			{:else if isActive && isFailedState && item.error_message}
-				<span class="text-xs text-error/80 max-w-44 text-right line-clamp-2"
-					>{item.error_message}</span
-				>
-			{:else if !isActive && item.album_version_only}
-				<span class="text-xs text-muted max-w-44 text-right">
-					Only the album version was found
-				</span>
-			{:else if !isActive && item.completed_at}
-				<span class="text-xs text-muted">{formatDate(item.completed_at)}</span>
+					Get it from the album
+				</Button>
 			{/if}
-
-			<div class="flex gap-1 items-center">
-				{#if isActive && hasStatusMessages}
-					<IconButton
-						size="xs"
-						shape="square"
-						icon={showStatusDetails ? ChevronUp : ChevronDown}
-						label={showStatusDetails ? 'Hide details' : 'Show details'}
+			{#if item.status === 'failed' || item.status === 'cancelled' || item.status === 'incomplete'}
+				<IconButton
+					variant="outline"
+					size="display-sm"
+					shape="square"
+					icon={RotateCcw}
+					label="Retry request"
+					onclick={handleRetry}
+				/>
+			{/if}
+			{#if authStore.isAdmin && item.can_reimport && item.task_id}
+				<span class="rq-square">
+					<Button
+						variant="outline"
+						size="display-sm"
+						icon={FileDown}
 						onclick={(e: MouseEvent) => {
 							e.stopPropagation();
-							showStatusDetails = !showStatusDetails;
+							reimport.mutate(
+								{
+									id: item.task_id!,
+									release_group_mbid:
+										item.track_release_group_mbid ?? (isTrackRequest ? null : item.musicbrainz_id)
+								},
+								{ onSuccess: () => onreimported?.() }
+							);
 						}}
-						aria-expanded={showStatusDetails}
+						disabled={reimport.isPending}
+						title="Already fixed this in the download client? Check the downloads mount again without re-searching."
+						aria-label="Retry import"
 					/>
-				{/if}
-				{#if isActive}
-					{#if confirmingCancel}
-						<span class="text-xs text-muted mr-0.5" role="alert">Cancel?</span>
-						<Button variant="danger" size="xs" onclick={handleCancelClick}>Yes</Button>
-						<Button variant="ghost" size="xs" onclick={handleCancelNo}>No</Button>
-					{:else}
-						<Button
-							variant="danger-ghost"
-							size="xs"
-							icon={X}
-							onclick={handleCancelClick}
-							title="Cancel download"
-							aria-label="Cancel download"
-						/>
-					{/if}
-				{:else}
-					{#if item.album_version_only && onretry}
-						<Button
-							variant="ghost"
-							size="xs"
-							icon={Disc3}
-							onclick={(e: MouseEvent) => {
-								e.stopPropagation();
-								fromAlbum.mutate(item.musicbrainz_id);
-							}}
-							disabled={fromAlbum.isPending}
-						>
-							Get it from the album
-						</Button>
-					{/if}
-					{#if item.status === 'failed' || item.status === 'cancelled' || item.status === 'incomplete'}
-						<Button
-							variant="ghost"
-							size="xs"
-							icon={RotateCcw}
-							onclick={handleRetry}
-							title="Retry request"
-							aria-label="Retry request"
-						/>
-					{/if}
-					{#if authStore.isAdmin && item.can_reimport && item.task_id}
-						<Button
-							variant="ghost"
-							size="xs"
-							icon={FileDown}
-							onclick={(e: MouseEvent) => {
-								e.stopPropagation();
-								reimport.mutate(
-									{
-										id: item.task_id!,
-										release_group_mbid:
-											item.track_release_group_mbid ?? (isTrackRequest ? null : item.musicbrainz_id)
-									},
-									{ onSuccess: () => onreimported?.() }
-								);
-							}}
-							disabled={reimport.isPending}
-							title="Already fixed this in the download client? Check the downloads mount again without re-searching."
-							aria-label="Retry import"
-						/>
-					{/if}
-					{#if authStore.isAdmin && !isTrackRequest && item.status === 'imported' && item.in_library !== false}
-						<Button
-							variant="ghost"
-							size="xs"
-							icon={Trash2}
-							onclick={handleRemoveFromLibrary}
-							title="Remove from library"
-							aria-label="Remove from library"
-						/>
-					{/if}
-					<Button
-						variant="ghost"
-						size="xs"
-						icon={X}
-						onclick={handleClear}
-						title="Clear from history"
-						aria-label="Clear from history"
-					/>
-				{/if}
-			</div>
-		</div>
+				</span>
+			{/if}
+			{#if authStore.isAdmin && !isTrackRequest && item.status === 'imported' && item.in_library !== false}
+				<IconButton
+					variant="outline"
+					size="display-sm"
+					shape="square"
+					icon={Trash2}
+					label="Remove from library"
+					onclick={handleRemoveFromLibrary}
+				/>
+			{/if}
+			<IconButton
+				variant="outline"
+				size="display-sm"
+				shape="square"
+				icon={X}
+				label="Clear from history"
+				onclick={handleClear}
+			/>
+		{/if}
 	</div>
+{/snippet}
 
-	{#if showStatusDetails && hasStatusMessages}
-		<div class="px-3 sm:px-4 pb-3 sm:pb-4 -mt-3 relative z-10">
-			<div
-				class="bg-base-100/50 border border-error/10 rounded-lg p-3 text-xs max-h-48 overflow-y-auto"
-			>
-				{#each item.status_messages ?? [] as msg, i (`${msg.title}-${i}`)}
-					{#if msg.title}
-						<div class="font-medium text-muted mt-2 first:mt-0">{msg.title}</div>
-					{/if}
-					{#each msg.messages as message, j (`${message}-${j}`)}
-						<div class="text-error/70 ml-3 mt-0.5">• {message}</div>
-					{/each}
-				{/each}
-			</div>
-		</div>
+<RequestRow
+	tone={isFailedState ? 'error' : waiting ? 'warning' : null}
+	href={albumContextMbid ? albumHref(albumContextMbid) : undefined}
+	linkLabel={isTrackRequest
+		? `Open album context for ${item.album_title}`
+		: `Open ${item.album_title}`}
+	lead={selectable ? lead : undefined}
+	{cover}
+	{aside}
+	below={showStatusDetails && hasStatusMessages ? details : undefined}
+>
+	<div class="rq-head">
+		<p class="rq-title">{trackTitle}</p>
+		<span
+			class="rq-pill rq-pill--{statusConfig.tone}"
+			class:rq-pill--outline={!isActive}
+			aria-label="Status: {statusConfig.label}"
+		>
+			<statusConfig.icon aria-hidden="true" />
+			{statusConfig.label}
+		</span>
+	</div>
+	{#if isTrackRequest}
+		<p class="rq-album">
+			<span class="rq-pill rq-pill--neutral rq-pill--outline rq-pill--tiny">Track</span>
+			<span class="truncate">Album: {item.album_title}</span>
+		</p>
 	{/if}
-</Card>
+	{#if item.artist_mbid}
+		<a href={artistHref(item.artist_mbid)} class="rq-artist">{item.artist_name}</a>
+	{:else}
+		<p class="rq-artist">{item.artist_name}</p>
+	{/if}
+	<p class="rq-meta mt-2">
+		<span>Asked {formatRelativeTime(item.requested_at)}</span>
+		{#if item.year}
+			<span>Year {item.year}</span>
+		{/if}
+		{#if item.origin === 'follow'}
+			<span>Followed artist</span>
+		{/if}
+		{#if isActive && item.quality}
+			<span class="font-semibold text-title">{item.quality}</span>
+		{/if}
+		{#if isActive && item.protocol}
+			<span>Protocol {item.protocol}</span>
+		{/if}
+		{#if item.requester_count > 0}
+			<span>+{item.requester_count} other{item.requester_count === 1 ? '' : 's'}</span>
+		{/if}
+		{#if !isActive && item.reviewed_by_name}
+			<span>
+				{item.status === 'rejected' ? 'Rejected' : 'Approved'} by {item.reviewed_by_name}
+			</span>
+		{/if}
+	</p>
+</RequestRow>
 
 {#if showDeleteModal}
 	<DeleteAlbumModal
@@ -536,42 +526,199 @@
 {/if}
 
 <style>
-	.progress-track {
-		height: 6px;
-		border-radius: 3px;
-		background: oklch(from var(--color-base-300) l c h / 1);
-		overflow: hidden;
+	.rq-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.375rem 1.25rem;
+		margin-bottom: 0.25rem;
 	}
-	.progress-fill {
-		height: 100%;
-		border-radius: 3px;
-		background: linear-gradient(
-			90deg,
-			oklch(from var(--color-info) l c h / 0.8),
-			oklch(from var(--color-info) l c h / 1)
-		);
-		transition: width 0.6s ease-out;
-		position: relative;
+	.rq-album {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		min-width: 0;
+		margin-bottom: 0.125rem;
+		font-size: 0.9375rem;
+		color: var(--dn-muted);
 	}
-	.progress-fill::after {
-		content: '';
-		position: absolute;
-		inset: 0;
-		background: linear-gradient(
-			90deg,
-			transparent 0%,
-			rgba(255, 255, 255, 0.15) 50%,
-			transparent 100%
-		);
-		animation: shimmer 2s ease-in-out infinite;
+	.rq-album .rq-pill {
+		height: 1.375rem;
+		padding-inline: 0.5rem;
+		font-size: 0.6875rem;
 	}
 
-	@keyframes shimmer {
-		0% {
-			transform: translateX(-100%);
+	.rq-actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 0.625rem;
+	}
+	/* an icon button that keeps a tooltip longer than its name */
+	.rq-square :global(.btn) {
+		width: var(--size);
+		padding: 0;
+	}
+	.rq-confirm {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+	}
+	.rq-note {
+		max-width: 16rem;
+		font-size: 0.875rem;
+		text-align: right;
+		color: var(--dn-muted);
+	}
+	.rq-note--error {
+		color: var(--color-error);
+	}
+	.rq-date {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		white-space: nowrap;
+		color: var(--dn-muted);
+	}
+
+	.rq-progress {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 0.375rem;
+		width: 15rem;
+	}
+	.rq-progress__bar {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		width: 100%;
+	}
+	.rq-progress__track {
+		flex: 1;
+		height: 0.5rem;
+		overflow: hidden;
+		border-radius: 9999px;
+		background-color: var(--color-base-300);
+		box-shadow: inset 0 0 0 1px var(--dn-line);
+	}
+	.rq-progress__fill {
+		height: 100%;
+		border-radius: inherit;
+		background-color: var(--dn-title);
+		transition: width 0.6s ease-out;
+	}
+	.rq-progress__pct,
+	.rq-progress__meta {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		font-variant-numeric: tabular-nums;
+	}
+	.rq-progress__pct {
+		min-width: 3.5ch;
+		text-align: right;
+	}
+	.rq-progress__meta {
+		display: flex;
+		gap: 0.75rem;
+		font-weight: 500;
+		color: var(--dn-muted);
+	}
+
+	/* the details: a torn paper slip, the facts left and the messages right;
+	   on the light theme's paper-white card the slip takes the page's tone */
+	:global([data-theme='light'] .rq-slip) {
+		background-color: var(--color-base-300);
+	}
+	.rq-details {
+		display: grid;
+		grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+		padding: 1.75rem 1.75rem 1.5rem;
+	}
+	.rq-details__part--messages {
+		margin-left: 1.75rem;
+		padding-left: 1.75rem;
+		border-left: 1.5px solid color-mix(in oklab, var(--dn-paper-content) 35%, transparent);
+	}
+	.rq-details__head {
+		margin-bottom: 0.75rem;
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		font-weight: 700;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+	}
+	.rq-details__list {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		gap: 0.3rem 1.5rem;
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+	}
+	.rq-details__list dt {
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--dn-muted);
+	}
+	.rq-details__list dd {
+		overflow-wrap: anywhere;
+	}
+	.rq-details__messages {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		max-height: 12rem;
+		overflow-y: auto;
+	}
+	.rq-details__group {
+		display: flex;
+		gap: 0.625rem;
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+	}
+	.rq-details__title {
+		font-weight: 700;
+	}
+	.rq-details__line {
+		color: var(--dn-muted);
+		overflow-wrap: anywhere;
+	}
+
+	@media (max-width: 767px) {
+		.rq-head {
+			gap: 0.375rem 0.75rem;
 		}
-		100% {
-			transform: translateX(100%);
+		.rq-progress {
+			flex: 1 1 100%;
+			width: auto;
+		}
+		.rq-note {
+			flex: 1 1 100%;
+			max-width: none;
+			text-align: left;
+		}
+		.rq-actions :global(.btn) {
+			--size: 2.25rem;
+			--fontsize: 0.9375rem;
+			--btn-p: 0.75rem;
+		}
+		.rq-details {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 1.25rem;
+			padding: 1.5rem 1.125rem 1.25rem;
+		}
+		.rq-details__part--messages {
+			margin-left: 0;
+			padding-top: 1.25rem;
+			padding-left: 0;
+			border-top: 1.5px solid color-mix(in oklab, var(--dn-paper-content) 35%, transparent);
+			border-left: 0;
 		}
 	}
 </style>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import ListPageHeader from '$lib/ui/ListPageHeader.svelte';
 	import { page } from '$app/state';
 	import { Download, Heart, History, Radar, Search, ShieldCheck, TrendingUp } from 'lucide-svelte';
 	import {
@@ -64,18 +65,13 @@
 	const activeCountQuery = getActiveRequestCountQuery(() => !!authStore.user?.id);
 	const activeBadgeCount = $derived(activeCountQuery.data?.count ?? activeSummary.count);
 
-	const badgeTones = {
-		info: 'bg-info/15 text-info',
-		warning: 'bg-warning/15 text-warning',
-		muted: 'bg-base-content/8 text-muted'
-	};
-
 	interface TabEntry {
 		id: RequestsTab;
 		label: string;
 		icon: typeof Download;
 		count: number;
-		tone: keyof typeof badgeTones;
+		/** `warning` counts read amber while their tab is closed. */
+		tone: 'muted' | 'warning';
 		show: boolean;
 	}
 
@@ -87,7 +83,7 @@
 					label: 'Active',
 					icon: Download,
 					count: activeBadgeCount,
-					tone: 'info',
+					tone: 'muted',
 					show: true
 				},
 				{
@@ -135,107 +131,178 @@
 	);
 </script>
 
-<div class="container mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-	<div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
-		<div>
-			<h1 class="text-2xl sm:text-3xl font-bold text-base-content">Requests</h1>
-			<p class="text-muted text-sm mt-0.5">What you've asked for and where each one stands</p>
+<svelte:head>
+	<title>Requests - DroppedNeedle</title>
+</svelte:head>
+
+<div class="min-h-[calc(100vh-200px)]">
+	<ListPageHeader
+		title="Requests"
+		lede="What you've asked for and where each one stands"
+		ticket="DN / CC 3.2"
+		stroke
+		actions={activeSummary.downloading + activeSummary.searching > 0 ? inFlight : undefined}
+	/>
+
+	<div class="px-4 pb-12 sm:px-6 lg:px-8">
+		<div class="rq-tabs" role="tablist" aria-label="Requests">
+			{#each tabs as tab (tab.id)}
+				{@const open = activeTab === tab.id}
+				<button
+					type="button"
+					role="tab"
+					class="rq-tab"
+					aria-selected={open}
+					onclick={() => switchTab(tab.id)}
+				>
+					<tab.icon class="size-5 shrink-0" aria-hidden="true" />
+					{tab.label}
+					{#if tab.count > 0}
+						<span
+							class="rq-tab__count"
+							class:rq-tab__count--open={open}
+							class:rq-tab__count--warning={!open && tab.tone === 'warning'}
+						>
+							{tab.count}
+						</span>
+					{/if}
+					{#if tab.id === 'active' && open && activeSummary.fetching}
+						<span class="rq-tab__dot" aria-hidden="true"></span>
+					{/if}
+				</button>
+			{/each}
 		</div>
-		{#if activeSummary.count > 0}
-			<div class="flex items-center gap-3 text-xs text-muted">
-				{#if activeSummary.downloading > 0}
-					<span class="flex items-center gap-1.5">
-						<Download class="h-3.5 w-3.5 text-info" />
-						{activeSummary.downloading} downloading
-					</span>
-				{/if}
-				{#if activeSummary.searching > 0}
-					<span class="flex items-center gap-1.5">
-						<Search class="h-3.5 w-3.5 text-warning" />
-						{activeSummary.searching} searching
-					</span>
-				{/if}
-			</div>
+
+		<ActiveTab active={activeTab === 'active'} />
+		<HistoryTab active={activeTab === 'history'} oncount={(n) => (counts.history = n)} />
+		<WantedTab active={activeTab === 'wanted'} oncount={(n) => (counts.wanted = n)} />
+		{#if authStore.isAdmin}
+			<ApprovalsTab active={activeTab === 'approvals'} oncount={(n) => (counts.approvals = n)} />
+			<AutoDownloadTab active={activeTab === 'auto-download'} oncount={(n) => (counts.auto = n)} />
+		{/if}
+		{#if authStore.isTrusted}
+			<UpgradesTab active={activeTab === 'upgrades'} oncount={(n) => (counts.upgrades = n)} />
 		{/if}
 	</div>
-
-	<div
-		class="flex items-center gap-1 mb-6 border-b border-base-content/5 pb-px overflow-x-auto"
-		role="tablist"
-	>
-		{#each tabs as tab (tab.id)}
-			<button
-				role="tab"
-				class="tab-btn"
-				class:tab-btn-active={activeTab === tab.id}
-				aria-selected={activeTab === tab.id}
-				onclick={() => switchTab(tab.id)}
-			>
-				<tab.icon class="h-4 w-4" />
-				{tab.label}
-				{#if tab.count > 0}
-					<span
-						class="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full {badgeTones[
-							tab.tone
-						]} text-xs font-medium tabular-nums"
-					>
-						{tab.count}
-					</span>
-				{/if}
-				{#if tab.id === 'active' && activeTab === 'active' && activeSummary.fetching}
-					<span class="polling-dot" aria-hidden="true"></span>
-				{/if}
-			</button>
-		{/each}
-	</div>
-
-	<ActiveTab active={activeTab === 'active'} />
-	<HistoryTab active={activeTab === 'history'} oncount={(n) => (counts.history = n)} />
-	<WantedTab active={activeTab === 'wanted'} oncount={(n) => (counts.wanted = n)} />
-	{#if authStore.isAdmin}
-		<ApprovalsTab active={activeTab === 'approvals'} oncount={(n) => (counts.approvals = n)} />
-		<AutoDownloadTab active={activeTab === 'auto-download'} oncount={(n) => (counts.auto = n)} />
-	{/if}
-	{#if authStore.isTrusted}
-		<UpgradesTab active={activeTab === 'upgrades'} oncount={(n) => (counts.upgrades = n)} />
-	{/if}
 </div>
 
+{#snippet inFlight()}
+	<span class="rq-flight">
+		<Download class="size-5" aria-hidden="true" />
+		{activeSummary.downloading} downloading
+	</span>
+	<span class="rq-flight" class:rq-flight--warning={activeSummary.searching > 0}>
+		<Search class="size-5" aria-hidden="true" />
+		{activeSummary.searching} searching
+	</span>
+{/snippet}
+
 <style>
-	.tab-btn {
+	/* the in-flight counts: plain status in the header buttons' shape */
+	.rq-flight {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.4rem;
-		padding: 0.5rem 0.85rem;
-		font-size: 0.875rem;
-		font-weight: 500;
-		color: oklch(from var(--color-base-content) l c h / 0.4);
-		border-bottom: 2px solid transparent;
-		transition: all 0.15s ease;
-		cursor: pointer;
-		background: none;
-		border-top: none;
-		border-left: none;
-		border-right: none;
-		margin-bottom: -1px;
+		gap: 0.625rem;
+		height: 2.875rem;
+		padding-inline: 1.125rem;
+		border: 2px solid var(--color-base-content);
+		border-radius: 0.625rem;
+		font-family: var(--font-display);
+		font-size: 1.1875rem;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		white-space: nowrap;
+		color: var(--color-base-content);
+		font-synthesis: none;
 	}
-	.tab-btn:hover {
-		color: oklch(from var(--color-base-content) l c h / 0.7);
-	}
-	.tab-btn-active {
-		color: oklch(from var(--color-primary) l c h / 1);
-		border-bottom-color: oklch(from var(--color-primary) l c h / 1);
+	.rq-flight--warning {
+		border-color: var(--color-warning);
+		color: var(--color-warning);
 	}
 
-	.polling-dot {
+	/* display caps tabs with an acid underline; the row scrolls sideways */
+	.rq-tabs {
+		display: flex;
+		gap: 0.5rem;
+		margin-bottom: 1.75rem;
+		overflow-x: auto;
+		border-bottom: 1px solid var(--dn-line);
+		scrollbar-width: none;
+		overscroll-behavior-x: contain;
+	}
+	.rq-tabs::-webkit-scrollbar {
+		display: none;
+	}
+	.rq-tab {
+		position: relative;
+		display: inline-flex;
+		flex: none;
+		align-items: center;
+		gap: 0.625rem;
+		padding: 0.875rem 1.25rem 0.9375rem;
+		font-family: var(--font-display);
+		font-size: 1.3125rem;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		white-space: nowrap;
+		color: var(--dn-muted);
+		cursor: pointer;
+		font-synthesis: none;
+		transition: color 150ms;
+	}
+	.rq-tab:first-child {
+		padding-left: 0.5rem;
+	}
+	.rq-tab:hover {
+		color: var(--color-base-content);
+	}
+	.rq-tab:focus-visible {
+		outline-offset: -2px;
+	}
+	.rq-tab[aria-selected='true'] {
+		color: var(--dn-title);
+	}
+	.rq-tab[aria-selected='true']::after {
+		content: '';
+		position: absolute;
+		inset: auto 0 -1px;
+		height: 3px;
+		background-color: var(--dn-title);
+	}
+
+	.rq-tab__count {
+		display: inline-grid;
+		place-items: center;
+		min-width: 1.625rem;
+		height: 1.625rem;
+		padding-inline: 0.375rem;
+		border-radius: 0.375rem;
+		background-color: var(--color-neutral);
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		font-weight: 700;
+		letter-spacing: 0;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-base-content);
+	}
+	.rq-tab__count--open {
+		background-color: var(--dn-action);
+		color: var(--dn-action-content);
+		box-shadow: inset 0 0 0 1px var(--dn-action-edge);
+	}
+	.rq-tab__count--warning {
+		background-color: color-mix(in oklab, var(--color-warning) 18%, transparent);
+		color: var(--color-warning);
+	}
+
+	.rq-tab__dot {
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;
-		background: oklch(from var(--color-info) l c h / 0.7);
-		animation: pulse-dot 1.5s ease-in-out infinite;
+		background-color: var(--dn-title);
+		animation: rq-pulse 1.5s ease-in-out infinite;
 	}
-
-	@keyframes pulse-dot {
+	@keyframes rq-pulse {
 		0%,
 		100% {
 			opacity: 0.3;
@@ -244,6 +311,43 @@
 		50% {
 			opacity: 1;
 			transform: scale(1.2);
+		}
+	}
+
+	@media (max-width: 767px) {
+		.rq-flight {
+			height: 2.25rem;
+			justify-content: center;
+			gap: 0.375rem;
+			padding-inline: 0.5rem;
+			font-size: 0.9375rem;
+		}
+		.rq-flight :global(svg) {
+			width: 1rem;
+			height: 1rem;
+		}
+		.rq-tabs {
+			gap: 0;
+			margin-inline: -1rem;
+			padding-inline: 0.5rem;
+			margin-bottom: 1.25rem;
+		}
+		.rq-tab {
+			gap: 0.375rem;
+			padding: 0.75rem 0.75rem 0.8125rem;
+			font-size: 1.0625rem;
+		}
+		.rq-tab:first-child {
+			padding-left: 0.5rem;
+		}
+		.rq-tab :global(svg) {
+			width: 1rem;
+			height: 1rem;
+		}
+		.rq-tab__count {
+			min-width: 1.375rem;
+			height: 1.375rem;
+			font-size: 0.75rem;
 		}
 	}
 </style>

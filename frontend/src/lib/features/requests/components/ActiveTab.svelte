@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { SvelteSet } from 'svelte/reactivity';
 	import { fade, fly } from '$lib/ui/motion';
-	import { CircleCheck, TriangleAlert } from 'lucide-svelte';
+	import { CircleCheck, CircleX } from 'lucide-svelte';
 	import RequestCard from '$lib/features/requests/components/RequestCard.svelte';
 	import type { RequestKind } from '$lib/features/requests/queries/types';
 	import { getActiveRequestsQuery } from '$lib/features/requests/queries/RequestQueries.svelte';
@@ -11,7 +11,9 @@
 	} from '$lib/features/requests/queries/RequestMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import RequestsAlert from './RequestsAlert.svelte';
 	import RequestsEmpty from './RequestsEmpty.svelte';
+	import RequestSkeleton from './RequestSkeleton.svelte';
 	import { itemKind, itemRequestKey, requestKey } from './requestItems';
 
 	interface Props {
@@ -67,6 +69,14 @@
 		}
 	});
 
+	const allSelected = $derived(
+		activeItems.length > 0 && selectedList.length === activeItems.length
+	);
+
+	function toggleAll() {
+		selectedKeys = allSelected ? new Set() : new Set(activeItems.map(itemRequestKey));
+	}
+
 	async function handleCancel(mbid: string, requestKind: RequestKind) {
 		try {
 			await cancelRequestMutation.mutateAsync({ mbid, kind: requestKind });
@@ -79,57 +89,48 @@
 {#if active}
 	<div in:fade={{ duration: 150 }} aria-live="polite">
 		{#if activeError}
-			<div class="alert alert-warning mb-4">
-				<TriangleAlert class="h-5 w-5" />
-				<span>{activeError}</span>
-				<Button size="sm" onclick={() => void activeListQuery.refetch()}>Retry</Button>
-			</div>
+			<RequestsAlert message={activeError} onretry={() => void activeListQuery.refetch()} />
 		{/if}
 
 		{#if activeLoading && activeItems.length === 0}
-			<div class="flex flex-col gap-2.5">
-				{#each Array(3) as _, i (`active-loading-${i}`)}
-					<div
-						class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box animate-pulse"
-						style:animation-delay="{i * 100}ms"
-					>
-						<div class="w-14 h-14 sm:w-18 sm:h-18 bg-base-300 rounded-lg"></div>
-						<div class="flex-1">
-							<div class="h-4 bg-base-300 rounded w-44 mb-2"></div>
-							<div class="h-3 bg-base-300 rounded w-28 mb-1"></div>
-							<div class="h-2.5 bg-base-300 rounded w-20"></div>
-						</div>
-						<div class="flex flex-col items-end gap-2">
-							<div class="h-5 bg-base-300 rounded-full w-24"></div>
-							<div class="h-1.5 bg-base-300 rounded w-36"></div>
-						</div>
-					</div>
-				{/each}
-			</div>
+			<RequestSkeleton count={3} />
 		{:else if activeItems.length === 0}
 			<RequestsEmpty icon={CircleCheck} tone="success" title="All clear">
 				No active downloads. Search for albums and request them to see progress here.
 			</RequestsEmpty>
 		{:else}
-			{#if selectedList.length > 0}
-				<div class="flex items-center gap-2 mb-3">
-					<span class="text-xs text-muted">
-						{selectedList.length} selected
-					</span>
-					<Button
-						variant="danger-ghost"
-						size="sm"
-						disabled={batchCancelMutation.isPending}
-						onclick={() => void handleBatchCancel()}
-					>
-						Cancel selected
-					</Button>
-					<Button variant="ghost" size="sm" onclick={() => (selectedKeys = new Set())}>
-						Clear
-					</Button>
-				</div>
-			{/if}
-			<div class="flex flex-col gap-2.5">
+			<div class="rq-select">
+				<label class="rq-select__all">
+					<input
+						type="checkbox"
+						class="checkbox"
+						checked={allSelected}
+						indeterminate={selectedList.length > 0 && !allSelected}
+						onchange={toggleAll}
+						aria-label="Select all"
+					/>
+					<span class="rq-select__count">{selectedList.length} selected</span>
+				</label>
+				<span class="rq-select__rule" aria-hidden="true"></span>
+				<Button
+					variant="outline"
+					size="display-sm"
+					icon={CircleX}
+					disabled={selectedList.length === 0 || batchCancelMutation.isPending}
+					onclick={() => void handleBatchCancel()}
+				>
+					Cancel selected
+				</Button>
+				<Button
+					variant="outline"
+					size="display-sm"
+					disabled={selectedList.length === 0}
+					onclick={() => (selectedKeys = new Set())}
+				>
+					Clear
+				</Button>
+			</div>
+			<div class="flex flex-col gap-4">
 				{#each activeItems as item, i (itemRequestKey(item))}
 					<div in:fly={{ y: 12, duration: 200, delay: i * 30 }}>
 						<RequestCard
@@ -148,3 +149,56 @@
 		{/if}
 	</div>
 {/if}
+
+<style>
+	/* the batch row: a tick for every row, the count, then the batch buttons */
+	.rq-select {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem 1.25rem;
+		margin-bottom: 1.25rem;
+		padding-left: 1.625rem;
+	}
+	.rq-select__all {
+		display: inline-flex;
+		align-items: center;
+		gap: 1rem;
+		cursor: pointer;
+	}
+	.rq-select__count {
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		font-weight: 600;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		white-space: nowrap;
+	}
+	.rq-select__rule {
+		width: 1px;
+		height: 1.75rem;
+		background-color: var(--dn-line);
+	}
+	@media (max-width: 767px) {
+		.rq-select {
+			gap: 0.5rem 0.75rem;
+			padding-left: 0.875rem;
+		}
+		.rq-select__all {
+			gap: 0.625rem;
+		}
+		.rq-select__count {
+			font-size: 0.75rem;
+			letter-spacing: 0.06em;
+		}
+		.rq-select__rule {
+			display: none;
+		}
+		.rq-select :global(.btn) {
+			--size: 2.25rem;
+			--fontsize: 0.875rem;
+			--btn-p: 0.625rem;
+			gap: 0.375rem;
+		}
+	}
+</style>

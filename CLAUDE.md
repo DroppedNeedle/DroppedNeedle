@@ -705,7 +705,8 @@ Run from the repo root. `make help` lists every target.
   `CardTitle`, `CardActions`, `ConfirmDialog`, `Field`, `TextField`,
   `NumberField`, `SecretField`, `PasswordField`, `SelectField`, `TextAreaField`,
   `ToggleRow`, `RadioCards`, `StatusChip`, `SectionHead` (a shelf's title
-  row), `ListPageHeader` (a browse page's title, count, ticket and record),
+  row), `ListPageHeader` (a browse page's title, count or lede, ticket and
+  record, with an optional brush stroke after the title),
   `SaveBar`, `AsyncButton`, `QueryBoundary`, `RatingStars` (`quiet`
   in list rows), `StatRow` (counts split by rules), `JumpTabs` (a page's
   sticky section strip; `look="pills"` fills the current link, `actions` sit at

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { fade, fly } from '$lib/ui/motion';
-	import { Check, CircleCheck, TrendingUp, TriangleAlert } from 'lucide-svelte';
+	import { Check, CircleCheck, TrendingUp } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import { QUALITY_TIERS } from '$lib/features/settings/components/qualityTiers';
 	import {
@@ -10,9 +10,12 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import RequestRow from './RequestRow.svelte';
+	import RequestsAlert from './RequestsAlert.svelte';
 	import RequestsEmpty from './RequestsEmpty.svelte';
+	import RequestSkeleton from './RequestSkeleton.svelte';
 
 	interface Props {
 		active: boolean;
@@ -64,27 +67,12 @@
 {#if active}
 	<div in:fade={{ duration: 150 }}>
 		{#if cutoffUnmetQuery.isError}
-			<div class="alert alert-warning mb-4">
-				<TriangleAlert class="h-5 w-5" />
-				<span>Could not load the upgrade worklist.</span>
-				<Button size="sm" onclick={() => void cutoffUnmetQuery.refetch()}>Retry</Button>
-			</div>
+			<RequestsAlert
+				message="Could not load the upgrade worklist."
+				onretry={() => void cutoffUnmetQuery.refetch()}
+			/>
 		{:else if cutoffUnmetQuery.isPending}
-			<div class="flex flex-col gap-2.5">
-				{#each Array(3) as _, i (`upgrade-loading-${i}`)}
-					<div
-						class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-base-200 rounded-box animate-pulse"
-						style:animation-delay="{i * 100}ms"
-					>
-						<div class="w-14 h-14 sm:w-16 sm:h-16 bg-base-300 rounded-lg"></div>
-						<div class="flex-1">
-							<div class="h-4 bg-base-300 rounded w-44 mb-2"></div>
-							<div class="h-3 bg-base-300 rounded w-28"></div>
-						</div>
-						<div class="h-8 bg-base-300 rounded-btn w-32"></div>
-					</div>
-				{/each}
-			</div>
+			<RequestSkeleton count={3} />
 		{:else if !cutoffUnmetQuery.data?.upgrade_allowed}
 			<RequestsEmpty icon={TrendingUp} tone="muted" title="Upgrades are off">
 				Turn on "Allow automatic upgrades" in Settings → Download Clients to list albums below your
@@ -93,9 +81,9 @@
 					{#if authStore.isAdmin}
 						<Button
 							variant="primary"
-							size="sm"
+							size="display-sm"
 							href={withBasePath('/settings?tab=download-client')}
-							class="mt-4"
+							class="mt-5"
 						>
 							Open download settings
 						</Button>
@@ -109,61 +97,97 @@
 			</RequestsEmpty>
 		{:else}
 			{@const cutoff = tierLabel(cutoffUnmetQuery.data.cutoff)}
-			<p class="text-xs text-muted mb-3">
+			<p class="rq-intro mb-5">
 				Albums whose worst track is below your cutoff ({cutoff}). "Find a better copy" only replaces
 				a file when the new one is better quality; replaced files go to the recycle bin.
 			</p>
-			<div class="flex flex-col gap-2.5">
+			<div class="rq-upgrades">
 				{#each upgradeItems as item, i (item.release_group_mbid)}
 					{@const queued = upgradeQueued.has(item.release_group_mbid)}
-					<div in:fly={{ y: 12, duration: 200, delay: i * 30 }}>
-						<Card padding="none">
-							<div class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4">
-								<div
-									class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 rounded-lg overflow-hidden bg-base-300"
-								>
-									<AlbumImage
-										mbid={item.release_group_mbid}
-										customUrl={null}
-										alt={item.album_title ?? 'Album'}
-										size="sm"
-										rounded="lg"
-										className="w-full h-full"
-									/>
-								</div>
-								<div class="flex-1 min-w-0">
-									<a
-										href={withBasePath(`/album/${item.release_group_mbid}`)}
-										class="block font-semibold text-sm truncate hover:text-accent hover:underline"
-									>
-										{item.album_title ?? 'Unknown album'}
-									</a>
-									<p class="text-muted text-xs truncate">
-										{item.artist_name ?? 'Unknown artist'}{item.year ? ` • ${item.year}` : ''}
-									</p>
-									<p class="text-muted text-xs mt-0.5">
-										<span class="text-warning/80">{tierLabel(item.current_tier)}</span>
-										<span class="text-muted"> → {cutoff}</span>
-										<span class="text-muted"> • {item.track_count} tracks</span>
-									</p>
-								</div>
-								<div class="shrink-0">
-									<Button
-										variant={queued ? 'ghost' : 'outline'}
-										size="sm"
-										icon={queued ? Check : TrendingUp}
-										class="gap-1.5"
-										disabled={queued || upgradeAlbum.isPending}
-										onclick={() => void handleUpgrade(item)}
-									>
-										{queued ? 'Queued' : 'Find a better copy'}
-									</Button>
-								</div>
-							</div>
-						</Card>
+					<div in:fly={{ y: 12, duration: 200, delay: Math.min(i, 12) * 30 }}>
+						<RequestRow>
+							{#snippet cover()}
+								<AlbumImage
+									mbid={item.release_group_mbid}
+									customUrl={null}
+									alt={item.album_title ?? 'Album'}
+									size="sm"
+									rounded="none"
+									className="w-full h-full"
+								/>
+							{/snippet}
+							{#snippet aside()}
+								<IconButton
+									variant={queued ? 'ghost' : 'outline'}
+									size="display"
+									shape="square"
+									icon={queued ? Check : TrendingUp}
+									label={queued ? 'Queued' : 'Find a better copy'}
+									disabled={queued || upgradeAlbum.isPending}
+									onclick={() => void handleUpgrade(item)}
+								/>
+							{/snippet}
+							<a
+								href={withBasePath(`/album/${item.release_group_mbid}`)}
+								class="rq-title rq-title--sm"
+							>
+								{item.album_title ?? 'Unknown album'}
+							</a>
+							<p class="truncate text-sm font-semibold">
+								{item.artist_name ?? 'Unknown artist'}{item.year ? ` • ${item.year}` : ''}
+							</p>
+							<p class="rq-meta mt-1.5">
+								<span>
+									<span class="font-semibold text-warning">{tierLabel(item.current_tier)}</span>
+									→ {cutoff}
+								</span>
+								<span>{item.track_count} tracks</span>
+							</p>
+						</RequestRow>
 					</div>
 				{/each}
 			</div>
 		{/if}
 	</div>
 {/if}
+
+<style>
+	/* a long worklist: two columns of compact rows on a wide screen */
+	.rq-upgrades {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 34rem), 1fr));
+		gap: 1rem;
+	}
+	.rq-upgrades :global(.rq-row__grid) {
+		gap: 0 1.25rem;
+		padding: 1rem 1.25rem;
+	}
+	.rq-upgrades :global(.rq-row__cover) {
+		width: 4.5rem;
+		height: 4.5rem;
+		border-radius: 0.625rem;
+	}
+	.rq-upgrades :global(.rq-row__aside) {
+		align-self: center;
+	}
+	.rq-upgrades :global(.rq-title--sm) {
+		font-size: 1.375rem;
+		-webkit-line-clamp: 1;
+		line-clamp: 1;
+	}
+	@media (max-width: 767px) {
+		.rq-upgrades :global(.rq-row__grid) {
+			grid-template-columns: auto minmax(0, 1fr) auto;
+			grid-template-areas: 'cover body aside';
+			padding: 0.875rem;
+			gap: 0 0.875rem;
+		}
+		.rq-upgrades :global(.rq-row__cover) {
+			width: 4rem;
+			height: 4rem;
+		}
+		.rq-upgrades :global(.rq-title--sm) {
+			font-size: 1.125rem;
+		}
+	}
+</style>
