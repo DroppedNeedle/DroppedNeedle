@@ -17,6 +17,7 @@
 		| 'primary'
 		| 'accent'
 		| 'outline'
+		| 'paper'
 		| 'ghost'
 		| 'caps'
 		| 'danger'
@@ -32,7 +33,8 @@
 
 	// Whole class strings, so Tailwind's scan finds every one. The dn-btn-*
 	// looks live in kit.css: primary is the acid action fill in both themes,
-	// neutral and outline a solid surface with an edge, caps a quiet mono
+	// neutral and outline a solid surface with an edge, paper an outline in
+	// a paper card's ink, caps a quiet mono
 	// uppercase link-like button (Back to top), and the service
 	// variants (lastfm, listenbrainz, spotify) that service's own colour.
 	const buttonVariants: Record<ButtonVariant, string> = {
@@ -40,6 +42,7 @@
 		primary: 'btn dn-btn-action',
 		accent: 'btn btn-accent',
 		outline: 'btn dn-btn-outline',
+		paper: 'btn dn-btn-paper',
 		ghost: 'btn btn-ghost dn-btn-ghost',
 		caps: 'btn btn-ghost dn-btn-ghost dn-btn-caps',
 		danger: 'btn btn-error',

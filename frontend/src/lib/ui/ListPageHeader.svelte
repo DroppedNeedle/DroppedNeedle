@@ -3,7 +3,10 @@
 	bold italic mono (or a spaced mono subtitle under the title), the barcode
 	ticket, and a big record with acid light at the top right. `backHref`
 	adds the square back button before the title; `actions` holds the
-	page's condensed caps buttons at the right. The record and ticket are
+	page's condensed caps buttons at the right. `eyebrow` is a spaced mono
+	line over the title ("SEARCH RESULTS FOR"), `fitTitle` steps a long,
+	typed title (a search) down so it wraps less, and `below` holds a row
+	under the title (search's tab chips). The record and ticket are
 	decoration.
 -->
 <script lang="ts">
@@ -23,6 +26,12 @@
 		backHref?: string;
 		backLabel?: string;
 		actions?: Snippet;
+		/** A spaced mono line over the title. */
+		eyebrow?: string;
+		/** Step a long title down in size (a typed query). */
+		fitTitle?: boolean;
+		/** A row under the title, such as tab chips. */
+		below?: Snippet;
 	}
 
 	let {
@@ -32,11 +41,29 @@
 		ticket,
 		backHref,
 		backLabel = 'Back',
-		actions
+		actions,
+		eyebrow,
+		fitTitle = false,
+		below
 	}: Props = $props();
+
+	const titleScale = $derived(
+		!fitTitle || title.length <= 10
+			? 1
+			: title.length <= 18
+				? 0.72
+				: title.length <= 30
+					? 0.54
+					: 0.42
+	);
 </script>
 
-<header class="dn-lph" class:dn-lph--back={backHref} class:dn-lph--actions={actions}>
+<header
+	class="dn-lph"
+	class:dn-lph--back={backHref}
+	class:dn-lph--actions={actions}
+	style:--dn-lph-scale={titleScale}
+>
 	<div class="dn-lph__row">
 		{#if backHref}
 			<a href={backHref} class="dn-lph__back" aria-label={backLabel} title={backLabel}>
@@ -44,6 +71,7 @@
 			</a>
 		{/if}
 		<div class="dn-lph__titles">
+			{#if eyebrow}<p class="dn-lph__eyebrow">{eyebrow}</p>{/if}
 			<h1 class="dn-lph__title">{title}</h1>
 			{#if subtitle}<p class="dn-lph__sub">{subtitle}</p>{/if}
 		</div>
@@ -59,6 +87,9 @@
 			<div class="dn-lph__actions">{@render actions()}</div>
 		{/if}
 	</div>
+	{#if below}
+		<div class="dn-lph__below">{@render below()}</div>
+	{/if}
 </header>
 
 <style>
@@ -130,7 +161,7 @@
 	.dn-lph__title {
 		font-family: var(--font-display);
 		font-weight: 400;
-		font-size: 6.5rem;
+		font-size: calc(6.5rem * var(--dn-lph-scale, 1));
 		line-height: 0.95;
 		letter-spacing: 0.005em;
 		text-transform: uppercase;
@@ -139,7 +170,21 @@
 		overflow-wrap: anywhere;
 	}
 	.dn-lph:not(.dn-lph--back) .dn-lph__title {
-		font-size: 7rem;
+		font-size: calc(7rem * var(--dn-lph-scale, 1));
+	}
+
+	.dn-lph__eyebrow {
+		margin-bottom: 0.25rem;
+		font-family: var(--font-mono);
+		font-size: 1rem;
+		font-weight: 600;
+		letter-spacing: 0.3em;
+		text-transform: uppercase;
+		color: var(--color-base-content);
+	}
+
+	.dn-lph__below {
+		margin-top: 1rem;
 	}
 
 	.dn-lph__sub {
@@ -197,10 +242,10 @@
 
 	@media (max-width: 1399px) {
 		.dn-lph__title {
-			font-size: 5rem;
+			font-size: calc(5rem * var(--dn-lph-scale, 1));
 		}
 		.dn-lph:not(.dn-lph--back) .dn-lph__title {
-			font-size: 6rem;
+			font-size: calc(6rem * var(--dn-lph-scale, 1));
 		}
 		.dn-lph__row {
 			flex-wrap: wrap;
@@ -266,7 +311,15 @@
 		}
 		.dn-lph__title,
 		.dn-lph:not(.dn-lph--back) .dn-lph__title {
-			font-size: clamp(2.75rem, 15vw, 3.75rem);
+			font-size: calc(clamp(2.75rem, 15vw, 3.75rem) * var(--dn-lph-scale, 1));
+		}
+		.dn-lph__eyebrow {
+			margin-bottom: 0.125rem;
+			font-size: 0.75rem;
+			letter-spacing: 0.22em;
+		}
+		.dn-lph__below {
+			margin-top: 0.75rem;
 		}
 		.dn-lph--back .dn-lph__title {
 			font-size: clamp(1.75rem, 9.6vw, 2.5rem);

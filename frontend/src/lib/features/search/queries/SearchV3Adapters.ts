@@ -37,7 +37,9 @@ export function toV1Artist(row: SearchResultItemV3): Artist {
 		musicbrainz_id: rowKey(row),
 		in_library: row.in_library,
 		score: row.score,
-		local_id: row.id ?? null
+		local_id: row.id ?? null,
+		disambiguation: row.disambiguation ?? null,
+		type_info: row.type_info ?? null
 	};
 }
 

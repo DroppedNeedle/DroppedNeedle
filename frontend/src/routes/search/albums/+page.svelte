@@ -1,11 +1,14 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import { goto } from '$app/navigation';
-	import { withBasePath } from '$lib/utils/basePath';
-	import AlbumCard from '$lib/features/album/components/AlbumCard.svelte';
-	import AlbumCardSkeleton from '$lib/features/album/components/AlbumCardSkeleton.svelte';
-	import SearchTopResult from '$lib/features/search/components/SearchTopResult.svelte';
+	import SearchAlbumCard from '$lib/features/search/components/SearchAlbumCard.svelte';
+	import SearchEmpty from '$lib/features/search/components/SearchEmpty.svelte';
+	import SearchHeader from '$lib/features/search/components/SearchHeader.svelte';
+	import SearchNotice from '$lib/features/search/components/SearchNotice.svelte';
+	import SearchShelf from '$lib/features/search/components/SearchShelf.svelte';
+	import SearchTopResults from '$lib/features/search/components/SearchTopResults.svelte';
+	import MediaTileSkeleton from '$lib/media/MediaTileSkeleton.svelte';
+	import SectionHead from '$lib/ui/SectionHead.svelte';
 	import type { Album, EnrichmentSource } from '$lib/features/album/queries/types';
 	import type { SearchRemoteStatus } from '$lib/features/search/queries/types';
 	import { applyAlbumEnrichment } from '$lib/features/search/queries/enrichment';
@@ -18,10 +21,8 @@
 	} from '$lib/features/search/queries/SearchV3Queries.svelte';
 	import { SearchEnrichCollector } from '$lib/features/search/queries/SearchV3Enrichment.svelte';
 	import { dedupeByMbid, toV1Album } from '$lib/features/search/queries/SearchV3Adapters';
-	import { RefreshCw } from 'lucide-svelte';
+	import { Disc3 } from 'lucide-svelte';
 	import { SvelteMap } from 'svelte/reactivity';
-	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		data: { query: string };
@@ -61,6 +62,7 @@
 	);
 	let albums = $derived(enrichment ? applyAlbumEnrichment(baseAlbums, enrichment) : baseAlbums);
 	let topAlbum = $derived(pages.get(0)?.top ?? null);
+	let shownAlbums = $derived(topAlbum ? albums.filter((a) => !sameMbid(a, topAlbum)) : albums);
 
 	// ids differ in case between MusicBrainz and library rows
 	function sameMbid(album: Album, top: Album | null): boolean {
@@ -76,18 +78,6 @@
 		const lastOffset = Math.max(...pages.keys());
 		return (pages.get(lastOffset)?.items.length ?? 0) >= SEARCH_BUCKET_PAGE_SIZE;
 	});
-
-	function navigateBack() {
-		if (normalizedQuery) {
-			goto(withBasePath(`/search?q=${encodeURIComponent(normalizedQuery)}`));
-		}
-	}
-
-	function navigateToBucket(bucket: 'artists' | 'tracks') {
-		if (normalizedQuery) {
-			goto(withBasePath(`/search/${bucket}?q=${encodeURIComponent(normalizedQuery)}`));
-		}
-	}
 
 	function loadMore() {
 		if (loading || !hasMore || !normalizedQuery) return;
@@ -163,62 +153,54 @@
 	});
 </script>
 
-<div class="px-4 pt-4 pb-2 sm:px-8">
-	<div class="flex gap-2">
-		<Button size="sm" pill onclick={navigateBack}>All</Button>
-		<Button size="sm" pill onclick={() => navigateToBucket('artists')}>Artists</Button>
-		<Button variant="primary" size="sm" pill aria-current="page">Albums</Button>
-		<Button size="sm" pill onclick={() => navigateToBucket('tracks')}>Songs</Button>
-	</div>
-</div>
-<section class="px-4 py-4 sm:px-8">
+<SearchHeader query={normalizedQuery} current="albums" />
+
+<div class="px-4 pt-4 pb-10 sm:px-6 lg:px-8">
 	{#if normalizedQuery && statusNotice}
-		<div class="alert {statusNotice.className} mb-3" role="status">
-			<span>{statusNotice.message}</span>
-			<Button size="sm" icon={RefreshCw} onclick={retryRemoteSearch}>Retry</Button>
+		<div class="mb-8">
+			<SearchNotice notice={statusNotice} onretry={retryRemoteSearch} />
 		</div>
 	{/if}
 	{#if !normalizedQuery}
-		<p class="text-center mt-32 text-muted">Enter a search query to get started.</p>
+		<p class="mt-12 text-center text-lg text-muted">Enter a search query to get started.</p>
 	{:else if loading && albums.length === 0}
-		<Card padding="md">
-			<div
-				class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
-			>
-				{#each Array(12) as _, i (`loading-album-${i}`)}
-					<AlbumCardSkeleton />
-				{/each}
-			</div>
-		</Card>
+		<SearchShelf label="Loading albums" busy>
+			{#each Array(14) as _, i (`loading-album-${i}`)}
+				<MediaTileSkeleton />
+			{/each}
+		</SearchShelf>
 	{:else if albums.length === 0 && !loading}
-		<Card><p class="text-center text-muted">No albums found</p></Card>
+		<SearchEmpty icon={Disc3} title="No albums found" text="Try a different search." />
 	{:else}
 		{#if topAlbum}
-			<div class="mb-4">
-				<SearchTopResult album={topAlbum} />
-			</div>
+			<section class="mb-10">
+				<SectionHead title="Top album" />
+				<SearchTopResults
+					album={topAlbum}
+					onalbumintent={() => topAlbum && enrichCollector.requestAlbum(topAlbum)}
+				/>
+			</section>
 		{/if}
-		<Card padding="md">
-			<div
-				class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
-			>
-				{#each topAlbum ? albums.filter((a) => !sameMbid(a, topAlbum)) : albums as album, index (album.musicbrainz_id)}
-					<AlbumCard
+		<section>
+			<SectionHead title="Albums" />
+			<SearchShelf label="Album search results" busy={loading}>
+				{#each shownAlbums as album, index (album.musicbrainz_id)}
+					<SearchAlbumCard
 						{album}
-						lazy={index >= 12}
+						lazy={index >= 14}
 						{enrichmentSource}
 						onenrichmentrequest={() => enrichCollector.requestAlbum(album)}
 					/>
 				{/each}
-			</div>
-		</Card>
+			</SearchShelf>
+		</section>
 
-		<div bind:this={sentinel} class="h-20 flex items-center justify-center">
+		<div bind:this={sentinel} class="flex h-20 items-center justify-center">
 			{#if loading}
 				<span class="loading loading-spinner loading-md text-primary"></span>
 			{:else if !hasMore}
-				<p class="text-muted text-sm">No more results</p>
+				<p class="font-mono text-xs tracking-widest text-muted uppercase">No more results</p>
 			{/if}
 		</div>
 	{/if}
-</section>
+</div>

@@ -711,7 +711,8 @@ Run from the repo root. `make help` lists every target.
   sticky section strip), `HalftonePhoto` (a photo printed as a fading
   halftone), `PageShell`, `Toaster`, `CoverPlaceholder`,
   `UnsavedChangesGuard`, `Logo`, `PaperPanel` (the light island), `Card`'s
-  `torn` paper, `Button`'s condensed caps sizes (`display`, `display-sm`),
+  `torn` paper, `Button`'s condensed caps sizes (`display`, `display-sm`)
+  and `paper` outline (a button on a paper card),
   the `dn-toolbar` and `dn-list-grid` classes for a list's controls and grid,
   and the decoration `FritFrame` (the page's dot frame, mounted once by the
   shell), `FritEdge`, `VinylSleeve`, `VinylRecord`, `BarcodeOrnament`,

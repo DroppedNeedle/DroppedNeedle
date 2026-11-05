@@ -1,14 +1,17 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
-	import AlbumCard from '$lib/features/album/components/AlbumCard.svelte';
+	import SearchAlbumCard from '$lib/features/search/components/SearchAlbumCard.svelte';
 	import SearchArtistCard from '$lib/features/search/components/SearchArtistCard.svelte';
-	import SearchSongRow from '$lib/features/search/components/SearchSongRow.svelte';
-	import ViewMoreAlbumCard from '$lib/features/search/components/ViewMoreAlbumCard.svelte';
-	import ViewMoreArtistCard from '$lib/features/search/components/ViewMoreArtistCard.svelte';
-	import ArtistCardSkeleton from '$lib/features/artist/components/ArtistCardSkeleton.svelte';
-	import AlbumCardSkeleton from '$lib/features/album/components/AlbumCardSkeleton.svelte';
+	import SearchEmpty from '$lib/features/search/components/SearchEmpty.svelte';
+	import SearchHeader from '$lib/features/search/components/SearchHeader.svelte';
+	import SearchNotice from '$lib/features/search/components/SearchNotice.svelte';
+	import SearchShelf from '$lib/features/search/components/SearchShelf.svelte';
+	import SearchSongList from '$lib/features/search/components/SearchSongList.svelte';
+	import SearchTopResults from '$lib/features/search/components/SearchTopResults.svelte';
+	import ViewMoreTile from '$lib/features/search/components/ViewMoreTile.svelte';
+	import MediaTileSkeleton from '$lib/media/MediaTileSkeleton.svelte';
+	import SectionHead from '$lib/ui/SectionHead.svelte';
 	import type { EnrichmentSource } from '$lib/features/album/queries/types';
 	import type { SearchRemoteStatus } from '$lib/features/search/queries/types';
 	import {
@@ -28,10 +31,7 @@
 		toV1Album,
 		toV1Artist
 	} from '$lib/features/search/queries/SearchV3Adapters';
-	import { ArrowRight, RefreshCw } from 'lucide-svelte';
-	import SearchTopResult from '$lib/features/search/components/SearchTopResult.svelte';
-	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import { Disc3, Mic } from 'lucide-svelte';
 
 	interface Props {
 		data: { query: string };
@@ -95,18 +95,16 @@
 	let displayedArtists = $derived(
 		topArtist ? artists.filter((a) => a.musicbrainz_id !== topArtist?.musicbrainz_id) : artists
 	);
-	let artistCards = $derived(displayedArtists.slice(0, 5));
+	let artistCards = $derived(displayedArtists.slice(0, 6));
 	let artistPlaceholderCount = $derived(
-		searchQuery.isFetching ? Math.max(0, 5 - artistCards.length) : 0
+		searchQuery.isFetching ? Math.max(0, 6 - artistCards.length) : 0
 	);
 	let displayedAlbums = $derived(
 		topAlbum ? albums.filter((a) => a.musicbrainz_id !== topAlbum?.musicbrainz_id) : albums
 	);
 
-	function navigateToBucket(bucket: 'artists' | 'albums' | 'tracks') {
-		if (normalizedQuery) {
-			goto(withBasePath(`/search/${bucket}?q=${encodeURIComponent(normalizedQuery)}`));
-		}
+	function bucketHref(bucket: 'artists' | 'albums' | 'tracks'): string {
+		return withBasePath(`/search/${bucket}?q=${encodeURIComponent(normalizedQuery)}`);
 	}
 
 	$effect(() => {
@@ -138,88 +136,60 @@
 	});
 </script>
 
-{#if hasSearched || isSearching}
-	<div class="px-4 pt-4 pb-2 sm:px-8">
-		<div class="flex gap-2">
-			<Button variant="primary" size="sm" pill aria-current="page">All</Button>
-			<Button size="sm" pill onclick={() => navigateToBucket('artists')}>Artists</Button>
-			<Button size="sm" pill onclick={() => navigateToBucket('albums')}>Albums</Button>
-			<Button size="sm" pill onclick={() => navigateToBucket('tracks')}>Songs</Button>
-		</div>
-	</div>
-{/if}
+<SearchHeader query={hasSearched ? normalizedQuery : ''} current="all" />
 
-{#if hasSearched}
-	<section class="px-4 py-4 sm:px-8 space-y-8">
-		{#if isSearching}
-			<div
-				class="grid grid-flow-col auto-cols-[85%] gap-3 overflow-x-auto sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-2 sm:overflow-visible"
-				aria-label="Loading top search results"
-			>
-				<div class="skeleton skeleton-shimmer min-h-44 sm:min-h-56 rounded-box"></div>
-				<div class="skeleton skeleton-shimmer min-h-44 sm:min-h-56 rounded-box"></div>
-			</div>
-		{:else if hasTopResult}
-			<div
-				class="grid grid-flow-col auto-cols-[85%] gap-3 overflow-x-auto sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-2 sm:overflow-visible"
-			>
-				{#if topArtist}
-					<SearchTopResult artist={topArtist} />
-				{/if}
-				{#if topAlbum}
-					<SearchTopResult album={topAlbum} />
-				{/if}
-			</div>
-		{/if}
-
-		{#if songs.length > 0}
-			<div>
-				<div class="flex items-center justify-between mb-4">
-					<h2 class="text-xl font-bold">Songs</h2>
-					<a
-						href={withBasePath(`/search/tracks?q=${encodeURIComponent(normalizedQuery)}`)}
-						class="text-sm text-primary hover:underline"
-					>
-						View more <ArrowRight class="h-4 w-4 inline align-middle" />
-					</a>
-				</div>
-				<div
-					class="divide-y divide-base-content/5 overflow-hidden rounded-xl bg-base-100/40 shadow-sm"
-					aria-label="Song search results"
-				>
-					{#each songs as song (song.id)}
-						<SearchSongRow {song} />
-					{/each}
-				</div>
-			</div>
-		{/if}
-
-		<div>
-			<h2 class="text-xl font-bold mb-4">Artists</h2>
-			{#if artistNotice}
-				<div class="alert {artistNotice.className} mb-3" role="status">
-					<span>{artistNotice.message}</span>
-					<Button size="sm" icon={RefreshCw} onclick={() => searchQuery.refetch()}>Retry</Button>
+<div class="px-4 pb-10 sm:px-6 lg:px-8">
+	{#if hasSearched}
+		<div class="space-y-10 pt-4">
+			{#if artistNotice || albumNotice}
+				<div class="space-y-2">
+					{#if artistNotice}
+						<SearchNotice notice={artistNotice} onretry={() => searchQuery.refetch()} />
+					{/if}
+					{#if albumNotice}
+						<SearchNotice notice={albumNotice} onretry={() => searchQuery.refetch()} />
+					{/if}
 				</div>
 			{/if}
-			{#if loadingArtists}
-				<Card padding="md">
-					<div
-						class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
-					>
-						{#each Array(6) as _, i (`artist-skeleton-${i}`)}
-							<ArtistCardSkeleton variant="detailed" />
+
+			{#if isSearching}
+				<div class="grid gap-5 sm:grid-cols-2" aria-label="Loading top search results">
+					<div class="skeleton skeleton-shimmer min-h-48 rounded-box"></div>
+					<div class="skeleton skeleton-shimmer hidden min-h-48 rounded-box sm:block"></div>
+				</div>
+			{:else if hasTopResult}
+				<section>
+					<SectionHead title="Top results" />
+					<SearchTopResults
+						artist={topArtist}
+						album={topAlbum}
+						onartistintent={() => topArtist && enrichCollector.requestArtist(topArtist)}
+						onalbumintent={() => topAlbum && enrichCollector.requestAlbum(topAlbum)}
+					/>
+				</section>
+			{/if}
+
+			{#if songs.length > 0}
+				<section>
+					<SectionHead title="Songs" href={bucketHref('tracks')} moreLabel="View more" />
+					<SearchSongList {songs} />
+				</section>
+			{/if}
+
+			<section>
+				<SectionHead
+					title="Artists"
+					href={displayedArtists.length > 0 ? bucketHref('artists') : null}
+					moreLabel="View more"
+				/>
+				{#if loadingArtists}
+					<SearchShelf label="Loading artists" swipe busy>
+						{#each Array(7) as _, i (`artist-skeleton-${i}`)}
+							<MediaTileSkeleton kind="artist" />
 						{/each}
-					</div>
-				</Card>
-			{:else if displayedArtists.length > 0}
-				<Card padding="md" class="overflow-hidden">
-					<div
-						class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
-						aria-label="Artist search results"
-						aria-busy={searchQuery.isFetching}
-					>
-						<ViewMoreArtistCard />
+					</SearchShelf>
+				{:else if displayedArtists.length > 0}
+					<SearchShelf label="Artist search results" swipe busy={searchQuery.isFetching}>
 						{#each artistCards as artist (artist.musicbrainz_id)}
 							<SearchArtistCard
 								{artist}
@@ -228,64 +198,45 @@
 							/>
 						{/each}
 						{#each Array(artistPlaceholderCount) as _, i (`artist-pending-${i}`)}
-							<ArtistCardSkeleton variant="detailed" />
+							<MediaTileSkeleton kind="artist" />
 						{/each}
-					</div>
-				</Card>
-			{:else}
-				<Card><p class="text-center text-muted">No artists found</p></Card>
-			{/if}
-		</div>
-
-		<div>
-			<div class="flex items-center justify-between mb-4">
-				<h2 class="text-xl font-bold">Albums</h2>
-				{#if displayedAlbums.length > 0}
-					<a
-						href={withBasePath(`/search/albums?q=${encodeURIComponent(normalizedQuery)}`)}
-						class="text-sm text-primary hover:underline"
-					>
-						View more <ArrowRight class="h-4 w-4 inline align-middle" />
-					</a>
+						<ViewMoreTile kind="artist" href={bucketHref('artists')} what="View more artists" />
+					</SearchShelf>
+				{:else}
+					<SearchEmpty icon={Mic} title="No artists found" compact />
 				{/if}
-			</div>
-			{#if albumNotice}
-				<div class="alert {albumNotice.className} mb-3" role="status">
-					<span>{albumNotice.message}</span>
-					<Button size="sm" icon={RefreshCw} onclick={() => searchQuery.refetch()}>Retry</Button>
-				</div>
-			{/if}
-			{#if loadingAlbums}
-				<Card padding="md">
-					<div
-						class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
-					>
-						{#each Array(6) as _, i (`album-skeleton-${i}`)}
-							<AlbumCardSkeleton />
+			</section>
+
+			<section>
+				<SectionHead
+					title="Albums"
+					href={displayedAlbums.length > 0 ? bucketHref('albums') : null}
+					moreLabel="View more"
+				/>
+				{#if loadingAlbums}
+					<SearchShelf label="Loading albums" swipe busy>
+						{#each Array(7) as _, i (`album-skeleton-${i}`)}
+							<MediaTileSkeleton />
 						{/each}
-					</div>
-				</Card>
-			{:else if displayedAlbums.length > 0}
-				<Card padding="md">
-					<div
-						class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
-					>
-						<ViewMoreAlbumCard />
+					</SearchShelf>
+				{:else if displayedAlbums.length > 0}
+					<SearchShelf label="Album search results" swipe>
 						{#each displayedAlbums as album, index (album.musicbrainz_id)}
-							<AlbumCard
+							<SearchAlbumCard
 								{album}
-								lazy={index >= 12}
+								lazy={index >= 14}
 								{enrichmentSource}
 								onenrichmentrequest={() => enrichCollector.requestAlbum(album)}
 							/>
 						{/each}
-					</div>
-				</Card>
-			{:else}
-				<Card><p class="text-center text-muted">No albums found</p></Card>
-			{/if}
+						<ViewMoreTile kind="album" href={bucketHref('albums')} what="View more albums" />
+					</SearchShelf>
+				{:else}
+					<SearchEmpty icon={Disc3} title="No albums found" compact />
+				{/if}
+			</section>
 		</div>
-	</section>
-{:else}
-	<p class="text-center mt-32 text-muted">Enter a search query to get started.</p>
-{/if}
+	{:else}
+		<p class="mt-12 text-center text-lg text-muted">Enter a search query to get started.</p>
+	{/if}
+</div>

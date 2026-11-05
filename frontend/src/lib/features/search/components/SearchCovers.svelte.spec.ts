@@ -8,7 +8,7 @@ import {
 import { fakeApi } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 
-import AlbumCard from '$lib/features/album/components/AlbumCard.svelte';
+import SearchAlbumCard from './SearchAlbumCard.svelte';
 import SearchArtistCard from './SearchArtistCard.svelte';
 
 // The lazy loader sets an image's src once its card scrolls into view. With it
@@ -83,7 +83,7 @@ describe('search covers', () => {
 			.element(page.getByRole('img', { name: 'Radiohead' }))
 			.toHaveAttribute('data-src', expect.stringContaining(`/covers/artist/${LINKED_ARTIST_MBID}`));
 
-		await renderWithQuery(AlbumCard, { album: toV1Album(linkedAlbum) });
+		await renderWithQuery(SearchAlbumCard, { album: toV1Album(linkedAlbum) });
 		await expect
 			.element(page.getByRole('img', { name: 'OK Computer' }))
 			.toHaveAttribute(
@@ -91,7 +91,7 @@ describe('search covers', () => {
 				expect.stringContaining(`/covers/release-group/${LINKED_ALBUM_MBID}`)
 			);
 
-		await renderWithQuery(AlbumCard, { album: toV1Album(unlinkedAlbum) });
+		await renderWithQuery(SearchAlbumCard, { album: toV1Album(unlinkedAlbum) });
 		await expect
 			.element(page.getByRole('img', { name: 'Home Demos' }))
 			.toHaveAttribute(

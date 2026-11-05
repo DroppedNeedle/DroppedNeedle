@@ -84,6 +84,12 @@
 		--btn-fg: var(--color-base-content);
 		--btn-border: var(--color-base-content);
 	}
+	/* an outline in the paper's ink, for a button on a paper card */
+	.dn-btn-paper {
+		--btn-color: var(--dn-paper);
+		--btn-fg: var(--dn-paper-content);
+		--btn-border: var(--dn-paper-content);
+	}
 	.dn-btn-ghost {
 		--btn-bg: transparent;
 		--btn-border: transparent;
@@ -110,6 +116,9 @@
 		}
 		.dn-btn-ghost:hover {
 			--btn-bg: color-mix(in oklab, var(--color-base-content) 9%, transparent);
+		}
+		.dn-btn-paper:hover {
+			--btn-bg: color-mix(in oklab, var(--dn-paper-content) 10%, var(--dn-paper));
 		}
 	}
 	/* disabled is plainly off, but still readable */

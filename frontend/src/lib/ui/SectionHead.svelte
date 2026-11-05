@@ -1,7 +1,7 @@
 <!--
 	A shelf's heading row: the Anton title, an optional chip beside it (a
-	source, a date), and "See all" at the right when the shelf has a page of
-	its own. With `href` the title is a link too. `actions` sits before
+	source, a date), and "See all" (or `moreLabel`) at the right when the
+	shelf has a page of its own. With `href` the title is a link too. `actions` sits before
 	"See all" for a shelf's own buttons or outside link.
 -->
 <script lang="ts">
@@ -17,11 +17,21 @@
 		chips?: Snippet;
 		/** Controls before "See all". */
 		actions?: Snippet;
+		/** The link's words at the right; "See all" by default. */
+		moreLabel?: string;
 		/** Layout only: margin. */
 		class?: string;
 	}
 
-	let { title, href = null, as = 'h2', chips, actions, class: className = '' }: Props = $props();
+	let {
+		title,
+		href = null,
+		as = 'h2',
+		chips,
+		actions,
+		moreLabel = 'See all',
+		class: className = ''
+	}: Props = $props();
 </script>
 
 <div class="dn-section-head {className}">
@@ -40,7 +50,7 @@
 			{@render actions?.()}
 			{#if href}
 				<a {href} class="dn-section-head__all">
-					See all<span class="sr-only">: {title}</span>
+					{moreLabel}<span class="sr-only">: {title}</span>
 					<ArrowRight class="size-3.5" aria-hidden="true" />
 				</a>
 			{/if}

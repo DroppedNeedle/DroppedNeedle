@@ -1,17 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import { goto } from '$app/navigation';
-	import { withBasePath } from '$lib/utils/basePath';
-	import SearchSongRow from '$lib/features/search/components/SearchSongRow.svelte';
+	import SearchEmpty from '$lib/features/search/components/SearchEmpty.svelte';
+	import SearchHeader from '$lib/features/search/components/SearchHeader.svelte';
+	import SearchSongList from '$lib/features/search/components/SearchSongList.svelte';
 	import {
 		SEARCH_BUCKET_PAGE_SIZE,
 		getSearchBucketV3Query
 	} from '$lib/features/search/queries/SearchV3Queries.svelte';
 	import { toSearchSongs, type SearchSong } from '$lib/features/search/queries/SearchV3Adapters';
+	import { Music } from 'lucide-svelte';
 	import { SvelteMap } from 'svelte/reactivity';
-	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 
 	interface Props {
@@ -64,18 +63,6 @@
 		return (pages.get(lastOffset)?.items.length ?? 0) >= SEARCH_BUCKET_PAGE_SIZE;
 	});
 
-	function navigateBack() {
-		if (normalizedQuery) {
-			goto(withBasePath(`/search?q=${encodeURIComponent(normalizedQuery)}`));
-		}
-	}
-
-	function navigateToBucket(bucket: 'artists' | 'albums') {
-		if (normalizedQuery) {
-			goto(withBasePath(`/search/${bucket}?q=${encodeURIComponent(normalizedQuery)}`));
-		}
-	}
-
 	function loadMore() {
 		if (loading || !hasMore || !normalizedQuery) return;
 		offset += SEARCH_BUCKET_PAGE_SIZE;
@@ -122,24 +109,18 @@
 	});
 </script>
 
-<div class="px-4 pt-4 pb-2 sm:px-8">
-	<div class="flex gap-2">
-		<Button size="sm" pill onclick={navigateBack}>All</Button>
-		<Button size="sm" pill onclick={() => navigateToBucket('artists')}>Artists</Button>
-		<Button size="sm" pill onclick={() => navigateToBucket('albums')}>Albums</Button>
-		<Button variant="primary" size="sm" pill aria-current="page">Songs</Button>
-	</div>
-</div>
-<section class="px-4 py-4 sm:px-8">
+<SearchHeader query={normalizedQuery} current="tracks" />
+
+<div class="px-4 pt-4 pb-10 sm:px-6 lg:px-8">
 	{#if !normalizedQuery}
-		<p class="text-center mt-32 text-muted">Enter a search query to get started.</p>
+		<p class="mt-12 text-center text-lg text-muted">Enter a search query to get started.</p>
 	{:else}
 		<QueryBoundary query={firstPage} what="songs">
 			{#snippet loading()}
-				<div class="overflow-hidden rounded-xl bg-base-100/40 shadow-sm">
+				<div class="overflow-hidden rounded-box border border-line bg-base-200">
 					{#each Array(12) as _, i (`loading-song-${i}`)}
-						<div class="flex items-center gap-3 px-3 py-2">
-							<div class="skeleton h-12 w-12 shrink-0 rounded-md"></div>
+						<div class="flex min-h-16 items-center gap-3.5 px-3.5 py-2">
+							<div class="skeleton size-12 shrink-0 rounded-md"></div>
 							<div class="flex-1 space-y-2">
 								<div class="skeleton h-3.5 w-48"></div>
 								<div class="skeleton h-3 w-32"></div>
@@ -149,26 +130,19 @@
 				</div>
 			{/snippet}
 			{#snippet empty()}
-				<Card><p class="text-center text-muted">No songs found</p></Card>
+				<SearchEmpty icon={Music} title="No songs found" text="Try a different search." />
 			{/snippet}
 			{#snippet children(loaded)}
-				<div
-					class="divide-y divide-base-content/5 overflow-hidden rounded-xl bg-base-100/40 shadow-sm"
-					aria-label="Song search results"
-				>
-					{#each loaded as song (song.id)}
-						<SearchSongRow {song} />
-					{/each}
-				</div>
+				<SearchSongList songs={loaded} />
 
-				<div bind:this={sentinel} class="h-20 flex items-center justify-center">
+				<div bind:this={sentinel} class="flex h-20 items-center justify-center">
 					{#if loading}
 						<span class="loading loading-spinner loading-md text-primary"></span>
 					{:else if !hasMore}
-						<p class="text-muted text-sm">No more results</p>
+						<p class="font-mono text-xs tracking-widest text-muted uppercase">No more results</p>
 					{/if}
 				</div>
 			{/snippet}
 		</QueryBoundary>
 	{/if}
-</section>
+</div>
