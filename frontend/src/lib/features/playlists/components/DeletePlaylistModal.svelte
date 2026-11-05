@@ -1,11 +1,11 @@
 <script lang="ts">
-	import Button from '$lib/ui/Button.svelte';
-	import Modal from '$lib/ui/Modal.svelte';
+	import { Trash2 } from 'lucide-svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 
 	interface Props {
 		playlistName: string;
 		deleting: boolean;
-		onconfirm: () => void;
+		onconfirm: () => unknown;
 	}
 
 	let { playlistName, deleting, onconfirm }: Props = $props();
@@ -17,12 +17,17 @@
 	}
 </script>
 
-<Modal bind:open title={`Delete "${playlistName}"?`} dismissible={!deleting}>
-	<p class="text-muted">
-		This will permanently remove the playlist and all its tracks. This action cannot be undone.
+<ConfirmDialog
+	bind:open
+	title="Delete playlist"
+	icon={Trash2}
+	tone="danger"
+	confirmLabel="Delete"
+	pending={deleting}
+	{onconfirm}
+>
+	<p class="font-semibold">Delete "{playlistName}"?</p>
+	<p class="mt-2 text-muted">
+		This will permanently remove the playlist. It won't delete any tracks from your library.
 	</p>
-	{#snippet actions()}
-		<Button variant="ghost" onclick={() => (open = false)} disabled={deleting}>Cancel</Button>
-		<Button variant="danger" loading={deleting} onclick={onconfirm}>Delete</Button>
-	{/snippet}
-</Modal>
+</ConfirmDialog>

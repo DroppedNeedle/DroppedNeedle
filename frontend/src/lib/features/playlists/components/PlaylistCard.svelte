@@ -1,3 +1,11 @@
+<!--
+	One playlist on the Playlists page: the mosaic at the left, the name in
+	Anton, one mono line of counts, the owner on a shared one, and square
+	Play, Shuffle and Delete buttons at the bottom right. The whole card opens
+	the playlist; the buttons stay separate targets. An imported playlist
+	carries its source as a tab on the card's top edge, in the source's
+	colour; your own carry a globe or a lock.
+-->
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import type { PlaylistSummary } from '$lib/api/playlists';
@@ -9,11 +17,11 @@
 	import { formatTotalDurationSec } from '$lib/utils/formatting';
 	import { getSourceColor, getSourceLabel } from '$lib/utils/sources';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { Play, Shuffle, Trash2, Tv, Lock, Globe } from 'lucide-svelte';
+	import { Play, Shuffle, Trash2, Lock, Globe } from 'lucide-svelte';
+	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/media/icons/PlexIcon.svelte';
 	import PlaylistMosaic from '$lib/media/PlaylistMosaic.svelte';
-	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
@@ -50,10 +58,26 @@
 	);
 
 	let subtitle = $derived(
-		`${playlist.track_count} track${playlist.track_count === 1 ? '' : 's'}${durationText ? ` - ${durationText}` : ''}${sourceLabel ? ` - from ${sourceLabel}` : ''}`
+		`${playlist.track_count} track${playlist.track_count === 1 ? '' : 's'}${durationText ? ` · ${durationText}` : ''}${sourceLabel ? ` · from ${sourceLabel}` : ''}`
 	);
 
 	let hasPlayableTracks = $derived(playlist.track_count > 0);
+
+	async function start(shuffle: boolean) {
+		const detail = await fetchPlaylist(playlist.id);
+		if (isRedactedPlaylist(detail)) return;
+		const items = detail.tracks
+			.map(playlistTrackToQueueItem)
+			.filter((item): item is NonNullable<typeof item> => item !== null);
+		if (items.length === 0) {
+			toastStore.show({
+				message: "This playlist doesn't have anything playable yet.",
+				type: 'info'
+			});
+			return;
+		}
+		playerStore.playQueue(items, 0, shuffle);
+	}
 
 	async function handlePlay(e: Event) {
 		e.preventDefault();
@@ -61,19 +85,7 @@
 		if (playLoading || shuffleLoading || !hasPlayableTracks) return;
 		playLoading = true;
 		try {
-			const detail = await fetchPlaylist(playlist.id);
-			if (isRedactedPlaylist(detail)) return;
-			const items = detail.tracks
-				.map(playlistTrackToQueueItem)
-				.filter((item): item is NonNullable<typeof item> => item !== null);
-			if (items.length === 0) {
-				toastStore.show({
-					message: "This playlist doesn't have anything playable yet.",
-					type: 'info'
-				});
-				return;
-			}
-			playerStore.playQueue(items, 0, false);
+			await start(false);
 		} catch {
 			toastStore.show({ message: "Couldn't load that playlist.", type: 'error' });
 		} finally {
@@ -87,19 +99,7 @@
 		if (shuffleLoading || playLoading || !hasPlayableTracks) return;
 		shuffleLoading = true;
 		try {
-			const detail = await fetchPlaylist(playlist.id);
-			if (isRedactedPlaylist(detail)) return;
-			const items = detail.tracks
-				.map(playlistTrackToQueueItem)
-				.filter((item): item is NonNullable<typeof item> => item !== null);
-			if (items.length === 0) {
-				toastStore.show({
-					message: "This playlist doesn't have anything playable yet.",
-					type: 'info'
-				});
-				return;
-			}
-			playerStore.playQueue(items, 0, true);
+			await start(true);
 		} catch {
 			toastStore.show({ message: "Couldn't load that playlist.", type: 'error' });
 		} finally {
@@ -143,81 +143,68 @@
 	});
 </script>
 
-<Card
-	variant="raised"
-	padding="none"
-	class="group relative w-full shrink-0"
-	style={sourceColor
-		? `background: color-mix(in srgb, ${sourceColor} 6%, var(--color-base-100)); border-left: 3px solid color-mix(in srgb, ${sourceColor} 50%, transparent);`
-		: undefined}
->
+<article class="pl-card" class:pl-card--sourced={sourceColor} style:--pl-source={sourceColor}>
+	<div class="pl-card__art">
+		<PlaylistMosaic
+			coverUrls={playlist.cover_urls}
+			customCoverUrl={playlist.custom_cover_url}
+			size="w-full h-full"
+			rounded="rounded-none"
+		/>
+	</div>
 	<a
 		href={withBasePath(`/playlists/${playlist.id}`)}
-		class="block relative z-0 transition-transform active:scale-95 focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 rounded-t-box"
+		class="pl-card__link"
 		aria-label="Open {playlist.name}"
 	>
-		<figure class="aspect-square overflow-hidden relative">
-			<div
-				class="w-full h-full transition-transform duration-200 group-hover:scale-105 transform-gpu"
-			>
-				<PlaylistMosaic
-					coverUrls={playlist.cover_urls}
-					customCoverUrl={playlist.custom_cover_url}
-					size="w-full h-full"
-					rounded="none"
-				/>
-			</div>
-			{#if sourceType}
-				<div
-					class="absolute top-2 right-2 flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider shadow-md backdrop-blur-sm"
-					style="background: color-mix(in srgb, {sourceColor} 85%, black); color: white;"
-				>
-					{#if sourceType === 'jellyfin'}
-						<Tv class="h-3 w-3" />
-					{:else if sourceType === 'navidrome'}
-						<NavidromeIcon class="h-3 w-3" />
-					{:else if sourceType === 'plex'}
-						<PlexIcon class="h-3 w-3" />
-					{/if}
-					<span>{sourceLabel}</span>
-				</div>
-			{/if}
-			{#if playlist.is_owner}
-				<div
-					class="absolute top-2 left-2 flex items-center justify-center rounded-full bg-base-100/80 p-1 shadow-sm backdrop-blur-sm"
-					title={playlist.is_public ? 'Public playlist' : 'Private playlist'}
-					aria-label={playlist.is_public ? 'Public playlist' : 'Private playlist'}
-				>
-					{#if playlist.is_public}
-						<Globe class="h-3 w-3 text-success" />
-					{:else}
-						<Lock class="h-3 w-3 text-muted" />
-					{/if}
-				</div>
-			{/if}
-		</figure>
-		<div class="px-3 pt-3 pb-1">
-			<h3 class="text-sm font-semibold line-clamp-1">{playlist.name}</h3>
-			<p class="text-xs text-muted mt-0.5">{subtitle}</p>
+		<div class="pl-card__text">
+			<h3 class="pl-card__name">{playlist.name}</h3>
+			<p class="pl-card__meta">
+				{#if playlist.is_owner}
+					<span
+						class="pl-card__mark"
+						title={playlist.is_public ? 'Public playlist' : 'Private playlist'}
+						aria-label={playlist.is_public ? 'Public playlist' : 'Private playlist'}
+						role="img"
+					>
+						{#if playlist.is_public}
+							<Globe class="size-3.5" aria-hidden="true" />
+						{:else}
+							<Lock class="size-3.5" aria-hidden="true" />
+						{/if}
+					</span>
+				{/if}
+				<span class="truncate">{subtitle}</span>
+			</p>
 			{#if !playlist.is_owner && playlist.is_public}
-				<div class="mt-1.5 flex items-center gap-1.5">
-					<div class="avatar avatar-placeholder">
-						<div class="w-4 h-4 rounded-full bg-accent text-accent-content">
-							<span class="text-[8px] font-semibold leading-none">{ownerInitials}</span>
-						</div>
-					</div>
-					<span class="text-[10px] text-muted line-clamp-1">
+				<p class="pl-card__owner">
+					<span class="pl-card__initials" aria-hidden="true">{ownerInitials}</span>
+					<span class="truncate">
 						{playlist.owner_name ? `Shared by ${playlist.owner_name}` : 'No owner'}
 					</span>
-				</div>
+				</p>
 			{/if}
 		</div>
 	</a>
 
-	<div class="flex items-center gap-1 px-3 pb-2.5 pt-1.5">
+	{#if sourceType && sourceLabel}
+		<span class="pl-card__tab">
+			{#if sourceType === 'jellyfin'}
+				<JellyfinIcon class="size-3" />
+			{:else if sourceType === 'navidrome'}
+				<NavidromeIcon class="size-3" />
+			{:else if sourceType === 'plex'}
+				<PlexIcon class="size-3" />
+			{/if}
+			{sourceLabel}
+		</span>
+	{/if}
+
+	<div class="pl-card__actions">
 		<IconButton
 			variant="primary"
 			size="sm"
+			shape="square"
 			icon={Play}
 			label="Play {playlist.name}"
 			class="[&_svg]:fill-current"
@@ -225,27 +212,200 @@
 			disabled={!hasPlayableTracks}
 			onclick={handlePlay}
 		/>
-
 		<IconButton
+			variant="outline"
 			size="sm"
+			shape="square"
 			icon={Shuffle}
 			label="Shuffle {playlist.name}"
 			loading={shuffleLoading}
 			disabled={!hasPlayableTracks}
 			onclick={handleShuffle}
 		/>
-
 		{#if playlist.can_delete}
-			<div class="ml-auto">
-				<IconButton
-					variant={deleteConfirming ? 'danger' : 'ghost'}
-					size="sm"
-					icon={Trash2}
-					label={deleteConfirming ? `Confirm delete ${playlist.name}` : `Delete ${playlist.name}`}
-					loading={deleting}
-					onclick={handleDeleteClick}
-				/>
-			</div>
+			<IconButton
+				variant={deleteConfirming ? 'danger' : 'danger-ghost'}
+				size="sm"
+				shape="square"
+				icon={Trash2}
+				label={deleteConfirming ? `Confirm delete ${playlist.name}` : `Delete ${playlist.name}`}
+				loading={deleting}
+				onclick={handleDeleteClick}
+			/>
 		{/if}
 	</div>
-</Card>
+</article>
+
+<style>
+	.pl-card {
+		--pl-edge: var(--dn-line);
+		position: relative;
+		display: grid;
+		grid-template-columns: 6rem minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 0.5rem 1rem;
+		min-width: 0;
+		padding: 0.875rem;
+		border: 1px solid var(--pl-edge);
+		border-radius: var(--radius-box);
+		background-color: var(--color-base-200);
+		transition: border-color 150ms;
+	}
+	.pl-card--sourced {
+		--pl-edge: color-mix(in oklab, var(--pl-source) 55%, var(--dn-line));
+	}
+	.pl-card:hover {
+		--pl-edge: var(--dn-title);
+	}
+
+	/* the link fills the card, so a click anywhere but a button opens it */
+	.pl-card__link {
+		min-width: 0;
+		border-radius: 0.25rem;
+	}
+	.pl-card__link::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		border-radius: var(--radius-box);
+	}
+	.pl-card__link:focus-visible {
+		outline: none;
+	}
+	.pl-card__link:focus-visible::after {
+		outline: 2px solid var(--dn-focus);
+		outline-offset: 2px;
+	}
+
+	.pl-card__art {
+		flex: none;
+		width: 6rem;
+		aspect-ratio: 1;
+		overflow: hidden;
+		border-radius: 0.375rem;
+		box-shadow: 0 6px 16px -8px rgb(0 0 0 / 0.6);
+	}
+
+	.pl-card__text {
+		display: flex;
+		min-width: 0;
+		flex-direction: column;
+		gap: 0.375rem;
+	}
+
+	.pl-card__name {
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		overflow: hidden;
+		font-family: var(--font-display);
+		font-size: 1.5rem;
+		font-weight: 400;
+		line-height: 1.05;
+		letter-spacing: 0.01em;
+		text-transform: uppercase;
+		overflow-wrap: anywhere;
+		color: var(--color-base-content);
+		font-synthesis: none;
+	}
+
+	.pl-card__meta,
+	.pl-card__owner {
+		display: flex;
+		min-width: 0;
+		align-items: center;
+		gap: 0.5rem;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		white-space: nowrap;
+	}
+	.pl-card__meta {
+		color: var(--dn-muted);
+	}
+	.pl-card__mark {
+		display: grid;
+		flex: none;
+		place-items: center;
+		color: var(--color-base-content);
+	}
+
+	.pl-card__initials {
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: 1.375rem;
+		height: 1.375rem;
+		border-radius: 9999px;
+		background-color: var(--dn-action);
+		color: var(--dn-action-content);
+		font-size: 0.5625rem;
+		letter-spacing: 0.02em;
+	}
+
+	/* the source as a small tab on the top edge, in its colour */
+	.pl-card__tab {
+		position: absolute;
+		top: -1px;
+		right: 1rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3125rem;
+		padding: 0.1875rem 0.5rem 0.25rem;
+		border-radius: 0 0 0.375rem 0.375rem;
+		background-color: color-mix(in oklab, var(--pl-source) 82%, #000);
+		color: #fff;
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		pointer-events: none;
+	}
+
+	.pl-card__actions {
+		position: relative;
+		z-index: 1;
+		display: flex;
+		align-self: end;
+		gap: 0.375rem;
+	}
+
+	/* Phone: the mosaic down the left, the words and then the buttons beside it */
+	@media (max-width: 479px) {
+		.pl-card {
+			grid-template-columns: 5rem minmax(0, 1fr);
+			gap: 0.5rem 0.875rem;
+			align-items: start;
+			padding: 0.75rem;
+		}
+		.pl-card--sourced {
+			padding-top: 1.5rem;
+		}
+		.pl-card__art {
+			grid-row: 1 / 3;
+			width: 5rem;
+		}
+		.pl-card__link {
+			padding-top: 0.25rem;
+		}
+		.pl-card__name {
+			font-size: 1.3125rem;
+			-webkit-line-clamp: 1;
+			line-clamp: 1;
+		}
+		.pl-card__actions {
+			grid-column: 2;
+			justify-content: flex-end;
+		}
+	}
+
+	@media (prefers-contrast: more) {
+		.pl-card__meta {
+			color: var(--color-base-content);
+		}
+	}
+</style>

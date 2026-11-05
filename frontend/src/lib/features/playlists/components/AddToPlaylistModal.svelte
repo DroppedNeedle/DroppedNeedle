@@ -1,5 +1,4 @@
 <script lang="ts">
-	import '$lib/features/player/components/now-playing.css';
 	import { browser } from '$app/environment';
 	import { Disc3, Search, Plus, Check, CircleCheck } from 'lucide-svelte';
 	import { fly } from '$lib/ui/motion';
@@ -234,8 +233,8 @@
 				disabled={creating}
 			/>
 			<IconButton
-				variant="accent"
-				size="sm"
+				variant="primary"
+				shape="square"
 				icon={Plus}
 				label="Create playlist"
 				class="shrink-0"
@@ -256,91 +255,84 @@
 			/>
 		{/if}
 
-		<div class="crate-scroll scrollbar-hide -mx-1 max-h-[min(56vh,27rem)] overflow-y-auto px-1">
+		<div class="crate-scroll scrollbar-hide max-h-[min(56vh,27rem)] overflow-y-auto">
 			{#if loading}
-				<div class="crate-grid">
-					{#each Array(8) as _, i (i)}
-						<div class="sleeve-skel" data-testid="playlist-skeleton"></div>
+				<ul class="crate-list">
+					{#each Array(6) as _, i (i)}
+						<li class="crate-row" data-testid="playlist-skeleton">
+							<div class="skeleton size-12 shrink-0 rounded-md"></div>
+							<div class="flex flex-1 flex-col gap-2">
+								<div class="skeleton h-4 w-1/2"></div>
+								<div class="skeleton h-3 w-1/4"></div>
+							</div>
+						</li>
 					{/each}
-				</div>
+				</ul>
 			{:else if fetchError}
 				<div role="alert" class="alert alert-error">
 					<span>{fetchError}</span>
 				</div>
 			{:else if playlists.length === 0}
 				<div class="flex flex-col items-center gap-2 py-10 text-center">
-					<div class="crate-disc crate-disc--lg" aria-hidden="true">
-						<Disc3 class="h-7 w-7 text-muted" />
-					</div>
+					<Disc3 class="mb-1 size-10 text-muted" aria-hidden="true" />
 					<p class="text-sm font-semibold text-muted">You haven't created any playlists yet.</p>
 					<p class="max-w-[16rem] text-xs text-muted">
 						Name one above and press your first record.
 					</p>
 				</div>
 			{:else}
-				<div class="crate-grid">
+				<ul class="crate-list">
 					{#each filteredPlaylists as playlist, i (playlist.id)}
 						{@const state = sleeveState(playlist.id)}
-						<button
-							type="button"
-							class="sleeve {state === 'added'
-								? 'is-added'
-								: state === 'adding'
-									? 'is-adding'
-									: state === 'partial'
-										? 'is-partial'
-										: ''}"
-							onclick={() => handleAdd(playlist)}
-							disabled={state === 'added' || state === 'adding' || !canAdd}
-							aria-label={sleeveAria(playlist)}
-							title={state === 'partial'
-								? `${existingCount(playlist.id)} of ${trackCount} already in "${playlist.name}"`
-								: sleeveAria(playlist)}
+						<li
 							in:fly={{
-								y: reducedMotion ? 0 : 14,
-								duration: reducedMotion ? 0 : 260,
-								delay: reducedMotion ? 0 : Math.min(i, 11) * 35
+								y: reducedMotion ? 0 : 10,
+								duration: reducedMotion ? 0 : 220,
+								delay: reducedMotion ? 0 : Math.min(i, 11) * 30
 							}}
 						>
-							<div class="sleeve-art">
-								<div class="vinyl-wrap" aria-hidden="true">
-									<div class="vinyl-disc"></div>
-								</div>
-								<div class="sleeve-cover">
+							<button
+								type="button"
+								class="crate-row crate-row--button is-{state}"
+								onclick={() => handleAdd(playlist)}
+								disabled={state === 'added' || state === 'adding' || !canAdd}
+								aria-label={sleeveAria(playlist)}
+								title={state === 'partial'
+									? `${existingCount(playlist.id)} of ${trackCount} already in "${playlist.name}"`
+									: sleeveAria(playlist)}
+							>
+								<span class="crate-art">
 									<PlaylistMosaic
 										coverUrls={playlist.cover_urls}
 										customCoverUrl={playlist.custom_cover_url}
 										size="w-full h-full"
 										rounded="rounded-none"
 									/>
-								</div>
-								{#if state === 'adding'}
-									<div class="sleeve-sweep pointer-events-none absolute inset-0 z-20"></div>
-								{/if}
-								<div class="sleeve-badge sleeve-badge--{state}">
+								</span>
+								<span class="min-w-0 flex-1">
+									<span class="crate-name">{playlist.name}</span>
+									<span class="crate-meta">
+										{playlist.track_count} track{playlist.track_count === 1 ? '' : 's'}{state ===
+										'partial'
+											? ` · ${existingCount(playlist.id)} here`
+											: ''}
+									</span>
+								</span>
+								<span class="crate-badge" aria-hidden="true">
 									{#if state === 'added'}
-										<Check class="h-3.5 w-3.5" />
+										<Check class="size-4" />
 									{:else if state === 'adding'}
 										<span class="loading loading-spinner loading-xs"></span>
 									{:else if state === 'partial'}
-										<CircleCheck class="h-3.5 w-3.5" />
+										<CircleCheck class="size-4" />
 									{:else}
-										<Plus class="h-3.5 w-3.5" />
+										<Plus class="size-4" />
 									{/if}
-								</div>
-							</div>
-							<div class="sleeve-meta">
-								<p class="truncate text-sm font-semibold text-base-content">{playlist.name}</p>
-								<p class="truncate text-[11px] text-muted">
-									{playlist.track_count} track{playlist.track_count === 1 ? '' : 's'}{state ===
-									'partial'
-										? ` · ${existingCount(playlist.id)} here`
-										: ''}
-								</p>
-							</div>
-						</button>
+								</span>
+							</button>
+						</li>
 					{/each}
-				</div>
+				</ul>
 				{#if filteredPlaylists.length === 0}
 					<p class="py-8 text-center text-sm text-muted">
 						No playlists match "{search}".
@@ -364,291 +356,103 @@
 </Modal>
 
 <style>
-	/* The label disc in the empty state. */
-	.crate-disc {
-		display: grid;
-		place-items: center;
-		height: 2.75rem;
-		width: 2.75rem;
-		flex-shrink: 0;
-		border-radius: 9999px;
-		color: var(--color-primary);
-		background:
-			radial-gradient(
-				circle at 35% 30%,
-				oklch(from var(--color-base-content) l c h / 0.14),
-				transparent 55%
-			),
-			radial-gradient(circle at center, var(--color-base-300), var(--color-base-100) 92%);
-		box-shadow:
-			inset 0 0 0 1px oklch(from var(--color-base-content) l c h / 0.1),
-			0 0 22px oklch(from var(--color-primary) l c h / 0.18);
+	.crate-list {
+		border-block: 1px solid var(--dn-line);
 	}
-	.crate-disc--lg {
-		height: 3.5rem;
-		width: 3.5rem;
+	.crate-list > :global(* + *) {
+		border-top: 1px solid var(--dn-line);
 	}
 
-	.crate-grid {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 0.85rem;
-		padding: 0.25rem 0 0.5rem;
-	}
-	@media (min-width: 480px) {
-		.crate-grid {
-			grid-template-columns: repeat(3, minmax(0, 1fr));
-		}
-	}
-	@media (min-width: 700px) {
-		.crate-grid {
-			grid-template-columns: repeat(4, minmax(0, 1fr));
-		}
-	}
-
-	.sleeve-skel {
-		aspect-ratio: 1;
-		border-radius: 0.6rem;
-		background: oklch(from var(--color-base-300) l c h / 0.6);
-		animation: sleeve-pulse 1.4s ease-in-out infinite;
-	}
-
-	/* Local light-sweep for the "filing" moment (the global crate-sweep relies on
-	   removed v4 tokens). The crate-sweep keyframes themselves are token-free. */
-	.sleeve-sweep {
-		border-radius: 0.6rem;
-		background: linear-gradient(
-			115deg,
-			transparent 28%,
-			oklch(from var(--color-primary) l c h / 0.3) 50%,
-			transparent 72%
-		);
-		animation: crate-sweep 0.75s ease-out;
-	}
-	@keyframes sleeve-pulse {
-		50% {
-			opacity: 0.45;
-		}
-	}
-
-	/* A playlist sleeve: the cover is the sleeve, a vinyl peeks out the right edge. */
-	.sleeve {
-		position: relative;
-		z-index: 1;
+	.crate-row {
 		display: flex;
-		flex-direction: column;
-		gap: 0.4rem;
-		padding: 0;
+		width: 100%;
+		align-items: center;
+		gap: 0.875rem;
+		padding: 0.625rem 0.5rem;
 		text-align: left;
-		background: none;
-		border: none;
-		cursor: pointer;
-		perspective: 720px;
 	}
-	.sleeve:disabled {
+	.crate-row--button {
+		border-radius: 0.375rem;
+		transition: background-color 150ms;
+	}
+	.crate-row--button:not(:disabled):hover {
+		background-color: var(--color-base-300);
+	}
+	.crate-row--button:focus-visible {
+		outline-offset: -2px;
+	}
+	.crate-row--button:disabled {
 		cursor: default;
 	}
-	/* Hovered/added sleeves rise above neighbours so the peeking record isn't covered. */
-	.sleeve:hover,
-	.sleeve:focus-visible,
-	.sleeve.is-added,
-	.sleeve.is-adding {
-		z-index: 6;
-	}
 
-	.sleeve-art {
-		position: relative;
-		aspect-ratio: 1;
-		border-radius: 0.6rem;
-		transform-style: preserve-3d;
-		transition:
-			transform 0.28s var(--ease-spring, cubic-bezier(0.23, 1, 0.32, 1)),
-			box-shadow 0.28s var(--ease-spring, cubic-bezier(0.23, 1, 0.32, 1));
-		box-shadow: 0 8px 18px -12px oklch(from var(--color-base-100) l c h / 0.95);
-	}
-
-	/* The sleeve cover sits on top of the vinyl. Absolute-fill so its height tracks
-	   the aspect-ratio box (a % height would collapse to the cover's content size). */
-	.sleeve-cover {
-		position: absolute;
-		inset: 0;
-		z-index: 2;
+	.crate-art {
+		flex: none;
+		width: 3rem;
+		height: 3rem;
 		overflow: hidden;
-		border-radius: 0.6rem;
-		box-shadow:
-			inset 0 0 0 1px oklch(from var(--color-base-content) l c h / 0.1),
-			inset -10px 0 18px -14px oklch(from var(--color-base-100) l c h / 0.9);
-	}
-	/* a faint sleeve "opening" highlight down the right spine */
-	.sleeve-cover::after {
-		content: '';
-		position: absolute;
-		inset: 6% 0 6% auto;
-		right: 0;
-		width: 2px;
-		background: linear-gradient(
-			oklch(from var(--color-base-content) l c h / 0),
-			oklch(from var(--color-base-content) l c h / 0.18),
-			oklch(from var(--color-base-content) l c h / 0)
-		);
-		z-index: 3;
+		border-radius: 0.3125rem;
 	}
 
-	.vinyl-wrap {
-		position: absolute;
-		inset: 8% -2% 8% auto;
-		right: 0;
-		aspect-ratio: 1;
-		z-index: 1;
+	.crate-name {
+		display: block;
+		overflow: hidden;
+		font-size: 0.9375rem;
+		font-weight: 650;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.crate-meta {
+		display: block;
+		margin-top: 0.125rem;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--dn-muted);
+	}
+
+	/* the row's state at the right: add, adding, partly there, added */
+	.crate-badge {
 		display: grid;
+		flex: none;
 		place-items: center;
-		transform: translateX(20%);
-		transition: transform 0.32s var(--ease-overshoot, cubic-bezier(0.34, 1.56, 0.64, 1));
-	}
-	.vinyl-disc {
-		position: relative;
-		height: 100%;
-		aspect-ratio: 1;
-		border-radius: 9999px;
-		background:
-			radial-gradient(circle at center, var(--color-primary) 0 17%, transparent 18%),
-			repeating-radial-gradient(
-				circle at center,
-				transparent 0 2px,
-				oklch(from var(--color-base-content) l c h / 0.16) 2px 3px
-			),
-			radial-gradient(
-				circle at 36% 30%,
-				oklch(from var(--color-base-content) l c h / 0.28),
-				transparent 48%
-			),
-			radial-gradient(circle at center, var(--color-base-300) 0%, var(--color-base-100) 95%);
-		box-shadow:
-			inset 0 0 0 1px oklch(from var(--color-base-content) l c h / 0.14),
-			0 10px 20px -10px oklch(from var(--color-base-100) l c h / 0.95);
-	}
-	.vinyl-disc::after {
-		content: '';
-		position: absolute;
-		left: 50%;
-		top: 50%;
-		height: 5%;
-		width: 5%;
-		transform: translate(-50%, -50%);
-		border-radius: 9999px;
-		background: var(--color-base-100);
-	}
-
-	/* Hover: lift, tilt toward the viewer, slide the record further out + spin. */
-	.sleeve:not(:disabled):hover .sleeve-art,
-	.sleeve:not(:disabled):focus-visible .sleeve-art {
-		transform: translateY(-4px) rotateX(5deg) rotateY(-9deg);
-		box-shadow:
-			0 22px 40px -20px oklch(from var(--color-base-100) l c h / 0.95),
-			0 0 24px oklch(from var(--color-primary) l c h / 0.22);
-	}
-	.sleeve:not(:disabled):hover .vinyl-wrap,
-	.sleeve:not(:disabled):focus-visible .vinyl-wrap {
-		transform: translateX(38%);
-	}
-	.sleeve:not(:disabled):hover .vinyl-disc,
-	.sleeve:not(:disabled):focus-visible .vinyl-disc {
-		animation: spin-vinyl 4.2s linear infinite;
-	}
-
-	/* Adding: the record slots into the sleeve, with a light sweep. */
-	.sleeve.is-adding .vinyl-wrap {
-		transform: translateX(-18%);
-	}
-	.sleeve.is-adding .sleeve-art {
-		box-shadow:
-			0 18px 36px -18px oklch(from var(--color-base-100) l c h / 0.95),
-			0 0 26px oklch(from var(--color-primary) l c h / 0.3);
-	}
-
-	/* Added: tucked in, ringed and glowing. */
-	.sleeve.is-added .vinyl-wrap {
-		transform: translateX(-18%);
-		opacity: 0.85;
-	}
-	.sleeve.is-added .sleeve-art {
-		box-shadow:
-			0 10px 22px -14px oklch(from var(--color-base-100) l c h / 0.95),
-			0 0 0 2px oklch(from var(--color-primary) l c h / 0.6),
-			0 0 26px oklch(from var(--color-primary) l c h / 0.28);
-	}
-	.sleeve.is-added .sleeve-cover {
-		filter: saturate(0.85);
-	}
-
-	.sleeve-badge {
-		position: absolute;
-		bottom: 0.4rem;
-		right: 0.4rem;
-		z-index: 4;
-		display: grid;
-		place-items: center;
-		height: 1.5rem;
-		width: 1.5rem;
-		border-radius: 9999px;
-		color: var(--color-base-100);
-		background: oklch(from var(--color-base-content) l c h / 0.55);
-		backdrop-filter: blur(4px);
-		box-shadow: 0 2px 8px -2px oklch(from var(--color-base-100) l c h / 0.9);
-		opacity: 0;
-		transform: scale(0.8);
+		width: 2rem;
+		height: 2rem;
+		border: 1px solid var(--dn-edge);
+		border-radius: 0.5rem;
+		color: var(--color-base-content);
 		transition:
-			opacity 0.18s ease,
-			transform 0.2s var(--ease-overshoot, cubic-bezier(0.34, 1.56, 0.64, 1)),
-			background-color 0.18s ease;
+			background-color 150ms,
+			border-color 150ms;
 	}
-	.sleeve:hover .sleeve-badge,
-	.sleeve:focus-visible .sleeve-badge,
-	.sleeve-badge--added,
-	.sleeve-badge--adding,
-	.sleeve-badge--partial {
-		opacity: 1;
-		transform: scale(1);
+	.crate-row--button:not(:disabled):hover .crate-badge {
+		border-color: var(--dn-action-edge);
+		background-color: var(--dn-action);
+		color: var(--dn-action-content);
 	}
-	.sleeve-badge--added {
-		background: var(--color-primary);
-		color: var(--color-primary-content);
+	.is-added .crate-badge {
+		border-color: var(--dn-action-edge);
+		background-color: var(--dn-action);
+		color: var(--dn-action-content);
 	}
-	.sleeve-badge--partial {
-		background: var(--color-warning);
-		color: var(--color-warning-content);
+	.is-partial .crate-badge {
+		border-color: color-mix(in oklab, var(--color-warning) 60%, transparent);
+		color: var(--color-warning);
 	}
 
 	.status-strip {
-		border-radius: 0.85rem;
+		border-radius: var(--radius-box);
 		padding: 0.55rem 0.9rem;
 		border: 1px solid transparent;
 	}
 	.status-strip--ok {
-		background: oklch(from var(--color-primary) l c h / 0.14);
-		border-color: oklch(from var(--color-primary) l c h / 0.4);
-		color: oklch(from var(--color-primary) l c h);
+		background: color-mix(in oklab, var(--color-success) 12%, transparent);
+		border-color: color-mix(in oklab, var(--color-success) 45%, transparent);
 	}
 	.status-strip--err {
-		background: oklch(from var(--color-error) l c h / 0.14);
-		border-color: oklch(from var(--color-error) l c h / 0.4);
+		background: color-mix(in oklab, var(--color-error) 12%, transparent);
+		border-color: color-mix(in oklab, var(--color-error) 45%, transparent);
 		color: var(--color-error);
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.sleeve-art,
-		.vinyl-wrap,
-		.sleeve-badge,
-		.sleeve-skel {
-			transition: none !important;
-			animation: none !important;
-		}
-		.sleeve:hover .sleeve-art,
-		.sleeve:focus-visible .sleeve-art {
-			transform: none;
-		}
-		.sleeve:hover .vinyl-wrap {
-			transform: translateX(20%);
-		}
 	}
 </style>

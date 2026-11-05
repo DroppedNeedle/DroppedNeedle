@@ -1,15 +1,11 @@
+<!--
+	Album suggestions for one playlist, from its playlist page or from
+	Discover (which first asks which playlist). The playlist it works from
+	sits under the title; the results are album tiles with request, sample,
+	go-to and ignore buttons, and a tile opens to list its tracks.
+-->
 <script lang="ts">
-	import {
-		X,
-		Sparkles,
-		ListMusic,
-		RefreshCw,
-		Music2,
-		Users,
-		Tags,
-		Check,
-		ExternalLink
-	} from 'lucide-svelte';
+	import { X, Sparkles, ListMusic, RefreshCw, Check, ExternalLink } from 'lucide-svelte';
 	import AlbumRequestButton from '$lib/features/requests/components/AlbumRequestButton.svelte';
 	import GenreAlbumCard from '$lib/features/genre/components/GenreAlbumCard.svelte';
 	import SampleButton from '$lib/features/discover/components/SampleButton.svelte';
@@ -21,40 +17,51 @@
 	import type { components } from '$lib/api/v3/openapi';
 	import { fetchAlbumTracks } from '$lib/features/album/queries/albumTracks';
 	import { ApiError } from '$lib/api/errors';
-	import { formatDuration } from '$lib/utils/formatting';
+	import { formatDuration, formatTotalDurationSec } from '$lib/utils/formatting';
 	import type { Track } from '$lib/features/album/queries/types';
 	import type { AlbumRef } from '$lib/features/discover/queries/types';
 	import { albumRows } from '$lib/features/discover/components/sectionRows';
 	import { toastStore } from '$lib/stores/toast';
 	import { libraryStore } from '$lib/stores/library';
 	import { albumHrefOrNull } from '$lib/utils/entityRoutes';
+	import PlaylistMosaic from '$lib/media/PlaylistMosaic.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
-	import Field from '$lib/ui/Field.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
+	import SelectField from '$lib/ui/SelectField.svelte';
 	import { untrack } from 'svelte';
 
 	interface Props {
 		open: boolean;
 		playlistId?: string;
 		playlistName?: string;
+		/** The preselected playlist's mosaic. */
+		playlistCoverUrls?: string[];
+		playlistCustomCoverUrl?: string | null;
+		/** The preselected playlist's counts line. */
+		playlistMeta?: string;
 	}
 
-	let { open = $bindable(false), playlistId = '', playlistName = '' }: Props = $props();
+	let {
+		open = $bindable(false),
+		playlistId = '',
+		playlistName = '',
+		playlistCoverUrls = [],
+		playlistCustomCoverUrl = null,
+		playlistMeta = ''
+	}: Props = $props();
 
 	let selectedPlaylistId = $state('');
-	let selectedPlaylistName = $state('');
-	let suggestionCount: number = $state(15);
+	let countValue = $state('15');
 	let ignoredIds = $state(new Set<string>());
 	let expandedAlbumId = $state<string | null>(null);
 	let expandedTracks = $state<Track[]>([]);
 	let expandLoading = $state(false);
 	let expandAbortController = $state<AbortController | null>(null);
 
+	const suggestionCount = $derived(parseInt(countValue, 10));
 	const isPreselected = $derived(!!playlistId);
 	const activePlaylistId = $derived(isPreselected ? playlistId : selectedPlaylistId);
-	const activePlaylistName = $derived(isPreselected ? playlistName : selectedPlaylistName);
 
 	type PlaylistSummary = components['schemas']['PlaylistSummary'];
 	const playlistListQuery = getPlaylistListV3Query(() => open && !isPreselected);
@@ -64,6 +71,28 @@
 		)
 	);
 	const playlistsLoading = $derived(playlistListQuery.isLoading);
+	const picked = $derived(playlists.find((p) => p.id === selectedPlaylistId) ?? null);
+
+	const activePlaylist = $derived.by(() => {
+		if (isPreselected) {
+			return {
+				name: playlistName,
+				coverUrls: playlistCoverUrls,
+				customCoverUrl: playlistCustomCoverUrl,
+				meta: playlistMeta
+			};
+		}
+		if (!picked) return null;
+		const duration = picked.total_duration ? formatTotalDurationSec(picked.total_duration) : '';
+		return {
+			name: picked.name,
+			coverUrls: picked.cover_urls,
+			customCoverUrl: picked.custom_cover_url,
+			meta: [`${picked.track_count} track${picked.track_count === 1 ? '' : 's'}`, duration]
+				.filter(Boolean)
+				.join(' · ')
+		};
+	});
 
 	const suggestionsQuery = getDiscoverPlaylistSuggestionsV3Query(() => ({
 		playlistId: activePlaylistId,
@@ -101,28 +130,12 @@
 	});
 
 	function resetState() {
-		if (!isPreselected) {
-			selectedPlaylistId = '';
-			selectedPlaylistName = '';
-		}
+		if (!isPreselected) selectedPlaylistId = '';
 		ignoredIds = new Set();
 		expandAbortController?.abort();
 		expandAbortController = null;
 		expandedAlbumId = null;
 		expandedTracks = [];
-	}
-
-	function handlePlaylistSelect(e: Event) {
-		const target = e.target as HTMLSelectElement;
-		const id = target.value;
-		selectedPlaylistId = id;
-		const found = playlists.find((p) => p.id === id);
-		selectedPlaylistName = found?.name ?? '';
-	}
-
-	function handleCountChange(e: Event) {
-		const target = e.target as HTMLSelectElement;
-		suggestionCount = parseInt(target.value, 10);
 	}
 
 	function ignoreAlbum(album: AlbumRef) {
@@ -171,123 +184,94 @@
 			}
 		}
 	}
-	const countOptions = [10, 15, 20, 30] as const;
+	const countOptions = ['10', '15', '20', '30'].map((c) => ({ value: c, label: c }));
+	const playlistOptions = $derived([
+		{ value: '', label: 'Select a playlist', disabled: true },
+		...playlists.map((pl) => ({
+			value: pl.id,
+			label: `${pl.name} (${pl.track_count} track${pl.track_count === 1 ? '' : 's'})`
+		}))
+	]);
 	const showPicker = $derived(!isPreselected && !activePlaylistId);
 	const showResults = $derived(!!activePlaylistId);
 	const allIgnored = $derived(showResults && !isLoading && !isError && visibleAlbums.length === 0);
 </script>
 
-<Modal
-	bind:open
-	size="xl"
-	icon={Sparkles}
-	closeButton
-	title={activePlaylistName ? `Suggestions for ${activePlaylistName}` : 'Playlist Discovery'}
->
-	<div>
+<Modal bind:open size="sheet" icon={Sparkles} iconTone="action" title="Playlist suggestions">
+	<div class="pl-sheet h-full overflow-y-auto px-4 py-5 md:px-6">
 		{#if showPicker}
-			<Card variant="bordered" padding="md">
-				<p class="text-sm text-muted">
-					Pick a playlist to get album suggestions based on its contents.
-				</p>
-
-				<div class="flex flex-col sm:flex-row gap-3">
-					<div class="flex-1">
-						<Field label="Playlist">
-							{#snippet children(control)}
-								{#if playlistsLoading}
-									<div class="flex items-center gap-2 py-2">
-										<span class="loading loading-spinner loading-sm text-primary"></span>
-										<span class="text-sm text-muted">Loading playlists…</span>
-									</div>
-								{:else if playlistListQuery.isError}
-									<span class="text-sm text-error/70 py-2">
-										{playlistListQuery.error instanceof Error
-											? playlistListQuery.error.message
-											: 'Failed to load playlists'}
-									</span>
-								{:else if playlists.length === 0}
-									<span class="text-sm text-muted py-2">
-										No playlists found. Create one first.
-									</span>
-								{:else}
-									<select
-										{...control}
-										class="select w-full"
-										value=""
-										onchange={handlePlaylistSelect}
-									>
-										<option value="" disabled>Select a playlist</option>
-										{#each playlists as pl (pl.id)}
-											<option value={pl.id}>
-												{pl.name} ({pl.track_count} track{pl.track_count === 1 ? '' : 's'})
-											</option>
-										{/each}
-									</select>
-								{/if}
-							{/snippet}
-						</Field>
+			<div class="pl-sheet__picker">
+				<p class="text-muted">Pick a playlist to get album suggestions based on its contents.</p>
+				<div class="pl-sheet__fields">
+					<div class="min-w-0 flex-1">
+						{#if playlistsLoading}
+							<p class="pl-sheet__label">Playlist</p>
+							<div class="flex items-center gap-2 py-2">
+								<span class="loading loading-spinner loading-sm text-primary"></span>
+								<span class="text-sm text-muted">Loading playlists…</span>
+							</div>
+						{:else if playlistListQuery.isError}
+							<p class="pl-sheet__label">Playlist</p>
+							<p class="py-2 text-sm text-error">
+								{playlistListQuery.error instanceof Error
+									? playlistListQuery.error.message
+									: 'Failed to load playlists'}
+							</p>
+						{:else if playlists.length === 0}
+							<p class="pl-sheet__label">Playlist</p>
+							<p class="py-2 text-sm text-muted">No playlists found. Create one first.</p>
+						{:else}
+							<SelectField
+								label="Playlist"
+								options={playlistOptions}
+								bind:value={selectedPlaylistId}
+							/>
+						{/if}
 					</div>
-
-					<div class="w-full sm:w-28">
-						<Field label="Count">
-							{#snippet children(control)}
-								<select
-									{...control}
-									class="select w-full"
-									value={String(suggestionCount)}
-									onchange={handleCountChange}
-								>
-									{#each countOptions as c (c)}
-										<option value={String(c)}>{c}</option>
-									{/each}
-								</select>
-							{/snippet}
-						</Field>
+					<div class="w-full sm:w-32">
+						<SelectField label="Count" options={countOptions} bind:value={countValue} />
 					</div>
 				</div>
-			</Card>
+			</div>
 		{/if}
 
 		{#if showResults}
-			<div aria-live="polite">
-				{#if !showPicker}
-					<div class="flex items-center gap-2 mb-4 mt-4">
-						<label class="text-sm text-muted" for="count-select-inline">Results:</label>
-						<select
-							id="count-select-inline"
-							class="select select-sm w-20"
-							value={String(suggestionCount)}
-							onchange={handleCountChange}
-						>
-							{#each countOptions as c (c)}
-								<option value={String(c)}>{c}</option>
-							{/each}
-						</select>
+			{#if activePlaylist}
+				<div class="pl-sheet__for">
+					<div class="pl-sheet__mosaic">
+						<PlaylistMosaic
+							coverUrls={activePlaylist.coverUrls}
+							customCoverUrl={activePlaylist.customCoverUrl}
+							size="w-full h-full"
+							rounded="rounded-none"
+						/>
 					</div>
-				{/if}
+					<div class="min-w-0 flex-1">
+						<p class="pl-sheet__label">Suggestions for</p>
+						<p class="pl-sheet__name">{activePlaylist.name}</p>
+						{#if activePlaylist.meta}
+							<p class="pl-sheet__meta">{activePlaylist.meta}</p>
+						{/if}
+					</div>
+					<div class="w-28 shrink-0">
+						<SelectField label="Results" size="sm" options={countOptions} bind:value={countValue} />
+					</div>
+				</div>
+			{/if}
 
+			<div aria-live="polite">
 				{#if isLoading}
-					<div class="flex flex-col gap-5 py-4">
-						<Card
-							variant="bordered"
-							padding="md"
-							class="bg-gradient-to-r from-primary/10 via-base-200/60 to-secondary/10"
-						>
-							<div class="flex flex-wrap items-center gap-4">
-								<div class="skeleton h-4 w-24 rounded"></div>
-								<div class="skeleton h-4 w-20 rounded"></div>
-								<div class="flex gap-1">
-									<div class="skeleton h-5 w-12 rounded-full"></div>
-									<div class="skeleton h-5 w-16 rounded-full"></div>
-									<div class="skeleton h-5 w-10 rounded-full"></div>
-								</div>
-							</div>
-						</Card>
-						<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+					<div class="flex flex-col gap-5">
+						<div class="flex flex-wrap items-center gap-3">
+							<div class="skeleton h-4 w-24 rounded"></div>
+							<div class="skeleton h-4 w-20 rounded"></div>
+							<div class="skeleton h-5 w-14 rounded-full"></div>
+							<div class="skeleton h-5 w-16 rounded-full"></div>
+						</div>
+						<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
 							{#each Array(8) as _, i (i)}
 								<div class="flex flex-col gap-2">
-									<div class="skeleton aspect-square w-full rounded-2xl"></div>
+									<div class="skeleton aspect-square w-full rounded-lg"></div>
 									<div class="skeleton h-4 w-3/4 rounded"></div>
 									<div class="skeleton h-3 w-1/2 rounded"></div>
 								</div>
@@ -295,152 +279,121 @@
 						</div>
 					</div>
 				{:else if isError}
-					<div class="flex flex-col items-center justify-center py-12 px-8">
+					<div class="flex flex-col items-center justify-center gap-3 px-8 py-12 text-center">
 						{#if errorStatus === 422}
-							<ListMusic class="h-10 w-10 text-warning mb-3" />
-							<p class="text-center text-muted max-w-md">
+							<ListMusic class="size-10 text-warning" aria-hidden="true" />
+							<p class="max-w-md text-muted">
 								This playlist doesn't have enough artist data for discovery. Add more tracks with
 								known artists and try again.
 							</p>
 						{:else if errorStatus === 404}
-							<p class="text-center text-muted">Playlist not found.</p>
+							<p class="text-muted">Playlist not found.</p>
 						{:else}
-							<p class="text-center text-muted mb-4">Couldn't load suggestions. Try again.</p>
+							<p class="text-muted">Couldn't load suggestions. Try again.</p>
 						{/if}
 						<Button
 							variant="primary"
-							size="sm"
+							size="display-sm"
 							icon={RefreshCw}
-							class="mt-4"
+							class="mt-2"
 							onclick={() => suggestionsQuery.refetch()}
 						>
 							Try Again
 						</Button>
 					</div>
 				{:else if allIgnored}
-					<div class="flex flex-col items-center justify-center py-12 px-8">
-						<p class="text-center text-muted">
-							No more suggestions left. Add more tracks or more varied artists for better results.
-						</p>
-					</div>
+					<p class="px-8 py-12 text-center text-muted">
+						No more suggestions left. Add more tracks or more varied artists for better results.
+					</p>
 				{:else if suggestions && visibleAlbums.length === 0}
-					<div class="flex flex-col items-center justify-center py-12 px-8">
-						<p class="text-center text-muted">
-							{suggestions.fallback_message ??
-								'No suggestions yet - try adding more songs or more varied artists to generate recommendations.'}
-						</p>
-					</div>
+					<p class="px-8 py-12 text-center text-muted">
+						{suggestions.fallback_message ??
+							'No suggestions yet - try adding more songs or more varied artists to generate recommendations.'}
+					</p>
 				{:else}
 					{#if profile}
-						<Card
-							variant="bordered"
-							padding="md"
-							class="mb-5 bg-gradient-to-r from-primary/10 via-base-200/60 to-secondary/10"
-						>
-							<div class="flex flex-wrap items-center gap-4 text-sm">
-								<span class="inline-flex items-center gap-1.5 text-muted">
-									<Music2 class="h-3.5 w-3.5" />
-									{profile.track_count ?? 0} track{(profile.track_count ?? 0) === 1 ? '' : 's'}
+						<div class="pl-sheet__summary">
+							<span>
+								{profile.track_count ?? 0} track{(profile.track_count ?? 0) === 1 ? '' : 's'}
+							</span>
+							<span aria-hidden="true">·</span>
+							<span>
+								{(profile.artist_mbids ?? []).length} artist{(profile.artist_mbids ?? []).length ===
+								1
+									? ''
+									: 's'}
+							</span>
+							{#if topGenres.length > 0}
+								<span class="sr-only">Top genres:</span>
+								<span class="flex flex-wrap gap-1.5">
+									{#each topGenres as genre (genre)}
+										<span class="pl-sheet__genre">{genre}</span>
+									{/each}
 								</span>
-								<span class="inline-flex items-center gap-1.5 text-muted">
-									<Users class="h-3.5 w-3.5" />
-									{(profile.artist_mbids ?? []).length} artist{(profile.artist_mbids ?? [])
-										.length === 1
-										? ''
-										: 's'}
-								</span>
-								{#if topGenres.length > 0}
-									<span class="inline-flex items-center gap-1.5 text-muted">
-										<Tags class="h-3.5 w-3.5 shrink-0" />
-									</span>
-									<div class="flex flex-wrap gap-1">
-										{#each topGenres as genre (genre)}
-											<span
-												class="inline-flex items-center rounded-full bg-gradient-to-r from-primary/20 to-secondary/20 px-2.5 py-0.5 text-xs font-medium text-primary border border-primary/20"
-												>{genre}</span
-											>
-										{/each}
-									</div>
-								{/if}
-							</div>
-						</Card>
+							{/if}
+						</div>
 					{/if}
 
-					<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+					<div
+						class="grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"
+					>
 						{#each visibleAlbums as album (album.musicbrainz_id ?? album.title)}
 							{@const albumKey = album.musicbrainz_id ?? album.title}
 							{@const isExpanded = expandedAlbumId === albumKey}
 							<div
-								class="flex flex-col overflow-hidden"
+								class="flex flex-col"
 								class:col-span-2={isExpanded}
 								class:sm:col-span-3={isExpanded}
 								class:md:col-span-4={isExpanded}
+								class:lg:col-span-5={isExpanded}
 							>
-								<div class="flex flex-col sm:flex-row gap-2">
-									<div class="w-full" class:sm:w-40={isExpanded} class:sm:shrink-0={isExpanded}>
+								<div class="flex flex-col gap-3 sm:flex-row">
+									<div class="w-full" class:sm:w-44={isExpanded} class:sm:shrink-0={isExpanded}>
 										<GenreAlbumCard {album} onclick={() => toggleExpand(album)} />
 									</div>
 									{#if isExpanded}
-										<Card variant="bordered" padding="sm" class="flex-1 min-w-0 mt-2 sm:mt-0">
+										<div class="pl-sheet__tracks">
 											{#if expandLoading}
-												<div class="flex flex-col gap-1.5 py-1">
+												<div class="flex flex-col gap-1.5 p-2">
 													{#each Array(4) as _, i (i)}
 														<div class="skeleton h-6 w-full rounded"></div>
 													{/each}
 												</div>
 											{:else if expandedTracks.length > 0}
-												<div class="max-h-48 overflow-y-auto">
-													<table class="table table-xs w-full">
-														<tbody>
-															{#each expandedTracks as track (track.position)}
-																<tr class="hover:bg-base-200/50">
-																	<td class="opacity-70 w-6 text-right pr-2 text-muted"
-																		>{track.position}</td
-																	>
-																	<td class="truncate max-w-0">{track.title}</td>
-																	<td class="text-muted text-right w-12 shrink-0"
-																		>{formatDuration(track.length)}</td
-																	>
-																	<td class="w-8 px-0">
-																		<SampleButton
-																			sampleKey={`track:${album.artist_name ?? ''}|${track.title}`}
-																			artist={album.artist_name ?? ''}
-																			title={track.title}
-																			kind="track"
-																			size="xs"
-																			albumMbid={album.musicbrainz_id}
-																			artistMbid={album.artist_id}
-																			coverUrl={album.cover_url}
-																		/>
-																	</td>
-																</tr>
-															{/each}
-														</tbody>
-													</table>
-												</div>
+												<ol class="max-h-56 divide-y divide-line overflow-y-auto">
+													{#each expandedTracks as track (track.position)}
+														<li class="flex items-center gap-3 px-3 py-1.5 text-sm">
+															<span class="w-6 text-right font-mono text-xs text-muted tabular-nums"
+																>{track.position}</span
+															>
+															<span class="min-w-0 flex-1 truncate">{track.title}</span>
+															<span class="font-mono text-xs text-muted tabular-nums"
+																>{formatDuration(track.length)}</span
+															>
+															<SampleButton
+																sampleKey={`track:${album.artist_name ?? ''}|${track.title}`}
+																artist={album.artist_name ?? ''}
+																title={track.title}
+																kind="track"
+																size="xs"
+																albumMbid={album.musicbrainz_id}
+																artistMbid={album.artist_id}
+																coverUrl={album.cover_url}
+															/>
+														</li>
+													{/each}
+												</ol>
 											{:else}
-												<p class="text-xs text-muted py-2">No track listing available.</p>
+												<p class="p-3 text-xs text-muted">No track listing available.</p>
 											{/if}
-										</Card>
+										</div>
 									{/if}
 								</div>
-								<div class="flex items-center justify-center gap-1 mt-2">
+								<div class="mt-1 flex items-center gap-1">
 									{#if album.musicbrainz_id}
 										{@const albumLink = albumHrefOrNull(album.musicbrainz_id)}
 										{@const isAlbumRequested =
 											album.requested || libraryStore.isRequested(album.musicbrainz_id)}
-										{#if albumLink}
-											<div class="tooltip tooltip-bottom" data-tip="Go to album">
-												<IconButton
-													size="sm"
-													icon={ExternalLink}
-													label="Go to {album.title}"
-													href={albumLink}
-													class="min-h-[36px] min-w-[36px]"
-												/>
-											</div>
-										{/if}
-
 										{#if !album.in_library && !isAlbumRequested}
 											<div class="tooltip tooltip-bottom" data-tip="Request album">
 												<AlbumRequestButton
@@ -453,32 +406,42 @@
 										{:else if album.in_library}
 											<div class="tooltip tooltip-bottom" data-tip="In library">
 												<span
-													class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-success/30 text-success"
+													class="inline-flex size-9 items-center justify-center rounded-full border border-success/40 text-success"
 													role="img"
 													aria-label="In library"
 												>
-													<Check class="h-3.5 w-3.5" />
+													<Check class="size-3.5" />
 												</span>
 											</div>
 										{/if}
 
-										{#if album.musicbrainz_id}
-											<SampleButton
-												sampleKey={album.musicbrainz_id}
-												artist={album.artist_name ?? ''}
-												title={album.title}
-												kind="album"
-												size="sm"
-												artistMbid={album.artist_id}
-												coverUrl={album.cover_url}
-											/>
+										<SampleButton
+											sampleKey={album.musicbrainz_id}
+											artist={album.artist_name ?? ''}
+											title={album.title}
+											kind="album"
+											size="sm"
+											artistMbid={album.artist_id}
+											coverUrl={album.cover_url}
+										/>
+
+										{#if albumLink}
+											<div class="tooltip tooltip-bottom" data-tip="Go to album">
+												<IconButton
+													size="sm"
+													icon={ExternalLink}
+													label="Go to {album.title}"
+													href={albumLink}
+													class="min-h-[36px] min-w-[36px]"
+												/>
+											</div>
 										{/if}
 									{/if}
 									<IconButton
 										size="sm"
 										icon={X}
 										label="Ignore suggestion"
-										class="min-h-[36px] min-w-[36px]"
+										class="ml-auto min-h-[36px] min-w-[36px]"
 										onclick={() => ignoreAlbum(album)}
 									/>
 								</div>
@@ -490,3 +453,115 @@
 		{/if}
 	</div>
 </Modal>
+
+<style>
+	/* labels read as mono capitals, like a sleeve's small print */
+	.pl-sheet :global(.fieldset-legend),
+	.pl-sheet__label {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--dn-muted);
+	}
+
+	.pl-sheet__picker {
+		display: flex;
+		max-width: 44rem;
+		flex-direction: column;
+		gap: 1rem;
+	}
+	.pl-sheet__fields {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+	@media (min-width: 640px) {
+		.pl-sheet__fields {
+			flex-direction: row;
+			align-items: flex-start;
+		}
+	}
+
+	/* the playlist the suggestions come from, ruled off from the results */
+	.pl-sheet__for {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		margin-bottom: 1.25rem;
+		padding-bottom: 1.25rem;
+		border-bottom: 1px solid var(--dn-line);
+	}
+	.pl-sheet__mosaic {
+		flex: none;
+		width: 4rem;
+		aspect-ratio: 1;
+		overflow: hidden;
+		border-radius: 0.375rem;
+	}
+	.pl-sheet__name {
+		overflow: hidden;
+		font-family: var(--font-display);
+		font-size: 1.5rem;
+		line-height: 1.1;
+		letter-spacing: 0.01em;
+		text-overflow: ellipsis;
+		text-transform: uppercase;
+		white-space: nowrap;
+		font-synthesis: none;
+	}
+	.pl-sheet__meta {
+		margin-top: 0.125rem;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--dn-muted);
+	}
+
+	.pl-sheet__summary {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem 0.75rem;
+		margin-bottom: 1.25rem;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+	}
+	.pl-sheet__genre {
+		padding: 0.125rem 0.5rem;
+		border: 1px solid var(--dn-edge);
+		border-radius: 9999px;
+		font-family: var(--font-sans);
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.02em;
+		text-transform: none;
+	}
+
+	.pl-sheet__tracks {
+		min-width: 0;
+		flex: 1;
+		overflow: hidden;
+		border: 1px solid var(--dn-line);
+		border-radius: var(--radius-box);
+		background-color: var(--color-base-100);
+	}
+
+	@media (max-width: 479px) {
+		.pl-sheet__for {
+			flex-wrap: wrap;
+		}
+		.pl-sheet__mosaic {
+			width: 3.25rem;
+		}
+		.pl-sheet__name {
+			font-size: 1.25rem;
+		}
+	}
+</style>

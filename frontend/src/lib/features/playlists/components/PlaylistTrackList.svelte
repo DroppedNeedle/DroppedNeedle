@@ -20,8 +20,10 @@
 	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import SourcePickerDropdown from '$lib/features/playlists/components/SourcePickerDropdown.svelte';
 	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
-	import { Music, Trash2, ListPlus, ListStart, GripVertical, Play, X } from 'lucide-svelte';
+	import { Trash2, ListPlus, ListStart, GripVertical, Play, X } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import VinylRecord from '$lib/ui/VinylRecord.svelte';
+	import PaperPanel from '$lib/ui/PaperPanel.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 
 	interface Props {
@@ -356,128 +358,133 @@
 <svelte:window onkeydown={handleWindowKeydown} />
 
 {#if playlist.tracks.length === 0}
-	<div class="flex flex-col items-center justify-center py-16 gap-3">
-		<Music class="h-12 w-12 text-base-content/20" />
-		<h2 class="text-base font-semibold text-muted">This playlist is empty</h2>
-		<p class="text-sm text-muted">Add tracks from album pages using the context menu</p>
-	</div>
+	<PaperPanel>
+		<div class="flex flex-col items-center gap-2 px-6 pt-8 pb-12 text-center">
+			<VinylRecord label class="mb-3 w-36" />
+			<h2 class="text-2xl text-paper-content sm:text-3xl">This playlist is empty</h2>
+			<p class="text-sm text-muted">Add tracks from album pages using the context menu</p>
+		</div>
+	</PaperPanel>
 {:else}
-	<ul class="list bg-base-200 rounded-box overflow-visible">
-		{#if playlist.tracks.length > 1 && !readonly}
-			<li class="px-3 sm:px-4 py-2 border-b border-base-300/50">
-				<label class="flex items-center gap-2 cursor-pointer text-xs text-muted">
-					<input
-						type="checkbox"
-						class="checkbox checkbox-sm"
-						checked={selectedIds.size === playlist.tracks.length}
-						indeterminate={selectedIds.size > 0 && selectedIds.size < playlist.tracks.length}
-						onchange={toggleSelectAll}
-					/>
-					Select all
-				</label>
-			</li>
-		{/if}
-		{#each playlist.tracks as track, i (track.id)}
-			{@const isCurrentlyPlaying =
-				playerStore.isPlaying &&
-				(playerStore.currentQueueItem?.playlistTrackId
-					? playerStore.currentQueueItem.playlistTrackId === track.id
-					: playerStore.currentQueueItem?.trackSourceId === track.track_source_id &&
-						playerStore.currentQueueItem?.sourceType === track.source_type)}
-			<li
-				transition:slide={{ duration: 200 }}
-				class="group transition-colors p-3 sm:p-4 {selectedIds.has(track.id)
-					? 'bg-primary/5'
-					: isCurrentlyPlaying
-						? 'bg-accent/10'
-						: 'hover:bg-base-300/50'}"
-				class:opacity-50={dragIndex === i}
-				class:border-t-2={dragOverIndex === i && dragIndex !== null && dragIndex !== i}
-				class:border-accent={dragOverIndex === i && dragIndex !== null && dragIndex !== i}
-				draggable={!selectionMode && !readonly}
-				ondragstart={(e) => handleDragStart(e, i)}
-				ondragover={(e) => handleDragOver(e, i)}
-				ondragleave={handleDragLeave}
-				ondrop={(e) => void handleDrop(e, i)}
-				ondragend={handleDragEnd}
-				role="listitem"
-				aria-roledescription="sortable"
-			>
-				<div class="flex items-center gap-4 w-full">
+	<PaperPanel>
+		{#snippet head()}
+			<div class="pl-row pl-row--head">
+				{#if !readonly}
+					<span class="pl-row__grip" aria-hidden="true"></span>
+					<span class="pl-row__check">
+						{#if playlist.tracks.length > 1}
+							<input
+								type="checkbox"
+								class="checkbox checkbox-sm"
+								title="Select all"
+								aria-label="Select all"
+								checked={selectedIds.size === playlist.tracks.length}
+								indeterminate={selectedIds.size > 0 && selectedIds.size < playlist.tracks.length}
+								onchange={toggleSelectAll}
+							/>
+						{/if}
+					</span>
+				{/if}
+				<span class="pl-row__num">#</span>
+				<span class="pl-row__cover" aria-hidden="true"></span>
+				<span class="pl-row__title">Title</span>
+				<span class="pl-row__album">Album</span>
+				<span class="pl-row__time">Duration</span>
+				<span class="pl-row__menu" aria-hidden="true"></span>
+			</div>
+		{/snippet}
+		<ul class="divide-y divide-paper-border">
+			{#each playlist.tracks as track, i (track.id)}
+				{@const isCurrentlyPlaying =
+					playerStore.isPlaying &&
+					(playerStore.currentQueueItem?.playlistTrackId
+						? playerStore.currentQueueItem.playlistTrackId === track.id
+						: playerStore.currentQueueItem?.trackSourceId === track.track_source_id &&
+							playerStore.currentQueueItem?.sourceType === track.source_type)}
+				{@const albumLinked = isValidMbid(track.album_id)}
+				<li
+					transition:slide={{ duration: 200 }}
+					class="pl-row group {selectedIds.has(track.id)
+						? 'pl-row--selected'
+						: isCurrentlyPlaying
+							? 'pl-row--playing'
+							: ''}"
+					class:opacity-50={dragIndex === i}
+					class:pl-row--drop={dragOverIndex === i && dragIndex !== null && dragIndex !== i}
+					draggable={!selectionMode && !readonly}
+					ondragstart={(e) => handleDragStart(e, i)}
+					ondragover={(e) => handleDragOver(e, i)}
+					ondragleave={handleDragLeave}
+					ondrop={(e) => void handleDrop(e, i)}
+					ondragend={handleDragEnd}
+					role="listitem"
+					aria-roledescription="sortable"
+				>
 					{#if !readonly}
 						<button
 							type="button"
-							class="cursor-grab active:cursor-grabbing p-1 touch-none shrink-0 transition-opacity {selectionMode
+							class="pl-row__grip cursor-grab touch-none transition-opacity active:cursor-grabbing {selectionMode
 								? 'pointer-events-none opacity-0'
-								: '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100'}"
+								: 'pl-reveal'}"
 							aria-label="Drag to reorder"
 							onkeydown={(e) => void handleTrackKeydown(e, i)}
 							tabindex={selectionMode ? -1 : 0}
 							aria-hidden={selectionMode ? 'true' : undefined}
 						>
-							<GripVertical class="h-4 w-4 text-base-content/30" />
+							<GripVertical class="size-4" />
 						</button>
 
-						<input
-							type="checkbox"
-							class="checkbox checkbox-sm shrink-0 transition-opacity {selectionMode
-								? ''
-								: '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100'}"
-							checked={selectedIds.has(track.id)}
-							onclick={(e: MouseEvent) => {
-								e.stopPropagation();
-								toggleTrackSelection(track.id, i, e.shiftKey);
-							}}
-							aria-label="Select {track.track_name}"
-						/>
+						<span class="pl-row__check">
+							<input
+								type="checkbox"
+								class="checkbox checkbox-sm transition-opacity {selectionMode ? '' : 'pl-reveal'}"
+								checked={selectedIds.has(track.id)}
+								onclick={(e: MouseEvent) => {
+									e.stopPropagation();
+									toggleTrackSelection(track.id, i, e.shiftKey);
+								}}
+								aria-label="Select {track.track_name}"
+							/>
+						</span>
 					{/if}
 
-					{#if isCurrentlyPlaying}
-						<div class="w-6 flex items-center justify-center shrink-0">
-							<NowPlayingIndicator />
-						</div>
-					{:else}
-						<span
-							class="text-muted text-sm w-6 text-center tabular-nums shrink-0 group-hover:hidden"
-							>{i + 1}</span
-						>
-						<button
-							type="button"
-							class="w-6 text-center shrink-0 hidden group-hover:flex items-center justify-center cursor-pointer"
-							aria-label="Play {track.track_name}"
-							onclick={(e) => {
-								e.stopPropagation();
-								onplaytrack?.(i);
-							}}
-						>
-							<Play class="h-4 w-4 fill-current text-primary" />
-						</button>
-					{/if}
+					<span class="pl-row__num">
+						{#if isCurrentlyPlaying}
+							<NowPlayingIndicator color="bg-primary" />
+						{:else}
+							<span class="pl-row__index">{i + 1}</span>
+							<button
+								type="button"
+								class="pl-row__play"
+								aria-label="Play {track.track_name}"
+								onclick={(e) => {
+									e.stopPropagation();
+									onplaytrack?.(i);
+								}}
+							>
+								<Play class="size-4 fill-current" />
+							</button>
+						{/if}
+					</span>
 
 					<AlbumImage
 						customUrl={track.cover_url ?? null}
 						alt=""
 						size="full"
 						requestSize={250}
-						rounded="md"
-						className="h-10 w-10 shrink-0"
+						rounded="sm"
+						className="pl-row__art size-10 shrink-0"
 					/>
 
-					<div class="flex-1 min-w-0">
-						{#if isValidMbid(track.album_id)}
-							<a
-								href={withBasePath(`/album/${track.album_id}`)}
-								class="font-medium truncate text-sm block hover:underline {isCurrentlyPlaying
-									? 'text-accent'
-									: ''}">{track.track_name}</a
+					<span class="pl-row__title">
+						{#if albumLinked}
+							<a href={withBasePath(`/album/${track.album_id}`)} class="pl-row__name"
+								>{track.track_name}</a
 							>
 						{:else}
-							<span
-								class="font-medium truncate text-sm block {isCurrentlyPlaying ? 'text-accent' : ''}"
-								>{track.track_name}</span
-							>
+							<span class="pl-row__name">{track.track_name}</span>
 						{/if}
-						<span class="text-xs text-muted truncate block">
+						<span class="pl-row__sub">
 							{#if track.artist_id}
 								<a href={withBasePath(`/artist/${track.artist_id}`)} class="hover:underline"
 									>{track.artist_name}</a
@@ -486,52 +493,67 @@
 								{track.artist_name}
 							{/if}
 							{#if track.album_name}
-								<span class="text-base-content/30"> · </span>
-								{#if isValidMbid(track.album_id)}
-									<a
-										href={withBasePath(`/album/${track.album_id}`)}
-										class="text-muted hover:underline">{track.album_name}</a
-									>
-								{:else}
-									<span class="text-muted">{track.album_name}</span>
-								{/if}
+								<span class="md:hidden">
+									<span aria-hidden="true"> · </span>
+									{#if albumLinked}
+										<a href={withBasePath(`/album/${track.album_id}`)} class="hover:underline"
+											>{track.album_name}</a
+										>
+									{:else}
+										{track.album_name}
+									{/if}
+								</span>
 							{/if}
 						</span>
-					</div>
-
-					<span class="text-sm text-muted tabular-nums shrink-0">
-						{formatDurationSec(track.duration)}
 					</span>
 
 					{#if !readonly}
-						<SourcePickerDropdown
-							currentSource={track.source_type}
-							availableSources={track.available_sources ?? [track.source_type]}
-							onchange={(src) => void handleSourceChange(track, src)}
-						/>
+						<span class="pl-row__source">
+							<SourcePickerDropdown
+								currentSource={track.source_type}
+								availableSources={track.available_sources ?? [track.source_type]}
+								onchange={(src) => void handleSourceChange(track, src)}
+							/>
+						</span>
 					{/if}
 
-					<div
-						class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shrink-0"
-					>
-						<ContextMenu items={getTrackMenuItems(track)} position="end" size="xs" />
-					</div>
-				</div>
-			</li>
-		{/each}
-	</ul>
+					<span class="pl-row__album">
+						{#if track.album_name}
+							{#if albumLinked}
+								<a href={withBasePath(`/album/${track.album_id}`)} class="hover:underline"
+									>{track.album_name}</a
+								>
+							{:else}
+								{track.album_name}
+							{/if}
+						{/if}
+					</span>
+
+					<span class="pl-row__time">{formatDurationSec(track.duration)}</span>
+
+					<span class="pl-row__menu">
+						<ContextMenu
+							items={getTrackMenuItems(track)}
+							position="end"
+							size="xs"
+							label="More actions for {track.track_name}"
+						/>
+					</span>
+				</li>
+			{/each}
+		</ul>
+	</PaperPanel>
 
 	{#if selectionMode}
 		<div
-			class="fixed left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-base-300 border border-base-content/10 rounded-box px-4 py-3 shadow-xl {playerStore.isPlayerVisible &&
+			class="pl-selection"
+			style:bottom="calc(var(--ms-bottom-nav-offset) + {playerStore.isPlayerVisible &&
 			playerStore.nowPlaying
-				? 'bottom-28'
-				: 'bottom-4'}"
+				? 'var(--ms-player-height) + '
+				: ''}0.75rem)"
 			transition:fly={{ y: 40, duration: 200 }}
 		>
-			<span class="text-sm font-medium">
-				{selectedIds.size} selected
-			</span>
+			<span class="pl-selection__count">{selectedIds.size} selected</span>
 			<Button variant="ghost" size="sm" icon={X} onclick={clearSelection}>Deselect</Button>
 			<Button
 				variant="danger"
@@ -547,3 +569,239 @@
 {/if}
 
 <div class="sr-only" aria-live="polite" role="status">{liveMessage}</div>
+
+<style>
+	.pl-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		min-height: 3.75rem;
+		padding: 0.5rem 0.75rem;
+		transition: background-color 150ms;
+	}
+	.pl-row:not(.pl-row--head):hover {
+		background-color: color-mix(in oklab, var(--dn-paper-content) 5%, transparent);
+	}
+	.pl-row--playing,
+	.pl-row--playing:not(.pl-row--head):hover {
+		background-color: var(--dn-selected);
+	}
+	.pl-row--selected,
+	.pl-row--selected:not(.pl-row--head):hover {
+		background-color: color-mix(in oklab, var(--color-primary) 12%, transparent);
+	}
+	.pl-row--drop {
+		box-shadow: inset 0 2px 0 var(--color-primary);
+	}
+
+	.pl-row--head {
+		min-height: 2.75rem;
+		padding-block: 0.375rem;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--dn-muted);
+	}
+
+	.pl-row__grip {
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: 1.25rem;
+		color: color-mix(in oklab, var(--dn-paper-content) 50%, transparent);
+	}
+	.pl-row__check {
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: 1.25rem;
+	}
+	/* the owner's handle and tick show on a pointed or focused row; a touch
+	   screen, with no hover, always shows them */
+	@media (hover: hover) {
+		.pl-row :global(.pl-reveal) {
+			opacity: 0;
+		}
+		.pl-row:hover :global(.pl-reveal),
+		.pl-row :global(.pl-reveal:focus-visible) {
+			opacity: 1;
+		}
+	}
+
+	.pl-row__num {
+		position: relative;
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: 1.75rem;
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--dn-muted);
+	}
+	.pl-row--head .pl-row__num {
+		font-size: 0.6875rem;
+	}
+	/* the row's play sits over its number and shows on hover or focus */
+	.pl-row__play {
+		position: absolute;
+		inset: 0;
+		display: grid;
+		place-items: center;
+		border-radius: 0.25rem;
+		color: var(--color-primary);
+		opacity: 0;
+	}
+	.pl-row__play:focus-visible,
+	.pl-row:hover .pl-row__play {
+		opacity: 1;
+	}
+	.pl-row:hover .pl-row__index,
+	.pl-row:has(.pl-row__play:focus-visible) .pl-row__index {
+		opacity: 0;
+	}
+
+	.pl-row--head .pl-row__cover {
+		width: 2.5rem;
+		flex: none;
+	}
+
+	.pl-row__title {
+		display: flex;
+		min-width: 0;
+		flex: 1 1 0;
+		flex-direction: column;
+		gap: 0.125rem;
+	}
+	.pl-row__name {
+		overflow: hidden;
+		font-size: 0.9375rem;
+		font-weight: 650;
+		line-height: 1.3;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	a.pl-row__name:hover {
+		text-decoration: underline;
+	}
+	.pl-row--playing .pl-row__name {
+		color: var(--color-primary);
+	}
+	.pl-row__sub {
+		overflow: hidden;
+		font-size: 0.8125rem;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--dn-muted);
+	}
+
+	.pl-row__album {
+		display: none;
+		min-width: 0;
+		flex: 0 1 28%;
+		overflow: hidden;
+		font-size: 0.875rem;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--dn-muted);
+	}
+	@media (min-width: 768px) {
+		.pl-row__album {
+			display: block;
+		}
+	}
+
+	/* the source column keeps one width, so the album column lines up */
+	.pl-row__source {
+		display: flex;
+		flex: none;
+		justify-content: flex-end;
+		min-width: 6.5rem;
+	}
+
+	.pl-row__time {
+		flex: none;
+		width: 4.25rem;
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		font-variant-numeric: tabular-nums;
+		text-align: right;
+	}
+	.pl-row--head :is(.pl-row__time, .pl-row__album) {
+		font-size: 0.6875rem;
+		color: var(--dn-muted);
+	}
+
+	.pl-row__menu {
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: 1.75rem;
+	}
+
+	/* A phone keeps the number, the title, the duration and the menu: the
+	   cover, the handle (touch screens cannot drag) and a source with
+	   nothing to choose give the title their room. */
+	@media (max-width: 639px) {
+		.pl-row :global(.pl-row__art),
+		.pl-row--head .pl-row__cover,
+		.pl-row__grip {
+			display: none;
+		}
+		.pl-row__source:not(:has(:global(.dropdown))) {
+			display: none;
+		}
+		/* the picker keeps its icon; its name stays for screen readers */
+		.pl-row__source :global(.dropdown > button > span) {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip-path: inset(50%);
+			white-space: nowrap;
+		}
+	}
+
+	@media (max-width: 479px) {
+		.pl-row {
+			gap: 0.5rem;
+			padding-inline: 0.5rem;
+		}
+		.pl-row__time {
+			width: auto;
+		}
+		.pl-row__source {
+			min-width: 0;
+		}
+		.pl-row--head .pl-row__time {
+			width: 3rem;
+		}
+	}
+
+	/* the selection bar floats over the page, above the player and phone bar */
+	.pl-selection {
+		position: fixed;
+		left: 50%;
+		z-index: 50;
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.625rem 0.75rem 0.625rem 1.125rem;
+		translate: -50% 0;
+		border: 1px solid var(--dn-edge);
+		border-radius: var(--radius-box);
+		background-color: var(--color-base-200);
+		box-shadow: 0 18px 40px -16px rgb(0 0 0 / 0.65);
+		white-space: nowrap;
+	}
+	.pl-selection__count {
+		margin-right: 0.25rem;
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+	}
+</style>

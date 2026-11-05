@@ -24,18 +24,14 @@
 		toPageDetail
 	} from '$lib/features/playlists/queries/playlistV3Adapter';
 	import { queryClient } from '$lib/queries/QueryClient';
-	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
-	import { getApiUrl } from '$lib/api/api-utils';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { Music, Download, Lock } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
-	import BackButton from '$lib/ui/BackButton.svelte';
-	import HeroBackdrop from '$lib/media/HeroBackdrop.svelte';
 	import type { PageData } from './$types';
 	import PlaylistHeader from '$lib/features/playlists/components/PlaylistHeader.svelte';
 	import PlaylistTrackList from '$lib/features/playlists/components/PlaylistTrackList.svelte';
 	import DeletePlaylistModal from '$lib/features/playlists/components/DeletePlaylistModal.svelte';
+	import PlaylistNotice from '$lib/features/playlists/components/PlaylistNotice.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -249,24 +245,6 @@
 		}
 	}
 
-	let heroGradient = $state(DEFAULT_GRADIENT);
-
-	let heroBgUrl = $derived.by(() => {
-		if (!playlist) return null;
-		if (playlist.custom_cover_url) return getApiUrl(playlist.custom_cover_url);
-		if (playlist.cover_urls.length > 0) return getApiUrl(playlist.cover_urls[0]);
-		return null;
-	});
-
-	$effect(() => {
-		const url = heroBgUrl;
-		if (url) {
-			extractDominantColor(url).then((gradient) => (heroGradient = gradient));
-		} else {
-			heroGradient = DEFAULT_GRADIENT;
-		}
-	});
-
 	onDestroy(() => {
 		trackList?.clearReorderState();
 		header?.cleanupPreview();
@@ -277,18 +255,18 @@
 	<title>{locked ? 'Private playlist' : (playlist?.name ?? 'Playlist')} - DroppedNeedle</title>
 </svelte:head>
 
-<div class="w-full px-2 sm:px-4 lg:px-8 py-4 sm:py-8 max-w-7xl mx-auto">
+<div class="w-full">
 	{#if loading}
-		<div class="space-y-6 sm:space-y-8">
-			<div class="skeleton h-10 w-10 rounded-full"></div>
-			<div class="flex flex-col lg:flex-row gap-6 lg:gap-8">
-				<div class="skeleton w-full lg:w-64 xl:w-80 aspect-square rounded-box shrink-0"></div>
-				<div class="flex-1 flex flex-col justify-end space-y-4">
-					<div class="skeleton h-4 w-20"></div>
-					<div class="skeleton h-12 w-3/4"></div>
-					<div class="skeleton h-6 w-1/2"></div>
-					<div class="flex gap-4 mt-6">
-						<div class="skeleton h-12 w-32"></div>
+		<div class="mx-auto max-w-7xl space-y-8 px-4 py-5 sm:px-6 lg:px-8" aria-busy="true">
+			<div class="skeleton size-12 rounded-full"></div>
+			<div class="flex flex-col gap-8 md:flex-row md:items-center">
+				<div class="skeleton aspect-square w-full max-w-72 shrink-0 rounded-md lg:max-w-80"></div>
+				<div class="flex flex-1 flex-col gap-4">
+					<div class="skeleton h-16 w-3/4"></div>
+					<div class="skeleton h-4 w-48"></div>
+					<div class="skeleton h-4 w-64"></div>
+					<div class="mt-4 flex gap-3">
+						<div class="skeleton h-12 w-36"></div>
 						<div class="skeleton h-12 w-32"></div>
 					</div>
 				</div>
@@ -300,90 +278,50 @@
 			</div>
 		</div>
 	{:else if locked}
-		<div class="flex flex-col items-center justify-center py-20 gap-4 text-center">
-			<Lock class="h-16 w-16 text-base-content/20" />
-			<div class="space-y-1">
-				<h2 class="text-lg font-semibold text-base-content/80">Private playlist</h2>
-				<p class="text-sm text-muted">{privatePlaylistLine(locked)}</p>
-			</div>
-			<BackButton fallback={withBasePath('/playlists')} />
-		</div>
+		<PlaylistNotice icon={Lock} title="Private playlist" message={privatePlaylistLine(locked)} />
 	{:else if loadError}
-		<div class="flex flex-col items-center justify-center py-20 gap-4 text-center">
-			<Music class="h-16 w-16 text-base-content/20" />
-			<h2 class="text-lg font-semibold text-base-content/80">Couldn't load this playlist</h2>
-			<p class="text-sm text-muted">{loadError}</p>
-			<div class="flex items-center gap-2">
-				<Button variant="accent" size="sm" onclick={() => void detailQuery.refetch()}>Retry</Button>
-				<BackButton fallback={withBasePath('/playlists')} />
-			</div>
-		</div>
+		<PlaylistNotice
+			icon={Music}
+			title="Couldn't load this playlist"
+			message={loadError}
+			onretry={() => void detailQuery.refetch()}
+		/>
 	{:else if !playlist}
-		<div class="flex flex-col items-center justify-center py-20 gap-4">
-			<Music class="h-16 w-16 text-base-content/20" />
-			<h2 class="text-lg font-semibold text-muted">Playlist not found</h2>
-			<BackButton fallback={withBasePath('/playlists')} />
-		</div>
+		<PlaylistNotice icon={Music} title="Playlist not found" />
 	{:else}
-		<div class="space-y-6 sm:space-y-8">
-			<div
-				class="group relative rounded-box playlist-hero"
-				style:--hero-glow-color="var(--brand-hero)"
-			>
-				<div
-					class="absolute inset-0 bg-linear-to-b {heroGradient} transition-all duration-1000 rounded-box"
-				></div>
-				<HeroBackdrop
-					imageUrl={heroBgUrl}
-					opacity={0.15}
-					hoverOpacity={0.2}
-					blur={3}
-					hoverBlur={2}
-					position="full"
-				/>
-				<div
-					class="absolute inset-0 bg-linear-to-b from-transparent via-base-100/50 to-base-100/80 rounded-box pointer-events-none"
-				></div>
+		<PlaylistHeader
+			bind:this={header}
+			{playlist}
+			canEdit={isOwner}
+			{canDelete}
+			sharePending={shareMutation.isPending}
+			onplayall={playAll}
+			onshuffleall={shuffleAll}
+			ondeleteclick={() => deleteModal?.showModal()}
+			onplaylistupdate={handlePlaylistUpdate}
+			onshare={handleShare}
+		/>
 
-				<div class="relative z-10 p-4 sm:p-6 lg:p-8">
-					<div class="mb-4">
-						<BackButton fallback={withBasePath('/playlists')} />
-					</div>
-
-					<PlaylistHeader
-						bind:this={header}
-						{playlist}
-						canEdit={isOwner}
-						{canDelete}
-						sharePending={shareMutation.isPending}
-						onplayall={playAll}
-						onshuffleall={shuffleAll}
-						ondeleteclick={() => deleteModal?.showModal()}
-						onplaylistupdate={handlePlaylistUpdate}
-						onshare={handleShare}
-					/>
-				</div>
-			</div>
-
+		<div class="mx-auto max-w-7xl space-y-6 px-4 pb-10 sm:px-6 lg:px-8">
 			{#if isOwner && missingAlbumCount > 0}
-				<Card variant="bordered" padding="sm">
-					<div class="flex items-center gap-3">
-						<Download class="h-4 w-4 shrink-0 text-muted" />
-						<p class="flex-1 text-sm text-muted">
-							{missingAlbumCount}
-							{missingAlbumCount === 1 ? 'album' : 'albums'} not in your library
-						</p>
-						<Button
-							variant="primary"
-							size="sm"
-							icon={Download}
-							loading={requesting}
-							onclick={() => void handleRequestMissing()}
-						>
-							Request {missingAlbumCount === 1 ? 'album' : missingAlbumCount + ' albums'}
-						</Button>
-					</div>
-				</Card>
+				<div
+					class="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-box border border-warning/60 bg-warning/8 px-4 py-3"
+				>
+					<Download class="size-5 shrink-0 text-warning" aria-hidden="true" />
+					<p class="min-w-0 flex-1 basis-48 text-sm font-medium">
+						{missingAlbumCount}
+						{missingAlbumCount === 1 ? 'album' : 'albums'} not in your library
+					</p>
+					<Button
+						variant="outline"
+						size="display-sm"
+						icon={Download}
+						loading={requesting}
+						onclick={() => void handleRequestMissing()}
+					>
+						Request {missingAlbumCount === 1 ? 'album' : missingAlbumCount + ' albums'}
+					</Button>
+				</div>
 			{/if}
 
 			<PlaylistTrackList
@@ -400,7 +338,7 @@
 			bind:this={deleteModal}
 			playlistName={playlist.name}
 			{deleting}
-			onconfirm={() => void confirmDelete()}
+			onconfirm={confirmDelete}
 		/>
 	{/if}
 </div>

@@ -12,7 +12,8 @@
 	with no Cancel of its own.
 	`titleHref` makes the title a link to the thing the dialog shows; it still
 	names the dialog, and following it closes the dialog.
-	`icon` sets a tinted mark beside the title, in `iconTone`.
+	`icon` sets a tinted mark beside the title, in `iconTone` (`action` is the
+	acid tile with dark ink); a sheet shows it too.
 	`bottomSheet` rises from the bottom edge on a phone and sits centred from
 	`sm` up.
 	`focusTitle` puts focus on the title when it opens, for a dialog that is
@@ -39,7 +40,7 @@
 		size?: 'sm' | 'md' | 'lg' | 'xl' | 'sheet';
 		/** A lucide icon shown in a tinted mark beside the title. */
 		icon?: KitIcon;
-		iconTone?: 'accent' | 'warning' | 'error';
+		iconTone?: 'accent' | 'action' | 'warning' | 'error';
 		/** On a phone, rise from the bottom edge. */
 		bottomSheet?: boolean;
 		focusTitle?: boolean;
@@ -81,6 +82,7 @@
 	const sheet = $derived(size === 'sheet');
 	const iconTones = {
 		accent: 'bg-accent/10 text-accent',
+		action: 'border border-action-edge bg-action text-action-content',
 		warning: 'bg-warning/12 text-warning',
 		error: 'bg-error/12 text-error'
 	};
@@ -170,7 +172,15 @@
 			<header
 				class="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-line bg-base-200 px-4 py-3 md:static md:px-6 md:py-4"
 			>
-				<div class="min-w-0">
+				{#if Icon}
+					<div
+						class="grid h-10 w-10 shrink-0 place-items-center rounded-xl {iconTones[iconTone]}"
+						aria-hidden="true"
+					>
+						<Icon class="h-5 w-5" />
+					</div>
+				{/if}
+				<div class={['min-w-0 flex-1', Icon && 'self-center']}>
 					{@render heading('text-xl leading-tight')}
 					{#if description}
 						<p id={descriptionId} class="mt-0.5 text-sm text-muted">{description}</p>
