@@ -25,15 +25,17 @@
 //! candidate and is looked at again at each run end and in each sweep
 //! ([`follow_waiting`]).
 //!
-//! A row a retag emptied with no proof at all follows its credits by name
-//! ([`follow_renamed`]), the one merge here that names alone decide. The
-//! scan records each credit it moves to another row ([`record_move`]).
-//! At the run end, a row left with no credits merges into the row they
-//! went to when every move went by name (no id in the file on either side,
-//! no proof at the old credit) to that one row, the row has no link and no
-//! proof, the two names differ only in sort name, capitals or spacing, the
-//! play guard holds and no administrator marked them distinct. Any other
-//! row a scan emptied stays, and the duplicate artists list offers it.
+//! Live records whose names have the same `artist_name_key` (capitals,
+//! spacing and Latin accents aside) join last ([`join_namesakes`]), the
+//! one merge here that names decide: when they hold one MusicBrainz id
+//! between them or none, and no administrator marked them distinct
+//! ([`MergeBasis::same_name`]). Records with two ids between them stay
+//! apart, and their ids are asked about, so the web UI can tell them
+//! apart by MusicBrainz's note. Each join keeps a record of what it moved,
+//! and an administrator can undo it (`artist_join`). The scan records each
+//! credit it moves to another row ([`record_move`]); any row a scan
+//! emptied that no join takes stays, and the duplicate artists list offers
+//! it.
 //!
 //! The upgrade from v2 folds a carried row named exactly "Unknown Artist"
 //! into the built-in one ([`fold_v2_placeholder`]) when nothing on it names
@@ -46,32 +48,35 @@
 //!
 //! [`merge_basis`]: super::merge_basis
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
+use super::artist_join::ArtistJoin;
 pub(crate) use super::artists::{
-    CREDITS_MOVED, MERGED_BY_NAME, MOVED_BY_NAME, MOVED_WITH_ID, V2_PLACEHOLDER_FOLDED,
+    CREDITS_MOVED, MERGED_BY_NAME, MOVED_BY_NAME, MOVED_WITH_ID, SAME_NAME_JOINED,
+    V2_PLACEHOLDER_FOLDED,
 };
 use super::artists::{retarget_retired, retire_artist};
-use super::merge_basis::{Follow, MergeBasis, V2PlaceholderKept};
+use super::merge_basis::{Follow, MergeBasis, SameName, V2PlaceholderKept};
 use super::models::{ArtistAliasKind, MergeCandidateState};
 use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::ArtistAction;
 use crate::catalog_actions::record_artist_action;
 use crate::catalog_revision::bump_catalog;
 use crate::identify::artist_links::{MovedProof, placeholder, settle_holders};
-use crate::scan::naming::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID};
-use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
+use crate::identify::merged_ids::nominate;
+use crate::scan::naming::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID, artist_name_key};
+use crate::scan::sqlite_store::artists::{SENTINEL_ARTIST_IDS, UNKEYED_NAMES};
 use droppedneedle_kernel::db::savepoint;
 
 /// The reason the duplicate artists list explains an automatic merge by.
 const REASON: &str = "AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE";
 
 /// Merge every group of live rows proven to be one MusicBrainz artist,
-/// then the rows waiting to follow their credits that now can, then the
-/// rows a retag emptied by name. A group the store fails on is rolled
-/// back and logged, and the next run end tries it again.
+/// then the rows waiting to follow their credits that now can, then join
+/// records of one name. A group the store fails on is rolled back and
+/// logged, and the next run end tries it again.
 pub(crate) fn converge_artists(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<()> {
     match candidate_ids(tx) {
         Ok(ids) => {
@@ -83,7 +88,7 @@ pub(crate) fn converge_artists(tx: &Transaction<'_>, now: f64) -> rusqlite::Resu
         }
     }
     follow_waiting(tx, now)?;
-    follow_renamed(tx, now)
+    join_namesakes(tx, now)
 }
 
 /// Settle the app's links of every row holding any of `ids`
@@ -109,7 +114,9 @@ pub(crate) fn converge_ids(tx: &Transaction<'_>, ids: &[String], now: f64) -> ru
             .iter()
             .map(|basis| basis.retiree().to_owned())
             .collect();
-        match savepoint(tx, "artist_convergence", || merge_group(tx, bases, now))? {
+        match savepoint(tx, "artist_convergence", || {
+            merge_group(tx, bases, None, now)
+        })? {
             Ok(true) => {
                 merged += 1;
                 tracing::info!(
@@ -173,7 +180,7 @@ fn follow_one(
     };
     let survivor = basis.survivor().to_owned();
     match savepoint(tx, "artist_follow_credits", || {
-        merge_group(tx, vec![basis], now)
+        merge_group(tx, vec![basis], None, now)
     })? {
         Ok(true) => {
             tracing::info!(
@@ -282,12 +289,15 @@ pub(crate) fn follow_waiting(tx: &Transaction<'_>, now: f64) -> rusqlite::Result
 }
 
 /// Retire each basis's row into their one survivor and write one audit row
-/// for the group, with the basis it rests on. Bases that name more than
-/// one survivor or kind, or a person's choice, are refused and nothing is
-/// written: false.
+/// for the group, with the basis it rests on. A same-name join also gives
+/// the survivor `sort_fill` while it has no sort name, and keeps what it
+/// moved as the audit row's `before_json`, for its undo. Bases that name
+/// more than one survivor or kind, or a person's choice, are refused and
+/// nothing is written: false.
 fn merge_group(
     tx: &Transaction<'_>,
     bases: Vec<MergeBasis<'_>>,
+    sort_fill: Option<&str>,
     now: f64,
 ) -> rusqlite::Result<bool> {
     let Some(first) = bases.first() else {
@@ -306,32 +316,68 @@ fn merge_group(
     }
     let survivor = first.survivor().to_owned();
     let provider_mbid = first.mbid().map(str::to_owned);
-    let reason = if provider_mbid.is_some() {
-        REASON
+    let joined = first.keeps_undo();
+    let (reason, kind) = if joined {
+        (SAME_NAME_JOINED, "same_name_join")
     } else {
-        MERGED_BY_NAME
+        (REASON, "artist_convergence")
+    };
+    let survivor_sort_name: Option<String> = if joined {
+        tx.prepare_cached(crate::corrections::sql::JOIN_NAMES.text())?
+            .query_row(params![survivor], crate::corrections::sql::JoinNames::read)?
+            .sort_name
+    } else {
+        None
     };
     let basis = MergeBasis::audit_group(&bases);
     let retire: Vec<String> = bases
         .iter()
         .map(|basis| basis.retiree().to_owned())
         .collect();
+    let mut retirees = Vec::new();
     for basis in bases {
-        retire_artist(tx, basis, now)?;
+        retirees.extend(retire_artist(tx, basis, now)?);
     }
+    let filled_sort_name = match sort_fill {
+        Some(sort) if joined && survivor_sort_name.is_none() => {
+            tx.prepare_cached(crate::corrections::sql::FILL_SORT_NAME.text())?
+                .execute(params![survivor, sort])?;
+            Some(sort.to_owned())
+        }
+        _ => None,
+    };
     tx.execute(
         crate::corrections::sql::BUMP_ARTIST_REVISION.text(),
         params![survivor, crate::clock::ms(now)],
     )?;
+    let listed = serde_json::json!({ "artist_ids": retire });
+    let before = if joined {
+        let record = ArtistJoin {
+            survivor: survivor.clone(),
+            survivor_sort_name,
+            filled_sort_name,
+            retirees,
+        };
+        serde_json::to_value(record).unwrap_or_else(|error| {
+            tracing::warn!(
+                %error,
+                surviving_artist_id = survivor,
+                "artist join's undo record could not be written; it has no undo"
+            );
+            listed
+        })
+    } else {
+        listed
+    };
     record_artist_action(
         tx,
         ArtistAction {
             actor: "system",
             kind: ActionKind::MergeArtist,
             artist_id: &survivor,
-            before: serde_json::json!({ "artist_ids": retire }),
+            before,
             after: serde_json::json!({
-                "kind": "artist_convergence",
+                "kind": kind,
                 "surviving_artist_id": survivor,
                 "retired_artist_ids": retire,
                 "provider_artist_mbid": provider_mbid,
@@ -347,7 +393,7 @@ fn merge_group(
 
 /// Record that a scan moved a credit from row `from` to row `to`, by name
 /// alone or (`with_id`) where an id or a proof was involved, as an open
-/// merge candidate [`follow_renamed`] and the duplicate artists list read.
+/// merge candidate the duplicate artists list reads.
 /// One row per pair and kind; a move to or from Various Artists or Unknown
 /// Artist is not recorded.
 pub(crate) fn record_move(
@@ -377,45 +423,91 @@ pub(crate) fn record_move(
     Ok(())
 }
 
-/// Merge each row a scan left with no credits into the one row its
-/// credits went to by name, when only the sort name, capitals or spacing
-/// of the name changed ([`record_move`], [`MergeBasis::emptied_by_name`]).
-/// A row that does not qualify keeps its open records, which the
-/// duplicate artists list reads; a merge resolves them.
-pub(crate) fn follow_renamed(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<()> {
-    let rows: Vec<String> = tx
-        .prepare_cached(crate::corrections::sql::FOLLOW_RENAMED.text())?
-        .query_map(params![MOVED_BY_NAME, MOVED_WITH_ID], |row| row.get(0))?
+/// The most same-name groups one run end joins; the rest wait for the next.
+const JOINS_PER_RUN: usize = 200;
+
+/// Join each group of live records whose names have the same
+/// `artist_name_key` and that nothing tells apart
+/// ([`MergeBasis::same_name`]), up to [`JOINS_PER_RUN`] groups. A group two
+/// MusicBrainz ids keep apart has its ids asked about. A group the store
+/// fails on is rolled back and logged, and the next run end tries again.
+pub(crate) fn join_namesakes(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<()> {
+    let names: Vec<String> = tx
+        .prepare_cached(crate::corrections::sql::NAMESAKE_NAMES.text())?
+        .query_map(
+            params![SENTINEL_ARTIST_IDS[0], SENTINEL_ARTIST_IDS[1]],
+            |row| row.get(0),
+        )?
         .collect::<rusqlite::Result<_>>()?;
-    let mut merged = 0;
-    for from in rows {
-        let Follow::Ready(basis) = MergeBasis::emptied_by_name(tx, &from)? else {
-            continue;
-        };
-        let survivor = basis.survivor().to_owned();
-        match savepoint(tx, "artist_follow_name", || {
-            merge_group(tx, vec![basis], now)
-        })? {
-            Ok(true) => {
-                merged += 1;
-                tracing::info!(
-                    surviving_artist_id = survivor,
-                    retired_artist_id = from,
-                    "artist row a retag left empty merged into the row of the same name"
-                );
+    let mut joined = 0;
+    let mut waiting = 0;
+    let mut nominated = BTreeSet::new();
+    for folded in names {
+        let mut by_key: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let rows = tx
+            .prepare_cached(crate::corrections::sql::NAMESAKES_OF.text())?
+            .query_map(
+                params![folded, SENTINEL_ARTIST_IDS[0], SENTINEL_ARTIST_IDS[1]],
+                crate::corrections::sql::NamesakeName::read,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for row in rows {
+            let key = artist_name_key(&row.display_name);
+            if !UNKEYED_NAMES.contains(&key.as_str()) {
+                by_key.entry(key).or_default().push(row.id);
             }
-            Ok(false) => {}
-            Err(error) => {
-                tracing::warn!(
-                    %error,
-                    surviving_artist_id = survivor,
-                    retired_artist_id = from,
-                    "artist row a retag left empty could not be merged; it stays as it is"
-                );
+        }
+        for ids in by_key.into_values().filter(|ids| ids.len() > 1) {
+            if joined >= JOINS_PER_RUN {
+                waiting += 1;
+                continue;
+            }
+            let (bases, sort_fill) = match MergeBasis::same_name(tx, &ids)? {
+                SameName::Join { bases, sort_fill } => (bases, sort_fill),
+                SameName::Apart(held) => {
+                    nominated.extend(held);
+                    continue;
+                }
+                SameName::Stays => continue,
+            };
+            let survivor = bases
+                .first()
+                .map(|basis| basis.survivor().to_owned())
+                .unwrap_or_default();
+            match savepoint(tx, "artist_same_name", || {
+                merge_group(tx, bases, sort_fill.as_deref(), now)
+            })? {
+                Ok(true) => {
+                    joined += 1;
+                    tracing::info!(
+                        surviving_artist_id = survivor,
+                        artist_ids = ?ids,
+                        "artist records of one name joined"
+                    );
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        surviving_artist_id = survivor,
+                        artist_ids = ?ids,
+                        "artist records of one name could not be joined; next scan tries again"
+                    );
+                }
             }
         }
     }
-    if merged > 0 {
+    if waiting > 0 {
+        tracing::info!(
+            joined,
+            waiting,
+            "artist records of one name left to join at the next run end"
+        );
+    }
+    if !nominated.is_empty() {
+        nominate(tx, &nominated, crate::clock::ms(now))?;
+    }
+    if joined > 0 {
         bump_catalog(tx)?;
     }
     Ok(())

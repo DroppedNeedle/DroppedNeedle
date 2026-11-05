@@ -290,5 +290,6 @@ pub(crate) fn artist_row(row: &Row<'_>) -> rusqlite::Result<ArtistRecord> {
         appearance_album_count: 0,
         appearance_track_count: 0,
         date_added: row.get("date_added")?,
+        disambiguation: row.get("disambiguation")?,
     })
 }

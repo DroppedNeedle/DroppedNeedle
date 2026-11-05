@@ -11,6 +11,7 @@
 		Search,
 		ShieldQuestionMark,
 		Split,
+		Undo2,
 		UsersRound
 	} from 'lucide-svelte';
 	import { onMount } from 'svelte';
@@ -21,7 +22,10 @@
 		createPreviewArtistMergeMutation
 	} from '$lib/features/library/queries/LibraryCatalogMutations.svelte';
 	import type { ArtistMergePreviewResponse } from '$lib/features/library-management/queries/LibraryOperationsTypes';
-	import { createDismissArtistDuplicateGroupMutation } from '$lib/features/library/queries/artist-reconciliation.svelte';
+	import {
+		createDismissArtistDuplicateGroupMutation,
+		createUndoArtistJoinMutation
+	} from '$lib/features/library/queries/artist-reconciliation.svelte';
 	import {
 		getArtistDuplicateGroupQuery,
 		getArtistDuplicateGroupsQuery,
@@ -80,6 +84,7 @@
 	} | null>(null);
 	let mergeOpen = $state(false);
 	let dismissOpen = $state(false);
+	let undoOpen = $state(false);
 
 	const progressQuery = getArtistReconciliationProgressQuery(() => authStore.isAdmin);
 	const groupsQuery = getArtistDuplicateGroupsQuery(() => ({
@@ -262,9 +267,17 @@
 		updateUrl({ clearGroup: true });
 	}
 
+	async function undoJoin(): Promise<void> {
+		if (!detail) return;
+		await undoMutation.mutateAsync({ groupId: detail.id });
+		selectedGroupId = null;
+		updateUrl({ clearGroup: true });
+	}
+
 	const previewArtist = createPreviewArtistMergeMutation();
 	const applyArtist = createApplyArtistMergeMutation();
 	const dismissMutation = createDismissArtistDuplicateGroupMutation();
+	const undoMutation = createUndoArtistJoinMutation();
 </script>
 
 <section class="space-y-5" aria-labelledby="artist-identity-desk-title">
@@ -277,8 +290,8 @@
 				Artist identity
 			</h1>
 			<p class="mt-1 max-w-3xl text-sm text-muted">
-				MusicBrainz release and track credits can prove identity. Similar names alone never merge
-				artists.
+				MusicBrainz proof merges artists. Records with the same name join by themselves, and you can
+				undo that here. Other similar names never merge.
 			</p>
 		</div>
 		<Button href={withBasePath('/library/management?tab=scanning')} variant="ghost" size="sm"
@@ -354,10 +367,7 @@
 		>
 			<BadgeCheck class="mx-auto h-10 w-10 text-success" />
 			<h2 class="mt-3 font-display text-xl font-semibold">No matching artist groups</h2>
-			<p class="mx-auto mt-1 max-w-lg text-sm text-muted">
-				Try changing the filters. Artists remain separate until provider evidence proves they match
-				or an administrator confirms a merge.
-			</p>
+			<p class="mx-auto mt-1 max-w-lg text-sm text-muted">Try changing the filters.</p>
 		</div>
 	{:else}
 		<div class="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_23rem]">
@@ -463,8 +473,9 @@
 														/>
 													{/if}
 													<span
-														><strong>{member.name}</strong><span
-															class="block break-all font-mono text-xs text-muted"
+														><strong>{member.name}</strong>{#if member.disambiguation}<span
+																class="block text-xs text-muted">{member.disambiguation}</span
+															>{/if}<span class="block break-all font-mono text-xs text-muted"
 															>{member.id} · revision {member.row_revision}</span
 														></span
 													>
@@ -548,6 +559,15 @@
 											{/each}
 										</ul>
 									</section>
+								{/if}
+
+								{#if detail.can_undo}
+									<Button
+										variant="ghost"
+										icon={Undo2}
+										disabled={undoMutation.isPending}
+										onclick={() => (undoOpen = true)}>Undo this join</Button
+									>
 								{/if}
 
 								{#if detail.state !== 'resolved_automatically'}
@@ -675,4 +695,14 @@
 	focusTitle
 	pending={dismissMutation.isPending}
 	onconfirm={dismissGroup}
+/>
+
+<ConfirmDialog
+	bind:open={undoOpen}
+	title="Split these artists apart?"
+	message="Each record gets back its songs, plays, favorites and ratings, and they stay apart from now on. Anything added since the join stays where it is."
+	confirmLabel="Undo join"
+	focusTitle
+	pending={undoMutation.isPending}
+	onconfirm={undoJoin}
 />

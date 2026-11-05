@@ -35,6 +35,53 @@ pub fn artist_key(name: &str, sort_name: Option<&str>) -> String {
     stable_id(&format!("artist:{name}:{}", sort_name.unwrap_or("")))
 }
 
+/// What two artist names share when they are one name: capitals, spacing
+/// and the accents of Latin letters aside. Decomposed, the marks
+/// (U+0300 to U+036F) that follow a Latin letter are dropped, then the
+/// name is composed again, case-folded and its spacing collapsed. Marks in
+/// any other script are kept, since there they make another name
+/// ("Йода" and "Иода", "ガゼット" and "カセット").
+#[must_use]
+pub fn artist_name_key(name: &str) -> String {
+    use unicode_normalization::UnicodeNormalization as _;
+    let mut kept = String::with_capacity(name.len());
+    let mut after_latin = false;
+    for ch in name.nfd() {
+        if ('\u{300}'..='\u{36f}').contains(&ch) {
+            if !after_latin {
+                kept.push(ch);
+            }
+            continue;
+        }
+        after_latin = is_latin_letter(ch);
+        kept.push(ch);
+    }
+    let composed: String = kept.nfc().collect();
+    caseless::default_case_fold_str(&composed)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A letter of the Latin script, by its Unicode blocks.
+fn is_latin_letter(ch: char) -> bool {
+    ch.is_alphabetic()
+        && matches!(ch,
+            'A'..='Z'
+            | 'a'..='z'
+            | '\u{aa}'
+            | '\u{ba}'
+            | '\u{c0}'..='\u{24f}'
+            | '\u{250}'..='\u{2af}'
+            | '\u{1d00}'..='\u{1dbf}'
+            | '\u{1e00}'..='\u{1eff}'
+            | '\u{2c60}'..='\u{2c7f}'
+            | '\u{a720}'..='\u{a7ff}'
+            | '\u{ab30}'..='\u{ab6f}'
+            | '\u{ff21}'..='\u{ff3a}'
+            | '\u{ff41}'..='\u{ff5a}')
+}
+
 /// The artist row for a credit with the lowercased MusicBrainz id `mbid`
 /// whose name row is proven to be another artist.
 #[must_use]
@@ -502,5 +549,27 @@ mod tests {
         assert_eq!(parsed.title.as_deref(), Some("Title"));
         assert_eq!(parsed.track_number, Some(3));
         assert_eq!(parsed.year, Some(1999));
+    }
+
+    /// Capitals, spacing and the accents of Latin letters make no other
+    /// name; anything else does, marks in other scripts included.
+    #[test]
+    fn artist_names_compare_by_their_key() {
+        for (a, b) in [
+            ("Beyoncé", "BEYONCE"),
+            ("Sigur  Rós", "sigur ros"),
+            ("Straße", "STRASSE"),
+            (" The  Oh", "the oh"),
+        ] {
+            assert_eq!(artist_name_key(a), artist_name_key(b), "{a} / {b}");
+        }
+        for (a, b) in [
+            ("ガゼット", "カセット"),
+            ("Йода", "Иода"),
+            ("AC/DC", "ACDC"),
+            ("The Beatles", "Beatles"),
+        ] {
+            assert_ne!(artist_name_key(a), artist_name_key(b), "{a} / {b}");
+        }
     }
 }

@@ -328,6 +328,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0139_library_album_listing_revision.sql",
         "69eb3c40823acb9fb3587426ccd6c5a5e488c80e1c92ee95d367e830ac24b085",
     ),
+    (
+        "0140_artist_join_undo.sql",
+        "f3fc8b836d93a8189b46d92fd63eb010ec44d69dc084a0bebf1f498fd0d826c2",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -934,6 +938,147 @@ fn album_listing_revision_upgrade_moves_on_listing_changes() {
         "a listed row deleted",
         "DELETE FROM local_tracks WHERE id = 't2'",
         ["a:4:5", "b:7:3"],
+    );
+}
+
+/// 0140 rebuilds the catalog action log to take the undo of an artist
+/// join, keeping every row, id and rowid and every index, and gives artist
+/// id checks a disambiguation column, empty on carried rows. Nothing else
+/// changes.
+#[test]
+fn artist_join_undo_upgrade_keeps_the_action_log() {
+    const ARTIST: &str = "00000000-0000-4000-8000-000000000002";
+    let dir = ScratchDir::new("artist-join-undo");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..5], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 139);
+    connection
+        .execute_batch(&format!(
+            "INSERT INTO library_catalog_actions (id, idempotency_key, action_kind,
+                 local_artist_id, before_json, after_json, reason_code, created_at)
+             VALUES ('m', NULL, 'merge_artist', '{ARTIST}', '{{}}', '{{\"kind\":\"x\"}}',
+                 'AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE', 5),
+                ('p', 'put-back:1', 'files_put_back', '{ARTIST}', '{{\"undoes\":\"m\"}}',
+                 '{{}}', NULL, 6),
+                ('l', NULL, 'artist_link_set', '{ARTIST}', '{{}}', '{{}}', 'R', 7);
+             DELETE FROM library_catalog_actions WHERE id = 'l';
+             INSERT INTO library_catalog_actions (id, action_kind, local_artist_id,
+                 before_json, after_json, created_at)
+             VALUES ('r', 'review_approve', '{ARTIST}', '{{}}', '{{}}', 8);
+             INSERT INTO library_identify_artist_id_checks (artist_mbid, state,
+                 nominated_at, checked_at)
+             VALUES ('aaaaaaaa-0000-4000-8000-000000000001', 'pending', 1, NULL),
+                ('aaaaaaaa-0000-4000-8000-000000000002', 'kept', 1, 2);"
+        ))
+        .unwrap();
+    let actions = |connection: &Connection| {
+        texts(
+            connection,
+            "SELECT rowid || ':' || id || ':' || COALESCE(idempotency_key, '-') || ':'
+                 || action_kind || ':' || local_artist_id || ':' || before_json || ':'
+                 || after_json || ':' || COALESCE(reason_code, '-') || ':' || created_at
+             FROM library_catalog_actions ORDER BY rowid",
+            [],
+        )
+    };
+    let checks = |connection: &Connection| {
+        texts(
+            connection,
+            "SELECT artist_mbid || ':' || state || ':' || nominated_at || ':'
+                 || COALESCE(checked_at, '-') FROM library_identify_artist_id_checks
+             ORDER BY artist_mbid",
+            [],
+        )
+    };
+    let changed = [
+        "library_catalog_actions",
+        "library_identify_artist_id_checks",
+    ];
+    let others = |connection: &Connection| {
+        let mut rows = schema_rows(connection);
+        rows.retain(|(_, _, table, _)| !changed.contains(&table.as_str()));
+        rows
+    };
+    let indexes = |connection: &Connection| {
+        texts(
+            connection,
+            "SELECT name FROM sqlite_master WHERE type = 'index'
+                 AND tbl_name = 'library_catalog_actions' ORDER BY name",
+            [],
+        )
+    };
+    let (before_actions, before_checks, before_schema, before_indexes) = (
+        actions(&connection),
+        checks(&connection),
+        others(&connection),
+        indexes(&connection),
+    );
+    assert_eq!(before_actions.len(), 3);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..6], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 140);
+    assert_eq!(
+        actions(&connection),
+        before_actions,
+        "every row and rowid kept"
+    );
+    assert_eq!(checks(&connection), before_checks, "checks kept");
+    assert_eq!(others(&connection), before_schema, "nothing else changes");
+    assert_eq!(indexes(&connection), before_indexes, "every index is back");
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM library_catalog_actions
+             WHERE json_extract(before_json, '$.undoes') = 'm'
+             AND action_kind = 'files_put_back'"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM library_identify_artist_id_checks
+             WHERE disambiguation IS NULL"
+        ),
+        2,
+        "carried checks have no note"
+    );
+    connection
+        .execute(
+            "INSERT INTO library_catalog_actions (id, idempotency_key, action_kind,
+                 local_artist_id, before_json, after_json, created_at)
+             VALUES ('u', 'merge-artist-undone:m', 'merge_artist_undone', ?1, '{}', '{}', 9)",
+            [ARTIST],
+        )
+        .unwrap();
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO library_catalog_actions (id, action_kind, local_artist_id,
+                     before_json, after_json, created_at)
+                 VALUES ('w', 'no_such_kind', ?1, '{}', '{}', 9)",
+                [ARTIST],
+            )
+            .is_err(),
+        "the kind check still holds"
+    );
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO library_catalog_actions (id, idempotency_key, action_kind,
+                     local_artist_id, before_json, after_json, created_at)
+                 VALUES ('v', 'merge-artist-undone:m', 'merge_artist_undone', ?1, '{}',
+                     '{}', 9)",
+                [ARTIST],
+            )
+            .is_err(),
+        "an idempotency key is still unique"
     );
 }
 

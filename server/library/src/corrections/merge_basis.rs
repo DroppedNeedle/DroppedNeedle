@@ -10,8 +10,9 @@
 //! - [`MergeBasis::followed`]: a row a pass of artist links left empty
 //!   follows its proven credits to the row they moved to, while a current
 //!   proof there still names the artist;
-//! - [`MergeBasis::emptied_by_name`]: a row a retag emptied follows its
-//!   credits by name, the one merge names alone decide;
+//! - [`MergeBasis::same_name`]: live records whose names have the same
+//!   `artist_name_key` and that nothing tells apart, the one merge names
+//!   decide, and the only one that keeps an undo;
 //! - [`MergeBasis::v2_placeholder`]: the upgrade folds a v2 row named
 //!   exactly "Unknown Artist" into the built-in one;
 //! - [`MergeBasis::person`]: an administrator chose the merge.
@@ -31,22 +32,23 @@
 //! nothing names another. One pair an administrator marked as distinct
 //! anywhere in a group keeps the whole group apart.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
 
 use rusqlite::{OptionalExtension as _, Transaction, params};
 use serde_json::{Value, json};
-use unicode_normalization::UnicodeNormalization as _;
 
-use super::artists::{MOVED_BY_NAME, MOVED_WITH_ID};
 use crate::corrections::sql::{
     EVERY_CREDIT_HOLDS, FILE_ID_COUNT, FILE_IDS, HELD_BACK, PROOF_ROWS, RELEASE_PROOF_COUNT,
     RELEASE_PROOFS, STILL_CREDITED, UNLINKED_MEMBER,
 };
 use crate::identify::artist_links::placeholder;
+use crate::identify::merged_ids;
 use crate::identity::DecisionSource;
-use crate::scan::naming::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID};
-use crate::scan::sqlite_store::artists::{NAME_MERGE_MARK, SENTINEL_ARTIST_IDS, proven_rows};
+use crate::scan::naming::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID, artist_name_key};
+use crate::scan::sqlite_store::artists::{
+    NAME_MERGE_MARK, SENTINEL_ARTIST_IDS, UNKEYED_NAMES, proven_rows,
+};
 use droppedneedle_auth::Admin;
 
 /// The most proofs one basis lists; the rest are only counted.
@@ -76,9 +78,12 @@ enum Kind {
         /// How many of `proof_count` are the survivor's own.
         survivor_count: usize,
     },
-    /// A retag moved every credit of the retiree by name to the survivor;
-    /// the recorded moves' ids.
-    EmptiedByName { moves: Vec<String> },
+    /// The records share a name key and nothing tells them apart: the key,
+    /// and each member with the MusicBrainz ids it holds.
+    SameName {
+        key: String,
+        members: Vec<(String, Vec<String>)>,
+    },
     /// The upgrade folded v2's placeholder row of this name.
     V2Placeholder { name: String },
     /// An administrator chose the merge.
@@ -188,6 +193,27 @@ impl V2PlaceholderFacts {
     }
 }
 
+/// What the same-name rule makes of one group of records
+/// ([`MergeBasis::same_name`]).
+pub(crate) enum SameName<'tx> {
+    /// They join: one basis per record retired, and the sort name the
+    /// survivor takes when it has none.
+    Join {
+        bases: Vec<MergeBasis<'tx>>,
+        sort_fill: Option<String>,
+    },
+    /// Two MusicBrainz ids or more keep them apart: those ids.
+    Apart(BTreeSet<String>),
+    /// Nothing joins.
+    Stays,
+}
+
+/// One record of a same-name group, with the MusicBrainz ids it holds.
+struct Namesake {
+    row: crate::corrections::sql::Namesake,
+    ids: BTreeSet<String>,
+}
+
 /// Where a row that could follow its credits stands.
 pub(crate) enum Follow<'tx> {
     /// It merges on this basis.
@@ -212,7 +238,7 @@ impl MergeBasis<'_> {
     pub(super) fn converged_mark(&self) -> Option<&str> {
         match &self.kind {
             Kind::Proven { mbid, .. } => Some(mbid),
-            Kind::EmptiedByName { .. } | Kind::V2Placeholder { .. } => Some(NAME_MERGE_MARK),
+            Kind::SameName { .. } | Kind::V2Placeholder { .. } => Some(NAME_MERGE_MARK),
             Kind::PersonChose { .. } => None,
         }
     }
@@ -267,20 +293,23 @@ impl MergeBasis<'_> {
                     "proof_count": count,
                 })
             }
-            Kind::EmptiedByName { .. } => {
-                let moves: Vec<&str> = bases
+            Kind::SameName { key, members } => json!({
+                "kind": "same_name",
+                "name_key": key,
+                "members": members
                     .iter()
-                    .flat_map(|basis| match &basis.kind {
-                        Kind::EmptiedByName { moves } => moves.as_slice(),
-                        _ => &[],
-                    })
-                    .map(String::as_str)
-                    .collect();
-                json!({ "kind": "same_name", "moves": moves })
-            }
+                    .map(|(id, mbids)| json!({ "artist_id": id, "artist_mbids": mbids }))
+                    .collect::<Vec<_>>(),
+            }),
             Kind::V2Placeholder { name } => json!({ "kind": "v2_placeholder", "name": name }),
             Kind::PersonChose { user_id } => json!({ "kind": "person", "user_id": user_id }),
         }
+    }
+
+    /// Whether the merge keeps a record its undo puts back: only a
+    /// same-name join does.
+    pub(super) fn keeps_undo(&self) -> bool {
+        matches!(self.kind, Kind::SameName { .. })
     }
 
     /// Whether an administrator chose the merge.
@@ -292,7 +321,7 @@ impl MergeBasis<'_> {
     pub(super) fn same_kind(&self, other: &Self) -> bool {
         match (&self.kind, &other.kind) {
             (Kind::Proven { mbid: a, .. }, Kind::Proven { mbid: b, .. }) => a == b,
-            (Kind::EmptiedByName { .. }, Kind::EmptiedByName { .. }) => true,
+            (Kind::SameName { key: a, .. }, Kind::SameName { key: b, .. }) => a == b,
             (Kind::V2Placeholder { .. }, Kind::V2Placeholder { .. }) => true,
             (Kind::PersonChose { user_id: a }, Kind::PersonChose { user_id: b }) => a == b,
             _ => false,
@@ -474,63 +503,132 @@ impl<'tx> MergeBasis<'tx> {
         )))
     }
 
-    /// Whether row `from`, which a scan left with no credits, merges into
-    /// the one row its credits went to by name: every open move recorded
-    /// for it went by name (no id in the file on either side, no proof at
-    /// the old credit) to that one row, neither row has a link or a proof
-    /// naming any id, the play guard holds, the two names differ only in
-    /// sort name, capitals or spacing, and no administrator marked them
-    /// distinct.
-    pub(crate) fn emptied_by_name(
+    /// The join of live records `ids`, whose names have one
+    /// [`artist_name_key`], read again here. A record whose own MusicBrainz
+    /// ids (its link, its credits' files and its current proofs, as
+    /// MusicBrainz merged them) number two or more sits out. The rest join
+    /// when they hold one id between them or none, and no administrator
+    /// marked any two of them distinct; two ids or more keep them apart.
+    /// The survivor is the record a person or v2 linked, else the one the
+    /// app linked, else one holding the id, else the one with most credits
+    /// (indexed tracks, then live albums), else the oldest.
+    pub(crate) fn same_name(
         tx: &'tx Transaction<'_>,
-        from: &str,
-    ) -> rusqlite::Result<Follow<'tx>> {
-        let credited: bool = tx
-            .prepare_cached(STILL_CREDITED.text())?
-            .query_row(params![from], |row| row.get(0))?;
-        if credited {
-            return Ok(Follow::Stays);
-        }
-        let moves: Vec<(String, String, String)> = tx
-            .prepare_cached(crate::corrections::sql::EMPTIED_BY_NAME.text())?
-            .query_map(params![from, MOVED_BY_NAME, MOVED_WITH_ID], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-        if moves.is_empty() || moves.iter().any(|(_, _, reason)| reason == MOVED_WITH_ID) {
-            return Ok(Follow::Stays);
-        }
-        let mut into = BTreeSet::new();
-        for (_, to, _) in &moves {
-            if let Some(live) = live_row(tx, to)?
-                && live != from
-            {
-                into.insert(live);
+        ids: &[String],
+    ) -> rusqlite::Result<SameName<'tx>> {
+        let mut key: Option<String> = None;
+        let mut members: Vec<Namesake> = Vec::new();
+        for id in ids {
+            let row = tx
+                .prepare_cached(crate::corrections::sql::NAMESAKE.text())?
+                .query_row(
+                    params![id, SENTINEL_ARTIST_IDS[0], SENTINEL_ARTIST_IDS[1]],
+                    crate::corrections::sql::Namesake::read,
+                )
+                .optional()?;
+            let Some(row) = row else { continue };
+            let own_key = artist_name_key(&row.display_name);
+            if UNKEYED_NAMES.contains(&own_key.as_str()) {
+                return Ok(SameName::Stays);
             }
+            match &key {
+                Some(key) if *key != own_key => return Ok(SameName::Stays),
+                Some(_) => {}
+                None => key = Some(own_key),
+            }
+            let mut held: Vec<String> = tx
+                .prepare_cached(crate::corrections::sql::NAMESAKE_IDS.text())?
+                .query_map(params![row.id], |found| found.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            held.extend(row.link_mbid.clone());
+            let mut own = BTreeSet::new();
+            for mbid in held {
+                let current = merged_ids::current_id(tx, &mbid)?;
+                if !placeholder(&current) {
+                    own.insert(current);
+                }
+            }
+            members.push(Namesake { row, ids: own });
         }
-        let mut into = into.into_iter();
-        let (Some(survivor), None) = (into.next(), into.next()) else {
-            return Ok(Follow::Stays);
+        let Some(key) = key else {
+            return Ok(SameName::Stays);
         };
-        // No link, no proof row naming any id (the column is never empty),
-        // and the play guard.
-        if held_back(tx, from, &survivor, "")? {
-            return Ok(Follow::Stays);
+        members.retain(|member| {
+            let sits_out = member.ids.len() > 1;
+            if sits_out {
+                tracing::debug!(
+                    artist_id = member.row.id,
+                    "artist record holds two MusicBrainz ids; not joined by name"
+                );
+            }
+            !sits_out
+        });
+        if members.len() < 2 {
+            return Ok(SameName::Stays);
         }
-        let (Some(old), Some(new)) = (ordinary_name(tx, from)?, ordinary_name(tx, &survivor)?)
-        else {
-            return Ok(Follow::Stays);
+        let held: BTreeSet<String> = members.iter().flat_map(|m| m.ids.iter().cloned()).collect();
+        if held.len() > 1 {
+            return Ok(SameName::Apart(held));
+        }
+        let member_ids: Vec<&str> = members.iter().map(|m| m.row.id.as_str()).collect();
+        if marked_distinct(tx, &member_ids)? {
+            tracing::debug!(
+                artist_ids = ?member_ids,
+                "artist records of one name marked distinct; not joined"
+            );
+            return Ok(SameName::Stays);
+        }
+        members.sort_by(|a, b| {
+            let rank = |m: &Namesake| {
+                (
+                    !m.row.chosen,
+                    m.row.link_mbid.is_none(),
+                    m.ids.is_empty(),
+                    std::cmp::Reverse(m.row.track_credits),
+                    std::cmp::Reverse(m.row.album_credits),
+                    m.row.created_at,
+                )
+            };
+            rank(a).cmp(&rank(b)).then_with(|| a.row.id.cmp(&b.row.id))
+        });
+        let Some((survivor, retirees)) = members.split_first() else {
+            return Ok(SameName::Stays);
         };
-        if name_key(&old) != name_key(&new) || marked_distinct(tx, &[from, survivor.as_str()])? {
-            return Ok(Follow::Stays);
+        if retirees.iter().any(|m| m.row.link_mbid.is_some()) {
+            return Ok(SameName::Stays);
         }
-        Ok(Follow::Ready(Self::new(
-            &survivor,
-            from,
-            Kind::EmptiedByName {
-                moves: moves.into_iter().map(|(id, _, _)| id).collect(),
-            },
-        )))
+        let sort_fill = if survivor.row.sort_name.is_none() {
+            retirees
+                .iter()
+                .filter(|m| m.row.sort_name.is_some())
+                .max_by_key(|m| {
+                    (
+                        m.row.track_credits + m.row.album_credits,
+                        std::cmp::Reverse(m.row.created_at),
+                    )
+                })
+                .and_then(|m| m.row.sort_name.clone())
+        } else {
+            None
+        };
+        let listed: BTreeMap<String, Vec<String>> = members
+            .iter()
+            .map(|m| (m.row.id.clone(), m.ids.iter().cloned().collect()))
+            .collect();
+        let bases = retirees
+            .iter()
+            .map(|retiree| {
+                Self::new(
+                    &survivor.row.id,
+                    &retiree.row.id,
+                    Kind::SameName {
+                        key: key.clone(),
+                        members: listed.clone().into_iter().collect(),
+                    },
+                )
+            })
+            .collect();
+        Ok(SameName::Join { bases, sort_fill })
     }
 
     /// The fold of v2's placeholder row `retiree` into the built-in Unknown
@@ -871,17 +969,6 @@ fn marked_distinct(tx: &Transaction<'_>, ids: &[&str]) -> rusqlite::Result<bool>
         .query_row(params![ids], |row| row.get(0))
 }
 
-/// A name as [`MergeBasis::emptied_by_name`] compares it: composed,
-/// case-folded and with its spacing collapsed. Accents and other marks are
-/// kept, so a name that differs by one is another name.
-fn name_key(name: &str) -> String {
-    let composed: String = name.nfc().collect();
-    caseless::default_case_fold_str(&composed)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// The display name of live row `artist` when it is an ordinary row:
 /// neither a sentinel nor a Various Artists row.
 fn ordinary_name(tx: &Transaction<'_>, artist: &str) -> rusqlite::Result<Option<String>> {
@@ -891,20 +978,4 @@ fn ordinary_name(tx: &Transaction<'_>, artist: &str) -> rusqlite::Result<Option<
             |row| row.get(0),
         )
         .optional()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::name_key;
-
-    /// Names that differ only in capitals or spacing merge by name; one
-    /// accent or other mark makes another name. The sort name is never
-    /// part of the key, so a sort change alone always matches.
-    #[test]
-    fn a_name_merge_keeps_marks_apart() {
-        assert_eq!(name_key("The  Oh"), name_key("the oh"));
-        assert_eq!(name_key(" BEYONCÉ"), name_key("Beyoncé"));
-        assert_ne!(name_key("Beyonce"), name_key("Beyoncé"));
-        assert_ne!(name_key("ガゼット"), name_key("カセット"));
-    }
 }

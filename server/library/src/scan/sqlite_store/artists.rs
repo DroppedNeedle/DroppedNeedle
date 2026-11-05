@@ -1,12 +1,15 @@
 //! Which artist row a file's credits land on.
 //!
-//! Quirk (v2): an artist row is keyed by the tag's name and sort name. A
-//! credit whose file lists its artists with their MusicBrainz ids one for
-//! one (`ARTISTS` with `MUSICBRAINZ_ARTISTID`, `ALBUMARTISTS` with
-//! `MUSICBRAINZ_ALBUMARTISTID`) carries its id, and that id picks the row
-//! already proven to be the artist, whatever name the tag now gives it.
-//! Names never prove anything: a credit without an id lands where its name
-//! keys, and an id never joins a row whose links or files say it is
+//! A new artist row is keyed by the tag's name and sort name (the key the
+//! v2 export uses too). A credit with no id lands on the row its exact
+//! name and sort name key to, else on the record whose name has the same
+//! [`artist_name_key`] (capitals, spacing and Latin accents aside), and
+//! only then on a new row: a new spelling or sort name never makes a
+//! second record. A credit whose file lists its artists with their
+//! MusicBrainz ids one for one (`ARTISTS` with `MUSICBRAINZ_ARTISTID`,
+//! `ALBUMARTISTS` with `MUSICBRAINZ_ALBUMARTISTID`) carries its id, and
+//! that id picks the row already proven to be the artist, whatever name the
+//! tag now gives it. An id never joins a row whose links or files say it is
 //! another artist. An id MusicBrainz merged into another, as identification
 //! recorded it (`identify::merged_ids`), is read as the id it was merged
 //! into, so files tagged before and after the merge land on one row.
@@ -26,7 +29,7 @@ use super::commit::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID};
 use crate::identify::artist_links::placeholder;
 use crate::identify::merged_ids;
 use crate::scan::models::ArtistKind;
-use crate::scan::naming::{VARIOUS_ARTISTS_ID, artist_key, artist_mbid_key};
+use crate::scan::naming::{VARIOUS_ARTISTS_ID, artist_key, artist_mbid_key, artist_name_key};
 use crate::tags::AudioArtistCredit;
 use droppedneedle_kernel::db::fold_text;
 
@@ -149,19 +152,73 @@ fn live_artist(tx: &Connection, id: &str) -> rusqlite::Result<Option<String>> {
         .optional()
 }
 
-/// The row a credit's name keys to, and the live row that is now: the
-/// row itself, or the row a merge retired it into.
+/// The row a credit's name reaches, and the live row that is now.
 struct NameRow {
+    /// The row reached: the one the exact name and sort name key to, the
+    /// same-name record, or a new row.
     keyed: String,
+    /// `keyed`, or the row a merge retired it into.
     live: String,
+    /// Reached as the same-name record, not by its exact key.
+    same_name: bool,
 }
 
+/// The row a credit with no id lands on: the row its exact name and sort
+/// name key to, followed to its live row; else the oldest live ordinary
+/// record whose name has the same [`artist_name_key`]; else a new row
+/// keyed by the name. A new spelling or sort name never makes a second
+/// record. The names "Unknown Artist" and "Various Artists" are only ever
+/// found by their exact key.
 fn name_row(tx: &Connection, credit: &Credit, now: f64) -> rusqlite::Result<NameRow> {
     let keyed = artist_id(credit);
+    if let Some(live) = live_artist(tx, &keyed)? {
+        return Ok(NameRow {
+            keyed,
+            live,
+            same_name: false,
+        });
+    }
+    let exists: bool = tx
+        .prepare_cached(crate::scan::sql::ARTIST_ROW_EXISTS.text())?
+        .query_row(params![keyed], |row| row.get(0))?;
+    if !exists && let Some(found) = same_name_row(tx, &credit.name)? {
+        return Ok(NameRow {
+            keyed: found.clone(),
+            live: found,
+            same_name: true,
+        });
+    }
     insert_artist(tx, &keyed, credit, now)?;
-    let live = live_artist(tx, &keyed)?.unwrap_or_else(|| keyed.clone());
-    Ok(NameRow { keyed, live })
+    Ok(NameRow {
+        live: keyed.clone(),
+        keyed,
+        same_name: false,
+    })
 }
+
+/// The oldest live ordinary record whose name has the same
+/// [`artist_name_key`] as `name`: one probe by folded name, then the key.
+fn same_name_row(tx: &Connection, name: &str) -> rusqlite::Result<Option<String>> {
+    let key = artist_name_key(name);
+    if UNKEYED_NAMES.contains(&key.as_str()) {
+        return Ok(None);
+    }
+    let rows = tx
+        .prepare_cached(crate::scan::sql::SAME_FOLDED_NAME_ROWS.text())?
+        .query_map(
+            params![fold_text(name), VARIOUS_ARTISTS_ID, UNKNOWN_ARTIST_ID],
+            crate::scan::sql::SameFoldedNameRow::read,
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows
+        .into_iter()
+        .find(|row| artist_name_key(&row.display_name) == key)
+        .map(|row| row.id))
+}
+
+/// Names never joined by their key: the sentinels' and Various Artists'
+/// own rules govern them.
+pub(crate) const UNKEYED_NAMES: [&str; 2] = ["unknown artist", "various artists"];
 
 /// The name row for a credit, as the album rebuild path takes it.
 pub(super) fn upsert_artist(
@@ -320,6 +377,9 @@ impl Resolver<'_> {
                 }
             };
             let row = if fits {
+                if base.same_name {
+                    self.follow_names(&base.live, shared.unwrap_or(credit))?;
+                }
                 base.live
             } else {
                 let keyed = artist_mbid_key(mbid);
@@ -334,6 +394,16 @@ impl Resolver<'_> {
             .or_default()
             .push(mbid.to_owned());
         Ok(row)
+    }
+
+    /// The row for a credit with no id ([`name_row`]). Reached as the
+    /// same-name record, the record follows the credit's names.
+    fn by_name(&self, credit: &Credit) -> rusqlite::Result<String> {
+        let base = name_row(self.tx, credit, self.now)?;
+        if base.same_name {
+            self.follow_names(&base.live, credit)?;
+        }
+        Ok(base.live)
     }
 
     /// Whether `artist` is another artist than `mbid` by what is known:
@@ -363,8 +433,8 @@ impl Resolver<'_> {
             )
     }
 
-    /// The proven row takes the credit's name once no other file still
-    /// credits it under its current name (only indexed tracks, and live
+    /// The proven or same-name row takes the credit's name once no other
+    /// file still credits it under its current name (only indexed tracks, and live
     /// albums with an indexed track, count), and the credit's sort name
     /// when the row is then called by the credit's name.
     fn follow_names(&self, artist: &str, credit: &Credit) -> rusqlite::Result<()> {
@@ -422,11 +492,11 @@ impl Resolver<'_> {
 ///
 /// First every credit with an id, album side then track side. A track
 /// credit with no proven row shares the row of an album credit with the
-/// same folded name that has no id or the same id, as a credit without an
+/// same name key that has no id or the same id, as a credit without an
 /// id always has. Then the credits without an id: an album credit takes
-/// the row of a credit with an id and the same folded name, a track
-/// credit that of an album credit, then of a track credit with an id,
-/// each by folded name; else the name row.
+/// the row of a credit with an id and the same name key, a track credit
+/// that of an album credit, then of a track credit with an id, each by
+/// [`artist_name_key`]; else its name row ([`name_row`]).
 pub(super) fn resolve(
     tx: &Connection,
     album: &[Credit],
@@ -441,6 +511,8 @@ pub(super) fn resolve(
         by_id: HashMap::new(),
         placed: HashMap::new(),
     };
+    let album_keys: Vec<String> = album.iter().map(|c| artist_name_key(&c.name)).collect();
+    let track_keys: Vec<String> = track.iter().map(|c| artist_name_key(&c.name)).collect();
     let mut album_rows: Vec<Option<String>> = vec![None; album.len()];
     let mut track_rows: Vec<Option<String>> = vec![None; track.len()];
     for (index, credit) in album.iter().enumerate() {
@@ -450,25 +522,24 @@ pub(super) fn resolve(
     }
     for (index, credit) in track.iter().enumerate() {
         if let Some(mbid) = &credit.mbid {
-            let folded = fold_text(&credit.name);
-            let shared = album.iter().find(|other| {
-                fold_text(&other.name) == folded && other.mbid.as_ref().is_none_or(|id| id == mbid)
+            let key = &track_keys[index];
+            let shared = album.iter().zip(&album_keys).find(|(other, other_key)| {
+                *other_key == key && other.mbid.as_ref().is_none_or(|id| id == mbid)
             });
-            track_rows[index] = Some(resolver.with_id(credit, mbid, shared)?);
+            track_rows[index] = Some(resolver.with_id(credit, mbid, shared.map(|(c, _)| c))?);
         }
     }
-    let with_id: Vec<(String, String)> = album
+    let with_id: Vec<(String, String)> = album_keys
         .iter()
         .zip(&album_rows)
-        .chain(track.iter().zip(&track_rows))
-        .filter_map(|(credit, row)| Some((fold_text(&credit.name), row.clone()?)))
+        .chain(track_keys.iter().zip(&track_rows))
+        .filter_map(|(key, row)| Some((key.clone(), row.clone()?)))
         .collect();
     for (index, credit) in album.iter().enumerate() {
         if album_rows[index].is_none() {
-            let folded = fold_text(&credit.name);
-            let row = match with_id.iter().find(|(name, _)| *name == folded) {
+            let row = match with_id.iter().find(|(key, _)| *key == album_keys[index]) {
                 Some((_, row)) => row.clone(),
-                None => name_row(tx, credit, now)?.live,
+                None => resolver.by_name(credit)?,
             };
             album_rows[index] = Some(row);
         }
@@ -476,26 +547,25 @@ pub(super) fn resolve(
     let album_rows: Vec<String> = album_rows.into_iter().flatten().collect();
     for (index, credit) in track.iter().enumerate() {
         if track_rows[index].is_none() {
-            let folded = fold_text(&credit.name);
-            let shared = album
+            let key = &track_keys[index];
+            let shared = album_keys
                 .iter()
                 .zip(&album_rows)
-                .find(|(other, _)| fold_text(&other.name) == folded)
+                .find(|(other, _)| *other == key)
                 .map(|(_, row)| row.clone())
                 .or_else(|| {
                     track
                         .iter()
+                        .zip(&track_keys)
                         .zip(&track_rows)
-                        .find(|(other, row)| {
-                            other.mbid.is_some()
-                                && row.is_some()
-                                && fold_text(&other.name) == folded
+                        .find(|((other, other_key), row)| {
+                            other.mbid.is_some() && row.is_some() && *other_key == key
                         })
                         .and_then(|(_, row)| row.clone())
                 });
             let row = match shared {
                 Some(row) => row,
-                None => name_row(tx, credit, now)?.live,
+                None => resolver.by_name(credit)?,
             };
             track_rows[index] = Some(row);
         }

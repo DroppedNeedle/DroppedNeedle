@@ -518,13 +518,13 @@ const ARTIST_ORDERS: [(ArtistSort, bool, [&str; 3]); 8] = [
 const ARTIST_RECORDS: [&str; 3] = [
     "ArtistRecord { id: \"a1\", name: \"Aurora\", artist_mbid: Some(\"m1\"), linked: true, \
      album_count: 2, track_count: 4, led_track_count: 3, appearance_album_count: 1, appearance_track_count: 1, \
-     date_added: Some(1000.0) }",
+     date_added: Some(1000.0), disambiguation: None }",
     "ArtistRecord { id: \"a2\", name: \"Boreal\", artist_mbid: None, linked: false, \
      album_count: 2, track_count: 3, led_track_count: 4, appearance_album_count: 0, appearance_track_count: 0, \
-     date_added: Some(1500.0) }",
+     date_added: Some(1500.0), disambiguation: None }",
     "ArtistRecord { id: \"a3\", name: \"Gæst \\\"Quoted\\\" 100%\", artist_mbid: None, \
      linked: false, album_count: 0, track_count: 1, led_track_count: 0, appearance_album_count: 1, \
-     appearance_track_count: 1, date_added: Some(1600.0) }",
+     appearance_track_count: 1, date_added: Some(1600.0), disambiguation: None }",
 ];
 
 fn artist_ids(artists: &[ArtistRecord]) -> Vec<&str> {

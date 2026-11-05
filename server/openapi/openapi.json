@@ -12840,6 +12840,85 @@
         ]
       }
     },
+    "/api/v3/library/artists/duplicate-groups/{group_id}/undo": {
+      "post": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Undo a join of records made because they share a name: each record\ncomes back with its songs, plays, favorites and ratings, less what\nchanged since, and the records are marked as different artists.",
+        "operationId": "undo_artist_duplicate_group",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group id of a resolved join",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Join undone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtistDuplicateGroupUndoResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not a join that can be undone, or undone already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/artists/merge": {
       "post": {
         "tags": [
@@ -36935,13 +37014,18 @@
           "provider_mbids",
           "affected_reference_count",
           "reason_code",
-          "reason"
+          "reason",
+          "can_undo"
         ],
         "properties": {
           "affected_reference_count": {
             "type": "integer",
             "format": "int64",
             "description": "Credits, favorites and plays a merge would move."
+          },
+          "can_undo": {
+            "type": "boolean",
+            "description": "The merge is a join by name an administrator can undo."
           },
           "display_name": {
             "type": "string"
@@ -37001,6 +37085,57 @@
           },
           "state": {
             "$ref": "#/components/schemas/ArtistGroupState"
+          }
+        }
+      },
+      "ArtistDuplicateGroupUndoResponse": {
+        "type": "object",
+        "description": "What undoing a join put back.",
+        "required": [
+          "group_id",
+          "surviving_artist_id",
+          "restored_artist_ids",
+          "put_back",
+          "left_in_place"
+        ],
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "left_in_place": {
+            "type": "object",
+            "description": "Rows the join moved that changed since and stay where they are.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "put_back": {
+            "type": "object",
+            "description": "Rows moved back, by kind (`album_credits`, `plays`, `favorites`, ...).",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "restored_artist_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The records split off again, each live once more."
+          },
+          "surviving_artist_id": {
+            "type": "string",
+            "description": "The record the join kept."
           }
         }
       },
@@ -37715,6 +37850,13 @@
             "type": "integer",
             "format": "int64"
           },
+          "disambiguation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MusicBrainz's short note on the linked artist (\"US singer\"), set\nonly while another record has the same name."
+          },
           "favorite_count": {
             "type": "integer",
             "format": "int64"
@@ -37997,6 +38139,13 @@
             ],
             "format": "double",
             "description": "First import time, unix seconds."
+          },
+          "disambiguation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MusicBrainz's short note on who this is (\"US singer\"), set only\nwhen another artist in the library has the same name."
           },
           "favorite": {
             "type": "boolean",
@@ -53300,13 +53449,18 @@
                 "provider_mbids",
                 "affected_reference_count",
                 "reason_code",
-                "reason"
+                "reason",
+                "can_undo"
               ],
               "properties": {
                 "affected_reference_count": {
                   "type": "integer",
                   "format": "int64",
                   "description": "Credits, favorites and plays a merge would move."
+                },
+                "can_undo": {
+                  "type": "boolean",
+                  "description": "The merge is a join by name an administrator can undo."
                 },
                 "display_name": {
                   "type": "string"

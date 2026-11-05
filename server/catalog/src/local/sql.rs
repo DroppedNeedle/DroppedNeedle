@@ -536,7 +536,15 @@ droppedneedle_kernel::sql! {
     /// subquery per row.
     pub(crate) fragment ARTIST_COLUMNS = "r.id AS id, r.display_name AS name, \
         e.provider_artist_id AS artist_mbid, (e.local_artist_id IS NOT NULL) AS linked, \
-        r.created_at / 1000.0 AS date_added";
+        r.created_at / 1000.0 AS date_added, " + ARTIST_DISAMBIGUATION;
+    /// MusicBrainz's note on artist `r`'s linked artist (`e`), as
+    /// identification stored it, while another live ordinary record has
+    /// the same folded name: what tells two of one name apart.
+    pub(crate) fragment ARTIST_DISAMBIGUATION = "(SELECT NULLIF(c.disambiguation, '') \
+        FROM library_identify_artist_id_checks c WHERE c.artist_mbid = lower(e.provider_artist_id) \
+        AND EXISTS (SELECT 1 FROM local_artists o WHERE o.folded_name = r.folded_name \
+         AND o.id <> r.id AND o.retired_into_artist_id IS NULL \
+         AND o.kind <> 'various_artists')) AS disambiguation";
     /// The artist projection's joins.
     pub(crate) fragment ARTIST_JOINS = "FROM local_artists r " + ARTIST_IDENTITY;
     /// The artist `r`'s MusicBrainz link, `e`.

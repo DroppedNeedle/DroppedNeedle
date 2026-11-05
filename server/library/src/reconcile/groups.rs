@@ -101,6 +101,7 @@ pub fn build(inputs: &GroupInputs) -> Vec<Group> {
             reason: reasons::for_code(&merge.reason_code),
             resolved_at: Some(merge.created_at),
             merge_basis: merge.basis,
+            can_undo: merge.can_undo,
         })
     }));
     groups.sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
@@ -194,6 +195,7 @@ fn open_group(members: &[&Candidate], ambiguous: &HashSet<&str>) -> Group {
         reason,
         resolved_at: None,
         merge_basis: None,
+        can_undo: false,
     }
 }
 
@@ -229,6 +231,7 @@ fn moved_group(rows: &[Candidate]) -> Option<Group> {
         reason,
         resolved_at: None,
         merge_basis: None,
+        can_undo: false,
     })
 }
 
@@ -264,6 +267,7 @@ fn shared_group(members: &[&Candidate]) -> Group {
         reason,
         resolved_at: None,
         merge_basis: None,
+        can_undo: false,
     }
 }
 
@@ -353,6 +357,7 @@ mod tests {
                 sort_name: None,
                 row_revision: 1,
                 provider_mbid: mbid.map(Into::into),
+                disambiguation: None,
                 counts: ReferenceCounts::default(),
             },
             folded_name: "low".into(),

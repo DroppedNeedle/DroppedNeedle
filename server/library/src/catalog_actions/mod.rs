@@ -37,6 +37,8 @@ pub enum ActionKind {
     Merge,
     MergeAlbum,
     MergeArtist,
+    /// A same-name artist join undone by an administrator.
+    MergeArtistUndone,
     /// Tracks moved to another album by a curator.
     Move,
     NewCopyAtPath,
@@ -87,6 +89,7 @@ droppedneedle_kernel::spelled!(ActionKind {
     Merge => "merge",
     MergeAlbum => "merge_album",
     MergeArtist => "merge_artist",
+    MergeArtistUndone => "merge_artist_undone",
     Move => "move",
     NewCopyAtPath => "new_copy_at_path",
     OtherMusicAtPath => "other_music_at_path",

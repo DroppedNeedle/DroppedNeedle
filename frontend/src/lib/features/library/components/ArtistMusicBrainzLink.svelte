@@ -138,7 +138,7 @@
 		onconfirm={save}
 	>
 		<p class="text-sm text-muted">
-			DroppedNeedle keeps a link you set. It never merges artists for you.
+			DroppedNeedle keeps a link you set. Setting it never merges artists.
 		</p>
 		<div class="mt-3">
 			<TextField

@@ -77,6 +77,9 @@ pub struct Member {
     pub sort_name: Option<String>,
     pub row_revision: i64,
     pub provider_mbid: Option<String>,
+    /// MusicBrainz's note on the linked artist, set only while another
+    /// live record has the same name.
+    pub disambiguation: Option<String>,
     pub counts: ReferenceCounts,
 }
 
@@ -105,8 +108,9 @@ pub struct Dismissal {
 pub enum MergeBasisLabel {
     /// MusicBrainz proved the records to be one artist.
     MusicbrainzProof,
-    /// A retag moved every credit to a record of the same name, with only
-    /// its sort name, capitals or spacing changed.
+    /// The records share a name and nothing told them apart: a join by
+    /// name, or before those, a retag that changed only the sort name,
+    /// capitals or spacing.
     SameName,
     /// The upgrade folded v2's Unknown Artist into the built-in one.
     V2Placeholder,
@@ -119,7 +123,8 @@ impl MergeBasisLabel {
         match reason_code {
             "AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE"
             | "AUTOMATIC_PROVIDER_ANCHORED_ARTIST_CONVERGENCE" => Some(Self::MusicbrainzProof),
-            crate::corrections::artist_convergence::MERGED_BY_NAME => Some(Self::SameName),
+            crate::corrections::artist_convergence::MERGED_BY_NAME
+            | crate::corrections::artist_convergence::SAME_NAME_JOINED => Some(Self::SameName),
             crate::corrections::artist_convergence::V2_PLACEHOLDER_FOLDED => {
                 Some(Self::V2Placeholder)
             }
@@ -138,6 +143,8 @@ pub struct MergeAction {
     pub survivor_id: String,
     pub retired_ids: Vec<String>,
     pub provider_mbid: Option<String>,
+    /// An administrator can undo it: a join by name not undone yet.
+    pub can_undo: bool,
 }
 
 /// Everything the grouping rules read, loaded in one pass.
@@ -175,6 +182,8 @@ pub struct Group {
     pub resolved_at: Option<f64>,
     /// What an automatic merge rested on, for a resolved group.
     pub merge_basis: Option<MergeBasisLabel>,
+    /// A resolved group an administrator can undo.
+    pub can_undo: bool,
 }
 
 /// A page of groups with the per-state counts over every group.

@@ -4099,6 +4099,311 @@ async fn artist_duplicate_groups_list_open_and_dismiss() {
     rig.stop().await;
 }
 
+/// Tag `file` as the one track of `album` by `name`, with this sort name and
+/// MusicBrainz artist id when given, on both sides, and no release ids.
+fn tag_artist(file: &Path, album: &str, name: &str, sort: Option<&str>, id: Option<&str>) {
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+    let one = |value: &str| vec![value.to_owned()];
+    let maybe = |value: Option<&str>| value.map(one).unwrap_or_default();
+    let edits = vec![
+        TagEdit::verbatim(TagField::Title, one(&format!("{album} 1"))),
+        TagEdit::verbatim(TagField::TrackNumber, one("1")),
+        TagEdit::verbatim(TagField::Album, one(album)),
+        TagEdit::verbatim(TagField::Compilation, Vec::new()),
+        TagEdit::verbatim(TagField::Artist, one(name)),
+        TagEdit::verbatim(TagField::Artists, one(name)),
+        TagEdit::verbatim(TagField::ArtistSort, maybe(sort)),
+        TagEdit::verbatim(TagField::AlbumArtist, one(name)),
+        TagEdit::verbatim(TagField::AlbumArtists, one(name)),
+        TagEdit::verbatim(TagField::AlbumArtistSort, maybe(sort)),
+        TagEdit::verbatim(TagField::MusicBrainzArtistId, maybe(id)),
+        TagEdit::verbatim(TagField::MusicBrainzAlbumArtistId, maybe(id)),
+        TagEdit::verbatim(TagField::MusicBrainzReleaseId, Vec::new()),
+        TagEdit::verbatim(TagField::MusicBrainzReleaseGroupId, Vec::new()),
+        TagEdit::verbatim(TagField::MusicBrainzRecordingId, Vec::new()),
+        TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+    ];
+    save_tags(file, &edits).expect("fixture tagged");
+}
+
+/// Two "Poppy"s whose files carry different MusicBrainz ids stay two
+/// records. Their ids are asked about, and once MusicBrainz has answered,
+/// the artist list shows each linked one its note. An artist no other
+/// record shares a name with shows none.
+#[tokio::test]
+async fn namesakes_musicbrainz_tells_apart_stay_two() {
+    use droppedneedle_library::identify::sources::ArtistAnswer;
+    const X: &str = "aaaaaaaa-0000-4000-8000-0000000000a1";
+    const Y: &str = "aaaaaaaa-0000-4000-8000-0000000000a2";
+    const Z: &str = "aaaaaaaa-0000-4000-8000-0000000000a3";
+    let rig = Rig::start("lib-namesakes").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let paused = rig.pause_identification().await;
+    let music = app.config.root_app_dir.join("music");
+    for (folder, album, name, id) in [
+        ("x", "Album X", "Poppy", X),
+        ("y", "Album Y", "Poppy", Y),
+        ("z", "Album Z", "Solo", Z),
+    ] {
+        let file = plant(&music, &format!("{folder}/01.flac"), "management_full.flac");
+        tag_artist(&file, album, name, None, Some(id));
+    }
+    app.add_library_folder("music", &music).await;
+    let db = app.db();
+    let record = |id: &str| {
+        texts(
+            &db,
+            &format!(
+                "SELECT DISTINCT local_artist_id FROM local_track_artists WHERE artist_mbid = '{id}'"
+            ),
+        )
+    };
+    let (x, y, z) = (record(X), record(Y), record(Z));
+    assert_eq!((x.len(), y.len(), z.len()), (1, 1, 1));
+    assert_ne!(x, y, "MusicBrainz's ids keep the two apart");
+    assert_eq!(
+        texts(
+            &db,
+            "SELECT artist_mbid || ' ' || state FROM library_identify_artist_id_checks \
+             ORDER BY artist_mbid"
+        ),
+        [format!("{X} pending"), format!("{Y} pending")],
+        "the two ids are asked about"
+    );
+    for (artist, id) in [(&x[0], X), (&y[0], Y), (&z[0], Z)] {
+        app.seed(&format!(
+            "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+             provider_artist_id, decision_source, selected_at) \
+             VALUES ('{artist}', 'musicbrainz', '{id}', 'manual', 1)"
+        ))
+        .await;
+    }
+    app.seed(&format!(
+        "INSERT INTO library_identify_artist_id_checks (artist_mbid, state, nominated_at, \
+         checked_at, disambiguation) VALUES ('{Z}', 'kept', 1, 2, 'a band')"
+    ))
+    .await;
+    let note = |text: &str| ArtistAnswer::Current {
+        disambiguation: Some(text.to_owned()),
+    };
+    rig.identify.set_artist(X, note("US singer"));
+    rig.identify.set_artist(Y, note("Japanese singer"));
+    rig.resume_identification(paused).await;
+    app.until("MusicBrainz answered both ids", || {
+        let done = texts(
+            &db,
+            "SELECT artist_mbid FROM library_identify_artist_id_checks WHERE state = 'kept' \
+             AND disambiguation IS NOT NULL",
+        )
+        .len()
+            == 3;
+        async move { done.then_some(()) }
+    })
+    .await;
+
+    let (status, body) = app
+        .call("GET", "/api/v3/library/artists?limit=50", &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mut notes: Vec<(String, Value)> = body["items"]
+        .as_array()
+        .expect("artists")
+        .iter()
+        .map(|item| {
+            (
+                item["name"].as_str().unwrap_or_default().to_owned(),
+                item["disambiguation"].clone(),
+            )
+        })
+        .collect();
+    notes.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.to_string().cmp(&b.1.to_string()))
+    });
+    assert_eq!(
+        notes,
+        [
+            ("Poppy".to_owned(), json!("Japanese singer")),
+            ("Poppy".to_owned(), json!("US singer")),
+            ("Solo".to_owned(), Value::Null),
+        ],
+        "{body}"
+    );
+    rig.stop().await;
+}
+
+/// A join of three records of one name is undone by an admin: each record
+/// gets back its songs, plays, favourites and ratings (a user who
+/// favourited and rated two of them keeps both), a play made after the join
+/// stays on the record kept, and they are marked distinct, so a rescan
+/// keeps them apart. The old id opens its own record again, and a
+/// second undo is refused.
+#[tokio::test]
+async fn an_undone_artist_join_splits_and_stays_split() {
+    use droppedneedle_library::scan::naming::artist_key;
+    let rig = Rig::start("lib-undo-join").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    let first = plant(&music, "a/01.flac", "management_full.flac");
+    tag_artist(
+        &first,
+        "Album A",
+        "Laura Marling",
+        Some("Marling, Laura"),
+        None,
+    );
+    app.add_library_folder("music", &music).await;
+    let db = app.db();
+    let one = |sql: &str| texts(&db, sql).into_iter().next().unwrap_or_default();
+    let kept = one(
+        "SELECT c.local_artist_id FROM local_track_artists c JOIN local_tracks t \
+         ON t.id = c.local_track_id WHERE t.relative_path = 'a/01.flac'",
+    );
+    let twin = artist_key("laura marling", None);
+    let third = artist_key("LAURA MARLING", None);
+    app.seed(&format!(
+        "INSERT INTO local_artists (id, display_name, folded_name, normalized_name, kind, \
+         created_at, updated_at) VALUES ('{twin}', 'laura marling', 'laura marling', \
+         'laura marling', 'group', 9999999999999, 9999999999999); \
+         INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('fan', 'Fan', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('fan', 'artist', '{twin}', 7); \
+         INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
+         VALUES ('fan', 'artist', '{twin}', 4, 7); \
+         INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
+         artist_name, played_at) VALUES ('before', 'fan', '{twin}', 'Song', 'laura marling', 7); \
+         INSERT INTO local_artists (id, display_name, folded_name, normalized_name, kind, \
+         created_at, updated_at) VALUES ('{third}', 'LAURA MARLING', 'laura marling', \
+         'laura marling', 'group', 9999999999999, 9999999999999); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('fan', 'artist', '{third}', 8); \
+         INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
+         VALUES ('fan', 'artist', '{third}', 2, 8);"
+    ))
+    .await;
+    let second = plant(&music, "b/01.flac", "management_full.flac");
+    tag_artist(&second, "Album B", "laura marling", None, None);
+    let last = plant(&music, "c/01.flac", "management_full.flac");
+    tag_artist(&last, "Album C", "LAURA MARLING", None, None);
+    app.scan_library().await;
+    let retired = format!(
+        "SELECT COALESCE(retired_into_artist_id, '-') FROM local_artists WHERE id = '{twin}'"
+    );
+    assert_eq!(one(&retired), kept, "the twins joined");
+    let retired_third = format!(
+        "SELECT COALESCE(retired_into_artist_id, '-') FROM local_artists WHERE id = '{third}'"
+    );
+    assert_eq!(one(&retired_third), kept, "all three joined");
+    app.seed(&format!(
+        "INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
+         artist_name, played_at) VALUES ('after', 'fan', '{kept}', 'Song', 'Laura Marling', 8);"
+    ))
+    .await;
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/artists/{twin}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["id"],
+        json!(kept),
+        "the old id opens the joined record"
+    );
+
+    let (status, body) = app
+        .call(
+            "GET",
+            "/api/v3/library/artists/duplicate-groups?state=resolved_automatically",
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let group = &body["items"][0];
+    assert_eq!(
+        group["reason"]["code"], "AUTOMATIC_SAME_NAME_ARTISTS_JOINED",
+        "{body}"
+    );
+    assert_eq!(group["can_undo"], true, "{body}");
+    let undo = format!(
+        "/api/v3/library/artists/duplicate-groups/{}/undo",
+        group["id"].as_str().expect("group id")
+    );
+    let (status, body) = app.call("POST", &undo, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mut restored: Vec<String> = body["restored_artist_ids"]
+        .as_array()
+        .expect("restored ids")
+        .iter()
+        .filter_map(|id| id.as_str().map(str::to_owned))
+        .collect();
+    restored.sort_unstable();
+    let mut expected = vec![twin.clone(), third.clone()];
+    expected.sort_unstable();
+    assert_eq!(restored, expected, "{body}");
+
+    assert_eq!(one(&retired), "-", "the record is its own again");
+    assert_eq!(
+        one(&retired_third),
+        "-",
+        "the third record is its own again"
+    );
+    let on = |sql: &str, artist: &str| texts(&db, &sql.replace("{id}", artist));
+    let credits = "SELECT t.relative_path FROM local_track_artists c JOIN local_tracks t \
+                   ON t.id = c.local_track_id WHERE c.local_artist_id = '{id}' \
+                   UNION ALL SELECT 'album ' || b.title FROM local_albums b \
+                   WHERE b.album_artist_id = '{id}' ORDER BY 1";
+    assert_eq!(on(credits, &twin), ["album Album B", "b/01.flac"]);
+    assert_eq!(on(credits, &third), ["album Album C", "c/01.flac"]);
+    assert_eq!(on(credits, &kept), ["a/01.flac", "album Album A"]);
+    let plays = "SELECT id FROM library_play_history WHERE local_artist_id = '{id}' ORDER BY id";
+    assert_eq!(on(plays, &twin), ["before"]);
+    assert_eq!(on(plays, &kept), ["after"], "a later play stays");
+    let stars = "SELECT user_id || ' ' || created_at FROM catalog_user_favorites \
+                 WHERE item_kind = 'artist' AND item_id = '{id}' \
+                 UNION ALL SELECT user_id || ' rated ' || rating FROM catalog_user_ratings \
+                 WHERE item_kind = 'artist' AND item_id = '{id}' ORDER BY 1";
+    assert_eq!(on(stars, &twin), ["fan 7", "fan rated 4"]);
+    assert_eq!(on(stars, &third), ["fan 8", "fan rated 2"]);
+    assert!(on(stars, &kept).is_empty(), "the join's copies are gone");
+    assert_eq!(
+        one(&format!(
+            "SELECT CAST(COUNT(*) AS TEXT) FROM library_artist_reconciliation_dismissals \
+             WHERE reason_code = 'UNDONE_JOIN' AND '{kept}' IN (left_artist_id, right_artist_id) \
+             AND '{twin}' IN (left_artist_id, right_artist_id)"
+        )),
+        "1",
+        "marked distinct"
+    );
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/artists/{twin}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["id"], json!(twin), "the old id opens its own record");
+
+    app.scan_library().await;
+    assert_eq!(one(&retired), "-", "a rescan keeps them apart");
+    let (status, body) = app.call("POST", &undo, &headers, None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "ARTIST_JOIN_UNDONE", "{body}");
+    rig.stop().await;
+}
+
 /// Removing with files moves them into the root's recycle bin, never
 /// deletes them; the catalog rows turn missing and a rescan request
 /// covers the album's folder.
@@ -25166,7 +25471,12 @@ async fn an_artist_whose_files_carry_a_merged_id_is_linked_and_kept() {
     });
     rig.identify
         .set_artist(RETIRED, ArtistAnswer::MergedInto(CURRENT.to_owned()));
-    rig.identify.set_artist(CURRENT, ArtistAnswer::Current);
+    rig.identify.set_artist(
+        CURRENT,
+        ArtistAnswer::Current {
+            disambiguation: None,
+        },
+    );
     rig.resume_identification(paused).await;
     let link = format!(
         "SELECT provider_artist_id || ' ' || decision_source \

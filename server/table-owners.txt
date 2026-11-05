@@ -19,6 +19,17 @@
 #                                           album (a followed retag, or a
 #                                           retag joined across two scans)
 #
+# The undo of an artist join made because two records share a name, also
+# library code in its own transaction, moves back what the join moved:
+#   catalog_user_favorites        catalog   back to the record split off,
+#                                           for a user who still has one on
+#                                           the joined record; the copy the
+#                                           join made is removed if unchanged
+#   catalog_user_favorite_names   catalog   back with their favorite
+#   catalog_user_ratings          catalog   back the same way
+#   library_play_history          media     plays the join moved, back to
+#                                           the record split off
+#
 # Auth's user delete removes catalog_playlists rows by cascade, and their
 # entries and covers with them; it names none of those tables.
 #

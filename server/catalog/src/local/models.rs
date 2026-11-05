@@ -308,6 +308,9 @@ pub struct ArtistView {
     pub art_missing: bool,
     /// True when the caller favorited this artist.
     pub favorite: bool,
+    /// MusicBrainz's short note on who this is ("US singer"), set only
+    /// when another artist in the library has the same name.
+    pub disambiguation: Option<String>,
 }
 
 /// A library artist with whether the caller favorited it and whether its
@@ -327,6 +330,7 @@ impl From<(ArtistRecord, bool, bool)> for ArtistView {
             date_added: artist.date_added,
             art_missing,
             favorite,
+            disambiguation: artist.disambiguation,
         }
     }
 }

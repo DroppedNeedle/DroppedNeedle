@@ -66,6 +66,7 @@
 	const facts = $derived.by<string[]>(() => {
 		if (!artist) return [];
 		const line: string[] = [];
+		if (artist.disambiguation) line.push(artist.disambiguation);
 		if (artist.album_count > 0)
 			line.push(
 				`${artist.album_count} ${artist.album_count === 1 ? 'album' : 'albums'} · ${artist.led_track_count} ${artist.led_track_count === 1 ? 'track' : 'tracks'}`

@@ -205,6 +205,18 @@ droppedneedle_kernel::sql! {
                  UNION ALL SELECT (SELECT local_artist_id FROM local_album_artists \
                   WHERE artist_mbid = ?1 AND local_artist_id > ?2 \
                   ORDER BY local_artist_id LIMIT 1))";
+    /// Whether a row `?1` exists, live or retired.
+    pub(super) ARTIST_ROW_EXISTS = "SELECT EXISTS(SELECT 1 FROM local_artists WHERE id = ?1)";
+    /// Live ordinary rows of folded name `?1`, neither sentinel (`?2`,
+    /// `?3`) nor a Various Artists row, oldest first.
+    pub(super) SAME_FOLDED_NAME_ROWS = "SELECT id, display_name FROM local_artists \
+         WHERE folded_name = ?1 AND kind <> 'various_artists' \
+         AND retired_into_artist_id IS NULL AND id NOT IN (?2, ?3) \
+         ORDER BY created_at, id";
+    pub(super) row SameFoldedNameRow for [SAME_FOLDED_NAME_ROWS] {
+        id: String,
+        display_name: String,
+    }
     pub(super) CONVERGED_MBID_OF_ARTIST = "SELECT converged_mbid FROM local_artists WHERE id = ?1";
     pub(super) ARTIST_NAMES = "SELECT display_name, sort_name FROM local_artists WHERE id = ?1";
     pub(super) WRITE_ARTIST_NAMES = "UPDATE local_artists SET display_name = ?2, folded_name = ?3, \

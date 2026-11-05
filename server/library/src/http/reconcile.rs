@@ -1,5 +1,6 @@
 //! Artist reconciliation routes: progress, duplicate artist groups, one
-//! group's evidence, and marking a group as distinct people.
+//! group's evidence, marking a group as distinct people, and undoing a
+//! join of records that share a name.
 //!
 //! Admin-only. Store work runs on a blocking thread.
 
@@ -36,6 +37,7 @@ pub fn routes() -> Routes<LibraryServices> {
         .admin(routes!(list_artist_duplicate_groups))
         .admin(routes!(get_artist_duplicate_group))
         .admin(routes!(dismiss_artist_duplicate_group))
+        .admin(routes!(undo_artist_duplicate_group))
 }
 
 impl From<ReconcileError> for ApiError {
@@ -108,8 +110,7 @@ impl From<ArtistGroupState> for GroupState {
 pub enum ArtistMergeBasis {
     /// MusicBrainz proved the records to be one artist.
     MusicbrainzProof,
-    /// A tag edit moved every song to a record of the same name, with only
-    /// its sort name, capitals or spacing changed.
+    /// The records share a name and nothing told them apart.
     SameName,
     /// The upgrade folded v2's Unknown Artist into the built-in one.
     V2Placeholder,
@@ -146,6 +147,9 @@ pub struct ArtistReconciliationMember {
     pub sort_name: Option<String>,
     pub row_revision: i64,
     pub provider_mbid: Option<String>,
+    /// MusicBrainz's short note on the linked artist ("US singer"), set
+    /// only while another record has the same name.
+    pub disambiguation: Option<String>,
     pub album_credit_count: i64,
     pub track_credit_count: i64,
     pub primary_album_count: i64,
@@ -164,6 +168,7 @@ impl From<&Member> for ArtistReconciliationMember {
             sort_name: member.sort_name.clone(),
             row_revision: member.row_revision,
             provider_mbid: member.provider_mbid.clone(),
+            disambiguation: member.disambiguation.clone(),
             album_credit_count: c.album_credits,
             track_credit_count: c.track_credits,
             primary_album_count: c.primary_albums,
@@ -196,6 +201,8 @@ pub struct ArtistDuplicateGroupSummary {
     pub resolved_at: Option<f64>,
     /// What that merge rested on.
     pub merge_basis: Option<ArtistMergeBasis>,
+    /// The merge is a join by name an administrator can undo.
+    pub can_undo: bool,
 }
 
 impl From<&Group> for ArtistDuplicateGroupSummary {
@@ -213,6 +220,7 @@ impl From<&Group> for ArtistDuplicateGroupSummary {
             reason: group.reason.into(),
             resolved_at: group.resolved_at,
             merge_basis: group.merge_basis.map(Into::into),
+            can_undo: group.can_undo,
         }
     }
 }
@@ -383,6 +391,20 @@ pub struct ArtistDuplicateGroupDismissResponse {
     pub dismissed_pairs: usize,
 }
 
+/// What undoing a join put back.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ArtistDuplicateGroupUndoResponse {
+    pub group_id: String,
+    /// The record the join kept.
+    pub surviving_artist_id: String,
+    /// The records split off again, each live once more.
+    pub restored_artist_ids: Vec<String>,
+    /// Rows moved back, by kind (`album_credits`, `plays`, `favorites`, ...).
+    pub put_back: BTreeMap<String, u64>,
+    /// Rows the join moved that changed since and stay where they are.
+    pub left_in_place: BTreeMap<String, u64>,
+}
+
 // ---------------------------------------------------------------------------
 // Handlers.
 // ---------------------------------------------------------------------------
@@ -504,5 +526,43 @@ pub async fn dismiss_artist_duplicate_group(
     Ok(Json(ArtistDuplicateGroupDismissResponse {
         group_id,
         dismissed_pairs: pairs,
+    }))
+}
+
+/// Undo a join of records made because they share a name: each record
+/// comes back with its songs, plays, favorites and ratings, less what
+/// changed since, and the records are marked as different artists.
+#[utoipa::path(
+    post,
+    tag = "library management",
+    path = "/api/v3/library/artists/duplicate-groups/{group_id}/undo",
+    params(("group_id" = String, Path, description = "Group id of a resolved join")),
+    responses(
+        (status = 200, description = "Join undone", body = ArtistDuplicateGroupUndoResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+        (status = 404, description = "No such group"),
+        (status = 409, description = "Not a join that can be undone, or undone already"),
+    )
+)]
+pub async fn undo_artist_duplicate_group(
+    State(service): State<Reconcile>,
+    caller: Admin,
+    Path(group_id): Path<String>,
+) -> Result<Json<ArtistDuplicateGroupUndoResponse>, ApiError> {
+    let id = group_id.clone();
+    let done = blocking(move || service.undo(&caller, &id)).await?;
+    let wire = |counts: BTreeMap<&'static str, u64>| {
+        counts
+            .into_iter()
+            .map(|(kind, n)| (kind.to_owned(), n))
+            .collect()
+    };
+    Ok(Json(ArtistDuplicateGroupUndoResponse {
+        group_id,
+        surviving_artist_id: done.survivor,
+        restored_artist_ids: done.restored,
+        put_back: wire(done.put_back),
+        left_in_place: wire(done.left),
     }))
 }

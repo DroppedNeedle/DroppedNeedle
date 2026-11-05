@@ -245,6 +245,9 @@ pub struct ArtistRecord {
     pub appearance_track_count: u64,
     /// First import time, unix seconds.
     pub date_added: Option<f64>,
+    /// MusicBrainz's note on the linked artist, while another record has
+    /// the same name.
+    pub disambiguation: Option<String>,
 }
 
 /// One streamable library track: what the track projection reads, and

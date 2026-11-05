@@ -3688,6 +3688,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/artists/duplicate-groups/{group_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo a join of records made because they share a name: each record
+         *     comes back with its songs, plays, favorites and ratings, less what
+         *     changed since, and the records are marked as different artists.
+         */
+        post: operations["undo_artist_duplicate_group"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/artists/merge": {
         parameters: {
             query?: never;
@@ -10570,6 +10591,8 @@ export interface components {
              * @description Credits, favorites and plays a merge would move.
              */
             affected_reference_count: number;
+            /** @description The merge is a join by name an administrator can undo. */
+            can_undo: boolean;
             display_name: string;
             /** @description Stable for the same set of records. */
             id: string;
@@ -10589,6 +10612,22 @@ export interface components {
              */
             resolved_at?: number | null;
             state: components["schemas"]["ArtistGroupState"];
+        };
+        /** @description What undoing a join put back. */
+        ArtistDuplicateGroupUndoResponse: {
+            group_id: string;
+            /** @description Rows the join moved that changed since and stay where they are. */
+            left_in_place: {
+                [key: string]: number;
+            };
+            /** @description Rows moved back, by kind (`album_credits`, `plays`, `favorites`, ...). */
+            put_back: {
+                [key: string]: number;
+            };
+            /** @description The records split off again, each live once more. */
+            restored_artist_ids: string[];
+            /** @description The record the join kept. */
+            surviving_artist_id: string;
         };
         /** @description Enriched artist counts. Absent counts mean unknown, never zero. */
         ArtistEnrichment: {
@@ -10866,6 +10905,11 @@ export interface components {
             active_credit_count: number;
             /** Format: int64 */
             album_credit_count: number;
+            /**
+             * @description MusicBrainz's short note on the linked artist ("US singer"), set
+             *     only while another record has the same name.
+             */
+            disambiguation?: string | null;
             /** Format: int64 */
             favorite_count: number;
             /** Format: int64 */
@@ -11003,6 +11047,11 @@ export interface components {
              * @description First import time, unix seconds.
              */
             date_added?: number | null;
+            /**
+             * @description MusicBrainz's short note on who this is ("US singer"), set only
+             *     when another artist in the library has the same name.
+             */
+            disambiguation?: string | null;
             /** @description True when the caller favorited this artist. */
             favorite: boolean;
             /** @description Local artist id. */
@@ -18055,6 +18104,8 @@ export interface components {
                  * @description Credits, favorites and plays a merge would move.
                  */
                 affected_reference_count: number;
+                /** @description The merge is a join by name an administrator can undo. */
+                can_undo: boolean;
                 display_name: string;
                 /** @description Stable for the same set of records. */
                 id: string;
@@ -33427,6 +33478,65 @@ export interface operations {
                 };
             };
             /** @description A member changed since the group was read */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    undo_artist_duplicate_group: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Group id of a resolved join */
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Join undone */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistDuplicateGroupUndoResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No such group */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not a join that can be undone, or undone already */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -3,9 +3,11 @@
 //! Every reference to a merged artist (album and track credits, album
 //! artists, favorites, ratings, play history, credit proofs, links and
 //! source links) moves to the survivor; the merged rows stay as retired
-//! records with an alias, so old links keep resolving. This is
-//! not undoable. Every merge, chosen or automatic, retires a row only
-//! through [`retire_artist`], with the [`MergeBasis`] it rests on.
+//! records with an alias, so old links keep resolving. Only a join of
+//! records that share a name keeps a record of what it moved, which its
+//! undo reads (`artist_join`); no other merge can be undone. Every merge,
+//! chosen or automatic, retires a row only through [`retire_artist`], with
+//! the [`MergeBasis`] it rests on.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,6 +15,7 @@ use rusqlite::types::Value;
 use rusqlite::{OptionalExtension as _, Transaction, params, params_from_iter};
 use serde::Serialize;
 
+use super::artist_join::{Retiree, record_retiree};
 use super::merge_basis::MergeBasis;
 use super::models::{
     ArtistAliasKind, ArtistMergeOutcome, ArtistMergeRequest, CorrectionError, MergeCandidateState,
@@ -232,23 +235,34 @@ pub(crate) const MOVED_WITH_ID: &str = "CREDITS_MOVED_WITH_ID";
 
 /// The audit reason of a row merged into the one a retag moved all its
 /// credits to, where the two names differ only in sort name, capitals or
-/// spacing (`artist_convergence`).
+/// spacing. Merges before same-name joins carry it; none is made now.
 pub(crate) const MERGED_BY_NAME: &str = "AUTOMATIC_SAME_NAME_CREDITS_MOVED";
+
+/// The audit reason of records joined because their names have the same
+/// `artist_name_key` and nothing tells them apart (`artist_convergence`).
+pub(crate) const SAME_NAME_JOINED: &str = "AUTOMATIC_SAME_NAME_ARTISTS_JOINED";
 
 /// The audit reason of a v2 "Unknown Artist" row the upgrade merged into
 /// the built-in one (`artist_convergence`).
 pub(crate) const V2_PLACEHOLDER_FOLDED: &str = "AUTOMATIC_V2_PLACEHOLDER_FOLDED";
 
 /// Point every reference of the basis's retiree at its survivor and
-/// retire it, recording in `converged_mbid` what proved the merge. The
-/// only writer of `local_artists.retired_into_artist_id`.
+/// retire it, recording in `converged_mbid` what proved the merge. With
+/// the undo of a join, the only writer of
+/// `local_artists.retired_into_artist_id`. A basis that keeps an undo
+/// answers what is about to move, read before anything does.
 pub(super) fn retire_artist(
     tx: &Transaction<'_>,
     basis: MergeBasis<'_>,
     now: f64,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<Option<Retiree>> {
     let artist = basis.retiree();
     let survivor = basis.survivor();
+    let record = if basis.keeps_undo() {
+        Some(record_retiree(tx, artist, survivor)?)
+    } else {
+        None
+    };
     // A row waiting to follow its credits to `artist`, or whose credits a
     // scan moved to it, follows them on to the survivor; every other open
     // candidate naming `artist` is resolved below.
@@ -286,7 +300,7 @@ pub(super) fn retire_artist(
         params![artist, survivor, now, ArtistAliasKind::MergedArtist],
     )?;
     resolve_merge_candidates(tx, artist, now)?;
-    Ok(())
+    Ok(record)
 }
 
 /// Close every open candidate naming `artist`: it was merged.

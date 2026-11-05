@@ -4,7 +4,7 @@ use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
 
 use crate::corrections::artist_convergence::{
-    MERGED_BY_NAME, MOVED_BY_NAME, MOVED_WITH_ID, V2_PLACEHOLDER_FOLDED,
+    MERGED_BY_NAME, MOVED_BY_NAME, MOVED_WITH_ID, SAME_NAME_JOINED, V2_PLACEHOLDER_FOLDED,
 };
 use crate::identify::artist_links::ProofSubject;
 use crate::identify::sql::CURRENT_PROOF;
@@ -61,10 +61,21 @@ droppedneedle_kernel::sql! {
                WHERE p.subject_kind = 'track' AND p.subject_id = credit.local_track_id \
                AND p.credit_position = credit.position AND p.source_local_artist_id = ?1 \
                AND (" + CURRENT_PROOF + ")))";
-    /// Catalog action reasons that record an automatic artist merge: v2's two, the merge of a row a retag emptied by name, and the upgrade's fold of v2's Unknown Artist.
+    /// Catalog action reasons that record an automatic artist merge: v2's two, the merge of a row a retag emptied by name, a join by name, and the upgrade's fold of v2's Unknown Artist.
     pub(super) fragment MERGE_REASONS = "('AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE', \
          'AUTOMATIC_PROVIDER_ANCHORED_ARTIST_CONVERGENCE', '" + MERGED_BY_NAME + "', \
-         '" + V2_PLACEHOLDER_FOLDED + "')";
+         '" + SAME_NAME_JOINED + "', '" + V2_PLACEHOLDER_FOLDED + "')";
+    /// True when merge action `a` is a join an administrator undid.
+    pub(super) fragment UNDONE_JOIN = "EXISTS (SELECT 1 FROM library_catalog_actions u \
+         WHERE u.idempotency_key = 'merge-artist-undone:' || a.id)";
+    /// MusicBrainz's note on `artist`'s linked artist (`identity`), while
+    /// another live ordinary record has its folded name.
+    pub(super) fragment DISAMBIGUATION = "(SELECT NULLIF(c.disambiguation, '') \
+         FROM library_identify_artist_id_checks c \
+         WHERE c.artist_mbid = lower(identity.provider_artist_id) \
+         AND EXISTS (SELECT 1 FROM local_artists o WHERE o.folded_name = artist.folded_name \
+          AND o.id <> artist.id AND o.retired_into_artist_id IS NULL \
+          AND o.kind <> 'various_artists')) AS disambiguation";
     /// The open moves of `artist.id`'s credits a scan recorded.
     pub(super) fragment OPEN_MOVES = "SELECT 1 FROM local_artist_merge_candidates moved WHERE moved.left_artist_id = " + "artist.id" + " \
          AND moved.reason_code IN ('" + MOVED_BY_NAME + "', '" + MOVED_WITH_ID + "') AND moved.state = 'open'";
@@ -83,7 +94,7 @@ droppedneedle_kernel::sql! {
          WHERE dest.id = moved.right_artist_id AND dest.folded_name IS NOT " + "artist.folded_name" + "))";
     /// The columns a candidate row reads for artist `artist`, joined to its MusicBrainz link as `identity`.
     pub(super) fragment CANDIDATE_COLUMNS = "artist.id, artist.display_name, artist.sort_name, artist.row_revision, \
-           identity.provider_artist_id, artist.folded_name, artist.created_at, \
+           identity.provider_artist_id, " + DISAMBIGUATION + ", artist.folded_name, artist.created_at, \
            (SELECT COUNT(*) FROM local_album_artists credit \
               JOIN local_albums album ON album.id = credit.local_album_id \
               WHERE credit.local_artist_id = artist.id AND " + ACTIVE_ALBUM + ") AS album_credits, \
@@ -129,13 +140,15 @@ droppedneedle_kernel::sql! {
              ORDER BY pair.left_artist_id, dest.created_at, pair.right_artist_id";
     pub(super) CANDIDATE_BY_ID = "SELECT " + CANDIDATE_COLUMNS + " FROM local_artists artist " + IDENTITY_JOIN + " WHERE artist.id = ?1";
     /// Automatic merges from the catalog action log, newest first.
-    pub(super) AUTOMATIC_MERGE_ACTIONS = "SELECT id, after_json, reason_code, created_at FROM library_catalog_actions \
-             WHERE reason_code IN " + MERGE_REASONS + " ORDER BY created_at DESC, id DESC";
+    pub(super) AUTOMATIC_MERGE_ACTIONS = "SELECT a.id, a.after_json, a.reason_code, a.created_at \
+             FROM library_catalog_actions a WHERE a.reason_code IN " + MERGE_REASONS + " \
+             AND NOT " + UNDONE_JOIN + " ORDER BY a.created_at DESC, a.id DESC";
     family MERGED_ARTIST_ROWS = merged_artist_rows;
     /// How many records were merged automatically so far.
     pub(super) AUTOMATIC_MERGE_COUNT = "SELECT COALESCE(SUM(json_array_length(json_extract(after_json, \
-             '$.retired_artist_ids'))), 0) FROM library_catalog_actions \
-             WHERE reason_code IN " + MERGE_REASONS + " AND json_valid(after_json)";
+             '$.retired_artist_ids'))), 0) FROM library_catalog_actions a \
+             WHERE a.reason_code IN " + MERGE_REASONS + " AND json_valid(a.after_json) \
+             AND NOT " + UNDONE_JOIN;
     family GROUP_CREDIT_EVIDENCE = group_credit_evidence;
     family GROUP_OWNED_ALBUMS = group_owned_albums;
     family GROUP_OWNED_TRACKS = group_owned_tracks;
@@ -153,6 +166,7 @@ droppedneedle_kernel::sql! {
         sort_name: Option<String>,
         row_revision: i64,
         provider_artist_id: Option<String>,
+        disambiguation: Option<String>,
         folded_name: String,
         created_at: f64,
         album_credits: i64,
@@ -185,6 +199,7 @@ droppedneedle_kernel::sql! {
         sort_name: Option<String>,
         row_revision: i64,
         provider_artist_id: Option<String>,
+        disambiguation: Option<String>,
     }
     pub(super) row EvidenceRow for family [group_credit_evidence] {
         subject_kind: ProofSubject,
@@ -218,7 +233,7 @@ pub(super) fn merged_artist_rows(ids: ListLen) -> String {
     let marks = crate::sql::marks(ids);
     format!(
         "SELECT artist.id, artist.display_name, artist.sort_name, artist.row_revision, \
-           identity.provider_artist_id FROM local_artists artist \
+           identity.provider_artist_id, {DISAMBIGUATION} FROM local_artists artist \
          LEFT JOIN local_artist_external_identities identity \
            ON identity.local_artist_id = artist.id AND identity.provider = 'musicbrainz' \
          WHERE artist.id IN ({marks})"

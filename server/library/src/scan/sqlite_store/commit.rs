@@ -59,7 +59,7 @@ use crate::scan::models::{
     Availability, EndPassName, GenreSource, GroupingSource, InventoryState, Phase, TagProvenance,
 };
 use crate::scan::naming::{
-    album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
+    album_grouping_key, album_name_key, artist_name_key, grouping_directory, parse_names_for_row,
 };
 use crate::scan::store::{EditionFill, IndexWindow, LengthFill, WindowOutcome};
 use crate::tags::{AudioArtistCredit, AudioTag};
@@ -3172,7 +3172,7 @@ pub(crate) fn automatic_album_for(
 
 /// The row a reset album's credit, which carries no id, lands on, as a
 /// scan of the track's file would key it ([`artists::resolve`]): the row
-/// of a credit of the track holding an id under the same folded name, else
+/// of a credit of the track holding an id under the same name key, else
 /// the name row.
 fn album_artist_row(
     tx: &Connection,
@@ -3180,7 +3180,7 @@ fn album_artist_row(
     credit: &Credit,
     now: f64,
 ) -> rusqlite::Result<String> {
-    let folded = fold_text(&credit.name);
+    let key = artist_name_key(&credit.name);
     let shared = tx
         .prepare_cached(crate::scan::sql::ALBUM_ARTIST_ROW.text())?
         .query_map(params![track_id], |row| {
@@ -3189,7 +3189,7 @@ fn album_artist_row(
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?
         .into_iter()
-        .find(|(_, mbid, name)| !placeholder(mbid) && fold_text(name) == folded);
+        .find(|(_, mbid, name)| !placeholder(mbid) && artist_name_key(name) == key);
     match shared {
         Some((row, _, _)) => Ok(row),
         None => upsert_artist(tx, credit, now),

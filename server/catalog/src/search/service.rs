@@ -475,7 +475,7 @@ impl SearchService {
                 in_library: row.owned,
                 requested: false,
                 score: match_score(&row.folded_name, folded),
-                disambiguation: None,
+                disambiguation: row.disambiguation,
                 type_info: None,
                 art_missing: false,
                 track: None,

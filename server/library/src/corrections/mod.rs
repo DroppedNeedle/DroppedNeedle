@@ -7,7 +7,9 @@
 //! - reset grouping: tracks grouped by hand go back to automatic grouping;
 //! - artist merge: duplicate artists fold into one survivor;
 //! - artist convergence: at the end of a scan run, artist rows MusicBrainz
-//!   proves to be one artist fold into one, with no one asking;
+//!   proves to be one artist fold into one, with no one asking, and so do
+//!   records of one name nothing tells apart, a join an administrator can
+//!   undo;
 //! - the upgrade from v2 folds v2's own Unknown Artist into the built-in one.
 //!
 //! Each is previewed first and applied with the preview's token
@@ -21,6 +23,7 @@
 //! sentences, `membership` split, merge and move, `reset` reset grouping,
 //! `edition` what happens to editions,
 //! `artists` the artist merge, `artist_convergence` the automatic one,
+//! `artist_join` the undo of a join by name,
 //! `merge_basis` what each artist merge rests on,
 //! `retag_merge` the join of an album
 //! retagged across two scans, `retag_pairs` the pairs a person joins or
@@ -31,6 +34,7 @@
 //! points.
 
 pub(crate) mod artist_convergence;
+pub(crate) mod artist_join;
 mod artists;
 pub mod continuation;
 mod edition;

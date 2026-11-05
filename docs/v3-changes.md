@@ -120,6 +120,10 @@ and the callback addresses and settings to change first are under
 
 ## Changed
 
+- **One artist, one entry.** v2 made a second artist when files of one
+  artist had different sort names or capitals. v3 keeps them on one record,
+  and joins the ones the upgrade carried at the first scan, with an Undo in
+  Duplicate artists. Artists MusicBrainz says are different stay apart.
 - **Held downloads expire.** v2 kept a held download until you acted on it.
   v3 removes a held file or upload 90 days after it was held. Ones carried
   from v2 get 90 days from the upgrade.

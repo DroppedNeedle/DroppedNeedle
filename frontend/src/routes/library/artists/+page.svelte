@@ -258,6 +258,7 @@
 							/>
 						{/snippet}
 						{#snippet meta()}
+							{#if artist.disambiguation}{artist.disambiguation} ·{/if}
 							{#if browse.scope === 'album_artists'}
 								{artist.album_count}
 								{artist.album_count === 1 ? 'release' : 'releases'} ·

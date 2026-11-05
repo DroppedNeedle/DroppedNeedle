@@ -19,7 +19,7 @@ use super::models::{
     MergeBasisLabel, OwnedReference, ReconcileError, ReferenceCounts,
 };
 use super::reasons;
-use crate::corrections::artist_convergence::{MOVED_BY_NAME, MOVED_WITH_ID};
+use crate::corrections::artist_convergence::{MOVED_BY_NAME, MOVED_WITH_ID, SAME_NAME_JOINED};
 use crate::corrections::models::MergeCandidateState;
 use crate::corrections::sql::{ReferenceCount, ReferenceKind, references_of};
 use crate::reconcile::sql::{
@@ -77,6 +77,7 @@ fn candidate_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Candidate> {
             sort_name: row.sort_name,
             row_revision: row.row_revision,
             provider_mbid: row.provider_artist_id,
+            disambiguation: row.disambiguation,
             counts: ReferenceCounts {
                 album_credits: row.album_credits,
                 track_credits: row.track_credits,
@@ -185,8 +186,9 @@ fn with_proofs(conn: &Connection, rows: &mut [Candidate]) -> Result<(), Reconcil
     Ok(())
 }
 
-/// Automatic merges from the catalog action log, newest first. Rows whose
-/// payload does not name a survivor and retired records are skipped.
+/// Automatic merges from the catalog action log, newest first, less the
+/// joins an administrator undid. Rows whose payload does not name a
+/// survivor and retired records are skipped.
 fn merges(conn: &Connection) -> Result<Vec<MergeAction>, ReconcileError> {
     let rows: Vec<MergeActionRow> = conn
         .prepare(crate::reconcile::sql::AUTOMATIC_MERGE_ACTIONS.text())?
@@ -221,6 +223,7 @@ fn merges(conn: &Connection) -> Result<Vec<MergeAction>, ReconcileError> {
             }
             let reason_code = reason_code.unwrap_or_default();
             Some(MergeAction {
+                can_undo: reason_code == SAME_NAME_JOINED,
                 id,
                 basis: MergeBasisLabel::for_reason(&reason_code),
                 reason_code,
@@ -259,6 +262,7 @@ fn merged_artists(
             sort_name: row.sort_name,
             row_revision: row.row_revision,
             provider_mbid: row.provider_artist_id,
+            disambiguation: row.disambiguation,
             counts: ReferenceCounts::default(),
         })
     })?;

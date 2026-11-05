@@ -8763,60 +8763,76 @@ async fn a_credit_lands_on_the_row_its_ids_prove() {
     assert_eq!(rig.track_artist("A/01.flac", 0), linked, "{case}");
 }
 
-/// An album whose match is accepted, tagged with no artist ids, is
-/// retagged with another sort name: the rescan puts its credits on a new
-/// row. The next sweep works the album through again, and the artist is
-/// one row holding the MusicBrainz id, the old row's id kept as an alias.
-/// A rescan that changes nothing leaves the album's state as it was.
+/// An album whose match is accepted, tagged with no artist ids, is retagged
+/// with no sort name and then with other capitals: its credits stay on the
+/// one record throughout, which keeps its link and its sort name and, once
+/// every file says "OH", is called that. A rescan that changes nothing
+/// leaves the album's state as it was.
 #[tokio::test]
-async fn a_changed_sort_name_keeps_one_artist_row() {
+async fn a_new_sort_name_or_capitals_lands_on_the_same_record() {
     let rig = ArtistRig::new("artist-sort-change");
-    let side = |sort| Side {
-        names: &["Oh"],
+    let side = |name: &'static str, sort: Option<&'static str>| Side {
+        names: match name {
+            "OH" => &["OH"],
+            _ => &["Oh"],
+        },
         ids: &[],
-        sort: Some(sort),
+        sort,
         listed: false,
     };
-    let tag = |sort| {
+    let tag = |name, sort| {
         for file in ["A/01.flac", "A/02.flac"] {
-            rig.put(file, "Album A", side(sort), side(sort));
+            rig.put(file, "Album A", side(name, sort), side(name, sort));
         }
     };
-    tag("Oh, The");
+    tag("Oh", Some("Oh, The"));
     rig.scan().await;
     rig.match_album("A/01.flac", MBID_X, "Oh");
-    let old = rig.track_artist("A/01.flac", 0);
-    assert_eq!(rig.link_source(&old), Some(format!("{MBID_X} automatic")));
+    let record = rig.track_artist("A/01.flac", 0);
+    assert_eq!(
+        rig.link_source(&record),
+        Some(format!("{MBID_X} automatic"))
+    );
     let album = |rig: &ArtistRig| {
         rig.text("SELECT local_album_id FROM local_tracks WHERE relative_path = 'A/01.flac'")
             .expect("album")
     };
     let matched = album(&rig);
+    let live = "SELECT COUNT(*) FROM local_artists WHERE folded_name = 'oh' \
+                AND retired_into_artist_id IS NULL";
 
-    tag("Oh Band");
+    tag("Oh", None);
     rig.scan().await;
-    let new = rig.track_artist("A/01.flac", 0);
-    assert_ne!(new, old, "the new sort name keys another row");
-    assert_eq!(album(&rig), matched);
-    rig.sweep_artist_links();
+    assert_eq!(rig.track_artist("A/01.flac", 0), record, "no sort name");
+    assert_eq!(
+        rig.album_artist("A/01.flac"),
+        (record.clone(), record.clone())
+    );
+    assert_eq!(rig.count(live), 1, "no second record");
+    assert_eq!(
+        rig.text(&format!(
+            "SELECT sort_name FROM local_artists WHERE id = '{record}'"
+        ))
+        .as_deref(),
+        Some("Oh, The"),
+        "a file with no sort name clears none"
+    );
 
-    assert_eq!(rig.retired_into(&old).as_deref(), Some(new.as_str()));
-    assert_eq!(rig.link_source(&new), Some(format!("{MBID_X} automatic")));
+    tag("OH", None);
+    rig.scan().await;
+    assert_eq!(rig.track_artist("A/01.flac", 0), record, "other capitals");
+    assert_eq!(rig.track_artist("A/02.flac", 0), record, "other capitals");
     assert_eq!(
-        rig.count(&format!(
-            "SELECT COUNT(*) FROM local_artist_aliases WHERE alias = '{old}' \
-             AND local_artist_id = '{new}' AND kind = 'merged_artist'"
-        )),
-        1
+        rig.album_artist("A/01.flac"),
+        (record.clone(), record.clone())
     );
+    assert_eq!(rig.count(live), 1, "no second record");
+    assert_eq!(rig.name(&record), "OH", "the record follows its files");
     assert_eq!(
-        rig.count(
-            "SELECT COUNT(*) FROM local_artists WHERE display_name = 'Oh' \
-             AND retired_into_artist_id IS NULL"
-        ),
-        1
+        rig.link_source(&record),
+        Some(format!("{MBID_X} automatic"))
     );
-    assert_eq!(rig.album_artist("A/01.flac"), (new.clone(), new.clone()));
+    assert_eq!(album(&rig), matched);
 
     let state = |rig: &ArtistRig| {
         rig.text(&format!(
@@ -8824,15 +8840,107 @@ async fn a_changed_sort_name_keeps_one_artist_row() {
              WHERE local_album_id = '{matched}'"
         ))
     };
+    rig.sweep_artist_links();
     let settled = state(&rig);
     assert!(settled.is_some());
-    tag("Oh Band");
+    tag("OH", None);
     rig.scan().await;
     assert_eq!(
         state(&rig),
         settled,
         "unchanged credits leave the state alone"
     );
+}
+
+/// A record named "laura marling" beside "Laura Marling", as scans before
+/// same-name joins left them, joins at the next run end: one record keeps
+/// both albums, the plays, favourites and ratings of both (a user who
+/// favourited both keeps one), and its sort name, the other's id opening it.
+/// The duplicate artists list shows the join.
+#[tokio::test]
+async fn existing_twins_join_at_the_run_end() {
+    use droppedneedle_library::reconcile::groups::build;
+    use droppedneedle_library::reconcile::models::GroupState;
+    use droppedneedle_library::reconcile::store::inputs;
+    use droppedneedle_library::scan::naming::artist_key;
+
+    let rig = ArtistRig::new("artist-twins-join");
+    let marling = sorted(&["Laura Marling"], "Marling, Laura");
+    rig.put("A/01.flac", "Album A", marling, marling);
+    rig.scan().await;
+    let kept = rig.track_artist("A/01.flac", 0);
+    let twin = artist_key("laura marling", None);
+    rig.run(&format!(
+        "INSERT INTO local_artists (id, display_name, folded_name, normalized_name, kind, \
+         created_at, updated_at) VALUES ('{twin}', 'laura marling', 'laura marling', \
+         'laura marling', 'group', 9999999999999, 9999999999999)"
+    ));
+    rig.listen("one", &kept);
+    rig.listen("two", &twin);
+    rig.listen("both", &kept);
+    rig.listen("both", &twin);
+    rig.run(&format!(
+        "INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
+         VALUES ('two', 'artist', '{twin}', 4, 5), ('one', 'artist', '{kept}', 3, 5)"
+    ));
+    let lower = plain(&["laura marling"]);
+    rig.put("B/01.flac", "Album B", lower, lower);
+    rig.scan().await;
+
+    assert_eq!(rig.retired_into(&twin), Some(kept.clone()));
+    assert_eq!(rig.track_artist("B/01.flac", 0), kept);
+    assert_eq!(rig.album_artist("B/01.flac"), (kept.clone(), kept.clone()));
+    assert_eq!(
+        rig.count(
+            "SELECT COUNT(*) FROM local_artists WHERE folded_name = 'laura marling' \
+             AND retired_into_artist_id IS NULL"
+        ),
+        1
+    );
+    assert_eq!(
+        rig.text(&format!(
+            "SELECT local_artist_id || ' ' || kind FROM local_artist_aliases \
+             WHERE alias = '{twin}'"
+        )),
+        Some(format!("{kept} merged_artist"))
+    );
+    assert_eq!(
+        rig.text(&format!(
+            "SELECT sort_name FROM local_artists WHERE id = '{kept}'"
+        ))
+        .as_deref(),
+        Some("Marling, Laura")
+    );
+    let on = |sql: &str| rig.count(&sql.replace("{id}", &kept));
+    assert_eq!(
+        on(
+            "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_kind = 'artist' \
+            AND item_id = '{id}'"
+        ),
+        3,
+        "one favourite each, the double kept once"
+    );
+    assert_eq!(
+        on("SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = '{id}'"),
+        4
+    );
+    assert_eq!(
+        on(
+            "SELECT COUNT(*) FROM catalog_user_ratings WHERE item_kind = 'artist' \
+            AND item_id = '{id}'"
+        ),
+        2
+    );
+    let resolved: Vec<_> = build(&inputs(&rig.db()).expect("groups read"))
+        .into_iter()
+        .filter(|group| group.state == GroupState::ResolvedAutomatically)
+        .collect();
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(
+        resolved[0].reason_code,
+        "AUTOMATIC_SAME_NAME_ARTISTS_JOINED"
+    );
+    assert!(open_groups(&rig).is_empty());
 }
 
 /// One side of a file naming `name` with this sort name and no id.
@@ -8869,15 +8977,13 @@ fn sorted_ids(ids: &[&str]) -> Vec<String> {
 }
 
 /// A retag that changes only an artist's sort name, with no ids and no
-/// match, moves its credits to a new row; at the run end the old row
-/// merges into it with its favorite and play, its id kept as an alias,
-/// and the duplicate artists list shows the merge as resolved. A later
-/// file under the old name and sort with another artist's id does not
-/// land on the survivor once that is linked to someone else.
+/// match, keeps its credits on the one record, which takes the new sort
+/// name and keeps its favorite and play; nothing is merged or offered. A
+/// later file under the old name and sort with another artist's id does not
+/// land on the record once that is linked to someone else.
 #[tokio::test]
-async fn a_sort_name_change_carries_the_old_row_over() {
+async fn a_sort_name_change_keeps_the_record() {
     use droppedneedle_library::reconcile::groups::build;
-    use droppedneedle_library::reconcile::models::GroupState;
     use droppedneedle_library::reconcile::store::inputs;
 
     let rig = ArtistRig::new("artist-follow-sort");
@@ -8899,8 +9005,15 @@ async fn a_sort_name_change_carries_the_old_row_over() {
     tag("Oh Band");
     rig.scan().await;
     let new = rig.track_artist("A/01.flac", 0);
-    assert_ne!(new, old, "the new sort name keys another row");
-    assert_eq!(rig.retired_into(&old), Some(new.clone()));
+    assert_eq!(new, old, "a new sort name lands on the same record");
+    assert_eq!(rig.retired_into(&old), None);
+    assert_eq!(
+        rig.text(&format!(
+            "SELECT sort_name FROM local_artists WHERE id = '{new}'"
+        ))
+        .as_deref(),
+        Some("Oh Band")
+    );
     assert_eq!(
         rig.count(&format!(
             "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_kind = 'artist' \
@@ -8914,20 +9027,7 @@ async fn a_sort_name_change_carries_the_old_row_over() {
         )),
         1
     );
-    assert_eq!(
-        rig.text(&format!(
-            "SELECT local_artist_id || ' ' || kind FROM local_artist_aliases \
-             WHERE alias = '{old}'"
-        )),
-        Some(format!("{new} merged_artist"))
-    );
-    let resolved: Vec<_> = build(&inputs(&rig.db()).expect("groups read"))
-        .into_iter()
-        .filter(|group| group.state == GroupState::ResolvedAutomatically)
-        .collect();
-    assert_eq!(resolved.len(), 1);
-    assert_eq!(resolved[0].reason_code, "AUTOMATIC_SAME_NAME_CREDITS_MOVED");
-    assert!(resolved[0].provider_mbids.is_empty());
+    assert!(build(&inputs(&rig.db()).expect("groups read")).is_empty());
 
     rig.link(&new, MBID_X);
     let other = Side {
@@ -8946,7 +9046,8 @@ async fn a_sort_name_change_carries_the_old_row_over() {
 }
 
 /// A rename without proof is offered in the duplicate artists list, never
-/// merged: the old row and its favorite stay where they are.
+/// merged: the old row and its favorite stay where they are. A change of
+/// sort name alone is no rename and keeps the record.
 #[tokio::test]
 async fn a_rename_without_proof_is_offered_not_merged() {
     // A retag that renames an artist, with no ids: the two rows are offered,
@@ -9011,11 +9112,10 @@ async fn a_rename_without_proof_is_offered_not_merged() {
         );
     }
 
-    // A retag that splits an artist's albums between two sort names leaves
-    // the old row unmerged, and the list offers it with both new rows as one
-    // group.
+    // A retag that splits an artist's albums between two sort names keeps
+    // both on the one record: no row is made, nothing is offered.
     {
-        let case = "split across two rows";
+        let case = "split across two sort names";
         let rig = ArtistRig::new("artist-follow-split");
         rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
         rig.put("B/01.flac", "Album B", plain(&["Oh"]), plain(&["Oh"]));
@@ -9028,19 +9128,14 @@ async fn a_rename_without_proof_is_offered_not_merged() {
         rig.put("A/01.flac", "Album A", one, one);
         rig.put("B/01.flac", "Album B", two, two);
         rig.scan().await;
-        let first = rig.track_artist("A/01.flac", 0);
-        let second = rig.track_artist("B/01.flac", 0);
-        assert_ne!(first, second, "{case}");
-        assert_eq!(rig.retired_into(&old), None, "{case}");
-        let groups = open_groups(&rig);
-        assert_eq!(groups.len(), 1, "{case}: {groups:?}");
-        assert_eq!(groups[0].1, sorted_ids(&[&old, &first, &second]), "{case}");
+        assert_eq!(rig.track_artist("A/01.flac", 0), old, "{case}");
+        assert_eq!(rig.track_artist("B/01.flac", 0), old, "{case}");
+        assert!(open_groups(&rig).is_empty(), "{case}");
     }
 
-    // A sort-name change of a row a person linked is not merged by name;
-    // the list offers the old row with the new one.
+    // A sort-name change of a row a person linked keeps the linked row.
     {
-        let case = "a linked row left empty by a sort change";
+        let case = "a linked row and a sort change";
         let rig = ArtistRig::new("artist-follow-linked");
         let tag = |sort: &'static str| {
             rig.put(
@@ -9058,12 +9153,13 @@ async fn a_rename_without_proof_is_offered_not_merged() {
 
         tag("Oh Band");
         rig.scan().await;
-        let new = rig.track_artist("A/01.flac", 0);
-        assert_ne!(new, old, "{case}");
-        assert_eq!(rig.retired_into(&old), None, "{case}");
-        let groups = open_groups(&rig);
-        assert_eq!(groups.len(), 1, "{case}: {groups:?}");
-        assert_eq!(groups[0].1, sorted_ids(&[&old, &new]), "{case}");
+        assert_eq!(rig.track_artist("A/01.flac", 0), old, "{case}");
+        assert_eq!(
+            rig.link_source(&old),
+            Some(format!("{MBID_X} manual")),
+            "{case}"
+        );
+        assert!(open_groups(&rig).is_empty(), "{case}");
     }
 
     // A retag from "Oh" to "Ox" with a featured artist records the move by
@@ -9126,12 +9222,11 @@ async fn a_rename_without_proof_is_offered_not_merged() {
     assert_eq!(rig.album_artist("G/01.flac"), (new.clone(), new), "{case}");
 }
 
-/// A retag from "Oh" to "OH" with a featured artist records the credit
-/// moved by name although the credit count changed, so at the run end Oh
-/// merges into OH with its favorite. A later retag down to one credit
-/// leaves the album no credit past it.
+/// A retag from "Oh" to "OH" with a featured artist keeps the credit on
+/// the record, which takes the new capitals and keeps its favorite. A
+/// later retag down to one credit leaves the album no credit past it.
 #[tokio::test]
-async fn a_case_change_with_a_featured_artist_carries_the_old_row_over() {
+async fn a_case_change_with_a_featured_artist_keeps_the_record() {
     const RELEASE: &str = "bbbbbbbb-0000-4000-8000-0000000000f1";
     let rig = ArtistRig::new("artist-follow-featured");
     rig.put_on(
@@ -9149,8 +9244,8 @@ async fn a_case_change_with_a_featured_artist_carries_the_old_row_over() {
     rig.put_on("A/01.flac", "Album A", Some(RELEASE), featured, featured);
     rig.scan().await;
     let new = rig.track_artist("A/01.flac", 0);
+    assert_eq!(new, old, "other capitals land on the same record");
     assert_eq!(rig.name(&new), "OH");
-    assert_eq!(rig.retired_into(&old), Some(new.clone()));
     assert_eq!(
         rig.count(&format!(
             "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_kind = 'artist' \
@@ -9179,9 +9274,11 @@ async fn a_case_change_with_a_featured_artist_carries_the_old_row_over() {
 /// A file retagged from "Oh" to "OH" with a featured artist and moved to
 /// another folder in one go, each folder scanned on its own, continues its
 /// track whichever folder is scanned first: the star on the track moves
-/// to it, the old id opens it, and Oh merges into OH. With the new folder
-/// scanned first, that happens a scan after the one that sees the old
-/// file gone.
+/// to it, the old id opens it, and the credit stays on Oh's record. With
+/// the new folder scanned first, the track continues a scan after the one
+/// that sees the old file gone, and the record keeps the name "Oh" until a
+/// file is read again, since the old file still said it when the new one
+/// was read.
 #[tokio::test]
 async fn a_moved_track_continues_whichever_folder_is_read_first() {
     for new_first in [false, true] {
@@ -9237,8 +9334,9 @@ async fn a_moved_track_continues_whichever_folder_is_read_first() {
             "{case}: the old id opens the track"
         );
         let new = rig.track_artist("b/01.flac", 0);
-        assert_eq!(rig.name(&new), "OH", "{case}");
-        assert_eq!(rig.retired_into(&oh), Some(new.clone()), "{case}");
+        assert_eq!(new, oh, "{case}: other capitals land on the same record");
+        let name = if new_first { "Oh" } else { "OH" };
+        assert_eq!(rig.name(&new), name, "{case}");
         assert_eq!(
             rig.count(&format!(
                 "SELECT COUNT(*) FROM catalog_user_favorites WHERE item_kind = 'artist' \

@@ -17,7 +17,11 @@ droppedneedle_kernel::sql! {
     /// contains pattern, the folded query, the prefix pattern, limit, offset.
     pub(super) ARTIST_HITS = (concat!(
         "SELECT a.id AS id, a.display_name AS display_name, a.folded_name AS folded_name, \
-         e.provider_artist_id AS mbid, (",
+         e.provider_artist_id AS mbid, (SELECT NULLIF(c.disambiguation, '') \
+         FROM library_identify_artist_id_checks c WHERE c.artist_mbid = lower(e.provider_artist_id) \
+         AND EXISTS (SELECT 1 FROM local_artists o WHERE o.folded_name = a.folded_name \
+          AND o.id <> a.id AND o.retired_into_artist_id IS NULL \
+          AND o.kind <> 'various_artists')) AS disambiguation, (",
         owned_artist!("a"),
         ") AS owned FROM local_artists a \
          LEFT JOIN local_artist_external_identities e ON e.local_artist_id = a.id AND ",
@@ -33,6 +37,7 @@ droppedneedle_kernel::sql! {
         display_name: String,
         folded_name: String,
         mbid: Option<String>,
+        disambiguation: Option<String>,
         owned: bool,
     }
     /// One page of album hits: owned albums whose folded title or album

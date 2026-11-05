@@ -126,7 +126,7 @@ droppedneedle_kernel::sql! {
     pub(super) PENDING = "SELECT artist_mbid FROM library_identify_artist_id_checks \
          WHERE state = ?2 ORDER BY nominated_at DESC LIMIT ?1";
     pub(super) KEEP = "UPDATE library_identify_artist_id_checks SET state = ?3, canonical_mbid = NULL, \
-         checked_at = ?2 WHERE artist_mbid = ?1";
+         checked_at = ?2, disambiguation = ?4 WHERE artist_mbid = ?1";
     pub(super) ARTIST_ID_CHECK_IN_STATE = "SELECT EXISTS (SELECT 1 FROM library_identify_artist_id_checks \
              WHERE artist_mbid = ?1 AND state = ?2)";
     pub(super) NOT_FOLLOWED = "SELECT EXISTS (SELECT 1 FROM library_identify_artist_id_checks \

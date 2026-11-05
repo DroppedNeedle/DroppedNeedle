@@ -11,6 +11,11 @@
 //! on a scan and a pass read `a` as `c`. The retired id stays here as an
 //! alias, and the files and `local_tracks` keep it. No file is read or
 //! written.
+//!
+//! Records of one name that two ids keep apart have their ids checked too
+//! (`corrections::artist_convergence::join_namesakes`), and MusicBrainz's
+//! disambiguation of a current id is kept, so the web UI can tell the
+//! records apart.
 
 use std::collections::BTreeSet;
 
@@ -99,9 +104,22 @@ pub fn pending(conn: &Connection, limit: usize) -> rusqlite::Result<Vec<String>>
         .collect()
 }
 
-fn keep(tx: &Transaction<'_>, mbid: &str, now_ms: i64) -> rusqlite::Result<()> {
+/// Keep `mbid` as it is. MusicBrainz's disambiguation is stored when it
+/// answered the id is current: `Some("")` when it has none, `None` when
+/// nothing was learned of it.
+fn keep(
+    tx: &Transaction<'_>,
+    mbid: &str,
+    disambiguation: Option<&str>,
+    now_ms: i64,
+) -> rusqlite::Result<()> {
     tx.prepare_cached(crate::identify::sql::KEEP.text())?
-        .execute(params![mbid, now_ms, CheckState::Kept.as_str()])?;
+        .execute(params![
+            mbid,
+            now_ms,
+            CheckState::Kept.as_str(),
+            disambiguation
+        ])?;
     Ok(())
 }
 
@@ -124,8 +142,17 @@ pub(crate) fn answer(
         return Ok(Vec::new());
     }
     match answer {
-        ArtistAnswer::Current | ArtistAnswer::Missing => {
-            keep(tx, &retired, now_ms)?;
+        ArtistAnswer::Current { disambiguation } => {
+            keep(
+                tx,
+                &retired,
+                Some(disambiguation.as_deref().unwrap_or_default()),
+                now_ms,
+            )?;
+            Ok(Vec::new())
+        }
+        ArtistAnswer::Missing => {
+            keep(tx, &retired, None, now_ms)?;
             Ok(Vec::new())
         }
         ArtistAnswer::Refused(reason) => {
@@ -134,7 +161,7 @@ pub(crate) fn answer(
                 reason,
                 "MusicBrainz refused an artist id; it is kept as it is"
             );
-            keep(tx, &retired, now_ms)?;
+            keep(tx, &retired, None, now_ms)?;
             Ok(Vec::new())
         }
         ArtistAnswer::MergedInto(current) => follow(tx, &retired, current, now_ms),
@@ -232,7 +259,7 @@ fn follow(
             reason,
             "MusicBrainz merged an artist id; not followed"
         );
-        keep(tx, retired, now_ms)?;
+        keep(tx, retired, None, now_ms)?;
         return Ok(Vec::new());
     }
     tx.prepare_cached(crate::identify::sql::SETTLE_ARTIST_ID_CHECK.text())?

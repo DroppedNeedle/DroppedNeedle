@@ -51,7 +51,8 @@ const group: ArtistDuplicateGroupSummary = {
 		action: 'Identify the unmatched albums.'
 	},
 	resolved_at: null,
-	merge_basis: null
+	merge_basis: null,
+	can_undo: false
 };
 
 const detail: ArtistDuplicateGroupDetail = {
@@ -119,7 +120,8 @@ const h = vi.hoisted(() => ({
 	goto: vi.fn(),
 	preview: vi.fn(),
 	apply: vi.fn(),
-	dismiss: vi.fn()
+	dismiss: vi.fn(),
+	undo: vi.fn()
 }));
 
 vi.mock('$app/navigation', () => ({ goto: h.goto }));
@@ -135,6 +137,7 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 }));
 vi.mock('$lib/features/library/queries/artist-reconciliation.svelte', () => ({
 	createDismissArtistDuplicateGroupMutation: () => ({ mutateAsync: h.dismiss, isPending: false }),
+	createUndoArtistJoinMutation: () => ({ mutateAsync: h.undo, isPending: false }),
 	getArtistReconciliationProgressQuery: () => ({
 		get data() {
 			return h.progress;
@@ -189,6 +192,13 @@ beforeEach(async () => {
 	h.preview.mockResolvedValue(previewResult);
 	h.apply.mockResolvedValue({ surviving_artist_id: 'artist-1' });
 	h.dismiss.mockResolvedValue({ group_id: 'group-1', dismissed_pairs: 1 });
+	h.undo.mockResolvedValue({
+		group_id: 'resolved:join-1',
+		surviving_artist_id: 'artist-1',
+		restored_artist_ids: ['artist-2'],
+		put_back: {},
+		left_in_place: {}
+	});
 });
 
 describe('ArtistIdentityDesk', () => {
@@ -265,5 +275,49 @@ describe('ArtistIdentityDesk', () => {
 			groupId: 'group-1',
 			expectedMemberRevisions: { 'artist-1': 3, 'artist-2': 5 }
 		});
+	});
+
+	it('undoes a join by name after confirmation, and only a join', async () => {
+		const joined: ArtistDuplicateGroupSummary = {
+			...group,
+			id: 'resolved:join-1',
+			state: 'resolved_automatically',
+			members: [
+				{ ...memberOne, disambiguation: 'US singer' },
+				{ ...memberTwo, disambiguation: null }
+			],
+			reason_code: 'AUTOMATIC_SAME_NAME_ARTISTS_JOINED',
+			reason: {
+				code: 'AUTOMATIC_SAME_NAME_ARTISTS_JOINED',
+				message: 'These records have the same name.',
+				action: 'Undo if they are different artists.'
+			},
+			merge_basis: 'same_name',
+			can_undo: true
+		};
+		h.groups = [joined];
+		h.detail = { ...detail, ...joined };
+		const { unmount } = await render(ArtistIdentityDesk);
+		await page.getByRole('button', { name: /KIRA/ }).click();
+		await expect.element(page.getByText('US singer')).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: 'Preview group merge' }))
+			.not.toBeInTheDocument();
+		await page.getByRole('button', { name: 'Undo this join' }).click();
+		await expect
+			.element(page.getByRole('heading', { name: 'Split these artists apart?' }))
+			.toHaveFocus();
+		await expect.element(page.getByText(/Anything added since the join/)).toBeVisible();
+		await page.getByRole('button', { name: 'Undo join' }).click();
+		expect(h.undo).toHaveBeenCalledWith({ groupId: 'resolved:join-1' });
+		unmount();
+
+		h.groups = [{ ...joined, can_undo: false }];
+		h.detail = { ...detail, ...joined, can_undo: false };
+		await render(ArtistIdentityDesk);
+		await page.getByRole('button', { name: /KIRA/ }).click();
+		await expect
+			.element(page.getByRole('button', { name: 'Undo this join' }))
+			.not.toBeInTheDocument();
 	});
 });

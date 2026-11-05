@@ -6,7 +6,7 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
-import { artistDuplicatesChanged, createAppMutation } from '$lib/queries/effects';
+import { artistDuplicatesChanged, catalogChanged, createAppMutation } from '$lib/queries/effects';
 
 type Schemas = components['schemas'];
 
@@ -19,6 +19,7 @@ export type ArtistCreditEvidence = Schemas['ArtistCreditEvidence'];
 export type ArtistOwnedReference = Schemas['ArtistOwnedReference'];
 export type ArtistDuplicateGroupDetail = Schemas['ArtistDuplicateGroupDetail'];
 export type ArtistDuplicateGroupDismissResponse = Schemas['ArtistDuplicateGroupDismissResponse'];
+export type ArtistDuplicateGroupUndoResponse = Schemas['ArtistDuplicateGroupUndoResponse'];
 
 export interface ArtistDuplicateGroupParams {
 	state?: ArtistReconciliationGroupState;
@@ -114,6 +115,25 @@ export const createDismissArtistDuplicateGroupMutation = () =>
 		onError: () =>
 			toastStore.show({
 				message: 'The artist records changed; review the group again',
+				type: 'error'
+			})
+	}));
+
+export const createUndoArtistJoinMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (input: { groupId: string }) =>
+			api.v3.POST(
+				v3('/api/v3/library/artists/duplicate-groups/{group_id}/undo', {
+					path: { group_id: input.groupId }
+				})
+			),
+		effects: () => [catalogChanged(authStore.user?.id), artistDuplicatesChanged()],
+		onSuccess: () => {
+			toastStore.show({ message: 'Artists split apart again', type: 'success' });
+		},
+		onError: () =>
+			toastStore.show({
+				message: 'This join can no longer be undone; reload the list',
 				type: 'error'
 			})
 	}));

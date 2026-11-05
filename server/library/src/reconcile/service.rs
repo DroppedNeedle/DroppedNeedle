@@ -7,6 +7,8 @@ use super::groups::{self, build};
 use super::models::{Group, GroupDetail, GroupPage, GroupState, Progress, ReconcileError};
 use super::{reasons, store};
 use crate::clock::LibraryClock as _;
+use crate::corrections::artist_join::{UndoRefused, UndoneJoin, undo_join};
+use droppedneedle_auth::Admin;
 use droppedneedle_kernel::db::{Db, Lane};
 
 #[derive(Clone)]
@@ -92,5 +94,25 @@ impl Reconcile {
             .write_blocking(Lane::Foreground, "reconcile.dismiss", |tx| {
                 store::dismiss(tx, &ids, expected, actor_user_id, now)
             })
+    }
+
+    /// Undo the join of records of one name a resolved group shows: each
+    /// record comes back with what has not changed since, and the records
+    /// are marked distinct (`corrections::artist_join`).
+    pub(crate) fn undo(&self, admin: &Admin, group_id: &str) -> Result<UndoneJoin, ReconcileError> {
+        let Some(action_id) = group_id.strip_prefix("resolved:") else {
+            return Err(ReconcileError::NotFound(reasons::GROUP_NOT_FOUND));
+        };
+        let now = self.clock.now_secs();
+        let outcome = self
+            .db
+            .write_blocking(Lane::Foreground, "reconcile.undo_join", |tx| {
+                undo_join(tx, admin, action_id, now).map_err(ReconcileError::from)
+            })?;
+        outcome.map_err(|refused| match refused {
+            UndoRefused::NotFound => ReconcileError::NotFound(reasons::GROUP_NOT_FOUND),
+            UndoRefused::NotUndoable => ReconcileError::Conflict(reasons::JOIN_NOT_UNDOABLE),
+            UndoRefused::Undone => ReconcileError::Conflict(reasons::JOIN_UNDONE),
+        })
     }
 }

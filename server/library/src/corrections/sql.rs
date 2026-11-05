@@ -7,6 +7,7 @@ use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
 
 use crate::identify::sql::CURRENT_PROOF;
+use crate::identity::sql::PERSONS;
 use crate::identity::sql::accepted;
 use crate::jobs::sql::live_job;
 use crate::publish::sql::HAS_BYTES_RECORD;
@@ -48,15 +49,6 @@ droppedneedle_kernel::sql! {
          right_artist_id, reason_code, state, created_at, updated_at) \
          SELECT ?1, ?2, ?3, ?4, ?6, ?5, ?5 WHERE NOT EXISTS (SELECT 1 FROM local_artists \
           WHERE id IN (?2, ?3) AND kind = 'various_artists')";
-    pub(super) FOLLOW_RENAMED = "SELECT DISTINCT m.left_artist_id FROM local_artist_merge_candidates m \
-             WHERE m.reason_code IN (?1, ?2) AND m.state = 'open' \
-             AND NOT EXISTS (SELECT 1 FROM local_album_artists \
-              WHERE local_artist_id = m.left_artist_id) \
-             AND NOT EXISTS (SELECT 1 FROM local_track_artists \
-              WHERE local_artist_id = m.left_artist_id) \
-             AND NOT EXISTS (SELECT 1 FROM local_albums \
-              WHERE album_artist_id = m.left_artist_id) \
-             ORDER BY m.left_artist_id";
     pub(super) LIVE_ARTIST_REVISION = "SELECT row_revision FROM local_artists WHERE id = ?1 \
                  AND retired_into_artist_id IS NULL";
     pub(super) DROP_ARTIST_LINKS = "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1";
@@ -204,9 +196,6 @@ droppedneedle_kernel::sql! {
     pub(super) COPY_SPLIT_ALBUM_CREDITS = "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, \
          credited_name, join_phrase) SELECT ?1, position, local_artist_id, role, credited_name, \
          join_phrase FROM local_album_artists WHERE local_album_id = ?2";
-    pub(super) EMPTIED_BY_NAME = "SELECT id, right_artist_id, reason_code FROM local_artist_merge_candidates \
-                 WHERE left_artist_id = ?1 AND reason_code IN (?2, ?3) AND state = 'open' \
-                 ORDER BY id";
     pub(super) LIVE_ARTISTS_OF_PAIR = "SELECT COUNT(*) FROM local_artists WHERE id IN (?1, ?2) \
                  AND retired_into_artist_id IS NULL";
     pub(super) LINK_DECISION_SOURCE = "SELECT decision_source FROM local_artist_external_identities \
@@ -585,7 +574,8 @@ droppedneedle_kernel::sql! {
          updated_at = CAST(round(?3 * 1000) AS INTEGER), \
          row_revision = row_revision + 1 WHERE local_artist_id = ?1";
     pub(super) DROP_ARTIST_LINK = "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1";
-    /// The only writer of `local_artists.retired_into_artist_id`.
+    /// With [`UNRETIRE_ARTIST`], the only writer of
+    /// `local_artists.retired_into_artist_id`.
     pub(super) RETIRE_ARTIST_ROW = "UPDATE local_artists SET retired_into_artist_id = ?2, converged_mbid = ?4, \
          updated_at = CAST(round(?3 * 1000) AS INTEGER), row_revision = row_revision + 1 WHERE id = ?1";
     pub(super) REPOINT_ARTIST_ALIASES = "UPDATE local_artist_aliases SET local_artist_id = ?2 WHERE local_artist_id = ?1";
@@ -650,6 +640,233 @@ droppedneedle_kernel::sql! {
          WHERE local_artist_id = ?1 AND trim(COALESCE(credited_name, '')) NOT IN ('', ?2)) \
          OR EXISTS (SELECT 1 FROM local_albums \
          WHERE album_artist_id = ?1 AND trim(album_artist_name) IS NOT ?2)";
+    /// Folded names two or more live ordinary records hold: neither
+    /// sentinel (`?1`, `?2`) nor a Various Artists row.
+    pub(super) NAMESAKE_NAMES = "SELECT folded_name FROM local_artists \
+         WHERE retired_into_artist_id IS NULL AND kind <> 'various_artists' \
+         AND id NOT IN (?1, ?2) GROUP BY folded_name HAVING COUNT(*) > 1 ORDER BY folded_name";
+    /// The live ordinary records of folded name `?1` (sentinels `?2`, `?3`).
+    pub(super) NAMESAKES_OF = "SELECT id, display_name FROM local_artists WHERE folded_name = ?1 \
+         AND retired_into_artist_id IS NULL AND kind <> 'various_artists' AND id NOT IN (?2, ?3) \
+         ORDER BY created_at, id";
+    pub(super) row NamesakeName for [NAMESAKES_OF] {
+        id: String,
+        display_name: String,
+    }
+    /// Live ordinary record `?1` (sentinels `?2`, `?3`) as a same-name join
+    /// judges it: its names, its link and who made it, and its credits on
+    /// indexed tracks and live albums.
+    pub(super) NAMESAKE = "SELECT a.id AS id, a.display_name AS display_name, a.sort_name AS sort_name, \
+         a.created_at AS created_at, lower(i.provider_artist_id) AS link_mbid, \
+         COALESCE(i.decision_source IN " + PERSONS + ", 0) AS chosen, \
+         (SELECT COUNT(*) FROM local_track_artists c JOIN local_tracks t ON t.id = c.local_track_id \
+          WHERE c.local_artist_id = a.id AND +t.availability = 'indexed') AS track_credits, \
+         (SELECT COUNT(*) FROM local_album_artists c JOIN local_albums b ON b.id = c.local_album_id \
+          WHERE c.local_artist_id = a.id AND b.retired_into_album_id IS NULL) AS album_credits \
+         FROM local_artists a LEFT JOIN local_artist_external_identities i \
+         ON i.local_artist_id = a.id AND i.provider = 'musicbrainz' \
+         WHERE a.id = ?1 AND a.retired_into_artist_id IS NULL AND a.kind <> 'various_artists' \
+         AND a.id NOT IN (?2, ?3)";
+    pub(super) row Namesake for [NAMESAKE] {
+        id: String,
+        display_name: String,
+        sort_name: Option<String>,
+        created_at: i64,
+        link_mbid: Option<String>,
+        chosen: bool,
+        track_credits: i64,
+        album_credits: i64,
+    }
+    /// The MusicBrainz ids record `?1`'s credits' files and its current
+    /// proofs name.
+    pub(super) NAMESAKE_IDS = "SELECT artist_mbid FROM local_track_artists \
+         WHERE local_artist_id = ?1 AND artist_mbid IS NOT NULL \
+         UNION SELECT artist_mbid FROM local_album_artists \
+         WHERE local_artist_id = ?1 AND artist_mbid IS NOT NULL \
+         UNION SELECT p.artist_mbid FROM library_artist_credit_proofs p \
+         WHERE p.source_local_artist_id = ?1 AND (" + CURRENT_PROOF + ")";
+    /// Fill survivor `?1`'s sort name with `?2` while it has none.
+    pub(super) FILL_SORT_NAME = "UPDATE local_artists SET sort_name = ?2 WHERE id = ?1 AND sort_name IS NULL";
+    /// What a same-name join records of record `?1` before it moves.
+    pub(super) JOIN_NAMES = "SELECT display_name, sort_name, row_revision FROM local_artists WHERE id = ?1";
+    pub(super) row JoinNames for [JOIN_NAMES] {
+        display_name: String,
+        sort_name: Option<String>,
+        row_revision: i64,
+    }
+    pub(super) JOIN_ALBUM_CREDITS = "SELECT local_album_id AS subject, position FROM local_album_artists \
+         WHERE local_artist_id = ?1 ORDER BY local_album_id, position";
+    pub(super) JOIN_TRACK_CREDITS = "SELECT local_track_id AS subject, position FROM local_track_artists \
+         WHERE local_artist_id = ?1 ORDER BY local_track_id, position";
+    pub(super) row JoinCredit for [JOIN_ALBUM_CREDITS, JOIN_TRACK_CREDITS] {
+        subject: String,
+        position: i64,
+    }
+    pub(super) JOIN_LED_ALBUMS = "SELECT id FROM local_albums WHERE album_artist_id = ?1 ORDER BY id";
+    pub(super) JOIN_PROOFS = "SELECT subject_kind, subject_id, credit_position, \
+         source_local_artist_id IS ?1 AS source, local_artist_id = ?1 AS local \
+         FROM library_artist_credit_proofs WHERE local_artist_id = ?1 OR source_local_artist_id = ?1 \
+         ORDER BY subject_kind, subject_id, credit_position";
+    pub(super) row JoinProof for [JOIN_PROOFS] {
+        subject_kind: String,
+        subject_id: String,
+        credit_position: i64,
+        source: bool,
+        local: bool,
+    }
+    pub(super) JOIN_ALIASES = "SELECT alias FROM local_artist_aliases WHERE local_artist_id = ?1 ORDER BY alias";
+    /// Record `?1`'s source links survivor `?2` has no copy of: they move.
+    pub(super) JOIN_SOURCE_LINKS_MOVED = "SELECT s.id FROM local_entity_source_links s \
+         WHERE s.local_artist_id = ?1 AND NOT EXISTS (SELECT 1 FROM local_entity_source_links kept \
+          WHERE kept.local_artist_id = ?2 AND kept.provider = s.provider \
+          AND kept.external_entity_type = s.external_entity_type AND kept.external_id = s.external_id) \
+         ORDER BY s.id";
+    /// Record `?1`'s source links survivor `?2` has a copy of: they are dropped.
+    pub(super) JOIN_SOURCE_LINKS_DROPPED = "SELECT s.id, s.provider, s.external_entity_type, \
+         s.external_id, s.canonical_url, s.decision_source, s.selected_by_user_id, s.verified_at, \
+         s.created_at, s.updated_at, s.row_revision FROM local_entity_source_links s \
+         WHERE s.local_artist_id = ?1 AND EXISTS (SELECT 1 FROM local_entity_source_links kept \
+          WHERE kept.local_artist_id = ?2 AND kept.provider = s.provider \
+          AND kept.external_entity_type = s.external_entity_type AND kept.external_id = s.external_id) \
+         ORDER BY s.id";
+    pub(super) row JoinSourceLink for [JOIN_SOURCE_LINKS_DROPPED] {
+        id: String,
+        provider: String,
+        external_entity_type: String,
+        external_id: String,
+        canonical_url: String,
+        decision_source: String,
+        selected_by_user_id: Option<String>,
+        verified_at: i64,
+        created_at: i64,
+        updated_at: i64,
+        row_revision: i64,
+    }
+    /// Record `?1`'s favourites, each with whether survivor `?2` has none
+    /// of that user's, so the join makes its copy.
+    pub(super) JOIN_FAVORITES = "SELECT f.user_id, f.created_at, n.display_name, \
+         NOT EXISTS (SELECT 1 FROM catalog_user_favorites g WHERE g.user_id = f.user_id \
+          AND g.item_kind = 'artist' AND g.item_id = ?2) AS created \
+         FROM catalog_user_favorites f LEFT JOIN catalog_user_favorite_names n \
+         ON n.user_id = f.user_id AND n.item_kind = f.item_kind AND n.item_id = f.item_id \
+         WHERE f.item_kind = 'artist' AND f.item_id = ?1 ORDER BY f.user_id";
+    pub(super) row JoinFavorite for [JOIN_FAVORITES] {
+        user_id: String,
+        created_at: i64,
+        display_name: Option<String>,
+        created: bool,
+    }
+    /// Record `?1`'s ratings, each with whether survivor `?2` has none of
+    /// that user's.
+    pub(super) JOIN_RATINGS = "SELECT r.user_id, r.rating, r.rated_at, \
+         NOT EXISTS (SELECT 1 FROM catalog_user_ratings s WHERE s.user_id = r.user_id \
+          AND s.item_kind = 'artist' AND s.item_id = ?2) AS created \
+         FROM catalog_user_ratings r WHERE r.item_kind = 'artist' AND r.item_id = ?1 \
+         ORDER BY r.user_id";
+    pub(super) row JoinRating for [JOIN_RATINGS] {
+        user_id: String,
+        rating: i64,
+        rated_at: i64,
+        created: bool,
+    }
+    pub(super) JOIN_PLAYS = "SELECT id FROM library_play_history WHERE local_artist_id = ?1 ORDER BY id";
+    /// Record `?1`'s open merge candidates, each with whether the merge
+    /// into `?2` repoints it (its moves follow on, reasons `?3` to `?5`)
+    /// rather than resolving it.
+    pub(super) JOIN_CANDIDATES = "SELECT id, (right_artist_id = ?1 AND reason_code IN (?3, ?4, ?5) \
+         AND left_artist_id <> ?2) AS repointed FROM local_artist_merge_candidates \
+         WHERE state = 'open' AND (left_artist_id = ?1 OR right_artist_id = ?1) ORDER BY id";
+    pub(super) row JoinCandidate for [JOIN_CANDIDATES] {
+        id: String,
+        repointed: bool,
+    }
+    /// The audit row an undo starts from.
+    pub(super) JOIN_ACTION = "SELECT action_kind, reason_code, before_json FROM library_catalog_actions \
+         WHERE id = ?1";
+    pub(super) row JoinAction for [JOIN_ACTION] {
+        action_kind: crate::catalog_actions::ActionKind,
+        reason_code: Option<String>,
+        before_json: String,
+    }
+    /// Whether an action with idempotency key `?1` was written.
+    pub(super) ACTION_WITH_KEY = "SELECT EXISTS (SELECT 1 FROM library_catalog_actions \
+         WHERE idempotency_key = ?1)";
+    /// Bring retired record `?1` back as a live record of its own.
+    pub(super) UNRETIRE_ARTIST = "UPDATE local_artists SET retired_into_artist_id = NULL, \
+         converged_mbid = NULL, updated_at = ?2, row_revision = row_revision + 1 \
+         WHERE id = ?1 AND retired_into_artist_id IS NOT NULL";
+    pub(super) DROP_MERGED_ALIAS = "DELETE FROM local_artist_aliases WHERE alias = ?1 AND kind = 'merged_artist'";
+    /// Each undo statement moves one recorded row from `?2` (where it is
+    /// now) back to `?3`, only while it is still there.
+    pub(super) UNDO_ALIAS = "UPDATE local_artist_aliases SET local_artist_id = ?3 \
+         WHERE alias = ?1 AND local_artist_id = ?2";
+    pub(super) UNDO_ALBUM_CREDIT = "UPDATE local_album_artists SET local_artist_id = ?3, \
+         row_revision = row_revision + 1 WHERE local_album_id = ?1 AND local_artist_id = ?2 \
+         AND position = ?4";
+    pub(super) UNDO_TRACK_CREDIT = "UPDATE local_track_artists SET local_artist_id = ?3, \
+         row_revision = row_revision + 1 WHERE local_track_id = ?1 AND local_artist_id = ?2 \
+         AND position = ?4";
+    pub(super) UNDO_LED_ALBUM = "UPDATE local_albums SET album_artist_id = ?3, updated_at = ?4, \
+         row_revision = row_revision + 1 WHERE id = ?1 AND album_artist_id = ?2";
+    pub(super) UNDO_SOURCE_LINK = "UPDATE local_entity_source_links SET local_artist_id = ?3, \
+         updated_at = ?4, row_revision = row_revision + 1 WHERE id = ?1 AND local_artist_id = ?2";
+    pub(super) UNDO_PLAY = "UPDATE library_play_history SET local_artist_id = ?3 \
+         WHERE id = ?1 AND local_artist_id = ?2";
+    /// Proof `?4`/`?5`/`?6` points back at `?3` in the columns (`?7`
+    /// local, `?8` source) that pointed at it, where they now name `?2`.
+    pub(super) UNDO_PROOF = "UPDATE library_artist_credit_proofs SET \
+         local_artist_id = CASE WHEN ?7 AND local_artist_id = ?2 THEN ?3 ELSE local_artist_id END, \
+         source_local_artist_id = CASE WHEN ?8 AND source_local_artist_id = ?2 THEN ?3 \
+         ELSE source_local_artist_id END, updated_at = ?1, row_revision = row_revision + 1 \
+         WHERE subject_kind = ?4 AND subject_id = ?5 AND credit_position = ?6 \
+         AND ((?7 AND local_artist_id = ?2) OR (?8 AND source_local_artist_id = ?2))";
+    /// Candidate `?1` back as it was: its right side from `?2` to `?3`
+    /// when the merge repointed it (`?4`), and open again if resolved.
+    pub(super) UNDO_CANDIDATE = "UPDATE OR IGNORE local_artist_merge_candidates SET \
+         right_artist_id = CASE WHEN ?4 AND right_artist_id = ?2 THEN ?3 ELSE right_artist_id END, \
+         state = CASE WHEN state = 'resolved' THEN 'open' ELSE state END, updated_at = ?5, \
+         row_revision = row_revision + 1 WHERE id = ?1 \
+         AND ((?4 AND right_artist_id = ?2) OR state = 'resolved')";
+    pub(super) RESTORE_SOURCE_LINK = "INSERT OR IGNORE INTO local_entity_source_links (id, \
+         local_artist_id, provider, external_entity_type, external_id, canonical_url, \
+         decision_source, selected_by_user_id, verified_at, created_at, updated_at, row_revision) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, (SELECT id FROM auth_users WHERE id = ?8), ?9, ?10, \
+         ?11, ?12)";
+    /// When user `?1` favourited artist `?2`, if they did.
+    pub(super) FAVORITE_AT = "SELECT created_at FROM catalog_user_favorites WHERE user_id = ?1 \
+         AND item_kind = 'artist' AND item_id = ?2";
+    pub(super) RESTORE_FAVORITE = "INSERT OR IGNORE INTO catalog_user_favorites (user_id, item_kind, \
+         item_id, created_at) VALUES (?1, 'artist', ?2, ?3)";
+    pub(super) RESTORE_FAVORITE_NAME = "INSERT OR IGNORE INTO catalog_user_favorite_names (user_id, \
+         item_kind, item_id, display_name) VALUES (?1, 'artist', ?2, ?3)";
+    pub(super) DROP_FAVORITE = "DELETE FROM catalog_user_favorites WHERE user_id = ?1 \
+         AND item_kind = 'artist' AND item_id = ?2";
+    /// User `?1`'s rating of artist `?2`, if any.
+    pub(super) RATING_OF = "SELECT rating, rated_at FROM catalog_user_ratings WHERE user_id = ?1 \
+         AND item_kind = 'artist' AND item_id = ?2";
+    pub(super) row RatingOf for [RATING_OF] {
+        rating: i64,
+        rated_at: i64,
+    }
+    pub(super) RESTORE_RATING = "INSERT OR IGNORE INTO catalog_user_ratings (user_id, item_kind, \
+         item_id, rating, rated_at) VALUES (?1, 'artist', ?2, ?3, ?4)";
+    pub(super) DROP_RATING = "DELETE FROM catalog_user_ratings WHERE user_id = ?1 \
+         AND item_kind = 'artist' AND item_id = ?2";
+    /// Survivor `?1`'s sort name back to `?3` while it is still `?2`.
+    pub(super) RESTORE_SORT_NAME = "UPDATE local_artists SET sort_name = ?3, updated_at = ?4, \
+         row_revision = row_revision + 1 WHERE id = ?1 AND sort_name IS ?2";
+    /// Mark records `?1` < `?2` distinct, at revisions `?3` and `?4`, by
+    /// `?5`, for reason `?7`.
+    pub(super) WRITE_UNDONE_DISMISSAL = "INSERT INTO library_artist_reconciliation_dismissals \
+         (left_artist_id, right_artist_id, left_artist_revision, right_artist_revision, \
+          dismissed_by_user_id, reason_code, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?7, ?6, ?6) \
+         ON CONFLICT(left_artist_id, right_artist_id) DO UPDATE SET \
+           left_artist_revision = excluded.left_artist_revision, \
+           right_artist_revision = excluded.right_artist_revision, \
+           dismissed_by_user_id = excluded.dismissed_by_user_id, \
+           reason_code = excluded.reason_code, updated_at = excluded.updated_at, \
+           row_revision = library_artist_reconciliation_dismissals.row_revision + 1";
     /// The rows of a list of tracks, in path order.
     family TRACK_ROWS_IN = track_rows_in;
     /// Lock a list of tracks to album `?1` by hand.

@@ -47,6 +47,11 @@ pub const RESOLVED_BY_NAME: Reason = reason(
     "A tag edit changed only how this artist's name is written or sorted, so the records were merged.",
     "Nothing to do.",
 );
+pub const RESOLVED_SAME_NAME: Reason = reason(
+    crate::corrections::artist_convergence::SAME_NAME_JOINED,
+    "These records have the same name and nothing shows they are different artists, so they were joined.",
+    "Undo if they are different artists.",
+);
 pub const RESOLVED_V2_PLACEHOLDER: Reason = reason(
     crate::corrections::artist_convergence::V2_PLACEHOLDER_FOLDED,
     "The upgrade merged v2's Unknown Artist into this one.",
@@ -69,6 +74,16 @@ pub const GROUP_RESOLVED: Reason = reason(
     "A group that was merged automatically cannot be marked distinct.",
     "Nothing to do.",
 );
+pub const JOIN_NOT_UNDOABLE: Reason = reason(
+    "ARTIST_JOIN_NOT_UNDOABLE",
+    "Only a join made because two records share a name can be undone.",
+    "Nothing to do.",
+);
+pub const JOIN_UNDONE: Reason = reason(
+    "ARTIST_JOIN_UNDONE",
+    "This join was undone already.",
+    "Reload the list.",
+);
 pub const GROUP_STALE: Reason = reason(
     "STALE_REVISION",
     "The artist records in this group changed since you opened it.",
@@ -86,6 +101,7 @@ pub fn for_code(code: &str) -> Reason {
         "CREDITS_MOVED_WITHOUT_PROOF" => CREDITS_MOVED,
         "SHARED_PROVIDER_IDENTITY" => SHARED_PROVIDER_IDENTITY,
         code if code == RESOLVED_BY_NAME.code => RESOLVED_BY_NAME,
+        code if code == RESOLVED_SAME_NAME.code => RESOLVED_SAME_NAME,
         code if code == RESOLVED_V2_PLACEHOLDER.code => RESOLVED_V2_PLACEHOLDER,
         _ => RESOLVED_AUTOMATICALLY,
     }
