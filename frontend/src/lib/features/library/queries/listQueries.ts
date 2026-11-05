@@ -33,6 +33,23 @@ export function reviewsQuery(params: LibraryReviewParams, cursor?: string) {
 	};
 }
 
+// The track bound and the caller's stars, shared by the long lists.
+function boundQuery(params: { minTracks?: number; tracksBelow?: boolean }) {
+	if (!params.minTracks || params.minTracks <= 1) return {};
+	return {
+		min_tracks: params.minTracks,
+		...(params.tracksBelow ? { tracks_mode: 'below' as const } : {})
+	};
+}
+
+function ratingQuery(params: { rating?: number; ratingMode?: 'at_least' | 'at_most' }) {
+	if (!params.rating) return {};
+	return {
+		rating: params.rating,
+		...(params.ratingMode === 'at_most' ? { rating_mode: 'at_most' as const } : {})
+	};
+}
+
 // The long lists read by cursor: `after` is the `next` of the page before.
 export function albumsQuery(params: LibraryV3AlbumsParams, after: string | null) {
 	return {
@@ -48,7 +65,8 @@ export function albumsQuery(params: LibraryV3AlbumsParams, after: string | null)
 		...(params.formats?.length && params.formatMode === 'without'
 			? { format_mode: 'without' as const }
 			: {}),
-		...(params.minTracks && params.minTracks > 1 ? { min_tracks: params.minTracks } : {}),
+		...boundQuery(params),
+		...ratingQuery(params),
 		...(params.favorites ? { favorites: true } : {})
 	};
 }
@@ -61,7 +79,8 @@ export function artistsQuery(params: LibraryV3ArtistsParams, after: string | nul
 		...(params.order ? { order: params.order } : {}),
 		...(params.q ? { q: params.q } : {}),
 		...(params.scope ? { scope: params.scope } : {}),
-		...(params.minTracks && params.minTracks > 1 ? { min_tracks: params.minTracks } : {}),
+		...boundQuery(params),
+		...ratingQuery(params),
 		...(params.favorites ? { favorites: true } : {})
 	};
 }
@@ -76,6 +95,11 @@ export function tracksQuery(params: LibraryV3TracksParams, after: string | null)
 		...(params.albumId ? { album_id: params.albumId } : {}),
 		...(params.artistId ? { artist_id: params.artistId } : {}),
 		...(params.genre ? { genre: params.genre } : {}),
+		...(params.formats?.length ? { formats: params.formats.join(',') } : {}),
+		...(params.formats?.length && params.formatMode === 'without'
+			? { format_mode: 'without' as const }
+			: {}),
+		...ratingQuery(params),
 		...(params.favorites ? { favorites: true } : {})
 	};
 }

@@ -8,8 +8,11 @@
 		getLibraryAlbumsInfiniteQuery
 	} from '$lib/features/library/queries/LibraryQueries.svelte';
 	import LibraryFilterMenu, {
-		type FormatMode
+		type FormatMode,
+		type RatingMode,
+		type TracksMode
 	} from '$lib/features/library/components/LibraryFilterMenu.svelte';
+	import { rememberFilters } from '$lib/features/library/state/rememberedFilters.svelte';
 	import type { LibraryV3AlbumsParams } from '$lib/features/library/queries/LibraryQueryKeyFactory';
 	import LibraryAlbumCard from '$lib/features/library/components/LibraryAlbumCard.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -41,6 +44,9 @@
 				.filter(Boolean),
 			formatMode: (sp.get('format_mode') === 'without' ? 'without' : 'with') as FormatMode,
 			minTracks: Math.max(1, Number(sp.get('min_tracks')) || 1),
+			tracksMode: (sp.get('tracks_mode') === 'below' ? 'below' : 'atLeast') as TracksMode,
+			rating: Math.min(5, Math.max(0, Number(sp.get('rating')) || 0)),
+			ratingMode: (sp.get('rating_mode') === 'at_most' ? 'atMost' : 'atLeast') as RatingMode,
 			favorites
 		};
 	});
@@ -59,11 +65,27 @@
 		...SORT_MAP[params.sort],
 		...(params.q ? { q: params.q } : {}),
 		...(params.formats.length ? { formats: params.formats, formatMode: params.formatMode } : {}),
-		...(params.minTracks > 1 ? { minTracks: params.minTracks } : {}),
+		...(params.minTracks > 1
+			? { minTracks: params.minTracks, tracksBelow: params.tracksMode === 'below' }
+			: {}),
+		...(params.rating > 0
+			? {
+					rating: params.rating,
+					ratingMode: params.ratingMode === 'atMost' ? ('at_most' as const) : ('at_least' as const)
+				}
+			: {}),
 		...(params.favorites ? { favorites: true } : {})
 	}));
 	const formatsQuery = getLibraryAlbumFormatsQuery();
-	const filtered = $derived(params.formats.length > 0 || params.minTracks > 1);
+	rememberFilters('albums', [
+		'formats',
+		'format_mode',
+		'min_tracks',
+		'tracks_mode',
+		'rating',
+		'rating_mode'
+	]);
+	const filtered = $derived(params.formats.length > 0 || params.minTracks > 1 || params.rating > 0);
 	// An album can move between pages while they load (a scan renames it):
 	// keep its first appearance.
 	const albums = $derived.by(() => {
@@ -161,7 +183,19 @@
 		</select>
 		<LibraryFilterMenu
 			minTracks={params.minTracks}
-			onMinTracks={(min) => setParams({ min_tracks: min > 1 ? String(min) : null })}
+			tracksMode={params.tracksMode}
+			onMinTracks={(min, mode) =>
+				setParams({
+					min_tracks: min > 1 ? String(min) : null,
+					tracks_mode: mode === 'below' && min > 1 ? 'below' : null
+				})}
+			rating={params.rating}
+			ratingMode={params.ratingMode}
+			onRating={(stars, mode) =>
+				setParams({
+					rating: stars > 0 ? String(stars) : null,
+					rating_mode: mode === 'atMost' && stars > 0 ? 'at_most' : null
+				})}
 			formatCounts={formatsQuery.data ?? []}
 			formats={params.formats}
 			formatMode={params.formatMode}

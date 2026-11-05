@@ -3,6 +3,7 @@
 	import { getLibraryTracksInfiniteQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import {
 		libraryTrackParams,
+		type LibraryTrackFilters,
 		type LibraryTrackSort
 	} from '$lib/features/library/queries/libraryTracks';
 	import { createLibraryTrackQueue } from '$lib/features/library/queries/libraryTrackQueue.svelte';
@@ -33,19 +34,80 @@
 		X
 	} from 'lucide-svelte';
 	import type { TrackView } from '$lib/features/library/queries/types';
+	import LibraryFilterMenu, {
+		type FormatMode,
+		type RatingMode
+	} from '$lib/features/library/components/LibraryFilterMenu.svelte';
+	import { getLibraryStatsQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
+	import { rememberFilters } from '$lib/features/library/state/rememberedFilters.svelte';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 
 	const PAGE_SIZE = 48;
 	const SEARCH_DEBOUNCE_MS = 300;
 
-	let searchQuery = $state('');
-	let searchTerm = $state('');
-	let sort = $state<LibraryTrackSort>('recent');
-	let favorites = $state(false);
+	const SORTS: LibraryTrackSort[] = ['recent', 'title', 'artist', 'album'];
+
+	// Browse state lives in the url, as on the album and artist lists, so
+	// it can be shared, survives back and forward, and is remembered.
+	const browse = $derived.by(() => {
+		const sp = page.url.searchParams;
+		const favorites = sp.get('favorites') === '1';
+		const rawSort = sp.get('sort') as LibraryTrackSort | null;
+		const valid = rawSort && (SORTS.includes(rawSort) || (favorites && rawSort === 'hearted'));
+		return {
+			q: sp.get('q') ?? '',
+			sort: (valid ? rawSort : favorites ? 'hearted' : 'recent') as LibraryTrackSort,
+			favorites,
+			formats: (sp.get('formats') ?? '')
+				.split(',')
+				.map((format) => format.trim().toLowerCase())
+				.filter(Boolean),
+			formatMode: (sp.get('format_mode') === 'without' ? 'without' : 'with') as FormatMode,
+			rating: Math.min(5, Math.max(0, Number(sp.get('rating')) || 0)),
+			ratingMode: (sp.get('rating_mode') === 'at_most' ? 'atMost' : 'atLeast') as RatingMode
+		};
+	});
+	const filters = $derived<LibraryTrackFilters>({
+		...(browse.formats.length ? { formats: browse.formats, formatMode: browse.formatMode } : {}),
+		...(browse.rating > 0
+			? {
+					rating: browse.rating,
+					ratingMode: browse.ratingMode === 'atMost' ? ('at_most' as const) : ('at_least' as const)
+				}
+			: {})
+	});
+	const filtered = $derived(browse.formats.length > 0 || browse.rating > 0);
+
+	// Local edits win over the url term until back or forward re-syncs it.
+	let searchQuery = $derived(browse.q);
+	const statsQuery = getLibraryStatsQuery();
+	// The tracks of each format, lowercased like the filter.
+	const formatCounts = $derived.by(() => {
+		const counts: Record<string, number> = {};
+		for (const [format, count] of Object.entries(statsQuery.data?.format_breakdown ?? {})) {
+			const key = format.toLowerCase();
+			counts[key] = (counts[key] ?? 0) + count;
+		}
+		return Object.entries(counts)
+			.sort(([a, countA], [b, countB]) => countB - countA || a.localeCompare(b))
+			.map(([format, count]) => ({ format, album_count: count }));
+	});
+	rememberFilters('tracks', ['formats', 'format_mode', 'rating', 'rating_mode']);
 	let searchTimeout: ReturnType<typeof setTimeout> | undefined;
 	$effect(() => () => clearTimeout(searchTimeout));
 
+	function setParams(updates: Record<string, string | null>): void {
+		const url = new URL(page.url);
+		for (const [key, value] of Object.entries(updates)) {
+			if (!value) url.searchParams.delete(key);
+			else url.searchParams.set(key, value);
+		}
+		void goto(url, { replaceState: true, keepFocus: true, noScroll: true });
+	}
+
 	const tracksQuery = getLibraryTracksInfiniteQuery(() =>
-		libraryTrackParams(PAGE_SIZE, sort, searchTerm, favorites)
+		libraryTrackParams(PAGE_SIZE, browse.sort, browse.q, browse.favorites, filters)
 	);
 	const pages = $derived(tracksQuery.data?.pages ?? []);
 	// A track can move between pages while they load (a scan renames it):
@@ -75,22 +137,25 @@
 
 	function handleSearchInput() {
 		clearTimeout(searchTimeout);
-		searchTimeout = setTimeout(() => (searchTerm = searchQuery.trim()), SEARCH_DEBOUNCE_MS);
+		searchTimeout = setTimeout(
+			() => setParams({ q: searchQuery.trim() || null }),
+			SEARCH_DEBOUNCE_MS
+		);
 	}
 
 	function clearSearch() {
 		searchQuery = '';
-		searchTerm = '';
 		clearTimeout(searchTimeout);
+		setParams({ q: null });
 	}
 
 	function handleSortChange(e: Event) {
-		sort = (e.target as HTMLSelectElement).value as LibraryTrackSort;
+		const sort = (e.target as HTMLSelectElement).value as LibraryTrackSort;
+		setParams({ sort: sort === (browse.favorites ? 'hearted' : 'recent') ? null : sort });
 	}
 
 	function toggleFavorites() {
-		favorites = !favorites;
-		sort = favorites ? 'hearted' : 'recent';
+		setParams({ favorites: browse.favorites ? null : '1', sort: null });
 	}
 
 	function playTrack(index: number) {
@@ -103,19 +168,20 @@
 	// Plays what is loaded, then the rest of the list after the last page.
 	function playAll() {
 		void queue.playAll(
-			sort,
-			searchTerm,
+			browse.sort,
+			browse.q,
 			{
 				items: tracks,
 				total,
 				next: pages.at(-1)?.next ?? null
 			},
-			favorites
+			browse.favorites,
+			filters
 		);
 	}
 
 	function shuffleAll() {
-		void queue.shuffleAll(searchTerm, favorites);
+		void queue.shuffleAll(browse.q, browse.favorites, filters);
 	}
 
 	function addTrackToQueue(track: TrackView) {
@@ -184,7 +250,7 @@
 {/snippet}
 
 <ListPageHeader
-	title={favorites ? 'Favourite Tracks' : 'All Tracks'}
+	title={browse.favorites ? 'Favourite Tracks' : 'All Tracks'}
 	count={tracksQuery.data ? `${total.toLocaleString()} ${total === 1 ? 'track' : 'tracks'}` : null}
 	ticket="DN / CC 3.2 - TRK"
 	backHref={withBasePath('/library')}
@@ -214,23 +280,41 @@
 			{/if}
 		</div>
 		<Button
-			variant={favorites ? 'primary' : 'outline'}
+			variant={browse.favorites ? 'primary' : 'outline'}
 			icon={Heart}
-			aria-pressed={favorites}
+			aria-pressed={browse.favorites}
 			onclick={toggleFavorites}>Favourites</Button
 		>
 		<select
 			class="select dn-toolbar__select"
-			value={sort}
+			value={browse.sort}
 			onchange={handleSortChange}
 			aria-label="Sort tracks"
 		>
-			{#if favorites}<option value="hearted">Recently favourited</option>{/if}
+			{#if browse.favorites}<option value="hearted">Recently favourited</option>{/if}
 			<option value="recent">Recently added</option>
 			<option value="title">Title</option>
 			<option value="artist">Artist</option>
 			<option value="album">Album</option>
 		</select>
+		<LibraryFilterMenu
+			{formatCounts}
+			countLabel="tracks"
+			formats={browse.formats}
+			formatMode={browse.formatMode}
+			onFormats={(next, mode) =>
+				setParams({
+					formats: next.length ? next.join(',') : null,
+					format_mode: mode === 'without' && next.length ? 'without' : null
+				})}
+			rating={browse.rating}
+			ratingMode={browse.ratingMode}
+			onRating={(stars, mode) =>
+				setParams({
+					rating: stars > 0 ? String(stars) : null,
+					rating_mode: mode === 'atMost' && stars > 0 ? 'at_most' : null
+				})}
+		/>
 	</div>
 
 	<QueryBoundary
@@ -256,12 +340,16 @@
 			<div class="flex flex-col items-center justify-center py-20 text-muted">
 				<Music2 class="mb-4 h-12 w-12 opacity-20" />
 				<p class="text-lg font-medium">
-					{searchTerm ? 'No matches' : favorites ? 'No favourites yet' : 'No tracks yet'}
+					{browse.q || filtered
+						? 'No matches'
+						: browse.favorites
+							? 'No favourites yet'
+							: 'No tracks yet'}
 				</p>
 				<p class="mt-1 text-sm">
-					{searchTerm
-						? 'Try another search term.'
-						: favorites
+					{browse.q || filtered
+						? 'Try another search term or filter.'
+						: browse.favorites
 							? 'Tap the heart on a track to add it here.'
 							: 'Scan your library to see tracks here.'}
 				</p>

@@ -30583,8 +30583,26 @@ export interface operations {
                  *     albums in none of them.
                  */
                 format_mode?: string;
-                /** @description Only albums with at least this many indexed tracks, 1-10000. */
+                /**
+                 * @description Only albums with at least this many indexed tracks, 1-10000. See
+                 *     `tracks_mode`.
+                 */
                 min_tracks?: number;
+                /**
+                 * @description `at_least` (default): albums with `min_tracks` or more; `below`:
+                 *     albums with fewer.
+                 */
+                tracks_mode?: string;
+                /**
+                 * @description Only albums the caller rated, 1-5 stars. See `rating_mode`; albums
+                 *     they did not rate are left out.
+                 */
+                rating?: number;
+                /**
+                 * @description `at_least` (default): `rating` stars or more; `at_most`: `rating`
+                 *     stars or fewer.
+                 */
+                rating_mode?: string;
                 /**
                  * @description Only the caller's favourites. Without `sort`, the newest favourite
                  *     comes first, and `order=asc` puts the oldest first.
@@ -33267,9 +33285,25 @@ export interface operations {
                 /**
                  * @description Only artists with at least this many indexed tracks in the library,
                  *     1-10000: the tracks credited to them and the tracks on the albums
-                 *     they lead, each once. The scope totals count the same artists.
+                 *     they lead, each once. The scope totals count the same artists. See
+                 *     `tracks_mode`.
                  */
                 min_tracks?: number;
+                /**
+                 * @description `at_least` (default): artists with `min_tracks` or more; `below`:
+                 *     artists with fewer.
+                 */
+                tracks_mode?: string;
+                /**
+                 * @description Only artists the caller rated, 1-5 stars. See `rating_mode`;
+                 *     artists they did not rate are left out.
+                 */
+                rating?: number;
+                /**
+                 * @description `at_least` (default): `rating` stars or more; `at_most`: `rating`
+                 *     stars or fewer.
+                 */
+                rating_mode?: string;
                 /**
                  * @description Only the caller's favourites. Without `sort`, the newest favourite
                  *     comes first, and `order=asc` puts the oldest first.
@@ -39473,6 +39507,26 @@ export interface operations {
                 artist_id?: string;
                 /** @description Restrict to one genre tag, case folded. */
                 genre?: string;
+                /**
+                 * @description Track formats, comma-separated, e.g. `flac,mp3`; matching is
+                 *     case-insensitive. See `format_mode`.
+                 */
+                formats?: string;
+                /**
+                 * @description `with` (default): only tracks in one of `formats`; `without`: only
+                 *     tracks in none of them.
+                 */
+                format_mode?: string;
+                /**
+                 * @description Only tracks the caller rated, 1-5 stars. See `rating_mode`; tracks
+                 *     they did not rate are left out.
+                 */
+                rating?: number;
+                /**
+                 * @description `at_least` (default): `rating` stars or more; `at_most`: `rating`
+                 *     stars or fewer.
+                 */
+                rating_mode?: string;
                 /**
                  * @description Only the caller's favourites. Without `sort`, the newest favourite
                  *     comes first, and `order=asc` puts the oldest first.

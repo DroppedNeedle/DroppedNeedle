@@ -19,7 +19,11 @@
 	} from '$lib/features/library/queries/types';
 	import { artistHref } from '$lib/utils/entityRoutes';
 	import { Disc3, Heart, Mic, Search, UsersRound, X } from 'lucide-svelte';
-	import LibraryFilterMenu from '$lib/features/library/components/LibraryFilterMenu.svelte';
+	import LibraryFilterMenu, {
+		type RatingMode,
+		type TracksMode
+	} from '$lib/features/library/components/LibraryFilterMenu.svelte';
+	import { rememberFilters } from '$lib/features/library/state/rememberedFilters.svelte';
 
 	const SEARCH_DEBOUNCE_MS = 300;
 
@@ -45,6 +49,13 @@
 			defaultSort,
 			q: page.url.searchParams.get('q') ?? '',
 			minTracks: Math.max(1, Number(page.url.searchParams.get('min_tracks')) || 1),
+			tracksMode: (page.url.searchParams.get('tracks_mode') === 'below'
+				? 'below'
+				: 'atLeast') as TracksMode,
+			rating: Math.min(5, Math.max(0, Number(page.url.searchParams.get('rating')) || 0)),
+			ratingMode: (page.url.searchParams.get('rating_mode') === 'at_most'
+				? 'atMost'
+				: 'atLeast') as RatingMode,
 			sortBy: rawSort && validSorts.includes(rawSort) ? rawSort : defaultSort,
 			sortOrder: page.url.searchParams.get('order') === 'desc' ? 'desc' : 'asc'
 		} as const;
@@ -56,9 +67,13 @@
 		q: browse.q,
 		scope: browse.scope,
 		minTracks: browse.minTracks,
+		tracksBelow: browse.tracksMode === 'below',
+		rating: browse.rating,
+		ratingMode: browse.ratingMode === 'atMost' ? ('at_most' as const) : ('at_least' as const),
 		favorites: browse.favorites
 	});
 	const artistsQuery = getLibraryArtistsInfiniteQuery(() => params);
+	rememberFilters('artists', ['min_tracks', 'tracks_mode', 'rating', 'rating_mode']);
 
 	const artists = $derived.by(() => {
 		const seen: Record<string, true> = Object.create(null);
@@ -197,7 +212,20 @@
 			</select>
 			<LibraryFilterMenu
 				minTracks={browse.minTracks}
-				onMinTracks={(min) => setParams({ min_tracks: min > 1 ? String(min) : null })}
+				tracksMode={browse.tracksMode}
+				tracksLabel={browse.scope === 'album_artists' ? 'Tracks on their albums' : 'Appearances'}
+				onMinTracks={(min, mode) =>
+					setParams({
+						min_tracks: min > 1 ? String(min) : null,
+						tracks_mode: mode === 'below' && min > 1 ? 'below' : null
+					})}
+				rating={browse.rating}
+				ratingMode={browse.ratingMode}
+				onRating={(stars, mode) =>
+					setParams({
+						rating: stars > 0 ? String(stars) : null,
+						rating_mode: mode === 'atMost' && stars > 0 ? 'at_most' : null
+					})}
 			/>
 		{/snippet}
 

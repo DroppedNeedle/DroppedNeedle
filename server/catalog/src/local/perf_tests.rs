@@ -20,8 +20,8 @@ use local::sql;
 use local::sqlite::fts_match_phrase;
 use local::store::LocalCatalog;
 use local::stores::{
-    After, AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, TrackFilter,
-    TrackRecord, TrackSort,
+    After, AlbumFilter, AlbumRecord, AlbumSort, ArtistBounds, ArtistRecord, ArtistScope,
+    ArtistSort, TrackFilter, TrackRecord, TrackSort,
 };
 use rusqlite::types::Value;
 
@@ -394,6 +394,8 @@ async fn album_pages_match_the_fixture() {
             formats: format.map(str::to_owned).into_iter().collect(),
             without_formats: false,
             min_tracks: None,
+            tracks_below: false,
+            rating: None,
             favorites_of: None,
         };
     let filters: [(AlbumFilter, &[&str]); 7] = [
@@ -546,7 +548,16 @@ async fn walk_artists(
     loop {
         let (page, led, contributors) = fixture
             .catalog
-            .artist_list(scope, q, None, sort, descending, limit, &after, None)
+            .artist_list(
+                scope,
+                q,
+                None,
+                sort,
+                descending,
+                limit,
+                &after,
+                &ArtistBounds::default(),
+            )
             .await
             .expect("lists");
         ids.extend(page.items.iter().map(|artist| artist.id.clone()));
@@ -634,7 +645,7 @@ async fn artist_pages_match_the_fixture() {
                 false,
                 50,
                 &After::default(),
-                None,
+                &ArtistBounds::default(),
             )
             .await
             .expect("lists");
@@ -654,7 +665,7 @@ async fn artist_pages_match_the_fixture() {
             false,
             50,
             &After::default(),
-            None,
+            &ArtistBounds::default(),
         )
         .await
         .expect("lists");
@@ -939,6 +950,7 @@ async fn track_search_matches_the_fixture() {
         artist_id: artist.map(str::to_owned),
         genre: genre.map(str::to_owned),
         favorites_of: None,
+        ..TrackFilter::default()
     };
     for filter in [
         narrowed(Some("al1"), None, None),
@@ -1216,7 +1228,9 @@ async fn assert_hot_plans(db: &Db) {
                 ArtistScope::WithMusic,
             ] {
                 for sort in ARTIST_SORTS {
-                    lists.push(sql::artist_page(scope, sort, descending, after, false));
+                    lists.push(sql::artist_page(
+                        scope, sort, descending, after, false, false,
+                    ));
                 }
             }
         }
@@ -1225,7 +1239,7 @@ async fn assert_hot_plans(db: &Db) {
     // page itself never skips rows.
     for text in &lists {
         assert!(
-            !text.replace("LIMIT 1 OFFSET ?))", "").contains("OFFSET"),
+            !text.replace("LIMIT 1 OFFSET ?)", "").contains("OFFSET"),
             "a list pages by offset: {text}"
         );
     }
@@ -1328,7 +1342,7 @@ async fn assert_hot_plans(db: &Db) {
                         && matches!(scope, ArtistScope::AlbumArtists);
                     let plan = explain_unbound(
                         db,
-                        &sql::artist_page(scope, sort, descending, after, false),
+                        &sql::artist_page(scope, sort, descending, after, false, false),
                     )
                     .await;
                     let walk = if after || bounded {
@@ -1405,7 +1419,14 @@ async fn assert_hot_plans(db: &Db) {
 
     let plan = explain_unbound(
         db,
-        &sql::artist_page(ArtistScope::All, ArtistSort::Name, false, false, false),
+        &sql::artist_page(
+            ArtistScope::All,
+            ArtistSort::Name,
+            false,
+            false,
+            false,
+            false,
+        ),
     )
     .await;
     assert!(
@@ -1420,7 +1441,14 @@ async fn assert_hot_plans(db: &Db) {
     for (name, text, binds) in [
         (
             "artist page",
-            sql::artist_page(ArtistScope::All, ArtistSort::Name, false, false, false),
+            sql::artist_page(
+                ArtistScope::All,
+                ArtistSort::Name,
+                false,
+                false,
+                false,
+                false,
+            ),
             vec![
                 ExplainBind::Text(None),
                 ExplainBind::Text(None),
@@ -1483,9 +1511,10 @@ async fn assert_hot_plans(db: &Db) {
     assert_filter_plans(db).await;
 }
 
-/// The album and artist lists' filters (formats, minimum tracks, an album
-/// out of the recycle bin) reach each album's tracks, an artist's credits
-/// and led albums, and a track's bin rows by key: a filtered page walks
+/// The album and artist lists' filters (formats, the track bound, the
+/// caller's rating, an album out of the recycle bin) reach each album's
+/// tracks, an artist's credits and led albums, a rating and a track's bin
+/// rows by key: a filtered page walks
 /// the same index its unfiltered page does, and only the format counts
 /// walk every album.
 async fn assert_filter_plans(db: &Db) {
@@ -1500,7 +1529,7 @@ async fn assert_filter_plans(db: &Db) {
                 .all(|line| line.starts_with("SEARCH ") && line.contains("=?"))
         })
     };
-    let album_aliases = ["t2", "mat", "gbt", "gbr", "gbj"];
+    let album_aliases = ["t2", "mat", "gbt", "gbr", "gbj", "ur"];
     for (name, text) in [
         ("album page", sql::album_page(AlbumSort::Name, false, false)),
         (
@@ -1534,7 +1563,21 @@ async fn assert_filter_plans(db: &Db) {
         "format counts probe each album's tracks by key: {plan:?}"
     );
 
-    let artist_aliases = ["mla", "ml", "map"];
+    for (name, text) in [
+        (
+            "track page",
+            sql::track_page_like(TrackSort::Title, false, false),
+        ),
+        ("track count", sql::TRACK_COUNT_LIKE.text().to_owned()),
+    ] {
+        let plan = explain_unbound(db, &text).await;
+        assert!(
+            by_key(&plan, &["ur"]),
+            "{name} reaches the caller's rating by key: {plan:?}"
+        );
+    }
+
+    let artist_aliases = ["mla", "ml", "map", "ur"];
     for scope in [
         ArtistScope::All,
         ArtistScope::AlbumArtists,
@@ -1542,9 +1585,14 @@ async fn assert_filter_plans(db: &Db) {
         ArtistScope::WithMusic,
     ] {
         for sort in ARTIST_SORTS {
-            for after in [false, true] {
-                let plan =
-                    explain_unbound(db, &sql::artist_page(scope, sort, true, after, true)).await;
+            for (after, (min_tracks, rated)) in [false, true].into_iter().flat_map(|after| {
+                [(true, false), (false, true), (true, true)].map(|pair| (after, pair))
+            }) {
+                let plan = explain_unbound(
+                    db,
+                    &sql::artist_page(scope, sort, true, after, min_tracks, rated),
+                )
+                .await;
                 assert!(
                     by_key(&plan, &artist_aliases),
                     "{scope:?} by {sort:?} filtered by tracks reaches them by key: {plan:?}"
@@ -1554,8 +1602,11 @@ async fn assert_filter_plans(db: &Db) {
                         .filter(|line| line.contains("TEMP B-TREE FOR"))
                         .count()
                 };
-                let unfiltered =
-                    explain_unbound(db, &sql::artist_page(scope, sort, true, after, false)).await;
+                let unfiltered = explain_unbound(
+                    db,
+                    &sql::artist_page(scope, sort, true, after, false, false),
+                )
+                .await;
                 // The minimum is tested on the walk's rows as they come, so
                 // a sorted walk stops once the page is full: the walk stays
                 // a co-routine of its own, never folded into the test, and
@@ -1573,11 +1624,14 @@ async fn assert_filter_plans(db: &Db) {
                 );
             }
         }
-        let plan = explain_unbound(db, &sql::artist_scope_count(scope, true)).await;
-        assert!(
-            by_key(&plan, &artist_aliases),
-            "{scope:?} counted by tracks reaches them by key: {plan:?}"
-        );
+        for (min_tracks, rated) in [(true, false), (false, true), (true, true)] {
+            let plan =
+                explain_unbound(db, &sql::artist_scope_count(scope, min_tracks, rated)).await;
+            assert!(
+                by_key(&plan, &artist_aliases),
+                "{scope:?} counted by tracks or rating reaches them by key: {plan:?}"
+            );
+        }
     }
 }
 
@@ -3841,8 +3895,9 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
         q: Some("zzz-no-such-thing-zzz".to_owned()),
         ..Default::default()
     };
+    let unbounded = ArtistBounds::default();
     let artists =
-        |scope, sort| catalog.artist_list(scope, None, None, sort, true, 48, &first, None);
+        |scope, sort| catalog.artist_list(scope, None, None, sort, true, 48, &first, &unbounded);
     match name {
         "library_albums" | "local_albums" => {
             catalog
@@ -3866,7 +3921,7 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
                     false,
                     50,
                     &first,
-                    None,
+                    &ArtistBounds::default(),
                 )
                 .await
                 .expect("lists");
@@ -3971,7 +4026,10 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
                     false,
                     50,
                     &first,
-                    Some(min),
+                    &ArtistBounds {
+                        min_tracks: Some(min),
+                        ..ArtistBounds::default()
+                    },
                 )
                 .await
                 .expect("lists");
@@ -3986,7 +4044,10 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
                     true,
                     50,
                     &first,
-                    Some(5),
+                    &ArtistBounds {
+                        min_tracks: Some(5),
+                        ..ArtistBounds::default()
+                    },
                 )
                 .await
                 .expect("lists");
@@ -4001,7 +4062,10 @@ async fn read_endpoint(catalog: &LocalCatalog, name: &str, deep: &(After, After,
                     false,
                     50,
                     &first,
-                    Some(2),
+                    &ArtistBounds {
+                        min_tracks: Some(2),
+                        ..ArtistBounds::default()
+                    },
                 )
                 .await
                 .expect("lists");

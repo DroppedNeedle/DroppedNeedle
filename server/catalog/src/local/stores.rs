@@ -129,8 +129,44 @@ pub struct AlbumFilter {
     pub without_formats: bool,
     /// Only albums with at least this many indexed tracks.
     pub min_tracks: Option<u32>,
+    /// Read `min_tracks` the other way: only albums with fewer tracks.
+    pub tracks_below: bool,
+    /// Only albums one user rated within these stars.
+    pub rating: Option<RatingBound>,
     /// Restrict to this user's favourites.
     pub favorites_of: Option<String>,
+}
+
+/// The stars a list keeps of one user's ratings: the items they rated
+/// from `low` to `high`, both 1 to 5. An item they did not rate is never
+/// kept.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RatingBound {
+    /// Whose ratings.
+    pub user_id: String,
+    /// The fewest stars kept.
+    pub low: u8,
+    /// The most stars kept.
+    pub high: u8,
+}
+
+/// An artist list's track bound and rating.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArtistBounds {
+    /// The track bound: at least this many tracks, the count the scope's
+    /// cards show, or with `below` fewer.
+    pub min_tracks: Option<u32>,
+    /// Read `min_tracks` the other way.
+    pub below: bool,
+    /// Only artists one user rated within these stars.
+    pub rating: Option<RatingBound>,
+}
+
+impl ArtistBounds {
+    /// Whether nothing narrows the list.
+    pub fn is_empty(&self) -> bool {
+        self.min_tracks.is_none() && self.rating.is_none()
+    }
 }
 
 /// Track list filter.
@@ -144,6 +180,13 @@ pub struct TrackFilter {
     pub artist_id: Option<String>,
     /// Restrict to one genre tag, case folded.
     pub genre: Option<String>,
+    /// Track formats, already lowercased: the tracks in one of them, or
+    /// with `without_formats` the tracks in none. Empty: every format.
+    pub formats: Vec<String>,
+    /// Hide the tracks in `formats` instead of keeping only them.
+    pub without_formats: bool,
+    /// Only tracks one user rated within these stars.
+    pub rating: Option<RatingBound>,
     /// Restrict to this user's favourites.
     pub favorites_of: Option<String>,
 }
