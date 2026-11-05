@@ -711,13 +711,15 @@ Run from the repo root. `make help` lists every target.
   `SaveBar`, `AsyncButton`, `QueryBoundary`, `RatingStars` (`quiet`
   in list rows), `StatRow` (counts split by rules), `JumpTabs` (a page's
   sticky section strip; `look="pills"` fills the current link, `actions` sit at
-  its end), `HalftonePhoto` (a photo printed as a fading
+  its end, `look="rail"` stands it in a left column with icons, `onjump`
+  opens a folded section first), `HalftonePhoto` (a photo printed as a fading
   halftone), `Knob` (a rotary slider: a dial over a dotted scale),
   `SideDrawer` (a panel from the right over a dimmed page, with `Tabs`'
   `caps` look for its tabs), `PageShell`, `Toaster`, `CoverPlaceholder`,
   `UnsavedChangesGuard`, `Logo`, `PaperPanel` (the light island), `Card`'s
   `torn` paper, `Button`'s condensed caps sizes (`display`, `display-sm`)
-  and `paper` outline (a button on a paper card), `AuthFrame` and `AuthCard`
+  and `paper` outline (a button on a paper card) and `danger-outline` (a red
+  outline beside outline buttons), `AuthFrame` and `AuthCard`
   (a signed-out page's frame and its torn paper card with folder tabs),
   the `dn-toolbar` and `dn-list-grid` classes for a list's controls and grid,
   and the decoration `FritFrame` (the page's dot frame, mounted once by the

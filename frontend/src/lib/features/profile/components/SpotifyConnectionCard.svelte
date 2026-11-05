@@ -1,6 +1,5 @@
 <script lang="ts">
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
 	import SpotifyIcon from '$lib/media/icons/SpotifyIcon.svelte';
 	import { getConnectionsQuery } from '$lib/features/profile/queries/ConnectionsQuery.svelte';
 	import {
@@ -38,81 +37,70 @@
 	}
 </script>
 
-<section>
-	<h2
-		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted"
-	>
-		<SpotifyIcon class="h-4 w-4 text-spotify" />
-		Spotify
-	</h2>
-
-	<Card variant="bordered" padding="md">
-		<div class="space-y-3">
-			<Card variant="bordered" padding="sm">
-				<div class="flex items-center justify-between gap-3">
-					<div class="flex min-w-0 items-center gap-3">
-						<div
-							class="flex h-10 w-10 items-center justify-center rounded-xl bg-spotify/10 text-spotify ring-1 ring-spotify/20"
-						>
-							<SpotifyIcon class="h-[1.15rem] w-[1.15rem]" />
-						</div>
-						<div class="min-w-0">
-							<div class="flex items-center gap-2">
-								<span class="text-sm font-semibold">Spotify</span>
-								<span class="status {spotify ? 'status-success' : 'status-error'} status-sm"></span>
-							</div>
-							{#if spotify}
-								<p class="truncate text-xs text-muted">@{spotify.username || 'linked'}</p>
-							{:else}
-								<p class="text-xs text-muted">Not connected</p>
-							{/if}
-						</div>
-					</div>
-
-					<div class="shrink-0">
-						{#if spotify}
-							<Button
-								variant="ghost"
-								size="xs"
-								pill
-								loading={disconnectMutation.isPending}
-								onclick={disconnect}
-							>
-								Disconnect
-							</Button>
-						{:else}
-							<Button
-								variant="spotify"
-								size="xs"
-								pill
-								loading={connectMutation.isPending}
-								onclick={connect}
-							>
-								{#if !connectMutation.isPending}
-									<SpotifyIcon class="h-3.5 w-3.5" />
-								{/if}
-								Connect
-							</Button>
-						{/if}
-					</div>
-				</div>
-			</Card>
-
-			{#if spotify}
-				<p class="px-1 text-xs text-muted">
-					Connected. Go to your <a href={withBasePath('/playlists')} class="link link-primary"
-						>Playlists</a
-					> to import from Spotify.
-				</p>
-			{:else}
-				<p class="px-1 text-xs text-muted">
-					Connect your Spotify account to import your personal playlists into DroppedNeedle.
-				</p>
+<div class="pf-box flex flex-wrap items-center gap-3 px-4 py-3">
+	<span class="sp-icon" aria-hidden="true"><SpotifyIcon class="size-5" /></span>
+	<div class="min-w-0 flex-1">
+		<p class="flex items-center gap-2 font-semibold">
+			Spotify
+			<span
+				class="status status-sm {spotify ? 'status-success' : 'status-error'}"
+				aria-hidden="true"
+			></span>
+		</p>
+		{#if spotify}
+			<p class="pf-meta truncate">@{spotify.username || 'linked'}</p>
+		{:else}
+			<p class="pf-meta">Not connected</p>
+		{/if}
+	</div>
+	{#if spotify}
+		<Button
+			variant="outline"
+			size="display-sm"
+			loading={disconnectMutation.isPending}
+			onclick={disconnect}
+		>
+			Disconnect
+		</Button>
+	{:else}
+		<Button
+			variant="spotify"
+			size="display-sm"
+			loading={connectMutation.isPending}
+			onclick={connect}
+		>
+			{#if !connectMutation.isPending}
+				<SpotifyIcon class="size-4" />
 			{/if}
+			Connect
+		</Button>
+	{/if}
+</div>
 
-			{#if error}
-				<p class="px-1 text-xs text-error">{error}</p>
-			{/if}
-		</div>
-	</Card>
-</section>
+{#if spotify}
+	<p class="mt-2.5 text-sm text-muted">
+		Connected. Go to your <a href={withBasePath('/playlists')} class="link link-primary"
+			>Playlists</a
+		> to import from Spotify.
+	</p>
+{:else}
+	<p class="mt-2.5 text-sm text-muted">
+		Connect your Spotify account to import your personal playlists into DroppedNeedle.
+	</p>
+{/if}
+
+{#if error}
+	<p class="mt-2 text-sm text-error">{error}</p>
+{/if}
+
+<style>
+	.sp-icon {
+		display: grid;
+		place-items: center;
+		width: 2.75rem;
+		height: 2.75rem;
+		border-radius: 0.5rem;
+		background-color: var(--color-base-300);
+		color: var(--color-spotify);
+	}
+</style>

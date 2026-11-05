@@ -90,6 +90,11 @@
 		--btn-fg: var(--dn-paper-content);
 		--btn-border: var(--dn-paper-content);
 	}
+	.dn-btn-danger-outline {
+		--btn-color: var(--color-base-200);
+		--btn-fg: var(--color-error);
+		--btn-border: var(--color-error);
+	}
 	.dn-btn-ghost {
 		--btn-bg: transparent;
 		--btn-border: transparent;
@@ -113,6 +118,9 @@
 		.dn-btn-neutral:hover,
 		.dn-btn-outline:hover {
 			--btn-bg: var(--color-neutral);
+		}
+		.dn-btn-danger-outline:hover {
+			--btn-bg: color-mix(in oklab, var(--color-error) 12%, var(--color-base-200));
 		}
 		.dn-btn-ghost:hover {
 			--btn-bg: color-mix(in oklab, var(--color-base-content) 9%, transparent);

@@ -6,27 +6,37 @@
 	`scroll-margin-top` should clear the top bar and this strip
 	(`scroll-mt-32`). `pills` marks the current link as a filled acid pill
 	in place of the underline; `actions` holds a page's own controls at the
-	strip's right end (they stay in view while the links scroll).
+	strip's right end (they stay in view while the links scroll). `rail` is
+	the same list standing in a page's left column: the label shown over it,
+	a section's icon beside its name, the current one an acid pill, held in
+	view below the top bar. `onjump` runs before the page scrolls, so a
+	page can open a collapsed section first.
 -->
 <script lang="ts" module>
+	import type { KitIcon } from './Button.svelte';
+
 	export interface JumpSection {
 		id: string;
 		label: string;
+		/** Shown beside the name in the rail. */
+		icon?: KitIcon;
 	}
 </script>
 
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+	import { tick, type Snippet } from 'svelte';
 	import { browser } from '$app/environment';
 
 	interface Props {
 		sections: JumpSection[];
 		/** The strip's name, for screen readers. */
 		label?: string;
-		/** How the current link is marked. */
-		look?: 'underline' | 'pills';
+		/** How the current link is marked; `rail` is a vertical list. */
+		look?: 'underline' | 'pills' | 'rail';
 		/** Controls at the right end of the strip. */
 		actions?: Snippet;
+		/** Runs before the jump, with the section's id. */
+		onjump?: (id: string) => void;
 		/** Layout only: margin. */
 		class?: string;
 	}
@@ -36,6 +46,7 @@
 		label = 'Page sections',
 		look = 'underline',
 		actions,
+		onjump,
 		class: className = ''
 	}: Props = $props();
 
@@ -81,17 +92,22 @@
 
 	// Keep the current link in view when the strip scrolls sideways.
 	$effect(() => {
-		if (!strip || !current) return;
+		if (!strip || !current || look === 'rail') return;
 		const link = strip.querySelector<HTMLElement>(`[data-section="${CSS.escape(current)}"]`);
 		if (!link) return;
 		const left = link.offsetLeft - strip.clientWidth / 2 + link.clientWidth / 2;
 		strip.scrollTo({ left, behavior: 'auto' });
 	});
 
-	function jump(event: MouseEvent, id: string) {
+	async function jump(event: MouseEvent, id: string) {
+		if (!document.getElementById(id)) return;
+		event.preventDefault();
+		if (onjump) {
+			onjump(id);
+			await tick();
+		}
 		const element = document.getElementById(id);
 		if (!element) return;
-		event.preventDefault();
 		const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 		element.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });
 		history.replaceState(history.state, '', `#${id}`);
@@ -100,18 +116,32 @@
 </script>
 
 {#if sections.length > 1 || actions}
-	<nav class="dn-jump {className}" class:dn-jump--pills={look === 'pills'} aria-label={label}>
+	<nav
+		class="dn-jump {className}"
+		class:dn-jump--pills={look === 'pills'}
+		class:dn-jump--rail={look === 'rail'}
+		aria-label={label}
+	>
+		{#if look === 'rail'}
+			<p class="dn-jump__head" aria-hidden="true">{label}</p>
+		{/if}
 		<div class="dn-jump__row">
 			<ul class="dn-jump__list" bind:this={strip}>
 				{#each sections as section (section.id)}
+					{@const Icon = section.icon}
 					<li>
 						<a
 							href={`#${section.id}`}
 							data-section={section.id}
 							class="dn-jump__link"
 							aria-current={current === section.id ? 'true' : undefined}
-							onclick={(event) => jump(event, section.id)}>{section.label}</a
+							onclick={(event) => void jump(event, section.id)}
 						>
+							{#if Icon && look === 'rail'}
+								<Icon class="dn-jump__icon" aria-hidden="true" />
+							{/if}
+							{section.label}
+						</a>
 					</li>
 				{/each}
 			</ul>
@@ -223,6 +253,61 @@
 		box-shadow: inset 0 0 0 1px var(--dn-action-edge);
 	}
 	.dn-jump--pills .dn-jump__link[aria-current='true']::after {
+		content: none;
+	}
+
+	/* rail: a vertical list in a page's left column */
+	.dn-jump--rail {
+		top: calc(4rem + 1.5rem);
+		z-index: auto;
+		background-color: transparent;
+		border-bottom: 0;
+	}
+	.dn-jump__head {
+		margin-bottom: 0.875rem;
+		padding-left: 0.75rem;
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		font-weight: 600;
+		letter-spacing: 0.24em;
+		text-transform: uppercase;
+		color: var(--color-base-content);
+	}
+	.dn-jump--rail .dn-jump__row {
+		display: block;
+		max-width: none;
+		padding-inline: 0;
+	}
+	.dn-jump--rail .dn-jump__list {
+		flex-direction: column;
+		gap: 0.125rem;
+		overflow: visible;
+	}
+	.dn-jump--rail .dn-jump__link,
+	.dn-jump--rail li:first-child .dn-jump__link {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.5rem 0.75rem;
+		border-radius: 0.375rem;
+		font-size: 0.875rem;
+		white-space: normal;
+		color: var(--color-base-content);
+	}
+	.dn-jump--rail .dn-jump__link:hover {
+		background-color: color-mix(in oklab, var(--color-base-content) 8%, transparent);
+	}
+	.dn-jump--rail :global(.dn-jump__icon) {
+		flex: none;
+		width: 1.125rem;
+		height: 1.125rem;
+	}
+	.dn-jump--rail .dn-jump__link[aria-current='true'] {
+		background-color: var(--dn-action);
+		color: var(--dn-action-content);
+		box-shadow: inset 0 0 0 1px var(--dn-action-edge);
+	}
+	.dn-jump--rail .dn-jump__link[aria-current='true']::after {
 		content: none;
 	}
 

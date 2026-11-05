@@ -1,0 +1,99 @@
+/* The profile sections' shared rows: an icon tile, a mono caps label over
+   its value, and the row's button at the right. */
+
+.pf-rows {
+	display: flex;
+	flex-direction: column;
+}
+
+.pf-row {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 0.25rem 1rem;
+	padding-block: 0.625rem;
+}
+.pf-row + .pf-row {
+	border-top: 1px solid var(--dn-line);
+}
+.pf-row__main {
+	min-width: 0;
+}
+.pf-row__under {
+	grid-column: 2 / -1;
+	margin-top: 0.5rem;
+}
+
+.pf-tile {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 2.75rem;
+	height: 2.75rem;
+	border: 1px solid var(--dn-edge);
+	border-radius: 0.5rem;
+	background-color: var(--color-base-200);
+	color: var(--color-base-content);
+}
+
+.pf-label {
+	font-family: var(--font-mono);
+	font-size: 0.75rem;
+	font-weight: 600;
+	letter-spacing: 0.2em;
+	text-transform: uppercase;
+	color: var(--color-base-content);
+}
+
+.pf-value {
+	overflow: hidden;
+	margin-top: 0.125rem;
+	font-size: 1rem;
+	font-weight: 500;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* a mono caps line: counts and dates */
+.pf-meta {
+	font-family: var(--font-mono);
+	font-size: 0.6875rem;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--dn-muted);
+}
+
+/* a group's caps heading inside a section */
+.pf-group {
+	margin-bottom: 0.625rem;
+	font-family: var(--font-mono);
+	font-size: 0.8125rem;
+	font-weight: 600;
+	letter-spacing: 0.22em;
+	text-transform: uppercase;
+	color: var(--color-base-content);
+}
+
+/* a framed block inside a section (an app-password list, a service) */
+.pf-box {
+	border: 1px solid var(--dn-edge);
+	border-radius: 0.5rem;
+	background-color: var(--color-base-200);
+}
+
+@media (max-width: 639px) {
+	.pf-row {
+		grid-template-columns: auto minmax(0, 1fr);
+	}
+	.pf-row .pf-row__action {
+		grid-column: 2;
+		justify-self: start;
+	}
+	.pf-row__under {
+		grid-column: 1 / -1;
+	}
+	.pf-tile {
+		width: 2.5rem;
+		height: 2.5rem;
+	}
+}

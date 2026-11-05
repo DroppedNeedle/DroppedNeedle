@@ -100,6 +100,8 @@ beforeEach(() => {
 describe('ProfileConnectApps.svelte', () => {
 	it('reveals the created secret exactly once', async () => {
 		await render(ProfileConnectApps);
+		// with app-passwords made, the list starts folded
+		await page.getByRole('button', { name: /App-passwords/ }).click();
 		await page.getByLabelText('New app-password name').fill('Finamp (tablet)');
 		await page.getByRole('button', { name: 'Create' }).click();
 		await expect
@@ -113,6 +115,7 @@ describe('ProfileConnectApps.svelte', () => {
 
 	it('confirms before revoking, then revokes on confirm', async () => {
 		await render(ProfileConnectApps);
+		await page.getByRole('button', { name: /App-passwords/ }).click();
 		// the row action only opens the dialog; nothing is revoked yet
 		await page.getByRole('button', { name: 'Revoke Symfonium (phone)' }).click();
 		await expect.element(page.getByText(/Revoke "Symfonium \(phone\)"\?/)).toBeInTheDocument();

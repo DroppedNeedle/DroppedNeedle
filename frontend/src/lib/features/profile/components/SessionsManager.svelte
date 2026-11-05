@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { KeyRound, LogOut, Monitor, Smartphone, TriangleAlert } from 'lucide-svelte';
+	import { LogOut, Monitor, Smartphone, Trash2, TriangleAlert } from 'lucide-svelte';
 	import { getSessionsQuery } from '$lib/features/profile/queries/sessions.svelte';
 	import {
 		createRevokeSessionMutation,
@@ -7,11 +7,17 @@
 	} from '$lib/features/profile/queries/sessions.svelte';
 	import type { SessionView } from '$lib/features/profile/queries/sessions.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 
 	const sessionsQuery = getSessionsQuery();
-	const sessions = $derived(sessionsQuery.data?.sessions ?? []);
+	// this browser's session first; a long list shows its first few until asked
+	const sessions = $derived(
+		[...(sessionsQuery.data?.sessions ?? [])].sort((a, b) => Number(b.current) - Number(a.current))
+	);
+	const FIRST_FEW = 5;
+	let showAll = $state(false);
+	const shown = $derived(showAll ? sessions : sessions.slice(0, FIRST_FEW));
 	const revoke = createRevokeSessionMutation();
 	const signOutEverywhere = createSignOutEverywhereMutation();
 
@@ -49,124 +55,107 @@
 	}
 </script>
 
-<Card variant="bordered" padding="none" class="overflow-hidden">
-	<div>
-		<div class="flex items-center gap-3 px-5 py-4">
-			<div
-				class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-muted"
-			>
-				<KeyRound class="h-4 w-4" />
-			</div>
-			<div class="min-w-0 flex-1">
-				<h2 class="text-sm font-semibold">Sessions</h2>
-				<p class="text-xs text-muted">
-					{#if sessionsQuery.isPending}
-						Loading signed-in devices
-					{:else if sessions.length === 1}
-						1 signed-in session
-					{:else}
-						{sessions.length} signed-in sessions
-					{/if}
-				</p>
-			</div>
-		</div>
+<p class="pf-group">
+	{#if sessionsQuery.isPending}
+		Loading signed-in devices
+	{:else if sessions.length === 1}
+		1 signed-in session
+	{:else}
+		{sessions.length.toLocaleString()} signed-in sessions
+	{/if}
+</p>
 
-		{#if sessionsQuery.isPending}
-			<div data-testid="sessions-skeleton" class="flex flex-col gap-3 px-5 pb-5">
-				{#each [0, 1] as i (`session-skeleton-${i}`)}
-					<div class="flex animate-pulse items-center gap-3">
-						<div class="h-9 w-9 shrink-0 rounded-lg bg-base-300"></div>
-						<div class="flex-1">
-							<div class="mb-1.5 h-4 w-40 rounded bg-base-300"></div>
-							<div class="h-3 w-28 rounded bg-base-300"></div>
-						</div>
-					</div>
-				{/each}
-			</div>
-		{:else if sessionsQuery.isError}
-			<div class="px-5 pb-5">
-				<div class="alert alert-warning">
-					<TriangleAlert class="h-5 w-5" />
-					<span>Could not load sessions. Check the connection and try again.</span>
-					<Button size="sm" onclick={() => sessionsQuery.refetch()}>Retry</Button>
+{#if sessionsQuery.isPending}
+	<div data-testid="sessions-skeleton" class="flex flex-col gap-3">
+		{#each [0, 1] as i (`session-skeleton-${i}`)}
+			<div class="flex animate-pulse items-center gap-3">
+				<div class="size-11 shrink-0 rounded-lg bg-base-300"></div>
+				<div class="flex-1">
+					<div class="mb-1.5 h-4 w-40 rounded bg-base-300"></div>
+					<div class="h-3 w-28 rounded bg-base-300"></div>
 				</div>
 			</div>
-		{:else if sessions.length === 0}
-			<p class="px-5 pb-5 text-sm text-muted">No active sessions found.</p>
-		{:else}
-			<ul class="divide-y divide-base-300/30 border-t border-base-300/30">
-				{#each sessions as session (session.id)}
-					<li class="flex items-start gap-3 px-5 py-4">
-						<div
-							class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-muted"
-						>
-							{#if session.kind === 'companion'}
-								<Smartphone class="h-4 w-4" />
-							{:else}
-								<Monitor class="h-4 w-4" />
-							{/if}
-						</div>
-						<div class="min-w-0 flex-1">
-							<p class="truncate text-sm font-medium">{session.label}</p>
-							<p class="mt-0.5 text-xs text-muted">
-								Last seen {relativeTime(session.last_seen_at)} · Signed in {formatDate(
-									session.created_at
-								)} · Expires {formatDate(session.expires_at)}
-							</p>
-							<div class="mt-1.5 flex flex-wrap items-center gap-1.5">
-								<span class="badge badge-ghost badge-sm">{kindLabel(session.kind)}</span>
-								{#if session.current}
-									<span class="badge badge-primary badge-sm">This session</span>
-								{/if}
-							</div>
-						</div>
-						{#if !session.current}
-							<div class="flex shrink-0 items-center gap-1.5">
-								{#if confirmingId === session.id}
-									<Button
-										variant="ghost"
-										size="xs"
-										onclick={() => (confirmingId = null)}
-										disabled={revoke.isPending}
-									>
-										Keep session
-									</Button>
-									<Button
-										variant="danger"
-										size="xs"
-										loading={revoke.isPending}
-										onclick={() => void confirmRevoke(session)}
-									>
-										Confirm revoke
-									</Button>
-								{:else}
-									<Button
-										variant="danger-ghost"
-										size="sm"
-										aria-label="Revoke {session.label}"
-										onclick={() => (confirmingId = session.id)}
-									>
-										Revoke
-									</Button>
-								{/if}
-							</div>
-						{/if}
-					</li>
-				{/each}
-			</ul>
-		{/if}
-		<div class="flex justify-end border-t border-base-300/30 px-5 py-3">
-			<Button
-				variant="danger-ghost"
-				size="sm"
-				icon={LogOut}
-				onclick={() => (signOutAllOpen = true)}
-			>
-				Sign out everywhere
-			</Button>
-		</div>
+		{/each}
 	</div>
-</Card>
+{:else if sessionsQuery.isError}
+	<div class="alert alert-warning">
+		<TriangleAlert class="h-5 w-5" />
+		<span>Could not load sessions. Check the connection and try again.</span>
+		<Button size="sm" onclick={() => sessionsQuery.refetch()}>Retry</Button>
+	</div>
+{:else if sessions.length === 0}
+	<p class="text-sm text-muted">No active sessions found.</p>
+{:else}
+	<ul class="pf-rows">
+		{#each shown as session (session.id)}
+			<li class="pf-row ss-row">
+				<span class="pf-tile" aria-hidden="true">
+					{#if session.kind === 'companion'}
+						<Smartphone class="size-5" />
+					{:else}
+						<Monitor class="size-5" />
+					{/if}
+				</span>
+				<div class="pf-row__main">
+					<p class="truncate text-sm font-semibold" title={session.label}>{session.label}</p>
+					<p class="pf-meta mt-0.5">
+						Last seen {relativeTime(session.last_seen_at)} · Signed in {formatDate(
+							session.created_at
+						)} · Expires {formatDate(session.expires_at)}
+					</p>
+				</div>
+				<div class="ss-row__end">
+					<StatusChip size="xs">{kindLabel(session.kind)}</StatusChip>
+					{#if session.current}
+						<StatusChip tone="action" size="xs">This session</StatusChip>
+					{:else if confirmingId === session.id}
+						<Button
+							variant="ghost"
+							size="xs"
+							onclick={() => (confirmingId = null)}
+							disabled={revoke.isPending}
+						>
+							Keep session
+						</Button>
+						<Button
+							variant="danger"
+							size="xs"
+							loading={revoke.isPending}
+							onclick={() => void confirmRevoke(session)}
+						>
+							Confirm revoke
+						</Button>
+					{:else}
+						<Button
+							variant="outline"
+							size="sm"
+							icon={Trash2}
+							aria-label="Revoke {session.label}"
+							onclick={() => (confirmingId = session.id)}
+						>
+							Revoke
+						</Button>
+					{/if}
+				</div>
+			</li>
+		{/each}
+	</ul>
+	{#if sessions.length > FIRST_FEW}
+		<Button variant="caps" size="sm" class="mt-1" onclick={() => (showAll = !showAll)}>
+			{showAll ? 'Show fewer' : `Show all ${sessions.length.toLocaleString()} sessions`}
+		</Button>
+	{/if}
+{/if}
+<div class="ss-foot">
+	<Button
+		variant="danger-outline"
+		size="display-sm"
+		icon={LogOut}
+		onclick={() => (signOutAllOpen = true)}
+	>
+		Sign out everywhere
+	</Button>
+</div>
 
 <ConfirmDialog
 	bind:open={signOutAllOpen}
@@ -176,3 +165,24 @@
 	tone="danger"
 	onconfirm={() => signOutEverywhere.mutateAsync()}
 />
+
+<style>
+	.ss-row__end {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 0.5rem 0.75rem;
+	}
+	.ss-foot {
+		margin-top: 0.75rem;
+		padding-top: 0.875rem;
+		border-top: 1px solid var(--dn-line);
+	}
+	@media (max-width: 639px) {
+		.ss-row__end {
+			grid-column: 2;
+			justify-content: flex-start;
+		}
+	}
+</style>

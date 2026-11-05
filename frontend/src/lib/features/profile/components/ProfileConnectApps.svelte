@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { APP_PASSWORD_CAP } from '$lib/features/profile/queries/connect-apps.svelte';
-	import { Copy, Plus, Trash2, TriangleAlert, Waypoints } from 'lucide-svelte';
+	import { ChevronDown, Copy, Plus, Trash2, TriangleAlert, Wifi } from 'lucide-svelte';
+	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
 
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -17,7 +18,7 @@
 	} from '$lib/features/profile/queries/connect-apps.svelte';
 	import type { AppPasswordView } from '$lib/features/profile/queries/connect-apps.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
@@ -62,7 +63,11 @@
 	];
 	const SUBSONIC_CLIENTS = 'Symfonium, Feishin, Amperfy, DSub, Substreamer, play:Sub, Tempo';
 	const JELLYFIN_CLIENTS = 'Finamp, Jellify, Manet Music (iOS), Symfonium (Jellyfin mode)';
-	const CLIENT_NODES = ['Feishin', 'Manet', 'Arpeggi'];
+
+	// the list folds away once there is something in it
+	let listOpen = $state<boolean | null>(null);
+	const listShown = $derived(listOpen ?? activeCount === 0);
+	const listId = $props.id();
 
 	async function handleCreate() {
 		const name = newName.trim();
@@ -119,84 +124,73 @@
 	}
 </script>
 
-<section>
-	<h2
-		class="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted"
-	>
-		<Waypoints class="h-4 w-4 text-accent" />
-		Connect Apps
-	</h2>
-
-	<!-- decorative motif: apps converging into DroppedNeedle -->
-	<div class="cx-motif mb-5" aria-hidden="true">
-		{#each CLIENT_NODES as node, i (node)}
-			<span class="cx-node" style="--i: {i}">{node}</span>
-		{/each}
-		<span class="cx-arrow">→</span>
-		<span class="cx-core"><span class="cx-core-dot"></span>DN</span>
+{#if settingsQuery.isLoading || passwordsQuery.isLoading || myChoicesQuery.isLoading}
+	<div class="space-y-3">
+		<div class="skeleton h-14 w-full rounded-lg"></div>
+		<div class="skeleton h-14 w-full rounded-lg"></div>
 	</div>
-
-	{#if settingsQuery.isLoading || passwordsQuery.isLoading || myChoicesQuery.isLoading}
-		<div class="space-y-4">
-			<div class="skeleton h-40 w-full rounded-xl"></div>
-			<div class="skeleton h-32 w-full rounded-xl"></div>
-		</div>
-	{:else if settingsQuery.isError || passwordsQuery.isError || myChoicesQuery.isError}
-		<div class="alert alert-error" role="alert">
-			<TriangleAlert class="h-5 w-5" aria-hidden="true" />
-			<span>Couldn't load Connect Apps.</span>
-			<Button
-				size="sm"
-				onclick={() => {
-					void settingsQuery.refetch();
-					void passwordsQuery.refetch();
-					void myChoicesQuery.refetch();
-				}}
+{:else if settingsQuery.isError || passwordsQuery.isError || myChoicesQuery.isError}
+	<div class="alert alert-error" role="alert">
+		<TriangleAlert class="h-5 w-5" aria-hidden="true" />
+		<span>Couldn't load Connect Apps.</span>
+		<Button
+			size="sm"
+			onclick={() => {
+				void settingsQuery.refetch();
+				void passwordsQuery.refetch();
+				void myChoicesQuery.refetch();
+			}}
+		>
+			Try again
+		</Button>
+	</div>
+{:else}
+	<div class="space-y-3">
+		{#if bothOff}
+			<div
+				class="flex items-start gap-3 rounded-lg border border-warning/40 bg-warning/8 p-3.5 text-sm"
+				role="note"
 			>
-				Try again
-			</Button>
-		</div>
-	{:else}
-		<div class="space-y-4">
-			{#if bothOff}
-				<div
-					class="flex items-start gap-3 rounded-xl border border-warning/30 bg-warning/5 p-4 text-sm"
-					role="note"
-				>
-					<TriangleAlert class="mt-0.5 h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
-					{#if isAdmin}
-						<p>
-							Streaming isn't turned on yet. You can still create an app-password below, then
-							<a href={withBasePath('/settings?tab=connect-apps')} class="link link-accent"
-								>enable it in Settings</a
-							>.
-						</p>
-					{:else}
-						<p>
-							Your admin hasn't turned on streaming yet. You can create an app-password now and it
-							will work once they enable it.
-						</p>
-					{/if}
-				</div>
-			{/if}
+				<TriangleAlert class="mt-0.5 h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
+				{#if isAdmin}
+					<p>
+						Streaming isn't turned on yet. You can still create an app-password below, then
+						<a href={withBasePath('/settings?tab=connect-apps')} class="link link-accent"
+							>enable it in Settings</a
+						>.
+					</p>
+				{:else}
+					<p>
+						Your admin hasn't turned on streaming yet. You can create an app-password now and it
+						will work once they enable it.
+					</p>
+				{/if}
+			</div>
+		{/if}
 
-			<!-- app-passwords -->
-			<Card variant="bordered">
-				<div>
-					<div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-						<h3 class="font-semibold">App-passwords</h3>
-						<span class="badge badge-ghost" aria-label="app-password count">
-							{activeCount} / {cap}
-						</span>
-					</div>
-					<p class="mb-4 text-sm text-muted">
+		<div class="pf-box">
+			<button
+				type="button"
+				class="ca-head"
+				aria-expanded={listShown}
+				aria-controls={listId}
+				onclick={() => (listOpen = !listShown)}
+			>
+				<span class="ca-title">App-passwords</span>
+				<span class="ca-count" aria-label="app-password count">{activeCount} / {cap}</span>
+				<ChevronDown class="ca-chevron size-5" aria-hidden="true" />
+			</button>
+
+			{#if listShown}
+				<div id={listId} class="border-t border-line px-4 pt-3 pb-4">
+					<p class="mb-3 text-sm text-muted">
 						An app-password lets one app stream your library while keeping your real account
 						password private. Use a different one per device, and revoke it any time.
 					</p>
 
 					{#if passwordsQuery.data && passwordsQuery.data.length > 0}
 						<div class="overflow-x-auto">
-							<table class="table table-sm">
+							<table class="ca-table table table-sm">
 								<thead>
 									<tr>
 										<th>Name</th>
@@ -209,13 +203,13 @@
 								<tbody>
 									{#each passwordsQuery.data as pw (pw.id)}
 										<tr>
-											<td class="font-medium">{pw.name}</td>
-											<td>{formatDate(pw.created_at)}</td>
-											<td>{formatDate(pw.last_used_at)}</td>
+											<td class="font-semibold">{pw.name}</td>
+											<td class="font-mono text-xs">{formatDate(pw.created_at)}</td>
+											<td class="font-mono text-xs">{formatDate(pw.last_used_at)}</td>
 											<td>{pw.last_client ?? '-'}</td>
 											<td class="text-right">
 												<Button
-													variant="danger-ghost"
+													variant="outline"
 													size="xs"
 													icon={Trash2}
 													aria-label={`Revoke ${pw.name}`}
@@ -231,14 +225,14 @@
 						</div>
 					{:else}
 						<div
-							class="rounded-box border border-dashed border-base-300 p-6 text-center text-muted"
+							class="rounded-lg border border-dashed border-edge p-5 text-center text-sm text-muted"
 						>
 							No app-passwords yet - create one to connect an app.
 						</div>
 					{/if}
 
 					<div class="mt-4 flex flex-wrap items-end gap-2">
-						<div class="flex-1">
+						<div class="min-w-48 flex-1">
 							<Field label="New app-password name">
 								{#snippet children(control)}
 									<Input
@@ -258,7 +252,8 @@
 							</datalist>
 						</div>
 						<Button
-							variant="accent"
+							variant="primary"
+							size="display-sm"
 							icon={Plus}
 							loading={create.isPending}
 							disabled={atCap}
@@ -269,188 +264,185 @@
 						</Button>
 					</div>
 				</div>
-			</Card>
-
-			<Card variant="bordered">
-				<ToggleRow
-					label="Show other people's public playlists"
-					description="Your apps list only your own unless this is on."
-					disabled={saveChoices.isPending}
-					bind:checked={
-						() => myChoicesQuery.data?.include_public_playlists ?? false,
-						(include) => void setIncludePublic(include)
-					}
-				/>
-			</Card>
-
-			<!-- how to connect -->
-			<div class="grid gap-4 lg:grid-cols-2">
-				{#each [{ key: 'subsonic', label: 'OpenSubsonic', url: subsonicUrl, on: subsonicOn, clients: SUBSONIC_CLIENTS }, { key: 'jellyfin', label: 'Jellyfin', url: jellyfinUrl, on: jellyfinOn, clients: JELLYFIN_CLIENTS }] as proto (proto.key)}
-					<Card variant="bordered" class={proto.on ? '' : 'opacity-60'}>
-						<div>
-							<h3 class="mb-3 flex items-center gap-2 font-semibold">
-								{proto.label}
-								{#if !proto.on}
-									<span class="badge badge-sm badge-ghost">not enabled yet</span>
-								{/if}
-							</h3>
-							<Field label="Server URL">
-								{#snippet children(control)}
-									<div class="join w-full">
-										<Input
-											{...control}
-											label={`${proto.label} server URL`}
-											mono
-											class="join-item flex-1"
-											readonly
-											value={proto.url}
-										/>
-										<IconButton
-											label={`Copy ${proto.label} URL`}
-											icon={Copy}
-											variant="neutral"
-											shape="square"
-											class="join-item"
-											onclick={() => copy(proto.url)}
-										/>
-									</div>
-								{/snippet}
-							</Field>
-							<p class="mt-3 text-sm">
-								<span class="text-muted">Username:</span>
-								<span class="font-mono">{username || 'your username'}</span>
-							</p>
-							<p class="mt-1 text-sm text-muted">
-								Use your <strong>app-password</strong> (above) as the password / API key.
-							</p>
-							<p class="mt-1 text-xs text-muted">Tested clients: {proto.clients}</p>
-						</div>
-					</Card>
-				{/each}
-			</div>
+			{/if}
 		</div>
-	{/if}
 
-	<Modal
-		bind:open={
-			() => revealedSecret !== null,
-			(open) => {
-				if (!open) revealedSecret = null;
-			}
-		}
-		title="Copy your app-password now"
-	>
-		<p class="pb-2 text-sm text-muted">
-			This is the only time "{revealedName}" will be shown. If you lose it, revoke it and create a
-			new one.
-		</p>
-		{#if bothOff}
-			<p class="pb-2 text-sm text-warning">
-				Streaming isn't turned on yet, but this password will work once it's enabled.
-			</p>
-		{/if}
-		<div class="join w-full">
-			<Input
-				label="App-password secret"
-				mono
-				class="join-item flex-1"
-				readonly
-				value={revealedSecret ?? ''}
+		<div class="grid gap-3 lg:grid-cols-2">
+			{#each [{ key: 'subsonic', label: 'OpenSubsonic', url: subsonicUrl, on: subsonicOn, clients: SUBSONIC_CLIENTS }, { key: 'jellyfin', label: 'Jellyfin', url: jellyfinUrl, on: jellyfinOn, clients: JELLYFIN_CLIENTS }] as proto (proto.key)}
+				<div class="pf-box px-4 py-3.5">
+					<h3 class="ca-proto">
+						{#if proto.key === 'subsonic'}
+							<Wifi class="size-6" aria-hidden="true" />
+						{:else}
+							<JellyfinIcon class="size-6" />
+						{/if}
+						<span class="flex-1">{proto.label}</span>
+						{#if !proto.on}
+							<StatusChip size="xs">not enabled yet</StatusChip>
+						{/if}
+					</h3>
+					<Field label="Server URL">
+						{#snippet children(control)}
+							<div class="join w-full">
+								<Input
+									{...control}
+									label={`${proto.label} server URL`}
+									mono
+									class="join-item flex-1"
+									readonly
+									value={proto.url}
+								/>
+								<IconButton
+									label={`Copy ${proto.label} URL`}
+									icon={Copy}
+									variant="neutral"
+									shape="square"
+									class="join-item"
+									onclick={() => copy(proto.url)}
+								/>
+							</div>
+						{/snippet}
+					</Field>
+					<p class="mt-3 text-sm">
+						<span class="text-muted">Username:</span>
+						<span class="font-mono">{username || 'your username'}</span>
+					</p>
+					<p class="mt-1 text-sm text-muted">
+						Use your <strong class="text-base-content">app-password</strong> (above) as the password /
+						API key.
+					</p>
+					<p class="mt-2 text-xs text-muted">Tested clients: {proto.clients}</p>
+				</div>
+			{/each}
+		</div>
+
+		<div class="pf-box px-4 py-3">
+			<ToggleRow
+				label="Show other people's public playlists"
+				description="Your apps list only your own unless this is on."
+				disabled={saveChoices.isPending}
+				bind:checked={
+					() => myChoicesQuery.data?.include_public_playlists ?? false,
+					(include) => void setIncludePublic(include)
+				}
 			/>
-			<Button
-				variant="accent"
-				icon={Copy}
-				class="join-item"
-				onclick={() => revealedSecret && copy(revealedSecret)}
-			>
-				Copy
-			</Button>
 		</div>
-		{#snippet actions()}
-			<Button onclick={() => (revealedSecret = null)}>Done</Button>
-		{/snippet}
-	</Modal>
+	</div>
+{/if}
 
-	<ConfirmDialog
-		bind:open={
-			() => pendingRevoke !== null,
-			(open) => {
-				if (!open) pendingRevoke = null;
-			}
+<Modal
+	bind:open={
+		() => revealedSecret !== null,
+		(open) => {
+			if (!open) revealedSecret = null;
 		}
-		title={`Revoke "${pendingRevoke?.name ?? ''}"?`}
-		message="Any app or device using this app-password will be disconnected immediately and will need a new one."
-		confirmLabel="Revoke"
-		tone="danger"
-		pending={revoke.isPending}
-		onconfirm={confirmRevoke}
-	/>
-</section>
+	}
+	title="Copy your app-password now"
+>
+	<p class="pb-2 text-sm text-muted">
+		This is the only time "{revealedName}" will be shown. If you lose it, revoke it and create a new
+		one.
+	</p>
+	{#if bothOff}
+		<p class="pb-2 text-sm text-warning">
+			Streaming isn't turned on yet, but this password will work once it's enabled.
+		</p>
+	{/if}
+	<div class="join w-full">
+		<Input
+			label="App-password secret"
+			mono
+			class="join-item flex-1"
+			readonly
+			value={revealedSecret ?? ''}
+		/>
+		<Button
+			variant="accent"
+			icon={Copy}
+			class="join-item"
+			onclick={() => revealedSecret && copy(revealedSecret)}
+		>
+			Copy
+		</Button>
+	</div>
+	{#snippet actions()}
+		<Button onclick={() => (revealedSecret = null)}>Done</Button>
+	{/snippet}
+</Modal>
+
+<ConfirmDialog
+	bind:open={
+		() => pendingRevoke !== null,
+		(open) => {
+			if (!open) pendingRevoke = null;
+		}
+	}
+	title={`Revoke "${pendingRevoke?.name ?? ''}"?`}
+	message="Any app or device using this app-password will be disconnected immediately and will need a new one."
+	confirmLabel="Revoke"
+	tone="danger"
+	pending={revoke.isPending}
+	onconfirm={confirmRevoke}
+/>
 
 <style>
-	.cx-motif {
+	.ca-head {
 		display: flex;
-		flex-wrap: wrap;
+		width: 100%;
 		align-items: center;
-		gap: 0.4rem 0.6rem;
-		font-size: 0.72rem;
+		gap: 1rem;
+		padding: 0.875rem 1rem;
+		border-radius: inherit;
+		cursor: pointer;
 	}
-	.cx-node {
-		padding: 0.15rem 0.6rem;
-		border-radius: 9999px;
-		color: oklch(from var(--color-base-content) l c h / 0.7);
-		background: oklch(from var(--color-base-content) l c h / 0.06);
-		border: 1px solid oklch(from var(--color-accent) l c h / 0.25);
-		animation: cx-node-pulse 3s ease-in-out infinite;
-		animation-delay: calc(var(--i) * 0.25s);
+	.ca-head:hover {
+		background-color: color-mix(in oklab, var(--color-base-content) 5%, transparent);
 	}
-	.cx-arrow {
-		color: oklch(from var(--color-accent) l c h / 0.7);
-		font-weight: 700;
+	.ca-head:focus-visible {
+		outline: 3px solid var(--dn-focus);
+		outline-offset: 2px;
 	}
-	.cx-core {
-		display: inline-flex;
+	.ca-head[aria-expanded='true'] :global(.ca-chevron) {
+		rotate: 180deg;
+	}
+	.ca-title {
+		flex: 1;
+		text-align: left;
+		font-family: var(--font-mono);
+		font-size: 1rem;
+		font-weight: 600;
+		letter-spacing: 0.22em;
+		text-transform: uppercase;
+	}
+	@media (max-width: 639px) {
+		.ca-title {
+			font-size: 0.875rem;
+			letter-spacing: 0.14em;
+		}
+	}
+	.ca-count {
+		font-family: var(--font-mono);
+		font-size: 0.9375rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+	}
+	.ca-table th {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--color-base-content);
+	}
+	.ca-proto {
+		display: flex;
 		align-items: center;
-		gap: 0.35rem;
-		padding: 0.2rem 0.7rem;
-		border-radius: 9999px;
-		font-weight: 700;
-		letter-spacing: 0.04em;
-		color: var(--color-accent-content, var(--color-base-100));
-		background: var(--color-accent);
-		box-shadow: 0 0 18px oklch(from var(--color-accent) l c h / 0.3);
-	}
-	.cx-core-dot {
-		width: 0.45rem;
-		height: 0.45rem;
-		border-radius: 9999px;
-		background: var(--color-accent-content, var(--color-base-100));
-		animation: cx-core-throb 2.4s ease-in-out infinite;
-	}
-	@keyframes cx-node-pulse {
-		0%,
-		100% {
-			border-color: oklch(from var(--color-accent) l c h / 0.2);
-		}
-		50% {
-			border-color: oklch(from var(--color-accent) l c h / 0.55);
-		}
-	}
-	@keyframes cx-core-throb {
-		0%,
-		100% {
-			transform: scale(1);
-			opacity: 0.85;
-		}
-		50% {
-			transform: scale(1.3);
-			opacity: 1;
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.cx-node,
-		.cx-core-dot {
-			animation: none;
-		}
+		gap: 0.75rem;
+		margin-bottom: 0.75rem;
+		font-family: var(--font-mono);
+		font-size: 1rem;
+		font-weight: 600;
+		letter-spacing: 0.2em;
+		text-transform: uppercase;
 	}
 </style>

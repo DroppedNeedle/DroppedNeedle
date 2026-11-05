@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { AtSign, Check, KeyRound, Mail, Pencil, UserCog } from 'lucide-svelte';
+	import { AtSign, Check, KeyRound, LockKeyhole, Mail, Pencil } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/errors';
 	import {
 		createChangePasswordMutation,
@@ -10,8 +10,6 @@
 	import type { ProfileData } from '$lib/features/profile/queries/profile.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
-	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import InlineEditField from './InlineEditField.svelte';
 
@@ -71,169 +69,149 @@
 	}
 </script>
 
-<section id="account" class="scroll-mt-24 xl:ml-40">
-	<h2
-		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-muted"
-	>
-		<UserCog class="h-4 w-4" />
-		Account
-	</h2>
-	<Card variant="bordered" padding="none" class="overflow-hidden">
-		<div class="divide-y divide-base-300/30">
-			<div class="flex items-start gap-3 px-5 py-4">
-				<div
-					class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-muted"
-				>
-					<AtSign class="h-4 w-4" />
-				</div>
-				<div class="min-w-0 flex-1">
-					<p class="text-[10px] font-medium uppercase tracking-wider text-muted">Username</p>
-					{#if editingUsername}
-						<InlineEditField
-							label="Username"
-							value={profile.username_display ?? profile.username ?? ''}
-							placeholder="username"
-							autocomplete="username"
-							pending={usernameMutation.isPending}
-							onsave={(username) => usernameMutation.mutateAsync({ username })}
-							ondone={() => (editingUsername = false)}
-							class="mt-1"
-						/>
-					{:else}
-						<p class="truncate text-sm font-medium">
-							@{profile.username_display ?? profile.username ?? '-'}
-						</p>
-					{/if}
-				</div>
-				{#if !editingUsername}
-					<IconButton
-						label="Edit username"
-						icon={Pencil}
+<div class="pf-rows">
+	<div class="pf-row">
+		<span class="pf-tile" aria-hidden="true"><AtSign class="size-5" /></span>
+		<div class="pf-row__main">
+			<p class="pf-label">Username</p>
+			{#if editingUsername}
+				<InlineEditField
+					label="Username"
+					value={profile.username_display ?? profile.username ?? ''}
+					placeholder="username"
+					autocomplete="username"
+					pending={usernameMutation.isPending}
+					onsave={(username) => usernameMutation.mutateAsync({ username })}
+					ondone={() => (editingUsername = false)}
+					class="mt-1"
+				/>
+			{:else}
+				<p class="pf-value font-mono">@{profile.username_display ?? profile.username ?? '-'}</p>
+			{/if}
+		</div>
+		{#if !editingUsername}
+			<Button
+				variant="outline"
+				size="display-sm"
+				icon={Pencil}
+				class="pf-row__action"
+				onclick={() => (editingUsername = true)}
+			>
+				Edit username
+			</Button>
+		{/if}
+	</div>
+
+	<div class="pf-row">
+		<span class="pf-tile" aria-hidden="true"><Mail class="size-5" /></span>
+		<div class="pf-row__main">
+			<p class="pf-label">Email</p>
+			{#if editingEmail}
+				<InlineEditField
+					label="Email"
+					type="email"
+					value={profile.email ?? ''}
+					placeholder="name@example.com (optional)"
+					autocomplete="email"
+					pending={emailMutation.isPending}
+					onsave={(email) => emailMutation.mutateAsync({ email: email.trim() || null })}
+					ondone={() => (editingEmail = false)}
+					class="mt-1"
+				/>
+			{:else if profile.email}
+				<p class="pf-value">{profile.email}</p>
+			{:else}
+				<p class="pf-value text-muted">Not set</p>
+			{/if}
+		</div>
+		{#if !editingEmail}
+			<Button
+				variant="outline"
+				size="display-sm"
+				icon={Pencil}
+				class="pf-row__action"
+				onclick={() => (editingEmail = true)}
+			>
+				Edit email
+			</Button>
+		{/if}
+	</div>
+
+	<div class="pf-row pf-row--wrap">
+		<span class="pf-tile" aria-hidden="true"><LockKeyhole class="size-5" /></span>
+		<div class="pf-row__main">
+			<p class="pf-label">Password</p>
+			{#if hasLocalPassword}
+				<p class="pf-value tracking-[0.3em]">••••••••</p>
+			{:else}
+				<p class="pf-value text-muted">No local password</p>
+			{/if}
+		</div>
+		<Button
+			variant="outline"
+			size="display-sm"
+			icon={showPasswordForm ? undefined : hasLocalPassword ? Pencil : KeyRound}
+			class="pf-row__action"
+			onclick={togglePasswordForm}
+		>
+			{#if showPasswordForm}
+				Cancel
+			{:else if hasLocalPassword}
+				Change
+			{:else}
+				Set a password
+			{/if}
+		</Button>
+
+		{#if passwordDone && !showPasswordForm}
+			<p class="pf-row__under flex items-center gap-1.5 text-sm text-success">
+				<Check class="size-4" aria-hidden="true" />
+				{hasLocalPassword ? 'Password updated' : 'Local password set'}
+			</p>
+		{/if}
+
+		{#if showPasswordForm}
+			<div class="pf-row__under space-y-2">
+				{#if hasLocalPassword}
+					<Input
+						type="password"
+						label="Current password"
 						size="sm"
-						onclick={() => (editingUsername = true)}
+						class="w-full max-w-sm"
+						autocomplete="current-password"
+						placeholder="Current password"
+						bind:value={currentPassword}
 					/>
-				{/if}
-			</div>
-
-			<div class="flex items-start gap-3 px-5 py-4">
-				<div
-					class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-muted"
-				>
-					<Mail class="h-4 w-4" />
-				</div>
-				<div class="min-w-0 flex-1">
-					<p class="text-[10px] font-medium uppercase tracking-wider text-muted">Email</p>
-					{#if editingEmail}
-						<InlineEditField
-							label="Email"
-							type="email"
-							value={profile.email ?? ''}
-							placeholder="name@example.com (optional)"
-							autocomplete="email"
-							pending={emailMutation.isPending}
-							onsave={(email) => emailMutation.mutateAsync({ email: email.trim() || null })}
-							ondone={() => (editingEmail = false)}
-							class="mt-1"
-						/>
-					{:else if profile.email}
-						<p class="truncate text-sm font-medium">{profile.email}</p>
-					{:else}
-						<p class="text-sm text-muted">Not set</p>
-					{/if}
-				</div>
-				{#if !editingEmail}
-					<IconButton
-						label="Edit email"
-						icon={Pencil}
-						size="sm"
-						onclick={() => (editingEmail = true)}
-					/>
-				{/if}
-			</div>
-
-			<div class="px-5 py-4">
-				<div class="flex items-center gap-3">
-					<div
-						class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300/60 text-muted"
-					>
-						<KeyRound class="h-4 w-4" />
-					</div>
-					<div class="min-w-0 flex-1">
-						<p class="text-[10px] font-medium uppercase tracking-wider text-muted">Password</p>
-						{#if hasLocalPassword}
-							<p class="text-sm font-medium tracking-widest">••••••••</p>
-						{:else}
-							<p class="text-sm text-muted">No local password</p>
-						{/if}
-					</div>
-					<Button
-						variant="ghost"
-						size="sm"
-						icon={showPasswordForm ? undefined : hasLocalPassword ? Pencil : KeyRound}
-						onclick={togglePasswordForm}
-					>
-						{#if showPasswordForm}
-							Cancel
-						{:else if hasLocalPassword}
-							Change
-						{:else}
-							Set a password
-						{/if}
-					</Button>
-				</div>
-
-				{#if passwordDone && !showPasswordForm}
-					<p class="mt-2 flex items-center gap-1.5 pl-12 text-xs text-success">
-						<Check class="h-3.5 w-3.5" />
-						{hasLocalPassword ? 'Password updated' : 'Local password set'}
+				{:else}
+					<p class="text-sm text-muted">
+						Add a password so you can also sign in with your username.
 					</p>
 				{/if}
-
-				{#if showPasswordForm}
-					<div class="mt-3 space-y-2 pl-0 sm:pl-12">
-						{#if hasLocalPassword}
-							<Input
-								type="password"
-								label="Current password"
-								size="sm"
-								class="w-full max-w-sm"
-								autocomplete="current-password"
-								placeholder="Current password"
-								bind:value={currentPassword}
-							/>
-						{:else}
-							<p class="text-xs text-muted">
-								Add a password so you can also sign in with your username.
-							</p>
-						{/if}
-						<Input
-							type="password"
-							label="New password"
-							size="sm"
-							class="w-full max-w-sm"
-							autocomplete="new-password"
-							placeholder="New password (min 12 characters)"
-							bind:value={newPassword}
-						/>
-						{#if passwordError}
-							<p class="text-xs text-error">{passwordError}</p>
-						{/if}
-						<div class="flex gap-2 pt-1">
-							<Button
-								variant="primary"
-								size="sm"
-								pill
-								loading={passwordPending}
-								disabled={!newPassword || (hasLocalPassword && !currentPassword)}
-								onclick={() => void submitPassword()}
-							>
-								{hasLocalPassword ? 'Update password' : 'Set password'}
-							</Button>
-							<Button variant="ghost" size="sm" onclick={togglePasswordForm}>Cancel</Button>
-						</div>
-					</div>
+				<Input
+					type="password"
+					label="New password"
+					size="sm"
+					class="w-full max-w-sm"
+					autocomplete="new-password"
+					placeholder="New password (min 12 characters)"
+					bind:value={newPassword}
+				/>
+				{#if passwordError}
+					<p class="text-sm text-error">{passwordError}</p>
 				{/if}
+				<div class="flex gap-2 pt-1">
+					<Button
+						variant="primary"
+						size="display-sm"
+						loading={passwordPending}
+						disabled={!newPassword || (hasLocalPassword && !currentPassword)}
+						onclick={() => void submitPassword()}
+					>
+						{hasLocalPassword ? 'Update password' : 'Set password'}
+					</Button>
+					<Button variant="ghost" size="display-sm" onclick={togglePasswordForm}>Cancel</Button>
+				</div>
 			</div>
-		</div>
-	</Card>
-</section>
+		{/if}
+	</div>
+</div>
