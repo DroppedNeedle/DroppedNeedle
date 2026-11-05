@@ -559,22 +559,29 @@ Run from the repo root. `make help` lists every target.
   `library/src/identity/sql.rs`. `source_gates.rs` holds these reads.
 - Manual and imported identities survive rescans and moves. Automatic ones
   stay revisable and retract on contradiction.
-- Automatic artist reconciliation needs provider proof, never name similarity
-  alone. The only exception: proof for the album (an accepted MusicBrainz
-  release ID or a stored album-level provider-proof row) may stand in for
-  proof on every credit when no provider proof contradicts it and the credits
-  are not composite or ambiguous.
-- A second exception: when a scan leaves an artist record with no credits,
-  the record holds no MusicBrainz link or proof, every credit the scan
-  moved off it went by name alone (no id in the files) to one other record,
-  the two names differ only in capitals, spacing or sort name, no play of
-  it is of a track now credited to someone else, and an admin has not
-  marked them distinct, the emptied record merges into that one at scan
-  end: plays, favourites and ratings move, its id stays an alias and the
-  merge is in the audit. Any other record emptied without provider proof is
-  never merged by itself; when a scan recorded the move and it holds a
-  favourite, rating or play, it is listed in Duplicate artists.
-- A third exception: at the upgrade, a carried v2 row named exactly "Unknown
+- Automatic artist reconciliation needs provider proof, never name
+  similarity alone, with one rule for the same name. Two live records whose
+  names have the same `artist_name_key` (`library/src/scan/naming.rs`:
+  capitals, spacing and the accents of Latin letters, nothing else) are one
+  artist unless something says otherwise: two MusicBrainz ids among them (a
+  link, the files' ids or a current proof), a record whose own ids
+  disagree, or an admin's distinct mark. A credit with no id goes to the
+  record its exact name and sort name key to, else to its same-name
+  record, and never makes a second one. Same-name records join at scan end:
+  plays, favourites and ratings move, the old id stays an alias, and the
+  join is in the merge history with an Undo that puts back what has not
+  changed since and marks the records distinct. Sentinels, Various Artists
+  rows and the names "Unknown Artist" and "Various Artists" are left out.
+  Records MusicBrainz says are different stay apart, and the web UI shows
+  each one's MusicBrainz disambiguation where they share a name.
+- One exception: proof for the album (an accepted MusicBrainz release ID or
+  a stored album-level provider-proof row) may stand in for proof on every
+  credit when no provider proof contradicts it and the credits are not
+  composite or ambiguous.
+- Any other record a scan empties without provider proof is never merged by
+  itself; when a scan recorded the move and it holds a favourite, rating or
+  play, it is listed in Duplicate artists.
+- A second exception: at the upgrade, a carried v2 row named exactly "Unknown
   Artist" merges into the built-in one when it has no MusicBrainz link other
   than a special-purpose id and no source link, nothing names a real id at any
   of its credits or proofs, every credit it holds is under that name, and an
@@ -583,7 +590,8 @@ Run from the repo root. `make help` lists every target.
 - Retired IDs stay as aliases.
 - Every artist merge goes through `retire_artist` with a `MergeBasis`
   built in `corrections/merge_basis.rs` from rows read in the same
-  transaction; the merge history shows each basis.
+  transaction; the merge history shows each basis. Only a same-name join
+  keeps an undo record.
 - Setting or clearing an artist's link by hand never starts a merge; when
   it would, it is refused and the records are merged by an admin.
 - MusicBrainz's special-purpose artist ids (Various Artists, unknown and
