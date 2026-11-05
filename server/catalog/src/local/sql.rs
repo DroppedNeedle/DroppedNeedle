@@ -568,6 +568,10 @@ droppedneedle_kernel::sql! {
         owned_album!("la"),
         "))"
     ));
+    /// Artists appearing on a live album someone else leads, as the kept
+    /// credit pairs count them and the contributor card shows.
+    pub(crate) fragment APPEARS_PREDICATE = "EXISTS (SELECT 1 FROM library_artist_album_credits pa \
+         WHERE pa.local_artist_id = r.id AND pa.appearance = 1)";
     /// Artists leading an album or credited on a live track, with the
     /// leading half written `(LED)`.
     pub(crate) fragment WITH_MUSIC_PREDICATE = (concat!(
@@ -594,8 +598,8 @@ droppedneedle_kernel::sql! {
     pub(crate) fragment ARTIST_TOTAL_COLUMNS = "SELECT \
         COALESCE(SUM(CASE WHEN " + CREDITED_PREDICATE + " THEN 1 ELSE 0 END), 0) AS total, \
         COALESCE(SUM(CASE WHEN " + LED_PREDICATE + " THEN 1 ELSE 0 END), 0) AS led, \
-        COALESCE(SUM(CASE WHEN NOT (" + LED_PREDICATE + ") AND (" + CREDITED_PREDICATE
-        + ") THEN 1 ELSE 0 END), 0) AS contributors ";
+        COALESCE(SUM(CASE WHEN (NOT (" + LED_PREDICATE + ") AND (" + CREDITED_PREDICATE
+        + ")) OR " + APPEARS_PREDICATE + " THEN 1 ELSE 0 END), 0) AS contributors ";
     /// Live artists matching the name filter (bound twice).
     pub(crate) fragment ARTIST_NAME_FILTER = " WHERE r.retired_into_artist_id IS NULL \
         AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\')";
@@ -1524,18 +1528,20 @@ pub(crate) fn tracks_in(ids: ListLen) -> String {
     )
 }
 
-/// The predicate of one artist scope, with `(LED)` and `(CREDITED)` spelled
-/// out.
+/// The predicate of one artist scope, with `(LED)`, `(CREDITED)` and
+/// `(APPEARS)` spelled out. Contributors are the artists credited without
+/// leading, and those leading albums who also appear on others'.
 fn artist_scope_predicate(scope: ArtistScope) -> String {
     let predicate = match scope {
         ArtistScope::All => CREDITED_PREDICATE,
         ArtistScope::AlbumArtists => LED_PREDICATE,
-        ArtistScope::Contributors => "(NOT (LED) AND (CREDITED))",
+        ArtistScope::Contributors => "((NOT (LED) AND (CREDITED)) OR (APPEARS))",
         ArtistScope::WithMusic => WITH_MUSIC_PREDICATE,
     };
     predicate
         .replace("(LED)", LED_PREDICATE)
         .replace("(CREDITED)", CREDITED_PREDICATE)
+        .replace("(APPEARS)", APPEARS_PREDICATE)
 }
 
 /// True when a page of `scope` sorted by `sort` walks the kept artist
@@ -1578,7 +1584,8 @@ pub(crate) fn artist_keys(scope: ArtistScope, sort: ArtistSort, descending: bool
 /// artists. A bound on the walked count is written on that column, so the
 /// first page seeks it. A lower bound is left out after a cursor: the
 /// cursor came from a row in scope and the walk only moves up from it, so
-/// the cursor alone seeks.
+/// the cursor alone seeks. Contributors are the rows leading nothing and
+/// the ones with an appearance, so their walk only filters.
 fn counts_scope(
     scope: ArtistScope,
     sort: ArtistSort,
@@ -1589,11 +1596,8 @@ fn counts_scope(
         (ArtistScope::AlbumArtists, ArtistSort::AlbumCount, false) if after => "1",
         (ArtistScope::AlbumArtists, ArtistSort::AlbumCount, false) => "s.album_count > 0",
         (ArtistScope::AlbumArtists, ArtistSort::AlbumCount, true) => "s.album_count_neg < 0",
-        (ArtistScope::Contributors, ArtistSort::AlbumCount, false) => "s.album_count <= 0",
-        (ArtistScope::Contributors, ArtistSort::AlbumCount, true) if after => "1",
-        (ArtistScope::Contributors, ArtistSort::AlbumCount, true) => "s.album_count_neg >= 0",
         (ArtistScope::AlbumArtists, ..) => "+s.album_count > 0",
-        (ArtistScope::Contributors, ..) => "+s.album_count = 0",
+        (ArtistScope::Contributors, ..) => "(+s.album_count = 0 OR +s.appearance_count > 0)",
         _ => "1",
     }
 }

@@ -570,7 +570,8 @@ async fn artist_pages_match_the_fixture() {
     let scopes: [(ArtistScope, &[&str]); 4] = [
         (ArtistScope::All, &["a1", "a2", "a3"]),
         (ArtistScope::AlbumArtists, &["a1", "a2"]),
-        (ArtistScope::Contributors, &["a3"]),
+        // a1 leads its own albums and also appears on a2's.
+        (ArtistScope::Contributors, &["a1", "a3"]),
         (ArtistScope::WithMusic, &["a1", "a2", "a3"]),
     ];
     for (scope, members) in scopes {
@@ -587,8 +588,8 @@ async fn artist_pages_match_the_fixture() {
                     .map(|id| (*id).to_owned())
                     .collect();
                 let totals = match q {
-                    None => (named.len() as u64, 2, 1),
-                    Some(_) => (named.len() as u64, 2, 0),
+                    None => (named.len() as u64, 2, 2),
+                    Some(_) => (named.len() as u64, 2, 1),
                 };
                 let pages = named.len().div_ceil(limit as usize).max(1);
                 assert_eq!(
@@ -1321,8 +1322,10 @@ async fn assert_hot_plans(db: &Db) {
                     } else {
                         index.to_owned()
                     };
+                    // Contributors take album artists who appear
+                    // elsewhere too, so only album artists bound the count.
                     let bounded = matches!(sort, ArtistSort::AlbumCount)
-                        && !matches!(scope, ArtistScope::All);
+                        && matches!(scope, ArtistScope::AlbumArtists);
                     let plan = explain_unbound(
                         db,
                         &sql::artist_page(scope, sort, descending, after, false),

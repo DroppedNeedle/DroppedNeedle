@@ -24,7 +24,7 @@ How DroppedNeedle scans your music, works out which album and edition each folde
 
 The Albums, Artists and Tracks lists show the first page and add the next with Load more, however large the library. Tracks sort by date added, title, artist (then album and track number) or album. Shuffle on the Tracks page plays every track once in a random order.
 
-An artist's page also has an "Appears on" section when they are credited on albums someone else leads, such as a guest or featured spot. It shows those albums and tracks, whether or not the artist has albums of their own, and the Contributors view of the Artists list counts them. When an album has an identification review waiting, curators see "Needs you: open its review" under its edition plate.
+An artist's page also has an "Appears on" section when they are credited on albums someone else leads, such as a guest or featured spot. It shows those albums and tracks, whether or not the artist has albums of their own, and the Contributors view of the Artists list counts them: an artist with albums of their own is listed there too. When an album has an identification review waiting, curators see "Needs you: open its review" under its edition plate.
 
 An artist's page lists every album of theirs you have under "In your library", split into Albums, EPs & Singles, and Compilations, Live & more by its MusicBrainz type, including the kinds your release-type settings leave out of the discography below it. Without MusicBrainz an album is filed by its compilation flag.
 
