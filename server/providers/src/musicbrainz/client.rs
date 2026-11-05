@@ -16,8 +16,8 @@ use serde::de::DeserializeOwned;
 
 use super::models::{
     ArtistSearchHit, MbArtist, MbRecording, MbRelease, MbReleaseGroup, RecordingSearchHit,
-    ReleaseGroupBrowsePage, ReleaseGroupSearchHit, ReleaseSearchHit, SearchPage, UrlResolution,
-    decode_search_page,
+    ReleaseBrowsePage, ReleaseGroupBrowsePage, ReleaseGroupSearchHit, ReleaseSearchHit, SearchPage,
+    UrlResolution, decode_search_page,
 };
 use super::redirects::{
     RedirectHop, brainzmash_redirect_path, lookup_redirect_pair, official_redirect_hop,
@@ -279,6 +279,37 @@ impl MusicBrainzView {
                 count: 0,
                 offset: u64::from(offset),
                 items: Vec::new(),
+            }),
+            WireOutcome::Redirect { status, .. } => Err(refused(status)),
+        }
+    }
+
+    /// One page of an artist's releases with their release groups
+    /// (browse), for an artist credited on releases but on no release
+    /// group. With artist credits each group carries its own, as the
+    /// release-group browse's rows do. Missing artists browse as empty.
+    pub async fn browse_artist_releases(
+        &self,
+        artist_mbid: &str,
+        limit: u32,
+        offset: u32,
+        criticality: Criticality,
+    ) -> Result<ReleaseBrowsePage, ProviderError> {
+        let params = vec![
+            ("artist".to_owned(), normalize_mb_id(artist_mbid)),
+            ("inc".to_owned(), "release-groups+artist-credits".to_owned()),
+            ("limit".to_owned(), limit.min(MAX_PAGE_LIMIT).to_string()),
+            ("offset".to_owned(), offset.to_string()),
+        ];
+        match self
+            .get(vec!["release".to_owned()], params, criticality)
+            .await?
+        {
+            WireOutcome::Found(reply) => reply.json(),
+            WireOutcome::Missing | WireOutcome::Degraded => Ok(ReleaseBrowsePage {
+                count: 0,
+                offset: u64::from(offset),
+                releases: Vec::new(),
             }),
             WireOutcome::Redirect { status, .. } => Err(refused(status)),
         }

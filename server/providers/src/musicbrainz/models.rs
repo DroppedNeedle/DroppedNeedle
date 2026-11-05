@@ -852,3 +852,35 @@ pub struct ReleaseGroupBrowsePage {
     #[serde(rename = "release-groups", default)]
     pub items: Vec<ReleaseGroupRef>,
 }
+
+/// One page of an artist's releases from the browse endpoint
+/// (`/release?artist=`) with the `release-groups` and `artist-credits`
+/// includes. The envelope is
+/// `{"release-count", "release-offset", "releases"}`. Only each release's
+/// group is read: an artist credited on releases but on no release group
+/// (a band whose album MusicBrainz credits to its singer) has its
+/// discography there. Verified 2026-11-05 against the recorded
+/// `/release?artist=` browse with those includes from musicbrainz.org,
+/// `server/tests/fixtures/catalog/mb_artist_releases_band.json`.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ReleaseBrowsePage {
+    /// Total releases the artist has.
+    #[serde(rename = "release-count", default)]
+    pub count: u64,
+    /// Offset of this page.
+    #[serde(rename = "release-offset", default)]
+    pub offset: u64,
+    /// This page's releases.
+    #[serde(default)]
+    pub releases: Vec<ReleaseBrowseItem>,
+}
+
+/// One release of a [`ReleaseBrowsePage`], read for its group alone.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ReleaseBrowseItem {
+    /// Release MBID.
+    pub id: String,
+    /// The release's group, under the `release-groups` include.
+    #[serde(rename = "release-group", default)]
+    pub release_group: Option<ReleaseGroupRef>,
+}

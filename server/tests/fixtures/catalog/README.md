@@ -1,10 +1,11 @@
 # Catalog fixtures
 
 The `mb_*.json` files are MusicBrainz answers that the catalog page tests
-read through the in-repo mock (`server/testkit/src/musicbrainz.rs`). Their
-origin is unknown. They were added with the catalog page tests on 2026-10-06
-as recorded payloads, and no request, date, server or version was noted with
-them. None is known to be made up, and none is marked as recorded.
+read through the in-repo mock (`server/testkit/src/musicbrainz.rs`). Except
+for `mb_artist_releases_band.json`, which says below where it was recorded,
+their origin is unknown. They were added with the catalog page tests on
+2026-10-06 as recorded payloads, and no request, date, server or version was
+noted with them. None is known to be made up.
 
 - `mb_artist.json`: Radiohead, for `artist/{mbid}` with
   `inc=aliases+tags+url-rels`.
@@ -15,6 +16,10 @@ them. None is known to be made up, and none is marked as recorded.
 - `mb_release_group.json`: OK Computer, for `release-group/{mbid}` with
   `inc=artist-credits+media+releases+url-rels`.
 - `mb_search_artists.json`: an artist search, with no include.
+- `mb_artist_releases_band.json`: Ben Caplan & The Casual Smokers' releases, for
+  `release?artist={mbid}` with `inc=release-groups+artist-credits`, recorded from musicbrainz.org on
+  2026-11-05. The band is credited on both releases, its album's release group on
+  Ben Caplan alone, so the band has no release group of its own.
 - `mb_search_release_groups.json`: a release-group search, with no include.
 
 None is re-recorded here. The answers recorded on 2026-10-21 come from the

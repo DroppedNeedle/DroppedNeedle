@@ -46,6 +46,11 @@ const RELEASE_CD: &str = "6b1c7d8a-5f0e-4cd3-8e8f-0c1d3a7b9f65";
 const UNKNOWN_ALBUM: &str = "00000000-1111-4222-8333-444444444444";
 const DUMMY_RELEASE: &str = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f";
 const DUMMY_GROUP: &str = "4d5e6f70-8b9c-4dae-9f10-2b3c4d5e6f70";
+/// Ben Caplan & The Casual Smokers: credited on two releases, on no
+/// release group.
+const BAND: &str = "2fe9cf1f-8019-496e-870c-24f16d4d36c1";
+/// The band's album, its release group credited to Ben Caplan alone.
+const BAND_ALBUM: &str = "deb08635-0f11-4b87-b211-66479b61385f";
 
 fn fixture(name: &str) -> String {
     let path = format!(
@@ -198,6 +203,17 @@ fn routes() -> Vec<Route> {
             "/mb/ws/2/release-group".to_owned(),
             Some(("artist", ARTIST)),
             fixture("mb_artist_release_groups.json"),
+        ),
+        route(
+            "/mb/ws/2/release-group".to_owned(),
+            Some(("artist", BAND)),
+            json!({"release-group-count": 0, "release-group-offset": 0, "release-groups": []})
+                .to_string(),
+        ),
+        route(
+            "/mb/ws/2/release".to_owned(),
+            Some(("inc", "artist-credits")),
+            fixture("mb_artist_releases_band.json"),
         ),
         route(
             "/mb/ws/2/release-group".to_owned(),
@@ -843,6 +859,58 @@ async fn owned_releases_list_every_held_group_whatever_its_type() {
         fixtures.hits("/mb/ws/2/release-group"),
         1,
         "the discography browse serves both"
+    );
+}
+
+/// An artist credited on releases but on no release group (a band whose
+/// album MusicBrainz credits to its singer) lists the groups of its
+/// releases, once each, named by their own credit, and the one the
+/// library holds is owned.
+#[tokio::test]
+async fn an_artist_without_release_groups_lists_those_of_its_releases() {
+    let fixtures = Fixtures::start().await;
+    let (app, _auth) = app_seeded(
+        &fixtures,
+        format!("{}/mb/ws/2", fixtures.base),
+        &[format!(
+            "INSERT INTO local_album_external_identities \
+             (local_album_id, provider, release_group_mbid, decision_source, selected_at) \
+             VALUES ('album-bootleg', 'musicbrainz', '{BAND_ALBUM}', 'automatic', 0)"
+        )],
+    )
+    .await;
+
+    let releases = get(&app, &format!("/api/v3/artists/{BAND}/releases")).await;
+    assert_eq!(
+        titles(&releases["albums"]),
+        ["In the Time of the Great Remembering"],
+        "two releases, one group"
+    );
+    assert_eq!(releases["albums"][0]["id"], BAND_ALBUM);
+    assert_eq!(releases["albums"][0]["in_library"], true);
+    assert_eq!(releases["source_total_count"], 1);
+
+    let owned = get(&app, &format!("/api/v3/artists/{BAND}/owned-releases")).await;
+    assert_eq!(owned["items"][0]["id"], BAND_ALBUM, "{owned}");
+    assert_eq!(owned["complete"], true);
+
+    let more = get(
+        &app,
+        &format!("/api/v3/albums/{OK_COMPUTER}/more-by-artist?artist_id={BAND}&count=2"),
+    )
+    .await;
+    assert_eq!(
+        more["artist_name"], "Ben Caplan",
+        "a group names the artist its own credit names, as a browsed group does"
+    );
+    assert_eq!(more["albums"][0]["artist_name"], "Ben Caplan", "{more}");
+    assert_eq!(
+        (
+            fixtures.hits("/mb/ws/2/release-group"),
+            fixtures.hits("/mb/ws/2/release")
+        ),
+        (1, 1),
+        "one browse of each serves all three"
     );
 }
 

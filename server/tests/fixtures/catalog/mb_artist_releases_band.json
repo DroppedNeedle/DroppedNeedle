@@ -1,0 +1,158 @@
+{
+  "release-count": 2,
+  "release-offset": 0,
+  "releases": [
+    {
+      "packaging": "None",
+      "artist-credit": [
+        {
+          "name": "Ben Caplan & The Casual Smokers",
+          "joinphrase": "",
+          "artist": {
+            "country": "CA",
+            "name": "Ben Caplan & The Casual Smokers",
+            "disambiguation": "",
+            "type": "Group",
+            "sort-name": "Caplan, Ben & Casual Smokers, The",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "id": "2fe9cf1f-8019-496e-870c-24f16d4d36c1"
+          }
+        }
+      ],
+      "packaging-id": "119eba76-b343-3e02-a292-f0f00644bb9b",
+      "release-events": [
+        {
+          "date": "2011-10-20",
+          "area": {
+            "iso-3166-1-codes": [
+              "CA"
+            ],
+            "name": "Canada",
+            "disambiguation": "",
+            "type": null,
+            "sort-name": "Canada",
+            "type-id": null,
+            "id": "71bbafaa-e825-3e15-8ca9-017dcad1748b"
+          }
+        }
+      ],
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "release-group": {
+        "title": "In the Time of the Great Remembering",
+        "disambiguation": "",
+        "secondary-types": [],
+        "id": "deb08635-0f11-4b87-b211-66479b61385f",
+        "secondary-type-ids": [],
+        "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "artist-credit": [
+          {
+            "name": "Ben Caplan",
+            "joinphrase": "",
+            "artist": {
+              "country": "CA",
+              "disambiguation": "Canadian folk musician",
+              "name": "Ben Caplan",
+              "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+              "id": "5caafbc8-2a57-4751-9e63-2f72469c56b6",
+              "type": "Person",
+              "sort-name": "Caplan, Ben"
+            }
+          }
+        ],
+        "primary-type": "Album",
+        "first-release-date": "2011-10-20"
+      },
+      "disambiguation": "",
+      "title": "In the Time of the Great Remembering",
+      "barcode": "",
+      "date": "2011-10-20",
+      "country": "CA",
+      "status": "Official",
+      "asin": null,
+      "text-representation": {
+        "script": "Latn",
+        "language": "eng"
+      },
+      "id": "317fc4d1-b805-49fd-9058-3068e28ddcce",
+      "quality": "normal",
+      "cover-art-archive": {
+        "darkened": false,
+        "front": true,
+        "back": true,
+        "count": 3,
+        "artwork": true
+      }
+    },
+    {
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "disambiguation": "",
+      "release-group": {
+        "first-release-date": "2011-10-20",
+        "primary-type": "Album",
+        "artist-credit": [
+          {
+            "artist": {
+              "sort-name": "Caplan, Ben",
+              "type": "Person",
+              "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+              "id": "5caafbc8-2a57-4751-9e63-2f72469c56b6",
+              "disambiguation": "Canadian folk musician",
+              "name": "Ben Caplan",
+              "country": "CA"
+            },
+            "joinphrase": "",
+            "name": "Ben Caplan"
+          }
+        ],
+        "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+        "secondary-type-ids": [],
+        "id": "deb08635-0f11-4b87-b211-66479b61385f",
+        "secondary-types": [],
+        "disambiguation": "",
+        "title": "In the Time of the Great Remembering"
+      },
+      "barcode": null,
+      "title": "In the Time of the Great Remembering",
+      "packaging": null,
+      "packaging-id": null,
+      "artist-credit": [
+        {
+          "artist": {
+            "name": "Ben Caplan & The Casual Smokers",
+            "disambiguation": "",
+            "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+            "id": "2fe9cf1f-8019-496e-870c-24f16d4d36c1",
+            "type": "Group",
+            "sort-name": "Caplan, Ben & Casual Smokers, The",
+            "country": "CA"
+          },
+          "joinphrase": "",
+          "name": "Ben Caplan & The Casual Smokers"
+        }
+      ],
+      "release-events": [
+        {
+          "area": null,
+          "date": "2011-10-20"
+        }
+      ],
+      "quality": "normal",
+      "id": "713c7a9e-d756-448b-87a3-c25bf1171fe1",
+      "cover-art-archive": {
+        "artwork": true,
+        "count": 1,
+        "front": true,
+        "darkened": false,
+        "back": false
+      },
+      "country": null,
+      "date": "2011-10-20",
+      "text-representation": {
+        "language": "eng",
+        "script": "Latn"
+      },
+      "asin": null,
+      "status": "Official"
+    }
+  ]
+}
