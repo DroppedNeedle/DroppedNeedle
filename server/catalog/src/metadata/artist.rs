@@ -229,10 +229,15 @@ impl Catalog {
         CacheKey::new(Source::MusicBrainz, &[&namespace, "artist", mbid])
     }
 
-    /// Cache key of the artist's release-group list.
+    /// Cache key of the artist's release-group list. Named anew when the
+    /// list began to fall back to the artist's releases, so an empty list
+    /// kept from before is not served for the rest of its two weeks.
     pub(super) fn release_groups_key(&self, mbid: &str) -> CacheKey {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        CacheKey::new(Source::MusicBrainz, &[&namespace, "artist_rgs", mbid])
+        CacheKey::new(
+            Source::MusicBrainz,
+            &[&namespace, "artist_release_groups", mbid],
+        )
     }
 
     /// Cache key of TheAudioDB's artist art.
