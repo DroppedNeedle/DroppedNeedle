@@ -1,9 +1,6 @@
 <script lang="ts">
-	import { Headphones, Play, Shuffle, Sparkles, ArrowRight } from 'lucide-svelte';
-	import {
-		getLocalRecentV3Query,
-		getLocalStatsV3Query
-	} from '$lib/features/library/queries/LocalV3Queries.svelte';
+	import { Play, Shuffle, Sparkles, ArrowRight } from 'lucide-svelte';
+	import { getLocalStatsV3Query } from '$lib/features/library/queries/LocalV3Queries.svelte';
 	import { formatBytes } from '$lib/utils/formatting';
 	import { buildDiscoveryQueueFromLocal } from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
@@ -13,15 +10,15 @@
 		libraryTrackParams
 	} from '$lib/features/library/queries/libraryTracks';
 	import { createLibraryTrackQueue } from '$lib/features/library/queries/libraryTrackQueue.svelte';
-	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import { NOISE_TEXTURE } from './noiseTexture';
+	import Card from '$lib/ui/Card.svelte';
+	import FritEdge from '$lib/ui/FritEdge.svelte';
+	import Illustration from '$lib/ui/Illustration.svelte';
+	import VinylRecord from '$lib/ui/VinylRecord.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	const statsQuery = getLocalStatsV3Query();
-	const recentQuery = getLocalRecentV3Query(() => 1);
 	const stats = $derived(statsQuery.data);
-	const backdropCard = $derived(recentQuery.data?.[0]);
 
 	const queue = createLibraryTrackQueue({
 		buildQueue: (tracks) => buildDiscoveryQueueFromLocal(tracks),
@@ -67,105 +64,62 @@
 	}
 </script>
 
-<section
-	class="group relative isolate overflow-hidden rounded-3xl border border-base-content/10 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-base-content/20 hover:shadow-2xl"
->
-	{#if backdropCard}
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute inset-0 scale-110 blur-2xl"
-			data-testid="local-files-backdrop"
-		>
-			<AlbumImage
-				albumId={backdropCard.id}
-				mbid={backdropCard.release_group_mbid ?? ''}
-				available={backdropCard.cover_available}
-				alt=""
-				size="full"
-				requestSize={250}
-				testId="local-files-backdrop-image"
-				rounded="none"
-				className="h-full w-full object-cover opacity-60"
-			/>
-		</div>
-	{/if}
-
-	<div
-		aria-hidden="true"
-		class="absolute inset-0 bg-linear-[105deg] from-base-100/96 from-28% via-base-100/72 via-62% to-localfiles/22"
-	></div>
-	<div
-		aria-hidden="true"
-		class="pointer-events-none absolute -top-16 -right-12 h-56 w-56 rounded-full bg-localfiles/28 blur-3xl"
-	></div>
-	<div
-		aria-hidden="true"
-		class="pointer-events-none absolute inset-0 opacity-[0.05]"
-		style:background-image={NOISE_TEXTURE}
-		style:background-size="200px"
-	></div>
+<section class="lf-band">
+	<div class="lf-band__glow" aria-hidden="true"></div>
+	<FritEdge class="lf-band__frit" />
+	<VinylRecord label class="lf-band__record" />
 
 	<!-- stretched link under the content so empty area navigates, while playback buttons (pointer-events re-enabled) still act in place; avoids nested interactives -->
 	<a
 		href={withBasePath('/library/local')}
 		aria-label="Enter the Listening Room"
-		class="absolute inset-0 z-10 rounded-3xl focus-visible:ring-2 focus-visible:ring-localfiles focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none"
+		class="lf-band__link"
 	></a>
 
-	<div class="pointer-events-none relative z-20 flex flex-col gap-5 p-6 sm:p-8">
-		<div class="flex items-start justify-between gap-3">
-			<div class="flex items-center gap-4">
-				<div
-					class="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-localfiles/15 text-localfiles ring-1 ring-localfiles/35 transition-transform duration-300 group-hover:-rotate-6 group-hover:scale-110"
-				>
-					<Headphones class="h-7 w-7" />
-				</div>
-				<div>
-					<h2 class="text-xl font-black tracking-tight sm:text-2xl">Local Files</h2>
-					<p class="text-sm text-muted">
-						{#if stats}
-							{stats.total_tracks.toLocaleString()} tracks · {stats.total_artists.toLocaleString()} artists
-							· {formatBytes(stats.total_size_bytes)}
-						{:else}
-							Your local music collection
-						{/if}
-					</p>
-				</div>
-			</div>
-			<div class="flex shrink-0 items-center gap-2 text-right text-localfiles">
-				<div class="leading-tight">
-					<div
-						class="hidden text-[10px] font-semibold tracking-[0.2em] uppercase opacity-70 sm:block"
-					>
-						Enter the
-					</div>
-					<div class="text-sm font-black tracking-tight sm:text-base">Listening Room</div>
-				</div>
-				<ArrowRight class="h-5 w-5 transition-transform duration-300 group-hover:translate-x-1" />
-			</div>
+	<div class="lf-band__body">
+		<div class="lf-band__head">
+			<Illustration name="folder-sticker" class="lf-band__sticker" />
+			<h2 class="lf-band__title">Local Files</h2>
+			<span class="lf-band__rule" aria-hidden="true"></span>
+			<p class="lf-band__counts">
+				{#if stats}
+					<span>{stats.total_tracks.toLocaleString()} tracks</span>
+					<span>{stats.total_artists.toLocaleString()} artists</span>
+					<span>{formatBytes(stats.total_size_bytes)}</span>
+				{:else}
+					<span>Your local music collection</span>
+				{/if}
+			</p>
 		</div>
 
-		<div class="h-px w-full bg-base-content/10"></div>
+		<div class="lf-band__ticket-wrap" aria-hidden="true">
+			<Card variant="torn" padding="none" class="lf-band__ticket">
+				<span class="lf-band__enter">Enter the</span>
+				<span class="lf-band__room">Listening Room<ArrowRight class="lf-band__arrow" /></span>
+				<span class="lf-band__stripes dn-stripes"></span>
+			</Card>
+		</div>
 
-		<div class="flex flex-wrap items-center gap-3">
+		<div class="lf-band__buttons">
 			<Button
 				variant="primary"
-				size="lg"
+				size="display"
 				icon={Play}
 				loading={busy === 'play'}
 				class="pointer-events-auto"
 				onclick={playAll}>Play All</Button
 			>
 			<Button
-				size="lg"
+				variant="outline"
+				size="display"
 				icon={Shuffle}
 				loading={busy === 'shuffle'}
-				class="pointer-events-auto border-localfiles/40 bg-base-100/40 backdrop-blur-sm hover:bg-base-100/70"
+				class="pointer-events-auto"
 				onclick={shuffleAll}>Shuffle</Button
 			>
 			<Button
-				variant="ghost"
-				size="lg"
+				variant="outline"
+				size="display"
 				icon={Sparkles}
 				loading={busy === 'surprise'}
 				class="pointer-events-auto"
@@ -174,3 +128,287 @@
 		</div>
 	</div>
 </section>
+
+<style>
+	.lf-band {
+		position: relative;
+		isolation: isolate;
+		overflow: hidden;
+		min-height: 10rem;
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 30%, transparent);
+		border-radius: 1rem;
+		background-color: var(--color-base-100);
+		transition: border-color 150ms;
+	}
+	.lf-band:hover {
+		border-color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+	}
+
+	.lf-band__glow {
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		background:
+			radial-gradient(
+				ellipse 40% 120% at 0% 100%,
+				color-mix(in oklab, var(--dn-title) 22%, transparent),
+				transparent 70%
+			),
+			radial-gradient(
+				ellipse 45% 140% at 62% 100%,
+				color-mix(in oklab, var(--dn-title) 16%, transparent),
+				transparent 70%
+			);
+	}
+	.lf-band :global(.lf-band__frit) {
+		z-index: -1;
+	}
+
+	.lf-band :global(.lf-band__record) {
+		position: absolute;
+		top: -2.25rem;
+		left: 50%;
+		z-index: -1;
+		width: 22rem;
+	}
+
+	.lf-band__link {
+		position: absolute;
+		inset: 0;
+		z-index: 10;
+		border-radius: 1rem;
+	}
+	.lf-band__link:focus-visible {
+		outline-offset: -4px;
+	}
+
+	.lf-band__body {
+		position: relative;
+		z-index: 20;
+		display: grid;
+		grid-template-columns: 1fr auto;
+		grid-template-areas:
+			'head ticket'
+			'buttons ticket';
+		align-items: center;
+		gap: 0.25rem 1.5rem;
+		padding: 0.875rem 1.25rem 0.875rem 0.875rem;
+		pointer-events: none;
+	}
+
+	.lf-band__head {
+		grid-area: head;
+		display: flex;
+		align-items: center;
+		gap: 1.25rem;
+	}
+	.lf-band__head :global(.lf-band__sticker) {
+		width: 5.25rem;
+		height: 4.875rem;
+		flex: none;
+		rotate: -2deg;
+	}
+	.lf-band__title {
+		font-family: var(--font-display);
+		font-weight: 400;
+		font-size: 3.875rem;
+		line-height: 0.95;
+		letter-spacing: 0.005em;
+		text-transform: uppercase;
+		white-space: nowrap;
+		font-synthesis: none;
+	}
+	.lf-band__rule {
+		width: 2px;
+		height: 3.75rem;
+		flex: none;
+		background-color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+	}
+	.lf-band__counts {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+	}
+
+	.lf-band__buttons {
+		grid-area: buttons;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.875rem;
+		padding-left: 4.5rem;
+	}
+
+	.lf-band__ticket-wrap {
+		grid-area: ticket;
+		filter: drop-shadow(0 8px 12px rgb(0 0 0 / 0.4));
+		rotate: -1.5deg;
+	}
+	.lf-band__ticket-wrap :global(.lf-band__ticket) {
+		width: 16rem;
+		padding: 1.5rem 1.5rem 1.25rem 2rem;
+	}
+	.lf-band__enter {
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		font-weight: 600;
+		letter-spacing: 0.3em;
+		text-transform: uppercase;
+	}
+	.lf-band__room {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.25rem;
+		font-family: var(--font-display);
+		font-size: 1.75rem;
+		line-height: 1;
+		letter-spacing: 0.03em;
+		text-transform: uppercase;
+		white-space: nowrap;
+		font-synthesis: none;
+	}
+	.lf-band__room :global(.lf-band__arrow) {
+		width: 1.75rem;
+		height: 1.75rem;
+		flex: none;
+	}
+	.lf-band__stripes {
+		display: block;
+		height: 1.375rem;
+		margin-top: 0.75rem;
+		font-size: 1.25rem;
+	}
+
+	@media (max-width: 1023px) {
+		.lf-band__body {
+			grid-template-columns: 1fr;
+			grid-template-areas:
+				'head'
+				'ticket'
+				'buttons';
+			gap: 0.875rem;
+		}
+		.lf-band__buttons {
+			padding-left: 0;
+		}
+		.lf-band__ticket-wrap {
+			rotate: none;
+		}
+		.lf-band__ticket-wrap :global(.lf-band__ticket) {
+			display: flex;
+			width: 100%;
+			flex-direction: row;
+			align-items: center;
+			gap: 0.75rem;
+			padding: 0.875rem 1.25rem;
+		}
+		.lf-band__ticket-wrap :global(.lf-band__ticket .card-body) {
+			flex-direction: row;
+			align-items: center;
+			gap: 0.75rem;
+		}
+		.lf-band__room {
+			margin-top: 0;
+		}
+		.lf-band__stripes {
+			flex: 1;
+			margin-top: 0;
+			max-width: 8rem;
+			margin-left: auto;
+		}
+	}
+
+	/* Phone: the counts on one line under the title, the buttons share a row */
+	@media (max-width: 639px) {
+		.lf-band__body {
+			padding: 0.875rem 0.75rem 0.875rem;
+			gap: 0.75rem;
+		}
+		.lf-band__head {
+			display: grid;
+			grid-template-columns: auto 1fr;
+			column-gap: 0.875rem;
+		}
+		.lf-band__head :global(.lf-band__sticker) {
+			grid-row: 1 / 3;
+			width: 3.5rem;
+			height: 3.25rem;
+		}
+		.lf-band__title {
+			font-size: 2.375rem;
+		}
+		.lf-band__rule {
+			display: none;
+		}
+		.lf-band__counts {
+			grid-column: 2;
+			flex-direction: row;
+			flex-wrap: wrap;
+			gap: 0 0.375rem;
+			font-size: 0.625rem;
+			letter-spacing: 0.1em;
+			white-space: nowrap;
+		}
+		.lf-band__counts span + span::before {
+			content: '·';
+			margin-right: 0.5rem;
+		}
+		/* the record keeps to the corner, above the counts and right of the title */
+		.lf-band :global(.lf-band__record) {
+			top: -4rem;
+			left: auto;
+			right: -3rem;
+			width: 7rem;
+		}
+		.lf-band__enter {
+			font-size: 0.75rem;
+			letter-spacing: 0.2em;
+			white-space: nowrap;
+		}
+		.lf-band__room {
+			font-size: 1.125rem;
+		}
+		.lf-band__room :global(.lf-band__arrow) {
+			width: 1.125rem;
+			height: 1.125rem;
+		}
+		.lf-band__ticket-wrap :global(.lf-band__ticket) {
+			padding: 0.625rem 0.875rem;
+		}
+		.lf-band__ticket-wrap :global(.lf-band__ticket .card-body) {
+			gap: 0.5rem;
+		}
+		.lf-band__stripes {
+			height: 1rem;
+			font-size: 0.875rem;
+		}
+		.lf-band__buttons {
+			display: grid;
+			grid-template-columns: 1fr 1fr 1fr;
+			gap: 0.5rem;
+		}
+		.lf-band__buttons :global(.btn) {
+			--btn-p: 0.25rem;
+			--fontsize: 0.8125rem;
+			--size: 2.375rem;
+			gap: 0.375rem;
+			white-space: nowrap;
+		}
+		.lf-band__buttons :global(.btn svg) {
+			width: 1rem;
+			height: 1rem;
+		}
+	}
+
+	/* too narrow for the record beside the title: the text keeps the room */
+	@media (max-width: 359px) {
+		.lf-band :global(.lf-band__record) {
+			display: none;
+		}
+	}
+</style>

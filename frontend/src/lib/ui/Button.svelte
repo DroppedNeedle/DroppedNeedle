@@ -18,6 +18,7 @@
 		| 'accent'
 		| 'outline'
 		| 'ghost'
+		| 'caps'
 		| 'danger'
 		| 'danger-ghost'
 		| 'warning'
@@ -26,11 +27,13 @@
 		| 'listenbrainz'
 		| 'spotify';
 
-	export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg';
+	/** `display` and `display-sm` are condensed caps, for a page header's or a band's buttons. */
+	export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg' | 'display' | 'display-sm';
 
 	// Whole class strings, so Tailwind's scan finds every one. The dn-btn-*
 	// looks live in kit.css: primary is the acid action fill in both themes,
-	// neutral and outline a solid surface with an edge, and the service
+	// neutral and outline a solid surface with an edge, caps a quiet mono
+	// uppercase link-like button (Back to top), and the service
 	// variants (lastfm, listenbrainz, spotify) that service's own colour.
 	const buttonVariants: Record<ButtonVariant, string> = {
 		neutral: 'btn dn-btn-neutral',
@@ -38,6 +41,7 @@
 		accent: 'btn btn-accent',
 		outline: 'btn dn-btn-outline',
 		ghost: 'btn btn-ghost dn-btn-ghost',
+		caps: 'btn btn-ghost dn-btn-ghost dn-btn-caps',
 		danger: 'btn btn-error',
 		'danger-ghost': 'btn btn-ghost dn-btn-ghost text-error',
 		warning: 'btn btn-warning',
@@ -51,7 +55,9 @@
 		xs: 'btn-xs',
 		sm: 'btn-sm',
 		md: 'dn-btn-md',
-		lg: 'btn-lg'
+		lg: 'btn-lg',
+		display: 'dn-btn-display',
+		'display-sm': 'dn-btn-display-sm'
 	};
 </script>
 
@@ -113,13 +119,17 @@
 		xs: 'size-3.5',
 		sm: 'size-4',
 		md: 'size-4',
-		lg: 'size-5'
+		lg: 'size-5',
+		display: 'size-5',
+		'display-sm': 'size-4'
 	};
 	const spinnerSizes: Record<ButtonSize, string> = {
 		xs: 'loading loading-spinner loading-xs',
 		sm: 'loading loading-spinner loading-sm',
 		md: 'loading loading-spinner loading-sm',
-		lg: 'loading loading-spinner loading-md'
+		lg: 'loading loading-spinner loading-md',
+		display: 'loading loading-spinner loading-sm',
+		'display-sm': 'loading loading-spinner loading-sm'
 	};
 
 	const tag = $derived(href !== undefined ? 'a' : (as ?? 'button'));

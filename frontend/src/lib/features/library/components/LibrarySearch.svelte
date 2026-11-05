@@ -11,7 +11,6 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
-	import { NOISE_TEXTURE } from './noiseTexture';
 
 	let term = $state('');
 	let debounced = $state('');
@@ -111,41 +110,27 @@
 </script>
 
 <div class="relative z-30" bind:this={rootEl}>
-	<div
-		class="group/bar relative overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-br from-primary/12 via-base-200/40 to-accent/10 shadow-lg backdrop-blur-sm transition-all duration-300 focus-within:border-primary/45 focus-within:shadow-[0_0_60px_-14px_oklch(from_var(--color-primary)_l_c_h/0.55)]"
-	>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute -top-16 -right-12 h-48 w-48 rounded-full bg-primary/20 blur-3xl transition-transform duration-500 group-focus-within/bar:scale-125"
-		></div>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute inset-0 opacity-[0.03]"
-			style:background-image={NOISE_TEXTURE}
-			style:background-size="200px"
-		></div>
-
-		<div class="relative flex items-center gap-4 px-5 py-5 sm:gap-5 sm:px-7 sm:py-6">
+	<div class="lib-search">
+		<div class="relative flex items-center gap-3 px-3 py-2.5 sm:gap-5 sm:px-6 sm:py-3.5">
 			<label
 				for="library-search-input"
-				class="flex min-w-0 flex-1 cursor-text items-center gap-4 sm:gap-5"
+				class="flex min-w-0 flex-1 cursor-text items-center gap-4 sm:gap-6"
 			>
-				<span
-					class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-base-100/50 text-muted ring-1 ring-base-content/10 transition-colors group-focus-within/bar:bg-primary/15 group-focus-within/bar:text-primary group-focus-within/bar:ring-primary/30 sm:h-14 sm:w-14"
-				>
-					<Search class="h-5 w-5 sm:h-6 sm:w-6" />
+				<span class="lib-search__well">
+					<Search class="size-6 sm:size-7" />
 				</span>
 				<span class="min-w-0 flex-1">
-					<span class="relative block h-7 sm:h-8">
+					<span class="lib-search__line relative block">
 						{#if !term}
 							<span class="pointer-events-none absolute inset-0" aria-hidden="true">
+								<!-- one hint fades out before the next fades in, so two never overlap -->
 								{#key hintIdx}
 									<span
-										in:fade={{ duration: 420 }}
-										out:fade={{ duration: 320 }}
-										class="absolute inset-0 flex items-center text-lg font-semibold text-muted sm:text-xl"
+										in:fade={{ duration: 300, delay: 240 }}
+										out:fade={{ duration: 200 }}
+										class="lib-search__hint absolute inset-0 flex items-center"
 									>
-										<span class="truncate">{hint}</span>
+										<span class="line-clamp-2">{hint}</span>
 									</span>
 								{/key}
 							</span>
@@ -163,7 +148,7 @@
 							class="absolute inset-0 text-lg font-semibold text-base-content sm:text-xl"
 						/>
 					</span>
-					<span class="mt-1 block truncate text-sm text-muted">
+					<span class="lib-search__sub mt-0.5 block truncate">
 						Find any artist, album or track instantly
 					</span>
 				</span>
@@ -171,10 +156,7 @@
 			{#if term}
 				<IconButton label="Clear search" icon={X} class="shrink-0" onclick={clear} />
 			{:else}
-				<kbd
-					class="hidden shrink-0 self-start rounded-lg border border-base-content/15 bg-base-100/50 px-2 py-1 text-sm font-medium text-muted sm:inline-block"
-					>/</kbd
-				>
+				<kbd class="lib-search__key">/</kbd>
 			{/if}
 		</div>
 	</div>
@@ -327,3 +309,97 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.lib-search {
+		position: relative;
+		overflow: hidden;
+		border: 1px solid color-mix(in oklab, var(--dn-title) 45%, transparent);
+		border-radius: 0.875rem;
+		background:
+			radial-gradient(
+				ellipse 70% 140% at 85% 50%,
+				color-mix(in oklab, var(--dn-title) 22%, transparent),
+				transparent 70%
+			),
+			linear-gradient(
+				90deg,
+				var(--color-base-100),
+				color-mix(in oklab, var(--dn-title) 10%, var(--color-base-100))
+			);
+		transition:
+			border-color 150ms,
+			box-shadow 150ms;
+	}
+	.lib-search:focus-within {
+		border-color: var(--dn-focus);
+		box-shadow: 0 0 0 1px var(--dn-focus);
+	}
+
+	.lib-search__well {
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: 4rem;
+		height: 4rem;
+		border: 1px solid var(--dn-line);
+		border-radius: 0.625rem;
+		background-color: var(--color-base-100);
+		color: var(--color-base-content);
+	}
+
+	.lib-search__line {
+		min-height: 2rem;
+	}
+
+	/* the hints in the header's Anton */
+	.lib-search__hint {
+		font-family: var(--font-display);
+		font-size: 1.625rem;
+		line-height: 1.05;
+		letter-spacing: 0.02em;
+		text-transform: uppercase;
+		color: var(--color-base-content);
+		font-synthesis: none;
+	}
+
+	.lib-search__sub {
+		font-size: 1rem;
+		letter-spacing: 0.02em;
+		color: var(--color-base-content);
+		opacity: 0.85;
+	}
+
+	.lib-search__key {
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		border: 1px solid var(--dn-edge);
+		border-radius: 0.5rem;
+		background-color: var(--color-base-100);
+		font-family: var(--font-mono);
+		font-size: 1rem;
+		color: var(--color-base-content);
+	}
+	@media (max-width: 639px) {
+		.lib-search__well {
+			width: 2.5rem;
+			height: 2.5rem;
+		}
+		.lib-search__line {
+			min-height: 2.25rem;
+		}
+		.lib-search__hint {
+			font-size: 1rem;
+		}
+		.lib-search__sub {
+			font-size: 0.75rem;
+		}
+		.lib-search__key {
+			width: 1.875rem;
+			height: 1.875rem;
+		}
+	}
+</style>

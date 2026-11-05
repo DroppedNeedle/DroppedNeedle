@@ -48,6 +48,27 @@
 		--fontsize: 0.9375rem;
 		--btn-p: 1.125rem;
 	}
+	/* condensed caps: a page header's and a band's buttons (LISTEN, PLAY ALL) */
+	.dn-btn-display,
+	.dn-btn-display-sm {
+		--fontsize: 1.1875rem;
+		--btn-p: 1.25rem;
+		--size: 2.875rem;
+		gap: 0.625rem;
+		border-radius: 0.625rem;
+		font-family: var(--font-display);
+		font-weight: 400;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		font-synthesis: none;
+	}
+	.dn-btn-display-sm {
+		--fontsize: 1.0625rem;
+		--btn-p: 1rem;
+		--size: 2.375rem;
+		gap: 0.5rem;
+		border-radius: 0.5rem;
+	}
 	.dn-btn-action {
 		--btn-color: var(--dn-action);
 		--btn-fg: var(--dn-action-content);
@@ -66,6 +87,13 @@
 	.dn-btn-ghost {
 		--btn-bg: transparent;
 		--btn-border: transparent;
+	}
+	.dn-btn-caps {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		letter-spacing: 0.2em;
+		text-transform: uppercase;
 	}
 	.dn-btn-spotify {
 		--btn-color: var(--dn-spotify);
@@ -167,6 +195,119 @@
 	[data-theme='light'] .dn-card-paper {
 		box-shadow: 0 10px 24px -18px color-mix(in oklab, var(--dn-paper-content) 45%, transparent);
 	}
+	/* torn paper: the card's top and bottom edges ripped, through a mask, so
+	   it takes no border and no shadow of its own */
+	.dn-card-torn {
+		--tear: 0.75rem;
+		--tear-top: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 12' preserveAspectRatio='none'%3E%3Cpath d='M0 12L0 1L9 2.9L13 5.7L19 3.1L27 5.9L33 5.4L40 6.3L44 3.4L51 5.5L54 5.4L60 7L68 1.8L74 7L81 5.2L87 6.9L95 3.4L100 6.4L105 2L110 3.8L115 7.1L121 5.7L129 1.4L134 4.6L140 3.7L144 6.9L147 3.4L152 5.3L161 4.3L165 3.6L170 3.4L176 3.2L182 5L186 6.9L192 6.6L199 5.1L205 4.3L212 7.1L217 5.6L222 4.8L227 3.1L232 6.2L240 1L240 12Z'/%3E%3C/svg%3E");
+		--tear-bottom: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 12' preserveAspectRatio='none'%3E%3Cpath d='M0 0L0 11L9 9.1L13 6.3L19 8.9L27 6.1L33 6.6L40 5.7L44 8.6L51 6.5L54 6.6L60 5L68 10.2L74 5L81 6.8L87 5.1L95 8.6L100 5.6L105 10L110 8.2L115 4.9L121 6.3L129 10.6L134 7.4L140 8.3L144 5.1L147 8.6L152 6.7L161 7.7L165 8.4L170 8.6L176 8.8L182 7L186 5.1L192 5.4L199 6.9L205 7.7L212 4.9L217 6.4L222 7.2L227 8.9L232 5.8L240 11L240 0Z'/%3E%3C/svg%3E");
+		--tear-body: linear-gradient(#000 0 0);
+		border: 0;
+		border-radius: 0.25rem;
+		mask-image: var(--tear-top), var(--tear-body), var(--tear-bottom);
+		mask-position:
+			0 0,
+			0 calc(var(--tear) - 1px),
+			0 100%;
+		mask-size:
+			15rem var(--tear),
+			100% calc(100% - 2 * var(--tear) + 2px),
+			15rem var(--tear);
+		mask-repeat: repeat-x, no-repeat, repeat-x;
+		-webkit-mask-image: var(--tear-top), var(--tear-body), var(--tear-bottom);
+		-webkit-mask-position:
+			0 0,
+			0 calc(var(--tear) - 1px),
+			0 100%;
+		-webkit-mask-size:
+			15rem var(--tear),
+			100% calc(100% - 2 * var(--tear) + 2px),
+			15rem var(--tear);
+		-webkit-mask-repeat: repeat-x, no-repeat, repeat-x;
+	}
+
+	/* the mask would cut a ring drawn outside, so it sits inside the tear */
+	.dn-card-torn:focus-visible {
+		outline: 3px solid var(--dn-paper-content);
+		outline-offset: calc(-1 * var(--tear) - 4px);
+	}
+
+	/* the diagonal stripe block on a ticket or a tile, in the text colour */
+	.dn-stripes {
+		background-image: repeating-linear-gradient(
+			-62deg,
+			currentColor 0 0.28em,
+			transparent 0.28em 0.62em
+		);
+	}
+
+	/* a list page's toolbar: search, toggles and selects in one row, outlined
+	   plainly on the page; on a phone the search takes its own row */
+	.dn-toolbar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem 2rem;
+		margin-bottom: 1.75rem;
+	}
+	.dn-toolbar__grow {
+		position: relative;
+		flex: 1 1 18rem;
+	}
+	.dn-toolbar__select {
+		width: 15rem;
+	}
+	@media (max-width: 639px) {
+		.dn-toolbar {
+			gap: 0.625rem 0.375rem;
+			margin-bottom: 1.25rem;
+		}
+		.dn-toolbar > * {
+			flex: 1 1 auto;
+			min-width: 0;
+		}
+		.dn-toolbar :where(.btn) {
+			--size: 2.5rem;
+			--btn-p: 0.375rem;
+			--fontsize: 0.75rem;
+			gap: 0.25rem;
+			white-space: nowrap;
+		}
+		.dn-toolbar :where(.select) {
+			--size: 2.5rem;
+			padding-inline: 0.5rem 1.5rem;
+		}
+		.dn-toolbar :where(.btn) svg {
+			flex: none;
+		}
+		.dn-toolbar > :is(.dn-toolbar__grow, [role='tablist']) {
+			flex-basis: 100%;
+		}
+		.dn-toolbar__select {
+			width: auto;
+		}
+	}
+
+	/* a browse grid: seven across a wide screen, never fewer than two */
+	.dn-list-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(min(10rem, calc(50% - 0.625rem)), 1fr));
+		gap: 1.5rem 1.25rem;
+	}
+	@media (max-width: 639px) {
+		.dn-list-grid {
+			gap: 1rem 0.875rem;
+		}
+	}
+
+	.dn-toolbar :where(.input, .select) {
+		--input-color: color-mix(in oklab, var(--color-base-content) 70%, transparent);
+		background-color: transparent;
+	}
+	.dn-toolbar :where(.input, .select):is(:focus, :focus-within) {
+		--input-color: var(--dn-focus);
+	}
+
 	:where(.modal-box) {
 		background-color: var(--color-base-200);
 		border: 1px solid var(--dn-line);

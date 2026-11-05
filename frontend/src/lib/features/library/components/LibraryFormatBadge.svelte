@@ -11,7 +11,7 @@
 
 	let { format, size = 'badge-sm' }: Props = $props();
 
-	type Tone = 'action' | 'info' | 'neutral';
+	type Tone = 'action' | 'neutral';
 
 	const config = $derived.by((): { label: string; tone: Tone } | null => {
 		const f = (format ?? '').toLowerCase();
@@ -19,7 +19,7 @@
 		if (f === 'mixed') return { label: 'MIXED', tone: 'neutral' };
 		if (f === 'flac' || f === 'wav' || f === 'alac')
 			return { label: f.toUpperCase(), tone: 'action' };
-		if (f === 'mp3') return { label: 'MP3', tone: 'info' };
+		if (f === 'mp3') return { label: 'MP3', tone: 'neutral' };
 		if (f === 'ogg' || f === 'oga') return { label: 'OGG', tone: 'neutral' };
 		if (f === 'opus') return { label: 'OPUS', tone: 'neutral' };
 		if (f === 'm4a' || f === 'aac' || f === 'mp4') return { label: 'M4A', tone: 'neutral' };

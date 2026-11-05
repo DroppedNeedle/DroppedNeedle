@@ -6,7 +6,7 @@
 	// The library lists' filter button: a minimum track count, and on the
 	// album list the formats to keep (With) or hide (Without), each with its
 	// album count. The menu changes the filters as it goes; the list follows.
-	import { Check, ListFilter, X } from 'lucide-svelte';
+	import { Check, Layers, ListFilter, X } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Popover from '$lib/ui/Popover.svelte';
 	import type { components } from '$lib/api/v3/openapi';
@@ -39,6 +39,13 @@
 
 	const active = $derived((minTracks > 1 ? 1 : 0) + (formats.length > 0 ? 1 : 0));
 	const label = (min: number) => (min <= 1 ? 'Any' : `${min}+`);
+	// On the album list the button reads as the format select it leads with.
+	const buttonLabel = $derived.by(() => {
+		if (!formatCounts || !onFormats) return 'Filter';
+		if (formats.length === 0) return 'All formats';
+		const list = formats.map((format) => format.toUpperCase()).join(', ');
+		return formatMode === 'without' ? `Without ${list}` : list;
+	});
 
 	function toggleFormat(format: string) {
 		const next = formats.includes(format)
@@ -53,7 +60,14 @@
 	}
 </script>
 
-<Popover label="Filter" title="Filters" icon={ListFilter} count={active}>
+<Popover
+	label={buttonLabel}
+	title="Filters"
+	icon={formatCounts && onFormats ? Layers : ListFilter}
+	caret={Boolean(formatCounts && onFormats)}
+	count={active}
+	class={formatCounts && onFormats ? 'sm:w-58' : ''}
+>
 	{#snippet children(close)}
 		<div class="space-y-2">
 			<label class="block text-sm font-semibold" for={sliderId}>Minimum tracks you have</label>

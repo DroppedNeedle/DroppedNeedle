@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { ChevronDown } from 'lucide-svelte';
 	import Button, { type KitIcon } from './Button.svelte';
 
 	interface Props {
@@ -17,6 +18,8 @@
 		icon?: KitIcon;
 		/** How many settings in the panel are on; shown on the button when above 0. */
 		count?: number;
+		/** A down arrow after the label, so the button reads as a menu. */
+		caret?: boolean;
 		/** Which edge of the button the panel lines up with. */
 		align?: 'start' | 'end';
 		/** Layout only: width, margin, flex. */
@@ -29,6 +32,7 @@
 		title,
 		icon = undefined,
 		count = 0,
+		caret = false,
 		align = 'end',
 		class: className = '',
 		children
@@ -112,12 +116,14 @@
 	<Button
 		variant={count > 0 ? 'primary' : 'outline'}
 		{icon}
+		class={caret ? 'w-full justify-start' : ''}
 		aria-expanded={open}
 		aria-haspopup="dialog"
 		aria-controls={open ? panelId : undefined}
 		onclick={toggle}
 	>
-		{label}{#if count > 0}<span class="badge badge-sm ml-1">{count}</span>{/if}
+		{label}{#if count > 0}<span class="badge badge-sm ml-1">{count}</span
+			>{/if}{#if caret}<ChevronDown class="ml-auto size-4" aria-hidden="true" />{/if}
 	</Button>
 	{#if open}
 		<div

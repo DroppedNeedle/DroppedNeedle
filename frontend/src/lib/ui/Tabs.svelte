@@ -3,7 +3,8 @@
 	keys, Home and End move between them and show the one reached. Each tab
 	may carry an icon before its label, coloured while selected, and a quiet
 	count. The panel is named by its tab, so the content passed in reads as
-	that tab's.
+	that tab's. `aside` sits in the row beside the tabs (a list's search and
+	sort, which belong to every tab).
 -->
 <script lang="ts" module>
 	import type { KitIcon } from './Button.svelte';
@@ -31,6 +32,7 @@
 		idPrefix: string;
 		look?: 'box' | 'border';
 		class?: string;
+		aside?: Snippet;
 		children: Snippet;
 	}
 
@@ -42,6 +44,7 @@
 		idPrefix,
 		look = 'box',
 		class: className = '',
+		aside,
 		children
 	}: Props = $props();
 
@@ -75,33 +78,46 @@
 	}
 </script>
 
-<div
-	bind:this={row}
-	role="tablist"
-	aria-label={label}
-	tabindex="-1"
-	class="tabs w-fit max-w-full flex-wrap {look === 'box' ? 'tabs-box' : 'tabs-border'} {className}"
-	onkeydown={move}
->
-	{#each tabs as tab (tab.id)}
-		<button
-			type="button"
-			role="tab"
-			id={tabId(tab.id)}
-			class="tab gap-2 {tab.id === selected ? 'tab-active' : ''}"
-			aria-selected={tab.id === selected}
-			aria-controls={panelId}
-			tabindex={tab.id === selected ? 0 : -1}
-			onclick={() => onselect(tab.id)}
-			>{#if tab.icon}<tab.icon
-					class="h-4 w-4"
-					aria-hidden="true"
-				/>{/if}{tab.label}{#if tab.count != null}&nbsp;<span
-					class="font-mono text-xs tabular-nums opacity-80">{tab.count.toLocaleString()}</span
-				>{/if}</button
-		>
-	{/each}
-</div>
+{#snippet tablist()}
+	<div
+		bind:this={row}
+		role="tablist"
+		aria-label={label}
+		tabindex="-1"
+		class="tabs w-fit max-w-full flex-wrap {look === 'box' ? 'tabs-box' : 'tabs-border'} {aside
+			? ''
+			: className}"
+		onkeydown={move}
+	>
+		{#each tabs as tab (tab.id)}
+			<button
+				type="button"
+				role="tab"
+				id={tabId(tab.id)}
+				class="tab gap-2 {tab.id === selected ? 'tab-active' : ''}"
+				aria-selected={tab.id === selected}
+				aria-controls={panelId}
+				tabindex={tab.id === selected ? 0 : -1}
+				onclick={() => onselect(tab.id)}
+				>{#if tab.icon}<tab.icon
+						class="h-4 w-4"
+						aria-hidden="true"
+					/>{/if}{tab.label}{#if tab.count != null}&nbsp;<span
+						class="font-mono text-xs tabular-nums opacity-80">{tab.count.toLocaleString()}</span
+					>{/if}</button
+			>
+		{/each}
+	</div>
+{/snippet}
+
+{#if aside}
+	<div class="flex flex-wrap items-center gap-3 {className}">
+		{@render tablist()}
+		{@render aside()}
+	</div>
+{:else}
+	{@render tablist()}
+{/if}
 <div role="tabpanel" id={panelId} aria-labelledby={tabId(selected)} tabindex="-1">
 	{@render children()}
 </div>

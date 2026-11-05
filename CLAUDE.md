@@ -705,11 +705,16 @@ Run from the repo root. `make help` lists every target.
   `CardTitle`, `CardActions`, `ConfirmDialog`, `Field`, `TextField`,
   `NumberField`, `SecretField`, `PasswordField`, `SelectField`, `TextAreaField`,
   `ToggleRow`, `RadioCards`, `StatusChip`, `SectionHead` (a shelf's title
-  row), `SaveBar`, `AsyncButton`, `QueryBoundary`, `RatingStars` (`quiet`
+  row), `ListPageHeader` (a browse page's title, count, ticket and record),
+  `SaveBar`, `AsyncButton`, `QueryBoundary`, `RatingStars` (`quiet`
   in list rows), `PageShell`, `Toaster`, `CoverPlaceholder`,
-  `UnsavedChangesGuard`, `Logo`, `PaperPanel` (the light island), and the
-  decoration `FritFrame` (the page's dot frame, mounted once by the shell),
-  `FritEdge`, `VinylSleeve`, `BarcodeOrnament`; in `src/lib/media` the one
+  `UnsavedChangesGuard`, `Logo`, `PaperPanel` (the light island), `Card`'s
+  `torn` paper, `Button`'s condensed caps sizes (`display`, `display-sm`),
+  the `dn-toolbar` and `dn-list-grid` classes for a list's controls and grid,
+  and the decoration `FritFrame` (the page's dot frame, mounted once by the
+  shell), `FritEdge`, `VinylSleeve`, `VinylRecord`, `BarcodeOrnament`,
+  `BarcodeTicket`, `Illustration` (turntable, dripping heart, folder
+  sticker); in `src/lib/media` the one
   album and artist tile, `MediaTile` and `MediaTileSkeleton`):
   do not hand-write a button, a card, a text input, a modal, a confirm, a
   form row, a `<dialog>` or a query's loading, error and empty branches

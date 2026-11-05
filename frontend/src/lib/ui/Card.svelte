@@ -2,7 +2,8 @@
 	A panel that groups one thing's content. `flat` sits on the page tint,
 	`bordered` is a framed panel, `raised` a tile in a grid, `paper` a page's
 	one light island (cream with dark ink in dark, raised paper-white in
-	light). With `href` the whole card is one link named by its title, so it
+	light), `torn` the same stock with its top and bottom edges ripped (a
+	browse tile, a ticket). With `href` the whole card is one link named by its title, so it
 	holds no other controls.
 	A caller's `aria-*` attributes pass through, so a `section` card can be
 	named by its own heading with `aria-labelledby`. `ref` binds the card's
@@ -18,7 +19,7 @@
 	import CardTitle from './CardTitle.svelte';
 
 	interface Props extends Omit<HTMLAttributes<HTMLElement>, 'title' | 'children'> {
-		variant?: 'flat' | 'bordered' | 'raised' | 'paper';
+		variant?: 'flat' | 'bordered' | 'raised' | 'paper' | 'torn';
 		padding?: 'none' | 'sm' | 'md' | 'lg';
 		/** Rendered as an `h2`; use `header` for another heading or more than text. */
 		title?: string;
@@ -51,13 +52,15 @@
 		flat: 'card border border-base-300 bg-base-200',
 		bordered: 'card border border-line bg-base-200',
 		raised: 'card border border-line bg-base-200',
-		paper: 'card dn-card-paper border border-paper-border bg-paper text-paper-content'
+		paper: 'card dn-card-paper border border-paper-border bg-paper text-paper-content',
+		torn: 'card dn-card-paper dn-card-torn bg-paper text-paper-content'
 	};
 	const linkHover = {
 		flat: 'transition-colors duration-150 hover:bg-neutral',
 		bordered: 'transition-colors duration-150 hover:border-edge hover:bg-neutral',
 		raised: 'transition duration-150 hover:bg-neutral motion-safe:hover:-translate-y-px',
-		paper: 'transition duration-150 hover:border-paper-content motion-safe:hover:-translate-y-px'
+		paper: 'transition duration-150 hover:border-paper-content motion-safe:hover:-translate-y-px',
+		torn: 'transition duration-150 motion-safe:hover:-translate-y-px'
 	};
 	const paddings = {
 		none: 'card-body p-0',

@@ -42,13 +42,17 @@
 		xs: 'size-3.5',
 		sm: 'size-4',
 		md: 'size-5',
-		lg: 'size-6'
+		lg: 'size-6',
+		display: 'size-5',
+		'display-sm': 'size-4'
 	};
 	const imageSizes: Record<ButtonSize, string> = {
 		xs: 'size-4',
 		sm: 'size-6',
 		md: 'size-7',
-		lg: 'size-9'
+		lg: 'size-9',
+		display: 'size-7',
+		'display-sm': 'size-6'
 	};
 </script>
 

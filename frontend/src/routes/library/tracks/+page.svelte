@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { getLibraryTracksInfiniteQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import {
@@ -18,10 +17,11 @@
 	import { reveal } from '$lib/actions/reveal';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import ListPageHeader from '$lib/ui/ListPageHeader.svelte';
+	import LibraryFormatBadge from '$lib/features/library/components/LibraryFormatBadge.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import {
-		ChevronLeft,
 		Play,
 		Shuffle,
 		ListPlus,
@@ -150,24 +150,51 @@
 
 <svelte:head><title>Tracks · Library</title></svelte:head>
 
-<div class="container mx-auto p-4 md:p-6 lg:p-8">
-	<div class="flex items-center gap-4 mb-6">
-		<IconButton
-			icon={ChevronLeft}
-			label="Back to library"
-			onclick={() => goto(withBasePath('/library'))}
-		/>
-		<div>
-			<h1 class="text-3xl font-bold">{favorites ? 'Favourite Tracks' : 'All Tracks'}</h1>
-			<p class="text-muted text-sm mt-1">
-				{total.toLocaleString()}
-				{total === 1 ? 'track' : 'tracks'}
-			</p>
-		</div>
-	</div>
+{#snippet playButtons()}
+	{#if queue.loading}
+		<Button
+			variant="primary"
+			size="display"
+			onclick={() => queue.abort()}
+			aria-label="Stop loading tracks"
+		>
+			<LoaderCircle class="size-5 animate-spin motion-keep" aria-hidden="true" />
+			{queue.progressText ?? 'Loading tracks'}
+		</Button>
+	{:else}
+		<Button
+			variant="primary"
+			size="display"
+			icon={Play}
+			onclick={playAll}
+			aria-label="Play all tracks"
+		>
+			Play All
+		</Button>
+		<Button
+			variant="outline"
+			size="display"
+			icon={Shuffle}
+			onclick={shuffleAll}
+			aria-label="Shuffle all tracks"
+		>
+			Shuffle
+		</Button>
+	{/if}
+{/snippet}
 
-	<div class="flex flex-col sm:flex-row gap-3 mb-6">
-		<div class="relative flex-1">
+<ListPageHeader
+	title={favorites ? 'Favourite Tracks' : 'All Tracks'}
+	count={tracksQuery.data ? `${total.toLocaleString()} ${total === 1 ? 'track' : 'tracks'}` : null}
+	ticket="DN / CC 3.2 - TRK"
+	backHref={withBasePath('/library')}
+	backLabel="Back to library"
+	actions={tracks.length > 0 ? playButtons : undefined}
+/>
+
+<div class="px-4 pb-10 sm:px-6 lg:px-8">
+	<div class="dn-toolbar">
+		<div class="dn-toolbar__grow">
 			<Input
 				icon={Search}
 				label="Search tracks"
@@ -192,7 +219,12 @@
 			aria-pressed={favorites}
 			onclick={toggleFavorites}>Favourites</Button
 		>
-		<select class="select" value={sort} onchange={handleSortChange} aria-label="Sort tracks">
+		<select
+			class="select dn-toolbar__select"
+			value={sort}
+			onchange={handleSortChange}
+			aria-label="Sort tracks"
+		>
 			{#if favorites}<option value="hearted">Recently favourited</option>{/if}
 			<option value="recent">Recently added</option>
 			<option value="title">Title</option>
@@ -207,7 +239,7 @@
 		isEmpty={(data) => !data.pages[0]?.items.length}
 	>
 		{#snippet loading()}
-			<div class="overflow-hidden rounded-xl bg-base-100/40 shadow-sm">
+			<div class="overflow-hidden rounded-xl border border-line bg-base-200">
 				{#each Array(12) as _, i (i)}
 					<div class="flex items-center gap-3 px-3 py-2">
 						<div class="skeleton h-12 w-12 shrink-0 rounded-md"></div>
@@ -235,50 +267,16 @@
 				</p>
 			</div>
 		{/snippet}
-		<div class="mb-4 flex items-center gap-2">
-			{#if queue.loading}
-				<Button
-					variant="primary"
-					size="sm"
-					onclick={() => queue.abort()}
-					aria-label="Stop loading tracks"
-				>
-					<LoaderCircle class="h-3.5 w-3.5 animate-spin motion-keep" aria-hidden="true" />
-					{queue.progressText ?? 'Loading tracks'}
-				</Button>
-			{:else}
-				<Button
-					variant="primary"
-					size="sm"
-					icon={Play}
-					class="[&_svg]:fill-current"
-					onclick={playAll}
-					aria-label="Play all tracks"
-				>
-					Play All
-				</Button>
-				<Button
-					variant="ghost"
-					size="sm"
-					icon={Shuffle}
-					onclick={shuffleAll}
-					aria-label="Shuffle all tracks"
-				>
-					Shuffle
-				</Button>
-			{/if}
-		</div>
-
 		<div
-			class="divide-y divide-base-content/5 overflow-hidden rounded-xl bg-base-100/40 shadow-sm"
+			class="divide-y divide-line/60 overflow-hidden rounded-xl border border-line bg-base-200"
 			use:reveal
 		>
 			{#each tracks as track, i (track.id)}
 				{@const playing = isTrackPlaying(track)}
 				<div
-					class="group flex cursor-pointer items-center gap-3 px-3 py-2 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary {playing
-						? 'bg-accent/10'
-						: 'hover:bg-base-200/50'}"
+					class="group flex cursor-pointer items-center gap-3 px-3 py-2 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus {playing
+						? 'bg-selected'
+						: 'hover:bg-neutral'}"
 					onclick={() => playTrack(i)}
 					onkeydown={(e) =>
 						e.target === e.currentTarget &&
@@ -314,10 +312,18 @@
 					</div>
 
 					<div class="min-w-0 flex-1">
-						<div class="truncate text-sm font-semibold {playing ? 'text-accent' : ''}">
-							{track.title}
+						<div class="flex min-w-0 items-center gap-2">
+							<span class="truncate text-sm font-semibold {playing ? 'text-title' : ''}"
+								>{track.title}</span
+							>
+							{#if playing}
+								<span
+									class="shrink-0 font-mono text-[0.6875rem] font-semibold tracking-widest text-title uppercase"
+									>Playing</span
+								>
+							{/if}
 						</div>
-						<div class="truncate text-xs text-muted">
+						<div class="truncate font-mono text-xs text-muted">
 							{track.artist_name}{#if track.album_title}<span class="ml-1 text-muted"
 									>· {track.album_title}</span
 								>{/if}
@@ -326,14 +332,12 @@
 
 					<div class="flex shrink-0 items-center gap-2">
 						{#if track.format}
-							<span
-								class="hidden text-[10px] font-medium uppercase tracking-wide text-muted sm:inline"
-							>
-								{track.format}
+							<span class="hidden sm:inline-flex">
+								<LibraryFormatBadge format={track.format} size="badge-xs" />
 							</span>
 						{/if}
 						{#if track.duration_seconds != null}
-							<span class="text-xs tabular-nums text-muted {playing ? 'text-accent/60' : ''}">
+							<span class="w-11 text-right font-mono text-xs tabular-nums text-muted">
 								{formatDurationSec(track.duration_seconds)}
 							</span>
 						{/if}
@@ -348,9 +352,10 @@
 		</div>
 
 		{#if tracksQuery.hasNextPage}
-			<div class="mt-6 flex justify-center">
+			<div class="mt-8 flex justify-center">
 				<Button
 					variant="outline"
+					class="min-w-60"
 					loading={tracksQuery.isFetchingNextPage}
 					onclick={() => tracksQuery.fetchNextPage()}
 				>

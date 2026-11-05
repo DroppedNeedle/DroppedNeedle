@@ -1,14 +1,16 @@
 <script lang="ts">
-	import { Disc3, Heart, Users, Music2, ArrowUpRight } from 'lucide-svelte';
+	import { ArrowRight, Disc3, Heart, Music, User } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import FritEdge from '$lib/ui/FritEdge.svelte';
+	import Illustration from '$lib/ui/Illustration.svelte';
 	import {
 		getLibraryArtistThumbsQuery,
 		getLibraryRecentlyAddedQuery
 	} from '$lib/features/library/queries/LibraryQueries.svelte';
 	import type { components } from '$lib/api/v3/openapi';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { NOISE_TEXTURE } from './noiseTexture';
 
 	type LibraryStats = components['schemas']['StatsView'];
 
@@ -21,8 +23,6 @@
 		key: string;
 		albumId?: string;
 		mbid: string;
-		remoteUrl: string | null;
-		type: 'album' | 'artist';
 		available: boolean;
 	}
 
@@ -34,8 +34,6 @@
 			key: a.id,
 			albumId: a.id,
 			mbid: a.release_group_mbid ?? '',
-			remoteUrl: null,
-			type: 'album',
 			available: a.cover_available
 		}))
 	);
@@ -43,42 +41,24 @@
 		(artistThumbsQuery.data?.items ?? []).slice(0, 9).map((a) => ({
 			key: a.id,
 			mbid: a.artist_mbid ?? '',
-			remoteUrl: null,
-			type: 'artist',
 			available: Boolean(a.artist_mbid)
 		}))
 	);
-	// rotate the reused album pool so the tracks fan never mirrors the albums fan in a small library
-	const trackArt = $derived<Art[]>(
-		albumArt.length > 1
-			? [
-					...albumArt.slice(Math.ceil(albumArt.length / 2)),
-					...albumArt.slice(0, Math.ceil(albumArt.length / 2))
-				]
-			: albumArt
-	);
 
-	const WINDOW = 5;
+	const ALBUM_WINDOW = 5;
+	const ARTIST_WINDOW = 3;
 
-	// one shared heartbeat advances every deck; per-deck offsets stagger them
+	// one shared heartbeat advances both decks; the offsets stagger them
 	let cycle = $state(0);
 	let reduced = $state(false);
-	let wide = $state(false);
 
 	// mirrors actions/tilt.ts so flipping the preference mid-session stops the deck instead of hard-snapping
 	$effect(() => {
 		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-		const wideMq = window.matchMedia('(min-width: 640px)');
 		reduced = mq.matches;
-		wide = wideMq.matches;
 		const onChange = (e: MediaQueryListEvent) => (reduced = e.matches);
-		const onWideChange = (e: MediaQueryListEvent) => (wide = e.matches);
 		mq.addEventListener('change', onChange);
-		wideMq.addEventListener('change', onWideChange);
-		return () => {
-			mq.removeEventListener('change', onChange);
-			wideMq.removeEventListener('change', onWideChange);
-		};
+		return () => mq.removeEventListener('change', onChange);
 	});
 
 	$effect(() => {
@@ -87,251 +67,378 @@
 		return () => clearInterval(id);
 	});
 
-	function visibleWindow(n: number): number {
-		return Math.min(WINDOW, n);
-	}
-
-	function startIndex(base: number, n: number): number {
-		// hold still unless the pool outnumbers the fan, else covers shuffle with nothing new to reveal
-		if (n <= WINDOW) return 0;
-		return (((cycle + base) % n) + n) % n;
-	}
-
-	function visibleSlots(art: Art[], base: number): Array<{ item: Art; position: number }> {
+	// hold still unless the pool outnumbers the deck, else pictures shuffle with nothing new to show
+	function visibleSlots(
+		art: Art[],
+		base: number,
+		size: number
+	): Array<{ item: Art; position: number }> {
 		const n = art.length;
-		const win = visibleWindow(n);
-		const start = startIndex(base, n);
+		const win = Math.min(size, n);
+		const start = n <= size ? 0 : (((cycle + base) % n) + n) % n;
 		return Array.from({ length: win }, (_, position) => ({
 			item: art[(start + position) % n]!,
 			position
 		}));
 	}
 
-	// playing-card fan: outer cards rotate from a low pivot, dim and drop back; anything past the window parks off the nearest edge and fades
-	function slotStyle(pos: number, win: number, hero: boolean, n: number): string {
-		if (pos >= win) {
-			// park off-stage toward the side this card is heading, so it slides out past the spread and re-enters from the far edge rather than collapsing to centre
-			const exiting = pos >= (win + n - 1) / 2;
-			const edge = (hero ? 128 : 64) * (exiting ? -1 : 1);
-			const drop = hero ? 26 : 12;
-			return `transform:translate(calc(-50% + ${edge}px), calc(-50% + ${drop}px)) scale(.72);opacity:0;z-index:0;`;
-		}
-		const off = pos - (win - 1) / 2;
-		const a = Math.abs(off);
-		const rot = off * (hero ? 9 : 7);
-		const tx = off * (hero ? 52 : 23);
-		const ty = a * (hero ? 10 : 6);
-		const scale = 1 - a * 0.05;
-		const z = 40 - Math.round(a * 10);
-		const opacity = 1 - a * 0.1;
-		return `transform:translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px)) rotate(${rot}deg) scale(${scale});opacity:${opacity};z-index:${z};`;
+	// The covers fan to the left from the front one, each further back
+	// turned a little more and tucked under; sizes are in the deck's height.
+	function coverTransform(position: number, win: number): string {
+		const depth = win - 1 - position;
+		const x = -depth * 5;
+		const y = -depth * 3;
+		const turn = 8 - depth * 6.5;
+		const scale = 1 - depth * 0.035;
+		return `translate(calc(-50% + ${x}cqh), calc(-50% + ${y}cqh)) rotate(${turn}deg) scale(${scale})`;
 	}
 </script>
 
-{#snippet fan(art: Art[], base: number, hero: boolean, FallbackIcon: typeof Disc3)}
-	<div class="fan-deck relative h-full w-full">
-		{#if art.length}
-			{@const n = art.length}
-			{@const win = visibleWindow(n)}
-			{#each visibleSlots(art, base) as slot (slot.item.key)}
-				<div
-					data-testid="library-fan-card"
-					data-fan-key={slot.item.key}
-					data-request-size="250"
-					class="fan-card absolute top-1/2 left-1/2 aspect-square overflow-hidden rounded-2xl shadow-xl ring-1 ring-base-content/10 {hero
-						? 'w-40 sm:w-48'
-						: 'w-20 sm:w-[5.5rem]'}"
-					style={slotStyle(slot.position, win, hero, n)}
-				>
-					{#if slot.item.type === 'album'}
+{#snippet tileText(count: number, label: string, Icon: typeof Disc3, go: string)}
+	<span class="hub-tile__text">
+		<span class="hub-tile__count">{count.toLocaleString()}</span>
+		<span class="hub-tile__label"><Icon class="hub-tile__icon" aria-hidden="true" />{label}</span>
+		<span class="hub-tile__go">{go}<ArrowRight class="size-4" aria-hidden="true" /></span>
+	</span>
+{/snippet}
+
+<!-- isolate keeps the decks' z-index inside, so they never paint over the search dropdown above -->
+<div class="hub-tiles isolate">
+	<div class="hub-tiles__torn">
+		<Card
+			variant="torn"
+			padding="none"
+			href={withBasePath('/library/albums')}
+			aria-label="Browse all albums"
+			class="hub-tile"
+		>
+			{@render tileText(stats.total_albums, 'Albums', Disc3, 'Browse albums')}
+			<span class="hub-deck hub-deck--albums" aria-hidden="true">
+				{#each visibleSlots(albumArt, 0, ALBUM_WINDOW) as slot (slot.item.key)}
+					<span
+						class="hub-deck__cover"
+						data-testid="library-fan-card"
+						data-fan-key={slot.item.key}
+						style:transform={coverTransform(slot.position, Math.min(ALBUM_WINDOW, albumArt.length))}
+						style:z-index={slot.position + 1}
+					>
 						<AlbumImage
 							albumId={slot.item.albumId}
 							mbid={slot.item.mbid}
 							available={slot.item.available}
-							remoteUrl={slot.item.remoteUrl}
 							alt=""
 							size="full"
 							requestSize={250}
-							responsiveSizes={hero ? '(max-width: 639px) 160px, 192px' : undefined}
 							testId="library-fan-image"
 							rounded="none"
 							className="h-full w-full object-cover"
 						/>
-					{:else}
-						<ArtistImage
-							mbid={slot.item.mbid}
-							available={slot.item.available}
-							remoteUrl={slot.item.remoteUrl}
-							alt=""
-							size="full"
-							requestSize={250}
-							responsiveSizes={hero ? '(max-width: 639px) 160px, 192px' : undefined}
-							testId="library-fan-image"
-							rounded="none"
-							className="h-full w-full object-cover"
-						/>
-					{/if}
-				</div>
-			{/each}
-		{:else}
-			<div class="absolute inset-0 flex items-center justify-center">
-				<FallbackIcon class="h-16 w-16 text-base-content/10" strokeWidth={1.25} />
-			</div>
-		{/if}
+					</span>
+				{/each}
+			</span>
+		</Card>
 	</div>
-{/snippet}
 
-<!-- isolate traps the fan cards' inline z-index (up to 40) in their own stacking
-     context so they can't paint over the library search dropdown above them -->
-<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 isolate">
-	<a
-		href={withBasePath('/library/albums')}
-		class="group relative flex min-h-[27rem] flex-col overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-br from-primary/20 via-primary/5 to-base-200/40 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-primary/40 hover:shadow-2xl focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none"
-		aria-label="Browse all albums"
-	>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute -top-16 -right-12 h-52 w-52 rounded-full bg-primary/25 blur-3xl transition-transform duration-500 group-hover:scale-125"
-		></div>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute inset-0 opacity-[0.035]"
-			style:background-image={NOISE_TEXTURE}
-			style:background-size="200px"
-		></div>
-		<ArrowUpRight
-			class="absolute top-5 right-5 z-10 h-5 w-5 text-base-content/25 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-primary"
-		/>
-		<div class="relative flex-1 px-6 pt-8 pb-2">
-			{@render fan(albumArt, 0, true, Disc3)}
-		</div>
-		<div class="relative flex items-end justify-between px-6 pt-2 pb-6">
-			<div>
-				<div class="text-4xl leading-none font-black tabular-nums sm:text-5xl">
-					{stats.total_albums.toLocaleString()}
-				</div>
-				<div
-					class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-muted uppercase"
-				>
-					<Disc3 class="h-3.5 w-3.5 text-primary" /> Albums
-				</div>
-			</div>
-		</div>
-	</a>
-
-	<a
+	<Card
+		variant="bordered"
+		padding="none"
 		href={withBasePath('/library/artists')}
-		class="group relative flex min-h-[27rem] flex-col overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-br from-accent/20 via-accent/5 to-base-200/40 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-accent/40 hover:shadow-2xl focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none"
 		aria-label="Browse all artists"
+		class="hub-tile hub-tile--dark hub-tile--artists"
 	>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute -top-16 -right-12 h-52 w-52 rounded-full bg-accent/25 blur-3xl transition-transform duration-500 group-hover:scale-125"
-		></div>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute inset-0 opacity-[0.035]"
-			style:background-image={NOISE_TEXTURE}
-			style:background-size="200px"
-		></div>
-		<ArrowUpRight
-			class="absolute top-5 right-5 z-10 h-5 w-5 text-base-content/25 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-accent"
-		/>
-		<div class="relative flex-1 px-6 pt-8 pb-2">
-			{@render fan(artistArt, 3, true, Users)}
-		</div>
-		<div class="relative flex items-end justify-between px-6 pt-2 pb-6">
-			<div>
-				<div class="text-4xl leading-none font-black tabular-nums sm:text-5xl">
-					{stats.total_artists.toLocaleString()}
-				</div>
-				<div
-					class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-muted uppercase"
+		<FritEdge class="hub-tile__frit" />
+		{@render tileText(stats.total_artists, 'Artists', User, 'Browse artists')}
+		<span class="hub-deck hub-deck--artists" aria-hidden="true">
+			{#each visibleSlots(artistArt, 3, ARTIST_WINDOW) as slot (slot.item.key)}
+				<span
+					class="hub-deck__face"
+					data-slot={slot.position + ARTIST_WINDOW - Math.min(ARTIST_WINDOW, artistArt.length)}
+					data-testid="library-fan-card"
+					data-fan-key={slot.item.key}
 				>
-					<Users class="h-3.5 w-3.5 text-accent" /> Artists
-				</div>
-			</div>
-		</div>
-	</a>
+					<ArtistImage
+						mbid={slot.item.mbid}
+						available={slot.item.available}
+						alt=""
+						size="full"
+						requestSize={250}
+						testId="library-fan-image"
+						rounded="none"
+						className="h-full w-full object-cover"
+					/>
+				</span>
+			{/each}
+		</span>
+	</Card>
 
-	<a
-		href={withBasePath('/library/tracks')}
-		class="group relative col-span-1 flex items-center gap-4 overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-r from-info/15 via-info/5 to-base-200/40 px-6 py-5 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-info/40 hover:shadow-2xl focus-visible:ring-2 focus-visible:ring-info focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none sm:col-span-2 sm:gap-8 sm:px-8"
-		aria-label="Browse all tracks"
-	>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute -top-12 right-1/3 h-44 w-44 rounded-full bg-info/20 blur-3xl transition-transform duration-500 group-hover:scale-125"
-		></div>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute inset-0 opacity-[0.035]"
-			style:background-image={NOISE_TEXTURE}
-			style:background-size="200px"
-		></div>
-		{#if wide}
-			<div class="relative h-28 w-52 shrink-0">
-				{@render fan(trackArt, 5, false, Music2)}
-			</div>
-		{/if}
-		<div class="relative min-w-0 flex-1">
-			<div class="text-4xl leading-none font-black tabular-nums sm:text-5xl">
-				{stats.total_tracks.toLocaleString()}
-			</div>
-			<div
-				class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-muted uppercase"
-			>
-				<Music2 class="h-3.5 w-3.5 text-info" /> Tracks
-			</div>
-		</div>
-		<ArrowUpRight
-			class="relative h-6 w-6 shrink-0 text-base-content/25 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-info"
-		/>
-	</a>
+	<div class="hub-tiles__torn">
+		<Card
+			variant="torn"
+			padding="none"
+			href={withBasePath('/library/tracks')}
+			aria-label="Browse all tracks"
+			class="hub-tile hub-tile--tracks"
+		>
+			{@render tileText(stats.total_tracks, 'Tracks', Music, 'Browse tracks')}
+			<span class="hub-turntable" aria-hidden="true">
+				<Illustration name="turntable" fit="cover" class="h-full w-full" />
+				<span class="hub-turntable__stripes dn-decor dn-stripes"></span>
+			</span>
+		</Card>
+	</div>
 
-	<a
+	<Card
+		variant="bordered"
+		padding="none"
 		href={withBasePath('/library/albums?favorites=1')}
-		class="group relative col-span-1 flex items-center gap-4 overflow-hidden rounded-3xl border border-base-content/10 bg-gradient-to-r from-error/15 via-error/5 to-base-200/40 px-6 py-5 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-error/40 hover:shadow-2xl focus-visible:ring-2 focus-visible:ring-error focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none sm:col-span-2 sm:gap-8 sm:px-8"
 		aria-label="Browse your favourite albums"
+		class="hub-tile hub-tile--dark hub-tile--favourites"
 	>
-		<div
-			aria-hidden="true"
-			class="pointer-events-none absolute -top-12 right-1/3 h-44 w-44 rounded-full bg-error/15 blur-3xl transition-transform duration-500 group-hover:scale-125"
-		></div>
-		<div class="relative min-w-0 flex-1">
-			<div class="text-4xl leading-none font-black tabular-nums sm:text-5xl">
-				{stats.favorite_albums.toLocaleString()}
-			</div>
-			<div
-				class="mt-2 flex items-center gap-1.5 text-xs font-semibold tracking-[0.18em] text-muted uppercase"
-			>
-				<Heart class="h-3.5 w-3.5 fill-current text-error" /> Favourites
-			</div>
-		</div>
-		<ArrowUpRight
-			class="relative h-6 w-6 shrink-0 text-base-content/25 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-error"
-		/>
-	</a>
+		{@render tileText(stats.favorite_albums, 'Favourites', Heart, 'View favourites')}
+		<Illustration name="drip-heart" class="hub-heart" />
+	</Card>
 </div>
 
 <style>
-	.fan-card {
+	.hub-tiles {
+		display: grid;
+		grid-template-columns: 1.37fr 1.32fr 1.24fr 1fr;
+		gap: 0.875rem;
+	}
+
+	/* the torn tiles take their edge and lift from a wrapper, as the mask
+	   would cut a border or shadow of their own */
+	.hub-tiles__torn {
+		filter: drop-shadow(0 0 0.5px var(--dn-paper-border)) drop-shadow(0 8px 12px rgb(0 0 0 / 0.35));
+	}
+
+	.hub-tiles :global(.hub-tile) {
+		position: relative;
+		height: 14.75rem;
+		overflow: hidden;
+		container-type: size;
+	}
+	.hub-tiles :global(.hub-tile--dark) {
+		border-radius: 0.75rem;
+		background-color: var(--color-base-100);
+	}
+	.hub-tiles :global(.hub-tile--dark:hover) {
+		border-color: var(--dn-edge);
+	}
+
+	.hub-tile__text {
+		position: relative;
+		z-index: 2;
+		display: flex;
+		flex: 1;
+		flex-direction: column;
+		align-items: flex-start;
+		padding: 1.875rem 1.5rem 1.625rem;
+	}
+
+	.hub-tile__count {
+		font-family: var(--font-display);
+		font-size: 5rem;
+		line-height: 0.9;
+		letter-spacing: -0.005em;
+		font-variant-numeric: tabular-nums;
+		font-synthesis: none;
+	}
+	:global(.hub-tile--artists) .hub-tile__count {
+		color: var(--dn-title);
+	}
+
+	.hub-tile__label {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		margin-top: 0.875rem;
+		font-family: var(--font-mono);
+		font-size: 0.9375rem;
+		font-weight: 600;
+		line-height: 1;
+		letter-spacing: 0.28em;
+		text-transform: uppercase;
+	}
+	.hub-tile__label :global(.hub-tile__icon) {
+		width: 1.5rem;
+		height: 1.5rem;
+		flex: none;
+	}
+	:global(.hub-tile--artists) .hub-tile__label :global(.hub-tile__icon) {
+		color: var(--dn-title);
+	}
+
+	.hub-tile__go {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.625rem;
+		margin-top: auto;
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		font-weight: 600;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+	}
+	:global(.hub-tile):hover .hub-tile__go {
+		text-decoration: underline;
+		text-underline-offset: 4px;
+	}
+
+	/* the album covers: a fan of square sleeves at the right, never cropped */
+	.hub-deck {
+		position: absolute;
+		inset: 0 0 0 auto;
+		z-index: 1;
+		width: 62%;
+		pointer-events: none;
+	}
+	.hub-deck__cover {
+		position: absolute;
+		top: 54%;
+		left: calc(100% - 35cqh);
+		width: 60cqh;
+		aspect-ratio: 1;
+		overflow: hidden;
+		border-radius: 3px;
+		box-shadow:
+			0 0 0 1px rgb(0 0 0 / 0.25),
+			-6px 8px 18px -6px rgb(0 0 0 / 0.55);
+		transition: transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+	}
+
+	/* the artist pictures: one large round face at the bottom right, two behind */
+	.hub-deck--artists {
+		width: 96cqh;
+	}
+	.hub-deck__face {
+		position: absolute;
+		overflow: hidden;
+		border-radius: 9999px;
+		box-shadow:
+			0 0 0 3px var(--color-base-100),
+			0 10px 22px -8px rgb(0 0 0 / 0.7);
 		transition:
-			transform 0.7s cubic-bezier(0.22, 1, 0.36, 1),
-			opacity 0.7s ease;
-		will-change: transform, opacity;
+			top 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+			right 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+			width 0.7s cubic-bezier(0.22, 1, 0.36, 1);
 	}
-	.group:hover .fan-deck {
-		transform: scale(1.04);
-		transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+	.hub-deck__face[data-slot='0'] {
+		z-index: 1;
+		top: 12%;
+		right: 27cqh;
+		width: 45cqh;
+		height: 45cqh;
 	}
-	.fan-deck {
-		transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+	.hub-deck__face[data-slot='1'] {
+		z-index: 2;
+		top: 43%;
+		right: 45cqh;
+		width: 34cqh;
+		height: 34cqh;
 	}
+	.hub-deck__face[data-slot='2'] {
+		z-index: 3;
+		top: 32%;
+		right: 2cqh;
+		width: 64cqh;
+		height: 64cqh;
+	}
+
+	.hub-tiles :global(.hub-tile__frit) {
+		z-index: 0;
+	}
+
+	/* the tracks tile: a turntable panel down its right side */
+	.hub-turntable {
+		position: absolute;
+		inset: 0 0 0 auto;
+		z-index: 1;
+		width: 37%;
+		background-color: var(--dn-vinyl);
+		overflow: hidden;
+	}
+	.hub-turntable__stripes {
+		position: absolute;
+		right: 0;
+		bottom: 0.75rem;
+		width: 100%;
+		height: 20%;
+		font-size: 1rem;
+		color: var(--dn-action);
+	}
+
+	/* the heart and its drips end above the label's row, so they never run
+	   over the label however narrow the tile */
+	.hub-tiles :global(.hub-heart) {
+		position: absolute;
+		top: 5%;
+		right: 3%;
+		z-index: 1;
+		height: 44%;
+		width: auto;
+		aspect-ratio: 120 / 150;
+	}
+
 	@media (prefers-reduced-motion: reduce) {
-		.fan-card,
-		.group:hover .fan-deck {
+		.hub-deck__cover,
+		.hub-deck__face {
 			transition: none;
+		}
+	}
+
+	@media (max-width: 1399px) {
+		.hub-tiles {
+			grid-template-columns: 1fr 1fr;
+		}
+	}
+
+	/* Phone: one tile a row, each a short band */
+	@media (max-width: 639px) {
+		.hub-tiles {
+			grid-template-columns: 1fr;
+			gap: 0.75rem;
+		}
+		.hub-tiles :global(.hub-tile) {
+			height: 8rem;
+		}
+		.hub-tile__text {
+			padding: 0.875rem 1.125rem 0.875rem;
+		}
+		.hub-tile__count {
+			font-size: 2.875rem;
+		}
+		.hub-tile__label {
+			gap: 0.5rem;
+			margin-top: 0.375rem;
+			font-size: 0.8125rem;
+		}
+		.hub-tile__label :global(.hub-tile__icon) {
+			width: 1.125rem;
+			height: 1.125rem;
+		}
+		.hub-tile__go {
+			font-size: 0.6875rem;
+		}
+		.hub-deck {
+			width: 60%;
+		}
+		.hub-deck__cover {
+			width: 82cqh;
+			left: calc(100% - 46cqh);
+		}
+		.hub-deck--artists {
+			width: 110cqh;
+			transform: scale(1.16);
+			transform-origin: 100% 85%;
+		}
+		.hub-turntable {
+			width: 50%;
+		}
+		/* a phone's tile is wide: the heart has the whole right side */
+		.hub-tiles :global(.hub-heart) {
+			top: 8%;
+			height: 80%;
 		}
 	}
 </style>

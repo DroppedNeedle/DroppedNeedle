@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Music } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import MediaTile from '$lib/media/MediaTile.svelte';
 	import LibraryFormatBadge from './LibraryFormatBadge.svelte';
@@ -46,7 +47,8 @@
 		{/if}
 	{/snippet}
 	{#snippet footer()}
-		<p class="flex flex-wrap gap-x-1 font-mono text-xs leading-tight text-muted">
+		<p class="flex flex-wrap items-center gap-x-1 font-mono text-xs leading-tight text-muted">
+			<Music class="size-3 shrink-0" aria-hidden="true" />
 			<span class="whitespace-nowrap">
 				{trackCountLabel(album.track_count, album.expected_track_count)}
 			</span>
