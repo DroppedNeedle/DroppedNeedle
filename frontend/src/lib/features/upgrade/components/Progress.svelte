@@ -4,7 +4,7 @@
 		UpgradeRun,
 		UpgradeStep
 	} from '$lib/features/upgrade/queries/UpgradeQueries.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import AuthCard from '$lib/ui/AuthCard.svelte';
 	import { STEP_LABELS, plannedSteps } from './upgradeText';
 
 	interface Props {
@@ -31,7 +31,7 @@
 	const current = $derived(run.step ? steps.indexOf(run.step) : -1);
 </script>
 
-<Card variant="bordered" title={TITLES[run.task]}>
+<AuthCard title={TITLES[run.task]}>
 	{#if rollingBack}
 		<p class="text-sm text-muted">Something went wrong. Putting your v2 files back.</p>
 	{:else}
@@ -74,4 +74,4 @@
 	{#if disconnected}
 		<p class="mt-3 text-sm text-warning" role="status">Lost the connection. Still trying.</p>
 	{/if}
-</Card>
+</AuthCard>

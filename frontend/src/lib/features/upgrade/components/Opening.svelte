@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getUpgradeAppReadyQuery } from '$lib/features/upgrade/queries/UpgradeQueries.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import AuthCard from '$lib/ui/AuthCard.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	// The app takes the upgrade page's place on the same address. Once it
@@ -15,7 +15,7 @@
 	const slow = $derived(ready.failureCount >= 30);
 </script>
 
-<Card variant="bordered" title="Opening DroppedNeedle">
+<AuthCard title="Opening DroppedNeedle">
 	<div class="flex items-center gap-3 text-sm" aria-busy="true">
 		<span class="loading loading-spinner loading-sm motion-keep"></span>
 		<span>Starting the app.</span>
@@ -25,4 +25,4 @@
 			This is taking a while. The server log says what it is doing.
 		</p>
 	{/if}
-</Card>
+</AuthCard>

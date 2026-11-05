@@ -8,7 +8,7 @@
 		type UpgradeCheck
 	} from '$lib/features/upgrade/queries/UpgradeQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import AuthCard from '$lib/ui/AuthCard.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import { FEATURE_LABELS, allCounts, headlineCounts, showAddress } from './upgradeText';
@@ -52,25 +52,25 @@
 
 <QueryBoundary query={preflight} what="the pre-flight">
 	{#snippet loading()}
-		<Card variant="bordered">
+		<AuthCard>
 			<div class="flex items-center gap-3" aria-busy="true">
 				<span class="loading loading-spinner loading-sm"></span>
 				<span>Checking your v2 data. Nothing is changed.</span>
 			</div>
-		</Card>
+		</AuthCard>
 	{/snippet}
 	{#snippet failed(cause, retry)}
-		<Card variant="bordered" title="The check did not run">
+		<AuthCard title="The check did not run">
 			<p class="text-sm text-muted">{message(cause)}</p>
 			{#snippet actions()}
 				<Button onclick={retry}>Check again</Button>
 			{/snippet}
-		</Card>
+		</AuthCard>
 	{/snippet}
 	{#snippet children(result)}
 		{#if result.check}
 			{@const check = result.check}
-			<Card variant="bordered" title="Before you upgrade">
+			<AuthCard title="Before you upgrade">
 				<div class="flex flex-col gap-5">
 					{#if check.counts}
 						<section aria-label="Found">
@@ -101,7 +101,7 @@
 						<section aria-label="Fix first" class="flex flex-col gap-2">
 							<h3 class="text-sm font-semibold">Fix first</h3>
 							{#each check.blockers as blocker (blocker.code)}
-								<div class="alert alert-error items-start text-sm" role="alert">
+								<div class="alert alert-soft alert-error items-start text-sm" role="alert">
 									<CircleAlert class="size-4 shrink-0" />
 									<div>
 										<p>{blocker.message}</p>
@@ -162,16 +162,17 @@
 					{/if}
 
 					{#if startError}
-						<div class="alert alert-error py-2 text-sm" role="alert">{startError}</div>
+						<div class="alert alert-soft alert-error py-2 text-sm" role="alert">{startError}</div>
 					{/if}
 				</div>
 				{#snippet actions()}
 					<div class="flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-between">
-						<Button variant="ghost" onclick={() => (confirmFresh = true)}>
+						<Button variant="ghost" size="display-sm" onclick={() => (confirmFresh = true)}>
 							Start fresh instead
 						</Button>
 						<Button
 							variant="primary"
+							size="display-sm"
 							disabled={!ready(check)}
 							loading={start.isPending}
 							onclick={() => void upgrade(check)}
@@ -180,9 +181,9 @@
 						</Button>
 					</div>
 				{/snippet}
-			</Card>
+			</AuthCard>
 		{:else}
-			<Card variant="bordered" title="The check did not finish">
+			<AuthCard title="The check did not finish">
 				<p class="text-sm text-muted">
 					{result.failure?.message ?? 'It ended without an answer.'}
 				</p>
@@ -190,7 +191,7 @@
 					<Button variant="ghost" onclick={() => (confirmFresh = true)}>Start fresh instead</Button>
 					<Button onclick={() => void preflight.refetch()}>Check again</Button>
 				{/snippet}
-			</Card>
+			</AuthCard>
 		{/if}
 	{/snippet}
 </QueryBoundary>

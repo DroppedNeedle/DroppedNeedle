@@ -7,9 +7,10 @@
 	import { createSetupMutation } from '$lib/features/auth/queries/AuthMutations.svelte';
 	import { toAuthUser } from '$lib/features/auth/queries/types';
 	import ServerLogHint from '$lib/features/auth/components/ServerLogHint.svelte';
-	import { Music, ShieldCheck } from 'lucide-svelte';
+	import { ShieldCheck } from 'lucide-svelte';
+	import AuthCard from '$lib/ui/AuthCard.svelte';
+	import AuthFrame from '$lib/ui/AuthFrame.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import PasswordField from '$lib/ui/PasswordField.svelte';
@@ -58,109 +59,95 @@
 	<title>Setup - DroppedNeedle</title>
 </svelte:head>
 
-<div class="min-h-screen bg-base-100 flex items-center justify-center p-4">
-	<div class="w-full max-w-md">
-		<div class="flex flex-col items-center mb-8 gap-3">
-			<div class="bg-primary/10 rounded-full p-4">
-				<Music class="h-10 w-10 text-primary" />
-			</div>
-			<h1 class="text-3xl font-bold">Welcome to DroppedNeedle</h1>
-			<p class="text-muted text-sm text-center max-w-xs">
-				Create your admin account to get started. This only appears once.
-			</p>
-		</div>
+<AuthFrame kicker="Welcome to DroppedNeedle">
+	<AuthCard
+		icon={ShieldCheck}
+		title="Admin Account"
+		lead="Create your admin account to get started. This only appears once."
+		{error}
+	>
+		<form
+			onsubmit={(e) => {
+				e.preventDefault();
+				void handleSetup();
+			}}
+			class="flex flex-col gap-5"
+		>
+			{#if authStore.codeRequired}
+				<ServerLogHint />
+				<Field label="Code from the server log">
+					{#snippet children(control)}
+						<Input
+							{...control}
+							label="Code from the server log"
+							class="w-full"
+							mono
+							required
+							autocomplete="one-time-code"
+							spellcheck={false}
+							bind:value={code}
+						/>
+					{/snippet}
+				</Field>
+			{/if}
 
-		<Card variant="bordered">
-			<div>
-				<div class="flex items-center gap-2 mb-5 pb-4 border-b border-base-300">
-					<ShieldCheck class="h-4 w-4 text-accent" />
-					<span class="text-sm font-semibold text-muted uppercase tracking-wider">
-						Admin Account
-					</span>
-				</div>
+			<TextField
+				label="Display Name"
+				placeholder="Your name"
+				bind:value={displayName}
+				required
+				autocomplete="name"
+			/>
 
-				<form
-					onsubmit={(e) => {
-						e.preventDefault();
-						void handleSetup();
-					}}
-					class="flex flex-col gap-4"
-				>
-					{#if authStore.codeRequired}
-						<ServerLogHint />
-						<Field label="Code from the server log">
-							{#snippet children(control)}
-								<Input
-									{...control}
-									label="Code from the server log"
-									class="w-full"
-									mono
-									required
-									autocomplete="one-time-code"
-									spellcheck={false}
-									bind:value={code}
-								/>
-							{/snippet}
-						</Field>
-					{/if}
+			<TextField
+				label="Username"
+				placeholder="jane.smith"
+				bind:value={username}
+				required
+				autocomplete="username"
+			/>
 
-					<TextField
-						label="Display Name"
-						placeholder="Your name"
-						bind:value={displayName}
-						required
-						autocomplete="name"
-					/>
+			<TextField
+				label="Email (optional)"
+				type="email"
+				placeholder="admin@example.com"
+				bind:value={email}
+				autocomplete="email"
+			/>
 
-					<TextField
-						label="Username"
-						placeholder="jane.smith"
-						bind:value={username}
-						required
-						autocomplete="username"
-					/>
+			<PasswordField
+				label="Password"
+				placeholder="Min. 12 characters"
+				required
+				autocomplete="new-password"
+				bind:value={password}
+				bind:shown={showPassword}
+			/>
 
-					<TextField
-						label="Email (optional)"
-						type="email"
-						placeholder="admin@example.com"
-						bind:value={email}
-						autocomplete="email"
-					/>
-
-					<PasswordField
-						label="Password"
-						placeholder="Min. 12 characters"
+			<Field label="Confirm Password">
+				{#snippet children(control)}
+					<Input
+						{...control}
+						label="Confirm Password"
+						type="password"
+						class="w-full"
+						placeholder="Repeat password"
 						required
 						autocomplete="new-password"
-						bind:value={password}
-						bind:shown={showPassword}
+						bind:value={confirmPassword}
 					/>
+				{/snippet}
+			</Field>
 
-					<Field label="Confirm Password">
-						{#snippet children(control)}
-							<Input
-								{...control}
-								label="Confirm Password"
-								type="password"
-								class="w-full"
-								placeholder="Repeat password"
-								required
-								autocomplete="new-password"
-								bind:value={confirmPassword}
-							/>
-						{/snippet}
-					</Field>
-
-					{#if error}
-						<div class="alert alert-error py-2 text-sm">{error}</div>
-					{/if}
-
-					<Button type="submit" variant="primary" class="w-full mt-1" loading={setup.isPending}>
-						Create Admin Account
-					</Button>
-				</form>
-			</div>
-		</Card>
-	</div>
-</div>
+			<Button
+				type="submit"
+				variant="primary"
+				size="display"
+				class="w-full"
+				loading={setup.isPending}
+			>
+				Create Admin Account
+			</Button>
+		</form>
+	</AuthCard>
+</AuthFrame>

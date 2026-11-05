@@ -5,7 +5,7 @@
 		createUpgradeUndoMutation
 	} from '$lib/features/upgrade/queries/UpgradeQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import AuthCard from '$lib/ui/AuthCard.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 
 	const start = createUpgradeStartMutation();
@@ -23,20 +23,27 @@
 	}
 </script>
 
-<Card variant="bordered" title="An upgrade didn't finish">
+<AuthCard title="An upgrade didn't finish">
 	<p class="text-sm text-muted">Finishing puts your v2 files back first, then upgrades again.</p>
 	{#if error}
-		<div class="alert alert-error mt-3 py-2 text-sm" role="alert">{error}</div>
+		<div class="alert alert-soft alert-error mt-3 py-2 text-sm" role="alert">{error}</div>
 	{/if}
 	{#snippet actions()}
 		<div class="flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-between">
-			<Button variant="ghost" onclick={() => (confirmUndo = true)}>Go back to v2</Button>
-			<Button variant="primary" loading={start.isPending} onclick={() => void finish()}>
+			<Button variant="ghost" size="display-sm" onclick={() => (confirmUndo = true)}
+				>Go back to v2</Button
+			>
+			<Button
+				variant="primary"
+				size="display-sm"
+				loading={start.isPending}
+				onclick={() => void finish()}
+			>
 				Finish the upgrade
 			</Button>
 		</div>
 	{/snippet}
-</Card>
+</AuthCard>
 
 <ConfirmDialog
 	bind:open={confirmUndo}

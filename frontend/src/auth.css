@@ -7,6 +7,9 @@
 @source './routes/recover-password/+page.svelte';
 @source './routes/auth/callback/+page.svelte';
 @source './routes/upgrade';
+@source './routes/connect/+page.svelte';
+@source './lib/features/auth/components';
+@source './lib/features/upgrade/components';
 @source './lib/ui';
 
 html,

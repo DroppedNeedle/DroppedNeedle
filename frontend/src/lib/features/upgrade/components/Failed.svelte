@@ -2,7 +2,7 @@
 	import { CircleAlert } from 'lucide-svelte';
 	import type { UpgradeFailure } from '$lib/features/upgrade/queries/UpgradeQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import AuthCard from '$lib/ui/AuthCard.svelte';
 	import { failureFix } from './upgradeText';
 
 	interface Props {
@@ -21,9 +21,9 @@
 	};
 </script>
 
-<Card variant="bordered" title="{what} failed">
+<AuthCard title="{what} failed">
 	<div class="flex flex-col gap-3 text-sm">
-		<div class="alert alert-error items-start" role="alert">
+		<div class="alert alert-soft alert-error items-start" role="alert">
 			<CircleAlert class="size-4 shrink-0" />
 			<div>
 				<p>{failure.message}</p>
@@ -33,6 +33,6 @@
 		<p class="text-muted">{V2_FILES[failure.v2_files]}</p>
 	</div>
 	{#snippet actions()}
-		<Button variant="primary" onclick={onretry}>Try again</Button>
+		<Button variant="primary" size="display-sm" onclick={onretry}>Try again</Button>
 	{/snippet}
-</Card>
+</AuthCard>

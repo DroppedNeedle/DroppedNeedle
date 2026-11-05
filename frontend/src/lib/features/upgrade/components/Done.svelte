@@ -5,7 +5,7 @@
 		type UpgradeResult
 	} from '$lib/features/upgrade/queries/UpgradeQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import AuthCard from '$lib/ui/AuthCard.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import { allCounts, headlineCounts } from './upgradeText';
 
@@ -32,7 +32,7 @@
 	);
 </script>
 
-<Card variant="bordered" {title}>
+<AuthCard {title}>
 	<div class="flex flex-col gap-5 text-sm">
 		{#if result?.outcome === 'started_fresh'}
 			<p class="text-muted">
@@ -116,18 +116,21 @@
 		{/if}
 
 		{#if continueError}
-			<div class="alert alert-error py-2" role="alert">{continueError}</div>
+			<div class="alert alert-soft alert-error py-2" role="alert">{continueError}</div>
 		{/if}
 	</div>
 	{#snippet actions()}
 		<div class="flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-between">
 			{#if result?.backup}
-				<Button variant="ghost" onclick={() => (confirmUndo = true)}>Go back to v2</Button>
+				<Button variant="ghost" size="display-sm" onclick={() => (confirmUndo = true)}
+					>Go back to v2</Button
+				>
 			{:else}
 				<span></span>
 			{/if}
 			<Button
 				variant="primary"
+				size="display-sm"
 				icon={ArrowRight}
 				iconPosition="end"
 				loading={continuing}
@@ -137,7 +140,7 @@
 			</Button>
 		</div>
 	{/snippet}
-</Card>
+</AuthCard>
 
 <ConfirmDialog
 	bind:open={confirmUndo}

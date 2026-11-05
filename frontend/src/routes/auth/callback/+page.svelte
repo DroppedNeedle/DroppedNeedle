@@ -8,7 +8,8 @@
 	import { createOidcExchangeMutation } from '$lib/features/auth/queries/AuthMutations.svelte';
 	import { toAuthUser } from '$lib/features/auth/queries/types';
 	import { onMount } from 'svelte';
-	import { Music } from 'lucide-svelte';
+	import AuthCard from '$lib/ui/AuthCard.svelte';
+	import AuthFrame from '$lib/ui/AuthFrame.svelte';
 	import Button from '$lib/ui/Button.svelte';
 
 	let error = $state<string | null>(null);
@@ -41,20 +42,33 @@
 	<title>Signing in - DroppedNeedle</title>
 </svelte:head>
 
-<div class="min-h-screen bg-base-100 flex items-center justify-center p-4">
-	<div class="flex flex-col items-center gap-4 text-center">
-		<div class="bg-primary/10 rounded-full p-4">
-			<Music class="h-10 w-10 text-primary" />
+<AuthFrame kicker={error ? 'Sign in to continue' : 'Signing you in…'}>
+	{#if error}
+		<AuthCard {error}>
+			<Button href={withBasePath('/login')} variant="primary" size="display" class="w-full">
+				Back to sign in
+			</Button>
+		</AuthCard>
+	{:else}
+		<div class="callback-wait" aria-busy="true">
+			<span class="loading loading-spinner motion-keep callback-wait__ring" aria-hidden="true"
+			></span>
+			<p>Completing sign-in…</p>
 		</div>
+	{/if}
+</AuthFrame>
 
-		{#if error}
-			<div class="flex flex-col items-center gap-3 max-w-sm">
-				<p class="text-muted text-sm">{error}</p>
-				<Button href={withBasePath('/login')} variant="primary" size="sm">Back to sign in</Button>
-			</div>
-		{:else}
-			<p class="text-muted text-sm">Completing sign-in…</p>
-			<span class="loading loading-spinner loading-md text-primary"></span>
-		{/if}
-	</div>
-</div>
+<style>
+	.callback-wait {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1rem;
+		color: var(--color-muted);
+		font-size: 0.9375rem;
+	}
+	.callback-wait__ring {
+		width: 2.75rem;
+		color: var(--dn-title);
+	}
+</style>

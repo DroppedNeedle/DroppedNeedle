@@ -15,8 +15,9 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { appAddress, framed, handBack } from '$lib/features/auth/state/appHandBack';
 	import { KeyRound, TriangleAlert } from 'lucide-svelte';
+	import AuthCard from '$lib/ui/AuthCard.svelte';
+	import AuthFrame from '$lib/ui/AuthFrame.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 
 	// What the app asked for, as it put it in the address; the server checks
@@ -102,82 +103,135 @@
 </svelte:head>
 
 {#snippet problem(found: Problem)}
-	<p class="text-sm text-muted" role="alert">{found.error}</p>
+	<p class="connect-line" role="alert">{found.error}</p>
 	{#if found.backToApp}
-		<Button href={found.backToApp} variant="outline" size="sm">Back to the app</Button>
+		<Button href={found.backToApp} variant="paper" size="sm">Back to the app</Button>
 	{/if}
 {/snippet}
 
-<div class="flex min-h-screen items-center justify-center bg-base-100 p-4">
-	<Card variant="raised" class="w-full max-w-md">
-		<div class="flex flex-col items-center gap-4 text-center">
-			<div class="rounded-full bg-primary/10 p-4">
-				<KeyRound class="h-10 w-10 text-primary" aria-hidden="true" />
-			</div>
-
-			{#if handedBack}
-				<p class="text-sm text-muted">Returning to the app.</p>
-				<Button href={handedBack} variant="primary" size="sm">Open the app</Button>
-			{:else if inFrame}
-				{@render problem({
-					error: 'This page cannot be used inside another page.',
-					backToApp: null
-				})}
-			{:else if refusal}
-				{@render problem(refusal)}
-			{:else}
-				<QueryBoundary query={requestQuery} what="the app's request">
-					{#snippet failed(cause)}
-						{@render problem(describe(cause))}
-					{/snippet}
-					{#snippet children(view)}
-						<h1 class="text-xl font-semibold">Connect {view.client_name}?</h1>
-						<p class="text-sm text-base-content/80">
-							<strong>{view.client_name}</strong> wants to use DroppedNeedle as
-							<strong>{signedInAs}</strong>.
-						</p>
-						<dl class="w-full text-left text-sm">
-							{#if view.device_name}
-								<dt class="text-muted">Device</dt>
-								<dd class="mb-2 break-words">{view.device_name}</dd>
-							{/if}
-							<dt class="text-muted">App-password</dt>
-							<dd class="break-words">{view.password_name}</dd>
-						</dl>
-						<p class="text-xs text-muted">
-							Revoke it any time under Profile, Connect Apps.
-							{#if view.replaces_existing}
-								It replaces your app-password of that name.
-							{/if}
-						</p>
-						<p class="flex items-start gap-2 text-left text-sm text-warning" role="note">
-							<TriangleAlert class="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-							<span>Only allow this if you just tapped "Sign in" in this app yourself.</span>
-						</p>
-						{#if view.at_limit}
-							<p class="text-sm text-error" role="alert">
-								You have the most app-passwords allowed. Revoke one under Profile, Connect Apps
-								first.
-							</p>
+<AuthFrame kicker="Connect an app">
+	<AuthCard icon={KeyRound} centred>
+		{#if handedBack}
+			<p class="connect-line">Returning to the app.</p>
+			<Button href={handedBack} variant="primary" size="display" class="w-full">Open the app</Button
+			>
+		{:else if inFrame}
+			{@render problem({
+				error: 'This page cannot be used inside another page.',
+				backToApp: null
+			})}
+		{:else if refusal}
+			{@render problem(refusal)}
+		{:else}
+			<QueryBoundary query={requestQuery} what="the app's request">
+				{#snippet failed(cause)}
+					{@render problem(describe(cause))}
+				{/snippet}
+				{#snippet children(view)}
+					<h2 class="connect-title">Connect {view.client_name}?</h2>
+					<p class="connect-line">
+						<strong>{view.client_name}</strong> wants to use DroppedNeedle as
+						<strong>{signedInAs}</strong>.
+					</p>
+					<dl class="connect-facts">
+						{#if view.device_name}
+							<dt>Device</dt>
+							<dd>{view.device_name}</dd>
 						{/if}
-						<div class="flex w-full gap-2">
-							<Button
-								variant="outline"
-								class="flex-1"
-								onclick={() => cancel(view.cancel_redirect)}
-								disabled={authorize.isPending}>Cancel</Button
-							>
-							<Button
-								variant="primary"
-								class="flex-1"
-								onclick={allow}
-								loading={authorize.isPending}
-								disabled={authorize.isPending || view.at_limit}>Allow</Button
-							>
-						</div>
-					{/snippet}
-				</QueryBoundary>
-			{/if}
-		</div>
-	</Card>
-</div>
+						<dt>App-password</dt>
+						<dd>{view.password_name}</dd>
+					</dl>
+					<p class="connect-line connect-line--small">
+						Revoke it any time under Profile, Connect Apps.
+						{#if view.replaces_existing}
+							It replaces your app-password of that name.
+						{/if}
+					</p>
+					<p class="connect-warn" role="note">
+						<TriangleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+						<span>Only allow this if you just tapped "Sign in" in this app yourself.</span>
+					</p>
+					{#if view.at_limit}
+						<p class="text-sm font-semibold text-error" role="alert">
+							You have the most app-passwords allowed. Revoke one under Profile, Connect Apps first.
+						</p>
+					{/if}
+					<div class="flex w-full gap-2">
+						<Button
+							variant="paper"
+							size="display"
+							class="flex-1"
+							onclick={() => cancel(view.cancel_redirect)}
+							disabled={authorize.isPending}>Cancel</Button
+						>
+						<Button
+							variant="primary"
+							size="display"
+							class="flex-1"
+							onclick={allow}
+							loading={authorize.isPending}
+							disabled={authorize.isPending || view.at_limit}>Allow</Button
+						>
+					</div>
+				{/snippet}
+			</QueryBoundary>
+		{/if}
+	</AuthCard>
+</AuthFrame>
+
+<style>
+	.connect-title {
+		font-family: var(--font-display);
+		font-size: 1.75rem;
+		font-weight: 400;
+		line-height: 1;
+		letter-spacing: 0.02em;
+		text-transform: uppercase;
+		overflow-wrap: anywhere;
+	}
+	.connect-line {
+		font-size: 0.9375rem;
+		line-height: 1.5;
+		color: var(--dn-muted);
+	}
+	.connect-line strong {
+		color: var(--dn-paper-content);
+	}
+	.connect-line--small {
+		font-size: 0.8125rem;
+	}
+	.connect-facts {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: 0.375rem 1rem;
+		width: 100%;
+		padding: 0.875rem 1rem;
+		border: 1.5px solid var(--dn-edge);
+		border-radius: 0.5rem;
+		text-align: left;
+		font-size: 0.875rem;
+	}
+	.connect-facts dt {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.14em;
+		line-height: 1.6rem;
+		text-transform: uppercase;
+		color: var(--dn-muted);
+	}
+	.connect-facts dd {
+		overflow-wrap: anywhere;
+		font-weight: 600;
+		line-height: 1.6rem;
+	}
+	.connect-warn {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.5rem;
+		text-align: left;
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--color-warning);
+	}
+</style>

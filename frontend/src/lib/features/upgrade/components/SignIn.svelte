@@ -1,9 +1,10 @@
 <script lang="ts">
+	import { ArrowUp } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/errors';
 	import ServerLogHint from '$lib/features/auth/components/ServerLogHint.svelte';
 	import { createUpgradeSignInMutation } from '$lib/features/upgrade/queries/UpgradeQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import AuthCard from '$lib/ui/AuthCard.svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
@@ -37,7 +38,7 @@
 	}
 </script>
 
-<Card variant="bordered" title="Sign in to upgrade">
+<AuthCard icon={ArrowUp} title="Sign in to upgrade">
 	<form
 		class="flex flex-col gap-4"
 		onsubmit={(event) => {
@@ -67,14 +68,20 @@
 		{/if}
 
 		{#if error}
-			<div class="alert alert-error py-2 text-sm" role="alert">{error}</div>
+			<div class="alert alert-soft alert-error py-2 text-sm" role="alert">{error}</div>
 		{/if}
 
-		<Button type="submit" variant="primary" class="w-full" loading={signIn.isPending}>
+		<Button
+			type="submit"
+			variant="primary"
+			size="display"
+			class="w-full"
+			loading={signIn.isPending}
+		>
 			Sign in
 		</Button>
 		<Button variant="ghost" size="sm" class="self-center" onclick={swap}>
 			{useCode ? 'Use a password instead' : 'Use a code from the server log'}
 		</Button>
 	</form>
-</Card>
+</AuthCard>

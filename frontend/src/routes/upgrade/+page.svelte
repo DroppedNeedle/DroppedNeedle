@@ -9,10 +9,11 @@
 		markUpgradeSignedOut
 	} from '$lib/features/upgrade/queries/UpgradeQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import { ArrowUp, CloudOff } from 'lucide-svelte';
+	import AuthCard from '$lib/ui/AuthCard.svelte';
+	import AuthFrame from '$lib/ui/AuthFrame.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import Logo from '$lib/ui/Logo.svelte';
 	import BackOnV2 from '$lib/features/upgrade/components/BackOnV2.svelte';
 	import Done from '$lib/features/upgrade/components/Done.svelte';
 	import Failed from '$lib/features/upgrade/components/Failed.svelte';
@@ -70,105 +71,67 @@
 	<title>Upgrade - DroppedNeedle</title>
 </svelte:head>
 
-<div class="upgrade-wrap min-h-screen px-4 py-10">
-	<div class="mx-auto flex w-full max-w-xl flex-col gap-6">
-		<div class="upgrade-brand">
-			<Logo variant="icon" label="" class="h-12 text-base-content" />
-			<h1 class="upgrade-wordmark">DroppedNeedle</h1>
-			<p class="upgrade-sub">Upgrade from v2</p>
-		</div>
-
-		<QueryBoundary query={upgrade} what="the upgrade">
-			{#snippet failed(cause, retry)}
-				{#if notUpgradeMode(cause)}
-					<Card variant="bordered" title="Nothing to upgrade">
-						<p class="text-sm text-muted">This server already runs v3.</p>
-						{#snippet actions()}
-							<Button variant="primary" href={withBasePath('/')}>Open DroppedNeedle</Button>
-						{/snippet}
-					</Card>
-				{:else}
-					<Card variant="bordered" title="Can't reach the server">
+<AuthFrame kicker="Upgrade from v2" width="lg">
+	<QueryBoundary query={upgrade} what="the upgrade">
+		{#snippet failed(cause, retry)}
+			{#if notUpgradeMode(cause)}
+				<AuthCard icon={ArrowUp} title="Nothing to upgrade">
+					<p class="text-sm text-muted">This server already runs v3.</p>
+					{#snippet actions()}
+						<Button variant="primary" size="display" href={withBasePath('/')}
+							>Open DroppedNeedle</Button
+						>
+					{/snippet}
+				</AuthCard>
+			{:else}
+				<AuthCard icon={CloudOff} title="Can't reach the server">
+					<p class="text-sm text-muted">Check that it is running, then try again.</p>
+					{#snippet actions()}
+						<Button onclick={retry}>Try again</Button>
+					{/snippet}
+				</AuthCard>
+			{/if}
+		{/snippet}
+		{#snippet children(current)}
+			{#if !current.signed_in}
+				<SignIn />
+			{:else if opening}
+				<Opening />
+			{:else if !progress.data}
+				{#if progress.isError}
+					<AuthCard icon={CloudOff} title="Can't reach the server">
 						<p class="text-sm text-muted">Check that it is running, then try again.</p>
 						{#snippet actions()}
-							<Button onclick={retry}>Try again</Button>
+							<Button onclick={() => void progress.refetch()}>Try again</Button>
 						{/snippet}
-					</Card>
-				{/if}
-			{/snippet}
-			{#snippet children(current)}
-				{#if !current.signed_in}
-					<SignIn />
-				{:else if opening}
-					<Opening />
-				{:else if !progress.data}
-					{#if progress.isError}
-						<Card variant="bordered" title="Can't reach the server">
-							<p class="text-sm text-muted">Check that it is running, then try again.</p>
-							{#snippet actions()}
-								<Button onclick={() => void progress.refetch()}>Try again</Button>
-							{/snippet}
-						</Card>
-					{:else}
-						<Card variant="bordered">
-							<span class="loading loading-spinner loading-sm" aria-label="Loading"></span>
-						</Card>
-					{/if}
-				{:else if run?.running}
-					<Progress {run} disconnected={progress.isError} />
-				{:else if ended?.failure}
-					<Failed
-						failure={ended.failure}
-						what={TASK_NAMES[ended.task]}
-						onretry={() => (setAside = ended)}
-					/>
-				{:else if ended?.result?.outcome === 'undone'}
-					<BackOnV2 onupgrade={() => (setAside = ended)} />
-				{:else if ended?.result || layout === 'finished'}
-					<Done
-						result={ended?.result ?? run?.result ?? null}
-						continuing={continueApp.isPending}
-						{continueError}
-						oncontinue={() => void openApp()}
-					/>
-				{:else if layout === 'interrupted'}
-					<Interrupted />
+					</AuthCard>
 				{:else}
-					<Preflight />
+					<AuthCard>
+						<span class="loading loading-spinner loading-sm" aria-label="Loading"></span>
+					</AuthCard>
 				{/if}
-			{/snippet}
-		</QueryBoundary>
-	</div>
-</div>
-
-<style>
-	.upgrade-wrap {
-		position: relative;
-		isolation: isolate;
-		background: var(--color-base-100);
-	}
-
-	.upgrade-brand {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.upgrade-wordmark {
-		font-family: var(--font-display);
-		font-weight: 800;
-		font-size: clamp(2.25rem, 11vw, 3.25rem);
-		line-height: 0.85;
-		letter-spacing: 0.01em;
-		color: oklch(from var(--color-base-content) l c h / 0.95);
-	}
-
-	.upgrade-sub {
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: var(--color-muted);
-	}
-</style>
+			{:else if run?.running}
+				<Progress {run} disconnected={progress.isError} />
+			{:else if ended?.failure}
+				<Failed
+					failure={ended.failure}
+					what={TASK_NAMES[ended.task]}
+					onretry={() => (setAside = ended)}
+				/>
+			{:else if ended?.result?.outcome === 'undone'}
+				<BackOnV2 onupgrade={() => (setAside = ended)} />
+			{:else if ended?.result || layout === 'finished'}
+				<Done
+					result={ended?.result ?? run?.result ?? null}
+					continuing={continueApp.isPending}
+					{continueError}
+					oncontinue={() => void openApp()}
+				/>
+			{:else if layout === 'interrupted'}
+				<Interrupted />
+			{:else}
+				<Preflight />
+			{/if}
+		{/snippet}
+	</QueryBoundary>
+</AuthFrame>
