@@ -131,6 +131,34 @@ pub struct TrackView {
     /// Plex part key for the stream gateway. Plex-only: Jellyfin and
     /// Navidrome stream by item id, so they always leave this empty.
     pub part_key: Option<String>,
+    /// The file's format in the library's names (`flac`, `mp3`, `alac`,
+    /// `m4a` for an MP4 file whose codec the server did not say), when the
+    /// source reports it.
+    pub format: Option<String>,
+}
+
+/// A remote file's format in the library's names, from the codec and the
+/// container a server reports. An MP4 file is `alac` or `m4a` (AAC, or a
+/// codec nobody named), as a library file is. A name the table does not
+/// know passes through lowercased when it is a short plain word, and
+/// anything else is absent.
+pub(crate) fn audio_format(codec: Option<&str>, container: Option<&str>) -> Option<String> {
+    let codec = codec.map(str::to_ascii_lowercase).filter(|c| !c.is_empty());
+    let container = container
+        .map(|value| value.to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+    let mp4 = container
+        .as_deref()
+        .is_some_and(|value| value.split(',').any(|part| matches!(part, "mp4" | "m4a")));
+    let named = match (codec.as_deref(), mp4) {
+        (Some("alac"), _) => "alac".to_owned(),
+        (Some("aac"), true) | (None, true) => "m4a".to_owned(),
+        (Some("vorbis"), _) => "ogg".to_owned(),
+        (Some(pcm), _) if pcm.starts_with("pcm_") => "wav".to_owned(),
+        (Some(other), _) => other.to_owned(),
+        (None, false) => container?,
+    };
+    (named.len() <= 8 && named.chars().all(|c| c.is_ascii_alphanumeric())).then_some(named)
 }
 
 /// One page of albums.

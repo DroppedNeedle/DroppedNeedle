@@ -12,8 +12,16 @@ import {
 	sessionKeyFor
 } from '$lib/features/player/playback/playbackSession';
 import { prefetchPathFor, streamUrlFor } from '$lib/features/player/playback/streamUrl';
-import { transcodeTarget } from '$lib/features/player/playback/transcodeTarget';
+import { browserPlays, transcodeTarget } from '$lib/features/player/playback/transcodeTarget';
 import { UNPLAYABLE_ERROR } from '$lib/features/player/playback/NativeAudioSource';
+import {
+	getPlaybackConversionQueryOptions,
+	type Conversion
+} from '$lib/features/player/queries/conversion';
+import { queryClient } from '$lib/queries/QueryClient';
+import { authStore } from '$lib/stores/authStore.svelte';
+import { withBasePath } from '$lib/utils/basePath';
+import { goto } from '$app/navigation';
 import { toastStore } from '$lib/stores/toast';
 import { radioSession } from '$lib/features/player/state/radioSession.svelte';
 import {
@@ -73,11 +81,15 @@ const MAX_PROGRESS_STEP_S = 5;
 /**
  * How the current item is recovering. A failed item is reloaded once (as a transcode when the
  * browser could not read it, and not at all when it already was one), then moved to another
- * source once, without a word. Then it is counted failed and skipped after a pause, with one
- * message; three failures in a row stop playback. A track that fails soon after starting spends
- * the same steps, and only real playback clears the count. Thirty seconds heard since the last
- * load earns the steps back, so a dropped connection on a long track retries each time. A decode
- * error after that point is the file's, and is not retried: it would fail there again, for ever.
+ * source once, without a word, where an original the browser could not read is reloaded once
+ * more as a transcode. Then it is counted failed and skipped after a pause, with one message; three
+ * failures in a row stop playback. A track that fails soon after starting spends the same steps,
+ * and only real playback clears the count. Thirty seconds heard since the last load earns the
+ * steps back, so a dropped connection on a long track retries each time. A decode error after
+ * that point is the file's, and is not retried: it would fail there again, for ever.
+ *
+ * A track the browser cannot play while the server is not converting is never asked for: it
+ * fails at once, may still move to another source, and is marked with why.
  */
 type RecoveryPhase = 'idle' | 'loading' | 'retrying' | 'fallingBack' | 'failed';
 type LoadKind = 'fresh' | 'retry' | 'fallback';
@@ -92,6 +104,8 @@ interface Recovery {
 	transcoded: boolean;
 	/** The browser could not read this track's original, so its reloads stay transcodes. */
 	directFailed: boolean;
+	/** The item moved to another source once already. */
+	fellBack: boolean;
 	/** Seconds heard since the last load, counted from the player's own progress. */
 	heard: number;
 	lastPosition: number;
@@ -103,6 +117,23 @@ const LOAD_PHASE: Record<LoadKind, RecoveryPhase> = {
 	retry: 'retrying',
 	fallback: 'fallingBack'
 };
+
+/** Why a track cannot play here: the note the player shows and the queue marks it with. */
+export type UnplayableReason = 'converting_off' | 'cannot_convert' | 'conversion_failed';
+
+// The load error for a track the server would not convert; its message is the Conversion.
+const NOT_CONVERTING = 'NOT_CONVERTING';
+
+const CONNECT_APPS_SETTINGS = '/settings?tab=connect-apps';
+
+function itemKey(item: QueueItem): string {
+	return `${item.sourceType}:${item.trackSourceId}`;
+}
+
+/** The format as a person reads it: `ALAC`, or "this format" when nobody named it. */
+export function formatLabel(format: string | undefined): string {
+	return format ? format.toUpperCase() : 'this format';
+}
 
 function createPlayerStore() {
 	let currentSource = $state<PlaybackSource | null>(null);
@@ -117,12 +148,19 @@ function createPlayerStore() {
 	let currentIndex = $state(0);
 	let shuffleEnabled = $state(false);
 	let shuffleOrder = $state<number[]>([]);
+	// Whether the server converts, as last read; null until read, or when it could not be.
+	let conversion = $state<Conversion | null>(null);
+	// Queue items that failed to play here, by source and id, with why.
+	let unplayable = $state<Record<string, UnplayableReason>>({});
+	// The current load is a conversion for this browser.
+	let converting = $state(false);
 	const recovery: Recovery = {
 		phase: 'idle',
 		generation: 0,
 		failed: [],
 		transcoded: false,
 		directFailed: false,
+		fellBack: false,
 		heard: 0,
 		lastPosition: 0,
 		skipTimer: null
@@ -216,8 +254,39 @@ function createPlayerStore() {
 		cancelSkip();
 		recovery.phase = 'idle';
 		recovery.failed = [];
+		unplayable = {};
+		converting = false;
 		session.clear();
 		storeSessionData(null);
+	}
+
+	/** Reads whether the server converts, from the cache while it is fresh. */
+	async function readConversion(): Promise<Conversion | null> {
+		try {
+			const answer = await queryClient.fetchQuery(getPlaybackConversionQueryOptions());
+			conversion = answer.conversion;
+		} catch {
+			conversion = null;
+		}
+		return conversion;
+	}
+
+	/** The browser cannot play this item's original, so it plays only as a conversion. */
+	function needsConversion(item: QueueItem): boolean {
+		return item.sourceType !== 'youtube' && !browserPlays(item.format);
+	}
+
+	/**
+	 * Why this item cannot play here, or null: it failed already, or the browser
+	 * cannot play its format, the server is not converting and no other source has it.
+	 */
+	function unplayableReasonFor(item: QueueItem): UnplayableReason | null {
+		const known = unplayable[itemKey(item)];
+		if (known) return known;
+		if (!needsConversion(item) || nextFallbackSource(item)) return null;
+		if (conversion === 'off') return 'converting_off';
+		if (conversion === 'unavailable') return 'cannot_convert';
+		return null;
 	}
 
 	function resolveSourceForItem(item: QueueItem): {
@@ -225,14 +294,15 @@ function createPlayerStore() {
 		loadUrl: string | undefined;
 	} {
 		isSeekable = true;
-		// Only library files transcode: the gateway passes a media server's bytes through.
 		const format =
-			item.sourceType === 'local' ? transcodeTarget(item.format, recovery.directFailed) : null;
+			item.sourceType === 'youtube' ? null : transcodeTarget(item.format, recovery.directFailed);
 		recovery.transcoded = format !== null;
+		converting = format !== null;
 		const url = streamUrlFor(item, format ? { format } : undefined);
 		if (item.sourceType === 'youtube') {
 			return { source: createPlaybackSource('youtube'), loadUrl: url };
 		}
+		const sourceType = item.sourceType;
 		return {
 			source: createPlaybackSource(item.sourceType, {
 				url: url!,
@@ -242,7 +312,7 @@ function createPlayerStore() {
 							duration: item.duration ?? 0,
 							urlAt: (seconds) =>
 								streamUrlFor(
-									{ sourceType: 'local', trackSourceId: item.trackSourceId },
+									{ sourceType, trackSourceId: item.trackSourceId },
 									{ format, start_seconds: seconds }
 								)
 						}
@@ -257,6 +327,8 @@ function createPlayerStore() {
 		if (!item) return;
 		const gen = beginLoad(LOAD_PHASE[kind]);
 		if (kind !== 'retry') recovery.directFailed = false;
+		if (kind === 'fresh') recovery.fellBack = false;
+		if (kind === 'fallback') recovery.fellBack = true;
 		const prevProgress = progress,
 			prevItem = currentSource ? (queue[currentIndex] ?? null) : null;
 		// A reload of the same track picks up where the listener was.
@@ -271,6 +343,18 @@ function createPlayerStore() {
 			session.clear();
 		}
 		if (!isCurrent(gen)) return;
+		if (recovery.directFailed || needsConversion(item)) {
+			const state = await readConversion();
+			if (!isCurrent(gen)) return;
+			if (state === 'off' || state === 'unavailable') {
+				currentSource?.destroy();
+				currentSource = null;
+				converting = false;
+				nowPlaying = buildNowPlayingMetadata(item);
+				handleTrackError(gen, { code: NOT_CONVERTING, message: state });
+				return;
+			}
+		}
 		currentSource?.destroy();
 		let source: PlaybackSource, resolvedUrl: string | undefined;
 		try {
@@ -330,17 +414,20 @@ function createPlayerStore() {
 		const item = queue[index];
 		const trackName = nowPlaying?.trackName ?? item?.trackName ?? 'Unknown track';
 		const { phase, transcoded } = recovery;
-		const unplayable = error?.code === UNPLAYABLE_ERROR;
-		const fileBroke = unplayable && recovery.heard >= REARM_AFTER_PLAYED_S;
+		const undecodable = error?.code === UNPLAYABLE_ERROR;
+		const notConverting = error?.code === NOT_CONVERTING;
+		const fileBroke = undecodable && recovery.heard >= REARM_AFTER_PLAYED_S;
 		// A first failure may be transient: reload once. A transcode that failed is
-		// not one to repeat, and an original the browser could not read becomes one.
-		if (item && phase === 'loading' && !transcoded && !fileBroke) {
-			recovery.directFailed ||= unplayable;
+		// not one to repeat, and an original the browser could not read becomes one,
+		// on the source it moved to as well.
+		const reload = phase === 'loading' || (phase === 'fallingBack' && undecodable);
+		if (item && reload && !transcoded && !fileBroke && !notConverting) {
+			recovery.directFailed ||= undecodable;
 			void loadQueueItem(index, 'retry');
 			return;
 		}
 		// The same track may play from another source (Plex fails, the local copy works).
-		if (item && (phase === 'retrying' || phase === 'loading')) {
+		if (item && !recovery.fellBack && (phase === 'retrying' || phase === 'loading')) {
 			const next = nextFallbackSource(item);
 			const switched = next ? changeItemSource(queue, index, next) : null;
 			if (switched && !switched.error) {
@@ -353,21 +440,45 @@ function createPlayerStore() {
 		recovery.phase = 'failed';
 		recovery.failed.push(trackName);
 		playbackState = 'error';
+		const reason: UnplayableReason | null = notConverting
+			? error?.message === 'off'
+				? 'converting_off'
+				: 'cannot_convert'
+			: transcoded
+				? 'conversion_failed'
+				: null;
+		if (item && reason) unplayable = { ...unplayable, [itemKey(item)]: reason };
 		if (recovery.failed.length >= MAX_CONSECUTIVE_ERRORS) {
 			const named = recovery.failed.map((n) => `"${n}"`).join(', ');
 			toastStore.notify(`Stopped: can't play ${named}`, 'error');
 			applyResetState();
 			return;
 		}
+		const why = notConverting
+			? `this browser can't play ${formatLabel(item?.format)}`
+			: "can't play it";
+		// An admin can turn transcoding on; the note says where.
+		const action =
+			reason === 'converting_off' && authStore.isAdmin
+				? {
+						label: 'Turn on transcoding',
+						run: () => goto(withBasePath(CONNECT_APPS_SETTINGS))
+					}
+				: undefined;
+		const say = (message: string, type: 'warning' | 'error') =>
+			action ? toastStore.show({ message, type, action }) : toastStore.notify(message, type);
 		const nextIdx = getNextIndex();
 		if (nextIdx !== null) {
-			toastStore.notify(`Skipped "${trackName}": can't play it`, 'warning');
+			say(`Skipped "${trackName}": ${why}`, 'warning');
 			recovery.skipTimer = setTimeout(() => {
 				recovery.skipTimer = null;
 				if (isCurrent(gen)) void loadQueueItem(nextIdx);
 			}, ERROR_SKIP_DELAY_MS);
 		} else {
-			toastStore.notify(`Can't play "${trackName}"`, 'error');
+			say(
+				notConverting ? `Can't play "${trackName}": ${why}` : `Can't play "${trackName}"`,
+				'error'
+			);
 		}
 	}
 
@@ -379,6 +490,7 @@ function createPlayerStore() {
 		if (recovery.heard >= REARM_AFTER_PLAYED_S && recovery.phase !== 'failed') {
 			recovery.phase = 'loading';
 			recovery.transcoded = false;
+			recovery.fellBack = false;
 		}
 	}
 
@@ -386,7 +498,8 @@ function createPlayerStore() {
 		const nextIdx = getNextIndex();
 		if (nextIdx === null) return;
 		const nextItem = queue[nextIdx];
-		if (!nextItem) return;
+		// A track that will not play here is not worth warming.
+		if (!nextItem || unplayableReasonFor(nextItem)) return;
 		const url = prefetchPathFor(nextItem);
 		if (url) void api.head(url).catch(() => {});
 	}
@@ -519,6 +632,12 @@ function createPlayerStore() {
 		get shuffleOrder() {
 			return shuffleOrder;
 		},
+		/** The current track plays as a conversion for this browser. */
+		get converting() {
+			return converting;
+		},
+
+		unplayableReasonFor,
 
 		playAlbum(source: PlaybackSource, metadata: NowPlaying): void {
 			radioSession.end();
@@ -552,6 +671,9 @@ function createPlayerStore() {
 			shuffleOrder = s.shuffleOrder;
 			isPlayerVisible = s.isPlayerVisible;
 			recovery.failed = [];
+			unplayable = {};
+			// So the queue can mark what will not play before it is reached.
+			if (items.some(needsConversion)) void readConversion();
 			void loadQueueItem(s.startIndex);
 		},
 

@@ -1,6 +1,7 @@
 <!--
 	A track's codec as a format chip (lossless in the action colour, lossy
 	plain), and unless `compact` its bitrate, channels and container.
+	`converted` marks a track the server converts for this browser.
 -->
 <script lang="ts">
 	import StatusChip from '$lib/ui/StatusChip.svelte';
@@ -11,6 +12,7 @@
 		audioChannels?: number | null;
 		container?: string | null;
 		compact?: boolean;
+		converted?: boolean;
 	}
 
 	let {
@@ -18,7 +20,8 @@
 		bitrate = null,
 		audioChannels = null,
 		container = null,
-		compact = false
+		compact = false,
+		converted = false
 	}: Props = $props();
 
 	const LOSSLESS_CODECS = ['flac', 'alac', 'wav', 'aiff', 'dsd', 'ape', 'wv', 'pcm'];
@@ -46,6 +49,11 @@
 		{#if codec}
 			<span class="inline-flex" title={isLossless ? 'Lossless' : 'Lossy'}>
 				<StatusChip size="xs" tone={isLossless ? 'action' : 'neutral'}>{codec}</StatusChip>
+			</span>
+		{/if}
+		{#if converted}
+			<span class="inline-flex" title="Converted for this browser">
+				<StatusChip size="xs">Converted</StatusChip>
 			</span>
 		{/if}
 

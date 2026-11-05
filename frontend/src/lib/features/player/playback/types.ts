@@ -106,6 +106,8 @@ export interface QueueItem {
 	format?: string;
 	availableSources?: SourceType[];
 	sourceIds?: Partial<Record<SourceType, string>>;
+	/** Each source's format for its file, when known, so a switch to another source carries its own. */
+	sourceFormats?: Partial<Record<SourceType, string>>;
 	/** MusicBrainz recording each source gave for its file, kept per source. */
 	recordingIds?: Partial<Record<SourceType, string>>;
 	duration?: number;

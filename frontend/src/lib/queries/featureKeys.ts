@@ -106,6 +106,8 @@ export const AlbumMatchKeyFactory = {
 export const ConnectAppsQueryKeyFactory = {
 	feature: 'connect-apps',
 	settings: () => key(SHARED, 'connect-apps', 'settings'),
+	// Whether the web player's tracks are converted: the same for everyone.
+	conversion: () => key(SHARED, 'connect-apps', 'conversion'),
 	appPasswords: (userId: string) => key(userScope(userId), 'connect-apps', 'app-passwords'),
 	mine: (userId: string) => key(userScope(userId), 'connect-apps', 'mine'),
 	// The oversight roster is the same for every admin.

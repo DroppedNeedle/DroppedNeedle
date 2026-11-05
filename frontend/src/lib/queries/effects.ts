@@ -184,8 +184,11 @@ export const EFFECTS = {
 	appPasswordRosterChanged: (): Sweep[] => [
 		{ key: ConnectAppsQueryKeyFactory.adminAppPasswords() }
 	],
-	/** The connect-apps settings. */
-	connectAppsSettingsChanged: (): Sweep[] => [{ key: ConnectAppsQueryKeyFactory.settings() }],
+	/** The connect-apps settings, and whether the web player's tracks are converted. */
+	connectAppsSettingsChanged: (): Sweep[] => [
+		{ key: ConnectAppsQueryKeyFactory.settings() },
+		{ key: ConnectAppsQueryKeyFactory.conversion() }
+	],
 	/** The apps that may sign in through the browser. */
 	appConnectSettingsChanged: (): Sweep[] => [{ key: ConnectAppsQueryKeyFactory.appConnect() }],
 	/** The caller's own Connect Apps choices. */

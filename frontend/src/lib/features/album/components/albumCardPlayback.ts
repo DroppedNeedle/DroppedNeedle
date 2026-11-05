@@ -5,11 +5,7 @@ import {
 import { readIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 import { playerStore } from '$lib/features/player/state/player.svelte';
 import { toastStore } from '$lib/stores/toast';
-import {
-	recordingFor,
-	REMOTE_FORMAT,
-	remoteStreamKey
-} from '$lib/features/player/playback/queueHelpers';
+import { recordingFor, remoteStreamKey } from '$lib/features/player/playback/queueHelpers';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 import type { LocalTrackInfo, QueueItem } from '$lib/features/player/playback/types';
 import type { RemoteSource, RemoteTrack } from '$lib/features/remote-library/queries/types';
@@ -56,7 +52,7 @@ function buildRemoteItems(tracks: RemoteTrack[], meta: AlbumCardMeta): QueueItem
 				coverUrl: cover,
 				sourceType: t.source,
 				artistId: meta.artistId,
-				format: REMOTE_FORMAT,
+				format: t.format ?? undefined,
 				recordingIds: recordingFor(t.source, t.recording_mbid),
 				plexRatingKey: t.source === 'plex' ? t.id : undefined
 			}

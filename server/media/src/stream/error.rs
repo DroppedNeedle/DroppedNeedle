@@ -16,6 +16,8 @@ pub const STREAM_FORBIDDEN: &str = "STREAM_FORBIDDEN";
 pub const RANGE_NOT_SATISFIABLE: &str = "RANGE_NOT_SATISFIABLE";
 /// Direct or transcode leases exhausted. Carries `Retry-After: 1`.
 pub const STREAM_CAPACITY_EXHAUSTED: &str = "STREAM_CAPACITY_EXHAUSTED";
+/// The web player asked for a format and the server is not converting.
+pub const TRANSCODE_UNAVAILABLE: &str = "TRANSCODE_UNAVAILABLE";
 
 /// Every failure these routes can return.
 #[derive(Debug)]
@@ -42,6 +44,9 @@ pub enum StreamError {
     },
     /// Leases exhausted. Renders 429 plus `Retry-After: 1`.
     Capacity,
+    /// A format was asked for and the original would have been sent
+    /// instead, because converting is off or there is no ffmpeg.
+    Unconverted,
     /// The source failed the read. A remote media server answers the
     /// closed-list `REMOTE_UNAVAILABLE`; a local file or a plugin a plain 502.
     Upstream {
@@ -97,6 +102,11 @@ impl From<StreamError> for ApiError {
             )
             .with_details(json!({ "retry_after": RETRY_AFTER_SECONDS }))
             .with_header(header::RETRY_AFTER, RETRY_AFTER_SECONDS.into()),
+            StreamError::Unconverted => ApiError::new(
+                StatusCode::CONFLICT,
+                TRANSCODE_UNAVAILABLE,
+                "This server is not converting audio",
+            ),
             StreamError::Upstream { source, cause } => {
                 let cause = format!("failed to stream from {}: {cause}", source.display_name());
                 match source {

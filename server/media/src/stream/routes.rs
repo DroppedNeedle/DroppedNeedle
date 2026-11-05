@@ -20,6 +20,7 @@
 //! ```text
 //! GET  /stream/{source}/{*key}   full or ranged audio bytes
 //! HEAD /stream/{source}/{*key}   same headers, no body
+//! GET  /playback/conversion      whether a stream that asks for a format is converted
 //! ```
 //!
 //! `source` is one of `local`, `jellyfin`, `navidrome`, `plex`. `key` is the
@@ -27,6 +28,11 @@
 //! part key (which may itself contain slashes, hence the wildcard). Query
 //! keys are `format`, `max_bitrate`, `start_seconds` and
 //! `estimate_content_length` (see [`StreamQuery`]).
+//!
+//! A `format` the bytes would not be in is refused here with a 409
+//! `TRANSCODE_UNAVAILABLE` instead of answered with the original, so the web
+//! player can tell a conversion from a pass-through. The compat routes keep
+//! the original-bytes fallback their clients expect.
 //!
 //! # Deep links
 //!
@@ -39,13 +45,15 @@
 //! # Mounting
 //!
 //! [`routes`] mounts [`stream_get_route`] and [`stream_head_route`], the
-//! production forms of the generic handlers, for any signed-in user. Playback
+//! production forms of the generic handlers, and [`conversion_route`], for
+//! any signed-in user. Playback
 //! reporting (`start`/`progress`/`stop`/`scrobble`/`now-playing`/`stopped`)
 //! lives in `playback`, not this router.
 
 use std::sync::Arc;
 
 use axum::{
+    Json,
     body::Body,
     extract::{FromRef, Path, State},
     http::HeaderMap,
@@ -56,11 +64,22 @@ use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidQuery;
 use droppedneedle_kernel::mount::{Routes, routes};
 
-use super::engine::{AudioSource, StreamEngine, StreamFault, StreamOpen, StreamParams};
+use super::engine::{
+    AudioSource, Conversion, StreamEngine, StreamFault, StreamMedia, StreamOpen, StreamParams,
+    format_for_content_type,
+};
 use super::error::StreamError;
 use super::framing::{FramedBody, frame, range_header};
 use crate::MediaEngine;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+/// Whether the web player's format asks are converted.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PlaybackConversion {
+    /// On, turned off by an admin, or impossible without ffmpeg.
+    pub conversion: Conversion,
+}
 
 /// Everything the stream handlers need.
 pub struct StreamState<E> {
@@ -105,7 +124,32 @@ where
     S: Clone + Send + Sync + 'static,
     StreamState<MediaEngine>: FromRef<S>,
 {
-    Routes::new().user(routes!(stream_get_route, stream_head_route))
+    Routes::new()
+        .user(routes!(stream_get_route, stream_head_route))
+        .user(routes!(conversion_route))
+}
+
+/// Whether a stream that asks for a format is converted, so the web player
+/// knows before it asks.
+#[utoipa::path(
+    get,
+    tag = "stream",
+    path = "/api/v3/playback/conversion",
+    responses(
+        (status = 200, description = "Whether converting is on", body = PlaybackConversion),
+        (status = 401, description = "Not authenticated"),
+    ),
+    operation_id = "playback_conversion"
+)]
+pub async fn conversion_route(
+    State(state): State<StreamState<MediaEngine>>,
+    _user: User,
+) -> Result<Json<PlaybackConversion>, ApiError> {
+    let conversion = state
+        .engine
+        .conversion()
+        .ok_or_else(|| ApiError::internal("connect_apps settings cannot be read"))?;
+    Ok(Json(PlaybackConversion { conversion }))
 }
 
 /// Full or ranged audio bytes.
@@ -129,6 +173,7 @@ where
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Playback refused"),
         (status = 404, description = "Unknown audio id"),
+        (status = 409, description = "A format was asked for and the server is not converting"),
         (status = 416, description = "Range not satisfiable"),
         (status = 429, description = "Stream capacity exhausted"),
         (status = 502, description = "Remote source failed the read"),
@@ -165,6 +210,7 @@ pub async fn stream_get_route(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Playback refused"),
         (status = 404, description = "Unknown audio id"),
+        (status = 409, description = "A format was asked for and the server is not converting"),
         (status = 429, description = "Stream capacity exhausted"),
         (status = 502, description = "Remote source failed the read"),
     ),
@@ -234,6 +280,9 @@ async fn serve<E: StreamEngine>(
         )
         .await
         .map_err(|fault| map_fault(fault, source))?;
+    if unconverted(query.format.as_deref(), &media) {
+        return Err(StreamError::Unconverted);
+    }
 
     let framed = frame(
         media,
@@ -249,6 +298,20 @@ async fn serve<E: StreamEngine>(
     let mut response = (framed.status, body).into_response();
     response.headers_mut().extend(framed.headers);
     Ok(response)
+}
+
+/// True when the request named a format and the gateway landed direct on
+/// bytes in another one: converting is off or there is no ffmpeg. `raw`
+/// asks for the original, and a direct landing already in the asked format
+/// is what was asked for.
+fn unconverted(asked: Option<&str>, media: &StreamMedia) -> bool {
+    let Some(asked) = asked.filter(|format| !format.is_empty()) else {
+        return false;
+    };
+    if asked.eq_ignore_ascii_case("raw") || media.transcoded {
+        return false;
+    }
+    !format_for_content_type(&media.content_type).eq_ignore_ascii_case(asked)
 }
 
 /// Map an engine fault to the wire. Messages stay fixed or user-safe; only

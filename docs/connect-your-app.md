@@ -14,7 +14,7 @@ DroppedNeedle answers the OpenSubsonic and Jellyfin APIs, so music apps can play
 
 ## Before you start
 
-1. **An admin turns the APIs on.** Both are off until an admin switches them on under Settings > Connect Apps: "OpenSubsonic API" for Subsonic apps, "Jellyfin-compatible API" for Jellyfin apps. Transcoding is set there too.
+1. **An admin turns the APIs on.** Both are off until an admin switches them on under Settings > Connect Apps: "OpenSubsonic API" for Subsonic apps, "Jellyfin-compatible API" for Jellyfin apps. Transcoding is set there too, and its "On-the-fly transcoding" switch also lets the web player transcode tracks your browser can't play ([Supported formats](library.md#supported-formats)).
 2. **You make an app password.** Under Profile > Connect Apps, give it a name (such as `Symfonium (phone)`) and create it. The password is shown only this once; if you lose it, revoke it and make a new one. Make one per app or device, up to 25, so you can revoke one without signing the others out. Your account password never works in a music app.
 
 ## What to enter

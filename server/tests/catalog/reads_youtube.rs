@@ -720,6 +720,7 @@ async fn an_imported_entry_carries_its_recording_to_a_filed_play() {
         recording_mbid: Some(recording.to_owned()),
         image_url: None,
         part_key: None,
+        format: None,
     };
     let imported = PlaylistImportSink::new(app.state().catalog.collections.clone())
         .import(

@@ -5,7 +5,6 @@ import { getCoverUrl } from '$lib/utils/errorHandling';
 import {
 	normalizeDiscNumber,
 	recordingFor,
-	REMOTE_FORMAT,
 	remoteStreamKey
 } from '$lib/features/player/playback/queueHelpers';
 
@@ -39,7 +38,7 @@ export function launchRemotePlayback(
 		coverUrl: normalizedCoverUrl,
 		sourceType: t.source,
 		artistId: meta.artistId,
-		format: REMOTE_FORMAT,
+		format: t.format ?? undefined,
 		recordingIds: recordingFor(t.source, t.recording_mbid),
 		plexRatingKey: t.source === 'plex' ? t.id : undefined
 	}));

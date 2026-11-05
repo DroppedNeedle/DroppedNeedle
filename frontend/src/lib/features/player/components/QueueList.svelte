@@ -7,9 +7,13 @@
 <script lang="ts">
 	import { isValidMbid } from '$lib/utils/formatting';
 	import { tick } from 'svelte';
-	import { playerStore } from '$lib/features/player/state/player.svelte';
+	import {
+		formatLabel,
+		playerStore,
+		type UnplayableReason
+	} from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { GripVertical, ListMusic, Shuffle, Trash2 } from 'lucide-svelte';
+	import { CircleSlash, GripVertical, ListMusic, Shuffle, Trash2 } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
@@ -139,6 +143,12 @@
 		toastStore.notify(`Track moved to position ${moved + 1}`, 'info');
 	}
 
+	function unplayableTitle(reason: UnplayableReason, format: string | undefined): string {
+		if (reason === 'conversion_failed') return "Couldn't be converted for this browser";
+		const why = reason === 'converting_off' ? 'transcoding is off' : "the server can't convert it";
+		return `This browser can't play ${formatLabel(format)}, and ${why}`;
+	}
+
 	function formatDuration(seconds?: number): string {
 		if (!seconds || isNaN(seconds)) return '';
 		const m = Math.floor(seconds / 60);
@@ -186,6 +196,7 @@
 				{@const isCurrent = queueIndex === currentIndex}
 				{@const isPlayed = displayPosition < currentDisplayPosition}
 				{@const isReorderable = displayPosition > currentDisplayPosition}
+				{@const unplayable = playerStore.unplayableReasonFor(item)}
 				{#if displayPosition === currentDisplayPosition + 1}
 					<p class="dn-queue-divider">Up next</p>
 				{/if}
@@ -243,6 +254,11 @@
 
 					{#if isCurrent && playerStore.isPlaying}
 						<NowPlayingIndicator size="md" color="bg-primary" />
+					{/if}
+					{#if unplayable}
+						<span class="inline-flex" title={unplayableTitle(unplayable, item.format)}>
+							<StatusChip size="xs" icon={CircleSlash}>Can't play</StatusChip>
+						</span>
 					{/if}
 					{#if item.duration}
 						<span class="dn-queue-time">{formatDuration(item.duration)}</span>

@@ -1328,6 +1328,9 @@ fn track_view(track: &Metadata) -> Result<TrackView, AdapterError> {
         year: track.year.and_then(|year| i32::try_from(year).ok()),
         recording_mbid: track.mbid(),
         part_key: track.part_key(),
+        // Plex's `Media` codec and container are not recorded from a real
+        // server yet, so a Plex track's format is left unknown.
+        format: None,
         id,
     })
 }

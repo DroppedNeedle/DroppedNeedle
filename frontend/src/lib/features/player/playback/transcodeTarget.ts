@@ -17,8 +17,15 @@ const LOSSLESS = new Set(['alac', 'flac', 'wav']);
 
 let probe: HTMLAudioElement | null = null;
 
-// Support varies by browser and version, so the browser is always asked. A
-// format it has no probe for is left to the load to find out.
+/**
+ * Whether this browser says it plays the format. Support varies by browser and
+ * version, so the browser is always asked. A format it has no probe for, or no
+ * format at all, is left to the load to find out.
+ */
+export function browserPlays(format: string | undefined): boolean {
+	return plays(format?.toLowerCase() ?? '');
+}
+
 function plays(format: string): boolean {
 	const type = PROBES[format];
 	if (!type || typeof document === 'undefined') return true;
@@ -31,7 +38,8 @@ function plays(format: string): boolean {
  * play the original. Lossless stays lossless, so nobody loses quality to a
  * browser's codec list. `directFailed` says the original was tried and did not
  * play: an MP4 file that fails where AAC plays is taken for ALAC, since a
- * playlist row can still say `m4a`.
+ * playlist row or a media server can say `m4a` for either, and so is a file
+ * whose format nobody named.
  */
 export function transcodeTarget(
 	sourceFormat: string | undefined,
@@ -39,7 +47,7 @@ export function transcodeTarget(
 ): TranscodeFormat | null {
 	const source = sourceFormat?.toLowerCase() ?? '';
 	if (!directFailed && plays(source)) return null;
-	const lossless = LOSSLESS.has(source) || (directFailed && source === 'm4a');
+	const lossless = LOSSLESS.has(source) || (directFailed && (source === 'm4a' || source === ''));
 	const order: TranscodeFormat[] = lossless ? ['flac', 'opus', 'mp3'] : ['opus', 'mp3'];
 	return order.find((format) => format !== source && plays(format)) ?? null;
 }

@@ -388,7 +388,7 @@ async fn query_hints_and_principal_reach_engine() {
     let (engine, router) = local_app(".mp3", 64);
     let (status, _, _) = get(
         router,
-        "/stream/local/song?format=opus&max_bitrate=128&estimate_content_length=true",
+        "/stream/local/song?format=mp3&max_bitrate=128&estimate_content_length=true",
         &[],
     )
     .await;
@@ -399,7 +399,7 @@ async fn query_hints_and_principal_reach_engine() {
     assert_eq!(seen[0].user_id, "user-1");
     assert_eq!(seen[0].source, AudioSource::Local);
     assert_eq!(seen[0].key, "song");
-    assert_eq!(seen[0].format, Some("opus".to_owned()));
+    assert_eq!(seen[0].format, Some("mp3".to_owned()));
     assert_eq!(seen[0].max_bitrate_kbps, Some(128));
     assert!(seen[0].estimate_content_length);
 }

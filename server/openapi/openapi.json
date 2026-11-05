@@ -22855,6 +22855,44 @@
         ]
       }
     },
+    "/api/v3/playback/conversion": {
+      "get": {
+        "tags": [
+          "stream"
+        ],
+        "summary": "Whether a stream that asks for a format is converted, so the web player\nknows before it asks.",
+        "operationId": "playback_conversion",
+        "responses": {
+          "200": {
+            "description": "Whether converting is on",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybackConversion"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/playback/progress": {
       "post": {
         "tags": [
@@ -33078,6 +33116,16 @@
               }
             }
           },
+          "409": {
+            "description": "A format was asked for and the server is not converting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "416": {
             "description": "Range not satisfiable",
             "content": {
@@ -33196,6 +33244,9 @@
           },
           "404": {
             "description": "Unknown audio id"
+          },
+          "409": {
+            "description": "A format was asked for and the server is not converting"
           },
           "429": {
             "description": "Stream capacity exhausted"
@@ -40450,6 +40501,15 @@
           "none",
           "pause",
           "stop"
+        ]
+      },
+      "Conversion": {
+        "type": "string",
+        "description": "Whether the server converts a stream that asks for a format.",
+        "enum": [
+          "on",
+          "off",
+          "unavailable"
         ]
       },
       "CorrectionKind": {
@@ -55023,6 +55083,19 @@
           }
         }
       },
+      "PlaybackConversion": {
+        "type": "object",
+        "description": "Whether the web player's format asks are converted.",
+        "required": [
+          "conversion"
+        ],
+        "properties": {
+          "conversion": {
+            "$ref": "#/components/schemas/Conversion",
+            "description": "On, turned off by an admin, or impossible without ffmpeg."
+          }
+        }
+      },
       "PlaybackProgressRequest": {
         "type": "object",
         "description": "Heartbeat for a live session: keeps presence alive and the scrubber live.",
@@ -59311,6 +59384,13 @@
             ],
             "format": "int64",
             "description": "Duration in seconds."
+          },
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file's format in the library's names (`flac`, `mp3`, `alac`,\n`m4a` for an MP4 file whose codec the server did not say), when the\nsource reports it."
           },
           "id": {
             "type": "string",

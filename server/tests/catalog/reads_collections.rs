@@ -709,6 +709,7 @@ async fn remote_playlist_import_lands_in_the_users_playlists() {
         recording_mbid: None,
         image_url: None,
         part_key: part.map(str::to_owned),
+        format: None,
     };
     let tracks = vec![track("1", Some("/library/parts/1")), track("2", None)];
 

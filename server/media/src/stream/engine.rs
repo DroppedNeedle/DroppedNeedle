@@ -13,6 +13,20 @@
 //! table.
 
 use futures_util::stream::BoxStream;
+use serde::Serialize;
+use utoipa::ToSchema;
+
+/// Whether the server converts a stream that asks for a format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Conversion {
+    /// Converting is on and ffmpeg is there.
+    On,
+    /// An admin turned "On-the-fly transcoding" off.
+    Off,
+    /// The server has no ffmpeg, so turning it on would not help.
+    Unavailable,
+}
 
 /// The stream sources behind one gateway. Display names feed the logged
 /// cause of a failed read only; wire identity is the lowercase route
@@ -231,6 +245,35 @@ pub fn extension_for_content_type(content_type: &str) -> Option<&'static str> {
         .iter()
         .find(|(_, known)| *known == content_type)
         .map(|(extension, _)| *extension)
+}
+
+/// The format bytes of a content type are in, in the names the transcode
+/// decision compares: `audio/flac` and `audio/x-flac` are `flac`,
+/// `audio/mp4` is `m4a`. A type the table does not know reads as its
+/// subtype (`audio/x-ape` is `x-ape`), which no asked format matches.
+pub fn format_for_content_type(content_type: &str) -> String {
+    let media = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if let Some(known) = extension_for_content_type(&media) {
+        return known.to_owned();
+    }
+    let known = match media.as_str() {
+        "audio/x-flac" => "flac",
+        "audio/mp3" => "mp3",
+        "audio/x-m4a" | "audio/m4a" => "m4a",
+        "audio/x-wav" | "audio/wave" => "wav",
+        _ => {
+            return media
+                .split_once('/')
+                .map(|(_, subtype)| subtype.to_owned())
+                .unwrap_or_default();
+        }
+    };
+    known.to_owned()
 }
 
 #[cfg(test)]

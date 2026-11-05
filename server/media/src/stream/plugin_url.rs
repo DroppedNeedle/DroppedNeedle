@@ -1,7 +1,9 @@
-//! Byte plumbing for `streaming_source` plugins that answer with a URL.
+//! Byte plumbing for `streaming_source` plugins that answer with a URL,
+//! and the temp-file spool that plugin URL and media server transcodes
+//! share.
 //!
 //! A direct play is proxied by range through [`super::ranged`]. A
-//! transcode spools the URL into a temp file first, because ffmpeg only
+//! transcode spools the bytes into a temp file first, because ffmpeg only
 //! ever reads local files; the file lives as long as the transcode body
 //! and is removed when it ends.
 
@@ -9,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use futures_util::StreamExt as _;
 
-use super::engine::SpanOpener;
+use super::engine::{ChunkStream, SpanOpener};
 use super::ranged;
 use droppedneedle_plugins::capabilities::stream::{PROXY_MAX_BYTES, open_url, proxy_chunks};
 
@@ -61,7 +63,7 @@ pub fn spans(client: reqwest::Client, url: reqwest::Url, first: reqwest::Respons
 /// Name prefix of spool files, so a startup sweep finds ones a crash left.
 const SPOOL_PREFIX: &str = "droppedneedle-plugin-stream-";
 
-/// Temp disk all plugin transcode spools may hold at once.
+/// Temp disk all transcode spools may hold at once.
 pub const SPOOL_BUDGET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 /// Bytes currently held by live spools.
@@ -89,24 +91,20 @@ pub fn sweep_stale_spools(dir: &Path) {
     }
 }
 
-/// A plugin URL copied to a local temp file for ffmpeg, readable by the
-/// server's user only. Dropping it (the transcode ended, or the client
-/// went away mid-copy or mid-play) removes the file and frees its share
-/// of [`SPOOL_BUDGET_BYTES`].
+/// A plugin URL or media server stream copied to a local temp file for
+/// ffmpeg, readable by the server's user only. Dropping it (the transcode
+/// ended, or the client went away mid-copy or mid-play) removes the file
+/// and frees its share of [`SPOOL_BUDGET_BYTES`].
 pub struct Spool {
     path: PathBuf,
     held: u64,
 }
 
 impl Spool {
-    /// Copy the whole response body (capped like any plugin proxy) into a
-    /// new file in `dir` named with `format` as its extension. Fails once
-    /// all spools together would pass [`SPOOL_BUDGET_BYTES`].
-    pub async fn fill(
-        response: reqwest::Response,
-        format: &str,
-        dir: &Path,
-    ) -> std::io::Result<Self> {
+    /// Copy the whole body into a new file in `dir` named with `format` as
+    /// its extension. Fails once the body passes [`PROXY_MAX_BYTES`] or all
+    /// spools together would pass [`SPOOL_BUDGET_BYTES`].
+    pub async fn fill(mut chunks: ChunkStream, format: &str, dir: &Path) -> std::io::Result<Self> {
         let extension = if !format.is_empty()
             && format.len() <= 8
             && format.chars().all(|c| c.is_ascii_alphanumeric())
@@ -126,9 +124,11 @@ impl Spool {
         let mut file = tokio::task::spawn_blocking(move || create_private(&target))
             .await
             .map_err(std::io::Error::other)??;
-        let mut chunks = proxy_chunks(response).boxed();
         while let Some(chunk) = chunks.next().await {
             let chunk = chunk?;
+            if spool.held + chunk.len() as u64 > PROXY_MAX_BYTES {
+                return Err(std::io::Error::other("the stream is over 500 MiB"));
+            }
             spool.reserve(chunk.len() as u64)?;
             file = tokio::task::spawn_blocking(move || {
                 use std::io::Write as _;
@@ -147,7 +147,7 @@ impl Spool {
         self.held += bytes;
         if total > SPOOL_BUDGET_BYTES {
             return Err(std::io::Error::other(
-                "plugin transcodes are using all of their temp disk space",
+                "transcodes are using all of their temp disk space",
             ));
         }
         Ok(())
@@ -177,7 +177,7 @@ impl Drop for Spool {
         if let Err(error) = std::fs::remove_file(&self.path)
             && error.kind() != std::io::ErrorKind::NotFound
         {
-            tracing::warn!(path = %self.path.display(), %error, "could not remove a plugin stream spool file");
+            tracing::warn!(path = %self.path.display(), %error, "could not remove a stream spool file");
         }
     }
 }

@@ -33,7 +33,7 @@ use super::jellyfin_models::{
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, FilterFacetsView, HistoryPage, HubView,
     InfoView, LyricLine, LyricsView, PlaylistDetail, PlaylistSummary, SearchResults, SessionView,
-    SessionsView, SourceName, StatsView, TrackView,
+    SessionsView, SourceName, StatsView, TrackView, audio_format,
 };
 use super::transport::{RemoteHttp, request_id};
 use super::warmup::{INDEX_MAX_PAGES, IndexedAlbum, indexed};
@@ -394,7 +394,7 @@ impl JellyfinAdapter {
             ("sortBy", sort_or(&browse.sort_by, "SortName")),
             ("sortOrder", order_word(browse.descending)),
             ("enableUserData", "true"),
-            ("Fields", "ProviderIds"),
+            ("Fields", "ProviderIds,MediaStreams"),
         ]);
         query.push(("limit".to_owned(), browse.limit.to_string()));
         query.push(("startIndex".to_owned(), browse.offset.to_string()));
@@ -521,7 +521,7 @@ impl JellyfinAdapter {
             ("isFavorite", "true"),
             ("enableUserData", "true"),
             ("recursive", "true"),
-            ("Fields", "ProviderIds"),
+            ("Fields", "ProviderIds,MediaStreams"),
         ]);
         track_query.push(("limit".to_owned(), limit));
         let artists = self.items("/Artists", &artist_query).await?;
@@ -723,7 +723,7 @@ impl JellyfinAdapter {
         };
         let query = params(&[
             ("Limit", "1000"),
-            ("Fields", "ProviderIds"),
+            ("Fields", "ProviderIds,MediaStreams"),
             ("EnableUserData", "true"),
         ]);
         let page = self
@@ -816,7 +816,10 @@ impl JellyfinAdapter {
     pub async fn similar(&self, id: &str, limit: i64) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;
         let id = request_id(id)?;
-        let mut query = params(&[("Fields", "ProviderIds"), ("EnableUserData", "true")]);
+        let mut query = params(&[
+            ("Fields", "ProviderIds,MediaStreams"),
+            ("EnableUserData", "true"),
+        ]);
         query.push(("Limit".to_owned(), limit.to_string()));
         let page = self.items(&format!("/Items/{id}/Similar"), &query).await?;
         let mut tracks = Vec::new();
@@ -838,7 +841,10 @@ impl JellyfinAdapter {
     /// as they were; a genre name is percent-encoded as one path segment.
     pub async fn mix(&self, seed: &MixSeed, limit: i64) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;
-        let mut query = params(&[("Fields", "ProviderIds"), ("EnableUserData", "true")]);
+        let mut query = params(&[
+            ("Fields", "ProviderIds,MediaStreams"),
+            ("EnableUserData", "true"),
+        ]);
         query.push(("Limit".to_owned(), limit.to_string()));
         let endpoint = match seed {
             MixSeed::Item(id) => format!("/Items/{}/InstantMix", request_id(id)?),
@@ -1221,6 +1227,13 @@ fn track_view(item: &Item) -> TrackView {
         // yet checked against a running Jellyfin.
         recording_mbid: item.provider("MusicBrainzRecording"),
         part_key: None,
+        format: audio_format(
+            item.media_streams
+                .iter()
+                .find(|stream| stream.kind.as_deref() == Some("Audio"))
+                .and_then(|stream| stream.codec.as_deref()),
+            item.container.as_deref(),
+        ),
     }
 }
 
@@ -1315,7 +1328,44 @@ fn bucket_index(mut artists: Vec<ArtistView>) -> Vec<ArtistIndexEntry> {
 
 #[cfg(test)]
 mod tests {
-    use super::image_url_for;
+    use super::{Item, ItemPage, image_url_for, track_view};
+
+    fn recorded(name: &str) -> serde_json::Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/reference/compat/jellyfin-10.10.6")
+            .join(name);
+        let text = std::fs::read_to_string(path).expect("the recording reads");
+        serde_json::from_str::<serde_json::Value>(&text).expect("the recording is json")["body"]
+            .clone()
+    }
+
+    /// Jellyfin 10.10.6's own answers: the container alone names FLAC and
+    /// MP3, an MP4 file without its streams stays `m4a`, and the audio
+    /// stream's codec names the format when the read asked for streams.
+    #[test]
+    fn recorded_tracks_carry_their_format() {
+        let page: ItemPage = serde_json::from_value(recorded("items.tracks.json")).unwrap();
+        let formats: Vec<_> = page
+            .items
+            .iter()
+            .map(|item| (item.name.clone().unwrap(), track_view(item).format))
+            .collect();
+        for (name, format) in [("Airbag", "flac"), ("One", "mp3"), ("Teardrop", "m4a")] {
+            assert!(
+                formats.contains(&(name.to_owned(), Some(format.to_owned()))),
+                "{name}: {formats:?}"
+            );
+        }
+
+        let mut item = recorded("item.track.json");
+        let track: Item = serde_json::from_value(item.clone()).unwrap();
+        assert_eq!(track_view(&track).format.as_deref(), Some("flac"));
+        // The same answer for an ALAC file in MP4, as ffprobe names it.
+        item["Container"] = "mov,mp4,m4a,3gp,3g2,mj2".into();
+        item["MediaStreams"][0]["Codec"] = "alac".into();
+        let track: Item = serde_json::from_value(item).unwrap();
+        assert_eq!(track_view(&track).format.as_deref(), Some("alac"));
+    }
 
     #[test]
     fn image_addresses_need_a_plain_id_and_tag() {

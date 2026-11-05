@@ -9,9 +9,6 @@ import type { RemoteTrack } from '$lib/features/remote-library/queries/types';
 import type { PlaylistTrack } from '$lib/api/playlists';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 
-// Remote views carry no codec, so a remote item is labelled with the common one.
-export const REMOTE_FORMAT = 'aac';
-
 /** The key a remote track streams by: Plex streams a media part, the others the item. */
 export function remoteStreamKey(track: RemoteTrack): string | null {
 	return track.source === 'plex' ? (track.part_key ?? null) : track.id;
@@ -77,7 +74,7 @@ export function selectBestSource(
 	return {
 		sourceType: remote.source,
 		trackSourceId: key,
-		format: REMOTE_FORMAT
+		format: remote.format ?? undefined
 	};
 }
 
@@ -121,6 +118,12 @@ export function buildQueueItem(meta: TrackMeta, data: TrackSourceData): QueueIte
 		...(data.plexTrack?.part_key ? recordingFor('plex', data.plexTrack.recording_mbid) : {})
 	};
 
+	const sourceFormats: Partial<Record<SourceType, string>> = {};
+	if (data.localTrack) sourceFormats.local = data.localTrack.format.toLowerCase();
+	if (data.navidromeTrack?.format) sourceFormats.navidrome = data.navidromeTrack.format;
+	if (data.jellyfinTrack?.format) sourceFormats.jellyfin = data.jellyfinTrack.format;
+	if (data.plexTrack?.part_key && data.plexTrack.format) sourceFormats.plex = data.plexTrack.format;
+
 	return {
 		trackSourceId: best.trackSourceId,
 		trackName: data.trackTitle,
@@ -135,6 +138,7 @@ export function buildQueueItem(meta: TrackMeta, data: TrackSourceData): QueueIte
 		format: best.format,
 		availableSources: getAvailableSources(data),
 		sourceIds,
+		sourceFormats,
 		recordingIds: Object.keys(recordingIds).length > 0 ? recordingIds : undefined,
 		duration: data.trackLength,
 		plexRatingKey: data.plexTrack?.id
@@ -159,7 +163,7 @@ export function buildRemoteQueueItems(tracks: RemoteTrack[], meta: TrackMeta): Q
 				coverUrl: normalizedCoverUrl,
 				sourceType: t.source,
 				artistId: meta.artistId,
-				format: REMOTE_FORMAT,
+				format: t.format ?? undefined,
 				availableSources: [t.source] as SourceType[],
 				recordingIds: recordingFor(t.source, t.recording_mbid),
 				duration: t.duration_secs ?? 0,
@@ -288,7 +292,7 @@ export function buildRemoteDiscoveryQueue(tracks: RemoteTrack[]): QueueItem[] {
 				albumName: t.album_name,
 				coverUrl: t.image_url ?? null,
 				sourceType: t.source,
-				format: REMOTE_FORMAT,
+				format: t.format ?? undefined,
 				availableSources: [t.source] as SourceType[],
 				recordingIds: recordingFor(t.source, t.recording_mbid),
 				duration: t.duration_secs ?? 0

@@ -780,6 +780,20 @@ impl StreamFolder {
         );
     }
 
+    /// Turn "On-the-fly transcoding" on or off in the `connect_apps`
+    /// section the gateways read.
+    pub async fn set_transcoding(&self, enabled: bool) {
+        use droppedneedle_kernel::runtime_config::sections::ConnectApps;
+        self.platform
+            .settings
+            .save(ConnectApps {
+                transcoding_enabled: enabled,
+                ..ConnectApps::default()
+            })
+            .await
+            .expect("connect_apps saves");
+    }
+
     /// A gateway over the folder's catalog and folder, a plugin host that
     /// launches nothing and the platform's `connect_apps` section, reading
     /// remote keys through `remote` and transcoding through `transcoder`.

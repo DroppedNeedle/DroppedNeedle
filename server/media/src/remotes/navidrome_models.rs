@@ -235,6 +235,12 @@ pub struct Song {
     /// Cover-art id.
     #[serde(default)]
     pub cover_art: Option<String>,
+    /// File extension, e.g. `flac` or `m4a`. Navidrome 0.62.0 names no
+    /// codec, so an MP4 file reads as `m4a` whether it holds AAC or ALAC
+    /// (recorded in `tests/reference/compat/navidrome-0.62.0`, which
+    /// answers `flac`, `mp3` and `m4a`).
+    #[serde(default)]
+    pub suffix: Option<String>,
 }
 
 /// `search3` and `starred2`: three buckets.

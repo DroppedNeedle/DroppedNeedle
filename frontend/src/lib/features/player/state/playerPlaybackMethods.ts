@@ -68,10 +68,16 @@ export function changeItemSource(
 	if (!resolvedId) return { newQueue: queue, error: 'Source ID unavailable for this track' };
 
 	const newQueue = [...queue];
+	// The new source's file has its own format; one nobody named stays unknown.
+	const sourceFormats = item.format
+		? { [item.sourceType]: item.format, ...item.sourceFormats }
+		: item.sourceFormats;
 	newQueue[index] = {
 		...item,
 		sourceType: newSourceType,
-		trackSourceId: resolvedId
+		trackSourceId: resolvedId,
+		format: sourceFormats?.[newSourceType],
+		sourceFormats
 	};
 	return { newQueue };
 }

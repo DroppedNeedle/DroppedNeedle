@@ -20,8 +20,8 @@ use droppedneedle_media::test_support::stream_routes;
 use futures_util::StreamExt as _;
 use serde_json::Value;
 use stream::engine::{
-    AudioSource, ChunkStream, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen,
-    StreamParams,
+    AudioSource, ChunkStream, Conversion, MediaBody, StreamEngine, StreamFault, StreamMedia,
+    StreamOpen, StreamParams,
 };
 use stream::framing::file_range;
 use stream::gateway::{Gateway, OUTSIDE_MESSAGE, RemoteMedia, RemoteReader};
@@ -524,6 +524,122 @@ impl RemoteReader for BlockingRemote {
         }
         .await;
         canned.map(Into::into)
+    }
+}
+
+/// Each plan a transcode ran with and the bytes it read.
+type SeenReads = Arc<std::sync::Mutex<Vec<(StreamPlan, Vec<u8>)>>>;
+
+/// Transcoder that reads the whole source it is handed, so a test sees
+/// what ffmpeg would have read, and answers canned output.
+#[derive(Clone, Default)]
+struct ReadingTranscoder {
+    seen: SeenReads,
+}
+
+impl Transcoder for ReadingTranscoder {
+    async fn stream(
+        &self,
+        mut source: std::fs::File,
+        plan: &StreamPlan,
+        _principal: &str,
+        _direct: Option<OwnedDirectLease>,
+    ) -> Result<ChunkStream, TranscodeError> {
+        let mut read = Vec::new();
+        std::io::Read::read_to_end(&mut source, &mut read).expect("the spool reads");
+        self.seen.lock().unwrap().push((plan.clone(), read));
+        Ok(futures_util::stream::iter([Ok(b"FLAC-OUT".to_vec())]).boxed())
+    }
+}
+
+/// A media server's ALAC file asked for as FLAC is copied to a temp file
+/// that ffmpeg reads, from the seek offset; with converting off, or no
+/// ffmpeg, the web player's route refuses with a code rather than sending
+/// the original, for a media server track and a library file alike.
+#[tokio::test]
+async fn remote_alac_converts_and_refuses_when_converting_is_off() {
+    let alac = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/library/alac_short.m4a"),
+    )
+    .expect("the ALAC fixture reads");
+    let remote = || CannedRemote {
+        media: RemoteMedia {
+            content_type: "audio/mp4".to_owned(),
+            bytes: alac.clone(),
+        },
+    };
+    let root = StreamFolder::new("remote-alac").await;
+    root.put("song.m4a", &alac);
+
+    let transcoder = ReadingTranscoder::default();
+    let app = stream_app(root.gateway(remote(), transcoder.clone(), true));
+    let (status, headers, body) = call_raw(
+        app,
+        "GET",
+        "/stream/jellyfin/item-1?format=flac&start_seconds=42",
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        stream_header(&headers, "content-type"),
+        Some("audio/flac".to_owned())
+    );
+    assert_eq!(body, b"FLAC-OUT");
+    let seen = transcoder.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 1);
+    match &seen[0].0 {
+        StreamPlan::Transcode {
+            out_format,
+            start_seconds,
+            ..
+        } => {
+            assert_eq!(out_format.name(), "flac");
+            assert_eq!(*start_seconds, 42.0);
+        }
+        StreamPlan::Direct { .. } => panic!("an ALAC file asked for as FLAC converts"),
+    }
+    assert_eq!(seen[0].1, alac, "ffmpeg reads the media server's bytes");
+
+    let conversion = |ffmpeg| root.gateway(remote(), NeverTranscoder, ffmpeg).conversion();
+    assert_eq!(conversion(true), Some(Conversion::On));
+    assert_eq!(conversion(false), Some(Conversion::Unavailable));
+    root.set_transcoding(false).await;
+    assert_eq!(conversion(true), Some(Conversion::Off));
+
+    for (case, ffmpeg, uri) in [
+        (
+            "converting off",
+            true,
+            "/stream/jellyfin/item-1?format=flac",
+        ),
+        (
+            "converting off, library file",
+            true,
+            "/stream/local/song.m4a?format=flac",
+        ),
+        ("no ffmpeg", false, "/stream/navidrome/item-1?format=flac"),
+    ] {
+        if !ffmpeg {
+            root.set_transcoding(true).await;
+        }
+        let app = stream_app(root.gateway(remote(), NeverTranscoder, ffmpeg));
+        let (status, _, body) = call_raw(app, "GET", uri, &[]).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{case}");
+        let envelope: Value = serde_json::from_slice(&body).expect("409 envelope is json");
+        assert_eq!(envelope["error"]["code"], "TRANSCODE_UNAVAILABLE", "{case}");
+    }
+
+    // Without a format the original still plays, and `raw` asks for it.
+    let app = stream_app(root.gateway(remote(), NeverTranscoder, false));
+    for uri in [
+        "/stream/jellyfin/item-1",
+        "/stream/jellyfin/item-1?format=raw",
+    ] {
+        let (status, _, body) = call_raw(app.clone(), "GET", uri, &[]).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+        assert_eq!(body, alac, "{uri}");
     }
 }
 

@@ -8,7 +8,7 @@
 -->
 <script lang="ts">
 	import { isValidMbid } from '$lib/utils/formatting';
-	import { playerStore } from '$lib/features/player/state/player.svelte';
+	import { formatLabel, playerStore } from '$lib/features/player/state/player.svelte';
 	import { deckFocus } from '$lib/features/player/state/deckFocus.svelte';
 	import { eqStore } from '$lib/features/player/state/eq.svelte';
 	import { scrobbleManager } from '$lib/features/player/state/scrobble.svelte';
@@ -112,6 +112,30 @@
 
 	const isYouTube = $derived(playerStore.nowPlaying?.sourceType === 'youtube');
 	const isError = $derived(playerStore.playbackState === 'error');
+	const unplayableReason = $derived(
+		isError && playerStore.currentQueueItem
+			? playerStore.unplayableReasonFor(playerStore.currentQueueItem)
+			: null
+	);
+	const unplayableNote = $derived.by(() => {
+		const format = formatLabel(playerStore.currentQueueItem?.format);
+		switch (unplayableReason) {
+			case 'converting_off':
+				return `This browser can't play ${format}, and transcoding is off.`;
+			case 'cannot_convert':
+				return `This browser can't play ${format}, and this server can't convert it.`;
+			case 'conversion_failed':
+				return "This track couldn't be converted for this browser.";
+			default:
+				return "This track isn't available right now.";
+		}
+	});
+	// What fits beside the cover on a phone; the full note is its accessible text.
+	const unplayableShort = $derived.by(() => {
+		if (!unplayableReason) return null;
+		if (unplayableReason === 'conversion_failed') return "Couldn't convert it";
+		return `Can't play ${formatLabel(playerStore.currentQueueItem?.format)} here`;
+	});
 	const progressPct = $derived(
 		playerStore.duration > 0
 			? Math.min(100, (playerStore.progress / playerStore.duration) * 100)
@@ -192,13 +216,23 @@
 						</p>
 					{/if}
 					{#if isError}
-						<p class="truncate text-xs font-semibold text-error">
-							This track isn't available right now.
+						<p class="line-clamp-2 text-xs font-semibold text-error" title={unplayableNote}>
+							{#if unplayableShort}
+								<span class="sm:hidden" aria-hidden="true">{unplayableShort}</span>
+								<span class="sr-only sm:not-sr-only">{unplayableNote}</span>
+							{:else}
+								{unplayableNote}
+							{/if}
+							{#if unplayableReason === 'converting_off' && authStore.isAdmin}
+								<a href={withBasePath('/settings?tab=connect-apps')} class="dn-player__link"
+									>Turn on</a
+								>
+							{/if}
 						</p>
 					{:else if np.format || (scrobbleManager.enabled && scrobbleManager.status !== 'idle')}
 						<div class="mt-1 hidden items-center gap-1.5 sm:flex">
 							{#if np.format}
-								<AudioQualityBadge codec={np.format} compact />
+								<AudioQualityBadge codec={np.format} converted={playerStore.converting} compact />
 							{/if}
 							{#if scrobbleManager.enabled && scrobbleManager.status !== 'idle'}
 								<span class="tooltip tooltip-top" data-tip={scrobbleManager.tooltip}>

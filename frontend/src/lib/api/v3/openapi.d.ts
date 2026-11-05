@@ -5889,6 +5889,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/playback/conversion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether a stream that asks for a format is converted, so the web player
+         *     knows before it asks.
+         */
+        get: operations["playback_conversion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/playback/progress": {
         parameters: {
             query?: never;
@@ -12189,6 +12209,11 @@ export interface components {
          * @enum {string}
          */
         ControlRequest: "none" | "pause" | "stop";
+        /**
+         * @description Whether the server converts a stream that asks for a format.
+         * @enum {string}
+         */
+        Conversion: "on" | "off" | "unavailable";
         /**
          * @description Which correction was applied.
          * @enum {string}
@@ -18709,6 +18734,11 @@ export interface components {
         PickResponse: {
             task_id: string;
         };
+        /** @description Whether the web player's format asks are converted. */
+        PlaybackConversion: {
+            /** @description On, turned off by an admin, or impossible without ffmpeg. */
+            conversion: components["schemas"]["Conversion"];
+        };
         /** @description Heartbeat for a live session: keeps presence alive and the scrubber live. */
         PlaybackProgressRequest: {
             /** @description Reporting device slug. */
@@ -20646,6 +20676,12 @@ export interface components {
              * @description Duration in seconds.
              */
             duration_secs?: number | null;
+            /**
+             * @description The file's format in the library's names (`flac`, `mp3`, `alac`,
+             *     `m4a` for an MP4 file whose codec the server did not say), when the
+             *     source reports it.
+             */
+            format?: string | null;
             /** @description Opaque remote id. */
             id: string;
             /** @description Relative images URL under `/api/v3`, when art exists. */
@@ -40449,6 +40485,35 @@ export interface operations {
             };
         };
     };
+    playback_conversion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whether converting is on */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaybackConversion"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     report_progress: {
         parameters: {
             query?: never;
@@ -47043,6 +47108,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description A format was asked for and the server is not converting */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Range not satisfiable */
             416: {
                 headers: {
@@ -47125,6 +47199,13 @@ export interface operations {
             };
             /** @description Unknown audio id */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A format was asked for and the server is not converting */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

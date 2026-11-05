@@ -34,7 +34,7 @@ use super::source::{AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBr
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, HistoryPage, HubView, InfoView,
     LyricLine, LyricsView, PlaylistDetail, PlaylistSummary, SearchResults, SessionView,
-    SessionsView, SourceName, StatsView, TrackView,
+    SessionsView, SourceName, StatsView, TrackView, audio_format,
 };
 use super::navidrome_models::{Album, Artist, Body, Envelope, Playlist, Song};
 use super::transport::{RemoteHttp, request_id};
@@ -1250,6 +1250,7 @@ fn track_view(song: &Song) -> TrackView {
         recording_mbid: non_empty(song.music_brainz_id.as_deref()),
         image_url: cover_url(song.cover_art.as_deref()),
         part_key: None,
+        format: audio_format(None, song.suffix.as_deref()),
     }
 }
 
@@ -1320,7 +1321,29 @@ fn hex_bytes(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::cover_url;
+    use super::{Envelope, cover_url, track_view};
+
+    /// Navidrome 0.62.0's own answer: each song's suffix is its format, and
+    /// an MP4 file, which names no codec, stays `m4a`.
+    #[test]
+    fn recorded_songs_carry_their_format() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/reference/compat/navidrome-0.62.0/getRandomSongs.json");
+        let text = std::fs::read_to_string(path).expect("the recording reads");
+        let body = serde_json::from_str::<serde_json::Value>(&text).unwrap()["body"].clone();
+        let envelope: Envelope = serde_json::from_value(body).unwrap();
+        let songs = envelope.response.random_songs.unwrap().song;
+        let formats: Vec<_> = songs
+            .iter()
+            .map(|song| (song.title.clone().unwrap(), track_view(song).format))
+            .collect();
+        for (title, format) in [("One", "mp3"), ("Airbag", "flac"), ("Teardrop", "m4a")] {
+            assert!(
+                formats.contains(&(title.to_owned(), Some(format.to_owned()))),
+                "{title}: {formats:?}"
+            );
+        }
+    }
 
     #[test]
     fn image_addresses_need_a_plain_id() {

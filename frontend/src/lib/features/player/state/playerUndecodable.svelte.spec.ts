@@ -3,7 +3,9 @@ import { userEvent } from 'vitest/browser';
 
 import { setAudioElement } from '$lib/features/player/playback/audioElement';
 import type { QueueItem } from '$lib/features/player/playback/types';
+import { queryClient } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
+import { fakeApi } from '$lib/test/api';
 import { playerStore } from './player.svelte';
 
 const MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
@@ -63,6 +65,8 @@ describe('a track the browser cannot play', () => {
 		document.body.append(button);
 		await userEvent.click(button);
 		button.remove();
+		queryClient.clear();
+		fakeApi({ 'GET /api/v3/playback/conversion': { conversion: 'on' } });
 		refused = [ALAC];
 		vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockImplementation((type) =>
 			refused.includes(type) ? '' : 'probably'

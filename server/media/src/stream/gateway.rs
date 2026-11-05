@@ -20,8 +20,11 @@
 //! that moves it into the response body bounds response concurrency, not
 //! only opens (compat's `GatewayAudio` does). A transcode takes the lease into
 //! the transcode instead, which frees it with the ffmpeg slot. Remote reads
-//! stream by range and are direct-only (the ffmpeg service takes a local
-//! path; per-source server-side transcode stays a remotes-adapter concern).
+//! stream by range. A remote read that names a format the plan transcodes
+//! to (the web player asking for a format the browser can play) is spooled
+//! to a temp file first, as a plugin URL is, because ffmpeg reads only
+//! local files. The source format is the upstream content type's, and the
+//! same [`decide()`] call and limits apply.
 //!
 //! [`StreamEngine`]: super::engine::StreamEngine
 //! [`StreamParams`]: super::engine::StreamParams
@@ -39,8 +42,8 @@ use droppedneedle_plugins::capabilities::stream::{open_url, proxy_chunks};
 use futures_util::StreamExt as _;
 
 use super::engine::{
-    AudioSource, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen,
-    content_type_for_extension,
+    AudioSource, Conversion, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen,
+    content_type_for_extension, format_for_content_type,
 };
 use super::leases::OwnedDirectLease;
 use super::transcode::{
@@ -141,6 +144,19 @@ impl<R, T> Gateway<R, T> {
     pub fn can_transcode(&self) -> bool {
         self.ffmpeg_present
     }
+
+    /// Whether a stream that asks for a format is converted now; `None`
+    /// while the `connect_apps` section does not read.
+    pub fn conversion(&self) -> Option<Conversion> {
+        let settings = crate::transcode_policy(&self.settings)?;
+        Some(if !self.ffmpeg_present {
+            Conversion::Unavailable
+        } else if settings.transcoding_enabled {
+            Conversion::On
+        } else {
+            Conversion::Off
+        })
+    }
 }
 
 impl<R: RemoteReader, T: Transcoder> StreamEngine for Gateway<R, T> {
@@ -157,14 +173,7 @@ impl<R: RemoteReader, T: Transcoder> StreamEngine for Gateway<R, T> {
         match request.source {
             AudioSource::Local => self.stream_local(&request, head_only, lease).await,
             AudioSource::Plugin => self.stream_plugin(&request, head_only, lease).await,
-            source => {
-                let mut media = self
-                    .remote
-                    .open_stream(source, &request.key, &request.user_id, head_only)
-                    .await?;
-                media.lease = Some(lease);
-                Ok(media)
-            }
+            source => self.stream_remote(source, &request, head_only, lease).await,
         }
     }
 }
@@ -305,6 +314,107 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             request.params.start_seconds,
             &settings,
             self.ffmpeg_present,
+        ))
+    }
+
+    /// One media server read: the upstream bytes as they come, or, when the
+    /// request names a format the plan transcodes to, ffmpeg's output over
+    /// a spooled copy. HEAD answers without spooling.
+    async fn stream_remote(
+        &self,
+        source: AudioSource,
+        request: &StreamOpen,
+        head_only: bool,
+        lease: OwnedDirectLease,
+    ) -> Result<StreamMedia, StreamFault> {
+        let mut media = self
+            .remote
+            .open_stream(source, &request.key, &request.user_id, head_only)
+            .await?;
+        let asked = request
+            .params
+            .format
+            .as_deref()
+            .is_some_and(|format| !format.is_empty() && !format.eq_ignore_ascii_case("raw"));
+        if !asked {
+            media.lease = Some(lease);
+            return Ok(media);
+        }
+        let format = format_for_content_type(&media.content_type);
+        let track = TrackInfo {
+            file_format: format.clone(),
+            bitrate_kbps: None,
+            duration_seconds: 0.0,
+        };
+        let plan = self.plan_for(&track, request)?;
+        let Some(out_format) = plan.out_format() else {
+            media.lease = Some(lease);
+            return Ok(media);
+        };
+        let mut out = StreamMedia {
+            content_type: out_media_type(&out_format).to_owned(),
+            total_len: 0,
+            transcoded: true,
+            estimated_len: estimated_len(request, &plan),
+            body: MediaBody::Empty,
+            lease: None,
+        };
+        if head_only {
+            out.lease = Some(lease);
+            return Ok(out);
+        }
+        let upstream = |cause: String| StreamFault::Upstream { source, cause };
+        let chunks = match media.body {
+            MediaBody::Spans(open) if plugin_url::within_cap(media.total_len) => {
+                open(0, media.total_len)
+            }
+            MediaBody::Spans(_) => {
+                return Err(upstream(format!(
+                    "the stream is over the size cap ({} bytes)",
+                    media.total_len
+                )));
+            }
+            MediaBody::Chunks(chunks) => chunks,
+            MediaBody::Bytes(bytes) => futures_util::stream::once(async { Ok(bytes) }).boxed(),
+            MediaBody::File(_) | MediaBody::Empty => {
+                return Err(StreamFault::Internal {
+                    cause: "a remote read answered no body to transcode".to_owned(),
+                });
+            }
+        };
+        let spool = plugin_url::Spool::fill(chunks, &format, &self.plugins.spool_dir)
+            .await
+            .map_err(|error| upstream(format!("could not be fetched for transcoding: {error}")))?;
+        out.body = self.transcode_spool(spool, &plan, request, lease).await?;
+        Ok(out)
+    }
+
+    /// ffmpeg's output over a spooled file. The spool lives inside the body
+    /// stream and goes with it.
+    async fn transcode_spool(
+        &self,
+        spool: plugin_url::Spool,
+        plan: &StreamPlan,
+        request: &StreamOpen,
+        lease: OwnedDirectLease,
+    ) -> Result<MediaBody, StreamFault> {
+        let source = tokio::fs::File::open(spool.path())
+            .await
+            .map_err(io_fault)?
+            .into_std()
+            .await;
+        let chunks = self
+            .transcoder
+            .stream(source, plan, &request.user_id, Some(lease))
+            .await
+            .map_err(transcode_fault)?;
+        Ok(MediaBody::Chunks(
+            chunks
+                .map(move |chunk| {
+                    let _keep = &spool;
+                    chunk
+                })
+                .boxed(),
         ))
     }
 
@@ -449,7 +559,8 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             return Ok(media);
         }
         let response = plugin_url_response(client, plugin, url, None).await?;
-        let spool = plugin_url::Spool::fill(response, format, &self.plugins.spool_dir)
+        let chunks = proxy_chunks(response).boxed();
+        let spool = plugin_url::Spool::fill(chunks, format, &self.plugins.spool_dir)
             .await
             .map_err(|error| StreamFault::Upstream {
                 source: AudioSource::Plugin,
@@ -457,25 +568,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                     "plugin {plugin} stream URL could not be fetched for transcoding: {error}"
                 ),
             })?;
-        let source = tokio::fs::File::open(spool.path())
-            .await
-            .map_err(io_fault)?
-            .into_std()
-            .await;
-        let chunks = self
-            .transcoder
-            .stream(source, &plan, &request.user_id, Some(lease))
-            .await
-            .map_err(transcode_fault)?;
-        // The spool lives inside the body stream and goes with it.
-        media.body = MediaBody::Chunks(
-            chunks
-                .map(move |chunk| {
-                    let _keep = &spool;
-                    chunk
-                })
-                .boxed(),
-        );
+        media.body = self.transcode_spool(spool, &plan, request, lease).await?;
         Ok(media)
     }
 }

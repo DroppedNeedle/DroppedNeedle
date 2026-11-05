@@ -64,7 +64,7 @@ impl ImportSink for PlaylistImportSink {
                         cover_url: track.image_url,
                         source_type: source_type.clone(),
                         available_sources: Some(vec![source_type.clone()]),
-                        format: None,
+                        format: track.format,
                         track_number: track.track_number,
                         disc_number: track.disc_number,
                         duration: track.duration_secs.map(|secs| secs as f64),

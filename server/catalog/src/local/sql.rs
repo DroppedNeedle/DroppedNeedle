@@ -176,14 +176,17 @@ macro_rules! album_track {
     };
 }
 
-/// Album `$album`'s primary format: its most common indexed track format,
-/// lowercased; NULL for an album without indexed tracks.
+/// Album `$album`'s primary format: its most common indexed track format
+/// as [`track_codec!`] names it (ALAC apart from AAC), lowercased; NULL for
+/// an album without indexed tracks.
 macro_rules! album_primary_format {
     ($album:literal) => {
         concat!(
-            "LOWER((SELECT t2.file_format FROM local_tracks t2 WHERE ",
+            "LOWER((SELECT ",
+            $crate::local::sql::track_codec!("t2"),
+            " AS codec FROM local_tracks t2 WHERE ",
             $crate::local::sql::album_track!("t2", concat!($album, ".id")),
-            " GROUP BY t2.file_format ORDER BY COUNT(*) DESC, t2.file_format LIMIT 1))"
+            " GROUP BY codec ORDER BY COUNT(*) DESC, codec LIMIT 1))"
         )
     };
 }
@@ -254,10 +257,8 @@ droppedneedle_kernel::sql! {
         (ae.local_album_id IS NOT NULL) AS linked, \
         COUNT(t.id) AS track_count, \
         COALESCE(SUM(t.duration_seconds), 0.0) AS total_duration_seconds, \
-        COALESCE(SUM(t.file_size_bytes), 0) AS total_size_bytes, \
-        (SELECT t2.file_format FROM local_tracks t2 \
-         WHERE t2.local_album_id = a.id AND t2.availability = 'indexed' \
-         GROUP BY t2.file_format ORDER BY COUNT(*) DESC, t2.file_format LIMIT 1) AS format, \
+        COALESCE(SUM(t.file_size_bytes), 0) AS total_size_bytes, "
+        + (album_primary_format!("a")) + " AS format, \
         a.year AS year, a.is_compilation AS is_compilation, \
         COALESCE(w.source IN ('folder','embedded'), 0) AS cover_available, \
         CASE WHEN w.source IN ('folder','embedded') THEN w.version END AS art_version, \

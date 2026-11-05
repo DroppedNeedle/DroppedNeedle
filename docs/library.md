@@ -58,7 +58,9 @@ MusicBrainz lookups pace at 1 request per second on the official MusicBrainz ser
 
 The library takes FLAC, MP3, Ogg Vorbis, Opus, AAC, ALAC or AAC in M4A, and WAV. Scans and imports skip other formats, WMA, APE and WavPack included.
 
-When your browser can't play a library file, the web player asks the server for a transcode by itself: FLAC for a lossless source such as ALAC, so nothing is lost (the max bitrate under Settings > Connect Apps doesn't apply to it), and Opus or MP3 for a lossy one. Seeking works as usual. With transcoding off, or when a transcode fails, the track is skipped with one message.
+When your browser can't play a track, the web player asks the server for a transcode by itself, for library files and for Jellyfin, Navidrome and Plex tracks alike: FLAC for a lossless source such as ALAC, so nothing is lost (the max bitrate under Settings > Connect Apps doesn't apply to it), and Opus or MP3 for a lossy one. Seeking works as usual. The player bar shows the track's own format, with "Converted" beside it while a transcode plays. A media server track is copied to a temporary file on the server while it is transcoded, and the file is removed when playback ends. Navidrome names an M4A file without saying whether it holds AAC or ALAC, and the player doesn't know a Plex track's format, so such a track is tried as it is first and transcoded when it doesn't play.
+
+The "On-the-fly transcoding" switch under Settings > Connect Apps turns these transcodes on and off, the same switch music apps use, and they need ffmpeg (the Docker image has it). With the switch off, or without ffmpeg, a track your browser can't play is skipped with one message saying why, and nothing is downloaded for it. The queue marks it "Can't play", and so does any later track the player already knows it can't play. An admin's message has a link to turn transcoding on. A transcode that fails is skipped the same way. Album formats, the format filter and saved playlist entries name ALAC apart from AAC; the per-format track counts on the library's statistics still count both as M4A.
 
 ## How an album is identified
 

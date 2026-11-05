@@ -92,6 +92,11 @@ pub struct Item {
     pub album_primary_image_tag: Option<String>,
     /// The calling user's play data.
     pub user_data: Option<UserData>,
+    /// The file's container: `flac`, `mp3`, or ffprobe's list for MP4
+    /// (`mov,mp4,m4a,3gp,3g2,mj2`). Sent without being asked for.
+    pub container: Option<String>,
+    /// The file's streams; sent when `Fields` names `MediaStreams`.
+    pub media_streams: Vec<MediaStream>,
 }
 
 impl Item {
@@ -162,6 +167,10 @@ struct RawItem {
     album_primary_image_tag: Option<String>,
     #[serde(default)]
     user_data: Option<UserData>,
+    #[serde(default)]
+    container: Option<String>,
+    #[serde(default)]
+    media_streams: Vec<MediaStream>,
 }
 
 impl TryFrom<RawItem> for Item {
@@ -193,6 +202,8 @@ impl TryFrom<RawItem> for Item {
             image_tags: raw.image_tags,
             album_primary_image_tag: raw.album_primary_image_tag,
             user_data: raw.user_data,
+            container: raw.container,
+            media_streams: raw.media_streams,
         })
     }
 }
@@ -206,6 +217,21 @@ pub struct NamedRef {
     /// Display name.
     #[serde(default)]
     pub name: Option<String>,
+}
+
+/// One stream of an item's file. Verified against Jellyfin 10.10.6
+/// (`tests/reference/compat/jellyfin-10.10.6/item.track.json`): an audio
+/// stream has `Type` `Audio` and ffprobe's codec name in `Codec`, which
+/// that recording shows only as `flac`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct MediaStream {
+    /// ffprobe's codec name, e.g. `flac`, `alac` or `aac`.
+    #[serde(default)]
+    pub codec: Option<String>,
+    /// `Audio`, `Video`, `EmbeddedImage`, ...
+    #[serde(default, rename = "Type")]
+    pub kind: Option<String>,
 }
 
 /// The calling user's data on an item.
