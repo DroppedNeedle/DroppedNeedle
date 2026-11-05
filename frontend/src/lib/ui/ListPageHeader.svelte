@@ -15,7 +15,8 @@
 	a hub's short statement in spaced mono caps beside the title, underlined
 	by an acid brush stroke; the ticket then sits on the title's lower right.
 	`mark` sits before the title (a media server's round icon badge). The
-	record, ticket and strokes are decoration.
+	record, ticket and strokes are decoration. `compact` sets a smaller title
+	on a desktop, for a working page whose panes need the height (Settings).
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -54,6 +55,8 @@
 		tagline?: string;
 		/** A badge before the title, such as a server's icon. */
 		mark?: Snippet;
+		/** A smaller title on a desktop, for a page whose panes need the height. */
+		compact?: boolean;
 	}
 
 	let {
@@ -73,7 +76,8 @@
 		longSubtitle = false,
 		snugTitle = false,
 		tagline,
-		mark
+		mark,
+		compact = false
 	}: Props = $props();
 
 	const titleScale = $derived(
@@ -94,6 +98,7 @@
 	class:dn-lph--snug={snugTitle}
 	class:dn-lph--tagline={tagline}
 	class:dn-lph--mark={mark}
+	class:dn-lph--compact={compact}
 	style:--dn-lph-scale={titleScale}
 >
 	<div class="dn-lph__row">
@@ -419,6 +424,23 @@
 	@media (max-width: 1023px) {
 		.dn-lph {
 			padding-inline: 1.5rem;
+		}
+	}
+
+	@media (min-width: 768px) {
+		.dn-lph--compact {
+			--pad-top: 1rem;
+			padding-bottom: 1.125rem;
+		}
+		.dn-lph.dn-lph--compact .dn-lph__title,
+		.dn-lph.dn-lph--compact:not(.dn-lph--back) .dn-lph__title {
+			font-size: 4.25rem;
+		}
+		.dn-lph--compact .dn-lph__rule {
+			margin-block: 0.75rem 0.5rem;
+		}
+		.dn-lph--compact .dn-lph__lede {
+			font-size: 1rem;
 		}
 	}
 

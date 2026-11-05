@@ -1,5 +1,5 @@
 <script lang="ts">
-	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
 	import {
 		createSaveJellyfinSettingsMutation,
 		createVerifyJellyfinMutation,
@@ -42,78 +42,73 @@
 	const loginLocked = $derived(!section.testPassed && !section.saved?.login_enabled);
 </script>
 
-<Card variant="bordered" as="section">
-	{#snippet header()}
-		<div class="flex items-center gap-3">
-			<div class="rounded-lg bg-primary/10 p-2">
-				<JellyfinIcon class="h-5 w-5 text-primary" />
-			</div>
-			<div>
-				<h2 class="font-semibold">Jellyfin</h2>
-				<p class="text-sm text-muted">Recently played and favorites from your server.</p>
-			</div>
-		</div>
-	{/snippet}
-	<QueryBoundary query={section} what="the Jellyfin settings">
-		{#snippet children(draft)}
-			<div class="mt-2 flex flex-col gap-5">
-				<TextField
-					label="Jellyfin URL"
-					type="url"
-					mono
-					placeholder="http://localhost:8096"
-					bind:value={draft.jellyfin_url}
-					error={section.fieldError('jellyfin_url', 'Jellyfin URL')}
-				/>
-				<div class="grid gap-4 md:grid-cols-2">
-					<SecretField
-						label="API key"
-						mask={SECRET_MASK}
-						placeholder="Your Jellyfin API key"
-						help="Dashboard → API Keys → Create"
-						bind:value={draft.api_key}
-						error={section.fieldError('api_key', 'API key')}
+<div class="space-y-5">
+	<SettingsPaneHeader
+		title="Jellyfin"
+		description="Recently played and favorites from your server."
+	/>
+	<Card variant="bordered" as="section">
+		<QueryBoundary query={section} what="the Jellyfin settings">
+			{#snippet children(draft)}
+				<div class="mt-2 flex flex-col gap-5">
+					<TextField
+						label="Jellyfin URL"
+						type="url"
+						mono
+						placeholder="http://localhost:8096"
+						bind:value={draft.jellyfin_url}
+						error={section.fieldError('jellyfin_url', 'Jellyfin URL')}
 					/>
-					{#if users.length > 0}
-						<SelectField
-							label="User"
-							bind:value={draft.user_id}
-							options={users.map((user) => ({ value: user.id, label: user.name }))}
-							error={section.fieldError('user_id', 'User')}
+					<div class="grid gap-4 md:grid-cols-2">
+						<SecretField
+							label="API key"
+							mask={SECRET_MASK}
+							placeholder="Your Jellyfin API key"
+							help="Dashboard → API Keys → Create"
+							bind:value={draft.api_key}
+							error={section.fieldError('api_key', 'API key')}
 						/>
-					{:else}
-						<TextField
-							label="User ID"
-							mono
-							placeholder="Test to pick a user"
-							help="Test the connection to choose from a list."
-							bind:value={draft.user_id}
-							error={section.fieldError('user_id', 'User ID')}
+						{#if users.length > 0}
+							<SelectField
+								label="User"
+								bind:value={draft.user_id}
+								options={users.map((user) => ({ value: user.id, label: user.name }))}
+								error={section.fieldError('user_id', 'User')}
+							/>
+						{:else}
+							<TextField
+								label="User ID"
+								mono
+								placeholder="Test to pick a user"
+								help="Test the connection to choose from a list."
+								bind:value={draft.user_id}
+								error={section.fieldError('user_id', 'User ID')}
+							/>
+						{/if}
+					</div>
+
+					<div class="flex flex-col gap-4 border-t border-base-300 pt-5">
+						<ToggleRow
+							label="Use Jellyfin"
+							description={enableLocked
+								? 'Test the connection first.'
+								: 'Show recently played and favorite artists on Home.'}
+							bind:checked={draft.enabled}
+							disabled={enableLocked}
 						/>
-					{/if}
-				</div>
+						<ToggleRow
+							label="Sign in with Jellyfin"
+							description={loginLocked
+								? 'Test the connection first.'
+								: 'People sign in with their Jellyfin account.'}
+							bind:checked={draft.login_enabled}
+							disabled={loginLocked}
+						/>
+					</div>
 
-				<div class="flex flex-col gap-4 border-t border-base-300 pt-5">
-					<ToggleRow
-						label="Use Jellyfin"
-						description={enableLocked
-							? 'Test the connection first.'
-							: 'Show recently played and favorite artists on Home.'}
-						bind:checked={draft.enabled}
-						disabled={enableLocked}
-					/>
-					<ToggleRow
-						label="Sign in with Jellyfin"
-						description={loginLocked
-							? 'Test the connection first.'
-							: 'People sign in with their Jellyfin account.'}
-						bind:checked={draft.login_enabled}
-						disabled={loginLocked}
-					/>
+					<SaveBar {...section.bar} testLabel="Test connection" />
 				</div>
-
-				<SaveBar {...section.bar} testLabel="Test connection" />
-			</div>
-		{/snippet}
-	</QueryBoundary>
-</Card>
+			{/snippet}
+		</QueryBoundary>
+	</Card>
+</div>

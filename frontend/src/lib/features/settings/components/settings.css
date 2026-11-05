@@ -1,0 +1,110 @@
+/* The settings pane's frame, shared by every section: the cards, a card
+   inside a card as an inset group, the notes and warnings, the field labels
+   and the mono caps sub-heads. Sections build on the kit; this only sets
+   how its pieces sit in the pane. The file sits outside the cascade
+   layers on purpose: a layer declared here first would reorder the kit's. */
+
+.dn-set-pane {
+	display: flex;
+	flex-direction: column;
+	gap: 1.5rem;
+}
+.dn-set-pane > * {
+	min-width: 0;
+	max-width: 68rem;
+}
+
+/* A card inside a card is an inset group: a step down, a quieter edge. */
+.dn-set-pane .card .card:not(.dn-card-paper) {
+	border-color: color-mix(in oklab, var(--dn-line) 80%, transparent);
+	border-radius: 0.625rem;
+	background-color: var(--color-base-100);
+}
+
+/* Notes and warnings: a box edged in its tone, an icon in the tone, the
+   text in the page's ink. */
+.dn-set-pane .alert {
+	--set-tone: var(--color-info);
+	align-items: flex-start;
+	border: 1px solid color-mix(in oklab, var(--set-tone) 65%, transparent);
+	border-radius: 0.625rem;
+	background-color: color-mix(in oklab, var(--set-tone) 9%, var(--color-base-200));
+	background-image: none;
+	box-shadow: none;
+	color: var(--color-base-content);
+}
+.dn-set-pane .alert.alert-warning {
+	--set-tone: var(--color-warning);
+}
+.dn-set-pane .alert.alert-error {
+	--set-tone: var(--color-error);
+}
+.dn-set-pane .alert.alert-success {
+	--set-tone: var(--color-success);
+}
+.dn-set-pane .alert > svg:first-child {
+	color: var(--set-tone);
+}
+
+/* A form with unsaved changes keeps its Save in view at the pane's foot,
+   on an acid-edged strip, while the form is on screen. */
+.dn-set-pane .dn-savebar[data-dirty] {
+	position: sticky;
+	bottom: 0.75rem;
+	z-index: 2;
+	padding: 0.625rem 0.75rem;
+	border: 1px solid var(--dn-action-edge);
+	border-radius: 0.625rem;
+	background-color: color-mix(in oklab, var(--color-base-200) 94%, transparent);
+	box-shadow: 0 10px 24px -14px rgb(0 0 0 / 0.6);
+	backdrop-filter: blur(6px);
+}
+
+/* Field labels are bold. */
+.dn-set-pane .fieldset-legend {
+	font-weight: 700;
+}
+
+/* A card's own title on a section with several cards. */
+.dn-set-title {
+	font-family: var(--font-display);
+	font-size: 1.5rem;
+	font-weight: 400;
+	line-height: 1.05;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+	color: var(--color-base-content);
+	font-synthesis: none;
+}
+.dn-set-title + p {
+	margin-top: 0.25rem;
+}
+
+/* A sub-head inside a card ("Downloads mount", "Quota defaults"). */
+.dn-set-kicker {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	font-family: var(--font-mono);
+	font-size: 0.8125rem;
+	font-weight: 600;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--color-base-content);
+}
+
+/* Phones: a card at the default padding gives its width to the fields. */
+@media (max-width: 639px) {
+	.dn-set-pane .card-body:not(.p-0, .p-3, .p-4) {
+		padding: 1.125rem 1rem;
+	}
+	.dn-set-pane .card .card-body.p-4 {
+		padding: 0.875rem 0.75rem;
+	}
+}
+
+@media (forced-colors: active) {
+	.dn-set-pane .alert {
+		border-color: CanvasText;
+	}
+}

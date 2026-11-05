@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { ArrowDown, ArrowUp, Disc3, Plus, X } from 'lucide-svelte';
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
+	import { ArrowDown, ArrowUp, Plus, X } from 'lucide-svelte';
 	import {
 		createSaveEditionPreferencesMutation,
 		getEditionPreferencesQuery,
 		type EditionPreferences
 	} from '$lib/features/settings/queries/SectionSettingsQueries.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
@@ -88,142 +88,137 @@
 	}
 </script>
 
-<Card>
-	{#snippet header()}
-		<div class="flex items-center gap-2">
-			<Disc3 class="h-5 w-5 text-primary" aria-hidden="true" />
-			<CardTitle>Edition preferences</CardTitle>
-		</div>
-	{/snippet}
-	<div class="flex flex-col gap-4">
-		<p class="text-sm text-muted">
-			Most albums come in several editions: the original CD, a remaster, a deluxe set, a vinyl
-			pressing. DroppedNeedle picks the edition that fits your files best. When two editions fit
-			equally well, or when you request an album you don't have yet, it uses these preferences. An
-			edition you pick yourself always wins.
-		</p>
-
-		<QueryBoundary query={section} what="the edition preferences">
-			{#snippet children(draft)}
-				<div class="grid gap-4 lg:grid-cols-3">
-					{#each lists as list (list.key)}
-						{@const refusal = section.fieldError(list.key, list.title)}
-						<Card as="section" variant="bordered" padding="md">
-							<h3 class="font-semibold">{list.title}</h3>
-							<p class="grow-0 text-xs text-muted">{list.hint}</p>
-							<ol class="mt-3 space-y-1">
-								{#each draft[list.key] as entry, index (entry)}
-									<li class="flex items-center gap-2 rounded-lg bg-base-200/60 px-2 py-1 text-sm">
-										<span class="w-5 text-xs text-muted">{index + 1}.</span>
-										<span class="min-w-0 flex-1 truncate">{entry}</span>
-										<IconButton
-											size="xs"
-											shape="square"
-											icon={ArrowUp}
-											label={`Move ${entry} up`}
-											disabled={index === 0}
-											onclick={() => move(draft, list.key, index, -1)}
-										/>
-										<IconButton
-											size="xs"
-											shape="square"
-											icon={ArrowDown}
-											label={`Move ${entry} down`}
-											disabled={index === draft[list.key].length - 1}
-											onclick={() => move(draft, list.key, index, 1)}
-										/>
-										<IconButton
-											size="xs"
-											shape="square"
-											icon={X}
-											label={`Remove ${entry}`}
-											onclick={() => remove(draft, list.key, index)}
-										/>
-									</li>
-								{:else}
-									<li class="text-xs text-muted">
-										{list.key === 'countries' ? 'Store region, then worldwide.' : 'No preference.'}
-									</li>
-								{/each}
-							</ol>
-							<form
-								class="join mt-3 w-full"
-								onsubmit={(event) => {
-									event.preventDefault();
-									add(draft, list.key);
-								}}
-							>
-								<Input
-									size="sm"
-									class="join-item w-full"
-									placeholder={list.placeholder}
-									label={`Add to ${list.title}`}
-									bind:value={adding[list.key]}
-								/>
-								<IconButton
-									type="submit"
-									variant="neutral"
-									size="sm"
-									shape="square"
-									class="join-item"
-									icon={Plus}
-									label="Add"
-								/>
-							</form>
-							{#if refusal}
-								<p class="mt-2 text-sm text-error" role="alert">{refusal}</p>
-							{/if}
-						</Card>
-					{/each}
-				</div>
-
-				<div class="grid gap-4 md:grid-cols-2">
-					<SelectField
-						label="Release date"
-						options={dateOptions}
-						bind:value={draft.date}
-						error={section.fieldError('date', 'Release date')}
-					/>
-					<SelectField
-						label="Standard or deluxe"
-						options={versionOptions}
-						bind:value={draft.version}
-						error={section.fieldError('version', 'Standard or deluxe')}
-					/>
-				</div>
-
-				<fieldset>
-					<legend class="text-sm font-medium">Avoid unless nothing else fits</legend>
-					<div class="mt-2 flex flex-wrap gap-3">
-						{#each avoidable as kind (kind)}
-							<label class="label cursor-pointer gap-2">
-								<input
-									type="checkbox"
-									class="checkbox checkbox-sm"
-									checked={draft.avoid_types.includes(kind)}
-									onchange={(event) => toggleAvoid(draft, kind, event.currentTarget.checked)}
-								/>
-								<span class="capitalize">{kind}</span>
-							</label>
+<div class="space-y-5">
+	<SettingsPaneHeader
+		title="Edition preferences"
+		description="Most albums come in several editions: the original CD, a remaster, a deluxe set, a vinyl pressing. DroppedNeedle picks the edition that fits your files best. When two editions fit equally well, or when you request an album you don't have yet, it uses these preferences. An edition you pick yourself always wins."
+	/>
+	<Card>
+		<div class="flex flex-col gap-4">
+			<QueryBoundary query={section} what="the edition preferences">
+				{#snippet children(draft)}
+					<div class="grid gap-4 lg:grid-cols-3">
+						{#each lists as list (list.key)}
+							{@const refusal = section.fieldError(list.key, list.title)}
+							<Card as="section" variant="bordered" padding="md">
+								<h3 class="font-semibold">{list.title}</h3>
+								<p class="grow-0 text-xs text-muted">{list.hint}</p>
+								<ol class="mt-3 space-y-1">
+									{#each draft[list.key] as entry, index (entry)}
+										<li class="flex items-center gap-2 rounded-lg bg-base-200/60 px-2 py-1 text-sm">
+											<span class="w-5 text-xs text-muted">{index + 1}.</span>
+											<span class="min-w-0 flex-1 truncate">{entry}</span>
+											<IconButton
+												size="xs"
+												shape="square"
+												icon={ArrowUp}
+												label={`Move ${entry} up`}
+												disabled={index === 0}
+												onclick={() => move(draft, list.key, index, -1)}
+											/>
+											<IconButton
+												size="xs"
+												shape="square"
+												icon={ArrowDown}
+												label={`Move ${entry} down`}
+												disabled={index === draft[list.key].length - 1}
+												onclick={() => move(draft, list.key, index, 1)}
+											/>
+											<IconButton
+												size="xs"
+												shape="square"
+												icon={X}
+												label={`Remove ${entry}`}
+												onclick={() => remove(draft, list.key, index)}
+											/>
+										</li>
+									{:else}
+										<li class="text-xs text-muted">
+											{list.key === 'countries'
+												? 'Store region, then worldwide.'
+												: 'No preference.'}
+										</li>
+									{/each}
+								</ol>
+								<form
+									class="join mt-3 w-full"
+									onsubmit={(event) => {
+										event.preventDefault();
+										add(draft, list.key);
+									}}
+								>
+									<Input
+										size="sm"
+										class="join-item w-full"
+										placeholder={list.placeholder}
+										label={`Add to ${list.title}`}
+										bind:value={adding[list.key]}
+									/>
+									<IconButton
+										type="submit"
+										variant="neutral"
+										size="sm"
+										shape="square"
+										class="join-item"
+										icon={Plus}
+										label="Add"
+									/>
+								</form>
+								{#if refusal}
+									<p class="mt-2 text-sm text-error" role="alert">{refusal}</p>
+								{/if}
+							</Card>
 						{/each}
 					</div>
-					{#if section.fieldError('avoid_types', 'Avoid unless nothing else fits')}
-						<p class="mt-2 text-sm text-error" role="alert">
-							{section.fieldError('avoid_types', 'Avoid unless nothing else fits')}
-						</p>
-					{/if}
-				</fieldset>
 
-				<Card variant="bordered" padding="md">
-					<ToggleRow
-						label="Also manage unconfirmed matches"
-						description="When DroppedNeedle isn't sure of an album's edition, it still uses its best guess for pages, playback and downloads, but leaves the files alone until you confirm it. Turn this on to let tagging and organizing work on those albums too."
-						bind:checked={draft.manage_unconfirmed}
-					/>
-				</Card>
+					<div class="grid gap-4 md:grid-cols-2">
+						<SelectField
+							label="Release date"
+							options={dateOptions}
+							bind:value={draft.date}
+							error={section.fieldError('date', 'Release date')}
+						/>
+						<SelectField
+							label="Standard or deluxe"
+							options={versionOptions}
+							bind:value={draft.version}
+							error={section.fieldError('version', 'Standard or deluxe')}
+						/>
+					</div>
 
-				<SaveBar {...section.bar} />
-			{/snippet}
-		</QueryBoundary>
-	</div>
-</Card>
+					<fieldset>
+						<legend class="text-sm font-medium">Avoid unless nothing else fits</legend>
+						<div class="mt-2 flex flex-wrap gap-3">
+							{#each avoidable as kind (kind)}
+								<label class="label cursor-pointer gap-2">
+									<input
+										type="checkbox"
+										class="checkbox checkbox-sm"
+										checked={draft.avoid_types.includes(kind)}
+										onchange={(event) => toggleAvoid(draft, kind, event.currentTarget.checked)}
+									/>
+									<span class="capitalize">{kind}</span>
+								</label>
+							{/each}
+						</div>
+						{#if section.fieldError('avoid_types', 'Avoid unless nothing else fits')}
+							<p class="mt-2 text-sm text-error" role="alert">
+								{section.fieldError('avoid_types', 'Avoid unless nothing else fits')}
+							</p>
+						{/if}
+					</fieldset>
+
+					<Card variant="bordered" padding="md">
+						<ToggleRow
+							label="Also manage unconfirmed matches"
+							description="When DroppedNeedle isn't sure of an album's edition, it still uses its best guess for pages, playback and downloads, but leaves the files alone until you confirm it. Turn this on to let tagging and organizing work on those albums too."
+							bind:checked={draft.manage_unconfirmed}
+						/>
+					</Card>
+
+					<SaveBar {...section.bar} />
+				{/snippet}
+			</QueryBoundary>
+		</div>
+	</Card>
+</div>

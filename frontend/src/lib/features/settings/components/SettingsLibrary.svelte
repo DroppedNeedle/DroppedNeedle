@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import '$lib/features/library-management/components/library-management.css';
 	import { TriangleAlert, ArrowRight, CircleCheckBig, FolderCog, ScanSearch } from 'lucide-svelte';
@@ -258,12 +259,10 @@
 </script>
 
 <div class="space-y-6">
-	<div>
-		<h2 class="text-xl font-bold">Library</h2>
-		<p class="text-sm text-muted">
-			Choose how DroppedNeedle observes your library and, separately, whether it may change it.
-		</p>
-	</div>
+	<SettingsPaneHeader
+		title="Library"
+		description="Choose how DroppedNeedle observes your library and, separately, whether it may change it."
+	/>
 
 	{#if settingsQuery.isError && settingsQuery.data}
 		<div class="alert alert-warning text-sm">

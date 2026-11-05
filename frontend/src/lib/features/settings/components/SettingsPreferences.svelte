@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
 	import {
 		createSaveReleasePreferencesMutation,
 		getReleasePreferencesQuery,
@@ -7,7 +8,6 @@
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardActions from '$lib/ui/CardActions.svelte';
-	import CardTitle from '$lib/ui/CardTitle.svelte';
 
 	interface ReleaseTypeOption {
 		id: string;
@@ -171,42 +171,39 @@
 	</div>
 {/snippet}
 
-<Card>
-	{#snippet header()}
-		<CardTitle class="text-2xl mb-2">Release Types</CardTitle>
-	{/snippet}
-	<p class="text-muted mb-6">
-		Choose which release types appear on artist pages and in search. The same choices apply to
-		automatic downloads for followed artists. Saving a different selection starts a new baseline, so
-		releases already present are not queued.
-	</p>
+<div class="space-y-5">
+	<SettingsPaneHeader
+		title="Release Types"
+		description="Choose which release types appear on artist pages and in search. The same choices apply to automatic downloads for followed artists. Saving a different selection starts a new baseline, so releases already present are not queued."
+	/>
+	<Card>
+		<div class="mb-8">
+			<h3 class="text-xl font-semibold mb-1">Primary Types</h3>
+			<p class="text-muted mb-4 text-sm">Choose the main MusicBrainz release formats to include.</p>
+			{@render typeTable(primaryTypes, 'primary_types')}
+		</div>
 
-	<div class="mb-8">
-		<h3 class="text-xl font-semibold mb-1">Primary Types</h3>
-		<p class="text-muted mb-4 text-sm">Choose the main MusicBrainz release formats to include.</p>
-		{@render typeTable(primaryTypes, 'primary_types')}
-	</div>
+		<div class="mb-8">
+			<h3 class="text-xl font-semibold mb-1">Secondary Types</h3>
+			<p class="text-muted mb-4 text-sm">
+				Choose which additional release classifications to include.
+			</p>
+			{@render typeTable(secondaryTypes, 'secondary_types')}
+		</div>
 
-	<div class="mb-8">
-		<h3 class="text-xl font-semibold mb-1">Secondary Types</h3>
-		<p class="text-muted mb-4 text-sm">
-			Choose which additional release classifications to include.
-		</p>
-		{@render typeTable(secondaryTypes, 'secondary_types')}
-	</div>
-
-	<CardActions class="justify-end items-center gap-4">
-		{#if saveMessage}
-			<div
-				class="alert flex-1"
-				class:alert-success={saveMessage.startsWith('Saved')}
-				class:alert-error={!saveMessage.startsWith('Saved')}
-			>
-				<span>{saveMessage}</span>
-			</div>
-		{/if}
-		<AsyncButton variant="primary" onclick={handleSave} pending={saving} pendingLabel="Saving...">
-			Save Settings
-		</AsyncButton>
-	</CardActions>
-</Card>
+		<CardActions class="justify-end items-center gap-4">
+			{#if saveMessage}
+				<div
+					class="alert flex-1"
+					class:alert-success={saveMessage.startsWith('Saved')}
+					class:alert-error={!saveMessage.startsWith('Saved')}
+				>
+					<span>{saveMessage}</span>
+				</div>
+			{/if}
+			<AsyncButton variant="primary" onclick={handleSave} pending={saving} pendingLabel="Saving...">
+				Save Settings
+			</AsyncButton>
+		</CardActions>
+	</Card>
+</div>

@@ -138,7 +138,7 @@
 		<Card variant="bordered" as="section">
 			<div class="flex min-w-0 flex-col gap-4">
 				<div>
-					<h2 class="font-semibold">Acquisition quality</h2>
+					<h2 class="dn-set-title">Acquisition quality</h2>
 					<p class="text-sm text-muted">
 						Set which complete-album format and quality DroppedNeedle tries first, then arrange the
 						fallbacks. New work uses saved changes.

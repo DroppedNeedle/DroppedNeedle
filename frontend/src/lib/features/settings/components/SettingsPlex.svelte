@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { onDestroy } from 'svelte';
 	import { fetchPlexLibraries } from '$lib/features/settings/queries/plex.svelte';
@@ -118,106 +119,108 @@
 	});
 </script>
 
-<Card title="Plex Connection">
-	<p class="text-muted mb-4">
-		Connect Plex to browse your library, play music, and keep your listening history in sync.
-	</p>
+<div class="space-y-5">
+	<SettingsPaneHeader
+		title="Plex"
+		description="Connect Plex to browse your library, play music, and keep your listening history in sync."
+	/>
+	<Card variant="bordered">
+		<QueryBoundary query={section} what="the Plex settings">
+			{#snippet children(draft)}
+				<div class="space-y-4">
+					<TextField
+						label="Plex URL"
+						type="url"
+						placeholder="http://plex-server:32400"
+						bind:value={draft.plex_url}
+						error={section.fieldError('plex_url', 'Plex URL')}
+					/>
 
-	<QueryBoundary query={section} what="the Plex settings">
-		{#snippet children(draft)}
-			<div class="space-y-4">
-				<TextField
-					label="Plex URL"
-					type="url"
-					placeholder="http://plex-server:32400"
-					bind:value={draft.plex_url}
-					error={section.fieldError('plex_url', 'Plex URL')}
-				/>
+					<SecretField
+						label="Plex Token"
+						mask={SECRET_MASK}
+						placeholder="Paste your Plex token"
+						help="Sign in with Plex below, or paste a token here."
+						bind:value={draft.plex_token}
+						error={section.fieldError('plex_token', 'Plex Token')}
+					/>
 
-				<SecretField
-					label="Plex Token"
-					mask={SECRET_MASK}
-					placeholder="Paste your Plex token"
-					help="Sign in with Plex below, or paste a token here."
-					bind:value={draft.plex_token}
-					error={section.fieldError('plex_token', 'Plex Token')}
-				/>
-
-				<div class="flex items-center gap-3">
-					{#if oauthPending}
-						<span class="loading loading-spinner loading-sm"></span>
-						<span class="text-sm text-muted">Finish signing in to Plex to continue.</span>
-						{#if oauthUrl}
-							<a href={oauthUrl} target="_blank" rel="noopener" class="link link-primary text-sm">
-								Open sign-in page
-							</a>
-						{/if}
-						<Button variant="ghost" size="xs" onclick={cancelOAuth}>Cancel</Button>
-					{:else}
-						<Button variant="primary" size="sm" onclick={startOAuth}>Sign in with Plex</Button>
-					{/if}
-				</div>
-
-				{#if (draft.plex_url && draft.plex_token) || libraries.length > 0 || loadingLibraries}
-					<fieldset class="fieldset">
-						<legend class="fieldset-legend flex w-full items-center justify-between">
-							Music libraries
-							<Button
-								variant="ghost"
-								size="xs"
-								onclick={fetchLibraries}
-								disabled={loadingLibraries}
-							>
-								Refresh
-							</Button>
-						</legend>
-						{#if loadingLibraries}
+					<div class="flex items-center gap-3">
+						{#if oauthPending}
 							<span class="loading loading-spinner loading-sm"></span>
-						{:else if libraries.length > 0}
-							<div class="space-y-2">
-								{#each libraries as lib (lib.key)}
-									<label class="flex items-center gap-3 cursor-pointer">
-										<input
-											type="checkbox"
-											class="checkbox checkbox-sm"
-											checked={draft.music_library_ids?.includes(lib.key) ?? false}
-											onchange={() => toggleLibrary(draft, lib.key)}
-										/>
-										<span>{lib.title}</span>
-									</label>
-								{/each}
-							</div>
+							<span class="text-sm text-muted">Finish signing in to Plex to continue.</span>
+							{#if oauthUrl}
+								<a href={oauthUrl} target="_blank" rel="noopener" class="link link-primary text-sm">
+									Open sign-in page
+								</a>
+							{/if}
+							<Button variant="ghost" size="xs" onclick={cancelOAuth}>Cancel</Button>
 						{:else}
-							<p class="text-sm text-muted">Run a connection test to load your Plex libraries.</p>
+							<Button variant="primary" size="sm" onclick={startOAuth}>Sign in with Plex</Button>
 						{/if}
-						<p class="label whitespace-normal text-muted">
-							Choose the Plex libraries that contain your music.
-						</p>
-					</fieldset>
-				{/if}
+					</div>
 
-				<ToggleRow
-					label="Enable Plex integration"
-					description={!draft.music_library_ids?.length
-						? 'Select at least one music library.'
-						: enableLocked
+					{#if (draft.plex_url && draft.plex_token) || libraries.length > 0 || loadingLibraries}
+						<fieldset class="fieldset">
+							<legend class="fieldset-legend flex w-full items-center justify-between">
+								Music libraries
+								<Button
+									variant="ghost"
+									size="xs"
+									onclick={fetchLibraries}
+									disabled={loadingLibraries}
+								>
+									Refresh
+								</Button>
+							</legend>
+							{#if loadingLibraries}
+								<span class="loading loading-spinner loading-sm"></span>
+							{:else if libraries.length > 0}
+								<div class="space-y-2">
+									{#each libraries as lib (lib.key)}
+										<label class="flex items-center gap-3 cursor-pointer">
+											<input
+												type="checkbox"
+												class="checkbox checkbox-sm"
+												checked={draft.music_library_ids?.includes(lib.key) ?? false}
+												onchange={() => toggleLibrary(draft, lib.key)}
+											/>
+											<span>{lib.title}</span>
+										</label>
+									{/each}
+								</div>
+							{:else}
+								<p class="text-sm text-muted">Run a connection test to load your Plex libraries.</p>
+							{/if}
+							<p class="label whitespace-normal text-muted">
+								Choose the Plex libraries that contain your music.
+							</p>
+						</fieldset>
+					{/if}
+
+					<ToggleRow
+						label="Enable Plex integration"
+						description={!draft.music_library_ids?.length
+							? 'Select at least one music library.'
+							: enableLocked
+								? 'Test the connection first.'
+								: 'Browse and play your Plex music here.'}
+						bind:checked={draft.enabled}
+						disabled={enableLocked || !draft.music_library_ids?.length}
+					/>
+
+					<ToggleRow
+						label="Allow login with Plex"
+						description={loginLocked
 							? 'Test the connection first.'
-							: 'Browse and play your Plex music here.'}
-					bind:checked={draft.enabled}
-					disabled={enableLocked || !draft.music_library_ids?.length}
-				/>
+							: 'Let users sign in to DroppedNeedle with their Plex account'}
+						bind:checked={draft.login_enabled}
+						disabled={loginLocked}
+					/>
 
-				<ToggleRow
-					label="Allow login with Plex"
-					description={loginLocked
-						? 'Test the connection first.'
-						: 'Let users sign in to DroppedNeedle with their Plex account'}
-					bind:checked={draft.login_enabled}
-					disabled={loginLocked}
-				/>
-
-				<SaveBar {...section.bar} testLabel="Test connection" />
-			</div>
-		{/snippet}
-	</QueryBoundary>
-</Card>
+					<SaveBar {...section.bar} testLabel="Test connection" />
+				</div>
+			{/snippet}
+		</QueryBoundary>
+	</Card>
+</div>

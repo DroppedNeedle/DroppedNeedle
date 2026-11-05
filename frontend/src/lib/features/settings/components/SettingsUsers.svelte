@@ -49,6 +49,8 @@
 	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 
@@ -332,354 +334,358 @@
 		return UserX;
 	}
 
-	function roleBadgeClass(role: string) {
-		if (role === 'admin') return 'badge-accent';
-		if (role === 'trusted') return 'badge-info';
-		return 'badge-ghost';
+	function roleTone(role: string): 'action' | 'info' | 'neutral' {
+		if (role === 'admin') return 'action';
+		if (role === 'trusted') return 'info';
+		return 'neutral';
 	}
 </script>
 
-<Card>
-	<div class="space-y-6">
-		<div class="flex flex-wrap items-center justify-between gap-3">
-			<div>
-				<h2 class="text-lg font-semibold">User Management</h2>
-				<p class="text-sm text-muted mt-0.5">Manage accounts and roles.</p>
-			</div>
-			<div class="flex flex-wrap gap-2">
-				<IconButton
-					size="sm"
-					icon={RefreshCw}
-					label="Refresh"
-					{loading}
-					onclick={() => void loadUsers(page)}
-				/>
-				<Button variant="outline" size="sm" icon={Download} onclick={() => (showImport = true)}>
-					Import
-				</Button>
-				<Button
-					variant="primary"
-					size="sm"
-					icon={Plus}
-					onclick={() => (showCreateForm = !showCreateForm)}
-				>
-					New User
-				</Button>
-			</div>
-		</div>
+<div class="space-y-5">
+	<SettingsPaneHeader title="User Management" description="Manage accounts and roles.">
+		{#snippet actions()}
+			<IconButton icon={RefreshCw} label="Refresh" {loading} onclick={() => void loadUsers(page)} />
+			<Button variant="paper" size="display-sm" icon={Download} onclick={() => (showImport = true)}>
+				Import
+			</Button>
+			<Button
+				variant="primary"
+				size="display-sm"
+				icon={Plus}
+				aria-expanded={showCreateForm}
+				onclick={() => (showCreateForm = !showCreateForm)}
+			>
+				New User
+			</Button>
+		{/snippet}
+	</SettingsPaneHeader>
 
-		<SettingsImportUsers bind:open={showImport} onImported={() => void loadUsers(page)} />
+	<Card padding="md">
+		<div class="space-y-5">
+			<SettingsImportUsers bind:open={showImport} onImported={() => void loadUsers(page)} />
 
-		{#if showCreateForm}
-			<Card variant="bordered" padding="md">
-				<h3 class="text-sm font-semibold mb-2 text-muted uppercase tracking-wider">Create User</h3>
-				<form
-					onsubmit={(e) => {
-						e.preventDefault();
-						void handleCreateUser();
-					}}
-					class="grid grid-cols-1 sm:grid-cols-2 gap-3"
-				>
-					<TextField label="Display Name" bind:value={newName} required placeholder="Jane Smith" />
-					<TextField label="Username" bind:value={newUsername} required placeholder="jane.smith" />
-					<TextField
-						label="Email (optional)"
-						type="email"
-						bind:value={newEmail}
-						placeholder="jane@example.com"
-					/>
-					<Field label="Password">
-						{#snippet children(control)}
-							<div class="join w-full">
-								<Input
-									{...control}
-									label="Password"
-									type={showNewPassword ? 'text' : 'password'}
-									class="join-item w-full"
-									autocomplete="new-password"
-									required
-									placeholder="Min. 12 chars"
-									bind:value={newPassword}
-								/>
-								<IconButton
-									variant="neutral"
-									shape="square"
-									class="join-item"
-									icon={showNewPassword ? EyeOff : Eye}
-									label={showNewPassword ? 'Hide password' : 'Show password'}
-									onclick={() => (showNewPassword = !showNewPassword)}
-								/>
-							</div>
-						{/snippet}
-					</Field>
-					<SelectField label="Role" options={roleOptions} bind:value={newRole} />
-					{#if createError}
-						<div class="sm:col-span-2 alert alert-error py-2 text-sm">{createError}</div>
-					{/if}
-					<div class="sm:col-span-2 flex gap-2 justify-end">
-						<Button variant="ghost" size="sm" onclick={() => (showCreateForm = false)}>
-							Cancel
-						</Button>
-						<Button type="submit" variant="primary" size="sm" loading={creating}>Create</Button>
-					</div>
-				</form>
-			</Card>
-		{/if}
-
-		{#if createSuccess}
-			<div class="alert alert-success py-2 text-sm">{createSuccess}</div>
-		{/if}
-
-		{#if roleError}
-			<div class="alert alert-error py-2 text-sm">{roleError}</div>
-		{/if}
-
-		{#if error}
-			<div class="alert alert-error py-2 text-sm">{error}</div>
-		{/if}
-
-		{#if loading && users.length === 0}
-			<div class="space-y-2">
-				{#each Array(3) as _, i (`user-skel-${i}`)}
-					<div class="flex items-center gap-3 p-3 bg-base-300/40 rounded-box animate-pulse">
-						<div class="w-9 h-9 rounded-full bg-base-300"></div>
-						<div class="flex-1">
-							<div class="h-3.5 bg-base-300 rounded w-32 mb-1.5"></div>
-							<div class="h-3 bg-base-300 rounded w-48"></div>
-						</div>
-						<div class="h-6 bg-base-300 rounded-full w-16"></div>
-					</div>
-				{/each}
-			</div>
-		{:else}
-			<div class="space-y-1.5">
-				{#each users as user (user.id)}
-					{@const RoleIcon = roleIcon(user.role)}
-					{@const canRecover = user.providers.includes('local')}
-					{@const isSelf = user.id === authStore.user?.id}
-					<div
-						class="flex flex-wrap items-center gap-3 p-3 bg-base-300/30 rounded-box hover:bg-base-300/50 transition-colors"
+			{#if showCreateForm}
+				<Card variant="bordered" padding="md">
+					<h3 class="dn-set-kicker mb-1">Create User</h3>
+					<form
+						onsubmit={(e) => {
+							e.preventDefault();
+							void handleCreateUser();
+						}}
+						class="grid grid-cols-1 sm:grid-cols-2 gap-3"
 					>
-						<div
-							class="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 overflow-hidden"
-						>
-							{#if user.avatar_url}
-								<img
-									src={getApiUrl(user.avatar_url)}
-									alt={user.display_name}
-									class="h-full w-full object-cover"
-								/>
-							{:else}
-								<UserRound class="h-5 w-5 text-primary/60" />
-							{/if}
-						</div>
-						<div class="flex-1 min-w-32">
-							<p class="text-sm font-medium truncate">{user.display_name}</p>
-							{#if user.username_display ?? user.username}
-								<p class="text-xs text-muted truncate">
-									@{user.username_display ?? user.username}
-								</p>
-							{/if}
-							{#if user.email}
-								<p class="text-xs text-muted truncate">{user.email}</p>
-							{/if}
-						</div>
-						{#if user.providers.length > 0}
-							<div class="flex items-center gap-1.5 shrink-0">
-								{#each user.providers as provider (provider)}
-									<div class="tooltip" data-tip={providerLabel[provider] ?? provider}>
-										{#if provider === 'jellyfin'}
-											<JellyfinIcon class="h-3.5 w-3.5 text-info" />
-										{:else if provider === 'plex'}
-											<PlexIcon class="h-3.5 w-3.5 text-plex" />
-										{:else if provider === 'oidc'}
-											<KeyRound class="h-3.5 w-3.5 text-muted" />
-										{:else}
-											<Mail class="h-3.5 w-3.5 text-muted" />
-										{/if}
-									</div>
-								{/each}
-							</div>
+						<TextField
+							label="Display Name"
+							bind:value={newName}
+							required
+							placeholder="Jane Smith"
+						/>
+						<TextField
+							label="Username"
+							bind:value={newUsername}
+							required
+							placeholder="jane.smith"
+						/>
+						<TextField
+							label="Email (optional)"
+							type="email"
+							bind:value={newEmail}
+							placeholder="jane@example.com"
+						/>
+						<Field label="Password">
+							{#snippet children(control)}
+								<div class="join w-full">
+									<Input
+										{...control}
+										label="Password"
+										type={showNewPassword ? 'text' : 'password'}
+										class="join-item w-full"
+										autocomplete="new-password"
+										required
+										placeholder="Min. 12 chars"
+										bind:value={newPassword}
+									/>
+									<IconButton
+										variant="neutral"
+										shape="square"
+										class="join-item"
+										icon={showNewPassword ? EyeOff : Eye}
+										label={showNewPassword ? 'Hide password' : 'Show password'}
+										onclick={() => (showNewPassword = !showNewPassword)}
+									/>
+								</div>
+							{/snippet}
+						</Field>
+						<SelectField label="Role" options={roleOptions} bind:value={newRole} />
+						{#if createError}
+							<div class="sm:col-span-2 alert alert-error py-2 text-sm">{createError}</div>
 						{/if}
-						<div class="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:shrink-0">
-							<span class="badge {roleBadgeClass(user.role)} badge-sm hidden gap-1 sm:inline-flex">
-								<RoleIcon class="h-3 w-3" />
-								{roleLabel[user.role]}
-							</span>
-							{#if savingRole === user.id}
-								<span class="loading loading-spinner loading-xs"></span>
-							{:else}
-								<select
-									class="select select-sm w-28 shrink-0"
-									value={user.role}
-									onchange={(e) =>
-										void setRole(
-											user.id,
-											(e.target as HTMLSelectElement).value as 'admin' | 'trusted' | 'user'
-										)}
-									aria-label="Change role"
-								>
-									<option value="user">User</option>
-									<option value="trusted">Trusted</option>
-									<option value="admin">Admin</option>
-								</select>
-							{/if}
-							<IconButton
-								size="sm"
-								icon={Gauge}
-								label="Request and storage quota"
-								active={quotaOpen.has(user.id)}
-								aria-expanded={quotaOpen.has(user.id)}
-								onclick={() => toggleQuota(user.id)}
-							/>
-							<span title={canRecover ? undefined : 'This account does not have a local password'}>
-								<IconButton
-									size="sm"
-									icon={KeyRound}
-									label={`Create recovery code for ${user.display_name}`}
-									disabled={!canRecover}
-									onclick={() => openRecoveryDialog(user)}
-								/>
-							</span>
-							<span title={isSelf ? 'Sign yourself out from your profile' : undefined}>
-								<IconButton
-									size="sm"
-									icon={LogOut}
-									label="Sign out everywhere"
-									disabled={isSelf}
-									onclick={() => confirmSignOut(user)}
-								/>
-							</span>
-							<span title={isSelf ? 'You cannot delete your own account' : undefined}>
-								<IconButton
-									size="sm"
-									variant="danger-ghost"
-									icon={Trash2}
-									label="Delete user"
-									disabled={isSelf}
-									onclick={() => confirmDelete(user)}
-								/>
-							</span>
+						<div class="sm:col-span-2 flex gap-2 justify-end">
+							<Button variant="ghost" size="sm" onclick={() => (showCreateForm = false)}>
+								Cancel
+							</Button>
+							<Button type="submit" variant="primary" size="sm" loading={creating}>Create</Button>
 						</div>
+					</form>
+				</Card>
+			{/if}
+
+			{#if createSuccess}
+				<div class="alert alert-success py-2 text-sm">{createSuccess}</div>
+			{/if}
+
+			{#if roleError}
+				<div class="alert alert-error py-2 text-sm">{roleError}</div>
+			{/if}
+
+			{#if error}
+				<div class="alert alert-error py-2 text-sm">{error}</div>
+			{/if}
+
+			{#if loading && users.length === 0}
+				<div class="space-y-2">
+					{#each Array(3) as _, i (`user-skel-${i}`)}
+						<div class="flex items-center gap-3 px-2 py-3 animate-pulse">
+							<div class="w-9 h-9 rounded-full bg-base-300"></div>
+							<div class="flex-1">
+								<div class="h-3.5 bg-base-300 rounded w-32 mb-1.5"></div>
+								<div class="h-3 bg-base-300 rounded w-48"></div>
+							</div>
+							<div class="h-6 bg-base-300 rounded-full w-16"></div>
+						</div>
+					{/each}
+				</div>
+			{:else}
+				<div class="divide-y divide-line">
+					{#each users as user (user.id)}
+						{@const RoleIcon = roleIcon(user.role)}
+						{@const canRecover = user.providers.includes('local')}
+						{@const isSelf = user.id === authStore.user?.id}
+						<div class="users-row">
+							<div class="users-row__avatar">
+								{#if user.avatar_url}
+									<img
+										src={getApiUrl(user.avatar_url)}
+										alt={user.display_name}
+										class="h-full w-full object-cover"
+									/>
+								{:else}
+									<UserRound class="h-5 w-5" aria-hidden="true" />
+								{/if}
+							</div>
+							<div class="flex-1 min-w-32">
+								<p class="font-bold truncate">{user.display_name}</p>
+								{#if user.username_display ?? user.username}
+									<p class="font-mono text-xs text-muted truncate">
+										@{user.username_display ?? user.username}
+									</p>
+								{/if}
+								{#if user.email}
+									<p class="text-xs text-muted truncate">{user.email}</p>
+								{/if}
+							</div>
+							{#if user.providers.length > 0}
+								<div class="flex items-center gap-1.5 shrink-0">
+									{#each user.providers as provider (provider)}
+										<div class="tooltip" data-tip={providerLabel[provider] ?? provider}>
+											{#if provider === 'jellyfin'}
+												<JellyfinIcon class="h-4 w-4 text-info" />
+											{:else if provider === 'plex'}
+												<PlexIcon class="h-4 w-4 text-plex" />
+											{:else if provider === 'oidc'}
+												<KeyRound class="h-4 w-4 text-muted" />
+											{:else}
+												<Mail class="h-4 w-4 text-muted" />
+											{/if}
+										</div>
+									{/each}
+								</div>
+							{/if}
+							<div
+								class="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:shrink-0"
+							>
+								<span class="hidden sm:contents">
+									<StatusChip tone={roleTone(user.role)} icon={RoleIcon}>
+										{roleLabel[user.role]}
+									</StatusChip>
+								</span>
+								{#if savingRole === user.id}
+									<span class="loading loading-spinner loading-xs"></span>
+								{:else}
+									<select
+										class="select select-sm w-28 shrink-0"
+										value={user.role}
+										onchange={(e) =>
+											void setRole(
+												user.id,
+												(e.target as HTMLSelectElement).value as 'admin' | 'trusted' | 'user'
+											)}
+										aria-label="Change role"
+									>
+										<option value="user">User</option>
+										<option value="trusted">Trusted</option>
+										<option value="admin">Admin</option>
+									</select>
+								{/if}
+								<IconButton
+									size="sm"
+									icon={Gauge}
+									label="Request and storage quota"
+									active={quotaOpen.has(user.id)}
+									aria-expanded={quotaOpen.has(user.id)}
+									onclick={() => toggleQuota(user.id)}
+								/>
+								<span
+									title={canRecover ? undefined : 'This account does not have a local password'}
+								>
+									<IconButton
+										size="sm"
+										icon={KeyRound}
+										label={`Create recovery code for ${user.display_name}`}
+										disabled={!canRecover}
+										onclick={() => openRecoveryDialog(user)}
+									/>
+								</span>
+								<span title={isSelf ? 'Sign yourself out from your profile' : undefined}>
+									<IconButton
+										size="sm"
+										icon={LogOut}
+										label="Sign out everywhere"
+										disabled={isSelf}
+										onclick={() => confirmSignOut(user)}
+									/>
+								</span>
+								<span title={isSelf ? 'You cannot delete your own account' : undefined}>
+									<IconButton
+										size="sm"
+										variant="danger-ghost"
+										icon={Trash2}
+										label="Delete user"
+										disabled={isSelf}
+										onclick={() => confirmDelete(user)}
+									/>
+								</span>
+							</div>
+						</div>
+						{#if quotaOpen.has(user.id)}
+							<UserQuotaEditor userId={user.id} displayName={user.display_name} />
+						{/if}
+					{/each}
+				</div>
+			{/if}
+
+			{#if total > PAGE_SIZE}
+				<div class="flex items-center justify-between">
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={page === 1 || loading}
+						onclick={() => void loadUsers(page - 1)}>Previous</Button
+					>
+					<span class="text-sm text-muted">
+						Showing {rangeStart}-{rangeEnd} of {total} users (page {page} of {totalPages})
+					</span>
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={page >= totalPages || loading}
+						onclick={() => void loadUsers(page + 1)}>Next</Button
+					>
+				</div>
+			{/if}
+
+			<div class="space-y-2 border-t border-line pt-5">
+				<h3 class="dn-set-kicker">Quota defaults</h3>
+				<p class="text-sm text-muted">
+					Limits for every plain user without an override (admin and trusted are exempt). 0 =
+					unlimited. Requests use a rolling window; storage counts each user's own downloads.
+				</p>
+				<QueryBoundary query={quotaDefaults} what="the quota defaults">
+					{#snippet children(draft)}
+						<div class="flex flex-wrap items-start gap-2">
+							<Field
+								label="Requests"
+								error={quotaDefaults.fieldError('default_request_quota_count', 'Requests')}
+							>
+								{#snippet children(control)}
+									<Input
+										{...control}
+										label="Requests"
+										type="number"
+										size="sm"
+										min="0"
+										class="w-24"
+										bind:value={draft.default_request_quota_count}
+									/>
+								{/snippet}
+							</Field>
+							<Field
+								label="Window (days)"
+								error={quotaDefaults.fieldError('default_request_quota_days', 'Window')}
+							>
+								{#snippet children(control)}
+									<Input
+										{...control}
+										label="Window (days)"
+										type="number"
+										size="sm"
+										min="1"
+										class="w-24"
+										bind:value={draft.default_request_quota_days}
+									/>
+								{/snippet}
+							</Field>
+							<Field
+								label="Storage (GB)"
+								error={quotaDefaults.fieldError('default_storage_quota_gb', 'Storage')}
+							>
+								{#snippet children(control)}
+									<Input
+										{...control}
+										label="Storage (GB)"
+										type="number"
+										size="sm"
+										min="0"
+										class="w-28"
+										bind:value={draft.default_storage_quota_gb}
+									/>
+								{/snippet}
+							</Field>
+						</div>
+						<SaveBar {...quotaDefaults.bar} saveLabel="Save defaults" />
+					{/snippet}
+				</QueryBoundary>
+			</div>
+
+			<div class="space-y-3 border-t border-line pt-5">
+				<h3 class="dn-set-kicker">Role guide</h3>
+				<div class="grid gap-2.5 text-sm text-muted">
+					<div class="flex gap-2">
+						<ShieldCheck class="h-4 w-4 text-accent shrink-0 mt-0.5" />
+						<span
+							><strong class="text-base-content">Admin</strong>, full access, approves requests,
+							manages users.</span
+						>
 					</div>
-					{#if quotaOpen.has(user.id)}
-						<UserQuotaEditor userId={user.id} displayName={user.display_name} />
-					{/if}
-				{/each}
-			</div>
-		{/if}
-
-		{#if total > PAGE_SIZE}
-			<div class="flex items-center justify-between">
-				<Button
-					variant="outline"
-					size="sm"
-					disabled={page === 1 || loading}
-					onclick={() => void loadUsers(page - 1)}>Previous</Button
-				>
-				<span class="text-sm text-muted">
-					Showing {rangeStart}-{rangeEnd} of {total} users (page {page} of {totalPages})
-				</span>
-				<Button
-					variant="outline"
-					size="sm"
-					disabled={page >= totalPages || loading}
-					onclick={() => void loadUsers(page + 1)}>Next</Button
-				>
-			</div>
-		{/if}
-
-		<div class="pt-2 border-t border-base-300 space-y-2">
-			<h3 class="text-xs font-semibold text-muted uppercase tracking-wider">Quota defaults</h3>
-			<p class="text-xs text-muted">
-				Limits for every plain user without an override (admin and trusted are exempt). 0 =
-				unlimited. Requests use a rolling window; storage counts each user's own downloads.
-			</p>
-			<QueryBoundary query={quotaDefaults} what="the quota defaults">
-				{#snippet children(draft)}
-					<div class="flex flex-wrap items-start gap-2">
-						<Field
-							label="Requests"
-							error={quotaDefaults.fieldError('default_request_quota_count', 'Requests')}
+					<div class="flex gap-2">
+						<UserCheck class="h-4 w-4 text-info shrink-0 mt-0.5" />
+						<span
+							><strong class="text-base-content">Trusted</strong>, requests auto-approved, no admin
+							functions.</span
 						>
-							{#snippet children(control)}
-								<Input
-									{...control}
-									label="Requests"
-									type="number"
-									size="sm"
-									min="0"
-									class="w-24"
-									bind:value={draft.default_request_quota_count}
-								/>
-							{/snippet}
-						</Field>
-						<Field
-							label="Window (days)"
-							error={quotaDefaults.fieldError('default_request_quota_days', 'Window')}
-						>
-							{#snippet children(control)}
-								<Input
-									{...control}
-									label="Window (days)"
-									type="number"
-									size="sm"
-									min="1"
-									class="w-24"
-									bind:value={draft.default_request_quota_days}
-								/>
-							{/snippet}
-						</Field>
-						<Field
-							label="Storage (GB)"
-							error={quotaDefaults.fieldError('default_storage_quota_gb', 'Storage')}
-						>
-							{#snippet children(control)}
-								<Input
-									{...control}
-									label="Storage (GB)"
-									type="number"
-									size="sm"
-									min="0"
-									class="w-28"
-									bind:value={draft.default_storage_quota_gb}
-								/>
-							{/snippet}
-						</Field>
 					</div>
-					<SaveBar {...quotaDefaults.bar} saveLabel="Save defaults" />
-				{/snippet}
-			</QueryBoundary>
-		</div>
-
-		<div class="pt-2 border-t border-base-300 space-y-2">
-			<h3 class="text-xs font-semibold text-muted uppercase tracking-wider">Role guide</h3>
-			<div class="grid gap-2 text-xs text-muted">
-				<div class="flex gap-2">
-					<ShieldCheck class="h-4 w-4 text-accent shrink-0 mt-0.5" />
-					<span
-						><strong class="text-base-content/80">Admin</strong>, full access, approves requests,
-						manages users.</span
-					>
-				</div>
-				<div class="flex gap-2">
-					<UserCheck class="h-4 w-4 text-info shrink-0 mt-0.5" />
-					<span
-						><strong class="text-base-content/80">Trusted</strong>, requests auto-approved, no admin
-						functions.</span
-					>
-				</div>
-				<div class="flex gap-2">
-					<UserX class="h-4 w-4 text-muted shrink-0 mt-0.5" />
-					<span
-						><strong class="text-base-content/80">User</strong>, requests need admin approval before
-						downloading.</span
-					>
+					<div class="flex gap-2">
+						<UserX class="h-4 w-4 text-muted shrink-0 mt-0.5" />
+						<span
+							><strong class="text-base-content">User</strong>, requests need admin approval before
+							downloading.</span
+						>
+					</div>
 				</div>
 			</div>
 		</div>
-	</div>
-</Card>
+	</Card>
+</div>
 
 <ConfirmDialog
 	bind:open={deleteOpen}
@@ -772,3 +778,25 @@
 		{/if}
 	{/snippet}
 </Modal>
+
+<style>
+	.users-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.875rem 0.5rem;
+	}
+	.users-row__avatar {
+		display: flex;
+		flex: none;
+		align-items: center;
+		justify-content: center;
+		width: 2.5rem;
+		height: 2.5rem;
+		overflow: hidden;
+		border: 2px solid var(--dn-title);
+		border-radius: 9999px;
+		color: var(--dn-title);
+	}
+</style>

@@ -96,7 +96,7 @@
 <Card variant="bordered">
 	<div class="space-y-3">
 		<div>
-			<h3 class="font-semibold">Source priority</h3>
+			<h3 class="dn-set-title">Source priority</h3>
 			<p class="text-sm text-muted">
 				Drag (or use ↑/↓) to set which source is tried first for automatic downloads. The top
 				enabled source is tried first; the next is the fallback.
@@ -108,7 +108,7 @@
 				{@const meta = metaFor(source)}
 				{@const Icon = meta.icon}
 				<li
-					class="flex items-center gap-3 rounded-box border border-base-300 bg-base-100 p-2.5"
+					class="flex items-center gap-2 rounded-box border border-line bg-base-100 p-2.5 sm:gap-3"
 					class:opacity-60={meta.missing}
 					ondragover={(e) => e.preventDefault()}
 					ondrop={() => onDrop(index)}
@@ -134,7 +134,7 @@
 						<GripVertical class="size-4" aria-hidden="true" />
 					</button>
 					<span
-						class="grid size-8 shrink-0 place-items-center rounded-lg bg-base-300/60 text-muted"
+						class="hidden size-8 shrink-0 place-items-center rounded-lg bg-base-300/60 text-muted sm:grid"
 					>
 						<Icon class="size-4" aria-hidden="true" />
 					</span>

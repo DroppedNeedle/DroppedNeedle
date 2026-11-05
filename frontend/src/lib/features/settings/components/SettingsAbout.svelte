@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
 	import '$lib/shell/release-notes.css';
 	import {
 		getVersionQuery,
@@ -33,10 +34,7 @@
 </script>
 
 <div class="space-y-6 stagger-fade-in">
-	<div>
-		<h2 class="text-2xl font-bold">About</h2>
-		<p class="text-muted mt-1">App version, updates, and release notes.</p>
-	</div>
+	<SettingsPaneHeader title="About" description="App version, updates, and release notes." />
 
 	<Card variant="bordered" padding="md">
 		<p class="text-xs text-muted">

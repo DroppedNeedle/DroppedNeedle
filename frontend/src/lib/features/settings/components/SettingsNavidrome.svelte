@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import {
 		createNavidromePlaylistSyncMutation,
@@ -76,122 +77,124 @@
 	}
 </script>
 
-<Card title="Navidrome Connection">
-	<p class="text-muted mb-4">
-		Connect your Navidrome server for music streaming, recently played tracks, and favorites.
-	</p>
-
-	<QueryBoundary query={section} what="the Navidrome settings">
-		{#snippet children(draft)}
-			<div class="space-y-4">
-				<TextField
-					label="Navidrome URL"
-					type="url"
-					placeholder="http://localhost:4533"
-					bind:value={draft.navidrome_url}
-					error={section.fieldError('navidrome_url', 'Navidrome URL')}
-				/>
-
-				<TextField
-					label="Username"
-					placeholder="Your Navidrome username"
-					bind:value={draft.username}
-					error={section.fieldError('username', 'Username')}
-				/>
-
-				<SecretField
-					label="Password"
-					mask={SECRET_MASK}
-					placeholder="Your Navidrome password"
-					bind:value={draft.password}
-					error={section.fieldError('password', 'Password')}
-				/>
-
-				<ToggleRow
-					label="Enable Navidrome Integration"
-					description={enableLocked
-						? 'Test the connection first.'
-						: 'Stream music, view recently played, and browse your Navidrome library'}
-					bind:checked={draft.enabled}
-					disabled={enableLocked}
-				/>
-
-				<div class="divider"></div>
-
-				<div>
-					<h3 class="font-medium">Playlist Sync</h3>
-					<p class="text-xs text-muted mt-1 whitespace-normal">
-						Sync DroppedNeedle playlists to Navidrome - DroppedNeedle writes an
-						<code>.m3u8</code> file per playlist into a folder Navidrome scans, and refreshes them in
-						the background as playlists change.
-					</p>
-				</div>
-
-				<ToggleRow
-					label="Export playlists to Navidrome"
-					description="Nothing is written until this is on and the settings are saved"
-					bind:checked={draft.playlist_sync_enabled}
-				/>
-
-				{#if draft.playlist_sync_enabled}
+<div class="space-y-5">
+	<SettingsPaneHeader
+		title="Navidrome"
+		description="Connect your Navidrome server for music streaming, recently played tracks, and favorites."
+	/>
+	<Card variant="bordered">
+		<QueryBoundary query={section} what="the Navidrome settings">
+			{#snippet children(draft)}
+				<div class="space-y-4">
 					<TextField
-						label="Playlist folder"
-						placeholder="/music/playlists"
-						help="An absolute path inside the DroppedNeedle container that must sit inside the same music library tree Navidrome scans. Track paths are written relative to this folder, so both apps have to see the same folder-to-track relationship."
-						bind:value={draft.playlist_sync_path}
-						error={section.fieldError('playlist_sync_path', 'Playlist folder')}
+						label="Navidrome URL"
+						type="url"
+						placeholder="http://localhost:4533"
+						bind:value={draft.navidrome_url}
+						error={section.fieldError('navidrome_url', 'Navidrome URL')}
 					/>
 
-					<SelectField
-						label="Which playlists"
-						bind:value={draft.playlist_sync_scope}
-						options={[
-							{ value: 'public', label: 'Public playlists only' },
-							{ value: 'all', label: 'All playlists' }
-						]}
-						help="Navidrome does not scope an imported playlist to a user, so anything exported is visible to everyone on that server. &quot;All playlists&quot; therefore publishes other users' private playlists too. To have them correctly scoped to a user on Navidrome, imported playlists can be assigned to a user (and made private or public) within the Navidrome dashboard."
-						error={section.fieldError('playlist_sync_scope', 'Which playlists')}
+					<TextField
+						label="Username"
+						placeholder="Your Navidrome username"
+						bind:value={draft.username}
+						error={section.fieldError('username', 'Username')}
+					/>
+
+					<SecretField
+						label="Password"
+						mask={SECRET_MASK}
+						placeholder="Your Navidrome password"
+						bind:value={draft.password}
+						error={section.fieldError('password', 'Password')}
 					/>
 
 					<ToggleRow
-						label="Remove exported files when a playlist is removed from DroppedNeedle, or when a playlist is made private and only public playlists are exported"
-						description="Only files exported from DroppedNeedle are ever removed. Other playlists in the same folder are never removed."
-						bind:checked={draft.playlist_sync_remove_deleted}
+						label="Enable Navidrome Integration"
+						description={enableLocked
+							? 'Test the connection first.'
+							: 'Stream music, view recently played, and browse your Navidrome library'}
+						bind:checked={draft.enabled}
+						disabled={enableLocked}
 					/>
 
-					{#if syncResult}
-						<div
-							class="alert"
-							class:alert-success={syncResult.success}
-							class:alert-error={!syncResult.success}
-						>
-							<div class="min-w-0 whitespace-normal break-words">
-								<span>{syncResult.message}</span>
-								{#if syncResult.removal_failures}
-									<p class="text-xs mt-1">
-										Files that could not be removed are still visible in Navidrome. They will be
-										retried on the next sync. Check the folder's permissions if this persists.
-									</p>
-								{/if}
+					<div class="divider"></div>
+
+					<div>
+						<h3 class="font-medium">Playlist Sync</h3>
+						<p class="text-xs text-muted mt-1 whitespace-normal">
+							Sync DroppedNeedle playlists to Navidrome - DroppedNeedle writes an
+							<code>.m3u8</code> file per playlist into a folder Navidrome scans, and refreshes them in
+							the background as playlists change.
+						</p>
+					</div>
+
+					<ToggleRow
+						label="Export playlists to Navidrome"
+						description="Nothing is written until this is on and the settings are saved"
+						bind:checked={draft.playlist_sync_enabled}
+					/>
+
+					{#if draft.playlist_sync_enabled}
+						<TextField
+							label="Playlist folder"
+							placeholder="/music/playlists"
+							help="An absolute path inside the DroppedNeedle container that must sit inside the same music library tree Navidrome scans. Track paths are written relative to this folder, so both apps have to see the same folder-to-track relationship."
+							bind:value={draft.playlist_sync_path}
+							error={section.fieldError('playlist_sync_path', 'Playlist folder')}
+						/>
+
+						<SelectField
+							label="Which playlists"
+							bind:value={draft.playlist_sync_scope}
+							options={[
+								{ value: 'public', label: 'Public playlists only' },
+								{ value: 'all', label: 'All playlists' }
+							]}
+							help="Navidrome does not scope an imported playlist to a user, so anything exported is visible to everyone on that server. &quot;All playlists&quot; therefore publishes other users' private playlists too. To have them correctly scoped to a user on Navidrome, imported playlists can be assigned to a user (and made private or public) within the Navidrome dashboard."
+							error={section.fieldError('playlist_sync_scope', 'Which playlists')}
+						/>
+
+						<ToggleRow
+							label="Remove exported files when a playlist is removed from DroppedNeedle, or when a playlist is made private and only public playlists are exported"
+							description="Only files exported from DroppedNeedle are ever removed. Other playlists in the same folder are never removed."
+							bind:checked={draft.playlist_sync_remove_deleted}
+						/>
+
+						{#if syncResult}
+							<div
+								class="alert"
+								class:alert-success={syncResult.success}
+								class:alert-error={!syncResult.success}
+							>
+								<div class="min-w-0 whitespace-normal break-words">
+									<span>{syncResult.message}</span>
+									{#if syncResult.removal_failures}
+										<p class="text-xs mt-1">
+											Files that could not be removed are still visible in Navidrome. They will be
+											retried on the next sync. Check the folder's permissions if this persists.
+										</p>
+									{/if}
+								</div>
 							</div>
+						{/if}
+
+						<div class="flex justify-start">
+							<Button
+								variant="outline"
+								size="sm"
+								loading={syncing}
+								disabled={section.saving || !draft.playlist_sync_path}
+								onclick={syncPlaylists}
+							>
+								Sync Now
+							</Button>
 						</div>
 					{/if}
 
-					<div class="flex justify-start">
-						<Button
-							variant="outline"
-							size="sm"
-							loading={syncing}
-							disabled={section.saving || !draft.playlist_sync_path}
-							onclick={syncPlaylists}
-						>
-							Sync Now
-						</Button>
-					</div>
-				{/if}
-
-				<SaveBar {...section.bar} testLabel="Test connection" />
-			</div>
-		{/snippet}
-	</QueryBoundary>
-</Card>
+					<SaveBar {...section.bar} testLabel="Test connection" />
+				</div>
+			{/snippet}
+		</QueryBoundary>
+	</Card>
+</div>

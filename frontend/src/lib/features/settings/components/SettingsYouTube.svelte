@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import {
 		createSaveYouTubeSettingsMutation,
@@ -33,77 +34,78 @@
 	const apiLocked = $derived(!section.testPassed && !section.saved?.api_enabled);
 </script>
 
-<Card title="YouTube">
-	<p class="text-muted mb-4">
-		Enable YouTube features across the app: manage album links, search YouTube, and optionally
-		enable the API for automatic link generation.
-	</p>
-
-	<QueryBoundary query={section} what="the YouTube settings">
-		{#snippet children(draft)}
-			<div class="space-y-6">
-				<ToggleRow
-					label="Enable YouTube"
-					description="Show YouTube features in the sidebar, album pages, and YouTube links page. Manual links and YouTube search work without an API key."
-					bind:checked={draft.enabled}
-				/>
-
-				<div class="divider my-1"></div>
-
-				<fieldset disabled={!draft.enabled} class="space-y-4" class:opacity-50={!draft.enabled}>
-					<div class="flex items-center gap-2">
-						<h3 class="text-lg font-semibold">YouTube API</h3>
-						<div class="badge badge-sm badge-ghost">Optional</div>
-					</div>
-					<p class="text-xs text-muted -mt-2">
-						Enable automatic link generation using the YouTube Data API. Get a free key from the
-						<a
-							href="https://console.cloud.google.com/apis/library/youtube.googleapis.com"
-							target="_blank"
-							rel="noopener noreferrer"
-							class="link link-primary">Google Cloud Console</a
-						>.
-					</p>
-
-					<SecretField
-						label="API Key"
-						mask={SECRET_MASK}
-						placeholder="Your YouTube Data API v3 key"
-						help="Enable YouTube Data API v3, then create an API key in Credentials"
-						bind:value={draft.api_key}
-						error={section.fieldError('api_key', 'API Key')}
-					/>
-
+<div class="space-y-5">
+	<SettingsPaneHeader
+		title="YouTube"
+		description="Enable YouTube features across the app: manage album links, search YouTube, and optionally enable the API for automatic link generation."
+	/>
+	<Card variant="bordered">
+		<QueryBoundary query={section} what="the YouTube settings">
+			{#snippet children(draft)}
+				<div class="space-y-6">
 					<ToggleRow
-						label="Enable YouTube API"
-						description={apiLocked
-							? 'Test the connection first.'
-							: 'Auto-generate album and track links using the YouTube Data API (~100 searches/day free quota)'}
-						bind:checked={draft.api_enabled}
-						disabled={apiLocked}
+						label="Enable YouTube"
+						description="Show YouTube features in the sidebar, album pages, and YouTube links page. Manual links and YouTube search work without an API key."
+						bind:checked={draft.enabled}
 					/>
 
-					<div class="max-w-xs">
-						<NumberField
-							label="Daily Quota Limit"
-							help="Maximum video lookups per day (default: 80)"
-							min={1}
-							max={10000}
-							bind:value={draft.daily_quota_limit}
-							error={section.fieldError('daily_quota_limit', 'Daily Quota Limit')}
+					<div class="divider my-1"></div>
+
+					<fieldset disabled={!draft.enabled} class="space-y-4" class:opacity-50={!draft.enabled}>
+						<div class="flex items-center gap-2">
+							<h3 class="text-lg font-semibold">YouTube API</h3>
+							<div class="badge badge-sm badge-ghost">Optional</div>
+						</div>
+						<p class="text-xs text-muted -mt-2">
+							Enable automatic link generation using the YouTube Data API. Get a free key from the
+							<a
+								href="https://console.cloud.google.com/apis/library/youtube.googleapis.com"
+								target="_blank"
+								rel="noopener noreferrer"
+								class="link link-primary">Google Cloud Console</a
+							>.
+						</p>
+
+						<SecretField
+							label="API Key"
+							mask={SECRET_MASK}
+							placeholder="Your YouTube Data API v3 key"
+							help="Enable YouTube Data API v3, then create an API key in Credentials"
+							bind:value={draft.api_key}
+							error={section.fieldError('api_key', 'API Key')}
 						/>
-					</div>
-				</fieldset>
 
-				{#if !draft.enabled}
-					<div class="alert alert-info">
-						<Info class="h-4 w-4" />
-						<span>Enable YouTube above to configure API settings.</span>
-					</div>
-				{/if}
+						<ToggleRow
+							label="Enable YouTube API"
+							description={apiLocked
+								? 'Test the connection first.'
+								: 'Auto-generate album and track links using the YouTube Data API (~100 searches/day free quota)'}
+							bind:checked={draft.api_enabled}
+							disabled={apiLocked}
+						/>
 
-				<SaveBar {...section.bar} testLabel="Test connection" />
-			</div>
-		{/snippet}
-	</QueryBoundary>
-</Card>
+						<div class="max-w-xs">
+							<NumberField
+								label="Daily Quota Limit"
+								help="Maximum video lookups per day (default: 80)"
+								min={1}
+								max={10000}
+								bind:value={draft.daily_quota_limit}
+								error={section.fieldError('daily_quota_limit', 'Daily Quota Limit')}
+							/>
+						</div>
+					</fieldset>
+
+					{#if !draft.enabled}
+						<div class="alert alert-info">
+							<Info class="h-4 w-4" />
+							<span>Enable YouTube above to configure API settings.</span>
+						</div>
+					{/if}
+
+					<SaveBar {...section.bar} testLabel="Test connection" />
+				</div>
+			{/snippet}
+		</QueryBoundary>
+	</Card>
+</div>

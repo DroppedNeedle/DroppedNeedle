@@ -2,7 +2,8 @@
 	A labelled dropdown over a list of options.
 	Replaces the hand-written `select select-bordered` blocks.
 	`bare` drops the visible label (it stays the accessible name), for a
-	small dropdown inside a table row or a toolbar.
+	small dropdown inside a table row or a toolbar. Options that name a
+	`group` are listed under that group's heading, in the order given.
 -->
 <script lang="ts" generics="T extends string">
 	import type { HTMLSelectAttributes } from 'svelte/elements';
@@ -12,6 +13,8 @@
 		value: T;
 		label: string;
 		disabled?: boolean;
+		/** A heading the option is listed under. */
+		group?: string;
 	}
 
 	interface Props {
@@ -41,6 +44,10 @@
 		class: className = '',
 		ref = $bindable(null)
 	}: Props = $props();
+
+	const groups = $derived([
+		...new Set(options.flatMap((o) => (o.group === undefined ? [] : [o.group])))
+	]);
 </script>
 
 {#snippet dropdown(
@@ -59,9 +66,19 @@
 		bind:value
 		bind:this={ref}
 	>
-		{#each options as option (option.value)}
-			<option value={option.value} disabled={option.disabled}>{option.label}</option>
-		{/each}
+		{#if groups.length > 0}
+			{#each groups as group (group)}
+				<optgroup label={group}>
+					{#each options.filter((o) => o.group === group) as option (option.value)}
+						<option value={option.value} disabled={option.disabled}>{option.label}</option>
+					{/each}
+				</optgroup>
+			{/each}
+		{:else}
+			{#each options as option (option.value)}
+				<option value={option.value} disabled={option.disabled}>{option.label}</option>
+			{/each}
+		{/if}
 	</select>
 {/snippet}
 

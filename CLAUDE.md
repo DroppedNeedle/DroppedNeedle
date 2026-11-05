@@ -707,7 +707,8 @@ Run from the repo root. `make help` lists every target.
   `ToggleRow`, `RadioCards`, `StatusChip`, `SectionHead` (a shelf's title
   row), `ListPageHeader` (a browse page's title, count, lede or a hub's
   tagline, ticket and record, with an optional brush stroke after the title;
-  `backStyle="link"` puts a mono caps back link over the title),
+  `backStyle="link"` puts a mono caps back link over the title, `compact`
+  suits a working page),
   `SaveBar`, `AsyncButton`, `QueryBoundary`, `RatingStars` (`quiet`
   in list rows), `StatRow` (counts split by rules), `JumpTabs` (a page's
   sticky section strip; `look="pills"` fills the current link, `actions` sit at

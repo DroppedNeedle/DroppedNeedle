@@ -2,7 +2,9 @@
 	The row under a settings form: an optional Test button, a status line,
 	Discard and Save. Save is live only while there are unsaved changes.
 	Replaces the per-tab Save and Test buttons, their spinners and the mix of
-	inline alerts and toasts that report the result.
+	inline alerts and toasts that report the result. The root carries
+	`dn-savebar` and `data-dirty` while there are unsaved changes, so a page
+	may pin it in view.
 -->
 <script lang="ts">
 	import { CircleCheck, CircleX, Info } from 'lucide-svelte';
@@ -46,7 +48,7 @@
 	const tones = { success: 'text-success', error: 'text-error', info: 'text-muted' };
 </script>
 
-<div class="flex flex-wrap items-center gap-3">
+<div class="dn-savebar flex flex-wrap items-center gap-3" data-dirty={dirty || undefined}>
 	{#if ontest}
 		<AsyncButton size="sm" onclick={ontest} pending={testing} {disabled}>
 			{testLabel}

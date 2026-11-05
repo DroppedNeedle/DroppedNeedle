@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import {
 		ChevronDown,
@@ -233,13 +234,10 @@
 </script>
 
 <section class="space-y-4">
-	<header class="space-y-1">
-		<h2 class="text-lg font-semibold">Indexers / Prowlarr</h2>
-		<p class="max-w-prose text-sm text-muted">
-			Usenet search sources. Pick one backend: your prioritized Newznab list, or a single Prowlarr
-			connection. The other side stays saved for later.
-		</p>
-	</header>
+	<SettingsPaneHeader
+		title="Indexers / Prowlarr"
+		description="Usenet search sources. Pick one backend: your prioritized Newznab list, or a single Prowlarr connection. The other side stays saved for later."
+	/>
 
 	<Card variant="bordered" padding="md">
 		<div class="flex flex-col gap-3">

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
 	import { DEFAULT_SOURCE, isMusicSource, type MusicSource } from '$lib/stores/musicSource';
 	import { getScrobblePreferencesQuery } from '$lib/features/profile/queries/scrobble-preferences.svelte';
 	import { createUpdateScrobblePreferencesMutation } from '$lib/features/profile/queries/scrobble-preferences.svelte';
@@ -36,37 +37,38 @@
 	}
 </script>
 
-<Card title="Primary Music Source">
-	<p class="text-muted mb-4">
-		Choose which listening service powers your Home and Discover by default. You can also set this
-		from your profile, and switch it on each page.
-	</p>
-
-	<div class="max-w-xs">
-		<SelectField
-			label="Default source for your discovery data"
-			bind:value={() => currentSource, (next) => void handleChange(next)}
-			options={[
-				{ value: 'listenbrainz', label: 'ListenBrainz' },
-				{ value: 'lastfm', label: 'Last.fm' }
-			]}
-			help="Your Home and Discover use this source unless you switch it on the page."
-			disabled={saving}
-		/>
-	</div>
-
-	{#if saving}
-		<div class="flex items-center gap-2 mt-2">
-			<span class="loading loading-spinner loading-sm"></span>
-			<span class="text-sm text-muted">Saving…</span>
+<div class="space-y-5">
+	<SettingsPaneHeader
+		title="Primary Music Source"
+		description="Choose which listening service powers your Home and Discover by default. You can also set this from your profile, and switch it on each page."
+	/>
+	<Card variant="bordered">
+		<div class="max-w-xs">
+			<SelectField
+				label="Default source for your discovery data"
+				bind:value={() => currentSource, (next) => void handleChange(next)}
+				options={[
+					{ value: 'listenbrainz', label: 'ListenBrainz' },
+					{ value: 'lastfm', label: 'Last.fm' }
+				]}
+				help="Your Home and Discover use this source unless you switch it on the page."
+				disabled={saving}
+			/>
 		</div>
-	{/if}
 
-	{#if message}
-		<div class="mt-2">
-			<span class="text-sm {message.includes('Couldn') ? 'text-error' : 'text-success'}">
-				{message}
-			</span>
-		</div>
-	{/if}
-</Card>
+		{#if saving}
+			<div class="flex items-center gap-2 mt-2">
+				<span class="loading loading-spinner loading-sm"></span>
+				<span class="text-sm text-muted">Saving…</span>
+			</div>
+		{/if}
+
+		{#if message}
+			<div class="mt-2">
+				<span class="text-sm {message.includes('Couldn') ? 'text-error' : 'text-success'}">
+					{message}
+				</span>
+			</div>
+		{/if}
+	</Card>
+</div>

@@ -3,6 +3,7 @@
 	import type { Snippet } from 'svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 
 	interface Props {
 		title: string;
@@ -33,21 +34,21 @@
 
 <Card variant="bordered" padding="none" class="client-card {enabled ? 'is-active' : ''}">
 	<div>
-		<div class="flex flex-wrap items-center gap-4 p-5">
-			<div class="grid size-12 place-items-center rounded-2xl bg-base-300/60">
-				<Icon class="size-6 text-accent" aria-hidden="true" />
+		<div class="flex flex-wrap items-center gap-x-4 gap-y-3 p-4 sm:p-5">
+			<div class="client-card__mark">
+				<Icon class="size-6" aria-hidden="true" />
 			</div>
 			<button
 				type="button"
-				class="min-w-0 flex-1 text-left"
+				class="min-w-0 flex-1 basis-40 text-left"
 				onclick={() => (open = !open)}
 				aria-expanded={open}
 			>
-				<div class="flex items-center gap-2">
-					<h3 class="text-lg font-bold">{title}</h3>
-					<span class="badge badge-ghost badge-sm">{sourceLabel}</span>
-				</div>
-				<div class="flex items-center gap-2 text-sm text-muted">
+				<span class="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+					<h3 class="client-card__name">{title}</h3>
+					<StatusChip tone="action" size="xs">{sourceLabel}</StatusChip>
+				</span>
+				<span class="mt-1 flex items-center gap-2 text-sm text-muted">
 					<span
 						class="orb"
 						class:is-connected={connected}
@@ -55,13 +56,13 @@
 						aria-label={connected ? 'Connected' : 'Not connected'}
 					></span>
 					{statusText}
-				</div>
+				</span>
 			</button>
-			<label class="flex cursor-pointer items-center gap-2">
-				<span class="text-sm font-medium">{enabled ? 'Enabled' : 'Disabled'}</span>
+			<label class="flex cursor-pointer items-center gap-2.5">
+				<span class="text-sm font-semibold">{enabled ? 'Enabled' : 'Disabled'}</span>
 				<input
 					type="checkbox"
-					class="toggle toggle-sm toggle-primary"
+					class="toggle toggle-primary"
 					bind:checked={enabled}
 					onchange={() => onToggle?.()}
 					aria-label={enableAriaLabel}
@@ -72,14 +73,14 @@
 				icon={ChevronDown}
 				size="sm"
 				shape="square"
-				class={open ? 'rotate-180' : ''}
+				class="transition-transform {open ? 'rotate-180' : ''}"
 				aria-expanded={open}
 				onclick={() => (open = !open)}
 			/>
 		</div>
 
 		{#if open}
-			<div class="space-y-5 border-t border-base-300 p-5">
+			<div class="space-y-5 border-t border-line p-4 sm:p-5">
 				{@render children()}
 			</div>
 		{/if}
@@ -88,35 +89,48 @@
 
 <style>
 	:global(.client-card) {
-		transition:
-			box-shadow 0.4s ease,
-			border-color 0.4s ease;
+		transition: border-color 0.3s ease;
 	}
 	:global(.client-card.is-active) {
-		border-color: oklch(from var(--color-accent) l c h / 0.55);
-		box-shadow:
-			0 0 0 1px oklch(from var(--color-accent) l c h / 0.3),
-			0 0 44px oklch(from var(--color-accent) l c h / 0.18);
+		border-color: var(--dn-action-edge);
+		box-shadow: inset 0 0 0 1px var(--dn-action-edge);
+	}
+	.client-card__mark {
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: 3rem;
+		height: 3rem;
+		border: 1px solid var(--dn-line);
+		border-radius: 0.75rem;
+		background-color: var(--color-base-100);
+		color: var(--dn-title);
+	}
+	.client-card__name {
+		font-size: 1.25rem;
+		font-weight: 800;
+		line-height: 1.2;
 	}
 	.orb {
 		display: inline-block;
-		width: 0.7rem;
-		height: 0.7rem;
+		flex: none;
+		width: 0.625rem;
+		height: 0.625rem;
 		border-radius: 9999px;
-		background: oklch(from var(--color-base-content) l c h / 0.3);
+		background: color-mix(in oklab, var(--color-base-content) 30%, transparent);
 		transition: background 0.3s ease;
 	}
 	.orb.is-connected {
-		background: var(--color-accent);
+		background: var(--color-success);
 		animation: orb-pulse 2.4s ease-in-out infinite;
 	}
 	@keyframes orb-pulse {
 		0%,
 		100% {
-			box-shadow: 0 0 5px oklch(from var(--color-accent) l c h / 0.5);
+			box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-success) 25%, transparent);
 		}
 		50% {
-			box-shadow: 0 0 14px oklch(from var(--color-accent) l c h / 0.95);
+			box-shadow: 0 0 0 5px color-mix(in oklab, var(--color-success) 12%, transparent);
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {

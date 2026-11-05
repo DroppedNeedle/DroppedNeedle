@@ -6,6 +6,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 
 	import PluginHealthBadge from './PluginHealthBadge.svelte';
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
 	import SettingsDownloadClient from './SettingsDownloadClient.svelte';
 	import SettingsDownloadPolicy from './SettingsDownloadPolicy.svelte';
 	import SettingsOnboardingChecklist from './SettingsOnboardingChecklist.svelte';
@@ -17,20 +18,17 @@
 	const pluginSources = $derived(sourcesQuery.data?.sources ?? []);
 </script>
 
-<div class="space-y-6">
-	<div>
-		<h2 class="text-xl font-bold">Download clients</h2>
-		<p class="text-sm text-muted">
-			Soulseek and Usenet are two ways to acquire music. Configure either or both, set which is
-			tried first, and tune the shared policy.
-		</p>
-	</div>
+<div class="space-y-5">
+	<SettingsPaneHeader
+		title="Download clients"
+		description="Soulseek and Usenet are two ways to acquire music. Configure either or both, set which is tried first, and tune the shared policy."
+	/>
 	<SettingsDownloadClient />
 	<SettingsSabnzbd />
 	<Card variant="bordered">
 		<div class="space-y-3">
 			<div>
-				<h3 class="font-semibold">Plugin sources</h3>
+				<h3 class="dn-set-title">Plugin sources</h3>
 				<p class="text-sm text-muted">
 					Plugins provide extra acquisition sources. Once configured, they join the same priority
 					order below.
@@ -52,7 +50,7 @@
 				<ul class="space-y-2">
 					{#each pluginSources as source (source.key)}
 						<li
-							class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-box border border-base-300 bg-base-100 p-2.5"
+							class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-box border border-line bg-base-100 p-2.5"
 						>
 							<span
 								class="grid size-8 shrink-0 place-items-center rounded-lg bg-base-300/60 text-muted"

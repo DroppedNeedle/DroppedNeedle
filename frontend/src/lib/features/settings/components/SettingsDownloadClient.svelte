@@ -146,148 +146,150 @@
 				</span>
 			</div>
 
-			<section class="space-y-2">
-				<div class="flex items-center gap-2 text-sm font-semibold">
-					<FolderTree class="size-4 text-muted" aria-hidden="true" /> Downloads mount
-				</div>
-				{#if mount?.path}
-					<p class="text-xs text-muted">
-						DroppedNeedle looks in
-						<code class="text-muted" data-testid="effective-downloads-path"
-							>{joinSubpath(mount.path, draft.downloads_subpath ?? '')}</code
-						>. The mount itself comes from <code>SLSKD_DOWNLOADS_PATH</code> in docker-compose. Recreate
-						the container after changing it.
-					</p>
-				{/if}
-				<!-- The subpath editor also renders before the first mount probe has
+			<Card variant="bordered" padding="md" as="section">
+				<div class="space-y-3">
+					<h4 class="dn-set-kicker">
+						<FolderTree class="size-4 text-muted" aria-hidden="true" /> Downloads mount
+					</h4>
+					{#if mount?.path}
+						<p class="text-xs text-muted">
+							DroppedNeedle looks in
+							<code class="text-muted" data-testid="effective-downloads-path"
+								>{joinSubpath(mount.path, draft.downloads_subpath ?? '')}</code
+							>. The mount itself comes from <code>SLSKD_DOWNLOADS_PATH</code> in docker-compose. Recreate
+							the container after changing it.
+						</p>
+					{/if}
+					<!-- The subpath editor also renders before the first mount probe has
 				run, so the setting stays editable. -->
-				{#if (mount?.ok && mountAdvisory) || !mount}
-					{#if mountAdvisory}
+					{#if (mount?.ok && mountAdvisory) || !mount}
+						{#if mountAdvisory}
+							<div class="alert alert-warning items-start text-sm">
+								<TriangleAlert class="size-5 shrink-0" aria-hidden="true" />
+								<div class="space-y-1">
+									<p>{mountAdvisory}</p>
+									{#if mount?.path}<code class="text-muted">{mount?.path}</code>{/if}
+								</div>
+							</div>
+						{/if}
+						<div>
+							<div class="space-y-1.5">
+								<label class="text-sm font-bold" for="downloads-subpath">
+									Downloads subfolder
+									<span class="badge badge-ghost badge-xs ml-1 align-middle"
+										>relative to the mount</span
+									>
+								</label>
+								<p class="text-xs text-muted">
+									The folder inside your mount where slskd saves completed downloads.
+									{#if slskdDownloadsDir}
+										slskd saves to <code class="text-muted">{slskdDownloadsDir}</code>. Set this to
+										the part of that path inside your mount.
+									{/if}
+								</p>
+								{#if slskdDownloadsDir && slskdDownloadsDir === mount?.path && !draft.downloads_subpath?.trim()}
+									<p class="text-xs text-success">
+										Leave this empty. Your mount already points where slskd saves.
+									</p>
+								{/if}
+								{#if draft.downloads_subpath?.trim().startsWith('/')}
+									<div class="alert alert-warning items-start py-2 text-xs">
+										<TriangleAlert class="size-4 shrink-0" aria-hidden="true" />
+										<div class="space-y-1.5">
+											<p>
+												This looks like a full path. Type only the part after the mount, or leave it
+												empty.
+											</p>
+											<Button size="xs" onclick={() => trimSubpathToRelative(draft)}
+												>Trim to relative</Button
+											>
+										</div>
+									</div>
+								{/if}
+								<div class="flex flex-wrap items-center gap-2">
+									<Input
+										id="downloads-subpath"
+										label="Downloads subfolder"
+										size="sm"
+										mono
+										class="flex-1"
+										placeholder="e.g. downloads/slskd/complete"
+										bind:value={draft.downloads_subpath}
+									/>
+									<Button
+										variant="primary"
+										size="sm"
+										onclick={() => void section.save()}
+										disabled={section.saving}
+									>
+										{section.saving ? 'Checking…' : 'Save & re-check'}
+									</Button>
+								</div>
+							</div>
+						</div>
+					{:else if mount?.ok && mount.move_supported}
+						<div class="flex items-center gap-2 text-sm text-success">
+							<CircleCheck class="size-4" aria-hidden="true" />
+							Fast move available
+							{#if mount.path}<code class="text-muted">{mount.path}</code>{/if}
+						</div>
+					{:else if mount?.reason === 'different_mount' || mount?.reason === 'different_filesystem'}
+						<div class="alert alert-info items-start text-sm">
+							<Info class="size-5 shrink-0" aria-hidden="true" />
+							<div class="space-y-1">
+								<p>
+									Your downloads and library use separate container mount boundaries. DroppedNeedle
+									will copy each file into the library and remove the source after the copy
+									succeeds. This is slower and temporarily needs room for both copies.
+								</p>
+								<p class="text-muted">
+									For fast moves, expose both folders through one common-parent container mount.
+									{#if mount.path}<code class="text-muted">{mount.path}</code>{/if}
+								</p>
+							</div>
+						</div>
+					{:else if mount?.reason === 'stat_error'}
+						<div class="alert alert-info items-start text-sm">
+							<Info class="size-5 shrink-0" aria-hidden="true" />
+							<p>
+								The downloads path is writable, but DroppedNeedle couldn't determine whether a fast
+								move is available. Imports will try the move first and copy when needed.
+							</p>
+						</div>
+					{:else if mount?.ok}
+						<div class="alert alert-info items-start text-sm">
+							<Info class="size-5 shrink-0" aria-hidden="true" />
+							<p>
+								The downloads path is ready. Configure a library root before DroppedNeedle can check
+								whether fast moves are available.
+							</p>
+						</div>
+					{:else if mount}
 						<div class="alert alert-warning items-start text-sm">
 							<TriangleAlert class="size-5 shrink-0" aria-hidden="true" />
 							<div class="space-y-1">
-								<p>{mountAdvisory}</p>
-								{#if mount?.path}<code class="text-muted">{mount?.path}</code>{/if}
+								<p>
+									DroppedNeedle can't reach slskd's downloads folder, so finished downloads won't
+									import.
+									{MOUNT_REASONS[mount.reason] ?? mount.reason}
+								</p>
+								<details class="text-xs">
+									<summary class="cursor-pointer font-semibold">How to set this up</summary>
+									<p class="mt-1 text-muted">
+										Expose slskd's completed-downloads directory to DroppedNeedle
+										<strong>read-write</strong>. For fast moves, keep it and the library inside one
+										common-parent container mount. See the slskd setup section in the README.
+									</p>
+								</details>
 							</div>
 						</div>
 					{/if}
-					<Card variant="bordered" padding="sm">
-						<div class="space-y-1.5">
-							<label class="text-sm font-medium" for="downloads-subpath">
-								Downloads subfolder
-								<span class="badge badge-ghost badge-xs ml-1 align-middle"
-									>relative to the mount</span
-								>
-							</label>
-							<p class="text-xs text-muted">
-								The folder inside your mount where slskd saves completed downloads.
-								{#if slskdDownloadsDir}
-									slskd saves to <code class="text-muted">{slskdDownloadsDir}</code>. Set this to
-									the part of that path inside your mount.
-								{/if}
-							</p>
-							{#if slskdDownloadsDir && slskdDownloadsDir === mount?.path && !draft.downloads_subpath?.trim()}
-								<p class="text-xs text-success">
-									Leave this empty. Your mount already points where slskd saves.
-								</p>
-							{/if}
-							{#if draft.downloads_subpath?.trim().startsWith('/')}
-								<div class="alert alert-warning items-start py-2 text-xs">
-									<TriangleAlert class="size-4 shrink-0" aria-hidden="true" />
-									<div class="space-y-1.5">
-										<p>
-											This looks like a full path. Type only the part after the mount, or leave it
-											empty.
-										</p>
-										<Button size="xs" onclick={() => trimSubpathToRelative(draft)}
-											>Trim to relative</Button
-										>
-									</div>
-								</div>
-							{/if}
-							<div class="flex flex-wrap items-center gap-2">
-								<Input
-									id="downloads-subpath"
-									label="Downloads subfolder"
-									size="sm"
-									mono
-									class="flex-1"
-									placeholder="e.g. downloads/slskd/complete"
-									bind:value={draft.downloads_subpath}
-								/>
-								<Button
-									variant="primary"
-									size="sm"
-									onclick={() => void section.save()}
-									disabled={section.saving}
-								>
-									{section.saving ? 'Checking…' : 'Save & re-check'}
-								</Button>
-							</div>
-						</div>
-					</Card>
-				{:else if mount?.ok && mount.move_supported}
-					<div class="flex items-center gap-2 text-sm text-success">
-						<CircleCheck class="size-4" aria-hidden="true" />
-						Fast move available
-						{#if mount.path}<code class="text-muted">{mount.path}</code>{/if}
-					</div>
-				{:else if mount?.reason === 'different_mount' || mount?.reason === 'different_filesystem'}
-					<div class="alert alert-info items-start text-sm">
-						<Info class="size-5 shrink-0" aria-hidden="true" />
-						<div class="space-y-1">
-							<p>
-								Your downloads and library use separate container mount boundaries. DroppedNeedle
-								will copy each file into the library and remove the source after the copy succeeds.
-								This is slower and temporarily needs room for both copies.
-							</p>
-							<p class="text-muted">
-								For fast moves, expose both folders through one common-parent container mount.
-								{#if mount.path}<code class="text-muted">{mount.path}</code>{/if}
-							</p>
-						</div>
-					</div>
-				{:else if mount?.reason === 'stat_error'}
-					<div class="alert alert-info items-start text-sm">
-						<Info class="size-5 shrink-0" aria-hidden="true" />
-						<p>
-							The downloads path is writable, but DroppedNeedle couldn't determine whether a fast
-							move is available. Imports will try the move first and copy when needed.
-						</p>
-					</div>
-				{:else if mount?.ok}
-					<div class="alert alert-info items-start text-sm">
-						<Info class="size-5 shrink-0" aria-hidden="true" />
-						<p>
-							The downloads path is ready. Configure a library root before DroppedNeedle can check
-							whether fast moves are available.
-						</p>
-					</div>
-				{:else if mount}
-					<div class="alert alert-warning items-start text-sm">
-						<TriangleAlert class="size-5 shrink-0" aria-hidden="true" />
-						<div class="space-y-1">
-							<p>
-								DroppedNeedle can't reach slskd's downloads folder, so finished downloads won't
-								import.
-								{MOUNT_REASONS[mount.reason] ?? mount.reason}
-							</p>
-							<details class="text-xs">
-								<summary class="cursor-pointer font-semibold">How to set this up</summary>
-								<p class="mt-1 text-muted">
-									Expose slskd's completed-downloads directory to DroppedNeedle
-									<strong>read-write</strong>. For fast moves, keep it and the library inside one
-									common-parent container mount. See the slskd setup section in the README.
-								</p>
-							</details>
-						</div>
-					</div>
-				{/if}
-			</section>
+				</div>
+			</Card>
 
-			<Card variant="bordered" padding="sm" as="section">
+			<Card variant="bordered" padding="md" as="section">
 				<div class="space-y-1.5">
-					<label class="text-sm font-medium" for="incomplete-mount">
+					<label class="text-sm font-bold" for="incomplete-mount">
 						Incomplete folder (optional)
 						<span class="badge badge-ghost badge-xs ml-1 align-middle">absolute path</span>
 					</label>

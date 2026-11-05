@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
 	import { Database, History, ImageIcon } from 'lucide-svelte';
 	import {
 		createSaveAdvancedSettingsMutation,
@@ -42,10 +43,10 @@
 </script>
 
 <div class="space-y-6">
-	<div>
-		<h2 class="text-2xl font-bold">Advanced Settings</h2>
-		<p class="text-muted mt-1">Control the Discover Queue and image loading.</p>
-	</div>
+	<SettingsPaneHeader
+		title="Advanced Settings"
+		description="Control the Discover Queue and image loading."
+	/>
 
 	<QueryBoundary query={section} what="the advanced settings">
 		{#snippet children(draft)}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
 	import { CircleCheck, CircleX, DatabaseBackup } from 'lucide-svelte';
 	import {
 		createRunBackupMutation,
@@ -12,7 +13,6 @@
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import Modal from '$lib/ui/Modal.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 
@@ -67,62 +67,57 @@
 	}
 </script>
 
-<Card>
-	{#snippet header()}
-		<div class="flex flex-wrap items-start justify-between gap-3">
-			<div class="min-w-0">
-				<CardTitle class="text-2xl">Backups</CardTitle>
-				<p class="mt-1 text-sm text-muted">
-					Copies of the database, settings included.
-					{#if backupsQuery.data}The newest {backupsQuery.data.keep} are kept.{/if}
-				</p>
-			</div>
-			<AsyncButton variant="primary" size="sm" icon={DatabaseBackup} onclick={backUpNow}>
+<div class="space-y-5">
+	<SettingsPaneHeader title="Backups" description="Copies of the database, settings included.">
+		{#if backupsQuery.data}<p>The newest {backupsQuery.data.keep} are kept.</p>{/if}
+		{#snippet actions()}
+			<AsyncButton variant="primary" size="display-sm" icon={DatabaseBackup} onclick={backUpNow}>
 				Back up now
 			</AsyncButton>
-		</div>
-	{/snippet}
-
-	<QueryBoundary
-		query={backupsQuery}
-		what="the backups"
-		isEmpty={(data) => data.backups.length === 0}
-	>
-		{#snippet empty()}
-			<p class="py-4 text-sm text-muted">No backups yet.</p>
 		{/snippet}
-		{#snippet children(data)}
-			<ul class="divide-y divide-base-300/40">
-				{#each newestFirst(data.backups) as backup (backup.name)}
-					<li class="flex items-center gap-3 py-3">
-						<div class="min-w-0 flex-1">
-							<p class="font-mono text-xs break-all sm:text-sm">{backup.name}</p>
-							<p class="mt-0.5 text-xs text-muted">{details(backup)}</p>
-						</div>
-						<Button
-							variant="outline"
-							size="sm"
-							aria-label="Check {backup.name}"
-							onclick={() => openCheck(backup.name)}
-						>
-							Check
-						</Button>
-					</li>
-				{/each}
-			</ul>
-		{/snippet}
-	</QueryBoundary>
-
-	<p class="mt-4 text-xs text-muted">
-		Restoring runs on the host with the server stopped.
-		<a
-			class="link whitespace-nowrap"
-			href={outsideLink(RESTORE_DOCS)}
-			target="_blank"
-			rel="noopener noreferrer">How to restore</a
+	</SettingsPaneHeader>
+	<Card variant="bordered" padding="md">
+		<QueryBoundary
+			query={backupsQuery}
+			what="the backups"
+			isEmpty={(data) => data.backups.length === 0}
 		>
-	</p>
-</Card>
+			{#snippet empty()}
+				<p class="py-4 text-sm text-muted">No backups yet.</p>
+			{/snippet}
+			{#snippet children(data)}
+				<ul class="divide-y divide-line">
+					{#each newestFirst(data.backups) as backup (backup.name)}
+						<li class="flex items-center gap-3 py-3 first:pt-0">
+							<div class="min-w-0 flex-1">
+								<p class="font-mono text-xs break-all sm:text-sm">{backup.name}</p>
+								<p class="mt-0.5 text-xs text-muted">{details(backup)}</p>
+							</div>
+							<Button
+								variant="outline"
+								size="sm"
+								aria-label="Check {backup.name}"
+								onclick={() => openCheck(backup.name)}
+							>
+								Check
+							</Button>
+						</li>
+					{/each}
+				</ul>
+			{/snippet}
+		</QueryBoundary>
+
+		<p class="mt-4 text-xs text-muted">
+			Restoring runs on the host with the server stopped.
+			<a
+				class="link whitespace-nowrap"
+				href={outsideLink(RESTORE_DOCS)}
+				target="_blank"
+				rel="noopener noreferrer">How to restore</a
+			>
+		</p>
+	</Card>
+</div>
 
 <Modal bind:open={checkOpen} title="Check backup" description={checking ?? undefined}>
 	<QueryBoundary query={reportQuery} what="the check">

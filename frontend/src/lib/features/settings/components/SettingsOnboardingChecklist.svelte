@@ -107,7 +107,7 @@
 		aria-expanded={expanded}
 	>
 		<div>
-			<h3 class="font-semibold">Setup checklist</h3>
+			<h3 class="dn-set-title">Setup checklist</h3>
 			<p class="text-sm text-muted">{doneCount}/{items.length} complete</p>
 		</div>
 		<span class="text-sm text-muted">{expanded ? 'Hide' : 'Show'}</span>

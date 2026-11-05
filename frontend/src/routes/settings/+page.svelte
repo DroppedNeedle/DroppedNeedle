@@ -16,7 +16,6 @@
 		Search,
 		ChartColumn,
 		Info,
-		CircleArrowUp,
 		Globe,
 		House,
 		Compass,
@@ -39,8 +38,10 @@
 	import PlexIcon from '$lib/media/icons/PlexIcon.svelte';
 	import SpotifyIcon from '$lib/media/icons/SpotifyIcon.svelte';
 	import YouTubeIcon from '$lib/media/icons/YouTubeIcon.svelte';
-	import Card from '$lib/ui/Card.svelte';
-	import Input from '$lib/ui/Input.svelte';
+	import FritEdge from '$lib/ui/FritEdge.svelte';
+	import ListPageHeader from '$lib/ui/ListPageHeader.svelte';
+	import SettingsRail from '$lib/features/settings/components/SettingsRail.svelte';
+	import '$lib/features/settings/components/settings.css';
 	import UnsavedChangesGuard from '$lib/ui/UnsavedChangesGuard.svelte';
 	import { confirmLeave } from '$lib/ui/settingsSection.svelte';
 
@@ -58,8 +59,6 @@
 		plex: 'plex',
 		youtube: 'youtube'
 	};
-
-	let filter = $state('');
 
 	const tiers = [
 		{ id: 'setup', label: 'Setup', hint: 'Connect your sources' },
@@ -109,16 +108,9 @@
 		requestedTab && tabs.some((tab) => tab.id === requestedTab) ? requestedTab : tabs[0].id
 	);
 
-	const normalizedFilter = $derived(filter.trim().toLowerCase());
-	function tabsForTier(tier: string) {
-		return tabs.filter(
-			(t) =>
-				t.tier === tier && (!normalizedFilter || t.label.toLowerCase().includes(normalizedFilter))
-		);
+	function connected(id: string): boolean | null {
+		return id in connectionMap ? integration.current[connectionMap[id]] : null;
 	}
-	const noMatches = $derived(
-		normalizedFilter.length > 0 && tiers.every((t) => tabsForTier(t.id).length === 0)
-	);
 
 	function selectTab(id: string) {
 		if (id === activeTab) return;
@@ -138,100 +130,50 @@
 	});
 </script>
 
-<div class="flex min-h-screen flex-col bg-base-100 lg:h-full lg:min-h-0">
+<div class="dn-settings flex min-h-screen flex-col lg:h-full lg:min-h-0">
 	<!-- Desktop is an app-style two-pane layout inside the shell's locked
-	     viewport column: the page itself doesn't scroll; the tab rail and the
-	     content pane each scroll independently, so the wheel isn't trapped by a
-	     hidden sidebar scroller when the tab list grows taller than the
-	     viewport. Mobile keeps natural page flow. -->
-	<div class="container mx-auto p-4 max-w-7xl lg:flex lg:h-full lg:min-h-0 lg:flex-col">
-		<div class="mb-6 lg:shrink-0">
-			<h1 class="text-3xl font-bold">Settings</h1>
-			<p class="text-muted mt-2">Manage your preferences and app settings.</p>
-		</div>
+	     viewport column: the page itself doesn't scroll; the rail and the
+	     content pane each scroll on their own. Below that, the sections
+	     dropdown sits over the pane in normal page flow. -->
+	<div class="dn-settings__head lg:shrink-0">
+		<FritEdge place="top-left" class="dn-settings__frit" />
+		<FritEdge place="top-right" class="dn-settings__frit" />
+		<ListPageHeader
+			title="Settings"
+			lede="Manage your preferences and app settings."
+			ticket="DN / CC 3.2"
+			compact
+		/>
+	</div>
 
-		<div class="flex flex-col lg:flex-row gap-6 lg:min-h-0 lg:flex-1">
-			<aside class="w-full lg:w-80 lg:shrink-0 space-y-3 lg:min-h-0 lg:overflow-y-auto lg:pb-4">
-				<Input
-					size="sm"
-					icon={Search}
-					label="Filter settings"
-					placeholder="Filter settings…"
-					class="w-full"
-					bind:value={filter}
-				/>
+	<div
+		class="flex flex-col gap-6 px-4 pb-6 sm:px-6 lg:min-h-0 lg:flex-1 lg:flex-row lg:px-8 lg:pb-0"
+	>
+		<aside class="w-full lg:w-80 lg:shrink-0 lg:min-h-0 lg:overflow-y-auto lg:pb-6">
+			<SettingsRail
+				{tiers}
+				{tabs}
+				active={activeTab}
+				onselect={selectTab}
+				{connected}
+				{updateAvailable}
+			/>
+		</aside>
 
-				{#each tiers as tier (tier.id)}
-					{@const tierTabs = tabsForTier(tier.id)}
-					{#if tierTabs.length > 0}
-						<Card variant="bordered" padding="sm">
-							<div class="px-3 pb-1 pt-2">
-								<h3
-									class="text-xs font-bold uppercase tracking-widest {tier.id === 'setup'
-										? 'text-accent'
-										: tier.id === 'personalize'
-											? 'text-muted'
-											: 'text-muted'}"
-								>
-									{tier.label}
-								</h3>
-								<p class="text-[10px] text-muted">{tier.hint}</p>
-							</div>
-							<ul class="menu gap-0.5 p-0">
-								{#each tierTabs as tab (tab.id)}
-									{@const Icon = tab.icon}
-									{@const isActive = activeTab === tab.id}
-									<li>
-										<button
-											class="group justify-start gap-3 rounded-xl text-base transition-all {isActive
-												? 'glow-primary-soft bg-primary/15 font-semibold text-primary'
-												: 'text-muted hover:bg-base-300/40'}"
-											aria-current={isActive ? 'page' : undefined}
-											onclick={() => selectTab(tab.id)}
-										>
-											<Icon
-												class="h-5 w-5 {isActive
-													? 'text-primary'
-													: 'text-muted group-hover:text-base-content/80'}"
-											/>
-											<span>{tab.label}</span>
-											{#if tab.id in connectionMap}
-												{@const storeKey = connectionMap[tab.id]}
-												{@const connected = integration.current[storeKey]}
-												<span
-													class="ml-auto h-2 w-2 rounded-full {connected
-														? 'bg-success ring-2 ring-success/30'
-														: 'bg-base-content/20'}"
-												>
-													<span class="sr-only">{connected ? 'Connected' : 'Not connected'}</span>
-												</span>
-											{/if}
-											{#if tab.id === 'about' && updateAvailable}
-												<span
-													class="ml-auto flex items-center gap-1 rounded-full bg-accent/15 px-2 py-0.5 text-xs font-semibold text-accent"
-												>
-													<CircleArrowUp class="h-3 w-3" />
-													Update
-												</span>
-											{/if}
-										</button>
-									</li>
-								{/each}
-							</ul>
-						</Card>
-					{/if}
-				{/each}
-
-				{#if noMatches}
-					<p class="px-3 py-2 text-sm text-muted">No settings match "{filter}".</p>
-				{/if}
-			</aside>
-
-			<main class="flex-1 min-w-0 lg:min-h-0 lg:overflow-y-auto lg:pb-4">
-				<SettingsTabContent tab={activeTab} isAdmin={authStore.isAdmin} />
-			</main>
-		</div>
+		<main class="dn-set-pane min-w-0 flex-1 lg:min-h-0 lg:overflow-y-auto lg:pb-8">
+			<SettingsTabContent tab={activeTab} isAdmin={authStore.isAdmin} />
+		</main>
 	</div>
 </div>
 
 <UnsavedChangesGuard />
+
+<style>
+	.dn-settings__head {
+		position: relative;
+		isolation: isolate;
+	}
+	.dn-settings__head :global(.dn-settings__frit) {
+		z-index: -1;
+	}
+</style>

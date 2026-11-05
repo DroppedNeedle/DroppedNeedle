@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Trash2, TriangleAlert, Users, Waypoints } from 'lucide-svelte';
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
+	import { Trash2, TriangleAlert, Users } from 'lucide-svelte';
 
 	import { toastStore } from '$lib/stores/toast';
 	import {
@@ -62,25 +63,18 @@
 	const rosterCount = $derived(rosterQuery.data?.length ?? 0);
 </script>
 
-<section class="flex flex-col gap-6">
-	<header>
-		<Card variant="bordered">
-			<div class="flex items-center gap-2 text-accent">
-				<Waypoints class="h-5 w-5" aria-hidden="true" />
-				<h2 class="text-xl font-bold tracking-tight">Connect Apps</h2>
-			</div>
-			<p class="max-w-2xl text-base text-muted">
-				Let music apps like Symfonium and Finamp stream this library over the OpenSubsonic or
-				Jellyfin protocols.
-			</p>
-			<p class="max-w-2xl text-sm text-muted">
-				These are server-wide switches. Each person creates their own app-password from their
-				<a href={withBasePath('/profile#connect-apps')} class="link link-accent"
-					>Profile → Connect Apps</a
-				>.
-			</p>
-		</Card>
-	</header>
+<section class="flex flex-col gap-5">
+	<SettingsPaneHeader
+		title="Connect Apps"
+		description="Let music apps like Symfonium and Finamp stream this library over the OpenSubsonic or Jellyfin protocols."
+	>
+		<p class="max-w-2xl text-sm">
+			These are server-wide switches. Each person creates their own app-password from their
+			<a href={withBasePath('/profile#connect-apps')} class="link font-semibold"
+				>Profile → Connect Apps</a
+			>.
+		</p>
+	</SettingsPaneHeader>
 
 	<Card variant="bordered">
 		{#snippet header()}

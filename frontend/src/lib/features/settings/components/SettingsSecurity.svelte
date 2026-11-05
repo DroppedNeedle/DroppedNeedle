@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
 	import { v3 } from '$lib/api/v3/endpoint';
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import {
@@ -149,10 +150,10 @@
 </script>
 
 <div class="space-y-6">
-	<div>
-		<h2 class="text-2xl font-bold">Security</h2>
-		<p class="text-muted mt-1">Configure password security and HTTPS enforcement headers.</p>
-	</div>
+	<SettingsPaneHeader
+		title="Security"
+		description="Configure password security and HTTPS enforcement headers."
+	/>
 
 	<QueryBoundary query={security} what="the security settings">
 		{#snippet children(draft)}
