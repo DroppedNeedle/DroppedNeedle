@@ -20,10 +20,7 @@ test('a request made with no download source waits, then starts when one is save
 	// Search, open the artist, then the album, and request it from its page.
 	await page.getByRole('searchbox', { name: 'Search' }).first().fill('Radiohead');
 	await page.getByRole('searchbox', { name: 'Search' }).first().press('Enter');
-	await page
-		.getByRole('link')
-		.filter({ has: page.getByRole('heading', { name: 'Radiohead', exact: true }) })
-		.click();
+	await page.getByRole('link', { name: 'Radiohead', exact: true }).first().click();
 	await expect(page.getByRole('heading', { name: 'Radiohead', level: 1 })).toBeVisible();
 	await page
 		.locator('#section-albums')
