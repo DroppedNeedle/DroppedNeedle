@@ -15,7 +15,7 @@
 		 * never the main player (cross-origin clips are muted by the player's Web Audio). */
 		previewStation?: { title: string; entries: SampleEntry[] } | null;
 		showShuffle?: boolean;
-		size?: 'xs' | 'sm' | 'md';
+		size?: 'xs' | 'sm' | 'md' | 'display';
 		variant?: 'primary' | 'ghost';
 		label?: string;
 		className?: string;

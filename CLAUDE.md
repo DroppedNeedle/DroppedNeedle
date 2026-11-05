@@ -718,7 +718,8 @@ Run from the repo root. `make help` lists every target.
   shell), `FritEdge`, `VinylSleeve`, `VinylRecord`, `BarcodeOrnament`,
   `BarcodeTicket`, `Illustration` (turntable, dripping heart, folder
   sticker); in `src/lib/media` the one
-  album and artist tile, `MediaTile` and `MediaTileSkeleton`):
+  album and artist tile, `MediaTile` (`wrapName` in a dense artist grid) and
+  `MediaTileSkeleton`):
   do not hand-write a button, a card, a text input, a modal, a confirm, a
   form row, a `<dialog>` or a query's loading, error and empty branches
   (lint refuses a `<dialog>` outside `src/lib/ui` and any `confirm()`). Lint refuses a

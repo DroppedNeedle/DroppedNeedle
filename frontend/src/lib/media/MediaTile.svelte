@@ -17,6 +17,8 @@
 		title: string;
 		/** The heading level the title sits at on its page. */
 		titleAs?: 'h2' | 'h3' | 'p';
+		/** An artist's name may wrap to two lines (a dense grid); one by default. */
+		wrapName?: boolean;
 		href?: string;
 		onclick?: () => void;
 		/** The target's accessible name; the title when not given. */
@@ -38,6 +40,7 @@
 		kind = 'album',
 		title,
 		titleAs = 'h3',
+		wrapName = false,
 		href,
 		onclick,
 		label,
@@ -50,6 +53,24 @@
 	}: Props = $props();
 
 	const tag = $derived(href !== undefined ? 'a' : 'div');
+
+	// A wrapped name breaks only between words: its longest word's width in
+	// em (Inter bold, a little generous) lets that word shrink to fit.
+	function wordEm(text: string): number {
+		let widest = 0;
+		for (const word of text.split(/\s+/)) {
+			let em = 0;
+			for (const char of word) {
+				if ('mwMW'.includes(char)) em += 0.86;
+				else if ("ilj.,'!|".includes(char)) em += 0.3;
+				else if (char !== char.toLowerCase()) em += 0.66;
+				else em += 0.57;
+			}
+			widest = Math.max(widest, em);
+		}
+		return widest * 1.02;
+	}
+	const fitWord = $derived(wrapName ? wordEm(title) : undefined);
 	const interactive = $derived(href !== undefined || onclick !== undefined);
 
 	function keydown(event: KeyboardEvent) {
@@ -61,7 +82,11 @@
 	}
 </script>
 
-<div class="dn-tile group relative min-w-0 {className}" data-kind={kind}>
+<div
+	class="dn-tile group relative min-w-0 {className}"
+	data-kind={kind}
+	data-wrap={wrapName || undefined}
+>
 	<svelte:element
 		this={tag}
 		{href}
@@ -78,7 +103,9 @@
 			{@render art()}
 		</div>
 		<div class="dn-tile__text">
-			<svelte:element this={titleAs} class="dn-tile__title">{title}</svelte:element>
+			<svelte:element this={titleAs} class="dn-tile__title" style:--dn-tile-word={fitWord}
+				>{title}</svelte:element
+			>
 			{#if meta}
 				<div class="dn-tile__meta">{@render meta()}</div>
 			{/if}
@@ -165,5 +192,16 @@
 		text-transform: none;
 		letter-spacing: 0;
 		font-size: 0.9375rem;
+	}
+	.dn-tile[data-kind='artist'][data-wrap] .dn-tile__text {
+		container-type: inline-size;
+	}
+	.dn-tile[data-kind='artist'][data-wrap] .dn-tile__title {
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		min-height: 2.5rem;
+		font-size: min(0.875rem, 100cqi / var(--dn-tile-word, 1));
+		line-height: 1.25rem;
+		overflow-wrap: normal;
 	}
 </style>

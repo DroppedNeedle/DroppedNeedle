@@ -18,6 +18,7 @@
 
 <MediaTile
 	kind="artist"
+	wrapName
 	title={artist.name}
 	href={href ?? undefined}
 	onclick={href ? undefined : onclick}
@@ -35,7 +36,9 @@
 	{/snippet}
 	{#snippet meta()}
 		{#if artist.listen_count}
-			{artist.listen_count} album{artist.listen_count !== 1 ? 's' : ''}
+			<span class="uppercase tracking-[0.12em]"
+				>{artist.listen_count} album{artist.listen_count !== 1 ? 's' : ''}</span
+			>
 		{/if}
 	{/snippet}
 	{#snippet overlay()}
