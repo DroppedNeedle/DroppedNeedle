@@ -16,6 +16,7 @@
 	import type { DropImportItemStatus } from '$lib/features/downloads/queries/import.svelte';
 	import type { HeldEntry } from '$lib/features/downloads/queries/types';
 	import Card from '$lib/ui/Card.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 
 	interface Props {
 		showAll?: boolean;
@@ -58,13 +59,14 @@
 		});
 	});
 
-	const badges: Record<DropImportItemStatus, { label: string; cls: string }> = {
-		processing: { label: 'Identifying…', cls: 'badge-info' },
-		imported: { label: 'Imported', cls: 'badge-success' },
-		skipped: { label: 'Skipped', cls: 'badge-ghost' },
-		needs_review: { label: 'Needs a match', cls: 'badge-warning' },
-		failed: { label: 'Failed', cls: 'badge-error' },
-		discarded: { label: 'Discarded', cls: 'badge-ghost' }
+	type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'error';
+	const badges: Record<DropImportItemStatus, { label: string; tone: Tone }> = {
+		processing: { label: 'Identifying…', tone: 'info' },
+		imported: { label: 'Imported', tone: 'success' },
+		skipped: { label: 'Skipped', tone: 'neutral' },
+		needs_review: { label: 'Needs a match', tone: 'warning' },
+		failed: { label: 'Failed', tone: 'error' },
+		discarded: { label: 'Discarded', tone: 'neutral' }
 	};
 </script>
 
@@ -74,9 +76,7 @@
 		<div class="skeleton h-16 w-full rounded-2xl"></div>
 	</div>
 {:else if jobs.length === 0}
-	<p class="py-6 text-center text-sm text-muted">
-		Nothing imported yet. Drop a purchase above to get started.
-	</p>
+	<p class="dl-import-empty">Nothing imported yet. Drop a purchase above to get started.</p>
 {:else}
 	<div class="space-y-3">
 		{#each jobs as job (job.id)}
@@ -84,10 +84,10 @@
 				<div>
 					<div class="flex flex-wrap items-center justify-between gap-2">
 						<div class="min-w-0">
-							<p class="truncate text-sm font-semibold" title={job.upload_name}>
+							<p class="truncate text-lg font-bold" title={job.upload_name}>
 								{job.upload_name}
 							</p>
-							<p class="text-xs text-muted">
+							<p class="font-mono text-xs tracking-wide text-muted uppercase">
 								{formatLastUpdated(new Date(job.created_at * 1000))}
 								{#if showAll && job.user_id !== authStore.user?.id}
 									· by {job.user_name}
@@ -95,11 +95,13 @@
 							</p>
 						</div>
 						{#if job.status === 'processing'}
-							<span class="badge badge-info gap-1">
-								<LoaderCircle class="h-3 w-3 animate-spin motion-keep" aria-hidden="true" /> Working…
-							</span>
+							<StatusChip tone="info">
+								<LoaderCircle class="size-3 animate-spin motion-keep" aria-hidden="true" /> Working…
+							</StatusChip>
 						{:else if job.status === 'failed'}
-							<span class="badge badge-error" title={job.error ?? undefined}>Failed</span>
+							<span title={job.error ?? undefined}
+								><StatusChip tone="error">Failed</StatusChip></span
+							>
 						{/if}
 					</div>
 
@@ -117,7 +119,7 @@
 								{@const badge = badges[item.status]}
 								{@const entry =
 									item.status === 'needs_review' ? entryByItem.get(item.id) : undefined}
-								<li class="rounded-xl bg-base-100/60 px-3 py-2">
+								<li class="rounded-field border border-line bg-base-100 px-3 py-2.5">
 									<div class="min-w-0">
 										<div class="flex min-w-0 items-center gap-2">
 											{#if item.status === 'imported'}
@@ -144,7 +146,7 @@
 													{item.folder_name}
 												{/if}
 											</p>
-											<span class="badge badge-sm {badge.cls} shrink-0">{badge.label}</span>
+											<StatusChip tone={badge.tone} size="xs">{badge.label}</StatusChip>
 										</div>
 										{#if item.detail && !entry}
 											<p class="mt-0.5 truncate text-xs text-muted" title={item.detail}>
@@ -175,3 +177,15 @@
 		{/each}
 	</div>
 {/if}
+
+<style>
+	.dl-import-empty {
+		padding-block: 2rem;
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		letter-spacing: 0.08em;
+		text-align: center;
+		text-transform: uppercase;
+		color: var(--dn-muted);
+	}
+</style>

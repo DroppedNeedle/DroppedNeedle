@@ -1,5 +1,11 @@
+<!--
+	A still-hunting album: the app retries it on a ladder of waits. The card
+	shows where on the ladder it is, how the last try went, the countdown to
+	the next, and Retry now and Stop.
+-->
 <script lang="ts">
-	import { FileDown, RotateCcw, TimerOff } from 'lucide-svelte';
+	import { FileDown, RefreshCw, RotateCcw, Square } from 'lucide-svelte';
+	import { prefersReducedMotion } from 'svelte/motion';
 
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import {
@@ -20,6 +26,7 @@
 	import { formatRelativeTime } from '$lib/utils/formatting';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 
 	import CueCountdown from './CueCountdown.svelte';
 
@@ -36,12 +43,26 @@
 
 	// recomputes every tick because retryLadderState reads the shared clock
 	const ladder = $derived(retryLadderState(task, nowSeconds()));
-	const countdown = $derived(ladder ? formatCountdown(ladder.secondsUntilNext) : '');
+	// Under reduced motion the time left is whole minutes, so it does not tick each second.
+	const countdown = $derived.by(() => {
+		if (!ladder) return '';
+		const left = ladder.secondsUntilNext;
+		if (prefersReducedMotion.current && left < 3600) return `${Math.max(1, Math.ceil(left / 60))}m`;
+		return formatCountdown(left);
+	});
 	const urgent = $derived(!!ladder && ladder.secondsUntilNext <= 60);
 	const lastTried = $derived(
 		task.completed_at ? formatRelativeTime(new Date(task.completed_at * 1000)) : null
 	);
 	const isPartial = $derived(task.status === 'partial');
+	const facts = $derived(
+		[
+			isPartial && task.files_total > 0
+				? `Got ${task.files_completed}/${task.files_total} tracks`
+				: null,
+			lastTried ? `Last tried ${lastTried}` : null
+		].filter(Boolean)
+	);
 
 	function rungLabel(minutes: number): string {
 		return minutes < 60 ? `${minutes}m` : `${Math.round(minutes / 60)}h`;
@@ -61,137 +82,287 @@
 	}
 </script>
 
-<Card as="article" variant="bordered" padding="sm" class="border-warning/20">
-	<div class="flex items-start gap-3 sm:gap-4">
-		<div class="size-14 shrink-0 overflow-hidden rounded-lg ring-1 ring-base-content/10 sm:size-16">
+<Card as="article" variant="bordered" padding="none" class="border-warning!">
+	<div class="hunt">
+		<div class="hunt__cover">
 			<AlbumImage
 				mbid={task.release_group_mbid}
 				alt={task.album_title}
-				size="sm"
-				rounded="lg"
+				size="full"
+				requestSize={250}
+				rounded="none"
 				className="h-full w-full"
 			/>
 		</div>
 
-		<div class="min-w-0 flex-1">
-			<h3 class="truncate text-sm font-semibold sm:text-base">
-				<a href={albumHref(task.release_group_mbid)} class="hover:text-primary transition-colors">
-					{task.album_title}
-				</a>
+		<div class="hunt__who">
+			<h3 class="hunt__title">
+				<a href={albumHref(task.release_group_mbid)} class="hunt__link">{task.album_title}</a>
 			</h3>
-			<p class="truncate text-xs text-muted">
+			<p class="hunt__artist">
 				{#if task.artist_mbid}
-					<a href={artistHref(task.artist_mbid)} class="hover:text-primary transition-colors">
-						{task.artist_name}
-					</a>
+					<a href={artistHref(task.artist_mbid)} class="hunt__artist-link">{task.artist_name}</a>
 				{:else}
 					{task.artist_name}
 				{/if}
-				{#if task.year}<span class="text-base-content/30"> · </span>{task.year}{/if}
-				{#if task.download_type === 'track' && task.track_title}<span class="text-base-content/30">
-						·
-					</span>{task.track_title}{/if}
+				{#if task.year}<span class="text-muted mr-1.5 ml-0.5">·</span>{task.year}{/if}
+				{#if task.download_type === 'track' && task.track_title}<span
+						class="text-muted mr-1.5 ml-0.5">·</span
+					>{task.track_title}{/if}
 			</p>
+		</div>
 
-			<p class="mt-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-warning">
+		<div class="hunt__state">
+			<StatusChip tone="warning" icon={RefreshCw}>
 				{#if ladder}Next spin · retry {ladder.attempt} of {ladder.total}{:else}Retrying{/if}
-			</p>
+			</StatusChip>
 
 			{#if ladder}
-				<div class="mt-1.5 flex flex-wrap items-center gap-1" aria-label="Retry schedule">
+				<ol class="hunt__ladder" aria-label="Retry schedule">
 					{#each ladder.rungs as min, i (i)}
-						<span
-							class="rung"
-							class:rung-done={i < ladder.index}
-							class:rung-now={i === ladder.index}
+						<li
+							class="hunt__rung"
+							class:is-done={i < ladder.index}
+							class:is-now={i === ladder.index}
+							aria-current={i === ladder.index ? 'step' : undefined}
 						>
-							{rungLabel(min)}
-						</span>
+							<span class="hunt__step">{rungLabel(min)}</span>
+						</li>
 					{/each}
-				</div>
+				</ol>
 			{/if}
 
-			<p class="mt-1.5 text-xs text-muted">
-				{#if isPartial && task.files_total > 0}
-					Got {task.files_completed}/{task.files_total} tracks{#if lastTried}
-						· last tried {lastTried}{/if}
-				{:else if lastTried}
-					Last tried {lastTried}
-				{/if}
-			</p>
+			{#if facts.length > 0}
+				<p class="hunt__facts">{facts.join(' · ')}</p>
+			{/if}
 			{#if task.reason}
-				<p class="mt-0.5 line-clamp-2 text-xs text-muted">{task.reason.text}</p>
+				<p class="hunt__reason line-clamp-2">Last try: {task.reason.text}</p>
 			{/if}
 			{#if task.maybe_have}
-				<p class="mt-1 text-xs text-muted">
+				<p class="hunt__maybe">
 					You may have this: {task.maybe_have.title} is a guess.
 					<a class="link" href={maybeHaveHref(task.maybe_have.album_id)}>Check it</a>
 				</p>
 			{/if}
 		</div>
 
-		<div class="flex shrink-0 flex-col items-center gap-2">
-			<CueCountdown fraction={ladder?.fractionElapsed ?? 0} label={countdown} {urgent} size={68} />
-			<div class="flex flex-col items-stretch gap-1">
+		<div class="hunt__clock">
+			<CueCountdown fraction={ladder?.fractionElapsed ?? 0} label={countdown} {urgent} />
+		</div>
+
+		<div class="hunt__actions">
+			<Button
+				variant="primary"
+				size="display-sm"
+				icon={RotateCcw}
+				onclick={onRetryNow}
+				disabled={retry.isPending || retried}
+				title="Try this download again right now"
+			>
+				{retried ? 'Retrying…' : 'Retry now'}
+			</Button>
+			<Button
+				variant="outline"
+				size="display-sm"
+				icon={Square}
+				onclick={() => stopRetry.mutate(task.id)}
+				disabled={stopRetry.isPending}
+				title="Stop hunting for this - it won't be watched for later either"
+			>
+				Stop
+			</Button>
+			{#if authStore.isAdmin && canReimport(task)}
 				<Button
 					variant="ghost"
-					size="xs"
-					icon={RotateCcw}
-					onclick={onRetryNow}
-					disabled={retry.isPending || retried}
-					title="Try this download again right now"
+					size="sm"
+					icon={FileDown}
+					onclick={() =>
+						reimport.mutate({ id: task.id, release_group_mbid: task.release_group_mbid })}
+					disabled={reimport.isPending}
+					title="Already fixed this in the download client? Check the downloads mount again without re-searching."
+					aria-label="Retry import"
 				>
-					{retried ? 'Retrying…' : 'Retry now'}
+					{reimport.isPending ? 'Checking...' : 'Retry import'}
 				</Button>
-				<Button
-					variant="ghost"
-					size="xs"
-					icon={TimerOff}
-					onclick={() => stopRetry.mutate(task.id)}
-					disabled={stopRetry.isPending}
-					title="Stop hunting for this - it won't be watched for later either"
-				>
-					Stop
-				</Button>
-			</div>
+			{/if}
 		</div>
 	</div>
-	{#if authStore.isAdmin && canReimport(task)}
-		<div class="mt-2 flex justify-end">
-			<Button
-				variant="ghost"
-				size="xs"
-				icon={FileDown}
-				onclick={() =>
-					reimport.mutate({ id: task.id, release_group_mbid: task.release_group_mbid })}
-				disabled={reimport.isPending}
-				title="Already fixed this in the download client? Check the downloads mount again without re-searching."
-				aria-label="Retry import"
-			>
-				{reimport.isPending ? 'Checking...' : 'Retry import'}
-			</Button>
-		</div>
-	{/if}
 </Card>
 
 <style>
-	.rung {
-		font-size: 10px;
+	.hunt {
+		display: grid;
+		grid-template-columns: 8rem minmax(9rem, 14rem) minmax(0, 1fr) auto 11rem;
+		align-items: center;
+		gap: 1rem 1.75rem;
+		padding: 0.875rem 2rem 0.875rem 1.75rem;
+	}
+
+	.hunt__cover {
+		width: 8rem;
+		height: 8rem;
+		overflow: hidden;
+		border-radius: 0.25rem;
+	}
+
+	.hunt__who {
+		align-self: start;
+		min-width: 0;
+		padding-top: 0.5rem;
+	}
+	.hunt__title {
+		font-size: 1.375rem;
+		font-weight: 700;
+		line-height: 1.2;
+		overflow-wrap: anywhere;
+	}
+	.hunt__link {
+		text-decoration: underline;
+		text-decoration-thickness: 2px;
+		text-underline-offset: 4px;
+		border-radius: 0.25rem;
+	}
+	.hunt__link:hover,
+	.hunt__artist-link:hover {
+		color: var(--dn-title);
+	}
+	.hunt__artist {
+		margin-top: 0.5rem;
+		font-size: 1rem;
+	}
+
+	.hunt__state {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.625rem;
+		min-width: 0;
+	}
+
+	.hunt__ladder {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.25rem 0;
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
 		font-weight: 600;
-		font-variant-numeric: tabular-nums;
-		padding: 1px 6px;
+	}
+	.hunt__rung {
+		display: inline-flex;
+		align-items: center;
+		color: var(--dn-muted);
+	}
+	/* the line between two steps */
+	.hunt__rung + .hunt__rung::before {
+		content: '';
+		width: 1.5rem;
+		height: 1px;
+		margin-inline: 0.125rem;
+		background: var(--dn-edge);
+	}
+	.hunt__step {
+		padding: 0.125rem 0.625rem;
 		border-radius: 9999px;
-		color: oklch(from var(--color-base-content) l c h / 0.4);
-		background: oklch(from var(--color-base-content) l c h / 0.06);
 	}
-	.rung-done {
-		color: oklch(from var(--color-base-content) l c h / 0.55);
+	.hunt__rung.is-done .hunt__step {
+		color: var(--color-base-content);
 		text-decoration: line-through;
-		text-decoration-color: oklch(from var(--color-base-content) l c h / 0.3);
 	}
-	.rung-now {
-		color: oklch(from var(--color-warning) l c h);
-		background: oklch(from var(--color-warning) l c h / 0.16);
-		box-shadow: inset 0 0 0 1px oklch(from var(--color-warning) l c h / 0.35);
+	.hunt__rung.is-now .hunt__step {
+		background: var(--color-warning);
+		color: var(--color-warning-content);
+	}
+
+	.hunt__facts {
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		font-weight: 500;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+	}
+	.hunt__reason {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		color: var(--dn-muted);
+	}
+	.hunt__maybe {
+		font-size: 0.75rem;
+		color: var(--dn-muted);
+	}
+
+	.hunt__actions {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0.75rem;
+	}
+
+	@media (max-width: 1279px) {
+		.hunt {
+			grid-template-columns: 7rem minmax(0, 1fr) auto;
+			padding: 1rem 1.25rem;
+		}
+		.hunt__cover {
+			width: 7rem;
+			height: 7rem;
+			grid-row: span 2;
+		}
+		.hunt__who {
+			grid-column: 2 / -1;
+			padding-top: 0;
+		}
+		.hunt__state {
+			grid-column: 2;
+		}
+		.hunt__clock {
+			grid-column: 3;
+		}
+		.hunt__actions {
+			grid-column: 1 / -1;
+			flex-direction: row;
+			flex-wrap: wrap;
+			justify-content: flex-end;
+		}
+	}
+
+	@media (max-width: 639px) {
+		.hunt {
+			grid-template-columns: 5.5rem minmax(0, 1fr);
+			gap: 0.875rem 1rem;
+			padding: 1rem;
+		}
+		.hunt__cover {
+			width: 5.5rem;
+			height: 5.5rem;
+			grid-row: auto;
+		}
+		.hunt__who {
+			grid-column: 2;
+			align-self: center;
+		}
+		.hunt__title {
+			font-size: 1.125rem;
+		}
+		.hunt__artist {
+			margin-top: 0.25rem;
+			font-size: 0.875rem;
+		}
+		.hunt__state {
+			grid-column: 1 / -1;
+		}
+		.hunt__facts {
+			font-size: 0.75rem;
+			letter-spacing: 0.06em;
+		}
+		.hunt__clock {
+			grid-column: 1 / -1;
+			justify-self: center;
+		}
+		.hunt__actions {
+			grid-column: 1 / -1;
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+		}
 	}
 </style>

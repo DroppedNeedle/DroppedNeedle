@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ChevronDown, Download, RotateCcw, TimerOff, Trash2 } from 'lucide-svelte';
+	import { Download, RotateCcw, Square, Trash2 } from 'lucide-svelte';
 
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import {
@@ -26,6 +26,7 @@
 	import HeldEntryCard from './HeldEntryCard.svelte';
 	import NowPressingHero from './NowPressingHero.svelte';
 	import QuarantinePanel from './QuarantinePanel.svelte';
+	import QueueSectionHead from './QueueSectionHead.svelte';
 	import WantedCard from './WantedCard.svelte';
 
 	const query = getDownloadsQuery();
@@ -102,12 +103,12 @@
 
 	const pulse = $derived(
 		[
-			{ n: sections.now_spinning.length, label: 'spinning', cls: 'text-primary' },
-			{ n: sections.wanted.length, label: 'still hunting', cls: 'text-warning' },
-			{ n: sections.needs_you.length, label: 'needs you', cls: 'text-info' },
-			{ n: held.length, label: 'to decide', cls: 'text-warning' },
-			{ n: sections.cueing.length, label: 'cueing up', cls: 'text-muted' },
-			{ n: crateCount, label: 'in your crate', cls: 'text-success' }
+			{ n: sections.now_spinning.length, label: 'spinning', tone: 'live' },
+			{ n: sections.wanted.length, label: 'still hunting', tone: 'wait' },
+			{ n: sections.needs_you.length, label: 'needs you', tone: 'wait' },
+			{ n: held.length, label: 'to decide', tone: 'wait' },
+			{ n: sections.cueing.length, label: 'cueing up', tone: 'quiet' },
+			{ n: crateCount, label: 'in your crate', tone: 'done' }
 		].filter((p) => p.n > 0)
 	);
 
@@ -115,12 +116,13 @@
 	let quarantineOpen = $state(false);
 </script>
 
-<div class="space-y-7">
+<div class="space-y-9">
 	{#if query.isLoading}
-		<div class="space-y-3">
-			<div class="skeleton h-32 w-full rounded-3xl"></div>
-			<div class="skeleton h-20 w-full rounded-2xl"></div>
-			<div class="skeleton h-20 w-full rounded-2xl"></div>
+		<div class="space-y-4" aria-busy="true">
+			<div class="skeleton h-5 w-80 max-w-full rounded"></div>
+			<div class="skeleton h-44 w-full rounded-box"></div>
+			<div class="skeleton h-24 w-full rounded-box"></div>
+			<div class="skeleton h-24 w-full rounded-box"></div>
 		</div>
 	{:else if query.isError}
 		<div class="alert alert-error">Couldn't load your downloads - retrying shortly.</div>
@@ -134,46 +136,50 @@
 		/>
 	{:else}
 		{#if pulse.length > 0}
-			<p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+			<p class="dl-pulse">
 				{#each pulse as p, i (p.label)}
-					{#if i > 0}<span class="text-base-content/25">·</span>{/if}
-					<span><span class="font-bold tabular-nums {p.cls}">{p.n}</span> {p.label}</span>
+					{#if i > 0}<span class="dl-pulse__dot" aria-hidden="true">·</span>{/if}
+					<span class="dl-pulse__part" data-tone={p.tone}
+						><span class="dl-pulse__n">{p.n}</span> {p.label}</span
+					>
 				{/each}
 			</p>
 		{/if}
 
 		<!-- NOW SPINNING -->
 		{#if sections.now_spinning.length > 0}
-			<section class="space-y-3">
-				<h2 class="dl-eyebrow">
-					Now spinning <span class="dl-count">{sections.now_spinning.length}</span>
-				</h2>
-				{#if hero}<NowPressingHero task={hero} showEyebrow={false} />{/if}
-				{#each spinningRest as task (task.id)}
-					<DownloadItem {task} />
-				{/each}
+			<section>
+				<QueueSectionHead title="Now spinning" count={sections.now_spinning.length} />
+				<div class="space-y-3">
+					{#if hero}<NowPressingHero task={hero} />{/if}
+					{#each spinningRest as task (task.id)}
+						<DownloadItem {task} />
+					{/each}
+				</div>
 			</section>
 		{/if}
 
 		<!-- STILL HUNTING (auto-retry ladder; "Wanted" is the requests page's word) -->
 		{#if sections.wanted.length > 0}
-			<section class="space-y-3">
-				<div class="flex items-center justify-between gap-2">
-					<h2 class="dl-eyebrow">
-						Still hunting <span class="text-muted">· auto-retrying</span>
-						<span class="dl-count">{sections.wanted.length}</span>
-					</h2>
-					<Button
-						variant="ghost"
-						size="xs"
-						icon={TimerOff}
-						onclick={() => stopAll.mutate()}
-						disabled={stopAll.isPending}
-						title="Stop auto-retrying every still-hunting album - they won't be watched for later either"
-					>
-						Stop all
-					</Button>
-				</div>
+			<section>
+				<QueueSectionHead
+					title="Still hunting"
+					aside="auto-retrying"
+					count={sections.wanted.length}
+				>
+					{#snippet actions()}
+						<Button
+							variant="outline"
+							size="sm"
+							icon={Square}
+							onclick={() => stopAll.mutate()}
+							disabled={stopAll.isPending}
+							title="Stop auto-retrying every still-hunting album - they won't be watched for later either"
+						>
+							Stop all
+						</Button>
+					{/snippet}
+				</QueueSectionHead>
 				<div class="space-y-3">
 					{#each sections.wanted as task (task.id)}
 						<WantedCard {task} />
@@ -184,38 +190,39 @@
 
 		<!-- NEEDS YOU -->
 		{#if sections.needs_you.length > 0}
-			<section class="space-y-3">
-				<h2 class="dl-eyebrow">
-					Needs you <span class="text-muted">· pick a release</span>
-					<span class="dl-count">{sections.needs_you.length}</span>
-				</h2>
-				{#each sections.needs_you as task (task.id)}
-					<DownloadItem {task} />
-				{/each}
+			<section>
+				<QueueSectionHead
+					title="Needs you"
+					aside="pick a release"
+					count={sections.needs_you.length}
+				/>
+				<div class="space-y-3">
+					{#each sections.needs_you as task (task.id)}
+						<DownloadItem {task} />
+					{/each}
+				</div>
 			</section>
 		{/if}
 
 		<!-- HELD: files waiting for a decision -->
 		{#if held.length > 0}
-			<section class="space-y-3">
-				<div class="flex items-center justify-between gap-2">
-					<h2 class="dl-eyebrow">
-						To decide <span class="text-muted">· files kept</span>
-						<span class="dl-count">{held.length}</span>
-					</h2>
-					{#if recheckEntryIds.length > 0}
-						<Button
-							variant="ghost"
-							size="xs"
-							icon={RotateCcw}
-							loading={recheckAll.isPending}
-							onclick={() => recheckAll.mutate(recheckEntryIds)}
-							title="Ask AcoustID again. Files it now confirms are imported"
-						>
-							{recheckAll.isPending ? 'Checking...' : 'Re-check all'}
-						</Button>
-					{/if}
-				</div>
+			<section>
+				<QueueSectionHead title="To decide" aside="files kept" count={held.length}>
+					{#snippet actions()}
+						{#if recheckEntryIds.length > 0}
+							<Button
+								variant="outline"
+								size="sm"
+								icon={RotateCcw}
+								loading={recheckAll.isPending}
+								onclick={() => recheckAll.mutate(recheckEntryIds)}
+								title="Ask AcoustID again. Files it now confirms are imported"
+							>
+								{recheckAll.isPending ? 'Checking...' : 'Re-check all'}
+							</Button>
+						{/if}
+					{/snippet}
+				</QueueSectionHead>
 				<div class="space-y-3">
 					{#each held as entry (entry.id)}
 						<HeldEntryCard {entry} retryTaskId={verdictTaskOf(entry)} />
@@ -226,108 +233,116 @@
 
 		<!-- CUEING UP -->
 		{#if sections.cueing.length > 0}
-			<section class="space-y-3">
-				<h2 class="dl-eyebrow">Cueing up <span class="dl-count">{sections.cueing.length}</span></h2>
-				{#each sections.cueing as task (task.id)}
-					<DownloadItem {task} />
-				{/each}
-			</section>
-		{/if}
-
-		<!-- HISTORY (collapsible) -->
-		{#if sections.history.length > 0}
-			<section class="space-y-3">
-				<div class="flex flex-wrap items-center justify-between gap-2">
-					<button
-						class="dl-eyebrow flex items-center gap-1.5 hover:text-muted"
-						onclick={() => (historyOpen = !historyOpen)}
-						aria-expanded={historyOpen}
-					>
-						<ChevronDown
-							class="h-3.5 w-3.5 transition-transform motion-reduce:transition-none {historyOpen
-								? ''
-								: '-rotate-90'}"
-						/>
-						History
-						<span class="font-normal normal-case tracking-normal text-muted">
-							{historyLabel}
-						</span>
-					</button>
-					{#if historyOpen}
-						<div class="flex items-center gap-1">
-							{#if hasFailed}
-								<Button
-									variant="ghost"
-									size="xs"
-									icon={RotateCcw}
-									onclick={() => retryAll.mutate()}
-									disabled={retryAll.isPending}
-									title="Retry every failed download"
-								>
-									Retry all failed
-								</Button>
-							{/if}
-							<Button
-								variant="ghost"
-								size="xs"
-								icon={Trash2}
-								onclick={() => clear.mutate()}
-								disabled={clear.isPending}
-								title="Remove completed and cancelled downloads from this list"
-							>
-								Clear
-							</Button>
-						</div>
-					{/if}
+			<section>
+				<QueueSectionHead title="Cueing up" count={sections.cueing.length} />
+				<div class="space-y-3">
+					{#each sections.cueing as task (task.id)}
+						<DownloadItem {task} />
+					{/each}
 				</div>
-				{#if historyOpen}
-					<div class="space-y-3">
-						{#each sections.history as task (task.id)}
-							<DownloadItem {task} liveTaskId={liveTwin(task, tasks)?.id ?? null} />
-						{/each}
-					</div>
-				{/if}
 			</section>
 		{/if}
 
-		<!-- QUARANTINE (admin, collapsible) -->
-		{#if quarantineCount > 0}
-			<section class="space-y-3">
-				<button
-					class="dl-eyebrow flex items-center gap-1.5 hover:text-muted"
-					onclick={() => (quarantineOpen = !quarantineOpen)}
-					aria-expanded={quarantineOpen}
-				>
-					<ChevronDown
-						class="h-3.5 w-3.5 transition-transform motion-reduce:transition-none {quarantineOpen
-							? ''
-							: '-rotate-90'}"
-					/>
-					Quarantine <span class="dl-count">{quarantineCount}</span>
-				</button>
-				{#if quarantineOpen}<QuarantinePanel />{/if}
-			</section>
+		<!-- HISTORY and QUARANTINE: collapsed until opened -->
+		{#if sections.history.length > 0 || quarantineCount > 0}
+			<div class={historyOpen || quarantineOpen ? 'space-y-9' : 'space-y-4'}>
+				{#if sections.history.length > 0}
+					<section>
+						<QueueSectionHead
+							title="History"
+							note={historyLabel}
+							open={historyOpen}
+							ontoggle={() => (historyOpen = !historyOpen)}
+						>
+							{#snippet actions()}
+								{#if historyOpen}
+									{#if hasFailed}
+										<Button
+											variant="outline"
+											size="sm"
+											icon={RotateCcw}
+											onclick={() => retryAll.mutate()}
+											disabled={retryAll.isPending}
+											title="Retry every failed download"
+										>
+											Retry all failed
+										</Button>
+									{/if}
+									<Button
+										variant="ghost"
+										size="sm"
+										icon={Trash2}
+										onclick={() => clear.mutate()}
+										disabled={clear.isPending}
+										title="Remove completed and cancelled downloads from this list"
+									>
+										Clear
+									</Button>
+								{/if}
+							{/snippet}
+						</QueueSectionHead>
+						{#if historyOpen}
+							<div class="space-y-3">
+								{#each sections.history as task (task.id)}
+									<DownloadItem {task} liveTaskId={liveTwin(task, tasks)?.id ?? null} />
+								{/each}
+							</div>
+						{/if}
+					</section>
+				{/if}
+
+				<!-- admins only -->
+				{#if quarantineCount > 0}
+					<section>
+						<QueueSectionHead
+							title="Quarantine"
+							count={quarantineCount}
+							open={quarantineOpen}
+							ontoggle={() => (quarantineOpen = !quarantineOpen)}
+						/>
+						{#if quarantineOpen}<QuarantinePanel />{/if}
+					</section>
+				{/if}
+			</div>
 		{/if}
 	{/if}
 </div>
 
 <style>
-	.dl-eyebrow {
-		font-size: 11px;
-		font-weight: 700;
+	.dl-pulse {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0.25rem 1rem;
+		font-family: var(--font-mono);
+		font-size: 1.125rem;
+		font-weight: 600;
+		letter-spacing: 0.14em;
 		text-transform: uppercase;
-		letter-spacing: 0.16em;
-		color: oklch(from var(--color-base-content) l c h / 0.45);
+		color: var(--color-base-content);
 	}
-	.dl-count {
-		display: inline-block;
-		margin-left: 0.35rem;
-		padding: 0 0.4rem;
-		border-radius: 9999px;
-		font-size: 10px;
-		font-variant-numeric: tabular-nums;
-		letter-spacing: 0;
-		color: oklch(from var(--color-base-content) l c h / 0.6);
-		background: oklch(from var(--color-base-content) l c h / 0.08);
+	.dl-pulse__dot {
+		color: var(--dn-muted);
+	}
+	.dl-pulse__part {
+		white-space: nowrap;
+	}
+	.dl-pulse__part[data-tone='live'],
+	.dl-pulse__n {
+		color: var(--dn-title);
+	}
+	.dl-pulse__part[data-tone='wait'],
+	.dl-pulse__part[data-tone='wait'] .dl-pulse__n {
+		color: var(--color-warning);
+	}
+	.dl-pulse__part[data-tone='quiet'] .dl-pulse__n {
+		color: var(--color-base-content);
+	}
+	@media (max-width: 639px) {
+		.dl-pulse {
+			gap: 0.125rem 0.625rem;
+			font-size: 0.8125rem;
+			letter-spacing: 0.08em;
+		}
 	}
 </style>

@@ -11,6 +11,7 @@
 		settledBadgeConfig
 	} from '$lib/features/downloads/queries/downloadStatusConfig';
 	import type { DownloadTask } from '$lib/features/downloads/queries/types';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 
 	let { task }: { task: DownloadTask } = $props();
 
@@ -35,12 +36,30 @@
 		if (settled) return settledBadgeConfig.label;
 		return downloadStatusConfig[derivedStatus].label;
 	});
+
+	type Tone = 'action' | 'neutral' | 'info' | 'success' | 'warning' | 'error';
+	// Acid only for the live transfer; amber for waiting and retries, red for failure.
+	const tone = $derived.by((): Tone => {
+		if (retry) return retry.kind === 'failed_exhausted' ? 'error' : 'warning';
+		if (settled) return 'neutral';
+		switch (derivedStatus) {
+			case 'downloading':
+				return 'action';
+			case 'processing':
+				return 'info';
+			case 'completed':
+				return 'success';
+			case 'awaiting_review':
+			case 'partial':
+				return 'warning';
+			case 'failed':
+				return 'error';
+			default:
+				return 'neutral';
+		}
+	});
 </script>
 
-<span
-	class="badge {cfg.badgeClass} badge-sm gap-1 {cfg.pulse ? 'animate-pulse' : ''}"
-	aria-label="Status: {label}"
->
-	<cfg.icon class="h-3 w-3" aria-hidden="true" />
-	{label}
+<span class="inline-flex" aria-label="Status: {label}">
+	<StatusChip {tone} icon={cfg.icon}>{label}</StatusChip>
 </span>

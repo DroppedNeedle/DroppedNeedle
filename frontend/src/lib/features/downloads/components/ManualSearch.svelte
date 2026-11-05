@@ -162,7 +162,7 @@
 			{#each groups as group (group.key)}
 				{@const visible = showAll ? group.items : group.items.slice(0, 3)}
 				<div class="space-y-2">
-					<p class="text-xs font-semibold uppercase tracking-wide text-muted">
+					<p class="font-mono text-xs font-semibold tracking-[0.2em] text-muted uppercase">
 						{group.label}
 					</p>
 					{#each visible as candidate (candidate.candidate_index)}

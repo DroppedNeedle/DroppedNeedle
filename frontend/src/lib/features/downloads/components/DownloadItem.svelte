@@ -33,6 +33,7 @@
 	import type { DownloadTask } from '$lib/features/downloads/queries/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import {
 		EMPTY_STATE_COPY,
@@ -134,86 +135,82 @@
 	}
 </script>
 
-<Card as="article" variant="bordered" padding="sm" id="download-{task.id}" class="scroll-mt-24">
-	<div class="flex items-center gap-3 sm:gap-4">
-		<div class="shrink-0">
+<Card as="article" variant="bordered" padding="none" id="download-{task.id}" class="scroll-mt-24">
+	<div class="row">
+		<div class="row__art">
 			{#if isSearchingState}
-				<VinylProgress indeterminate spinning size={64} />
+				<VinylProgress indeterminate spinning size={88} />
 			{:else if isLive}
-				<VinylProgress percent={livePct} spinning size={64} />
+				<VinylProgress percent={livePct} spinning={isDownloading} size={88} />
 			{:else}
-				<div class="size-16 overflow-hidden rounded-lg ring-1 ring-base-content/10">
+				<div class="row__cover">
 					<AlbumImage
 						mbid={task.release_group_mbid}
 						alt={task.album_title}
-						size="sm"
-						rounded="lg"
+						size="full"
+						requestSize={250}
+						rounded="none"
 						className="h-full w-full"
 					/>
 				</div>
 			{/if}
 		</div>
 
-		<div class="min-w-0 flex-1">
-			<h3 class="truncate text-sm font-semibold sm:text-base">
-				<a href={albumHref(task.release_group_mbid)} class="hover:text-primary transition-colors">
-					{task.album_title}
-				</a>
+		<div class="row__main">
+			<h3 class="row__title">
+				<a href={albumHref(task.release_group_mbid)} class="row__link">{task.album_title}</a>
 			</h3>
-			<p class="truncate text-xs text-muted">
+			<p class="row__by">
 				{#if task.artist_mbid}
-					<a href={artistHref(task.artist_mbid)} class="hover:text-primary transition-colors">
-						{task.artist_name}
-					</a>
+					<a href={artistHref(task.artist_mbid)} class="row__artist">{task.artist_name}</a>
 				{:else}
 					{task.artist_name}
 				{/if}
-				{#if task.year}<span class="text-base-content/30"> · </span>{task.year}{/if}
+				{#if task.year}<span class="text-muted mr-1.5 ml-0.5">·</span>{task.year}{/if}
 				{#if task.download_type === 'track' && task.track_title}
-					<span class="text-base-content/30"> · </span>{task.track_title}
+					<span class="text-muted mr-1.5 ml-0.5">·</span>{task.track_title}
 				{/if}
 			</p>
-			<div class="mt-1 flex flex-wrap items-center gap-1.5">
+			<div class="row__chips">
 				<DownloadStatusBadge {task} />
 				{#if task.source === 'usenet'}
-					<span class="badge badge-ghost badge-sm">Usenet</span>
+					<StatusChip size="xs">Usenet</StatusChip>
 				{/if}
 				{#if task.source === 'usenet' && task.download_type === 'track'}
-					<span
-						class="badge badge-ghost badge-sm"
-						title="A whole album NZB was fetched to extract this one track">via album NZB</span
-					>
+					<span title="A whole album NZB was fetched to extract this one track">
+						<StatusChip size="xs">via album NZB</StatusChip>
+					</span>
 				{/if}
 				<!-- Plugin sources take the generic path: no client-specific badges or
 					remote-queue hints, just the source key. -->
 				{#if task.source && task.source !== 'soulseek' && task.source !== 'usenet'}
-					<span class="badge badge-ghost badge-sm">{task.source}</span>
+					<StatusChip size="xs">{task.source}</StatusChip>
 				{/if}
 				{#if isOwnedByOther}
-					<span class="text-[11px] text-muted">(another user's download)</span>
+					<span class="row__note">(another user's download)</span>
 				{/if}
 				{#if cleanupState === 'pending'}
-					<span class="inline-flex items-center gap-1 text-[11px] text-muted">
-						<Clock3 class="size-3" /> Removing temporary files
+					<span class="row__note inline-flex items-center gap-1">
+						<Clock3 class="size-3" aria-hidden="true" /> Removing temporary files
 					</span>
 				{:else if cleanupState === 'preserved'}
 					<span
-						class="inline-flex items-center gap-1 text-[11px] text-warning"
+						class="row__note inline-flex items-center gap-1 text-warning"
 						title="Kept on purpose by your library settings. Your music is imported."
 					>
-						<Archive class="size-3" /> Temporary files kept
+						<Archive class="size-3" aria-hidden="true" /> Temporary files kept
 					</span>
 				{:else if cleanupState === 'needs_attention'}
 					<span
-						class="inline-flex items-center gap-1 text-[11px] text-error/80"
+						class="row__note inline-flex items-center gap-1 text-error"
 						title="Your library is safe. The temporary copy was kept because it could not be verified safe to remove. DroppedNeedle retries automatically."
 					>
-						<TriangleAlert class="size-3" /> Couldn't remove temporary files
+						<TriangleAlert class="size-3" aria-hidden="true" /> Couldn't remove temporary files
 					</span>
 				{/if}
 			</div>
 			{#if showBar}
-				<div class="mt-2 max-w-md">
+				<div class="mt-3 max-w-xl">
 					<DownloadProgressBar
 						percent={livePct}
 						bytesDownloaded={progress?.bytes_downloaded ?? task.downloaded_bytes}
@@ -231,18 +228,18 @@
 			/>
 			<DownloadReasonNote {task} />
 			{#if emptyCopy}
-				<div class="mt-1 rounded-box border border-base-300 bg-base-100 px-2 py-1.5 text-xs">
+				<div class="row__empty">
 					<p class="font-semibold">{emptyCopy.title}</p>
 					<p class="text-muted">{emptyCopy.detail}</p>
 				</div>
 			{/if}
 		</div>
 
-		<div class="flex shrink-0 flex-col items-end gap-1.5">
+		<div class="row__actions">
 			{#if parkedJobId}
 				<Button
 					variant="primary"
-					size="xs"
+					size="display-sm"
 					onclick={() => (reviewOpen = !reviewOpen)}
 					aria-expanded={reviewOpen}
 				>
@@ -251,8 +248,8 @@
 			{/if}
 			{#if canCancel(task)}
 				<Button
-					variant="danger-ghost"
-					size="xs"
+					variant="outline"
+					size="sm"
 					icon={X}
 					onclick={() => cancel.mutate(task.id)}
 					disabled={cancel.isPending}
@@ -263,8 +260,8 @@
 				</Button>
 			{:else if isProcessing}
 				<Button
-					variant="ghost"
-					size="xs"
+					variant="outline"
+					size="sm"
 					icon={X}
 					disabled
 					title="Can't cancel while processing files."
@@ -276,7 +273,7 @@
 			{#if authStore.isAdmin && canReimport(task)}
 				<Button
 					variant="ghost"
-					size="xs"
+					size="sm"
 					icon={FileDown}
 					onclick={() =>
 						reimport.mutate({ id: task.id, release_group_mbid: task.release_group_mbid })}
@@ -290,7 +287,7 @@
 			{#if canSearchManually}
 				<Button
 					variant="ghost"
-					size="xs"
+					size="sm"
 					icon={Search}
 					onclick={onSearchManually}
 					disabled={search.isPending || manualJobId !== null}
@@ -301,13 +298,13 @@
 				</Button>
 			{/if}
 			{#if liveTaskId}
-				<Button variant="ghost" size="xs" icon={ArrowUp} href="#download-{liveTaskId}">
+				<Button variant="ghost" size="sm" icon={ArrowUp} href="#download-{liveTaskId}">
 					See the download
 				</Button>
 			{:else if canRetry(task)}
 				<Button
-					variant="ghost"
-					size="xs"
+					variant="outline"
+					size="sm"
 					icon={RotateCcw}
 					onclick={onRetry}
 					disabled={retry.isPending || retried}
@@ -320,7 +317,7 @@
 			{#if isScheduledRetry}
 				<Button
 					variant="ghost"
-					size="xs"
+					size="sm"
 					icon={TimerOff}
 					onclick={() => stopRetry.mutate(task.id)}
 					disabled={stopRetry.isPending}
@@ -333,7 +330,7 @@
 			{#if isCompleted}
 				<Button
 					variant="ghost"
-					size="xs"
+					size="sm"
 					icon={ExternalLink}
 					href={albumHref(task.release_group_mbid)}
 					aria-label="View in library"
@@ -345,8 +342,125 @@
 	</div>
 
 	{#if parkedJobId && reviewOpen}
-		<ManualSearch jobId={parkedJobId} onClose={() => (reviewOpen = false)} />
+		<div class="row__results">
+			<ManualSearch jobId={parkedJobId} onClose={() => (reviewOpen = false)} />
+		</div>
 	{:else if manualJobId}
-		<ManualSearch jobId={manualJobId} onClose={() => (manualJobId = null)} />
+		<div class="row__results">
+			<ManualSearch jobId={manualJobId} onClose={() => (manualJobId = null)} />
+		</div>
 	{/if}
 </Card>
+
+<style>
+	.row {
+		display: grid;
+		grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 1rem 1.75rem;
+		padding: 0.875rem 1.5rem 0.875rem 1.25rem;
+	}
+
+	.row__art {
+		display: grid;
+		place-items: center;
+		width: 5.5rem;
+		height: 5.5rem;
+	}
+	.row__cover {
+		width: 100%;
+		height: 100%;
+		overflow: hidden;
+		border-radius: 0.25rem;
+	}
+
+	.row__main {
+		min-width: 0;
+	}
+	.row__title {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 1.25rem;
+		font-weight: 700;
+		line-height: 1.25;
+	}
+	.row__link {
+		text-decoration: underline;
+		text-decoration-thickness: 2px;
+		text-underline-offset: 4px;
+		border-radius: 0.25rem;
+	}
+	.row__link:hover,
+	.row__artist:hover {
+		color: var(--dn-title);
+	}
+	.row__by {
+		margin-top: 0.125rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 0.9375rem;
+	}
+	.row__chips {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.375rem 0.625rem;
+		margin-top: 0.5rem;
+	}
+	.row__note {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		color: var(--dn-muted);
+	}
+	.row__empty {
+		margin-top: 0.5rem;
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--dn-line);
+		border-radius: var(--radius-field);
+		font-size: 0.75rem;
+	}
+
+	.row__actions {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 0.5rem;
+	}
+
+	.row__results {
+		padding: 0 1.25rem 1.25rem;
+	}
+
+	@media (max-width: 639px) {
+		.row {
+			grid-template-columns: 4.5rem minmax(0, 1fr);
+			gap: 0.75rem 1rem;
+			padding: 0.875rem 1rem;
+		}
+		.row__art {
+			width: 4.5rem;
+			height: 4.5rem;
+			align-self: start;
+		}
+		.row__art :global(.vinyl) {
+			transform: scale(0.82);
+		}
+		.row__title {
+			font-size: 1.0625rem;
+		}
+		.row__by {
+			font-size: 0.875rem;
+		}
+		.row__actions {
+			grid-column: 1 / -1;
+			flex-direction: row;
+			flex-wrap: wrap;
+			justify-content: flex-end;
+		}
+		.row__results {
+			padding: 0 0.75rem 0.75rem;
+		}
+	}
+</style>

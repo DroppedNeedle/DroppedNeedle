@@ -8,7 +8,9 @@
 	typed title (a search) down so it wraps less, and `below` holds a row
 	under the title (search's tab chips). `lede` is a plain sentence under
 	the title that wraps on a phone, and `stroke` draws a short brush stroke
-	after the title in place of the rule. The record, ticket and stroke are
+	after the title in place of the rule. `longSubtitle` sets a sentence-long
+	subtitle smaller and lets it wrap on a phone; `snugTitle` keeps a wide
+	one-word title on one line on a phone, sized to its column. The record, ticket and stroke are
 	decoration.
 -->
 <script lang="ts">
@@ -38,6 +40,10 @@
 		lede?: string;
 		/** A short brush stroke after the title, in place of the rule. */
 		stroke?: boolean;
+		/** A sentence-long subtitle: smaller, and it wraps on a phone. */
+		longSubtitle?: boolean;
+		/** A wide one-word title: on a phone it shrinks to fit rather than break. */
+		snugTitle?: boolean;
 	}
 
 	let {
@@ -52,7 +58,9 @@
 		fitTitle = false,
 		below,
 		lede,
-		stroke = false
+		stroke = false,
+		longSubtitle = false,
+		snugTitle = false
 	}: Props = $props();
 
 	const titleScale = $derived(
@@ -70,6 +78,7 @@
 	class="dn-lph"
 	class:dn-lph--back={backHref}
 	class:dn-lph--actions={actions}
+	class:dn-lph--snug={snugTitle}
 	style:--dn-lph-scale={titleScale}
 >
 	<div class="dn-lph__row">
@@ -98,7 +107,9 @@
 			{:else}
 				<h1 class="dn-lph__title">{title}</h1>
 			{/if}
-			{#if subtitle}<p class="dn-lph__sub">{subtitle}</p>{/if}
+			{#if subtitle}<p class="dn-lph__sub" class:dn-lph__sub--long={longSubtitle}>
+					{subtitle}
+				</p>{/if}
 			{#if lede}<p class="dn-lph__lede">{lede}</p>{/if}
 		</div>
 		{#if !stroke}<span class="dn-decor dn-lph__rule" aria-hidden="true"></span>{/if}
@@ -243,6 +254,10 @@
 		line-height: 1.4;
 		color: var(--color-base-content);
 	}
+	.dn-lph__sub--long {
+		font-size: 0.875rem;
+		letter-spacing: 0.2em;
+	}
 
 	.dn-lph__rule {
 		flex: none;
@@ -377,6 +392,20 @@
 			font-size: 0.6875rem;
 			letter-spacing: 0.16em;
 			white-space: nowrap;
+		}
+		.dn-lph--snug .dn-lph__titles {
+			container-type: inline-size;
+		}
+		.dn-lph--snug .dn-lph__title,
+		.dn-lph--snug:not(.dn-lph--back) .dn-lph__title {
+			font-size: min(clamp(2.75rem, 15vw, 3.75rem), 21cqw);
+			white-space: nowrap;
+		}
+		.dn-lph__sub--long {
+			font-size: 0.625rem;
+			line-height: 1.5;
+			letter-spacing: 0.12em;
+			white-space: normal;
 		}
 		.dn-lph__rule {
 			display: none;

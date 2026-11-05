@@ -193,41 +193,21 @@
 </Card>
 
 <style>
-	/* the sleeve tilt rides on the kit Card, outside this component's scope */
+	/* the lift rides on the kit Card, outside this component's scope */
 	:global(.sleeve-card) {
-		transform: perspective(900px) rotateY(-3deg);
-		transform-style: preserve-3d;
 		transition:
-			transform 0.35s ease,
-			box-shadow 0.35s ease;
-		animation: fade-in-up 0.3s ease both;
+			transform 0.2s ease,
+			border-color 0.2s ease;
 	}
 	:global(.sleeve-card:hover) {
-		transform: perspective(900px) rotateY(0deg) translateY(-2px);
-		box-shadow: 0 12px 30px oklch(from var(--color-base-300) l c h / 0.6);
-	}
-	.sleeve {
-		transform: translateZ(20px) rotateY(6deg);
-		box-shadow: 4px 4px 12px oklch(from var(--color-base-300) l c h / 0.7);
-	}
-	@keyframes fade-in-up {
-		0% {
-			opacity: 0;
-			transform: perspective(900px) rotateY(-3deg) translateY(10px);
-		}
-		100% {
-			opacity: 1;
-			transform: perspective(900px) rotateY(-3deg) translateY(0);
-		}
+		transform: translateY(-1px);
+		border-color: var(--dn-edge);
 	}
 	@media (prefers-reduced-motion: reduce) {
-		:global(.sleeve-card) {
-			animation: none;
-			transition: none;
-		}
+		:global(.sleeve-card),
 		:global(.sleeve-card:hover) {
+			transition: none;
 			transform: none;
-			box-shadow: none;
 		}
 	}
 </style>

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Clock3, ListOrdered, SkipForward } from 'lucide-svelte';
+	import { Bird, Clock3, ListOrdered, Newspaper, Puzzle, SkipForward } from 'lucide-svelte';
 
 	import { NO_FALLBACK_COPY } from '$lib/features/downloads/components/acquisitionLabels';
 
@@ -13,13 +13,16 @@
 		live?: DownloadSourceUpdate | null;
 		bytesDownloaded?: number;
 		compact?: boolean;
+		/** The hero's side panel: the source's name and its facts as a list. */
+		panel?: boolean;
 	}
 
 	let {
 		task,
 		live = null,
 		bytesDownloaded = task.downloaded_bytes,
-		compact = false
+		compact = false,
+		panel = false
 	}: Props = $props();
 
 	const nextSource = createTryNextSourceMutation();
@@ -85,6 +88,30 @@
 		return chips;
 	});
 
+	// The hero's panel names the source and lists only the facts this download has.
+	const sourceName = $derived(
+		source === 'soulseek'
+			? 'Soulseek'
+			: source === 'usenet'
+				? 'Usenet'
+				: (source?.replace(/^plugin:/, '') ?? null)
+	);
+	const SourceMark = $derived(
+		source === 'soulseek' ? Bird : source === 'usenet' ? Newspaper : Puzzle
+	);
+	const peer = $derived(source === 'soulseek' ? task.source_username || null : null);
+	const panelFacts = $derived(
+		[
+			peer ? { key: 'User', value: peer } : null,
+			quality ? { key: 'Quality', value: quality } : null,
+			evidenceChips[0] ? { key: 'Bitrate', value: evidenceChips[0] } : null,
+			attemptNumber > 0 && attemptTotal > 0
+				? { key: 'Trying', value: `${attemptNumber} of ${attemptTotal}` }
+				: null,
+			isQueued ? { key: 'Queue', value: livePosition ?? queueLabel } : null
+		].filter((fact) => fact !== null)
+	);
+
 	function onTryNext() {
 		if (candidateIndex == null) return;
 		actionMessage = null;
@@ -112,9 +139,55 @@
 	});
 </script>
 
-<!-- Plugin sources (source "plugin:<name>") intentionally take the generic path:
+{#snippet tryNext()}
+	{#if canTryNext}
+		<Button
+			variant={panel ? 'paper' : 'outline'}
+			size="xs"
+			icon={SkipForward}
+			onclick={onTryNext}
+			disabled={nextSource.isPending}
+			aria-label="Try the next ranked download source"
+		>
+			{nextSource.isPending ? 'Switching…' : 'Try next source'}
+		</Button>
+	{/if}
+	{#if actionMessage}
+		<p class="source-action-error" role="alert">{actionMessage}</p>
+	{/if}
+{/snippet}
+
+{#if panel}
+	{#if sourceName && !task.held_for_review}
+		<div class="source-panel" role="status" aria-live="polite" aria-atomic="true">
+			<p class="source-panel__label">Source</p>
+			<p class="source-panel__name">
+				<SourceMark class="size-5" aria-hidden="true" />
+				{sourceName}
+			</p>
+			{#if panelFacts.length > 0}
+				<dl class="source-panel__facts">
+					{#each panelFacts as fact (fact.key)}
+						<dt>{fact.key}</dt>
+						<dd>{fact.value}</dd>
+					{/each}
+				</dl>
+			{/if}
+			{#if isQueued}
+				<p class="source-panel__note">Waiting in the peer's queue</p>
+			{/if}
+			{#if fallbackLine}
+				<p class="source-panel__note source-panel__note--warn">
+					<Clock3 class="size-3" aria-hidden="true" />
+					{fallbackLine}
+				</p>
+			{/if}
+			{@render tryNext()}
+		</div>
+	{/if}
+	<!-- Plugin sources (source "plugin:<name>") intentionally take the generic path:
 	no remote-queue hints below - only soulseek peers report queue telemetry. -->
-{#if source === 'soulseek' && task.status === 'downloading' && !task.held_for_review}
+{:else if source === 'soulseek' && task.status === 'downloading' && !task.held_for_review}
 	<div
 		class:source-telemetry-compact={compact}
 		class="source-telemetry mt-2"
@@ -124,7 +197,7 @@
 	>
 		<div class="min-w-0">
 			{#if quality}
-				<p class="truncate text-xs font-bold tracking-wide text-base-content/85">{quality}</p>
+				<p class="source-quality">{quality}</p>
 			{/if}
 			<p class="mt-0.5 text-xs text-muted">
 				{isQueued ? `Waiting for Soulseek · ${queueLabel}` : 'Downloading from Soulseek'}
@@ -140,38 +213,73 @@
 			{#if isQueued && livePosition}
 				<span>Live position {livePosition}</span>
 			{/if}
-			{#if isQueued && fallbackLine}
+			{#if fallbackLine}
 				<span class="text-warning">
 					<Clock3 class="size-3" aria-hidden="true" />
 					{fallbackLine}
 				</span>
 			{/if}
 			{#each evidenceChips as chip (chip)}
-				<span class="badge badge-ghost badge-sm">{chip}</span>
+				<span>{chip}</span>
 			{/each}
 		</div>
 
-		{#if canTryNext}
-			<div class="source-next">
-				<Button
-					variant="outline"
-					size="xs"
-					icon={SkipForward}
-					onclick={onTryNext}
-					disabled={nextSource.isPending}
-					aria-label="Try the next ranked download source"
-				>
-					{nextSource.isPending ? 'Switching…' : 'Try next source'}
-				</Button>
-			</div>
-		{/if}
-		{#if actionMessage}
-			<p class="source-action-error" role="alert">{actionMessage}</p>
+		{#if canTryNext || actionMessage}
+			<div class="source-next">{@render tryNext()}</div>
 		{/if}
 	</div>
 {/if}
 
 <style>
+	.source-panel {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.375rem;
+		min-width: 0;
+	}
+	.source-panel__label {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		letter-spacing: 0.24em;
+		text-transform: uppercase;
+		color: var(--dn-muted);
+	}
+	.source-panel__name {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 1.0625rem;
+		font-weight: 700;
+	}
+	.source-panel__facts {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		gap: 0.25rem 1.5rem;
+		margin-top: 0.25rem;
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+	}
+	.source-panel__facts dt {
+		font-weight: 600;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+	}
+	.source-panel__facts dd {
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+	.source-panel__note {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		font-size: 0.75rem;
+		color: var(--dn-muted);
+	}
+	.source-panel__note--warn {
+		color: var(--color-warning);
+	}
 	.source-telemetry {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) auto;
@@ -179,17 +287,28 @@
 		gap: 0.5rem 1rem;
 		max-width: 42rem;
 		padding: 0.65rem 0.75rem;
-		border-left: 2px solid var(--color-primary);
+		border-left: 2px solid var(--dn-title);
 		border-radius: 0.25rem 0.75rem 0.75rem 0.25rem;
-		background: oklch(from var(--color-base-300) l c h / 0.42);
+		background: var(--color-base-300);
+	}
+	.source-quality {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
 	}
 	.source-facts {
 		display: flex;
 		grid-column: 1 / -1;
 		flex-wrap: wrap;
 		gap: 0.35rem 0.85rem;
+		font-family: var(--font-mono);
 		font-size: 0.6875rem;
-		color: oklch(from var(--color-base-content) l c h / 0.58);
+		color: var(--dn-muted);
 	}
 	.source-facts span {
 		display: inline-flex;
@@ -201,7 +320,6 @@
 		grid-row: 1;
 	}
 	.source-action-error {
-		grid-column: 1 / -1;
 		margin: 0;
 		font-size: 0.75rem;
 		font-weight: 600;

@@ -137,18 +137,17 @@
 	</Button>
 {/snippet}
 
-<Card as="article" variant="bordered" padding="md" class="border-warning/25">
+<Card as="article" variant="bordered" padding="md" class="border-warning/60! sm:p-5">
 	<div class="flex items-start gap-3 sm:gap-4">
 		{#if !compact}
-			<div
-				class="relative size-14 shrink-0 overflow-hidden rounded-xl ring-1 ring-base-content/10 sm:size-16"
-			>
+			<div class="relative size-16 shrink-0 overflow-hidden rounded-sm sm:size-22">
 				{#if entry.release_group_mbid}
 					<AlbumImage
 						mbid={entry.release_group_mbid}
 						alt={title}
-						size="sm"
-						rounded="xl"
+						size="full"
+						requestSize={250}
+						rounded="none"
 						className="h-full w-full"
 					/>
 				{:else}
@@ -159,11 +158,11 @@
 
 		<div class="min-w-0 flex-1">
 			{#if !compact}
-				<h3 class="truncate text-base font-bold">
+				<h3 class="truncate text-lg font-bold sm:text-xl">
 					{#if entry.release_group_mbid}
 						<a
 							href={albumHref(entry.release_group_mbid)}
-							class="transition-colors hover:text-primary motion-reduce:transition-none"
+							class="underline decoration-2 underline-offset-4 transition-colors hover:text-title motion-reduce:transition-none"
 						>
 							{title}
 						</a>
@@ -172,7 +171,7 @@
 					{/if}
 				</h3>
 			{/if}
-			<p class="text-xs text-muted">
+			<p class="mt-1 font-mono text-xs tracking-wide text-muted uppercase">
 				{subtitle} · <span class="whitespace-nowrap">{expiry}</span>
 			</p>
 			{#if retrying}

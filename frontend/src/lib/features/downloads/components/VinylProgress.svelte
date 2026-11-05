@@ -1,3 +1,9 @@
+<!--
+	A live download's record: a black disc whose acid outer ring is the
+	progress, the percent in the middle. It turns slowly while `spinning`
+	(the light on it moves; the numbers stay upright) and stands still under
+	reduced motion. `indeterminate` (still searching) shows dots, no ring.
+-->
 <script lang="ts">
 	interface Props {
 		percent?: number;
@@ -12,16 +18,15 @@
 
 <div
 	class="vinyl"
-	style="--vinyl-size:{size}px; --vinyl-pct:{clamped};"
+	style:--vinyl-size="{size}px"
+	style:--vinyl-pct={indeterminate ? 0 : clamped}
 	role="img"
 	aria-label={indeterminate ? 'Searching' : `${clamped}% downloaded`}
 >
-	{#if spinning}
-		<div class="vinyl-halo" aria-hidden="true"></div>
-	{/if}
+	<div class="vinyl-disc" aria-hidden="true"></div>
+	<div class="vinyl-sheen" class:is-spinning={spinning} aria-hidden="true"></div>
 	<div class="vinyl-ring" aria-hidden="true"></div>
-	<div class="vinyl-disc" class:is-spinning={spinning} aria-hidden="true"></div>
-	<div class="vinyl-label">
+	<div class="vinyl-label" aria-hidden="true">
 		{#if indeterminate}
 			<span class="vinyl-dots">•••</span>
 		{:else}
@@ -37,99 +42,81 @@
 		height: var(--vinyl-size);
 		flex-shrink: 0;
 	}
-	.vinyl-halo {
-		position: absolute;
-		inset: -6px;
-		border-radius: 9999px;
-		background: radial-gradient(
-			circle,
-			oklch(from var(--color-primary) l c h / 0.32),
-			transparent 70%
-		);
-		animation: glow-pulse 2.5s ease-in-out infinite;
-		pointer-events: none;
-	}
-	.vinyl-ring {
-		position: absolute;
-		inset: 0;
-		border-radius: 9999px;
-		background: conic-gradient(
-			oklch(from var(--color-primary) l c h / 0.95) calc(var(--vinyl-pct) * 1%),
-			oklch(from var(--color-base-content) l c h / 0.1) 0
-		);
-		-webkit-mask: radial-gradient(circle, transparent 58%, #000 60%);
-		mask: radial-gradient(circle, transparent 58%, #000 60%);
-		transition: background 0.6s var(--ease-spring, ease-out);
-	}
 	.vinyl-disc {
 		position: absolute;
-		inset: 9%;
+		inset: 0;
 		border-radius: 9999px;
 		background:
 			repeating-radial-gradient(
 				circle at center,
-				oklch(from var(--color-base-content) l c h / 0.06) 0px,
-				oklch(from var(--color-base-content) l c h / 0.06) 1px,
-				transparent 2px,
-				transparent 4px
+				var(--dn-vinyl-groove) 0 1px,
+				transparent 1px 3.5px
 			),
-			radial-gradient(
-				circle at 34% 28%,
-				oklch(from var(--color-base-content) l c h / 0.1),
-				transparent 56%
-			),
-			radial-gradient(
-				circle at center,
-				oklch(from var(--color-base-300) l c h),
-				oklch(from var(--color-base-100) l c h) 95%
-			);
-		box-shadow:
-			inset 0 0 0 1px oklch(from var(--color-base-content) l c h / 0.08),
-			inset 0 0 12px oklch(from var(--color-base-100) l c h / 0.9);
+			var(--dn-vinyl);
+		box-shadow: 0 6px 18px -10px rgb(0 0 0 / 0.7);
 	}
-	.vinyl-disc.is-spinning {
-		animation: spin-vinyl 4.2s linear infinite;
+	/* two soft wedges of light that turn with the record */
+	.vinyl-sheen {
+		position: absolute;
+		inset: 0;
+		border-radius: 9999px;
+		background: conic-gradient(
+			transparent 0deg,
+			rgb(255 255 255 / 0.14) 30deg,
+			transparent 70deg,
+			transparent 180deg,
+			rgb(255 255 255 / 0.1) 210deg,
+			transparent 250deg
+		);
+	}
+	.vinyl-sheen.is-spinning {
+		animation: spin-vinyl 6s linear infinite;
+	}
+	/* the progress: an acid band round the rim, over a dim track */
+	.vinyl-ring {
+		position: absolute;
+		inset: 3%;
+		border-radius: 9999px;
+		background: conic-gradient(
+			var(--dn-action) calc(var(--vinyl-pct) * 1%),
+			rgb(255 255 255 / 0.12) 0
+		);
+		-webkit-mask: radial-gradient(circle closest-side, transparent 83%, #000 85%);
+		mask: radial-gradient(circle closest-side, transparent 83%, #000 85%);
+		transition: background 0.6s ease-out;
 	}
 	.vinyl-label {
 		position: absolute;
 		inset: 0;
 		margin: auto;
-		width: 44%;
-		height: 44%;
+		width: 64%;
+		height: 64%;
 		border-radius: 9999px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: radial-gradient(
-			circle at center,
-			oklch(from var(--color-primary) l c h / 0.22),
-			oklch(from var(--color-base-200) l c h)
-		);
-		box-shadow: inset 0 0 0 1px oklch(from var(--color-primary) l c h / 0.28);
+		background: var(--dn-vinyl);
+		box-shadow: 0 0 0 1px rgb(255 255 255 / 0.06);
 	}
 	.vinyl-pct {
-		font-size: calc(var(--vinyl-size) * 0.2);
-		font-weight: 700;
-		font-variant-numeric: tabular-nums;
+		font-family: var(--font-display);
+		font-size: calc(var(--vinyl-size) * 0.26);
+		font-weight: 400;
+		font-synthesis: none;
 		line-height: 1;
-		color: oklch(from var(--color-primary) l c h);
+		font-variant-numeric: tabular-nums;
+		color: var(--dn-action);
 	}
 	.vinyl-sym {
-		font-size: 0.6em;
-		opacity: 0.7;
+		font-size: 0.8em;
 	}
 	.vinyl-dots {
-		font-size: calc(var(--vinyl-size) * 0.22);
+		font-size: calc(var(--vinyl-size) * 0.2);
 		letter-spacing: 0.05em;
-		color: oklch(from var(--color-primary) l c h);
+		color: var(--dn-action);
 		animation: glow-pulse 1.6s ease-in-out infinite;
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.vinyl-disc.is-spinning,
-		.vinyl-halo,
-		.vinyl-dots {
-			animation: none;
-		}
 		.vinyl-ring {
 			transition: none;
 		}

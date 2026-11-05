@@ -57,22 +57,22 @@
 {:else}
 	<div class="space-y-2">
 		{#each query.data?.items ?? [] as entry (entry.id)}
-			<Card variant="bordered" padding="sm">
-				<div class="flex items-center gap-3">
+			<Card variant="bordered" padding="md">
+				<div class="flex flex-wrap items-center gap-3 sm:flex-nowrap">
 					<TriangleAlert class="h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
 					<div class="min-w-0 flex-1">
-						<p class="truncate text-sm font-medium" title={entry.filename}>
+						<p class="truncate font-semibold" title={entry.filename}>
 							{basename(entry.filename)}
 						</p>
-						<p class="truncate text-xs text-muted">
+						<p class="mt-0.5 truncate font-mono text-xs text-muted">
 							{entry.username}
-							<span class="text-base-content/30"> · </span>{entry.reason_text ?? entry.reason}
-							<span class="text-base-content/30"> · </span>{fmtDate(entry.quarantined_at)}
+							<span aria-hidden="true" class="mx-1.5">·</span>{entry.reason_text ?? entry.reason}
+							<span aria-hidden="true" class="mx-1.5">·</span>{fmtDate(entry.quarantined_at)}
 						</p>
 					</div>
 					<Button
-						variant={confirmId === entry.id ? 'danger' : 'ghost'}
-						size="xs"
+						variant={confirmId === entry.id ? 'danger' : 'outline'}
+						size="sm"
 						icon={Trash2}
 						class="gap-1"
 						onclick={() => requestDelete(entry.id)}

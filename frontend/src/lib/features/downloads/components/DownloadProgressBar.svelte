@@ -1,3 +1,7 @@
+<!--
+	A transfer's progress: a mono line ("8 of 12 tracks · 389 MB / 572 MB")
+	over an acid bar. The percent is read out, and drawn by the record beside.
+-->
 <script lang="ts">
 	interface Props {
 		percent?: number;
@@ -18,68 +22,69 @@
 
 	function fmtSize(bytes: number): string {
 		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 		return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 	}
+
+	const facts = $derived(
+		[
+			filesTotal > 0 ? `${filesCompleted} of ${filesTotal} tracks` : null,
+			bytesTotal > 0 ? `${fmtSize(bytesDownloaded)} / ${fmtSize(bytesTotal)}` : null
+		].filter(Boolean)
+	);
 </script>
 
-<div class="flex flex-col gap-1" role="status" aria-live="polite" aria-label="Download progress">
-	<div class="dl-track">
-		<div class="dl-fill" style="width:{clamped}%"></div>
-	</div>
-	<div class="flex items-center justify-between text-[11px] text-muted tabular-nums">
-		<span>{clamped.toFixed(0)}%</span>
-		<span>
-			{#if bytesTotal > 0}{fmtSize(bytesDownloaded)} / {fmtSize(bytesTotal)}{/if}
-			{#if filesTotal > 0}<span class="text-base-content/30"> · </span>{filesCompleted}/{filesTotal} files{/if}
-		</span>
+<div class="dl-progress" role="status" aria-live="polite" aria-label="Download progress">
+	<p class="dl-progress__facts">
+		<span class="sr-only">{clamped.toFixed(0)}%</span>
+		{#each facts as fact, i (fact)}{#if i > 0}<span class="dl-progress__dot mx-1.5">·</span
+				>{/if}{fact}{/each}
+	</p>
+	<div class="dl-track" aria-hidden="true">
+		<div class="dl-fill" style:width="{clamped}%"></div>
 	</div>
 </div>
 
 <style>
+	.dl-progress {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+	.dl-progress__facts {
+		min-height: 1.25rem;
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		font-weight: 500;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		font-variant-numeric: tabular-nums;
+	}
+	.dl-progress__dot {
+		color: var(--dn-muted);
+	}
 	.dl-track {
-		height: 6px;
-		border-radius: 3px;
-		background: oklch(from var(--color-base-300) l c h);
+		height: 0.625rem;
+		border-radius: 9999px;
+		background: color-mix(in oklab, var(--color-base-content) 14%, transparent);
 		overflow: hidden;
 	}
 	.dl-fill {
-		position: relative;
 		height: 100%;
-		border-radius: 3px;
-		background: linear-gradient(
-			90deg,
-			oklch(from var(--color-primary) l c h / 0.7),
-			oklch(from var(--color-primary) l c h)
-		);
-		transition: width 0.6s var(--ease-spring, ease-out);
-	}
-	.dl-fill::after {
-		content: '';
-		position: absolute;
-		inset: 0;
-		background: linear-gradient(
-			90deg,
-			transparent,
-			oklch(from var(--color-primary) l c h / 0.28),
-			transparent
-		);
-		animation: dl-sweep 2s ease-in-out infinite;
-	}
-	@keyframes dl-sweep {
-		0% {
-			transform: translateX(-100%);
-		}
-		100% {
-			transform: translateX(100%);
-		}
+		border-radius: 9999px;
+		background: var(--dn-action);
+		box-shadow: inset 0 0 0 1px var(--dn-action-edge);
+		transition: width 0.6s ease-out;
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.dl-fill {
 			transition: none;
 		}
-		.dl-fill::after {
-			animation: none;
+	}
+	@media (max-width: 639px) {
+		.dl-progress__facts {
+			font-size: 0.75rem;
+			letter-spacing: 0.06em;
 		}
 	}
 </style>
