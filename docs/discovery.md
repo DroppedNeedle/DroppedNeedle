@@ -33,7 +33,7 @@ When an outside service such as ListenBrainz, Last.fm or MusicBrainz is down or 
 
 ## Genres
 
-Genre tiles on Home and Discover use covers from your own albums in that genre: up to four, picked from different artists, and only art your library actually has (a cover image in the album folder or one embedded in the files). Genres you have nothing in get a plain color. Click a genre to see the artists and albums you own in it next to the popular ones on MusicBrainz, with "more" buttons to page through them. While you look, the server fetches pictures for those popular artists and albums in the background, slowly, so the page is quicker next time.
+Genre tiles on Home and Discover use covers from your own albums in that genre: up to four, picked from different artists, and only art your library actually has (a cover image in the album folder or one embedded in the files). Genres you have nothing in get a plain color. Click a genre to see the artists and albums you own in it next to the popular ones on MusicBrainz. Your own show their first rows, with "View all" for the rest. The popular ones show three rows; "View more" opens the rest and then pages through them. While you look, the server fetches pictures for those popular artists and albums in the background, slowly, so the page is quicker next time.
 
 ## The discover queue
 
@@ -45,7 +45,7 @@ Radio plays a station from an artist, an album, a genre or a whole shelf. An art
 
 ## Playlist suggestions
 
-A playlist can suggest albums to add: albums by artists similar to the ones on it, plus albums in their genres. Artists already on the playlist are left out. It works for your own playlists and public ones.
+"Suggest Albums" on a playlist's page lists albums to add: albums by artists similar to the ones on it, plus albums in their genres. Artists already on the playlist are left out. It works for your own playlists and public ones.
 
 ## Download all
 

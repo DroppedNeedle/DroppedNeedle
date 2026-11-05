@@ -20,16 +20,16 @@ One container. No Lidarr.
 
 ---
 
-<img src="Images/Home.webp" alt="Home page with trending artists, popular albums, and personalized recommendations" width="100%" />
+<img src="Images/Home.webp" alt="Home page with your library, drop imports and popular albums" width="100%" />
 
 <details>
 <summary>More screenshots</summary>
 
 <img src="Images/Discover.webp" alt="Discover page with personalized album recommendations" width="100%" />
-<img src="Images/Library.webp" alt="Library overview with statistics and recent additions" width="100%" />
-<img src="Images/ListeningRoom.webp" alt="Listening Room with local files library stats" width="100%" />
-<img src="Images/Jellyfin.webp" alt="Jellyfin library view" width="100%" />
-<img src="Images/Settings.webp" alt="Settings" width="100%" />
+<img src="Images/Library.webp" alt="Library overview with counts and local files" width="100%" />
+<img src="Images/ListeningRoom.webp" alt="Listening Room deck playing a record" width="100%" />
+<img src="Images/Album.webp" alt="Album page with its edition and tracks" width="100%" />
+<img src="Images/Settings.webp" alt="Settings grouped into Setup, Personalize and System" width="100%" />
 
 </details>
 
