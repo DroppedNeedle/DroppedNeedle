@@ -4,7 +4,9 @@
 	may carry an icon before its label, coloured while selected, and a quiet
 	count. The panel is named by its tab, so the content passed in reads as
 	that tab's. `aside` sits in the row beside the tabs (a list's search and
-	sort, which belong to every tab).
+	sort, which belong to every tab). The `caps` look is a strip of mono
+	capitals, the current tab underlined in the title colour (a drawer's
+	tabs).
 -->
 <script lang="ts" module>
 	import type { KitIcon } from './Button.svelte';
@@ -30,8 +32,10 @@
 		label: string;
 		/** Keeps the ids of two rows on one page apart. */
 		idPrefix: string;
-		look?: 'box' | 'border';
+		look?: 'box' | 'border' | 'caps';
 		class?: string;
+		/** Layout only, for the panel: a drawer's panel fills and scrolls. */
+		panelClass?: string;
 		aside?: Snippet;
 		children: Snippet;
 	}
@@ -44,12 +48,14 @@
 		idPrefix,
 		look = 'box',
 		class: className = '',
+		panelClass = '',
 		aside,
 		children
 	}: Props = $props();
 
 	const tabId = (id: string) => `${idPrefix}-tab-${id}`;
 	const panelId = $derived(`${idPrefix}-panel`);
+	const looks = { box: 'tabs tabs-box', border: 'tabs tabs-border', caps: 'dn-tabs-caps' };
 	let row = $state<HTMLDivElement | null>(null);
 
 	function move(event: KeyboardEvent): void {
@@ -84,9 +90,7 @@
 		role="tablist"
 		aria-label={label}
 		tabindex="-1"
-		class="tabs w-fit max-w-full flex-wrap {look === 'box' ? 'tabs-box' : 'tabs-border'} {aside
-			? ''
-			: className}"
+		class="{looks[look]} w-fit max-w-full flex-wrap {aside ? '' : className}"
 		onkeydown={move}
 	>
 		{#each tabs as tab (tab.id)}
@@ -94,7 +98,9 @@
 				type="button"
 				role="tab"
 				id={tabId(tab.id)}
-				class="tab gap-2 {tab.id === selected ? 'tab-active' : ''}"
+				class="{look === 'caps' ? 'dn-tab-caps' : 'tab'} gap-2 {tab.id === selected
+					? 'tab-active'
+					: ''}"
 				aria-selected={tab.id === selected}
 				aria-controls={panelId}
 				tabindex={tab.id === selected ? 0 : -1}
@@ -118,6 +124,48 @@
 {:else}
 	{@render tablist()}
 {/if}
-<div role="tabpanel" id={panelId} aria-labelledby={tabId(selected)} tabindex="-1">
+<div
+	role="tabpanel"
+	id={panelId}
+	aria-labelledby={tabId(selected)}
+	tabindex="-1"
+	class={panelClass || undefined}
+>
 	{@render children()}
 </div>
+
+<style>
+	.dn-tabs-caps {
+		display: flex;
+		gap: 1.375rem;
+	}
+	.dn-tab-caps {
+		display: inline-flex;
+		align-items: center;
+		min-height: 3rem;
+		border-block: 3px solid transparent;
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		font-weight: 700;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--dn-muted);
+		cursor: pointer;
+		transition: color 150ms;
+	}
+	.dn-tab-caps:hover {
+		color: var(--color-base-content);
+	}
+	.dn-tab-caps.tab-active {
+		border-bottom-color: var(--dn-title);
+		color: var(--color-base-content);
+	}
+	.dn-tab-caps:focus-visible {
+		outline-offset: -2px;
+	}
+	@media (forced-colors: active) {
+		.dn-tab-caps.tab-active {
+			border-bottom-color: Highlight;
+		}
+	}
+</style>

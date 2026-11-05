@@ -317,7 +317,7 @@ textarea {
 	:root {
 		--ms-bottom-nav-height: 0rem;
 		--ms-bottom-nav-offset: 0px;
-		--ms-player-height: 5.625rem;
+		--ms-player-height: 7rem;
 	}
 
 	.droppedneedle-toast {
@@ -325,7 +325,7 @@ textarea {
 	}
 
 	.droppedneedle-toast.droppedneedle-toast--player {
-		bottom: 6.5rem;
+		bottom: calc(var(--ms-player-height) + 0.5rem);
 	}
 }
 

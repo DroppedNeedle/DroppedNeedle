@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { YOUTUBE_PLAYER_ELEMENT_ID } from '$lib/constants';
+	import { playerDrawer } from '$lib/features/player/state/playerDrawer.svelte';
 
 	interface Props {
 		elementId?: string;
@@ -16,6 +17,7 @@
 <div
 	data-testid="youtube-player"
 	class="droppedneedle-yt-popout fixed right-3 z-[60] overflow-hidden rounded-lg shadow-lg ring-1 ring-base-content/10 sm:right-4"
+	class:droppedneedle-yt-popout--beside-drawer={playerDrawer.open}
 	style:min-width="200px"
 	style:min-height="200px"
 >
@@ -32,6 +34,11 @@
 		width: clamp(200px, calc(100vw - 1.5rem), 356px);
 		height: 200px;
 		animation: droppedneedle-yt-popout-in 200ms ease-out;
+	}
+
+	/* The drawer would cover it; the policy forbids that, so it moves to the drawer's left. */
+	.droppedneedle-yt-popout--beside-drawer {
+		right: calc(min(28rem, 100vw - 1.5rem) + 1.5rem);
 	}
 
 	/* YT.Player replaces the mount div with an iframe carrying its own width/height attributes.

@@ -711,7 +711,8 @@ Run from the repo root. `make help` lists every target.
   sticky section strip; `look="pills"` fills the current link, `actions` sit at
   its end), `HalftonePhoto` (a photo printed as a fading
   halftone), `Knob` (a rotary slider: a dial over a dotted scale),
-  `PageShell`, `Toaster`, `CoverPlaceholder`,
+  `SideDrawer` (a panel from the right over a dimmed page, with `Tabs`'
+  `caps` look for its tabs), `PageShell`, `Toaster`, `CoverPlaceholder`,
   `UnsavedChangesGuard`, `Logo`, `PaperPanel` (the light island), `Card`'s
   `torn` paper, `Button`'s condensed caps sizes (`display`, `display-sm`)
   and `paper` outline (a button on a paper card),

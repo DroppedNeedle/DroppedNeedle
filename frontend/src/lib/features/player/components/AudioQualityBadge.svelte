@@ -1,4 +1,10 @@
+<!--
+	A track's codec as a format chip (lossless in the action colour, lossy
+	plain), and unless `compact` its bitrate, channels and container.
+-->
 <script lang="ts">
+	import StatusChip from '$lib/ui/StatusChip.svelte';
+
 	interface Props {
 		codec?: string | null;
 		bitrate?: number | null;
@@ -19,13 +25,13 @@
 
 	const isLossless = $derived(codec ? LOSSLESS_CODECS.includes(codec.toLowerCase()) : false);
 
-	const bitrateLabel = $derived(() => {
+	const bitrateLabel = $derived.by(() => {
 		if (!bitrate) return '';
 		if (bitrate >= 1000) return `${(bitrate / 1000).toFixed(1)} Mbps`;
 		return `${bitrate} kbps`;
 	});
 
-	const channelLabel = $derived(() => {
+	const channelLabel = $derived.by(() => {
 		if (!audioChannels) return '';
 		if (audioChannels === 1) return 'Mono';
 		if (audioChannels === 2) return 'Stereo';
@@ -36,26 +42,23 @@
 </script>
 
 {#if hasAnyInfo}
-	<div class="inline-flex items-center gap-1 flex-wrap">
+	<span class="inline-flex flex-wrap items-center gap-1">
 		{#if codec}
-			<span
-				class="badge badge-xs uppercase font-mono {isLossless ? 'badge-success' : 'badge-ghost'}"
-				title={isLossless ? 'Lossless' : 'Lossy'}
-			>
-				{codec}
+			<span class="inline-flex" title={isLossless ? 'Lossless' : 'Lossy'}>
+				<StatusChip size="xs" tone={isLossless ? 'action' : 'neutral'}>{codec}</StatusChip>
 			</span>
 		{/if}
 
 		{#if !compact}
 			{#if bitrate}
-				<span class="badge badge-xs badge-ghost font-mono">{bitrateLabel()}</span>
+				<StatusChip size="xs">{bitrateLabel}</StatusChip>
 			{/if}
 			{#if audioChannels}
-				<span class="badge badge-xs badge-ghost">{channelLabel()}</span>
+				<StatusChip size="xs">{channelLabel}</StatusChip>
 			{/if}
 			{#if container && container !== codec}
-				<span class="badge badge-xs badge-ghost uppercase font-mono">{container}</span>
+				<StatusChip size="xs">{container}</StatusChip>
 			{/if}
 		{/if}
-	</div>
+	</span>
 {/if}

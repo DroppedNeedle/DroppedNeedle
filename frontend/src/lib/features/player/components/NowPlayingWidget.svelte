@@ -1,9 +1,15 @@
+<!--
+	What is playing in other sessions, one card per session, in the player
+	bar's look: who, on what, which track and how far along. Paused cards
+	are greyed with a pause mark. Read-only: no buttons, no links.
+-->
 <script lang="ts">
 	import '$lib/features/player/components/now-playing.css';
 	import { Pause, User } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import AudioQualityBadge from '$lib/features/player/components/AudioQualityBadge.svelte';
-	import Card from '$lib/ui/Card.svelte';
+	import SectionHead from '$lib/ui/SectionHead.svelte';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import type { NowPlayingSession } from '$lib/features/player/state/nowPlayingSessions.svelte';
 
 	interface Props {
@@ -36,12 +42,13 @@
 
 {#if sessions.length > 0}
 	<section class="space-y-3">
-		<div class="flex items-center gap-2 px-1">
-			<div class="now-playing-bars">
-				<span></span><span></span><span></span>
-			</div>
-			<h2 class="text-lg font-semibold text-base-content sm:text-xl">Now Playing</h2>
-		</div>
+		<SectionHead title="Now Playing">
+			{#snippet chips()}
+				<span class="now-playing-bars" aria-hidden="true"
+					><span></span><span></span><span></span></span
+				>
+			{/snippet}
+		</SectionHead>
 
 		<!-- auto-fit collapses empty tracks so one card fills the row, two share it, etc.;
 		     the (100% - gaps)/4 floor caps it at four across before wrapping.
@@ -51,100 +58,133 @@
 		>
 			{#each sessions as session (session.id)}
 				{@const progress = progressPercent(session)}
-				<Card
-					variant="bordered"
-					padding="sm"
-					class="h-full {session.is_paused ? 'opacity-70' : ''}"
-				>
-					<div class="flex h-full items-center gap-3">
-						<div class="relative shrink-0">
-							<AlbumImage
-								customUrl={session.cover_url ?? null}
-								alt={session.album_name}
-								size="full"
-								className="h-[4.5rem] w-[4.5rem] shadow {session.is_paused ? 'grayscale' : ''}"
-							/>
-							{#if session.is_paused}
-								<div
-									class="absolute inset-0 flex items-center justify-center rounded-lg bg-base-300/50"
-								>
-									<Pause class="h-5 w-5 text-base-content" />
-								</div>
+				<div class="dn-np-card" class:dn-np-card--paused={session.is_paused}>
+					<div class="relative shrink-0">
+						<AlbumImage
+							customUrl={session.cover_url ?? null}
+							alt={session.album_name}
+							size="full"
+							rounded="sm"
+							className="size-[4.5rem] {session.is_paused ? 'grayscale' : ''}"
+						/>
+						{#if session.is_paused}
+							<div class="dn-np-card__paused">
+								<Pause class="size-5 fill-current" aria-hidden="true" />
+							</div>
+						{/if}
+					</div>
+
+					<div class="flex min-w-0 flex-1 flex-col gap-0.5">
+						<p class="dn-np-card__state">
+							<span
+								class="now-playing-bars now-playing-bars--sm"
+								class:now-playing-bars--paused={session.is_paused}
+								aria-hidden="true"><span></span><span></span><span></span></span
+							>
+							<span>{session.is_paused ? 'Paused' : 'Now Playing'}</span>
+							{#if session.source}
+								<span aria-hidden="true">·</span>
+								<span class="truncate">{sourceLabels[session.source] ?? session.source}</span>
+							{/if}
+						</p>
+
+						{#if session.redacted}
+							<p class="truncate text-sm font-semibold text-muted italic">Private listening</p>
+						{:else}
+							<p class="truncate text-sm leading-tight font-bold">{session.track_name}</p>
+							<p class="truncate text-xs text-muted">{session.artist_name}</p>
+						{/if}
+
+						<div class="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted">
+							{#if session.user_name}
+								<StatusChip size="xs" icon={User}>{session.user_name}</StatusChip>
+							{/if}
+							{#if session.device_name}
+								<span class="max-w-[8rem] truncate">{session.device_name}</span>
+							{/if}
+							{#if session.audio_codec}
+								<AudioQualityBadge codec={session.audio_codec} bitrate={session.bitrate} compact />
 							{/if}
 						</div>
 
-						<div class="flex min-w-0 flex-1 flex-col gap-0.5">
-							<div class="flex items-center gap-1.5">
-								<div
-									class="now-playing-bars now-playing-bars--sm {session.is_paused
-										? 'now-playing-bars--paused'
-										: ''}"
-								>
-									<span></span><span></span><span></span>
+						{#if progress !== null}
+							<div class="mt-1.5 flex items-center gap-2">
+								<div class="dn-np-card__rail">
+									<div class="dn-np-card__fill" style:width="{progress}%"></div>
 								</div>
-								<span class="text-[10px] font-medium uppercase tracking-wide text-muted">
-									{session.is_paused ? 'Paused' : 'Now Playing'}
-									{#if session.source}
-										<span class="opacity-60"
-											>· {sourceLabels[session.source] ?? session.source}</span
-										>
-									{/if}
-								</span>
-							</div>
-
-							{#if session.redacted}
-								<p class="truncate text-sm font-medium italic leading-tight text-muted">
-									Private listening
-								</p>
-							{:else}
-								<p class="truncate text-sm font-semibold leading-tight text-base-content">
-									{session.track_name}
-								</p>
-								<p class="truncate text-xs text-muted">{session.artist_name}</p>
-							{/if}
-
-							<div
-								class="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] text-muted"
-							>
-								{#if session.user_name}
-									<span
-										class="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary"
-									>
-										<User class="h-3 w-3" />
-										{session.user_name}
+								{#if session.progress_ms != null && session.duration_ms != null}
+									<span class="dn-np-card__time">
+										{formatTime(session.progress_ms)}/{formatTime(session.duration_ms)}
 									</span>
 								{/if}
-								{#if session.device_name}
-									<span class="max-w-[8rem] truncate">{session.device_name}</span>
-								{/if}
-								{#if session.audio_codec}
-									<AudioQualityBadge
-										codec={session.audio_codec}
-										bitrate={session.bitrate}
-										compact
-									/>
-								{/if}
 							</div>
-
-							{#if progress !== null}
-								<div class="mt-1 flex items-center gap-1.5">
-									<div class="h-1 flex-1 overflow-hidden rounded-full bg-base-content/10">
-										<div
-											class="h-full rounded-full bg-primary transition-[width] duration-1000 ease-linear"
-											style="width: {progress}%"
-										></div>
-									</div>
-									{#if session.progress_ms != null && session.duration_ms != null}
-										<span class="shrink-0 text-[10px] tabular-nums text-muted">
-											{formatTime(session.progress_ms)}/{formatTime(session.duration_ms)}
-										</span>
-									{/if}
-								</div>
-							{/if}
-						</div>
+						{/if}
 					</div>
-				</Card>
+				</div>
 			{/each}
 		</div>
 	</section>
 {/if}
+
+<style>
+	.dn-np-card {
+		display: flex;
+		height: 100%;
+		align-items: center;
+		gap: 0.875rem;
+		padding: 0.625rem 0.875rem 0.625rem 0.625rem;
+		border: 1px solid var(--dn-line);
+		border-radius: var(--radius-box);
+		background: var(--color-base-200);
+	}
+	.dn-np-card--paused {
+		border-style: dashed;
+	}
+	.dn-np-card__paused {
+		position: absolute;
+		inset: 0;
+		display: grid;
+		place-items: center;
+		border-radius: 0.25rem;
+		background: color-mix(in oklab, var(--color-base-300) 55%, transparent);
+		color: var(--color-base-content);
+	}
+	.dn-np-card__state {
+		display: flex;
+		min-width: 0;
+		align-items: center;
+		gap: 0.375rem;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--dn-muted);
+	}
+	.dn-np-card--paused :is(p, span) {
+		color: var(--dn-muted);
+	}
+	.dn-np-card__rail {
+		height: 4px;
+		flex: 1;
+		overflow: hidden;
+		border-radius: 2px;
+		background: var(--dn-line);
+	}
+	.dn-np-card__fill {
+		height: 100%;
+		border-radius: 2px;
+		background: var(--dn-title);
+		transition: width 1s linear;
+	}
+	.dn-np-card--paused .dn-np-card__fill {
+		background: var(--dn-muted);
+	}
+	.dn-np-card__time {
+		flex-shrink: 0;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--dn-muted);
+	}
+</style>
