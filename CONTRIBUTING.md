@@ -171,6 +171,8 @@ Only maintainers tag, and nothing but a version tag publishes a release image. T
 
 To rehearse a release without publishing, run the Release workflow by hand with the version you plan to tag and leave `push` unticked. It runs every check, waits for the same approval and builds the image for both architectures without pushing anything.
 
+To publish a tag before CI has passed on its commit, run the Release workflow by hand on the tag with `push` and `skip_ci` ticked. Every other check and the approval still apply.
+
 ## Questions?
 
 Ask in [Discord](https://discord.gg/B5suDg7gu2) or open an [issue](https://github.com/DroppedNeedle/DroppedNeedle/issues).

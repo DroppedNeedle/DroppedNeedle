@@ -19,6 +19,10 @@ on:
         description: Publish the image. Only works when run on the tag itself.
         type: boolean
         default: false
+      skip_ci:
+        description: Publish even though CI has not passed on the commit. The approval is still needed.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -171,8 +175,10 @@ jobs:
           fi
 
       # CI is path-filtered, so a commit that changed no code has no CI
-      # run. Start CI by hand on the release branch for such a commit.
+      # run. Start CI by hand on the release branch for such a commit, or
+      # run this workflow by hand with skip_ci ticked.
       - name: Check CI passed on the commit
+        if: ${{ !inputs.skip_ci }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -198,6 +204,10 @@ jobs:
             echo "::error::Frontend CI has not passed on $sha (latest run: $frontend)."
             exit 1
           fi
+
+      - name: Note the skipped CI check
+        if: ${{ inputs.skip_ci }}
+        run: echo "::warning::The CI check was skipped for this run."
 
       # A job that names a missing environment creates it with no rules, so
       # the approval gate is checked before any job uses it.
