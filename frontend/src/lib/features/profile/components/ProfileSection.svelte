@@ -28,6 +28,7 @@
 	let { id, title, blurb, icon: Icon, glyph, open, ontoggle, summary, children }: Props = $props();
 
 	const bodyId = $derived(`${id}-body`);
+	const summaryId = $derived(`${id}-summary`);
 </script>
 
 <section {id} class="pf-sec" class:pf-sec--open={open} aria-labelledby="{id}-title">
@@ -46,6 +47,7 @@
 					class="pf-sec__toggle"
 					aria-expanded={open}
 					aria-controls={bodyId}
+					aria-describedby={open ? undefined : summaryId}
 					onclick={() => ontoggle(!open)}>{title}</button
 				>
 			</h2>
@@ -68,10 +70,18 @@
 			{@render children()}
 		</div>
 	{:else}
-		<div class="pf-sec__summary" id={bodyId}>
-			<div class="pf-sec__summary-text">{@render summary?.()}</div>
+		<!-- A mouse target only. The title button is the one tab stop; its aria-describedby points at the text. -->
+		<button
+			type="button"
+			class="pf-sec__summary"
+			id={bodyId}
+			tabindex="-1"
+			aria-hidden="true"
+			onclick={() => ontoggle(true)}
+		>
+			<span class="pf-sec__summary-text" id={summaryId}>{@render summary?.()}</span>
 			<ChevronDown class="pf-sec__chevron" aria-hidden="true" />
-		</div>
+		</button>
 	{/if}
 </section>
 
@@ -163,19 +173,13 @@
 	.pf-sec__toggle:focus-visible {
 		outline: none;
 	}
-	/* the button covers the label; closed, the whole row */
+	/* covers the paper label; a closed row's summary is a separate button */
 	.pf-sec__toggle::after {
 		content: '';
 		position: absolute;
 		inset: 0;
 		z-index: 1;
-		border-radius: inherit;
-	}
-	.pf-sec:not(.pf-sec--open) .pf-sec__label {
-		position: static;
-	}
-	.pf-sec:not(.pf-sec--open) .pf-sec__toggle::after {
-		border-radius: 0.5rem;
+		border-radius: 0.5rem 0 0 0.5rem;
 	}
 	.pf-sec:has(.pf-sec__toggle:focus-visible) {
 		outline: 3px solid var(--dn-focus);
@@ -209,8 +213,11 @@
 		display: flex;
 		align-items: center;
 		gap: 1rem;
+		width: 100%;
 		min-width: 0;
 		padding: 0.5rem 1.25rem 0.5rem 1.25rem;
+		text-align: left;
+		cursor: pointer;
 	}
 	.pf-sec__summary-text {
 		display: flex;
@@ -259,6 +266,9 @@
 				0 0,
 				0 100%;
 			-webkit-mask-repeat: no-repeat, repeat-x;
+		}
+		.pf-sec__toggle::after {
+			border-radius: 0.5rem 0.5rem 0 0;
 		}
 		.pf-sec:not(.pf-sec--open) .pf-sec__label {
 			padding-block: 0.625rem calc(var(--tear) + 0.375rem);
