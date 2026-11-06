@@ -1,11 +1,13 @@
 /* daisyUI themes, shared by app.css and auth.css so every page switches together.
-   Dark is acid ink on black stock, light forest ink on warm paper. Every text
-   pair here was measured against WCAG AA on the page, surface and subtle
-   surface it sits on. */
+   Dark is acid ink on black stock, light forest ink on warm paper, and midnight
+   is the dark palette with its paper islands turned dark. Every text pair here
+   was measured against WCAG AA on the page, surface and subtle surface it sits
+   on. */
 @plugin "daisyui" {
 	themes:
 		dark --default,
-		light;
+		light,
+		midnight;
 }
 @plugin "daisyui/theme" {
 	name: 'dark';
@@ -28,6 +30,38 @@
 	--color-info: #b6ddf5;
 	--color-info-content: #121a12;
 	/* teal, apart from the brand acid */
+	--color-success: #5fd3a8;
+	--color-success-content: #121a12;
+	--color-warning: #f4bc65;
+	--color-warning-content: #121a12;
+	--color-error: #ff837a;
+	--color-error-content: #121a12;
+	--radius-selector: 0.5rem;
+	--radius-field: 0.5rem;
+	--radius-box: 0.75rem;
+	--size-selector: 0.25rem;
+	--size-field: 0.25rem;
+	--border: 1px;
+	--depth: 0;
+	--noise: 0;
+}
+@plugin "daisyui/theme" {
+	name: 'midnight';
+	color-scheme: dark;
+	--color-base-100: #090e0b;
+	--color-base-200: #0b0f0c;
+	--color-base-300: #121713;
+	--color-base-content: #f3f5ef;
+	--color-primary: #b8ef64;
+	--color-primary-content: #121a12;
+	--color-secondary: #d7b8f0;
+	--color-secondary-content: #121a12;
+	--color-accent: #c6f38c;
+	--color-accent-content: #121a12;
+	--color-neutral: #1a241c;
+	--color-neutral-content: #f3f5ef;
+	--color-info: #b6ddf5;
+	--color-info-content: #121a12;
 	--color-success: #5fd3a8;
 	--color-success-content: #121a12;
 	--color-warning: #f4bc65;
@@ -121,6 +155,27 @@
 	--dn-frit-opacity: 0.75;
 	--dn-vinyl: #0b0e0c;
 	--dn-vinyl-groove: #2b342b;
+}
+
+[data-theme='midnight'] {
+	/* secondary text on the dark surfaces */
+	--dn-muted: #a9b8a8;
+	--dn-title: #b8ef64;
+	--dn-action: #b8ef64;
+	--dn-action-content: #121a12;
+	--dn-action-edge: #b8ef64;
+	/* the paper islands turn dark; the ink turns light */
+	--dn-paper: #0b0f0c;
+	--dn-paper-content: #f3f5ef;
+	--dn-paper-border: #202822;
+	--dn-focus: #d9f69a;
+	--dn-edge: #4f5f4f;
+	--dn-line: #2a352c;
+	--dn-selected: #1a241c;
+	--dn-frit: #b8ef64;
+	--dn-frit-opacity: 0.75;
+	--dn-vinyl: #050705;
+	--dn-vinyl-groove: #1a211b;
 }
 
 [data-theme='light'] {

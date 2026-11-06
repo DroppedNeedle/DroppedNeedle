@@ -1,16 +1,20 @@
 import { browser } from '$app/environment';
 
-export type ThemePreference = 'system' | 'light' | 'dark';
-type Theme = 'light' | 'dark';
+export type ThemePreference = 'system' | 'light' | 'dark' | 'midnight';
+type Theme = 'light' | 'dark' | 'midnight';
 
 const STORAGE_KEY = 'droppedneedle_theme';
 const LIGHT_QUERY = '(prefers-color-scheme: light)';
 // Browser chrome colour per theme: each theme's base-100 in src/theme.css.
 // Hardcoded because the theme is applied before any stylesheet has loaded.
-const THEME_COLOR: Record<Theme, string> = { dark: '#090e0b', light: '#f6f3e8' };
+const THEME_COLOR: Record<Theme, string> = {
+	dark: '#090e0b',
+	light: '#f6f3e8',
+	midnight: '#090e0b'
+};
 
 export function parseThemePreference(raw: string | null): ThemePreference {
-	return raw === 'system' || raw === 'light' ? raw : 'dark';
+	return raw === 'system' || raw === 'light' || raw === 'midnight' ? raw : 'dark';
 }
 
 export function resolveTheme(preference: ThemePreference, prefersLight: boolean): Theme {
