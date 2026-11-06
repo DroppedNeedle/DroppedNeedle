@@ -368,6 +368,15 @@
 		color: var(--dn-action);
 	}
 
+	/* The turntable is part of the tracks tile's meaning, not ornament: keep
+	   it visible when high contrast or forced colours strip decoration. */
+	@media (prefers-contrast: more), (forced-colors: active) {
+		.hub-turntable :global(.dn-illo),
+		.hub-turntable__stripes {
+			display: block !important;
+		}
+	}
+
 	/* the heart and its drips end above the label's row, so they never run
 	   over the label however narrow the tile */
 	.hub-tiles :global(.hub-heart) {
