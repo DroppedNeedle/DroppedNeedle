@@ -5,7 +5,6 @@
 	import QueryProvider from '$lib/queries/QueryProvider.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { withoutBasePath } from '$lib/utils/basePath';
-	import '$lib/stores/customCss.svelte';
 	import type { Component, Snippet } from 'svelte';
 
 	let { children }: { children: Snippet } = $props();

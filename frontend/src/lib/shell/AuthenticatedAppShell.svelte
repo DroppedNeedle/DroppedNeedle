@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../../app.css';
+	import '$lib/stores/customCss.svelte';
 	import { browser } from '$app/environment';
 	import { beforeNavigate, afterNavigate } from '$app/navigation';
 	import { withoutBasePath } from '$lib/utils/basePath';
