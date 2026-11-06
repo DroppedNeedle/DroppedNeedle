@@ -231,7 +231,7 @@
 		fill: var(--dn-vinyl-groove);
 	}
 	.arm-base {
-		fill: color-mix(in oklab, var(--dn-paper) 80%, var(--dn-vinyl));
+		fill: color-mix(in oklab, var(--dn-arm) 80%, var(--dn-vinyl));
 		stroke: var(--dn-vinyl);
 		stroke-width: 2;
 	}
@@ -247,13 +247,13 @@
 	}
 	.arm-line {
 		fill: none;
-		stroke: color-mix(in oklab, var(--dn-paper) 90%, var(--dn-vinyl));
+		stroke: var(--dn-arm);
 		stroke-width: 6.5;
 		stroke-linecap: round;
 		stroke-linejoin: round;
 	}
 	.head {
-		fill: var(--dn-paper);
+		fill: var(--dn-arm);
 		stroke: var(--dn-vinyl);
 		stroke-width: 2;
 	}

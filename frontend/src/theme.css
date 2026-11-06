@@ -142,6 +142,8 @@
 	--dn-action-edge: #b8ef64;
 	/* the light island (the album track list, Home's Your Music card) */
 	--dn-paper: #f6f3e8;
+	/* the turntable's tonearm: light on the black record in every theme */
+	--dn-arm: #f3f5ef;
 	--dn-paper-content: #142016;
 	--dn-paper-border: #c9d1c4;
 	--dn-focus: #d9f69a;
@@ -166,6 +168,7 @@
 	--dn-action-edge: #b8ef64;
 	/* the paper islands turn dark; the ink turns light */
 	--dn-paper: #0b0f0c;
+	--dn-arm: #f3f5ef;
 	--dn-paper-content: #f3f5ef;
 	--dn-paper-border: #202822;
 	--dn-focus: #d9f69a;
@@ -187,6 +190,7 @@
 	/* acid on paper is 1.2, so the button carries a forest outline (6.0) */
 	--dn-action-edge: #1e6a38;
 	--dn-paper: #fffdf5;
+	--dn-arm: #f3f5ef;
 	--dn-paper-content: #0e2e1d;
 	--dn-paper-border: #aebeaa;
 	--dn-focus: #1e6a38;
