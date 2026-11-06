@@ -1,13 +1,16 @@
 // The filters on a management preview's file list. The page reads `params`
-// for the plan-items query; the filter bar binds the fields.
+// for the plan-items query; the filter bar binds the fields and the list's
+// tabs bind `scope`, which starts on the files that change.
 import type {
 	LibraryManagementPlanItemParams,
 	ManagementChangeKind,
-	ManagementEligibility
+	ManagementEligibility,
+	ManagementListScope
 } from '$lib/features/library-management/queries/types';
 
 export class PreviewFilters {
-	eligibility = $state<ManagementEligibility | ''>('');
+	scope = $state<ManagementListScope>('changing');
+	#eligibility = $state<ManagementEligibility | ''>('');
 	reasonCode = $state('');
 	rootId = $state('');
 	artistId = $state('');
@@ -16,14 +19,39 @@ export class PreviewFilters {
 	albumLabel = $state('');
 	catalogSearch = $state('');
 	audioFormat = $state('');
-	changeKind = $state<ManagementChangeKind | ''>('');
+	#changeKind = $state<ManagementChangeKind | ''>('');
 	collisionClass = $state('');
 	hasPreservedValue = $state(false);
 	hasRepresentationLoss = $state(false);
 
+	// Blocked, stale and unchanged files are never on the Changing tab, so
+	// picking one of them shows every file instead of an empty list.
+	get eligibility(): ManagementEligibility | '' {
+		return this.#eligibility;
+	}
+
+	set eligibility(value: ManagementEligibility | '') {
+		this.#eligibility = value;
+		if (value === 'blocked' || value === 'stale') this.#leaveChanging();
+	}
+
+	get changeKind(): ManagementChangeKind | '' {
+		return this.#changeKind;
+	}
+
+	set changeKind(value: ManagementChangeKind | '') {
+		this.#changeKind = value;
+		if (value === 'no_change') this.#leaveChanging();
+	}
+
+	#leaveChanging(): void {
+		if (this.scope === 'changing') this.scope = 'all';
+	}
+
 	params(limit: number): LibraryManagementPlanItemParams {
 		return {
 			limit,
+			scope: this.scope === 'all' ? undefined : this.scope,
 			eligibility: this.eligibility || undefined,
 			reasonCode: this.reasonCode || undefined,
 			rootId: this.rootId || undefined,
@@ -35,6 +63,12 @@ export class PreviewFilters {
 			hasRepresentationLoss: this.hasRepresentationLoss || undefined,
 			changeKind: this.changeKind || undefined
 		};
+	}
+
+	/** Whether any filter besides the tab narrows the list. */
+	narrowed(): boolean {
+		const { limit: _limit, scope: _scope, ...rest } = this.params(0);
+		return Object.values(rest).some((value) => value !== undefined);
 	}
 
 	chooseArtist(id: string, label: string): void {
@@ -60,14 +94,15 @@ export class PreviewFilters {
 	}
 
 	clear(): void {
-		this.eligibility = '';
+		this.scope = 'changing';
+		this.#eligibility = '';
 		this.reasonCode = '';
 		this.rootId = '';
 		this.clearArtist();
 		this.clearAlbum();
 		this.catalogSearch = '';
 		this.audioFormat = '';
-		this.changeKind = '';
+		this.#changeKind = '';
 		this.collisionClass = '';
 		this.hasPreservedValue = false;
 		this.hasRepresentationLoss = false;

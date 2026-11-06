@@ -167,4 +167,57 @@ describe('LibraryManagementPreviewPage', () => {
 			.element(page.getByRole('link', { name: 'Library settings' }))
 			.toHaveAttribute('href', '/settings?tab=library');
 	});
+
+	it('starts on the files that change, with tabs for the rest', async () => {
+		const base = detail();
+		h.preview = {
+			data: detail({
+				summary: {
+					...(base.summary as Record<string, unknown>),
+					item_count: 5,
+					eligible_count: 3,
+					warning_count: 0,
+					blocked_count: 1,
+					stale_count: 1,
+					no_change_count: 1
+				}
+			}),
+			isLoading: false,
+			isError: false
+		};
+		await render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect
+			.element(page.getByRole('tab', { name: /^Changing\s2$/ }))
+			.toHaveAttribute('aria-selected', 'true');
+		await expect.element(page.getByRole('tab', { name: /^Not changing\s3$/ })).toBeVisible();
+		await expect.element(page.getByRole('tab', { name: /^All\s5$/ })).toBeVisible();
+		expect(h.itemParams?.().scope).toBe('changing');
+
+		await page.getByRole('tab', { name: /^Not changing/ }).click();
+		expect(h.itemParams?.().scope).toBe('not_changing');
+		await page.getByRole('tab', { name: /^All/ }).click();
+		expect(h.itemParams?.().scope).toBeUndefined();
+	});
+
+	it('shows every file when a filter picks files that never change', async () => {
+		await render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await page.getByRole('combobox', { name: /^Outcome/ }).selectOptions('blocked');
+		await expect
+			.element(page.getByRole('tab', { name: /^All/ }))
+			.toHaveAttribute('aria-selected', 'true');
+		expect(h.itemParams?.()).toMatchObject({ scope: undefined, eligibility: 'blocked' });
+	});
+
+	it('says so when nothing changes, and points to every file', async () => {
+		h.items = { ...h.items, data: { pages: [{ items: [], next_cursor: null }] } };
+		await render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect.element(page.getByText('Nothing in this preview changes a file.')).toBeVisible();
+		await page.getByRole('button', { name: 'Show all files' }).click();
+		await expect
+			.element(page.getByRole('tab', { name: /^All/ }))
+			.toHaveAttribute('aria-selected', 'true');
+	});
 });

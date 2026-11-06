@@ -36382,6 +36382,8 @@ export interface operations {
                 cursor?: string;
                 /** @description Files per page, 1 to 200 (default 100); more is read as 200. */
                 limit?: number;
+                /** @description Only the files that change, or only the others; all when absent. */
+                scope?: "changing" | "not_changing";
             };
             header?: never;
             path: {
@@ -36401,7 +36403,7 @@ export interface operations {
                     "application/json": components["schemas"]["Page_ManagementResultItemView"];
                 };
             };
-            /** @description Bad cursor */
+            /** @description Bad scope or cursor */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -36778,6 +36780,8 @@ export interface operations {
                 album_id?: string;
                 audio_format?: string;
                 change_kind?: "tags" | "path" | "sidecars" | "artwork" | "no_change";
+                /** @description Only the files that change, or only the others; all when absent. */
+                scope?: "changing" | "not_changing";
             };
             header?: never;
             path: {

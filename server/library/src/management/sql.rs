@@ -379,6 +379,14 @@ droppedneedle_kernel::sql! {
          " + ALBUM_ORDER + ", t.disc_number, t.track_number, t.relative_path";
     pub(super) SNAPSHOT = "SELECT " + SNAPSHOT_COLUMNS + " FROM library_management_job_snapshots s \
          JOIN library_operation_jobs j ON j.id = s.job_id WHERE s.job_id = ?1 AND j.kind = ?2";
+    /// A planned file that is written and changes something, as
+    /// `ItemDiff::changes_anything` on a file that `Eligibility::writes`.
+    pub(super) fragment ITEM_CHANGES = "(eligibility IN ('eligible', 'warning') AND \
+     (COALESCE(json_extract(diff_json, '$.tags_changed'), 0) = 1 \
+      OR COALESCE(json_extract(diff_json, '$.path_changed'), 0) = 1 \
+      OR COALESCE(json_extract(diff_json, '$.artwork_changed'), 0) = 1 \
+      OR COALESCE(json_array_length(diff_json, '$.sidecars'), 0) > 0 \
+      OR COALESCE(json_array_length(diff_json, '$.generated'), 0) > 0))";
     pub(super) ITEMS_PAGE = "SELECT " + ITEM_COLUMNS + " FROM library_management_plan_items WHERE job_id = ?1 \
          AND ordinal > ?2 AND (?3 IS NULL OR eligibility = ?3) \
          AND (?4 IS NULL OR reason_code = ?4) AND (?5 IS NULL OR expected_root_id = ?5) \
@@ -390,6 +398,7 @@ droppedneedle_kernel::sql! {
            OR (?8 = 'sidecars' AND json_array_length(diff_json, '$.sidecars') > 0) \
            OR (?8 = 'no_change' AND COALESCE(json_extract(diff_json, '$.tags_changed'), 0) = 0 \
                AND COALESCE(json_extract(diff_json, '$.path_changed'), 0) = 0)) \
+         AND (?10 IS NULL OR (?10 = 'changing') = " + ITEM_CHANGES + ") \
          ORDER BY ordinal LIMIT ?9";
     pub(super) BUNDLE_ITEMS = "SELECT " + ITEM_COLUMNS + " FROM library_management_plan_items \
          WHERE job_id = ?1 AND bundle_ordinal = ?2 ORDER BY ordinal";

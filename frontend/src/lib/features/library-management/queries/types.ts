@@ -1,4 +1,4 @@
-import type { components } from '$lib/api/v3/openapi';
+import type { components, paths } from '$lib/api/v3/openapi';
 
 type Schemas = components['schemas'];
 
@@ -13,6 +13,14 @@ export type ManagementFieldMode = Schemas['FieldMode'];
 export type ManagementSelectionKind = Schemas['ManagementSelectionKind'];
 export type ManagementEligibility = Schemas['Eligibility'];
 export type ManagementChangeKind = 'tags' | 'artwork' | 'path' | 'sidecars' | 'no_change';
+export type ManagementItemScope = NonNullable<
+	NonNullable<
+		paths['/api/v3/library/management/previews/{job_id}/items']['get']['parameters']['query']
+	>['scope']
+>;
+/** A file list's tab: one of the scopes, or every file. */
+export type ManagementListScope = ManagementItemScope | 'all';
+export type ManagementSummary = Schemas['ManagementSummaryView'];
 export type LibraryManagementTagEditMode = Schemas['ManagementTagEditMode'];
 export type ManagementPhase = Schemas['ManagementPhase'];
 export type LibraryManagementTagEditValue = string | number | boolean | string[] | null;
@@ -191,4 +199,5 @@ export interface LibraryManagementPlanItemParams {
 	hasPreservedValue?: boolean;
 	hasRepresentationLoss?: boolean;
 	changeKind?: ManagementChangeKind;
+	scope?: ManagementItemScope;
 }

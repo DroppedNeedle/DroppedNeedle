@@ -9,7 +9,8 @@ export function previewItemsQuery(params: LibraryManagementPlanItemParams) {
 		root_id: params.rootId,
 		album_id: params.albumId,
 		audio_format: params.audioFormat,
-		change_kind: params.changeKind
+		change_kind: params.changeKind,
+		scope: params.scope
 	};
 }
 

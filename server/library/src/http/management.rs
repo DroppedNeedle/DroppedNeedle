@@ -22,8 +22,8 @@ use crate::jobs::OperationState;
 use crate::jobs::{ControlRequest, ManagementPhase};
 use crate::management::after_apply::ExternalRefresh;
 use crate::management::models::{
-    Eligibility, HistoryFilter, HistoryItem, ItemFilter, JobDetail, ManagementError, PlannedItem,
-    PreviewHandle, ResultItem, ResultState, Selection, Summary,
+    Eligibility, HistoryFilter, HistoryItem, ItemFilter, ItemScope, JobDetail, ManagementError,
+    PlannedItem, PreviewHandle, ResultItem, ResultState, Selection, Summary,
 };
 use crate::management::reasons::ItemReason;
 use crate::management::service::{ApplyRequest, HISTORY_MAX, Management, PAGE_MAX, PreviewRequest};
@@ -402,6 +402,9 @@ pub struct ManagementItemsQuery {
     pub audio_format: Option<String>,
     #[param(inline)]
     pub change_kind: Option<ChangeKind>,
+    /// Only the files that change, or only the others; all when absent.
+    #[param(inline)]
+    pub scope: Option<ItemScope>,
 }
 
 /// What a planned file changes, to filter by.
@@ -436,6 +439,9 @@ pub struct ManagementResultsQuery {
     pub cursor: Option<String>,
     /// Files per page, 1 to 200 (default 100); more is read as 200.
     pub limit: Option<u32>,
+    /// Only the files that change, or only the others; all when absent.
+    #[param(inline)]
+    pub scope: Option<ItemScope>,
 }
 
 /// History filters.
@@ -550,6 +556,7 @@ fn item_filter(query: &ManagementItemsQuery) -> ItemFilter {
         album_id: query.album_id.clone(),
         audio_format: query.audio_format.clone(),
         change_kind: query.change_kind.map(|kind| kind.as_str().to_owned()),
+        scope: query.scope,
     }
 }
 
@@ -796,7 +803,7 @@ pub async fn get_management_operation(
     params(("job_id" = String, Path, description = "Management job id"), ManagementResultsQuery),
     responses(
         (status = 200, description = "Results", body = Page<ManagementResultItemView>),
-        (status = 400, description = "Bad cursor"),
+        (status = 400, description = "Bad scope or cursor"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown job"),
@@ -809,7 +816,8 @@ pub async fn list_management_operation_results(
     ValidQuery(query): ValidQuery<ManagementResultsQuery>,
 ) -> Result<Json<Page<ManagementResultItemView>>, ApiError> {
     let (after, limit) = ordinal_paging(query.limit, query.cursor.as_deref())?;
-    let page = blocking(move || management.results(&job_id, after, limit)).await?;
+    let scope = query.scope;
+    let page = blocking(move || management.results(&job_id, after, limit, scope)).await?;
     Ok(Json(Page::new(
         page.items.into_iter().map(Into::into).collect(),
         page.next_after_ordinal,

@@ -49,6 +49,7 @@
 		managementProviderStatus,
 		managementQuantity,
 		managementRootLabel,
+		managementScopeCounts,
 		managementStaleBannerDetail,
 		qualifiedManagementReasonLabel,
 		titleManagementValue
@@ -98,6 +99,7 @@
 	const auditDossiers = $derived(
 		groupManagementAuditEntries(items.map((item) => planAuditEntry(item)))
 	);
+	const scopeCounts = $derived(managementScopeCounts(preview?.summary));
 	const applyCount = $derived(
 		(preview?.summary.eligible_count ?? 0) + (preview?.summary.warning_count ?? 0)
 	);
@@ -368,14 +370,16 @@
 									.join(' · ')}
 							</p>
 						{/if}
-						{#if culpritRelease !== null && topBlockers[0]}
+						{#if topBlockers[0]}
 							<p class="mt-1 text-sm">
-								Start with Release {culpritRelease}: its blocked rows name the exact cause.
+								{#if culpritRelease !== null}Start with Release {culpritRelease}: its blocked rows
+									name the exact cause.{/if}
 								<button
 									type="button"
 									class="link link-hover"
 									onclick={() => {
 										filters.reasonCode = topBlockers[0][0];
+										filters.scope = 'all';
 									}}>Filter to {qualifiedManagementReasonLabel(topBlockers[0][0])}</button
 								>
 							</p>
@@ -436,38 +440,57 @@
 
 			<LibraryManagementPlanFilterBar {filters} {preview} {roots} />
 
-			{#if itemsQuery.isLoading}
-				<div class="space-y-3" role="status" aria-label="Loading preview files">
-					<div class="skeleton h-28 rounded-xl"></div>
-					<div class="skeleton h-28 rounded-xl"></div>
-				</div>
-			{:else if itemsQuery.isError}
-				<div class="alert alert-error" role="alert">Could not load preview items.</div>
-			{:else if items.length === 0}
-				<div
-					class="rounded-2xl border border-dashed border-base-content/15 p-8 text-center text-muted"
-				>
-					No files match these filters.
-					<div class="mt-3">
-						<Button variant="ghost" size="sm" onclick={() => filters.clear()}>Clear filters</Button>
+			{#snippet itemsState()}
+				{#if itemsQuery.isLoading}
+					<div class="space-y-3" role="status" aria-label="Loading preview files">
+						<div class="skeleton h-28 rounded-xl"></div>
+						<div class="skeleton h-28 rounded-xl"></div>
 					</div>
-				</div>
-			{:else}
-				<LibraryManagementAuditDossiers
-					dossiers={auditDossiers}
-					inspector={previewInspector}
-					detailLabel="Inspect exact diff"
-					reserveStickyFooter={preview.state === 'ready'}
-					{stickyFooterHeight}
-					incomplete={Boolean(itemsQuery.hasNextPage)}
-				/>
-				{#if itemsQuery.hasNextPage}<Button
-						variant="outline"
-						class="w-full"
-						loading={itemsQuery.isFetchingNextPage}
-						onclick={() => void itemsQuery.fetchNextPage()}>Load more files</Button
-					>{/if}
-			{/if}
+				{:else if itemsQuery.isError}
+					<div class="alert alert-error" role="alert">Could not load preview items.</div>
+				{:else if filters.scope === 'changing' && !filters.narrowed()}
+					<div
+						class="rounded-2xl border border-dashed border-base-content/15 p-8 text-center text-muted"
+					>
+						Nothing in this preview changes a file.
+						<div class="mt-3">
+							<Button variant="ghost" size="sm" onclick={() => (filters.scope = 'all')}
+								>Show all files</Button
+							>
+						</div>
+					</div>
+				{:else}
+					<div
+						class="rounded-2xl border border-dashed border-base-content/15 p-8 text-center text-muted"
+					>
+						No files match these filters.
+						<div class="mt-3">
+							<Button variant="ghost" size="sm" onclick={() => filters.clear()}
+								>Clear filters</Button
+							>
+						</div>
+					</div>
+				{/if}
+			{/snippet}
+			<LibraryManagementAuditDossiers
+				dossiers={auditDossiers}
+				inspector={previewInspector}
+				bind:scope={filters.scope}
+				{scopeCounts}
+				placeholder={itemsQuery.isLoading || itemsQuery.isError || items.length === 0
+					? itemsState
+					: undefined}
+				detailLabel="Inspect exact diff"
+				reserveStickyFooter={preview.state === 'ready'}
+				{stickyFooterHeight}
+				incomplete={Boolean(itemsQuery.hasNextPage)}
+			/>
+			{#if items.length > 0 && itemsQuery.hasNextPage}<Button
+					variant="outline"
+					class="w-full"
+					loading={itemsQuery.isFetchingNextPage}
+					onclick={() => void itemsQuery.fetchNextPage()}>Load more files</Button
+				>{/if}
 
 			{#if preview.state === 'ready'}
 				{#if activationPreview}<div

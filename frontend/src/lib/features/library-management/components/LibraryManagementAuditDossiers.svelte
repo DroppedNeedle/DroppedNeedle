@@ -15,6 +15,8 @@
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import Tabs, { type TabItem } from '$lib/ui/Tabs.svelte';
+	import type { ManagementListScope } from '$lib/features/library-management/queries/types';
 	import type { ManagementAuditDossier, ManagementAuditEntry } from './LibraryManagementAuditTypes';
 	import {
 		managementReasonLabel,
@@ -24,6 +26,11 @@
 	interface Props {
 		dossiers: ManagementAuditDossier[];
 		inspector: Snippet<[number]>;
+		/** The list's tab: the files that change, the others, or all. */
+		scope: ManagementListScope;
+		scopeCounts: Record<ManagementListScope, number>;
+		/** Shown under the tabs instead of the files (loading, an error, an empty list). */
+		placeholder?: Snippet;
 		detailLabel?: string;
 		reserveStickyFooter?: boolean;
 		stickyFooterHeight?: number;
@@ -33,11 +40,19 @@
 	let {
 		dossiers,
 		inspector,
+		scope = $bindable(),
+		scopeCounts,
+		placeholder,
 		detailLabel = 'Inspect exact diff',
 		reserveStickyFooter = false,
 		stickyFooterHeight = 0,
 		incomplete = false
 	}: Props = $props();
+	const scopeTabs = $derived<TabItem<ManagementListScope>[]>([
+		{ id: 'changing', label: 'Changing', count: scopeCounts.changing },
+		{ id: 'not_changing', label: 'Not changing', count: scopeCounts.not_changing },
+		{ id: 'all', label: 'All', count: scopeCounts.all }
+	]);
 	let onlyExceptions = $state(false);
 	let showFullPaths = $state(false);
 	let selectedOrdinal = $state<number | null>(null);
@@ -151,12 +166,12 @@
 	}
 </script>
 
-<div class="management-audit-toolbar" aria-label="Audit display controls">
+{#snippet displayControls()}
 	<div class="flex flex-wrap items-center gap-1">
 		<Button variant="ghost" size="xs" onclick={expandAll}>Expand releases</Button>
 		<Button variant="ghost" size="xs" onclick={collapseAll}>Collapse releases</Button>
 	</div>
-	<div class="flex flex-wrap items-center gap-3">
+	<div class="ml-auto flex flex-wrap items-center gap-3">
 		<label class="management-audit-toggle">
 			<input
 				type="checkbox"
@@ -170,229 +185,255 @@
 			<span>Show full paths</span>
 		</label>
 	</div>
-</div>
+{/snippet}
 
-{#if incomplete}
-	<p class="mb-3 rounded-xl bg-info/10 px-3 py-2 text-xs text-muted" role="status">
-		More files are available. Dossier counts below describe the files loaded so far.
-	</p>
-{/if}
-
-{#if visibleDossiers.length === 0}
-	<div class="rounded-2xl border border-dashed border-base-content/15 p-8 text-center">
-		<strong>No exceptions in the loaded files.</strong>
-		<p class="mt-1 text-sm text-muted">Turn off “Only exceptions” to review the full plan.</p>
-	</div>
-{:else}
-	<div
-		class="management-audit-layout"
-		data-reserve-sticky-footer={reserveStickyFooter}
-		data-testid="management-audit-layout"
-		style={`--management-sticky-footer-height: ${stickyFooterHeight}px`}
-	>
-		<div class="space-y-4">
-			{#each visibleDossiers as dossier (dossier.bundleOrdinal)}
-				{@const collapsed = collapsedBundles.has(dossier.bundleOrdinal)}
-				{@const top = topReason(dossier)}
-				<article class="management-dossier" aria-labelledby={`dossier-${dossier.bundleOrdinal}`}>
-					<header class="management-dossier-header">
-						<div
-							class="management-dossier-art"
-							aria-hidden="true"
-							data-testid="management-dossier-art-frame"
-						>
-							<AlbumImage
-								mbid={dossier.artworkUrl ||
-								(dossier.albumId && dossier.albumArtworkVersion !== null)
-									? ''
-									: (dossier.albumMbid ?? '')}
-								albumId={dossier.artworkUrl || dossier.albumArtworkVersion === null
-									? undefined
-									: (dossier.albumId ?? undefined)}
-								coverVersion={dossier.artworkUrl
-									? undefined
-									: (dossier.albumArtworkVersion ?? undefined)}
-								customUrl={dossier.artworkUrl}
-								alt={`${dossier.title} cover`}
-								size="full"
-								requestSize={250}
-								rounded="none"
-								showPlaceholder={true}
-								retryOnError={false}
-								testId="management-dossier-artwork"
-								className="h-full w-full"
-							/>
-						</div>
-						<div class="min-w-0 flex-1">
-							<p class="management-step">Release {dossier.bundleOrdinal + 1}</p>
-							<h3
-								id={`dossier-${dossier.bundleOrdinal}`}
-								class="truncate font-display text-lg font-semibold"
-							>
-								{dossier.title}
-							</h3>
-							<p class="truncate text-sm text-muted">
-								{dossier.artist} · {#if dossier.entries.length < originalEntryCount(dossier)}{dossier.entries.length.toLocaleString()}
-									of {originalEntryCount(dossier).toLocaleString()}
-								{:else}{dossier.entries.length.toLocaleString()}{/if}
-								{incomplete ? 'loaded ' : ''}{originalEntryCount(dossier) === 1 ? 'file' : 'files'}
-							</p>
-							<div class="management-dossier-stats">
-								{#each outcomeStats(dossier) as stat (`${stat.tone}:${stat.label}`)}
-									<span data-tone={stat.tone}>{stat.count} {stat.label}</span>
-								{/each}
-								{#if changeCount(dossier, 'tags')}
-									<span><Tags class="h-3 w-3" /> {changeCount(dossier, 'tags')} tags</span>
-								{/if}
-								{#if changeCount(dossier, 'artwork')}
-									<span><Image class="h-3 w-3" /> {changeCount(dossier, 'artwork')} artwork</span>
-								{/if}
-								{#if changeCount(dossier, 'path')}
-									<span><FolderCog class="h-3 w-3" /> {changeCount(dossier, 'path')} path</span>
-								{/if}
-								{#if changeCount(dossier, 'sidecars')}
-									<span><Layers class="h-3 w-3" /> {changeCount(dossier, 'sidecars')} sidecars</span
-									>
-								{/if}
-							</div>
-							{#if top}
-								<p class="mt-1 text-xs text-muted">
-									{#if top.code === 'BUNDLE_BLOCKED'}
-										Held by a blocked file in this release (Release {dossier.bundleOrdinal + 1}) · {top.label}
-										({top.count.toLocaleString()})
-									{:else}
-										Top reason: {top.code === 'OPTIONAL_ENRICHMENT_DEFERRED'
-											? 'Optional enrichment deferred · still applicable with warnings'
-											: top.label} ({top.count.toLocaleString()})
-									{/if}
-								</p>
-							{/if}
-						</div>
-						<IconButton
-							size="sm"
-							shape="square"
-							class="shrink-0"
-							icon={collapsed ? ChevronRight : ChevronDown}
-							label={`${collapsed ? 'Expand' : 'Collapse'} ${dossier.title}`}
-							aria-expanded={!collapsed}
-							onclick={() => toggleBundle(dossier.bundleOrdinal)}
-						/>
-					</header>
-
-					{#if !collapsed}
-						<div class="management-dossier-tracks">
-							{#each dossier.entries as entry (entry.ordinal)}
-								{@const active = selectedEntry?.ordinal === entry.ordinal}
-								<button
-									id={`management-track-${entry.ordinal}`}
-									class="management-audit-track"
-									data-selected={active}
-									data-tone={entry.statusTone}
-									aria-pressed={active}
-									aria-expanded={active}
-									aria-controls="management-inspector"
-									aria-label={`${detailLabel} for ${entry.title}`}
-									onclick={() => (selectedOrdinal = entry.ordinal)}
-								>
-									<span class="management-audit-track-number">{entry.trackLabel}</span>
-									<span class="badge badge-ghost badge-sm font-mono"
-										>{entry.format.toUpperCase()}</span
-									>
-									<span class="min-w-0 flex-1 text-left">
-										<strong class="block truncate text-sm">{entry.title}</strong>
-										{#if entry.artist && entry.artist !== dossier.artist}
-											<small class="block truncate text-muted">{entry.artist}</small>
-										{/if}
-										{#if entry.reason && active}
-											<small class="block truncate font-semibold text-error">{entry.reason}</small>
-										{/if}
-										{#if pathChanged(entry)}
-											<span
-												class="management-audit-path"
-												aria-label={`File path changed from ${entry.sourcePath} to ${entry.destinationPath}`}
-											>
-												{showFullPaths
-													? displayPath(entry.sourceRoot, entry.sourcePath)
-													: fileName(entry.sourcePath)}
-												<ArrowRight class="h-3 w-3 shrink-0" />
-												<strong
-													>{showFullPaths
-														? displayPath(entry.destinationRoot, entry.destinationPath)
-														: fileName(entry.destinationPath)}</strong
-												>
-											</span>
-										{:else if showFullPaths}
-											<span class="management-audit-path"
-												>{displayPath(entry.sourceRoot, entry.sourcePath)}</span
-											>
-										{/if}
-									</span>
-									<span class="management-audit-changes">
-										{#each entry.changes as change (change)}
-											<span class="management-change-chip" title={changeLabel(change)}>
-												{#if change === 'tags'}<Tags
-														class="h-3 w-3"
-													/>{:else if change === 'artwork'}<Image
-														class="h-3 w-3"
-													/>{:else if change === 'path'}<FolderCog class="h-3 w-3" />{:else}<Layers
-														class="h-3 w-3"
-													/>{/if}
-												<span>{changeLabel(change)}</span>
-											</span>
-										{/each}
-									</span>
-									<span
-										class="badge badge-sm {entry.statusTone === 'success'
-											? 'badge-success'
-											: entry.statusTone === 'warning'
-												? 'badge-warning'
-												: entry.statusTone === 'error'
-													? 'badge-error'
-													: 'badge-outline'}">{entry.status}</span
-									>
-									<ChevronRight class="h-4 w-4 shrink-0 text-base-content/35" />
-								</button>
-								{#if !isWide && active}
-									<div
-										id="management-inspector"
-										class="management-audit-inline-inspector"
-										role="region"
-										aria-label={`${detailLabel}: ${entry.title}`}
-										aria-live="polite"
-										data-testid="management-audit-inspector"
-										onkeydown={focusSelectedTrack}
-									>
-										{@render inspector(entry.ordinal)}
-									</div>
-								{/if}
-							{/each}
-						</div>
-					{/if}
-				</article>
-			{/each}
-		</div>
-
-		{#if isWide && selectedEntry}
-			<aside
-				id="management-inspector"
-				class="management-audit-inspector"
-				aria-label={`${detailLabel}: ${selectedEntry.title}`}
-				aria-live="polite"
-				data-testid="management-audit-inspector"
-				onkeydown={focusSelectedTrack}
-			>
-				{@render inspector(selectedEntry.ordinal)}
-			</aside>
+<Tabs
+	tabs={scopeTabs}
+	selected={scope}
+	onselect={(id) => (scope = id)}
+	label="Files to show"
+	idPrefix="management-scope"
+	class="management-audit-toolbar"
+	aside={displayControls}
+>
+	{#if placeholder}
+		{@render placeholder()}
+	{:else}
+		{#if incomplete}
+			<p class="mb-3 rounded-xl bg-info/10 px-3 py-2 text-xs text-muted" role="status">
+				More files are available. Dossier counts below describe the files loaded so far.
+			</p>
 		{/if}
-	</div>
-{/if}
+
+		{#if visibleDossiers.length === 0}
+			<div class="rounded-2xl border border-dashed border-base-content/15 p-8 text-center">
+				<strong>No exceptions in the loaded files.</strong>
+				<p class="mt-1 text-sm text-muted">Turn off “Only exceptions” to review the full plan.</p>
+			</div>
+		{:else}
+			<div
+				class="management-audit-layout"
+				data-reserve-sticky-footer={reserveStickyFooter}
+				data-testid="management-audit-layout"
+				style={`--management-sticky-footer-height: ${stickyFooterHeight}px`}
+			>
+				<div class="space-y-4">
+					{#each visibleDossiers as dossier (dossier.bundleOrdinal)}
+						{@const collapsed = collapsedBundles.has(dossier.bundleOrdinal)}
+						{@const top = topReason(dossier)}
+						<article
+							class="management-dossier"
+							aria-labelledby={`dossier-${dossier.bundleOrdinal}`}
+						>
+							<header class="management-dossier-header">
+								<div
+									class="management-dossier-art"
+									aria-hidden="true"
+									data-testid="management-dossier-art-frame"
+								>
+									<AlbumImage
+										mbid={dossier.artworkUrl ||
+										(dossier.albumId && dossier.albumArtworkVersion !== null)
+											? ''
+											: (dossier.albumMbid ?? '')}
+										albumId={dossier.artworkUrl || dossier.albumArtworkVersion === null
+											? undefined
+											: (dossier.albumId ?? undefined)}
+										coverVersion={dossier.artworkUrl
+											? undefined
+											: (dossier.albumArtworkVersion ?? undefined)}
+										customUrl={dossier.artworkUrl}
+										alt={`${dossier.title} cover`}
+										size="full"
+										requestSize={250}
+										rounded="none"
+										showPlaceholder={true}
+										retryOnError={false}
+										testId="management-dossier-artwork"
+										className="h-full w-full"
+									/>
+								</div>
+								<div class="min-w-0 flex-1">
+									<p class="management-step">Release {dossier.bundleOrdinal + 1}</p>
+									<h3
+										id={`dossier-${dossier.bundleOrdinal}`}
+										class="truncate font-display text-lg font-semibold"
+									>
+										{dossier.title}
+									</h3>
+									<p class="truncate text-sm text-muted">
+										{dossier.artist} · {#if dossier.entries.length < originalEntryCount(dossier)}{dossier.entries.length.toLocaleString()}
+											of {originalEntryCount(dossier).toLocaleString()}
+										{:else}{dossier.entries.length.toLocaleString()}{/if}
+										{incomplete ? 'loaded ' : ''}{originalEntryCount(dossier) === 1
+											? 'file'
+											: 'files'}
+									</p>
+									<div class="management-dossier-stats">
+										{#each outcomeStats(dossier) as stat (`${stat.tone}:${stat.label}`)}
+											<span data-tone={stat.tone}>{stat.count} {stat.label}</span>
+										{/each}
+										{#if changeCount(dossier, 'tags')}
+											<span><Tags class="h-3 w-3" /> {changeCount(dossier, 'tags')} tags</span>
+										{/if}
+										{#if changeCount(dossier, 'artwork')}
+											<span
+												><Image class="h-3 w-3" /> {changeCount(dossier, 'artwork')} artwork</span
+											>
+										{/if}
+										{#if changeCount(dossier, 'path')}
+											<span><FolderCog class="h-3 w-3" /> {changeCount(dossier, 'path')} path</span>
+										{/if}
+										{#if changeCount(dossier, 'sidecars')}
+											<span
+												><Layers class="h-3 w-3" />
+												{changeCount(dossier, 'sidecars')} sidecars</span
+											>
+										{/if}
+									</div>
+									{#if top}
+										<p class="mt-1 text-xs text-muted">
+											{#if top.code === 'BUNDLE_BLOCKED'}
+												Held by a blocked file in this release (Release {dossier.bundleOrdinal + 1})
+												· {top.label}
+												({top.count.toLocaleString()})
+											{:else}
+												Top reason: {top.code === 'OPTIONAL_ENRICHMENT_DEFERRED'
+													? 'Optional enrichment deferred · still applicable with warnings'
+													: top.label} ({top.count.toLocaleString()})
+											{/if}
+										</p>
+									{/if}
+								</div>
+								<IconButton
+									size="sm"
+									shape="square"
+									class="shrink-0"
+									icon={collapsed ? ChevronRight : ChevronDown}
+									label={`${collapsed ? 'Expand' : 'Collapse'} ${dossier.title}`}
+									aria-expanded={!collapsed}
+									onclick={() => toggleBundle(dossier.bundleOrdinal)}
+								/>
+							</header>
+
+							{#if !collapsed}
+								<div class="management-dossier-tracks">
+									{#each dossier.entries as entry (entry.ordinal)}
+										{@const active = selectedEntry?.ordinal === entry.ordinal}
+										<button
+											id={`management-track-${entry.ordinal}`}
+											class="management-audit-track"
+											data-selected={active}
+											data-tone={entry.statusTone}
+											aria-pressed={active}
+											aria-expanded={active}
+											aria-controls="management-inspector"
+											aria-label={`${detailLabel} for ${entry.title}`}
+											onclick={() => (selectedOrdinal = entry.ordinal)}
+										>
+											<span class="management-audit-track-number">{entry.trackLabel}</span>
+											<span class="badge badge-ghost badge-sm font-mono"
+												>{entry.format.toUpperCase()}</span
+											>
+											<span class="min-w-0 flex-1 text-left">
+												<strong class="block truncate text-sm">{entry.title}</strong>
+												{#if entry.artist && entry.artist !== dossier.artist}
+													<small class="block truncate text-muted">{entry.artist}</small>
+												{/if}
+												{#if entry.reason && active}
+													<small class="block truncate font-semibold text-error"
+														>{entry.reason}</small
+													>
+												{/if}
+												{#if pathChanged(entry)}
+													<span
+														class="management-audit-path"
+														aria-label={`File path changed from ${entry.sourcePath} to ${entry.destinationPath}`}
+													>
+														{showFullPaths
+															? displayPath(entry.sourceRoot, entry.sourcePath)
+															: fileName(entry.sourcePath)}
+														<ArrowRight class="h-3 w-3 shrink-0" />
+														<strong
+															>{showFullPaths
+																? displayPath(entry.destinationRoot, entry.destinationPath)
+																: fileName(entry.destinationPath)}</strong
+														>
+													</span>
+												{:else if showFullPaths}
+													<span class="management-audit-path"
+														>{displayPath(entry.sourceRoot, entry.sourcePath)}</span
+													>
+												{/if}
+											</span>
+											<span class="management-audit-changes">
+												{#each entry.changes as change (change)}
+													<span class="management-change-chip" title={changeLabel(change)}>
+														{#if change === 'tags'}<Tags
+																class="h-3 w-3"
+															/>{:else if change === 'artwork'}<Image
+																class="h-3 w-3"
+															/>{:else if change === 'path'}<FolderCog
+																class="h-3 w-3"
+															/>{:else}<Layers class="h-3 w-3" />{/if}
+														<span>{changeLabel(change)}</span>
+													</span>
+												{/each}
+											</span>
+											<span
+												class="badge badge-sm {entry.statusTone === 'success'
+													? 'badge-success'
+													: entry.statusTone === 'warning'
+														? 'badge-warning'
+														: entry.statusTone === 'error'
+															? 'badge-error'
+															: 'badge-outline'}">{entry.status}</span
+											>
+											<ChevronRight class="h-4 w-4 shrink-0 text-base-content/35" />
+										</button>
+										{#if !isWide && active}
+											<div
+												id="management-inspector"
+												class="management-audit-inline-inspector"
+												role="region"
+												aria-label={`${detailLabel}: ${entry.title}`}
+												aria-live="polite"
+												data-testid="management-audit-inspector"
+												onkeydown={focusSelectedTrack}
+											>
+												{@render inspector(entry.ordinal)}
+											</div>
+										{/if}
+									{/each}
+								</div>
+							{/if}
+						</article>
+					{/each}
+				</div>
+
+				{#if isWide && selectedEntry}
+					<aside
+						id="management-inspector"
+						class="management-audit-inspector"
+						aria-label={`${detailLabel}: ${selectedEntry.title}`}
+						aria-live="polite"
+						data-testid="management-audit-inspector"
+						onkeydown={focusSelectedTrack}
+					>
+						{@render inspector(selectedEntry.ordinal)}
+					</aside>
+				{/if}
+			</div>
+		{/if}
+	{/if}
+</Tabs>
 
 <style>
-	.management-audit-toolbar {
+	/* The row the kit's Tabs draws: the scope tabs, then the display controls. */
+	:global(.management-audit-toolbar) {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		justify-content: space-between;
 		gap: 0.75rem;
 		padding: 0.6rem 0.75rem;
 		border: 1px solid color-mix(in oklab, var(--color-base-content) 9%, transparent);
@@ -637,9 +678,23 @@
 	}
 
 	@media (max-width: 639px) {
-		.management-audit-toolbar {
+		:global(.management-audit-toolbar) {
 			align-items: stretch;
 			flex-direction: column;
+		}
+
+		/* The three scope tabs share one row across the toolbar. */
+		:global(.management-audit-toolbar > [role='tablist']) {
+			width: 100%;
+			flex-wrap: nowrap;
+		}
+
+		:global(.management-audit-toolbar > [role='tablist'] > [role='tab']) {
+			flex: 1 1 auto;
+			flex-wrap: nowrap;
+			gap: 0.25rem;
+			padding-inline: 0.45rem;
+			font-size: 0.8125rem;
 		}
 
 		.management-audit-track {

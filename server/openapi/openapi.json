@@ -16916,6 +16916,20 @@
               "format": "int32",
               "minimum": 0
             }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "Only the files that change, or only the others; all when absent.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Which planned files a list shows, by whether they change.",
+              "enum": [
+                "changing",
+                "not_changing"
+              ]
+            }
           }
         ],
         "responses": {
@@ -16930,7 +16944,7 @@
             }
           },
           "400": {
-            "description": "Bad cursor",
+            "description": "Bad scope or cursor",
             "content": {
               "application/json": {
                 "schema": {
@@ -17513,6 +17527,20 @@
                 "sidecars",
                 "artwork",
                 "no_change"
+              ]
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "Only the files that change, or only the others; all when absent.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Which planned files a list shows, by whether they change.",
+              "enum": [
+                "changing",
+                "not_changing"
               ]
             }
           }

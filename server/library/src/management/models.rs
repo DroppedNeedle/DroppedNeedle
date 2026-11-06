@@ -648,6 +648,27 @@ pub struct ItemFilter {
     pub audio_format: Option<String>,
     /// `tags`, `path`, `sidecars`, or `no_change`.
     pub change_kind: Option<String>,
+    /// Only the files that change, or only the others; none lists all.
+    pub scope: Option<ItemScope>,
+}
+
+/// Which planned files a list shows, by whether they change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemScope {
+    /// Files that will be written and whose plan changes something.
+    Changing,
+    /// Files with nothing to change, and blocked or stale files.
+    NotChanging,
+}
+
+impl ItemScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Changing => "changing",
+            Self::NotChanging => "not_changing",
+        }
+    }
 }
 
 /// Where one planned file's write is after apply.

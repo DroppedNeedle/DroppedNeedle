@@ -10524,7 +10524,7 @@ async fn library_management_preview_apply_undo() {
     assert!(music.join(&dest_dir).join("rip.log").exists());
     assert!(!music.join("incoming/cover.jpg").exists());
     let results = management
-        .results(&handle.job_id, -1, 100)
+        .results(&handle.job_id, -1, 100, None)
         .expect("results");
     assert!(
         results
@@ -10989,7 +10989,9 @@ async fn management_apply(
             break;
         }
         if !management_step(library).await {
-            let results = management.results(&handle.job_id, -1, 50).expect("results");
+            let results = management
+                .results(&handle.job_id, -1, 50, None)
+                .expect("results");
             panic!(
                 "apply stuck at {state}: {:?}",
                 results
@@ -12809,6 +12811,89 @@ impl ManagedLibrary {
             .expect("items")
             .items;
         (handle, items)
+    }
+}
+
+/// A preview's file list and its results list split by scope: Changing
+/// lists the files that are written and change something, Not changing
+/// the files with nothing to change and the blocked ones, and each pages
+/// through only its own files.
+#[tokio::test]
+async fn management_lists_split_into_changing_and_not_changing() {
+    use droppedneedle_library::management::models::{
+        ItemDiff, ItemFilter, ItemScope, SelectionKind,
+    };
+
+    let managed = ManagedLibrary::start("lib-management-scope", |_| {}).await;
+    let (album, _) = managed.add_album("scope", 3).await;
+    let (handle, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "scope-preview")
+        .await;
+    assert_eq!(items.len(), 3);
+    assert!(
+        items
+            .iter()
+            .all(|item| item.eligibility.writes() && item.diff.changes_anything()),
+        "every file is planned to change"
+    );
+    management_apply(&managed.library, &handle).await;
+    // One file planned with nothing to change and one blocked, as a
+    // preview records them.
+    let [changing, unchanged, blocked] = [0, 1, 2].map(|at| items[at].ordinal);
+    let db = managed.db();
+    db.execute(
+        "UPDATE library_management_plan_items SET diff_json = ?3 WHERE job_id = ?1 AND ordinal = ?2",
+        rusqlite::params![
+            handle.job_id,
+            unchanged,
+            serde_json::to_string(&ItemDiff::default()).expect("diff")
+        ],
+    )
+    .expect("no change planned");
+    db.execute(
+        "UPDATE library_management_plan_items SET eligibility = 'blocked', \
+         reason_code = 'UNCONFIRMED_MATCH' WHERE job_id = ?1 AND ordinal = ?2",
+        rusqlite::params![handle.job_id, blocked],
+    )
+    .expect("blocked");
+
+    let management = managed.management();
+    let plan = |scope: Option<ItemScope>| {
+        let filter = ItemFilter {
+            scope,
+            ..ItemFilter::default()
+        };
+        let mut seen = Vec::new();
+        let mut after = -1;
+        loop {
+            let page = management
+                .items(&handle.job_id, after, 1, &filter)
+                .expect("items page");
+            seen.extend(page.items.iter().map(|item| item.ordinal));
+            match page.next_after_ordinal {
+                Some(next) => after = next,
+                None => break seen,
+            }
+        }
+    };
+    let results = |scope: Option<ItemScope>| {
+        let mut seen = Vec::new();
+        let mut after = -1;
+        loop {
+            let page = management
+                .results(&handle.job_id, after, 1, scope)
+                .expect("results page");
+            seen.extend(page.items.iter().map(|item| item.plan.ordinal));
+            match page.next_after_ordinal {
+                Some(next) => after = next,
+                None => break seen,
+            }
+        }
+    };
+    for list in [&plan as &dyn Fn(Option<ItemScope>) -> Vec<i64>, &results] {
+        assert_eq!(list(Some(ItemScope::Changing)), vec![changing]);
+        assert_eq!(list(Some(ItemScope::NotChanging)), vec![unchanged, blocked]);
+        assert_eq!(list(None), vec![changing, unchanged, blocked]);
     }
 }
 
@@ -25385,7 +25470,7 @@ async fn a_run_that_adds_ids_and_translates_keeps_the_artist() {
     assert_eq!(applied.job.state.as_str(), "succeeded");
     let results = managed
         .management()
-        .results(&handle.job_id, -1, 50)
+        .results(&handle.job_id, -1, 50, None)
         .expect("results");
     for item in &results.items {
         assert_eq!(
@@ -28402,7 +28487,7 @@ async fn the_edition_cover_replaces_nothing_it_may_not() {
     management_apply(&managed.library, &handle).await;
     let results = managed
         .management()
-        .results(&handle.job_id, -1, 50)
+        .results(&handle.job_id, -1, 50, None)
         .expect("results");
     assert!(
         results.items.iter().any(|item| item

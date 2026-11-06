@@ -1,7 +1,9 @@
 import type {
 	DuplicateCollisionKind,
 	LibraryManagementPlanItem,
-	LibraryManagementPreviewDetailResponse
+	LibraryManagementPreviewDetailResponse,
+	ManagementListScope,
+	ManagementSummary
 } from '$lib/features/library-management/queries/types';
 
 export interface ManagementFieldDiff {
@@ -528,6 +530,25 @@ export function qualifiedManagementReasonLabel(
 
 export function managementPreviewHeading(mode: string): string {
 	return mode === 'preview' ? 'Organization preview' : `${titleManagementValue(mode)} preview`;
+}
+
+/**
+ * Files per list tab, from a preview's summary: the files that are written
+ * and change something, the rest, and all of them.
+ */
+export function managementScopeCounts(
+	summary: ManagementSummary | null | undefined
+): Record<ManagementListScope, number> {
+	if (!summary) return { changing: 0, not_changing: 0, all: 0 };
+	const changing = Math.max(
+		0,
+		summary.eligible_count + summary.warning_count - summary.no_change_count
+	);
+	return {
+		changing,
+		not_changing: Math.max(0, summary.item_count - changing),
+		all: summary.item_count
+	};
 }
 
 export function managementQuantity(value: number, singular: string, plural = `${singular}s`) {

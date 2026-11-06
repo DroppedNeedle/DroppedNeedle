@@ -42,6 +42,7 @@
 		managementPlanTitle,
 		managementPlanTrackLabel,
 		managementReasonLabel,
+		managementScopeCounts,
 		titleManagementValue
 	} from './LibraryManagementDisplay';
 	import LibraryManagementAuditDossiers from './LibraryManagementAuditDossiers.svelte';
@@ -54,7 +55,8 @@
 	} from './LibraryManagementAuditTypes';
 	import type {
 		LibraryManagementExternalRefresh,
-		LibraryManagementResultItem
+		LibraryManagementResultItem,
+		ManagementListScope
 	} from '$lib/features/library-management/queries/types';
 
 	interface Props {
@@ -72,11 +74,14 @@
 		() => jobId
 	);
 	const operation = $derived(operationQuery.data ?? null);
+	let scope = $state<ManagementListScope>('changing');
+	const scopeCounts = $derived(managementScopeCounts(operation?.summary));
 	const resultsQuery = getLibraryManagementOperationResultsQuery(
 		() => authStore.user?.id,
 		() => jobId,
 		() => 50,
-		() => operation?.state ?? null
+		() => operation?.state ?? null,
+		() => (scope === 'all' ? undefined : scope)
 	);
 	const pauseOperation = createControlLibraryManagementOperationMutation('pause');
 	const resumeOperation = createControlLibraryManagementOperationMutation('resume');
@@ -313,6 +318,30 @@
 
 <svelte:head><title>Organization operation · DroppedNeedle</title></svelte:head>
 
+{#snippet resultsState()}
+	{#if resultsQuery.isLoading}<div
+			class="space-y-2"
+			role="status"
+			aria-label="Loading file results"
+		>
+			<div class="skeleton h-20"></div>
+			<div class="skeleton h-20"></div>
+		</div>{:else if resultsQuery.isError}<div class="alert alert-error" role="alert">
+			Could not load operation results.
+		</div>{:else if scope === 'changing' && plannedItems > 0}<div
+			class="rounded-xl border border-dashed border-base-content/15 p-5 text-sm text-muted"
+		>
+			Nothing in this operation changes a file.
+			<div class="mt-2">
+				<Button variant="ghost" size="sm" onclick={() => (scope = 'all')}>Show all files</Button>
+			</div>
+		</div>{:else}<div
+			class="rounded-xl border border-dashed border-base-content/15 p-5 text-sm text-muted"
+		>
+			No per-file results have been recorded yet.
+		</div>{/if}
+{/snippet}
+
 {#snippet resultInspector(ordinal: number)}
 	{@const result = results.find((candidate) => candidate.plan.ordinal === ordinal)}
 	{#if result}<LibraryManagementResultInspector
@@ -471,31 +500,23 @@
 						href={withBasePath('/library/management/history')}>All history</Button
 					>
 				</div>
-				{#if resultsQuery.isLoading}<div
-						class="space-y-2"
-						role="status"
-						aria-label="Loading file results"
-					>
-						<div class="skeleton h-20"></div>
-						<div class="skeleton h-20"></div>
-					</div>{:else if resultsQuery.isError}<div class="alert alert-error" role="alert">
-						Could not load operation results.
-					</div>{:else if results.length === 0}<div
-						class="rounded-xl border border-dashed border-base-content/15 p-5 text-sm text-muted"
-					>
-						No per-file results have been recorded yet.
-					</div>{:else}<LibraryManagementAuditDossiers
-						dossiers={resultDossiers}
-						inspector={resultInspector}
-						detailLabel="Inspect result evidence"
-						incomplete={Boolean(resultsQuery.hasNextPage)}
-					/>
-					{#if resultsQuery.hasNextPage}<Button
-							variant="outline"
-							class="w-full"
-							loading={resultsQuery.isFetchingNextPage}
-							onclick={() => void resultsQuery.fetchNextPage()}>Load more results</Button
-						>{/if}{/if}
+				<LibraryManagementAuditDossiers
+					dossiers={resultDossiers}
+					inspector={resultInspector}
+					bind:scope
+					{scopeCounts}
+					placeholder={resultsQuery.isLoading || resultsQuery.isError || results.length === 0
+						? resultsState
+						: undefined}
+					detailLabel="Inspect result evidence"
+					incomplete={Boolean(resultsQuery.hasNextPage)}
+				/>
+				{#if results.length > 0 && resultsQuery.hasNextPage}<Button
+						variant="outline"
+						class="w-full"
+						loading={resultsQuery.isFetchingNextPage}
+						onclick={() => void resultsQuery.fetchNextPage()}>Load more results</Button
+					>{/if}
 			</Card>
 
 			<section class="grid gap-3 sm:grid-cols-2">

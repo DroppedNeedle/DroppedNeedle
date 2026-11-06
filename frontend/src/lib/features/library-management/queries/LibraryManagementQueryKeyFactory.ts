@@ -1,5 +1,9 @@
 import { key, userScope } from '$lib/queries/keys';
-import type { LibraryManagementHistoryParams, LibraryManagementPlanItemParams } from './types';
+import type {
+	LibraryManagementHistoryParams,
+	LibraryManagementPlanItemParams,
+	ManagementItemScope
+} from './types';
 
 const normalizedHistory = (params: LibraryManagementHistoryParams) => ({
 	limit: params.limit ?? 50,
@@ -23,7 +27,8 @@ const normalizedItems = (params: LibraryManagementPlanItemParams) => ({
 	collisionClass: params.collisionClass ?? null,
 	hasPreservedValue: params.hasPreservedValue ?? null,
 	hasRepresentationLoss: params.hasRepresentationLoss ?? null,
-	changeKind: params.changeKind ?? null
+	changeKind: params.changeKind ?? null,
+	scope: params.scope ?? null
 });
 
 type UserId = string | null | undefined;
@@ -64,8 +69,17 @@ export const LibraryManagementQueryKeyFactory = {
 		] as const,
 	operation: (userId: UserId, jobId: string) =>
 		[...LibraryManagementQueryKeyFactory.operationsPrefix(userId), jobId] as const,
-	operationResults: (userId: UserId, jobId: string, limit: number) =>
-		[...LibraryManagementQueryKeyFactory.operation(userId, jobId), 'results', { limit }] as const,
+	operationResults: (
+		userId: UserId,
+		jobId: string,
+		limit: number,
+		scope: ManagementItemScope | undefined
+	) =>
+		[
+			...LibraryManagementQueryKeyFactory.operation(userId, jobId),
+			'results',
+			{ limit, scope: scope ?? null }
+		] as const,
 	recovery: (userId: UserId) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'recovery'] as const,
 	automaticSkipped: (userId: UserId) =>

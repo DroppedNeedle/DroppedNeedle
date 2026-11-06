@@ -22,7 +22,8 @@ import type {
 	LibraryManagementPreviewDetailResponse,
 	LibraryManagementRecoveryDiagnosticsResponse,
 	LibraryManagementResultPageResponse,
-	LibraryManagementTagEditorContext
+	LibraryManagementTagEditorContext,
+	ManagementItemScope
 } from './types';
 
 type PreviewQuery = { state: { data?: LibraryManagementPreviewDetailResponse } };
@@ -251,23 +252,30 @@ export const getLibraryManagementOperationResultsQuery = (
 	getUserId: Getter<string | null | undefined>,
 	getJobId: Getter<string | null>,
 	getLimit: Getter<number> = () => 100,
-	getOperationState: Getter<string | null> = () => null
+	getOperationState: Getter<string | null> = () => null,
+	getScope: Getter<ManagementItemScope | undefined> = () => undefined
 ) =>
 	createInfiniteQuery(() => {
 		const jobId = getJobId();
 		const limit = getLimit();
+		const scope = getScope();
 		return {
 			enabled: Boolean(jobId),
 			refetchInterval: (query: ResultsQuery) =>
 				activeResultsRefetchInterval(jobId, getOperationState(), query),
-			queryKey: LibraryManagementQueryKeyFactory.operationResults(getUserId(), jobId ?? '', limit),
+			queryKey: LibraryManagementQueryKeyFactory.operationResults(
+				getUserId(),
+				jobId ?? '',
+				limit,
+				scope
+			),
 			initialPageParam: undefined as string | undefined,
 			queryFn: async ({ pageParam, signal }) =>
 				toResultPage(
 					await api.v3.GET(
 						v3('/api/v3/library/management/operations/{job_id}/results', {
 							path: { job_id: jobId ?? '' },
-							query: { cursor: pageParam, limit }
+							query: { cursor: pageParam, limit, scope }
 						}),
 						{ signal }
 					)

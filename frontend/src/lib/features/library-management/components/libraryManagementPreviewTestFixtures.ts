@@ -6,6 +6,8 @@ import { vi } from 'vitest';
 export const h = {
 	preview: {} as Record<string, unknown>,
 	items: {} as Record<string, unknown>,
+	/** The plan-items query's params, as the page passes them. */
+	itemParams: null as (() => Record<string, unknown>) | null,
 	apply: vi.fn(),
 	discard: vi.fn(),
 	resolve: vi.fn(),
@@ -39,7 +41,14 @@ export const libraryQueriesMock = {
 
 export const queriesMock = {
 	getLibraryManagementPreviewQuery: () => h.preview,
-	getLibraryManagementPlanItemsQuery: () => h.items,
+	getLibraryManagementPlanItemsQuery: (
+		_user: unknown,
+		_job: unknown,
+		getParams: () => Record<string, unknown>
+	) => {
+		h.itemParams = getParams;
+		return h.items;
+	},
 	getLibraryManagementSettingsQuery: () => ({
 		data: { settings_revision: 'settings-1' },
 		isLoading: false,
@@ -166,6 +175,7 @@ export const collisionItem = {
 export function resetPreviewMocks(): void {
 	vi.clearAllMocks();
 	sessionStorage.clear();
+	h.itemParams = null;
 	h.preview = { data: detail(), isLoading: false, isError: false };
 	h.items = {
 		data: { pages: [{ items: [collisionItem], next_cursor: null }] },

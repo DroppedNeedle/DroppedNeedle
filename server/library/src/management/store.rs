@@ -15,8 +15,8 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use super::after_apply::RefreshTarget;
 use super::models::{
     DesiredDocument, Eligibility, HistoryFilter, HistoryItem, ItemDiff, ItemFacts, ItemFilter,
-    ItemPage, JobIntent, JobMode, Origin, PlannedItem, ResultItem, ResultPage, ResultState,
-    Revisions, Summary, TagScope,
+    ItemPage, ItemScope, JobIntent, JobMode, Origin, PlannedItem, ResultItem, ResultPage,
+    ResultState, Revisions, Summary, TagScope,
 };
 use super::reasons::{self, ItemReason};
 use super::sql::{
@@ -356,6 +356,7 @@ pub fn items_page(
             filter.audio_format,
             change,
             limit + 1,
+            filter.scope.map(ItemScope::as_str),
         ],
         map_item,
     )?;
@@ -610,8 +611,13 @@ pub fn results(
     job_id: &str,
     after_ordinal: i64,
     limit: i64,
+    scope: Option<ItemScope>,
 ) -> rusqlite::Result<ResultPage> {
-    let page = items_page(conn, job_id, after_ordinal, limit, &ItemFilter::default())?;
+    let filter = ItemFilter {
+        scope,
+        ..ItemFilter::default()
+    };
+    let page = items_page(conn, job_id, after_ordinal, limit, &filter)?;
     let mut work = conn.prepare_cached(sql::WORK_RESULT.text())?;
     let mut items = Vec::with_capacity(page.items.len());
     for plan in page.items {

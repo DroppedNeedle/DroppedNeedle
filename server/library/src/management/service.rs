@@ -12,7 +12,7 @@ use std::sync::Arc;
 use droppedneedle_kernel::db::Lane;
 
 use super::models::{
-    HistoryFilter, HistoryItem, ItemFilter, ItemPage, JobDetail, JobIntent, JobMode,
+    HistoryFilter, HistoryItem, ItemFilter, ItemPage, ItemScope, JobDetail, JobIntent, JobMode,
     ManagementError, Origin, PinnedProfile, PlannedItem, PreviewHandle, ResultPage, Revisions,
     Selection, SelectionKind, Summary, TagEditMode, TagScope,
 };
@@ -612,11 +612,12 @@ impl Management {
         job_id: &str,
         after: i64,
         limit: i64,
+        scope: Option<ItemScope>,
     ) -> Result<ResultPage, ManagementError> {
         self.snapshot(job_id)?;
         let limit = limit.clamp(1, PAGE_MAX);
         self.parts.db.read_blocking("management.results", |conn| {
-            Ok(store::results(conn, job_id, after, limit)?)
+            Ok(store::results(conn, job_id, after, limit, scope)?)
         })
     }
 
