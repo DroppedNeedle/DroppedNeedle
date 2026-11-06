@@ -141,6 +141,7 @@
 			trackSourceId: t.track_file_id,
 			trackName: t.title,
 			artistName: t.artist_name,
+			artistId: t.artist_id ?? undefined,
 			trackNumber: 0,
 			discNumber: 1,
 			albumId: t.album_mbid ?? t.album_id,

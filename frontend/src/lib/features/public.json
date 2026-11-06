@@ -120,6 +120,7 @@
 		"components/LyricsPanel.svelte",
 		"components/NowPlayingIndicator.svelte",
 		"components/NowPlayingWidget.svelte",
+		"components/PlayerTrackMarks.svelte",
 		"playback/audioElement.ts",
 		"playback/launchLocalPlayback.ts",
 		"playback/launchRadio.ts",

@@ -24,6 +24,7 @@ export type CrateTrack = {
 	title: string;
 	album_name: string;
 	artist_name: string;
+	artist_id?: string | null;
 	album_id: string;
 	album_mbid?: string | null;
 	cover_url?: string | null;

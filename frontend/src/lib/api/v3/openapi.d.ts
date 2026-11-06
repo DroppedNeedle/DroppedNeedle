@@ -23072,6 +23072,8 @@ export interface components {
             album_id: string;
             /** @description Album title. */
             album_title: string;
+            /** @description Local track-artist id, when credited. */
+            artist_id?: string | null;
             /** @description Track artist display name. */
             artist_name: string;
             /** @description True when the owning album has a folder image or an embedded picture. */

@@ -64,6 +64,7 @@ export function searchTrackToCrateTrack(item: SearchItemV3): CrateTrack | null {
 		title: item.title,
 		album_name: detail.album_title,
 		artist_name: item.artist ?? '',
+		artist_id: detail.artist_id ?? null,
 		album_id: detail.album_id,
 		album_mbid: albumMbid,
 		cover_url: libraryCoverPath(
@@ -89,6 +90,7 @@ export function suggestionToCrateTrack(
 		title: suggestion.title,
 		album_name: suggestion.album_title,
 		artist_name: suggestion.artist_name,
+		artist_id: suggestion.artist_id ?? null,
 		album_id: suggestion.album_id,
 		album_mbid: albumMbid,
 		cover_url: libraryCoverPath(

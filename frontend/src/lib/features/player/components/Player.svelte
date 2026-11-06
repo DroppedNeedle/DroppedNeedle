@@ -34,6 +34,7 @@
 	import PlayerTrackMarks from '$lib/features/player/components/PlayerTrackMarks.svelte';
 	import { skipByRating } from '$lib/features/player/state/skipByRating.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import { playedAlbumHref, playedArtistHref } from '$lib/utils/entityRoutes';
 	import { getLyricsQuery } from '$lib/features/player/queries/lyrics.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { navidromeFolderScope } from '$lib/features/remote-library/queries/RemoteQueries.svelte';
@@ -122,11 +123,10 @@
 		playerStore.setVolume(Number((e.target as HTMLInputElement).value));
 	}
 
-	const MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-	function isAlbumLinkable(id: string | undefined): boolean {
-		return !!id && MBID_RE.test(id);
-	}
+	const albumLink = $derived(
+		playedAlbumHref(playerStore.nowPlaying?.albumId, playerStore.nowPlaying?.sourceType === 'local')
+	);
+	const artistLink = $derived(playedArtistHref(playerStore.nowPlaying?.artistId));
 
 	function openInYouTube(): void {
 		const trackSourceId = playerStore.nowPlaying?.trackSourceId;
@@ -178,10 +178,8 @@
 </script>
 
 {#snippet albumName()}
-	{#if isAlbumLinkable(playerStore.nowPlaying?.albumId)}
-		<a href={withBasePath(`/album/${playerStore.nowPlaying?.albumId}`)} class="dn-player__link"
-			>{playerStore.nowPlaying?.albumName}</a
-		>
+	{#if albumLink}
+		<a href={albumLink} class="dn-player__link">{playerStore.nowPlaying?.albumName}</a>
 	{:else}
 		{playerStore.nowPlaying?.albumName}
 	{/if}
@@ -196,10 +194,8 @@
 {#snippet floorTag()}{floor.minStars}{@render floorStar()}+{/snippet}
 
 {#snippet artistName()}
-	{#if playerStore.nowPlaying?.artistId}
-		<a href={withBasePath(`/artist/${playerStore.nowPlaying.artistId}`)} class="dn-player__link"
-			>{playerStore.nowPlaying.artistName}</a
-		>
+	{#if artistLink}
+		<a href={artistLink} class="dn-player__link">{playerStore.nowPlaying?.artistName}</a>
 	{:else}
 		{playerStore.nowPlaying?.artistName}
 	{/if}

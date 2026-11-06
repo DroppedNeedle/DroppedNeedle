@@ -65029,6 +65029,13 @@
             "type": "string",
             "description": "Album title."
           },
+          "artist_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Local track-artist id, when credited."
+          },
           "artist_name": {
             "type": "string",
             "description": "Track artist display name."

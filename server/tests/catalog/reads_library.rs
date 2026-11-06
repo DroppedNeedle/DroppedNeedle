@@ -729,6 +729,15 @@ async fn album_and_artist_pages_answer_the_seeded_catalog() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 
+    // A suggested track names its credited artist, so the player links it.
+    let (status, body) = get(app(deps.clone(), Some(ADA)), "/api/v3/library/suggestions").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let peak = body["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["track_id"] == "t6"))
+        .expect("t6 suggested");
+    assert_eq!(peak["artist_id"], "a2", "{peak}");
+
     // An album page's revision and pending review.
     let uri = "/api/v3/library/albums/al2";
     let (status, body) = get(app(deps.clone(), Some(ADA)), uri).await;

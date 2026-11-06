@@ -658,6 +658,8 @@ pub struct SuggestionTrack {
     pub album_title: String,
     /// Track artist display name.
     pub artist_name: String,
+    /// Local track-artist id, when credited.
+    pub artist_id: Option<String>,
     /// Owning local album id.
     pub album_id: String,
     /// True when the owning album has a folder image or an embedded picture.
@@ -694,6 +696,7 @@ impl From<(TrackRecord, SuggestionReason)> for SuggestionTrack {
             title: track.title,
             album_title: track.album_title,
             artist_name: track.artist_name,
+            artist_id: track.artist_id,
             album_id: track.album_id,
             cover_available: track.cover_available,
             format: track.format,

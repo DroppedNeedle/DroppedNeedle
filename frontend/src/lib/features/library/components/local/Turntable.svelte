@@ -14,6 +14,7 @@
 	import EqPanel from '$lib/features/player/components/EqPanel.svelte';
 	import LyricsPanel from '$lib/features/player/components/LyricsPanel.svelte';
 	import AudioQualityBadge from '$lib/features/player/components/AudioQualityBadge.svelte';
+	import PlayerTrackMarks from '$lib/features/player/components/PlayerTrackMarks.svelte';
 	import DeckVisualiser from '$lib/features/library/components/local/DeckVisualiser.svelte';
 	import { coverTint } from '$lib/features/library/components/local/coverTint';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
@@ -28,6 +29,7 @@
 	import type { CrateTrack } from '$lib/features/library/queries/types';
 	import type { SpinAlbum } from '$lib/features/library/queries/LocalV3Adapters';
 	import { isValidMbid } from '$lib/utils/formatting';
+	import { playedAlbumHref, playedArtistHref } from '$lib/utils/entityRoutes';
 	import {
 		Play,
 		Pause,
@@ -76,6 +78,8 @@
 	const isPlaying = $derived(playerStore.isPlaying);
 	const format = $derived(playerStore.currentQueueItem?.format ?? null);
 	const isYouTube = $derived(np?.sourceType === 'youtube');
+	const artistLink = $derived(playedArtistHref(np?.artistId));
+	const albumLink = $derived(playedAlbumHref(np?.albumId, isLocal));
 
 	let dragOver = $state(false);
 	let eqPanelOpen = $state(false);
@@ -410,10 +414,16 @@
 									<span class="truncate">{np.trackName ?? np.albumName}</span>
 								</p>
 								<p class="dn-deck__artist">
-									{np.artistName}{#if np.albumName}<span>&nbsp;&middot; {np.albumName}</span>{/if}
+									{#if artistLink}<a href={artistLink} class="dn-deck__link">{np.artistName}</a
+										>{:else}{np.artistName}{/if}{#if np.albumName}<span
+											>&nbsp;&middot;
+											{#if albumLink}<a href={albumLink} class="dn-deck__link">{np.albumName}</a
+												>{:else}{np.albumName}{/if}</span
+										>{/if}
 								</p>
 							</div>
 						</div>
+						<PlayerTrackMarks alwaysStars />
 					</div>
 					<div class="dn-deck__seek">
 						<span>{fmt(shownProgress)}</span>
@@ -499,7 +509,7 @@
 								/>
 							</div>
 						{/if}
-						<div class="ml-auto flex min-w-0 items-center gap-1.5">
+						<div class="ml-auto flex max-w-full flex-wrap items-center gap-1.5">
 							{#if format}
 								<AudioQualityBadge codec={format} compact />
 							{/if}
@@ -1240,6 +1250,13 @@
 		font-size: 0.8125rem;
 		color: var(--dn-muted);
 	}
+	.dn-deck__link {
+		color: inherit;
+	}
+	.dn-deck__link:hover,
+	.dn-deck__link:focus-visible {
+		text-decoration: underline;
+	}
 	.dn-deck__seek {
 		display: flex;
 		align-items: center;
@@ -1264,6 +1281,7 @@
 	}
 	.dn-deck__utility {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 0.25rem;
 		min-width: 0;

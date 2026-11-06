@@ -1,7 +1,8 @@
 <!--
-	The heart and stars of the track playing, in the player bar. A track
-	from a media server rates its library copy; one with no library copy
-	shows nothing. `stars={false}` shows the heart alone.
+	The heart and stars of the track playing, in the player bar and on the
+	Listening Room's deck. A track from a media server rates its library
+	copy; one with no library copy shows nothing. `stars={false}` shows the
+	heart alone.
 -->
 <script lang="ts">
 	import { playerStore } from '$lib/features/player/state/player.svelte';
@@ -19,10 +20,12 @@
 	interface Props {
 		/** The stars beside the heart, from the large width up. */
 		stars?: boolean;
+		/** The stars at every width, not only from the large width up. */
+		alwaysStars?: boolean;
 		class?: string;
 	}
 
-	let { stars = true, class: className = '' }: Props = $props();
+	let { stars = true, alwaysStars = false, class: className = '' }: Props = $props();
 
 	const trackId = $derived.by(() => {
 		const np = playerStore.nowPlaying;
@@ -58,7 +61,7 @@
 		<FavoriteHeart {favorite} onchange={(favorited) => setFavorite(id, favorited)} />
 		{#if stars}
 			<RatingStars
-				class="hidden lg:inline-flex"
+				class={alwaysStars ? 'inline-flex' : 'hidden lg:inline-flex'}
 				quiet
 				label={title}
 				value={rating}
