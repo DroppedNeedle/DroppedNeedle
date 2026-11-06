@@ -25,6 +25,12 @@
 
 	type HeldFileAction = components['schemas']['HeldFileAction'];
 
+	const ORIGINS: Record<HeldEntry['origin'], string> = {
+		download: 'Download',
+		upload: 'Upload',
+		import_folder: 'Import folder'
+	};
+
 	interface Props {
 		entry: HeldEntry;
 		/** The upload's name, where the card sits inside its job. */
@@ -66,7 +72,7 @@
 		[
 			entry.artist_name,
 			`${files.length} ${files.length === 1 ? 'file' : 'files'}`,
-			entry.origin === 'upload' ? 'Upload' : 'Download'
+			ORIGINS[entry.origin]
 		]
 			.filter(Boolean)
 			.join(' · ')
@@ -316,9 +322,12 @@
 <ConfirmDialog
 	bind:open={discardOpen}
 	title="Discard {files.length} files?"
-	message="They are deleted. Nothing in your library changes."
+	message={entry.origin === 'import_folder'
+		? 'They are deleted from the import folder. Nothing in your library changes.'
+		: 'They are deleted. Nothing in your library changes.'}
 	confirmLabel="Discard"
 	tone="danger"
+	paper={entry.origin === 'import_folder'}
 	pending={discardMut.isPending}
 	onconfirm={() => discardMut.mutateAsync(forFiles(files.map((file) => file.id)))}
 />

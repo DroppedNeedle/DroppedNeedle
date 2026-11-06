@@ -268,6 +268,10 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
             state.acquire.held.clone()
         })
         .area(
+            droppedneedle_acquire::import_folder::http::routes(),
+            |state| state.acquire.import_folder.clone(),
+        )
+        .area(
             droppedneedle_acquire::imports::handlers::routes(),
             |state| state.acquire.imports.clone(),
         )

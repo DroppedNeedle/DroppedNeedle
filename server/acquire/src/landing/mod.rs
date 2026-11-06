@@ -763,7 +763,8 @@ impl LandingService {
                 downloads_folders: Some(landing.downloads_folders.clone()),
             },
             gate: intake::Gate::Automatic,
-            owner: task.user_id.clone(),
+            owner: Some(task.user_id.clone()),
+            sidecars: Vec::new(),
         };
         let placed = match intake::place(library.as_ref(), &batch, pairing, heard).await {
             Ok(placed) => placed,
@@ -1013,7 +1014,7 @@ impl LandingService {
             })
             .collect();
         let entry = NewEntry {
-            user_id: task.user_id.clone(),
+            user_id: Some(task.user_id.clone()),
             origin: EntryOrigin::Download,
             key: Self::hold_key(task, target),
             release_group_mbid: non_empty(&target.release_group_mbid),
@@ -1587,6 +1588,8 @@ fn hold_item(
             source_task_id: Some(task.id.clone()),
             reason: code,
             reason_detail: Some(detail.to_owned()).filter(|detail| !detail.is_empty()),
+            file_size: None,
+            file_modified_at: None,
         },
     }
 }

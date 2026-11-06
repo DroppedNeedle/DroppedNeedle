@@ -94,6 +94,7 @@ section_list! {
         UserPreferences,
         LibraryScanSchedule,
         FilesystemWatcher,
+        ImportFolder,
         WantedWatcher,
         SourcePriority,
         UsenetBackendSetting,

@@ -27,6 +27,7 @@
 	import LibraryRootPolicyEditor from '$lib/features/library-management/components/LibraryRootPolicyEditor.svelte';
 	import LibraryNamingExample from '$lib/features/library-management/components/LibraryNamingExample.svelte';
 	import LibraryScanScheduleControl from '$lib/features/library-management/components/LibraryScanScheduleControl.svelte';
+	import SettingsImportFolder from './SettingsImportFolder.svelte';
 	import SettingsLyrics from './SettingsLyrics.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -399,6 +400,10 @@
 			<p class="text-sm text-warning">Sign in as an administrator to change library settings.</p>
 		{/if}
 	</Card>
+
+	{#if authStore.isAdmin}
+		<SettingsImportFolder aboveReady={!settingsQuery.isPending} />
+	{/if}
 
 	<Card as="section" variant="bordered">
 		<div class="flex flex-col gap-4">

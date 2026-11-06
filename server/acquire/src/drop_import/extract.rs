@@ -225,7 +225,7 @@ pub fn extract_and_group(staging_dir: &Path) -> std::io::Result<(Vec<Unit>, Vec<
 }
 
 /// Whether a folder name is only a disc marker: `CD1`, `Disc 2`, `disk-3`.
-fn is_disc_folder(name: &str) -> bool {
+pub(crate) fn is_disc_folder(name: &str) -> bool {
     let lower = name.trim().to_lowercase();
     ["cd", "disc", "disk"].iter().any(|prefix| {
         lower.strip_prefix(prefix).is_some_and(|rest| {

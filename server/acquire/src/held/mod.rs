@@ -14,6 +14,13 @@
 //! arrived, and the list shows when. A supervised loop removes the held
 //! copies of expired entries: only copies in the app's own two folders,
 //! never a library file or a download client's folder.
+//!
+//! Files the import folder could not place wait here too, where they are:
+//! they are the person's own copies, so their entry belongs to no user
+//! (only admins see it), never expires, and a file leaves the folder only
+//! when a person discards it or once the library holds its exact bytes.
+//! They are read and removed beneath the import folder, and only while
+//! that folder is still the import folder.
 
 pub mod http;
 pub mod service;
@@ -36,25 +43,55 @@ pub struct HeldFolders {
 }
 
 impl HeldFolders {
-    /// The root folder of `root`.
-    pub fn dir(&self, root: HeldRoot) -> &Path {
+    /// The app-owned folder of `root`; `None` for the import folder, which
+    /// is checked on each use (see [`crate::import_folder::site`]).
+    pub fn dir(&self, root: HeldRoot) -> Option<&Path> {
         match root {
-            HeldRoot::Held => &self.held,
-            HeldRoot::Drop => &self.drop,
+            HeldRoot::Held => Some(&self.held),
+            HeldRoot::Drop => Some(&self.drop),
+            HeldRoot::Import => None,
         }
     }
 
     /// Where a held copy is: `path` below its root folder. `None` for a
     /// path that is absolute or climbs out, so nothing outside the two
-    /// folders is ever read or deleted through a row.
+    /// folders is ever read or deleted through a row, and for the import
+    /// folder's files.
     pub fn locate(&self, root: HeldRoot, path: &str) -> Option<PathBuf> {
-        let relative = Path::new(path);
-        let plain = !path.is_empty()
-            && relative
-                .components()
-                .all(|part| matches!(part, Component::Normal(_)));
-        plain.then(|| self.dir(root).join(relative))
+        below(self.dir(root)?, path)
     }
+}
+
+/// A file's size and modification time in milliseconds, as an
+/// import-folder row records them when the file is listed.
+pub fn listed_identity(meta: &std::fs::Metadata) -> (i64, i64) {
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |at| i64::try_from(at.as_millis()).unwrap_or(i64::MAX));
+    (i64::try_from(meta.len()).unwrap_or(i64::MAX), modified)
+}
+
+/// Whether the file now at a held row's path (`meta`, read without
+/// following a link) is still the file the row listed. A row that recorded
+/// nothing is taken as listed.
+pub fn as_listed(file: &store::HeldFile, meta: &std::fs::Metadata) -> bool {
+    match (file.file_size, file.file_modified_at) {
+        (Some(size), Some(modified)) => listed_identity(meta) == (size, modified),
+        _ => true,
+    }
+}
+
+/// `path` below `dir`: `None` for a path that is empty, absolute or climbs
+/// out.
+pub fn below(dir: &Path, path: &str) -> Option<PathBuf> {
+    let relative = Path::new(path);
+    let plain = !path.is_empty()
+        && relative
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)));
+    plain.then(|| dir.join(relative))
 }
 
 /// Remove one held copy below `dir`. True once the copy is gone: removed

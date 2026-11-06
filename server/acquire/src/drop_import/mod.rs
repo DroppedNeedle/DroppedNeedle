@@ -20,6 +20,12 @@
 //! Jobs and items live in SQLite ([`store`]); a restart fails the jobs it
 //! cut off (their staged files wait in the held list) instead of importing
 //! anything twice.
+//!
+//! The import folder ([`crate::import_folder`]) runs its albums through the
+//! same steps, one at a time, reading them where they are: its jobs belong
+//! to no user, a file the library already holds as well waits for a person
+//! rather than being consumed, the album's sidecars go with it, and what
+//! went in leaves the folder only once the library holds its exact bytes.
 
 pub mod extract;
 pub mod http;
@@ -32,17 +38,21 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use self::identify::Outcome;
-use self::store::{DropItemStatus, DropJobStatus, DropStore, ItemRecord, JobRecord, StoreError};
+use self::store::{
+    DropItemStatus, DropJobSource, DropJobStatus, DropStore, ItemRecord, JobRecord, StoreError,
+};
 use crate::flows::seams::{FlowEvent, TickSink};
 use crate::held::store::{
     Entry, EntryOrigin, FileState, GroupKey, HeldFile, HeldRows, NewEntry, NewFile,
     Pairing as HeldPairing,
 };
+use crate::import_folder::site::ImportSite;
 use crate::intake;
 use crate::landing::canonical_dirs;
+use crate::landing::confine;
 use crate::landing::matching::{FilePlan, FoundRelease, MatchSummary, plan};
 use crate::landing::ports::LandingLibrary;
-use crate::landing::probe::{Landing, probe};
+use crate::landing::probe::{Landing, probe_beneath};
 use crate::landing::specs::Target;
 use crate::reason::Reason;
 use crate::requests::models::RequestKind;
@@ -65,6 +75,22 @@ const INCOMING_DIR: &str = "_incoming";
 enum Ran {
     Done,
     /// The database closed for a shutdown; the job goes no further.
+    Stopped,
+}
+
+/// How one album of the import folder's run ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FolderRun {
+    /// Its outcome is recorded.
+    Done,
+    /// It waits on something of its own (an earlier publish of it still
+    /// being recovered): it stays queued and the albums after it go on.
+    PassOver,
+    /// Something every album needs is not there now (MusicBrainz, AcoustID,
+    /// the library, the database): nothing was recorded and it stays
+    /// queued, spending no try.
+    Waits,
+    /// The database closed for a shutdown.
     Stopped,
 }
 
@@ -205,11 +231,13 @@ pub struct DropImports {
     events: EventHub,
     ticks: Arc<dyn TickSink>,
     ledger: RequestStore,
+    site: Arc<ImportSite>,
 }
 
 impl DropImports {
     /// Service over its store, the library port, a staging folder of its
-    /// own, the event sink, and the request stores it resolves.
+    /// own, the event sink, the request stores it resolves, and the import
+    /// folder its folder jobs read.
     pub fn new(
         store: DropStore,
         library: Arc<dyn LandingLibrary>,
@@ -217,6 +245,7 @@ impl DropImports {
         events: EventHub,
         ticks: Arc<dyn TickSink>,
         ledger: RequestStore,
+        site: Arc<ImportSite>,
     ) -> Self {
         Self {
             store,
@@ -225,7 +254,13 @@ impl DropImports {
             events,
             ticks,
             ledger,
+            site,
         }
+    }
+
+    /// The jobs and items.
+    pub(crate) fn store(&self) -> &DropStore {
+        &self.store
     }
 
     /// Where uploads stream before a job exists: the same disk as the job
@@ -275,7 +310,7 @@ impl DropImports {
         let runner = self.clone();
         let spawned = job_id.clone();
         tokio::spawn(async move { runner.run_job(&spawned).await });
-        self.publish(user_id, &job_id);
+        self.publish(Some(user_id), &job_id);
         self.store
             .get_job(&job_id)
             .await?
@@ -325,22 +360,49 @@ impl DropImports {
             return Err(DropError::Invalid("Pick an album to match.".into()));
         }
         let library = self.library.clone();
-        let paths: Vec<PathBuf> = files
-            .iter()
-            .map(|file| self.root.join(&file.path))
-            .filter(|path| path.exists())
-            .collect();
+        let beneath = self.folder_of(&job).await?;
+        let mut paths: Vec<PathBuf> = Vec::with_capacity(files.len());
+        for file in files {
+            let path = match &beneath {
+                Some(folder) => crate::held::below(folder, &file.path),
+                None => Some(self.root.join(&file.path)),
+            };
+            let Some(path) = path else { continue };
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if !meta.is_file() {
+                continue;
+            }
+            // A file of the import folder that changed since it was listed
+            // is not the one the person matched.
+            if beneath.is_some() && !crate::held::as_listed(file, &meta) {
+                return Err(DropError::Conflict(
+                    "A file in the import folder changed since it was listed. \
+                     DroppedNeedle looks at it again by itself."
+                        .into(),
+                ));
+            }
+            paths.push(path);
+        }
         if paths.is_empty() {
-            return Err(DropError::Invalid(
-                "The uploaded files are no longer on disk. Drop them in again.".into(),
-            ));
+            return Err(DropError::Invalid(match job.source {
+                DropJobSource::Upload => {
+                    "The uploaded files are no longer on disk. Drop them in again.".into()
+                }
+                DropJobSource::ImportFolder => {
+                    "These files are no longer in the import folder.".into()
+                }
+            }));
         }
         if !self.store.claim_review(item.id).await? {
             return Err(DropError::Conflict(
                 "This item is already being handled.".into(),
             ));
         }
-        let landing = self.probe(library.as_ref(), paths).await;
+        let landing = self
+            .probe(library.as_ref(), paths, beneath.as_deref())
+            .await;
         let summary = match identify::assigned(library.as_ref(), &landing, group).await {
             Outcome::Matched(summary) => summary,
             Outcome::Busy | Outcome::Closed => {
@@ -408,13 +470,38 @@ impl DropImports {
         Ok(matched)
     }
 
+    /// The import folder's real path for an import-folder job, checked now;
+    /// `None` for an upload. Refused while the job's folder is no longer the
+    /// import folder, or cannot be used.
+    async fn folder_of(&self, job: &JobRecord) -> Result<Option<PathBuf>, DropError> {
+        if job.source != DropJobSource::ImportFolder {
+            return Ok(None);
+        }
+        let site = self.site.clone();
+        let dir = job.staging_dir.clone();
+        let found = tokio::task::spawn_blocking(move || site.folder_of(&dir))
+            .await
+            .map_err(|error| {
+                DropError::Unavailable(format!("folder check did not run: {error}"))
+            })?;
+        match found {
+            Ok(folder) => Ok(Some(folder)),
+            Err(crate::import_folder::site::Unusable::Off) => Err(DropError::Conflict(
+                "These files are in an import folder that is no longer set.".into(),
+            )),
+            Err(_) => Err(DropError::Conflict(
+                "The import folder can't be used right now. Check its status in Settings.".into(),
+            )),
+        }
+    }
+
     /// Remove empty folders left in a drop item's job folder.
     pub(crate) async fn tidy_item(&self, item_id: i64) {
         match self.store.get_item(item_id).await {
             Ok(Some(item)) => match self.store.get_job(&item.job_id).await {
                 Ok(Some(job)) => {
                     self.tidy(&job).await;
-                    self.publish(&job.user_id, &job.id);
+                    self.publish(job.user_id.as_deref(), &job.id);
                 }
                 Ok(None) => {}
                 Err(error) => tracing::warn!(item_id, %error, "drop job unreadable for tidying"),
@@ -424,13 +511,18 @@ impl DropImports {
         }
     }
 
-    /// Files of an upload a person imported from the held list reached the
-    /// library: tell plugins.
-    pub(crate) fn announce_import(&self, release_group_mbid: &str, imported: usize) {
+    /// Files of an upload or the import folder a person imported from the
+    /// held list reached the library: tell plugins.
+    pub(crate) fn announce_import(
+        &self,
+        release_group_mbid: &str,
+        imported: usize,
+        source: DropJobSource,
+    ) {
         self.ticks.announce(FlowEvent::ImportFinished {
             release_group_mbid: release_group_mbid.to_owned(),
             track_count: i64::try_from(imported).unwrap_or(i64::MAX),
-            source: "drop_import".to_owned(),
+            source: plugin_source(source).to_owned(),
         });
     }
 
@@ -566,7 +658,7 @@ impl DropImports {
         {
             tracing::warn!(job_id, %error, "drop import failure not recorded");
         }
-        self.publish(&job.user_id, job_id);
+        self.publish(job.user_id.as_deref(), job_id);
     }
 
     /// Answers the job's final status and how many items it made, or
@@ -586,7 +678,7 @@ impl DropImports {
                 .set_job_status(&job.id, DropJobStatus::Failed, Some(error))
                 .await
                 .map_err(|error| error.to_string())?;
-            self.publish(&job.user_id, &job.id);
+            self.publish(job.user_id.as_deref(), &job.id);
             return Ok(Some((DropJobStatus::Failed, 0)));
         }
         let ids = self
@@ -595,7 +687,7 @@ impl DropImports {
             .await
             .map_err(|error| error.to_string())?;
         let items: Vec<_> = ids.into_iter().zip(units).collect();
-        self.publish(&job.user_id, &job.id);
+        self.publish(job.user_id.as_deref(), &job.id);
         let count = items.len();
         for (id, unit) in items {
             match self
@@ -621,7 +713,7 @@ impl DropImports {
                     }
                 }
             }
-            self.publish(&job.user_id, &job.id);
+            self.publish(job.user_id.as_deref(), &job.id);
         }
         // A damaged archive next to good ones is still reported: the job
         // completes and the notes say what was skipped.
@@ -631,7 +723,7 @@ impl DropImports {
             .await
             .map_err(|error| error.to_string())?;
         self.tidy(job).await;
-        self.publish(&job.user_id, &job.id);
+        self.publish(job.user_id.as_deref(), &job.id);
         Ok(Some((DropJobStatus::Completed, count)))
     }
 
@@ -649,7 +741,7 @@ impl DropImports {
             .map_err(|error| error.to_string())?
             .ok_or("item vanished")?;
         let library = self.library.clone();
-        let landing = self.probe(library.as_ref(), paths).await;
+        let landing = self.probe(library.as_ref(), paths, None).await;
         let unreadable = landing.unreadable.len();
         if landing.audio.is_empty() {
             let mut failed = settled(item, DropItemStatus::Failed, Reason::Corrupt, None);
@@ -697,6 +789,275 @@ impl DropImports {
         Ok(Ran::Done)
     }
 
+    /// Run one album of the import folder `folder` (its real path, checked
+    /// just now): identify it, file it with its sidecars, and record what
+    /// became of each file. A wait on something every album needs records
+    /// nothing, so the album stays queued. Files a publish of this album
+    /// already put in the library (a restart cut it off before its record)
+    /// are not imported again: they only wait to leave the folder.
+    pub(crate) async fn run_folder_item(&self, folder: &Path, item: ItemRecord) -> FolderRun {
+        let job = match self.store.get_job(&item.job_id).await {
+            Ok(Some(job)) => job,
+            Ok(None) => {
+                tracing::warn!(item_id = item.id, "import folder: the album's job vanished");
+                return FolderRun::PassOver;
+            }
+            Err(error) => {
+                tracing::warn!(item_id = item.id, %error, "import folder: the album's job does not read");
+                return FolderRun::Waits;
+            }
+        };
+        let library = self.library.clone();
+        let placed = match library.placed_sources(&format!("drop-{}", item.id)).await {
+            Ok(Some(placed)) => placed,
+            Ok(None) => {
+                tracing::info!(
+                    item_id = item.id,
+                    "import folder: an earlier publish of the album waits for recovery"
+                );
+                return FolderRun::PassOver;
+            }
+            Err(error) => {
+                tracing::warn!(item_id = item.id, %error, "import folder: the publish journal does not read");
+                return FolderRun::Waits;
+            }
+        };
+        let mut paths: Vec<PathBuf> = Vec::with_capacity(item.staging_paths.len());
+        for rel in &item.staging_paths {
+            match crate::held::below(folder, rel) {
+                Some(path) => paths.push(path),
+                None => tracing::warn!(rel, "import folder: a path that climbs out is left alone"),
+            }
+        }
+        let mut already: Vec<String> = Vec::new();
+        if !placed.is_empty() {
+            let folders = vec![folder.to_path_buf()];
+            let checked = paths.clone();
+            let in_library = tokio::task::spawn_blocking(move || {
+                checked
+                    .iter()
+                    .map(|path| {
+                        confine::hash_beneath(&folders, path)
+                            .is_ok_and(|hashed| placed.contains(&hashed.sha256))
+                    })
+                    .collect::<Vec<bool>>()
+            })
+            .await
+            .unwrap_or_default();
+            let mut rest = Vec::with_capacity(paths.len());
+            for (index, path) in paths.into_iter().enumerate() {
+                if in_library.get(index).copied().unwrap_or(false) {
+                    already.push(rel_below(folder, &path));
+                } else {
+                    rest.push(path);
+                }
+            }
+            paths = rest;
+        }
+        let landing = self.probe(library.as_ref(), paths, Some(folder)).await;
+        let name = match item.folder_name.rsplit('/').next() {
+            Some(name) if !name.is_empty() => name.to_owned(),
+            _ => extract::LOOSE_UNIT_NAME.to_owned(),
+        };
+        // Everything readable went in before a restart cut the album off.
+        if landing.audio.is_empty()
+            && landing.unreadable.is_empty()
+            && landing.samples.is_empty()
+            && !already.is_empty()
+        {
+            return self.settle_placed(&job, item, folder, already, &name).await;
+        }
+        if landing.audio.is_empty() {
+            self.folder_wait(&job, item, &landing, Reason::Corrupt, None, already)
+                .await;
+            return FolderRun::Done;
+        }
+        if landing.audio.len() > MAX_FILES_PER_UNIT {
+            let specifics = format!("It has {} audio files.", landing.audio.len());
+            self.folder_wait(
+                &job,
+                item,
+                &landing,
+                Reason::TooManyFiles,
+                Some(specifics),
+                already,
+            )
+            .await;
+            return FolderRun::Done;
+        }
+        match identify::identify(library.as_ref(), &landing, &name).await {
+            Outcome::Matched(summary) => {
+                let mut organised = self
+                    .organise(&job, item, library.as_ref(), &landing, &summary, false)
+                    .await;
+                // A wait every album shares leaves this one queued; one of
+                // its own (a naming script, a fault of this import) holds it
+                // as a leftover, which the held list retries by itself.
+                if let Some(
+                    reason @ (Reason::LibraryOff
+                    | Reason::LibraryFolderMissing
+                    | Reason::JournalUnreadable
+                    | Reason::AcoustidUnavailable),
+                ) = organised.deferred
+                {
+                    tracing::info!(
+                        item_id = organised.item.id,
+                        code = reason.code(),
+                        "import folder: the library put the album off; it waits"
+                    );
+                    return FolderRun::Waits;
+                }
+                // Sidecars an earlier publish placed leave with its files.
+                if !already.is_empty() {
+                    let (root, album) = (folder.to_path_buf(), organised.item.folder_name.clone());
+                    let sidecars = tokio::task::spawn_blocking(move || {
+                        crate::import_folder::walk::sidecars(&root, &album)
+                    })
+                    .await
+                    .unwrap_or_default();
+                    for (below, _) in sidecars {
+                        if !organised.item.staging_paths.contains(&below) {
+                            organised.item.staging_paths.push(below);
+                        }
+                    }
+                }
+                organised.item.staging_paths.extend(already);
+                self.finish(&job, organised, None).await;
+            }
+            Outcome::Review { reason, detail } => {
+                self.folder_wait(&job, item, &landing, reason, detail, already)
+                    .await;
+            }
+            Outcome::Unavailable(cause) => {
+                tracing::warn!(item_id = item.id, %cause, "import folder: MusicBrainz unavailable; the album waits");
+                return FolderRun::Waits;
+            }
+            Outcome::AcoustidUnavailable => {
+                tracing::info!(
+                    item_id = item.id,
+                    "import folder: AcoustID unavailable; the album waits"
+                );
+                return FolderRun::Waits;
+            }
+            Outcome::Busy => return FolderRun::Waits,
+            Outcome::Closed => return FolderRun::Stopped,
+        }
+        FolderRun::Done
+    }
+
+    /// An import-folder album all of whose files a publish already put in
+    /// the library before a restart cut it off: it settles as imported, the
+    /// album's requests and plugins hear of it, and its files and sidecars
+    /// wait to leave the folder.
+    async fn settle_placed(
+        &self,
+        job: &JobRecord,
+        item: ItemRecord,
+        folder: &Path,
+        already: Vec<String>,
+        name: &str,
+    ) -> FolderRun {
+        let library = self.library.clone();
+        let all: Vec<PathBuf> = already
+            .iter()
+            .filter_map(|rel| crate::held::below(folder, rel))
+            .collect();
+        let landing = self.probe(library.as_ref(), all, Some(folder)).await;
+        let release = match identify::identify(library.as_ref(), &landing, name).await {
+            Outcome::Matched(summary) => summary.best().map(|found| {
+                let fulfills = found.release.tracks.iter().all(|track| summary.owns(track));
+                (found.release.clone(), fulfills)
+            }),
+            Outcome::Unavailable(_) | Outcome::AcoustidUnavailable | Outcome::Busy => {
+                return FolderRun::Waits;
+            }
+            Outcome::Closed => return FolderRun::Stopped,
+            Outcome::Review { .. } => None,
+        };
+        let (root, album) = (folder.to_path_buf(), item.folder_name.clone());
+        let sidecars = tokio::task::spawn_blocking(move || {
+            crate::import_folder::walk::sidecars(&root, &album)
+        })
+        .await
+        .unwrap_or_default();
+        let count = already.len();
+        let mut leaving = already;
+        leaving.extend(sidecars.into_iter().map(|(below, _)| below));
+        let imported = ItemRecord {
+            status: DropItemStatus::Imported,
+            detail: Some(format!(
+                "Imported {count} {}.",
+                if count == 1 { "file" } else { "files" }
+            )),
+            reason_code: None,
+            release_group_mbid: release
+                .as_ref()
+                .map(|(release, _)| release.release_group_id.clone())
+                .or(item.release_group_mbid.clone()),
+            album_title: release
+                .as_ref()
+                .map(|(release, _)| release.title.clone())
+                .or(item.album_title.clone()),
+            artist_name: release
+                .as_ref()
+                .map(|(release, _)| release.artist_text())
+                .or(item.artist_name.clone()),
+            files_imported: item
+                .files_imported
+                .saturating_add(i64::try_from(count).unwrap_or(i64::MAX)),
+            staging_paths: leaving,
+            ..item
+        };
+        if !self.record(job, &imported, &[], None).await {
+            return FolderRun::PassOver;
+        }
+        if let Some((release, fulfills)) = release {
+            self.after_import(job, &release, count, fulfills).await;
+        }
+        FolderRun::Done
+    }
+
+    /// Every file of an import-folder album waits for a person: its audio
+    /// for `reason`, unreadable files as unreadable, samples as samples.
+    /// `done` are files already in the library, which only wait to leave
+    /// the folder.
+    async fn folder_wait(
+        &self,
+        job: &JobRecord,
+        item: ItemRecord,
+        landing: &Landing,
+        reason: Reason,
+        specifics: Option<String>,
+        done: Vec<String>,
+    ) {
+        let detail = specifics.clone().unwrap_or_default();
+        let fates: Vec<Fate> = landing
+            .audio
+            .iter()
+            .map(|file| Fate::held(file.path.clone(), reason, &detail))
+            .chain(
+                landing
+                    .unreadable
+                    .iter()
+                    .map(|path| Fate::held(path.clone(), Reason::Corrupt, "")),
+            )
+            .chain(
+                landing
+                    .samples
+                    .iter()
+                    .map(|path| Fate::held(path.clone(), Reason::Samples, "")),
+            )
+            .collect();
+        let status = if fates.is_empty() {
+            DropItemStatus::Skipped
+        } else {
+            DropItemStatus::NeedsReview
+        };
+        let mut settled = settled(item, status, reason, specifics);
+        settled.staging_paths = done;
+        self.record(job, &settled, &fates, None).await;
+    }
+
     /// Every staged file of an item waits in the held list for `reason`.
     async fn wait_whole(
         &self,
@@ -713,7 +1074,7 @@ impl DropImports {
             .collect();
         let mut review = settled(item, DropItemStatus::NeedsReview, reason, specifics);
         review.staging_paths = Vec::new();
-        self.record(&job.user_id, &review, &fates, None).await;
+        self.record(job, &review, &fates, None).await;
     }
 
     /// Put an identified item's files in the library and work out what
@@ -728,6 +1089,19 @@ impl DropImports {
         summary: &MatchSummary,
         manual: bool,
     ) -> Organised {
+        let from_folder = job.source == DropJobSource::ImportFolder;
+        // An upload ignores files that do not read; in the import folder
+        // they are the person's own and wait for them.
+        let unreadable_fates = || -> Vec<Fate> {
+            if !from_folder {
+                return Vec::new();
+            }
+            landing
+                .unreadable
+                .iter()
+                .map(|path| Fate::held(path.clone(), Reason::Corrupt, ""))
+                .collect()
+        };
         let all_wait = |item: ItemRecord, reason: Reason, specifics: Option<String>| {
             let detail = specifics.clone().unwrap_or_default();
             let fates: Vec<Fate> = landing
@@ -740,6 +1114,7 @@ impl DropImports {
                         .iter()
                         .map(|path| Fate::held(path.clone(), Reason::Samples, "")),
                 )
+                .chain(unreadable_fates())
                 .collect();
             let mut review = settled(item, DropItemStatus::NeedsReview, reason, specifics);
             review.staging_paths = Vec::new();
@@ -772,6 +1147,35 @@ impl DropImports {
                 deferred: None,
             };
         };
+        let folder = PathBuf::from(&job.staging_dir);
+        let (origin, sidecars) = if from_folder {
+            let (root, album) = (folder.clone(), item.folder_name.clone());
+            let found = tokio::task::spawn_blocking(move || {
+                crate::import_folder::walk::sidecars(&root, &album)
+            })
+            .await
+            .unwrap_or_default();
+            (
+                intake::Origin::Folder {
+                    drop_item_id: item.id,
+                    folders: vec![folder.clone()],
+                },
+                found
+                    .into_iter()
+                    .map(|(below, rel)| intake::SidecarFile {
+                        path: folder.join(below),
+                        rel,
+                    })
+                    .collect(),
+            )
+        } else {
+            (
+                intake::Origin::Upload {
+                    drop_item_id: item.id,
+                },
+                Vec::new(),
+            )
+        };
         let batch = intake::IntakeBatch {
             files: landing
                 .audio
@@ -786,15 +1190,14 @@ impl DropImports {
                 join: None,
                 asked: Vec::new(),
             },
-            origin: intake::Origin::Upload {
-                drop_item_id: item.id,
-            },
+            origin,
             gate: if manual {
                 intake::Gate::PersonChoseAlbum
             } else {
                 intake::Gate::Automatic
             },
             owner: job.user_id.clone(),
+            sidecars,
         };
         let pairing_of = |file: usize, track: Option<usize>| {
             let track = track.or_else(|| found.scored.pair_for(file).map(|pair| pair.track))?;
@@ -878,6 +1281,15 @@ impl DropImports {
                     consumed.push(path.clone());
                     (FileFate::Imported, None)
                 }
+                // The import folder's file is a person's own copy: one no
+                // better than the library's waits for them, never removed.
+                intake::Outcome::AlreadyOwned { track } if from_folder => {
+                    first_held.get_or_insert(Reason::NoBetterThanYours);
+                    (
+                        FileFate::Held(Reason::NoBetterThanYours, String::new()),
+                        Some(*track),
+                    )
+                }
                 intake::Outcome::AlreadyOwned { track } => {
                     done.owned += 1;
                     consumed.push(path.clone());
@@ -923,6 +1335,7 @@ impl DropImports {
                 .iter()
                 .map(|path| Fate::held(path.clone(), Reason::Samples, "")),
         );
+        fates.extend(unreadable_fates());
         done.waiting = fates
             .iter()
             .filter(|fate| matches!(fate.outcome, FileFate::Held(..)))
@@ -959,7 +1372,25 @@ impl DropImports {
         item.files_imported = item
             .files_imported
             .saturating_add(i64::try_from(placed).unwrap_or(i64::MAX));
-        item.staging_paths = Vec::new();
+        // What went in leaves the import folder once the library holds its
+        // bytes; the sidecars with it, those the library took.
+        item.staging_paths = if from_folder {
+            let mut leaving: Vec<String> = consumed
+                .iter()
+                .map(|path| rel_below(&folder, path))
+                .collect();
+            if placed > 0 {
+                leaving.extend(
+                    batch
+                        .sidecars
+                        .iter()
+                        .map(|sidecar| rel_below(&folder, &sidecar.path)),
+                );
+            }
+            leaving
+        } else {
+            Vec::new()
+        };
         let summary_text = describe(&done, unreadable, fulfills);
         // Files still waiting keep the item waiting, with why the first one
         // was held; a file nothing paired waits as an album not worked out.
@@ -1022,15 +1453,17 @@ impl DropImports {
             fulfills,
             ..
         } = organised;
-        let recorded = self.record(&job.user_id, &item, &fates, entry).await;
-        if recorded {
+        let recorded = self.record(job, &item, &fates, entry).await;
+        // The import folder's files leave it only by its own check, once
+        // the library holds their exact bytes.
+        if recorded && job.source == DropJobSource::Upload {
             intake::dispose::remove_sources(consumed, vec![PathBuf::from(&job.staging_dir)]).await;
         }
         self.tidy(job).await;
         if placed > 0 {
             self.after_import(job, &release, placed, fulfills).await;
         }
-        self.publish(&job.user_id, &job.id);
+        self.publish(job.user_id.as_deref(), &job.id);
     }
 
     /// Settle a processing item and its files in one transaction: files
@@ -1040,16 +1473,39 @@ impl DropImports {
     /// it was written; a lost race or a failure is logged.
     async fn record(
         &self,
-        owner: &str,
+        job: &JobRecord,
         item: &ItemRecord,
         fates: &[Fate],
         entry: Option<&Entry>,
     ) -> bool {
-        let root = self.root.clone();
+        let from_folder = job.source == DropJobSource::ImportFolder;
+        let root = if from_folder {
+            PathBuf::from(&job.staging_dir)
+        } else {
+            self.root.clone()
+        };
         let relative = |path: &Path| {
             path.strip_prefix(&root)
                 .ok()
                 .map(|rel| rel.to_string_lossy().into_owned())
+        };
+        // A file left in the import folder is listed as it is now, so one
+        // that changes later is never acted on as this file.
+        let listed: std::collections::HashMap<PathBuf, (i64, i64)> = if from_folder {
+            let paths: Vec<PathBuf> = fates.iter().map(|fate| fate.path.clone()).collect();
+            tokio::task::spawn_blocking(move || {
+                paths
+                    .into_iter()
+                    .filter_map(|path| {
+                        let meta = std::fs::symlink_metadata(&path).ok()?;
+                        Some((path, crate::held::listed_identity(&meta)))
+                    })
+                    .collect()
+            })
+            .await
+            .unwrap_or_default()
+        } else {
+            std::collections::HashMap::new()
         };
         let mut waiting: Vec<NewFile> = Vec::new();
         let mut decided: Vec<(String, FileFate, Option<HeldPairing>)> = Vec::new();
@@ -1059,18 +1515,30 @@ impl DropImports {
                 continue;
             };
             if let (None, FileFate::Held(reason, detail)) = (entry, &fate.outcome) {
+                let file = if from_folder {
+                    NewFile::import_folder(&rel, *reason)
+                } else {
+                    NewFile::upload(&rel, *reason)
+                };
+                let identity = listed.get(&fate.path);
                 waiting.push(NewFile {
                     pairing: fate.pairing.clone().unwrap_or_default(),
                     reason_detail: Some(detail.clone()).filter(|detail| !detail.is_empty()),
-                    ..NewFile::upload(&rel, *reason)
+                    file_size: identity.map(|identity| identity.0),
+                    file_modified_at: identity.map(|identity| identity.1),
+                    ..file
                 });
             } else {
                 decided.push((rel, fate.outcome.clone(), fate.pairing.clone()));
             }
         }
         let new_entry = NewEntry {
-            user_id: owner.to_owned(),
-            origin: EntryOrigin::Upload,
+            user_id: job.user_id.clone(),
+            origin: if from_folder {
+                EntryOrigin::ImportFolder
+            } else {
+                EntryOrigin::Upload
+            },
             key: GroupKey::Upload(item.id),
             release_group_mbid: item.release_group_mbid.clone(),
             recording_mbid: None,
@@ -1089,6 +1557,8 @@ impl DropImports {
             )
         });
         let item_id = item.id;
+        let (settled_folder, settled_status, settled_reason) =
+            (item.folder_name.clone(), item.status, item.reason_code);
         let item = item.clone();
         let clock = self.store.db().clock().clone();
         let written = self
@@ -1131,7 +1601,18 @@ impl DropImports {
             })
             .await;
         match written {
-            Ok(true) => true,
+            Ok(true) => {
+                if from_folder {
+                    tracing::info!(
+                        item_id,
+                        folder = %settled_folder,
+                        status = settled_status.as_str(),
+                        reason = settled_reason.map(Reason::code),
+                        "import folder: album settled"
+                    );
+                }
+                true
+            }
             Ok(false) => {
                 tracing::warn!(item_id, "drop item changed under the import");
                 false
@@ -1157,7 +1638,7 @@ impl DropImports {
         self.ticks.announce(FlowEvent::ImportFinished {
             release_group_mbid: group.clone(),
             track_count: i64::try_from(imported).unwrap_or(i64::MAX),
-            source: "drop_import".to_owned(),
+            source: plugin_source(job.source).to_owned(),
         });
         // A partial import keeps the request and watch open for the normal
         // recovery paths.
@@ -1182,7 +1663,9 @@ impl DropImports {
                 let fulfilled = fulfilled
                     .into_iter()
                     .map(|mut row| {
-                        row.user_id.get_or_insert_with(|| job.user_id.clone());
+                        if row.user_id.is_none() {
+                            row.user_id.clone_from(&job.user_id);
+                        }
                         row
                     })
                     .collect();
@@ -1200,7 +1683,7 @@ impl DropImports {
             .iter()
             .map(|requester| requester.user_id.as_str())
             .chain(record.user_id.as_deref())
-            .filter(|user_id| !user_id.is_empty() && *user_id != job.user_id)
+            .filter(|user_id| !user_id.is_empty() && Some(*user_id) != job.user_id.as_deref())
             .collect();
         askers.sort_unstable();
         askers.dedup();
@@ -1217,10 +1700,21 @@ impl DropImports {
         }
     }
 
-    /// Read the files off the async workers, never entering the library.
-    async fn probe(&self, library: &dyn LandingLibrary, paths: Vec<PathBuf>) -> Landing {
+    /// Read the files off the async workers, never entering the library;
+    /// with `beneath`, each beneath that real folder path.
+    async fn probe(
+        &self,
+        library: &dyn LandingLibrary,
+        paths: Vec<PathBuf>,
+        beneath: Option<&Path>,
+    ) -> Landing {
         let libraries = canonical_dirs(&library.library_dirs());
-        match tokio::task::spawn_blocking(move || probe(&paths, &libraries)).await {
+        let beneath = beneath.map(Path::to_path_buf);
+        match tokio::task::spawn_blocking(move || {
+            probe_beneath(&paths, &libraries, beneath.as_deref())
+        })
+        .await
+        {
             Ok(landing) => landing,
             Err(error) => {
                 tracing::error!(%error, "drop import probe did not run");
@@ -1238,15 +1732,24 @@ impl DropImports {
         }
     }
 
-    /// Remove empty folders left in a job's staging folder.
+    /// Remove empty folders left in an upload's staging folder. The import
+    /// folder's are its own pass's to remove.
     async fn tidy(&self, job: &JobRecord) {
+        if job.source != DropJobSource::Upload {
+            return;
+        }
         let dir = PathBuf::from(&job.staging_dir);
         if let Err(error) = tokio::task::spawn_blocking(move || remove_empty_dirs(&dir)).await {
             tracing::warn!(%error, "drop staging tidy did not run");
         }
     }
 
-    fn publish(&self, user_id: &str, job_id: &str) {
+    /// Tell the job's owner's open tabs. A job of no user has none to tell:
+    /// the held list's triggers move the download revision instead.
+    fn publish(&self, user_id: Option<&str>, job_id: &str) {
+        let Some(user_id) = user_id else {
+            return;
+        };
         self.events.notify(
             user_id,
             UserNotice::DropImportUpdated(DropImportUpdated {
@@ -1324,6 +1827,22 @@ pub(crate) fn album_pairing(
         },
     };
     Some((found, file_plan, pairing))
+}
+
+/// The `source` plugins hear an import of a job's files came from.
+fn plugin_source(source: DropJobSource) -> &'static str {
+    match source {
+        DropJobSource::Upload => "drop_import",
+        DropJobSource::ImportFolder => "import_folder",
+    }
+}
+
+/// `path`'s place below `folder`, as stored.
+fn rel_below(folder: &Path, path: &Path) -> String {
+    path.strip_prefix(folder)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// An item settled with one reason: the sentence (plus specifics) as the

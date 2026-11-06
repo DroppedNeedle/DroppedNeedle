@@ -12,8 +12,12 @@ export function nextTry(at: number | null | undefined, now: Date = new Date()): 
 	return `Tries again by itself on ${day} at ${time}`;
 }
 
-/** "Kept until 23 Jan": when a held entry's files are removed, in the viewer's locale. */
-export function keptUntil(expiresAt: number, now: Date = new Date()): string {
+/**
+ * "Kept until 23 Jan": when a held entry's files are removed, in the viewer's locale.
+ * Files left in the import folder have no such day: they stay until someone decides.
+ */
+export function keptUntil(expiresAt: number | null | undefined, now: Date = new Date()): string {
+	if (expiresAt == null) return 'Stays until you decide';
 	const date = new Date(expiresAt);
 	return `Kept until ${date.toLocaleDateString(undefined, {
 		day: 'numeric',

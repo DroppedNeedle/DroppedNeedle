@@ -16,10 +16,10 @@ droppedneedle_kernel::sql! {
              release_track_mbid, recording_mbid, disc_number, track_number, track_title, \
              file_format, duration_seconds, expected_duration_seconds, evidence_title, \
              evidence_artist, evidence_score, source, source_task_id, reason, reason_detail, \
-             created_at FROM acquire_held_files";
-    /// The open entry of user `?1` under key `?2`.
+             created_at, file_size, file_modified_at FROM acquire_held_files";
+    /// The open entry of user `?1` (NULL for no user's) under key `?2`.
     pub(super) OPEN_ENTRY = "SELECT id FROM acquire_held_entries \
-             WHERE user_id = ?1 AND group_key = ?2 AND state IN " + OPEN;
+             WHERE user_id IS ?1 AND group_key = ?2 AND state IN " + OPEN;
     /// A new open entry.
     pub(super) INSERT_ENTRY = "INSERT INTO acquire_held_entries (user_id, origin, group_key, \
              release_group_mbid, recording_mbid, drop_item_id, artist_name, album_title, state, \
@@ -44,13 +44,15 @@ droppedneedle_kernel::sql! {
              original_name, release_mbid, release_track_mbid, recording_mbid, disc_number, \
              track_number, track_title, file_format, duration_seconds, \
              expected_duration_seconds, evidence_title, evidence_artist, evidence_score, \
-             source, source_task_id, reason, reason_detail, state, created_at) \
+             source, source_task_id, reason, reason_detail, state, created_at, file_size, \
+             file_modified_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, \
-             ?17, ?18, ?19, ?20, 'held', ?21)";
+             ?17, ?18, ?19, ?20, 'held', ?21, ?22, ?23)";
     /// Open entries of owner `?1` (NULL for everyone), album `?2` and
-    /// download `?3` (each NULL for any), newest first.
+    /// download `?3` (each NULL for any), newest first; with `?4`, an
+    /// admin's view, entries of no user too.
     pub(super) LIST_ENTRIES = ENTRY_ROW + " e WHERE e.state IN " + OPEN + " \
-             AND (?1 IS NULL OR e.user_id = ?1) \
+             AND (?1 IS NULL OR e.user_id = ?1 OR (e.user_id IS NULL AND ?4)) \
              AND (?2 IS NULL OR e.release_group_mbid = lower(?2)) \
              AND (?3 IS NULL OR EXISTS (SELECT 1 FROM acquire_held_files f \
                  WHERE f.entry_id = e.id AND f.state = 'held' AND f.source_task_id = ?3)) \
@@ -90,9 +92,11 @@ droppedneedle_kernel::sql! {
              WHERE f.source_task_id = ?1 AND f.state = 'held' AND e.state IN " + OPEN + ")";
     /// Tasks among a list that still have a file held in an open entry.
     family TASKS_HOLDING = tasks_holding;
-    /// Open entries of owner `?1` (NULL for everyone).
+    /// Open entries of owner `?1` (NULL for everyone); with `?2`, those of
+    /// no user too.
     pub(super) COUNT_OPEN = "SELECT COUNT(*) FROM acquire_held_entries \
-             WHERE state IN " + OPEN + " AND (?1 IS NULL OR user_id = ?1)";
+             WHERE state IN " + OPEN + " AND (?1 IS NULL OR user_id = ?1 \
+             OR (user_id IS NULL AND ?2))";
     /// Download copies of album `?1` held at or before `?2`, in open
     /// entries; the caller claims each entry and leaves one in use alone.
     pub(super) REMOVED_ALBUM_FILES = "SELECT f.id, f.entry_id, f.path \
@@ -129,9 +133,10 @@ droppedneedle_kernel::sql! {
              'library_unavailable', 'naming_script_failed', 'library_folder_missing', \
              'library_off', 'local_fault')";
     /// Held file `f` is retried by itself: held for a library reason, or
-    /// an upload waiting for AcoustID, and paired with a track.
+    /// an upload or import-folder file waiting for AcoustID, and paired
+    /// with a track.
     pub(super) fragment RETRIES = "(f.state = 'held' AND (f.reason IN " + LIBRARY_REASONS + " \
-             OR (f.reason = 'acoustid_unavailable' AND f.root = 'drop')) \
+             OR (f.reason = 'acoustid_unavailable' AND f.root IN ('drop', 'import'))) \
              AND (COALESCE(f.release_track_mbid, '') != '' \
                   OR COALESCE(f.recording_mbid, '') != ''))";
     /// Entries waiting for a person with a file retried by itself, due at
@@ -152,6 +157,17 @@ droppedneedle_kernel::sql! {
              WHERE id = ?1";
     /// Entries an action had claimed.
     pub(super) PLACING_ENTRIES = ENTRY_ROW + " WHERE state = 'placing' ORDER BY id";
+    /// Every file of import folder `?1` (root `import`) an open entry still
+    /// holds, as listed, and whether its entry waits for a person (rather
+    /// than being acted on): the import folder leaves them where they are.
+    /// Leftovers of another folder neither hold nor lose a path here.
+    pub(crate) IMPORT_FOLDER_HELD = "SELECT f.id, f.entry_id, f.path, f.file_size, \
+             f.file_modified_at, e.state = 'held' FROM acquire_held_files f \
+             JOIN acquire_held_entries e ON e.id = f.entry_id \
+             JOIN drop_import_items i ON i.id = e.drop_item_id \
+             JOIN drop_import_jobs j ON j.id = i.job_id \
+             WHERE f.root = 'import' AND f.state = 'held' AND e.state IN " + OPEN + " \
+             AND j.source = 'import_folder' AND j.staging_dir = ?1";
     /// Every copy in the held folder an open entry still names.
     pub(super) HELD_FOLDER_PATHS = "SELECT f.path FROM acquire_held_files f \
              JOIN acquire_held_entries e ON e.id = f.entry_id \

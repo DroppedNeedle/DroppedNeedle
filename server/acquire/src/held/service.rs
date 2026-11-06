@@ -11,6 +11,11 @@
 //! entry first (`held` to `placing`), so a second action, or the prune,
 //! never runs on it at once. The loop also presses Retry by itself on
 //! files our side could not take, at growing gaps.
+//!
+//! An import-folder file is read where it is, beneath the import folder,
+//! and only while that is still the import folder. Discard deletes it from
+//! there; once it went in, it is removed only while it still has the
+//! exact bytes the library took.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -31,12 +36,14 @@ use crate::downloads::queue_rows::Viewer;
 use crate::downloads::state::TaskStatus;
 use crate::downloads::store::{DownloadStore, TaskRow};
 use crate::downloads::worker::DownloadWorker;
+use crate::drop_import::store::DropJobSource;
 use crate::drop_import::{DropError, DropImports, identify};
+use crate::import_folder::site::{ImportSite, Unusable};
 use crate::intake::{self, Gate, IntakeBatch, IntakeFile, Origin, Outcome};
-use crate::landing::canonical_dirs;
 use crate::landing::ports::LandingLibrary;
 use crate::landing::probe::{self, LandedFile, Landing};
 use crate::landing::specs;
+use crate::landing::{canonical_dirs, confine};
 use crate::reason::{Reason, ReasonKind};
 use droppedneedle_library::matching::Release;
 
@@ -119,6 +126,25 @@ impl From<DropError> for HeldError {
 
 const GONE: &str = "That held entry was not found. It may have been handled already.";
 
+/// An import-folder entry whose folder is not the import folder any more.
+const NO_LONGER_SET: &str = "These files are in an import folder that is no longer set.";
+
+/// An import-folder file that is not the one listed any more.
+const CHANGED: &str = "That file in the import folder changed since it was listed. DroppedNeedle looks at it again by itself.";
+
+/// What deleting one held file did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Removal {
+    /// It is gone (or was already).
+    Gone,
+    /// Its folder is no longer the import folder: only its row goes.
+    OffList,
+    /// It is not the file that was listed: it stays.
+    Changed,
+    /// It could not be removed now: it stays, listed.
+    Kept,
+}
+
 /// What an action did with the files it was given.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Acted {
@@ -150,6 +176,8 @@ pub struct HeldService {
     worker: Arc<DownloadWorker>,
     drops: Arc<DropImports>,
     folders: HeldFolders,
+    /// The import folder, which its entries' files are read beneath.
+    site: Arc<ImportSite>,
     /// Entries a restart found claimed: the action on them stopped part
     /// way, and the prune finishes them once the library's writes settle.
     cut_off: Mutex<Vec<i64>>,
@@ -161,6 +189,7 @@ impl HeldService {
         worker: Arc<DownloadWorker>,
         drops: Arc<DropImports>,
         folders: HeldFolders,
+        site: Arc<ImportSite>,
     ) -> Self {
         Self {
             db: journal.db().clone(),
@@ -168,6 +197,7 @@ impl HeldService {
             worker,
             drops,
             folders,
+            site,
             cut_off: Mutex::new(Vec::new()),
         }
     }
@@ -221,9 +251,11 @@ impl HeldService {
         all: bool,
     ) -> Result<Vec<Entry>, HeldError> {
         let owner = (!(all && viewer.admin)).then(|| viewer.user_id.clone());
+        let admin = viewer.admin;
         self.read("held.list", move |rows| {
             rows.list(
                 owner.as_deref(),
+                admin,
                 release_group_mbid.as_deref(),
                 task_id.as_deref(),
             )
@@ -278,7 +310,7 @@ impl HeldService {
     pub async fn get(&self, viewer: &Viewer, entry_id: i64) -> Result<Entry, HeldError> {
         self.read("held.entry", move |rows| rows.entry(entry_id))
             .await?
-            .filter(|entry| entry.state.is_open() && viewer.may_touch(&entry.user_id))
+            .filter(|entry| entry.state.is_open() && touches(viewer, entry.user_id.as_deref()))
             .ok_or(HeldError::NotFound(GONE))
     }
 
@@ -373,17 +405,18 @@ impl HeldService {
         file_ids: Option<Vec<i64>>,
         actor: &str,
     ) -> Result<Acted, HeldError> {
-        self.import_for(viewer, entry_id, file_ids, actor, Asker::Person)
+        self.import_for(viewer, entry_id, file_ids, Some(actor), Asker::Person)
             .await
     }
 
-    /// [`Self::import`] for a person or for the held loop's retry.
+    /// [`Self::import`] for a person or for the held loop's retry; `actor`
+    /// is `None` for work that belongs to no user.
     async fn import_for(
         &self,
         viewer: &Viewer,
         entry_id: i64,
         file_ids: Option<Vec<i64>>,
-        actor: &str,
+        actor: Option<&str>,
         asker: Asker,
     ) -> Result<Acted, HeldError> {
         let entry = self.claim(viewer, entry_id).await?;
@@ -418,7 +451,7 @@ impl HeldService {
         let result = match Self::chosen(&entry, file_ids.as_deref()) {
             Ok(files) if files.is_empty() => Ok(Acted::default()),
             Ok(files) => match entry.origin {
-                EntryOrigin::Upload => self
+                EntryOrigin::Upload | EntryOrigin::ImportFolder => self
                     .drops
                     .match_entry(&entry, &files, &group)
                     .await
@@ -428,7 +461,10 @@ impl HeldService {
                         ..Acted::default()
                     })
                     .map_err(HeldError::from),
-                EntryOrigin::Download => self.match_download(&entry, files, &group, actor).await,
+                EntryOrigin::Download => {
+                    self.match_download(&entry, files, &group, Some(actor))
+                        .await
+                }
             },
             Err(error) => Err(error),
         };
@@ -457,7 +493,7 @@ impl HeldService {
                             .to_owned(),
                     ))
                 } else {
-                    self.recheck_files(&entry, files, actor).await
+                    self.recheck_files(&entry, files, Some(actor)).await
                 }
             }
             Err(error) => Err(error),
@@ -514,7 +550,7 @@ impl HeldService {
                         .filter(|file| ids.contains(&file.id))
                         .collect();
                     let done = self.recheck_each(&entry, mine).await;
-                    let done = self.import_confirmed(&entry, done, actor).await;
+                    let done = self.import_confirmed(&entry, done, Some(actor)).await;
                     self.release(entry.id).await;
                     done
                 }
@@ -533,7 +569,7 @@ impl HeldService {
         &self,
         entry: &Entry,
         files: Vec<HeldFile>,
-        actor: &str,
+        actor: Option<&str>,
     ) -> Result<Acted, HeldError> {
         let checked = self.recheck_each(entry, files).await;
         let results = self.import_confirmed(entry, checked, actor).await;
@@ -616,7 +652,7 @@ impl HeldService {
         &self,
         entry: &Entry,
         checked: Vec<(HeldFile, Result<Checked, String>)>,
-        actor: &str,
+        actor: Option<&str>,
     ) -> Vec<(i64, Result<bool, String>)> {
         let mut confirmed = Vec::new();
         let mut automatic = Vec::new();
@@ -642,7 +678,7 @@ impl HeldService {
         &self,
         entry: &Entry,
         files: Vec<HeldFile>,
-        actor: &str,
+        actor: Option<&str>,
         asker: Asker,
     ) -> Vec<(i64, Result<bool, String>)> {
         let mut results = Vec::new();
@@ -696,11 +732,19 @@ impl HeldService {
         // go. A copy that could not be removed keeps its row, still listed.
         let mut ids: Vec<i64> = Vec::with_capacity(files.len());
         let mut kept: Vec<Reason> = Vec::new();
+        let (mut changed, mut off_list) = (false, false);
         for file in &files {
-            if self.remove(file).await {
-                ids.push(file.id);
-            } else {
-                kept.push(file.reason);
+            match self.remove(&entry, file).await {
+                Removal::Gone => ids.push(file.id),
+                Removal::OffList => {
+                    off_list = true;
+                    ids.push(file.id);
+                }
+                Removal::Changed => {
+                    changed = true;
+                    kept.push(file.reason);
+                }
+                Removal::Kept => kept.push(file.reason),
             }
         }
         let deleted = ids.len();
@@ -737,10 +781,16 @@ impl HeldService {
         if kept.is_empty() {
             return Ok(Acted {
                 discarded,
+                message: off_list.then(|| {
+                    "Taken off the list. Their import folder is no longer set, so the files were left where they are."
+                        .to_owned()
+                }),
                 ..Acted::default()
             });
         }
-        let message = if kept.len() == 1 {
+        let message = if changed {
+            "A file in the import folder changed since it was listed, so it was not deleted. DroppedNeedle looks at it again by itself."
+        } else if kept.len() == 1 {
             "A held file could not be deleted, so it is still listed. Check that the server can write to its folder, then try again."
         } else {
             "Some held files could not be deleted, so they are still listed. Check that the server can write to its folder, then try again."
@@ -768,14 +818,17 @@ impl HeldService {
                 Ok(rows.entry(file.entry_id)?.map(|entry| (file, entry)))
             })
             .await?
-            .filter(|(_, entry)| entry.state.is_open() && viewer.may_touch(&entry.user_id))
-            .map(|(file, _)| file)
+            .filter(|(_, entry)| entry.state.is_open() && touches(viewer, entry.user_id.as_deref()))
             .ok_or(HeldError::NotFound("That held file was not found."))?;
+        let (file, entry) = file;
         let path = self
-            .folders
-            .locate(file.root, &file.path)
+            .located(&entry, &file)
+            .await?
             .ok_or(HeldError::NotFound("That held file was not found."))?;
-        let root = self.folders.dir(file.root).to_path_buf();
+        let root = match self.folders.dir(file.root) {
+            Some(dir) => dir.to_path_buf(),
+            None => self.import_folder_of(&entry).await?,
+        };
         let checked = tokio::task::spawn_blocking(move || {
             let meta = std::fs::symlink_metadata(&path).ok()?;
             let real = std::fs::canonicalize(&path).ok()?;
@@ -793,10 +846,29 @@ impl HeldService {
     /// that cannot be read refuses the action and changes nothing: the
     /// copy may well still be there.
     async fn on_disk(&self, entry: &Entry, file: &HeldFile) -> Result<Option<PathBuf>, HeldError> {
-        let Some(path) = self.folders.locate(file.root, &file.path) else {
+        let Some(path) = self.located(entry, file).await? else {
             return Ok(None);
         };
-        match tokio::fs::try_exists(&path).await {
+        // A person's own file in the import folder is never followed
+        // through a link.
+        let found = match file.root {
+            HeldRoot::Import => match tokio::fs::symlink_metadata(&path).await {
+                Ok(meta) if meta.is_file() && !super::as_listed(file, &meta) => {
+                    return Err(HeldError::Refused(CHANGED.to_owned()));
+                }
+                Ok(meta) if meta.is_file() => Ok(true),
+                Ok(_) => {
+                    return Err(HeldError::Refused(
+                        "That file in the import folder is a link or a folder now, so it is left alone."
+                            .to_owned(),
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                Err(error) => Err(error),
+            },
+            HeldRoot::Held | HeldRoot::Drop => tokio::fs::try_exists(&path).await,
+        };
+        match found {
             Ok(true) => return Ok(Some(path)),
             Ok(false) => {}
             Err(error) => {
@@ -818,9 +890,167 @@ impl HeldService {
         Ok(None)
     }
 
-    /// Remove a held file's copy; true once it is gone.
-    async fn remove(&self, file: &HeldFile) -> bool {
-        super::remove_copy(self.folders.dir(file.root), &file.path).await
+    /// Where a held file is: below its own folder, or below the import
+    /// folder while that is still the folder its entry's files came from.
+    /// `None` for a path that cannot be ours.
+    async fn located(&self, entry: &Entry, file: &HeldFile) -> Result<Option<PathBuf>, HeldError> {
+        match self.folders.dir(file.root) {
+            Some(dir) => Ok(super::below(dir, &file.path)),
+            None => Ok(super::below(
+                &self.import_folder_of(entry).await?,
+                &file.path,
+            )),
+        }
+    }
+
+    /// The import folder's real path for an import-folder entry, checked
+    /// now: refused while it is no longer the folder the entry's files came
+    /// from, or cannot be used.
+    async fn import_folder_of(&self, entry: &Entry) -> Result<PathBuf, HeldError> {
+        self.import_folder_now(entry)
+            .await?
+            .map_err(|unusable| match unusable {
+                Unusable::Off => HeldError::Refused(NO_LONGER_SET.to_owned()),
+                _ => HeldError::Refused(
+                    "The import folder can't be used right now. Check its status in Settings."
+                        .to_owned(),
+                ),
+            })
+    }
+
+    /// The import folder's real path for an import-folder entry now, or why
+    /// it cannot be used (`Off` when it is no longer the folder the entry's
+    /// files came from).
+    async fn import_folder_now(
+        &self,
+        entry: &Entry,
+    ) -> Result<Result<PathBuf, Unusable>, HeldError> {
+        let item = entry.drop_item_id.ok_or(HeldError::NotFound(GONE))?;
+        let dir: Option<String> = self
+            .db
+            .db()
+            .read("held.import_folder", move |conn| {
+                use rusqlite::OptionalExtension as _;
+                Ok::<_, HeldError>(
+                    conn.query_row(
+                        crate::drop_import::sql::FOLDER_OF_ITEM.text(),
+                        [item],
+                        |row| row.get(0),
+                    )
+                    .optional()?,
+                )
+            })
+            .await?;
+        let dir = dir.ok_or(HeldError::NotFound(GONE))?;
+        let site = self.site.clone();
+        tokio::task::spawn_blocking(move || site.folder_of(&dir))
+            .await
+            .map_err(|error| HeldError::Unavailable(format!("folder check did not run: {error}")))
+    }
+
+    /// Delete a held file a person discarded. An import-folder file is
+    /// deleted beneath the import folder, never through a link, and only
+    /// while it is the file that was listed. One in a folder that is no
+    /// longer the import folder is only taken off the list; while the folder
+    /// cannot be used it stays, listed.
+    async fn remove(&self, entry: &Entry, file: &HeldFile) -> Removal {
+        if let Some(dir) = self.folders.dir(file.root) {
+            return if super::remove_copy(dir, &file.path).await {
+                Removal::Gone
+            } else {
+                Removal::Kept
+            };
+        }
+        let folder = match self.import_folder_now(entry).await {
+            Ok(Ok(folder)) => folder,
+            Ok(Err(Unusable::Off)) => return Removal::OffList,
+            Ok(Err(_)) => return Removal::Kept,
+            Err(error) => {
+                tracing::warn!(file_id = file.id, %error, "import-folder file not removed");
+                return Removal::Kept;
+            }
+        };
+        let Some(path) = super::below(&folder, &file.path) else {
+            tracing::warn!(file_id = file.id, "import-folder file path refused");
+            return Removal::Gone;
+        };
+        let listed = file.clone();
+        let removed = tokio::task::spawn_blocking(move || {
+            match std::fs::symlink_metadata(&path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(Removal::Gone);
+                }
+                Err(error) => return Err(error),
+                Ok(meta) if !meta.is_file() || !super::as_listed(&listed, &meta) => {
+                    return Ok(Removal::Changed);
+                }
+                Ok(_) => {}
+            }
+            let folders = vec![folder.clone()];
+            match confine::remove_beneath(&folders, &path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            crate::import_folder::remove_empty_folders(&folder, &path);
+            Ok(Removal::Gone)
+        })
+        .await;
+        match removed {
+            Ok(Ok(removal)) => removal,
+            Ok(Err(error)) => {
+                tracing::warn!(file_id = file.id, %error, "import-folder file not removed");
+                Removal::Kept
+            }
+            Err(error) => {
+                tracing::warn!(file_id = file.id, %error, "import-folder file removal did not run");
+                Removal::Kept
+            }
+        }
+    }
+
+    /// Remove the files that went into the library from where they were
+    /// held. An import-folder file goes only while it has the exact bytes
+    /// the library took for this entry and is unchanged up to the unlink;
+    /// any other stays where it is, logged.
+    async fn consume(&self, entry: &Entry, files: &[HeldFile]) {
+        let (own, import): (Vec<&HeldFile>, Vec<&HeldFile>) =
+            files.iter().partition(|file| file.root != HeldRoot::Import);
+        for file in own {
+            self.remove(entry, file).await;
+        }
+        if import.is_empty() {
+            return;
+        }
+        let folder = match self.import_folder_of(entry).await {
+            Ok(folder) => folder,
+            Err(error) => {
+                tracing::warn!(entry_id = entry.id, %error, "imported files stay in the import folder");
+                return;
+            }
+        };
+        let placed = match self.library().placed_sources(&staging_name(entry)).await {
+            Ok(Some(placed)) => placed,
+            Ok(None) => {
+                tracing::info!(
+                    entry_id = entry.id,
+                    "imported files stay in the import folder until their publish is recovered"
+                );
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(entry_id = entry.id, %error, "imported files stay in the import folder");
+                return;
+            }
+        };
+        let rels: Vec<String> = import.iter().map(|file| file.path.clone()).collect();
+        if let Err(error) = tokio::task::spawn_blocking(move || {
+            crate::import_folder::remove_imported_files(&folder, &rels, &placed);
+        })
+        .await
+        {
+            tracing::warn!(entry_id = entry.id, %error, "import-folder removal did not run");
+        }
     }
 
     /// Place held files as a person's choice: one batch per download they
@@ -830,7 +1060,7 @@ impl HeldService {
         &self,
         entry: &Entry,
         files: Vec<HeldFile>,
-        actor: &str,
+        actor: Option<&str>,
         asker: Asker,
     ) -> Result<Acted, HeldError> {
         let mut groups: Vec<Vec<HeldFile>> = Vec::new();
@@ -855,12 +1085,16 @@ impl HeldService {
         &self,
         entry: &Entry,
         files: Vec<HeldFile>,
-        actor: &str,
+        actor: Option<&str>,
         asker: Asker,
         acted: &mut Acted,
     ) -> Result<(), HeldError> {
         let library = self.library();
-        if entry.origin == EntryOrigin::Upload && files.iter().any(|file| !file.is_paired()) {
+        if matches!(
+            entry.origin,
+            EntryOrigin::Upload | EntryOrigin::ImportFolder
+        ) && files.iter().any(|file| !file.is_paired())
+        {
             return Err(HeldError::Refused(
                 "These files are not paired with any track yet. Pick the album with Match."
                     .to_owned(),
@@ -907,7 +1141,11 @@ impl HeldService {
             // track; with none there, it is placed as it is.
             pairing.owned.push((index, track));
         }
-        let origin = self.origin_of(entry, first, task.as_ref());
+        let folder = match entry.origin {
+            EntryOrigin::ImportFolder => Some(self.import_folder_of(entry).await?),
+            EntryOrigin::Upload | EntryOrigin::Download => None,
+        };
+        let origin = self.origin_of(entry, first, task.as_ref(), folder);
         let batch = IntakeBatch {
             files: batch_files,
             target: intake::Target {
@@ -917,7 +1155,8 @@ impl HeldService {
             },
             origin,
             gate: asker.gate(),
-            owner: actor.to_owned(),
+            owner: actor.map(str::to_owned),
+            sidecars: Vec::new(),
         };
         let placement = match intake::place(library.as_ref(), &batch, pairing, None).await {
             Ok(placement) => placement,
@@ -998,14 +1237,18 @@ impl HeldService {
         .await
         .map_err(|error| self.record_failed(entry_id, error))?;
         acted.imported += count;
-        for file in files.iter().filter(|file| imported.contains(&file.id)) {
-            self.remove(file).await;
-        }
+        let went_in: Vec<HeldFile> = files
+            .iter()
+            .filter(|file| imported.contains(&file.id))
+            .cloned()
+            .collect();
+        self.consume(entry, &went_in).await;
         if count > 0 {
             tracing::info!(entry_id = entry.id, files = count, "held files imported");
             match (item, task) {
                 (Some(item), _) => {
-                    self.drops.announce_import(&release.release_group_id, count);
+                    self.drops
+                        .announce_import(&release.release_group_id, count, job_source(entry));
                     self.drops.tidy_item(item).await;
                 }
                 (None, Some(task)) => self.settle_task(&library, &task, &release).await,
@@ -1017,9 +1260,19 @@ impl HeldService {
 
     /// The batch origin of an entry's files: the download they came from
     /// (its import staged under the entry's own name), or the upload.
-    fn origin_of(&self, entry: &Entry, file: &HeldFile, task: Option<&TaskRow>) -> Origin {
-        match (entry.origin, entry.drop_item_id) {
-            (EntryOrigin::Upload, Some(drop_item_id)) => Origin::Upload { drop_item_id },
+    fn origin_of(
+        &self,
+        entry: &Entry,
+        file: &HeldFile,
+        task: Option<&TaskRow>,
+        folder: Option<PathBuf>,
+    ) -> Origin {
+        match (entry.origin, entry.drop_item_id, folder) {
+            (EntryOrigin::ImportFolder, Some(drop_item_id), Some(folder)) => Origin::Folder {
+                drop_item_id,
+                folders: vec![folder],
+            },
+            (EntryOrigin::Upload, Some(drop_item_id), _) => Origin::Upload { drop_item_id },
             _ => Origin::Download {
                 task_id: file
                     .source_task_id
@@ -1131,7 +1384,7 @@ impl HeldService {
         entry: &Entry,
         files: Vec<HeldFile>,
         group: &str,
-        actor: &str,
+        actor: Option<&str>,
     ) -> Result<Acted, HeldError> {
         let library = self.library();
         let mut groups: Vec<Vec<HeldFile>> = Vec::new();
@@ -1210,9 +1463,10 @@ impl HeldService {
                     join: None,
                     asked: Vec::new(),
                 },
-                origin: self.origin_of(entry, first, task.as_ref()),
+                origin: self.origin_of(entry, first, task.as_ref(), None),
                 gate: Gate::PersonChoseAlbum,
-                owner: actor.to_owned(),
+                owner: actor.map(str::to_owned),
+                sidecars: Vec::new(),
             };
             let placement = intake::place(library.as_ref(), &batch, pairing, None)
                 .await
@@ -1287,9 +1541,7 @@ impl HeldService {
             })
             .await
             .map_err(|error| self.record_failed(entry_id, error))?;
-            for file in &consumed {
-                self.remove(file).await;
-            }
+            self.consume(entry, &consumed).await;
             if let Some(task) = task
                 && acted.imported > 0
             {
@@ -1441,6 +1693,7 @@ impl HeldService {
             }
         };
         for (entry_id, owner) in due {
+            // Work of no user is retried as an admin's view of it.
             let files = match self
                 .read("held.retry_files", move |rows| rows.entry(entry_id))
                 .await
@@ -1461,11 +1714,17 @@ impl HeldService {
                 continue;
             }
             let viewer = Viewer {
-                user_id: owner.clone(),
-                admin: false,
+                user_id: owner.clone().unwrap_or_default(),
+                admin: owner.is_none(),
             };
             match self
-                .import_for(&viewer, entry_id, Some(files), &owner, Asker::Loop)
+                .import_for(
+                    &viewer,
+                    entry_id,
+                    Some(files),
+                    owner.as_deref(),
+                    Asker::Loop,
+                )
                 .await
             {
                 Ok(acted) => {
@@ -1535,14 +1794,16 @@ impl HeldService {
             let mut committed = Vec::new();
             let mut absent = Vec::new();
             for file in &entry.files {
-                let Some(path) = self.folders.locate(file.root, &file.path) else {
+                let Ok(Some(path)) = self.located(&entry, file).await else {
                     continue;
                 };
                 // A discard cut off after it removed the copy: the row goes
                 // too. A folder that is not there says nothing about a file.
-                if tokio::fs::try_exists(self.folders.dir(file.root))
-                    .await
-                    .unwrap_or(false)
+                let folder_there = match self.folders.dir(file.root) {
+                    Some(dir) => tokio::fs::try_exists(dir).await.unwrap_or(false),
+                    None => true,
+                };
+                if folder_there
                     && matches!(
                         tokio::fs::symlink_metadata(&path).await,
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound
@@ -1581,9 +1842,7 @@ impl HeldService {
                         imported = committed.len(),
                         "held action cut off by a restart finished"
                     );
-                    for file in &committed {
-                        self.remove(file).await;
-                    }
+                    self.consume(&entry, &committed).await;
                     self.forget_cut_off(entry_id);
                 }
                 Err(error) => tracing::warn!(entry_id, %error, "cut-off held entry not finished"),
@@ -1634,7 +1893,10 @@ impl HeldService {
             };
             let mut gone = Vec::with_capacity(copies.len());
             for (file_id, root, path) in &copies {
-                if super::remove_copy(self.folders.dir(*root), path).await {
+                let Some(dir) = self.folders.dir(*root) else {
+                    continue;
+                };
+                if super::remove_copy(dir, path).await {
                     gone.push(*file_id);
                 }
             }
@@ -1673,8 +1935,25 @@ type Decided = (i64, Option<FileState>, Option<(Reason, String, Pairing)>);
 /// how a restart finds what an action placed.
 fn staging_name(entry: &Entry) -> String {
     match (entry.origin, entry.drop_item_id) {
-        (EntryOrigin::Upload, Some(item)) => format!("drop-{item}"),
+        (EntryOrigin::Upload | EntryOrigin::ImportFolder, Some(item)) => format!("drop-{item}"),
         _ => format!("held-{}", entry.id),
+    }
+}
+
+/// The drop job source an entry's files came from, for plugins.
+fn job_source(entry: &Entry) -> DropJobSource {
+    match entry.origin {
+        EntryOrigin::ImportFolder => DropJobSource::ImportFolder,
+        EntryOrigin::Upload | EntryOrigin::Download => DropJobSource::Upload,
+    }
+}
+
+/// Whether `viewer` may see and act on an entry of `owner`: work of no
+/// user (the import folder's) is an admin's.
+fn touches(viewer: &Viewer, owner: Option<&str>) -> bool {
+    match owner {
+        Some(owner) => viewer.may_touch(owner),
+        None => viewer.admin,
     }
 }
 
@@ -1806,7 +2085,9 @@ pub fn is_retry(reason: Reason) -> bool {
 /// automatic import does, through [`Gate::HeldRetry`], which never replaces a
 /// library copy.
 fn settles_as_automatic(file: &HeldFile) -> bool {
-    file.reason == Reason::AcoustidUnavailable && file.root == HeldRoot::Drop && file.is_paired()
+    file.reason == Reason::AcoustidUnavailable
+        && matches!(file.root, HeldRoot::Drop | HeldRoot::Import)
+        && file.is_paired()
 }
 
 /// Whether a held file is retried by itself: paired with a track, and held

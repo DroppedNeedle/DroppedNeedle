@@ -46,6 +46,7 @@ pub mod edition;
 pub mod flows;
 pub mod follows;
 pub mod held;
+pub mod import_folder;
 pub mod imports;
 pub mod intake;
 pub mod landing;

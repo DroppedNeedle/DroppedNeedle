@@ -316,7 +316,7 @@ async fn plan(
         let release_track = &release.tracks[track];
         match &batch.origin {
             _ if gate.imports_held() => true,
-            Origin::Upload { .. } => true,
+            Origin::Upload { .. } | Origin::Folder { .. } => true,
             Origin::Download { upgrade, .. } => {
                 *upgrade
                     || batch
@@ -629,6 +629,15 @@ async fn import(
             None,
             None,
         ),
+        Origin::Folder {
+            drop_item_id,
+            folders,
+        } => (
+            format!("drop-{drop_item_id}"),
+            ImportOrigin::Folder,
+            None,
+            Some(folders.clone()),
+        ),
     };
     let request = ImportRequest {
         task_id: task_id.clone(),
@@ -652,6 +661,7 @@ async fn import(
             .map(|file| extra_file(&batch.files[*file].file))
             .collect(),
         actor: batch.owner.clone(),
+        sidecars: batch.sidecars.clone(),
     };
     let receipt = library.import(request).await?;
     let skipped: HashMap<usize, String> = receipt.skipped.into_iter().collect();

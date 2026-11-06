@@ -332,6 +332,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0140_artist_join_undo.sql",
         "f3fc8b836d93a8189b46d92fd63eb010ec44d69dc084a0bebf1f498fd0d826c2",
     ),
+    (
+        "0141_import_folder.sql",
+        "3153174e8569240731263a2052b291b19b758dd6e32bb633c6658fb7bbc96473",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -585,6 +589,168 @@ fn held_reasons_narrow_and_every_held_row_is_kept() {
         ),
         ["held_by_earlier_version:a/01.flac"]
     );
+}
+
+/// Every row of `table` as text, in rowid order, its columns as named.
+fn table_rows(connection: &Connection, table: &str, columns: &str) -> Vec<String> {
+    let mut statement = connection
+        .prepare(&format!("SELECT {columns} FROM {table} ORDER BY rowid"))
+        .unwrap();
+    let count = statement.column_count();
+    statement
+        .query_map([], |row| {
+            (0..count)
+                .map(|at| Ok(format!("{:?}", row.get_ref(at)?)))
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map(|cells| cells.join("|"))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+/// 0141 lets the import folder's work belong to no user: drop import jobs
+/// gain their source (every carried job an upload), and a held entry may
+/// have no owner and no expiry, a held file may sit in the import folder or
+/// be held as unreadable. Every row keeps its id and rowid, no foreign key
+/// breaks, the indexes come back, nothing else in the schema changes, and
+/// the held triggers bump an owner's revision as before and no longer fail
+/// on an entry of no user.
+#[test]
+fn import_folder_upgrade_keeps_every_row() {
+    let dir = ScratchDir::new("import-folder-upgrade");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..6], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 140);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'U', 1);
+             INSERT INTO drop_import_jobs (id, user_id, user_name, status, created_at,
+                 upload_name, staging_dir, error)
+                 VALUES ('j1', 'u1', 'U', 'completed', 5, 'Dummy.zip', '/imports/drop/j1', NULL);
+             INSERT INTO drop_import_items (id, job_id, folder_name, status, updated_at,
+                 staging_paths) VALUES (3, 'j1', 'Dummy', 'needs_review', 6, '[]');
+             INSERT INTO acquire_held_entries (id, user_id, origin, group_key, drop_item_id,
+                 state, created_at, expires_at, retry_tries, retry_at)
+                 VALUES (7, 'u1', 'upload', 'upload:3', 3, 'held', 10, 20, 2, 30);
+             INSERT INTO acquire_held_files (id, entry_id, root, path, original_name, source,
+                 reason, state, created_at)
+                 VALUES (42, 7, 'drop', 'j1/01.flac', '01.flac', 'upload', 'no_album_match',
+                 'held', 11);",
+        )
+        .unwrap();
+    let job_columns = "id, user_id, user_name, status, created_at, upload_name, staging_dir, error";
+    let rows = |connection: &Connection| {
+        (
+            table_rows(
+                connection,
+                "drop_import_jobs",
+                &format!("rowid, {job_columns}"),
+            ),
+            table_rows(connection, "drop_import_items", "rowid, *"),
+            table_rows(connection, "acquire_held_entries", "rowid, *"),
+            table_rows(
+                connection,
+                "acquire_held_files",
+                "rowid, id, entry_id, root, path, original_name, release_mbid, \
+                 release_track_mbid, recording_mbid, disc_number, track_number, track_title, \
+                 file_format, duration_seconds, expected_duration_seconds, evidence_title, \
+                 evidence_artist, evidence_score, source, source_task_id, reason, reason_detail, \
+                 state, created_at, resolved_at",
+            ),
+        )
+    };
+    let rebuilt = [
+        "drop_import_jobs",
+        "acquire_held_entries",
+        "acquire_held_files",
+    ];
+    let others = |connection: &Connection| {
+        let mut rows = schema_rows(connection);
+        rows.retain(|(kind, name, _, _)| {
+            let rebuilt_table = kind == "table" && rebuilt.contains(&name.as_str());
+            let held_trigger = kind == "trigger" && name.starts_with("download_activity_held_");
+            !(rebuilt_table || held_trigger)
+        });
+        rows
+    };
+    let (before_rows, before_schema) = (rows(&connection), others(&connection));
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..7], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 141);
+    assert_eq!(rows(&connection), before_rows, "every row as it was");
+    assert_eq!(others(&connection), before_schema, "nothing else changes");
+    assert_eq!(
+        texts(&connection, "SELECT source FROM drop_import_jobs", []),
+        ["upload"]
+    );
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"),
+        0
+    );
+
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .unwrap();
+    let global = |connection: &Connection| {
+        scalar(
+            connection,
+            "SELECT revision FROM download_activity_global_revision",
+        )
+    };
+    let user = |connection: &Connection| {
+        scalar(
+            connection,
+            "SELECT COALESCE((SELECT revision FROM download_activity_user_revisions \
+             WHERE user_id = 'u1'), 0)",
+        )
+    };
+    let (global_before, user_before) = (global(&connection), user(&connection));
+    connection
+        .execute_batch(
+            "INSERT INTO drop_import_jobs (id, user_id, status, created_at, upload_name,
+                 staging_dir, source)
+                 VALUES ('j2', NULL, 'processing', 40, 'Import folder', '/import',
+                 'import_folder');
+             INSERT INTO drop_import_items (id, job_id, folder_name, status, updated_at)
+                 VALUES (4, 'j2', 'Odds', 'needs_review', 41);
+             INSERT INTO acquire_held_entries (id, user_id, origin, group_key, drop_item_id,
+                 state, created_at, expires_at)
+                 VALUES (8, NULL, 'import_folder', 'upload:4', 4, 'held', 42, NULL);
+             INSERT INTO acquire_held_files (id, entry_id, root, path, original_name, source,
+                 reason, state, created_at)
+                 VALUES (43, 8, 'import', 'Odds/09.flac', 'Odds/09.flac', 'import_folder',
+                 'corrupt', 'held', 43);
+             UPDATE acquire_held_files SET state = 'discarded' WHERE id = 43;
+             UPDATE acquire_held_entries SET state = 'resolved' WHERE id = 8;",
+        )
+        .expect("work of no user is written");
+    assert_eq!(global(&connection), global_before + 4, "admins see it move");
+    assert_eq!(user(&connection), user_before, "no user's revision moves");
+    connection
+        .execute_batch("UPDATE acquire_held_files SET reason = 'samples' WHERE id = 42")
+        .unwrap();
+    assert_eq!(
+        user(&connection),
+        user_before + 1,
+        "an owner's revision still moves"
+    );
+    for refused in [
+        "INSERT INTO drop_import_jobs (id, user_id, status, created_at, upload_name,
+             staging_dir) VALUES ('j3', NULL, 'processing', 1, 'x', '/x')",
+        "INSERT INTO acquire_held_entries (user_id, origin, group_key, state, created_at,
+             expires_at) VALUES ('u1', 'upload', 'k', 'held', 1, NULL)",
+        "INSERT INTO acquire_held_entries (user_id, origin, group_key, state, created_at,
+             expires_at) VALUES ('u1', 'import_folder', 'k', 'held', 1, NULL)",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
 }
 
 /// 0137 makes the retired-albums index partial (only retired rows) and
@@ -1591,7 +1757,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_acquire::downloads::landing_rows::ImportOutcome;
     use droppedneedle_acquire::downloads::quarantine::QuarantineReason;
     use droppedneedle_acquire::downloads::state::{AttemptDisposition, AttemptState, TaskStatus};
-    use droppedneedle_acquire::drop_import::store::{DropItemStatus, DropJobStatus};
+    use droppedneedle_acquire::drop_import::store::{DropItemStatus, DropJobSource, DropJobStatus};
     use droppedneedle_acquire::held::store::{EntryOrigin, EntryState, FileState, HeldRoot};
     use droppedneedle_acquire::reason::Reason;
     use droppedneedle_acquire::requests::batches::models::BatchOutcome;
@@ -1669,6 +1835,7 @@ fn state_columns() -> Vec<StateColumn> {
         state("download_tasks", "status", &TaskStatus::ALL, TaskStatus::as_str),
         state("drop_import_items", "status", &DropItemStatus::ALL, DropItemStatus::as_str),
         state("drop_import_jobs", "status", &DropJobStatus::ALL, DropJobStatus::as_str),
+        state("drop_import_jobs", "source", &DropJobSource::ALL, DropJobSource::as_str),
         state("personal_mix_approvals", "state", &ApprovalState::ALL, ApprovalState::as_str),
         state("request_history", "origin", &DispatchOrigin::ALL, DispatchOrigin::as_str),
         state("request_history", "request_kind", &RequestKind::ALL, RequestKind::as_str),

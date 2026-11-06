@@ -75,4 +75,4 @@ Indexers added one by one are asked at most about once a second each. Many cap A
 
 ## Drop imports
 
-Bought music somewhere else? Drop it in. Admins and trusted users can upload up to 25 files at once on the Downloads page: audio files, or `.zip` archives straight from the store. Each album is identified, tagged and filed, or held for a manual match. The details are under [Drop imports](downloads.md#drop-imports).
+Bought music somewhere else? Drop it in. Admins and trusted users can upload up to 25 files at once on the Downloads page: audio files, or `.zip` archives straight from the store. Each album is identified, tagged and filed, or held for a manual match. The details are under [Drop imports](downloads.md#drop-imports). For a large collection, an admin can set an [import folder](downloads.md#import-folder) that DroppedNeedle imports from and empties by itself; it needs no download client.

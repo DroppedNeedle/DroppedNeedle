@@ -7,6 +7,7 @@
 	import DiscoveryBatchList from '$lib/features/discover/components/DiscoveryBatchList.svelte';
 	import DropImportJobList from '$lib/features/downloads/components/DropImportJobList.svelte';
 	import DropImportZone from '$lib/features/downloads/components/DropImportZone.svelte';
+	import ImportFolderLine from '$lib/features/settings/components/ImportFolderLine.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ListPageHeader from '$lib/ui/ListPageHeader.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
@@ -105,6 +106,7 @@
 		{#if activeTab === 'import' && canImport}
 			<div class="space-y-6">
 				<DropImportZone />
+				<ImportFolderLine />
 				{#if isAdmin}
 					<div class="dl-everyone">
 						<ToggleRow label="Show everyone's imports" bind:checked={showAllImports} />

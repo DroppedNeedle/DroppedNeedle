@@ -296,7 +296,7 @@ fn fetch_facts(
                 landed.extend(wanted.iter().filter(|at| !missing.contains(at)));
             }
         }
-        for entry in rows.list(None, None, Some(task_id))? {
+        for entry in rows.list(None, false, None, Some(task_id))? {
             for file in entry.files {
                 if file.source_task_id.as_deref() != Some(task_id.as_str()) {
                     continue;

@@ -104,10 +104,23 @@ impl Landing {
 /// canonical library folders): a job folder that contains the library
 /// must not pull library files into an import. Blocking.
 pub fn probe(paths: &[PathBuf], libraries: &[PathBuf]) -> Landing {
+    probe_beneath(paths, libraries, None)
+}
+
+/// [`probe`], with every file read beneath `beneath` (a real folder path,
+/// such as the import folder's) instead of beneath the path it was found
+/// under. Blocking.
+pub fn probe_beneath(paths: &[PathBuf], libraries: &[PathBuf], beneath: Option<&Path>) -> Landing {
     let mut files = Vec::new();
     let mut landing = Landing::default();
     for path in paths {
         collect(path, path, 0, libraries, &mut files, &mut landing);
+    }
+    if let Some(beneath) = beneath {
+        files.retain(|(_, path)| path.starts_with(beneath));
+        for (root, _) in &mut files {
+            *root = beneath.to_path_buf();
+        }
     }
     files.sort_by(|left, right| left.1.cmp(&right.1));
     files.dedup_by(|left, right| left.1 == right.1);

@@ -135,7 +135,12 @@ vi.mock('$lib/features/settings/queries/SectionSettingsQueries.svelte', async (i
 		isPending: false,
 		isError: false
 	}),
-	createSaveLibraryWatcherSettingsMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
+	createSaveLibraryWatcherSettingsMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	getImportFolderSettingsQuery: () => ({ data: { path: '' }, isPending: false, isError: false }),
+	createSaveImportFolderSettingsMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	getImportFolderStatusQuery: () => ({
+		data: { state: 'off', overlap: null, overlap_path: null, waiting: 0 }
+	})
 }));
 vi.mock('$lib/features/settings/queries/LyricsSettingsQueries.svelte', () => ({
 	getLyricsSettingsQuery: () => ({ data: { enabled: true }, isPending: false, isError: false }),

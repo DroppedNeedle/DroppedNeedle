@@ -66,17 +66,35 @@ droppedneedle_kernel::spelled!(DropItemStatus {
     Discarded => "discarded",
 });
 
-/// One upload gesture.
+/// Where a job's files came from. The `drop_import_jobs.source` CHECK lists
+/// exactly these values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropJobSource {
+    /// A person's upload, staged in the app's own folder.
+    Upload,
+    /// Albums taken from the import folder, read where they are. The job
+    /// belongs to no user.
+    ImportFolder,
+}
+
+droppedneedle_kernel::spelled!(DropJobSource {
+    Upload => "upload",
+    ImportFolder => "import_folder",
+});
+
+/// One upload gesture, or one pass of the import folder.
 #[derive(Debug, Clone, PartialEq)]
 pub struct JobRecord {
     pub id: String,
-    pub user_id: String,
+    /// `None` for the import folder's jobs.
+    pub user_id: Option<String>,
     pub user_name: String,
     pub status: DropJobStatus,
     pub created_at: f64,
     pub upload_name: String,
     pub staging_dir: String,
     pub error: Option<String>,
+    pub source: DropJobSource,
     pub items: Vec<ItemRecord>,
 }
 
@@ -98,7 +116,9 @@ pub struct ItemRecord {
     /// Why the item stopped short, when it did.
     pub reason_code: Option<Reason>,
     /// The item's staged files while it is processed; empty once settled
-    /// (files still waiting are in the held list).
+    /// (files still waiting are in the held list). An import-folder item
+    /// names them below the import folder, and keeps the ones that went in
+    /// once settled, until they have left the folder.
     pub staging_paths: Vec<String>,
 }
 
@@ -148,6 +168,7 @@ impl JobRecord {
             upload_name: row.get(5)?,
             staging_dir: row.get(6)?,
             error: row.get(7)?,
+            source: row.get(8)?,
             items: Vec::new(),
         })
     }
@@ -202,7 +223,7 @@ impl DropStore {
         &self.db
     }
 
-    /// Register a job as processing.
+    /// Register an upload as processing.
     pub async fn create_job(
         &self,
         id: &str,
@@ -389,7 +410,7 @@ impl DropStore {
                     Option<String>,
                     Option<String>,
                     Option<String>,
-                    String,
+                    Option<String>,
                     bool,
                     bool,
                 );
@@ -460,6 +481,185 @@ impl DropStore {
                 let jobs =
                     tx.execute(sql::FAIL_PROCESSING_JOBS.text(), params![reason.message()])?;
                 Ok(jobs)
+            })
+            .await
+            .map_err(write_error)
+    }
+
+    /// One pass of the import folder `folder`: the albums found ready
+    /// (`(folder name, files below the folder)`, `listed` giving each file's
+    /// size and modification time now), less every file an item is still
+    /// working on or has still to remove and every file an open entry of the
+    /// held list holds there, become one job, read and written in one
+    /// transaction so nothing is queued twice. A held file that changed since
+    /// it was listed is not the file a person was shown: while nobody acts on
+    /// its entry, its row goes and the file is new work. Answers how many
+    /// albums were queued.
+    pub async fn queue_folder(
+        &self,
+        id: &str,
+        folder: &str,
+        units: Vec<(String, Vec<String>)>,
+        listed: std::collections::HashMap<String, (i64, i64)>,
+    ) -> Result<usize, StoreError> {
+        let (id, folder) = (id.to_owned(), folder.to_owned());
+        let clock = self.db.clock().clone();
+        self.db
+            .write_background("drop_import.queue_folder", move |tx| {
+                let now = clock.now_ms();
+                let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+                let mut changed: Vec<(i64, i64)> = Vec::new();
+                {
+                    let mut statement = tx.prepare(sql::FOLDER_TAKEN.text())?;
+                    let rows =
+                        statement.query_map(params![folder], |row| row.get::<_, String>(0))?;
+                    for paths in rows {
+                        taken.extend(
+                            serde_json::from_str::<Vec<String>>(&paths?).unwrap_or_default(),
+                        );
+                    }
+                    type Held = (i64, i64, String, Option<i64>, Option<i64>, bool);
+                    let mut statement = tx.prepare(crate::held::sql::IMPORT_FOLDER_HELD.text())?;
+                    let rows = statement.query_map(params![folder], |row| {
+                        Ok::<Held, _>((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                        ))
+                    })?;
+                    for row in rows {
+                        let (file_id, entry_id, path, size, modified, waiting) = row?;
+                        let differs = match (size, modified, listed.get(&path)) {
+                            (Some(size), Some(modified), Some(now_is)) => {
+                                (size, modified) != *now_is
+                            }
+                            _ => false,
+                        };
+                        if differs && waiting {
+                            changed.push((entry_id, file_id));
+                        } else {
+                            taken.insert(path);
+                        }
+                    }
+                }
+                let rows = HeldRows::new(tx);
+                for (entry_id, file_id) in changed {
+                    rows.resolve(
+                        entry_id,
+                        &[file_id],
+                        crate::held::store::FileState::Discarded,
+                        now,
+                    )?;
+                }
+                let units: Vec<(String, Vec<String>)> = units
+                    .into_iter()
+                    .map(|(name, files)| {
+                        let files: Vec<String> = files
+                            .into_iter()
+                            .filter(|file| !taken.contains(file))
+                            .collect();
+                        (name, files)
+                    })
+                    .filter(|(_, files)| !files.is_empty())
+                    .collect();
+                if units.is_empty() {
+                    return Ok(0);
+                }
+                let at = now;
+                tx.execute(sql::INSERT_FOLDER_JOB.text(), params![id, at, folder])?;
+                for (folder_name, paths) in &units {
+                    let total = i64::try_from(paths.len()).unwrap_or(i64::MAX);
+                    let paths = serde_json::to_string(paths).unwrap_or_else(|_| "[]".to_owned());
+                    tx.execute(
+                        sql::INSERT_ITEM.text(),
+                        params![id, folder_name, total, paths, at],
+                    )?;
+                }
+                Ok(units.len())
+            })
+            .await
+            .map_err(write_error)
+    }
+
+    /// The import folder's albums still to run, oldest first.
+    pub async fn folder_items(&self, folder: &str) -> Result<Vec<ItemRecord>, StoreError> {
+        let folder = folder.to_owned();
+        self.read("drop_import.folder_items", move |conn| {
+            conn.prepare(sql::FOLDER_PROCESSING.text())?
+                .query_map(params![folder], ItemRecord::from_row)?
+                .collect()
+        })
+        .await
+    }
+
+    /// The import folder's settled albums whose imported files still wait
+    /// to leave the folder.
+    pub async fn folder_removals(&self, folder: &str) -> Result<Vec<ItemRecord>, StoreError> {
+        let folder = folder.to_owned();
+        self.read("drop_import.folder_removals", move |conn| {
+            conn.prepare(sql::FOLDER_REMOVALS.text())?
+                .query_map(params![folder], ItemRecord::from_row)?
+                .collect()
+        })
+        .await
+    }
+
+    /// How many of the import folder's albums are still to run.
+    pub async fn folder_waiting(&self, folder: &str) -> Result<i64, StoreError> {
+        let folder = folder.to_owned();
+        self.read("drop_import.folder_waiting", move |conn| {
+            conn.query_row(sql::FOLDER_WAITING.text(), params![folder], |row| {
+                row.get(0)
+            })
+        })
+        .await
+    }
+
+    /// A settled import-folder item is done with its files.
+    pub async fn clear_removals(&self, item_id: i64) -> Result<(), StoreError> {
+        let clock = self.db.clock().clone();
+        self.db
+            .write_background("drop_import.clear_removals", move |tx| {
+                tx.execute(sql::CLEAR_REMOVALS.text(), params![item_id, clock.now_ms()])?;
+                tx.execute(sql::SETTLE_FOLDER_JOBS.text(), [])?;
+                Ok(())
+            })
+            .await
+            .map_err(write_error)
+    }
+
+    /// Import-folder jobs with nothing left to run complete.
+    pub async fn settle_folder_jobs(&self) -> Result<(), StoreError> {
+        self.db
+            .write_background("drop_import.settle_folder_jobs", |tx| {
+                tx.execute(sql::SETTLE_FOLDER_JOBS.text(), [])?;
+                Ok(())
+            })
+            .await
+            .map_err(write_error)
+    }
+
+    /// The import folder is now `folder` (`None`: off). Albums of any other
+    /// folder not yet started fail with that reason, and no file there is
+    /// touched. Its leftovers stay listed and its imported files still wait
+    /// to leave it, should it be the import folder again. Answers how many
+    /// albums it let go.
+    pub async fn leave_other_folders(&self, folder: Option<&str>) -> Result<usize, StoreError> {
+        let folder = folder.map(str::to_owned);
+        let clock = self.db.clock().clone();
+        self.db
+            .write_background("drop_import.leave_other_folders", move |tx| {
+                let now = clock.now_ms();
+                let note = "The import folder was changed; its files were left where they were.";
+                let left = tx.execute(
+                    sql::FAIL_OTHER_FOLDER_ITEMS.text(),
+                    params![folder, note, Reason::Interrupted.code(), now],
+                )?;
+                tx.execute(sql::FAIL_OTHER_FOLDER_JOBS.text(), params![folder, note])?;
+                Ok(left)
             })
             .await
             .map_err(write_error)

@@ -281,7 +281,7 @@ also read with dots, like `event.payload.task_id`):
 | `playback_started` | `artist`, `track`, `album`, `user_id` |
 | `download_started`, `download_completed`, `download_failed` | `task_id`, `user_id`, `release_group_mbid`, `source`, `outcome` |
 | `request_created`, `request_fulfilled` | `request_id`, `user_id`, `release_group_mbid`, `status` |
-| `import_finished` | `release_group_mbid`, `track_count`, `source` |
+| `import_finished` | `release_group_mbid`, `track_count`, `source` (`drop_import` for an upload, `import_folder` for the import folder) |
 | `plugin_notice` | `source_plugin`, `title`, `body` |
 
 Each plugin handles one event at a time. An event that arrives while the

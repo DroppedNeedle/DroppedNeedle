@@ -200,10 +200,10 @@ impl Reason {
     ];
 
     /// The reasons a held file can carry, in declaration order: every hold
-    /// and library reason, and the two outside lookups a held file waits
-    /// on. `acquire_held_files.reason` lists exactly these, so a reason only
+    /// and library reason, the two outside lookups a held file waits on,
+    /// and a file of the import folder that does not read. `acquire_held_files.reason` lists exactly these, so a reason only
     /// a download task carries needs no schema change.
-    pub const HELD: [Reason; 34] = [
+    pub const HELD: [Reason; 35] = [
         Self::WeakMatch,
         Self::NoArtistEvidence,
         Self::MostlyUnmatched,
@@ -236,6 +236,7 @@ impl Reason {
         Self::LibraryFolderMissing,
         Self::LibraryOff,
         Self::LocalFault,
+        Self::Corrupt,
         Self::MusicbrainzUnavailable,
         Self::AcoustidUnavailable,
     ];
@@ -595,7 +596,7 @@ impl Reason {
                 "Retry import once the download client shows it finished, or let DroppedNeedle try another source."
             }
             Self::Corrupt => {
-                "A download tries another source when one is left. For an upload, drop in a fresh copy."
+                "A download tries another source when one is left. Otherwise put a fresh copy in, or discard it."
             }
             Self::NoAudio | Self::Sample | Self::WrongAlbum => {
                 "Nothing to do: DroppedNeedle skips this source and tries the next one."
@@ -913,13 +914,15 @@ mod tests {
                 matches!(reason.kind(), ReasonKind::Hold | ReasonKind::Library)
                     || matches!(
                         reason,
-                        Reason::MusicbrainzUnavailable | Reason::AcoustidUnavailable
+                        Reason::MusicbrainzUnavailable
+                            | Reason::AcoustidUnavailable
+                            | Reason::Corrupt
                     )
             })
             .collect();
         assert_eq!(Reason::HELD.to_vec(), expected, "held reasons");
         assert_eq!(
-            Reason::Corrupt.held(),
+            Reason::NoAudio.held(),
             Reason::HeldByEarlierVersion,
             "held reasons"
         );

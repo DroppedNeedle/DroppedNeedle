@@ -8434,6 +8434,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/library/import-folder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the import folder setting. */
+        get: operations["get_import_folder"];
+        /**
+         * Save the import folder. Music copied there is imported, then
+         *     removed from it.
+         */
+        put: operations["put_import_folder"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library/import-folder/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the import folder is doing now, or why it waits.
+         *     `GET /api/v3/settings/library/import-folder/status`.
+         */
+        get: operations["import_folder_status_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/settings/library/policy-apply-preview": {
         parameters: {
             query?: never;
@@ -14024,7 +14065,7 @@ export interface components {
          * @description Where an entry's files came from.
          * @enum {string}
          */
-        EntryOrigin: "download" | "upload";
+        EntryOrigin: "download" | "upload" | "import_folder";
         /**
          * @description Where an entry is in its life.
          * @enum {string}
@@ -14661,9 +14702,10 @@ export interface components {
             drop_item_id?: number | null;
             /**
              * Format: int64
-             * @description When its held files are removed, in milliseconds.
+             * @description When its held files are removed, in milliseconds. `None` for files
+             *     left in the import folder, which stay until a person decides.
              */
-            expires_at: number;
+            expires_at?: number | null;
             files: components["schemas"]["HeldFileResponse"][];
             /** Format: int64 */
             id: number;
@@ -14729,7 +14771,7 @@ export interface components {
             recording_mbid?: string | null;
             release_mbid?: string | null;
             release_track_mbid?: string | null;
-            /** @description `soulseek`, `usenet`, `plugin:<key>` or `upload`. */
+            /** @description `soulseek`, `usenet`, `plugin:<key>`, `upload` or `import_folder`. */
             source: string;
             source_task_id?: string | null;
             /** Format: int64 */
@@ -15016,6 +15058,40 @@ export interface components {
             reason_code?: null | components["schemas"]["Reason"];
             /** @description The reason as a plain sentence. */
             reason_text?: string | null;
+        };
+        /**
+         * @description The folder on the server DroppedNeedle imports music from by itself and
+         *     empties as it goes. An empty path turns it off.
+         */
+        ImportFolder: {
+            /**
+             * @description An absolute folder path as the server sees it, or empty for off.
+             * @default
+             */
+            path: string;
+        };
+        /**
+         * @description Which kind of folder the import folder overlaps.
+         * @enum {string}
+         */
+        ImportFolderOverlap: "library" | "recycle_bin" | "downloads" | "app";
+        /**
+         * @description What the import folder is doing, or why it waits.
+         * @enum {string}
+         */
+        ImportFolderState: "off" | "watching" | "importing" | "waiting_for_scan" | "retrying" | "library_off" | "settings_unreadable" | "unreachable" | "read_only" | "overlaps";
+        /** @description What the import folder is doing, or why it waits. */
+        ImportFolderStatusResponse: {
+            /** @description With `overlaps`: the kind of folder it overlaps. */
+            overlap?: null | components["schemas"]["ImportFolderOverlap"];
+            /** @description With `overlaps`: that folder's path. */
+            overlap_path?: string | null;
+            state: components["schemas"]["ImportFolderState"];
+            /**
+             * Format: int64
+             * @description Albums found and still to go in.
+             */
+            waiting: number;
         };
         /** @description Receipt for a playlist import into the local catalog. */
         ImportResult: {
@@ -46023,6 +46099,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryManagementChangeImpact"];
+                };
+            };
+        };
+    };
+    get_import_folder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Import folder */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportFolder"];
+                };
+            };
+        };
+    };
+    put_import_folder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportFolder"];
+            };
+        };
+        responses: {
+            /** @description Saved import folder */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportFolder"];
+                };
+            };
+        };
+    };
+    import_folder_status_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportFolderStatusResponse"];
                 };
             };
         };

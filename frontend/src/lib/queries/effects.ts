@@ -244,6 +244,10 @@ export const EFFECTS = {
 	downloadPolicyChanged: (): Sweep[] => [{ key: DownloadQueryKeyFactory.policy() }],
 	/** The wanted watcher's settings. */
 	wantedSettingsChanged: (): Sweep[] => [{ key: DownloadQueryKeyFactory.wantedSettings() }],
+	/** The import folder setting, and so what its status says. */
+	importFolderChanged: (userId: UserId): Sweep[] => [
+		{ key: SettingsQueryKeyFactory.importFolderStatus(userId) }
+	],
 	/** Any download, in the caller's views and the admin's. */
 	anyDownloadChanged: (): Sweep[] => [{ everyScope: [DownloadQueryKeyFactory.feature] }],
 	/** Any request, in the caller's views and the admin's. */
@@ -504,6 +508,7 @@ export const usenetSettingsChanged = fact('usenetSettingsChanged');
 export const sourcePriorityChanged = fact('sourcePriorityChanged');
 export const downloadPolicyChanged = fact('downloadPolicyChanged');
 export const wantedSettingsChanged = fact('wantedSettingsChanged');
+export const importFolderChanged = fact('importFolderChanged');
 export const anyDownloadChanged = fact('anyDownloadChanged');
 export const anyRequestChanged = fact('anyRequestChanged');
 export const albumStatusChanged = fact('albumStatusChanged');

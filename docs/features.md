@@ -13,6 +13,7 @@ Everything DroppedNeedle does, one row each, with links to the page that covers 
 | Following | New-release radar with optional auto-download, release-type filters, and sidebar badges |
 | Library | Browse, filter, rate, download, rescan, and remove albums (ratings are shared with Subsonic apps). Search finds your songs as well as artists and albums, and plays a song with one click. Albums DroppedNeedle isn't sure of are listed as unconfirmed, without blocking anything. An artist whose files spell the name with other capitals, spacing or accents stays one artist, and an admin can undo such a join. Admins see artists that share a name but whose MusicBrainz evidence differs, or whose songs a tag edit moved to a new name, with the evidence for each, and can merge them or mark them as different people. See [Your library](library.md) |
 | Drop imports | Drag in a zip or loose files from anywhere you buy music; identified, tagged, and filed, or held for a manual match |
+| Import folder | Copy a collection into one folder on the server; each album goes in by itself, with its covers, and leaves the folder. See [Import folder](downloads.md#import-folder) |
 | Playlists | Mix Jellyfin, Navidrome, Plex, local, YouTube, and Spotify imports in one place, share read-only with one toggle |
 | YouTube links | Find an album or its tracks on YouTube from the album page and play them there. Paste your own links on the YouTube library page. Each search spends one unit of the daily quota set under Settings > YouTube; a saved link never searches again |
 | Library Management | Optional MusicBrainz Picard-style tags, artwork, and organization behind an admin preview with dry run and typed confirmation. A file whose tags a write could not keep whole, such as one holding a frame twice, is refused with the reason. Off until you enable it. See [Library Management](library-management.md) |
@@ -22,6 +23,6 @@ Everything DroppedNeedle does, one row each, with links to the page that covers 
 
 | Direction | What plugs in |
 |-|-|
-| In | Your slskd, your SABnzbd with your Newznab indexers or Prowlarr, and drop imports. Identity from MusicBrainz and AcoustID, album art from your files and the Cover Art Archive, artist photos from AudioDB, Deezer and Wikimedia Commons, matched by MusicBrainz id |
+| In | Your slskd, your SABnzbd with your Newznab indexers or Prowlarr, drop imports and the import folder. Identity from MusicBrainz and AcoustID, album art from your files and the Cover Art Archive, artist photos from AudioDB, Deezer and Wikimedia Commons, matched by MusicBrainz id |
 | Out | Jellyfin, Navidrome, Plex, local files, and YouTube previews, plus OpenSubsonic and Jellyfin APIs so apps like Symfonium, Finamp, Feishin, Amperfy, Arpeggi, Jellify, and Manet can play from you. The apps get the lyrics your files carry. Albums on Plex and Navidrome whose tags carry no MusicBrainz id are found by title and artist |
 | Around | ListenBrainz and Last.fm scrobbling, Spotify playlist import, Ticketmaster and Skiddle gigs, Deezer and iTunes preview clips, and purchase links that put Bandcamp first |

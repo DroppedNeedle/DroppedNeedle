@@ -9,5 +9,7 @@ export const SettingsQueryKeyFactory = {
 	jellyfin: (userId: UserId) => key(userScope(userId), 'settings', 'jellyfin'),
 	lyrics: (userId: UserId) => key(userScope(userId), 'settings', 'lyrics'),
 	publicAddress: (userId: UserId) => key(userScope(userId), 'settings', 'public-address'),
+	importFolderStatus: (userId: UserId) =>
+		key(userScope(userId), 'settings', 'import-folder-status'),
 	cacheStats: (userId: UserId) => key(userScope(userId), 'admin', 'cache', 'stats')
 };

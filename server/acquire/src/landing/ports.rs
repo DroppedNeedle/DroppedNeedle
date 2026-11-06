@@ -99,8 +99,12 @@ pub struct ImportRequest {
     /// Files filed with the album that are none of its tracks; their
     /// request indexes follow `files`.
     pub extras: Vec<ExtraFile>,
-    /// The user the removal of replaced tracks is recorded for.
-    pub actor: String,
+    /// The user the removal of replaced tracks is recorded for; `None` for
+    /// work that belongs to no user.
+    pub actor: Option<String>,
+    /// Files that came with the album and are none of its music; the
+    /// library files those its patterns name beside the music.
+    pub sidecars: Vec<droppedneedle_library::import::SidecarSource>,
 }
 
 /// What the library did with an import.
@@ -275,6 +279,13 @@ pub trait LandingLibrary: Send + Sync {
     /// Whether the library-wide switch is off, so nothing lands. Blocking:
     /// it reads the folders.
     fn library_off(&self) -> bool {
+        false
+    }
+
+    /// Whether a library scan is running or queued: the import folder
+    /// takes nothing meanwhile. Blocking: it reads the scan runs, and one
+    /// list it cannot read answers as if a scan were running.
+    fn scanning(&self) -> bool {
         false
     }
 

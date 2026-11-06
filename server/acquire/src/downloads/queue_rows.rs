@@ -555,7 +555,7 @@ impl DownloadStore<'_> {
                 .query_row(sql::ACTIVITY_COUNTS.text(), params![owner], |row| {
                     Ok((row.get(0)?, row.get(1)?))
                 })?;
-        let held_count = HeldRows::new(self.conn).count_open(owner)?;
+        let held_count = HeldRows::new(self.conn).count_open(owner, viewer.admin)?;
         let mut stmt = self.conn.prepare_cached(sql::LANDED_ALBUMS.text())?;
         let landed = stmt
             .query_map(params![owner], |row| row.get::<_, String>(0))?

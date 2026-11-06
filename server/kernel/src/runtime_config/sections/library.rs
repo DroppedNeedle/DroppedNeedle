@@ -140,6 +140,40 @@ impl Section for FilesystemWatcher {
     }
 }
 
+// --- library_import_folder --------------------------------------------------
+
+/// The folder on the server DroppedNeedle imports music from by itself and
+/// empties as it goes. An empty path turns it off.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct ImportFolder {
+    /// An absolute folder path as the server sees it, or empty for off.
+    pub path: String,
+}
+
+impl Section for ImportFolder {
+    const KEY: &'static str = "library_import_folder";
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        let path = self.path.trim();
+        if path.is_empty() {
+            return Ok(());
+        }
+        let parsed = std::path::Path::new(path);
+        let climbs = parsed
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir));
+        if !parsed.is_absolute() || climbs {
+            return Err(ConfigError::Validation {
+                section: Self::KEY,
+                field: "path",
+                reason: "must be an absolute folder path without ..".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
 // --- edition_preferences ----------------------------------------------------
 
 /// Which release date wins when editions otherwise tie.

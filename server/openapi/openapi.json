@@ -31514,6 +31514,98 @@
         ]
       }
     },
+    "/api/v3/settings/library/import-folder": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read the import folder setting.",
+        "operationId": "get_import_folder",
+        "responses": {
+          "200": {
+            "description": "Import folder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportFolder"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Save the import folder. Music copied there is imported, then\nremoved from it.",
+        "operationId": "put_import_folder",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportFolder"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved import folder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportFolder"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/settings/library/import-folder/status": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "What the import folder is doing now, or why it waits.\n`GET /api/v3/settings/library/import-folder/status`.",
+        "operationId": "import_folder_status_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportFolderStatusResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/settings/library/policy-apply-preview": {
       "post": {
         "tags": [
@@ -44771,7 +44863,8 @@
         "description": "Where an entry's files came from.",
         "enum": [
           "download",
-          "upload"
+          "upload",
+          "import_folder"
         ]
       },
       "EntryState": {
@@ -46095,7 +46188,6 @@
           "origin",
           "state",
           "created_at",
-          "expires_at",
           "files"
         ],
         "properties": {
@@ -46132,9 +46224,12 @@
             "description": "The upload's drop import item."
           },
           "expires_at": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64",
-            "description": "When its held files are removed, in milliseconds."
+            "description": "When its held files are removed, in milliseconds. `None` for files\nleft in the import folder, which stay until a person decides."
           },
           "files": {
             "type": "array",
@@ -46311,7 +46406,7 @@
           },
           "source": {
             "type": "string",
-            "description": "`soulseek`, `usenet`, `plugin:<key>` or `upload`."
+            "description": "`soulseek`, `usenet`, `plugin:<key>`, `upload` or `import_folder`."
           },
           "source_task_id": {
             "type": [
@@ -47016,6 +47111,79 @@
               "null"
             ],
             "description": "The reason as a plain sentence."
+          }
+        }
+      },
+      "ImportFolder": {
+        "type": "object",
+        "description": "The folder on the server DroppedNeedle imports music from by itself and\nempties as it goes. An empty path turns it off.",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "An absolute folder path as the server sees it, or empty for off.",
+            "default": ""
+          }
+        }
+      },
+      "ImportFolderOverlap": {
+        "type": "string",
+        "description": "Which kind of folder the import folder overlaps.",
+        "enum": [
+          "library",
+          "recycle_bin",
+          "downloads",
+          "app"
+        ]
+      },
+      "ImportFolderState": {
+        "type": "string",
+        "description": "What the import folder is doing, or why it waits.",
+        "enum": [
+          "off",
+          "watching",
+          "importing",
+          "waiting_for_scan",
+          "retrying",
+          "library_off",
+          "settings_unreadable",
+          "unreachable",
+          "read_only",
+          "overlaps"
+        ]
+      },
+      "ImportFolderStatusResponse": {
+        "type": "object",
+        "description": "What the import folder is doing, or why it waits.",
+        "required": [
+          "state",
+          "waiting"
+        ],
+        "properties": {
+          "overlap": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportFolderOverlap"
+              }
+            ],
+            "description": "With `overlaps`: the kind of folder it overlaps."
+          },
+          "overlap_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `overlaps`: that folder's path."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ImportFolderState"
+          },
+          "waiting": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums found and still to go in."
           }
         }
       },

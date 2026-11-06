@@ -76,6 +76,12 @@ pub enum Origin {
     Upload {
         drop_item_id: i64,
     },
+    /// An album of the import folder, read where it is: beneath `folders`
+    /// (the folder's real path), never through a link below it.
+    Folder {
+        drop_item_id: i64,
+        folders: Vec<PathBuf>,
+    },
 }
 
 /// One file of a batch.
@@ -108,9 +114,15 @@ pub struct IntakeBatch {
     pub origin: Origin,
     pub gate: Gate,
     /// The user the work is done for; replaced tracks are recorded as
-    /// theirs.
-    pub owner: String,
+    /// theirs. `None` for work that belongs to no user.
+    pub owner: Option<String>,
+    /// Files that came with the album and are none of its music (covers,
+    /// cue sheets, logs). The library files those its patterns name beside
+    /// the music it places.
+    pub sidecars: Vec<SidecarFile>,
 }
+
+pub use droppedneedle_library::import::SidecarSource as SidecarFile;
 
 /// A file the door's own checks held, with the track it was paired to.
 #[derive(Debug, Clone)]

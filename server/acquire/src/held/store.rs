@@ -42,11 +42,15 @@ pub fn retry_gap(tries: i64) -> i64 {
 pub enum EntryOrigin {
     Download,
     Upload,
+    /// Files the import folder could not place. They belong to no user and
+    /// never expire: they are the person's own copies.
+    ImportFolder,
 }
 
 droppedneedle_kernel::spelled!(EntryOrigin {
     Download => "download",
     Upload => "upload",
+    ImportFolder => "import_folder",
 });
 
 /// Where an entry is in its life.
@@ -78,18 +82,22 @@ droppedneedle_kernel::spelled!(EntryState {
     Expired => "expired",
 });
 
-/// Which app-owned folder a held copy sits in.
+/// Which folder a held file sits in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeldRoot {
     /// The held folder, where a download's file is copied.
     Held,
     /// The drop staging folder, where an upload waits.
     Drop,
+    /// The import folder, where a person's own file stays until it is
+    /// imported or discarded.
+    Import,
 }
 
 droppedneedle_kernel::spelled!(HeldRoot {
     Held => "held",
     Drop => "drop",
+    Import => "import",
 });
 
 /// Whether a held file waits, or how it was decided.
@@ -184,11 +192,15 @@ pub struct HeldFile {
     pub evidence_title: Option<String>,
     pub evidence_artist: Option<String>,
     pub evidence_score: Option<f64>,
-    /// `soulseek`, `usenet`, `plugin:<key>` or `upload`.
+    /// `soulseek`, `usenet`, `plugin:<key>`, `upload` or `import_folder`.
     pub source: String,
     pub source_task_id: Option<String>,
     pub reason: Reason,
     pub reason_detail: Option<String>,
+    /// An import-folder file's size and modification time (milliseconds)
+    /// as it was listed: one that changed since is not this file any more.
+    pub file_size: Option<i64>,
+    pub file_modified_at: Option<i64>,
     pub created_at: i64,
 }
 
@@ -219,6 +231,8 @@ impl HeldFile {
             reason: Reason::from_stored(&row.get::<_, String>(19)?),
             reason_detail: row.get(20)?,
             created_at: row.get(21)?,
+            file_size: row.get(22)?,
+            file_modified_at: row.get(23)?,
         })
     }
 
@@ -240,7 +254,8 @@ impl HeldFile {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
     pub id: i64,
-    pub user_id: String,
+    /// `None` for import-folder work, which only admins see.
+    pub user_id: Option<String>,
     pub origin: EntryOrigin,
     pub group_key: String,
     pub release_group_mbid: Option<String>,
@@ -250,7 +265,8 @@ pub struct Entry {
     pub album_title: Option<String>,
     pub state: EntryState,
     pub created_at: i64,
-    pub expires_at: i64,
+    /// `None` for files that never expire (the import folder's).
+    pub expires_at: Option<i64>,
     /// When the held loop next retries its files our side could not take;
     /// `None` for at its next pass.
     pub retry_at: Option<i64>,
@@ -281,7 +297,8 @@ impl Entry {
 /// The entry files join.
 #[derive(Debug, Clone)]
 pub struct NewEntry {
-    pub user_id: String,
+    /// `None` for import-folder work.
+    pub user_id: Option<String>,
     pub origin: EntryOrigin,
     pub key: GroupKey,
     pub release_group_mbid: Option<String>,
@@ -308,6 +325,9 @@ pub struct NewFile {
     pub source_task_id: Option<String>,
     pub reason: Reason,
     pub reason_detail: Option<String>,
+    /// An import-folder file's size and modification time as listed.
+    pub file_size: Option<i64>,
+    pub file_modified_at: Option<i64>,
 }
 
 impl NewFile {
@@ -330,6 +350,8 @@ impl NewFile {
             source_task_id: None,
             reason,
             reason_detail: None,
+            file_size: None,
+            file_modified_at: None,
         }
     }
 
@@ -344,6 +366,11 @@ impl NewFile {
                 .to_owned(),
             ..Self::new(HeldRoot::Drop, path, reason, "upload")
         }
+    }
+
+    /// A file at `path` below the import folder, named by that path.
+    pub fn import_folder(path: &str, reason: Reason) -> Self {
+        Self::new(HeldRoot::Import, path, reason, "import_folder")
     }
 }
 
@@ -390,6 +417,8 @@ impl<'c> HeldRows<'c> {
                 row.get(0)
             })
             .optional()?;
+        // The import folder's files are a person's own copies: no expiry.
+        let expires = (entry.origin != EntryOrigin::ImportFolder).then_some(now + KEEP_MS);
         let group = entry
             .release_group_mbid
             .as_deref()
@@ -410,7 +439,7 @@ impl<'c> HeldRows<'c> {
                         entry.artist_name,
                         entry.album_title,
                         now,
-                        now + KEEP_MS,
+                        expires,
                     ],
                 )?;
                 self.conn.last_insert_rowid()
@@ -469,6 +498,8 @@ impl<'c> HeldRows<'c> {
                     file.reason.code(),
                     file.reason_detail,
                     now,
+                    file.file_size,
+                    file.file_modified_at,
                 ],
             )?;
             held.push(Some(self.conn.last_insert_rowid()));
@@ -478,7 +509,7 @@ impl<'c> HeldRows<'c> {
                 sql::EXTEND_ENTRY.text(),
                 params![
                     entry_id,
-                    now + KEEP_MS,
+                    expires,
                     group,
                     entry.artist_name,
                     entry.album_title
@@ -521,16 +552,21 @@ impl<'c> HeldRows<'c> {
     }
 
     /// Open entries with their held files, newest first: one owner's (or
-    /// everyone's), one album's, one download's.
+    /// everyone's), one album's, one download's. With `admin`, entries
+    /// that belong to no user (the import folder's) are listed too.
     pub fn list(
         &self,
         owner: Option<&str>,
+        admin: bool,
         release_group_mbid: Option<&str>,
         task_id: Option<&str>,
     ) -> rusqlite::Result<Vec<Entry>> {
         let mut statement = self.conn.prepare_cached(sql::LIST_ENTRIES.text())?;
         let entries = statement
-            .query_map(params![owner, release_group_mbid, task_id], Entry::from_row)?
+            .query_map(
+                params![owner, release_group_mbid, task_id, admin],
+                Entry::from_row,
+            )?
             .collect::<Result<Vec<_>, _>>()?;
         entries
             .into_iter()
@@ -705,10 +741,13 @@ impl<'c> HeldRows<'c> {
         Ok(rows)
     }
 
-    /// Open entries of one owner, or of everyone.
-    pub fn count_open(&self, owner: Option<&str>) -> rusqlite::Result<i64> {
+    /// Open entries of one owner, or of everyone; with `admin`, those of
+    /// no user too.
+    pub fn count_open(&self, owner: Option<&str>, admin: bool) -> rusqlite::Result<i64> {
         self.conn
-            .query_row(sql::COUNT_OPEN.text(), params![owner], |row| row.get(0))
+            .query_row(sql::COUNT_OPEN.text(), params![owner, admin], |row| {
+                row.get(0)
+            })
     }
 
     /// Claim the entries holding files of a removed album (release group
@@ -815,9 +854,9 @@ impl<'c> HeldRows<'c> {
         entry_id: i64,
         now: i64,
     ) -> rusqlite::Result<Option<Vec<(i64, HeldRoot, String)>>> {
-        let due = self
-            .entry(entry_id)?
-            .is_some_and(|entry| entry.state == EntryState::Held && entry.expires_at <= now);
+        let due = self.entry(entry_id)?.is_some_and(|entry| {
+            entry.state == EntryState::Held && entry.expires_at.is_some_and(|at| at <= now)
+        });
         if !due || !self.claim(entry_id)? {
             return Ok(None);
         }
@@ -866,8 +905,12 @@ impl<'c> HeldRows<'c> {
     }
 
     /// Entries waiting for a person whose automatic retry is due at `now`,
-    /// longest waiting first: id and owner.
-    pub fn due_retries(&self, now: i64, limit: i64) -> rusqlite::Result<Vec<(i64, String)>> {
+    /// longest waiting first: id and owner (`None` for no user's).
+    pub fn due_retries(
+        &self,
+        now: i64,
+        limit: i64,
+    ) -> rusqlite::Result<Vec<(i64, Option<String>)>> {
         let mut statement = self.conn.prepare_cached(sql::DUE_RETRIES.text())?;
         let rows = statement
             .query_map(params![now, limit], |row| Ok((row.get(0)?, row.get(1)?)))?

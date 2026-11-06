@@ -99,7 +99,7 @@ fn read_only_mount(folder: &Path) -> bool {
 }
 
 /// The server's effective ids may write in the folder.
-fn writable(folder: &Path) -> bool {
+pub(crate) fn writable(folder: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt as _;
     let Ok(c_path) = std::ffi::CString::new(folder.as_os_str().as_bytes()) else {
         return false;

@@ -148,6 +148,7 @@
 	// "Use this version" and "Use this file" put this file in place of a better one
 	// you already have, so they ask first.
 	let replaceOpen = $state(false);
+	let discardOpen = $state(false);
 	const replaceLabel = $derived(
 		offers.has('use_this_version') ? 'Use this version' : 'Use this file'
 	);
@@ -278,7 +279,8 @@
 			variant="ghost"
 			size="xs"
 			icon={Trash2}
-			onclick={() => discardMut.mutate(input, settle)}
+			onclick={() =>
+				entry.origin === 'import_folder' ? (discardOpen = true) : discardMut.mutate(input, settle)}
 			disabled={busy}
 			aria-label="Discard {title}"
 		>
@@ -286,6 +288,18 @@
 		</Button>
 	</div>
 </div>
+
+<!-- A file left in the import folder is the person's own copy: deleting it asks first. -->
+<ConfirmDialog
+	bind:open={discardOpen}
+	title="Discard 1 file?"
+	message="It is deleted from the import folder. Nothing in your library changes."
+	confirmLabel="Discard"
+	tone="danger"
+	paper
+	pending={discardMut.isPending}
+	onconfirm={() => discardMut.mutateAsync(input).then(() => (done = true))}
+/>
 
 <ConfirmDialog
 	bind:open={replaceOpen}

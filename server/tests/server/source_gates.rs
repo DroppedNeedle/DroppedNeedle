@@ -854,9 +854,10 @@ const FOLDER_LISTING: &str = "a folder listing its asker waits on up to a deadli
 
 const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/drop_import/http.rs", 1, UPLOAD_CLEANUP),
-    ("acquire/src/drop_import/mod.rs", 6, DROP_IMPORT_STEP),
+    ("acquire/src/drop_import/mod.rs", 12, DROP_IMPORT_STEP),
     ("acquire/src/drop_import/mod.rs", 1, DROP_IMPORT),
-    ("acquire/src/held/service.rs", 5, AWAITED),
+    ("acquire/src/held/service.rs", 8, AWAITED),
+    ("acquire/src/import_folder/mod.rs", 5, LOOP_STEP),
     ("acquire/src/intake/dispose.rs", 1, AWAITED),
     ("acquire/src/landing/hold.rs", 1, AWAITED),
     ("acquire/src/landing/library.rs", 2, AWAITED),

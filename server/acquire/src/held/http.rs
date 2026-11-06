@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use super::service::{Acted, HeldError, HeldService, is_retry, rechecks, retries_by_itself};
-use super::store::{Entry, EntryOrigin, EntryState, HeldFile};
+use super::store::{Entry, EntryOrigin, EntryState, HeldFile, HeldRoot};
 use crate::downloads::queue_rows::Viewer;
 use crate::reason::{Reason, ReasonKind};
 use crate::requests::error::RequestsError;
@@ -70,6 +70,19 @@ fn actions_for(file: &HeldFile) -> Vec<HeldFileAction> {
     actions
 }
 
+/// The reason a file is held, as one sentence. A file left in the import
+/// folder was never copied anywhere: it is still in the import folder.
+fn reason_text(file: &HeldFile) -> String {
+    let text = file.reason.message();
+    match file.root {
+        HeldRoot::Import => text.replace(
+            "The held file is still here.",
+            "The file is still in the import folder.",
+        ),
+        HeldRoot::Held | HeldRoot::Drop => text.to_owned(),
+    }
+}
+
 /// One held file.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct HeldFileResponse {
@@ -90,7 +103,7 @@ pub struct HeldFileResponse {
     pub evidence_title: Option<String>,
     pub evidence_artist: Option<String>,
     pub evidence_score: Option<f64>,
-    /// `soulseek`, `usenet`, `plugin:<key>` or `upload`.
+    /// `soulseek`, `usenet`, `plugin:<key>`, `upload` or `import_folder`.
     pub source: String,
     pub source_task_id: Option<String>,
     pub reason: Reason,
@@ -110,6 +123,7 @@ pub struct HeldFileResponse {
 
 impl From<HeldFile> for HeldFileResponse {
     fn from(file: HeldFile) -> Self {
+        let reason_text = reason_text(&file);
         Self {
             actions: actions_for(&file),
             id: file.id,
@@ -129,7 +143,7 @@ impl From<HeldFile> for HeldFileResponse {
             source: file.source,
             source_task_id: file.source_task_id,
             reason: file.reason,
-            reason_text: file.reason.message().to_owned(),
+            reason_text,
             reason_action: file.reason.action().to_owned(),
             reason_kind: file.reason.kind(),
             reason_detail: file.reason_detail,
@@ -154,8 +168,9 @@ pub struct HeldEntryResponse {
     pub album_title: Option<String>,
     /// When it was made, in milliseconds.
     pub created_at: i64,
-    /// When its held files are removed, in milliseconds.
-    pub expires_at: i64,
+    /// When its held files are removed, in milliseconds. `None` for files
+    /// left in the import folder, which stay until a person decides.
+    pub expires_at: Option<i64>,
     /// When DroppedNeedle next retries the files offering Retry by itself,
     /// in milliseconds. `None` when no file offers Retry, or when the next
     /// try is at the held loop's next pass (within five minutes).

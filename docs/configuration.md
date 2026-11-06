@@ -80,6 +80,18 @@ On Unraid, keep `/app/cache` on a pool path such as `/mnt/cache/appdata/droppedn
 
 For the media mount, one shared parent (`/data`) with the library and the download client's completions under it keeps imports fast; see [Download clients](download-clients.md#slskd).
 
+### Import folder
+
+The [import folder](downloads.md#import-folder) is a folder you mount read-write and name under Settings > Library. It must not be a library folder, the recycle bin, a download client's folder, `/app/imports`, `/app/config` or `/app/cache`, and must not sit inside or hold one of them: DroppedNeedle checks this on every pass and imports nothing while it overlaps. A read-only mount imports nothing either, because removing what went in is part of the job. On the same disk as the library, files go in faster.
+
+```yaml
+services:
+  droppedneedle:
+    volumes:
+      - /mnt/media/music:/data/music
+      - /mnt/media/to-import:/data/import   # then set /data/import under Settings > Library
+```
+
 ## Where settings live
 
 | Setting | Location |

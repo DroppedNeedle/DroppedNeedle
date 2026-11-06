@@ -115,6 +115,8 @@ Then open [http://localhost:8688](http://localhost:8688).
 4. Press Scan for changes on Settings > Library. The scan reads and identifies files without renaming or retagging anything.
 5. Search the catalog, open an album, and Request it. Watch it land live on the Downloads page.
 
+Bringing in a collection you want filed and tagged? See [Bringing in an existing library](docs/downloads.md#bringing-in-an-existing-library).
+
 To update, run `docker compose pull` and `docker compose up -d`. DroppedNeedle backs up its database before a new version changes it: see [Backups and restore](docs/backups-and-restore.md).
 
 ## Coming from v2

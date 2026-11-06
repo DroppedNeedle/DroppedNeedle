@@ -8,6 +8,7 @@ mod acquire_download_tasks;
 mod acquire_downloads;
 mod acquire_drop_import;
 mod acquire_flows;
+mod acquire_import_folder;
 mod acquire_imports;
 mod acquire_journey;
 mod acquire_landing;

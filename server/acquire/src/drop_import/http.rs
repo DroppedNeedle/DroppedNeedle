@@ -117,7 +117,7 @@ impl From<JobRecord> for DropImportJobResponse {
             status: job.status,
             created_at: job.created_at,
             upload_name: job.upload_name,
-            user_id: job.user_id,
+            user_id: job.user_id.unwrap_or_default(),
             user_name: job.user_name,
             error: job.error,
             items: job.items.into_iter().map(Into::into).collect(),

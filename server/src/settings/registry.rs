@@ -23,8 +23,8 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     WrappedSettings, YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    AppConnect, ConnectApps, EditionPreferences, FilesystemWatcher, GetIt, LyricsSettings,
-    PlainSection, PublicAddress, SecuritySettings, UserPreferences, WantedWatcher,
+    AppConnect, ConnectApps, EditionPreferences, FilesystemWatcher, GetIt, ImportFolder,
+    LyricsSettings, PlainSection, PublicAddress, SecuritySettings, UserPreferences, WantedWatcher,
 };
 use droppedneedle_kernel::runtime_config::{Masked, SecretSection, Section};
 
@@ -153,6 +153,12 @@ section_routes! {
             => "Filesystem poller knobs";
         put put_watcher: "Save the filesystem poller knobs."
             => "Saved poller knobs";
+    }
+    plain ImportFolder at "/api/v3/settings/library/import-folder", read admin, write admin {
+        get get_import_folder: "Read the import folder setting."
+            => "Import folder";
+        put put_import_folder: "Save the import folder. Music copied there is imported, then\nremoved from it."
+            => "Saved import folder";
     }
     plain LyricsSettings at "/api/v3/settings/lyrics", read admin, write admin {
         get get_lyrics_settings: "Read the online lyrics lookup switch."

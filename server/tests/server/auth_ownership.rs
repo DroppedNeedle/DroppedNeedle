@@ -1216,7 +1216,7 @@ async fn seed(app: &TestApp, kind: Owned, owner: &Who, n: u32) -> Ids {
                     .write("test.seed_held", move |tx| {
                         Ok(HeldRows::new(tx).hold(
                             &NewEntry {
-                                user_id,
+                                user_id: Some(user_id),
                                 origin: EntryOrigin::Download,
                                 key: GroupKey::Album(group.clone()),
                                 release_group_mbid: Some(group),

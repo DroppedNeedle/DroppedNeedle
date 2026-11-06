@@ -1242,6 +1242,47 @@ pub fn naming_variables(
     variables
 }
 
+/// The files Library Management moves with an album in library folder
+/// `root_id`, case-folded: its profile's sidecar patterns, or a new
+/// profile's while no profile is set up. Empty while the settings don't
+/// read, so nothing is taken as a sidecar on a guess.
+pub(crate) fn sidecar_patterns(
+    management: &droppedneedle_kernel::runtime_config::Live<LibraryManagement>,
+    root_id: &str,
+) -> Vec<Vec<char>> {
+    use droppedneedle_kernel::runtime_config::sections::OrganizationManagementSettings;
+    let Some(stored) = management.read() else {
+        return Vec::new();
+    };
+    let mut settings = LibraryManagement::clone(&stored);
+    settings::complete_fields(&mut settings);
+    let assignment = root_assignment(&settings, root_id);
+    let unset = assignment
+        .profile_id
+        .as_deref()
+        .unwrap_or(&settings.default_profile_id)
+        .is_empty();
+    let patterns = if unset {
+        OrganizationManagementSettings::default().sidecar_patterns
+    } else {
+        match settings::pin_profile(&settings, &assignment) {
+            Ok(profile) => profile.organization.sidecar_patterns,
+            Err(error) => {
+                tracing::warn!(
+                    root_id,
+                    ?error,
+                    "a library folder's sidecar patterns don't read; no sidecar is taken"
+                );
+                Vec::new()
+            }
+        }
+    };
+    patterns
+        .iter()
+        .map(|pattern| caseless::default_case_fold_str(pattern).chars().collect())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -334,7 +334,7 @@ async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
     let (entry, staged) = entry_of(&acquire, &curator.user_id, odd.id).await;
     assert_eq!(staged.len(), 1);
     assert!(staged.iter().all(|path| path.is_file()));
-    assert!(entry.expires_at > entry.created_at);
+    assert!(entry.expires_at > Some(entry.created_at));
     // The job's folder stays while a file of it waits for a decision.
     let job_dir = PathBuf::from(&job.staging_dir);
     acquire.drops.sweep_stale().await.unwrap();

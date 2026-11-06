@@ -17,6 +17,8 @@ What happens between pressing Request and the album landing in your library, and
 - [The Wanted list](#the-wanted-list)
 - [Blocked sources](#blocked-sources)
 - [Drop imports](#drop-imports)
+- [Bringing in an existing library](#bringing-in-an-existing-library)
+- [Import folder](#import-folder)
 - [Indexer limits](#indexer-limits)
 
 ## Which edition is fetched
@@ -65,7 +67,7 @@ Text outside braces is kept. `{name}` is a value, such as `albumartist`, `album`
 
 ## Held files
 
-Every file that waits for your decision, whether a download or an upload brought it, is in one list on the Downloads page, and on its album's page. One download or one upload is one entry with its files: an album held from two sources is still one entry. Each file says why it was held and what to do, and each entry says how long it is kept ("Kept until 23 Jan").
+Every file that waits for your decision, whether a download, an upload or the [import folder](#import-folder) brought it, is in one list on the Downloads page, and on its album's page. One download or one upload is one entry with its files: an album held from two sources is still one entry. Each file says why it was held and what to do, and each entry says how long it is kept ("Kept until 23 Jan"). Files left in the import folder are kept until you decide ("Stays until you decide").
 
 Every entry offers the same actions:
 
@@ -124,7 +126,7 @@ Admins can see blocked sources (Downloads > Quarantine) with the reason each was
 
 ## Drop imports
 
-Bought music somewhere else? Drop it in. Admins and trusted users can upload up to 25 files at once on the downloads page, 8 GB in all: audio files, or `.zip` archives straight from the store. The drop zone shows how much has been sent. If nothing more gets through for a minute, the upload stops with an error. DroppedNeedle unpacks the archives (audio only), treats each top-level folder as one album, and works out which album it is the way a library scan would: MusicBrainz tags first, then the album and artist names (from the tags, or a folder named `Artist - Album`), then AcoustID fingerprints when you have set an AcoustID key.
+Bought music somewhere else? Drop it in. For a whole collection, use the [import folder](#import-folder) instead. Admins and trusted users can upload up to 25 files at once on the downloads page, 8 GB in all: audio files, or `.zip` archives straight from the store. The drop zone shows how much has been sent. If nothing more gets through for a minute, the upload stops with an error. DroppedNeedle unpacks the archives (audio only), treats each top-level folder as one album, and works out which album it is the way a library scan would: MusicBrainz tags first, then the album and artist names (from the tags, or a folder named `Artist - Album`), then AcoustID fingerprints when you have set an AcoustID key.
 
 - A folder that matches closely is renamed with your import naming script, tagged, and added to the library. Where it lands in a folder set to Local metadata, its files keep the tags they came with, and the import's summary ends "Tags kept as they came." If the album is now complete, its open request and wanted watch are settled and everyone who asked for it is told.
 - If your library already keeps an edition of that album, the files must match that edition. Files of another edition wait in [Held files](#held-files) instead of quietly importing as a second edition.
@@ -139,6 +141,26 @@ If the server stops while an archive unpacks, it starts that archive again from 
 If the server restarts in the middle of an import, the upload's files wait in Held files as interrupted; pick the album with Match or drop them in again.
 
 The server log notes each upload when it starts and when it has arrived (its size and file count), each upload refused as over the size limit, and each import when it starts and finishes.
+
+## Bringing in an existing library
+
+Have a collection DroppedNeedle doesn't manage yet, and want it identified, tagged and filed the way downloads are? Mount a spare folder into the container and set it as the import folder under Settings > Library (the Downloads page's Import tab links there). Then copy a few artists in at a time. Each album goes into your library by itself and leaves the folder, so what is still there is what needs you; copy the next few once it has emptied. If you only want DroppedNeedle to read your library as it is, add it as a library folder instead and scan it.
+
+## Import folder
+
+For a large collection DroppedNeedle doesn't manage yet, set an import folder under Settings > Library: a folder mounted into the container that is not a library folder, the recycle bin, a download folder or one of DroppedNeedle's own folders, and not inside or around one of them (see [Configuration](configuration.md#import-folder)). Copy a few artists or albums in at a time; DroppedNeedle imports them by itself and empties the folder as it goes. Only admins see the setting and what the folder leaves behind.
+
+- An album folder is taken once nothing in it has changed for 3 minutes, so a copy still running is never read half-way. A file or folder whose name starts with `.` is never taken: copy an album as `.Album` and rename it when it's done to start it at once. Disc folders (`CD1`, `Disc 2`) belong to the album above them, and loose files at the top are one more album.
+- Albums go in one at a time, the way a drop import does: identified (MusicBrainz tags, then names, then AcoustID), tagged and filed where downloads go (the first library folder set to Automatic, else the first not Excluded). Covers, cue sheets, logs and lyrics that match the library folder's Library Management sidecar patterns (the default list while none is set up) go beside the album. One that would land on a file already there stays in the import folder.
+- Nothing is taken while a library scan runs, so a long scheduled scan on a big library pauses it. It also waits, and tries again by itself, while MusicBrainz, AcoustID or the library folder isn't there.
+- A file leaves the import folder only once the library holds its exact bytes: DroppedNeedle hashes it again, beneath the folder and never through a link, and removes it only while it is still that file. Folders it leaves empty are removed too. The library copy carries DroppedNeedle's tags; the original is removed.
+- An album it can't place (no match, tags that disagree, a file no better than the one you have, an unreadable file, a naming script that gives no path) stays in the import folder and is listed in [Held files](#held-files) as "Import folder", with the reason, Match, Import and Discard. It has no expiry, and holds that the library side caused are retried by themselves. Discard deletes its files from the import folder; nothing in your library changes. A listed file that changes afterwards (you replace it with a better copy, say) is not acted on as the file you saw: Import, Match and Discard refuse it, and the next pass takes it off the list and looks at it again as new music.
+- Library Management treats these albums as dropped folders: "after dropped folders are imported" on its Automation tab covers them.
+- Archives are not unpacked. A folder that is read-only imports nothing.
+- The setting shows what the folder is doing ("Watching", "Importing", "Waiting for a scan", "Will try again soon") or why it waits ("Overlaps a library folder", naming it). While MusicBrainz, AcoustID or the library folder is away it tries again at growing gaps, up to half an hour.
+- Change the folder, or clear the setting, and nothing in the old folder is touched: albums queued from it that had not started stop with that reason, its leftovers stay listed, and files that went in still wait to leave it. Import and Match on those leftovers say the files are in an import folder that is no longer set; Discard only takes them off the list. Set the old folder again and it carries on where it stopped. A folder that can't be reached keeps its leftovers as they are.
+
+A 2,000-album import makes roughly 8,000 to 16,000 MusicBrainz requests, at background priority and at most one a second, so expect a few hours; a person's lookups go first.
 
 ### Behind a reverse proxy
 

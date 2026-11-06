@@ -138,6 +138,8 @@ pub struct LibraryLanding {
     library: Imports,
     management: Management,
     releases: Prioritised<Arc<dyn ReleaseSource>>,
+    /// The scan runs, which the import folder waits out.
+    scans: Arc<droppedneedle_library::wiring::ScanCoordinator>,
 }
 
 impl LibraryLanding {
@@ -149,6 +151,7 @@ impl LibraryLanding {
             library: library.imports.clone(),
             management: Management::new(library),
             releases,
+            scans: library.coordinator.clone(),
         }
     }
 
@@ -454,6 +457,10 @@ impl LandingLibrary for LibraryLanding {
         self.library.core.switched_off()
     }
 
+    fn scanning(&self) -> bool {
+        !self.scans.current().is_empty()
+    }
+
     fn import_folder(&self) -> Option<PathBuf> {
         let registry = self.library.core.live_registry();
         let usable: Vec<_> = registry
@@ -495,14 +502,18 @@ impl LandingLibrary for LibraryLanding {
                         replaces: file.replaces,
                     })
                     .collect(),
-                actor: Some(request.actor),
+                actor: request.actor,
             };
             let join = request.join;
             let beneath = request.read_beneath;
+            let sidecars = request.sidecars;
             let done = tokio::task::spawn_blocking(move || match beneath {
-                Some(folders) => library.import_download_from(&import, join, &|path| {
-                    super::confine::open_beneath(&folders, path)
-                }),
+                Some(folders) => library.import_with_sidecars(
+                    &import,
+                    join,
+                    &|path| super::confine::open_beneath(&folders, path),
+                    &sidecars,
+                ),
                 None => library.import_download_joined(&import, join),
             })
             .await

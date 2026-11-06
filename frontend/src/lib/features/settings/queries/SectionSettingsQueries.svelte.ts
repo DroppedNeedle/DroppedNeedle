@@ -12,6 +12,7 @@ import {
 	anyArtistChanged,
 	concertsChanged,
 	createAppMutation,
+	importFolderChanged,
 	type Effect
 } from '$lib/queries/effects';
 
@@ -20,6 +21,8 @@ export type AdvancedSettings = Schemas['AdvancedSettings'];
 export type EditionPreferences = Schemas['EditionPreferences'];
 export type EventsSettings = Schemas['EventsSettings'];
 export type GetItSettings = Schemas['GetIt'];
+export type ImportFolderSettings = Schemas['ImportFolder'];
+export type ImportFolderStatus = Schemas['ImportFolderStatusResponse'];
 export type LastFmSettings = Schemas['LastFmSettings'];
 export type LibraryWatcherSettings = Schemas['FilesystemWatcher'];
 export type NavidromeSettings = Schemas['NavidromeConnection'];
@@ -111,6 +114,27 @@ const libraryWatcher = section<LibraryWatcherSettings>(
 );
 export const getLibraryWatcherSettingsQuery = libraryWatcher.query;
 export const createSaveLibraryWatcherSettingsMutation = libraryWatcher.save;
+
+// The folder DroppedNeedle imports from by itself; a save changes what its
+// status says.
+const importFolder = section<ImportFolderSettings>(
+	'import-folder',
+	(signal) => api.v3.GET(v3('/api/v3/settings/library/import-folder'), { signal }),
+	(body) => api.v3.PUT(v3('/api/v3/settings/library/import-folder'), body),
+	() => [importFolderChanged(authStore.user?.id)]
+);
+export const getImportFolderSettingsQuery = importFolder.query;
+export const createSaveImportFolderSettingsMutation = importFolder.save;
+
+/** What the import folder is doing, read again every 15 seconds while shown. */
+export const getImportFolderStatusQuery = (enabled: () => boolean = () => true) =>
+	createQuery(() => ({
+		queryKey: SettingsQueryKeyFactory.importFolderStatus(authStore.user?.id),
+		queryFn: ({ signal }) =>
+			api.v3.GET(v3('/api/v3/settings/library/import-folder/status'), { signal }),
+		enabled: enabled(),
+		refetchInterval: 15_000
+	}));
 
 const navidrome = section<NavidromeSettings>(
 	'navidrome',

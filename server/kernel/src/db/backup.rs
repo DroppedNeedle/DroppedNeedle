@@ -1013,9 +1013,15 @@ fn verify_staging(staging: &Path, created_at: SystemTime) -> Result<BackupManife
 /// so a catalog-sized database never sits in memory whole. Blocking: call
 /// from a blocking thread.
 pub fn file_sha256(path: &Path) -> std::io::Result<(String, u64)> {
-    let mut file = std::io::BufReader::with_capacity(64 * 1024, std::fs::File::open(path)?);
+    read_sha256(std::fs::File::open(path)?)
+}
+
+/// The SHA-256 (lower-case hex) of everything `reader` holds, and its
+/// length.
+pub fn read_sha256(reader: impl std::io::Read) -> std::io::Result<(String, u64)> {
+    let mut reader = std::io::BufReader::with_capacity(64 * 1024, reader);
     let mut hasher = Sha256::new();
-    let total = std::io::copy(&mut file, &mut hasher)?;
+    let total = std::io::copy(&mut reader, &mut hasher)?;
     Ok((hex_digest(&hasher.finalize()), total))
 }
 

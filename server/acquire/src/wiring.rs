@@ -29,6 +29,8 @@ use crate::flows::loops::{
 };
 use crate::flows::seams::{ReleasePoll, TickSink};
 use crate::held::{HeldFolders, HeldService};
+use crate::import_folder::ImportFolders;
+use crate::import_folder::site::ImportSite;
 use crate::imports::handlers::ImportsDeps;
 use crate::imports::jobs::{SpotifyImportJobs, SpotifyImports};
 use crate::imports::lidarr::LidarrClient;
@@ -86,6 +88,7 @@ pub const ACQUIRE_LOOPS: &[&str] = &[
     SYNC_JOB,
     PRUNE_JOB,
     crate::held::PRUNE_JOB,
+    crate::import_folder::IMPORT_FOLDER_JOB,
     crate::downloads::worker::DOWNLOAD_WORKER_JOB,
     crate::probes::PROBE_JOB,
     crate::readiness::SOURCE_WATCH_JOB,
@@ -232,6 +235,8 @@ pub struct AcquireSetup {
     pub drops: Arc<DropImports>,
     /// The held list: every file waiting for a person's decision.
     pub held: Arc<HeldService>,
+    /// The import folder: music copied there goes in by itself.
+    pub import_folder: Arc<ImportFolders>,
     /// Runs the Spotify import jobs; registered on the jobs table.
     pub spotify_import_jobs: Arc<SpotifyImportJobs>,
 }
@@ -244,6 +249,7 @@ fn drop_imports(
     folders: &HeldFolders,
     events: &EventHub,
     flows: &FlowsBundle,
+    site: Arc<ImportSite>,
 ) -> Arc<DropImports> {
     Arc::new(DropImports::new(
         DropStore::new(db.clone()),
@@ -252,6 +258,7 @@ fn drop_imports(
         events.clone(),
         flows.ticks.clone(),
         flows.ledger.clone(),
+        site,
     ))
 }
 
@@ -601,12 +608,45 @@ impl AcquireSetup {
             search_quota,
             events.clone(),
         ));
-        let drops = drop_imports(&db, &landing, &stores.folders, &events, &core.flows);
+        // The import folder stays clear of the library, the recycle bin, the
+        // download folders and the app's own folders.
+        let site = Arc::new(ImportSite::new(
+            config_store.live(),
+            landing.library().clone(),
+            recycle_guard(
+                &config_store,
+                staging_root.clone(),
+                config.slskd_downloads_path.clone(),
+            ),
+            config_store.live(),
+            [
+                Some(config.cache_dir.clone()),
+                Some(config.config_dir.clone()),
+                config.library_db_path.parent().map(Path::to_path_buf),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        ));
+        let drops = drop_imports(
+            &db,
+            &landing,
+            &stores.folders,
+            &events,
+            &core.flows,
+            site.clone(),
+        );
         let held = Arc::new(HeldService::new(
             core.journal.clone(),
             worker.clone(),
             drops.clone(),
             stores.folders.clone(),
+            site.clone(),
+        ));
+        let import_folder = Arc::new(ImportFolders::new(
+            site,
+            drops.clone(),
+            landing.library().clone(),
         ));
 
         Ok(Self {
@@ -630,6 +670,7 @@ impl AcquireSetup {
             search_jobs,
             drops,
             held,
+            import_folder,
             spotify_import_jobs,
         })
     }
@@ -708,6 +749,7 @@ impl AcquireSetup {
         spawn_prune_loop(supervisor, self.prune.clone())?;
         crate::downloads::worker::spawn_download_worker(self.worker.clone(), supervisor)?;
         crate::held::spawn_held_prune(supervisor, self.held.clone())?;
+        crate::import_folder::spawn_import_folder(supervisor, self.import_folder.clone())?;
         crate::probes::spawn_probe_loop(
             supervisor,
             self.probe_cache.clone(),

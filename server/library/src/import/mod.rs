@@ -10,12 +10,16 @@
 //!    root it is going to (`.droppedneedle-management-import/<task>/`).
 //!    The scan skips the hidden prefix, and the publisher's rename then
 //!    never crosses a filesystem, whatever disk the download client used.
-//!    A plain download goes to the first root whose policy at every
-//!    file's destination is Automatic, else to the first root where no
-//!    file's destination is Excluded (by the root or a path rule); joins,
-//!    upgrades, drop imports and downloads for an album the library
-//!    already holds always go to the latter. When no root takes them, the
-//!    import fails as a naming script fault and nothing is placed.
+//!    A plain download, and an album taken from the import folder, goes
+//!    to the first root whose policy at every file's destination is
+//!    Automatic, else to the first root where no file's destination is
+//!    Excluded (by the root or a path rule); joins, upgrades, drop imports
+//!    and downloads for an album the library already holds always go to
+//!    the latter. When no root takes them, the import fails as a naming
+//!    script fault and nothing is placed. Sidecars that came with the
+//!    files (covers, cue sheets, logs: the destination folder's Library
+//!    Management patterns) go beside the files they came with, in the
+//!    same bundle; one whose place is taken stays where it was.
 //! 2. One bundle moves every copy to the path the import naming script gives
 //!    and writes the release's full tag set on the way. A file whose
 //!    destination is in a folder that keeps its own tags (the Local
@@ -126,6 +130,15 @@ pub struct ExtraSource {
     pub position: u32,
 }
 
+/// A file that came with an album and is none of its music: a cover, a cue
+/// sheet, a log. `rel` is its path below the album folder it came in, which
+/// the folder's sidecar patterns are matched against.
+#[derive(Debug, Clone)]
+pub struct SidecarSource {
+    pub path: PathBuf,
+    pub rel: String,
+}
+
 /// Where imported files come from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ImportOrigin {
@@ -135,6 +148,9 @@ pub enum ImportOrigin {
     /// Files a person uploaded (drop import); `task_id` names the drop
     /// item and is not a download task.
     Drop,
+    /// Files taken from the import folder; `task_id` names the drop item
+    /// and is not a download task. They go where a plain download goes.
+    Folder,
 }
 
 impl ImportOrigin {
@@ -143,6 +159,7 @@ impl ImportOrigin {
         match self {
             Self::Download => "download",
             Self::Drop => "drop",
+            Self::Folder => "drop_folder",
         }
     }
 }
@@ -318,6 +335,20 @@ impl Imports {
         join: Option<ImportJoin>,
         open_source: &dyn Fn(&Path) -> std::io::Result<std::fs::File>,
     ) -> Result<ImportedAlbum, ImportError> {
+        self.import_with_sidecars(import, join, open_source, &[])
+    }
+
+    /// [`Self::import_download_from`], with the files that came with the
+    /// album: each one the destination folder's sidecar patterns name goes
+    /// beside the files placed from its folder, in the same bundle. One
+    /// whose place is taken, or that does not open, is left where it is.
+    pub fn import_with_sidecars(
+        &self,
+        import: &DownloadImport,
+        join: Option<ImportJoin>,
+        open_source: &dyn Fn(&Path) -> std::io::Result<std::fs::File>,
+        sidecars: &[SidecarSource],
+    ) -> Result<ImportedAlbum, ImportError> {
         let fault = |message: String| ImportError::LocalFault(message);
         if import.files.is_empty() && import.extras.is_empty() {
             return Err(fault("nothing to import".to_owned()));
@@ -428,7 +459,7 @@ impl Imports {
                 .collect::<Vec<_>>(),
         );
         let plain = join.is_none()
-            && import.origin == ImportOrigin::Download
+            && matches!(import.origin, ImportOrigin::Download | ImportOrigin::Folder)
             && import.files.iter().all(|file| file.replaces.is_empty())
             && !self
                 .db
@@ -872,6 +903,8 @@ impl Imports {
                 tags_kept: 0,
             });
         }
+        let sidecar_dests =
+            self.sidecar_dests(&root, &open.sandbox, &placements, sidecars, &mut claimed);
         // Where a file sits on the join's release, when the import matched
         // that release (an extra file has no place).
         let joined_track = |track: &super::matching::ReleaseTrack| {
@@ -903,6 +936,7 @@ impl Imports {
         };
         let result = (|| {
             let mut items = Vec::with_capacity(placements.len());
+            let mut next_sidecar = 0usize;
             for placement in &placements {
                 let staged = open
                     .sandbox
@@ -913,6 +947,33 @@ impl Imports {
                 let fingerprint = copy_in(source, &staged)
                     .map_err(|error| fault(format!("copy into the library failed: {error}")))?;
                 let track = &placement.track;
+                let mut carried = Vec::new();
+                for (sidecar, dest_rel) in sidecar_dests
+                    .iter()
+                    .filter(|dest| dest.0 == placement.index)
+                    .map(|dest| (&sidecars[dest.1], &dest.2))
+                {
+                    let staged_rel = format!("{task_dir}/sidecar-{next_sidecar:03}");
+                    next_sidecar += 1;
+                    let copied = open
+                        .sandbox
+                        .resolve_no_symlink(&root.id, &staged_rel)
+                        .map_err(|error| std::io::Error::other(error.to_string()))
+                        .and_then(|staged| copy_in(open_source(&sidecar.path)?, &staged));
+                    match copied {
+                        Ok(fingerprint) => carried.push(super::publish::planner::SidecarPlan {
+                            source_root: root.id.clone(),
+                            source_rel: staged_rel,
+                            dest_root: root.id.clone(),
+                            dest_rel: dest_rel.clone(),
+                            fingerprint,
+                        }),
+                        Err(error) => tracing::info!(
+                            %error,
+                            "an import leaves a sidecar it could not copy where it was"
+                        ),
+                    }
+                }
                 items.push(PlanItem {
                     track_id: placement.track_id.clone(),
                     source_root: root.id.clone(),
@@ -938,7 +999,7 @@ impl Imports {
                     },
                     format: placement.format,
                     managed_updates: placement.tags.clone(),
-                    sidecars: Vec::new(),
+                    sidecars: carried,
                     adopt: Some(super::publish::planner::Adoption {
                         source_path: Some(placement.source.to_string_lossy().into_owned()),
                         track: joined_track(track),
@@ -1068,6 +1129,82 @@ impl Imports {
             blocked,
             tags_kept,
         })
+    }
+
+    /// Where each sidecar the destination folder's patterns name goes:
+    /// `(placement index, sidecar index, destination)`. It goes beside the
+    /// files placed from the nearest folder at or above its own (never
+    /// above the album folder it came in) that holds any: into the folder
+    /// their destinations share, with its path below that folder kept. One
+    /// whose destination is taken, excluded, claimed by another file of the
+    /// bundle, or would sit directly in the library folder, is left out.
+    fn sidecar_dests(
+        &self,
+        root: &LibraryRoot,
+        sandbox: &super::publish::Sandbox,
+        placements: &[Placement],
+        sidecars: &[SidecarSource],
+        claimed: &mut std::collections::HashSet<super::publish::CollisionKey>,
+    ) -> Vec<(usize, usize, String)> {
+        if sidecars.is_empty() {
+            return Vec::new();
+        }
+        let patterns =
+            super::management::profile::sidecar_patterns(&self.settings.management, &root.id);
+        let mut dests = Vec::new();
+        for (ordinal, sidecar) in sidecars.iter().enumerate() {
+            let folded = caseless::default_case_fold_str(&sidecar.rel);
+            if !super::management::planner::sidecar_match(&patterns, &folded) {
+                continue;
+            }
+            let depth = Path::new(&sidecar.rel).components().count();
+            let Some(album_dir) = sidecar.path.ancestors().nth(depth) else {
+                continue;
+            };
+            let mut found = None;
+            for dir in sidecar.path.ancestors().skip(1) {
+                if !dir.starts_with(album_dir) {
+                    break;
+                }
+                let below: Vec<&Placement> = placements
+                    .iter()
+                    .filter(|placement| placement.source.starts_with(dir))
+                    .collect();
+                if !below.is_empty() {
+                    found = Some((dir, below));
+                    break;
+                }
+            }
+            let Some((dir, below)) = found else {
+                continue;
+            };
+            let Some(folder) =
+                shared_folder(below.iter().map(|placement| placement.dest_rel.as_str()))
+            else {
+                continue;
+            };
+            let Ok(rest) = sidecar.path.strip_prefix(dir) else {
+                continue;
+            };
+            let dest_rel = format!("{folder}/{}", rest.to_string_lossy());
+            let excluded = root.policy_for(&root.path.join(&dest_rel)) == EffectivePolicy::Excluded;
+            let occupied = sandbox
+                .resolve_no_symlink(&root.id, &dest_rel)
+                .map(|dest| taken(&root.id, &dest, &[]))
+                .unwrap_or(true);
+            if excluded
+                || occupied
+                || !claimed.insert(super::publish::collision_key(&root.id, &dest_rel))
+            {
+                tracing::info!(
+                    dest_rel,
+                    "an import leaves a sidecar whose place is taken where it was"
+                );
+                continue;
+            }
+            dests.push((below[0].index, ordinal, dest_rel));
+        }
+        dests
     }
 
     /// The track id a file bound for `dest_rel` takes, or why it is held.
@@ -1207,6 +1344,21 @@ fn taken(root_id: &str, dest: &Path, leaving: &[&Path]) -> bool {
             && super::publish::collision_key(root_id, text) == wanted_key
             && !leaving.contains(&parent.join(text).as_path())
     })
+}
+
+/// The folder every one of `dests` (paths relative to a library folder)
+/// sits in, or under: `None` when they share none but the library folder.
+fn shared_folder<'a>(mut dests: impl Iterator<Item = &'a str>) -> Option<String> {
+    let parent = |dest: &'a str| Path::new(dest).parent().map(Path::to_path_buf);
+    let mut shared = parent(dests.next()?)?;
+    for dest in dests {
+        let folder = parent(dest)?;
+        while !folder.starts_with(&shared) {
+            shared = shared.parent()?.to_path_buf();
+        }
+    }
+    let text = shared.to_string_lossy().into_owned();
+    (!text.is_empty()).then_some(text)
 }
 
 /// The first of `dests`, relative to `root`, that the folder or a path
@@ -1377,11 +1529,10 @@ pub(crate) fn recovered_provenance(staged: &Path, bundle_id: &str, track_id: &st
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     let source_path = provenance.sources.get(&name).cloned();
-    let origin = if provenance.ingest_source == ImportOrigin::Drop.as_str() {
-        ImportOrigin::Drop
-    } else {
-        ImportOrigin::Download
-    };
+    let origin = [ImportOrigin::Drop, ImportOrigin::Folder]
+        .into_iter()
+        .find(|origin| provenance.ingest_source == origin.as_str())
+        .unwrap_or(ImportOrigin::Download);
     let file = provenance
         .files
         .get(&name)

@@ -223,6 +223,88 @@ pub fn remove_beneath(folders: &[PathBuf], path: &Path) -> io::Result<()> {
     unlink_beneath(folders, path, 0)
 }
 
+/// A file as it was when its bytes were hashed: the hash, and what says it
+/// is still that file (device, inode, size, change and modification times).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hashed {
+    /// Lower-case hex SHA-256 of its bytes.
+    pub sha256: String,
+    identity: Identity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Identity {
+    dev: u64,
+    ino: u64,
+    size: u64,
+    mtime: (i64, i64),
+    ctime: (i64, i64),
+}
+
+impl Identity {
+    fn of(meta: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt as _;
+        Self {
+            dev: meta.dev(),
+            ino: meta.ino(),
+            size: meta.size(),
+            mtime: (meta.mtime(), meta.mtime_nsec()),
+            ctime: (meta.ctime(), meta.ctime_nsec()),
+        }
+    }
+}
+
+/// Hash the regular file at `path`, opened as [`open_beneath`] opens it. A
+/// file that changes while it is read is an error. Blocking.
+pub fn hash_beneath(folders: &[PathBuf], path: &Path) -> io::Result<Hashed> {
+    let file = open_beneath(folders, path)?;
+    let identity = Identity::of(&file.metadata()?);
+    let (sha256, _) = droppedneedle_kernel::db::backup::read_sha256(&file)?;
+    if Identity::of(&file.metadata()?) != identity {
+        return Err(io::Error::other("the file changed while it was read"));
+    }
+    Ok(Hashed { sha256, identity })
+}
+
+/// Remove the file at `path`, beneath whichever of `folders` holds it, only
+/// while it is still the file `hashed` read: its folder is opened as
+/// [`open_beneath`] opens it, the name is looked at there without following
+/// a link, and it is unlinked from that same folder. True when it was
+/// removed, false when it is another file now (left as it is). Blocking.
+pub fn remove_beneath_if_unchanged(
+    folders: &[PathBuf],
+    path: &Path,
+    hashed: &Hashed,
+) -> io::Result<bool> {
+    use std::os::fd::FromRawFd as _;
+    let (dir, name) = beneath::parent_beneath(holder(folders, path)?, path, RootLinks::Refuse)?;
+    // SAFETY: `dir` is an open descriptor and `name` a NUL-terminated
+    // string, both alive for the call; the answer is checked before use.
+    let found = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if found < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `found` is a descriptor this call just opened and nothing
+    // else owns.
+    let found = std::fs::File::from(unsafe { std::os::fd::OwnedFd::from_raw_fd(found) });
+    if Identity::of(&found.metadata()?) != hashed.identity {
+        return Ok(false);
+    }
+    // SAFETY: as above.
+    let status = unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), 0) };
+    if status == 0 {
+        Ok(true)
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 /// Remove the empty folder at `path`, beneath whichever of `folders`
 /// holds it, as [`remove_beneath`] removes a file. Blocking.
 pub fn remove_dir_beneath(folders: &[PathBuf], path: &Path) -> io::Result<()> {

@@ -86,6 +86,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	sourcePriorityChanged: [key('admin', 'downloads', 'source-priority')],
 	downloadPolicyChanged: [key('admin', 'downloads', 'policy')],
 	wantedSettingsChanged: [key('admin', 'downloads', 'wanted-settings')],
+	importFolderChanged: [key(U, 'settings', 'import-folder-status')],
 	anyDownloadChanged: [every('downloads')],
 	anyRequestChanged: [every('requests')],
 	albumStatusChanged: [key(U, 'library', 'album', 'job')],

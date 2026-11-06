@@ -400,7 +400,8 @@ Run from the repo root. `make help` lists every target.
   from the parsed base. Relay a server's bytes only under a content type of
   ours from a short allowlist, with `nosniff` and a sandbox policy. A path a
   download client or plugin reports is read only from inside that client's
-  folder: a downloaded file is copied or removed only through
+  folder, and a file in the import folder only from inside it: a
+  downloaded or import-folder file is copied or removed only through
   `acquire/src/landing/confine.rs`, which opens it beneath the folder's
   real path one component at a time and never follows a link. That
   opener is the kernel's one no-follow opener (`kernel/src/beneath.rs`),
@@ -541,6 +542,17 @@ Run from the repo root. `make help` lists every target.
   check), or on an album with no match whose files' tags name different
   groups. The new file is held and the old stays. Only a person importing
   that held file passes the check; the quality comparison still runs.
+- The import folder (`acquire/src/import_folder/`) is one admin-set folder
+  that is not, holds no and sits in no library, recycle bin, download or
+  app folder; a pass that finds it overlapping one, not writable, or
+  cannot tell, does nothing. It takes an album folder only once nothing in
+  it has changed for 3 minutes (names starting with `.` are never taken),
+  one album at a time, never while a scan runs, through drop import's
+  steps. A file (music or sidecar) leaves the folder only once the publish
+  journal holds its exact bytes for its item, hashed beneath the folder
+  and unchanged up to the unlink. Its work belongs to no user: its jobs
+  and held entries have no owner, only admins see and act on them, and
+  only while that folder is still the import folder.
 
 **Identity** (product rules, not up for debate)
 - An edition a person chose is the album's identity; a v2 pin carries as
@@ -647,11 +659,15 @@ Run from the repo root. `make help` lists every target.
   ready is held and starts by itself when one is saved. It is never
   refused or lost.
 - Every file kept for a person's decision (a held download, an upload
-  waiting for review) is an entry in acquire's one held list
-  (`acquire/src/held/`), kept 90 days and then removed by its prune. An
-  entry a person is acting on is never removed under them, and a held
-  file is only judged gone when the filesystem says it is absent, never
-  on a read error. A held file the library could not take is retried by
+  waiting for review, a file the import folder could not place) is an
+  entry in acquire's one held list (`acquire/src/held/`). Copies in the
+  app's own folders are kept 90 days and then removed by its prune. A file
+  left in the import folder is the person's own copy: it has no expiry,
+  the prune never touches it, and it leaves the folder only when a person
+  discards it or once the library holds its exact bytes. An entry a
+  person is acting on is never removed under them, and a held file is
+  only judged gone when the filesystem says it is absent, never on a read
+  error. A held file the library could not take is retried by
   itself (`Gate::HeldRetry`), and that retry never places a file on an
   album a person moved it away from, never adds a second copy and never
   replaces a library copy: those wait for a person.
