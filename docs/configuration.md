@@ -133,4 +133,4 @@ Before a new version changes the database schema, DroppedNeedle writes a verifie
 
 A `:dev` tag (`droppedneedle/droppedneedle:dev`) is built from `main` on every push that changes the code, and may break. Pin a commit with `:dev-<short-sha>`. Until v3 is released, `main` and `:dev` are still v2.
 
-Pre-releases are published to the same image under their own version tag, for example `droppedneedle/droppedneedle:v3.1.0-rc.1`. They never move `:latest`, so you only get one by asking for its tag.
+Pre-releases are published to the same image under their own version tag, for example `droppedneedle/droppedneedle:v3.1.0-rc.1`. They never move `:latest`, so you only get one by asking for its tag. `:beta` always points at the newest pre-release, so testers can stay on `droppedneedle/droppedneedle:beta` and get each new one with a pull. A full release does not move it: once the version you were testing is released, switch back to `:latest`.

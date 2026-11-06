@@ -156,7 +156,7 @@ If you used AI, say so in the pull request: the tool and model (for example Clau
 
 ## Releases
 
-Maintainers cut releases. A release is a version tag, `v3.1.0` or `v3.1.0-rc.1` for a pre-release, on a commit of the release branch that CI has passed on. Bump `version` under `[workspace.package]` in `server/Cargo.toml` to the same version, without the `v`, before tagging: the workflow rejects a tag that does not match it. Pushing the tag starts the Release workflow, which checks the tag, the branch and CI, then waits for a maintainer to approve the `release` environment before it publishes `droppedneedle/droppedneedle:<tag>`. `:latest` only moves forward: a pre-release never moves it, and neither does a patch to an older line once a higher full version is tagged.
+Maintainers cut releases. A release is a version tag, `v3.1.0` or `v3.1.0-rc.1` for a pre-release, on a commit of the release branch that CI has passed on. Bump `version` under `[workspace.package]` in `server/Cargo.toml` to the same version, without the `v`, before tagging: the workflow rejects a tag that does not match it. A pre-release keeps the version it leads up to, so `v3.1.0-rc.1` and `v3.1.0-beta.2` both need `3.1.0`. Pushing the tag starts the Release workflow, which checks the tag, the branch and CI, then waits for a maintainer to approve the `release` environment before it publishes `droppedneedle/droppedneedle:<tag>`. `:latest` only moves forward: a pre-release never moves it, and neither does a patch to an older line once a higher full version is tagged. `:beta` follows the newest pre-release and is never moved by a full release.
 
 CI is path-filtered: a commit that changes no code gets no CI run, and a run on one that changes only some areas skips the other jobs and still passes. The Release workflow takes any passing CI run on the commit, so start a full one by hand.
 
@@ -166,7 +166,7 @@ Only maintainers tag, and nothing but a version tag publishes a release image. T
 2. Start CI by hand on that commit, so every job runs, and wait for it to pass.
 3. Check that the latest Frontend CI run on the release branch and the weekly Perf budgets run are green.
 4. Run the release dry run described below.
-5. Push the tag.
+5. Push the tag, or publish a GitHub release that creates it (ticking "Set as a pre-release" for a pre-release).
 6. Approve the `release` environment when the Release workflow asks.
 
 To rehearse a release without publishing, run the Release workflow by hand with the version you plan to tag and leave `push` unticked. It runs every check, waits for the same approval and builds the image for both architectures without pushing anything.

@@ -46,6 +46,7 @@ jobs:
       prerelease: ${{ steps.version.outputs.prerelease }}
       publish: ${{ steps.version.outputs.publish }}
       latest: ${{ steps.latest.outputs.latest }}
+      beta: ${{ steps.beta.outputs.beta }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -86,7 +87,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # The server gives the crate version to plugins and in its user agent,
-      # so it has to agree with the tag the image is published under.
+      # so it has to agree with the tag the image is published under. A
+      # pre-release carries the version it leads up to (v3.0.0-beta.1 needs
+      # 3.0.0), so the user agent MetaBrainz's gateway was set up for stays
+      # the same through a release's betas.
       - name: Check the version matches the crate
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -102,7 +106,7 @@ jobs:
             echo "::error::No package version found in server/Cargo.toml."
             exit 1
           fi
-          if [[ "v$crate" != "$VERSION" ]]; then
+          if [[ "v$crate" != "${VERSION%%-*}" ]]; then
             echo "::error::$VERSION does not match version $crate in server/Cargo.toml. Bump the crate version before tagging."
             exit 1
           fi
@@ -130,6 +134,30 @@ jobs:
             echo "$VERSION is older than $highest and leaves latest alone."
           fi
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
+
+      # beta follows the newest pre-release, so testers can stay on one tag.
+      # A full release leaves it alone, and so does an older pre-release.
+      - name: Decide whether beta moves
+        id: beta
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          beta=false
+          if [[ "$PRERELEASE" != "true" ]]; then
+            echo "$VERSION is a full release and leaves beta alone."
+          else
+            highest="$(git tag --list 'v*-*' \
+              | awk -v self="$VERSION" '$0 != self' \
+              | sort -V | tail -n 1)"
+            if [[ "$(printf '%s\n' "$highest" "$VERSION" | sort -V | tail -n 1)" == "$VERSION" ]]; then
+              beta=true
+              echo "$VERSION is the newest pre-release and moves beta."
+            else
+              echo "$VERSION is older than $highest and leaves beta alone."
+            fi
+          fi
+          echo "beta=$beta" >> "$GITHUB_OUTPUT"
 
       - name: Check the commit is on the release branch
         run: |
@@ -292,4 +320,12 @@ jobs:
           docker buildx imagetools create \
             -t "ghcr.io/droppedneedle/droppedneedle:latest" \
             -t "droppedneedle/droppedneedle:latest" \
+            "droppedneedle/droppedneedle:${VERSION}"
+
+      - name: Tag beta
+        if: env.PUBLISH == 'true' && needs.checks.outputs.beta == 'true'
+        run: |
+          docker buildx imagetools create \
+            -t "ghcr.io/droppedneedle/droppedneedle:beta" \
+            -t "droppedneedle/droppedneedle:beta" \
             "droppedneedle/droppedneedle:${VERSION}"
