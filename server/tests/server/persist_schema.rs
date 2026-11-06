@@ -2595,6 +2595,13 @@ const ALLOWED_LITERALS: &[AllowedLiteral] = &[
         why: "the backup checks read a backup file's integrity and version, a file the \
               server never opens as its database",
     },
+    AllowedLiteral {
+        path: "tool/src/export/sql.rs",
+        starts_with: "PRAGMA wal_checkpoint(TRUNCATE)",
+        whole: true,
+        why: "checkpoints the upgrade's private recovered copy of a v2 database, a file no \
+              server opens; v2's own files are never written",
+    },
 ];
 
 /// The export's bundle builder. Each statement is made at run time from the

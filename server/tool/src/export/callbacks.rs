@@ -16,7 +16,7 @@ use serde_json::{Map, Value};
 
 use crate::export::bundle::carried_rows;
 use crate::export::error::ExportError;
-use crate::export::exporter::{open_v2_db, table_exists};
+use crate::export::exporter::{V2Snapshot, open_v2_db, table_exists};
 use crate::export::sections::contributions::CALLBACK_TOKENS;
 use crate::export::sql::{ADMINS, AdminRow};
 use crate::export::v2dir::read_config;
@@ -146,15 +146,20 @@ pub struct Acknowledged {
 
 /// Read what the stopped v2 instance registered with outside services:
 /// `config_dir` holds its `config.json` and `db_path` is its database.
-/// `base_path` is v3's deployment base path. A read that fails is an
-/// error, never an empty result; a table v2 does not have holds nothing.
+/// `base_path` is v3's deployment base path. Writes v2 left in its `-wal`
+/// file are read from a copy in `scratch` ([`V2Snapshot`]), removed again
+/// before this returns. A read that fails is an error, never an empty
+/// result; a table v2 does not have holds nothing.
 pub fn check_callbacks(
     config_dir: &Path,
     db_path: &Path,
     base_path: &str,
+    scratch: &Path,
 ) -> Result<CallbackCheck, ExportError> {
     let config = read_config(config_dir)?;
     let single_sign_on = oidc_change(&config, base_path);
+    let snapshot = V2Snapshot::take(db_path, scratch)?;
+    let db_path = snapshot.path();
     let db = open_v2_db(db_path)?;
     let admins = match single_sign_on {
         Some(_) => Some(read_admins(&db)?),

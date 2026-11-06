@@ -66346,7 +66346,7 @@
           "UNKNOWN_LAYOUT",
           "UNSUPPORTED_PATHS",
           "BACKUP_EXISTS",
-          "V2_WAL_PRESENT",
+          "V2_WAL_UNREADABLE",
           "NOT_ENOUGH_DISK",
           "V2_KEY_NOT_FOUND",
           "V2_KEY_INVALID",

@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use droppedneedle_kernel::runtime_config::Secret;
+use droppedneedle_tool::export::exporter::V2_COPY_PREFIX;
 use droppedneedle_tool::export::{
     ExportError, ExportRequest, HashScheme, LeftBehind, LeftBehindKind, Opener, ParsedExport,
     SealError, export_v2, export_v2_to_file, fernet::FernetKey, parse_export, unseal,
@@ -757,7 +758,9 @@ fn export_to_file_writes_a_parseable_envelope() {
 }
 
 // The stopped v2 database opens immutable: a WAL database exports
-// without the exporter creating its shared-memory file.
+// without the exporter creating its shared-memory file. Writes v2 left in
+// its -wal file are read from a recovered copy, which changes none of v2's
+// files and is gone afterwards. A -wal file that cannot be read refuses.
 #[test]
 fn export_reads_the_database_immutable() {
     let (dir, _key) = fixture_v2_root();
@@ -773,8 +776,43 @@ fn export_reads_the_database_immutable() {
     export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap();
     assert!(!shm.exists(), "an immutable open touches no side files");
 
-    // Unmerged writes in the log would be skipped: refuse instead.
-    std::fs::write(dir.join("cache/library.db-wal"), b"pending").unwrap();
-    let error = export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap_err();
-    assert_eq!(error.code(), "V2_WAL_PRESENT");
+    crate::tooling_cli::users_in_wal(&db, &["Carol"]);
+    let entries = |folder: &Path| -> Vec<std::ffi::OsString> {
+        let mut names: Vec<_> = std::fs::read_dir(folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        names
+    };
+    let v2_files = || {
+        ["library.db", "library.db-wal", "library.db-shm"]
+            .map(|name| std::fs::read(dir.join("cache").join(name)).unwrap())
+    };
+    let (cache_before, files_before) = (entries(&dir.join("cache")), v2_files());
+    let doc = export_v2(&request(&dir), &dir.join("recovered.bundle.sqlite")).unwrap();
+    assert!(doc.users.iter().any(|user| user.display_name == "Carol"));
+    assert!(
+        v2_files() == files_before,
+        "v2's files are left as they were"
+    );
+    assert_eq!(entries(&dir.join("cache")), cache_before);
+    let copies = entries(&dir)
+        .into_iter()
+        .filter(|name| name.to_string_lossy().starts_with(V2_COPY_PREFIX))
+        .count();
+    assert_eq!(copies, 0, "the copy is removed");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let wal = dir.join("cache/library.db-wal");
+        std::fs::set_permissions(&wal, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Root reads it anyway, and then there is nothing to refuse.
+        if std::fs::read(&wal).is_err() {
+            let error = export_v2(&request(&dir), &dir.join("refused.bundle.sqlite")).unwrap_err();
+            assert_eq!(error.code(), "V2_WAL_UNREADABLE");
+        }
+        std::fs::set_permissions(&wal, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
 }

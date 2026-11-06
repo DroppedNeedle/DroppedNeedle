@@ -8,8 +8,11 @@
 //! covers it; secrets never go in here.
 //!
 //! The bundle opens v2 through `ATTACH` with the same immutable, read-only
-//! URI the exporter uses, so v2 is never written. Bundle columns carry no
-//! declared type: values keep the exact storage class v2 gave them.
+//! URI the exporter uses, on the same file: the v2 database, or its
+//! recovered copy when v2 left writes in its `-wal` file
+//! ([`V2Snapshot`](crate::export::exporter::V2Snapshot)). v2 is never
+//! written. Bundle columns carry no declared type: values keep the exact
+//! storage class v2 gave them.
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::Read as _;

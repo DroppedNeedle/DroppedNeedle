@@ -539,6 +539,84 @@ pub(crate) fn clean_v2(root: &Path) {
     .expect("repair runs");
 }
 
+/// Add one v2 user per name, each in its own transaction, and leave every
+/// one only in the `-wal` file beside `db`, as v2 2.15 does even when it
+/// stops cleanly: it never checkpoints on close, so the `-shm` stays too.
+pub(crate) fn users_in_wal(db: &Path, names: &[&str]) {
+    let conn = rusqlite::Connection::open(db).expect("v2 database opens");
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
+        .expect("journal mode set");
+    assert_eq!(mode, "wal");
+    conn.set_db_config(
+        rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+        true,
+    )
+    .expect("no checkpoint on close");
+    let before = std::fs::read(db).expect("database reads");
+    for name in names {
+        conn.execute(
+            "INSERT INTO auth_users (id, display_name, role, created_at)
+             VALUES (?1, ?2, 'user', '2026-11-01T00:00:00+00:00')",
+            rusqlite::params![uuid::Uuid::new_v4().to_string(), name],
+        )
+        .expect("user added");
+    }
+    drop(conn);
+    assert_eq!(
+        std::fs::read(db).expect("database reads"),
+        before,
+        "the users are only in the -wal file"
+    );
+}
+
+/// What a v2 killed while writing leaves: the `-wal` file's last frame is
+/// cut in half, so its transaction never committed, and no `-shm`.
+pub(crate) fn kill_mid_write(db: &Path) {
+    let wal = PathBuf::from(format!("{}-wal", db.display()));
+    let bytes = std::fs::read(&wal).expect("wal reads");
+    let header = bytes.get(8..12).expect("wal header");
+    let page_size = u64::from(u32::from_be_bytes(header.try_into().expect("four bytes")));
+    let frame = 24 + page_size;
+    let length = u64::try_from(bytes.len()).expect("length fits");
+    assert_eq!((length - 32) % frame, 0, "the wal holds whole frames");
+    assert!(length >= 32 + 2 * frame, "more than one frame");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&wal)
+        .and_then(|file| file.set_len(length - frame / 2))
+        .expect("wal torn");
+    let shm = PathBuf::from(format!("{}-shm", db.display()));
+    std::fs::remove_file(&shm).expect("shm removed");
+}
+
+/// The display names in the `auth_users` table of the database at `db`.
+pub(crate) fn user_names(db: &Path) -> Vec<String> {
+    let conn =
+        rusqlite::Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .expect("database opens");
+    let mut statement = conn
+        .prepare("SELECT display_name FROM auth_users ORDER BY display_name")
+        .expect("names query");
+    statement
+        .query_map([], |row| row.get(0))
+        .expect("names read")
+        .collect::<Result<_, _>>()
+        .expect("names read")
+}
+
+/// The trees without v2's `-shm` index: telling v2 from v3 reads a
+/// database through its `-wal` file, and SQLite keeps its reader marks in
+/// that index, as the server's own start does.
+pub(crate) fn without_shm((config, cache): (Tree, Tree)) -> (Tree, Tree) {
+    let keep = |tree: Tree| {
+        tree.into_iter()
+            .filter(|(path, _)| path.file_name().is_none_or(|name| name != "library.db-shm"))
+            .collect()
+    };
+    (keep(config), keep(cache))
+}
+
 /// Folders (`None`) and files (their bytes) by relative path.
 pub(crate) type Tree = BTreeMap<PathBuf, Option<Vec<u8>>>;
 
@@ -617,6 +695,7 @@ pub(crate) async fn upgrade_with_fault(
         v2_commit: None,
         base_path: String::new(),
         callbacks_changed: false,
+        temp_dir: std::env::temp_dir(),
         fault: Some(fault),
     };
     upgrade::run(&request, &mut |_| {}).await
@@ -1250,8 +1329,7 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
 }
 
 /// A run that cannot finish leaves the v2 data directory as it found it,
-/// byte for byte, whether it stops before or after the files moved. The
-/// check names what would stop it, and changes nothing either.
+/// byte for byte, whether it stops before or after the files moved.
 #[tokio::test]
 async fn a_failed_upgrade_leaves_the_v2_directory_as_it_was() {
     let scratch = scratch_dir("upgrade-fails");
@@ -1260,49 +1338,6 @@ async fn a_failed_upgrade_leaves_the_v2_directory_as_it_was() {
     let key_file = root.join("config").join(".env");
     let key = std::fs::read(&key_file).expect("key reads");
     let original = data_trees(&root);
-
-    // A v2 that did not stop cleanly: the check names its -wal file and
-    // what to do, and changes nothing. Telling v2 from v3 reads the
-    // database through that file, which makes SQLite add its -shm index
-    // beside it, as the server's own start does; nothing else appears.
-    let wal = root.join("cache").join("library.db-wal");
-    std::fs::write(&wal, b"unmerged").expect("wal writes");
-    let unclean = data_trees(&root);
-    let checked = tool_in(&root, &["upgrade", "--check", "--progress", "json"]);
-    assert_eq!(
-        checked.status.code(),
-        Some(1),
-        "stderr: {}",
-        stderr_of(&checked)
-    );
-    let lines = json_lines(&checked);
-    let [
-        Line {
-            event: Event::Check(check),
-            ..
-        },
-    ] = lines.as_slice()
-    else {
-        panic!("one check line: {lines:?}");
-    };
-    let blocker = check
-        .blockers
-        .iter()
-        .find(|blocker| blocker.code == Code::V2WalPresent)
-        .unwrap_or_else(|| panic!("V2_WAL_PRESENT listed: {check:?}"));
-    assert!(
-        blocker.fix.contains("stop it cleanly"),
-        "fix: {}",
-        blocker.fix
-    );
-    assert_eq!(check.counts, None);
-    let shm = root.join("cache").join("library.db-shm");
-    let (config, mut cache) = data_trees(&root);
-    cache.remove(Path::new("library.db-shm"));
-    assert_eq!((config, cache), unclean);
-    for file in [&wal, &shm] {
-        std::fs::remove_file(file).expect("side file removed");
-    }
 
     // A running server holds the data lock: refused.
     {
@@ -1461,17 +1496,40 @@ async fn an_interrupted_upgrade_is_rolled_back_first() {
 
 /// `--undo --yes` deletes the v3 data and puts the v2 files back as they
 /// were, after an upgrade or a fresh start. `--no-backup` keeps no v2
-/// files, so there is nothing to undo.
+/// files, so there is nothing to undo. The v2 here stopped cleanly and
+/// left its newest writes in its `-wal` file, as v2 2.15 does: the check
+/// and the upgrade read them from a copy and never change v2's files.
 #[test]
 fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
     let scratch = scratch_dir("upgrade-undo");
     let root = scratch.join("data");
     clean_v2(&root);
-    let original = data_trees(&root);
+    let db = root.join("cache").join("library.db");
+    users_in_wal(&db, &["Carol"]);
+    let original = without_shm(data_trees(&root));
+
+    let checked = tool_in(&root, &["upgrade", "--check", "--progress", "json"]);
+    assert!(checked.status.success(), "stderr: {}", stderr_of(&checked));
+    let lines = json_lines(&checked);
+    let [
+        Line {
+            event: Event::Check(check),
+            ..
+        },
+    ] = lines.as_slice()
+    else {
+        panic!("one check line: {lines:?}");
+    };
+    assert_eq!(check.blockers, []);
+    let counts = check.counts.as_ref().expect("the check exported");
+    assert_eq!(counts.get("user"), Some(&3), "Carol is counted");
+    assert_eq!(without_shm(data_trees(&root)), original);
 
     let run = tool_in(&root, &["upgrade"]);
     assert!(run.status.success(), "stderr: {}", stderr_of(&run));
-    assert_eq!(backup_trees(&root), original);
+    assert!(is_v3(&root));
+    assert_eq!(user_names(&db), ["Alice", "Bob", "Carol"]);
+    assert_eq!(without_shm(backup_trees(&root)), original);
     let upgraded = data_trees(&root);
 
     // Undo deletes the v3 data, so it asks for --yes first.
@@ -1510,7 +1568,7 @@ fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
 
     let undone = tool_in(&root, &["upgrade", "--undo", "--yes"]);
     assert!(undone.status.success(), "stderr: {}", stderr_of(&undone));
-    assert_eq!(data_trees(&root), original);
+    assert_eq!(without_shm(data_trees(&root)), original);
     assert!(std::fs::symlink_metadata(&link).is_err());
     assert_eq!(
         std::fs::read(outside.join("keep.txt")).expect("target survives"),
@@ -1525,7 +1583,7 @@ fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
         "stderr: {}",
         stderr_of(&already_v2)
     );
-    assert_eq!(data_trees(&root), original);
+    assert_eq!(without_shm(data_trees(&root)), original);
 
     // A fresh start never deletes the v2 files, so --no-backup is refused.
     // It keeps them byte for byte in the backup and leaves no v3 database,
@@ -1537,7 +1595,7 @@ fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
         "stderr: {}",
         stderr_of(&refused)
     );
-    assert_eq!(data_trees(&root), original);
+    assert_eq!(without_shm(data_trees(&root)), original);
     let fresh = tool_in(
         &root,
         &["upgrade", "--fresh", "--yes", "--progress", "json"],
@@ -1553,7 +1611,7 @@ fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
             ..
         })
     ));
-    assert_eq!(backup_trees(&root), original);
+    assert_eq!(without_shm(backup_trees(&root)), original);
     assert!(!root.join("cache").join("library.db").exists());
     assert_eq!(data_dirs::check_bootable(&upgrade_dirs(&root)), Ok(()));
     let undone = tool_in(&root, &["upgrade", "--undo", "--yes", "--progress", "json"]);
@@ -1568,7 +1626,7 @@ fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
             ..
         })
     ));
-    assert_eq!(data_trees(&root), original);
+    assert_eq!(without_shm(data_trees(&root)), original);
 
     let run = tool_in(&root, &["upgrade", "--no-backup"]);
     assert!(run.status.success(), "stderr: {}", stderr_of(&run));
@@ -1584,6 +1642,28 @@ fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
         stderr_of(&nothing_to_undo)
     );
     assert!(is_v3(&root));
+}
+
+/// A v2 that was killed: its newest committed users are only in its
+/// `-wal` file, the last frame was cut short and there is no `-shm`. The
+/// upgrade reads a recovered copy: SQLite keeps every committed write and
+/// drops the torn transaction, as v2's own next start would, and v2's
+/// files are never changed.
+#[test]
+fn a_killed_v2_upgrades_with_its_committed_writes() {
+    let scratch = scratch_dir("upgrade-killed");
+    let root = scratch.join("data");
+    clean_v2(&root);
+    let db = root.join("cache").join("library.db");
+    users_in_wal(&db, &["Carol", "Dave"]);
+    kill_mid_write(&db);
+    let original = without_shm(data_trees(&root));
+
+    let run = tool_in(&root, &["upgrade"]);
+    assert!(run.status.success(), "stderr: {}", stderr_of(&run));
+    assert!(is_v3(&root));
+    assert_eq!(user_names(&db), ["Alice", "Bob", "Carol"]);
+    assert_eq!(without_shm(backup_trees(&root)), original);
 }
 
 #[tokio::test]

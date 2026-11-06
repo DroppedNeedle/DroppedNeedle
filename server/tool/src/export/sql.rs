@@ -61,4 +61,16 @@ droppedneedle_kernel::sql! {
         username: Option<String>,
         has_password: bool,
     }
+
+    /// Move every committed frame of a recovered copy's `-wal` file into
+    /// the copy and empty the log. Run only on the private copy, never on
+    /// v2's own database.
+    pub(crate) WAL_CHECKPOINT = "PRAGMA wal_checkpoint(TRUNCATE)";
+
+    /// What the checkpoint did: `busy` is 1 when it could not finish.
+    pub(crate) row Checkpoint for [WAL_CHECKPOINT] {
+        busy: i64,
+        log: i64,
+        checkpointed: i64,
+    }
 }

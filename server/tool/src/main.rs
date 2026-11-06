@@ -395,18 +395,17 @@ fn run_export(args: &[String]) -> Result<(), Failure> {
     let v2 = V2Dirs::under_root(std::path::Path::new(&required_flag(args, "--v2-root")?));
     let db_path = flag_value(args, "--db")?.map(PathBuf::from);
     let out = required_flag(args, "--out")?;
-    let base_path = AppConfig::load()
-        .map_err(|error| {
-            format!(
-                "{error}\nexport reads v3's deployment settings from the environment, for the \
-                 base path in the addresses it lists. Fix that variable or leave it unset."
-            )
-        })?
-        .base_path;
+    let config = AppConfig::load().map_err(|error| {
+        format!(
+            "{error}\nexport reads v3's deployment settings from the environment, for the \
+             base path in the addresses it lists. Fix that variable or leave it unset."
+        )
+    })?;
     let callbacks = check_callbacks(
         &v2.config_dir,
         &resolve_db_path(&v2.cache_dir, db_path.as_deref()),
-        &base_path,
+        &config.base_path,
+        &config.temp_dir,
     )
     .map_err(|error| format!("{}: {error}", error.code()))?;
     let acknowledged = has_flag(args, CALLBACKS_CHANGED_FLAG);
@@ -858,10 +857,11 @@ fn upgrade_command(args: &[String], out: &mut Progress) -> Result<(), UpgradeFai
         v2_commit,
         base_path: config.base_path,
         callbacks_changed,
+        temp_dir: config.temp_dir,
         fault: None,
     };
     if check {
-        return run_check(&request, &config.temp_dir, out);
+        return run_check(&request, out);
     }
     let runtime = new_runtime()
         .map_err(|message| UpgradeFailed::untouched(Failure::Failed(message), Code::Internal))?;
@@ -1051,12 +1051,8 @@ fn print_summary(out: &Progress, dirs: &DataDirs, summary: &lines::Summary, back
 /// `upgrade --check`: what the upgrade would find, changing nothing. It
 /// exits the way the upgrade would stop: 1 for a blocker, 3 for addresses
 /// not yet acknowledged or an admin nobody could get back in, else 0.
-fn run_check(
-    request: &UpgradeRequest,
-    temp_dir: &std::path::Path,
-    out: &mut Progress,
-) -> Result<(), UpgradeFailed> {
-    let result = upgrade::check(request, temp_dir);
+fn run_check(request: &UpgradeRequest, out: &mut Progress) -> Result<(), UpgradeFailed> {
+    let result = upgrade::check(request);
     print_check(out, &request.dirs, &result, request.callbacks_changed);
     let blocked = result
         .blockers

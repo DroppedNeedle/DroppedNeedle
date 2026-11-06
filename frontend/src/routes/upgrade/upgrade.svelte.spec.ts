@@ -175,9 +175,9 @@ describe('the upgrade page', () => {
 					orphans: 0,
 					blockers: [
 						{
-							code: 'V2_WAL_PRESENT',
-							message: "v2's database has unsaved writes.",
-							fix: 'Start v2 once and stop it cleanly.'
+							code: 'V2_WAL_UNREADABLE',
+							message: "Cannot read v2's library.db-wal.",
+							fix: 'Make it readable by the user the upgrade runs as.'
 						}
 					],
 					warnings: []
@@ -191,7 +191,9 @@ describe('the upgrade page', () => {
 		});
 		await renderWithQuery(UpgradePage, {});
 
-		await expect.element(page.getByText('Start v2 once and stop it cleanly.')).toBeVisible();
+		await expect
+			.element(page.getByText('Make it readable by the user the upgrade runs as.'))
+			.toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Upgrade', exact: true })).toBeDisabled();
 		await page.getByRole('button', { name: 'Start fresh instead' }).click();
 		await expect

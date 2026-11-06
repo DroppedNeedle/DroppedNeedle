@@ -58,8 +58,11 @@ checks the library against your files on its first scan.
    docker compose stop
    ```
 
-   Let it stop on its own. A v2 that was killed can leave unsaved writes
-   behind, and the upgrade refuses those (`V2_WAL_PRESENT` below).
+   Never upgrade while v2 is running. v2 can leave its newest writes in
+   `library.db-wal`, even after a clean stop, and so does a v2 that was
+   killed or lost power. The upgrade reads them from a copy it makes of the
+   database and that file, and keeps every write v2 had saved, as v2's own
+   next start would. v2's files are never changed.
 
 2. Change the image in your compose file to a v3 tag (such as `:v3.0.0`, or
    `:latest` once v3 is released). Leave the volumes as they are.
@@ -183,7 +186,8 @@ anything you want to keep before you remove the backup.
 
 Moving the files into the backup takes no time and no extra disk space.
 The upgrade does need some free space in the cache folder while it runs:
-about twice the size of the v2 database plus the files the upgrade carries
+about twice the size of the v2 database, once more for a copy of it when
+v2 left writes in its `-wal` file, plus the files the upgrade carries
 (saved originals, held downloads, profile pictures and playlist covers),
 plus a little headroom. The pre-flight checks that.
 
@@ -207,7 +211,9 @@ a copy of your own.
 
 v2 could keep follows and auto-download approvals that belonged to users
 who had since been deleted. The upgrade removes those rows and tells you how
-many. Nothing else in the v2 database is changed.
+many. Nothing else in the v2 database is changed. When v2 left writes in its
+`-wal` file, the rows are removed from the upgrade's copy of the database and
+v2's own is not changed at all.
 
 ## Upgrading from the command line
 
@@ -538,7 +544,7 @@ v2's back there.
 | `no complete v2 backup` | `--undo` found no `v2-backup` folders to go back to | Restore your own copy of the v2 folders |
 | `V2_KEY_NOT_FOUND` | v2's `config/.env` is missing | Put it back from a copy of your own, then run again |
 | `V2_KEY_MISMATCH` | The key in `config/.env` does not decrypt your stored secrets | Use the `config/.env` that v2 actually ran with |
-| `V2_WAL_PRESENT` | v2's database still has writes in its `-wal` file | If v2 is still running, stop it first. Otherwise start v2 once and stop it cleanly, then run again |
+| `V2_WAL_UNREADABLE` | The upgrade cannot read v2's `library.db-wal`, which may hold its newest writes | Make the file readable by the user the upgrade runs as (`chown` to your `PUID` and `PGID`), then run again |
 | `DANGLING_USER_REF` | Orphan follows or approvals in v2 | The upgrade removes them itself. By hand: the cleanup in [Validate](upgrading-by-hand.md#4-validate), then export again |
 | `INSTANCE_MISMATCH` | The export came from a different v2 instance | Export from the right `V2_ROOT` |
 | `ENVELOPE_AUTH_FAILED` | Wrong passphrase | Re-run with the right passphrase file; no records were imported |

@@ -329,8 +329,8 @@ pub enum Code {
     UnsupportedPaths,
     /// A `v2-backup` folder is already there.
     BackupExists,
-    /// v2's database has unmerged writes, or its `-wal` file cannot be read.
-    V2WalPresent,
+    /// v2's database `-wal` file cannot be read.
+    V2WalUnreadable,
     /// Too little free disk in the cache folder.
     NotEnoughDisk,
     /// v2's key file is missing.

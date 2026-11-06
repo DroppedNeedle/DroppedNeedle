@@ -32,8 +32,8 @@ use crate::export::error::ExportError;
 use crate::export::fernet::FernetKey;
 use crate::export::seal::Sealer;
 use crate::export::sql::{
-    APP_PASSWORDS, APPROVALS, CONNECTIONS, EVENT_CITIES, EVENT_SEEN, FOLLOWS, PROVIDERS,
-    RECOVERY_CODES, TABLE_COUNT, TABLE_EXISTS, USERS,
+    APP_PASSWORDS, APPROVALS, CONNECTIONS, Checkpoint, EVENT_CITIES, EVENT_SEEN, FOLLOWS,
+    PROVIDERS, RECOVERY_CODES, TABLE_COUNT, TABLE_EXISTS, USERS, WAL_CHECKPOINT,
 };
 use crate::export::v2dir::V2Dirs;
 use crate::export::{EXPORT_FORMAT, FORMAT_VERSION};
@@ -142,9 +142,11 @@ fn build_doc(
         .ok_or(ExportError::InstanceIdMissing)?
         .to_owned();
     let sealer = Sealer::generate(request.passphrase.expose())?;
-    let db_path =
+    let v2_db =
         crate::export::v2dir::resolve_db_path(&request.v2.cache_dir, request.db_path.as_deref());
-    let db = open_v2_db(&db_path)?;
+    let snapshot = V2Snapshot::take(&v2_db, bundle_path.parent().unwrap_or(Path::new(".")))?;
+    let db_path = snapshot.path();
+    let db = open_v2_db(db_path)?;
     let mut users = read_users(&db)?;
     attach_user_rows(&db, &mut users, &key, &sealer)?;
     let user_connections = read_connections(&db, &key, &sealer)?;
@@ -163,7 +165,7 @@ fn build_doc(
     let now = time::OffsetDateTime::now_utc();
     let built = bundle_with_inventory(
         &db,
-        &db_path,
+        db_path,
         &request.v2.cache_dir,
         bundle_path,
         bundle_name,
@@ -376,8 +378,154 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.sync_all()
 }
 
-/// Open the stopped v2 database read-only and immutable, so the export
-/// works from a read-only mount (no WAL or shm files are touched).
+/// The start of the name of each private folder a recovered copy of the
+/// v2 database is made in.
+pub const V2_COPY_PREFIX: &str = "droppedneedle-v2-copy-";
+
+/// The v2 database as the export reads it.
+///
+/// An immutable read leaves out the `-wal` file, and v2 leaves committed
+/// writes there even after a clean stop. So a database whose `-wal` holds
+/// anything is read from a copy: the database and its `-wal`, never the
+/// `-shm`, copied byte for byte into a private folder, opened read-write so
+/// SQLite recovers the log the way v2's next start would (a torn or
+/// uncommitted tail is dropped), then checkpointed into the copy. v2's own
+/// files are only read. Without a `-wal`, or with an empty one, the
+/// database is read where it is. The copy goes when this is dropped.
+#[derive(Debug)]
+pub struct V2Snapshot {
+    path: PathBuf,
+    copy_dir: Option<PathBuf>,
+}
+
+impl V2Snapshot {
+    /// The database at `db_path` as the export reads it. A copy is made in
+    /// a new folder inside `scratch`, which must exist.
+    pub fn take(db_path: &Path, scratch: &Path) -> Result<Self, ExportError> {
+        match wal_state(db_path) {
+            WalState::Absent | WalState::Empty => {
+                return Ok(Self {
+                    path: db_path.to_owned(),
+                    copy_dir: None,
+                });
+            }
+            WalState::HoldsData(_) => {}
+            WalState::Unreadable(error) => return Err(unreadable_wal(db_path, &error)),
+        }
+        let copy_dir = private_copy_dir(scratch)?;
+        // From here on a failure drops the snapshot, which removes the copy.
+        let snapshot = Self {
+            path: copy_dir.join("library.db"),
+            copy_dir: Some(copy_dir),
+        };
+        let database = std::fs::File::open(db_path).map_err(|error| ExportError::V2Database {
+            table: "database".to_owned(),
+            detail: format!("cannot read {}: {error}", db_path.display()),
+        })?;
+        let wal = std::fs::File::open(wal_path(db_path))
+            .map_err(|error| unreadable_wal(db_path, &error))?;
+        copy_private(database, &snapshot.path)?;
+        copy_private(wal, &wal_path(&snapshot.path))?;
+        recover(&snapshot.path)?;
+        Ok(snapshot)
+    }
+
+    /// The database file to read.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for V2Snapshot {
+    fn drop(&mut self) {
+        if let Some(dir) = &self.copy_dir
+            && let Err(error) = std::fs::remove_dir_all(dir)
+        {
+            tracing::warn!(%error, dir = %dir.display(), "cannot remove the copy of the v2 database");
+        }
+    }
+}
+
+fn unreadable_wal(db_path: &Path, error: &std::io::Error) -> ExportError {
+    ExportError::V2WalUnreadable {
+        path: wal_path(db_path),
+        reason: error.to_string(),
+    }
+}
+
+/// A new owner-only folder in `scratch` for one copy. The copy holds
+/// password hashes and listening history.
+fn private_copy_dir(scratch: &Path) -> Result<PathBuf, ExportError> {
+    let mut name = [0u8; 8];
+    getrandom::fill(&mut name).map_err(|_| ExportError::ExportWrite {
+        reason: "cannot pick a name for the copy of the v2 database".to_owned(),
+    })?;
+    let hex: String = name.iter().map(|byte| format!("{byte:02x}")).collect();
+    let dir = scratch.join(format!("{V2_COPY_PREFIX}{hex}"));
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    builder
+        .create(&dir)
+        .map_err(|error| copy_error(&dir, &error))?;
+    Ok(dir)
+}
+
+/// Copy `from` byte for byte into a new owner-only file at `to`, writable
+/// whatever the mode of the original.
+fn copy_private(mut from: std::fs::File, to: &Path) -> Result<(), ExportError> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut copy = options.open(to).map_err(|error| copy_error(to, &error))?;
+    std::io::copy(&mut from, &mut copy).map_err(|error| copy_error(to, &error))?;
+    Ok(())
+}
+
+fn copy_error(path: &Path, error: &std::io::Error) -> ExportError {
+    ExportError::ExportWrite {
+        reason: format!("cannot copy the v2 database to {}: {error}", path.display()),
+    }
+}
+
+/// Let SQLite recover the copy's `-wal` file, move what it committed into
+/// the copy, and close it, which removes the log.
+fn recover(copy: &Path) -> Result<(), ExportError> {
+    let failed = |detail: String| ExportError::V2Database {
+        table: "database".to_owned(),
+        detail: format!("cannot recover the writes in its -wal file: {detail}"),
+    };
+    let db = Connection::open_with_flags(copy, OpenFlags::SQLITE_OPEN_READ_WRITE)
+        .map_err(|error| failed(error.to_string()))?;
+    let checkpoint = db
+        .query_row(WAL_CHECKPOINT.text(), [], Checkpoint::read)
+        .map_err(|error| failed(error.to_string()))?;
+    if checkpoint.busy != 0 || checkpoint.checkpointed != checkpoint.log {
+        return Err(failed(format!(
+            "{} of {} frames moved",
+            checkpoint.checkpointed, checkpoint.log
+        )));
+    }
+    db.close().map_err(|(_, error)| failed(error.to_string()))?;
+    match wal_state(copy) {
+        WalState::Absent | WalState::Empty => Ok(()),
+        WalState::HoldsData(bytes) => Err(failed(format!("{bytes} bytes still in the log"))),
+        WalState::Unreadable(error) => Err(failed(error.to_string())),
+    }
+}
+
+/// Open the v2 database at `path` read-only and immutable, so the export
+/// works from a read-only mount and no side file is created or changed.
+/// `path` is a [`V2Snapshot`]'s, which leaves nothing in the `-wal` file
+/// for an immutable read to miss.
 pub(crate) fn open_v2_db(path: &Path) -> Result<Connection, ExportError> {
     if !path.is_file() {
         return Err(ExportError::V2Database {
@@ -385,21 +533,13 @@ pub(crate) fn open_v2_db(path: &Path) -> Result<Connection, ExportError> {
             detail: format!("{} is not a file", path.display()),
         });
     }
-    // An immutable open ignores the write-ahead log, so committed writes
-    // still sitting in it would be silently missing from the export.
-    match wal_state(path) {
-        WalState::Absent | WalState::Empty => {}
-        WalState::HoldsData(_) => {
-            return Err(ExportError::V2WalPresent {
-                path: wal_path(path),
-            });
-        }
-        WalState::Unreadable(error) => {
-            return Err(ExportError::V2WalUnreadable {
-                path: wal_path(path),
-                reason: error.to_string(),
-            });
-        }
+    // An immutable read leaves out what a -wal file holds. A snapshot's
+    // copy never has one, so a path that does was not taken as a snapshot.
+    if let WalState::HoldsData(_) = wal_state(path) {
+        return Err(ExportError::V2Database {
+            table: "database".to_owned(),
+            detail: format!("{} holds writes", wal_path(path).display()),
+        });
     }
     let uri = format!(
         "file:{}?immutable=1",

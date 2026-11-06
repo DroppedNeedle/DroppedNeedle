@@ -593,7 +593,7 @@ async fn start_refuses_a_preflight_with_blockers_or_without_v2_data() {
         "new_address": {"kind": "path", "value": "/api/v3/auth/oidc/callback"},
     });
     let blocker =
-        json!({"code": "V2_WAL_PRESENT", "message": "Unmerged writes.", "fix": "Stop v2."});
+        json!({"code": "V2_WAL_UNREADABLE", "message": "Cannot read it.", "fix": "Fix it."});
     for (layout, blockers, code) in [("v2", json!([blocker]), "1"), ("v3", json!([]), "0")] {
         let line = json!({
             "v": 1, "type": "check", "layout": layout, "counts": null, "orphans": 0,

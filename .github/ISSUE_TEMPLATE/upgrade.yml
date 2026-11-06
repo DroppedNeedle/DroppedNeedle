@@ -35,7 +35,7 @@ body:
     id: stopped-at
     attributes:
       label: Where did it stop?
-      description: The step the page showed, or the message and code it gave (for example V2_WAL_PRESENT).
+      description: The step the page showed, or the message and code it gave (for example V2_KEY_NOT_FOUND).
     validations:
       required: true
   - type: textarea
