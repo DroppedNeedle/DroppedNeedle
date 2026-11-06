@@ -1,20 +1,21 @@
 <!--
-	The one card of a signed-out page, inside AuthFrame: torn cream paper
-	(paper-white in light) with the light theme inside, so every field,
-	tick, alert and button in it is the one measured for paper. Field
-	labels print as bold caps and the fields take a dark ink edge. `title`
-	is an Anton h2, `icon` a square ink tile beside it, `lead` a line
-	under it. `error` is a red-tinted bar with an icon at the top of the
-	card, announced as an alert. `tabs` holds folder tabs along the card's
-	top edge: buttons with the `dn-auth-tab` class, the open one marked
-	`aria-pressed="true"`, which prints acid and joins the paper.
-	`actions` is the row of buttons at the foot.
+	The one card of a signed-out page, inside AuthFrame: torn paper stock
+	(cream in dark, paper-white in light, dark in midnight) with the sheet's
+	theme inside, so every field, tick, alert and button in it is the one
+	measured for that stock. Field labels print as bold caps and the fields
+	take a dark ink edge. `title` is an Anton h2, `icon` a square ink tile
+	beside it, `lead` a line under it. `error` is a red-tinted bar with an
+	icon at the top of the card, announced as an alert. `tabs` holds folder
+	tabs along the card's top edge: buttons with the `dn-auth-tab` class, the
+	open one marked `aria-pressed="true"`, which prints acid and joins the
+	paper. `actions` is the row of buttons at the foot.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { CircleAlert } from 'lucide-svelte';
 	import type { KitIcon } from './Button.svelte';
 	import Card from './Card.svelte';
+	import { themeStore } from '$lib/stores/theme.svelte';
 
 	interface Props {
 		title?: string;
@@ -39,6 +40,8 @@
 		children
 	}: Props = $props();
 
+	const theme = $derived(themeStore.resolved);
+
 	// A long form's error bar may be above the screen when it appears.
 	function reveal(node: HTMLElement) {
 		node.scrollIntoView({ block: 'nearest' });
@@ -50,7 +53,7 @@
 		<div class="dn-auth-card__tabs">{@render tabs()}</div>
 	{/if}
 	<Card variant="torn" padding="none" class="dn-auth-card__stock">
-		<div class="dn-auth-card__body" data-theme="light">
+		<div class="dn-auth-card__body" data-theme={theme === 'midnight' ? 'midnight' : 'light'}>
 			{#if error}
 				<div class="dn-auth-card__error" role="alert" use:reveal>
 					<CircleAlert class="size-5 shrink-0" aria-hidden="true" />
@@ -91,7 +94,7 @@
 		z-index: 1;
 	}
 
-	/* inside, the light theme; its page colour is the card's own paper */
+	/* inside, the sheet's theme; its page colour is the card's own paper */
 	.dn-auth-card__body {
 		display: flex;
 		flex-direction: column;

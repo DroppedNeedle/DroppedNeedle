@@ -104,7 +104,7 @@
 				title="{displayName} panel"
 				sandbox="allow-scripts"
 				{src}
-				class="h-48 w-full rounded-lg border border-base-content/10 bg-white"
+				class="h-48 w-full rounded-lg border border-base-content/10 bg-base-200"
 			></iframe>
 			<p class="mt-1 text-[11px] text-muted">Sandboxed: no access to this page or your session.</p>
 		{/if}

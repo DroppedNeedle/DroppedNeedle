@@ -1,12 +1,14 @@
 <!--
-	The light island: the one large paper shape on a page (an album's track
+	The paper island: the one large paper shape on a page (an album's track
 	list). In dark it is cream stock with dark ink, in light paper-white with
-	a visible edge. Inside, the light theme applies, so every control in it
-	is already measured for paper. No texture, ever. `head` is the panel's
-	top band (a source's name and its Play All), ruled off from the rest.
+	a visible edge, in midnight dark stock with light ink. Inside, the sheet's
+	theme applies, so every control in it is already measured for that stock.
+	No texture, ever. `head` is the panel's top band (a source's name and its
+	Play All), ruled off from the rest.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { themeStore } from '$lib/stores/theme.svelte';
 
 	interface Props {
 		head?: Snippet;
@@ -16,10 +18,12 @@
 	}
 
 	let { head, class: className = '', children }: Props = $props();
+
+	const theme = $derived(themeStore.resolved);
 </script>
 
 <div class="dn-paper {className}">
-	<div class="dn-paper__sheet" data-theme="light">
+	<div class="dn-paper__sheet" data-theme={theme === 'midnight' ? 'midnight' : 'light'}>
 		{#if head}
 			<div class="dn-paper__head">{@render head()}</div>
 		{/if}
@@ -28,7 +32,7 @@
 </div>
 
 <style>
-	/* Read the page theme's paper here, before the sheet switches to light. */
+	/* Read the page theme's paper here, before the sheet switches to its own theme. */
 	.dn-paper {
 		--paper-bg: var(--dn-paper);
 		--paper-edge: var(--dn-paper-border);

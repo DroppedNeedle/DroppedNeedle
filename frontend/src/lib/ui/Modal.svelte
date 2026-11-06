@@ -23,7 +23,7 @@
 	changes. The caller closes it by setting `open` to false.
 	`overflowVisible` lets a dropdown inside reach past the box's edge, for a
 	short dialog that holds one.
-	`paper` prints a non-sheet dialog on paper stock (the light theme inside,
+	`paper` prints a non-sheet dialog on paper stock (the sheet's theme inside,
 	an Anton title), for a confirm that starts a write to files.
 -->
 <script lang="ts">
@@ -31,6 +31,7 @@
 	import { X } from 'lucide-svelte';
 	import type { KitIcon } from './Button.svelte';
 	import IconButton from './IconButton.svelte';
+	import { themeStore } from '$lib/stores/theme.svelte';
 
 	interface Props {
 		open: boolean;
@@ -54,7 +55,7 @@
 		onrequestclose?: () => void;
 		/** Lets a dropdown inside reach past the box's edge. */
 		overflowVisible?: boolean;
-		/** Cream paper stock with an Anton title, for a confirm that starts a write. */
+		/** Paper stock with an Anton title, for a confirm that starts a write. */
 		paper?: boolean;
 		onclose?: () => void;
 		children: Snippet;
@@ -85,6 +86,7 @@
 	const descriptionId = `${titleId}-description`;
 	const widths = { sm: 'max-w-sm', md: 'max-w-md', lg: 'max-w-2xl', xl: 'max-w-4xl' };
 	const sheet = $derived(size === 'sheet');
+	const theme = $derived(themeStore.resolved);
 	const iconTones = {
 		accent: 'bg-accent/10 text-accent',
 		action: 'border border-action-edge bg-action text-action-content',
@@ -221,7 +223,7 @@
 				paper && 'border-2 border-paper-content',
 				bottomSheet && 'max-sm:max-w-none pb-[calc(env(safe-area-inset-bottom)+1.5rem)] sm:pb-6'
 			]}
-			data-theme={paper ? 'light' : undefined}
+			data-theme={paper ? (theme === 'midnight' ? 'midnight' : 'light') : undefined}
 		>
 			<div class="flex items-start gap-3">
 				{#if Icon}

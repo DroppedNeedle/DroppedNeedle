@@ -8,7 +8,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
-	import { Moon, Search, Sun, UserRound } from 'lucide-svelte';
+	import { Moon, MoonStar, Search, Sun, UserRound } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Logo from '$lib/ui/Logo.svelte';
@@ -37,10 +37,16 @@
 	});
 
 	const theme = $derived(themeStore.resolved);
-	const themeLabel = $derived(theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+	const themeLabel = $derived(
+		theme === 'dark'
+			? 'Switch to midnight theme'
+			: theme === 'midnight'
+				? 'Switch to light theme'
+				: 'Switch to dark theme'
+	);
 
 	function toggleTheme() {
-		themeStore.set(theme === 'dark' ? 'light' : 'dark');
+		themeStore.set(theme === 'light' ? 'dark' : theme === 'dark' ? 'midnight' : 'light');
 	}
 
 	function handleSearch() {
@@ -65,6 +71,12 @@
 		</span>
 		<span class="theme-glyph__face theme-glyph__face--sun" class:is-away={theme !== 'light'}>
 			<Sun class={size} />
+		</span>
+		<span
+			class="theme-glyph__face theme-glyph__face--midnight"
+			class:is-away={theme !== 'midnight'}
+		>
+			<MoonStar class={size} />
 		</span>
 	</span>
 {/snippet}

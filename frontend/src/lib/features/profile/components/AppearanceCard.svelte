@@ -6,6 +6,11 @@
 		{ value: 'dark', label: 'Dark', description: 'The default look.' },
 		{ value: 'light', label: 'Light', description: 'Light surfaces with darker accents.' },
 		{
+			value: 'midnight',
+			label: 'Midnight',
+			description: 'Pure darkness'
+		},
+		{
 			value: 'system',
 			label: 'System',
 			description: "Follow this device's light or dark setting."
@@ -19,6 +24,6 @@
 	{options}
 	value={themeStore.preference}
 	onchange={(value) => themeStore.set(value)}
-	class="sm:grid-cols-3"
+	class="sm:grid-cols-2 lg:grid-cols-4"
 />
 <p class="mt-2.5 text-xs text-muted">Saved in this browser only.</p>

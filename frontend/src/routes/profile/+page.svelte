@@ -237,7 +237,12 @@
 		services.filter((service) => service.enabled).map((service) => service.name.toLowerCase())
 	);
 	const mediaLinked = $derived(mediaRows.filter((service) => linkedTo(service)).length);
-	const themeLabel = { dark: 'Dark', light: 'Light', system: 'System' } as const;
+	const themeLabel = {
+		dark: 'Dark',
+		light: 'Light',
+		midnight: 'Midnight',
+		system: 'System'
+	} as const;
 	const count = (n: number) => n.toLocaleString();
 	const plural = (n: number, one: string, many: string) => `${count(n)} ${n === 1 ? one : many}`;
 </script>
