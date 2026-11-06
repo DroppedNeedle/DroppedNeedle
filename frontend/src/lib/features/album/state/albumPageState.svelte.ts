@@ -40,7 +40,12 @@ import {
 	getEditionPlanQuery,
 	type EditionFetchTrackState
 } from '$lib/features/library/queries/EditionQueries.svelte';
-import { editionTrackRows, unmatchedFiles, type EditionTrackRow } from '../components/albumEdition';
+import {
+	editionTrackRows,
+	placeOnEdition,
+	unmatchedFiles,
+	type EditionTrackRow
+} from '../components/albumEdition';
 import { getAlbumDownloadsQuery } from '$lib/features/downloads/queries/DownloadQueries.svelte';
 import { getHeldEntriesQuery } from '$lib/features/downloads/queries/HeldQueries.svelte';
 import { isActiveDownloadStatus } from '$lib/features/downloads/queries/downloadStatus';
@@ -235,11 +240,9 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		() => new SvelteMap(trackLinks.map((tl) => [getDiscTrackKey(tl), tl]))
 	);
 	const jellyfinTracks = $derived([...(jellyfinMatch?.tracks ?? [])].sort(compareDiscTrack));
-	const localTracks = $derived([...(localMatch?.tracks ?? [])].sort(compareDiscTrack));
 	const navidromeTracks = $derived([...(navidromeMatch?.tracks ?? [])].sort(compareDiscTrack));
 	const plexTracks = $derived([...(plexMatch?.tracks ?? [])].sort(compareDiscTrack));
 	const jellyfinTrackMap = $derived(buildSortedTrackMap(jellyfinMatch?.tracks ?? []));
-	const localTrackMap = $derived(buildSortedTrackMap(localMatch?.tracks ?? []));
 	const navidromeTrackMap = $derived(buildSortedTrackMap(navidromeMatch?.tracks ?? []));
 	const plexTrackMap = $derived(buildSortedTrackMap(plexMatch?.tracks ?? []));
 	const inLibrary = $derived(
@@ -370,6 +373,17 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		}
 		return rows;
 	});
+	// While the rows follow the plan, the local files are numbered by the
+	// edition track each sits on, not by their tags, and a file the plan does
+	// not place takes no row. Removal by id and the album download keep the
+	// full list from localMatch.
+	const localOnEdition = $derived(
+		editionPlan && editionRows
+			? placeOnEdition(editionPlan, localMatch?.tracks ?? [])
+			: (localMatch?.tracks ?? [])
+	);
+	const localTracks = $derived([...localOnEdition].sort(compareDiscTrack));
+	const localTrackMap = $derived(buildSortedTrackMap(localOnEdition));
 	const editionCounts = $derived(
 		editionPlan ? { kept: editionPlan.kept_count, total: editionPlan.tracks.length } : null
 	);
@@ -529,9 +543,13 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	}
 
 	// Playback follows the edition plan: a file it does not keep (a duplicate,
-	// another version, an extra) plays individually from its own section. With
-	// no plan, or a plan that keeps nothing, every held file plays.
+	// another version, an extra) plays individually from its own section, and
+	// while the rows follow the plan the files carry the edition's numbering.
+	// With no plan, or a plan that keeps nothing, every held file plays.
 	const localMatchForPlayback = $derived.by(() => {
+		if (localMatch && editionRows && localOnEdition.length > 0) {
+			return { ...localMatch, tracks: localOnEdition };
+		}
 		const kept = new SvelteSet(
 			editionPlan?.files.filter((file) => file.fate === 'keep').map((file) => file.local_track_id)
 		);

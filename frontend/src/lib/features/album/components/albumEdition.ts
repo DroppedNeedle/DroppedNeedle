@@ -2,7 +2,7 @@
 // the album pages' track rows and their "Unmatched files" section.
 import type { EditionPlan } from '$lib/features/library/queries/EditionQueries.svelte';
 import { getDiscTrackKey } from '$lib/features/player/playback/queueHelpers';
-import type { LibraryStatusTrack } from '$lib/features/album/queries/types';
+import type { LibraryStatusTrack, LocalTrackInfo } from '$lib/features/album/queries/types';
 
 type EditionPlanFile = EditionPlan['files'][number];
 
@@ -81,6 +81,28 @@ export function editionTrackRows(
 		});
 	}
 	return rows;
+}
+
+/**
+ * The files the plan places, each numbered with the edition track it sits on,
+ * in edition order. Files the plan does not place are left out.
+ */
+export function placeOnEdition(
+	plan: Pick<EditionPlan, 'tracks'>,
+	tracks: LocalTrackInfo[]
+): LocalTrackInfo[] {
+	const byId = new Map(tracks.map((track) => [track.track_file_id, track]));
+	const placed: LocalTrackInfo[] = [];
+	for (const editionTrack of plan.tracks) {
+		const file = editionTrack.local_track_id ? byId.get(editionTrack.local_track_id) : undefined;
+		if (!file) continue;
+		placed.push({
+			...file,
+			disc_number: editionTrack.disc_number,
+			track_number: editionTrack.position
+		});
+	}
+	return placed;
 }
 
 function trackName(file: EditionPlanFile): string {
