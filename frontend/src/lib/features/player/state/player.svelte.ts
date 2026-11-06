@@ -420,23 +420,22 @@ function createPlayerStore() {
 			return { source: createPlaybackSource('youtube'), loadUrl: url };
 		}
 		const sourceType = item.sourceType;
-		return {
-			source: createPlaybackSource(item.sourceType, {
-				url: url!,
-				seekable: true,
-				transcode: format
-					? {
-							duration: item.duration ?? 0,
-							urlAt: (seconds) =>
-								streamUrlFor(
-									{ sourceType, trackSourceId: item.trackSourceId },
-									{ format, start_seconds: seconds }
-								)
-						}
-					: undefined
-			}),
-			loadUrl: url
-		};
+		const source = createPlaybackSource(item.sourceType, {
+			url: url!,
+			seekable: true,
+			transcode: format
+				? {
+						duration: item.duration ?? 0,
+						urlAt: (seconds) =>
+							streamUrlFor(
+								{ sourceType, trackSourceId: item.trackSourceId },
+								{ format, start_seconds: seconds }
+							)
+					}
+				: undefined
+		});
+		isSeekable = source.isSeekable?.() ?? true;
+		return { source, loadUrl: url };
 	}
 
 	async function loadQueueItem(index: number, kind: LoadKind = 'fresh'): Promise<void> {
@@ -1068,6 +1067,7 @@ function createPlayerStore() {
 			}
 		},
 		seekTo(seconds: number): void {
+			if (!isSeekable) return;
 			currentSource?.seekTo(seconds);
 			progress = seconds;
 			persist();

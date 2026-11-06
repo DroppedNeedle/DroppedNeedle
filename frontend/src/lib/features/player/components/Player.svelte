@@ -105,7 +105,16 @@
 		return `${mins}:${secs.toString().padStart(2, '0')}`;
 	}
 
+	// A drag moves only the thumb; the seek happens once, on release, so a
+	// conversion starts one new pipe per drag rather than one per step.
+	let scrub = $state<number | null>(null);
+
+	function handleScrub(e: Event): void {
+		scrub = Number((e.target as HTMLInputElement).value);
+	}
+
 	function handleSeek(e: Event): void {
+		scrub = null;
 		playerStore.seekTo(Number((e.target as HTMLInputElement).value));
 	}
 
@@ -152,10 +161,9 @@
 		if (unplayableReason === 'conversion_failed') return "Couldn't convert it";
 		return `Can't play ${formatLabel(playerStore.currentQueueItem?.format)} here`;
 	});
+	const shownProgress = $derived(scrub ?? playerStore.progress);
 	const progressPct = $derived(
-		playerStore.duration > 0
-			? Math.min(100, (playerStore.progress / playerStore.duration) * 100)
-			: 0
+		playerStore.duration > 0 ? Math.min(100, (shownProgress / playerStore.duration) * 100) : 0
 	);
 
 	const playPauseIcon = $derived(
@@ -370,7 +378,7 @@
 				</div>
 
 				<div class="hidden w-full items-center gap-2.5 sm:flex">
-					<span class="dn-player__time text-right">{formatTime(playerStore.progress)}</span>
+					<span class="dn-player__time text-right">{formatTime(shownProgress)}</span>
 					<input
 						type="range"
 						class="dn-range min-w-0 flex-1"
@@ -378,13 +386,15 @@
 						min="0"
 						max={playerStore.duration || 1}
 						step="any"
-						value={playerStore.progress}
+						value={shownProgress}
 						disabled={!playerStore.isSeekable}
-						oninput={handleSeek}
+						oninput={handleScrub}
+						onchange={handleSeek}
+						onpointerup={() => (scrub = null)}
+						onpointercancel={() => (scrub = null)}
+						onblur={() => (scrub = null)}
 						aria-label="Seek"
-						aria-valuetext="{formatTime(playerStore.progress)} of {formatTime(
-							playerStore.duration
-						)}"
+						aria-valuetext="{formatTime(shownProgress)} of {formatTime(playerStore.duration)}"
 					/>
 					<span class="dn-player__time">{formatTime(playerStore.duration)}</span>
 				</div>

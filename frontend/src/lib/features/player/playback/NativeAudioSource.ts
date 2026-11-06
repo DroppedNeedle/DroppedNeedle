@@ -49,7 +49,8 @@ export class NativeAudioSource implements PlaybackSource {
 	) {
 		this.type = type;
 		this.url = opts.url;
-		this.seekable = opts.seekable;
+		// A pipe of unknown length has no scale to seek on.
+		this.seekable = opts.seekable && !(opts.transcode && !opts.transcode.duration);
 		this.transcode = opts.transcode;
 		this.audio = getAudioElement();
 	}

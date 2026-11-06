@@ -142,7 +142,8 @@
 					coverUrl: t.image_url ?? null,
 					sourceType: 'jellyfin' as const,
 					format: t.format ?? undefined,
-					recordingIds: recordingFor('jellyfin', t.recording_mbid)
+					recordingIds: recordingFor('jellyfin', t.recording_mbid),
+					duration: t.duration_secs ?? undefined
 				}));
 				playerStore.playQueue(items, 0, false);
 			}

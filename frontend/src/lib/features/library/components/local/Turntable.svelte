@@ -137,9 +137,14 @@
 		return () => cancelAnimationFrame(raf);
 	});
 
+	let scrubRatio = $state<number | null>(null);
 	// The arm rides inward through the track: 13 degrees is the lead-in groove, 28 the run-out.
 	const progressRatio = $derived(
-		playerStore.duration > 0 ? Math.min(1, playerStore.progress / playerStore.duration) : 0
+		scrubRatio ??
+			(playerStore.duration > 0 ? Math.min(1, playerStore.progress / playerStore.duration) : 0)
+	);
+	const shownProgress = $derived(
+		scrubRatio === null ? playerStore.progress : scrubRatio * playerStore.duration
 	);
 	const armAngle = $derived(np ? 13 + progressRatio * 15 : 0);
 	const armState = $derived(!np ? 'rest' : isPlaying ? 'play' : 'cue');
@@ -151,8 +156,18 @@
 		return `${m}:${s.toString().padStart(2, '0')}`;
 	}
 
+	function seekRatio(e: Event): number {
+		return Number((e.currentTarget as HTMLInputElement).value) / 1000;
+	}
+
+	// A drag moves only the thumb; the seek happens once, on release.
+	function onScrub(e: Event) {
+		scrubRatio = seekRatio(e);
+	}
+
 	function onSeek(e: Event) {
-		const ratio = Number((e.currentTarget as HTMLInputElement).value) / 1000;
+		scrubRatio = null;
+		const ratio = seekRatio(e);
 		if (playerStore.duration > 0) playerStore.seekTo(ratio * playerStore.duration);
 	}
 
@@ -401,13 +416,17 @@
 						</div>
 					</div>
 					<div class="dn-deck__seek">
-						<span>{fmt(playerStore.progress)}</span>
+						<span>{fmt(shownProgress)}</span>
 						<input
 							type="range"
 							min="0"
 							max="1000"
 							value={Math.round(progressRatio * 1000)}
-							oninput={onSeek}
+							oninput={onScrub}
+							onchange={onSeek}
+							onpointerup={() => (scrubRatio = null)}
+							onpointercancel={() => (scrubRatio = null)}
+							onblur={() => (scrubRatio = null)}
 							disabled={!playerStore.isSeekable}
 							aria-label="Seek"
 							class="range range-xs range-primary flex-1"

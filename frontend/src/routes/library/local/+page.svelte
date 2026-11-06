@@ -147,7 +147,8 @@
 			albumName: t.album_name,
 			coverUrl: crateCoverUrl(t),
 			sourceType: 'local',
-			format: (t.format ?? '').toLowerCase()
+			format: (t.format ?? '').toLowerCase(),
+			duration: t.duration_seconds ?? undefined
 		};
 	}
 
