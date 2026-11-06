@@ -2,9 +2,11 @@
 //! offered back with its path and restored through the revision-checked
 //! save, also while a scan has marked all its files missing but its folder
 //! is there, the save refuses to drop every root under a live catalog, and
-//! the previews count catalog rows the way v2 did.
+//! the previews count catalog rows the way v2 did. The script preview
+//! shows a script on the example albums as it is written.
 
 use crate::common::ScratchDir;
+use axum::http::StatusCode;
 
 use droppedneedle::settings::models::{
     LibraryPolicyApplyRequest, LibraryRestoreRootsRequest, LibrarySettingsSaveRequest,
@@ -224,4 +226,76 @@ async fn an_import_naming_script_is_checked_only_when_changed() {
         .await
         .expect("a save that leaves the script alone goes through");
     assert!(!kept.settings.enabled);
+}
+
+#[tokio::test]
+async fn the_script_preview_shows_each_example_album_and_a_fix_for_a_misspelt_name() {
+    let app = crate::common::TestApp::start("settings-script-preview").await;
+    let admin = app.login_admin().await;
+    let headers = [("authorization", admin.as_str())];
+    let url = "/api/v3/settings/library/script-preview";
+    let preview = |kind: &str, source: &str| {
+        let body = json!({"kind": kind, "source": source});
+        app.call("POST", url, &headers, Some(body))
+    };
+    let sample = |body: &serde_json::Value, name: &str| {
+        body["samples"]
+            .as_array()
+            .and_then(|samples| samples.iter().find(|sample| sample["sample"] == name))
+            .cloned()
+            .unwrap_or_else(|| panic!("no {name} sample: {body}"))
+    };
+
+    let (status, body) = preview("import_naming", "{albumartist}/{titel}.{ext}").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["fault"]["line"], 1, "{body}");
+    assert_eq!(body["fault"]["column"], 15, "{body}");
+    assert_eq!(
+        body["fault"]["suggestion"],
+        json!({"found": "titel", "name": "title"})
+    );
+    assert_eq!(
+        sample(&body, "one_disc")["values"]["title"],
+        "Paranoid Android"
+    );
+
+    // The ready-made blocks: the disc number on a multi-disc album only,
+    // and the album artist's disambiguation in brackets.
+    let script = concat!(
+        "{albumartist}{conditional(is_empty(albumartist_disambiguation), \"\", ",
+        "concat(\" (\", albumartist_disambiguation, \")\"))}/",
+        "{conditional(equals(total_discs, \"1\"), \"\", concat(pad(disc, 2), \"-\"))}",
+        "{track:02d} {title}.{ext}"
+    );
+    let (status, body) = preview("import_naming", script).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["fault"].is_null(), "{body}");
+    let path = |name: &str| sample(&body, name)["path"].clone();
+    assert_eq!(path("one_disc"), "Radiohead/02 Paranoid Android.flac");
+    assert_eq!(path("two_discs"), "Radiohead/02-03 Lift.flac");
+    assert_eq!(
+        path("name_shared"),
+        "Alice Cooper (1964-1975 American rock band)/01 Under My Wheels.mp3"
+    );
+
+    let (status, body) = preview("naming", "{albumartist}/{album_disambiguation}/{title}").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let one = sample(&body, "one_disc");
+    assert_eq!(
+        one["empty_name_parts"],
+        json!(["Radiohead", "", "Paranoid Android"])
+    );
+    assert!(one["path"].is_null(), "{one}");
+    assert_eq!(
+        sample(&body, "two_discs")["path"],
+        "Radiohead/remastered/Lift"
+    );
+
+    let (status, body) = preview("tagging", "delete comment").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        sample(&body, "one_disc")["tags"],
+        json!([{"name": "comment", "before": ["Ripped with EAC"], "after": []}])
+    );
+    app.stop().await;
 }

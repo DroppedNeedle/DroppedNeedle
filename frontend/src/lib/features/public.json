@@ -96,12 +96,12 @@
 	"library-management": [
 		"components/AlbumOrganizationDialog.svelte",
 		"components/AlbumRetagPairs.svelte",
-		"components/LibraryNamingExample.svelte",
 		"components/LibraryRootPolicyEditor.svelte",
 		"components/LibraryScanScheduleControl.svelte",
 		"components/ManagementHoldSection.svelte",
 		"components/OperationJobStrip.svelte",
 		"components/RecycledRemovals.svelte",
+		"components/ScriptWorkbench.svelte",
 		"queries/LibraryActivityQueries.svelte.ts",
 		"queries/LibraryManagementMutations.svelte.ts",
 		"queries/LibraryManagementPreviewTokens.ts",

@@ -1,4 +1,4 @@
-import { key, userScope } from '$lib/queries/keys';
+import { ADMIN, key, userScope } from '$lib/queries/keys';
 import type {
 	LibraryManagementHistoryParams,
 	LibraryManagementPlanItemParams,
@@ -35,6 +35,8 @@ type UserId = string | null | undefined;
 
 export const LibraryManagementQueryKeyFactory = {
 	user: (userId: UserId) => key(userScope(userId), 'library-management'),
+	scriptPreview: (kind: string, source: string) =>
+		key(ADMIN, 'library-management', 'script-preview', kind, source),
 	settings: (userId: UserId) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'settings'] as const,
 	profile: (userId: UserId, profileId: string) =>

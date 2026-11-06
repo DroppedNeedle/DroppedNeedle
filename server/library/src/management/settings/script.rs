@@ -8,7 +8,7 @@ use crate::management::script::{self, ScriptFault, Segment, Statement, Target};
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Naming variable universe (managed fields plus path-only variables).
-fn naming_variables() -> BTreeSet<&'static str> {
+pub(crate) fn naming_variables() -> BTreeSet<&'static str> {
     let mut variables: BTreeSet<&'static str> = MANAGED_FIELDS
         .iter()
         .map(|field| field.name)
@@ -34,6 +34,8 @@ fn naming_variables() -> BTreeSet<&'static str> {
             "extension",
             "medium",
             "album_disambiguation",
+            "albumartist_disambiguation",
+            "artist_disambiguation",
             "medium_format",
             "medium_number",
             "musicbrainz_id",
@@ -54,14 +56,47 @@ fn naming_variables() -> BTreeSet<&'static str> {
     variables
 }
 
-fn script_error(message: String, script_name: &str, line: usize, column: usize) -> SettingsError {
-    SettingsError::InvalidInput {
-        message: format!("{script_name} line {line}, column {column}: {message}"),
+/// Why a script breaks a settings rule, and the name it did not know
+/// when that is the reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LanguageFault {
+    pub fault: ScriptFault,
+    pub unknown_name: Option<String>,
+}
+
+impl From<ScriptFault> for LanguageFault {
+    fn from(fault: ScriptFault) -> Self {
+        Self {
+            fault,
+            unknown_name: None,
+        }
     }
 }
 
-fn compile_error(fault: ScriptFault, script_name: &str) -> SettingsError {
-    script_error(fault.message, script_name, fault.line, fault.column)
+fn rule_fault(message: String, line: usize, column: usize) -> LanguageFault {
+    LanguageFault::from(ScriptFault {
+        message,
+        line,
+        column,
+        path_too_long: false,
+    })
+}
+
+fn unknown(message: String, name: &str, line: usize, column: usize) -> LanguageFault {
+    LanguageFault {
+        unknown_name: Some(name.to_owned()),
+        ..rule_fault(message, line, column)
+    }
+}
+
+fn settings_error(fault: LanguageFault, script_name: &str) -> SettingsError {
+    let fault = fault.fault;
+    SettingsError::InvalidInput {
+        message: format!(
+            "{script_name} line {}, column {}: {}",
+            fault.line, fault.column, fault.message
+        ),
+    }
 }
 
 /// Check a naming script as every naming script is checked on save:
@@ -70,16 +105,19 @@ pub(crate) fn validate_naming_language(
     source: &str,
     script_name: &str,
 ) -> Result<(), SettingsError> {
+    check_naming_language(source).map_err(|fault| settings_error(fault, script_name))
+}
+
+/// [`validate_naming_language`]'s check, answering where and why.
+pub(crate) fn check_naming_language(source: &str) -> Result<(), LanguageFault> {
     if source.contains('\n') || source.contains('\r') {
-        return Err(script_error(
+        return Err(rule_fault(
             "Naming scripts must be a single path template.".to_owned(),
-            script_name,
             1,
             1,
         ));
     }
-    let segments =
-        script::compile_naming(source).map_err(|fault| compile_error(fault, script_name))?;
+    let segments = script::compile_naming(source)?;
     let path_shape: String = segments
         .iter()
         .map(|segment| match segment {
@@ -92,9 +130,8 @@ pub(crate) fn validate_naming_language(
             .split('/')
             .any(|part| matches!(part, "" | "." | ".."))
     {
-        return Err(script_error(
+        return Err(rule_fault(
             "Naming script must stay in a non-empty relative path.".to_owned(),
-            script_name,
             1,
             1,
         ));
@@ -110,9 +147,9 @@ pub(crate) fn validate_naming_language(
                 column,
             } => {
                 if !variables.contains(name.as_str()) {
-                    return Err(script_error(
+                    return Err(unknown(
                         format!("Unknown naming variable: {name}."),
-                        script_name,
+                        name,
                         *line,
                         *column,
                     ));
@@ -128,17 +165,15 @@ pub(crate) fn validate_naming_language(
                         | "total_discs"
                         | "medium_number"
                 ) {
-                    return Err(script_error(
+                    return Err(rule_fault(
                         format!("Variable {name} does not support a numeric format."),
-                        script_name,
                         *line,
                         *column,
                     ));
                 }
                 if script::format_number(0, spec).is_none() {
-                    return Err(script_error(
+                    return Err(rule_fault(
                         format!("Numeric format {spec} is not valid."),
-                        script_name,
                         *line,
                         *column,
                     ));
@@ -147,9 +182,9 @@ pub(crate) fn validate_naming_language(
             Segment::Expression(expr) => {
                 for (name, line, column) in expr.variables() {
                     if !variables.contains(name) {
-                        return Err(script_error(
+                        return Err(unknown(
                             format!("Unknown naming variable: {name}."),
-                            script_name,
+                            name,
                             line,
                             column,
                         ));
@@ -200,28 +235,22 @@ impl TaggingRules {
         }
     }
 
-    fn check_target(
-        &self,
-        target: &Target,
-        append: bool,
-        script_name: &str,
-    ) -> Result<(), SettingsError> {
+    fn check_target(&self, target: &Target, append: bool) -> Result<(), LanguageFault> {
         let name = target.name.as_str();
         let custom = is_custom(name).then(|| name[7..].trim());
         let custom_valid = custom
             .is_some_and(|name| !name.is_empty() && !name.contains('\x00') && name.len() <= 255);
         if !self.allowed.contains(name) && !custom_valid {
-            return Err(script_error(
+            return Err(unknown(
                 format!("Unknown or invalid tagging target: {name}."),
-                script_name,
+                name,
                 target.line,
                 target.column,
             ));
         }
         if append && !self.ordered.contains(name) && custom.is_none() {
-            return Err(script_error(
+            return Err(rule_fault(
                 format!("Field {name} does not accept append."),
-                script_name,
                 target.line,
                 target.column,
             ));
@@ -229,12 +258,12 @@ impl TaggingRules {
         Ok(())
     }
 
-    fn check_reads(&self, expr: &script::Expr, script_name: &str) -> Result<(), SettingsError> {
+    fn check_reads(&self, expr: &script::Expr) -> Result<(), LanguageFault> {
         for (name, line, column) in expr.variables() {
             if !(self.allowed.contains(name) || self.read_only.contains(name) || is_custom(name)) {
-                return Err(script_error(
+                return Err(unknown(
                     format!("Unknown tagging variable: {name}."),
-                    script_name,
+                    name,
                     line,
                     column,
                 ));
@@ -243,22 +272,22 @@ impl TaggingRules {
         Ok(())
     }
 
-    fn check(&self, statements: &[Statement], script_name: &str) -> Result<(), SettingsError> {
+    fn check(&self, statements: &[Statement]) -> Result<(), LanguageFault> {
         for statement in statements {
             match statement {
                 Statement::Set(target, expr) => {
-                    self.check_target(target, false, script_name)?;
-                    self.check_reads(expr, script_name)?;
+                    self.check_target(target, false)?;
+                    self.check_reads(expr)?;
                 }
                 Statement::Append(target, expr) => {
-                    self.check_target(target, true, script_name)?;
-                    self.check_reads(expr, script_name)?;
+                    self.check_target(target, true)?;
+                    self.check_reads(expr)?;
                 }
-                Statement::Delete(target) => self.check_target(target, false, script_name)?,
+                Statement::Delete(target) => self.check_target(target, false)?,
                 Statement::If(condition, body, alternate) => {
-                    self.check_reads(condition, script_name)?;
-                    self.check(body, script_name)?;
-                    self.check(alternate, script_name)?;
+                    self.check_reads(condition)?;
+                    self.check(body)?;
+                    self.check(alternate)?;
                 }
             }
         }
@@ -266,11 +295,21 @@ impl TaggingRules {
     }
 }
 
+/// Every name a tagging script may read.
+pub(crate) fn tagging_variables() -> BTreeSet<&'static str> {
+    let rules = TaggingRules::new();
+    rules.allowed.union(&rules.read_only).copied().collect()
+}
+
 pub(super) fn validate_tagging_language(
     source: &str,
     script_name: &str,
 ) -> Result<(), SettingsError> {
-    let statements =
-        script::compile_tagging(source).map_err(|fault| compile_error(fault, script_name))?;
-    TaggingRules::new().check(&statements, script_name)
+    check_tagging_language(source).map_err(|fault| settings_error(fault, script_name))
+}
+
+/// [`validate_tagging_language`]'s check, answering where and why.
+pub(crate) fn check_tagging_language(source: &str) -> Result<(), LanguageFault> {
+    let statements = script::compile_tagging(source)?;
+    TaggingRules::new().check(&statements)
 }

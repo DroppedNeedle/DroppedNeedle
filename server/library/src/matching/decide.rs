@@ -757,6 +757,7 @@ mod tests {
                 name: "The Lanterns".to_owned(),
                 sort_name: None,
                 join: String::new(),
+                disambiguation: None,
             }],
             tracks: (0..count)
                 .map(|index| ReleaseTrack {

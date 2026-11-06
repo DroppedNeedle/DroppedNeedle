@@ -820,6 +820,7 @@ fn render_import_path(script: &str, date: Option<&str>) -> String {
             name: "Portishead".to_owned(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }],
         date: date.map(str::to_owned),
         original_date: date.map(str::to_owned),

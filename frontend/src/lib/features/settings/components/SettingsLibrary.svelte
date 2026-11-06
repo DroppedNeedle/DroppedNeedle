@@ -25,7 +25,7 @@
 		createSaveDownloadPolicyMutation
 	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
 	import LibraryRootPolicyEditor from '$lib/features/library-management/components/LibraryRootPolicyEditor.svelte';
-	import LibraryNamingExample from '$lib/features/library-management/components/LibraryNamingExample.svelte';
+	import ScriptWorkbench from '$lib/features/library-management/components/ScriptWorkbench.svelte';
 	import LibraryScanScheduleControl from '$lib/features/library-management/components/LibraryScanScheduleControl.svelte';
 	import SettingsImportFolder from './SettingsImportFolder.svelte';
 	import SettingsLyrics from './SettingsLyrics.svelte';
@@ -38,7 +38,6 @@
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
-	import TextAreaField from '$lib/ui/TextAreaField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -361,14 +360,13 @@
 						<div class="divider my-0"></div>
 
 						<section class="space-y-2">
-							<TextAreaField
+							<ScriptWorkbench
+								kind="import_naming"
 								label="Import naming script"
-								help="Where downloads and dropped files are filed. Same script language as Library Management."
-								mono
+								help="Where downloads and dropped files are filed."
 								bind:value={draft.naming_script}
 								error={section.fieldError('naming_script', 'Import naming script')}
 							/>
-							<LibraryNamingExample example={currentSettings?.naming_example ?? null} />
 						</section>
 
 						<div class="divider my-0"></div>

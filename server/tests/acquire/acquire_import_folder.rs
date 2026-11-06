@@ -81,6 +81,7 @@ fn release() -> Release {
             name: "Portishead".to_owned(),
             sort_name: Some("Portishead".to_owned()),
             join: String::new(),
+            disambiguation: None,
         }],
         status: Some("Official".to_owned()),
         media: vec![ReleaseMedium {

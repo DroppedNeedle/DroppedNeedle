@@ -35,6 +35,17 @@ impl From<Reason> for ItemReason {
     }
 }
 
+/// The naming script reads the artists' MusicBrainz disambiguation, and
+/// the lookup that has it for this album could not be had.
+pub fn disambiguation_unavailable() -> ItemReason {
+    ItemReason::new(
+        "METADATA_UNAVAILABLE",
+        "The naming script reads the artist's MusicBrainz disambiguation, which could not be \
+         read for this album, so its path is not planned.",
+        "Make a new preview later; automatic management looks again by itself.",
+    )
+}
+
 /// Lyrics or ReplayGain the profile requires could not be had.
 pub fn metadata_unavailable(what: &str) -> ItemReason {
     ItemReason {

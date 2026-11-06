@@ -1,7 +1,12 @@
 import { operationsQuery } from '$lib/features/library-management/queries/listQueries';
 import { previewItemsQuery } from '$lib/features/library-management/queries/listQueries';
 import { v3 } from '$lib/api/v3/endpoint';
-import { createInfiniteQuery, createQuery, queryOptions } from '@tanstack/svelte-query';
+import {
+	createInfiniteQuery,
+	createQuery,
+	keepPreviousData,
+	queryOptions
+} from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
@@ -23,7 +28,8 @@ import type {
 	LibraryManagementRecoveryDiagnosticsResponse,
 	LibraryManagementResultPageResponse,
 	LibraryManagementTagEditorContext,
-	ManagementItemScope
+	ManagementItemScope,
+	ScriptPreviewKind
 } from './types';
 
 type PreviewQuery = { state: { data?: LibraryManagementPreviewDetailResponse } };
@@ -348,3 +354,31 @@ export const getLibraryManagementPlacementQuery = (
 		queryFn: ({ signal }) =>
 			api.v3.GET(v3('/api/v3/settings/library-management/placement'), { signal })
 	}));
+
+/** How long typing must pause before a script is shown again. */
+export const SCRIPT_PREVIEW_PAUSE_MS = 300;
+
+/**
+ * A script shown on the example albums, asked for once typing pauses. The
+ * last answer stays while the next one loads.
+ */
+export const getScriptPreviewQuery = (kind: Getter<ScriptPreviewKind>, source: Getter<string>) => {
+	let settled = $state(source());
+	$effect(() => {
+		const next = source();
+		const timer = setTimeout(() => (settled = next), SCRIPT_PREVIEW_PAUSE_MS);
+		return () => clearTimeout(timer);
+	});
+	return createQuery(() => ({
+		enabled: settled.trim() !== '',
+		queryKey: LibraryManagementQueryKeyFactory.scriptPreview(kind(), settled),
+		queryFn: ({ signal }) =>
+			api.v3.POST(
+				v3('/api/v3/settings/library/script-preview'),
+				{ kind: kind(), source: settled },
+				{ signal }
+			),
+		placeholderData: keepPreviousData,
+		staleTime: Infinity
+	}));
+};

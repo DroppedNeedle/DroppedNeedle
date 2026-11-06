@@ -1039,6 +1039,7 @@ mod tests {
             name: name.to_owned(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }
     }
 

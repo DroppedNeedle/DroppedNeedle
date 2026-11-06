@@ -180,6 +180,7 @@ fn release(group: &str, id: &str, recordings: &[&str]) -> Release {
             name: "Some Artist".to_owned(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }],
         status: Some("Official".to_owned()),
         tracks: recordings
@@ -1082,6 +1083,7 @@ impl Links {
                     name: (*name).to_owned(),
                     sort_name: None,
                     join: String::new(),
+                    disambiguation: None,
                 })
                 .collect()
         };
@@ -1409,6 +1411,7 @@ fn another_spelling_links_only_through_the_artists_names() {
             ArtistName {
                 name: "坂本龍一".to_owned(),
                 sort_name: None,
+                disambiguation: None,
                 aliases: Some(vec![ArtistAlias {
                     name: "Ryūichi Sakamoto".to_owned(),
                     ..ArtistAlias::default()
@@ -2154,6 +2157,7 @@ fn a_row_not_proven_on_every_credit_is_not_merged() {
                         ArtistName {
                             name: "Alpha".to_owned(),
                             sort_name: None,
+                            disambiguation: None,
                             aliases: Some(vec![ArtistAlias {
                                 name: "Alpha & Gamma".to_owned(),
                                 ..ArtistAlias::default()

@@ -329,6 +329,7 @@ async fn heard_as_its_neighbour(
             name: "The Lanterns".to_owned(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }],
         status: Some("Official".to_owned()),
         tracks: tracks
@@ -1229,6 +1230,7 @@ async fn a_merged_release_id_finds_the_document_already_on_file() {
             ArtistName {
                 name: "The Lanterns".to_owned(),
                 sort_name: None,
+                disambiguation: None,
                 aliases: Some(Vec::new()),
             },
         )]
@@ -1477,6 +1479,7 @@ impl Rig {
                         name: NAME.to_owned(),
                         sort_name: None,
                         join: String::new(),
+                        disambiguation: None,
                     }],
                     tracks: (1..=2)
                         .map(|number| ReleaseTrack {

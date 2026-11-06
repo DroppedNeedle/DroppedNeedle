@@ -110,13 +110,10 @@ describe('SettingsLibraryManagement', () => {
 		await expect.element(profileDialog.getByText('Manage metadata tags')).not.toBeVisible();
 
 		await profileDialog.getByText('File naming and organization').click();
-		await profileDialog.getByText('Language reference').click();
-		await expect.element(profileDialog.getByText('Alpha/Management Track.flac')).toBeVisible();
-		await expect
-			.element(profileDialog.getByText(/Run a dry preview for real file results/))
-			.toBeVisible();
+		const reference = profileDialog.getByRole('link', { name: 'Script reference' }).first();
+		await expect.element(reference).toBeVisible();
 		await profileDialog.getByText('Metadata fields').click();
-		await expect.element(profileDialog.getByText('Alpha/Management Track.flac')).toBeVisible();
+		await expect.element(reference).toBeVisible();
 		const metadataToggle = profileDialog.getByRole('checkbox', { name: /Manage metadata tags/ });
 		await metadataToggle.click();
 		await expect.element(profileDialog.getByText('Saved choices retained')).toBeVisible();

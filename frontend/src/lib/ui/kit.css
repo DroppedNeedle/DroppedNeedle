@@ -48,6 +48,17 @@
 		--fontsize: 0.9375rem;
 		--btn-p: 1.125rem;
 	}
+	/* a chip whose label wraps instead of pushing past its row */
+	.dn-btn-wrap {
+		height: auto;
+		min-height: var(--size);
+		max-width: 100%;
+		flex-wrap: wrap;
+		justify-content: flex-start;
+		padding-block: 0.4rem;
+		white-space: normal;
+		text-align: left;
+	}
 	/* condensed caps: a page header's and a band's buttons (LISTEN, PLAY ALL) */
 	.dn-btn-display,
 	.dn-btn-display-sm {

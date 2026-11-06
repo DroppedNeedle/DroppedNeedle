@@ -26,7 +26,8 @@ const MAX_RUNTIME_STEPS: usize = 10_000;
 const MAX_LIST_VALUES: usize = 100;
 const MAX_VALUE_CHARACTERS: usize = 8_192;
 const MAX_TOTAL_OUTPUT_CHARACTERS: usize = 65_536;
-const MAX_SOURCE_CHARACTERS: usize = 32_768;
+/// The longest script source the compiler reads, in characters.
+pub const MAX_SOURCE_CHARACTERS: usize = 32_768;
 
 /// Windows device names are disarmed even on Linux, so a library copied
 /// to a Windows share stays valid.
@@ -973,6 +974,18 @@ pub fn render_path(
     compat: &PathCompatibilitySettings,
     root: &str,
 ) -> Result<String, ScriptFault> {
+    let rendered = render_text(source, variables, compat)?;
+    finish_path(&rendered, compat, root)
+}
+
+/// A naming template's text before it is checked and cleaned as a path:
+/// each value with the characters a name can't hold replaced, `/` only
+/// where the template wrote one.
+pub fn render_text(
+    source: &str,
+    variables: &Variables,
+    compat: &PathCompatibilitySettings,
+) -> Result<String, ScriptFault> {
     let mut budget = Budget::default();
     let mut rendered = String::new();
     for segment in compile_naming(source)? {
@@ -1011,6 +1024,14 @@ pub fn render_path(
         };
         rendered.push_str(&sanitize_value(&text, compat));
     }
+    Ok(rendered)
+}
+
+fn finish_path(
+    rendered: &str,
+    compat: &PathCompatibilitySettings,
+    root: &str,
+) -> Result<String, ScriptFault> {
     // Windows-compatible names lose leading and trailing dots, so a value
     // of `.` or `..` becomes the replacement there, as `...` already does.
     // Without that cleaning it would name a folder outside the path.

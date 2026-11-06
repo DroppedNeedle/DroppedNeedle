@@ -6,8 +6,10 @@
 
 use droppedneedle_kernel::runtime_config::sections::PathCompatibilitySettings;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-use crate::management::profile::{NamingFacts, naming_variables};
+use crate::management::profile::{NamingFacts, artist_disambiguations, naming_variables};
 use crate::management::script::{ScriptFault, Value, Variables, render_path};
 use crate::management::settings::validate_naming_language;
 use crate::matching::model::{CreditedArtist, ReleaseMedium};
@@ -28,6 +30,8 @@ pub fn variables(
         .media
         .iter()
         .find(|medium| medium.position == track.disc);
+    let (album_artist_disambiguation, artist_disambiguation) =
+        artist_disambiguations(release, track);
     let facts = NamingFacts {
         extension: format,
         codec: format,
@@ -39,6 +43,8 @@ pub fn variables(
             .unwrap_or_default(),
         medium_number: i64::from(track.disc),
         album_disambiguation: release.disambiguation.clone().unwrap_or_default(),
+        album_artist_disambiguation,
+        artist_disambiguation,
     };
     naming_variables(&fields, &facts)
 }
@@ -73,47 +79,169 @@ pub fn render(script: &str, variables: &Variables, root: &str) -> Result<String,
     Ok(path)
 }
 
-/// The path `script` gives a fixed example track, shown under the setting.
-pub fn example(script: &str) -> Result<String, ScriptFault> {
-    let artist = CreditedArtist {
-        id: "a74b1b7f-71a5-4011-9441-d0b5e4122711".to_owned(),
-        name: "Radiohead".to_owned(),
-        sort_name: Some("Radiohead".to_owned()),
+/// The built-in example albums a script is shown against: one disc, two
+/// discs with an edition note, and an album artist whose name another
+/// artist shares, told apart by MusicBrainz's disambiguation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExampleAlbum {
+    OneDisc,
+    TwoDiscs,
+    NameShared,
+}
+
+impl ExampleAlbum {
+    pub const ALL: [Self; 3] = [Self::OneDisc, Self::TwoDiscs, Self::NameShared];
+}
+
+/// One example track: its release, the file it comes as, and a tag the
+/// file holds besides the release's.
+pub struct ExampleTrack {
+    pub release: Release,
+    pub track: ReleaseTrack,
+    pub format: &'static str,
+    pub header: HeaderInfo,
+    pub comment: &'static str,
+}
+
+impl ExampleTrack {
+    /// The variables a naming script reads for this track.
+    pub fn variables(&self) -> Variables {
+        variables(&self.release, &self.track, self.format, &self.header)
+    }
+}
+
+fn artist(id: &str, name: &str, disambiguation: Option<&str>) -> CreditedArtist {
+    CreditedArtist {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        sort_name: Some(name.to_owned()),
         join: String::new(),
-    };
-    let track = ReleaseTrack {
-        title: "Paranoid Android".to_owned(),
-        disc: 1,
-        position: 2,
-        absolute_position: 2,
-        ..ReleaseTrack::default()
-    };
-    let release = Release {
-        release_group_id: "b1392450-e666-3926-a536-22c65f834433".to_owned(),
-        title: "OK Computer".to_owned(),
-        artists: vec![artist],
-        date: Some("1997-05-21".to_owned()),
-        original_date: Some("1997-05-21".to_owned()),
-        media: vec![ReleaseMedium {
-            position: 1,
-            format: Some("CD".to_owned()),
-            track_count: 12,
-            ..ReleaseMedium::default()
-        }],
-        tracks: vec![track.clone()],
-        ..Release::default()
-    };
-    let header = HeaderInfo {
+        disambiguation: disambiguation.map(str::to_owned),
+    }
+}
+
+fn medium(position: u32, track_count: u32) -> ReleaseMedium {
+    ReleaseMedium {
+        position,
+        format: Some("CD".to_owned()),
+        track_count,
+        ..ReleaseMedium::default()
+    }
+}
+
+fn lossless() -> HeaderInfo {
+    HeaderInfo {
         bitrate_kbps: Some(1000),
         sample_rate: Some(44_100),
         bit_depth: Some(16),
         ..HeaderInfo::default()
+    }
+}
+
+/// The track an example album is shown with. The ids of the second and
+/// third are made up.
+pub fn example_track(album: ExampleAlbum) -> ExampleTrack {
+    let (release, track, format, header, comment) = match album {
+        ExampleAlbum::OneDisc => {
+            let track = ReleaseTrack {
+                title: "Paranoid Android".to_owned(),
+                disc: 1,
+                position: 2,
+                absolute_position: 2,
+                ..ReleaseTrack::default()
+            };
+            let release = Release {
+                release_group_id: "b1392450-e666-3926-a536-22c65f834433".to_owned(),
+                title: "OK Computer".to_owned(),
+                artists: vec![artist(
+                    "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+                    "Radiohead",
+                    None,
+                )],
+                date: Some("1997-05-21".to_owned()),
+                original_date: Some("1997-05-21".to_owned()),
+                primary_type: Some("Album".to_owned()),
+                labels: vec!["Parlophone".to_owned()],
+                media: vec![medium(1, 12)],
+                tracks: vec![track.clone()],
+                ..Release::default()
+            };
+            (release, track, "flac", lossless(), "Ripped with EAC")
+        }
+        ExampleAlbum::TwoDiscs => {
+            let track = ReleaseTrack {
+                title: "Lift".to_owned(),
+                disc: 2,
+                position: 3,
+                absolute_position: 15,
+                ..ReleaseTrack::default()
+            };
+            let release = Release {
+                release_group_id: "00000000-0000-4000-8000-000000000002".to_owned(),
+                title: "OK Computer OKNOTOK 1997 2017".to_owned(),
+                artists: vec![artist(
+                    "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+                    "Radiohead",
+                    None,
+                )],
+                date: Some("2017-06-23".to_owned()),
+                original_date: Some("2017-06-23".to_owned()),
+                primary_type: Some("Album".to_owned()),
+                labels: vec!["XL Recordings".to_owned()],
+                media: vec![medium(1, 12), medium(2, 11)],
+                tracks: vec![track.clone()],
+                disambiguation: Some("remastered".to_owned()),
+                ..Release::default()
+            };
+            (release, track, "flac", lossless(), "")
+        }
+        ExampleAlbum::NameShared => {
+            let track = ReleaseTrack {
+                title: "Under My Wheels".to_owned(),
+                disc: 1,
+                position: 1,
+                absolute_position: 1,
+                ..ReleaseTrack::default()
+            };
+            let release = Release {
+                release_group_id: "00000000-0000-4000-8000-000000000003".to_owned(),
+                title: "Killer".to_owned(),
+                artists: vec![artist(
+                    "00000000-0000-4000-8000-000000000004",
+                    "Alice Cooper",
+                    Some("1964-1975 American rock band"),
+                )],
+                date: Some("1971-11-27".to_owned()),
+                original_date: Some("1971-11-27".to_owned()),
+                primary_type: Some("Album".to_owned()),
+                labels: vec!["Warner Bros. Records".to_owned()],
+                media: vec![medium(1, 8)],
+                tracks: vec![track.clone()],
+                ..Release::default()
+            };
+            let header = HeaderInfo {
+                bitrate_kbps: Some(320),
+                sample_rate: Some(44_100),
+                ..HeaderInfo::default()
+            };
+            (release, track, "mp3", header, "")
+        }
     };
-    render(
-        script,
-        &variables(&release, &track, "flac", &header),
-        "/music",
-    )
+    ExampleTrack {
+        release,
+        track,
+        format,
+        header,
+        comment,
+    }
+}
+
+/// The path `script` gives the first example track, shown under the
+/// setting and checked on save.
+pub fn example(script: &str) -> Result<String, ScriptFault> {
+    let example = example_track(ExampleAlbum::OneDisc);
+    render(script, &example.variables(), "/music")
 }
 
 /// Check a naming script a person saves: it passes the checks every

@@ -861,6 +861,7 @@ mod fields {
             name: name.to_owned(),
             sort_name: Some(sort.to_owned()),
             join: String::new(),
+            disambiguation: None,
         }
     }
 

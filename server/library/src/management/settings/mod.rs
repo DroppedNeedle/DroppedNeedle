@@ -17,7 +17,10 @@
 
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 pub use normalize::{complete_fields, migration_carry, normalize, validate_preset_provenance};
-pub(crate) use script::validate_naming_language;
+pub(crate) use script::{
+    LanguageFault, check_naming_language, check_tagging_language, naming_variables,
+    tagging_variables, validate_naming_language,
+};
 
 mod activation;
 mod bundle;

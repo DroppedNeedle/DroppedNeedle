@@ -201,3 +201,9 @@ export interface LibraryManagementPlanItemParams {
 	changeKind?: ManagementChangeKind;
 	scope?: ManagementItemScope;
 }
+
+export type ScriptPreviewKind = Schemas['ScriptPreviewKind'];
+export type ScriptPreviewResponse = Schemas['ScriptPreviewResponse'];
+export type ScriptPreviewSample = Schemas['ScriptPreviewSample'];
+export type ScriptPreviewFault = Schemas['ScriptPreviewFault'];
+export type ExampleAlbum = Schemas['ExampleAlbum'];

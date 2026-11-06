@@ -67,7 +67,8 @@ export const queriesMock = {
 	getLibraryManagementActivationHealthQuery: () => h.health,
 	getLibraryManagementPlacementQuery: () => h.placement,
 	getLibraryManagementOperationsQuery: () => h.operations,
-	getLibraryManagementPresetDiffQuery: () => h.presetDiff
+	getLibraryManagementPresetDiffQuery: () => h.presetDiff,
+	getScriptPreviewQuery: () => ({ data: undefined, isFetching: false, isPlaceholderData: false })
 };
 
 export const mutationsMock = {

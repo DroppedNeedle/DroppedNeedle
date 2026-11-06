@@ -31890,6 +31890,54 @@
         ]
       }
     },
+    "/api/v3/settings/library/script-preview": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Show a naming or tagging script on the built-in example albums while\nit is written. Nothing is saved; a script that fails answers why in\nthe 200 body.",
+        "operationId": "preview_library_script",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The script on each example album",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The script is too long",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/settings/library/watcher": {
       "get": {
         "tags": [
@@ -45087,6 +45135,15 @@
           "supported",
           "unknown",
           "contradictory"
+        ]
+      },
+      "ExampleAlbum": {
+        "type": "string",
+        "description": "The built-in example albums a script is shown against: one disc, two\ndiscs with an edition note, and an album artist whose name another\nartist shares, told apart by MusicBrainz's disambiguation.",
+        "enum": [
+          "one_disc",
+          "two_discs",
+          "name_shared"
         ]
       },
       "ExtensionCase": {
@@ -62478,6 +62535,194 @@
           "startup_resume",
           "policy_apply"
         ]
+      },
+      "ScriptNameSuggestion": {
+        "type": "object",
+        "description": "A misspelt name and the known name it is closest to.",
+        "required": [
+          "found",
+          "name"
+        ],
+        "properties": {
+          "found": {
+            "type": "string",
+            "description": "The name as the script wrote it."
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ScriptPreviewFault": {
+        "type": "object",
+        "description": "Why a script fails, and where.",
+        "required": [
+          "message",
+          "line",
+          "column"
+        ],
+        "properties": {
+          "column": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "line": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string"
+          },
+          "suggestion": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScriptNameSuggestion"
+              }
+            ],
+            "description": "The known name closest to the one the script misspelt."
+          }
+        }
+      },
+      "ScriptPreviewKind": {
+        "type": "string",
+        "description": "Which script is being written.",
+        "enum": [
+          "import_naming",
+          "naming",
+          "tagging"
+        ]
+      },
+      "ScriptPreviewRequest": {
+        "type": "object",
+        "description": "A script to show against the example albums.",
+        "required": [
+          "kind",
+          "source"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ScriptPreviewKind"
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
+      "ScriptPreviewResponse": {
+        "type": "object",
+        "description": "The script on every example album.",
+        "required": [
+          "samples"
+        ],
+        "properties": {
+          "fault": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScriptPreviewFault"
+              }
+            ],
+            "description": "Why the script does not compile or breaks a rule; the examples\nthen carry their values only."
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptPreviewSample"
+            }
+          }
+        }
+      },
+      "ScriptPreviewSample": {
+        "type": "object",
+        "description": "The script on one example album.",
+        "required": [
+          "sample",
+          "tags",
+          "values"
+        ],
+        "properties": {
+          "empty_name_parts": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The path's names as written, when one of them came out empty\n(each empty one as `\"\"`)."
+          },
+          "fault": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScriptPreviewFault"
+              }
+            ],
+            "description": "Why the script fails on this example."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The path a naming script gives the example track."
+          },
+          "sample": {
+            "$ref": "#/components/schemas/ExampleAlbum"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptTagChange"
+            },
+            "description": "The tags a tagging script changes, by name."
+          },
+          "values": {
+            "type": "object",
+            "description": "Every value the script can read here, as text.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ScriptTagChange": {
+        "type": "object",
+        "description": "One tag a tagging script changes; `after` is empty when it removes it.",
+        "required": [
+          "name",
+          "before",
+          "after"
+        ],
+        "properties": {
+          "after": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "before": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string"
+          }
+        }
       },
       "ScrobbleNowPlayingRequest": {
         "type": "object",

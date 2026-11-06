@@ -10,7 +10,8 @@
 //! turns a profile into tags and paths, `script` is the naming and
 //! tagging language, `planner` plans one album, `store` is the snapshot
 //! and plan SQL (the job rows go through [`crate::jobs`]),
-//! `reasons` the per-file reasons, and `service` the entry points the
+//! `reasons` the per-file reasons, `script_preview` a script shown on
+//! example albums while it is written, and `service` the entry points the
 //! handlers and the worker call. The other kinds of job sit next to it:
 //! `tag_edit` (the tag editor), `edition_tags` (an edition's tags written
 //! from the edition sheet), `restore` (back to the originals, and
@@ -40,6 +41,7 @@ pub mod reasons;
 pub mod recovery;
 pub mod restore;
 pub mod script;
+pub mod script_preview;
 pub mod selection;
 pub mod service;
 pub mod settings;

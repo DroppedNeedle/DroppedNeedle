@@ -8590,6 +8590,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/library/script-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Show a naming or tagging script on the built-in example albums while
+         *     it is written. Nothing is saved; a script that fails answers why in
+         *     the 200 body.
+         */
+        post: operations["preview_library_script"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/settings/library/watcher": {
         parameters: {
             query?: never;
@@ -14196,6 +14217,13 @@ export interface components {
          * @enum {string}
          */
         EvidenceClass: "supported" | "unknown" | "contradictory";
+        /**
+         * @description The built-in example albums a script is shown against: one disc, two
+         *     discs with an edition note, and an album artist whose name another
+         *     artist shares, told apart by MusicBrainz's disambiguation.
+         * @enum {string}
+         */
+        ExampleAlbum: "one_disc" | "two_discs" | "name_shared";
         /**
          * @description Extension case policy.
          * @enum {string}
@@ -21997,6 +22025,66 @@ export interface components {
          * @enum {string}
          */
         ScanTrigger: "manual" | "automatic" | "subsonic" | "startup_resume" | "policy_apply";
+        /** @description A misspelt name and the known name it is closest to. */
+        ScriptNameSuggestion: {
+            /** @description The name as the script wrote it. */
+            found: string;
+            name: string;
+        };
+        /** @description Why a script fails, and where. */
+        ScriptPreviewFault: {
+            /** Format: int32 */
+            column: number;
+            /** Format: int32 */
+            line: number;
+            message: string;
+            /** @description The known name closest to the one the script misspelt. */
+            suggestion?: null | components["schemas"]["ScriptNameSuggestion"];
+        };
+        /**
+         * @description Which script is being written.
+         * @enum {string}
+         */
+        ScriptPreviewKind: "import_naming" | "naming" | "tagging";
+        /** @description A script to show against the example albums. */
+        ScriptPreviewRequest: {
+            kind: components["schemas"]["ScriptPreviewKind"];
+            source: string;
+        };
+        /** @description The script on every example album. */
+        ScriptPreviewResponse: {
+            /**
+             * @description Why the script does not compile or breaks a rule; the examples
+             *     then carry their values only.
+             */
+            fault?: null | components["schemas"]["ScriptPreviewFault"];
+            samples: components["schemas"]["ScriptPreviewSample"][];
+        };
+        /** @description The script on one example album. */
+        ScriptPreviewSample: {
+            /**
+             * @description The path's names as written, when one of them came out empty
+             *     (each empty one as `""`).
+             */
+            empty_name_parts?: string[] | null;
+            /** @description Why the script fails on this example. */
+            fault?: null | components["schemas"]["ScriptPreviewFault"];
+            /** @description The path a naming script gives the example track. */
+            path?: string | null;
+            sample: components["schemas"]["ExampleAlbum"];
+            /** @description The tags a tagging script changes, by name. */
+            tags: components["schemas"]["ScriptTagChange"][];
+            /** @description Every value the script can read here, as text. */
+            values: {
+                [key: string]: string;
+            };
+        };
+        /** @description One tag a tagging script changes; `after` is empty when it removes it. */
+        ScriptTagChange: {
+            after: string[];
+            before: string[];
+            name: string;
+        };
         /** @description One native now-playing forward, by name. */
         ScrobbleNowPlayingRequest: {
             /** @description Album title. */
@@ -46378,6 +46466,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryScanScheduleResponse"];
+                };
+            };
+        };
+    };
+    preview_library_script: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScriptPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description The script on each example album */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScriptPreviewResponse"];
+                };
+            };
+            /** @description The script is too long */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

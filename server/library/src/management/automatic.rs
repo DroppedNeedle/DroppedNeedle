@@ -939,7 +939,7 @@ impl Management {
             && super::enrich::ensure_release_extras(
                 &*self.parts.enrichment,
                 &self.parts.identify_store,
-                &pinned.profile,
+                &pinned,
                 &mut release,
                 true,
             )

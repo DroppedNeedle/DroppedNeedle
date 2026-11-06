@@ -1030,6 +1030,12 @@ pub fn names_from_wire(wire: &MbRelease, fetched_at_ms: i64) -> ArtistNames {
                 name: artist.name.clone(),
                 sort_name: artist.sort_name.clone().filter(|sort| !sort.is_empty()),
                 aliases,
+                disambiguation: artist
+                    .disambiguation
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_owned),
             },
         );
     }
@@ -1197,6 +1203,13 @@ fn credits(credit: &[ArtistCreditName]) -> Vec<CreditedArtist> {
                 .clone()
                 .filter(|name| !name.is_empty()),
             join: entry.joinphrase.clone(),
+            disambiguation: entry
+                .artist
+                .disambiguation
+                .as_deref()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned),
         })
         .collect()
 }

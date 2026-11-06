@@ -87,6 +87,9 @@
 		pill?: boolean;
 		/** The pressed or current state of a toggle-like button. */
 		active?: boolean;
+		/** The label may wrap onto more lines and the button never grows
+		 * wider than its row, for a chip with a long label. */
+		wrap?: boolean;
 		/** Shows a spinner and blocks clicks. */
 		loading?: boolean;
 		/** Shown in place of the label while loading, e.g. "Saving...". */
@@ -107,6 +110,7 @@
 		size = 'md',
 		pill = false,
 		active = false,
+		wrap = false,
 		loading = false,
 		loadingLabel,
 		icon: Icon,
@@ -149,6 +153,7 @@
 			buttonSizes[size],
 			pill ? 'rounded-full' : '',
 			active ? 'btn-active' : '',
+			wrap ? 'dn-btn-wrap' : '',
 			loading ? 'dn-btn-loading' : '',
 			overlay ? 'relative' : '',
 			tag !== 'button' && blocked ? 'btn-disabled' : '',

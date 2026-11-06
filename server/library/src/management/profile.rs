@@ -327,6 +327,30 @@ fn joined_mode_value(
     Some(vec![merged])
 }
 
+/// Fold the naming spellings a tagging script may set (`albumartist`)
+/// onto their tag field, and say so for names nothing can write.
+pub(crate) fn fold_script_names(
+    desired: &mut BTreeMap<String, Vec<String>>,
+    script_name: &str,
+    warnings: &mut Vec<String>,
+) {
+    let names: Vec<String> = desired.keys().cloned().collect();
+    for name in names {
+        if TagField::from_name(&name).is_some() {
+            continue;
+        }
+        let values = desired.remove(&name).unwrap_or_default();
+        match tag_field(&name) {
+            Some(field) => {
+                desired.insert(field.name().to_owned(), values);
+            }
+            None => warnings.push(format!(
+                "The script \"{script_name}\" set \"{name}\", which this server cannot write; it was skipped."
+            )),
+        }
+    }
+}
+
 /// Every field as a script value: one value as text, several as a list.
 pub fn field_variables(fields: &BTreeMap<String, Vec<String>>) -> Variables {
     fields
@@ -658,24 +682,7 @@ pub fn plan_tags(
                 &mut script::Budget::default(),
             )
             .map_err(|fault| reasons::script_failed(&script.name, &fault.to_string()))?;
-            // Scripts may use naming spellings (`albumartist`); fold them
-            // onto the tag field, and say so for names nothing can write.
-            let names: Vec<String> = desired.keys().cloned().collect();
-            for name in names {
-                if TagField::from_name(&name).is_some() {
-                    continue;
-                }
-                let values = desired.remove(&name).unwrap_or_default();
-                match tag_field(&name) {
-                    Some(field) => {
-                        desired.insert(field.name().to_owned(), values);
-                    }
-                    None => warnings.push(format!(
-                        "The script \"{}\" set \"{name}\", which this server cannot write; it was skipped.",
-                        script.name
-                    )),
-                }
-            }
+            fold_script_names(&mut desired, &script.name, &mut warnings);
         }
     }
     desired.retain(|_, values| !values.is_empty());
@@ -1131,6 +1138,40 @@ pub struct NamingFacts<'a> {
     pub medium_number: i64,
     /// The edition's MusicBrainz disambiguation, or empty.
     pub album_disambiguation: String,
+    /// The first album artist's MusicBrainz disambiguation, or empty.
+    pub album_artist_disambiguation: String,
+    /// The first track artist's MusicBrainz disambiguation, or empty.
+    pub artist_disambiguation: String,
+}
+
+/// The first album artist's and the first track artist's MusicBrainz
+/// disambiguation, empty where there is none. A track with no credit of
+/// its own is credited to the release's artists, as its tags are. A
+/// release stored before its credits kept the value takes it from the
+/// artist names lookup, which naming scripts that read it ask for.
+pub fn artist_disambiguations(release: &Release, track: &ReleaseTrack) -> (String, String) {
+    let first = |artists: &[crate::matching::model::CreditedArtist]| {
+        let artist = artists.first();
+        artist
+            .and_then(|artist| artist.disambiguation.clone())
+            .or_else(|| {
+                let id = artist?.id.to_ascii_lowercase();
+                release
+                    .artist_names
+                    .as_ref()?
+                    .artists
+                    .get(&id)?
+                    .disambiguation
+                    .clone()
+            })
+            .unwrap_or_default()
+    };
+    let track_artists = if track.artists.is_empty() {
+        &release.artists
+    } else {
+        &track.artists
+    };
+    (first(&release.artists), first(track_artists))
 }
 
 fn first(fields: &BTreeMap<String, Vec<String>>, name: &str) -> String {
@@ -1235,6 +1276,14 @@ pub fn naming_variables(
         ),
         ("medium_format", Value::Text(facts.medium_format.clone())),
         ("medium_number", Value::Int(facts.medium_number)),
+        (
+            "albumartist_disambiguation",
+            Value::Text(facts.album_artist_disambiguation.clone()),
+        ),
+        (
+            "artist_disambiguation",
+            Value::Text(facts.artist_disambiguation.clone()),
+        ),
     ];
     for (name, value) in pairs {
         variables.insert(name.to_owned(), value);
@@ -1906,6 +1955,8 @@ mod tests {
                 medium_format: String::new(),
                 medium_number: 1,
                 album_disambiguation: String::new(),
+                album_artist_disambiguation: String::new(),
+                artist_disambiguation: String::new(),
             };
             script::render_path(
                 "{original_date}/{date}",
@@ -2200,5 +2251,69 @@ mod tests {
         );
         assert_eq!(initial("The Cure"), "C");
         assert_eq!(initial("2Pac"), "#");
+    }
+
+    /// A release stored before its credits kept the artist's
+    /// disambiguation names it from the artist names lookup, which a
+    /// profile whose naming script reads it asks for.
+    #[test]
+    fn a_stored_release_takes_the_disambiguation_from_its_artist_names() {
+        use crate::matching::model::{ArtistName, ArtistNames, CreditedArtist};
+        use droppedneedle_kernel::runtime_config::sections::NamingScript;
+
+        let script = "{albumartist} ({albumartist_disambiguation})/{title}.{ext}";
+        let pinned = |source: &str| PinnedProfile {
+            profile: LibraryManagementProfile::default(),
+            naming_script: NamingScript {
+                source: source.to_owned(),
+                ..NamingScript::default()
+            },
+            multi_disc_naming_script: None,
+            tagging_scripts: Vec::new(),
+            overrides: None,
+        };
+        assert!(super::super::enrich::script_names_wanted(&pinned(script)));
+        assert!(!super::super::enrich::script_names_wanted(&pinned(
+            "{albumartist}/{title}.{ext}"
+        )));
+
+        let id = "4d7928cd-7ed2-4282-8c29-c0c9f966f1bd";
+        let track = ReleaseTrack {
+            title: "Under My Wheels".to_owned(),
+            disc: 1,
+            position: 1,
+            ..ReleaseTrack::default()
+        };
+        let release = Release {
+            artists: vec![CreditedArtist {
+                id: id.to_owned(),
+                name: "Alice Cooper".to_owned(),
+                ..CreditedArtist::default()
+            }],
+            tracks: vec![track.clone()],
+            artist_names: Some(ArtistNames {
+                fetched_at_ms: 1,
+                artists: [(
+                    id.to_owned(),
+                    ArtistName {
+                        name: "Alice Cooper".to_owned(),
+                        disambiguation: Some("1964-1975 American rock band".to_owned()),
+                        ..ArtistName::default()
+                    },
+                )]
+                .into(),
+            }),
+            ..Release::default()
+        };
+        let variables = crate::import::naming::variables(
+            &release,
+            &track,
+            "flac",
+            &crate::tags::read::HeaderInfo::default(),
+        );
+        assert_eq!(
+            crate::import::naming::render(script, &variables, "/music").expect("renders"),
+            "Alice Cooper (1964-1975 American rock band)/Under My Wheels.flac"
+        );
     }
 }

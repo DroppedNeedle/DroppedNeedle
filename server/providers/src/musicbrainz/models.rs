@@ -37,6 +37,13 @@ pub struct ArtistRef {
     /// Sort name (`"Beatles, The"` style), when the service sends one.
     #[serde(rename = "sort-name", default)]
     pub sort_name: Option<String>,
+    /// The artist's comment telling it apart from others of its name
+    /// ("1964-1975 American rock band"). Every credited artist in the
+    /// recorded release lookups of 2026-10-15
+    /// (`server/tests/fixtures/musicbrainz/release_names_*.json`,
+    /// `release_lookup_classical.json`) carries the key, `""` for none.
+    #[serde(default)]
+    pub disambiguation: Option<String>,
     /// Aliases, under the `aliases` include. Seen on 2026-10-15 per
     /// `server/tests/fixtures/musicbrainz/README.md`: BrainzMash release
     /// lookups with `inc=recordings+artist-credits+aliases` and the relation

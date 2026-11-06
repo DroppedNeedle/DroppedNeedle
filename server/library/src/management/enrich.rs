@@ -266,6 +266,25 @@ pub fn names_wanted(
         })
 }
 
+/// Whether the profile's naming scripts read the artists' MusicBrainz
+/// disambiguation, which a release stored before its credits kept it
+/// gets from the artist names lookup.
+pub fn script_names_wanted(pinned: &super::models::PinnedProfile) -> bool {
+    const READ: [&str; 2] = ["albumartist_disambiguation", "artist_disambiguation"];
+    std::iter::once(&pinned.naming_script)
+        .chain(pinned.multi_disc_naming_script.as_ref())
+        .filter_map(|script| super::script::compile_naming(&script.source).ok())
+        .flatten()
+        .any(|segment| match segment {
+            super::script::Segment::Literal(_) => false,
+            super::script::Segment::Variable { name, .. } => READ.contains(&name.as_str()),
+            super::script::Segment::Expression(expr) => expr
+                .variables()
+                .iter()
+                .any(|(name, _, _)| READ.contains(name)),
+        })
+}
+
 /// Make sure the stored document for `release` carries the parts the
 /// profile needs (credits, artist names), fresh: when one is missing,
 /// older than [`RELEASE_FRESH_SECS`] or parsed under an older version,
@@ -275,16 +294,17 @@ pub fn names_wanted(
 pub fn ensure_release_extras(
     port: &dyn EnrichmentPort,
     store: &SqliteIdentifyStore,
-    profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
+    pinned: &super::models::PinnedProfile,
     release: &mut Release,
     background: bool,
 ) -> ReleaseParts {
     if super::custom::is_custom(release) {
         return ReleaseParts::default();
     }
+    let profile = &pinned.profile;
     let wants = ExtrasWanted {
         relations: credits_wanted(profile),
-        names: names_wanted(profile),
+        names: names_wanted(profile) || script_names_wanted(pinned),
     };
     let now_ms = store.clock().now_ms();
     let fresh_ms = (RELEASE_FRESH_SECS * 1000) as i64;
@@ -463,13 +483,14 @@ pub struct ReplayGainValues {
 pub fn gather(
     port: &dyn EnrichmentPort,
     store: &SqliteIdentifyStore,
-    profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
+    pinned: &super::models::PinnedProfile,
     release: &mut Release,
     automatic: bool,
     exact_edition: bool,
 ) -> AlbumExtras {
     use droppedneedle_kernel::runtime_config::sections::GenreSource;
-    let parts = ensure_release_extras(port, store, profile, release, automatic);
+    let profile = &pinned.profile;
+    let parts = ensure_release_extras(port, store, pinned, release, automatic);
     let mut extras = AlbumExtras {
         credits: parts.credits,
         names: parts.names,

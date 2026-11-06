@@ -5,9 +5,10 @@
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
-	import TextAreaField from '$lib/ui/TextAreaField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 	import { createUuid } from '$lib/utils/uuid';
+
+	import ScriptWorkbench from './ScriptWorkbench.svelte';
 
 	interface Props {
 		kind: 'naming' | 'tagging';
@@ -31,27 +32,6 @@
 		if (multi) return 'Assigned to multi-disc';
 		return 'Not assigned';
 	});
-	const localProblem = $derived(validateLocally(selectedScript));
-
-	function validateLocally(script: ManagementScriptSettings | null): string {
-		if (!script) return 'Choose or create a script.';
-		if (!script.name.trim()) return 'The script needs a name.';
-		if (!script.source.trim()) return 'The script needs source text.';
-		if (kind === 'naming') {
-			if (script.source.includes('\n') || script.source.includes('\r')) {
-				return 'Naming scripts must be one path-template line.';
-			}
-			let depth = 0;
-			for (const character of script.source) {
-				if (character === '{') depth += 1;
-				if (character === '}') depth -= 1;
-				if (depth < 0) return 'A closing brace has no matching opening brace.';
-			}
-			if (depth !== 0) return 'An expression brace is not closed.';
-		}
-		return '';
-	}
-
 	function updateScript(update: Partial<Pick<ManagementScriptSettings, 'name' | 'source'>>): void {
 		if (!selectedScript) return;
 		onchange(
@@ -162,94 +142,21 @@
 			<div class="mt-3">
 				<TextField
 					label="Script name"
+					error={selectedScript.name.trim() ? null : 'The script needs a name.'}
 					bind:value={() => selectedScript.name, (name) => updateScript({ name })}
 				/>
 			</div>
-			<TextAreaField
-				label={`${kind === 'naming' ? 'Naming' : 'Tagging'} script source`}
-				mono
-				rows={6}
-				value={selectedScript.source}
-				oninput={(source) => updateScript({ source })}
-			/>
-			{#if localProblem}
-				<p class="mt-2 text-xs text-error" role="alert">{localProblem}</p>
-			{:else}
-				<p class="mt-2 text-xs text-success">
-					Basic structure is valid. Full language validation runs before save.
-				</p>
-			{/if}
-			{#if kind === 'naming'}
-				<div class="mt-3 rounded-lg border border-base-content/10 bg-base-100 p-3 text-xs">
-					<strong>Built-in Picard-style examples</strong>
-					<p class="mt-1 font-mono">Artist/Album (2008)/03 - Title.flac</p>
-					<p class="font-mono">Artist/Album (2023)/CD 01/01 - Track.flac</p>
-					<p class="font-mono">Artist/Album (2023)/Disc 01/01 - Track.flac</p>
-				</div>
-			{/if}
-
-			<details class="mt-3 text-xs text-muted">
-				<summary class="cursor-pointer font-semibold">Language reference</summary>
-				{#if kind === 'naming'}
-					<p class="mt-2">
-						Common values: title, album, album_disambiguation, artist, albumartist, initial, year,
-						disc, track, medium_format, medium_number, genre, ext, codec.
-					</p>
-					<p class="mt-1">
-						{'{initial}'} uses the effective album artist, ignores leading Unicode whitespace and a case-insensitive
-						"The" plus following Unicode whitespace, then returns one uppercase letter; empty or nonletter
-						leads return "#".
-					</p>
-					<p class="mt-1">
-						Functions: default, conditional, concat, is_empty, pad, replace, lower, upper, title,
-						join, ascii_fold, path_safe.
-					</p>
-					<p class="mt-1">
-						Only literal / characters create directories. Actual paths and collisions appear in a
-						dry run.
-					</p>
-					<div class="mt-3 grid gap-2 sm:grid-cols-2">
-						<div class="rounded-lg border border-base-content/10 bg-base-100 p-2">
-							<strong>Single artist</strong>
-							<code class="mt-1 block break-all">{'{albumartist}/{title}.{ext}'}</code>
-							<p class="mt-1">Alpha/Management Track.flac</p>
-						</div>
-						<div class="rounded-lg border border-base-content/10 bg-base-100 p-2">
-							<strong>Built-in multi-disc shape</strong>
-							<code class="mt-1 block break-all"
-								>{'{albumartist}/{album}{conditional(is_empty(year), "", concat(" (", year, ")"))}{conditional(is_empty(album_disambiguation), "", concat(" (", album_disambiguation, ")"))}/{default(medium_format, "Disc")} {medium_number:02d}/{track:02d} - {title}.{ext}'}</code
-							>
-							<p class="mt-1">Alpha/Management Album (2023)/CD 01/02 - Management Track.flac</p>
-						</div>
-					</div>
-				{:else}
-					<p class="mt-2">
-						Statements: set, append, delete, if ...:, else:, end. Custom fields use custom.NAME.
-					</p>
-					<p class="mt-1">
-						Scripts run in the attached order. Exact field-level effects are attributed in the
-						management preview.
-					</p>
-					<div class="mt-3 grid gap-2 sm:grid-cols-2">
-						<div class="rounded-lg border border-base-content/10 bg-base-100 p-2">
-							<strong>Before</strong>
-							<p class="mt-1">Title: the great escape</p>
-							<p>Genre: Rock</p>
-						</div>
-						<div class="rounded-lg border border-base-content/10 bg-base-100 p-2">
-							<strong>Script and result</strong>
-							<code class="mt-1 block">set title = title(title)</code>
-							<code class="block">append genre = "Alternative Rock"</code>
-							<p class="mt-1">Title: The Great Escape</p>
-							<p>Genre: Rock, Alternative Rock</p>
-						</div>
-					</div>
-				{/if}
-				<p class="mt-3 rounded-lg border border-warning/20 bg-warning/5 p-2">
-					Run a dry preview for real file results, path-length and normalization warnings, and
-					collision checks. The browser never guesses what a script will do.
-				</p>
-			</details>
+			<div class="mt-3">
+				{#key selectedScript.id}
+					<ScriptWorkbench
+						{kind}
+						label={`${kind === 'naming' ? 'Naming' : 'Tagging'} script source`}
+						rows={kind === 'naming' ? 2 : 6}
+						value={selectedScript.source}
+						oninput={(source) => updateScript({ source })}
+					/>
+				{/key}
+			</div>
 			{#if selectedScript.preset_origin === 'legacy_naming_template'}
 				<p class="mt-3 rounded-lg border border-info/20 bg-info/5 p-2 text-xs text-muted">
 					Carried over from v2. Imports use the script in Settings &gt; Library.

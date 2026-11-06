@@ -429,6 +429,7 @@ fn ambiguous_from(facts: &LocalAlbumFacts) -> RecallResult {
             name: facts.album_artist_name.clone(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }],
         tracks: facts
             .tracks
@@ -744,6 +745,7 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
             name: "Alfa".to_owned(),
             sort_name: Some("Alfa, The".to_owned()),
             join: String::new(),
+            disambiguation: None,
         };
         for release in &mut recall.releases {
             release.artists = vec![alfa.clone()];
@@ -3667,6 +3669,7 @@ fn tagged_from(facts: &LocalAlbumFacts) -> Release {
             name: facts.album_artist_name.clone(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }],
         tracks: facts
             .tracks
@@ -4913,6 +4916,7 @@ async fn an_upgrade_held_for_one_file_keeps_that_files_old_copy() {
             name: "The Band".to_owned(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }],
         tracks: vec![track(1), track(2), track(3)],
         ..Release::default()
@@ -5049,6 +5053,7 @@ async fn an_upgrade_plans_again_when_a_replaced_track_comes_back() {
             name: "The Band".to_owned(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }],
         tracks: vec![ReleaseTrack {
             id: "20000000-0000-4000-8000-00000000000b".to_owned(),
@@ -5867,6 +5872,7 @@ async fn a_switched_off_library_takes_no_file_changes() {
             name: "The Band".to_owned(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }],
         tracks: vec![ReleaseTrack {
             id: "20000000-0000-4000-8000-00000000000b".to_owned(),
@@ -9082,6 +9088,7 @@ async fn edition_plan_pairs_another_version() {
         name: "Someone Else".to_owned(),
         sort_name: None,
         join: String::new(),
+        disambiguation: None,
     }];
     rig.identify.set_recall(RecallResult {
         releases: vec![fit.clone(), other.clone(), stranger],
@@ -16056,6 +16063,7 @@ async fn import_and_management_name_a_file_alike() {
             name: "The Golden Band".to_owned(),
             sort_name: Some("Golden Band, The".to_owned()),
             join: String::new(),
+            disambiguation: None,
         };
         let track = ReleaseTrack {
             id: format!("{n}0000000-0000-4000-8000-00000000000b"),
@@ -16194,6 +16202,7 @@ async fn a_file_staging_cannot_read_is_a_local_fault() {
             name: "Artist".to_owned(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }],
         tracks: vec![ReleaseTrack {
             id: "70000000-0000-4000-8000-00000000001b".to_owned(),
@@ -16249,6 +16258,7 @@ async fn an_import_never_lands_under_an_excluded_path() {
             name: "Live".to_owned(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }],
         date: Some("2001-02-03".to_owned()),
         media: vec![ReleaseMedium {
@@ -17877,6 +17887,7 @@ fn one_track_per_title(facts: &LocalAlbumFacts) -> RecallResult {
                 name: facts.album_artist_name.clone(),
                 sort_name: None,
                 join: String::new(),
+                disambiguation: None,
             }],
             tracks,
             ..Release::default()
@@ -22978,6 +22989,7 @@ fn sibling_editions(n: u32, title: &str) -> (Release, Release) {
             name: "Radiohead".to_owned(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }],
         tracks: TITLES
             .iter()
@@ -24909,6 +24921,7 @@ fn chosen_release(count: u32) -> Release {
             name: "Chosen Artist".to_owned(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }],
         tracks: (1..=count)
             .map(|n| ReleaseTrack {
@@ -25345,6 +25358,7 @@ fn sakamoto_edition(release: &mut Release) {
         name: name.to_owned(),
         sort_name: Some(sort.to_owned()),
         join: join.to_owned(),
+        disambiguation: None,
     };
     release.artists = vec![
         artist(SAKAMOTO, "Ryuichi Sakamoto", "Sakamoto, Ryūichi", " + "),
@@ -25619,6 +25633,7 @@ fn sakamoto_alone(release: &mut Release) {
         name: "坂本龍一".to_owned(),
         sort_name: Some("Sakamoto, Ryūichi".to_owned()),
         join: String::new(),
+        disambiguation: None,
     };
     release.artists = vec![sakamoto.clone()];
     for track in &mut release.tracks {
@@ -25962,6 +25977,7 @@ async fn an_artist_whose_files_carry_a_merged_id_is_linked_and_kept() {
             name: "Artist X".to_owned(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         };
         release.artists = vec![credit.clone()];
         for track in &mut release.tracks {
@@ -27480,6 +27496,7 @@ fn junk_release(
             name: facts.album_artist_name.clone(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }],
         tracks: tracks
             .iter()
@@ -28297,6 +28314,7 @@ async fn a_carried_library_fetches_its_release_documents_and_keeps_its_links() {
         name: credited.clone(),
         sort_name: None,
         join: String::new(),
+        disambiguation: None,
     };
     rig.identify.set_document(
         REL_1,

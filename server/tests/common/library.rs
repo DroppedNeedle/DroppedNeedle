@@ -434,6 +434,7 @@ impl EnrichmentPort for NoEnrichment {
                         let name = ArtistName {
                             name: artist.name.clone(),
                             sort_name: artist.sort_name.clone(),
+                            disambiguation: None,
                             aliases: None,
                         };
                         (artist.id.to_ascii_lowercase(), name)

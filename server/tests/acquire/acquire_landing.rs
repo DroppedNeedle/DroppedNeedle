@@ -152,6 +152,7 @@ pub(crate) fn release(id: &str, group: &str, titles: &[&str], lengths: &[Option<
         name: "Portishead".to_owned(),
         sort_name: Some("Portishead".to_owned()),
         join: String::new(),
+        disambiguation: None,
     };
     Release {
         id: id.to_owned(),
@@ -3577,6 +3578,7 @@ fn edition(
             name: "Portishead".to_owned(),
             sort_name: Some("Portishead".to_owned()),
             join: String::new(),
+            disambiguation: None,
         }],
         status: Some("Official".to_owned()),
         media: discs

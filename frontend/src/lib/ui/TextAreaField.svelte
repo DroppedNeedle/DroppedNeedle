@@ -4,8 +4,11 @@
 	For a list kept one value per line, pass `value` without binding and
 	parse the text in `oninput`: the box keeps what was typed (a trailing
 	blank line included) while the list holds only the parsed values.
+	Bind `element` to place text at the cursor; `aside` sits at the end of
+	the label's row.
 -->
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import Field from './Field.svelte';
 
 	interface Props {
@@ -22,6 +25,9 @@
 		readonly?: boolean;
 		/** Called with the text after each edit. */
 		oninput?: (text: string) => void;
+		/** The textarea, for placing text at the cursor. */
+		element?: HTMLTextAreaElement | null;
+		aside?: Snippet;
 	}
 
 	let {
@@ -34,11 +40,13 @@
 		rows = 2,
 		disabled = false,
 		readonly = false,
-		oninput
+		oninput,
+		element = $bindable(null),
+		aside
 	}: Props = $props();
 </script>
 
-<Field {label} {help} {error}>
+<Field {label} {help} {error} {aside}>
 	{#snippet children(control)}
 		<textarea
 			{...control}
@@ -49,6 +57,7 @@
 			{disabled}
 			{readonly}
 			oninput={(event) => oninput?.(event.currentTarget.value)}
+			bind:this={element}
 			bind:value></textarea>
 	{/snippet}
 </Field>

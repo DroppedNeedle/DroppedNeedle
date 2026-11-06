@@ -187,6 +187,7 @@ fn matching_release(verified: &MusicBrainzVerifiedRelease) -> Release {
             name: verified.artist_name.clone(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }],
         date: verified.date.clone(),
         country: verified.country.clone(),

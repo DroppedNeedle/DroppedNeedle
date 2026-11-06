@@ -38,6 +38,9 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, LibraryScanSchedule, SecuritySettings,
 };
+use droppedneedle_library::management::script_preview::{
+    self, ScriptPreviewRequest, ScriptPreviewResponse,
+};
 use droppedneedle_library::management::settings::{ActivationHealth, ChangeImpact, PresetDiff};
 use droppedneedle_library::settings_models::{
     LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
@@ -248,6 +251,28 @@ pub async fn get_library_policy_tree(
         .await
         .map(Json)
         .map_err(ApiError::from)
+}
+
+/// Show a naming or tagging script on the built-in example albums while
+/// it is written. Nothing is saved; a script that fails answers why in
+/// the 200 body.
+#[utoipa::path(
+    post,
+    tag = "settings",
+    path = "/api/v3/settings/library/script-preview",
+    request_body = ScriptPreviewRequest,
+    responses(
+        (status = 200, description = "The script on each example album", body = ScriptPreviewResponse),
+        (status = 400, description = "The script is too long")
+    )
+)]
+pub async fn preview_library_script(
+    _caller: Admin,
+    ValidJson(body): ValidJson<ScriptPreviewRequest>,
+) -> JsonResult<ScriptPreviewResponse> {
+    script_preview::preview(&body)
+        .map(Json)
+        .map_err(|error| ApiError::invalid_input(error.to_string()))
 }
 
 /// Preview what saving candidate library settings would change. Nothing

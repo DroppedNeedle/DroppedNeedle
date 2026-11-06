@@ -148,6 +148,11 @@ pub struct CreditedArtist {
     pub sort_name: Option<String>,
     /// Text joining this artist to the next (" & ", "; ", "").
     pub join: String,
+    /// MusicBrainz's comment telling the artist apart from others of its
+    /// name; naming scripts read it. Releases stored before it was kept
+    /// have none until they are fetched again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disambiguation: Option<String>,
 }
 
 /// Credit display text: credited names with their join phrases.
@@ -309,6 +314,11 @@ pub struct ArtistName {
     pub sort_name: Option<String>,
     /// `None` when MusicBrainz sent no alias list for the artist.
     pub aliases: Option<Vec<ArtistAlias>>,
+    /// MusicBrainz's comment telling the artist apart from others of its
+    /// name. Naming scripts read it for releases stored before their
+    /// credits kept it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disambiguation: Option<String>,
 }
 
 /// One of an artist's aliases.

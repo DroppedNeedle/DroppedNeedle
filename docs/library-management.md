@@ -6,6 +6,7 @@ Library Management writes MusicBrainz Picard-style tags, artwork and lyrics, and
 
 - [Previews and Apply](#previews-and-apply)
 - [Profiles and fields](#profiles-and-fields)
+- [Naming and tagging scripts](#naming-and-tagging-scripts)
 - [Tags, credits and artist names](#tags-credits-and-artist-names)
 - [Artwork](#artwork)
 - [Lyrics](#lyrics)
@@ -41,6 +42,170 @@ The two AcoustID fields come from the file's audio. The fingerprint is the Chrom
 The genre row is the Genres section's switch and mode. Merge is offered for the fields that hold several values. Profiles saved before keep writing what they wrote: a tag that used to be written along with another field (artist sort with artist, the release facts with album, original date with date, disc subtitle with disc number, the release track ID with the recording ID) takes that field's mode, the older spellings (`albumartist`, `track`, `disc`, `year`) fold into their field, and a preserved field still preserves the tags it covered. Profiles that already listed ISRC or album artists now write them. MP4 files have no place for performer or arranger: when a profile or a tagging script would set one there, the preview says so and the file keeps what it has.
 
 A profile can be shared: export gives a `.dnprofile` file and a text code starting `DNLP2:`, carrying the profile's settings and the naming and tagging scripts it uses. Import shows what the profile will do before anything is saved and adds it beside your own profiles, renaming it when the name is taken. A code or file shared from v2 (a code starting `DNLP1:`) is refused; share the profile again from v3.
+
+## Naming and tagging scripts
+
+One script language names files and edits tags. It is used in three places: the import naming script (Settings > Library), which files downloads and drop imports, and a profile's naming scripts and tagging scripts (Library Management > profile > File naming and organization, and Metadata).
+
+### While you write
+
+Under every script box:
+
+- **The example** shows what the script does to a sample track, a moment after you stop typing. For a naming script it is the path the file gets, for a tagging script the tags that change (tags the script leaves alone are not listed). The part your last change altered is highlighted for a second.
+- **One disc, Two discs, Name shared** switch the sample: Radiohead's _OK Computer_ (one disc), _OK Computer OKNOTOK 1997 2017_ (two discs, with the edition note "remastered") and Alice Cooper's _Killer_ (an artist name MusicBrainz tells apart with "1964-1975 American rock band"). Switch between them to see a conditional piece appear and disappear.
+- **Blocks** put a value or a ready-made piece at the cursor, and select what they put there. Each shows its value for the sample, or "empty here". A tagging script also has line blocks: Set a tag, Add to a tag, Remove a tag and Only when. Undo takes the last block or fix back.
+- **Mistakes** show as you type, with the line and column. A misspelt value name offers the nearest real one, such as `title` for `titel`, with a button that puts it in. The last good example stays, dimmed, until the script works again.
+- **An empty folder name** for one of the samples shows as a warning with the empty part marked: an import with that path would stop (see [Import naming script](downloads.md#import-naming-script)), and Library Management would leave that file where it is.
+
+The example uses the default path settings. A profile's own path settings, and real collisions, show in a preview.
+
+### Naming scripts
+
+A naming script is one line. Text outside braces is kept as written, and `/` starts a new folder. Inside braces:
+
+- `{name}` is a value, such as `{albumartist}` or `{title}`.
+- `{track:02d}` writes a number at least two digits wide, padded with zeros (`02`). `{track:3}` pads with spaces. This works on `track`, `disc`, `track_number`, `disc_number`, `total_tracks`, `total_discs` and `medium_number`.
+- Anything else is an expression: a function call such as `{default(album_artist_sort, albumartist)}`, text in quotes (`"text"` or `'text'`, with `\n`, `\t`, `\\`, `\"` and `\u00e9` escapes), a whole number, or a list such as `[artist, title]`. An expression can't hold a `}`.
+
+The script must give a relative path: it can't start with `/` or have an empty, `.` or `..` part. Each value is cleaned as it goes in: a `/` or `\` in a value becomes `_`, so only the script's own `/` make folders. With the default path settings the path is then made safe for Windows too:
+
+- `<`, `>`, `:`, `"`, `|`, `?`, `*` and control characters become `_`;
+- spaces and dots at the start or end of a name are dropped, and a Windows device name (`CON`, `NUL`, `COM1` and so on) gets a `_` in front;
+- each folder and file name is cut to 240 bytes, keeping the extension; the whole path may be 4096 bytes;
+- text is put in Unicode NFC form.
+
+A profile's path settings can change these (keep non-ASCII letters or not, spaces to underscores, the replacement character, the length limits, the extension's case). The import naming script always uses the defaults. A name that comes out empty for an album (a value with nothing in it, with nothing else in that folder name) means the file can't be placed: an import stops with "The import naming script gave no usable path", and Library Management leaves the file where it is. Use a ready-made block that adds a piece only when there is one, such as "Edition note in brackets". The import naming script's file name must also end in `.{ext}`.
+
+A profile has a naming script for albums of one disc, and can have another for albums of several discs.
+
+### Values
+
+Every tag the file will have is a value under its field name (see [Profiles and fields](#profiles-and-fields)): `title`, `album`, `artist`, `artists`, `artist_sort`, `album_artist`, `album_artists`, `album_artist_sort`, `track_number`, `total_tracks`, `disc_number`, `total_discs`, `disc_subtitle`, `date`, `original_date`, `release_status`, `release_country`, `release_type`, `compilation`, `asin`, `media`, `label`, `catalog_number`, `barcode`, `isrc`, the `musicbrainz_..._id` fields, and in Library Management also `genre` and the credit fields (`composer`, `conductor` and the rest) when the profile writes them. A tag with one value is text, a tag with several is a list, which reads as its values joined by `; `. Tag values are text: `total_discs` is `"1"`, not `1`.
+
+Naming scripts can also read:
+
+| Value | What it holds | On the one-disc sample |
+| --- | --- | --- |
+| `albumartist` | The album artist credit, or the track artist when there is none | Radiohead |
+| `artist`, `artist_display` | The track artist credit, such as "Kanye West & Jay-Z" | Radiohead |
+| `album_artist`, `album_artist_display` | The album artist credit | Radiohead |
+| `artists` | Each track artist's name, as a list | Radiohead |
+| `album_artists` | The album artist credit, as a list of one | Radiohead |
+| `artist_sorts`, `album_artist_sorts` | The artist sort and album artist sort tags, as lists | Radiohead |
+| `albumartist_disambiguation` | MusicBrainz's comment telling the first album artist apart from others of the name | (empty; "1964-1975 American rock band" on Name shared) |
+| `artist_disambiguation` | The same for the first track artist | (empty) |
+| `initial` | The album artist's first letter, past a leading "The", in capitals; `#` when it isn't a letter | R |
+| `year` | The first four characters of `date` (the edition's release date) | 1997 |
+| `album_disambiguation` | MusicBrainz's note telling the edition apart ("deluxe edition") | (empty; "remastered" on Two discs) |
+| `release_type` | The release group's primary type then its secondary types, in lower case: `album`, `single`, `ep`, `broadcast`, `other`, with `compilation`, `live`, `soundtrack`, `remix` and the like after it | album |
+| `track`, `disc` | The track and disc number, as numbers | 2, 1 |
+| `medium_number` | The disc number, as a number | 1 |
+| `medium`, `medium_format` | The disc's format | CD |
+| `musicbrainz_id` | The release group's MusicBrainz ID | b1392450-... |
+| `artist_mbid` | The first track artist's MusicBrainz ID | a74b1b7f-... |
+| `genre`, `primary_genre` | The first genre tag | (empty on imports) |
+| `genres` | Every genre tag, as a list | (empty on imports) |
+| `ext`, `extension` | The file's extension, without the dot | flac |
+| `codec` | The file's format, such as `flac` or `mp3` | flac |
+| `quality` | `lossless` for a lossless file, else the bit rate, such as `320kbps` | lossless |
+| `bitrate` | Kilobits a second | 1000 |
+| `sample_rate`, `bit_depth` | Hertz and bits, empty when unknown | 44100, 16 |
+
+`albumartist_disambiguation` and `artist_disambiguation` come from the release MusicBrainz sent. For an album identified before they were kept, a profile whose naming script reads either one looks up the album's artists on MusicBrainz when it plans the album (once a week at most, the same lookup a profile writing MusicBrainz artist names makes), so its preview and automatic runs see them. Imports of new downloads have them from the start. While MusicBrainz can't be asked, those albums wait rather than being named without them.
+
+### Functions
+
+Each function has the names in its row; they work the same. A value counts as empty when it is missing, empty text or an empty list. In a test, empty, `0` and `false` count as no.
+
+| Function | What it gives | Example |
+| --- | --- | --- |
+| `default(a, b, ...)`, `fallback` | The first one that isn't empty | `default(original_date, date)` |
+| `conditional(test, then, else)`, `if` | `then` when `test` is yes, else `else` | `conditional(is_empty(year), "", year)` |
+| `is_empty(x)`, `empty` | Whether `x` is empty | `is_empty(album_disambiguation)` |
+| `equals(a, b)`, `eq` | Whether `a` and `b` are the same. Text and numbers differ: `equals(total_discs, "1")`, but `equals(disc, 1)` | `equals(total_discs, "1")` |
+| `contains(x, part)` | Whether text holds `part`, or a list holds the value `part` | `contains(release_type, "live")` |
+| `not(x)` | The opposite of `x` | `not(is_empty(label))` |
+| `all(a, b, ...)`, `and` | Whether every one is yes | `and(compilation, is_empty(disc_subtitle))` |
+| `any(a, b, ...)`, `or` | Whether one is yes | `or(contains(release_type, "live"), contains(album, "Live"))` |
+| `concat(a, b, ...)` | The values joined with nothing between | `concat(" (", year, ")")` |
+| `join(list, separator)` | A list's values joined by `separator`, `; ` when it is left out | `join(artists, ", ")` |
+| `first(list)` | A list's first value | `first(release_type)` |
+| `slice(x, start, end)` | Characters (or list values) from `start` up to `end`; counted from 0, a negative number counts from the end, `end` can be left out | `slice(date, 0, 4)` |
+| `pad(x, width, fill)` | `x` with `fill` (one character, `0` when left out) in front up to `width` | `pad(disc, 2)` |
+| `replace(x, from, to)` | `x` with every `from` changed to `to` | `replace(album, ":", " -")` |
+| `lower(x)`, `upper(x)` | In lower or upper case | `upper(release_type)` |
+| `title(x)` | Each word with a capital first letter and the rest in lower case | `title(release_type)` gives "Album" |
+| `sortname(x)`, `sort_name` | A leading "The", "A" or "An" moved to the end | `sortname("The Cure")` gives "Cure, The" |
+| `ascii_fold(x)`, `asciifold` | Accents taken off, other non-ASCII letters dropped | `ascii_fold("Björk")` gives "Bjork" |
+| `path_safe(x, replacement)`, `pathsafe` | `<>:"/\|?*` and control characters changed to `replacement` (`_` when left out) | `path_safe(title, "-")` |
+
+A script may be up to 32,768 characters, nest functions 20 deep, and make values of up to 8,192 characters.
+
+### Tagging scripts
+
+A tagging script changes the tags a profile writes, after the profile's fields and before the file is written. It has one statement a line, and the profile runs its tagging scripts in the order they are attached. Values a person saved in the tag editor or as overrides win over every script.
+
+- `set title = title(title)` sets a tag to an expression's value (no braces; the expression is as in a naming script).
+- `append genre = "Alternative Rock"` adds a value to a tag that can hold several: the artist and album artist tags and their sort names, release type, label, catalog number, ISRC, the MusicBrainz artist, album artist and work IDs, the credit fields, genre and comment.
+- `delete comment` removes a tag.
+- `if equals(total_discs, "1"):` starts lines that run only when the test is yes; `else:` starts the lines for no, and `end` closes it. Indenting is up to you.
+- A line starting with `#` is a note, and blank lines are skipped.
+
+A tagging script reads and writes tags by their field names. It may also write `albumartist`, `track`, `disc` and `year`, which set `album_artist`, `track_number`, `disc_number` and `date`. It can't read the values only naming scripts have (`quality`, `initial` and the like).
+
+```
+set album = concat(album, " [", upper(first(release_type)), "]")
+if equals(total_discs, "1"):
+    delete disc_subtitle
+end
+delete comment
+```
+
+### Recipes
+
+The disc number only on albums of more than one disc, as Lidarr's single-disc and multi-disc formats do:
+
+```
+{albumartist}/{album}{conditional(is_empty(year), "", concat(" (", year, ")"))}/{conditional(equals(total_discs, "1"), "", concat(pad(disc, 2), "-"))}{track:02d} - {title}.{ext}
+```
+
+gives `Radiohead/OK Computer (1997)/02 - Paranoid Android.flac` and `Radiohead/OK Computer OKNOTOK 1997 2017 (2017)/02-03 - Lift.flac`. To put each disc in a folder of its own, give a profile a multi-disc script such as `{albumartist}/{album}/Disc {disc}/{track:02d} - {title}.{ext}`: a `/` that an expression gives becomes `_`, so a conditional can't make a folder.
+
+- Two artists of one name kept apart: `{albumartist}{conditional(is_empty(albumartist_disambiguation), "", concat(" (", albumartist_disambiguation, ")"))}/...` gives `Alice Cooper (1964-1975 American rock band)/...`.
+- The edition in the album folder: `{album}{conditional(is_empty(album_disambiguation), "", concat(" (", album_disambiguation, ")"))}`.
+- The year the album first came out, not the edition's: `{slice(default(original_date, date), 0, 4)}`.
+- Release type in the folder: `{album} [{title(first(release_type))}]` gives `OK Computer [Album]`.
+- Letter folders: `{initial}/{albumartist}/...` gives `R/Radiohead/...`.
+- Sort-name artist folders: `{default(album_artist_sort, albumartist)}/...` gives `Beatles, The/...`.
+
+### Coming from Lidarr
+
+| Lidarr | Here |
+| --- | --- |
+| `{Artist Name}` | `{albumartist}` |
+| `{Artist NameThe}` | `{sortname(albumartist)}` |
+| `{Artist CleanName}` | `{albumartist}` (characters a name can't hold become `_`); `{ascii_fold(albumartist)}` also drops accents |
+| `{Artist Disambiguation}` | `{albumartist_disambiguation}` |
+| `{Album Title}` | `{album}` |
+| `{Album Type}` | `{title(first(release_type))}` |
+| `{Album Disambiguation}` | `{album_disambiguation}` |
+| `{Release Year}` | `{slice(default(original_date, date), 0, 4)}`, or `{year}` for the edition's year |
+| `{Track Title}` | `{title}` |
+| `{Track ArtistName}` | `{artist}` |
+| `{track:00}` | `{track:02d}` |
+| `{medium:00}` | `{disc:02d}` |
+| `{Medium Format}` | `{medium_format}` |
+| `{Quality Title}` | `{quality}` or `{codec}` |
+| `{MediaInfo AudioCodec}` | `{codec}` |
+| `{MediaInfo AudioBitRate}` | `{bitrate}` (kilobits a second) |
+| `{MediaInfo AudioSampleRate}` | `{sample_rate}` |
+| `{MediaInfo AudioBitsPerSample}` | `{bit_depth}` |
+
+A Lidarr format such as `{Artist Name}/{Album Title} ({Release Year})/{Artist Name} - {Album Title} - {track:00} - {Track Title}` becomes:
+
+```
+{albumartist}/{album} ({slice(default(original_date, date), 0, 4)})/{albumartist} - {album} - {track:02d} - {title}.{ext}
+```
 
 ## Tags, credits and artist names
 

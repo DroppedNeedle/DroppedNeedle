@@ -108,6 +108,25 @@ vi.mock('$lib/features/library-management/queries/LibraryPolicyMutations.svelte'
 		isPending: false
 	})
 }));
+vi.mock('$lib/features/library-management/queries/LibraryManagementQueries.svelte', () => ({
+	getScriptPreviewQuery: () => ({
+		data: {
+			fault: null,
+			samples: [
+				{
+					sample: 'one_disc',
+					path: 'Radiohead/OK Computer/2 Paranoid Android.flac',
+					empty_name_parts: null,
+					fault: null,
+					tags: [],
+					values: {}
+				}
+			]
+		},
+		isFetching: false,
+		isPlaceholderData: false
+	})
+}));
 vi.mock('$lib/features/library-management/queries/LibraryOperationMutations.svelte', () => ({
 	createRequestLibraryRunMutation: () => ({ mutateAsync: h.requestRun, isPending: false })
 }));

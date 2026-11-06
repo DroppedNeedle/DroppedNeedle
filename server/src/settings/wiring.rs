@@ -177,6 +177,7 @@ pub fn routes() -> Routes<SettingsSetup> {
         .admin(routes!(h::get_schedule, h::put_schedule))
         .admin(routes!(h::get_library, h::put_library))
         .admin(routes!(h::get_library_policy_tree))
+        .admin(routes!(h::preview_library_script))
         .admin(routes!(h::preview_library_policy_impact))
         .admin(routes!(h::preview_library_policy_apply))
         .admin(routes!(h::get_restorable_library_roots))

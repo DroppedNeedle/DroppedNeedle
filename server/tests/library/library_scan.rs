@@ -8232,6 +8232,7 @@ impl ArtistRig {
             name: name.to_owned(),
             sort_name: None,
             join: String::new(),
+            disambiguation: None,
         }];
         let numbers = self.count(&format!(
             "SELECT COUNT(*) FROM local_tracks WHERE local_album_id = '{album}' \

@@ -715,6 +715,7 @@ mod tests {
             name: "Diverse".to_owned(),
             sort_name: Some("Various Artists".to_owned()),
             join: String::new(),
+            disambiguation: None,
         }];
         various.artist_names = Some(ArtistNames {
             fetched_at_ms: 1,
@@ -723,6 +724,7 @@ mod tests {
                 ArtistName {
                     name: "Various Artists".to_owned(),
                     sort_name: Some("Various Artists".to_owned()),
+                    disambiguation: None,
                     aliases: Some(vec![alias("Verschiedene", "en", ALIAS_ARTIST_NAME)]),
                 },
             )]
