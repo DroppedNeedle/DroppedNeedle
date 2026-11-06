@@ -6512,6 +6512,88 @@ async fn an_album_removed_with_a_vanished_file_leaves_the_lists() {
     rig.stop().await;
 }
 
+/// An album the upgrade brought with nothing to play, or one with no
+/// tracks at all, stays off the lists and still opens by its id; one whose
+/// files vanish later stays listed.
+#[tokio::test]
+async fn an_album_carried_without_files_stays_off_the_lists() {
+    let rig = Rig::start("lib-carried-file-less").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "a/01.flac", "flac_full_01.flac");
+    plant(&music, "b/01.flac", "flac_full_01.flac");
+    plant(&music, "c/01.flac", "flac_full_01.flac");
+    rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    app.scan_library().await;
+    let store = &rig.scan_store;
+    let a1 = store.track_at("music", "a/01.flac").unwrap().expect("a/01");
+    let b1 = store.track_at("music", "b/01.flac").unwrap().expect("b/01");
+    let c1 = store.track_at("music", "c/01.flac").unwrap().expect("c/01");
+    let carried = store.album_for_track(&a1).unwrap().expect("album a");
+    let vanished = store.album_for_track(&b1).unwrap().expect("album b");
+    let kept = store.album_for_track(&c1).unwrap().expect("album c");
+    let get = |uri: String| {
+        let headers = &headers;
+        async move {
+            let (status, body) = app.call("GET", &uri, headers, None).await;
+            assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+            body
+        }
+    };
+    let listed = || async {
+        let page = get("/api/v3/library/albums?limit=50".to_owned()).await;
+        let mut ids: Vec<String> = page["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|item| item["id"].as_str().expect("id").to_owned())
+            .collect();
+        ids.sort();
+        ids
+    };
+
+    // What the upgrade writes for a v2 album whose files were already
+    // gone: its tracks missing since before the run, and an album row
+    // left with no tracks.
+    std::fs::remove_file(music.join("a/01.flac")).expect("a file vanishes");
+    app.seed_with(
+        "INSERT INTO import_runs (id, instance_id, exported_at, exit_code, entity_counts, \
+         applied_at) SELECT 'run-1', 'v2', 0, 'OK', '{}', MAX(imported_at) FROM local_tracks",
+        [] as [&str; 0],
+    )
+    .await;
+    app.seed_with(
+        "UPDATE local_tracks SET availability = 'missing', \
+         missing_at = (SELECT applied_at FROM import_runs) - 86400000 \
+         WHERE local_album_id = ?1",
+        [&carried],
+    )
+    .await;
+    app.seed_with(
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) \
+         SELECT 'ghost', root_id, 'g-ghost', 'Ghost', 'ghost', album_artist_id, \
+         'legacy_import', 0, 0 FROM local_albums WHERE id = ?1",
+        [&carried],
+    )
+    .await;
+    std::fs::remove_file(music.join("b/01.flac")).expect("a file vanishes later");
+    app.scan_library().await;
+
+    let mut shown = vec![vanished.clone(), kept];
+    shown.sort();
+    assert_eq!(listed().await, shown, "the later loss stays listed");
+    for album in [carried.as_str(), "ghost", vanished.as_str()] {
+        let opened = get(format!("/api/v3/library/albums/{album}")).await;
+        assert_eq!(opened["id"], json!(album), "its link still opens it");
+        assert_eq!(opened["track_count"], json!(0), "{opened}");
+    }
+    rig.stop().await;
+}
+
 /// The bin page lists a removal with its files and their size, offers
 /// Put back, and lists it no more once its files are back.
 #[tokio::test]

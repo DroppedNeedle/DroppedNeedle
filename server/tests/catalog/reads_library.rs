@@ -248,7 +248,9 @@ async fn sqlite_fixture() -> SqliteFixture {
          ('t5', 'al2', 'r1', '/m/t5.mp3', 't5.mp3', 'h5', 3000000, 1, 's5', 'Skipped', 'skipped', \
           'Aurora', 'aurora', 'Second Dawn', 'second dawn', 'Aurora', 'aurora', 1, 2, 2001, 180.0, 'mp3', 'excluded', 'scan', 2050.0, 'automatic'), \
          ('t6', 'al3', 'r1', '/m/t6.flac', 't6.flac', 'h6', 5000000, 1, 's6', 'Peak', 'peak', \
-          'Boreal', 'boreal', 'Lone Peak', 'lone peak', 'Boreal', 'boreal', 1, 1, 1994, 220.0, 'flac', 'indexed', 'scan', 1500.0, 'automatic')",
+          'Boreal', 'boreal', 'Lone Peak', 'lone peak', 'Boreal', 'boreal', 1, 1, 1994, 220.0, 'flac', 'indexed', 'scan', 1500.0, 'automatic'), \
+         ('tg4', 'al4', 'r1', '/m/tg4.flac', 'tg4.flac', 'hg4', 4000000, 1, 'sg4', 'Lost', 'lost', \
+          'Aurora', 'aurora', 'First Light (Deluxe)', 'first light (deluxe)', 'Aurora', 'aurora', 1, 1, 1994, 200.0, 'flac', 'missing', 'scan', 1200.0, 'automatic')",
         "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) VALUES \
          ('t1', 0, 'a1', 'main'), ('t2', 0, 'a1', 'main'), ('t3', 0, 'a1', 'main'), \
          ('t4', 0, 'a1', 'main'), ('t5', 0, 'a1', 'main'), \
@@ -928,7 +930,8 @@ async fn one_album_set_everywhere() {
     let auth = rig.subsonic_auth("album-set");
     let subsonic = |call: &str| rest(call, &auth);
 
-    // The web list: every live album, the ones without files with no tracks.
+    // The web list: every live album with a track row, the ones without
+    // files with no tracks.
     let (status, page) = rig
         .app
         .call("GET", "/api/v3/library/albums?limit=200", &native, None)
@@ -936,16 +939,9 @@ async fn one_album_set_everywhere() {
     assert_eq!(status, StatusCode::OK, "{page}");
     assert_eq!(
         sorted_ids(&page["items"], "id"),
-        [
-            "al-empty",
-            "al-excluded",
-            "al-live",
-            "al-missing",
-            "al-pair-a",
-            "al-pair-b"
-        ]
+        ["al-excluded", "al-live", "al-missing", "al-pair-b"]
     );
-    assert_eq!(page["total"], 6, "{page}");
+    assert_eq!(page["total"], 4, "{page}");
     for item in page["items"].as_array().expect("items") {
         let has_files = matches!(item["id"].as_str(), Some("al-live" | "al-pair-b"));
         assert_eq!(item["track_count"] != 0, has_files, "{item}");

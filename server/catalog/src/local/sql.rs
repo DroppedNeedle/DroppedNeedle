@@ -20,7 +20,10 @@
 //!   ([`droppedneedle_library::album_gone_through_bin`]): a removed album
 //!   is listed, marked "no files", while any of its files can still be put
 //!   back. One whose files vanished from disk stays listed, unless they
-//!   vanished before it was removed. Every album still opens by its id.
+//!   vanished before it was removed. An album with no track rows, or one
+//!   the upgrade from v2 brought with every track already missing (v2 hid
+//!   these), is not listed: a kept track is one not missing, or missing
+//!   since the first `import_runs` row. Every album still opens by its id.
 //! - **Live track.** A track every read shows is indexed and sits on a
 //!   live album. Merges retire only emptied albums, so a track left on a
 //!   retired one is a leftover no read lists, counts or returns.
@@ -73,7 +76,10 @@ macro_rules! live_album {
 }
 
 /// An album the web UI's lists show, over an album alias: live, and with
-/// files or with something of it not yet through the recycle bin.
+/// files, or with a kept track and something of it not yet through the
+/// recycle bin. A kept track is not missing, or went missing after the
+/// upgrade from v2 (a NULL `missing_at` reads as carried); with no upgrade
+/// every track row is kept.
 macro_rules! listed_album {
     ($album:literal) => {
         concat!(
@@ -81,9 +87,14 @@ macro_rules! listed_album {
             $album,
             ".retired_into_album_id IS NULL AND (+",
             $album,
-            ".has_indexed_track = 1 OR NOT (",
+            ".has_indexed_track = 1 OR (EXISTS (SELECT 1 FROM local_tracks lk \
+             WHERE lk.local_album_id = ",
+            $album,
+            ".id AND (lk.availability <> 'missing' \
+             OR NOT EXISTS (SELECT 1 FROM import_runs) \
+             OR lk.missing_at >= (SELECT MIN(ir.applied_at) FROM import_runs ir))) AND NOT (",
             droppedneedle_library::album_gone_through_bin!(concat!($album, ".id")),
-            "))"
+            ")))"
         )
     };
 }

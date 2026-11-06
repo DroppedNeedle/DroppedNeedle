@@ -118,7 +118,9 @@ fn seed_small_sql() -> String {
          ('t8', 'al5', 'r1', '/m/t8.opus', 't8.opus', 'h8', 2000000, 1, 's8', 'Up', 'up', \
           'Boreal', 'boreal', '100% \"Live\" _Unplugged_ ''Encore''', '{al5}', 'Boreal', 'boreal', 1, 1, 1987, 190.0, 'opus', 'indexed', 'scan', 1800000, 'automatic'), \
          ('t9', 'al5', 'r1', '/m/t9.opus', 't9.opus', 'h9', 2000000, 1, 's9', 'Ox \"Q\" %', '{t9}', \
-          NULL, NULL, '100% \"Live\" _Unplugged_ ''Encore''', '{al5}', 'Boreal', 'boreal', 1, 2, 1987, 195.0, 'opus', 'indexed', 'scan', 1900000, 'automatic');\n\
+          NULL, NULL, '100% \"Live\" _Unplugged_ ''Encore''', '{al5}', 'Boreal', 'boreal', 1, 2, 1987, 195.0, 'opus', 'indexed', 'scan', 1900000, 'automatic'), \
+         ('tg4', 'al4', 'r1', '/m/tg4.flac', 'tg4.flac', 'hg4', 4000000, 1, 'sg4', 'Lost', 'lost', \
+          'Aurora', 'aurora', 'Empty Halls', 'empty halls', 'Aurora', 'aurora', 1, 1, 1994, 200.0, 'flac', 'missing', 'scan', 1200000, 'automatic');\n\
          INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) VALUES \
          ('t1', 0, 'a1', 'main'), ('t2', 0, 'a1', 'main'), ('t3', 0, 'a1', 'main'), \
          ('t4', 0, 'a1', 'main'), ('t5', 0, 'a1', 'main'), \
