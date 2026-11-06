@@ -11,6 +11,7 @@
 		Clock,
 		Play,
 		ListPlus,
+		ListStart,
 		GripVertical,
 		RefreshCw,
 		ArrowDownToLine
@@ -19,6 +20,7 @@
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
+	import ContextMenu, { menuTrigger, type MenuPoint } from '$lib/ui/ContextMenu.svelte';
 
 	interface Props {
 		tracks: CrateTrack[];
@@ -34,6 +36,7 @@
 		onRefresh: () => void;
 		onPlay: (t: CrateTrack) => void;
 		onQueue: (t: CrateTrack) => void;
+		onPlayNext: (t: CrateTrack) => void;
 		onQueueAlbum?: (a: SpinAlbum) => void;
 	}
 
@@ -48,6 +51,7 @@
 		onRefresh,
 		onPlay,
 		onQueue,
+		onPlayNext,
 		onQueueAlbum
 	}: Props = $props();
 
@@ -147,6 +151,23 @@
 	const flipDur = $derived(reducedMotion ? 0 : 340);
 	let draggingId = $state<string | null>(null);
 	let dragOverQueue = $state(false);
+
+	// one menu for the whole crate, opened from a row
+	let menu = $state<(MenuPoint & { track: CrateTrack }) | null>(null);
+
+	function openMenu(at: MenuPoint, track: CrateTrack) {
+		// the drift would scroll under the menu and close it
+		interruptAutoScroll();
+		menu = { ...at, track };
+	}
+
+	function menuItems(t: CrateTrack) {
+		return [
+			{ label: 'Play', icon: Play, onclick: () => onPlay(t) },
+			{ label: 'Play Next', icon: ListStart, onclick: () => onPlayNext(t) },
+			{ label: 'Add to Queue', icon: ListPlus, onclick: () => onQueue(t) }
+		];
+	}
 
 	function onDragStart(e: DragEvent, t: CrateTrack) {
 		if (!e.dataTransfer) return;
@@ -254,6 +275,8 @@
 						role="button"
 						tabindex="0"
 						aria-label="{t.title} by {t.artist_name}"
+						aria-haspopup="menu"
+						use:menuTrigger={{ open: (at) => openMenu(at, t), close: () => (menu = null) }}
 						ondragstart={(e) => onDragStart(e, t)}
 						ondragend={() => (draggingId = null)}
 						ondblclick={() => onPlay(t)}
@@ -338,6 +361,16 @@
 		{/if}
 	</div>
 </section>
+
+{#if menu}
+	<ContextMenu
+		trigger="point"
+		at={menu}
+		label="{menu.track.title} by {menu.track.artist_name}"
+		items={menuItems(menu.track)}
+		onclose={() => (menu = null)}
+	/>
+{/if}
 
 <style>
 	.crate-countdown {
