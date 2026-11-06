@@ -20,6 +20,7 @@ use droppedneedle_kernel::db::Lane;
 use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::models::{JobIntent, JobMode, ManagementError, Origin, Selection, SelectionKind};
+use super::organized::{self, AppliedScripts, FileAt, OrganizedPins};
 use super::reasons::{self, ItemReason};
 use super::service::{JobSpec, Management};
 use super::sql::{AlbumFile, AutomaticDueRow, SkippedRow};
@@ -94,7 +95,6 @@ struct Opened {
     assignment: LibraryManagementRootAssignment,
     origin: Origin,
     policy: String,
-    states: Vec<Option<store::TrackState>>,
     identity: AlbumIdentity,
     /// Each file and the revision of the track match it is written from.
     mapping: Vec<(String, u64)>,
@@ -269,8 +269,10 @@ pub fn wake(conn: &Connection, code: Option<&str>, now: f64) -> rusqlite::Result
 }
 
 /// A file's place and stat signature: changes when the file is moved,
-/// rewritten or touched, without hashing its bytes.
+/// rewritten or touched, without hashing its bytes. The change time is
+/// in it so a rewrite that put the modified time back still counts.
 pub fn path_revision(sandbox: &Sandbox, root_id: &str, relative_path: &str) -> Option<String> {
+    use std::os::unix::fs::MetadataExt as _;
     let path = sandbox.resolve_no_symlink(root_id, relative_path).ok()?;
     let meta = std::fs::symlink_metadata(&path).ok()?;
     let modified = meta
@@ -279,10 +281,13 @@ pub fn path_revision(sandbox: &Sandbox, root_id: &str, relative_path: &str) -> O
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?
         .as_nanos();
+    let changed = (meta.ctime(), meta.ctime_nsec());
     Some(sha256_hex(
         format!(
-            "{root_id}\u{0}{relative_path}\u{0}{}\u{0}{modified}",
-            meta.len()
+            "{root_id}\u{0}{relative_path}\u{0}{}\u{0}{modified}\u{0}{}.{}",
+            meta.len(),
+            changed.0,
+            changed.1
         )
         .as_bytes(),
     ))
@@ -807,7 +812,6 @@ impl Management {
             assignment,
             origin,
             policy,
-            states,
             identity,
             mapping,
         })))
@@ -892,39 +896,37 @@ impl Management {
             assignment,
             origin,
             policy,
-            states,
             identity,
             mapping,
         } = opened;
         let pinned = profile::pin_assignment(&stored, &assignment)?;
         let revisions = profile::revisions(&stored, &pinned, &policy);
         let sandbox = self.parts.publishing.publish_sandbox().ok();
-        let as_revision = |value: u64| i64::try_from(value).ok();
-        let managed =
-            files
-                .iter()
-                .zip(&states)
-                .zip(&mapping)
-                .all(|((file, state), (_, track_revision))| {
-                    state.as_ref().is_some_and(|state| {
-                        state.last_run_succeeded()
-                    && state.profile_id.as_deref() == Some(pinned.profile.id.as_str())
-                    && state.profile_revision.as_deref() == Some(revisions.profile.as_str())
-                    && state.naming_revision.as_deref() == Some(revisions.naming.as_str())
-                    && state.root_id.as_deref() == Some(file.root_id.as_str())
-                    // The edition and the file's match it was written from.
-                    && state.album_identity_revision == as_revision(identity.row_revision)
-                    && state.track_identity_revision == as_revision(*track_revision)
-                    // The file is still where, and as, the run left it.
-                    && state.path_revision.is_some()
-                    && state.path_revision
-                        == sandbox.as_ref().and_then(|sandbox| {
-                            path_revision(sandbox, &file.root_id, &file.relative_path)
-                        })
-                    && state.override_revision.as_deref()
-                        == Some(self.override_revision(album_id, &file.id).to_string().as_str())
-                    })
-                });
+        let at: Vec<FileAt<'_>> = files
+            .iter()
+            .map(|file| FileAt {
+                track_id: &file.id,
+                root_id: &file.root_id,
+                relative_path: &file.relative_path,
+            })
+            .collect();
+        // A library whose places cannot be read now has nothing organized.
+        let managed = match sandbox.as_ref() {
+            Some(sandbox) => self.already_organized(
+                album_id,
+                &at,
+                &OrganizedPins {
+                    profile_id: &pinned.profile.id,
+                    profile_revision: &revisions.profile,
+                    naming_revision: &revisions.naming,
+                    tagging_scripts: organized::script_pins(&pinned.tagging_scripts),
+                    expected_root: None,
+                },
+                sandbox,
+                &mut AppliedScripts::default(),
+            )?,
+            None => false,
+        };
         if managed {
             return Ok(Verdict::Done("ALREADY_MANAGED"));
         }
@@ -999,6 +1001,18 @@ impl Management {
             revisions.settings,
             revisions.policy,
         );
+        // An edited tagging script asks for a run of its own. Left out
+        // when the profile runs none, so those keys stay as they were.
+        let key_material = if pinned.tagging_scripts.is_empty() {
+            key_material
+        } else {
+            let scripts: Vec<String> = pinned
+                .tagging_scripts
+                .iter()
+                .map(|script| format!("{}:{}", script.id, script.revision))
+                .collect();
+            format!("{key_material}\u{0}scripts:{}", scripts.join(","))
+        };
         // A hand-back asks for a fresh look: no run made before it, done,
         // stepped back or waiting, answers for the album.
         let key_material = match self

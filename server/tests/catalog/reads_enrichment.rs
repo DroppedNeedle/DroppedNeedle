@@ -238,3 +238,60 @@ async fn acoustid_answers_are_reused_and_failures_are_not() {
         .await;
     assert_eq!(partial, AcoustIdAnswer::Unavailable(Unanswered::Failed));
 }
+
+/// A genre source the admin left switched off answers "off" and is never
+/// asked; switched on, one that cannot be reached is a failure, never
+/// "off", so the plan keeps the file's genres.
+#[tokio::test]
+async fn a_switched_off_genre_source_is_off_and_an_unreachable_one_fails() {
+    use droppedneedle_catalog::enrichment::library::LiveEnrichment;
+    use droppedneedle_catalog::lyrics::OnlineLyrics;
+    use droppedneedle_catalog::metadata::upstream::{LiveCatalogSettings, Upstream};
+    use droppedneedle_kernel::runtime_config::Secret;
+    use droppedneedle_kernel::runtime_config::secret_sections::ListenBrainzConnection;
+    use droppedneedle_library::management::enrich::{EnrichmentPort as _, GenreAnswer};
+    use droppedneedle_providers::test_support::ScriptedWire;
+    use droppedneedle_providers::{ProviderEndpoints, Providers};
+    use std::sync::Arc;
+
+    let rig = crate::common::auth::AuthRig::new("enrich-genres-off").await;
+    let wire = Arc::new(ScriptedWire::new());
+    let providers = Arc::new(Providers::unpaced_at(
+        wire.clone(),
+        ProviderEndpoints::closed(),
+    ));
+    let enrichment = LiveEnrichment::new(
+        Upstream::new(
+            providers.clone(),
+            Arc::new(LiveCatalogSettings::new(&rig.config)),
+            rig.deps.clone(),
+        ),
+        droppedneedle_catalog::test_support::artwork(&rig.platform, &providers),
+        OnlineLyrics::new(&providers, rig.config.live()),
+        providers.acoustid.clone(),
+        rig.config.live(),
+    );
+
+    let group = "f5093c06-23e3-404f-aeaa-40f72885ee3a";
+    assert_eq!(
+        enrichment.listenbrainz_genres(group, false).await,
+        Ok(GenreAnswer::Off)
+    );
+    assert_eq!(
+        enrichment.lastfm_genres("Artist", "Album", false).await,
+        Ok(GenreAnswer::Off)
+    );
+    assert!(wire.sent().is_empty(), "nothing was asked");
+
+    rig.config
+        .save_secret_blocking(ListenBrainzConnection {
+            username: String::new(),
+            user_token: Secret::new(""),
+            enabled: true,
+        })
+        .expect("ListenBrainz on");
+    assert!(
+        enrichment.listenbrainz_genres(group, false).await.is_err(),
+        "a closed address is a failure"
+    );
+}

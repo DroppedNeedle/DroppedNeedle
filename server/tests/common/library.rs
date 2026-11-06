@@ -352,8 +352,7 @@ impl EnrichmentPort for NoEnrichment {
         &'a self,
         _release_group_mbid: &'a str,
         _background: bool,
-    ) -> BoxFuture<'a, Result<Vec<droppedneedle_library::management::genre::Candidate>, String>>
-    {
+    ) -> BoxFuture<'a, Result<droppedneedle_library::management::enrich::GenreAnswer, String>> {
         Box::pin(async { Err("no outside sources".to_owned()) })
     }
 
@@ -362,8 +361,7 @@ impl EnrichmentPort for NoEnrichment {
         _artist: &'a str,
         _album: &'a str,
         _background: bool,
-    ) -> BoxFuture<'a, Result<Vec<droppedneedle_library::management::genre::Candidate>, String>>
-    {
+    ) -> BoxFuture<'a, Result<droppedneedle_library::management::enrich::GenreAnswer, String>> {
         Box::pin(async { Err("no outside sources".to_owned()) })
     }
 

@@ -48,10 +48,11 @@ impl EnrichmentPort for ScriptedEnrichment {
         &'a self,
         _release_group_mbid: &'a str,
         _background: bool,
-    ) -> BoxFuture<'a, Result<Vec<Candidate>, String>> {
+    ) -> BoxFuture<'a, Result<GenreAnswer, String>> {
         let answer = self
             .listenbrainz
             .clone()
+            .map(GenreAnswer::Genres)
             .ok_or_else(|| "not scripted".to_owned());
         Box::pin(async move { answer })
     }
@@ -61,7 +62,7 @@ impl EnrichmentPort for ScriptedEnrichment {
         _artist: &'a str,
         _album: &'a str,
         _background: bool,
-    ) -> BoxFuture<'a, Result<Vec<Candidate>, String>> {
+    ) -> BoxFuture<'a, Result<GenreAnswer, String>> {
         Box::pin(async { Err("not scripted".to_owned()) })
     }
 

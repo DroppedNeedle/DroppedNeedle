@@ -51116,6 +51116,10 @@
             ],
             "description": "Makes a retried request return the same preview."
           },
+          "include_organized": {
+            "type": "boolean",
+            "description": "Also plan albums already organized with these settings and\nunchanged since. A preview of one album always plans it."
+          },
           "overrides": {
             "oneOf": [
               {
@@ -51606,6 +51610,8 @@
           "sidecar_change_count",
           "estimated_temporary_bytes",
           "expanded_track_count",
+          "organized_album_count",
+          "organized_file_count",
           "reasons",
           "roots",
           "formats",
@@ -51671,6 +51677,16 @@
           "no_change_count": {
             "type": "integer",
             "format": "int64"
+          },
+          "organized_album_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums left out because they are already organized."
+          },
+          "organized_file_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files of the albums left out as already organized."
           },
           "path_change_count": {
             "type": "integer",

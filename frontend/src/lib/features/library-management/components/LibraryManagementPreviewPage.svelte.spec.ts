@@ -82,6 +82,22 @@ describe('LibraryManagementPreviewPage', () => {
 		await expect.element(page.getByText('Remove', { exact: true })).toBeVisible();
 	});
 
+	it('says how many already organized albums it left out', async () => {
+		const summary = detail().summary as Record<string, unknown>;
+		h.preview = {
+			data: detail({
+				summary: { ...summary, organized_album_count: 12, organized_file_count: 140 }
+			}),
+			isLoading: false,
+			isError: false
+		};
+		await render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect.element(page.getByText('12 albums')).toBeVisible();
+		await expect.element(page.getByText('(140 files)')).toBeVisible();
+		await expect.element(page.getByText(/already organized left out/)).toBeVisible();
+	});
+
 	it('makes stale and expired plans impossible to apply', async () => {
 		h.preview = {
 			data: detail({ stale: true, expired: true, ready_for_confirmation: false }),

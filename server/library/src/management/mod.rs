@@ -18,7 +18,8 @@
 //! (the dry run that turns automatic management on), `automatic` (runs
 //! after a scan or an import), `after_apply` (bookkeeping, and the
 //! media-server rescans queued on the jobs table), `recovery` (writes that need an administrator),
-//! `placement` (how safely each library folder can be written to), and
+//! `placement` (how safely each library folder can be written to),
+//! `organized` (whether an album is already as a run would leave it), and
 //! `takeover` (albums whose files were changed outside the app, which
 //! automatic management then leaves alone).
 
@@ -31,6 +32,7 @@ pub mod edition_tags;
 pub mod enrich;
 pub mod genre;
 pub mod models;
+pub mod organized;
 pub mod placement;
 pub mod planner;
 pub mod profile;

@@ -252,6 +252,9 @@ pub struct JobIntent {
     pub duplicate: Option<DuplicateIntent>,
     /// For an edition's tag write: the edition the person saw.
     pub edition: Option<EditionPin>,
+    /// A preview of more than one album leaves out the albums already
+    /// organized under its pins (see [`super::organized`]).
+    pub skip_organized: bool,
 }
 
 /// The edition a tag write was asked for, with the identity revision the
@@ -528,6 +531,14 @@ pub struct Summary {
     #[schema(required = true)]
     #[serde(default)]
     pub expanded_track_count: i64,
+    /// Albums left out because they are already organized.
+    #[schema(required = true)]
+    #[serde(default)]
+    pub organized_album_count: i64,
+    /// Files of the albums left out as already organized.
+    #[schema(required = true)]
+    #[serde(default)]
+    pub organized_file_count: i64,
     /// Files per reason code.
     #[schema(required = true)]
     #[serde(default)]

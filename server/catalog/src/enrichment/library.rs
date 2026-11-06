@@ -15,8 +15,8 @@ use crate::artwork::ArtworkService;
 use crate::lyrics::{LyricsError, OnlineLyrics};
 use crate::metadata::upstream::Upstream;
 use droppedneedle_library::management::enrich::{
-    AcoustIdAnswer, AcoustIdPrint, Cover, EnrichmentPort, ExtrasWanted, LyricsFound, LyricsQuery,
-    normalize_lrc,
+    AcoustIdAnswer, AcoustIdPrint, Cover, EnrichmentPort, ExtrasWanted, GenreAnswer, LyricsFound,
+    LyricsQuery, normalize_lrc,
 };
 use droppedneedle_library::management::genre::Candidate;
 use droppedneedle_library::matching::model::ReleaseExtras;
@@ -134,12 +134,15 @@ impl EnrichmentPort for LiveEnrichment {
         &'a self,
         release_group_mbid: &'a str,
         background: bool,
-    ) -> BoxFuture<'a, Result<Vec<Candidate>, String>> {
+    ) -> BoxFuture<'a, Result<GenreAnswer, String>> {
         Box::pin(async move {
+            if self.upstream.listenbrainz_switched_off() {
+                return Ok(GenreAnswer::Off);
+            }
             let (client, creds) = self
                 .upstream
                 .listenbrainz()
-                .ok_or_else(|| "ListenBrainz is switched off".to_owned())?;
+                .ok_or_else(|| "the ListenBrainz setting could not be read".to_owned())?;
             let groups = client
                 .release_group_genres(
                     &[release_group_mbid.to_owned()],
@@ -148,20 +151,22 @@ impl EnrichmentPort for LiveEnrichment {
                 )
                 .await
                 .map_err(|error| error.to_string())?;
-            Ok(groups
-                .get(release_group_mbid)
-                .map(|metadata| {
-                    metadata
-                        .release_group_tags
-                        .iter()
-                        .map(|tag| Candidate {
-                            name: tag.tag.clone(),
-                            count: Some(tag.count),
-                            curated: tag.genre_mbid.is_some(),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default())
+            Ok(GenreAnswer::Genres(
+                groups
+                    .get(release_group_mbid)
+                    .map(|metadata| {
+                        metadata
+                            .release_group_tags
+                            .iter()
+                            .map(|tag| Candidate {
+                                name: tag.tag.clone(),
+                                count: Some(tag.count),
+                                curated: tag.genre_mbid.is_some(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            ))
         })
     }
 
@@ -170,13 +175,16 @@ impl EnrichmentPort for LiveEnrichment {
         artist: &'a str,
         album: &'a str,
         background: bool,
-    ) -> BoxFuture<'a, Result<Vec<Candidate>, String>> {
+    ) -> BoxFuture<'a, Result<GenreAnswer, String>> {
         Box::pin(async move {
+            if self.upstream.lastfm_switched_off() {
+                return Ok(GenreAnswer::Off);
+            }
             let (client, creds) = self
                 .upstream
                 .lastfm("")
                 .await
-                .ok_or_else(|| "Last.fm has no usable key".to_owned())?;
+                .ok_or_else(|| "the Last.fm settings could not be read".to_owned())?;
             let priority = priority(background);
             let mut out = Vec::new();
             for answer in [
@@ -192,7 +200,7 @@ impl EnrichmentPort for LiveEnrichment {
                     curated: false,
                 }));
             }
-            Ok(out)
+            Ok(GenreAnswer::Genres(out))
         })
     }
 

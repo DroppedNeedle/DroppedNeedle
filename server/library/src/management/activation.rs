@@ -115,8 +115,11 @@ impl Management {
             pinned: &pinned,
             target_root_id: None,
             linked_job_id: None,
+            // It shows what automatic management would change, and that
+            // leaves organized albums alone.
             intent: JobIntent {
                 activation_root_id: Some(request.root_id),
+                skip_organized: true,
                 ..JobIntent::default()
             },
             proposed_settings_revision: Some(&proposed_revision),

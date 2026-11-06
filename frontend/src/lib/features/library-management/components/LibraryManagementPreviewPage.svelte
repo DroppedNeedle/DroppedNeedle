@@ -5,6 +5,7 @@
 	import {
 		ArrowRight,
 		BookOpenCheck,
+		CheckCheck,
 		Clock3,
 		FolderCog,
 		HardDrive,
@@ -318,6 +319,16 @@
 						><HardDrive class="h-3 w-3" /> {managementProviderStatus(preview)}</span
 					>
 				</div>
+				{#if preview.summary.organized_album_count > 0}<p
+						class="mt-4 flex items-center gap-2 text-sm"
+					>
+						<CheckCheck class="h-4 w-4 shrink-0 text-success" /><span
+							><strong>{managementQuantity(preview.summary.organized_album_count, 'album')}</strong>
+							<span class="text-muted"
+								>({managementQuantity(preview.summary.organized_file_count, 'file')})</span
+							> already organized left out</span
+						>
+					</p>{/if}
 			</header>
 
 			{#if preview.stale || preview.expired}

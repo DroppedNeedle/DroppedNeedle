@@ -176,10 +176,19 @@ impl Management {
                         for mark in &marks {
                             // The match each file was written for, read on
                             // this transaction.
-                            let album_identity = read_album_identity(tx, &mark.album_id)?
-                                .map(|identity| identity.row_revision);
-                            let track_identity = read_track_identity(tx, &mark.track_id)?
-                                .map(|identity| identity.row_revision);
+                            let album = read_album_identity(tx, &mark.album_id)?;
+                            let release = super::organized::applied_release(
+                                tx,
+                                &mark.album_id,
+                                album.as_ref(),
+                            )?;
+                            let track = read_track_identity(tx, &mark.track_id)?;
+                            let release_track = super::organized::applied_release_track(
+                                track.as_ref(),
+                                release.as_deref(),
+                            );
+                            let album_identity = album.map(|identity| identity.row_revision);
+                            let track_identity = track.map(|identity| identity.row_revision);
                             store::mark_managed(
                                 tx,
                                 &ManagedMark {
@@ -192,6 +201,8 @@ impl Management {
                                     job_id,
                                     album_identity_revision: album_identity,
                                     track_identity_revision: track_identity,
+                                    release_mbid: release.as_deref(),
+                                    release_track_mbid: release_track.as_deref(),
                                     path_revision: mark.path.clone(),
                                     found_sha256: mark.found.as_deref(),
                                 },

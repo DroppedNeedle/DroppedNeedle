@@ -17,6 +17,7 @@
 	import Modal from '$lib/ui/Modal.svelte';
 
 	import type { ActivationWizard } from './activationWizard.svelte';
+	import { managementQuantity } from './LibraryManagementDisplay';
 	import { profileAspects } from './managementSettingsDraft.svelte';
 
 	interface Props {
@@ -157,7 +158,7 @@
 							release totals appear after the first planning checkpoint.</span
 						>
 					</div>{/if}
-				{#if wizard.ready}<div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+				{#if wizard.ready}<div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
 						<div class="management-mini-stat">
 							<span>Eligible</span><strong>{preview.summary.eligible_count}</strong>
 						</div>
@@ -181,6 +182,11 @@
 						</div>
 						<div class="management-mini-stat">
 							<span>No change</span><strong>{preview.summary.no_change_count ?? 0}</strong>
+						</div>
+						<div class="management-mini-stat col-span-2 sm:col-span-1">
+							<span>Already organized</span><strong
+								>{managementQuantity(preview.summary.organized_album_count ?? 0, 'album')}</strong
+							>
 						</div>
 					</div>{/if}
 				<Button

@@ -848,6 +848,9 @@ pub struct ManagedMark<'a> {
     /// The album's and the file's match revisions the run wrote from.
     pub album_identity_revision: Option<u64>,
     pub track_identity_revision: Option<u64>,
+    /// The release and release track the run wrote from.
+    pub release_mbid: Option<&'a str>,
+    pub release_track_mbid: Option<&'a str>,
     /// The file's place and stat signature after the run.
     pub path_revision: Option<String>,
     /// The file's SHA-256 as the plan read it, for a file the run left as
@@ -885,6 +888,8 @@ pub fn mark_managed(
             mark.track_id,
             revision(mark.album_identity_revision),
             revision(mark.track_identity_revision),
+            mark.release_mbid,
+            mark.release_track_mbid,
         ],
     )?;
     Ok(())
@@ -922,6 +927,11 @@ pub struct TrackState {
     pub album_identity_revision: Option<i64>,
     pub track_identity_revision: Option<i64>,
     pub path_revision: Option<String>,
+    /// The job that last wrote the file.
+    pub last_operation_job_id: Option<String>,
+    /// The release and release track the file was written from.
+    pub applied_release_mbid: Option<String>,
+    pub applied_release_track_mbid: Option<String>,
 }
 
 impl TrackState {
@@ -956,6 +966,9 @@ pub fn track_state(conn: &Connection, track_id: &str) -> rusqlite::Result<Option
             album_identity_revision: row.applied_album_identity_revision,
             track_identity_revision: row.applied_track_identity_revision,
             path_revision: row.managed_path_revision,
+            last_operation_job_id: row.last_operation_job_id,
+            applied_release_mbid: row.applied_release_mbid,
+            applied_release_track_mbid: row.applied_release_track_mbid,
         })
     })
 }

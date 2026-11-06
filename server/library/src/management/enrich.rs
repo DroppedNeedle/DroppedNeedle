@@ -43,6 +43,14 @@ pub struct Cover {
     pub mime: String,
 }
 
+/// What a remote genre source answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GenreAnswer {
+    Genres(Vec<Candidate>),
+    /// Switched off by the admin, or no usable key: nothing was asked.
+    Off,
+}
+
 /// The outside sources planning reads. `Err` means the source could not
 /// answer now; `Ok(None)` (or an empty list) that it has nothing.
 pub trait EnrichmentPort: Send + Sync {
@@ -51,14 +59,14 @@ pub trait EnrichmentPort: Send + Sync {
         &'a self,
         release_group_mbid: &'a str,
         background: bool,
-    ) -> BoxFuture<'a, Result<Vec<Candidate>, String>>;
+    ) -> BoxFuture<'a, Result<GenreAnswer, String>>;
     /// `background` asks at background priority (automatic runs).
     fn lastfm_genres<'a>(
         &'a self,
         artist: &'a str,
         album: &'a str,
         background: bool,
-    ) -> BoxFuture<'a, Result<Vec<Candidate>, String>>;
+    ) -> BoxFuture<'a, Result<GenreAnswer, String>>;
     /// `background` asks at background priority (automatic runs).
     fn lyrics<'a>(
         &'a self,
@@ -504,15 +512,27 @@ pub fn gather(
     }
     if profile.genres.enabled {
         if profile.genres.sources.contains(&GenreSource::Listenbrainz) {
-            extras.genres.listenbrainz =
-                wait(port.listenbrainz_genres(&release.release_group_id, automatic));
+            extras.genres.listenbrainz = source_genres(wait(
+                port.listenbrainz_genres(&release.release_group_id, automatic),
+            ));
         }
         if profile.genres.sources.contains(&GenreSource::Lastfm) {
             let artist = release.artist_text();
-            extras.genres.lastfm = wait(port.lastfm_genres(&artist, &release.title, automatic));
+            extras.genres.lastfm =
+                source_genres(wait(port.lastfm_genres(&artist, &release.title, automatic)));
         }
     }
     extras
+}
+
+/// A genre source's answer as the projection reads it.
+fn source_genres(answer: Option<GenreAnswer>) -> super::genre::SourceGenres {
+    use super::genre::SourceGenres;
+    match answer {
+        Some(GenreAnswer::Genres(genres)) => SourceGenres::Answered(genres),
+        Some(GenreAnswer::Off) => SourceGenres::Off,
+        None => SourceGenres::Unanswered,
+    }
 }
 
 /// What LRCLIB said about one file's lyrics.

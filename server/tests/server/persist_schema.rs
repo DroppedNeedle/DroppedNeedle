@@ -336,6 +336,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0141_import_folder.sql",
         "3153174e8569240731263a2052b291b19b758dd6e32bb633c6658fb7bbc96473",
     ),
+    (
+        "0142_management_applied_release.sql",
+        "d4c8cd38822f03c2845a8ebd8a5ac0e2d2d100380aa34b7c9c690b81cb389663",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -1105,6 +1109,56 @@ fn album_listing_revision_upgrade_moves_on_listing_changes() {
         "DELETE FROM local_tracks WHERE id = 't2'",
         ["a:4:5", "b:7:3"],
     );
+}
+
+/// 0142 gives each managed file's record the release and release track
+/// it was written from, NULL on carried rows, which keep their revisions.
+/// Nothing else in the schema changes.
+#[test]
+fn management_applied_release_upgrade_keeps_every_row() {
+    let dir = ScratchDir::new("management-applied-release");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..7], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 141);
+    connection
+        .execute_batch(
+            // The row alone, without the track it belongs to.
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO library_track_management_identity (local_track_id,
+                 applied_album_identity_revision, applied_track_identity_revision)
+             VALUES ('t1', 3, 5);",
+        )
+        .unwrap();
+    let table = "library_track_management_identity";
+    let others = |connection: &Connection| {
+        let mut rows = schema_rows(connection);
+        rows.retain(|(_, name, _, _)| name != table);
+        rows
+    };
+    let before_schema = others(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..8], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 142);
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT rowid || ':' || local_track_id || ':' || applied_album_identity_revision
+                 || ':' || applied_track_identity_revision || ':'
+                 || COALESCE(applied_release_mbid, '-') || ':'
+                 || COALESCE(applied_release_track_mbid, '-')
+             FROM library_track_management_identity",
+            [],
+        ),
+        ["1:t1:3:5:-:-"],
+        "the row is kept, with no release yet"
+    );
+    assert_eq!(others(&connection), before_schema, "nothing else changes");
 }
 
 /// 0140 rebuilds the catalog action log to take the undo of an artist

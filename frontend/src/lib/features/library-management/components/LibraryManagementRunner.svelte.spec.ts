@@ -133,6 +133,9 @@ describe('LibraryManagementRunner', () => {
 		await page.getByRole('button', { name: /Continue/ }).click();
 		await page.getByRole('checkbox', { name: /Customize this run/ }).click();
 		await page.getByRole('checkbox', { name: /Embedded artwork/ }).click();
+		await expect
+			.element(page.getByRole('checkbox', { name: /Include already organized/ }))
+			.not.toBeInTheDocument();
 		await page.getByRole('button', { name: /Continue/ }).click();
 
 		await expect.element(page.getByText(/expands to complete releases/)).toBeVisible();
@@ -145,13 +148,36 @@ describe('LibraryManagementRunner', () => {
 				profile_id: 'profile-1',
 				expected_settings_revision: 'settings-1',
 				expected_policy_revision: 'policy-1',
-				overrides: expect.objectContaining({ embedded_artwork_enabled: false })
+				overrides: expect.objectContaining({ embedded_artwork_enabled: false }),
+				include_organized: false
 			})
 		);
 		expect(sessionStorage.getItem('droppedneedle:library-management:preview-token:preview-1')).toBe(
 			'secret-token'
 		);
 		expect(h.goto).toHaveBeenCalledWith('/library/management/previews/preview-1');
+	});
+
+	it('plans already organized albums of a folder only when asked', async () => {
+		await render(LibraryManagementRunner, {
+			roots,
+			settings,
+			policyRevision: 'policy-1',
+			onclose: vi.fn()
+		});
+
+		await page.getByRole('button', { name: /Continue/ }).click();
+		await page.getByRole('button', { name: /Continue/ }).click();
+		await page.getByRole('checkbox', { name: /Include already organized/ }).click();
+		await page.getByRole('button', { name: /Continue/ }).click();
+		await page.getByRole('button', { name: 'Generate preview' }).click();
+
+		expect(h.createPreview).toHaveBeenCalledWith(
+			expect.objectContaining({
+				selection: expect.objectContaining({ kind: 'roots' }),
+				include_organized: true
+			})
+		);
 	});
 
 	it('labels baseline restore as broader than Undo', async () => {

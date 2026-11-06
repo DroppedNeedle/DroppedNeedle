@@ -73,6 +73,7 @@
 	let moveEnabled = $state(true);
 	let sidecarsEnabled = $state(true);
 	let targetRootId = $state('');
+	let includeOrganized = $state(false);
 	let seededProfileId = $state('');
 	let localError = $state('');
 
@@ -89,6 +90,15 @@
 		selectionKind === 'tracks' && (renameEnabled || moveEnabled || sidecarsEnabled)
 	);
 	const pending = $derived(createPreview.isPending || createRestore.isPending);
+	// A preview of one album always plans it, so the option shows only for
+	// a selection that can span more than one.
+	const wideSelection = $derived(
+		selectionKind === 'roots' ||
+			selectionKind === 'artists' ||
+			selectionKind === 'filter' ||
+			(selectionKind === 'albums' && selectedIds.length > 1) ||
+			(selectionKind === 'tracks' && new Set(selectedItems.map((item) => item.image?.id)).size > 1)
+	);
 	const filterHasCriteria = $derived(
 		Boolean(
 			filterSearch.trim() || filterGenre.trim() || filterFromYear !== null || filterToYear !== null
@@ -306,7 +316,8 @@
 							expected_policy_revision: policyRevision,
 							idempotency_key: createUuid(),
 							target_root_id: targetRootId || null,
-							overrides: overrides()
+							overrides: overrides(),
+							include_organized: wideSelection && includeOrganized
 						});
 			rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
 			close();
@@ -612,7 +623,11 @@
 										onchange={(event) => option.set(event.currentTarget.checked)}
 									/><span><strong>{option.label}</strong><small>One run only</small></span></label
 								>{/each}
-						</div>{/if}<SelectField
+						</div>{/if}{#if wideSelection}<ToggleRow
+							label="Include already organized"
+							description="Also looks again for new genres, lyrics and covers."
+							bind:checked={includeOrganized}
+						/>{/if}<SelectField
 						label="Explicit cross-root destination"
 						help="Cross-root movement happens only in this manual preview and is never an automatic setting."
 						options={destinationOptions}

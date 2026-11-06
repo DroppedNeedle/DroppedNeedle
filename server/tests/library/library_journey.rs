@@ -9849,6 +9849,7 @@ async fn a_busy_database_leaves_a_management_job_runnable() {
                 idempotency_key: Some("preview-busy".to_owned()),
                 target_root_id: None,
                 overrides: None,
+                include_organized: false,
             },
             "admin",
         )
@@ -9944,6 +9945,7 @@ async fn each_library_worker_recovers_and_wakes() {
                 idempotency_key: Some("preview-dead-worker".to_owned()),
                 target_root_id: None,
                 overrides: None,
+                include_organized: false,
             },
             "admin",
         )
@@ -10031,6 +10033,7 @@ async fn each_library_worker_recovers_and_wakes() {
                     idempotency_key: Some(key.to_owned()),
                     target_root_id: None,
                     overrides: None,
+                    include_organized: false,
                 },
                 "admin",
             )
@@ -10409,6 +10412,7 @@ async fn library_management_preview_apply_undo() {
             idempotency_key: Some(key.to_owned()),
             target_root_id: None,
             overrides: None,
+            include_organized: false,
         };
 
     // The tie was decided as a best guess: its files wait, and say why.
@@ -11200,6 +11204,7 @@ async fn library_management_tools_journey() {
                     idempotency_key: Some("parity".to_owned()),
                     target_root_id: None,
                     overrides: None,
+                    include_organized: false,
                 },
                 "admin",
             )
@@ -11494,6 +11499,7 @@ async fn library_management_tools_journey() {
         idempotency_key: Some(key.to_owned()),
         target_root_id: None,
         overrides: None,
+        include_organized: false,
     };
     let ready = management
         .create_preview(album_preview("before-off"), "admin")
@@ -11724,6 +11730,7 @@ async fn library_management_tools_journey() {
                 idempotency_key: Some("clash".to_owned()),
                 target_root_id: None,
                 overrides: None,
+                include_organized: false,
             },
             "admin",
         )
@@ -12002,6 +12009,7 @@ async fn library_management_custom_edition_journey() {
         idempotency_key: Some(key.to_owned()),
         target_root_id: None,
         overrides: None,
+        include_organized: false,
     };
     let handle = management
         .create_preview(preview("custom-1"), "admin")
@@ -12179,6 +12187,7 @@ async fn library_management_artwork_journey() {
         idempotency_key: Some(key.to_owned()),
         target_root_id: None,
         overrides: None,
+        include_organized: false,
     };
     let managed_path = || {
         let rel: String = db()
@@ -12778,6 +12787,21 @@ impl ManagedLibrary {
         droppedneedle_library::management::models::PreviewHandle,
         Vec<droppedneedle_library::management::models::PlannedItem>,
     ) {
+        self.preview_with(kind, ids, key, false).await
+    }
+
+    /// [`Self::preview`], planning albums already organized too when
+    /// `include_organized` says so.
+    async fn preview_with(
+        &self,
+        kind: droppedneedle_library::management::models::SelectionKind,
+        ids: &[&str],
+        key: &str,
+        include_organized: bool,
+    ) -> (
+        droppedneedle_library::management::models::PreviewHandle,
+        Vec<droppedneedle_library::management::models::PlannedItem>,
+    ) {
         use droppedneedle_library::management::models::Selection;
         use droppedneedle_library::management::service::PreviewRequest;
         let management = self.management();
@@ -12801,6 +12825,7 @@ impl ManagedLibrary {
                     idempotency_key: Some(key.to_owned()),
                     target_root_id: None,
                     overrides: None,
+                    include_organized,
                 },
                 "admin",
             )
@@ -13304,6 +13329,229 @@ async fn a_hand_retag_takes_the_album_over() {
         items[0].facts.warnings
     );
     assert_eq!(file_sha256(&file), edited);
+}
+
+/// A preview of a whole folder leaves out the albums DroppedNeedle already
+/// organized and that have not changed since, and says how many; the dry
+/// run that turns automatic management on agrees. A file rewritten outside
+/// with its size and modified time put back is planned again. "Include
+/// already organized" plans every album, and a preview of one album
+/// always plans it.
+#[tokio::test]
+async fn a_folder_preview_leaves_out_albums_already_organized() {
+    use droppedneedle_library::management::models::{Eligibility, SelectionKind};
+
+    let managed = ManagedLibrary::start("lib-skip-organized", |_| {}).await;
+    let (first, first_tracks) = managed.add_album("first", 2).await;
+    let (second, _) = managed.add_album("second", 1).await;
+    let (organize, items) = managed
+        .preview(SelectionKind::Roots, &["music"], "organize")
+        .await;
+    assert_eq!(items.len(), 3);
+    assert!(items.iter().all(|item| item.eligibility.writes()));
+    management_apply(&managed.library, &organize).await;
+    rescan(&managed.library).await;
+    let summary = |job: &str| managed.management().detail(job).expect("detail").summary;
+
+    let (again, items) = managed
+        .preview(SelectionKind::Roots, &["music"], "again")
+        .await;
+    assert!(items.is_empty(), "{items:?}");
+    let counted = summary(&again.job_id);
+    assert_eq!(
+        (counted.organized_album_count, counted.organized_file_count),
+        (2, 3)
+    );
+    assert_eq!(counted.item_count, 0);
+
+    let (dry_run, _) = managed.dry_run("dry-run", |_| {}).await;
+    let detail = managed
+        .management()
+        .activation_detail(&dry_run.job_id)
+        .expect("dry run detail");
+    assert_eq!(detail.summary.organized_album_count, 2);
+    assert_eq!(detail.summary.item_count, 0);
+    assert!(detail.ready_for_confirmation, "{:?}", detail.stale_reasons);
+
+    // Retagged outside with the same size, and its modified time put back:
+    // only the change time says the file is not as the app left it.
+    let file = managed.path(&first_tracks[0]);
+    let before = std::fs::metadata(&file).expect("stat");
+    droppedneedle_library::tags::save_tags(&file, &[title_edit("FIRST 1")])
+        .expect("retagged outside the app");
+    std::fs::File::options()
+        .write(true)
+        .open(&file)
+        .expect("file opens")
+        .set_modified(before.modified().expect("mtime"))
+        .expect("mtime put back");
+    let after = std::fs::metadata(&file).expect("stat");
+    assert_eq!(after.len(), before.len(), "same size");
+    assert_eq!(after.modified().ok(), before.modified().ok(), "same mtime");
+    rescan(&managed.library).await;
+
+    let (changed, items) = managed
+        .preview(SelectionKind::Roots, &["music"], "changed")
+        .await;
+    assert_eq!(summary(&changed.job_id).organized_album_count, 1);
+    assert!(items.iter().all(|item| item.album_id == first), "{items:?}");
+    assert_eq!(items.len(), 2);
+    let retagged = items
+        .iter()
+        .find(|item| item.track_id.as_deref() == Some(first_tracks[0].as_str()))
+        .expect("the retagged file is planned");
+    assert_eq!(retagged.eligibility, Eligibility::Blocked);
+    assert_eq!(retagged.reason().expect("a reason").code, "CHANGED_OUTSIDE");
+
+    let (everything, items) = managed
+        .preview_with(SelectionKind::Roots, &["music"], "everything", true)
+        .await;
+    assert_eq!(summary(&everything.job_id).organized_album_count, 0);
+    assert_eq!(items.len(), 3);
+    assert!(items.iter().any(|item| item.album_id == second));
+
+    let (alone, items) = managed
+        .preview(SelectionKind::Albums, &[&second], "alone")
+        .await;
+    assert_eq!(summary(&alone.job_id).organized_album_count, 0);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].album_id, second);
+}
+
+/// Albums already exactly as the profile wants, with no record of it (left
+/// right by v2, another tool, or a run from before the record held what it
+/// holds now): the first folder preview reads them, finds nothing to change
+/// and records them, and the next leaves them all out.
+#[tokio::test]
+async fn a_folder_preview_records_albums_it_finds_already_right() {
+    use droppedneedle_library::management::models::SelectionKind;
+
+    let managed = ManagedLibrary::start("lib-record-organized", |profile| {
+        // No genre source answers here, and a file planned with that
+        // warning is never recorded as left as it is.
+        profile.genres.enabled = false;
+    })
+    .await;
+    managed.add_album("first", 2).await;
+    managed.add_album("second", 1).await;
+    let (organize, _) = managed
+        .preview(SelectionKind::Roots, &["music"], "organize")
+        .await;
+    management_apply(&managed.library, &organize).await;
+    rescan(&managed.library).await;
+    managed
+        .db()
+        .execute_batch(
+            "DELETE FROM library_track_management_identity;
+             DELETE FROM library_track_management_state;",
+        )
+        .expect("records forgotten");
+    let summary = |job: &str| managed.management().detail(job).expect("detail").summary;
+
+    let (first_look, items) = managed
+        .preview(SelectionKind::Roots, &["music"], "first look")
+        .await;
+    assert_eq!(summary(&first_look.job_id).organized_album_count, 0);
+    assert_eq!(items.len(), 3);
+    assert!(
+        items
+            .iter()
+            .all(|item| item.eligibility.writes() && !item.diff.changes_anything()),
+        "{items:?}"
+    );
+
+    let (second_look, items) = managed
+        .preview(SelectionKind::Roots, &["music"], "second look")
+        .await;
+    assert!(items.is_empty(), "{items:?}");
+    let counted = summary(&second_look.job_id);
+    assert_eq!(
+        (counted.organized_album_count, counted.organized_file_count),
+        (2, 3)
+    );
+}
+
+/// A match taken off and chosen again starts its revisions again at 1, so
+/// an album organized from one release and then matched to another can
+/// carry the same revisions: the release it was written from tells them
+/// apart, and a folder preview plans the album.
+#[tokio::test]
+async fn a_folder_preview_plans_an_album_matched_again_to_another_release() {
+    use droppedneedle_library::management::models::SelectionKind;
+
+    let managed = ManagedLibrary::start("lib-organized-rematch", |profile| {
+        // No genre source answers here, and a file planned with that
+        // warning is never recorded as left as it is.
+        profile.genres.enabled = false;
+    })
+    .await;
+    let (album, _) = managed.add_album("first", 2).await;
+    managed.add_album("second", 1).await;
+    let release = || -> String {
+        managed
+            .db()
+            .query_row(
+                "SELECT release_mbid FROM local_album_external_identities \
+                 WHERE local_album_id = ?1",
+                [&album],
+                |row| row.get(0),
+            )
+            .expect("edition")
+    };
+    let rematch = |key: &'static str, to: String| {
+        let managed = &managed;
+        let album = album.clone();
+        async move {
+            let mut db = managed.db();
+            let tx = db.transaction().expect("transaction");
+            droppedneedle_library::edition::choice::detach_by_person(
+                &tx, &album, "DETACHED", "admin", 1.0,
+            )
+            .expect("match taken off");
+            tx.commit().expect("committed");
+            // The scripted MusicBrainz answers for the second album now:
+            // it is told this album's editions again.
+            managed
+                .scratch
+                .identify
+                .set_recall(ambiguous_recall(&managed.library.identify_store, &album));
+            crate::common::library::operations(&managed.library)
+                .choose_edition(
+                    &album,
+                    &to,
+                    shown_revision(&managed.library, &album),
+                    Some("admin"),
+                    false,
+                )
+                .await
+                .expect("edition chosen");
+            let (handle, items) = managed.preview(SelectionKind::Roots, &["music"], key).await;
+            (handle, items)
+        }
+    };
+    let (organize, _) = managed
+        .preview(SelectionKind::Roots, &["music"], "organize")
+        .await;
+    management_apply(&managed.library, &organize).await;
+
+    // Chosen again on its own release, then organized: its record now
+    // holds revision 1 everywhere.
+    let first = release();
+    let (again, items) = rematch("again", first.clone()).await;
+    if items.iter().any(|item| item.diff.changes_anything()) {
+        management_apply(&managed.library, &again).await;
+    }
+    let (_, items) = managed
+        .preview(SelectionKind::Roots, &["music"], "settled")
+        .await;
+    assert!(items.is_empty(), "{items:?}");
+
+    // Taken off again and matched to the other release: revision 1 again.
+    let other = if first == REL_1 { REL_2 } else { REL_1 };
+    let (_, items) = rematch("other", other.to_owned()).await;
+    let planned: Vec<_> = items.iter().filter(|item| item.album_id == album).collect();
+    assert_eq!(planned.len(), 2, "{items:?}");
+    assert!(planned.iter().any(|item| item.diff.changes_anything()));
 }
 
 /// What the app does not manage is not a takeover: a tag outside the
@@ -15146,6 +15394,7 @@ impl ManagedLibrary {
                 idempotency_key: Some(key.to_owned()),
                 target_root_id: None,
                 overrides: None,
+                include_organized: false,
             },
         )
         .await
@@ -15875,6 +16124,7 @@ async fn import_and_management_name_a_file_alike() {
                     idempotency_key: Some(format!("alike-{n}")),
                     target_root_id: None,
                     overrides: None,
+                    include_organized: false,
                 },
                 "admin",
             )
@@ -16355,9 +16605,10 @@ async fn a_wide_job_never_writes_over_an_unnoticed_hand_edit() {
         let file = managed.path(&tracks[0]);
         let bytes = file_sha256(&file);
 
+        // The other album is already organized: included, so it plans.
         let items = if case == "profile preview" {
             managed
-                .preview(SelectionKind::Albums, &[&album, &other], "both")
+                .preview_with(SelectionKind::Albums, &[&album, &other], "both", true)
                 .await
                 .1
         } else {
@@ -17525,6 +17776,7 @@ async fn management_preview_blocks_an_album_whose_edition_is_being_placed() {
                 idempotency_key: Some("preview-remap".to_owned()),
                 target_root_id: None,
                 overrides: None,
+                include_organized: false,
             },
             "admin",
         )
@@ -24431,7 +24683,7 @@ impl droppedneedle_library::management::enrich::EnrichmentPort for LiveAcoustId 
         background: bool,
     ) -> futures_util::future::BoxFuture<
         'a,
-        Result<Vec<droppedneedle_library::management::genre::Candidate>, String>,
+        Result<droppedneedle_library::management::enrich::GenreAnswer, String>,
     > {
         self.scripted
             .listenbrainz_genres(release_group_mbid, background)
@@ -24444,7 +24696,7 @@ impl droppedneedle_library::management::enrich::EnrichmentPort for LiveAcoustId 
         background: bool,
     ) -> futures_util::future::BoxFuture<
         'a,
-        Result<Vec<droppedneedle_library::management::genre::Candidate>, String>,
+        Result<droppedneedle_library::management::enrich::GenreAnswer, String>,
     > {
         self.scripted.lastfm_genres(artist, album, background)
     }

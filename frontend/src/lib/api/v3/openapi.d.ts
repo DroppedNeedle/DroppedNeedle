@@ -16989,6 +16989,11 @@ export interface components {
             expected_settings_revision: string;
             /** @description Makes a retried request return the same preview. */
             idempotency_key?: string | null;
+            /**
+             * @description Also plan albums already organized with these settings and
+             *     unchanged since. A preview of one album always plans it.
+             */
+            include_organized?: boolean;
             /** @description Switches for this run only, on top of the profile. */
             overrides?: null | components["schemas"]["LibraryManagementRootOverrides"];
             profile_id: string;
@@ -17187,6 +17192,16 @@ export interface components {
             metadata_snapshot_ids: string[];
             /** Format: int64 */
             no_change_count: number;
+            /**
+             * Format: int64
+             * @description Albums left out because they are already organized.
+             */
+            organized_album_count: number;
+            /**
+             * Format: int64
+             * @description Files of the albums left out as already organized.
+             */
+            organized_file_count: number;
             /** Format: int64 */
             path_change_count: number;
             /** @description Files per reason code. */

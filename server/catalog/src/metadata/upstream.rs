@@ -36,6 +36,11 @@ pub trait CatalogSettings: Send + Sync {
     fn advanced(&self) -> AdvancedSettings;
     /// Whether ListenBrainz reads are switched on.
     fn listenbrainz_enabled(&self) -> bool;
+    /// Whether ListenBrainz reads are switched on; `None` while the
+    /// setting does not read, which is never "off".
+    fn listenbrainz_switch(&self) -> Option<bool> {
+        Some(self.listenbrainz_enabled())
+    }
     /// Two-letter store region for purchase lookups; `None` while it does
     /// not read.
     fn store_region(&self) -> Option<String>;
@@ -111,6 +116,10 @@ impl CatalogSettings for LiveCatalogSettings {
 
     fn listenbrainz_enabled(&self) -> bool {
         or_default(&self.listenbrainz).enabled
+    }
+
+    fn listenbrainz_switch(&self) -> Option<bool> {
+        self.listenbrainz.read().map(|settings| settings.enabled)
     }
 
     fn store_region(&self) -> Option<String> {
@@ -292,6 +301,21 @@ impl Upstream {
                 ListenBrainzCredentials::default(),
             )
         })
+    }
+
+    /// Whether the admin switched ListenBrainz off, as its setting reads
+    /// now; false while it does not read.
+    pub fn listenbrainz_switched_off(&self) -> bool {
+        self.settings.listenbrainz_switch() == Some(false)
+    }
+
+    /// Whether the admin switched Last.fm off or saved no instance key, as
+    /// its settings read now; false while they do not read.
+    pub fn lastfm_switched_off(&self) -> bool {
+        self.users
+            .lastfm_switch
+            .read()
+            .is_ok_and(|state| !state.enabled || state.instance_keys.is_none())
     }
 
     /// The Last.fm client with this user's own API key, else the instance

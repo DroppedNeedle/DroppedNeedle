@@ -16,6 +16,7 @@ use super::models::{
     ManagementError, Origin, PinnedProfile, PlannedItem, PreviewHandle, ResultPage, Revisions,
     Selection, SelectionKind, Summary, TagEditMode, TagScope,
 };
+use super::organized::{self, AppliedScripts, FileAt, OrganizedPins};
 use super::planner::{self, PlanContext};
 use super::profile::{self, CompiledScripts};
 use super::reasons::{self, ItemReason};
@@ -40,6 +41,9 @@ use droppedneedle_kernel::runtime_config::sections::{
 pub const PAGE_MAX: i64 = 200;
 /// Largest page of history.
 pub const HISTORY_MAX: i64 = 50;
+/// Albums a preview leaves out as organized between two checks for a
+/// pause or stop.
+const ORGANIZED_CHECKPOINT: i64 = 100;
 
 /// A request for a new preview.
 pub struct PreviewRequest {
@@ -50,6 +54,9 @@ pub struct PreviewRequest {
     pub idempotency_key: Option<String>,
     pub target_root_id: Option<String>,
     pub overrides: Option<LibraryManagementRootOverrides>,
+    /// Plan albums already organized too, when the preview spans more
+    /// than one album.
+    pub include_organized: bool,
 }
 
 /// Everything a new job pins.
@@ -359,7 +366,10 @@ impl Management {
             pinned: &pinned,
             target_root_id: request.target_root_id.as_deref(),
             linked_job_id: None,
-            intent: JobIntent::default(),
+            intent: JobIntent {
+                skip_organized: !request.include_organized,
+                ..JobIntent::default()
+            },
             proposed_settings_revision: None,
             retention_hours: stored.preview_retention_hours,
         })
@@ -396,6 +406,7 @@ impl Management {
                 && snapshot.intent().tag_edit == spec.intent.tag_edit
                 && snapshot.intent().duplicate == spec.intent.duplicate
                 && snapshot.intent().edition == spec.intent.edition
+                && snapshot.intent().skip_organized == spec.intent.skip_organized
                 && snapshot.job.requested_by_user_id.as_deref() == spec.actor;
             if !same {
                 return Err(stale(
@@ -1509,6 +1520,17 @@ impl Management {
             }
         }
         let person = snapshot.origin == Origin::Manual.as_str();
+        // A preview of one album always reads it, so previewing an album by
+        // itself still writes over changes made outside the app.
+        let skip_organized = intent.skip_organized && ctx.wide;
+        let organized_pins = OrganizedPins {
+            profile_id: &pinned.profile.id,
+            profile_revision: &snapshot.profile_revision,
+            naming_revision: &snapshot.naming_revision,
+            tagging_scripts: organized::script_pins(&pinned.tagging_scripts),
+            expected_root: snapshot.target_root_id.as_deref(),
+        };
+        let mut applied_scripts = AppliedScripts::default();
         let mut summary = Summary::default();
         let mut ordinal = 0;
         for (bundle_ordinal, scope) in albums.iter().enumerate() {
@@ -1521,6 +1543,38 @@ impl Management {
             if tracks.is_empty() {
                 continue;
             }
+            let at: Vec<FileAt<'_>> = tracks
+                .iter()
+                .map(|track| FileAt {
+                    track_id: &track.id,
+                    root_id: &track.root_id,
+                    relative_path: &track.relative_path,
+                })
+                .collect();
+            let before_plan = if skip_organized {
+                if self.already_organized(
+                    &scope.album_id,
+                    &at,
+                    &organized_pins,
+                    &sandbox,
+                    &mut applied_scripts,
+                )? {
+                    summary.organized_album_count += 1;
+                    summary.organized_file_count += tracks.len() as i64;
+                    // Albums left out store nothing, so pausing, stopping
+                    // and the lease are seen to here.
+                    if summary.organized_album_count % ORGANIZED_CHECKPOINT == 0
+                        && (self.checkpoint(&snapshot.job.id, worker)?
+                            || !self.heartbeat(&snapshot.job.id, worker)?)
+                    {
+                        return Ok(None);
+                    }
+                    continue;
+                }
+                Some(self.before_plan(&scope.album_id, &at, &sandbox)?)
+            } else {
+                None
+            };
             let held = ctx.wide && person;
             let before = if held {
                 self.parts
@@ -1545,6 +1599,20 @@ impl Management {
             )?;
             if held {
                 self.hold_changed(&scope.album_id, &snapshot.job.id, &mut items, &before)?;
+            }
+            // An album this plan leaves exactly as it is counts as organized
+            // from now on, so files already right (organized before, by v2
+            // or by another tool) are read once, not by every wide preview.
+            if let Some(before_plan) = &before_plan {
+                self.record_organized(
+                    &scope.album_id,
+                    &at,
+                    &items,
+                    before_plan,
+                    &organized_pins,
+                    &snapshot.job.id,
+                    &sandbox,
+                )?;
             }
             ordinal += items.len() as i64;
             summary.bundle_count += 1;

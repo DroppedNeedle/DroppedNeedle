@@ -10,7 +10,9 @@
 //! canonical display spelling, and deduplicated. A source that could not
 //! be asked is *deferred*: when that leaves only MusicBrainz's answer (or
 //! nothing) and the file has genres, the file's genres are kept rather
-//! than replaced by a partial answer.
+//! than replaced by a partial answer. A source the admin switched off, or
+//! one with no usable key, is not a source at all: it is never asked and
+//! defers nothing.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -36,12 +38,22 @@ pub struct Candidate {
     pub curated: bool,
 }
 
-/// What one remote source answered for an album: candidates, or `None`
-/// when it could not be asked (switched off, an outage, a rate limit).
+/// What one remote genre source answered for an album.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum SourceGenres {
+    /// It could not be asked now (an outage, a rate limit): deferred.
+    #[default]
+    Unanswered,
+    /// The admin switched it off, or it has no usable key: not a source.
+    Off,
+    Answered(Vec<Candidate>),
+}
+
+/// What the remote sources answered for an album.
 #[derive(Debug, Clone, Default)]
 pub struct RemoteGenres {
-    pub listenbrainz: Option<Vec<Candidate>>,
-    pub lastfm: Option<Vec<Candidate>>,
+    pub listenbrainz: SourceGenres,
+    pub lastfm: SourceGenres,
 }
 
 /// The genres to write and how they were reached.
@@ -198,7 +210,7 @@ pub fn project(
                 by_source.push((*source, musicbrainz_genres(release, settings)));
             }
             GenreSource::Listenbrainz => match &remote.listenbrainz {
-                Some(values) => by_source.push((
+                SourceGenres::Answered(values) => by_source.push((
                     *source,
                     values
                         .iter()
@@ -211,10 +223,11 @@ pub fn project(
                         .cloned()
                         .collect(),
                 )),
-                None => deferred.push("listenbrainz"),
+                SourceGenres::Off => {}
+                SourceGenres::Unanswered => deferred.push("listenbrainz"),
             },
             GenreSource::Lastfm => match &remote.lastfm {
-                Some(values) => by_source.push((
+                SourceGenres::Answered(values) => by_source.push((
                     *source,
                     values
                         .iter()
@@ -226,7 +239,8 @@ pub fn project(
                         .cloned()
                         .collect(),
                 )),
-                None => deferred.push("lastfm"),
+                SourceGenres::Off => {}
+                SourceGenres::Unanswered => deferred.push("lastfm"),
             },
             GenreSource::ExistingLocal => {}
         }
@@ -433,5 +447,36 @@ mod tests {
                 assert_eq!(projection.preserved_existing, preserved, "{label}");
             }
         }
+    }
+
+    /// A source the admin switched off is not a source: it neither defers
+    /// nor keeps the file's genres, and the others answer. One that could
+    /// not be reached still defers, and the file keeps its genres.
+    #[test]
+    fn a_switched_off_source_is_left_out_but_an_unreachable_one_defers() {
+        let sources = settings(
+            GenreMode::Replace,
+            vec![GenreSource::Musicbrainz, GenreSource::Listenbrainz],
+        );
+        let existing = vec!["Pop".to_owned()];
+        let answer = |listenbrainz| {
+            project(
+                &sources,
+                &release(&[("rock", 3)]),
+                &RemoteGenres {
+                    listenbrainz,
+                    ..RemoteGenres::default()
+                },
+                &existing,
+            )
+        };
+        let off = answer(SourceGenres::Off);
+        assert_eq!(off.genres, ["rock"]);
+        assert!(off.deferred.is_empty(), "switched off defers nothing");
+        assert!(!off.preserved_existing);
+        let unreachable = answer(SourceGenres::Unanswered);
+        assert_eq!(unreachable.genres, ["pop"]);
+        assert_eq!(unreachable.deferred, ["listenbrainz"]);
+        assert!(unreachable.preserved_existing);
     }
 }

@@ -88,6 +88,10 @@ pub struct ManagementPreviewCreateBody {
     /// Switches for this run only, on top of the profile.
     #[serde(default)]
     pub overrides: Option<LibraryManagementRootOverrides>,
+    /// Also plan albums already organized with these settings and
+    /// unchanged since. A preview of one album always plans it.
+    #[serde(default)]
+    pub include_organized: bool,
 }
 
 /// A new preview and the token that applies it. Keep the token: it is
@@ -517,6 +521,7 @@ pub async fn create_management_preview(
         idempotency_key: body.idempotency_key.filter(|key| !key.trim().is_empty()),
         target_root_id: body.target_root_id.filter(|root| !root.is_empty()),
         overrides: body.overrides,
+        include_organized: body.include_organized,
     };
     let handle = blocking(move || management.create_preview(request, caller.user_id())).await?;
     Ok(Json(handle.into()))

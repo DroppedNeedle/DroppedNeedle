@@ -260,10 +260,13 @@ droppedneedle_kernel::sql! {
          last_reason_code = NULL, \
          row_revision = library_track_management_state.row_revision + 1";
     pub(super) WRITE_MANAGED_IDENTITY = "INSERT INTO library_track_management_identity (local_track_id, \
-         applied_album_identity_revision, applied_track_identity_revision) VALUES (?1, ?2, ?3) \
+         applied_album_identity_revision, applied_track_identity_revision, applied_release_mbid, \
+         applied_release_track_mbid) VALUES (?1, ?2, ?3, ?4, ?5) \
          ON CONFLICT (local_track_id) DO UPDATE SET \
          applied_album_identity_revision = excluded.applied_album_identity_revision, \
-         applied_track_identity_revision = excluded.applied_track_identity_revision";
+         applied_track_identity_revision = excluded.applied_track_identity_revision, \
+         applied_release_mbid = excluded.applied_release_mbid, \
+         applied_release_track_mbid = excluded.applied_release_track_mbid";
     pub(super) WRITE_RESTORED_STATE = "INSERT INTO library_track_management_state (local_track_id, last_operation_job_id, \
          last_managed_at, last_outcome) VALUES (?1, ?2, ?3, 'restored') \
          ON CONFLICT (local_track_id) DO UPDATE SET applied_profile_id = NULL, \
@@ -276,10 +279,15 @@ droppedneedle_kernel::sql! {
     pub(super) TRACK_STATE = "SELECT s.applied_profile_id, s.applied_profile_revision, \
          s.applied_naming_script_revision, s.applied_override_revision, s.managed_root_id, \
          s.last_outcome, s.last_managed_at, i.applied_album_identity_revision, \
-         i.applied_track_identity_revision, s.managed_path_revision \
+         i.applied_track_identity_revision, s.managed_path_revision, s.last_operation_job_id, \
+         i.applied_release_mbid, i.applied_release_track_mbid \
          FROM library_track_management_state s \
          LEFT JOIN library_track_management_identity i ON i.local_track_id = s.local_track_id \
          WHERE s.local_track_id = ?1";
+    /// The tagging scripts a job was pinned with (`?1` job), as its
+    /// profile snapshot holds them.
+    pub(super) JOB_TAGGING_SCRIPTS = "SELECT json_extract(profile_snapshot_json, '$.tagging_scripts') \
+         FROM library_management_job_snapshots WHERE job_id = ?1";
     pub(super) EDIT_OVERRIDE_REVISIONS = "SELECT json_extract(result_json, '$.override_revisions') FROM library_operation_work \
              WHERE job_id = ?1 AND ordinal = ?2";
     pub(super) TRACK_TO_EDIT = "SELECT t.id AS track_id, t.local_album_id AS album_id, t.root_id, t.relative_path, \
@@ -576,6 +584,9 @@ droppedneedle_kernel::sql! {
         applied_album_identity_revision: Option<i64>,
         applied_track_identity_revision: Option<i64>,
         managed_path_revision: Option<String>,
+        last_operation_job_id: Option<String>,
+        applied_release_mbid: Option<String>,
+        applied_release_track_mbid: Option<String>,
     }
     pub(super) row EditSubject for [TRACK_TO_EDIT] {
         track_id: String,
