@@ -4,7 +4,8 @@
 	from its centre). To assistive tech it is a slider: arrow keys step,
 	Page Up and Page Down move a tenth of the range, Home and End go to the
 	ends. It turns by dragging up and down, or round its edge, and a double
-	click returns it to `resetTo` when one is given. `label` is its
+	click returns it to `resetTo` when one is given. Over the face, the
+	mouse wheel turns it one arrow-key step per notch. `label` is its
 	accessible name and is printed under it with the value, which `format`
 	writes for the readout and for screen readers.
 -->
@@ -108,6 +109,31 @@
 		set(next);
 	}
 
+	// A notch is 100 px of wheel. A trackpad sends small deltas, so `wheelDelta`
+	// keeps the pixels not yet made into a notch (positive while turning up).
+	const NOTCH_PX = 100;
+	let wheelDelta = 0;
+
+	function onwheel(event: WheelEvent) {
+		if (disabled || event.deltaY === 0) return;
+		const up = event.deltaY < 0;
+		// At the end of the range the page scrolls instead.
+		if (up ? clamped >= max : clamped <= min) {
+			wheelDelta = 0;
+			return;
+		}
+		event.preventDefault();
+		// deltaMode 1 counts lines (about 33 px each) and 2 counts pages.
+		const unit = event.deltaMode === 2 ? window.innerHeight : event.deltaMode === 1 ? 33 : 1;
+		const px = Math.abs(event.deltaY) * unit * (up ? 1 : -1);
+		if (Math.sign(px) !== Math.sign(wheelDelta)) wheelDelta = 0;
+		wheelDelta += px;
+		const notches = Math.trunc(wheelDelta / NOTCH_PX);
+		if (notches === 0) return;
+		wheelDelta -= notches * NOTCH_PX;
+		set(clamped + notches * (keyStep ?? step));
+	}
+
 	// One drag turns by height, or round the edge when it starts near the rim.
 	let drag: {
 		id: number;
@@ -174,7 +200,7 @@
 	class:is-disabled={disabled}
 	title={disabled ? disabledReason : undefined}
 >
-	<div class="dn-knob__face">
+	<div class="dn-knob__face" {onwheel}>
 		<svg class="dn-knob__scale" viewBox="0 0 120 120" aria-hidden="true">
 			{#each scale as dot (dot.key)}
 				<circle cx={dot.x} cy={dot.y} r={size === 'lg' ? 2.1 : 2.8} class:is-lit={dot.lit} />
@@ -201,6 +227,7 @@
 			{onpointermove}
 			onpointerup={endDrag}
 			onpointercancel={endDrag}
+			onpointerleave={() => (wheelDelta = 0)}
 			ondblclick={() => resetTo !== undefined && set(resetTo)}
 		>
 			<div class="dn-knob__skirt" style:rotate="{angle}deg"></div>
