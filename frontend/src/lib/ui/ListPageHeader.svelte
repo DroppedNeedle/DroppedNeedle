@@ -23,6 +23,7 @@
 	import { ArrowLeft } from 'lucide-svelte';
 	import BarcodeTicket from './BarcodeTicket.svelte';
 	import VinylRecord from './VinylRecord.svelte';
+	import { part } from './parts';
 
 	interface Props {
 		title: string;
@@ -100,6 +101,7 @@
 	class:dn-lph--mark={mark}
 	class:dn-lph--compact={compact}
 	style:--dn-lph-scale={titleScale}
+	data-part={part('page-header')}
 >
 	<div class="dn-lph__row">
 		{#if backHref && backStyle === 'button'}
@@ -119,7 +121,7 @@
 			{#if eyebrow}<p class="dn-lph__eyebrow">{eyebrow}</p>{/if}
 			{#if stroke}
 				<div class="dn-lph__line">
-					<h1 class="dn-lph__title">{title}</h1>
+					<h1 class="dn-lph__title" data-part={part('page-title')}>{title}</h1>
 					<svg
 						class="dn-decor dn-lph__stroke"
 						viewBox="0 0 120 16"
@@ -133,7 +135,7 @@
 					>
 				</div>
 			{:else}
-				<h1 class="dn-lph__title">{title}</h1>
+				<h1 class="dn-lph__title" data-part={part('page-title')}>{title}</h1>
 			{/if}
 			{#if subtitle}<p class="dn-lph__sub" class:dn-lph__sub--long={longSubtitle}>
 					{subtitle}

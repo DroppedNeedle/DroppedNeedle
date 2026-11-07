@@ -6,6 +6,7 @@
 <script lang="ts">
 	import { Ellipsis } from 'lucide-svelte';
 	import NavItemBadge from './NavItemBadge.svelte';
+	import { part } from '$lib/ui/parts';
 	import { canSee, isMoreActive, navHref, navItems, type NavViewer } from './navItems';
 
 	interface Props {
@@ -27,6 +28,7 @@
 	class="droppedneedle-bottom-nav md:hidden"
 	class:droppedneedle-bottom-nav--no-settings={compact}
 	aria-label="Primary navigation"
+	data-part={part('bottom-bar')}
 >
 	{#each items as item (item.id)}
 		{@const active = item.bottom?.active(currentPath) ?? false}

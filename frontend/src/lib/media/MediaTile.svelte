@@ -11,6 +11,7 @@
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { part } from '$lib/ui/parts';
 
 	interface Props {
 		kind?: 'album' | 'artist';
@@ -86,6 +87,7 @@
 	class="dn-tile group relative min-w-0 {className}"
 	data-kind={kind}
 	data-wrap={wrapName || undefined}
+	data-part={part('media-tile')}
 >
 	<svelte:element
 		this={tag}
@@ -99,12 +101,15 @@
 		onpointerenter={onintent}
 		onfocus={onintent}
 	>
-		<div class="dn-tile__art relative aspect-square">
+		<div class="dn-tile__art relative aspect-square" data-part={part('media-tile-art')}>
 			{@render art()}
 		</div>
 		<div class="dn-tile__text">
-			<svelte:element this={titleAs} class="dn-tile__title" style:--dn-tile-word={fitWord}
-				>{title}</svelte:element
+			<svelte:element
+				this={titleAs}
+				class="dn-tile__title"
+				style:--dn-tile-word={fitWord}
+				data-part={part('media-tile-title')}>{title}</svelte:element
 			>
 			{#if meta}
 				<div class="dn-tile__meta">{@render meta()}</div>

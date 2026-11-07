@@ -34,6 +34,7 @@
 	import VersionOverlays from '$lib/shell/VersionOverlays.svelte';
 	import Footer from '$lib/shell/Footer.svelte';
 	import FritFrame from '$lib/ui/FritFrame.svelte';
+	import { part } from '$lib/ui/parts';
 	import Toaster from '$lib/ui/Toaster.svelte';
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { cancelPendingImages } from '$lib/media/lazyImage';
@@ -264,7 +265,7 @@
 <DegradedBanner />
 <VersionOverlays bind:updateAvailable={versionUpdateAvailable} />
 
-<div class="drawer md:drawer-open">
+<div class="drawer md:drawer-open" data-part={part('shell')}>
 	<input id="main-drawer" type="checkbox" class="drawer-toggle" aria-label="Expand sidebar" />
 
 	<div
@@ -277,6 +278,7 @@
 		<div
 			class="droppedneedle-main-content flex-1"
 			class:droppedneedle-player-visible={playerStore.isPlayerVisible}
+			data-part={part('page')}
 		>
 			{#if framed}
 				{#key currentPath}<FritFrame />{/key}

@@ -9,6 +9,7 @@
 -->
 <script lang="ts">
 	import { isValidMbid } from '$lib/utils/formatting';
+	import { part } from '$lib/ui/parts';
 	import { formatLabel, playerStore } from '$lib/features/player/state/player.svelte';
 	import { deckFocus } from '$lib/features/player/state/deckFocus.svelte';
 	import { eqStore } from '$lib/features/player/state/eq.svelte';
@@ -203,7 +204,7 @@
 
 {#if barShowing && playerStore.nowPlaying}
 	{@const np = playerStore.nowPlaying}
-	<div class="droppedneedle-player-bar dn-player">
+	<div class="droppedneedle-player-bar dn-player" data-part={part('player-bar')}>
 		<Button
 			variant="neutral"
 			size="xs"
@@ -219,7 +220,7 @@
 		></span>
 
 		<div class="dn-player__grid">
-			<div class="dn-player__now">
+			<div class="dn-player__now" data-part={part('player-bar-now')}>
 				<AlbumImage
 					mbid={isValidMbid(np.albumId) ? np.albumId : ''}
 					customUrl={np.coverUrl ?? null}
@@ -288,7 +289,7 @@
 				</div>
 			</div>
 
-			<div class="dn-player__transport">
+			<div class="dn-player__transport" data-part={part('player-bar-controls')}>
 				<div class="flex items-center gap-1 sm:gap-2.5">
 					{#if playerStore.hasQueue}
 						<Popover

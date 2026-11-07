@@ -31,6 +31,7 @@
 	import { X } from 'lucide-svelte';
 	import type { KitIcon } from './Button.svelte';
 	import IconButton from './IconButton.svelte';
+	import { part } from './parts';
 	import { themeStore } from '$lib/stores/theme.svelte';
 
 	interface Props {
@@ -174,6 +175,7 @@
 		<div
 			class="modal-box flex h-dvh max-h-dvh w-full max-w-none flex-col overflow-y-auto rounded-none p-0 md:h-[min(88dvh,52rem)] md:max-h-[min(88dvh,52rem)] md:max-w-6xl md:overflow-hidden md:rounded-box"
 			data-testid="modal-sheet"
+			data-part={part('modal')}
 		>
 			<header
 				class="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-line bg-base-200 px-4 py-3 md:static md:px-6 md:py-4"
@@ -223,6 +225,7 @@
 				bottomSheet && 'max-sm:max-w-none pb-[calc(env(safe-area-inset-bottom)+1.5rem)] sm:pb-6'
 			]}
 			data-theme={paper ? themeStore.paper : undefined}
+			data-part={part('modal')}
 		>
 			<div class="flex items-start gap-3">
 				{#if Icon}

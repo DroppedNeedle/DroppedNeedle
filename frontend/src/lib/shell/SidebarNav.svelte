@@ -8,6 +8,7 @@
 	import { page } from '$app/state';
 	import { LogOut, PanelLeft } from 'lucide-svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import { part } from '$lib/ui/parts';
 	import SidebarServices from '$lib/shell/SidebarServices.svelte';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { logout } from '$lib/utils/logout';
@@ -86,6 +87,7 @@
 	<label for="main-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
 	<div
 		class="dn-rail is-drawer-close:w-14 is-drawer-open:w-60 flex min-h-full max-h-dvh flex-col items-start overflow-x-hidden overflow-y-auto border-r border-base-300 bg-base-100"
+		data-part={part('sidebar')}
 	>
 		<ul class="menu w-full grow gap-0.5 px-2 py-2">
 			{#each searchItems as item (item.id)}

@@ -74,6 +74,7 @@
 		HTMLButtonAttributes,
 		HTMLLabelAttributes
 	} from 'svelte/elements';
+	import { part } from './parts';
 
 	type Attributes = Omit<
 		HTMLButtonAttributes & HTMLAnchorAttributes & HTMLLabelAttributes,
@@ -168,6 +169,7 @@
 	this={tag}
 	bind:this={ref}
 	{...rest}
+	data-part={part('button')}
 	class={classes}
 	href={tag === 'a' && !blocked ? href : undefined}
 	type={tag === 'button' ? type : undefined}

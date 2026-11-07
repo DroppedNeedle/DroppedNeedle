@@ -9,6 +9,7 @@
 	import type { Snippet } from 'svelte';
 	import { ArrowRight } from 'lucide-svelte';
 	import type { KitIcon } from './Button.svelte';
+	import { part } from './parts';
 
 	interface Props {
 		title: string;
@@ -39,9 +40,9 @@
 	}: Props = $props();
 </script>
 
-<div class="dn-section-head {className}">
+<div class="dn-section-head {className}" data-part={part('section-head')}>
 	<div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-		<svelte:element this={as} class="dn-section-head__title">
+		<svelte:element this={as} class="dn-section-head__title" data-part={part('section-head-title')}>
 			{#if Icon}<Icon class="dn-section-head__icon" aria-hidden="true" />{/if}
 			{#if href}
 				<a {href} class="dn-section-head__link">{title}</a>

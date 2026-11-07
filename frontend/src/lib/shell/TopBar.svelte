@@ -12,6 +12,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Logo from '$lib/ui/Logo.svelte';
+	import { part } from '$lib/ui/parts';
 	import SearchSuggestions from '$lib/features/search/components/SearchSuggestions.svelte';
 	import ServiceHealthIndicator from '$lib/shell/ServiceHealthIndicator.svelte';
 	import { getApiUrl } from '$lib/api/api-utils';
@@ -81,7 +82,10 @@
 	</span>
 {/snippet}
 
-<div class="droppedneedle-topbar navbar sticky top-0 z-50 border-b border-base-300 bg-base-100">
+<div
+	class="droppedneedle-topbar navbar sticky top-0 z-50 border-b border-base-300 bg-base-100"
+	data-part={part('top-bar')}
+>
 	<div class="navbar-start w-auto sm:grow-0" class:grow={!onSearchPage}>
 		<Button variant="ghost" href={withBasePath('/')} class="px-2 sm:px-3" aria-label="Home">
 			{#if onSearchPage}

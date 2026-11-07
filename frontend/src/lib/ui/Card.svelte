@@ -18,6 +18,7 @@
 	import type { HTMLAttributes } from 'svelte/elements';
 	import CardActions from './CardActions.svelte';
 	import CardTitle from './CardTitle.svelte';
+	import { part } from './parts';
 
 	interface Props extends Omit<HTMLAttributes<HTMLElement>, 'title' | 'children'> {
 		variant?: 'flat' | 'bordered' | 'raised' | 'paper' | 'torn' | 'acid';
@@ -88,6 +89,7 @@
 	this={href !== undefined ? 'a' : as}
 	bind:this={ref}
 	{...rest}
+	data-part={part('card')}
 	{href}
 	class={classes}
 	aria-labelledby={href !== undefined && title ? titleId : rest['aria-labelledby']}
