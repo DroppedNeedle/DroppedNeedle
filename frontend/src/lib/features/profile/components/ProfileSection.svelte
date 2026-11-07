@@ -2,7 +2,8 @@
 	One profile section as a wide row: a paper label on the left (icon, title,
 	one short line) with a torn right edge, the content on the page to its
 	right. A section folds shut: closed, it shows only its one-line summary,
-	and the whole row opens it. On a phone the label sits over the content.
+	and the whole row opens it. A body opened once stays mounted while folded,
+	so an unsaved draft in it survives. On a phone the label sits over the content.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -28,6 +29,11 @@
 	let { id, title, blurb, icon: Icon, glyph, open, ontoggle, summary, children }: Props = $props();
 
 	const bodyId = $derived(`${id}-body`);
+	// Opened once, the body stays mounted while folded (see above).
+	let opened = $state(false);
+	$effect.pre(() => {
+		if (open) opened = true;
+	});
 	const summaryId = $derived(`${id}-summary`);
 </script>
 
@@ -58,8 +64,8 @@
 		{/if}
 	</div>
 
-	{#if open}
-		<div class="pf-sec__body" id={bodyId}>
+	{#if opened}
+		<div class="pf-sec__body" class:pf-sec__body--folded={!open} id={bodyId}>
 			<IconButton
 				label="Collapse {title}"
 				icon={ChevronUp}
@@ -69,12 +75,12 @@
 			/>
 			{@render children()}
 		</div>
-	{:else}
+	{/if}
+	{#if !open}
 		<!-- A mouse target only. The title button is the one tab stop; its aria-describedby points at the text. -->
 		<button
 			type="button"
 			class="pf-sec__summary"
-			id={bodyId}
 			tabindex="-1"
 			aria-hidden="true"
 			onclick={() => ontoggle(true)}
@@ -198,6 +204,9 @@
 		display: none;
 	}
 
+	.pf-sec__body--folded {
+		display: none;
+	}
 	.pf-sec__body {
 		position: relative;
 		min-width: 0;
