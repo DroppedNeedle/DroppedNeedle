@@ -1,11 +1,11 @@
 <!--
 	A labelled CSS editor: line numbers, syntax colours, Tab to indent,
 	completion of the `words` passed in, and a marker on each line `problems`
-	refuses. Escape then Tab leaves the field, so the keyboard is never
-	trapped. CodeMirror is loaded only when the field first shows. `limit`
-	adds a count of the characters used. Call `insert(text)` (through
-	`bind:this`) to put text at the cursor. `aside` sits at the end of the
-	label's row.
+	refuses, checked again whenever `problems` changes. Escape then Tab leaves
+	the field, so the keyboard is never trapped. CodeMirror is loaded only
+	when the field first shows. `limit` adds a count of the characters used.
+	Call `insert(text)` (through `bind:this`) to put text at the cursor.
+	`aside` sits at the end of the label's row.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -83,6 +83,12 @@
 
 	$effect(() => {
 		editor?.setReadonly(readonly);
+	});
+
+	// A new `problems` may mark other lines in the same text, such as a refused save's.
+	$effect(() => {
+		void problems;
+		editor?.recheck();
 	});
 
 	/** Put `text` at the cursor, or in place of the selection. */

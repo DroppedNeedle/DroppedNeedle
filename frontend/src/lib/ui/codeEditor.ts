@@ -14,8 +14,8 @@ import {
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { css, cssLanguage } from '@codemirror/lang-css';
 import { HighlightStyle, indentOnInput, syntaxHighlighting } from '@codemirror/language';
-import { linter, lintGutter, type Diagnostic } from '@codemirror/lint';
-import { Compartment, EditorState } from '@codemirror/state';
+import { forceLinting, linter, lintGutter, type Diagnostic } from '@codemirror/lint';
+import { Compartment, EditorState, StateEffect } from '@codemirror/state';
 import {
 	drawSelection,
 	EditorView,
@@ -59,6 +59,8 @@ export interface CodeEditor {
 	setReadonly(readonly: boolean): void;
 	insert(text: string): void;
 	focus(): void;
+	/** Mark the lines again, for when `problems` answers differently for the same text. */
+	recheck(): void;
 	destroy(): void;
 }
 
@@ -160,6 +162,8 @@ function wordsSource(words: () => CodeWord[]): CompletionSource {
 	};
 }
 
+const recheckLines = StateEffect.define<null>();
+
 export function createCodeEditor(options: CodeEditorOptions): CodeEditor {
 	const root = options.host.shadowRoot ?? options.host.attachShadow({ mode: 'open' });
 	const editable = new Compartment();
@@ -173,7 +177,11 @@ export function createCodeEditor(options: CodeEditorOptions): CodeEditor {
 				return { from: line.from, to: line.to, severity: 'error', message: problem.message };
 			});
 		},
-		{ delay: 300 }
+		{
+			delay: 300,
+			needsRefresh: (update) =>
+				update.transactions.some((tr) => tr.effects.some((effect) => effect.is(recheckLines)))
+		}
 	);
 
 	const view = new EditorView({
@@ -237,6 +245,10 @@ export function createCodeEditor(options: CodeEditorOptions): CodeEditor {
 		},
 		focus() {
 			view.focus();
+		},
+		recheck() {
+			view.dispatch({ effects: recheckLines.of(null) });
+			forceLinting(view);
 		},
 		destroy() {
 			view.destroy();
