@@ -344,6 +344,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0143_appearance.sql",
         "d46dde6a7c8cb71c45698a7daa1e27dfe9f86dbbbbc465492d964060da2512c4",
     ),
+    (
+        "0144_v3_cover_paths.sql",
+        "930574621d42b5857f928daec93146f506e6a14b900d3f825d2215af010127f8",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -1225,6 +1229,94 @@ fn appearance_upgrade_keeps_every_row() {
             count(&connection, table),
             0,
             "{table} goes with the account"
+        );
+    }
+}
+
+/// 0144 moves cover paths carried from v2 onto v3's routes in the four
+/// tables that keep one: both v2 spellings of a cover path and the media
+/// server image paths move, behind a base path too, another v2 path
+/// becomes no cover, and v3 paths, full addresses and empty values stay.
+/// Nothing else in the schema changes.
+#[test]
+fn v3_cover_paths_upgrade_moves_v2_covers() {
+    let dir = ScratchDir::new("v3-cover-paths");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..9], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 143);
+    let covers = [
+        ("a", Some("/api/v1/covers/release-group/rg-1?size=250")),
+        ("b", Some("/api/covers/release/r-1")),
+        ("c", Some("/music/api/v1/jellyfin/image/item-1")),
+        ("d", Some("/api/v1/navidrome/cover/al-1")),
+        ("e", Some("/api/v1/plex/thumb/101")),
+        ("f", Some("/api/v1/library/albums/x/artwork/cached")),
+        ("g", Some("/api/v3/covers/artist/ar-1")),
+        ("h", Some("https://i.ytimg.com/vi/x/hqdefault.jpg")),
+        ("i", None),
+    ];
+    for (key, cover) in covers {
+        connection
+            .execute_batch(&format!(
+                "PRAGMA foreign_keys = OFF;
+                 INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name,
+                     artist_name, album_name, cover_url, source_type, created_at)
+                 VALUES ('{key}', 'p1', unicode('{key}'), 'T', 'A', 'L', {cover}, 'local', 1);
+                 INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id,
+                     artist_name, album_title, cover_url, requested_at, status)
+                 VALUES ('{key}', '{key}', 'A', 'L', {cover}, 1, 'imported');
+                 INSERT INTO wanted_watches (release_group_mbid_lower, release_group_mbid,
+                     user_id, artist_name, album_title, cover_url, kind, created_at,
+                     next_check_at)
+                 VALUES ('{key}', '{key}', 'u1', 'A', 'L', {cover}, 'missing', 1, 1);
+                 INSERT INTO catalog_youtube_links (album_id, album_name, artist_name,
+                     cover_url, created_at)
+                 VALUES ('{key}', 'L', 'A', {cover}, 1);",
+                cover = cover.map_or("NULL".to_owned(), |cover| format!("'{cover}'")),
+            ))
+            .unwrap();
+    }
+    let before_schema = schema_rows(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..10], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 144);
+    assert_eq!(
+        schema_rows(&connection),
+        before_schema,
+        "nothing else changes"
+    );
+    for (table, key) in [
+        ("catalog_playlist_tracks", "id"),
+        ("request_history", "musicbrainz_id_lower"),
+        ("wanted_watches", "release_group_mbid_lower"),
+        ("catalog_youtube_links", "album_id"),
+    ] {
+        assert_eq!(
+            texts(
+                &connection,
+                &format!(
+                    "SELECT {key} || ':' || COALESCE(cover_url, '-') FROM {table} ORDER BY {key}"
+                ),
+                [],
+            ),
+            [
+                "a:/api/v3/covers/release-group/rg-1?size=250",
+                "b:/api/v3/covers/release/r-1",
+                "c:/api/v3/remotes/jellyfin/images/item-1",
+                "d:/api/v3/remotes/navidrome/images/al-1",
+                "e:/api/v3/remotes/plex/images/101",
+                "f:-",
+                "g:/api/v3/covers/artist/ar-1",
+                "h:https://i.ytimg.com/vi/x/hqdefault.jpg",
+                "i:-",
+            ],
+            "{table}"
         );
     }
 }

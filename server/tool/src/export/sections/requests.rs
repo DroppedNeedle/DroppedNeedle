@@ -140,6 +140,29 @@ macro_rules! set_or {
 
 pub(crate) use set_or;
 
+/// A v2 `cover_url` moved onto v3's routes, the same rule as migration
+/// 0144. A root-relative path's `/api/` segment is found behind any base
+/// path v2's web UI put in front, which is dropped (v3 adds its own). The
+/// cover and media server image paths move to v3's routes for the same
+/// ids, any other v2 `/api/` path becomes no cover, and a full address or
+/// a v3 path stays.
+pub(crate) const V3_COVER: &str = "CASE WHEN substr(s.cover_url, 1, 1) = '/' \
+     AND substr(s.cover_url, 1, 2) != '//' AND instr(s.cover_url, '/api/') > 0 \
+     AND (instr(s.cover_url, '?') = 0 OR instr(s.cover_url, '/api/') < instr(s.cover_url, '?')) \
+     AND substr(s.cover_url, instr(s.cover_url, '/api/'), 8) != '/api/v3/' \
+     THEN CASE \
+     WHEN substr(s.cover_url, instr(s.cover_url, '/api/'), 15) = '/api/v1/covers/' \
+     THEN '/api/v3/covers/' || substr(s.cover_url, instr(s.cover_url, '/api/') + 15) \
+     WHEN substr(s.cover_url, instr(s.cover_url, '/api/'), 12) = '/api/covers/' \
+     THEN '/api/v3/covers/' || substr(s.cover_url, instr(s.cover_url, '/api/') + 12) \
+     WHEN substr(s.cover_url, instr(s.cover_url, '/api/'), 23) = '/api/v1/jellyfin/image/' \
+     THEN '/api/v3/remotes/jellyfin/images/' || substr(s.cover_url, instr(s.cover_url, '/api/') + 23) \
+     WHEN substr(s.cover_url, instr(s.cover_url, '/api/'), 24) = '/api/v1/navidrome/cover/' \
+     THEN '/api/v3/remotes/navidrome/images/' || substr(s.cover_url, instr(s.cover_url, '/api/') + 24) \
+     WHEN substr(s.cover_url, instr(s.cover_url, '/api/'), 19) = '/api/v1/plex/thumb/' \
+     THEN '/api/v3/remotes/plex/images/' || substr(s.cover_url, instr(s.cover_url, '/api/') + 19) \
+     END ELSE s.cover_url END";
+
 /// Requester and dismissal rows hang off their request.
 const ON_REQUEST: &[Parent] = &[Parent::required(
     "request_history",
@@ -170,7 +193,7 @@ pub const REQUESTS: TableSection = TableSection {
         col("album_title"),
         col("artist_mbid"),
         Column::new("year").from_sql(whole!("year")),
-        col("cover_url"),
+        Column::new("cover_url").from_sql_of("cover_url", V3_COVER),
         Column::new("requested_at").from_sql(concat!(
             "COALESCE(",
             millis!("requested_at"),
@@ -289,7 +312,7 @@ pub const WANTED_WATCHES: TableSection = TableSection {
         col("album_title"),
         col("artist_mbid"),
         Column::new("year").from_sql(whole!("year")),
-        col("cover_url"),
+        Column::new("cover_url").from_sql_of("cover_url", V3_COVER),
         Column::new("kind").ruled(ValueRule::OneOf {
             kept: &["missing", "partial"],
             prefix: None,

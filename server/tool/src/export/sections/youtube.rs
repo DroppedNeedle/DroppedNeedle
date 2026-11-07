@@ -1,11 +1,11 @@
 //! YouTube links a user found or set for albums and tracks. v3 keeps their
 //! times in integer milliseconds where v2 had ISO text, and a flag that is
 //! never NULL; v2's stored track count stays behind, as v3 counts the track
-//! links. The rest travels verbatim. The album id is a
-//! MusicBrainz release group id, not a library id, so nothing waits on the
-//! library carry.
+//! links. A cover path moves onto v3's cover routes, and the rest travels
+//! verbatim. The album id is a MusicBrainz release group id, not a library
+//! id, so nothing waits on the library carry.
 
-use super::requests::{flag, millis, whole};
+use super::requests::{V3_COVER, flag, millis, whole};
 use super::{Column, Source, TableSection, Target, col};
 
 /// Album links.
@@ -23,7 +23,7 @@ pub const ALBUM_LINKS: TableSection = TableSection {
         col("album_name"),
         col("artist_name"),
         col("embed_url"),
-        col("cover_url"),
+        Column::new("cover_url").from_sql_of("cover_url", V3_COVER),
         Column::new("created_at").from_sql(concat!("COALESCE(", millis!("created_at"), ", 0)")),
         Column::new("is_manual").from_sql(flag!("is_manual")),
     ],

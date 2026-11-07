@@ -300,6 +300,8 @@ has the commands, and covers accounts that never had a password.
   and play history. A playlist with no owner in v2 stays ownerless: public
   ones stay readable by everyone, and an admin may delete any of them. In
   v3, deleting a user deletes their playlists, favorites and follows.
+  Each song's album art comes across too; the rare one v3 has no way to
+  show falls back to a placeholder.
 - Finished requests and finished downloads, wanted watches, and the list of
   bad download sources.
 - Per-user quota overrides. Past requests still count toward each user's

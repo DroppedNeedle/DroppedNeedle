@@ -834,14 +834,15 @@ fn build_user_data(
                 ('playlist-bob', 'Bob mix', NULL, '{at}', '{at}', NULL, '{bob}', 0);
          INSERT INTO library_playlist_tracks (id, playlist_id, position, track_name,
              artist_name, album_name, track_source_id, source_type, created_at,
-             library_file_id, local_track_id, local_album_id, local_artist_id)
+             library_file_id, local_track_id, local_album_id, local_artist_id, cover_url)
          VALUES ('entry-local', '{PLAYLIST_ID}', 0, 'Song', 'Artist', 'Album', '{V2_TRACK_ID}',
                  'local', '{at}', '{V2_TRACK_ID}', '{V2_TRACK_ID}', '{V2_ALBUM_ID}',
-                 '{V2_ARTIST_ID}'),
+                 '{V2_ARTIST_ID}', '/music/api/v1/covers/release-group/rg-1?size=250'),
                 ('entry-remote', '{PLAYLIST_ID}', 1, 'Other', 'Someone', 'Elsewhere', 'yt-abc',
-                 'youtube', '{at}', NULL, NULL, NULL, NULL),
+                 'youtube', '{at}', NULL, NULL, NULL, NULL,
+                 '/api/v1/library/albums/x/artwork/cached'),
                 ('entry-duplicate', '{DUPLICATE_PLAYLIST_ID}', 0, 'Other', 'Someone',
-                 'Elsewhere', 'yt-abc', 'youtube', '{at}', NULL, NULL, NULL, NULL);
+                 'Elsewhere', 'yt-abc', 'youtube', '{at}', NULL, NULL, NULL, NULL, NULL);
          INSERT INTO local_artists (id, display_name, folded_name, normalized_name, kind,
              created_at, updated_at)
          VALUES ('{V2_ARTIST_ID}', 'John Coltrane', 'john coltrane', 'john coltrane',
@@ -889,11 +890,12 @@ fn build_user_data(
                  'Song', 'Artist', 'Album', '{at}'),
                 ('listen-2', '{bob}', NULL, NULL, NULL, 'Other', 'Someone', NULL, '{at}');
          INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name,
-             album_title, requested_at, completed_at, status, user_id)
+             album_title, requested_at, completed_at, status, user_id, cover_url)
          VALUES ('{FINISHED_REQUEST_MBID}', '{FINISHED_REQUEST_MBID}', 'Artist', 'Album',
-                 '2023-11-14T22:13:20.250000+00:00', '1700000500', 'imported', '{alice}'),
+                 '2023-11-14T22:13:20.250000+00:00', '1700000500', 'imported', '{alice}',
+                 '/api/covers/release-group/{FINISHED_REQUEST_MBID}'),
                 ('{PENDING_REQUEST_MBID}', '{PENDING_REQUEST_MBID}', 'Artist', 'Next',
-                 '1700001000', NULL, 'awaiting_approval', '{bob}');
+                 '1700001000', NULL, 'awaiting_approval', '{bob}', NULL);
          INSERT INTO request_history_requesters (user_id, musicbrainz_id_lower, requested_at)
          VALUES ('{alice}', '{FINISHED_REQUEST_MBID}', '2023-11-14T22:13:20.250000+00:00'),
                 ('{bob}', '{PENDING_REQUEST_MBID}', '1700001000');

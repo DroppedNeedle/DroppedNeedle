@@ -6,7 +6,7 @@
 //! Playlist entries and favorites point at v2 library ids, written as is
 //! (v3 has no foreign key there) and recorded as pending links.
 
-use super::requests::{flag, millis, whole, whole_or};
+use super::requests::{V3_COVER, flag, millis, whole, whole_or};
 use super::{Column, FileSet, LinkKind, LinkMode, Parent, Source, TableSection, Target, col};
 
 /// A v2 ISO text time as integer milliseconds. v2's fractional and offset
@@ -83,7 +83,7 @@ pub const PLAYLIST_TRACKS: TableSection = TableSection {
         col("album_id"),
         col("artist_id"),
         col("track_source_id").link_when(LinkKind::Track, LinkMode::AsWritten, LOCAL_ENTRY),
-        col("cover_url"),
+        Column::new("cover_url").from_sql_of("cover_url", V3_COVER),
         col("source_type"),
         col("available_sources"),
         col("format"),

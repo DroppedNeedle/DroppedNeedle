@@ -599,6 +599,24 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
         rusqlite::params![PLAYLIST_ID],
     );
     assert_eq!(cover, COVER_BYTES);
+    // v2's cover paths land on v3's cover routes, without the base path v2
+    // put in front. A v2 path v3 has no route for lands as no cover.
+    let entry_covers: Vec<Option<String>> = target_db.column(
+        "SELECT cover_url FROM catalog_playlist_tracks WHERE playlist_id = ? ORDER BY position",
+        rusqlite::params![PLAYLIST_ID],
+    );
+    assert_eq!(
+        entry_covers,
+        [
+            Some("/api/v3/covers/release-group/rg-1?size=250".to_owned()),
+            None
+        ]
+    );
+    let request_cover: Option<String> = target_db.one("SELECT cover_url FROM request_history", []);
+    assert_eq!(
+        request_cover.as_deref(),
+        Some("/api/v3/covers/release-group/aaaaaaaa-0000-4000-8000-000000000001")
+    );
     let avatar = v3_root
         .join("cache")
         .join("avatars")
