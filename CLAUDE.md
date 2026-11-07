@@ -793,10 +793,13 @@ Run from the repo root. `make help` lists every target.
   outside hosts only from the list in `server/src/security_headers.rs`.
   Loading a script, frame, audio clip or connection from a new host is a
   reviewed edit to that list, with the reason beside it. The browser
-  journeys fail on any violation. The one stylesheet made at run time is
-  the person's custom CSS (`lib/stores/customCss.svelte.ts`): applied per
-  user, removed at sign-out, and refused when it holds a backslash,
-  `@import`, `@font-face` or a CSS function off the allowlist in its store.
+  journeys fail on any violation. The stylesheets made at run time are
+  the site CSS and the person's custom CSS (`lib/stores/customCss.svelte.ts`),
+  site first: applied per user, removed at sign-out, and refused when one
+  holds a backslash, `@import`, `@font-face` or a CSS function off the
+  allowlist in `lib/stores/customCssRules.json`. The server's check
+  (`server/src/appearance/check.rs`) is the one that counts; both checks
+  read that file and pass its cases.
 - The style hooks a person's CSS may rely on are the `data-part` names in
   `lib/ui/parts.ts`, each set by one component through `part()`. They are
   a public contract published in `docs/custom-css.md` (`parts.spec.ts`
