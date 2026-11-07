@@ -58,6 +58,8 @@ FROM dependencies AS builder
 COPY server/ ./server/
 # The Python plugin helper is compiled into the binary.
 COPY sdk/ ./sdk/
+# The custom CSS rules, which the server's check shares with the web UI's.
+COPY frontend/src/lib/stores/customCssRules.json ./frontend/src/lib/stores/customCssRules.json
 
 # Only the binaries stay in this layer, which keeps the build cache small.
 RUN cargo build --release --locked --manifest-path server/Cargo.toml --bins -p droppedneedle -p droppedneedle-tool \

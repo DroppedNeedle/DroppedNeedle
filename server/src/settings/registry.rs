@@ -309,6 +309,7 @@ mod tests {
         ("lidarr_import", "the Lidarr import routes"),
         ("indexers", "the indexer routes"),
         ("plugins", "the plugin routes"),
+        ("appearance", "the appearance routes check the sheet"),
         ("_internal", "server state, never edited"),
     ];
 

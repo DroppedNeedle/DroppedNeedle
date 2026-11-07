@@ -21,6 +21,7 @@
 
 pub mod admin;
 pub mod app;
+pub mod appearance;
 pub mod bootstrap;
 pub mod docs;
 pub mod handlers;

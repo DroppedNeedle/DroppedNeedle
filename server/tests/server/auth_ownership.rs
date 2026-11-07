@@ -1601,8 +1601,8 @@ async fn a_plain_user_reads_connect_apps_and_cannot_save_it() {
 }
 
 /// Favourites, ratings, follows, play marks, remote-server links and
-/// Navidrome folder choices belong to their caller: A's never show in B's
-/// reads, and B's writes never touch A's.
+/// Navidrome folder choices, and theme and custom CSS belong to their
+/// caller: A's never show in B's reads, and B's writes never touch A's.
 #[tokio::test]
 async fn caller_keyed_state_stays_with_its_caller() {
     let app = TestApp::start("auth-caller-keyed").await;
@@ -1918,6 +1918,40 @@ async fn caller_keyed_state_stays_with_its_caller() {
         body["server_url"].is_null(),
         "B sees the server address on the shared account: {body}"
     );
+
+    // Theme and custom CSS, and the saves of that CSS.
+    let appearance = "/api/v3/me/appearance";
+    let saves = "/api/v3/me/appearance/css-saves";
+    let mine = json!({"theme": "midnight", "custom_css": {"text": "a { color: red; }"}});
+    let (status, body) = call(&app, &ada, "PUT", appearance, Some(mine)).await;
+    ok(status, &body, "A saves an appearance");
+    let (status, body) = call(&app, &bob, "GET", appearance, None).await;
+    ok(status, &body, "B reads its appearance");
+    assert_eq!(
+        (body["stored"].clone(), body["custom_css"]["text"].clone()),
+        (json!(false), json!("")),
+        "B sees A's appearance: {body}"
+    );
+    let (status, body) = call(&app, &bob, "GET", saves, None).await;
+    ok(status, &body, "B lists its CSS saves");
+    assert_eq!(body, json!([]), "B sees A's CSS saves");
+    let theirs = json!({"theme": "light", "custom_css": {"text": "", "enabled": false}});
+    let (status, body) = call(&app, &bob, "PUT", appearance, Some(theirs)).await;
+    ok(status, &body, "B saves an appearance");
+    let (status, body) = call(&app, &ada, "GET", appearance, None).await;
+    ok(status, &body, "A reads its appearance");
+    assert_eq!(
+        (
+            body["theme"].clone(),
+            body["custom_css"]["text"].clone(),
+            body["custom_css"]["enabled"].clone()
+        ),
+        (json!("midnight"), json!("a { color: red; }"), json!(true)),
+        "B's write took A's appearance: {body}"
+    );
+    let (status, body) = call(&app, &ada, "GET", saves, None).await;
+    ok(status, &body, "A lists its CSS saves");
+    assert_eq!(body.as_array().map(Vec::len), Some(1), "{body}");
 
     // Clearing finished watches: B's reaches only B's, an admin's everyone's.
     let ids = seed(&app, Owned::Wanted, &ada, 900).await;

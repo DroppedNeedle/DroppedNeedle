@@ -109,6 +109,7 @@ section_list! {
         InternalState,
         LibraryManagement,
         EditionPreferences,
+        Appearance,
     ],
     secret: [
         ListenBrainzConnection,

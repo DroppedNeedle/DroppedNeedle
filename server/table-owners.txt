@@ -96,7 +96,9 @@ plugin_library_writes
 plugin_tick_state
 
 [app]
+app_custom_css_saves
 app_section_prefs
+app_user_appearances
 
 [compat]
 compat_bookmarks

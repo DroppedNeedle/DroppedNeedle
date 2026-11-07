@@ -19,6 +19,11 @@ pub enum AdminError {
         /// What is already going.
         message: String,
     },
+    /// The database was too busy to answer.
+    Busy {
+        /// What was busy, for the log only.
+        cause: String,
+    },
     /// Server fault.
     Internal {
         /// What went wrong, for the log only.

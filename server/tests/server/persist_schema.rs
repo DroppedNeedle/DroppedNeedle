@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 175);
+    assert_eq!(table_names(&connection).len(), 177);
     assert_eq!(
         scalar(
             &connection,
@@ -339,6 +339,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0142_management_applied_release.sql",
         "d4c8cd38822f03c2845a8ebd8a5ac0e2d2d100380aa34b7c9c690b81cb389663",
+    ),
+    (
+        "0143_appearance.sql",
+        "d46dde6a7c8cb71c45698a7daa1e27dfe9f86dbbbbc465492d964060da2512c4",
     ),
 ];
 
@@ -1161,6 +1165,70 @@ fn management_applied_release_upgrade_keeps_every_row() {
     assert_eq!(others(&connection), before_schema, "nothing else changes");
 }
 
+/// 0143 adds each person's appearance and their custom CSS saves, empty,
+/// both going with their account. Every carried row stays and nothing else
+/// in the schema changes.
+#[test]
+fn appearance_upgrade_keeps_every_row() {
+    let dir = ScratchDir::new("appearance");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..8], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 142);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'U', 1);
+             INSERT INTO app_section_prefs (user_id, page, section_key, enabled, updated_at)
+             VALUES ('u1', 'home', 'recent', 0, 2);",
+        )
+        .unwrap();
+    let added = ["app_user_appearances", "app_custom_css_saves"];
+    let others = |connection: &Connection| {
+        let mut rows = schema_rows(connection);
+        rows.retain(|(_, _, table, _)| !added.contains(&table.as_str()));
+        rows
+    };
+    let carried = |connection: &Connection| {
+        texts(
+            connection,
+            "SELECT user_id || ':' || page || ':' || section_key FROM app_section_prefs",
+            [],
+        )
+    };
+    let (before_schema, before_rows) = (others(&connection), carried(&connection));
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..9], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 143);
+    assert_eq!(others(&connection), before_schema, "nothing else changes");
+    assert_eq!(carried(&connection), before_rows, "carried rows stay");
+    let count = |connection: &Connection, table: &str| {
+        scalar(connection, &format!("SELECT COUNT(*) FROM {table}"))
+    };
+    for table in added {
+        assert_eq!(count(&connection, table), 0, "{table} starts empty");
+    }
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = ON;
+             INSERT INTO app_user_appearances (user_id, theme, updated_at) VALUES ('u1', 'dark', 3);
+             INSERT INTO app_custom_css_saves (user_id, css, saved_at) VALUES ('u1', 'a {}', 3);
+             DELETE FROM auth_users WHERE id = 'u1';",
+        )
+        .unwrap();
+    for table in added {
+        assert_eq!(
+            count(&connection, table),
+            0,
+            "{table} goes with the account"
+        );
+    }
+}
+
 /// 0140 rebuilds the catalog action log to take the undo of an artist
 /// join, keeping every row, id and rowid and every index, and gives artist
 /// id checks a disambiguation column, empty on carried rows. Nothing else
@@ -1314,7 +1382,9 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("acquire_held_entries", "drop_item_id", "drop_import_items", "CASCADE"),
     ("acquire_held_entries", "user_id", "auth_users", "CASCADE"),
     ("acquire_held_files", "entry_id", "acquire_held_entries", "CASCADE"),
+    ("app_custom_css_saves", "user_id", "auth_users", "CASCADE"),
     ("app_section_prefs", "user_id", "auth_users", "CASCADE"),
+    ("app_user_appearances", "user_id", "auth_users", "CASCADE"),
     ("auth_app_passwords", "user_id", "auth_users", "CASCADE"),
     ("auth_password_recovery_codes", "user_id", "auth_users", "CASCADE"),
     ("auth_providers", "user_id", "auth_users", "CASCADE"),
@@ -1807,6 +1877,7 @@ fn state<T: Copy>(
 /// Every state column held to its enum.
 #[rustfmt::skip]
 fn state_columns() -> Vec<StateColumn> {
+    use droppedneedle::appearance::ThemeChoice;
     use droppedneedle_acquire::dispatch::DispatchOrigin;
     use droppedneedle_acquire::downloads::landing_rows::ImportOutcome;
     use droppedneedle_acquire::downloads::quarantine::QuarantineReason;
@@ -1921,6 +1992,8 @@ fn state_columns() -> Vec<StateColumn> {
         state("import_pending_links", "mode", &LinkMode::ALL, LinkMode::as_str),
         state("import_pending_links", "ref_kind", &RefKind::ALL, RefKind::as_str),
         state("import_runs", "exit_code", &ExitCode::ALL, ExitCode::as_str),
+        // app
+        state("app_user_appearances", "theme", &ThemeChoice::ALL, ThemeChoice::as_str),
         // auth
         state("auth_providers", "hash_scheme", &HashScheme::ALL, |scheme| scheme.as_tag()),
         state("auth_tokens", "session_kind", &SessionKind::ALL, SessionKind::as_str),

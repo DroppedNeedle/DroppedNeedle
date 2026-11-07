@@ -41,6 +41,9 @@ use droppedneedle_kernel::{
         droppedneedle_catalog::local::models::FormatMode,
         droppedneedle_catalog::local::models::TracksMode,
         droppedneedle_catalog::local::models::RatingMode,
+        // The `details` of a refused custom CSS sheet.
+        crate::appearance::models::CssRefusal,
+        crate::appearance::check::CssProblem,
     )),
     info(
         title = "DroppedNeedle v3",

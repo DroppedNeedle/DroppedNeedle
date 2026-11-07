@@ -15,6 +15,7 @@
 
 use std::sync::Arc;
 
+use crate::appearance::wiring::AppearanceSetup;
 use crate::bootstrap::Outbound;
 use crate::settings::effects::Effects;
 use crate::settings::library_catalog::SqliteLibraryPolicyCatalog;
@@ -46,6 +47,9 @@ pub struct SettingsSetup {
     bins: BinSource,
     /// The scan history the schedule shows its last scan from.
     scans: Arc<LocalCatalog>,
+    /// The appearance routes, which save the site section through the
+    /// same service.
+    appearance: AppearanceSetup,
 }
 
 impl SettingsSetup {
@@ -76,6 +80,7 @@ impl SettingsSetup {
                 service.clone(),
                 Arc::new(SqliteLibraryPolicyCatalog::new(platform.db.clone())),
             )),
+            appearance: AppearanceSetup::build(platform, service.clone()),
             service,
             lifecycle: Arc::new(MusicBrainzLifecycle::new(store, effects, outbound.clone())),
             management,
@@ -166,6 +171,11 @@ impl SettingsSetup {
     /// The per-user section prefs.
     pub fn prefs(&self) -> &SectionPrefs {
         &self.prefs
+    }
+
+    /// The appearance routes' bundle.
+    pub fn appearance(&self) -> &AppearanceSetup {
+        &self.appearance
     }
 }
 

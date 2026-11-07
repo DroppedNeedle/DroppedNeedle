@@ -8,8 +8,10 @@ use axum::{
 };
 
 use droppedneedle_auth::{Admin, Curator, User};
-use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
+
+use crate::appearance::models::CustomCssSummary;
 
 use super::{
     AdminSetup,
@@ -27,6 +29,7 @@ impl From<AdminError> for ApiError {
             AdminError::NotFound => ApiError::not_found(),
             AdminError::InvalidInput { message } => ApiError::invalid_input(message),
             AdminError::Conflict { message } => ApiError::conflict(message),
+            AdminError::Busy { cause } => ApiError::unavailable(Unavailable::ServerBusy, cause),
             AdminError::Internal { cause } => ApiError::internal(cause),
         }
     }
@@ -260,4 +263,43 @@ async fn blocking<T: Send + 'static>(
         .await
         .map_err(|cause| AdminError::internal(&format_args!("backup task failed: {cause}")))?;
     Ok(outcome?)
+}
+
+/// What one user's custom CSS is, never its text.
+#[utoipa::path(
+    get,
+    tag = "admin",
+    path = "/api/v3/admin/users/{id}/custom-css",
+    params(("id" = String, Path, description = "User id")),
+    responses((status = 200, description = "Custom CSS summary", body = CustomCssSummary))
+)]
+pub async fn get_user_custom_css(
+    State(admin): State<AdminSetup>,
+    _caller: Admin,
+    Path(user_id): Path<String>,
+) -> Result<Json<CustomCssSummary>, ApiError> {
+    super::custom_css::get(&admin.users, &admin.appearance, &user_id)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Switch one user's custom CSS off, keeping its text so they can see it
+/// and switch it back on.
+#[utoipa::path(
+    post,
+    tag = "admin",
+    path = "/api/v3/admin/users/{id}/custom-css/turn-off",
+    params(("id" = String, Path, description = "User id")),
+    responses((status = 200, description = "Custom CSS summary", body = CustomCssSummary))
+)]
+pub async fn turn_off_user_custom_css(
+    State(admin): State<AdminSetup>,
+    _caller: Admin,
+    Path(user_id): Path<String>,
+) -> Result<Json<CustomCssSummary>, ApiError> {
+    super::custom_css::turn_off(&admin.users, &admin.appearance, &user_id)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }

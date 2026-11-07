@@ -1054,6 +1054,84 @@
         ]
       }
     },
+    "/api/v3/admin/users/{id}/custom-css": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "What one user's custom CSS is, never its text.",
+        "operationId": "get_user_custom_css",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Custom CSS summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomCssSummary"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/admin/users/{id}/custom-css/turn-off": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Switch one user's custom CSS off, keeping its text so they can see it\nand switch it back on.",
+        "operationId": "turn_off_user_custom_css",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Custom CSS summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomCssSummary"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/admin/users/{id}/quota": {
       "get": {
         "tags": [
@@ -22153,6 +22231,179 @@
         ]
       }
     },
+    "/api/v3/me/appearance": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Read your own theme and custom CSS, with the site's CSS.",
+        "operationId": "get_my_appearance",
+        "responses": {
+          "200": {
+            "description": "Own appearance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyAppearance"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Save your own theme or custom CSS. A field left out keeps its value,\nand a change any part of which is refused saves nothing.",
+        "operationId": "put_my_appearance",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppearanceUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved appearance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyAppearance"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The CSS is refused (`CUSTOM_CSS_REFUSED`, its problems in `details`) or too long (`CUSTOM_CSS_TOO_LONG`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Custom CSS is turned off on this server (`CUSTOM_CSS_TURNED_OFF`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/me/appearance/css-saves": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "List your last saves of your custom CSS, newest first.",
+        "operationId": "list_my_css_saves",
+        "responses": {
+          "200": {
+            "description": "Own CSS saves, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CssSave"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/me/appearance/import": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Move the theme and CSS this browser kept to your account, once. An\naccount that already holds them keeps its own and changes nothing.",
+        "operationId": "import_my_appearance",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppearanceUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The appearance as stored, and whether this call wrote it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppearanceImported"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The CSS is refused (`CUSTOM_CSS_REFUSED`, its problems in `details`) or too long (`CUSTOM_CSS_TOO_LONG`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Custom CSS is turned off on this server (`CUSTOM_CSS_TURNED_OFF`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/me/avatar": {
       "post": {
         "tags": [
@@ -29355,6 +29606,80 @@
           },
           "400": {
             "description": "An app's id, name or return address is not allowed, or there are more than eight",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/settings/appearance": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read the site CSS and whether people may add their own.",
+        "operationId": "get_site_appearance",
+        "responses": {
+          "200": {
+            "description": "Site appearance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Appearance"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Save the site CSS and whether people may add their own. The site CSS\npasses the same check as a person's, with a longer limit.",
+        "operationId": "put_site_appearance",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Appearance"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved site appearance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Appearance"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The CSS is refused (`CUSTOM_CSS_REFUSED`, its problems in `details`) or too long (`CUSTOM_CSS_TOO_LONG`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -36940,6 +37265,57 @@
           }
         }
       },
+      "Appearance": {
+        "type": "object",
+        "description": "Site-wide appearance. The server's appearance routes check the sheet\nbefore it is saved; the kernel only holds it.",
+        "properties": {
+          "allow_user_css": {
+            "type": "boolean",
+            "description": "Let people add their own CSS on top of the site's.",
+            "default": true
+          },
+          "site_css": {
+            "type": "string",
+            "description": "CSS every signed-in page loads on top of the app's own styles.",
+            "default": ""
+          }
+        }
+      },
+      "AppearanceImported": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/MyAppearance",
+            "description": "The caller's appearance as stored now."
+          },
+          {
+            "type": "object",
+            "required": [
+              "imported"
+            ],
+            "properties": {
+              "imported": {
+                "type": "boolean",
+                "description": "True when this call wrote it; false when the account already held\none and nothing changed."
+              }
+            }
+          }
+        ],
+        "description": "The answer to the one-time move from the browser."
+      },
+      "AppearanceUpdate": {
+        "type": "object",
+        "description": "A change to the caller's appearance. A field left out keeps its value.",
+        "properties": {
+          "custom_css": {
+            "$ref": "#/components/schemas/CustomCssUpdate",
+            "description": "The caller's own CSS."
+          },
+          "theme": {
+            "$ref": "#/components/schemas/ThemeChoice",
+            "description": "The theme to use."
+          }
+        }
+      },
       "ApplyResult": {
         "type": "string",
         "description": "What Apply did with a finding.",
@@ -41059,6 +41435,114 @@
               "null"
             ],
             "description": "Import provenance (`<source>:<id>`), when the playlist was imported."
+          }
+        }
+      },
+      "CssProblem": {
+        "type": "object",
+        "description": "One refused part of a sheet.",
+        "required": [
+          "what",
+          "line"
+        ],
+        "properties": {
+          "line": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The 1-based line it first appears on; 0 for `too_long`.",
+            "minimum": 0
+          },
+          "what": {
+            "type": "string",
+            "description": "What is refused: `backslash`, `import`, `font_face`, `too_long`, or\n`function:<name>` with the name in lower case."
+          }
+        }
+      },
+      "CssRefusal": {
+        "type": "object",
+        "description": "What a refused sheet answers in the error's `details`.",
+        "required": [
+          "problems"
+        ],
+        "properties": {
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CssProblem"
+            },
+            "description": "Each refused part of the sheet, once, in the order the check reads\nthem."
+          }
+        }
+      },
+      "CssSave": {
+        "type": "object",
+        "description": "One kept save of a person's CSS.",
+        "required": [
+          "id",
+          "css",
+          "saved_at"
+        ],
+        "properties": {
+          "css": {
+            "type": "string",
+            "description": "The sheet as saved."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The save's id."
+          },
+          "saved_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was saved, unix milliseconds."
+          }
+        }
+      },
+      "CustomCssSummary": {
+        "type": "object",
+        "description": "What an admin sees of a person's CSS: never the text.",
+        "required": [
+          "has_css",
+          "enabled",
+          "length"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "The person's \"Use my CSS\" switch."
+          },
+          "has_css": {
+            "type": "boolean",
+            "description": "Whether the person has CSS saved."
+          },
+          "length": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The sheet's length in characters, as the limit counts them.",
+            "minimum": 0
+          },
+          "saved_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the text last changed, unix milliseconds."
+          }
+        }
+      },
+      "CustomCssUpdate": {
+        "type": "object",
+        "description": "A change to a person's own CSS. A field left out keeps its value.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "The \"Use my CSS\" switch."
+          },
+          "text": {
+            "type": "string",
+            "description": "The new sheet; an empty one clears it."
           }
         }
       },
@@ -52714,6 +53198,40 @@
           }
         }
       },
+      "MyAppearance": {
+        "type": "object",
+        "description": "Everything the browser needs to paint the caller's pages.",
+        "required": [
+          "custom_css",
+          "site",
+          "stored"
+        ],
+        "properties": {
+          "custom_css": {
+            "$ref": "#/components/schemas/MyCustomCss",
+            "description": "The caller's own CSS."
+          },
+          "site": {
+            "$ref": "#/components/schemas/SiteAppearance",
+            "description": "The site's CSS and whether the caller's own applies."
+          },
+          "stored": {
+            "type": "boolean",
+            "description": "False while the caller has saved nothing to their account."
+          },
+          "theme": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThemeChoice"
+              }
+            ],
+            "description": "The theme the caller chose, or null while they chose none."
+          }
+        }
+      },
       "MyConnectApps": {
         "type": "object",
         "description": "The caller's choices for their music apps.",
@@ -52724,6 +53242,32 @@
           "include_public_playlists": {
             "type": "boolean",
             "description": "Apps list other people's public playlists as well as the caller's."
+          }
+        }
+      },
+      "MyCustomCss": {
+        "type": "object",
+        "description": "A person's own CSS.",
+        "required": [
+          "text",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "The \"Use my CSS\" switch. Off keeps the text but applies none of it."
+          },
+          "saved_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the text last changed, unix milliseconds."
+          },
+          "text": {
+            "type": "string",
+            "description": "The sheet, empty when there is none."
           }
         }
       },
@@ -64505,6 +65049,24 @@
           }
         }
       },
+      "SiteAppearance": {
+        "type": "object",
+        "description": "The site's appearance as every signed-in person reads it.",
+        "required": [
+          "css",
+          "allow_user_css"
+        ],
+        "properties": {
+          "allow_user_css": {
+            "type": "boolean",
+            "description": "Whether people's own CSS applies."
+          },
+          "css": {
+            "type": "string",
+            "description": "CSS loaded under every person's own."
+          }
+        }
+      },
       "SkippedReviews": {
         "type": "object",
         "description": "Reviews one reason held back.",
@@ -65648,6 +66210,16 @@
             "description": "Server version, when known."
           }
         }
+      },
+      "ThemeChoice": {
+        "type": "string",
+        "description": "The theme a person chose.",
+        "enum": [
+          "system",
+          "light",
+          "dark",
+          "midnight"
+        ]
       },
       "TopAlbumsResponse": {
         "type": "object",

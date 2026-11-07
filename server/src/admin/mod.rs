@@ -9,6 +9,7 @@
 
 pub mod backups;
 pub mod cache;
+pub mod custom_css;
 pub mod error;
 pub mod handlers;
 pub mod models;
@@ -19,6 +20,7 @@ pub mod system;
 
 use std::sync::Arc;
 
+use crate::appearance::store::AppearanceStore;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::{BackupService, CheckpointService, Db};
 use droppedneedle_kernel::mount::{Routes, routes};
@@ -70,6 +72,8 @@ pub struct AdminSetup {
     pub precache: crate::bootstrap::jobs::PrecacheTrigger,
     /// Cover and artist image cache, for its stats and clears.
     pub covers: droppedneedle_catalog::artwork::cache::ArtworkCache,
+    /// Each person's appearance, for the custom CSS summary and switch.
+    pub appearance: AppearanceStore,
 }
 
 impl AdminSetup {
@@ -87,6 +91,7 @@ impl AdminSetup {
         covers: droppedneedle_catalog::artwork::cache::ArtworkCache,
     ) -> Self {
         Self {
+            appearance: AppearanceStore::new(db.clone(), users.clock.clone()),
             users,
             quota,
             cache: providers.cache.clone(),
@@ -114,5 +119,7 @@ pub fn routes() -> Routes<AdminSetup> {
         .admin(routes!(handlers::queue_stats))
         .admin(routes!(handlers::provider_stats))
         .admin(routes!(handlers::get_quota, handlers::set_quota))
+        .admin(routes!(handlers::get_user_custom_css))
+        .admin(routes!(handlers::turn_off_user_custom_css))
         .admin(routes!(handlers::run_precache))
 }

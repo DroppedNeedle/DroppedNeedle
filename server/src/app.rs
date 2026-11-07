@@ -202,6 +202,9 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
         .area(crate::settings::wiring::routes(), |state| {
             state.settings.clone()
         })
+        .area(crate::appearance::wiring::routes(), |state| {
+            state.settings.appearance().clone()
+        })
         .area(droppedneedle_plugins::wiring::routes(), |state| {
             state.plugins.clone()
         })

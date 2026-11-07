@@ -61,6 +61,10 @@ const EXTRACTORS: &[(&str, &str, &str)] = &[
 const USER_ROW_READS: &[(&str, &str)] = &[
     ("src/admin/quota.rs", "the quota's target user"),
     (
+        "src/admin/custom_css.rs",
+        "the custom CSS summary's target user",
+    ),
+    (
         "catalog/src/wrapped/listenbrainz.rs",
         "display names for Wrapped",
     ),

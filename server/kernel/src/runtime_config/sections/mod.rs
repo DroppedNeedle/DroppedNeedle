@@ -19,6 +19,7 @@ use super::error::ConfigError;
 
 mod access;
 mod acquisition;
+mod appearance;
 mod library;
 mod listening;
 mod management;
@@ -27,6 +28,7 @@ mod plugins;
 
 pub use access::*;
 pub use acquisition::*;
+pub use appearance::*;
 pub use library::*;
 pub use listening::*;
 pub use management::*;

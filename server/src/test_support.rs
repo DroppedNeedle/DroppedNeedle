@@ -10,6 +10,7 @@ use droppedneedle_kernel::db::statement::StatementFile;
 pub fn statement_files() -> Vec<StatementFile> {
     vec![
         crate::admin::sql::registered(),
+        crate::appearance::sql::registered(),
         crate::bootstrap::sql::registered(),
         crate::settings::sql::registered(),
         crate::upgrade_mode::sql::registered(),

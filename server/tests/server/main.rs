@@ -5,6 +5,7 @@ mod common;
 
 mod admin_backups;
 mod admin_routes;
+mod appearance;
 mod auth_app_connect;
 mod auth_e2e;
 mod auth_federated;

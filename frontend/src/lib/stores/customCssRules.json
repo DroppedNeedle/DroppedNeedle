@@ -1,0 +1,395 @@
+{
+	"allowed_functions": [
+		"var",
+		"env",
+		"calc",
+		"min",
+		"max",
+		"clamp",
+		"round",
+		"mod",
+		"rem",
+		"abs",
+		"sign",
+		"sin",
+		"cos",
+		"tan",
+		"asin",
+		"acos",
+		"atan",
+		"atan2",
+		"rgb",
+		"rgba",
+		"hsl",
+		"hsla",
+		"hwb",
+		"lab",
+		"lch",
+		"oklab",
+		"oklch",
+		"color",
+		"color-mix",
+		"light-dark",
+		"linear-gradient",
+		"radial-gradient",
+		"conic-gradient",
+		"repeating-linear-gradient",
+		"repeating-radial-gradient",
+		"repeating-conic-gradient",
+		"translate",
+		"translatex",
+		"translatey",
+		"translatez",
+		"translate3d",
+		"scale",
+		"scalex",
+		"scaley",
+		"scalez",
+		"scale3d",
+		"rotate",
+		"rotatex",
+		"rotatey",
+		"rotatez",
+		"rotate3d",
+		"skew",
+		"skewx",
+		"skewy",
+		"matrix",
+		"matrix3d",
+		"perspective",
+		"blur",
+		"brightness",
+		"contrast",
+		"drop-shadow",
+		"grayscale",
+		"hue-rotate",
+		"invert",
+		"opacity",
+		"saturate",
+		"sepia",
+		"inset",
+		"circle",
+		"ellipse",
+		"polygon",
+		"cubic-bezier",
+		"steps",
+		"linear",
+		"repeat",
+		"minmax",
+		"fit-content",
+		"counter",
+		"counters",
+		"attr",
+		"is",
+		"where",
+		"not",
+		"has",
+		"nth-child",
+		"nth-last-child",
+		"nth-of-type",
+		"nth-last-of-type",
+		"lang",
+		"dir"
+	],
+	"limits": {
+		"user": 20000,
+		"site": 50000
+	},
+	"cases": [
+		{
+			"css": "",
+			"limit": "user",
+			"problems": []
+		},
+		{
+			"css": ":root { --dn-spec: oklch(70% 0.1 200); }\n.card { transform: translate(1px, 2px) rotate(3deg); width: calc(var(--x) + 2px); }",
+			"limit": "user",
+			"problems": []
+		},
+		{
+			"css": "a { color: RGB(1 2 3); background: Linear-Gradient(red, blue); }",
+			"limit": "user",
+			"problems": []
+		},
+		{
+			"css": "@namespace \"x\";",
+			"limit": "user",
+			"problems": []
+		},
+		{
+			"css": "body { background: url(https://x.test/a.png); }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "function:url",
+					"line": 1
+				}
+			]
+		},
+		{
+			"css": "body { background: URL(https://x.test/a.png); }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "function:url",
+					"line": 1
+				}
+			]
+		},
+		{
+			"css": ":root { --x: u\\72l(https://x.test/b.png); }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "backslash",
+					"line": 1
+				},
+				{
+					"what": "function:72l",
+					"line": 1
+				}
+			]
+		},
+		{
+			"css": "body { background: image-set(\"https://x.test/c.png\" 1x); }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "function:image-set",
+					"line": 1
+				}
+			]
+		},
+		{
+			"css": "body { background: -webkit-image-set(\"https://x.test/c.png\" 1x); }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "function:-webkit-image-set",
+					"line": 1
+				}
+			]
+		},
+		{
+			"css": "a { b: type(x); c: src(x); d: image(x); }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "function:type",
+					"line": 1
+				},
+				{
+					"what": "function:src",
+					"line": 1
+				},
+				{
+					"what": "function:image",
+					"line": 1
+				}
+			]
+		},
+		{
+			"css": "a { b: --fn(x); }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "function:--fn",
+					"line": 1
+				}
+			]
+		},
+		{
+			"css": "@IMPORT \"x.css\";",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "import",
+					"line": 1
+				}
+			]
+		},
+		{
+			"css": "@import\"x.css\";",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "import",
+					"line": 1
+				}
+			]
+		},
+		{
+			"css": "@font-face { font-family: x; }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "font_face",
+					"line": 1
+				}
+			]
+		},
+		{
+			"css": "a { background: url/**/(x); }",
+			"limit": "user",
+			"problems": []
+		},
+		{
+			"css": "a { background: url (x); }",
+			"limit": "user",
+			"problems": []
+		},
+		{
+			"css": "a::after { content: \"url(x)\"; }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "function:url",
+					"line": 1
+				}
+			]
+		},
+		{
+			"css": "/* src(x) */ a { color: red; }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "function:src",
+					"line": 1
+				}
+			]
+		},
+		{
+			"css": "a { b: \u017frc(x); }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "function:rc",
+					"line": 1
+				}
+			]
+		},
+		{
+			"css": "@\u0131mport \"x.css\";",
+			"limit": "user",
+			"problems": []
+		},
+		{
+			"css": "a { color: red; }\r\nb { color: blue; }\r\nc { background: url(x); }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "function:url",
+					"line": 3
+				}
+			]
+		},
+		{
+			"css": "a {}\rb {}\fc { x: src(y); }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "function:src",
+					"line": 3
+				}
+			]
+		},
+		{
+			"css": "a {}\n\rc { x: src(y); }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "function:src",
+					"line": 3
+				}
+			]
+		},
+		{
+			"css": "a { b: url(x); }\nc { d: url(y); }\ne { f: src(z); }",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "function:url",
+					"line": 1
+				},
+				{
+					"what": "function:src",
+					"line": 3
+				}
+			]
+		},
+		{
+			"css": "@font-face {}\n@import \"x\";\na\\b {}",
+			"limit": "user",
+			"problems": [
+				{
+					"what": "backslash",
+					"line": 3
+				},
+				{
+					"what": "import",
+					"line": 2
+				},
+				{
+					"what": "font_face",
+					"line": 1
+				}
+			]
+		},
+		{
+			"css": "a",
+			"repeat": 20000,
+			"limit": "user",
+			"problems": []
+		},
+		{
+			"css": "a",
+			"repeat": 20001,
+			"limit": "user",
+			"problems": [
+				{
+					"what": "too_long",
+					"line": 0
+				}
+			]
+		},
+		{
+			"css": "\ud83d\ude00",
+			"repeat": 10001,
+			"limit": "user",
+			"problems": [
+				{
+					"what": "too_long",
+					"line": 0
+				}
+			]
+		},
+		{
+			"css": "url(",
+			"repeat": 5001,
+			"limit": "user",
+			"problems": [
+				{
+					"what": "too_long",
+					"line": 0
+				}
+			]
+		},
+		{
+			"css": "a",
+			"repeat": 50000,
+			"limit": "site",
+			"problems": []
+		},
+		{
+			"css": "a",
+			"repeat": 50001,
+			"limit": "site",
+			"problems": [
+				{
+					"what": "too_long",
+					"line": 0
+				}
+			]
+		}
+	]
+}

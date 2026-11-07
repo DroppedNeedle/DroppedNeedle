@@ -305,6 +305,7 @@ mod tests {
             "edition_preferences",
             "app_connect",
             "library_import_folder",
+            "appearance",
             // This install's own id.
             "instance_id",
         ];

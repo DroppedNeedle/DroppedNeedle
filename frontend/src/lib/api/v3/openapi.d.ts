@@ -485,6 +485,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/admin/users/{id}/custom-css": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What one user's custom CSS is, never its text. */
+        get: operations["get_user_custom_css"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/admin/users/{id}/custom-css/turn-off": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch one user's custom CSS off, keeping its text so they can see it
+         *     and switch it back on.
+         */
+        post: operations["turn_off_user_custom_css"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/admin/users/{id}/quota": {
         parameters: {
             query?: never;
@@ -5636,6 +5673,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/me/appearance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read your own theme and custom CSS, with the site's CSS. */
+        get: operations["get_my_appearance"];
+        /**
+         * Save your own theme or custom CSS. A field left out keeps its value,
+         *     and a change any part of which is refused saves nothing.
+         */
+        put: operations["put_my_appearance"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/appearance/css-saves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List your last saves of your custom CSS, newest first. */
+        get: operations["list_my_css_saves"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/appearance/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move the theme and CSS this browser kept to your account, once. An
+         *     account that already holds them keeps its own and changes nothing.
+         */
+        post: operations["import_my_appearance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/me/avatar": {
         parameters: {
             query?: never;
@@ -7727,6 +7822,27 @@ export interface paths {
          *     native app sign-in off.
          */
         put: operations["put_app_connect"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/appearance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the site CSS and whether people may add their own. */
+        get: operations["get_site_appearance"];
+        /**
+         * Save the site CSS and whether people may add their own. The site CSS
+         *     passes the same check as a person's, with a longer limit.
+         */
+        put: operations["put_site_appearance"];
         post?: never;
         delete?: never;
         options?: never;
@@ -10532,6 +10648,37 @@ export interface components {
             name: string;
         };
         /**
+         * @description Site-wide appearance. The server's appearance routes check the sheet
+         *     before it is saved; the kernel only holds it.
+         */
+        Appearance: {
+            /**
+             * @description Let people add their own CSS on top of the site's.
+             * @default true
+             */
+            allow_user_css: boolean;
+            /**
+             * @description CSS every signed-in page loads on top of the app's own styles.
+             * @default
+             */
+            site_css: string;
+        };
+        /** @description The answer to the one-time move from the browser. */
+        AppearanceImported: components["schemas"]["MyAppearance"] & {
+            /**
+             * @description True when this call wrote it; false when the account already held
+             *     one and nothing changed.
+             */
+            imported: boolean;
+        };
+        /** @description A change to the caller's appearance. A field left out keeps its value. */
+        AppearanceUpdate: {
+            /** @description The caller's own CSS. */
+            custom_css?: components["schemas"]["CustomCssUpdate"];
+            /** @description The theme to use. */
+            theme?: components["schemas"]["ThemeChoice"];
+        };
+        /**
          * @description What Apply did with a finding.
          * @enum {string}
          */
@@ -12406,6 +12553,66 @@ export interface components {
             name: string;
             /** @description Import provenance (`<source>:<id>`), when the playlist was imported. */
             source_ref?: string | null;
+        };
+        /** @description One refused part of a sheet. */
+        CssProblem: {
+            /**
+             * Format: int32
+             * @description The 1-based line it first appears on; 0 for `too_long`.
+             */
+            line: number;
+            /**
+             * @description What is refused: `backslash`, `import`, `font_face`, `too_long`, or
+             *     `function:<name>` with the name in lower case.
+             */
+            what: string;
+        };
+        /** @description What a refused sheet answers in the error's `details`. */
+        CssRefusal: {
+            /**
+             * @description Each refused part of the sheet, once, in the order the check reads
+             *     them.
+             */
+            problems: components["schemas"]["CssProblem"][];
+        };
+        /** @description One kept save of a person's CSS. */
+        CssSave: {
+            /** @description The sheet as saved. */
+            css: string;
+            /**
+             * Format: int64
+             * @description The save's id.
+             */
+            id: number;
+            /**
+             * Format: int64
+             * @description When it was saved, unix milliseconds.
+             */
+            saved_at: number;
+        };
+        /** @description What an admin sees of a person's CSS: never the text. */
+        CustomCssSummary: {
+            /** @description The person's "Use my CSS" switch. */
+            enabled: boolean;
+            /** @description Whether the person has CSS saved. */
+            has_css: boolean;
+            /**
+             * Format: int64
+             * @description The sheet's length in characters, as the limit counts them.
+             */
+            length: number;
+            /**
+             * Format: int64
+             * @description When the text last changed, unix milliseconds.
+             */
+            saved_at?: number | null;
+        };
+        /** @description A change to a person's own CSS. A field left out keeps its value. */
+        CustomCssUpdate: {
+            /** @description The "Use my CSS" switch. */
+            enabled?: boolean;
+            /** @description The new sheet; an empty one clears it. */
+            text?: string;
         };
         /** @description Seal a custom edition. */
         CustomEditionBody: {
@@ -17666,10 +17873,33 @@ export interface components {
             /** @description Folder name. */
             name: string;
         };
+        /** @description Everything the browser needs to paint the caller's pages. */
+        MyAppearance: {
+            /** @description The caller's own CSS. */
+            custom_css: components["schemas"]["MyCustomCss"];
+            /** @description The site's CSS and whether the caller's own applies. */
+            site: components["schemas"]["SiteAppearance"];
+            /** @description False while the caller has saved nothing to their account. */
+            stored: boolean;
+            /** @description The theme the caller chose, or null while they chose none. */
+            theme?: null | components["schemas"]["ThemeChoice"];
+        };
         /** @description The caller's choices for their music apps. */
         MyConnectApps: {
             /** @description Apps list other people's public playlists as well as the caller's. */
             include_public_playlists: boolean;
+        };
+        /** @description A person's own CSS. */
+        MyCustomCss: {
+            /** @description The "Use my CSS" switch. Off keeps the text but applies none of it. */
+            enabled: boolean;
+            /**
+             * Format: int64
+             * @description When the text last changed, unix milliseconds.
+             */
+            saved_at?: number | null;
+            /** @description The sheet, empty when there is none. */
+            text: string;
         };
         /** @description One naming script. */
         NamingScript: {
@@ -22837,6 +23067,13 @@ export interface components {
             /** @description Services that failed, or are switched off, while the list was built. */
             unavailable_sources: components["schemas"]["ListenSource"][];
         };
+        /** @description The site's appearance as every signed-in person reads it. */
+        SiteAppearance: {
+            /** @description Whether people's own CSS applies. */
+            allow_user_css: boolean;
+            /** @description CSS loaded under every person's own. */
+            css: string;
+        };
         /** @description Reviews one reason held back. */
         SkippedReviews: {
             /** Format: int32 */
@@ -23337,6 +23574,11 @@ export interface components {
             /** @description Server version, when known. */
             version?: string | null;
         };
+        /**
+         * @description The theme a person chose.
+         * @enum {string}
+         */
+        ThemeChoice: "system" | "light" | "dark" | "midnight";
         /** @description `GET /artists/{artist_mbid}/top-albums`. */
         TopAlbumsResponse: {
             /** @description Albums, most played first. */
@@ -25540,6 +25782,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    get_user_custom_css: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Custom CSS summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomCssSummary"];
+                };
+            };
+        };
+    };
+    turn_off_user_custom_css: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Custom CSS summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomCssSummary"];
+                };
             };
         };
     };
@@ -40165,6 +40453,130 @@ export interface operations {
             };
         };
     };
+    get_my_appearance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Own appearance */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyAppearance"];
+                };
+            };
+        };
+    };
+    put_my_appearance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppearanceUpdate"];
+            };
+        };
+        responses: {
+            /** @description Saved appearance */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyAppearance"];
+                };
+            };
+            /** @description The CSS is refused (`CUSTOM_CSS_REFUSED`, its problems in `details`) or too long (`CUSTOM_CSS_TOO_LONG`) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Custom CSS is turned off on this server (`CUSTOM_CSS_TURNED_OFF`) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_my_css_saves: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Own CSS saves, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CssSave"][];
+                };
+            };
+        };
+    };
+    import_my_appearance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppearanceUpdate"];
+            };
+        };
+        responses: {
+            /** @description The appearance as stored, and whether this call wrote it */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppearanceImported"];
+                };
+            };
+            /** @description The CSS is refused (`CUSTOM_CSS_REFUSED`, its problems in `details`) or too long (`CUSTOM_CSS_TOO_LONG`) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Custom CSS is turned off on this server (`CUSTOM_CSS_TURNED_OFF`) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     post_avatar: {
         parameters: {
             query?: never;
@@ -44744,6 +45156,59 @@ export interface operations {
                 };
             };
             /** @description An app's id, name or return address is not allowed, or there are more than eight */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_site_appearance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Site appearance */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Appearance"];
+                };
+            };
+        };
+    };
+    put_site_appearance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Appearance"];
+            };
+        };
+        responses: {
+            /** @description Saved site appearance */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Appearance"];
+                };
+            };
+            /** @description The CSS is refused (`CUSTOM_CSS_REFUSED`, its problems in `details`) or too long (`CUSTOM_CSS_TOO_LONG`) */
             400: {
                 headers: {
                     [name: string]: unknown;
