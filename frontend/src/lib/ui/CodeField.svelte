@@ -96,7 +96,7 @@
 	}
 </script>
 
-<div class="fieldset" role="group" aria-labelledby="{id}-label">
+<div class="fieldset code-field" role="group" aria-labelledby="{id}-label">
 	<div class="flex flex-wrap items-baseline justify-between gap-x-3">
 		<!-- The editor sits in its own shadow root, so a click on the name focuses it by hand. -->
 		<button
@@ -138,7 +138,12 @@
 </div>
 
 <style>
+	.code-field {
+		min-width: 0;
+		grid-template-columns: minmax(0, 1fr);
+	}
 	.code-host {
+		min-width: 0;
 		min-height: 16rem;
 	}
 	.fieldset-legend {

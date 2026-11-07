@@ -183,6 +183,7 @@ export function createCodeEditor(options: CodeEditorOptions): CodeEditor {
 			doc: options.text,
 			extensions: [
 				lineNumbers(),
+				EditorView.lineWrapping,
 				highlightActiveLineGutter(),
 				highlightActiveLine(),
 				drawSelection(),

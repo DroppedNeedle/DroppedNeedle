@@ -1,6 +1,6 @@
 {
 	"part_selector": "[data-part=\"{name}\"]",
-	"placeholder": "[data-part=\"card\"] { border-radius: 0; }",
+	"placeholder": "/* For example: [data-part=\"card\"] { border-radius: 0; } */",
 	"snippets": [
 		{
 			"id": "square-corners",
