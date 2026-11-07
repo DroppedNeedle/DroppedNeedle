@@ -67,6 +67,7 @@
 		"@codemirror/state": "^6.7.6",
 		"@codemirror/view": "^6.43.15",
 		"@lezer/highlight": "^1.2.5",
+		"@noble/hashes": "^2.4.0",
 		"@tanstack/svelte-query": "^6.1.48",
 		"@tanstack/svelte-query-devtools": "^6.1.48",
 		"@tanstack/svelte-query-persist-client": "^6.1.48",
