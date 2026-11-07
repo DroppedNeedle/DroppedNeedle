@@ -1,0 +1,118 @@
+/* The custom CSS editor's layout and its rail lists. Once the section is wide
+   enough, the switches and the file buttons share the top row and the rail
+   stands beside the editor. Narrower, as on a phone, the pieces stack, the
+   file buttons after the rail, the save bar stays in view at the foot, and
+   the buttons are 44px tall. */
+
+.css-root {
+	container-type: inline-size;
+}
+.css-layout {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	grid-template-areas:
+		'switches'
+		'editor'
+		'rail'
+		'files'
+		'footer';
+	gap: 1rem;
+	margin-top: 0.75rem;
+}
+.css-switches {
+	grid-area: switches;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem 1.5rem;
+}
+.css-switch {
+	display: flex;
+	align-items: center;
+	min-height: 2.75rem;
+	min-width: 10rem;
+}
+.css-files {
+	grid-area: files;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem;
+}
+.css-editor {
+	grid-area: editor;
+	min-width: 0;
+}
+.css-rail {
+	grid-area: rail;
+	min-width: 0;
+}
+.css-rail-panel {
+	padding-top: 0.75rem;
+}
+.css-footer {
+	grid-area: footer;
+	position: sticky;
+	bottom: 0.75rem;
+	z-index: 2;
+	padding: 0.625rem 0.75rem;
+	border: 1px solid var(--dn-line);
+	border-radius: 0.625rem;
+	background-color: color-mix(in oklab, var(--color-base-200) 94%, transparent);
+	backdrop-filter: blur(6px);
+}
+.css-footer:has(.dn-savebar[data-dirty]) {
+	border-color: var(--dn-action-edge);
+}
+
+.css-rail-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.125rem;
+	max-height: 26rem;
+	overflow-y: auto;
+}
+.css-history-row {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 0.375rem 0.5rem;
+}
+.css-history-row + .css-history-row {
+	border-top: 1px solid var(--dn-line);
+}
+.css-swatch {
+	flex: none;
+	width: 1rem;
+	height: 1rem;
+	border: 1px solid var(--dn-edge);
+	border-radius: 0.25rem;
+}
+.css-swatch--none {
+	border-style: dashed;
+}
+
+@container (max-width: 43.99rem) {
+	.css-rail-list .btn,
+	.css-files .btn,
+	.css-footer .btn,
+	.css-rail [role='tab'] {
+		min-height: 2.75rem;
+	}
+}
+
+@container (min-width: 44rem) {
+	.css-layout {
+		grid-template-columns: minmax(0, 1fr) 18rem;
+		grid-template-areas:
+			'switches files'
+			'editor rail'
+			'footer footer';
+		align-items: start;
+	}
+	.css-files {
+		justify-content: flex-end;
+	}
+	.css-footer {
+		position: static;
+	}
+}

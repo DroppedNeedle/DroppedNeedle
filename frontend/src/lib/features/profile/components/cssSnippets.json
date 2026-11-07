@@ -1,0 +1,26 @@
+{
+	"part_selector": "[data-part=\"{name}\"]",
+	"placeholder": "[data-part=\"card\"] { border-radius: 0; }",
+	"snippets": [
+		{
+			"id": "square-corners",
+			"label": "Square corners",
+			"css": "/* Square corners */\n[data-part=\"card\"],\n[data-part=\"button\"],\n[data-part=\"modal\"],\n[data-part=\"media-tile-art\"] {\n  border-radius: 0;\n}\n"
+		},
+		{
+			"id": "compact-lists",
+			"label": "Compact lists",
+			"css": "/* Compact lists */\n[data-part=\"card\"] {\n  padding: 0.75rem;\n}\n[data-part=\"section-head\"] {\n  margin-bottom: 0.5rem;\n}\n[data-part=\"media-tile-title\"] {\n  font-size: 0.8125rem;\n  line-height: 1.2;\n}\n"
+		},
+		{
+			"id": "larger-text",
+			"label": "Larger text",
+			"css": "/* Larger text */\nhtml {\n  font-size: 112.5%;\n}\n"
+		},
+		{
+			"id": "no-decorations",
+			"label": "No decorations",
+			"css": "/* No decorations: the dot frame and halftone prints */\n:root,\n[data-theme] {\n  --dn-frit-opacity: 0;\n}\n"
+		}
+	]
+}

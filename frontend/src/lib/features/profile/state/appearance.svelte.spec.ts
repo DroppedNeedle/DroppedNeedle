@@ -9,6 +9,7 @@ import { page } from 'vitest/browser';
 import type { components } from '$lib/api/v3/openapi';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
+import { MAX_CUSTOM_CSS } from '$lib/stores/customCss.svelte';
 import { themeStore } from '$lib/stores/theme.svelte';
 import AppearanceTestHarness from './AppearanceTestHarness.svelte';
 import { apiError, fakeApi, type FakeApi } from '$lib/test/api';
@@ -87,9 +88,13 @@ async function mount(): Promise<void> {
 	await renderWithQuery(AppearanceTestHarness, {}, { client: queryClient });
 }
 
+function editor() {
+	return page.getByRole('textbox', { name: 'CSS rules' });
+}
+
 async function save(css: string): Promise<void> {
-	await page.getByLabelText('CSS rules').fill(css);
-	await page.getByRole('button', { name: 'Save' }).click();
+	await editor().fill(css);
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
 }
 
 beforeEach(() => {
@@ -108,7 +113,6 @@ describe('account appearance', () => {
 	it("applies one user's sheet and takes it off at sign-out", async () => {
 		signIn('user-a');
 		await mount();
-		await page.getByText('Custom CSS').click();
 
 		await save(':root { --dn-spec-a: 1px; }');
 		await expect.poll(() => token('--dn-spec-a')).toBe('1px');
@@ -126,7 +130,7 @@ describe('account appearance', () => {
 		expect(token('--dn-spec-a')).toBe('');
 
 		signIn('user-b');
-		await expect.element(page.getByLabelText('CSS rules')).toHaveValue('');
+		await expect.element(page.getByText(`0 / ${MAX_CUSTOM_CSS.toLocaleString()}`)).toBeVisible();
 		expect(token('--dn-spec-a')).toBe('');
 
 		signIn('user-a');
@@ -136,12 +140,14 @@ describe('account appearance', () => {
 	it('refuses a sheet that could fetch and applies none of it', async () => {
 		signIn('user-a');
 		await mount();
-		await page.getByText('Custom CSS').click();
 
-		await save(':root { --dn-spec-b: 1px; } body { background: url(https://x.test/a.png); }');
+		await editor().fill(
+			':root { --dn-spec-b: 1px; } body { background: url(https://x.test/a.png); }'
+		);
 		await expect.element(page.getByText('Not allowed: url().')).toBeVisible();
-		await save(':root { --dn-spec-b: 1px; --x: u\\72l(https://x.test/b.png); }');
+		await editor().fill(':root { --dn-spec-b: 1px; --x: u\\72l(https://x.test/b.png); }');
 		await expect.element(page.getByText(/Not allowed: backslashes/)).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
 		expect(token('--dn-spec-b')).toBe('');
 		expect(api.calls('PUT /api/v3/me/appearance')).toEqual([]);
 	});
@@ -154,7 +160,6 @@ describe('account appearance', () => {
 		});
 		signIn('user-c');
 		await mount();
-		await page.getByText('Custom CSS').click();
 
 		await expect.element(page.getByText('Not allowed: image-set().')).toBeVisible();
 		expect(token('--dn-spec-c')).toBe('');
