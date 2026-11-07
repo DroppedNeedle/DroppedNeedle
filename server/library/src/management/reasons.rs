@@ -79,7 +79,7 @@ pub fn unconfirmed_match() -> ItemReason {
     ItemReason::new(
         "UNCONFIRMED_MATCH",
         "This album's edition is a best guess nobody has confirmed yet, so its files are left alone.",
-        "Confirm the match on the album page, or turn on \"Also manage unconfirmed matches\" in Settings > Edition preferences.",
+        "Confirm the match on the album page, or turn on \"Also manage unconfirmed matches\" in Settings > Editions.",
     )
 }
 
@@ -186,7 +186,7 @@ pub fn script_failed(script_name: &str, fault: &str) -> ItemReason {
     ItemReason::new(
         "SCRIPT_VALIDATION_FAILED",
         format!("The script \"{script_name}\" could not handle this file: {fault}"),
-        "Fix the script in Settings > Library Management, then make a new preview.",
+        "Fix the script in its profile, on the Automation tab of Library Management, then make a new preview.",
     )
 }
 

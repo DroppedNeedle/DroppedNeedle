@@ -598,7 +598,9 @@ describe('making your copy the chosen edition', () => {
 		await sheet().getByRole('button', { name: 'Use this edition' }).click();
 
 		await expect.element(sheet().getByText(/so this edition waits/)).toBeVisible();
-		await expect.element(sheet().getByRole('link', { name: 'Download settings' })).toBeVisible();
+		await expect
+			.element(sheet().getByText('Ask an admin to set up a download source.'))
+			.toBeVisible();
 		expect(h.acquire).toHaveBeenCalledWith(expect.objectContaining({ replaceVersions: true }));
 	});
 

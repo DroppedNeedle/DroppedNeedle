@@ -35,8 +35,9 @@
 
 	let { active, oncount }: Props = $props();
 
+	// All three load on every admin visit, not only on this tab, so its count is live.
 	// Artist auto-download standing approvals.
-	const autoApprovalsQuery = getAutoDownloadApprovalsQuery(() => authStore.isAdmin && active);
+	const autoApprovalsQuery = getAutoDownloadApprovalsQuery(() => authStore.isAdmin);
 	const autoApprovals = $derived(autoApprovalsQuery.data?.items ?? []);
 	const approveAuto = createApproveAutoDownloadMutation();
 	const grantedAuto = $derived(autoApprovalsQuery.data?.granted ?? []);
@@ -44,15 +45,13 @@
 	const revokeAuto = createRevokeAutoDownloadMutation();
 
 	// Bulk "Lidarr Import" approval batches.
-	const batchApprovalsQuery = getAutoDownloadApprovalBatchesQuery(
-		() => authStore.isAdmin && active
-	);
+	const batchApprovalsQuery = getAutoDownloadApprovalBatchesQuery(() => authStore.isAdmin);
 	const batchApprovals = $derived(batchApprovalsQuery.data?.batches ?? []);
 	const approveBatch = createApproveAutoDownloadBatchMutation();
 	const rejectBatch = createRejectAutoDownloadBatchMutation();
 
 	// Weekly Mix auto-request standing approvals.
-	const mixApprovalsQuery = getPersonalMixApprovalsQuery(() => authStore.isAdmin && active);
+	const mixApprovalsQuery = getPersonalMixApprovalsQuery(() => authStore.isAdmin);
 	const mixApprovals = $derived(mixApprovalsQuery.data?.items ?? []);
 	const approveMix = createApprovePersonalMixMutation();
 	const grantedMix = $derived(mixApprovalsQuery.data?.granted ?? []);

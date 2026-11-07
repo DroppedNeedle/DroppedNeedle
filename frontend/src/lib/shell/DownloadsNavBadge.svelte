@@ -10,6 +10,8 @@
 
 	const query = getDownloadActivitySummaryQuery();
 	const count = $derived(query.data?.active_count ?? 0);
+	// Shown only while nothing is active: one number, one badge.
+	const held = $derived(query.data?.held_count ?? 0);
 
 	const observed = createDownloadActivityObservation();
 
@@ -28,5 +30,12 @@
 		aria-label="{count} active downloads"
 	>
 		{count}
+	</span>
+{:else if held > 0}
+	<span
+		class="absolute -top-1.5 -right-2 badge badge-warning badge-xs h-4 min-w-4 px-1"
+		aria-label="{held} held for you to check"
+	>
+		{held}
 	</span>
 {/if}

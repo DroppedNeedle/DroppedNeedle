@@ -139,7 +139,7 @@ pub fn skip_reason(code: &str) -> ItemReason {
         "ACTIVATION_STALE" => reason(
             code,
             "The library folder's dry run is out of date, so automatic management is paused for it.",
-            "Run and confirm a new dry run in Settings > Library Management.",
+            "Run and confirm a new dry run on the Automation tab of Library Management.",
         ),
         "RESTORED" => reason(
             code,
@@ -171,7 +171,7 @@ pub fn skip_reason(code: &str) -> ItemReason {
         "CUSTOM_EDITION" => reason(
             code,
             "This album is a custom edition, and the library folder does not manage custom editions automatically.",
-            "Turn on \"Custom editions\" for the folder in Settings > Library Management, or manage the album with a preview by hand.",
+            "Turn on \"Include Custom editions\" for the folder on the Automation tab of Library Management, or manage the album with a preview by hand.",
         ),
         "METADATA_UNAVAILABLE" => reason(
             code,

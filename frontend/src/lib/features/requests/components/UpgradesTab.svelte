@@ -75,8 +75,12 @@
 			<RequestSkeleton count={3} />
 		{:else if !cutoffUnmetQuery.data?.upgrade_allowed}
 			<RequestsEmpty icon={TrendingUp} tone="muted" title="Upgrades are off">
-				Turn on "Allow automatic upgrades" in Settings → Download Clients to list albums below your
-				quality cutoff.
+				{#if authStore.isAdmin}
+					Turn on "Allow automatic upgrades" in Settings > Download Client to list albums below your
+					quality cutoff.
+				{:else}
+					Ask an admin to turn on automatic upgrades.
+				{/if}
 				{#snippet action()}
 					{#if authStore.isAdmin}
 						<Button

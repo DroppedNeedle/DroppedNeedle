@@ -4,6 +4,7 @@
 	import { browser } from '$app/environment';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import { setQueueMutationToastsSuppressed } from '$lib/features/player/state/playerUtils';
 	import { deckFocus } from '$lib/features/player/state/deckFocus.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -501,10 +502,14 @@
 				<div>
 					<p class="font-semibold">No local music yet</p>
 					<p class="text-sm text-muted">
-						Add a music folder in <a
-							href={withBasePath('/settings?tab=library')}
-							class="link link-accent">Settings &rarr; Library</a
-						>, then run a scan.
+						{#if authStore.isAdmin}
+							Add a music folder in <a
+								href={withBasePath('/settings?tab=library')}
+								class="link link-accent">Settings &rarr; Library</a
+							>, then run a scan.
+						{:else}
+							Ask an admin to add a music folder.
+						{/if}
 					</p>
 				</div>
 			</div>

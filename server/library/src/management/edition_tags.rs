@@ -42,7 +42,7 @@ const fn refusal(code: &'static str, message: &'static str, action: &'static str
 pub const SETTINGS_UNREADABLE: Reason = refusal(
     "LIBRARY_MANAGEMENT_UNREADABLE",
     "The Library Management settings could not be read.",
-    "Open Settings > Library Management and save them again.",
+    "Open the Automation tab of Library Management and save them again.",
 );
 pub const NO_EDITION: Reason = refusal(
     "EDITION_TAGS_NO_EDITION",
@@ -92,7 +92,7 @@ pub const NO_FILES: Reason = refusal(
 pub const NO_TAGS: Reason = refusal(
     "PROFILE_WRITES_NO_TAGS",
     "This folder's Library Management profile writes no tags.",
-    "Turn tags on for it in Settings > Library Management.",
+    "Turn tags on in its profile, on the Automation tab of Library Management.",
 );
 
 /// A tag write as the edition sheet reads it.

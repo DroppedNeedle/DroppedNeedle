@@ -125,7 +125,7 @@
 						variant="primary"
 						size="display-sm"
 						icon={Settings}
-						href={withBasePath('/settings')}
+						href={withBasePath('/settings?tab=events')}
 					>
 						Open Settings
 					</Button>

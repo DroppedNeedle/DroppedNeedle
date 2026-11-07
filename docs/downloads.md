@@ -67,7 +67,7 @@ Every value, function and path rule is in [Naming and tagging scripts](library-m
 
 ## Held files
 
-Every file that waits for your decision, whether a download, an upload or the [import folder](#import-folder) brought it, is in one list on the Downloads page, and on its album's page. One download or one upload is one entry with its files: an album held from two sources is still one entry. Each file says why it was held and what to do, and each entry says how long it is kept ("Kept until 23 Jan"). Files left in the import folder are kept until you decide ("Stays until you decide").
+Every file that waits for your decision, whether a download, an upload or the [import folder](#import-folder) brought it, is in one list on the Downloads page, and on its album's page. One download or one upload is one entry with its files: an album held from two sources is still one entry. Each file says why it was held and what to do, and each entry says how long it is kept ("Kept until 23 Jan"). Files left in the import folder are kept until you decide ("Stays until you decide"). While nothing is downloading, the Downloads badge in the sidebar shows how many entries wait for you, in amber.
 
 Every entry offers the same actions:
 

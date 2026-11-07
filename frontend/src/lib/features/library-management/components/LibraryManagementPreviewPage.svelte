@@ -406,7 +406,7 @@
 								class="mt-3"
 								icon={ArrowRight}
 								iconPosition="end"
-								href={withBasePath('/library/management?tab=organize')}
+								href={withBasePath('/library/management?tab=organize#identity-readiness')}
 								>Open identity readiness</Button
 							>
 						{/if}
@@ -428,7 +428,7 @@
 							class="mt-3"
 							icon={ArrowRight}
 							iconPosition="end"
-							href={withBasePath('/library/management?tab=organize')}
+							href={withBasePath('/library/management?tab=organize#identity-readiness')}
 							>Open identity readiness</Button
 						>
 					</div>

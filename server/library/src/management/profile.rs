@@ -126,7 +126,7 @@ pub fn pin_assignment(
             droppedneedle_kernel::runtime_config::settings_error::SettingsError::InvalidInput {
                 message,
             } => ManagementError::Invalid(format!(
-                "{message} Edit the profile in Settings > Library Management."
+                "{message} Edit the profile on the Automation tab of Library Management."
             )),
             other => ManagementError::Store(format!("{other:?}")),
         };
@@ -143,7 +143,7 @@ pub fn pin_assignment(
             .ok_or_else(|| {
                 ManagementError::Invalid(format!(
                     "The profile uses a tagging script that no longer exists ({script_id}); \
-                     edit the profile in Settings > Library Management."
+                     edit the profile on the Automation tab of Library Management."
                 ))
             })?;
         tagging_scripts.push(script.clone());

@@ -177,7 +177,12 @@
 		<HistoryTab active={activeTab === 'history'} oncount={(n) => (counts.history = n)} />
 		<WantedTab active={activeTab === 'wanted'} oncount={(n) => (counts.wanted = n)} />
 		{#if authStore.isAdmin}
-			<ApprovalsTab active={activeTab === 'approvals'} oncount={(n) => (counts.approvals = n)} />
+			<ApprovalsTab
+				active={activeTab === 'approvals'}
+				oncount={(n) => (counts.approvals = n)}
+				autoCount={counts.auto}
+				onopenauto={() => switchTab('auto-download')}
+			/>
 			<AutoDownloadTab active={activeTab === 'auto-download'} oncount={(n) => (counts.auto = n)} />
 		{/if}
 		{#if authStore.isTrusted}

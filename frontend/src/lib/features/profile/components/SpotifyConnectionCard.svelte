@@ -6,6 +6,7 @@
 		createConnectSpotifyMutation,
 		createDisconnectMutation
 	} from '$lib/features/profile/queries/ConnectionsMutations.svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	const connectionsQuery = getConnectionsQuery();
@@ -23,7 +24,9 @@
 		try {
 			await connectMutation.mutateAsync();
 		} catch {
-			error = 'Could not start Spotify sign-in. Check that Spotify is configured in Settings.';
+			error = authStore.isAdmin
+				? 'Could not start Spotify sign-in. Check that Spotify is set up in Settings > Spotify.'
+				: 'Could not start Spotify sign-in. Ask an admin to set up Spotify.';
 		}
 	}
 

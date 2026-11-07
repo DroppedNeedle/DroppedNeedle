@@ -124,7 +124,11 @@
 </script>
 
 {#snippet settingsLink()}
-	<a class="link" href={withBasePath('/settings?tab=download-client')}>Download settings</a>
+	{#if authStore.isAdmin}
+		<a class="link" href={withBasePath('/settings?tab=download-client')}>Download settings</a>
+	{:else}
+		Ask an admin to set up a download source.
+	{/if}
 {/snippet}
 
 <div class="flex w-full flex-col items-start gap-2 text-sm">

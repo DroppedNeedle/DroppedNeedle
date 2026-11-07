@@ -19,9 +19,12 @@
 	interface Props {
 		active: boolean;
 		oncount?: (count: number) => void;
+		/** What waits on the Auto-downloads tab, named when this tab is empty. */
+		autoCount?: number;
+		onopenauto?: () => void;
 	}
 
-	let { active, oncount }: Props = $props();
+	let { active, oncount, autoCount = 0, onopenauto }: Props = $props();
 
 	// Fetched on every admin visit, not only on this tab, so its badge is live.
 	const approvalsQuery = getApprovalsQuery(() => authStore.isAdmin);
@@ -60,8 +63,23 @@
 		{#if approvalLoading && approvalItems.length === 0}
 			<RequestSkeleton count={3} buttons={2} />
 		{:else if approvalItems.length === 0}
-			<RequestsEmpty icon={ShieldCheck} tone="success" title="No pending approvals">
-				Requests from regular users will appear here for your review.
+			<RequestsEmpty
+				icon={ShieldCheck}
+				tone="success"
+				title={autoCount > 0 ? 'No pending requests' : 'No pending approvals'}
+			>
+				{#if autoCount > 0}
+					{autoCount} {autoCount === 1 ? 'waits' : 'wait'} in Auto-downloads.
+				{:else}
+					Requests from regular users will appear here for your review.
+				{/if}
+				{#snippet action()}
+					{#if autoCount > 0 && onopenauto}
+						<Button variant="primary" size="display-sm" class="mt-5" onclick={onopenauto}>
+							Open Auto-downloads
+						</Button>
+					{/if}
+				{/snippet}
 			</RequestsEmpty>
 		{:else}
 			<div class="flex flex-col gap-4">

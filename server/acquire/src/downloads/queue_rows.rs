@@ -535,8 +535,8 @@ impl DownloadStore<'_> {
     }
 
     /// The viewer's activity summary: the revision the triggers keep (global
-    /// for admins, per user otherwise), live, held and failed counts, and the
-    /// 20 albums that landed most recently.
+    /// for admins, per user otherwise), live and failed counts, the held count
+    /// the Downloads page lists, and the 20 albums that landed most recently.
     pub fn activity_summary(&self, viewer: &Viewer) -> Result<ActivitySummary, StoreError> {
         let owner = viewer.owner_filter();
         let revision: Option<i64> = if viewer.admin {
@@ -555,7 +555,10 @@ impl DownloadStore<'_> {
                 .query_row(sql::ACTIVITY_COUNTS.text(), params![owner], |row| {
                     Ok((row.get(0)?, row.get(1)?))
                 })?;
-        let held_count = HeldRows::new(self.conn).count_open(owner, viewer.admin)?;
+        // What the Downloads page lists: the viewer's own, plus the import
+        // folder's owner-less entries for an admin.
+        let held_count =
+            HeldRows::new(self.conn).count_open(Some(viewer.user_id.as_str()), viewer.admin)?;
         let mut stmt = self.conn.prepare_cached(sql::LANDED_ALBUMS.text())?;
         let landed = stmt
             .query_map(params![owner], |row| row.get::<_, String>(0))?

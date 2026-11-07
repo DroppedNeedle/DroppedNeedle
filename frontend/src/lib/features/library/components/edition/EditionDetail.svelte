@@ -16,6 +16,7 @@
 	import Card from '$lib/ui/Card.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import type { EditionPlan } from '$lib/features/library/queries/EditionQueries.svelte';
 	import EditionCompare from './EditionCompare.svelte';
@@ -262,9 +263,13 @@
 						{#if !sourceReady}
 							<p class="text-sm text-muted">
 								{NO_SOURCE_SENTENCE}
-								<a class="link" href={withBasePath('/settings?tab=download-client')}
-									>Download settings</a
-								>
+								{#if authStore.isAdmin}
+									<a class="link" href={withBasePath('/settings?tab=download-client')}
+										>Download settings</a
+									>
+								{:else}
+									Ask an admin to set up a download source.
+								{/if}
 							</p>
 						{/if}
 					{/if}
