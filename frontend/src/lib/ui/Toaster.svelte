@@ -52,8 +52,10 @@
 					variant="outline"
 					size="xs"
 					onclick={() => {
+						// Taken before hiding: hiding empties the toast `action` reads from.
+						const { run } = action;
 						toastStore.hide();
-						void action.run();
+						void run();
 					}}>{action.label}</Button
 				>
 			{/if}
