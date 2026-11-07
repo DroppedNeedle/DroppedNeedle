@@ -161,6 +161,8 @@ function createCustomCssStore() {
 	let siteCss = $state('');
 	let allowUserCss = $state(true);
 	let disabled = $state(hatchAtLoad());
+	let draft = $state<string | null>(null);
+	let previewing = $state(false);
 	let siteSheet: CSSStyleSheet | null = null;
 	let ownSheet: CSSStyleSheet | null = null;
 
@@ -189,7 +191,8 @@ function createCustomCssStore() {
 		const on = !disabled && owner !== null;
 		const previous = [siteSheet, ownSheet];
 		siteSheet = on ? sheetFor(siteSheet, siteCss, 'site') : null;
-		ownSheet = on && enabled && allowUserCss ? sheetFor(ownSheet, css, 'user') : null;
+		ownSheet = on && enabled && allowUserCss ? sheetFor(ownSheet, draft ?? css, 'user') : null;
+		previewing = draft !== null && ownSheet !== null;
 		place(previous);
 	}
 
@@ -214,9 +217,14 @@ function createCustomCssStore() {
 		get disabled() {
 			return disabled;
 		},
+		/** True while an unsaved draft is applied in place of the saved sheet. */
+		get previewing() {
+			return previewing;
+		},
 
 		/** Apply `userId`'s appearance. A sheet the check refuses is not applied. */
 		showFor(userId: string, appearance: MyAppearance): void {
+			if (userId !== owner) draft = null;
 			owner = userId;
 			css = appearance.custom_css.text;
 			enabled = appearance.custom_css.enabled;
@@ -227,11 +235,23 @@ function createCustomCssStore() {
 
 		/** Take both sheets off the page. */
 		hide(): void {
+			draft = null;
 			owner = null;
 			css = '';
 			enabled = true;
 			siteCss = '';
 			allowUserCss = true;
+			apply();
+		},
+
+		/**
+		 * Apply `text` as the loaded user's sheet in place of the saved one,
+		 * under the same check and switches; null puts the saved one back. A
+		 * sign-out or a change of user drops the draft.
+		 */
+		preview(text: string | null): void {
+			if (text !== null && !owner) return;
+			draft = text;
 			apply();
 		},
 
