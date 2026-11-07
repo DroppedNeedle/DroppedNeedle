@@ -17,6 +17,7 @@ Everything DroppedNeedle does, one row each, with links to the page that covers 
 | Playlists | Mix Jellyfin, Navidrome, Plex, local, YouTube, and Spotify imports in one place, share read-only with one toggle |
 | YouTube links | Find an album or its tracks on YouTube from the album page and play them there. Paste your own links on the YouTube library page. Each search spends one unit of the daily quota set under Settings > YouTube; a saved link never searches again |
 | Library Management | Optional MusicBrainz Picard-style tags, artwork, and organization behind an admin preview with dry run and typed confirmation. A file whose tags a write could not keep whole, such as one holding a frame twice, is refused with the reason. Off until you enable it. See [Library Management](library-management.md) |
+| Appearance | Dark, Light, Midnight or System themes and your own CSS in a code editor with live preview, undo and history, kept on your account. Admins can add site CSS for everyone. See [Custom CSS](custom-css.md) |
 | Plugins | Add download sources, scrobble targets, purchase links and more from a GitHub repository, pinned to an exact commit. See [PLUGINS.md](../PLUGINS.md) |
 
 ## What plugs in
