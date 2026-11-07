@@ -1,29 +1,21 @@
-// The site's CSS and a person's own, kept on their account and applied in
-// the signed-in shell as two constructed stylesheets, the site's first. The
+// The site's CSS and a person's own, applied in the signed-in shell as two
+// constructed stylesheets, the site's first. What they hold comes from the
+// account (`features/profile/state/appearance.svelte.ts`). The
 // policy's `img-src` allows any host and does not govern a constructed
 // sheet, so the check below is what keeps this CSS from fetching. The
 // server runs the same check on every save and is the one that counts; this
 // copy runs before every apply and gives quick feedback while typing. Both
 // read `customCssRules.json` and pass its cases.
 import { browser } from '$app/environment';
-import { untrack } from 'svelte';
 import { SvelteURL } from 'svelte/reactivity';
 import { ApiError } from '$lib/api/errors';
-import {
-	createImportAppearanceMutation,
-	getMyAppearanceQuery,
-	takeFetchedAppearance,
-	type AppearanceUpdate,
-	type CssProblem,
-	type MyAppearance,
-	type ThemeChoice
-} from '$lib/features/profile/queries/appearance.svelte';
-import { AppearanceQueryKeyFactory } from '$lib/queries/featureKeys';
-import { queryClient } from '$lib/queries/QueryClient';
+import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
 import rules from '$lib/stores/customCssRules.json';
-import { THEME_STORAGE_KEY, themeStore } from '$lib/stores/theme.svelte';
 import { registerUserSessionReset } from '$lib/utils/userSessionCleanup';
+
+type CssProblem = components['schemas']['CssProblem'];
+type MyAppearance = components['schemas']['MyAppearance'];
 
 /** Whose sheet is checked, which sets its length limit. */
 export type CssLimit = keyof typeof rules.limits;
@@ -32,11 +24,6 @@ export const MAX_CUSTOM_CSS = rules.limits.user;
 export const MAX_SITE_CSS = rules.limits.site;
 
 const ALLOWED_FUNCTIONS: ReadonlySet<string> = new Set(rules.allowed_functions);
-
-// The key the browser-only version kept a person's CSS under, read once to
-// move it to their account.
-const OLD_KEY_PREFIX = 'droppedneedle_custom_css:';
-const THEMES: readonly ThemeChoice[] = ['system', 'light', 'dark', 'midnight'];
 
 /** A name character the check reads before a `(`: ASCII only, as the server reads it. */
 function isNameUnit(unit: number): boolean {
@@ -270,99 +257,3 @@ export const customCssStore = createCustomCssStore();
 registerUserSessionReset(() => {
 	if (customCssStore.owner !== authStore.user?.id) customCssStore.hide();
 });
-
-function readOldCss(userId: string): string {
-	try {
-		return localStorage.getItem(`${OLD_KEY_PREFIX}${userId}`) ?? '';
-	} catch {
-		return '';
-	}
-}
-
-function removeOldCss(userId: string): void {
-	try {
-		localStorage.removeItem(`${OLD_KEY_PREFIX}${userId}`);
-	} catch {
-		// Storage refused: the account holds the sheet, so a leftover copy is harmless.
-	}
-}
-
-function readLocalTheme(): ThemeChoice | null {
-	try {
-		const raw = localStorage.getItem(THEME_STORAGE_KEY);
-		return THEMES.find((theme) => theme === raw) ?? null;
-	} catch {
-		return null;
-	}
-}
-
-function isRefusal(error: unknown): boolean {
-	return error instanceof ApiError && (error.status === 400 || error.status === 403);
-}
-
-/**
- * The account and this browser's theme follow the signed-in user, and the
- * site's and their own CSS apply. The first time an account answers with
- * nothing stored, the theme and CSS this browser kept move up to it. Call
- * once from the signed-in shell's script.
- */
-export function applyAppearance(): void {
-	const query = getMyAppearanceQuery();
-	const importer = createImportAppearanceMutation();
-	const mountedAt = Date.now();
-	// The users this page already tried to move, so a refusal is not retried on every answer.
-	const moveTried: string[] = [];
-
-	async function moveFromBrowser(userId: string): Promise<void> {
-		const theme = readLocalTheme();
-		const text = readOldCss(userId);
-		if (!theme && !text.trim()) return;
-		const update: AppearanceUpdate = {};
-		if (theme) update.theme = theme;
-		if (text.trim()) update.custom_css = { text };
-		try {
-			await importer.mutateAsync(update);
-			removeOldCss(userId);
-		} catch (error) {
-			// A refused sheet stays in this browser; the theme still moves on its own.
-			if (!isRefusal(error) || !theme || !update.custom_css) return;
-			await importer.mutateAsync({ theme }).catch(() => undefined);
-		}
-	}
-
-	$effect(() => {
-		const userId = authStore.user?.id;
-		if (!userId) return;
-		// A real change of user takes the last one's sheets off.
-		return () => customCssStore.hide();
-	});
-
-	$effect(() => {
-		const userId = authStore.user?.id;
-		// Read for their changes only: the answer is read below by the user's
-		// own key, so a moment where the query still holds the last user's
-		// answer never applies it.
-		void query.data;
-		void query.dataUpdatedAt;
-		if (!userId) return;
-		untrack(() => {
-			const appearance = queryClient.getQueryData<MyAppearance>(
-				AppearanceQueryKeyFactory.mine(userId)
-			);
-			if (!appearance) return;
-			customCssStore.showFor(userId, appearance);
-			if (appearance.theme) themeStore.set(appearance.theme);
-			const fetched = takeFetchedAppearance();
-			if (
-				fetched &&
-				fetched.userId === userId &&
-				fetched.fetchedAt >= mountedAt &&
-				!fetched.answer.stored &&
-				!moveTried.includes(userId)
-			) {
-				moveTried.push(userId);
-				void moveFromBrowser(userId);
-			}
-		});
-	});
-}

@@ -4,7 +4,7 @@
 	import { beforeNavigate, afterNavigate } from '$app/navigation';
 	import { withoutBasePath } from '$lib/utils/basePath';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { applyAppearance } from '$lib/stores/customCss.svelte';
+	import { applyAppearance } from '$lib/features/profile/state/appearance.svelte';
 	import { watchMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
 	import { libraryStore } from '$lib/stores/library';
 	import { getIntegrationStatusQuery } from '$lib/features/home/queries/home.svelte';
