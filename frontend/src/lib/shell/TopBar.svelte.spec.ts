@@ -12,10 +12,15 @@ describe('TopBar theme toggle', () => {
 		themeStore.set('dark');
 	});
 
-	it('switches to the other theme and renames itself', async () => {
+	it('cycles dark to midnight to light and renames itself', async () => {
 		fakeApi({ 'GET /api/v3/system/health': { degraded: [] } });
 		themeStore.set('dark');
 		await renderWithQuery(TopBar, { onsearch: () => {} });
+
+		await page.getByRole('button', { name: 'Switch to midnight theme' }).click();
+
+		expect(document.documentElement.dataset.theme).toBe('midnight');
+		await expect.element(page.getByRole('button', { name: 'Switch to light theme' })).toBeVisible();
 
 		await page.getByRole('button', { name: 'Switch to light theme' }).click();
 
