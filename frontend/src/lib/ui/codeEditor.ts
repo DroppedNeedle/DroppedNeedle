@@ -125,6 +125,24 @@ const highlight = HighlightStyle.define([
 	{ tag: tags.invalid, color: 'var(--color-error)' }
 ]);
 
+// Typing over a selection that covers coloured text makes Chrome carry the
+// colour into a `style` attribute on the new text, which the policy refuses.
+// Such typing is applied here instead, so the browser never edits the page.
+const replaceSelectionTyping = EditorView.domEventHandlers({
+	beforeinput(event, view) {
+		if (event.inputType !== 'insertText' || event.data === null) return false;
+		if (view.state.readOnly || view.state.selection.ranges.every((range) => range.empty)) {
+			return false;
+		}
+		event.preventDefault();
+		view.dispatch(view.state.replaceSelection(event.data), {
+			userEvent: 'input.type',
+			scrollIntoView: true
+		});
+		return true;
+	}
+});
+
 function wordsSource(words: () => CodeWord[]): CompletionSource {
 	return (context) => {
 		const before = context.matchBefore(/(\[[\w-]*(="?[\w-]*)?|--[\w-]*)$/);
@@ -192,6 +210,7 @@ export function createCodeEditor(options: CodeEditorOptions): CodeEditor {
 					spellcheck: 'false'
 				}),
 				editable.of(EditorState.readOnly.of(options.readonly)),
+				replaceSelectionTyping,
 				EditorView.updateListener.of((update) => {
 					if (update.focusChanged) options.onfocus(update.view.hasFocus);
 					if (update.docChanged && !quiet) options.onchange(update.state.doc.toString());
