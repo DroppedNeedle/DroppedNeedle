@@ -75,6 +75,10 @@ impl Rig {
             runtime.checkpoint().clone(),
             jobs.precache_trigger(),
             crate::common::bundles::covers_at(&platform),
+            droppedneedle::appearance::store::AppearanceStore::new(
+                runtime.db().clone(),
+                platform.clock.clone(),
+            ),
         );
         Self {
             runtime,

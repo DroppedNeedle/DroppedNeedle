@@ -661,6 +661,10 @@ pub fn settings_at(
             store.live(),
             Arc::new(|| Some(Vec::new())),
         ),
+        droppedneedle::appearance::store::AppearanceStore::new(
+            platform.db.clone(),
+            platform.clock.clone(),
+        ),
     )
 }
 

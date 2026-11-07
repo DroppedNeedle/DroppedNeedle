@@ -38,6 +38,7 @@ use crate::{
     AppState,
     admin::AdminSetup,
     app::create_app_with_web,
+    appearance::store::AppearanceStore,
     settings::{
         effects::{Effects, LiveSaveEffects},
         wiring::SettingsSetup,
@@ -599,6 +600,7 @@ pub(crate) async fn build_on(
         scans.clone(),
         handlers,
     );
+    let appearance = AppearanceStore::new(db.clone(), p.clock.clone());
     let admin = AdminSetup::new(
         auth.users.clone(),
         acquire.requests.quota.clone(),
@@ -608,6 +610,7 @@ pub(crate) async fn build_on(
         runtime.checkpoint().clone(),
         jobs.precache_trigger(),
         covers,
+        appearance.clone(),
     );
     let download_worker = acquire.worker.clone();
     let roots_library = library.scans.clone();
@@ -638,6 +641,7 @@ pub(crate) async fn build_on(
         SettingsSetup::live_probes(p, &providers),
         auth.users.lastfm.clone(),
         library.bins.clone(),
+        appearance,
     );
     let plugins = PluginsSetup::build(p, plugin_host, plugin_ticks, providers.github_repos.clone());
     plugins.sync_ticks().await;

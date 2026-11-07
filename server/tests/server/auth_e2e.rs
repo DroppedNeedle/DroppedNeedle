@@ -315,6 +315,7 @@ impl E2e {
             self.runtime.checkpoint().clone(),
             jobs.precache_trigger(),
             crate::common::bundles::covers_at(p),
+            droppedneedle::appearance::store::AppearanceStore::new(p.db.clone(), p.clock.clone()),
         );
         // The production plugins bundle over the scratch plugins folder,
         // launching nothing, reading GitHub through the rig's providers.

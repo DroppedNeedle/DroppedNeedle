@@ -125,8 +125,9 @@ async fn a_refused_change_saves_nothing() {
     app.stop().await;
 }
 
-/// The newest ten saves are kept, newest first. Saving the same text again
-/// and clearing it add none, and a clear keeps the history.
+/// The newest ten saves are kept, newest first. Saving the same text again,
+/// clearing it and saving only a byte order mark add none, and a clear keeps
+/// the history.
 #[tokio::test]
 async fn the_saves_keep_the_newest_ten() {
     let app = TestApp::start("appearance-saves").await;
@@ -145,6 +146,12 @@ async fn the_saves_keep_the_newest_ten() {
     call(&app, &ada, "PUT", MINE, Some(css("a{--n:12}"))).await;
     call(&app, &ada, "PUT", MINE, Some(json!({"theme": "dark"}))).await;
     call(&app, &ada, "PUT", MINE, Some(css(""))).await;
+    let (_, body) = call(&app, &ada, "PUT", MINE, Some(css("\u{feff}"))).await;
+    assert_eq!(
+        body["custom_css"]["text"],
+        json!(""),
+        "a byte order mark alone is blank: {body}"
+    );
     let (status, body) = call(&app, &ada, "GET", SAVES, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let kept: Vec<&str> = body

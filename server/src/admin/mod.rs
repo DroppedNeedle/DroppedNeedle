@@ -78,7 +78,8 @@ pub struct AdminSetup {
 
 impl AdminSetup {
     /// Bundle every handle the admin routes use. The provider answer
-    /// cache is the one `providers` holds.
+    /// cache is the one `providers` holds, and `appearance` is the store
+    /// the appearance routes share.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         users: UsersDeps,
@@ -89,9 +90,10 @@ impl AdminSetup {
         checkpoint: CheckpointService,
         precache: crate::bootstrap::jobs::PrecacheTrigger,
         covers: droppedneedle_catalog::artwork::cache::ArtworkCache,
+        appearance: AppearanceStore,
     ) -> Self {
         Self {
-            appearance: AppearanceStore::new(db.clone(), users.clock.clone()),
+            appearance,
             users,
             quota,
             cache: providers.cache.clone(),

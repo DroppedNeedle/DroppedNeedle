@@ -20,6 +20,8 @@
 //! the `u` flag: `ſrc(` reads as `rc(`, never `src(`. Length counts UTF-16
 //! units, as JavaScript's `length` does.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -27,7 +29,7 @@ use utoipa::ToSchema;
 const RULES: &str = include_str!("../../../frontend/src/lib/stores/customCssRules.json");
 
 #[derive(Deserialize)]
-struct Rules {
+struct RulesFile {
     allowed_functions: Vec<String>,
     limits: Limits,
 }
@@ -38,24 +40,38 @@ struct Limits {
     site: usize,
 }
 
-impl Rules {
-    /// The rules as compiled in. Read on each check, which is rare and
-    /// small. Rules that do not decode allow nothing (the test over their
-    /// cases fails first).
-    fn load() -> Self {
-        serde_json::from_str(RULES).unwrap_or_else(|error| {
-            tracing::error!(%error, "the custom CSS rules do not decode; every sheet is refused");
-            Self {
-                allowed_functions: Vec::new(),
-                limits: Limits { user: 0, site: 0 },
-            }
-        })
-    }
+/// The rules, decoded once by [`CssRules::compiled`] and passed to every
+/// check.
+#[derive(Debug)]
+pub struct CssRules {
+    allowed_functions: HashSet<String>,
+    user_limit: usize,
+    site_limit: usize,
+}
 
-    fn max(&self, limit: Limit) -> usize {
-        match limit {
-            Limit::User => self.limits.user,
-            Limit::Site => self.limits.site,
+impl CssRules {
+    /// The rules as compiled in. Rules that do not decode allow nothing:
+    /// every function is refused and every non-empty sheet is past its
+    /// limit (the test over their cases fails first).
+    #[must_use]
+    pub fn compiled() -> Self {
+        match serde_json::from_str::<RulesFile>(RULES) {
+            Ok(file) => Self {
+                allowed_functions: file.allowed_functions.into_iter().collect(),
+                user_limit: file.limits.user,
+                site_limit: file.limits.site,
+            },
+            Err(error) => {
+                tracing::error!(
+                    %error,
+                    "the custom CSS rules do not decode; every sheet is refused"
+                );
+                Self {
+                    allowed_functions: HashSet::new(),
+                    user_limit: 0,
+                    site_limit: 0,
+                }
+            }
         }
     }
 }
@@ -71,10 +87,13 @@ pub enum Limit {
 }
 
 impl Limit {
-    /// The most UTF-16 units a sheet may hold.
+    /// The most UTF-16 units a sheet may hold under `rules`.
     #[must_use]
-    pub fn max(self) -> usize {
-        Rules::load().max(self)
+    pub fn max(self, rules: &CssRules) -> usize {
+        match self {
+            Self::User => rules.user_limit,
+            Self::Site => rules.site_limit,
+        }
     }
 }
 
@@ -96,9 +115,8 @@ pub const TOO_LONG: &str = "too_long";
 /// function off the allowlist in the order met. A sheet past its limit
 /// answers `too_long` alone. Empty means the sheet may be applied.
 #[must_use]
-pub fn problems(css: &str, limit: Limit) -> Vec<CssProblem> {
-    let rules = Rules::load();
-    if css.encode_utf16().count() > rules.max(limit) {
+pub fn problems(css: &str, limit: Limit, rules: &CssRules) -> Vec<CssProblem> {
+    if css.encode_utf16().count() > limit.max(rules) {
         return vec![CssProblem {
             what: TOO_LONG.to_owned(),
             line: 0,
@@ -107,8 +125,9 @@ pub fn problems(css: &str, limit: Limit) -> Vec<CssProblem> {
     let bytes = css.as_bytes();
     let lines = LineStarts::of(bytes);
     let mut found: Vec<CssProblem> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     let mut refuse = |what: String, at: usize| {
-        if !found.iter().any(|problem| problem.what == what) {
+        if seen.insert(what.clone()) {
             found.push(CssProblem {
                 what,
                 line: lines.line_of(at),
@@ -214,10 +233,11 @@ mod tests {
         let file: CaseFile = serde_json::from_str(RULES).unwrap();
         assert!(!file.cases.is_empty() && !file.allowed_functions.is_empty());
         assert!(file.limits.user > 0 && file.limits.site > file.limits.user);
+        let rules = CssRules::compiled();
         let mut wrong = Vec::new();
         for case in file.cases {
             let css = case.css.repeat(case.repeat.unwrap_or(1));
-            let found = problems(&css, case.limit);
+            let found = problems(&css, case.limit, &rules);
             if found != case.problems {
                 let shown: String = case.css.chars().take(60).collect();
                 wrong.push(format!(

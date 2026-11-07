@@ -86,10 +86,16 @@ pub async fn put_my_appearance(
     User(caller): User,
     ValidJson(body): ValidJson<AppearanceUpdate>,
 ) -> Result<Json<MyAppearance>, ApiError> {
-    service::save(&setup.store, &setup.section, caller.user_id(), body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
+    service::save(
+        &setup.store,
+        &setup.section,
+        &setup.rules,
+        caller.user_id(),
+        body,
+    )
+    .await
+    .map(Json)
+    .map_err(ApiError::from)
 }
 
 /// Move the theme and CSS this browser kept to your account, once. An
@@ -110,10 +116,16 @@ pub async fn import_my_appearance(
     User(caller): User,
     ValidJson(body): ValidJson<AppearanceUpdate>,
 ) -> Result<Json<AppearanceImported>, ApiError> {
-    service::import(&setup.store, &setup.section, caller.user_id(), body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
+    service::import(
+        &setup.store,
+        &setup.section,
+        &setup.rules,
+        caller.user_id(),
+        body,
+    )
+    .await
+    .map(Json)
+    .map_err(ApiError::from)
 }
 
 /// List your last saves of your custom CSS, newest first.
@@ -168,7 +180,7 @@ pub async fn put_site_appearance(
     _caller: Admin,
     ValidJson(body): ValidJson<Appearance>,
 ) -> Result<Json<Appearance>, ApiError> {
-    service::check_sheet(&body.site_css, Limit::Site)?;
+    service::check_sheet(&body.site_css, Limit::Site, &setup.rules)?;
     setup
         .settings
         .save(body)

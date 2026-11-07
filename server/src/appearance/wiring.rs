@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use super::check::CssRules;
 use super::handlers as h;
 use super::store::AppearanceStore;
 use crate::settings::services::SettingsService;
@@ -20,16 +21,23 @@ pub struct AppearanceSetup {
     /// The section service the site section saves through, so its save
     /// runs like every other section's.
     pub settings: Arc<SettingsService>,
+    /// The custom CSS rules, decoded once for every check.
+    pub rules: Arc<CssRules>,
 }
 
 impl AppearanceSetup {
-    /// Build over the platform's database, clock and settings, saving the
-    /// site section through `settings`.
-    pub fn build(platform: &Platform, settings: Arc<SettingsService>) -> Self {
+    /// Build over `store` and the platform's settings, saving the site
+    /// section through `settings`.
+    pub fn build(
+        platform: &Platform,
+        store: AppearanceStore,
+        settings: Arc<SettingsService>,
+    ) -> Self {
         Self {
-            store: AppearanceStore::new(platform.db.clone(), platform.clock.clone()),
+            store,
             section: platform.settings.live(),
             settings,
+            rules: Arc::new(CssRules::compiled()),
         }
     }
 }

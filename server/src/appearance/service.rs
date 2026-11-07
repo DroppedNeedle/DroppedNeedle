@@ -6,7 +6,7 @@ use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::Appearance;
 
-use super::check::{self, CssProblem, Limit};
+use super::check::{self, CssProblem, CssRules, Limit};
 use super::models::{
     AppearanceImported, AppearanceUpdate, CssSave, CustomCssSummary, MyAppearance, MyCustomCss,
     SiteAppearance,
@@ -36,13 +36,15 @@ impl From<DbError> for AppearanceError {
 }
 
 /// Refuse `css` when the check finds anything in it.
-pub fn check_sheet(css: &str, limit: Limit) -> Result<(), AppearanceError> {
-    let problems = check::problems(css, limit);
+pub fn check_sheet(css: &str, limit: Limit, rules: &CssRules) -> Result<(), AppearanceError> {
+    let problems = check::problems(css, limit, rules);
     if problems
         .iter()
         .any(|problem| problem.what == check::TOO_LONG)
     {
-        return Err(AppearanceError::TooLong { limit: limit.max() });
+        return Err(AppearanceError::TooLong {
+            limit: limit.max(rules),
+        });
     }
     if problems.is_empty() {
         Ok(())
@@ -94,26 +96,33 @@ pub async fn read(
     Ok(view(stored, site(section)))
 }
 
+/// Whether `text` is blank as the browser's `trim()` reads it. Rust's
+/// `trim()` keeps a byte order mark, which JavaScript's drops.
+fn is_blank(text: &str) -> bool {
+    text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
+        .is_empty()
+}
+
 /// `update` as a checked change, or why it is refused. Every part is
 /// checked before anything is written, so a refused part saves nothing.
 /// With the site's switch off, a change may still clear the text, switch
 /// the CSS off or set the theme, but not set text or switch it on.
-fn checked(update: AppearanceUpdate, site: &SiteAppearance) -> Result<Change, AppearanceError> {
+fn checked(
+    update: AppearanceUpdate,
+    site: &SiteAppearance,
+    rules: &CssRules,
+) -> Result<Change, AppearanceError> {
     let css = update.custom_css.unwrap_or_default();
-    let text = css.text.map(|text| {
-        if text.trim().is_empty() {
-            String::new()
-        } else {
-            text
-        }
-    });
+    let text = css
+        .text
+        .map(|text| if is_blank(&text) { String::new() } else { text });
     if !site.allow_user_css
         && (text.as_ref().is_some_and(|text| !text.is_empty()) || css.enabled == Some(true))
     {
         return Err(AppearanceError::TurnedOff);
     }
     if let Some(text) = &text {
-        check_sheet(text, Limit::User)?;
+        check_sheet(text, Limit::User, rules)?;
     }
     Ok(Change {
         theme: update.theme,
@@ -126,11 +135,12 @@ fn checked(update: AppearanceUpdate, site: &SiteAppearance) -> Result<Change, Ap
 pub async fn save(
     store: &AppearanceStore,
     section: &Live<Appearance>,
+    rules: &CssRules,
     user_id: &str,
     update: AppearanceUpdate,
 ) -> Result<MyAppearance, AppearanceError> {
     let site = site(section);
-    let change = checked(update, &site)?;
+    let change = checked(update, &site, rules)?;
     let stored = match store.write(user_id, change, false).await? {
         Written::Saved(stored) | Written::AlreadyStored(stored) => stored,
     };
@@ -144,6 +154,7 @@ pub async fn save(
 pub async fn import(
     store: &AppearanceStore,
     section: &Live<Appearance>,
+    rules: &CssRules,
     user_id: &str,
     update: AppearanceUpdate,
 ) -> Result<AppearanceImported, AppearanceError> {
@@ -154,7 +165,7 @@ pub async fn import(
             imported: false,
         });
     }
-    let change = checked(update, &site)?;
+    let change = checked(update, &site, rules)?;
     let (stored, imported) = match store.write(user_id, change, true).await? {
         Written::Saved(stored) => (stored, true),
         Written::AlreadyStored(stored) => (stored, false),

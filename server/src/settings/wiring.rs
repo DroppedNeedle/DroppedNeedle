@@ -15,6 +15,7 @@
 
 use std::sync::Arc;
 
+use crate::appearance::store::AppearanceStore;
 use crate::appearance::wiring::AppearanceSetup;
 use crate::bootstrap::Outbound;
 use crate::settings::effects::Effects;
@@ -60,7 +61,9 @@ impl SettingsSetup {
     /// each other. The Verify routes check keys through `probes`, the
     /// section prefs read Last.fm links through `lastfm`, and the Library
     /// Management settings say through `bins` when the recycle bin path is
-    /// not used.
+    /// not used. The appearance routes use `appearance`, the store the
+    /// admin routes share.
+    #[allow(clippy::too_many_arguments)]
     pub fn build(
         platform: &Platform,
         effects: Effects,
@@ -69,6 +72,7 @@ impl SettingsSetup {
         probes: Arc<dyn VerifyProbes>,
         lastfm: LastFmLinks,
         bins: BinSource,
+        appearance: AppearanceStore,
     ) -> Self {
         let store = platform.settings.clone();
         let service = Arc::new(
@@ -80,7 +84,7 @@ impl SettingsSetup {
                 service.clone(),
                 Arc::new(SqliteLibraryPolicyCatalog::new(platform.db.clone())),
             )),
-            appearance: AppearanceSetup::build(platform, service.clone()),
+            appearance: AppearanceSetup::build(platform, appearance, service.clone()),
             service,
             lifecycle: Arc::new(MusicBrainzLifecycle::new(store, effects, outbound.clone())),
             management,
