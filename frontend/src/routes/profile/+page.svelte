@@ -340,7 +340,7 @@
 				<ProfileSection
 					id="appearance"
 					title="Appearance"
-					blurb="How DroppedNeedle looks for you in this browser."
+					blurb="How DroppedNeedle looks for you, on every device."
 					icon={SunMoon}
 					open={isOpen('appearance')}
 					ontoggle={(open) => setOpen('appearance', open)}
