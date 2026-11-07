@@ -10,6 +10,7 @@ import {
 	createSaveAppearanceMutation,
 	getMyAppearanceQuery,
 	takeFetchedAppearance,
+	type AppearanceImported,
 	type AppearanceUpdate,
 	type MyAppearance,
 	type ThemeChoice
@@ -162,31 +163,73 @@ function applyTheme(theme: ThemeChoice | null, tag: string, userId: string): voi
 
 /**
  * The account and this browser's theme follow the signed-in user, and the
- * site's and their own CSS apply. The first time an account answers with
- * nothing stored, the theme and CSS this browser kept move up to it. Call
- * once from the signed-in shell's script.
+ * site's and their own CSS apply. The first answer after mount moves what this
+ * browser kept up to the account, once: the theme when the account has no row
+ * yet, and the sheet unless the account has one of its own. Call once from the
+ * signed-in shell's script.
  */
 export function applyAppearance(): void {
 	const query = getMyAppearanceQuery();
 	const importer = createImportAppearanceMutation();
+	const sheetSaver = createSaveAppearanceMutation();
 	const mountedAt = Date.now();
 	// The users this page already tried to move, so a refusal is not retried on every answer.
 	const moveTried: string[] = [];
 
-	async function moveFromBrowser(userId: string, theme: ThemeChoice | null): Promise<void> {
-		const text = readOldCss(userId);
-		if (!theme && !text.trim()) return;
-		const update: AppearanceUpdate = {};
-		if (theme) update.theme = theme;
-		if (text.trim()) update.custom_css = { text };
+	/** Puts the browser's sheet on the account by PUT. Its copy goes once the account holds it. */
+	async function saveSheet(userId: string, text: string): Promise<void> {
 		try {
-			await importer.mutateAsync(update);
-			removeOldCss(userId);
-		} catch (error) {
-			// A refused sheet stays in this browser; the theme still moves on its own.
-			if (!isRefusal(error) || !theme || !update.custom_css) return;
-			await importer.mutateAsync({ theme }).catch(() => undefined);
+			const saved = await sheetSaver.mutateAsync({ custom_css: { text } });
+			if (saved.custom_css.text.trim()) removeOldCss(userId);
+		} catch {
+			// A refused or failed save keeps the browser's copy for the next load.
 		}
+	}
+
+	/**
+	 * Moves what this browser kept up to the account. The theme goes only into an
+	 * account with no row yet. While there is no row, the sheet goes in with the
+	 * import; once there is one, it goes by PUT. A copy is removed only after the
+	 * account answers holding its sheet, and a sheet the account has of its own wins.
+	 */
+	async function moveFromBrowser(
+		userId: string,
+		answer: MyAppearance,
+		browserTheme: ThemeChoice | null
+	): Promise<void> {
+		const theme = answer.stored ? null : browserTheme;
+		const text = readOldCss(userId);
+		const sheet = text.trim() ? text : null;
+		// The account's own sheet wins: the copy goes, and nothing is uploaded.
+		if (sheet && answer.custom_css.text.trim()) {
+			removeOldCss(userId);
+			return;
+		}
+		if (!answer.stored) {
+			if (!theme && !sheet) return;
+			const update: AppearanceUpdate = {};
+			if (theme) update.theme = theme;
+			if (sheet) update.custom_css = { text };
+			let imported: AppearanceImported;
+			try {
+				imported = await importer.mutateAsync(update);
+			} catch (error) {
+				// A refused sheet stays in this browser; the theme still moves on its own.
+				if (isRefusal(error) && theme && sheet) {
+					await importer.mutateAsync({ theme }).catch(() => undefined);
+				}
+				return;
+			}
+			if (!sheet) return;
+			if (imported.custom_css.text.trim()) {
+				removeOldCss(userId);
+				return;
+			}
+			// Written but still blank: keep the copy. Otherwise the account has a row
+			// with no sheet, and the sheet goes by PUT.
+			if (imported.imported) return;
+		}
+		if (sheet) await saveSheet(userId, text);
 	}
 
 	$effect(() => {
@@ -230,11 +273,10 @@ export function applyAppearance(): void {
 				fetched &&
 				fetched.userId === userId &&
 				fetched.fetchedAt >= mountedAt &&
-				!fetched.answer.stored &&
 				!moveTried.includes(userId)
 			) {
 				moveTried.push(userId);
-				void moveFromBrowser(userId, browserTheme);
+				void moveFromBrowser(userId, fetched.answer, browserTheme);
 			}
 		});
 	});

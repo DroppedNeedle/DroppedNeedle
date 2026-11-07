@@ -472,4 +472,97 @@ describe('account appearance', () => {
 			release();
 		}
 	});
+
+	it("moves the browser's sheet when a theme save creates the account's row first", async () => {
+		const sheet = ':root { --dn-move-a: 1px; }';
+		localStorage.setItem('droppedneedle_custom_css:user-r', sheet);
+		// The click must change the choice, so start from another theme.
+		themeStore.show('dark');
+		// The first answer is held, and the save cancels it, so the row exists before any answer lands.
+		const firstAnswer = account('user-r');
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = () => resolve();
+		});
+		let answers = 0;
+		api.use({
+			'GET /api/v3/me/appearance': async () => {
+				answers++;
+				if (answers === 1) {
+					await held;
+					return firstAnswer;
+				}
+				return account('user-r');
+			}
+		});
+
+		try {
+			signIn('user-r');
+			await mount();
+			await page.getByText('Midnight', { exact: true }).click();
+
+			await expect.poll(() => localStorage.getItem('droppedneedle_custom_css:user-r')).toBeNull();
+			expect(accounts.get('user-r')?.custom_css.text).toBe(sheet);
+			await expect.poll(() => token('--dn-move-a')).toBe('1px');
+			expect(api.calls('PUT /api/v3/me/appearance').map((call) => call.body)).toEqual([
+				{ theme: 'midnight' },
+				{ custom_css: { text: sheet } }
+			]);
+			expect(api.calls('POST /api/v3/me/appearance/import')).toEqual([]);
+		} finally {
+			release();
+		}
+	});
+
+	it("keeps an account's own sheet, drops the browser's copy and uploads nothing", async () => {
+		const own = ':root { --dn-own: 2px; }';
+		write('user-s', { custom_css: { text: own } });
+		localStorage.setItem('droppedneedle_custom_css:user-s', ':root { --dn-browser: 1px; }');
+		signIn('user-s');
+		await mount();
+
+		await expect.poll(() => localStorage.getItem('droppedneedle_custom_css:user-s')).toBeNull();
+		await expect.poll(() => token('--dn-own')).toBe('2px');
+		expect(accounts.get('user-s')?.custom_css.text).toBe(own);
+		expect(api.calls('PUT /api/v3/me/appearance')).toEqual([]);
+		expect(api.calls('POST /api/v3/me/appearance/import')).toEqual([]);
+	});
+
+	it("moves the browser's sheet by PUT when the import finds a row a theme save made", async () => {
+		const sheet = ':root { --dn-race-c: 1px; }';
+		localStorage.setItem('droppedneedle_custom_css:user-c', sheet);
+		// The click must change the choice, so start from another theme.
+		themeStore.show('dark');
+		// The import is answered only after the theme save has created the row, so it finds one.
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = () => resolve();
+		});
+		api.use({
+			'POST /api/v3/me/appearance/import': async ({ body }) => {
+				await held;
+				const id = authStore.user?.id ?? '';
+				if (accounts.has(id)) return { ...account(id), imported: false };
+				return { ...write(id, body as AppearanceUpdate), imported: true };
+			}
+		});
+
+		try {
+			signIn('user-c');
+			await mount();
+			await expect.poll(() => api.calls('POST /api/v3/me/appearance/import').length).toBe(1);
+			await page.getByText('Midnight', { exact: true }).click();
+			await expect.poll(() => accounts.has('user-c')).toBe(true);
+			release();
+
+			await expect.poll(() => localStorage.getItem('droppedneedle_custom_css:user-c')).toBeNull();
+			expect(accounts.get('user-c')?.custom_css.text).toBe(sheet);
+			expect(api.calls('PUT /api/v3/me/appearance').map((call) => call.body)).toEqual([
+				{ theme: 'midnight' },
+				{ custom_css: { text: sheet } }
+			]);
+		} finally {
+			release();
+		}
+	});
 });
