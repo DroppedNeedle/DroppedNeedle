@@ -3,7 +3,9 @@ import { browser } from '$app/environment';
 export type ThemePreference = 'system' | 'light' | 'dark' | 'midnight';
 type Theme = 'light' | 'dark' | 'midnight';
 
-const STORAGE_KEY = 'droppedneedle_theme';
+// This browser's copy, which paints the first frame. Once signed in, the
+// account's theme is written here.
+export const THEME_STORAGE_KEY = 'droppedneedle_theme';
 const LIGHT_QUERY = '(prefers-color-scheme: light)';
 // Browser chrome colour per theme: each theme's base-100 in src/theme.css.
 // Hardcoded because the theme is applied before any stylesheet has loaded.
@@ -25,7 +27,7 @@ export function resolveTheme(preference: ThemePreference, prefersLight: boolean)
 function readPreference(): ThemePreference {
 	if (!browser) return 'dark';
 	try {
-		return parseThemePreference(localStorage.getItem(STORAGE_KEY));
+		return parseThemePreference(localStorage.getItem(THEME_STORAGE_KEY));
 	} catch {
 		return 'dark';
 	}
@@ -54,10 +56,11 @@ function createThemeStore() {
 		});
 	}
 
+	/** Show `next` and keep it as this browser's copy. Saving it to the account is the caller's. */
 	function set(next: ThemePreference): void {
 		preference = next;
 		try {
-			localStorage.setItem(STORAGE_KEY, next);
+			localStorage.setItem(THEME_STORAGE_KEY, next);
 		} catch {
 			// private mode: the choice lasts for this page only
 		}

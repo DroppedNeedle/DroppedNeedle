@@ -1,7 +1,14 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { themeStore, type ThemePreference } from '$lib/stores/theme.svelte';
-	import { customCssProblem, customCssStore, MAX_CUSTOM_CSS } from '$lib/stores/customCss.svelte';
+	import {
+		customCssProblem,
+		customCssSaveError,
+		customCssStore,
+		MAX_CUSTOM_CSS
+	} from '$lib/stores/customCss.svelte';
+	import { toastStore } from '$lib/stores/toast';
+	import { createSaveAppearanceMutation } from '$lib/features/profile/queries/appearance.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import RadioCards from '$lib/ui/RadioCards.svelte';
 	import TextAreaField from '$lib/ui/TextAreaField.svelte';
@@ -16,6 +23,9 @@
 			description: "Follow this device's light or dark setting."
 		}
 	];
+
+	const saveTheme = createSaveAppearanceMutation();
+	const saveCssMutation = createSaveAppearanceMutation();
 
 	let draft = $state('');
 	let cssError = $state<string | null>(null);
@@ -33,9 +43,32 @@
 		});
 	});
 
+	// Shown at once; a failed save keeps it on screen and the next load corrects it.
+	function chooseTheme(value: ThemePreference): void {
+		themeStore.set(value);
+		saveTheme.mutate(
+			{ theme: value },
+			{
+				onError: () =>
+					toastStore.show({ message: 'Theme not saved to your account.', type: 'error' })
+			}
+		);
+	}
+
 	function saveCss(next: string): void {
-		cssError = customCssStore.save(next);
-		if (!cssError) draft = next;
+		cssError = customCssStore.saveProblem(next);
+		if (cssError) return;
+		saveCssMutation.mutate(
+			{ custom_css: { text: next } },
+			{
+				onSuccess: () => {
+					draft = next;
+				},
+				onError: (error) => {
+					cssError = customCssSaveError(error);
+				}
+			}
+		);
 	}
 </script>
 
@@ -44,17 +77,17 @@
 	label="Theme"
 	{options}
 	value={themeStore.preference}
-	onchange={(value) => themeStore.set(value)}
+	onchange={chooseTheme}
 	class="sm:grid-cols-2 lg:grid-cols-4"
 />
-<p class="mt-2.5 text-xs text-muted">Saved in this browser only.</p>
+<p class="mt-2.5 text-xs text-muted">Saved to your account.</p>
 
 <details class="mt-6 border-t border-line pt-5">
 	<summary class="cursor-pointer text-sm font-semibold">Custom CSS</summary>
 	<div class="mt-3">
 		<TextAreaField
 			label="CSS rules"
-			help="This browser only. Add ?nocustomcss=1 to the address to turn it off."
+			help="Saved to your account. Add ?nocustomcss=1 to the address to turn it off."
 			error={cssError}
 			mono
 			rows={6}
@@ -77,7 +110,7 @@
 			<Button
 				variant="primary"
 				size="sm"
-				disabled={draft === customCssStore.css}
+				disabled={draft === customCssStore.css || saveCssMutation.isPending}
 				onclick={() => saveCss(draft)}
 			>
 				Save

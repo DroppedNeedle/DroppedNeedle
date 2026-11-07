@@ -4,7 +4,7 @@
 	import { beforeNavigate, afterNavigate } from '$app/navigation';
 	import { withoutBasePath } from '$lib/utils/basePath';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { applyCustomCss } from '$lib/stores/customCss.svelte';
+	import { applyAppearance } from '$lib/stores/customCss.svelte';
 	import { watchMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
 	import { libraryStore } from '$lib/stores/library';
 	import { getIntegrationStatusQuery } from '$lib/features/home/queries/home.svelte';
@@ -75,8 +75,8 @@
 	getIntegrationStatusQuery();
 	loadAdvancedSettings();
 	const viewer = $derived({ isAdmin: authStore.isAdmin, isCurator: authStore.isTrusted });
-	// The signed-in user's own CSS, swapped when the account changes.
-	applyCustomCss();
+	// The account's theme, the site's CSS and the person's own, swapped when the account changes.
+	applyAppearance();
 
 	const NAV_PROGRESS_DELAY_MS = 120;
 	const NAV_PROGRESS_MIN_VISIBLE_MS = 220;
