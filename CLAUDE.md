@@ -732,6 +732,7 @@ Run from the repo root. `make help` lists every target.
   Build on `src/lib/ui` (`Button`, `IconButton`, `Card`, `Input`, `Modal`,
   `CardTitle`, `CardActions`, `ConfirmDialog`, `Field`, `TextField`,
   `NumberField`, `SecretField`, `PasswordField`, `SelectField`, `TextAreaField`,
+  `CodeField` (a CSS editor, CodeMirror loaded on first use),
   `ToggleRow`, `RadioCards`, `StatusChip`, `SectionHead` (a shelf's title
   row), `ListPageHeader` (a browse page's title, count, lede or a hub's
   tagline, ticket and record, with an optional brush stroke after the title;
@@ -793,9 +794,10 @@ Run from the repo root. `make help` lists every target.
   outside hosts only from the list in `server/src/security_headers.rs`.
   Loading a script, frame, audio clip or connection from a new host is a
   reviewed edit to that list, with the reason beside it. The browser
-  journeys fail on any violation. The stylesheets made at run time are
-  the site CSS and the person's custom CSS (`lib/stores/customCss.svelte.ts`),
-  site first: applied per user, removed at sign-out, and refused when one
+  journeys fail on any violation. Besides the code editor's own styles,
+  which `CodeField` keeps in its shadow root, the stylesheets made at run
+  time are the site CSS and the person's custom CSS
+  (`lib/stores/customCss.svelte.ts`), site first: applied per user, removed at sign-out, and refused when one
   holds a backslash, `@import`, `@font-face` or a CSS function off the
   allowlist in `lib/stores/customCssRules.json`. The server's check
   (`server/src/appearance/check.rs`) is the one that counts; both checks

@@ -100,8 +100,10 @@ const SHELL_DIRECTIVES: &[&str] = &[
     "script-src-attr 'none'",
     // Stylesheets from the app's own files. The page builds no `<style>`.
     // The stylesheets made at run time are the site's CSS and the person's
-    // own, constructed sheets this policy does not govern
-    // (`frontend/src/lib/stores/customCss.svelte.ts`).
+    // own (`frontend/src/lib/stores/customCss.svelte.ts`), and the code
+    // editor's own styles inside its shadow root
+    // (`frontend/src/lib/ui/codeEditor.ts`): constructed sheets this policy
+    // does not govern.
     // `'report-sample'` allows nothing. It makes the browser quote the
     // start of a refused style, which is how a style attribute in a bundle
     // is traced to its component. The app sets its own inline styles
