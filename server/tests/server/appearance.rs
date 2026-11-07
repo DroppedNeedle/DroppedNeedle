@@ -127,7 +127,7 @@ async fn a_refused_change_saves_nothing() {
 
 /// The newest ten saves are kept, newest first. Saving the same text again,
 /// clearing it and saving only a byte order mark add none, and a clear keeps
-/// the history.
+/// the history. A sheet of only U+0085 is not blank, so it is kept.
 #[tokio::test]
 async fn the_saves_keep_the_newest_ten() {
     let app = TestApp::start("appearance-saves").await;
@@ -162,6 +162,12 @@ async fn the_saves_keep_the_newest_ten() {
         .collect();
     let wanted: Vec<String> = (3..=12).rev().map(|at| format!("a{{--n:{at}}}")).collect();
     assert_eq!(kept, wanted);
+    let (_, body) = call(&app, &ada, "PUT", MINE, Some(css("\u{85}"))).await;
+    assert_eq!(
+        body["custom_css"]["text"],
+        json!("\u{85}"),
+        "a sheet of only U+0085 is kept as text: {body}"
+    );
     app.stop().await;
 }
 

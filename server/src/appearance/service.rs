@@ -96,11 +96,11 @@ pub async fn read(
     Ok(view(stored, site(section)))
 }
 
-/// Whether `text` is blank as the browser's `trim()` reads it. Rust's
-/// `trim()` keeps a byte order mark, which JavaScript's drops.
-fn is_blank(text: &str) -> bool {
-    text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
-        .is_empty()
+/// `text` with what JavaScript's `trim()` removes taken off both ends. Rust's
+/// `trim()` removes U+0085, which JavaScript keeps, and keeps a byte order
+/// mark, which JavaScript removes.
+fn js_trim(text: &str) -> &str {
+    text.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
 }
 
 /// `update` as a checked change, or why it is refused. Every part is
@@ -113,9 +113,13 @@ fn checked(
     rules: &CssRules,
 ) -> Result<Change, AppearanceError> {
     let css = update.custom_css.unwrap_or_default();
-    let text = css
-        .text
-        .map(|text| if is_blank(&text) { String::new() } else { text });
+    let text = css.text.map(|text| {
+        if js_trim(&text).is_empty() {
+            String::new()
+        } else {
+            text
+        }
+    });
     if !site.allow_user_css
         && (text.as_ref().is_some_and(|text| !text.is_empty()) || css.enabled == Some(true))
     {
