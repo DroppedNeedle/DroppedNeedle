@@ -17,6 +17,7 @@
 - [Requests and downloads](downloads.md): editions and single tracks, following artists, held files, upgrades, choosing a copy.
 - [Discovery](discovery.md): Home, Discover, radio, Weekly Mix, covers, Last.fm, ListenBrainz, Spotify import, music apps in depth.
 - [Connect your music app](connect-your-app.md): what to enter in Symfonium, Finamp, Feishin and other Subsonic or Jellyfin apps.
+- [Custom CSS](custom-css.md): restyling the app, and the style hooks that stay stable across releases.
 - [Troubleshooting](troubleshooting.md): common problems and their fixes.
 
 ## Run and extend

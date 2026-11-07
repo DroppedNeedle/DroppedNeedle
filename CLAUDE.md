@@ -797,6 +797,11 @@ Run from the repo root. `make help` lists every target.
   the person's custom CSS (`lib/stores/customCss.svelte.ts`): applied per
   user, removed at sign-out, and refused when it holds a backslash,
   `@import`, `@font-face` or a CSS function off the allowlist in its store.
+- The style hooks a person's CSS may rely on are the `data-part` names in
+  `lib/ui/parts.ts`, each set by one component through `part()`. They are
+  a public contract published in `docs/custom-css.md` (`parts.spec.ts`
+  holds the source and the docs to the list): renaming or removing one is
+  announced in the release notes.
 - Text from outside (biographies, album notes, plugin text, release notes)
   renders as text. Markup goes only through `SafeHtml`; eslint rejects a raw
   `{@html}`. A link to an outside address goes through `outsideLink`, which
