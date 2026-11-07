@@ -8,7 +8,7 @@
 -->
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
-	import { Braces, Download, History, Puzzle, Upload } from 'lucide-svelte';
+	import { Download, Upload } from 'lucide-svelte';
 	import {
 		createSaveAppearanceMutation,
 		getMyAppearanceQuery
@@ -88,9 +88,9 @@
 	const draftText = $derived(section.draft?.text ?? '');
 	const refused = $derived(customCssProblems(draftText).length > 0);
 	const tabs = [
-		{ id: 'variables' as const, label: 'Variables', icon: Braces },
-		{ id: 'snippets' as const, label: 'Snippets', icon: Puzzle },
-		{ id: 'history' as const, label: 'History', icon: History }
+		{ id: 'variables' as const, label: 'Variables' },
+		{ id: 'snippets' as const, label: 'Snippets' },
+		{ id: 'history' as const, label: 'History' }
 	];
 
 	async function storeText(sheet: Sheet): Promise<Sheet> {

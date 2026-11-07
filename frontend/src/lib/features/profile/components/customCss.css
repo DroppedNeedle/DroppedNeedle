@@ -91,7 +91,7 @@
 	border-style: dashed;
 }
 
-@container (max-width: 43.99rem) {
+@container (max-width: 39.99rem) {
 	.css-rail-list .btn,
 	.css-files .btn,
 	.css-footer .btn,
@@ -100,7 +100,7 @@
 	}
 }
 
-@container (min-width: 44rem) {
+@container (min-width: 40rem) {
 	.css-layout {
 		grid-template-columns: minmax(0, 1fr) 18rem;
 		grid-template-areas:
