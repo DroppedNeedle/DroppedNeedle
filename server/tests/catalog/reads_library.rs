@@ -311,7 +311,7 @@ async fn the_seeded_catalog_reads_back() {
         .await
         .map(|page| (page.items, page.total))
         .expect("albums list");
-    assert_eq!(total, 4, "albums");
+    assert_eq!(total, 3, "albums");
     let first = albums
         .iter()
         .find(|album| album.id == "al1")
@@ -355,7 +355,7 @@ async fn the_seeded_catalog_reads_back() {
                 decade: Some(1990),
                 ..Default::default()
             },
-            3,
+            2,
             "decade filter",
         ),
         (
@@ -363,7 +363,7 @@ async fn the_seeded_catalog_reads_back() {
                 artist_id: Some("a1".to_owned()),
                 ..Default::default()
             },
-            3,
+            2,
             "artist filter",
         ),
     ] {
@@ -389,7 +389,7 @@ async fn the_seeded_catalog_reads_back() {
             .iter()
             .map(|album| album.id.as_str())
             .collect::<Vec<_>>(),
-        ["al1", "al4", "al2", "al3"],
+        ["al1", "al2", "al3"],
         "artist sort"
     );
     let (albums, _) = fixture
@@ -403,7 +403,7 @@ async fn the_seeded_catalog_reads_back() {
             .iter()
             .map(|album| album.id.as_str())
             .collect::<Vec<_>>(),
-        ["al3", "al2", "al4", "al1"],
+        ["al3", "al2", "al1"],
         "artist sort desc"
     );
 
@@ -444,14 +444,7 @@ async fn the_seeded_catalog_reads_back() {
         .album_copies("al1")
         .await
         .expect("copies list");
-    assert_eq!(
-        copies
-            .iter()
-            .map(|album| album.id.as_str())
-            .collect::<Vec<_>>(),
-        ["al4"],
-        "al1 copies"
-    );
+    assert!(copies.is_empty(), "al1 copies: al4 has no files");
     let copies = fixture
         .catalog
         .album_copies("al2")
@@ -528,7 +521,7 @@ async fn the_seeded_catalog_reads_back() {
         .await
         .map(|page| (page.items, page.total))
         .expect("led list");
-    assert_eq!(total, 3, "led albums");
+    assert_eq!(total, 2, "led albums");
     assert_eq!(led_albums[0].id, "al1", "led albums");
 
     let (appearances, total) = fixture
@@ -884,8 +877,8 @@ fn sorted_ids(items: &Value, key: &str) -> Vec<String> {
 }
 
 /// A merged album appears nowhere and its id answers for the survivor; an
-/// album without files shows on the web with no tracks but counts as owned
-/// nowhere and never reaches a player app; a track's recording id is its
+/// album without files is left off the web lists, counts as owned nowhere
+/// and never reaches a player app; a track's recording id is its
 /// match's, else its tags'.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn one_album_set_everywhere() {
@@ -930,22 +923,14 @@ async fn one_album_set_everywhere() {
     let auth = rig.subsonic_auth("album-set");
     let subsonic = |call: &str| rest(call, &auth);
 
-    // The web list: every live album with a track row, the ones without
-    // files with no tracks.
+    // The web list: every live album with files.
     let (status, page) = rig
         .app
         .call("GET", "/api/v3/library/albums?limit=200", &native, None)
         .await;
     assert_eq!(status, StatusCode::OK, "{page}");
-    assert_eq!(
-        sorted_ids(&page["items"], "id"),
-        ["al-excluded", "al-live", "al-missing", "al-pair-b"]
-    );
-    assert_eq!(page["total"], 4, "{page}");
-    for item in page["items"].as_array().expect("items") {
-        let has_files = matches!(item["id"].as_str(), Some("al-live" | "al-pair-b"));
-        assert_eq!(item["track_count"] != 0, has_files, "{item}");
-    }
+    assert_eq!(sorted_ids(&page["items"], "id"), ["al-live", "al-pair-b"]);
+    assert_eq!(page["total"], 2, "{page}");
 
     // A merged album's id answers for the album it merged into.
     let (status, album) = rig
@@ -1221,7 +1206,7 @@ async fn lists_filter_by_formats_and_minimum_tracks() {
         ("min_tracks=2", vec!["al1"]),
         ("formats=MP3", vec!["al2"]),
         ("formats=flac,mp3", vec!["al1", "al2", "al3"]),
-        ("formats=flac&format_mode=without", vec!["al2", "al4"]),
+        ("formats=flac&format_mode=without", vec!["al2"]),
         ("formats=flac&min_tracks=2", vec!["al1"]),
         ("format=mp3", vec!["al2"]),
     ] {
@@ -1337,7 +1322,7 @@ async fn lists_filter_by_your_rating_and_by_fewer_tracks() {
     let ids = |page: &Value| sorted_ids(&page["items"], "id");
 
     for (query, want) in [
-        ("min_tracks=2&tracks_mode=below", vec!["al2", "al3", "al4"]),
+        ("min_tracks=2&tracks_mode=below", vec!["al2", "al3"]),
         ("min_tracks=2&tracks_mode=at_least", vec!["al1"]),
         ("rating=4", vec!["al1", "al3"]),
         ("rating=4&rating_mode=at_least", vec!["al1", "al3"]),

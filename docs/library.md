@@ -134,9 +134,7 @@ Removing an album or a track never deletes your music. The files move into a rec
 
 ## Albums with no files
 
-An album marked "No files" has none of its files in the library now: they are missing from disk, in the recycle bin ("Put back" on its page returns them), or excluded. It stays in the web app's album lists and on its artist's page, with nothing to play. An album you removed stays there while any of its files is still in the recycle bin; once none is (the retention or "Empty recycle bin" deleted them), it leaves those lists, though its link still opens it. An album whose files went missing from disk stays listed; files that were already missing when you removed the album leave with it. Player apps don't show it. Search, Discover and follows treat it as not in your library, so you can request it again.
-
-An album the upgrade from v2 brought over with no files (v2 hid these) is not listed, nor is an album left with no tracks at all. Its link still opens it, and it is listed again if its files come back.
+An album with none of its files in the library (missing from disk, excluded, or with no tracks at all) is not shown in the album lists, on its artist's page, in favorites, ratings or counts, or under another album's Copies. The one exception is an album you removed: it stays listed, marked "No files", while "Put back" on its page can still bring its files home. It leaves once nothing can be put back. Its link still opens it, and it is listed again once a scan finds its files. Player apps don't show it, and search, Discover and follows treat it as not in your library, so you can request it again.
 
 ## Downloading from the library
 

@@ -6356,10 +6356,10 @@ async fn a_removed_album_is_listed_until_the_bin_lets_go_of_it() {
 }
 
 /// An album removed and put back whose folder then vanishes from disk
-/// stays listed: its files went missing after their trip to the bin, not
-/// because of it.
+/// leaves the lists: the put-back spent its removal, so nothing of it can
+/// be brought home.
 #[tokio::test]
-async fn an_album_put_back_then_vanished_stays_listed() {
+async fn an_album_put_back_then_vanished_leaves_the_lists() {
     let rig = Rig::start("lib-put-back-vanished").await;
     let app = &rig.app;
     let auth = app.login_admin().await;
@@ -6416,35 +6416,29 @@ async fn an_album_put_back_then_vanished_stays_listed() {
     app.scan_library().await;
 
     let page = get("/api/v3/library/albums?limit=50".to_owned()).await;
-    let listed: Vec<(&str, u64)> = page["items"]
+    let listed: Vec<&str> = page["items"]
         .as_array()
         .expect("items")
         .iter()
-        .map(|item| {
-            (
-                item["id"].as_str().expect("id"),
-                item["track_count"].as_u64().expect("count"),
-            )
-        })
+        .map(|item| item["id"].as_str().expect("id"))
         .collect();
     assert!(
-        listed.contains(&(album.as_str(), 0)),
-        "a vanished album stays listed: {page}"
+        !listed.contains(&album.as_str()),
+        "a vanished album leaves the list: {page}"
     );
     rig.stop().await;
 }
 
-/// An album removed with one of its files already gone from disk leaves
-/// the lists once the bin is emptied: the missing file left with it.
+/// An album whose files are gone leaves the lists and its copy's Copies,
+/// opens by id, and is listed again when its files return.
 #[tokio::test]
-async fn an_album_removed_with_a_vanished_file_leaves_the_lists() {
-    let rig = Rig::start("lib-removed-vanished").await;
+async fn an_album_without_files_leaves_the_lists() {
+    let rig = Rig::start("lib-file-less-unlisted").await;
     let app = &rig.app;
     let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
     let music = app.config.root_app_dir.join("music");
     plant(&music, "a/01.flac", "flac_full_01.flac");
-    plant(&music, "a/02.flac", "flac_full_02.flac");
     plant(&music, "b/01.flac", "flac_full_01.flac");
     rig.pause_identification().await;
     app.add_library_folder("music", &music).await;
@@ -6452,95 +6446,17 @@ async fn an_album_removed_with_a_vanished_file_leaves_the_lists() {
     let store = &rig.scan_store;
     let a1 = store.track_at("music", "a/01.flac").unwrap().expect("a/01");
     let b1 = store.track_at("music", "b/01.flac").unwrap().expect("b/01");
-    let album = store.album_for_track(&a1).unwrap().expect("album a");
+    let gone = store.album_for_track(&a1).unwrap().expect("album a");
     let kept = store.album_for_track(&b1).unwrap().expect("album b");
-    let get = |uri: String| {
-        let headers = &headers;
-        async move {
-            let (status, body) = app.call("GET", &uri, headers, None).await;
-            assert_eq!(status, StatusCode::OK, "{uri}: {body}");
-            body
-        }
-    };
-    let listed = || async {
-        let page = get("/api/v3/library/albums?limit=50".to_owned()).await;
-        let mut ids: Vec<String> = page["items"]
-            .as_array()
-            .expect("items")
-            .iter()
-            .map(|item| item["id"].as_str().expect("id").to_owned())
-            .collect();
-        ids.sort();
-        ids
-    };
-
-    std::fs::remove_file(music.join("a/02.flac")).expect("a file vanishes");
-    app.scan_library().await;
-    let shown = get(format!("/api/v3/library/albums/{album}")).await;
-    assert_eq!(shown["track_count"], json!(1), "{shown}");
-    let uri = format!(
-        "/api/v3/library/albums/{album}?expected_revision={}&expected_listing_revision={}&delete_files=true",
-        shown["row_revision"], shown["listing_revision"]
-    );
-    let (status, body) = app.call("DELETE", &uri, &headers, None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let mut both = vec![album.clone(), kept.clone()];
-    both.sort();
-    assert_eq!(listed().await, both, "in the bin: listed");
-
-    let summary = get("/api/v3/library/recycle-bin/summary".to_owned()).await;
-    let before = summary["as_of"].as_i64().expect("as of") + 1000;
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/recycle-bin/empty",
-            &headers,
-            Some(json!({ "before": before })),
+    for album in [&gone, &kept] {
+        app.seed_with(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, decision_source, selected_at) \
+             VALUES (?1, 'musicbrainz', 'rg-shared', 'manual', 1)",
+            [album],
         )
         .await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
-    // The empty runs on the job runner's blocking threads: the bound is
-    // wall time.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    loop {
-        let status = get("/api/v3/library/recycle-bin/status".to_owned()).await;
-        if status["state"] == "idle" && status["last_emptied"].is_object() {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the bin empties: {status}"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-
-    assert_eq!(listed().await, [kept], "out of the bin: gone");
-    rig.stop().await;
-}
-
-/// An album the upgrade brought with nothing to play, or one with no
-/// tracks at all, stays off the lists and still opens by its id; one whose
-/// files vanish later stays listed.
-#[tokio::test]
-async fn an_album_carried_without_files_stays_off_the_lists() {
-    let rig = Rig::start("lib-carried-file-less").await;
-    let app = &rig.app;
-    let auth = app.login_admin().await;
-    let headers = [("authorization", auth.as_str())];
-    let music = app.config.root_app_dir.join("music");
-    plant(&music, "a/01.flac", "flac_full_01.flac");
-    plant(&music, "b/01.flac", "flac_full_01.flac");
-    plant(&music, "c/01.flac", "flac_full_01.flac");
-    rig.pause_identification().await;
-    app.add_library_folder("music", &music).await;
-    app.scan_library().await;
-    let store = &rig.scan_store;
-    let a1 = store.track_at("music", "a/01.flac").unwrap().expect("a/01");
-    let b1 = store.track_at("music", "b/01.flac").unwrap().expect("b/01");
-    let c1 = store.track_at("music", "c/01.flac").unwrap().expect("c/01");
-    let carried = store.album_for_track(&a1).unwrap().expect("album a");
-    let vanished = store.album_for_track(&b1).unwrap().expect("album b");
-    let kept = store.album_for_track(&c1).unwrap().expect("album c");
     let get = |uri: String| {
         let headers = &headers;
         async move {
@@ -6549,8 +6465,7 @@ async fn an_album_carried_without_files_stays_off_the_lists() {
             body
         }
     };
-    let listed = || async {
-        let page = get("/api/v3/library/albums?limit=50".to_owned()).await;
+    let ids = |page: &Value| -> Vec<String> {
         let mut ids: Vec<String> = page["items"]
             .as_array()
             .expect("items")
@@ -6560,43 +6475,45 @@ async fn an_album_carried_without_files_stays_off_the_lists() {
         ids.sort();
         ids
     };
+    let artist = get(format!("/api/v3/library/albums/{kept}")).await["artist_id"]
+        .as_str()
+        .expect("artist id")
+        .to_owned();
+    let lists = || async {
+        let mut listed = Vec::new();
+        for uri in [
+            "/api/v3/library/albums?limit=50".to_owned(),
+            format!("/api/v3/library/artists/{artist}/albums?limit=50"),
+        ] {
+            let page = get(uri).await;
+            assert_eq!(page["total"], json!(ids(&page).len()), "{page}");
+            listed.push(ids(&page));
+        }
+        listed
+    };
+    let copies = |album: &str| {
+        let uri = format!("/api/v3/library/albums/{album}/copies");
+        async move { ids(&get(uri).await) }
+    };
 
-    // What the upgrade writes for a v2 album whose files were already
-    // gone: its tracks missing since before the run, and an album row
-    // left with no tracks.
-    std::fs::remove_file(music.join("a/01.flac")).expect("a file vanishes");
-    app.seed_with(
-        "INSERT INTO import_runs (id, instance_id, exported_at, exit_code, entity_counts, \
-         applied_at) SELECT 'run-1', 'v2', 0, 'OK', '{}', MAX(imported_at) FROM local_tracks",
-        [] as [&str; 0],
-    )
-    .await;
-    app.seed_with(
-        "UPDATE local_tracks SET availability = 'missing', \
-         missing_at = (SELECT applied_at FROM import_runs) - 86400000 \
-         WHERE local_album_id = ?1",
-        [&carried],
-    )
-    .await;
-    app.seed_with(
-        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
-         album_artist_id, grouping_source, created_at, updated_at) \
-         SELECT 'ghost', root_id, 'g-ghost', 'Ghost', 'ghost', album_artist_id, \
-         'legacy_import', 0, 0 FROM local_albums WHERE id = ?1",
-        [&carried],
-    )
-    .await;
-    std::fs::remove_file(music.join("b/01.flac")).expect("a file vanishes later");
+    std::fs::remove_dir_all(music.join("a")).expect("the folder is deleted");
     app.scan_library().await;
+    let only = vec![kept.clone()];
+    assert_eq!(lists().await, [only.clone(), only], "gone from the lists");
+    assert!(
+        copies(&kept).await.is_empty(),
+        "gone from its copy's Copies"
+    );
+    assert_eq!(copies(&gone).await, [kept.clone()], "its own Copies");
+    let opened = get(format!("/api/v3/library/albums/{gone}")).await;
+    assert_eq!(opened["id"], json!(gone), "its link still opens it");
+    assert_eq!(opened["track_count"], json!(0), "{opened}");
 
-    let mut shown = vec![vanished.clone(), kept];
-    shown.sort();
-    assert_eq!(listed().await, shown, "the later loss stays listed");
-    for album in [carried.as_str(), "ghost", vanished.as_str()] {
-        let opened = get(format!("/api/v3/library/albums/{album}")).await;
-        assert_eq!(opened["id"], json!(album), "its link still opens it");
-        assert_eq!(opened["track_count"], json!(0), "{opened}");
-    }
+    plant(&music, "a/01.flac", "flac_full_01.flac");
+    app.scan_library().await;
+    let mut both = vec![gone.clone(), kept.clone()];
+    both.sort();
+    assert_eq!(lists().await, [both.clone(), both], "its files are back");
     rig.stop().await;
 }
 

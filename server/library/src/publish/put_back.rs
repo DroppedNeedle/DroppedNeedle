@@ -160,21 +160,10 @@ pub fn removals(db: &Db, album_id: &str) -> Result<Vec<Listed>, PublishError> {
     let rows: Vec<(String, Option<String>, i64, u32, bool)> =
         db.read_blocking("publish.album_removals", |conn| {
             let mut statement = conn.prepare_cached(sql::ALBUM_REMOVALS.text())?;
-            let rows = statement.query_map(
-                params![
-                    album_id,
-                    JournalKind::Remove,
-                    JournalState::NeedsAttention,
-                    JournalState::Prepared,
-                    JournalState::Staged,
-                    JournalState::Published,
-                    JournalState::Compensated,
-                ],
-                |row| {
-                    let row = sql::AlbumRemoval::read(row)?;
-                    Ok((row.id, row.reason_code, row.created_at, row.files, row.held))
-                },
-            )?;
+            let rows = statement.query_map(params![album_id], |row| {
+                let row = sql::AlbumRemoval::read(row)?;
+                Ok((row.id, row.reason_code, row.created_at, row.files, row.held))
+            })?;
             Ok::<_, PublishError>(rows.collect::<rusqlite::Result<Vec<_>>>()?)
         })?;
     Ok(rows

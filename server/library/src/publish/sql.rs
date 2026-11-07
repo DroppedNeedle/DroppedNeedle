@@ -33,37 +33,32 @@ macro_rules! in_bin {
     };
 }
 
-/// Everything of an album, a column holding its id, went through the
-/// recycle bin and has left it: the album has tracks, each of them is
-/// missing because its file went to the bin (a copy reached the bin no
-/// earlier than the track went missing: a removal marks the track missing
-/// in its commit and its copy lands after), and none is there now (put
-/// back, expired or emptied). A track whose file vanished before the
-/// album's last removal counts as removed with it: the person removed the
-/// album with that track already gone. A track that went missing later
-/// (its folder vanished, even after an earlier trip to the bin and back)
-/// or one excluded keeps the album out of this.
+/// A removal the album's page can still put back, over an alias of its
+/// `files_recycled` row in `library_catalog_actions`: no put-back spent
+/// it, none of its file rows is still being written, and one of its
+/// copies is still in the recycle bin or its row waits for an admin. The
+/// album page's removals and the web UI's lists read this one rule. The
+/// unary plus drops the id's affinity, so the put-back probe can use its
+/// expression index.
 #[macro_export]
-macro_rules! album_gone_through_bin {
-    ($album_id:expr) => {
+macro_rules! removal_offered {
+    ($action:literal) => {
         concat!(
-            "EXISTS (SELECT 1 FROM local_tracks gbt WHERE gbt.local_album_id = ",
-            $album_id,
-            ") AND NOT EXISTS (SELECT 1 FROM local_tracks gbt WHERE gbt.local_album_id = ",
-            $album_id,
-            " AND (gbt.availability <> 'missing' OR gbt.missing_at IS NULL \
-             OR (NOT EXISTS (SELECT 1 FROM library_publish_replacements gbr \
-             WHERE gbr.replaced_track_id = gbt.id AND gbr.recycled_at >= gbt.missing_at) \
-             AND gbt.missing_at > IFNULL((SELECT MAX(gbo.missing_at) \
-             FROM library_publish_replacements gbl \
-             JOIN local_tracks gbo ON gbo.id = gbl.replaced_track_id \
-             WHERE gbo.local_album_id = gbt.local_album_id AND +gbo.availability = 'missing' \
-             AND gbl.recycled_at >= gbo.missing_at), -1)) \
-             OR EXISTS (SELECT 1 FROM library_publish_replacements gbr \
-             JOIN library_publish_journal gbj ON gbj.id = gbr.journal_id \
-             WHERE gbr.replaced_track_id = gbt.id AND ",
-            $crate::in_recycle_bin!("gbr", "gbj", "'needs_attention'"),
-            ")))"
+            "NOT EXISTS (SELECT 1 FROM library_catalog_actions rop \
+             WHERE rop.action_kind = 'files_put_back' \
+             AND json_extract(rop.before_json, '$.undoes') = +",
+            $action,
+            ".id) AND NOT EXISTS (SELECT 1 FROM library_publish_journal roj \
+             WHERE roj.bundle_id = ",
+            $action,
+            ".id AND roj.kind = 'remove' \
+             AND roj.state IN ('prepared', 'staged', 'published', 'compensated')) \
+             AND EXISTS (SELECT 1 FROM library_publish_journal rok \
+             JOIN library_publish_replacements ror ON ror.journal_id = rok.id \
+             WHERE rok.bundle_id = ",
+            $action,
+            ".id AND rok.kind = 'remove' \
+             AND (ror.expired_at IS NULL OR rok.state = 'needs_attention'))"
         )
     };
 }
@@ -202,31 +197,23 @@ droppedneedle_kernel::sql! {
     pub(super) PUT_BACK_EXISTS = "SELECT EXISTS (SELECT 1 FROM library_catalog_actions \
              WHERE action_kind = 'files_put_back' AND json_extract(before_json, '$.undoes') = ?1)";
     /// The removals of album `?1` (or of an album merged into it) that can
-    /// still be put back: unspent, every file row settled or held for an
-    /// admin, newest first. `files` counts the copies still in the bin; a
-    /// held row never expires. `?2` is the removal kind, `?3` the held state
-    /// and `?4` to `?7` the states of a row still being written.
+    /// still be put back ([`removal_offered!`]), newest first. `files`
+    /// counts the copies still in the bin; a held row never expires.
     pub(crate) ALBUM_REMOVALS = "WITH RECURSIVE albums(id, hops) AS ( \
              SELECT ?1, 0 UNION SELECT b.id, albums.hops + 1 FROM local_albums b \
              JOIN albums ON b.retired_into_album_id = albums.id WHERE albums.hops < 8) \
-             SELECT id, reason_code, created_at, files, held FROM ( \
              SELECT a.id, a.reason_code, a.created_at, \
              (SELECT count(*) FROM library_publish_journal j \
               JOIN library_publish_replacements r ON r.journal_id = j.id \
-              WHERE j.bundle_id = a.id AND j.kind = ?2 \
-              AND (r.expired_at IS NULL OR j.state = ?3)) AS files, \
+              WHERE j.bundle_id = a.id AND j.kind = 'remove' \
+              AND (r.expired_at IS NULL OR j.state = 'needs_attention')) AS files, \
              EXISTS (SELECT 1 FROM library_publish_journal j WHERE j.bundle_id = a.id \
-              AND j.kind = ?2 AND j.state = ?3) AS held \
+              AND j.kind = 'remove' AND j.state = 'needs_attention') AS held \
              FROM library_catalog_actions a \
              WHERE a.action_kind = 'files_recycled' \
              AND a.local_album_id IN (SELECT id FROM albums) \
-             AND NOT EXISTS (SELECT 1 FROM library_catalog_actions p \
-              WHERE p.action_kind = 'files_put_back' \
-              AND json_extract(p.before_json, '$.undoes') = a.id) \
-             AND NOT EXISTS (SELECT 1 FROM library_publish_journal j WHERE j.bundle_id = a.id \
-              AND j.kind = ?2 \
-              AND j.state IN (?4, ?5, ?6, ?7))) \
-             WHERE files > 0 ORDER BY created_at DESC, id";
+             AND " + (removal_offered!("a")) + " \
+             ORDER BY a.created_at DESC, a.id";
     /// One page of what the recycle bin holds, grouped by the removal or
     /// change that put it there, newest first, before the cursor (`?1`
     /// unix ms, then bundle id `?2`), at most `?3`: each bundle with when
@@ -801,12 +788,35 @@ droppedneedle_kernel::sql! {
 
 #[cfg(test)]
 mod tests {
-    use super::JournalState;
+    use super::{JournalKind, JournalState};
 
-    /// [`album_gone_through_bin!`] writes the held state as text.
+    /// [`removal_offered!`] and the album page's removals write journal
+    /// kinds and states as text: each word they quote outside the action
+    /// kinds is one the enums spell, and the rule names every state it
+    /// means.
     #[test]
-    fn the_bin_rule_names_the_held_state() {
-        let state = format!("gbj.state = '{}'", JournalState::NeedsAttention.as_str());
-        assert!(album_gone_through_bin!("a.id").contains(&state));
+    fn the_removal_rule_quotes_journal_words() {
+        let actions = ["files_put_back", "files_recycled", "$.undoes"];
+        for text in [removal_offered!("a"), super::ALBUM_REMOVALS.text()] {
+            for word in text.split('\'').skip(1).step_by(2) {
+                let known = actions.contains(&word)
+                    || JournalState::parse(word).is_some()
+                    || JournalKind::parse(word).is_some();
+                assert!(known, "{word:?} is not a journal state or kind");
+            }
+        }
+        let rule = removal_offered!("a");
+        let removal = format!("rok.kind = '{}'", JournalKind::Remove.as_str());
+        let held = format!("rok.state = '{}'", JournalState::NeedsAttention.as_str());
+        let writing = format!(
+            "roj.state IN ('{}', '{}', '{}', '{}')",
+            JournalState::Prepared.as_str(),
+            JournalState::Staged.as_str(),
+            JournalState::Published.as_str(),
+            JournalState::Compensated.as_str(),
+        );
+        for part in [removal, held, writing] {
+            assert!(rule.contains(&part), "{part} is missing");
+        }
     }
 }

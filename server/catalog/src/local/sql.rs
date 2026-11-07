@@ -14,16 +14,10 @@
 //!   by triggers): at least one of its tracks is indexed. Missing tracks
 //!   (gone from disk or in the recycle bin) and excluded ones do not count.
 //!   Player apps never see a live album without files.
-//! - **Listed.** The web UI's album lists show a live album, with or
-//!   without files, until everything of a file-less album has been through
-//!   the recycle bin and left it
-//!   ([`droppedneedle_library::album_gone_through_bin`]): a removed album
-//!   is listed, marked "no files", while any of its files can still be put
-//!   back. One whose files vanished from disk stays listed, unless they
-//!   vanished before it was removed. An album with no track rows, or one
-//!   the upgrade from v2 brought with every track already missing (v2 hid
-//!   these), is not listed: a kept track is one not missing, or missing
-//!   since the first `import_runs` row. Every album still opens by its id.
+//! - **Listed.** The web UI's lists show a live album with files, and one
+//!   with none only while Put back can still bring something of it home
+//!   ([`droppedneedle_library::removal_offered`]). Every album still opens
+//!   by its id.
 //! - **Live track.** A track every read shows is indexed and sits on a
 //!   live album. Merges retire only emptied albums, so a track left on a
 //!   retired one is a leftover no read lists, counts or returns.
@@ -76,10 +70,7 @@ macro_rules! live_album {
 }
 
 /// An album the web UI's lists show, over an album alias: live, and with
-/// files, or with a kept track and something of it not yet through the
-/// recycle bin. A kept track is not missing, or went missing after the
-/// upgrade from v2 (a NULL `missing_at` reads as carried); with no upgrade
-/// every track row is kept.
+/// files, or with a removal that Put back can still bring home.
 macro_rules! listed_album {
     ($album:literal) => {
         concat!(
@@ -87,14 +78,12 @@ macro_rules! listed_album {
             $album,
             ".retired_into_album_id IS NULL AND (+",
             $album,
-            ".has_indexed_track = 1 OR (EXISTS (SELECT 1 FROM local_tracks lk \
-             WHERE lk.local_album_id = ",
+            ".has_indexed_track = 1 OR EXISTS (SELECT 1 FROM library_catalog_actions lra \
+             WHERE lra.local_album_id = ",
             $album,
-            ".id AND (lk.availability <> 'missing' \
-             OR NOT EXISTS (SELECT 1 FROM import_runs) \
-             OR lk.missing_at >= (SELECT MIN(ir.applied_at) FROM import_runs ir))) AND NOT (",
-            droppedneedle_library::album_gone_through_bin!(concat!($album, ".id")),
-            ")))"
+            ".id AND lra.action_kind = 'files_recycled' AND ",
+            droppedneedle_library::removal_offered!("lra"),
+            "))"
         )
     };
 }
@@ -306,11 +295,11 @@ droppedneedle_kernel::sql! {
         album_track!("t", "a.id")
     ));
     /// The album list's filters, shared by its page and its count: listed
-    /// albums, with or without files. Binds: the pattern three times, the
-    /// artist twice, the decade three times, the formats (`,flac,mp3,`)
-    /// twice and whether the album must have one of them (1) or none (0),
-    /// the track bound as [`album_min_tracks!`] binds it, then the user
-    /// whose stars it keeps (or NULL) and [`rated_within!`]'s binds.
+    /// albums. Binds: the pattern three times, the artist twice, the decade
+    /// three times, the formats (`,flac,mp3,`) twice and whether the album
+    /// must have one of them (1) or none (0), the track bound as
+    /// [`album_min_tracks!`] binds it, then the user whose stars it keeps
+    /// (or NULL) and [`rated_within!`]'s binds.
     pub(crate) fragment ALBUM_FILTER = (concat!(
         listed_album!("a"),
         " AND (? IS NULL OR a.title_folded LIKE ? ESCAPE '\\' \

@@ -282,53 +282,27 @@ const ARTIST_SORTS: [ArtistSort; 4] = [
 
 /// The album list's id order for each sort and direction over every album
 /// of the small fixture.
-const ALBUM_ORDERS: [(AlbumSort, bool, [&str; 5]); 10] = [
-    (AlbumSort::Name, false, ["al5", "al4", "al1", "al3", "al2"]),
-    (AlbumSort::Name, true, ["al2", "al3", "al1", "al4", "al5"]),
-    (
-        AlbumSort::DateAdded,
-        false,
-        ["al1", "al4", "al3", "al5", "al2"],
-    ),
-    (
-        AlbumSort::DateAdded,
-        true,
-        ["al2", "al5", "al3", "al4", "al1"],
-    ),
-    (AlbumSort::Year, false, ["al5", "al1", "al3", "al4", "al2"]),
-    (AlbumSort::Year, true, ["al2", "al4", "al3", "al1", "al5"]),
-    (
-        AlbumSort::Artist,
-        false,
-        ["al4", "al1", "al2", "al5", "al3"],
-    ),
-    (AlbumSort::Artist, true, ["al3", "al5", "al2", "al1", "al4"]),
-    (
-        AlbumSort::Rediscover,
-        false,
-        ["al1", "al4", "al3", "al5", "al2"],
-    ),
-    (
-        AlbumSort::Rediscover,
-        true,
-        ["al2", "al5", "al3", "al4", "al1"],
-    ),
+const ALBUM_ORDERS: [(AlbumSort, bool, [&str; 4]); 10] = [
+    (AlbumSort::Name, false, ["al5", "al1", "al3", "al2"]),
+    (AlbumSort::Name, true, ["al2", "al3", "al1", "al5"]),
+    (AlbumSort::DateAdded, false, ["al1", "al3", "al5", "al2"]),
+    (AlbumSort::DateAdded, true, ["al2", "al5", "al3", "al1"]),
+    (AlbumSort::Year, false, ["al5", "al1", "al3", "al2"]),
+    (AlbumSort::Year, true, ["al2", "al3", "al1", "al5"]),
+    (AlbumSort::Artist, false, ["al1", "al2", "al5", "al3"]),
+    (AlbumSort::Artist, true, ["al3", "al5", "al2", "al1"]),
+    (AlbumSort::Rediscover, false, ["al1", "al3", "al5", "al2"]),
+    (AlbumSort::Rediscover, true, ["al2", "al5", "al3", "al1"]),
 ];
 
 /// The small fixture's albums as the default page reads them.
-const ALBUM_RECORDS: [&str; 5] = [
+const ALBUM_RECORDS: [&str; 4] = [
     "AlbumRecord { id: \"al5\", title: \"100% \\\"Live\\\" _Unplugged_ 'Encore'\", \
      artist_name: \"Boreal\", artist_id: \"a2\", release_group_mbid: None, release_mbid: None, \
      artist_mbid: None, linked: false, track_count: 2, total_duration_seconds: 385.0, \
      total_size_bytes: 4000000, format: Some(\"opus\"), year: Some(1987), \
      is_compilation: false, cover_available: false, art_version: None, date_added: Some(1800.0), \
      contribution_id: None, contribution_state: None }",
-    "AlbumRecord { id: \"al4\", title: \"Empty Halls\", artist_name: \"Aurora\", \
-     artist_id: \"a1\", release_group_mbid: None, release_mbid: None, \
-     artist_mbid: Some(\"m1\"), linked: false, track_count: 0, total_duration_seconds: 0.0, \
-     total_size_bytes: 0, format: None, year: Some(1994), is_compilation: false, \
-     cover_available: false, art_version: None, date_added: Some(1200.0), contribution_id: None, \
-     contribution_state: None }",
     "AlbumRecord { id: \"al1\", title: \"First Light\", artist_name: \"Aurora\", \
      artist_id: \"a1\", release_group_mbid: Some(\"rg1\"), release_mbid: Some(\"r1\"), \
      artist_mbid: Some(\"m1\"), linked: true, track_count: 2, total_duration_seconds: 400.0, \
@@ -382,9 +356,9 @@ async fn walk_albums(
 
 /// The album list answers the fixture's pages: every sort in both
 /// directions across filters, walked two at a time by cursor, the album
-/// without files listed with no tracks. A filtered page is the sort's
-/// order of every album kept to the filter's albums; one random walk
-/// gives every album once.
+/// without files left off. A filtered page is the sort's order of every
+/// album kept to the filter's albums; one random walk gives every album
+/// once.
 #[tokio::test]
 async fn album_pages_match_the_fixture() {
     let fixture = seed_small().await;
@@ -401,12 +375,12 @@ async fn album_pages_match_the_fixture() {
             favorites_of: None,
         };
     let filters: [(AlbumFilter, &[&str]); 7] = [
-        (AlbumFilter::default(), &["al1", "al2", "al3", "al4", "al5"]),
+        (AlbumFilter::default(), &["al1", "al2", "al3", "al5"]),
         (filter(Some("light"), None, None, None), &["al1"]),
         (filter(Some("zzz-no-such-album"), None, None, None), &[]),
         (filter(Some("100% \"live\""), None, None, None), &["al5"]),
-        (filter(None, Some("a1"), None, None), &["al1", "al2", "al4"]),
-        (filter(None, None, Some(1990), None), &["al1", "al3", "al4"]),
+        (filter(None, Some("a1"), None, None), &["al1", "al2"]),
+        (filter(None, None, Some(1990), None), &["al1", "al3"]),
         (filter(None, None, None, Some("flac")), &["al1", "al3"]),
     ];
     for (sort, descending, order) in ALBUM_ORDERS {
@@ -425,14 +399,14 @@ async fn album_pages_match_the_fixture() {
         }
         assert_eq!(
             walk_albums(&fixture, sort, descending, 2, 0).await,
-            (order.map(str::to_owned).to_vec(), vec![5, 5, 5]),
+            (order.map(str::to_owned).to_vec(), vec![4, 4]),
             "sort={sort:?} desc={descending}"
         );
     }
     let (mut ids, totals) = walk_albums(&fixture, AlbumSort::Random, false, 2, 42).await;
-    assert_eq!(totals, [5, 5, 5]);
+    assert_eq!(totals, [4, 4]);
     ids.sort_unstable();
-    assert_eq!(ids, ["al1", "al2", "al3", "al4", "al5"]);
+    assert_eq!(ids, ["al1", "al2", "al3", "al5"]);
     let page = fixture
         .catalog
         .list_albums(
@@ -1531,7 +1505,7 @@ async fn assert_filter_plans(db: &Db) {
                 .all(|line| line.starts_with("SEARCH ") && line.contains("=?"))
         })
     };
-    let album_aliases = ["t2", "mat", "gbt", "gbr", "gbj", "ur"];
+    let album_aliases = ["t2", "mat", "lra", "rop", "roj", "rok", "ror", "ur"];
     for (name, text) in [
         ("album page", sql::album_page(AlbumSort::Name, false, false)),
         (
