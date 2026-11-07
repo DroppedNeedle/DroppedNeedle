@@ -50,6 +50,8 @@ pub enum HistoryKind {
     RetagDismissalEnded,
     /// A leftover album of an earlier version was folded into this one.
     LeftoverJoined,
+    /// People's hearts and ratings moved here from a copy with no files.
+    MarksFollowed,
     /// Other music took the paths of tracks, which stayed behind as missing.
     TracksOtherMusic,
     /// Tracks' files were replaced by new copies of the same recordings.
@@ -326,6 +328,9 @@ pub fn album_history(
                     | "AUTOMATIC_PROVIDER_CONTRADICTION_CATALOG_REPAIR",
                 ),
             ) => HistoryKind::LeftoverJoined,
+            (ActionKind::MergeAlbum, Some(hygiene::MARKS_FOLLOWED_REASON)) => {
+                HistoryKind::MarksFollowed
+            }
             (ActionKind::AlbumArtist, Some(hygiene::ARTIST_REPAIR_REASON)) => {
                 let undo_id = hygiene::artist_repair_undoable(conn, &row.id)?.then_some(row.id);
                 entries.push(HistoryEntry {

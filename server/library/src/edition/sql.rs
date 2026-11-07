@@ -60,7 +60,7 @@ droppedneedle_kernel::sql! {
          AND state IN ('queued', 'running', 'deferred'))";
     pub(super) WAITING_ALBUM_COUNT = "SELECT COUNT(*) FROM library_album_match_state s \
          JOIN local_albums a ON a.id = s.local_album_id \
-         WHERE s.state = ?1 AND a.retired_into_album_id IS NULL";
+         WHERE s.state = ?1 AND " + (crate::listed_album!("a"));
     pub(super) WAITING_ALBUM_PAGE = "SELECT s.local_album_id, a.title, COALESCE(a.album_artist_name, '') AS artist_name, s.reason_code, \
          e.release_mbid, e.release_group_mbid, s.updated_at, \
          COALESCE(e.row_revision, 0) AS identity_revision, s.candidates_json, \
@@ -72,7 +72,7 @@ droppedneedle_kernel::sql! {
          JOIN local_albums a ON a.id = s.local_album_id \
          LEFT JOIN local_album_external_identities e \
            ON e.local_album_id = s.local_album_id AND e.provider = ?2 \
-         WHERE s.state = ?1 AND a.retired_into_album_id IS NULL \
+         WHERE s.state = ?1 AND " + (crate::listed_album!("a")) + " \
          ORDER BY s.updated_at DESC, s.local_album_id LIMIT ?3 OFFSET ?4";
     /// The album artist's name, as its files have it.
     pub(super) ALBUM_ARTIST_NAME = "SELECT COALESCE(album_artist_name, '') FROM local_albums WHERE id = ?1";
@@ -101,15 +101,15 @@ droppedneedle_kernel::sql! {
     pub(super) LOOKS_WRONG_OF = "SELECT \
          EXISTS(SELECT 1 FROM library_album_looks_wrong WHERE local_album_id = ?1 AND user_id = ?2), \
          (SELECT COUNT(*) FROM library_album_looks_wrong WHERE local_album_id = ?1)";
-    /// Live albums someone flagged.
+    /// Listed albums someone flagged.
     pub(super) LOOKS_WRONG_ALBUM_COUNT = "SELECT COUNT(DISTINCT w.local_album_id) \
          FROM library_album_looks_wrong w JOIN local_albums a ON a.id = w.local_album_id \
-         WHERE a.retired_into_album_id IS NULL";
+         WHERE " + (crate::listed_album!("a"));
     /// One page of the albums someone flagged, newest flag first.
     pub(super) LOOKS_WRONG_PAGE = "SELECT w.local_album_id, MAX(w.created_at) AS flagged_at, \
          COUNT(*) AS looks_wrong \
          FROM library_album_looks_wrong w JOIN local_albums a ON a.id = w.local_album_id \
-         WHERE a.retired_into_album_id IS NULL \
+         WHERE " + (crate::listed_album!("a")) + " \
          GROUP BY w.local_album_id ORDER BY flagged_at DESC, w.local_album_id LIMIT ?1 OFFSET ?2";
     /// The release of album `?1` a person chose, when it is `?3` and no custom edition is active.
     pub(super) RELEASE_A_PERSON_CHOSE = "SELECT release_mbid FROM local_album_external_identities \

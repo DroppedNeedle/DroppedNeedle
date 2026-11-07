@@ -449,6 +449,19 @@ pub fn identified_after(conn: &Connection, after: &Watermark) -> rusqlite::Resul
             job_id: row.job_id,
         });
     }
+    // An identification may have accepted the copy a hidden album's marks
+    // wait for, so each cleanup also looks at every such album.
+    if page.last.is_some() {
+        let mut stmt = conn.prepare(crate::repairs::sql::MARKS_CANDIDATES.text())?;
+        let marked = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for album in marked {
+            if seen.insert(album.clone()) {
+                page.albums.push(album);
+            }
+        }
+    }
     Ok(page)
 }
 

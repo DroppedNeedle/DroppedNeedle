@@ -9,9 +9,13 @@
 # code inside its own transaction, when one album, artist or track row
 # takes the place of another (a merge, or a scan following a retagged
 # album onto its old row):
-#   catalog_user_favorites        catalog   moved to the surviving row
+#   catalog_user_favorites        catalog   moved to the surviving row, or
+#                                           to the copy with files, when an
+#                                           album with no files has one
 #   catalog_user_favorite_names   catalog   moved with their favorite
-#   catalog_user_ratings          catalog   moved to the surviving row; a
+#   catalog_user_ratings          catalog   moved to the surviving row, or
+#                                           to the copy with files, when an
+#                                           album with no files has one; a
 #                                           user who rated both keeps the
 #                                           surviving row's rating
 #   library_play_history          media     moved to the surviving row

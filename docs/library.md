@@ -134,7 +134,7 @@ Removing an album or a track never deletes your music. The files move into a rec
 
 ## Albums with no files
 
-An album with none of its files in the library (missing from disk, excluded, or with no tracks at all) is not shown in the album lists, on its artist's page, in favorites, ratings or counts, or under another album's Copies. The one exception is an album you removed: it stays listed, marked "No files", while "Put back" on its page can still bring its files home. It leaves once nothing can be put back. Its link still opens it, and it is listed again once a scan finds its files. Player apps don't show it, and search, Discover and follows treat it as not in your library, so you can request it again.
+An album with none of its files in the library (missing from disk, excluded, or with no tracks at all) is not shown in the album lists, on its artist's page, in favorites, ratings or counts, under Check albums, or under another album's Copies. The one exception is an album you removed: it stays listed, marked "No files", while "Put back" on its page can still bring its files home. It leaves once nothing can be put back. Its link still opens it, and it is listed again once a scan finds its files. Player apps don't show it, and search, Discover and follows treat it as not in your library, so you can request it again. When another copy of the same album has files, and both are matched to MusicBrainz, the album's heart and rating on the copy with no files move to it, and that album's history says so; its plays stay where they were. They stay on the copy they moved to if the old one's files come back.
 
 ## Downloading from the library
 
@@ -156,13 +156,13 @@ In the player bar and on the deck, the artist and album names link to their page
 
 The filter button left of Shuffle skips by rating. "Only play" a number of stars "and up" (2 to 5) makes Next, Previous and the end of a track pass over the queue's tracks rated lower; "Play unrated" (on at first) says whether tracks you haven't rated still play. The button shows the floor, such as 4★+, while it is on, the queue marks the tracks it will pass over "Skips", and "Turn off" plays everything again. A track you pick yourself always plays, and a track with no library copy is never skipped. When nothing left in the queue passes, playback stops at the end of the track and the queue stays, with "No more 4★+ tracks." in the bar. If your ratings can't be read, nothing is skipped and the player says so once. The setting is kept per account in this browser, and phones don't show the button.
 
-The "highest rated" album list in Subsonic apps shows the albums you rated, best first. When albums, artists or tracks are merged, their ratings move to the one that stays; if you rated both, the one that stays keeps its rating. Jellyfin apps don't show ratings.
+The "highest rated" album list in Subsonic apps shows the albums you rated, best first. When albums, artists or tracks are merged, their ratings move to the one that stays; if you rated both, the one that stays keeps its rating. An album rating moves the same way from an album left with no files to the copy of it that has files (see [Albums with no files](#albums-with-no-files)); if you rated both, the copy keeps its rating. Jellyfin apps don't show ratings.
 
 ## Favorites
 
 The heart beside the stars adds an album, a track that has a file in your library, or an artist to your favorites; click it again to take it off. To see them, turn on Favourites on the Albums, Artists or Tracks list, or open the Favourites tile on the Library page. The list starts with your newest favorite, and the sort menu still works. On the Tracks list, Play All and Shuffle play only your favorites while the filter is on.
 
-Favorites are kept per account, and they are the same list player apps use: a heart in the web app is a star in Subsonic apps and a favorite in Jellyfin apps, and the other way round. When albums, artists or tracks are merged, their favorites move to the one that stays. Favorites on a Jellyfin or Navidrome server you linked are that server's own and are shown on its page, apart from these.
+Favorites are kept per account, and they are the same list player apps use: a heart in the web app is a star in Subsonic apps and a favorite in Jellyfin apps, and the other way round. When albums, artists or tracks are merged, their favorites move to the one that stays, and a heart on an album left with no files moves to the copy of it that has files (see [Albums with no files](#albums-with-no-files)). Favorites on a Jellyfin or Navidrome server you linked are that server's own and are shown on its page, apart from these.
 
 ## Adding a missing album to MusicBrainz
 

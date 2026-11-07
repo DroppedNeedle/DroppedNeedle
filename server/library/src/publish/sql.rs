@@ -63,6 +63,28 @@ macro_rules! removal_offered {
     };
 }
 
+/// An album the web UI's lists show, over an album alias: live, and with
+/// files, or with a removal that Put back can still bring home
+/// ([`removal_offered!`]). The catalog's lists and counts, Check albums
+/// and the cleanup that moves marks off a hidden album read this one rule.
+#[macro_export]
+macro_rules! listed_album {
+    ($album:literal) => {
+        concat!(
+            "+",
+            $album,
+            ".retired_into_album_id IS NULL AND (+",
+            $album,
+            ".has_indexed_track = 1 OR EXISTS (SELECT 1 FROM library_catalog_actions lra \
+             WHERE lra.local_album_id = ",
+            $album,
+            ".id AND lra.action_kind = 'files_recycled' AND ",
+            $crate::removal_offered!("lra"),
+            "))"
+        )
+    };
+}
+
 droppedneedle_kernel::sql! {
     /// One journal row with the file it replaces, if any.
     pub(super) fragment JOURNAL_ROWS = "SELECT j.id, j.bundle_id, j.kind, j.source_root, \
@@ -93,6 +115,17 @@ droppedneedle_kernel::sql! {
     /// Move a row (`?2`) from `?3` to `?1` only.
     pub(super) JOURNAL_TRANSITION = "UPDATE library_publish_journal SET state = ?1, seq = seq + 1 \
              WHERE id = ?2 AND state = ?3";
+    /// Whether moving removal row `?1` to `needs_attention` may change
+    /// whether its album is listed ([`listed_album!`]): the album has no
+    /// files, and the row was still being written (`?2`) or its copy left
+    /// the bin, so the removal can be offered now.
+    pub(super) ATTENTION_CHANGES_LISTING = "SELECT EXISTS (SELECT 1 FROM library_publish_journal j \
+             JOIN library_catalog_actions a ON a.id = j.bundle_id \
+             AND a.action_kind = 'files_recycled' \
+             JOIN local_albums al ON al.id = a.local_album_id \
+             JOIN library_publish_replacements r ON r.journal_id = j.id \
+             WHERE j.id = ?1 AND j.kind = 'remove' AND +al.has_indexed_track = 0 \
+             AND (?2 OR r.expired_at IS NOT NULL))";
     /// Move a row (`?2`) from `?3` to `?1` only, recording the hash of its
     /// staged bytes (`?4`).
     pub(super) JOURNAL_STAGE = "UPDATE library_publish_journal \

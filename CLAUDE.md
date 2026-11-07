@@ -631,6 +631,10 @@ Run from the repo root. `make help` lists every target.
   edition's undo takes the choice back with every match
   made on it; files the app wrote meanwhile are undone through Library
   management.
+- A person's album hearts and ratings on an album with no files move to
+  the copy its release group opens, when both are accepted and that copy
+  has files; a rating on both keeps the copy's. Plays stay, local-only
+  albums keep theirs, and the album's history shows the move.
 - Album and track identities, match state and their undo rows are written
   only through `library/src/identity/`; a source gate holds it.
 

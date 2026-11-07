@@ -26,7 +26,7 @@ droppedneedle_kernel::sql! {
     AND (a.action_kind IN ('continue_tracks', 'other_music_at_path', 'new_copy_at_path') \
       OR (a.action_kind = 'merge_album' AND a.reason_code IN ('RETAG_JOINED_ACROSS_SCANS', \
         'RETAG_JOINED_SAME_RELEASE', 'AUTOMATIC_EMPTY_ALBUM_SHELL_CONVERGENCE', \
-        'AUTOMATIC_PROVIDER_CONTRADICTION_CATALOG_REPAIR')) \
+        'AUTOMATIC_PROVIDER_CONTRADICTION_CATALOG_REPAIR', 'MARKS_FOLLOWED_TO_COPY')) \
       OR (a.action_kind = 'retag_first_half' \
         AND a.reason_code = 'RETAG_FIRST_HALF_LEFT_AS_IT_WAS') \
       OR a.action_kind = 'retag_dismissal_ended' \

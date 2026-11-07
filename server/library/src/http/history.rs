@@ -55,6 +55,8 @@ pub enum AlbumHistoryKindView {
     RetagDismissalEnded,
     /// A leftover album of an earlier version was folded into this one.
     LeftoverJoined,
+    /// People's hearts and ratings moved here from a copy with no files.
+    MarksFollowed,
     /// Other music took the paths of tracks, which came in as new tracks;
     /// what people made stayed with the old tracks, now missing.
     TracksOtherMusic,
@@ -128,6 +130,7 @@ impl From<HistoryEntry> for AlbumHistoryEntryView {
                 HistoryKind::RetagHalfLeftAlone => AlbumHistoryKindView::RetagHalfLeftAlone,
                 HistoryKind::RetagDismissalEnded => AlbumHistoryKindView::RetagDismissalEnded,
                 HistoryKind::LeftoverJoined => AlbumHistoryKindView::LeftoverJoined,
+                HistoryKind::MarksFollowed => AlbumHistoryKindView::MarksFollowed,
                 HistoryKind::TracksOtherMusic => AlbumHistoryKindView::TracksOtherMusic,
                 HistoryKind::TracksNewCopy => AlbumHistoryKindView::TracksNewCopy,
                 HistoryKind::ArtistFromTracks => AlbumHistoryKindView::ArtistFromTracks,

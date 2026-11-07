@@ -1,7 +1,8 @@
 //! Catalog cleanup after an upgrade (v2's catalog identity hygiene): three
-//! repairs of album rows an earlier version left behind. Catalog rows
-//! only; no file is touched. Each runs in the caller's transaction and
-//! does nothing unless the evidence is unambiguous.
+//! repairs of album rows an earlier version left behind, and a move of
+//! people's marks off an album with no files. Catalog rows only; no file
+//! is touched. Each runs in the caller's transaction and does nothing
+//! unless the evidence is unambiguous.
 //!
 //! - An empty album shell (no files left) that names the same album as
 //!   exactly one live album in the same root is retired into it, once no
@@ -14,6 +15,10 @@
 //!   writes an album's artist only from files it reads, so a row an
 //!   earlier version left on the placeholder stays there while its files
 //!   are unchanged.
+//! - People's hearts and ratings on an album with no files, which the
+//!   lists hide, move to the copy with files its release group opens, when
+//!   both are accepted on that group. A person who rated both keeps the
+//!   copy's rating; the one dropped is kept in the audit row. Plays stay.
 //!
 //! A person's edition choice is never lost: an album holding a chosen
 //! edition, made now or in v2, is only retired into an album with the same
@@ -34,14 +39,14 @@ use crate::catalog_revision::bump_catalog;
 use crate::corrections::membership::retire;
 use crate::identify::artist_links::mark_stale;
 use crate::identify::queue::offer_again;
-use crate::identify::sqlite::offer_album;
+use crate::identify::sqlite::{offer_album, retarget_marks};
 use crate::identity::{self, DecisionSource, Rows};
 use crate::repairs::sql::ALBUM_CREDITS;
 use crate::repairs::sql::INSERT_ALBUM_CREDIT;
 use crate::repairs::sql::TRACK_CREDITS;
 use crate::repairs::sql::{
     AlbumArtistAndSort, ArtistRepairAction, CreditColumns, HygieneAlbum as Album, HygieneIdentity,
-    HygieneTrack, LiveAlbumArtist, NamedTrack,
+    HygieneTrack, LiveAlbumArtist, NamedTrack, SupersededRating,
 };
 use crate::scan::models::GroupingSource;
 use crate::scan::naming::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID};
@@ -65,7 +70,10 @@ pub fn clean_album(
         Some(change) => Some(change),
         None => match fold_split_legacy_album(tx, &album, job_id, now)? {
             Some(change) => Some(change),
-            None => artist_from_tracks(tx, &album, job_id, now)?,
+            None => match artist_from_tracks(tx, &album, job_id, now)? {
+                Some(change) => Some(change),
+                None => marks_follow_copy(tx, &album, job_id, now)?,
+            },
         },
     };
     if changed.is_some() {
@@ -102,10 +110,17 @@ fn identity(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Identi
     .optional()
 }
 
-/// Work a person or a job is doing on these albums: leave them alone.
+/// Work a person or a job is doing on these albums, or a person's edits
+/// to them in the tag editor: leave them alone.
 fn busy(conn: &Connection, albums: &[&str], now: f64) -> rusqlite::Result<bool> {
+    live_work(conn, albums, true, now)
+}
+
+/// Work a person or a job is doing on these albums; with `edits`, a
+/// person's lasting tag-editor edits count as well.
+fn live_work(conn: &Connection, albums: &[&str], edits: bool, now: f64) -> rusqlite::Result<bool> {
     conn.query_row(
-        &crate::repairs::sql::albums_have_live_work(ListLen::new(albums.len())),
+        &crate::repairs::sql::albums_have_live_work(ListLen::new(albums.len()), edits),
         params_from_iter(
             std::iter::once(rusqlite::types::Value::Integer(crate::clock::ms(now))).chain(
                 albums
@@ -346,6 +361,70 @@ fn fold_split_legacy_album(
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?,
         &after,
         identity::FOLD_REASON,
+        now,
+    )?;
+    Ok(Some(after))
+}
+
+/// The reason code of the audit row [`marks_follow_copy`] writes.
+pub const MARKS_FOLLOWED_REASON: &str = "MARKS_FOLLOWED_TO_COPY";
+
+/// Move people's hearts and ratings off an album with no files that the
+/// lists hide onto the copy with files its release group opens, when both
+/// are accepted on that group. A person who rated both keeps the copy's
+/// rating, and the audit row keeps the one dropped. Plays stay: a play
+/// names the track played. Nothing moves them back if the files return.
+fn marks_follow_copy(
+    tx: &Transaction<'_>,
+    album: &Album,
+    job_id: &str,
+    now: f64,
+) -> rusqlite::Result<Option<serde_json::Value>> {
+    let target: Option<String> = tx
+        .query_row(
+            crate::repairs::sql::MARKS_FOLLOW_TARGET.text(),
+            params![album.id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    let Some(target) = target else {
+        return Ok(None);
+    };
+    // Moving marks touches no album row and no file, so a person's tag
+    // edits to either album do not hold it back; work in flight does.
+    if live_work(tx, &[&album.id, &target], false, now)? || awaits_retag(tx, &target)? {
+        return Ok(None);
+    }
+    let superseded = tx
+        .prepare(crate::repairs::sql::SUPERSEDED_RATINGS.text())?
+        .query_map(params![album.id, target], SupersededRating::read)?
+        .map(|row| {
+            row.map(|row| {
+                serde_json::json!({
+                    "user_id": row.user_id,
+                    "rating": row.rating,
+                    "rated_at": row.rated_at,
+                })
+            })
+        })
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let (favorites, ratings) = retarget_marks(tx, "album", &album.id, &target)?;
+    let after = serde_json::json!({
+        "kind": "marks_followed",
+        "favorites": favorites,
+        "ratings": ratings,
+    });
+    audit(
+        tx,
+        &target,
+        job_id,
+        serde_json::json!({
+            "from_album_id": album.id,
+            "superseded_ratings": superseded,
+        }),
+        &after,
+        MARKS_FOLLOWED_REASON,
         now,
     )?;
     Ok(Some(after))

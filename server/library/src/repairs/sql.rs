@@ -8,7 +8,7 @@ use droppedneedle_kernel::db::time::Millis;
 
 use super::models::{ApplyResult, Confidence, FindingCode, FindingState};
 use crate::identity::DecisionSource;
-use crate::identity::sql::REVISABLE;
+use crate::identity::sql::{REVISABLE, accepted};
 use crate::jobs::sql::live_job;
 use crate::scan::models::GroupingSource;
 
@@ -289,8 +289,43 @@ droppedneedle_kernel::sql! {
              CAST(release_group_mbid AS TEXT) AS release_group_mbid, \
              CAST(duration_ms AS INTEGER) AS duration_ms, CAST(source AS TEXT) AS source FROM library_play_history \
              WHERE " + UNFILED + " AND rowid > ?1 ORDER BY rowid LIMIT ?2";
+    /// The copy that people's marks on album `a` move to: the album
+    /// [`copy_of_group!`](crate::copy_of_group) opens for the group of
+    /// `a`'s accepted match, when it is another album, has files and is
+    /// accepted on the same group.
+    pub(super) fragment MARKS_TARGET = "SELECT mty.id FROM local_album_external_identities xi \
+     JOIN local_albums mty ON mty.id = ("
+     + (crate::copy_of_group!("= +lower(xi.release_group_mbid)")) + ") \
+     JOIN local_album_external_identities yi ON yi.local_album_id = mty.id \
+     AND yi.provider = 'musicbrainz' \
+     WHERE xi.local_album_id = a.id AND xi.provider = 'musicbrainz' AND "
+     + (accepted!("xi")) + " \
+     AND mty.id <> a.id AND +mty.has_indexed_track = 1 \
+     AND lower(yi.release_group_mbid) = lower(xi.release_group_mbid) AND "
+     + (accepted!("yi"));
+    /// An album with no files that the lists hide, holding a person's
+    /// heart or rating, whose marks can move to [`MARKS_TARGET`]. Read
+    /// from the marks first, so it is empty once they have moved.
+    pub(super) fragment MARKS_CANDIDATE = "(+a.has_indexed_track = 0 \
+     AND a.id IN (SELECT item_id FROM catalog_user_favorites WHERE item_kind = 'album' \
+     UNION SELECT item_id FROM catalog_user_ratings WHERE item_kind = 'album') \
+     AND NOT (" + (crate::listed_album!("a")) + ") AND EXISTS (" + MARKS_TARGET + "))";
     pub(super) HYGIENE_CANDIDATES_EXIST = "SELECT EXISTS(SELECT 1 FROM local_albums a \
-             WHERE a.retired_into_album_id IS NULL AND " + HYGIENE_CANDIDATE + ")";
+             WHERE a.retired_into_album_id IS NULL AND (" + HYGIENE_CANDIDATE + " OR "
+             + MARKS_CANDIDATE + "))";
+    /// Every live album whose marks can move to its copy with files.
+    pub(super) MARKS_CANDIDATES = "SELECT a.id FROM local_albums a \
+             WHERE a.retired_into_album_id IS NULL AND " + MARKS_CANDIDATE + " ORDER BY a.id";
+    /// The copy album `?1`'s marks move to, while it is a candidate; no
+    /// row otherwise.
+    pub(super) MARKS_FOLLOW_TARGET = "SELECT (" + MARKS_TARGET + ") FROM local_albums a \
+             WHERE a.id = ?1 AND a.retired_into_album_id IS NULL AND " + MARKS_CANDIDATE;
+    /// The ratings of album `?1` that give way to the same person's rating
+    /// of album `?2`.
+    pub(super) SUPERSEDED_RATINGS = "SELECT x.user_id, x.rating, x.rated_at \
+             FROM catalog_user_ratings x WHERE x.item_kind = 'album' AND x.item_id = ?1 \
+             AND EXISTS (SELECT 1 FROM catalog_user_ratings y WHERE y.user_id = x.user_id \
+             AND y.item_kind = 'album' AND y.item_id = ?2) ORDER BY x.user_id";
     pub(super) NEWEST_IDENTIFIED = "SELECT updated_at AS at_ms, id AS job_id FROM library_identify_jobs \
                  WHERE state IN " + IDENTIFY_FINISHED + " ORDER BY updated_at DESC, id DESC LIMIT 1";
     pub(super) IDENTIFIED_AFTER = "SELECT j.updated_at AS at_ms, j.id AS job_id, a.id AS album_id, \
@@ -396,7 +431,9 @@ droppedneedle_kernel::sql! {
              AND (t.applied_policy != 'automatic' \
                  OR trim(COALESCE(t.embedded_release_mbid, '')) != '')) \
          ORDER BY a.id";
-    /// Work a person or a job is doing on a list of albums (`?2` on); `?1` is now.
+    /// Work a person or a job is doing on a list of albums (`?2` on); `?1`
+    /// is now. With `edits`, a person's lasting tag-editor edits to an
+    /// album count too.
     family ALBUMS_HAVE_LIVE_WORK = albums_have_live_work;
     /// Move a list of tracks to the album bound first.
     family MOVE_TRACKS_TO_ALBUM = move_tracks_to_album;
@@ -510,6 +547,11 @@ droppedneedle_kernel::sql! {
         grouping_source: GroupingSource,
         grouping_locked: bool,
     }
+    pub(super) row SupersededRating for [SUPERSEDED_RATINGS] {
+        user_id: String,
+        rating: i64,
+        rated_at: i64,
+    }
     pub(super) row HygieneIdentity for [IDENTITY] {
         release_group_mbid: String,
         release_mbid: Option<String>,
@@ -580,20 +622,26 @@ droppedneedle_kernel::sql! {
     }
 }
 
-pub(super) fn albums_have_live_work(albums: ListLen) -> String {
+pub(super) fn albums_have_live_work(albums: ListLen, edits: bool) -> String {
     let marks = (2..albums.get() + 2)
         .map(|number| format!("?{number}"))
         .collect::<Vec<_>>()
         .join(",");
     let live = live_job!("?1");
+    let edits = if edits {
+        format!(
+            " OR EXISTS(SELECT 1 FROM library_management_overrides \
+             WHERE local_album_id IN ({marks}))"
+        )
+    } else {
+        String::new()
+    };
     format!(
         "SELECT EXISTS(SELECT 1 FROM library_contribution_drafts WHERE local_album_id IN \
              ({marks}) AND state IN ('draft','ready','seeded','verifying','needs_review')) \
              OR EXISTS(SELECT 1 FROM library_management_plan_items item \
              JOIN library_operation_jobs job ON job.id = item.job_id \
-             WHERE item.local_album_id IN ({marks}) AND {live}) \
-             OR EXISTS(SELECT 1 FROM library_management_overrides \
-             WHERE local_album_id IN ({marks}))"
+             WHERE item.local_album_id IN ({marks}) AND {live}){edits}"
     )
 }
 
@@ -651,9 +699,12 @@ fn repair_scope_from(scope: RepairScope) -> String {
             } else {
                 ""
             };
+            // Albums whose marks can move to their copy with files are
+            // looked at by every cleanup in the scope, whether or not a
+            // run touched them.
             format!(
-                "FROM local_albums a WHERE a.retired_into_album_id IS NULL \
-                 AND {HYGIENE_CANDIDATE} {roots} {albums} {run}"
+                "FROM local_albums a WHERE a.retired_into_album_id IS NULL {roots} {albums} \
+                 AND (({HYGIENE_CANDIDATE} {run}) OR {MARKS_CANDIDATE})"
             )
         }
         RepairScopeKind::Nothing => "FROM local_albums a WHERE 0".to_owned(),

@@ -6517,6 +6517,106 @@ async fn an_album_without_files_leaves_the_lists() {
     rig.stop().await;
 }
 
+/// A heart and rating on a copy whose files are gone follow to the copy
+/// with files; that copy keeps its own rating; plays stay; a local-only
+/// album keeps its heart; the copy's history shows the move.
+#[tokio::test]
+async fn marks_on_a_copy_without_files_follow_to_the_copy_with_files() {
+    use droppedneedle_library::http::history::album_history_view;
+
+    let (scratch, library, music) = bare_library("lib-marks-follow-copy").await;
+    for folder in ["gone", "kept", "local"] {
+        plant(&music, &format!("{folder}/01.flac"), "flac_full_01.flac");
+    }
+    add_music_root(&library, &music).await;
+    let db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db opens");
+    let read = |sql: &str| -> Vec<String> {
+        let mut stmt = db.prepare(sql).expect("query prepares");
+        stmt.query_map([], |row| row.get(0))
+            .expect("query runs")
+            .collect::<Result<_, _>>()
+            .expect("rows read")
+    };
+    let album_of = |folder: &str| -> String {
+        db.query_row(
+            "SELECT local_album_id FROM local_tracks WHERE relative_path = ?1",
+            [format!("{folder}/01.flac")],
+            |row| row.get(0),
+        )
+        .expect("album found")
+    };
+    let (gone, kept, local) = (album_of("gone"), album_of("kept"), album_of("local"));
+    db.execute_batch(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at) VALUES \
+         ('{gone}', 'musicbrainz', 'rg-shared', 'rel-gone', 'automatic', 1), \
+         ('{kept}', 'musicbrainz', 'rg-shared', 'rel-kept', 'automatic', 1); \
+         INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('fan', 'Fan', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
+         ('fan', 'album', '{gone}', 7), ('fan', 'album', '{local}', 7); \
+         INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at) VALUES \
+         ('fan', 'album', '{gone}', 4, 7), ('fan', 'album', '{kept}', 2, 8); \
+         INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         track_name, artist_name, played_at) SELECT 'played', 'fan', id, local_album_id, \
+         'Song', 'Artist', 7 FROM local_tracks WHERE local_album_id = '{gone}'; \
+         INSERT INTO library_management_overrides (id, subject_kind, local_album_id, \
+         field_name, value_json, mode, actor_user_id, reason, subject_revision, created_at, \
+         updated_at) VALUES ('edit', 'album', '{kept}', 'title', '\"Kept\"', 'replace', \
+         'fan', 'tag_editor', 1, 7, 7);"
+    ))
+    .expect("marks and a tag edit planted");
+
+    std::fs::remove_dir_all(music.join("gone")).expect("the copy's folder is deleted");
+    std::fs::remove_dir_all(music.join("local")).expect("the local album's folder is deleted");
+    rescan(&library).await;
+    let worker = crate::common::library::repair_worker(&library);
+    for _ in 0..20 {
+        if !droppedneedle_library::repairs::tick(&worker, "worker").await {
+            break;
+        }
+    }
+
+    let mut hearts = vec![kept.clone(), local.clone()];
+    hearts.sort();
+    assert_eq!(
+        read("SELECT item_id FROM catalog_user_favorites ORDER BY item_id"),
+        hearts,
+        "the heart followed to the copy with files; the local album kept its own"
+    );
+    assert_eq!(
+        read("SELECT item_id || ' ' || rating FROM catalog_user_ratings"),
+        [format!("{kept} 2")],
+        "the copy keeps its own rating"
+    );
+    assert_eq!(
+        read(
+            "SELECT json_extract(before_json, '$.superseded_ratings[0].rating') \
+             || ' ' || json_extract(before_json, '$.from_album_id') \
+             FROM library_catalog_actions WHERE reason_code = 'MARKS_FOLLOWED_TO_COPY'"
+        ),
+        [format!("4 {gone}")],
+        "the dropped rating is kept in the audit"
+    );
+    assert_eq!(
+        read("SELECT local_album_id FROM library_play_history"),
+        [gone.clone()],
+        "plays stay"
+    );
+    let ops = crate::common::library::operations(&library);
+    let view = album_history_view(&ops, &kept, "fan").expect("history reads");
+    let items = serde_json::to_value(view).expect("history serializes")["items"].clone();
+    assert!(
+        items
+            .as_array()
+            .expect("items")
+            .iter()
+            .any(|item| item["kind"] == "marks_followed"),
+        "{items}"
+    );
+}
+
 /// The bin page lists a removal with its files and their size, offers
 /// Put back, and lists it no more once its files are back.
 #[tokio::test]

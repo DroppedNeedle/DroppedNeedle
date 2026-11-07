@@ -932,6 +932,53 @@ async fn one_album_set_everywhere() {
     assert_eq!(sorted_ids(&page["items"], "id"), ["al-live", "al-pair-b"]);
     assert_eq!(page["total"], 2, "{page}");
 
+    // Check albums and the Favourites count read the same list rule.
+    rig.app
+        .seed(format!(
+            "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+             updated_at) VALUES ('al-missing', 'unconfirmed', 'CLOSE_CALL', 1), \
+             ('al-live', 'unconfirmed', 'CLOSE_CALL', 1); \
+             INSERT INTO library_album_looks_wrong (local_album_id, user_id, created_at) \
+             VALUES ('al-excluded', '{player_id}', 1); \
+             INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
+             VALUES ('{player_id}', 'album', 'al-missing', 1), \
+             ('{player_id}', 'album', 'al-live', 1);"
+        ))
+        .await;
+    let (status, stats) = rig
+        .app
+        .call("GET", "/api/v3/library/stats", &native, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{stats}");
+    assert_eq!(
+        (
+            &stats["guess_count"],
+            &stats["looks_wrong_count"],
+            &stats["check_count"],
+            &stats["favorite_albums"],
+        ),
+        (
+            &Value::from(1),
+            &Value::from(0),
+            &Value::from(1),
+            &Value::from(1)
+        ),
+        "{stats}"
+    );
+    for (state, listed) in [("unconfirmed", vec!["al-live"]), ("looks_wrong", vec![])] {
+        let (status, waiting) = rig
+            .app
+            .call(
+                "GET",
+                &format!("/api/v3/library/unconfirmed?state={state}"),
+                &native,
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{waiting}");
+        assert_eq!(sorted_ids(&waiting["items"], "album_id"), listed, "{state}");
+    }
+
     // A merged album's id answers for the album it merged into.
     let (status, album) = rig
         .app

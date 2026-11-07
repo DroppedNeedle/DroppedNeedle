@@ -1,11 +1,12 @@
 <!--
 	What DroppedNeedle did by itself to a library album: history moved to new
 	files, tracks whose paths other music took, tracks replaced by new copies
-	of the same recordings, albums joined into this one, an artist taken from
-	the tracks instead of "Unknown Artist", edition changes and a hand-back
-	that stopped, and the undos of those changes. A curator can undo the fold
-	of a leftover album and that artist change. Nothing shows while it loads
-	or when there is nothing to tell.
+	of the same recordings, albums joined into this one, hearts and ratings
+	moved here from a copy with no files, an artist taken from the tracks
+	instead of "Unknown Artist", edition changes and a hand-back that stopped,
+	and the undos of those changes. A curator can undo the fold of a leftover
+	album and that artist change. Nothing shows while it loads or when there
+	is nothing to tell.
 -->
 <script lang="ts">
 	import { History, Undo2 } from 'lucide-svelte';
@@ -103,6 +104,8 @@
 				return `The tracks came back from ${old}, so "Keep them apart" no longer applies.`;
 			case 'leftover_joined':
 				return `${old}, left over from an earlier version as a separate album, was folded into this album.`;
+			case 'marks_followed':
+				return 'Hearts and ratings moved here from a copy with no files.';
 			case 'artist_from_tracks':
 				return 'The artist was taken from the tracks, replacing "Unknown Artist".';
 			case 'edition_changed':

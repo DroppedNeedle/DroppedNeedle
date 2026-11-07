@@ -1366,6 +1366,19 @@ pub(crate) fn retarget_references(
         "artist" => crate::identify::sql::RETARGET_ARTIST_PLAYS,
         _ => crate::identify::sql::RETARGET_TRACK_PLAYS,
     };
+    let (favorites, ratings) = retarget_marks(tx, item_kind, retired_id, surviving_id)?;
+    let plays = tx.execute(plays.text(), params![surviving_id, retired_id])? as u64;
+    Ok(favorites + ratings + plays)
+}
+
+/// Move people's favorites, with their kept names, and ratings of one item
+/// onto another. Returns how many favorites and ratings left the old item.
+pub(crate) fn retarget_marks(
+    tx: &Connection,
+    item_kind: &str,
+    retired_id: &str,
+    surviving_id: &str,
+) -> rusqlite::Result<(u64, u64)> {
     // Copy, then delete: favorite names reference the favorite's key
     // without ON UPDATE, so the key cannot change in place. Deleting the
     // old favorite cascades to its name.
@@ -1390,8 +1403,7 @@ pub(crate) fn retarget_references(
         crate::identify::sql::DROP_ITEM_RATINGS.text(),
         params![item_kind, retired_id],
     )?;
-    let plays = tx.execute(plays.text(), params![surviving_id, retired_id])?;
-    Ok((favorites + ratings + plays) as u64)
+    Ok((favorites as u64, ratings as u64))
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {

@@ -15,9 +15,10 @@
 //!   (gone from disk or in the recycle bin) and excluded ones do not count.
 //!   Player apps never see a live album without files.
 //! - **Listed.** The web UI's lists show a live album with files, and one
-//!   with none only while Put back can still bring something of it home
-//!   ([`droppedneedle_library::removal_offered`]). Every album still opens
-//!   by its id.
+//!   with none only while Put back can still bring something of it home:
+//!   one definition, [`droppedneedle_library::listed_album`], which the
+//!   lists, their counts and Check albums read. Every album still opens by
+//!   its id.
 //! - **Live track.** A track every read shows is indexed and sits on a
 //!   live album. Merges retire only emptied albums, so a track left on a
 //!   retired one is a leftover no read lists, counts or returns.
@@ -58,33 +59,14 @@ use super::player::{
 use super::stores::{AlbumSort, ArtistScope, ArtistSort, TrackSort};
 use droppedneedle_library::identity::asked_groups;
 use droppedneedle_library::{
-    all_owners, copy_of_group, match_flag_state, named_group_guess, not_yet_identified, owns_group,
-    recording_mbid,
+    all_owners, copy_of_group, listed_album, match_flag_state, named_group_guess,
+    not_yet_identified, owns_group, recording_mbid,
 };
 
 /// An album that has not been merged into another, over an album alias.
 macro_rules! live_album {
     ($album:literal) => {
         concat!("+", $album, ".retired_into_album_id IS NULL")
-    };
-}
-
-/// An album the web UI's lists show, over an album alias: live, and with
-/// files, or with a removal that Put back can still bring home.
-macro_rules! listed_album {
-    ($album:literal) => {
-        concat!(
-            "+",
-            $album,
-            ".retired_into_album_id IS NULL AND (+",
-            $album,
-            ".has_indexed_track = 1 OR EXISTS (SELECT 1 FROM library_catalog_actions lra \
-             WHERE lra.local_album_id = ",
-            $album,
-            ".id AND lra.action_kind = 'files_recycled' AND ",
-            droppedneedle_library::removal_offered!("lra"),
-            "))"
-        )
     };
 }
 
@@ -155,9 +137,7 @@ macro_rules! owned_artist {
     };
 }
 
-pub(crate) use {
-    listed_album, live_album, live_track, musicbrainz, owned_album, owned_artist, track_codec,
-};
+pub(crate) use {live_album, live_track, musicbrainz, owned_album, owned_artist, track_codec};
 
 /// A track an album's track count counts, over a track alias and the
 /// album's id column: an indexed track on that album, whoever is credited
@@ -678,19 +658,20 @@ droppedneedle_kernel::sql! {
         FROM catalog_track_format_stats WHERE indexed_tracks > 0";
     /// Review, Check albums, local-only and last-scan totals; `to_check`
     /// counts each album once, whichever of the three lists it is on. Local-only
-    /// albums are owned albums with no identity row; best guesses and
-    /// albums nothing fits are live albums with that match state; the last
-    /// scan is the newest completed run.
+    /// albums are owned albums with no identity row; best guesses, albums
+    /// nothing fits and albums flagged as looking wrong are listed albums
+    /// with that state, as the Check albums tabs list them; the last scan
+    /// is the newest completed run.
     pub(crate) STATS_EXTRAS = "SELECT \
         (SELECT COUNT(*) FROM library_identify_reviews WHERE state = 'pending') AS reviews, \
-        (SELECT COUNT(*) FROM local_albums a WHERE a.retired_into_album_id IS NULL \
+        (SELECT COUNT(*) FROM local_albums a WHERE " + (listed_album!("a")) + " \
          AND " + (match_flag_state!("a.id", "unconfirmed")) + ") AS guesses, \
-        (SELECT COUNT(*) FROM local_albums a WHERE a.retired_into_album_id IS NULL \
+        (SELECT COUNT(*) FROM local_albums a WHERE " + (listed_album!("a")) + " \
          AND " + (match_flag_state!("a.id", "unmatched")) + ") AS not_found, \
         (SELECT COUNT(DISTINCT w.local_album_id) FROM library_album_looks_wrong w \
          JOIN local_albums a ON a.id = w.local_album_id \
-         WHERE a.retired_into_album_id IS NULL) AS looks_wrong, \
-        (SELECT COUNT(*) FROM local_albums a WHERE a.retired_into_album_id IS NULL AND ("
+         WHERE " + (listed_album!("a")) + ") AS looks_wrong, \
+        (SELECT COUNT(*) FROM local_albums a WHERE " + (listed_album!("a")) + " AND ("
         + (match_flag_state!("a.id", "unconfirmed")) + " \
          OR EXISTS (SELECT 1 FROM library_album_looks_wrong w WHERE w.local_album_id = a.id) \
          OR EXISTS (SELECT 1 FROM library_identify_reviews r \
@@ -702,9 +683,12 @@ droppedneedle_kernel::sql! {
 
     /// Which of a page of ids a user favorited, for one kind.
     family FAVORITES_IN = favorites_in;
-    /// A user's favorite counts per kind.
-    pub(crate) FAVORITE_COUNTS = "SELECT item_kind AS kind, COUNT(*) AS total \
-        FROM catalog_user_favorites WHERE user_id = ? GROUP BY item_kind";
+    /// A user's favorite counts per kind; albums count while they are
+    /// listed, as the Favourites list shows them.
+    pub(crate) FAVORITE_COUNTS = "SELECT f.item_kind AS kind, COUNT(*) AS total \
+        FROM catalog_user_favorites f WHERE f.user_id = ? \
+        AND (f.item_kind <> 'album' OR EXISTS (SELECT 1 FROM local_albums a \
+        WHERE a.id = f.item_id AND " + (listed_album!("a")) + ")) GROUP BY f.item_kind";
 
     /// The live album a local id or alias names now: the album itself while
     /// it is live, else the album its alias points at (every merge points
