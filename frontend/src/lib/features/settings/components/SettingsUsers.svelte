@@ -31,6 +31,7 @@
 		LogOut
 	} from 'lucide-svelte';
 	import UserQuotaEditor from '$lib/features/settings/components/UserQuotaEditor.svelte';
+	import UserCustomCssRow from '$lib/features/settings/components/UserCustomCssRow.svelte';
 	import {
 		getDownloadPolicyQuery,
 		createSaveDownloadPolicyMutation
@@ -530,7 +531,7 @@
 								<IconButton
 									size="sm"
 									icon={Gauge}
-									label="Request and storage quota"
+									label="Quota and custom CSS"
 									active={quotaOpen.has(user.id)}
 									aria-expanded={quotaOpen.has(user.id)}
 									onclick={() => toggleQuota(user.id)}
@@ -569,6 +570,7 @@
 						</div>
 						{#if quotaOpen.has(user.id)}
 							<UserQuotaEditor userId={user.id} displayName={user.display_name} />
+							<UserCustomCssRow userId={user.id} displayName={user.display_name} />
 						{/if}
 					{/each}
 				</div>

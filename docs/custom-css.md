@@ -12,9 +12,11 @@ If you used custom CSS or picked a theme before they moved to the account, the f
 
 ## Site CSS
 
-An admin can add CSS for the whole server under Settings > Appearance (up to 50,000 characters). It loads on every signed-in page on top of the app's own styles, and your CSS loads on top of it, so your rules win where the two disagree.
+An admin can add CSS for the whole server under Settings > Appearance (up to 50,000 characters). It loads on every signed-in page on top of the app's own styles, and your CSS loads on top of it, so your rules win where the two disagree. The site editor runs the same check and offers the same variables and snippets as yours; it keeps no history. A save the server refuses marks the lines it named.
 
-The same section has "Let people add their own CSS", on by default. While it is off, nobody's own CSS is applied or can be saved. Your text is kept, the editor shows it read-only and says custom CSS is turned off on this server, and you can still clear it. An admin can also turn one person's CSS off from their user page: the text stays and "Use my CSS" goes off, so you can see what happened and switch it back on.
+The same section has "Let people add their own CSS", on by default. While it is off, nobody's own CSS is applied or can be saved. Your text is kept, the editor shows it read-only and says custom CSS is turned off on this server, and you can still clear it.
+
+An admin can also turn one person's CSS off: in Settings > Users, the "Quota and custom CSS" button on their row shows whether they have custom CSS, whether it is on, its length and when it was saved, but never the text. Turn off keeps the text and turns "Use my CSS" off, so the person can see what happened and switch it back on.
 
 ## The editor
 
@@ -46,7 +48,7 @@ A sheet can hide or cover parts of the page. Any of these gets you out:
 - Add `?nocustomcss=1` to the address and load it, for example `https://music.example.com/profile?nocustomcss=1`. Your CSS and the site CSS stay off until the next full reload, so you can fix your sheet, turn it off or clear it.
 - Turn off "Use my CSS".
 - Press Undo on the message that confirmed the save, or Restore an earlier save from History.
-- Ask an admin: they can turn your CSS off from your user page, without seeing it.
+- Ask an admin: they can turn your CSS off from Settings > Users, without seeing it.
 
 ## What the check refuses, and why
 
