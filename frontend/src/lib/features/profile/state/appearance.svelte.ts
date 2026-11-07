@@ -7,6 +7,7 @@ import { untrack } from 'svelte';
 import { ApiError } from '$lib/api/errors';
 import {
 	createImportAppearanceMutation,
+	createSaveAppearanceMutation,
 	getMyAppearanceQuery,
 	takeFetchedAppearance,
 	type AppearanceUpdate,
@@ -18,6 +19,7 @@ import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { customCssStore } from '$lib/stores/customCss.svelte';
 import { setThemeOwner, THEME_STORAGE_KEY, themeOwner, themeStore } from '$lib/stores/theme.svelte';
+import { toastStore } from '$lib/stores/toast';
 
 // The key the browser-only version kept a person's CSS under, read once to
 // move it to their account.
@@ -68,20 +70,88 @@ function isRefusal(error: unknown): boolean {
 }
 
 /** Claim this browser's theme copy for the signed-in person. */
-export function claimThemeCopy(): void {
+function claimThemeCopy(): void {
 	const userId = authStore.user?.id;
 	if (userId) setThemeOwner(ownerTag(userId));
 }
 
+type ThemeSend = (update: AppearanceUpdate) => Promise<unknown>;
+
+/** A theme choice to store on the account, and the account it was made for. */
+interface ThemeSave {
+	theme: ThemeChoice;
+	userId: string | undefined;
+	send: ThemeSend;
+}
+
+// Theme saves reach the account one at a time, in the order they were made.
+// `sending` is the save on its way; `waiting` is the newest choice made since,
+// which replaces any older choice still waiting.
+let sending: ThemeSave | null = null;
+let waiting: ThemeSave | null = null;
+
+/** Whether a theme choice of this account is on its way or waiting. */
+function themeSavePending(userId: string): boolean {
+	return sending?.userId === userId || waiting?.userId === userId;
+}
+
+/** Whether the choice waiting is the same choice, for the same account, as `save`. */
+function isWaiting(save: ThemeSave): boolean {
+	return waiting !== null && waiting.theme === save.theme && waiting.userId === save.userId;
+}
+
+async function sendWaiting(): Promise<void> {
+	while (waiting) {
+		const save = waiting;
+		waiting = null;
+		// A choice made for a different account, or for nobody, is dropped.
+		if (save.userId !== authStore.user?.id) continue;
+		sending = save;
+		let stored = false;
+		try {
+			await save.send({ theme: save.theme });
+			stored = true;
+		} catch {
+			toastStore.show({ message: 'Theme not saved to your account.', type: 'error' });
+		}
+		sending = null;
+		// The account holds this choice already, so a copy of it waiting is not sent again.
+		if (stored && isWaiting(save)) waiting = null;
+	}
+}
+
+/**
+ * The theme saver for the component being set up. `saveTheme(next)` shows
+ * `next` at once, claims this browser's copy and saves `next` to the account,
+ * after any save made before it. A failed save shows an error and keeps
+ * `next` on screen.
+ */
+export function createThemeSaver(): (next: ThemeChoice) => void {
+	const save = createSaveAppearanceMutation();
+	return (next) => {
+		themeStore.set(next);
+		claimThemeCopy();
+		waiting = {
+			theme: next,
+			userId: authStore.user?.id,
+			send: (update) => save.mutateAsync(update)
+		};
+		if (!sending) void sendWaiting();
+	};
+}
+
 // The account's own theme wins. Otherwise an unclaimed copy becomes this
-// account's, and another account's copy gives way to the default.
-function applyTheme(theme: ThemeChoice | null, tag: string): void {
+// account's, and another account's copy is replaced by the default, claimed
+// for this account. Nothing is saved for either. An account answer does not
+// touch the screen while this person's theme save is pending: that save decides it.
+function applyTheme(theme: ThemeChoice | null, tag: string, userId: string): void {
+	if (themeSavePending(userId)) return;
 	if (theme) {
 		themeStore.set(theme);
 		setThemeOwner(tag);
 	} else if (!ownsBrowserTheme(tag)) {
-		// Another account's copy: show the default and save nothing.
-		themeStore.show('dark');
+		themeStore.set('dark');
+		setThemeOwner(tag);
 	} else if (readLocalTheme()) {
 		setThemeOwner(tag);
 	}
@@ -100,9 +170,7 @@ export function applyAppearance(): void {
 	// The users this page already tried to move, so a refusal is not retried on every answer.
 	const moveTried: string[] = [];
 
-	async function moveFromBrowser(userId: string, tag: string): Promise<void> {
-		// Another account's theme is not this account's to move.
-		const theme = ownsBrowserTheme(tag) ? readLocalTheme() : null;
+	async function moveFromBrowser(userId: string, theme: ThemeChoice | null): Promise<void> {
 		const text = readOldCss(userId);
 		if (!theme && !text.trim()) return;
 		const update: AppearanceUpdate = {};
@@ -125,6 +193,16 @@ export function applyAppearance(): void {
 		return () => customCssStore.hide();
 	});
 
+	// Once the user is known, another account's copy is not shown as theirs,
+	// before the account has answered.
+	$effect(() => {
+		const userId = authStore.user?.id;
+		if (!userId) return;
+		untrack(() => {
+			if (!ownsBrowserTheme(ownerTag(userId))) themeStore.show('dark');
+		});
+	});
+
 	$effect(() => {
 		const userId = authStore.user?.id;
 		// Read for their changes only: the answer is read below by the user's
@@ -140,7 +218,10 @@ export function applyAppearance(): void {
 			if (!appearance) return;
 			customCssStore.showFor(userId, appearance);
 			const tag = ownerTag(userId);
-			applyTheme(appearance.theme ?? null, tag);
+			// Read before the theme is applied, since applying replaces another
+			// account's copy. That copy is never moved to this account.
+			const browserTheme = ownsBrowserTheme(tag) ? readLocalTheme() : null;
+			applyTheme(appearance.theme ?? null, tag, userId);
 			const fetched = takeFetchedAppearance();
 			if (
 				fetched &&
@@ -150,7 +231,7 @@ export function applyAppearance(): void {
 				!moveTried.includes(userId)
 			) {
 				moveTried.push(userId);
-				void moveFromBrowser(userId, tag);
+				void moveFromBrowser(userId, browserTheme);
 			}
 		});
 	});

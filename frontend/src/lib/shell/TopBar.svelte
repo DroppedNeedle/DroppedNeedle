@@ -17,10 +17,8 @@
 	import ServiceHealthIndicator from '$lib/shell/ServiceHealthIndicator.svelte';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { createSaveAppearanceMutation } from '$lib/features/profile/queries/appearance.svelte';
-	import { claimThemeCopy } from '$lib/features/profile/state/appearance.svelte';
+	import { createThemeSaver } from '$lib/features/profile/state/appearance.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
-	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath, withoutBasePath } from '$lib/utils/basePath';
 	import type { SuggestResult } from '$lib/features/search/queries/types';
 
@@ -49,21 +47,13 @@
 				: 'Switch to dark theme'
 	);
 
-	const saveTheme = createSaveAppearanceMutation();
+	const saveTheme = createThemeSaver();
 
 	// Saved to the account like the theme cards, so the account's theme does not
 	// undo the choice on the next load.
 	function toggleTheme() {
 		const next = theme === 'light' ? 'dark' : theme === 'dark' ? 'midnight' : 'light';
-		themeStore.set(next);
-		claimThemeCopy();
-		saveTheme.mutate(
-			{ theme: next },
-			{
-				onError: () =>
-					toastStore.show({ message: 'Theme not saved to your account.', type: 'error' })
-			}
-		);
+		saveTheme(next);
 	}
 
 	function handleSearch() {

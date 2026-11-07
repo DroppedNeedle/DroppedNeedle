@@ -7,10 +7,12 @@ import { flushSync } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { page } from 'vitest/browser';
 import type { components } from '$lib/api/v3/openapi';
+import { AppearanceQueryKeyFactory } from '$lib/queries/featureKeys';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
 import { MAX_CUSTOM_CSS } from '$lib/stores/customCss.svelte';
 import { themeStore } from '$lib/stores/theme.svelte';
+import { toastStore } from '$lib/stores/toast';
 import AppearanceTestHarness from './AppearanceTestHarness.svelte';
 import { apiError, fakeApi, type FakeApi } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
@@ -244,9 +246,13 @@ describe('account appearance', () => {
 
 		await expect.poll(() => themeStore.preference).toBe('dark');
 		expect(document.documentElement.dataset.theme).toBe('dark');
+
+		// The default replaces the copy and is claimed for this account, once the account answers.
+		const tagF = await tagOf('user-f');
+		await expect.poll(() => localStorage.getItem('droppedneedle_theme_owner')).toBe(tagF);
+		expect(localStorage.getItem('droppedneedle_theme')).toBe('dark');
 		expect(api.calls('POST /api/v3/me/appearance/import')).toEqual([]);
 		expect(api.calls('PUT /api/v3/me/appearance')).toEqual([]);
-		expect(localStorage.getItem('droppedneedle_theme_owner')).toBe(await tagOf('user-f0'));
 	});
 
 	it("still moves this browser's theme to the account that owns it", async () => {
@@ -277,5 +283,111 @@ describe('account appearance', () => {
 		signIn('user-i');
 		await expect.poll(() => themeStore.preference).toBe('dark');
 		expect(api.calls('POST /api/v3/me/appearance/import')).toEqual([]);
+	});
+
+	it("shows the default at once for another account's copy, then claims that copy", async () => {
+		themeStore.set('light');
+		localStorage.setItem('droppedneedle_theme_owner', await tagOf('user-l0'));
+		const tagL = await tagOf('user-l');
+
+		// The account's answer is held back, so the check before it is what shows.
+		let release!: () => void;
+		const answered = new Promise<void>((resolve) => {
+			release = () => resolve();
+		});
+		api.use({
+			'GET /api/v3/me/appearance': async () => {
+				await answered;
+				return account('user-l');
+			}
+		});
+		await mount();
+		signIn('user-l');
+
+		await expect.poll(() => themeStore.preference).toBe('dark');
+		expect(document.documentElement.dataset.theme).toBe('dark');
+		expect(localStorage.getItem('droppedneedle_theme')).toBe('light');
+
+		release();
+		await expect.poll(() => localStorage.getItem('droppedneedle_theme_owner')).toBe(tagL);
+		expect(localStorage.getItem('droppedneedle_theme')).toBe('dark');
+		expect(api.calls('PUT /api/v3/me/appearance')).toEqual([]);
+		expect(api.calls('POST /api/v3/me/appearance/import')).toEqual([]);
+	});
+
+	it('sends theme saves one at a time, and the newest choice is the one stored', async () => {
+		write('user-m', { theme: 'light' });
+		signIn('user-m');
+		await mount();
+		await expect.poll(() => themeStore.preference).toBe('light');
+
+		// The first save is held open while two more choices are made.
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = () => resolve();
+		});
+		let sent = 0;
+		api.use({
+			'PUT /api/v3/me/appearance': async ({ body }) => {
+				sent++;
+				if (sent === 1) await held;
+				return write('user-m', body as AppearanceUpdate);
+			}
+		});
+
+		const newestTheme = () =>
+			queryClient.getQueryData<MyAppearance>(AppearanceQueryKeyFactory.mine('user-m'))?.theme;
+		const shown: string[] = [];
+		const watch = new MutationObserver(() => {
+			shown.push(document.documentElement.dataset.theme ?? '');
+		});
+
+		try {
+			await page.getByText('Midnight', { exact: true }).click();
+			await page.getByText('Light', { exact: true }).click();
+			await expect.poll(() => api.calls('PUT /api/v3/me/appearance').length).toBeGreaterThan(0);
+			expect(api.calls('PUT /api/v3/me/appearance')).toHaveLength(1);
+
+			// From the newest choice on, every theme the page shows must be that choice.
+			watch.observe(document.documentElement, {
+				attributes: true,
+				attributeFilter: ['data-theme']
+			});
+			await page.getByText('Dark', { exact: true }).click();
+			expect(themeStore.preference).toBe('dark');
+			release();
+			await expect.poll(() => api.calls('PUT /api/v3/me/appearance').length).toBe(2);
+			await expect.poll(newestTheme).toBe('dark');
+			expect(shown).toContain('dark');
+			expect(shown.every((theme) => theme === 'dark')).toBe(true);
+			expect(api.calls('PUT /api/v3/me/appearance').map((call) => call.body)).toEqual([
+				{ theme: 'midnight' },
+				{ theme: 'dark' }
+			]);
+		} finally {
+			watch.disconnect();
+			release();
+		}
+	});
+
+	it('shows one error for a theme save that fails, and keeps the choice on screen', async () => {
+		write('user-n', { theme: 'light' });
+		signIn('user-n');
+		await mount();
+		await expect.poll(() => themeStore.preference).toBe('light');
+		api.use({ 'PUT /api/v3/me/appearance': () => apiError(500, 'INTERNAL_ERROR', 'Failed') });
+
+		const errors: string[] = [];
+		const stop = toastStore.subscribe((toast) => {
+			if (toast?.type === 'error') errors.push(toast.message);
+		});
+		try {
+			await page.getByText('Midnight', { exact: true }).click();
+			await expect.poll(() => errors).toEqual(['Theme not saved to your account.']);
+			expect(themeStore.preference).toBe('midnight');
+			expect(document.documentElement.dataset.theme).toBe('midnight');
+		} finally {
+			stop();
+		}
 	});
 });
