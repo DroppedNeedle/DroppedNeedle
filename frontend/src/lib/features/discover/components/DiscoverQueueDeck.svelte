@@ -52,7 +52,6 @@
 	const previewMutation = createQueuePreviewV3Mutation();
 
 	const current = $derived(deck.current);
-	const theme = $derived(themeStore.resolved);
 	const cardIdentity = $derived(`${deck.requestKey}:${current?.musicbrainz_id ?? ''}`);
 	const enrichment = $derived(current?.enrichment);
 	const enriching = $derived(current != null && !current.enrichment);
@@ -261,7 +260,7 @@
 		aria-roledescription="carousel"
 		aria-label="Discover Queue"
 	>
-		<div class="dn-deck__ink" data-theme={theme === 'midnight' ? 'midnight' : 'light'}>
+		<div class="dn-deck__ink" data-theme={themeStore.paper}>
 			{#if deck.phase === 'loading' || deck.phase === 'idle'}
 				<div class="grid gap-8 lg:grid-cols-[22rem_1fr]">
 					<div class="skeleton skeleton-shimmer aspect-square w-full max-w-80 rounded-md"></div>
@@ -851,8 +850,8 @@
 		align-items: center;
 		gap: 1.25rem;
 		padding: 1rem 2.25rem calc(1rem + var(--tear, 0.75rem));
-		background-color: var(--dn-paper-content);
-		color: var(--dn-paper);
+		background-color: var(--dn-paper-tile);
+		color: var(--dn-paper-tile-content);
 	}
 	.dn-deck__band-title {
 		flex: none;
@@ -888,7 +887,7 @@
 	.deck-strip-item[aria-selected='true'] {
 		opacity: 1;
 		box-shadow:
-			0 0 0 2px var(--dn-paper-content),
+			0 0 0 2px var(--dn-paper-tile),
 			0 0 0 4px var(--dn-action);
 	}
 	.deck-strip-item:focus-visible {

@@ -5,11 +5,7 @@
 	const options: { value: ThemePreference; label: string; description: string }[] = [
 		{ value: 'dark', label: 'Dark', description: 'The default look.' },
 		{ value: 'light', label: 'Light', description: 'Light surfaces with darker accents.' },
-		{
-			value: 'midnight',
-			label: 'Midnight',
-			description: 'Pure darkness'
-		},
+		{ value: 'midnight', label: 'Midnight', description: 'Dark, with dark paper cards.' },
 		{
 			value: 'system',
 			label: 'System',

@@ -40,8 +40,6 @@
 		children
 	}: Props = $props();
 
-	const theme = $derived(themeStore.resolved);
-
 	// A long form's error bar may be above the screen when it appears.
 	function reveal(node: HTMLElement) {
 		node.scrollIntoView({ block: 'nearest' });
@@ -53,7 +51,7 @@
 		<div class="dn-auth-card__tabs">{@render tabs()}</div>
 	{/if}
 	<Card variant="torn" padding="none" class="dn-auth-card__stock">
-		<div class="dn-auth-card__body" data-theme={theme === 'midnight' ? 'midnight' : 'light'}>
+		<div class="dn-auth-card__body" data-theme={themeStore.paper}>
 			{#if error}
 				<div class="dn-auth-card__error" role="alert" use:reveal>
 					<CircleAlert class="size-5 shrink-0" aria-hidden="true" />
@@ -136,7 +134,7 @@
 		width: 3rem;
 		height: 3rem;
 		border-radius: 0.5rem;
-		background: var(--dn-paper-content);
+		background: var(--dn-paper-tile);
 		color: var(--dn-action);
 	}
 	.dn-auth-card__title {

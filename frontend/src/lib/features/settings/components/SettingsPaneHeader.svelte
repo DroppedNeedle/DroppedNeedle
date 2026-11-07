@@ -17,15 +17,10 @@
 	}
 
 	let { title, description, actions, children }: Props = $props();
-
-	const theme = $derived(themeStore.resolved);
 </script>
 
 <header class="dn-set-head">
-	<div
-		class="dn-set-head__sheet dn-card-torn"
-		data-theme={theme === 'midnight' ? 'midnight' : 'light'}
-	>
+	<div class="dn-set-head__sheet dn-card-torn" data-theme={themeStore.paper}>
 		<div class="dn-set-head__text">
 			<h2 class="dn-set-head__title">{title}</h2>
 			{#if description}<p class="dn-set-head__lede">{description}</p>{/if}

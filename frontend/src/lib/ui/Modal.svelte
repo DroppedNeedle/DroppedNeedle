@@ -86,7 +86,6 @@
 	const descriptionId = `${titleId}-description`;
 	const widths = { sm: 'max-w-sm', md: 'max-w-md', lg: 'max-w-2xl', xl: 'max-w-4xl' };
 	const sheet = $derived(size === 'sheet');
-	const theme = $derived(themeStore.resolved);
 	const iconTones = {
 		accent: 'bg-accent/10 text-accent',
 		action: 'border border-action-edge bg-action text-action-content',
@@ -220,10 +219,10 @@
 				'modal-box',
 				widths[size as keyof typeof widths],
 				overflowVisible && 'overflow-visible',
-				paper && 'border-2 border-paper-content',
+				paper && 'border-2 border-paper-content bg-paper',
 				bottomSheet && 'max-sm:max-w-none pb-[calc(env(safe-area-inset-bottom)+1.5rem)] sm:pb-6'
 			]}
-			data-theme={paper ? (theme === 'midnight' ? 'midnight' : 'light') : undefined}
+			data-theme={paper ? themeStore.paper : undefined}
 		>
 			<div class="flex items-start gap-3">
 				{#if Icon}

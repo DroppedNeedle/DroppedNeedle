@@ -1,11 +1,13 @@
 <!--
-	The artist fan shared by the Library's Artists tile and the Home Discover
-	teaser: three round faces, the front one largest, cycling through the
-	source every 4.2s. The caller owns the box and sets container-type: size;
+	The round artist faces shared by the Library's Artists tile and the Home
+	Discover teaser: three at once, the front one largest, turning with the
+	caller's `cycle` (a deckBeat count, plus an offset to stagger it from a
+	deck beside it). The caller owns the box and sets container-type: size;
 	the faces are sized in cqh so the same fan works in both places.
 -->
 <script lang="ts">
 	import ArtistImage from './ArtistImage.svelte';
+	import { deckSlots } from './deckBeat.svelte';
 
 	interface ArtistFanItem {
 		key: string;
@@ -15,55 +17,23 @@
 
 	interface Props {
 		artists: ArtistFanItem[];
-		/** Faces shown at once. */
-		windowSize?: number;
+		cycle: number;
 		/** Root class for the caller's box, width and position. */
 		class?: string;
-		/** Test ids for the Library tile's existing tests. */
-		faceTestId?: string;
-		imageTestId?: string;
 	}
 
-	let { artists, windowSize = 3, class: className = '', faceTestId, imageTestId }: Props = $props();
+	let { artists, cycle, class: className = '' }: Props = $props();
 
-	let cycle = $state(0);
-	let reduced = $state(false);
-
-	$effect(() => {
-		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-		reduced = mq.matches;
-		const onChange = (e: MediaQueryListEvent) => (reduced = e.matches);
-		mq.addEventListener('change', onChange);
-		return () => mq.removeEventListener('change', onChange);
-	});
-
-	$effect(() => {
-		if (reduced) return;
-		const id = setInterval(() => (cycle += 1), 4200);
-		return () => clearInterval(id);
-	});
-
-	function visibleSlots(
-		items: ArtistFanItem[],
-		size: number
-	): Array<{ item: ArtistFanItem; position: number }> {
-		const n = items.length;
-		const win = Math.min(size, n);
-		const start = n <= size ? 0 : ((cycle % n) + n) % n;
-		return Array.from({ length: win }, (_, position) => ({
-			item: items[(start + position) % n]!,
-			position
-		}));
-	}
+	const WINDOW = 3;
 </script>
 
 <span class="artist-fan {className}" aria-hidden="true">
-	{#each visibleSlots(artists, windowSize) as slot (slot.item.key)}
+	{#each deckSlots(artists, cycle, WINDOW) as slot (slot.item.key)}
+		<!-- with fewer faces than the window, they take the front slots -->
 		<span
 			class="artist-fan__face"
-			data-slot={slot.position + windowSize - Math.min(windowSize, artists.length)}
+			data-slot={slot.position + WINDOW - Math.min(WINDOW, artists.length)}
 			data-fan-key={slot.item.key}
-			data-testid={faceTestId}
 		>
 			<ArtistImage
 				mbid={slot.item.mbid}
@@ -71,7 +41,6 @@
 				alt=""
 				size="full"
 				requestSize={250}
-				testId={imageTestId}
 				rounded="none"
 				className="h-full w-full object-cover"
 			/>

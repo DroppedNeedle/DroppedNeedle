@@ -18,12 +18,10 @@
 	}
 
 	let { head, class: className = '', children }: Props = $props();
-
-	const theme = $derived(themeStore.resolved);
 </script>
 
 <div class="dn-paper {className}">
-	<div class="dn-paper__sheet" data-theme={theme === 'midnight' ? 'midnight' : 'light'}>
+	<div class="dn-paper__sheet" data-theme={themeStore.paper}>
 		{#if head}
 			<div class="dn-paper__head">{@render head()}</div>
 		{/if}

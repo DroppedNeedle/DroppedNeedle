@@ -215,7 +215,7 @@
 		flex: none;
 		place-items: center;
 		border-radius: 9999px;
-		background-color: var(--dn-paper-content);
+		background-color: var(--dn-paper-tile);
 		color: var(--dn-action);
 	}
 	.dn-gigs__notice-title {

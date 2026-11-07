@@ -2,6 +2,7 @@
 	import { ArrowRight, Disc3, Heart, Music, User } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import ArtistFan from '$lib/media/ArtistFan.svelte';
+	import { createDeckBeat, deckSlots } from '$lib/media/deckBeat.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import FritEdge from '$lib/ui/FritEdge.svelte';
 	import Illustration from '$lib/ui/Illustration.svelte';
@@ -47,39 +48,9 @@
 
 	const ALBUM_WINDOW = 5;
 
-	// one shared heartbeat advances both decks; the offsets stagger them
-	let cycle = $state(0);
-	let reduced = $state(false);
-
-	// mirrors actions/tilt.ts so flipping the preference mid-session stops the deck instead of hard-snapping
-	$effect(() => {
-		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-		reduced = mq.matches;
-		const onChange = (e: MediaQueryListEvent) => (reduced = e.matches);
-		mq.addEventListener('change', onChange);
-		return () => mq.removeEventListener('change', onChange);
-	});
-
-	$effect(() => {
-		if (reduced) return;
-		const id = setInterval(() => (cycle += 1), 4200);
-		return () => clearInterval(id);
-	});
-
-	// hold still unless the pool outnumbers the deck, else pictures shuffle with nothing new to show
-	function visibleSlots(
-		art: Art[],
-		base: number,
-		size: number
-	): Array<{ item: Art; position: number }> {
-		const n = art.length;
-		const win = Math.min(size, n);
-		const start = n <= size ? 0 : (((cycle + base) % n) + n) % n;
-		return Array.from({ length: win }, (_, position) => ({
-			item: art[(start + position) % n]!,
-			position
-		}));
-	}
+	// one shared heartbeat advances both decks; the artists' offset staggers them
+	const beat = createDeckBeat();
+	const ARTIST_OFFSET = 3;
 
 	// The covers fan to the left from the front one, each further back
 	// turned a little more and tucked under; sizes are in the deck's height.
@@ -113,7 +84,7 @@
 		>
 			{@render tileText(stats.total_albums, 'Albums', Disc3, 'Browse albums')}
 			<span class="hub-deck hub-deck--albums" aria-hidden="true">
-				{#each visibleSlots(albumArt, 0, ALBUM_WINDOW) as slot (slot.item.key)}
+				{#each deckSlots(albumArt, beat.cycle, ALBUM_WINDOW) as slot (slot.item.key)}
 					<span
 						class="hub-deck__cover"
 						data-testid="library-fan-card"
@@ -147,12 +118,7 @@
 	>
 		<FritEdge class="hub-tile__frit" />
 		{@render tileText(stats.total_artists, 'Artists', User, 'Browse artists')}
-		<ArtistFan
-			artists={artistArt}
-			class="hub-deck--artists"
-			faceTestId="library-fan-card"
-			imageTestId="library-fan-image"
-		/>
+		<ArtistFan artists={artistArt} cycle={beat.cycle + ARTIST_OFFSET} class="hub-deck--artists" />
 	</Card>
 
 	<div class="hub-tiles__torn">

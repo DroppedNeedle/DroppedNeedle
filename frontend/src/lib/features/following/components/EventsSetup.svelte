@@ -159,7 +159,7 @@
 		height: 5rem;
 		place-items: center;
 		border-radius: 9999px;
-		background-color: var(--dn-paper-content);
+		background-color: var(--dn-paper-tile);
 		color: var(--dn-action);
 	}
 	/* three strokes either side, acid over a dark edge so they hold on paper */
@@ -171,8 +171,7 @@
 		stroke-linecap: round;
 		stroke-width: 4;
 		paint-order: stroke;
-		filter: drop-shadow(0 0 0.6px var(--dn-paper-content))
-			drop-shadow(0 0 0.6px var(--dn-paper-content));
+		filter: drop-shadow(0 0 0.6px var(--dn-paper-tile)) drop-shadow(0 0 0.6px var(--dn-paper-tile));
 	}
 	.dn-gig-setup__burst--end {
 		scale: -1 1;

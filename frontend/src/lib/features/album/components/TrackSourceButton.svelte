@@ -15,12 +15,14 @@
 </script>
 
 {#if available}
-	<!-- Each source keeps its own colour, which the kit's variants do not cover. -->
+	<!-- Each source keeps its own colour, which the kit's variants do not cover.
+	     The icon takes the theme's page colour: the source hues are tuned
+	     against it, so it reads on them on light and dark paper alike. -->
 	<Button
 		size="xs"
 		icon={Play}
 		class="shrink-0 [&_svg]:fill-current"
-		style="--btn-color: {sourceColor}; background-color: var(--btn-color); color: oklch(98% 0 0);"
+		style="--btn-color: {sourceColor}; background-color: var(--btn-color); color: var(--color-base-100);"
 		{onclick}
 		aria-label={ariaLabel}
 	>

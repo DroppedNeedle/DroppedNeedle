@@ -112,8 +112,8 @@
 		padding-inline: 1.25rem;
 		border: 2px solid var(--dn-action);
 		border-radius: 9999px;
-		background-color: var(--dn-paper-content);
-		color: var(--dn-paper);
+		background-color: var(--dn-paper-tile);
+		color: var(--dn-paper-tile-content);
 		transition: box-shadow 150ms;
 	}
 	:global([data-theme='light']) .dn-city-search__pill {
@@ -127,10 +127,10 @@
 	.dn-city-search__pill :global(.dn-city-search__input) {
 		min-width: 0;
 		font-size: 1rem;
-		color: var(--dn-paper);
+		color: var(--dn-paper-tile-content);
 	}
 	.dn-city-search__pill :global(.dn-city-search__input::placeholder) {
-		color: color-mix(in oklab, var(--dn-paper) 72%, var(--dn-paper-content));
+		color: color-mix(in oklab, var(--dn-paper-tile-content) 72%, var(--dn-paper-tile));
 		opacity: 1;
 	}
 

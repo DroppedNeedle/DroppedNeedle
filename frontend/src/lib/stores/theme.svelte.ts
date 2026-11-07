@@ -71,6 +71,10 @@ function createThemeStore() {
 		get resolved() {
 			return resolved;
 		},
+		/** The theme a paper sheet switches to inside: Midnight's dark stock, else light. */
+		get paper(): 'light' | 'midnight' {
+			return resolved === 'midnight' ? 'midnight' : 'light';
+		},
 		set
 	};
 }

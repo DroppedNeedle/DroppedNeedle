@@ -6,6 +6,7 @@
 <script lang="ts">
 	import { ArrowRight, ChevronRight, Compass } from 'lucide-svelte';
 	import ArtistFan from '$lib/media/ArtistFan.svelte';
+	import { createDeckBeat } from '$lib/media/deckBeat.svelte';
 	import { getDiscoverQueueStatusQuery } from '$lib/features/discover/queries/DiscoverQueueQueries';
 	import { withBasePath } from '$lib/utils/basePath';
 	import type { DiscoverPreview } from '$lib/features/discover/queries/types';
@@ -23,6 +24,7 @@
 		queueStatus.data?.status === 'ready' ? (queueStatus.data.item_count ?? null) : null
 	);
 
+	const beat = createDeckBeat();
 	const fanArtists = $derived(
 		(preview?.items ?? []).slice(0, 4).map((artist, i) => ({
 			key: artist.musicbrainz_id ?? `${artist.name}-${i}`,
@@ -46,7 +48,7 @@
 	<div class="relative flex items-center gap-4 sm:gap-6">
 		<div class="ring" aria-hidden="true">
 			{#if fanArtists.length > 0}
-				<ArtistFan artists={fanArtists} class="ring-fan" />
+				<ArtistFan artists={fanArtists} cycle={beat.cycle} class="ring-fan" />
 			{:else}
 				<Compass class="size-7 sm:size-8" />
 			{/if}
@@ -117,11 +119,15 @@
 		background: var(--color-base-100);
 		color: var(--dn-title);
 		container-type: size;
+		overflow: hidden;
 	}
 
+	/* the fan is laid out for a wider box: shrunk and moved up and left, its
+	   front face sits whole inside the ring */
 	.ring :global(.ring-fan) {
 		position: absolute;
 		inset: 0;
+		transform: translate(-6%, -5%) scale(0.9);
 	}
 	@media (min-width: 640px) {
 		.ring {
