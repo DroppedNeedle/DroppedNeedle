@@ -131,6 +131,25 @@ services:
 | AudioDB images: on or off, key, name search fallback, direct remote images, preferring local cover art | Settings > Advanced |
 | Request history, ignored albums and clean-up interval | Settings > Advanced |
 | App version, update check and release notes | Settings > About |
+| Theme and your own CSS (this browser only) | Profile > Appearance |
+
+### Custom CSS
+
+Profile > Appearance > Custom CSS takes your own CSS rules and applies them to the signed-in app once you save (not the sign-in, setup or app connect pages). They are kept in this browser for your account only: another account on the same browser does not get them, and signing out takes them off until you sign in again. Up to 20,000 characters.
+
+Nothing in it may load from elsewhere, so a sheet is refused, with what was not allowed, when it holds `url()` or any other CSS function outside the set that only computes values (colours, gradients, maths such as `calc()` and `var()`, transforms, filters, shapes, timing, grid and selector functions), a backslash, `@import` or `@font-face`. The check reads strings and comments too, so a `url(` inside a comment is refused as well, and a few harmless functions such as `sqrt()` or `@supports selector()` are not on the list.
+
+If your CSS makes the page hard to use, add `?nocustomcss=1` to the address (for example `https://music.example.com/?nocustomcss=1`) and load it. Your CSS stays off until the next full reload, so you can fix it or press Reset.
+
+For example, square corners and a softer muted text colour:
+
+```css
+:root, [data-theme] {
+  --radius-box: 0 !important;
+  --radius-field: 0 !important;
+  --dn-muted: #8a8f8a !important;
+}
+```
 
 ## Updating and image tags
 

@@ -21,6 +21,9 @@
 		mono?: boolean;
 		/** Rows shown when the text is shorter. */
 		rows?: number;
+		maxlength?: number;
+		/** Stops growing at 24rem and scrolls, for long text. */
+		capped?: boolean;
 		disabled?: boolean;
 		readonly?: boolean;
 		/** Called with the text after each edit. */
@@ -38,6 +41,8 @@
 		placeholder,
 		mono = false,
 		rows = 2,
+		maxlength,
+		capped = false,
 		disabled = false,
 		readonly = false,
 		oninput,
@@ -50,9 +55,15 @@
 	{#snippet children(control)}
 		<textarea
 			{...control}
-			class={['textarea grows w-full', mono && 'font-mono text-sm', error && 'textarea-error']}
+			class={[
+				'textarea grows w-full',
+				mono && 'font-mono text-sm',
+				capped && 'capped',
+				error && 'textarea-error'
+			]}
 			spellcheck={mono ? false : undefined}
 			{rows}
+			{maxlength}
 			{placeholder}
 			{disabled}
 			{readonly}
@@ -66,5 +77,8 @@
 	.grows {
 		field-sizing: content;
 		resize: vertical;
+	}
+	.capped {
+		max-height: 24rem;
 	}
 </style>

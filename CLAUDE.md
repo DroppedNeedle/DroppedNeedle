@@ -789,7 +789,10 @@ Run from the repo root. `make help` lists every target.
   outside hosts only from the list in `server/src/security_headers.rs`.
   Loading a script, frame, audio clip or connection from a new host is a
   reviewed edit to that list, with the reason beside it. The browser
-  journeys fail on any violation.
+  journeys fail on any violation. The one stylesheet made at run time is
+  the person's custom CSS (`lib/stores/customCss.svelte.ts`): applied per
+  user, removed at sign-out, and refused when it holds a backslash,
+  `@import`, `@font-face` or a CSS function off the allowlist in its store.
 - Text from outside (biographies, album notes, plugin text, release notes)
   renders as text. Markup goes only through `SafeHtml`; eslint rejects a raw
   `{@html}`. A link to an outside address goes through `outsideLink`, which

@@ -99,6 +99,9 @@ const SHELL_DIRECTIVES: &[&str] = &[
     // No handler attributes, whatever `script-src` becomes.
     "script-src-attr 'none'",
     // Stylesheets from the app's own files. The page builds no `<style>`.
+    // The one stylesheet made at run time is the person's own custom CSS,
+    // a constructed sheet this policy does not govern
+    // (`frontend/src/lib/stores/customCss.svelte.ts`).
     // `'report-sample'` allows nothing. It makes the browser quote the
     // start of a refused style, which is how a style attribute in a bundle
     // is traced to its component. The app sets its own inline styles
@@ -114,7 +117,10 @@ const SHELL_DIRECTIVES: &[&str] = &[
     // pictures from any web address: artist and album art, chart covers,
     // account pictures from Plex, Jellyfin (often plain http on a LAN) and
     // single sign-on, plugin images. A picture cannot run code, and text
-    // from outside renders no images.
+    // from outside renders no images. Because any host is allowed, the
+    // custom CSS's function allowlist (no `url()` or other fetching
+    // function, no backslash escapes, no `@import` or `@font-face`) is the
+    // only thing keeping that sheet from loading from anywhere.
     "img-src 'self' data: blob: https: http:",
     // The app's streams, the silent `data:` unlock clip, the preview hosts.
     "media-src 'self' data: https://*.dzcdn.net https://audio-ssl.itunes.apple.com",
