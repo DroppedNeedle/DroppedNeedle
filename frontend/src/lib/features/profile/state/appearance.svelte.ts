@@ -75,6 +75,9 @@ function claimThemeCopy(): void {
 	if (userId) setThemeOwner(ownerTag(userId));
 }
 
+// A theme save with no answer by then fails, so the saves behind it go on.
+const THEME_SAVE_TIMEOUT_MS = 15_000;
+
 type ThemeSend = (update: AppearanceUpdate) => Promise<unknown>;
 
 /** A theme choice to store on the account, and the account it was made for. */
@@ -127,7 +130,7 @@ async function sendWaiting(): Promise<void> {
  * `next` on screen.
  */
 export function createThemeSaver(): (next: ThemeChoice) => void {
-	const save = createSaveAppearanceMutation();
+	const save = createSaveAppearanceMutation(THEME_SAVE_TIMEOUT_MS);
 	return (next) => {
 		themeStore.set(next);
 		claimThemeCopy();

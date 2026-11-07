@@ -4,8 +4,9 @@
 // not applied. What a browser kept before moves to the account once, and a
 // refused sheet stays behind while the theme still moves.
 import { flushSync } from 'svelte';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import { api as apiClient } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { AppearanceQueryKeyFactory } from '$lib/queries/featureKeys';
 import { queryClient } from '$lib/queries/QueryClient';
@@ -376,18 +377,99 @@ describe('account appearance', () => {
 		await mount();
 		await expect.poll(() => themeStore.preference).toBe('light');
 		api.use({ 'PUT /api/v3/me/appearance': () => apiError(500, 'INTERNAL_ERROR', 'Failed') });
+		toastStore.hide();
 
 		const errors: string[] = [];
 		const stop = toastStore.subscribe((toast) => {
 			if (toast?.type === 'error') errors.push(toast.message);
 		});
+		const put = vi.spyOn(apiClient.v3, 'PUT');
 		try {
 			await page.getByText('Midnight', { exact: true }).click();
 			await expect.poll(() => errors).toEqual(['Theme not saved to your account.']);
 			expect(themeStore.preference).toBe('midnight');
 			expect(document.documentElement.dataset.theme).toBe('midnight');
+			// The save has a deadline, so a request that never answers fails too.
+			expect(put.mock.calls[0]?.[2]).toEqual({ timeoutMs: 15_000 });
 		} finally {
+			put.mockRestore();
 			stop();
+		}
+	});
+
+	it('keeps the chosen theme when an answer from before a failed save arrives', async () => {
+		write('user-q', { theme: 'light' });
+		signIn('user-q');
+		await mount();
+		await expect.poll(() => themeStore.preference).toBe('light');
+
+		// A refetch is still on its way when the save starts. Its answer is the
+		// account's theme from before the save, and it is held until the save fails.
+		const beforeSave = account('user-q');
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = () => resolve();
+		});
+		let refetches = 0;
+		let saves = 0;
+		api.use({
+			'GET /api/v3/me/appearance': async () => {
+				refetches++;
+				if (refetches === 1) {
+					await held;
+					return beforeSave;
+				}
+				return account('user-q');
+			},
+			'PUT /api/v3/me/appearance': ({ body }) => {
+				saves++;
+				if (saves === 1) return apiError(500, 'INTERNAL_ERROR', 'Failed');
+				return write('user-q', body as AppearanceUpdate);
+			}
+		});
+
+		// An error left by the test before this one must not count as this save's.
+		toastStore.hide();
+		const shown: string[] = [];
+		const watch = new MutationObserver(() => {
+			shown.push(document.documentElement.dataset.theme ?? '');
+		});
+		const errors: string[] = [];
+		const stop = toastStore.subscribe((toast) => {
+			if (toast?.type === 'error') errors.push(toast.message);
+		});
+		try {
+			const fetches = api.calls('GET /api/v3/me/appearance').length;
+			void queryClient.refetchQueries({
+				queryKey: AppearanceQueryKeyFactory.mine('user-q'),
+				exact: true
+			});
+			await expect.poll(() => api.calls('GET /api/v3/me/appearance').length).toBe(fetches + 1);
+
+			await page.getByText('Midnight', { exact: true }).click();
+			await expect.poll(() => errors).toEqual(['Theme not saved to your account.']);
+			expect(themeStore.preference).toBe('midnight');
+
+			// From here on the screen is watched. The answer from before the save lands
+			// now, and a later save goes through.
+			watch.observe(document.documentElement, {
+				attributes: true,
+				attributeFilter: ['data-theme']
+			});
+			release();
+			await page.getByText('Dark', { exact: true }).click();
+			await expect
+				.poll(
+					() =>
+						queryClient.getQueryData<MyAppearance>(AppearanceQueryKeyFactory.mine('user-q'))?.theme
+				)
+				.toBe('dark');
+			expect(shown).not.toContain('light');
+			expect(themeStore.preference).toBe('dark');
+		} finally {
+			watch.disconnect();
+			stop();
+			release();
 		}
 	});
 });

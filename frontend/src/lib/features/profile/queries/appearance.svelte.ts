@@ -1,4 +1,4 @@
-import { createQuery } from '@tanstack/svelte-query';
+import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { v3 } from '$lib/api/v3/endpoint';
 import type { components } from '$lib/api/v3/openapi';
@@ -70,14 +70,33 @@ async function keepAnswer(userId: string | undefined, answer: MyAppearance): Pro
 	});
 }
 
-/** Save the caller's theme or CSS. Send only the fields that changed. */
-export const createSaveAppearanceMutation = () =>
-	createAppMutation(() => ({
-		mutationFn: (update: AppearanceUpdate) => api.v3.PUT(v3('/api/v3/me/appearance'), update),
-		onMutate: () => ({ userId: authStore.user?.id }),
-		onSuccess: (answer, _update, context) => keepAnswer(context.userId, answer),
-		effects: (_answer, _update, context) => [myAppearanceChanged(context?.userId)]
-	}));
+/**
+ * Save the caller's theme or CSS. Send only the fields that changed. A save
+ * first cancels the account's answer still on its way, so that answer cannot
+ * land after the save. `timeoutMs` sets a deadline for the request.
+ */
+export const createSaveAppearanceMutation = (timeoutMs?: number) => {
+	const client = useQueryClient();
+	return createAppMutation(
+		() => ({
+			mutationFn: (update: AppearanceUpdate) =>
+				api.v3.PUT(v3('/api/v3/me/appearance'), update, { timeoutMs }),
+			onMutate: async () => {
+				const userId = authStore.user?.id;
+				if (userId) {
+					await client.cancelQueries({
+						queryKey: AppearanceQueryKeyFactory.mine(userId),
+						exact: true
+					});
+				}
+				return { userId };
+			},
+			onSuccess: (answer, _update, context) => keepAnswer(context.userId, answer),
+			effects: (_answer, _update, context) => [myAppearanceChanged(context?.userId)]
+		}),
+		client
+	);
+};
 
 /** Move what this browser kept to the account, once; an account that holds a row keeps it. */
 export const createImportAppearanceMutation = () =>
