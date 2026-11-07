@@ -138,13 +138,13 @@ services:
 
 Profile > Appearance > Custom CSS takes your own CSS rules and applies them to the signed-in app once you save (not the sign-in, setup or app connect pages). Your theme and your CSS are kept on your account, so they follow you to every browser and device you sign in on; each browser also keeps a copy so a reload paints at once. Another account on the same browser does not get them, and signing out takes them off until you sign in again. Up to 20,000 characters. If you used custom CSS or chose a theme before they moved to the account, the first sign-in on that browser moves them up by itself.
 
-The last 10 saves of your CSS are kept on your account. Clearing the box (Reset) leaves them there, so what you had before can still be found.
+The editor checks your CSS as you type, can preview it live before you save, and keeps your last 10 saves on your account (clearing the sheet leaves them there). [Custom CSS](custom-css.md) covers the editor, the variables and the style hooks you can rely on.
 
 An admin can add site CSS under Settings > Appearance (up to 50,000 characters). It loads on every signed-in page on top of the app's own styles, and each person's CSS loads on top of it. The same section has "Let people add their own CSS", on by default: while it is off, nobody's own CSS is applied or can be saved, and their text is kept. An admin can also turn one person's CSS off from their user page; the text stays, and they can switch it back on.
 
 Nothing in it may load from elsewhere, so a sheet is refused, with what was not allowed, when it holds `url()` or any other CSS function outside the set that only computes values (colours, gradients, maths such as `calc()` and `var()`, transforms, filters, shapes, timing, grid and selector functions), a backslash, `@import` or `@font-face`. The check reads strings and comments too, so a `url(` inside a comment is refused as well, and a few harmless functions such as `sqrt()` or `@supports selector()` are not on the list.
 
-If your CSS makes the page hard to use, add `?nocustomcss=1` to the address (for example `https://music.example.com/?nocustomcss=1`) and load it. Your CSS and the site CSS stay off until the next full reload, so you can fix yours or press Reset.
+If your CSS makes the page hard to use, add `?nocustomcss=1` to the address (for example `https://music.example.com/?nocustomcss=1`) and load it. Your CSS and the site CSS stay off until the next full reload, so you can fix yours, turn it off or clear it.
 
 For example, square corners and a softer muted text colour:
 
