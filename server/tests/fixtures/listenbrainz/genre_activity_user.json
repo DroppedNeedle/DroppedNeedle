@@ -1,0 +1,1211 @@
+{
+  "payload": {
+    "from_ts": 1009843200,
+    "genre_activity": [
+      {
+        "genre": "alternative rock",
+        "hour": 1,
+        "listen_count": 109
+      },
+      {
+        "genre": "alternative rock",
+        "hour": 4,
+        "listen_count": 180
+      },
+      {
+        "genre": "alternative rock",
+        "hour": 5,
+        "listen_count": 155
+      },
+      {
+        "genre": "alternative rock",
+        "hour": 11,
+        "listen_count": 1181
+      },
+      {
+        "genre": "alternative rock",
+        "hour": 14,
+        "listen_count": 1172
+      },
+      {
+        "genre": "alternative rock",
+        "hour": 15,
+        "listen_count": 1121
+      },
+      {
+        "genre": "ambient",
+        "hour": 0,
+        "listen_count": 412
+      },
+      {
+        "genre": "ambient",
+        "hour": 1,
+        "listen_count": 230
+      },
+      {
+        "genre": "ambient",
+        "hour": 2,
+        "listen_count": 225
+      },
+      {
+        "genre": "ambient",
+        "hour": 3,
+        "listen_count": 323
+      },
+      {
+        "genre": "ambient",
+        "hour": 4,
+        "listen_count": 297
+      },
+      {
+        "genre": "ambient",
+        "hour": 5,
+        "listen_count": 291
+      },
+      {
+        "genre": "ambient",
+        "hour": 6,
+        "listen_count": 274
+      },
+      {
+        "genre": "ambient",
+        "hour": 7,
+        "listen_count": 371
+      },
+      {
+        "genre": "ambient",
+        "hour": 8,
+        "listen_count": 815
+      },
+      {
+        "genre": "ambient",
+        "hour": 9,
+        "listen_count": 1632
+      },
+      {
+        "genre": "ambient",
+        "hour": 10,
+        "listen_count": 2180
+      },
+      {
+        "genre": "ambient",
+        "hour": 11,
+        "listen_count": 2457
+      },
+      {
+        "genre": "ambient",
+        "hour": 12,
+        "listen_count": 2352
+      },
+      {
+        "genre": "ambient",
+        "hour": 13,
+        "listen_count": 2329
+      },
+      {
+        "genre": "ambient",
+        "hour": 14,
+        "listen_count": 2365
+      },
+      {
+        "genre": "ambient",
+        "hour": 15,
+        "listen_count": 2280
+      },
+      {
+        "genre": "ambient",
+        "hour": 16,
+        "listen_count": 1956
+      },
+      {
+        "genre": "ambient",
+        "hour": 17,
+        "listen_count": 1785
+      },
+      {
+        "genre": "ambient",
+        "hour": 18,
+        "listen_count": 1841
+      },
+      {
+        "genre": "ambient",
+        "hour": 19,
+        "listen_count": 1886
+      },
+      {
+        "genre": "ambient",
+        "hour": 20,
+        "listen_count": 2225
+      },
+      {
+        "genre": "ambient",
+        "hour": 21,
+        "listen_count": 2172
+      },
+      {
+        "genre": "ambient",
+        "hour": 22,
+        "listen_count": 1827
+      },
+      {
+        "genre": "ambient",
+        "hour": 23,
+        "listen_count": 1005
+      },
+      {
+        "genre": "chillout",
+        "hour": 0,
+        "listen_count": 236
+      },
+      {
+        "genre": "chillout",
+        "hour": 1,
+        "listen_count": 159
+      },
+      {
+        "genre": "chillout",
+        "hour": 2,
+        "listen_count": 180
+      },
+      {
+        "genre": "chillout",
+        "hour": 3,
+        "listen_count": 236
+      },
+      {
+        "genre": "chillout",
+        "hour": 4,
+        "listen_count": 197
+      },
+      {
+        "genre": "chillout",
+        "hour": 5,
+        "listen_count": 219
+      },
+      {
+        "genre": "chillout",
+        "hour": 6,
+        "listen_count": 222
+      },
+      {
+        "genre": "chillout",
+        "hour": 7,
+        "listen_count": 188
+      },
+      {
+        "genre": "chillout",
+        "hour": 17,
+        "listen_count": 784
+      },
+      {
+        "genre": "chillout",
+        "hour": 19,
+        "listen_count": 971
+      },
+      {
+        "genre": "chillout",
+        "hour": 20,
+        "listen_count": 1073
+      },
+      {
+        "genre": "chillout",
+        "hour": 21,
+        "listen_count": 1054
+      },
+      {
+        "genre": "chillout",
+        "hour": 22,
+        "listen_count": 905
+      },
+      {
+        "genre": "chillout",
+        "hour": 23,
+        "listen_count": 520
+      },
+      {
+        "genre": "dance",
+        "hour": 2,
+        "listen_count": 142
+      },
+      {
+        "genre": "dance",
+        "hour": 3,
+        "listen_count": 152
+      },
+      {
+        "genre": "dance",
+        "hour": 4,
+        "listen_count": 174
+      },
+      {
+        "genre": "dance",
+        "hour": 6,
+        "listen_count": 167
+      },
+      {
+        "genre": "dance",
+        "hour": 8,
+        "listen_count": 392
+      },
+      {
+        "genre": "dance",
+        "hour": 9,
+        "listen_count": 775
+      },
+      {
+        "genre": "dance",
+        "hour": 10,
+        "listen_count": 1061
+      },
+      {
+        "genre": "dance",
+        "hour": 11,
+        "listen_count": 1226
+      },
+      {
+        "genre": "dance",
+        "hour": 12,
+        "listen_count": 1230
+      },
+      {
+        "genre": "dance",
+        "hour": 13,
+        "listen_count": 1141
+      },
+      {
+        "genre": "dance",
+        "hour": 14,
+        "listen_count": 1266
+      },
+      {
+        "genre": "dance",
+        "hour": 15,
+        "listen_count": 1106
+      },
+      {
+        "genre": "dance",
+        "hour": 16,
+        "listen_count": 1052
+      },
+      {
+        "genre": "dance",
+        "hour": 17,
+        "listen_count": 821
+      },
+      {
+        "genre": "dance",
+        "hour": 18,
+        "listen_count": 868
+      },
+      {
+        "genre": "dance",
+        "hour": 19,
+        "listen_count": 1021
+      },
+      {
+        "genre": "dance",
+        "hour": 20,
+        "listen_count": 1007
+      },
+      {
+        "genre": "dance",
+        "hour": 21,
+        "listen_count": 964
+      },
+      {
+        "genre": "dance",
+        "hour": 22,
+        "listen_count": 862
+      },
+      {
+        "genre": "dance",
+        "hour": 23,
+        "listen_count": 501
+      },
+      {
+        "genre": "downtempo",
+        "hour": 0,
+        "listen_count": 917
+      },
+      {
+        "genre": "downtempo",
+        "hour": 1,
+        "listen_count": 632
+      },
+      {
+        "genre": "downtempo",
+        "hour": 2,
+        "listen_count": 631
+      },
+      {
+        "genre": "downtempo",
+        "hour": 3,
+        "listen_count": 757
+      },
+      {
+        "genre": "downtempo",
+        "hour": 4,
+        "listen_count": 773
+      },
+      {
+        "genre": "downtempo",
+        "hour": 5,
+        "listen_count": 759
+      },
+      {
+        "genre": "downtempo",
+        "hour": 6,
+        "listen_count": 790
+      },
+      {
+        "genre": "downtempo",
+        "hour": 7,
+        "listen_count": 748
+      },
+      {
+        "genre": "downtempo",
+        "hour": 8,
+        "listen_count": 1417
+      },
+      {
+        "genre": "downtempo",
+        "hour": 9,
+        "listen_count": 2529
+      },
+      {
+        "genre": "downtempo",
+        "hour": 10,
+        "listen_count": 3566
+      },
+      {
+        "genre": "downtempo",
+        "hour": 11,
+        "listen_count": 3941
+      },
+      {
+        "genre": "downtempo",
+        "hour": 12,
+        "listen_count": 3868
+      },
+      {
+        "genre": "downtempo",
+        "hour": 13,
+        "listen_count": 3826
+      },
+      {
+        "genre": "downtempo",
+        "hour": 14,
+        "listen_count": 4132
+      },
+      {
+        "genre": "downtempo",
+        "hour": 15,
+        "listen_count": 3923
+      },
+      {
+        "genre": "downtempo",
+        "hour": 16,
+        "listen_count": 3400
+      },
+      {
+        "genre": "downtempo",
+        "hour": 17,
+        "listen_count": 3038
+      },
+      {
+        "genre": "downtempo",
+        "hour": 18,
+        "listen_count": 3360
+      },
+      {
+        "genre": "downtempo",
+        "hour": 19,
+        "listen_count": 3827
+      },
+      {
+        "genre": "downtempo",
+        "hour": 20,
+        "listen_count": 3966
+      },
+      {
+        "genre": "downtempo",
+        "hour": 21,
+        "listen_count": 4060
+      },
+      {
+        "genre": "downtempo",
+        "hour": 22,
+        "listen_count": 3246
+      },
+      {
+        "genre": "downtempo",
+        "hour": 23,
+        "listen_count": 2048
+      },
+      {
+        "genre": "electronic",
+        "hour": 0,
+        "listen_count": 1459
+      },
+      {
+        "genre": "electronic",
+        "hour": 1,
+        "listen_count": 922
+      },
+      {
+        "genre": "electronic",
+        "hour": 2,
+        "listen_count": 937
+      },
+      {
+        "genre": "electronic",
+        "hour": 3,
+        "listen_count": 1031
+      },
+      {
+        "genre": "electronic",
+        "hour": 4,
+        "listen_count": 1091
+      },
+      {
+        "genre": "electronic",
+        "hour": 5,
+        "listen_count": 1148
+      },
+      {
+        "genre": "electronic",
+        "hour": 6,
+        "listen_count": 1088
+      },
+      {
+        "genre": "electronic",
+        "hour": 7,
+        "listen_count": 1124
+      },
+      {
+        "genre": "electronic",
+        "hour": 8,
+        "listen_count": 2313
+      },
+      {
+        "genre": "electronic",
+        "hour": 9,
+        "listen_count": 4249
+      },
+      {
+        "genre": "electronic",
+        "hour": 10,
+        "listen_count": 6131
+      },
+      {
+        "genre": "electronic",
+        "hour": 11,
+        "listen_count": 6765
+      },
+      {
+        "genre": "electronic",
+        "hour": 12,
+        "listen_count": 6552
+      },
+      {
+        "genre": "electronic",
+        "hour": 13,
+        "listen_count": 6398
+      },
+      {
+        "genre": "electronic",
+        "hour": 14,
+        "listen_count": 6755
+      },
+      {
+        "genre": "electronic",
+        "hour": 15,
+        "listen_count": 6396
+      },
+      {
+        "genre": "electronic",
+        "hour": 16,
+        "listen_count": 5506
+      },
+      {
+        "genre": "electronic",
+        "hour": 17,
+        "listen_count": 4729
+      },
+      {
+        "genre": "electronic",
+        "hour": 18,
+        "listen_count": 5238
+      },
+      {
+        "genre": "electronic",
+        "hour": 19,
+        "listen_count": 5763
+      },
+      {
+        "genre": "electronic",
+        "hour": 20,
+        "listen_count": 6110
+      },
+      {
+        "genre": "electronic",
+        "hour": 21,
+        "listen_count": 6140
+      },
+      {
+        "genre": "electronic",
+        "hour": 22,
+        "listen_count": 4982
+      },
+      {
+        "genre": "electronic",
+        "hour": 23,
+        "listen_count": 3142
+      },
+      {
+        "genre": "electronica",
+        "hour": 3,
+        "listen_count": 139
+      },
+      {
+        "genre": "electronica",
+        "hour": 4,
+        "listen_count": 149
+      },
+      {
+        "genre": "electronica",
+        "hour": 5,
+        "listen_count": 167
+      },
+      {
+        "genre": "electronica",
+        "hour": 6,
+        "listen_count": 174
+      },
+      {
+        "genre": "electronica",
+        "hour": 7,
+        "listen_count": 192
+      },
+      {
+        "genre": "electronica",
+        "hour": 8,
+        "listen_count": 411
+      },
+      {
+        "genre": "hip hop",
+        "hour": 0,
+        "listen_count": 200
+      },
+      {
+        "genre": "hip hop",
+        "hour": 1,
+        "listen_count": 130
+      },
+      {
+        "genre": "hip hop",
+        "hour": 5,
+        "listen_count": 152
+      },
+      {
+        "genre": "hip hop",
+        "hour": 6,
+        "listen_count": 195
+      },
+      {
+        "genre": "hip hop",
+        "hour": 7,
+        "listen_count": 167
+      },
+      {
+        "genre": "house",
+        "hour": 2,
+        "listen_count": 149
+      },
+      {
+        "genre": "house",
+        "hour": 3,
+        "listen_count": 130
+      },
+      {
+        "genre": "house",
+        "hour": 8,
+        "listen_count": 360
+      },
+      {
+        "genre": "house",
+        "hour": 9,
+        "listen_count": 781
+      },
+      {
+        "genre": "house",
+        "hour": 10,
+        "listen_count": 1073
+      },
+      {
+        "genre": "house",
+        "hour": 12,
+        "listen_count": 1184
+      },
+      {
+        "genre": "house",
+        "hour": 13,
+        "listen_count": 1044
+      },
+      {
+        "genre": "house",
+        "hour": 16,
+        "listen_count": 937
+      },
+      {
+        "genre": "house",
+        "hour": 17,
+        "listen_count": 834
+      },
+      {
+        "genre": "house",
+        "hour": 18,
+        "listen_count": 874
+      },
+      {
+        "genre": "house",
+        "hour": 19,
+        "listen_count": 962
+      },
+      {
+        "genre": "house",
+        "hour": 20,
+        "listen_count": 1047
+      },
+      {
+        "genre": "house",
+        "hour": 21,
+        "listen_count": 937
+      },
+      {
+        "genre": "new wave",
+        "hour": 0,
+        "listen_count": 204
+      },
+      {
+        "genre": "new wave",
+        "hour": 9,
+        "listen_count": 680
+      },
+      {
+        "genre": "new wave",
+        "hour": 10,
+        "listen_count": 1258
+      },
+      {
+        "genre": "new wave",
+        "hour": 11,
+        "listen_count": 1314
+      },
+      {
+        "genre": "new wave",
+        "hour": 12,
+        "listen_count": 1270
+      },
+      {
+        "genre": "new wave",
+        "hour": 13,
+        "listen_count": 1198
+      },
+      {
+        "genre": "new wave",
+        "hour": 14,
+        "listen_count": 1482
+      },
+      {
+        "genre": "new wave",
+        "hour": 15,
+        "listen_count": 1189
+      },
+      {
+        "genre": "new wave",
+        "hour": 16,
+        "listen_count": 918
+      },
+      {
+        "genre": "new wave",
+        "hour": 18,
+        "listen_count": 933
+      },
+      {
+        "genre": "new wave",
+        "hour": 22,
+        "listen_count": 912
+      },
+      {
+        "genre": "new wave",
+        "hour": 23,
+        "listen_count": 542
+      },
+      {
+        "genre": "pop",
+        "hour": 0,
+        "listen_count": 439
+      },
+      {
+        "genre": "pop",
+        "hour": 1,
+        "listen_count": 230
+      },
+      {
+        "genre": "pop",
+        "hour": 2,
+        "listen_count": 179
+      },
+      {
+        "genre": "pop",
+        "hour": 3,
+        "listen_count": 174
+      },
+      {
+        "genre": "pop",
+        "hour": 4,
+        "listen_count": 235
+      },
+      {
+        "genre": "pop",
+        "hour": 5,
+        "listen_count": 232
+      },
+      {
+        "genre": "pop",
+        "hour": 6,
+        "listen_count": 176
+      },
+      {
+        "genre": "pop",
+        "hour": 7,
+        "listen_count": 191
+      },
+      {
+        "genre": "pop",
+        "hour": 8,
+        "listen_count": 683
+      },
+      {
+        "genre": "pop",
+        "hour": 9,
+        "listen_count": 1611
+      },
+      {
+        "genre": "pop",
+        "hour": 10,
+        "listen_count": 2243
+      },
+      {
+        "genre": "pop",
+        "hour": 11,
+        "listen_count": 2605
+      },
+      {
+        "genre": "pop",
+        "hour": 12,
+        "listen_count": 2368
+      },
+      {
+        "genre": "pop",
+        "hour": 13,
+        "listen_count": 2320
+      },
+      {
+        "genre": "pop",
+        "hour": 14,
+        "listen_count": 2490
+      },
+      {
+        "genre": "pop",
+        "hour": 15,
+        "listen_count": 2108
+      },
+      {
+        "genre": "pop",
+        "hour": 16,
+        "listen_count": 1867
+      },
+      {
+        "genre": "pop",
+        "hour": 17,
+        "listen_count": 1494
+      },
+      {
+        "genre": "pop",
+        "hour": 18,
+        "listen_count": 1752
+      },
+      {
+        "genre": "pop",
+        "hour": 19,
+        "listen_count": 1882
+      },
+      {
+        "genre": "pop",
+        "hour": 20,
+        "listen_count": 1934
+      },
+      {
+        "genre": "pop",
+        "hour": 21,
+        "listen_count": 1776
+      },
+      {
+        "genre": "pop",
+        "hour": 22,
+        "listen_count": 1588
+      },
+      {
+        "genre": "pop",
+        "hour": 23,
+        "listen_count": 875
+      },
+      {
+        "genre": "rock",
+        "hour": 0,
+        "listen_count": 614
+      },
+      {
+        "genre": "rock",
+        "hour": 1,
+        "listen_count": 369
+      },
+      {
+        "genre": "rock",
+        "hour": 2,
+        "listen_count": 312
+      },
+      {
+        "genre": "rock",
+        "hour": 3,
+        "listen_count": 281
+      },
+      {
+        "genre": "rock",
+        "hour": 4,
+        "listen_count": 398
+      },
+      {
+        "genre": "rock",
+        "hour": 5,
+        "listen_count": 328
+      },
+      {
+        "genre": "rock",
+        "hour": 6,
+        "listen_count": 273
+      },
+      {
+        "genre": "rock",
+        "hour": 7,
+        "listen_count": 361
+      },
+      {
+        "genre": "rock",
+        "hour": 8,
+        "listen_count": 853
+      },
+      {
+        "genre": "rock",
+        "hour": 9,
+        "listen_count": 1708
+      },
+      {
+        "genre": "rock",
+        "hour": 10,
+        "listen_count": 2667
+      },
+      {
+        "genre": "rock",
+        "hour": 11,
+        "listen_count": 2933
+      },
+      {
+        "genre": "rock",
+        "hour": 12,
+        "listen_count": 2857
+      },
+      {
+        "genre": "rock",
+        "hour": 13,
+        "listen_count": 2697
+      },
+      {
+        "genre": "rock",
+        "hour": 14,
+        "listen_count": 3044
+      },
+      {
+        "genre": "rock",
+        "hour": 15,
+        "listen_count": 2626
+      },
+      {
+        "genre": "rock",
+        "hour": 16,
+        "listen_count": 2123
+      },
+      {
+        "genre": "rock",
+        "hour": 17,
+        "listen_count": 1836
+      },
+      {
+        "genre": "rock",
+        "hour": 18,
+        "listen_count": 2133
+      },
+      {
+        "genre": "rock",
+        "hour": 19,
+        "listen_count": 2166
+      },
+      {
+        "genre": "rock",
+        "hour": 20,
+        "listen_count": 2247
+      },
+      {
+        "genre": "rock",
+        "hour": 21,
+        "listen_count": 2388
+      },
+      {
+        "genre": "rock",
+        "hour": 22,
+        "listen_count": 1850
+      },
+      {
+        "genre": "rock",
+        "hour": 23,
+        "listen_count": 1169
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 0,
+        "listen_count": 304
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 1,
+        "listen_count": 126
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 2,
+        "listen_count": 142
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 7,
+        "listen_count": 168
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 8,
+        "listen_count": 539
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 9,
+        "listen_count": 1084
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 10,
+        "listen_count": 1552
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 11,
+        "listen_count": 1733
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 12,
+        "listen_count": 1640
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 13,
+        "listen_count": 1599
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 14,
+        "listen_count": 1644
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 15,
+        "listen_count": 1451
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 16,
+        "listen_count": 1352
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 17,
+        "listen_count": 1110
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 18,
+        "listen_count": 1242
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 19,
+        "listen_count": 1281
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 20,
+        "listen_count": 1382
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 21,
+        "listen_count": 1187
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 22,
+        "listen_count": 1081
+      },
+      {
+        "genre": "synth-pop",
+        "hour": 23,
+        "listen_count": 615
+      },
+      {
+        "genre": "trip hop",
+        "hour": 0,
+        "listen_count": 737
+      },
+      {
+        "genre": "trip hop",
+        "hour": 1,
+        "listen_count": 534
+      },
+      {
+        "genre": "trip hop",
+        "hour": 2,
+        "listen_count": 536
+      },
+      {
+        "genre": "trip hop",
+        "hour": 3,
+        "listen_count": 615
+      },
+      {
+        "genre": "trip hop",
+        "hour": 4,
+        "listen_count": 657
+      },
+      {
+        "genre": "trip hop",
+        "hour": 5,
+        "listen_count": 635
+      },
+      {
+        "genre": "trip hop",
+        "hour": 6,
+        "listen_count": 637
+      },
+      {
+        "genre": "trip hop",
+        "hour": 7,
+        "listen_count": 519
+      },
+      {
+        "genre": "trip hop",
+        "hour": 8,
+        "listen_count": 840
+      },
+      {
+        "genre": "trip hop",
+        "hour": 9,
+        "listen_count": 1399
+      },
+      {
+        "genre": "trip hop",
+        "hour": 10,
+        "listen_count": 1968
+      },
+      {
+        "genre": "trip hop",
+        "hour": 11,
+        "listen_count": 2257
+      },
+      {
+        "genre": "trip hop",
+        "hour": 12,
+        "listen_count": 2258
+      },
+      {
+        "genre": "trip hop",
+        "hour": 13,
+        "listen_count": 2173
+      },
+      {
+        "genre": "trip hop",
+        "hour": 14,
+        "listen_count": 2395
+      },
+      {
+        "genre": "trip hop",
+        "hour": 15,
+        "listen_count": 2368
+      },
+      {
+        "genre": "trip hop",
+        "hour": 16,
+        "listen_count": 1992
+      },
+      {
+        "genre": "trip hop",
+        "hour": 17,
+        "listen_count": 1651
+      },
+      {
+        "genre": "trip hop",
+        "hour": 18,
+        "listen_count": 2032
+      },
+      {
+        "genre": "trip hop",
+        "hour": 19,
+        "listen_count": 2463
+      },
+      {
+        "genre": "trip hop",
+        "hour": 20,
+        "listen_count": 2450
+      },
+      {
+        "genre": "trip hop",
+        "hour": 21,
+        "listen_count": 2493
+      },
+      {
+        "genre": "trip hop",
+        "hour": 22,
+        "listen_count": 2156
+      },
+      {
+        "genre": "trip hop",
+        "hour": 23,
+        "listen_count": 1549
+      }
+    ],
+    "last_updated": 1790524408,
+    "range": "all_time",
+    "to_ts": 1790468020,
+    "user_id": "listenbrainz-user"
+  }
+}

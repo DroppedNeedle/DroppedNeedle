@@ -56,6 +56,13 @@ recordings, no releases, similar users or recommended playlists yet):
 - `recommendation_playlists_account.json`: HTTP 200 to
   `GET /1/user/DroppedNeedle/playlists/recommendations`. An empty list.
 
+Another user's answer, 2026-11-07, because the throwaway account's genre stats
+are still not computed:
+
+- `genre_activity_user.json`: HTTP 200 to `GET /1/stats/user/rob/genre-activity`,
+  a public account's stats. Re-indented, and `user_id` replaced with
+  `listenbrainz-user`; nothing else changed. One row per genre and hour.
+
 No file: HTTP 204 with an empty body while a new account's stats are not
 computed yet. Recorded for `GET /1/stats/user/DroppedNeedle/artists?count=5`,
 `.../recordings?count=5`, `.../release-groups?count=5` and
@@ -65,8 +72,9 @@ Not recorded yet:
 
 - `get-feedback` with `metadata=true`, which the loved-recordings and
   loved-artist reads send. The `track_metadata` shape is unverified.
-- The 200 answers of the user stats endpoints. The account answered 204 with
-  `count=5` only, not with the `range` and `offset` the reads also send.
+- The 200 answers of the user `artists`, `release-groups` and `recordings`
+  stats. On 2026-11-07 a public account's answers to these, with `range` and
+  `offset`, were checked against the models and decoded, but not kept.
 - A row of `fresh_releases`, `similar-users` or `playlists/recommendations`:
   the account's lists are empty.
 - `/1/playlist/{id}`: the account has no recommended playlist to take an id from.

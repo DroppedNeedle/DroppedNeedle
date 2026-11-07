@@ -100,6 +100,7 @@ enum ListenBrainzRead {
     FreshReleases,
     SimilarUsers,
     RecommendationPlaylists,
+    GenreActivity,
 }
 
 /// The album the Deezer album search fixture names first, and its track list.
@@ -868,6 +869,13 @@ const ROWS: &[Row] = &[
         identity: "/playlists",
     },
     Row {
+        name: "listenbrainz /1/stats/user/{user}/genre-activity, list",
+        provider: Provider::ListenBrainz(ListenBrainzRead::GenreActivity),
+        body: include_str!("../fixtures/listenbrainz/genre_activity_user.json"),
+        kind: PayloadKind::Decode,
+        identity: "/payload/genre_activity",
+    },
+    Row {
         name: "youtube /search, video id",
         provider: Provider::YouTubeSearch,
         body: include_str!("../fixtures/youtube/search_found.json"),
@@ -1553,6 +1561,14 @@ async fn listenbrainz(read: ListenBrainzRead, body: &str) -> Result<bool, Provid
             .await?;
             true
         }
+        ListenBrainzRead::GenreActivity => !answer(
+            Method::Get,
+            "/1/stats/user/DroppedNeedle/genre-activity".to_owned(),
+        )
+        .listenbrainz
+        .user_genre_activity("DroppedNeedle", PRIORITY)
+        .await?
+        .is_empty(),
     })
 }
 

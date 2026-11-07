@@ -407,12 +407,19 @@ pub struct SimilarUserRow {
 
 /// `GET /1/stats/user/{user}/genre-activity`.
 ///
-/// The account answered 204 on 2026-11-03 (no parameters), which reads as an
-/// empty list. Not verified: the 200 answer.
+/// Verified against api.listenbrainz.org/1/stats/user/{user}/genre-activity on 2026-11-07: tests/fixtures/listenbrainz/genre_activity_user.json.
+/// A list not computed yet is a 204, which reads as an empty list.
 #[derive(Debug, Clone, Deserialize)]
 pub struct GenreActivityAnswer {
-    /// One row per genre and hour bucket.
-    pub result: Vec<GenreActivityRow>,
+    /// The envelope.
+    pub payload: GenreActivityPayload,
+}
+
+/// The genre activity envelope.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GenreActivityPayload {
+    /// One row per genre and hour bucket. Required, as for the artist list.
+    pub genre_activity: Vec<GenreActivityRow>,
 }
 
 /// One genre in one hour bucket.

@@ -297,7 +297,7 @@ impl ListenBrainzClient {
             return Ok(Vec::new());
         };
         let mut totals: Vec<GenreActivity> = Vec::new();
-        for row in answer.result {
+        for row in answer.payload.genre_activity {
             let Some(genre) = row.genre else {
                 continue;
             };

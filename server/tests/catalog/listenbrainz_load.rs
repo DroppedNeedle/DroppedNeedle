@@ -154,10 +154,10 @@ fn lb_answer(uri: &Uri, body: &[u8]) -> Value {
         ["stats", _, .., "release-groups"] => {
             json!({"payload": {"release_groups": (1..=25).map(group_stat).collect::<Vec<_>>()}})
         }
-        ["stats", "user", _, "genre-activity"] => json!({"result": GENRES
+        ["stats", "user", _, "genre-activity"] => json!({"payload": {"genre_activity": GENRES
             .iter()
             .map(|genre| json!({"genre": genre, "listen_count": 40}))
-            .collect::<Vec<_>>()}),
+            .collect::<Vec<_>>()}}),
         ["user", _, "similar-users"] => recorded(SIMILAR_USERS_BODY),
         ["user", _, "fresh_releases"] => recorded(FRESH_RELEASES_BODY),
         // `metadata=true` is not recorded yet, so those rows stay generated.
