@@ -2,6 +2,7 @@
 <script lang="ts">
 	import { themeStore, type ThemePreference } from '$lib/stores/theme.svelte';
 	import { toastStore } from '$lib/stores/toast';
+	import { claimThemeCopy } from '$lib/features/profile/state/appearance.svelte';
 	import { createSaveAppearanceMutation } from '$lib/features/profile/queries/appearance.svelte';
 	import RadioCards from '$lib/ui/RadioCards.svelte';
 
@@ -21,6 +22,7 @@
 	// A failed save keeps the choice on screen; the next load corrects it.
 	function chooseTheme(value: ThemePreference): void {
 		themeStore.set(value);
+		claimThemeCopy();
 		saveTheme.mutate(
 			{ theme: value },
 			{

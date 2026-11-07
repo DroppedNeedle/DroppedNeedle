@@ -1,6 +1,8 @@
 // The signed-in person's appearance, from their account: the theme, the
 // site's CSS and their own, and the one-time move of what this browser kept
 // before both lived on the account.
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
 import { untrack } from 'svelte';
 import { ApiError } from '$lib/api/errors';
 import {
@@ -15,12 +17,15 @@ import { AppearanceQueryKeyFactory } from '$lib/queries/featureKeys';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { customCssStore } from '$lib/stores/customCss.svelte';
-import { THEME_STORAGE_KEY, themeStore } from '$lib/stores/theme.svelte';
+import { setThemeOwner, THEME_STORAGE_KEY, themeOwner, themeStore } from '$lib/stores/theme.svelte';
 
 // The key the browser-only version kept a person's CSS under, read once to
 // move it to their account.
 const OLD_KEY_PREFIX = 'droppedneedle_custom_css:';
 const THEMES: readonly ThemeChoice[] = ['system', 'light', 'dark', 'midnight'];
+// The owner tag is SHA-256 of this prefix and the account id, so the id itself
+// is never kept in the browser.
+const OWNER_TAG_PREFIX = 'droppedneedle theme owner:';
 
 function readOldCss(userId: string): string {
 	try {
@@ -47,8 +52,39 @@ function readLocalTheme(): ThemeChoice | null {
 	}
 }
 
+function ownerTag(userId: string): string {
+	return bytesToHex(sha256(new TextEncoder().encode(OWNER_TAG_PREFIX + userId)));
+}
+
+// Whether this browser's theme copy belongs to the account with this tag, or
+// no account has claimed it yet.
+function ownsBrowserTheme(tag: string): boolean {
+	const owner = themeOwner();
+	return owner === null || owner === tag;
+}
+
 function isRefusal(error: unknown): boolean {
 	return error instanceof ApiError && (error.status === 400 || error.status === 403);
+}
+
+/** Claim this browser's theme copy for the signed-in person. */
+export function claimThemeCopy(): void {
+	const userId = authStore.user?.id;
+	if (userId) setThemeOwner(ownerTag(userId));
+}
+
+// The account's own theme wins. Otherwise an unclaimed copy becomes this
+// account's, and another account's copy gives way to the default.
+function applyTheme(theme: ThemeChoice | null, tag: string): void {
+	if (theme) {
+		themeStore.set(theme);
+		setThemeOwner(tag);
+	} else if (!ownsBrowserTheme(tag)) {
+		// Another account's copy: show the default and save nothing.
+		themeStore.show('dark');
+	} else if (readLocalTheme()) {
+		setThemeOwner(tag);
+	}
 }
 
 /**
@@ -64,8 +100,9 @@ export function applyAppearance(): void {
 	// The users this page already tried to move, so a refusal is not retried on every answer.
 	const moveTried: string[] = [];
 
-	async function moveFromBrowser(userId: string): Promise<void> {
-		const theme = readLocalTheme();
+	async function moveFromBrowser(userId: string, tag: string): Promise<void> {
+		// Another account's theme is not this account's to move.
+		const theme = ownsBrowserTheme(tag) ? readLocalTheme() : null;
 		const text = readOldCss(userId);
 		if (!theme && !text.trim()) return;
 		const update: AppearanceUpdate = {};
@@ -102,7 +139,8 @@ export function applyAppearance(): void {
 			);
 			if (!appearance) return;
 			customCssStore.showFor(userId, appearance);
-			if (appearance.theme) themeStore.set(appearance.theme);
+			const tag = ownerTag(userId);
+			applyTheme(appearance.theme ?? null, tag);
 			const fetched = takeFetchedAppearance();
 			if (
 				fetched &&
@@ -112,7 +150,7 @@ export function applyAppearance(): void {
 				!moveTried.includes(userId)
 			) {
 				moveTried.push(userId);
-				void moveFromBrowser(userId);
+				void moveFromBrowser(userId, tag);
 			}
 		});
 	});

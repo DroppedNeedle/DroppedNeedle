@@ -6,6 +6,10 @@ type Theme = 'light' | 'dark' | 'midnight';
 // This browser's copy, which paints the first frame. Once signed in, the
 // account's theme is written here.
 export const THEME_STORAGE_KEY = 'droppedneedle_theme';
+// The owner tag (see appearance.svelte.ts) of the account this copy was last
+// applied or chosen for. Another account's copy is never uploaded, and an
+// account with no theme of its own sees the default.
+export const THEME_OWNER_STORAGE_KEY = 'droppedneedle_theme_owner';
 const LIGHT_QUERY = '(prefers-color-scheme: light)';
 // Browser chrome colour per theme: each theme's base-100 in src/theme.css.
 // Hardcoded because the theme is applied before any stylesheet has loaded.
@@ -33,6 +37,24 @@ function readPreference(): ThemePreference {
 	}
 }
 
+/** The owner tag of this browser's theme copy, or null when no account has claimed it. */
+export function themeOwner(): string | null {
+	try {
+		return localStorage.getItem(THEME_OWNER_STORAGE_KEY);
+	} catch {
+		return null;
+	}
+}
+
+/** Record `tag` as the owner tag of this browser's theme copy. */
+export function setThemeOwner(tag: string): void {
+	try {
+		localStorage.setItem(THEME_OWNER_STORAGE_KEY, tag);
+	} catch {
+		// private mode: nothing is kept, so there is nothing to own
+	}
+}
+
 function apply(preference: ThemePreference): Theme {
 	const theme = resolveTheme(preference, matchMedia(LIGHT_QUERY).matches);
 	document.documentElement.dataset.theme = theme;
@@ -56,15 +78,20 @@ function createThemeStore() {
 		});
 	}
 
+	/** Show `next` without keeping it as this browser's copy. */
+	function show(next: ThemePreference): void {
+		preference = next;
+		resolved = apply(next);
+	}
+
 	/** Show `next` and keep it as this browser's copy. Saving it to the account is the caller's. */
 	function set(next: ThemePreference): void {
-		preference = next;
+		show(next);
 		try {
 			localStorage.setItem(THEME_STORAGE_KEY, next);
 		} catch {
 			// private mode: the choice lasts for this page only
 		}
-		resolved = apply(next);
 	}
 
 	return {
@@ -78,7 +105,8 @@ function createThemeStore() {
 		get paper(): 'light' | 'midnight' {
 			return resolved === 'midnight' ? 'midnight' : 'light';
 		},
-		set
+		set,
+		show
 	};
 }
 

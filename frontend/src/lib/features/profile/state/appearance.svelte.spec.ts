@@ -36,6 +36,15 @@ function token(name: string): string {
 	return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
+// The owner tag the browser keeps for an account, made here with Web Crypto.
+async function tagOf(id: string): Promise<string> {
+	const digest = await crypto.subtle.digest(
+		'SHA-256',
+		new TextEncoder().encode(`droppedneedle theme owner:${id}`)
+	);
+	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 function signIn(id: string): void {
 	authStore.setUser(user(id));
 	flushSync();
@@ -196,6 +205,9 @@ describe('account appearance', () => {
 		expect(localStorage.getItem('droppedneedle_custom_css:user-d')).toBeNull();
 		expect(localStorage.getItem('droppedneedle_custom_css:user-d2')).not.toBeNull();
 		expect(localStorage.getItem('droppedneedle_theme')).toBe('light');
+		await expect
+			.poll(() => localStorage.getItem('droppedneedle_theme_owner'))
+			.toBe(await tagOf('user-d'));
 	});
 
 	it('keeps a refused sheet in this browser and still moves the theme', async () => {
@@ -221,5 +233,49 @@ describe('account appearance', () => {
 		});
 		await expect.poll(() => accounts.get('user-e')?.theme).toBe('midnight');
 		expect(localStorage.getItem('droppedneedle_custom_css:user-e')).toBe('a { b: url(x); }');
+	});
+
+	it("does not move another account's theme to this one or show it", async () => {
+		localStorage.setItem('droppedneedle_theme', 'light');
+		localStorage.setItem('droppedneedle_theme_owner', await tagOf('user-f0'));
+		themeStore.set('light');
+		signIn('user-f');
+		await mount();
+
+		await expect.poll(() => themeStore.preference).toBe('dark');
+		expect(document.documentElement.dataset.theme).toBe('dark');
+		expect(api.calls('POST /api/v3/me/appearance/import')).toEqual([]);
+		expect(api.calls('PUT /api/v3/me/appearance')).toEqual([]);
+		expect(localStorage.getItem('droppedneedle_theme_owner')).toBe(await tagOf('user-f0'));
+	});
+
+	it("still moves this browser's theme to the account that owns it", async () => {
+		localStorage.setItem('droppedneedle_theme', 'midnight');
+		localStorage.setItem('droppedneedle_theme_owner', await tagOf('user-g'));
+		signIn('user-g');
+		await mount();
+
+		await expect.poll(() => accounts.get('user-g')?.theme).toBe('midnight');
+		expect(api.calls('POST /api/v3/me/appearance/import').map((call) => call.body)).toEqual([
+			{ theme: 'midnight' }
+		]);
+		await expect.poll(() => themeStore.preference).toBe('midnight');
+		expect(localStorage.getItem('droppedneedle_theme_owner')).toBe(await tagOf('user-g'));
+		expect(JSON.stringify({ ...localStorage })).not.toContain('user-g');
+	});
+
+	it('gives an unclaimed theme to the first account that signs in, not the next', async () => {
+		write('user-h', { custom_css: { text: ':root { --dn-spec-h: 1px; }' } });
+		localStorage.setItem('droppedneedle_theme', 'light');
+		signIn('user-h');
+		await mount();
+		await expect.poll(() => token('--dn-spec-h')).toBe('1px');
+		await expect
+			.poll(() => localStorage.getItem('droppedneedle_theme_owner'))
+			.toBe(await tagOf('user-h'));
+
+		signIn('user-i');
+		await expect.poll(() => themeStore.preference).toBe('dark');
+		expect(api.calls('POST /api/v3/me/appearance/import')).toEqual([]);
 	});
 });
