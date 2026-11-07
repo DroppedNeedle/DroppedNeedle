@@ -25,6 +25,8 @@
 		disabled?: boolean;
 		saveLabel?: string;
 		ondiscard?: () => void;
+		/** "Cancel" where discarding also takes back what the page shows, such as a preview. */
+		discardLabel?: string;
 		ontest?: () => unknown;
 		testing?: boolean;
 		testLabel?: string;
@@ -39,6 +41,7 @@
 		disabled = false,
 		saveLabel = 'Save',
 		ondiscard,
+		discardLabel = 'Discard',
 		ontest,
 		testing = false,
 		testLabel = 'Test',
@@ -70,7 +73,7 @@
 		{/if}
 	</p>
 	{#if ondiscard && dirty}
-		<Button variant="ghost" size="sm" onclick={ondiscard} disabled={saving}>Discard</Button>
+		<Button variant="ghost" size="sm" onclick={ondiscard} disabled={saving}>{discardLabel}</Button>
 	{/if}
 	<AsyncButton
 		variant="primary"
