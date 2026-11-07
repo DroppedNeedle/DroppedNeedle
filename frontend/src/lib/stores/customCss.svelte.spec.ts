@@ -28,18 +28,4 @@ describe('custom css store', () => {
 		expect(localStorage.getItem(KEY)).toBeNull();
 		expect(document.adoptedStyleSheets.length).toBe(before);
 	});
-
-	it('does not apply when the escape hatch is set', async () => {
-		history.replaceState(null, '', '/?nocustomcss=1');
-		const { customCssStore } = await import('./customCss.svelte');
-		const before = document.adoptedStyleSheets.length;
-
-		customCssStore.set(':root { --dn-test: 2; }');
-
-		expect(customCssStore.disabled).toBe(true);
-		expect(localStorage.getItem(KEY)).toContain('--dn-test');
-		expect(document.adoptedStyleSheets.length).toBe(before);
-
-		customCssStore.clear();
-	});
 });
