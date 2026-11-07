@@ -153,6 +153,8 @@
 <style>
 	.site-css-root {
 		container-type: inline-size;
+		/* Shorter than the profile's list, so the Save bar fits a 900px-tall desktop screen. */
+		--css-rail-list-max: 16rem;
 	}
 	.site-css {
 		display: grid;

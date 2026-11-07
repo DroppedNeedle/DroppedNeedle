@@ -64,11 +64,12 @@
 	border-color: var(--dn-action-edge);
 }
 
+/* A page may set --css-rail-list-max to change this cap. */
 .css-rail-list {
 	display: flex;
 	flex-direction: column;
 	gap: 0.125rem;
-	max-height: 26rem;
+	max-height: var(--css-rail-list-max, 26rem);
 	overflow-y: auto;
 }
 .css-history-row {
