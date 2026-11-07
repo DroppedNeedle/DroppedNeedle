@@ -10,6 +10,16 @@ type UserId = string | null | undefined;
 
 // An artist's MusicBrainz link. The caller's: it says whether they set it.
 // Under the library feature, so a catalog refresh reloads it.
+// The caller's theme and custom CSS, which also carry the site's CSS. The
+// site section and one person's CSS summary are the admin's.
+export const AppearanceQueryKeyFactory = {
+	feature: 'appearance',
+	mine: (userId: UserId) => key(userScope(userId), 'appearance', 'mine'),
+	cssSaves: (userId: UserId) => key(userScope(userId), 'appearance', 'mine', 'css-saves'),
+	site: () => key(ADMIN, 'appearance', 'site'),
+	userCustomCss: (accountId: string) => key(ADMIN, 'appearance', 'user-custom-css', accountId)
+};
+
 export const ArtistLinkQueryKeyFactory = {
 	link: (userId: UserId, artistId: string) =>
 		key(userScope(userId), 'library', 'artist-link', artistId)

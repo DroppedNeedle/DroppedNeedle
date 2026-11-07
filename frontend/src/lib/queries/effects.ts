@@ -10,6 +10,7 @@ import {
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { everyScope, key, userScope } from '$lib/queries/keys';
 import { ArtistQueryKeyFactory } from '$lib/features/artist/queries/ArtistQueryKeyFactory';
+import { AppearanceQueryKeyFactory } from '$lib/queries/featureKeys';
 import { ArtistLinkQueryKeyFactory } from '$lib/queries/featureKeys';
 import { DiscoverQueryKeyFactory } from '$lib/features/discover/queries/DiscoverQueryKeyFactory';
 import { DownloadQueryKeyFactory } from '$lib/features/downloads/queries/DownloadQueryKeyFactory';
@@ -191,6 +192,19 @@ export const EFFECTS = {
 	],
 	/** The apps that may sign in through the browser. */
 	appConnectSettingsChanged: (): Sweep[] => [{ key: ConnectAppsQueryKeyFactory.appConnect() }],
+	/** The caller's theme or custom CSS, and its kept saves. */
+	myAppearanceChanged: (userId: UserId): Sweep[] => [
+		{ key: AppearanceQueryKeyFactory.mine(userId) }
+	],
+	/** The site CSS or its switch, which every person's appearance carries. */
+	siteAppearanceChanged: (): Sweep[] => [
+		{ key: AppearanceQueryKeyFactory.site() },
+		{ everyScope: [AppearanceQueryKeyFactory.feature, 'mine'] }
+	],
+	/** One account's custom CSS, as the admin sees it. */
+	userCustomCssChanged: (accountId: string): Sweep[] => [
+		{ key: AppearanceQueryKeyFactory.userCustomCss(accountId) }
+	],
 	/** The caller's own Connect Apps choices. */
 	myConnectAppsChanged: (userId: string): Sweep[] => [
 		{ key: ConnectAppsQueryKeyFactory.mine(userId) }
@@ -495,6 +509,9 @@ export const appPasswordRosterChanged = fact('appPasswordRosterChanged');
 export const connectAppsSettingsChanged = fact('connectAppsSettingsChanged');
 export const appConnectSettingsChanged = fact('appConnectSettingsChanged');
 export const myConnectAppsChanged = fact('myConnectAppsChanged');
+export const myAppearanceChanged = fact('myAppearanceChanged');
+export const siteAppearanceChanged = fact('siteAppearanceChanged');
+export const userCustomCssChanged = fact('userCustomCssChanged');
 export const connectionsChanged = fact('connectionsChanged');
 export const sourcePlaylistsChanged = fact('sourcePlaylistsChanged');
 export const spotifyPlaylistsChanged = fact('spotifyPlaylistsChanged');
