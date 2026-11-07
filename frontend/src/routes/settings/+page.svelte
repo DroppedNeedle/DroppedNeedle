@@ -29,6 +29,7 @@
 		ShoppingBag,
 		Blocks,
 		PanelLeft,
+		Palette,
 		Activity,
 		Disc3,
 		DatabaseBackup
@@ -91,6 +92,7 @@
 		{ id: 'home', label: 'Home', tier: 'personalize', icon: House },
 		{ id: 'discover', label: 'Discover', tier: 'personalize', icon: Compass },
 		{ id: 'sidebar', label: 'Sidebar', tier: 'personalize', icon: PanelLeft },
+		{ id: 'appearance', label: 'Appearance', tier: 'personalize', icon: Palette },
 		{ id: 'music-source', label: 'Music Source', tier: 'personalize', icon: ChartColumn },
 		{ id: 'cache', label: 'Cache', tier: 'system', icon: Database },
 		{ id: 'musicbrainz', label: 'MusicBrainz', tier: 'system', icon: Globe },

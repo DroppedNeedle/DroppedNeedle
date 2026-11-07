@@ -31,6 +31,7 @@ const settingsTabLoaders: Record<string, SettingsLoader> = {
 	home: () => import('./SettingsHome.svelte'),
 	discover: () => import('./SettingsDiscover.svelte'),
 	sidebar: () => import('./SettingsSidebar.svelte'),
+	appearance: () => import('./SettingsAppearance.svelte'),
 	'music-source': () => import('./SettingsMusicSource.svelte'),
 	cache: () => import('./SettingsCache.svelte'),
 	musicbrainz: () => import('./SettingsMusicBrainz.svelte'),

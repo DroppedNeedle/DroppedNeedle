@@ -144,6 +144,9 @@
 		"state/playlistModal.svelte.ts"
 	],
 	"profile": [
+		"components/CssSnippetsMenu.svelte",
+		"components/CssVariablesPanel.svelte",
+		"components/cssVocabulary.ts",
 		"queries/ConnectionsQuery.svelte.ts",
 		"queries/connect-apps.svelte.ts",
 		"queries/scrobble-preferences.svelte.ts"
