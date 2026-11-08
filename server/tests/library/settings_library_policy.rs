@@ -272,7 +272,7 @@ async fn the_script_preview_shows_each_example_album_and_a_fix_for_a_misspelt_na
     assert!(body["fault"].is_null(), "{body}");
     let path = |name: &str| sample(&body, name)["path"].clone();
     assert_eq!(path("one_disc"), "Radiohead/02 Paranoid Android.flac");
-    assert_eq!(path("two_discs"), "Radiohead/02-03 Lift.flac");
+    assert_eq!(path("two_discs"), "The Smashing Pumpkins/02-02 Bodies.flac");
     assert_eq!(
         path("name_shared"),
         "Alice Cooper (1964-1975 American rock band)/01 Under My Wheels.mp3"
@@ -288,7 +288,7 @@ async fn the_script_preview_shows_each_example_album_and_a_fix_for_a_misspelt_na
     assert!(one["path"].is_null(), "{one}");
     assert_eq!(
         sample(&body, "two_discs")["path"],
-        "Radiohead/remastered/Lift"
+        "The Smashing Pumpkins/remastered/Bodies"
     );
 
     let (status, body) = preview("tagging", "delete comment").await;

@@ -52,7 +52,7 @@ One script language names files and edits tags. It is used in three places: the 
 Under every script box:
 
 - **The example** shows what the script does to a sample track, a moment after you stop typing. For a naming script it is the path the file gets, for a tagging script the tags that change (tags the script leaves alone are not listed). The part your last change altered is highlighted for a second.
-- **One disc, Two discs, Name shared** switch the sample: Radiohead's _OK Computer_ (one disc), _OK Computer OKNOTOK 1997 2017_ (two discs, with the edition note "remastered") and Alice Cooper's _Killer_ (an artist name MusicBrainz tells apart with "1964-1975 American rock band"). Switch between them to see a conditional piece appear and disappear.
+- **One disc, Two discs, Name shared** switch the sample: Radiohead's _OK Computer_ (one disc), The Smashing Pumpkins' _Mellon Collie and the Infinite Sadness_ (two discs, with the edition note "remastered") and Alice Cooper's _Killer_ (an artist name MusicBrainz tells apart with "1964-1975 American rock band"). Switch between them to see a conditional piece appear and disappear.
 - **Blocks** put a value or a ready-made piece at the cursor, and select what they put there. Each shows its value for the sample, or "empty here". A tagging script also has line blocks: Set a tag, Add to a tag, Remove a tag and Only when. Undo takes the last block or fix back.
 - **Mistakes** show as you type, with the line and column. A misspelt value name offers the nearest real one, such as `title` for `titel`, with a button that puts it in. The last good example stays, dimmed, until the script works again.
 - **An empty folder name** for one of the samples shows as a warning with the empty part marked: an import with that path would stop (see [Import naming script](downloads.md#import-naming-script)), and Library Management would leave that file where it is.
@@ -169,7 +169,7 @@ The disc number only on albums of more than one disc, as Lidarr's single-disc an
 {albumartist}/{album}{conditional(is_empty(year), "", concat(" (", year, ")"))}/{conditional(equals(total_discs, "1"), "", concat(pad(disc, 2), "-"))}{track:02d} - {title}.{ext}
 ```
 
-gives `Radiohead/OK Computer (1997)/02 - Paranoid Android.flac` and `Radiohead/OK Computer OKNOTOK 1997 2017 (2017)/02-03 - Lift.flac`. To put each disc in a folder of its own, give a profile a multi-disc script such as `{albumartist}/{album}/Disc {disc}/{track:02d} - {title}.{ext}`: a `/` that an expression gives becomes `_`, so a conditional can't make a folder.
+gives `Radiohead/OK Computer (1997)/02 - Paranoid Android.flac` and `The Smashing Pumpkins/Mellon Collie and the Infinite Sadness (2012)/02-02 - Bodies.flac`. To put each disc in a folder of its own, give a profile a multi-disc script such as `{albumartist}/{album}/Disc {disc}/{track:02d} - {title}.{ext}`: a `/` that an expression gives becomes `_`, so a conditional can't make a folder.
 
 - Two artists of one name kept apart: `{albumartist}{conditional(is_empty(albumartist_disambiguation), "", concat(" (", albumartist_disambiguation, ")"))}/...` gives `Alice Cooper (1964-1975 American rock band)/...`.
 - The edition in the album folder: `{album}{conditional(is_empty(album_disambiguation), "", concat(" (", album_disambiguation, ")"))}`.

@@ -139,8 +139,8 @@ fn lossless() -> HeaderInfo {
     }
 }
 
-/// The track an example album is shown with. The ids of the second and
-/// third are made up.
+/// The track an example album is shown with. The first album's ids are
+/// MusicBrainz's; the ids of the second and third are made up.
 pub fn example_track(album: ExampleAlbum) -> ExampleTrack {
     let (release, track, format, header, comment) = match album {
         ExampleAlbum::OneDisc => {
@@ -171,25 +171,25 @@ pub fn example_track(album: ExampleAlbum) -> ExampleTrack {
         }
         ExampleAlbum::TwoDiscs => {
             let track = ReleaseTrack {
-                title: "Lift".to_owned(),
+                title: "Bodies".to_owned(),
                 disc: 2,
-                position: 3,
-                absolute_position: 15,
+                position: 2,
+                absolute_position: 16,
                 ..ReleaseTrack::default()
             };
             let release = Release {
                 release_group_id: "00000000-0000-4000-8000-000000000002".to_owned(),
-                title: "OK Computer OKNOTOK 1997 2017".to_owned(),
+                title: "Mellon Collie and the Infinite Sadness".to_owned(),
                 artists: vec![artist(
-                    "a74b1b7f-71a5-4011-9441-d0b5e4122711",
-                    "Radiohead",
+                    "00000000-0000-4000-8000-000000000005",
+                    "The Smashing Pumpkins",
                     None,
                 )],
-                date: Some("2017-06-23".to_owned()),
-                original_date: Some("2017-06-23".to_owned()),
+                date: Some("2012-12-04".to_owned()),
+                original_date: Some("1995-10-23".to_owned()),
                 primary_type: Some("Album".to_owned()),
-                labels: vec!["XL Recordings".to_owned()],
-                media: vec![medium(1, 12), medium(2, 11)],
+                labels: vec!["Virgin".to_owned()],
+                media: vec![medium(1, 14), medium(2, 14)],
                 tracks: vec![track.clone()],
                 disambiguation: Some("remastered".to_owned()),
                 ..Release::default()
