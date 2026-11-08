@@ -108,7 +108,9 @@
 	}
 
 	// A drag moves only the thumb; the seek happens once, on release, so a
-	// conversion starts one new pipe per drag rather than one per step.
+	// conversion starts one new pipe per drag rather than one per step. The
+	// drag value stays until `change` reads it: pointerup comes first, and
+	// clearing it there put the old position back, so nothing seeked.
 	let scrub = $state<number | null>(null);
 
 	function handleScrub(e: Event): void {
@@ -387,7 +389,6 @@
 						disabled={!playerStore.isSeekable}
 						oninput={handleScrub}
 						onchange={handleSeek}
-						onpointerup={() => (scrub = null)}
 						onpointercancel={() => (scrub = null)}
 						onblur={() => (scrub = null)}
 						aria-label="Seek"

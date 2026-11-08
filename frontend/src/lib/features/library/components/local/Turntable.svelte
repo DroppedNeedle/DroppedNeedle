@@ -164,7 +164,8 @@
 		return Number((e.currentTarget as HTMLInputElement).value) / 1000;
 	}
 
-	// A drag moves only the thumb; the seek happens once, on release.
+	// A drag moves only the thumb; the seek happens once, on release. The
+	// drag value stays until `change` reads it (pointerup comes first).
 	function onScrub(e: Event) {
 		scrubRatio = seekRatio(e);
 	}
@@ -434,7 +435,6 @@
 							value={Math.round(progressRatio * 1000)}
 							oninput={onScrub}
 							onchange={onSeek}
-							onpointerup={() => (scrubRatio = null)}
 							onpointercancel={() => (scrubRatio = null)}
 							onblur={() => (scrubRatio = null)}
 							disabled={!playerStore.isSeekable}
