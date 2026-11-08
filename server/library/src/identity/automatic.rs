@@ -323,8 +323,11 @@ fn still_as_checked(
 /// instead of the edition undo: keyed to the match this leaves and still
 /// carried, it brings their edition back. A person's choice, made now or
 /// carried over from v2, is never replaced, and an album that moved since
-/// the check ([`Accepted::expected`]) is left as it is: `None` then.
-/// Returns the audit row id.
+/// the check ([`Accepted::expected`]) is left as it is: `None` then. An
+/// album row that already names the edition keeps its revision and the
+/// live automatic-edition undo, and an album that already reads exactly as
+/// the edition would leave it is not written at all: `None` too. Returns
+/// the audit row id.
 pub fn accept_automatic(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -353,14 +356,16 @@ pub fn accept_automatic(
                 &placement.release_track_mbid,
             )
         });
-    tx.prepare_cached(sql::ACCEPT_ALBUM.text())?
+    let album_changed = tx
+        .prepare_cached(sql::ACCEPT_ALBUM.text())?
         .execute(params![
             album_id,
             PROVIDER,
             accepted.release_group_mbid,
             accepted.release_mbid,
             crate::clock::ms(now)
-        ])?;
+        ])?
+        == 1;
     for placement in &placed {
         tx.prepare_cached(sql::PLACE_TRACK.text())?
             .execute(params![
@@ -394,17 +399,22 @@ pub fn accept_automatic(
         .execute(params![album_id])?;
     // A confident match: applied fully, so no unconfirmed flag remains.
     write_match_flag(tx, album_id, None, now)?;
-    keep_automatic_undo(
-        tx,
-        album_id,
-        &Kept {
-            prior: prior.as_ref(),
-            prior_tracks: &prior_tracks,
-            job_id: accepted.job_id,
-            reason_code: accepted.reason_code,
-            now,
-        },
-    )?;
+    if tx.total_changes() == before {
+        return Ok(None);
+    }
+    if album_changed {
+        keep_automatic_undo(
+            tx,
+            album_id,
+            &Kept {
+                prior: prior.as_ref(),
+                prior_tracks: &prior_tracks,
+                job_id: accepted.job_id,
+                reason_code: accepted.reason_code,
+                now,
+            },
+        )?;
+    }
     let action = record_action(
         tx,
         CatalogAction {

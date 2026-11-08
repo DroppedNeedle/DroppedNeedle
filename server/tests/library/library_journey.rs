@@ -13458,6 +13458,113 @@ async fn a_management_run_has_the_scan_read_what_it_wrote() {
     );
 }
 
+/// An album the app matched by itself, its rows carrying what an upgrade
+/// from v2 leaves on them (a matcher stamp, each file's disc and position),
+/// is retagged by a run. The scan reads the files back and sends the album
+/// to identification, which finds the same release: the match keeps its
+/// revisions and its automatic-edition undo, so the run's Undo still puts
+/// the files back.
+#[tokio::test]
+async fn a_run_stays_undoable_after_identification_finds_the_same_release() {
+    use droppedneedle_library::management::models::SelectionKind;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::{TagField, read_fields};
+
+    let managed = ManagedLibrary::start("lib-run-reidentified", |_| {}).await;
+    let rel = "auto/01.flac";
+    let file = plant(&managed.music, rel, "management_full.flac");
+    // The fixture's release ids would name another album than the one
+    // MusicBrainz is scripted to answer with.
+    save_tags(
+        &file,
+        &[
+            TagEdit::verbatim(TagField::Title, vec!["auto 1".to_owned()]),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseGroupId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+        ],
+    )
+    .expect("track tagged");
+    rescan(&managed.library).await;
+    let track = managed
+        .library
+        .scan_store
+        .track_at("music", rel)
+        .unwrap()
+        .expect("track indexed");
+    let album = managed
+        .library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    let release = fitting_release(&managed.library, &album);
+    managed.scratch.identify.set_recall(release);
+    while managed.library.identification.identify_tick().await > 0 {}
+    let held = || -> Vec<String> {
+        let db = managed.db();
+        let mut statement = db
+            .prepare(
+                "SELECT 'album ' || decision_source || ' ' || release_mbid || ' ' \
+                 || row_revision FROM local_album_external_identities \
+                 WHERE local_album_id = ?1 \
+                 UNION ALL SELECT 'track ' || i.release_track_mbid || ' ' || i.row_revision \
+                 FROM local_track_external_identities i JOIN local_tracks t \
+                 ON t.id = i.local_track_id WHERE t.local_album_id = ?1 \
+                 UNION ALL SELECT 'undo ' || id FROM library_automatic_edition_undo \
+                 WHERE local_album_id = ?1",
+            )
+            .expect("query prepares");
+        statement
+            .query_map([&album], |row| row.get(0))
+            .expect("query runs")
+            .collect::<rusqlite::Result<_>>()
+            .expect("rows read")
+    };
+    assert_eq!(held()[0], format!("album automatic {REL_1} 1"));
+    managed.activate().await;
+    managed.edit_outside(&track, title_edit("Before")).await;
+    while managed.library.identification.identify_tick().await > 0 {}
+    managed
+        .db()
+        .execute_batch(&format!(
+            "UPDATE local_album_external_identities \
+             SET matcher_version = 'quiet-reconfirm-v1' WHERE local_album_id = '{album}'; \
+             UPDATE local_track_external_identities SET medium_position = 1, \
+             release_track_position = 1 WHERE local_track_id = '{track}';"
+        ))
+        .expect("rows stamped");
+    managed.library.dirty.clear(&managed.library.dirty.list());
+    let matched = held();
+
+    let run = managed
+        .apply(SelectionKind::Albums, &[&album], "retag")
+        .await;
+    let title = || {
+        read_fields(track_file(&managed.path(&track))).expect("tags read")[&TagField::Title].clone()
+    };
+    assert_eq!(
+        title(),
+        vec!["auto 1".to_owned()],
+        "the run wrote the edition"
+    );
+    for _ in 0..100 {
+        managed.library.scans.supervisor_tick().await;
+        if managed.library.coordinator.current().is_empty() {
+            break;
+        }
+    }
+    let mut identified = 0;
+    while managed.library.identification.identify_tick().await > 0 {
+        identified += 1;
+    }
+
+    assert!(identified > 0, "the scan sent the album to identification");
+    assert_eq!(held(), matched, "the same release changes nothing");
+    managed.undo_run(&run, "undo").await;
+    assert_eq!(title(), vec!["Before".to_owned()], "Undo put the file back");
+}
+
 /// A file the app wrote that is retagged outside it is the user's: the
 /// next automatic run writes nothing, marks the album as taken over and
 /// parks it, and never touches the album's match. The app's own write

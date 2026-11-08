@@ -3251,6 +3251,119 @@ fn resealing_an_unchanged_match_writes_nothing() {
     );
 }
 
+/// An album already on an automatic match, with the bookkeeping a repair
+/// and an acceptance leave on its rows: a matcher stamp and an attempt on
+/// the album row, and a disc and position on each file's release track.
+fn stamped_match(rig: &Rig, album: &str, files: &[(&str, &str)]) {
+    rig.carried(album, RELEASE_A2, "automatic", 3);
+    rig.run(&format!(
+        "INSERT INTO library_identification_attempts (id, local_album_id, trigger, \
+         input_tag_revision, input_policy_revision, input_file_revision, matcher_version, \
+         state, terminal_reason_code, started_at, completed_at) VALUES ('attempt-{album}', \
+         '{album}', 'scan', 'r', 'r', 'r', 'quiet-reconfirm-v1', 'identified', 'OK', 0, 0); \
+         UPDATE local_album_external_identities SET matcher_version = 'quiet-reconfirm-v1', \
+         attempt_id = 'attempt-{album}' WHERE local_album_id = '{album}';"
+    ));
+    for (position, (file, recording)) in files.iter().enumerate() {
+        rig.run(&format!(
+            "INSERT INTO local_track_external_identities (local_track_id, provider, \
+             recording_mbid, release_mbid, release_track_mbid, medium_position, \
+             release_track_position, decision_source, attempt_id, selected_at) \
+             VALUES ('{file}', 'musicbrainz', '{recording}', '{RELEASE_A2}', 'rt-{file}', \
+             1, {}, 'automatic', 'attempt-{album}', 0);",
+            position + 1
+        ));
+    }
+}
+
+/// Everything about the album's match a re-identification could move,
+/// bookkeeping included, one line each.
+fn match_rows(rig: &Rig, album: &str) -> Vec<String> {
+    let mut lines = rig.identity_tables(album);
+    lines.extend(rig.texts(
+        "SELECT 'stamp ' || COALESCE(matcher_version, '-') || ' ' \
+         || COALESCE(attempt_id, '-') || ' ' || selected_at \
+         FROM local_album_external_identities WHERE local_album_id = ?1 \
+         UNION ALL SELECT 'track stamp ' || i.local_track_id || ' ' \
+         || COALESCE(i.attempt_id, '-') || ' ' || i.selected_at \
+         FROM local_track_external_identities i JOIN local_tracks t \
+         ON t.id = i.local_track_id WHERE t.local_album_id = ?1 \
+         UNION ALL SELECT 'undo ' || id || ' ' || created_at \
+         FROM library_automatic_edition_undo WHERE local_album_id = ?1",
+        album,
+    ));
+    lines
+}
+
+/// Identification sealing the release and tracks an album already holds
+/// changes nothing, even where only bookkeeping differs (a repair's matcher
+/// stamp, an attempt, the disc and position an acceptance placed): no row
+/// revision moves, so an Undo keyed to them still applies, and the earlier
+/// automatic-edition undo stays live.
+#[test]
+fn resealing_the_held_release_keeps_its_bookkeeping_and_revisions() {
+    let rig = rig_with_recall(RecallResult::default());
+    let files = [("t1", RECORDING_1), ("t2", RECORDING_2)];
+    rig.seed_album(&album_facts(
+        "album-1",
+        &[("t1", Some(RECORDING_1)), ("t2", Some(RECORDING_2))],
+    ));
+    stamped_match(&rig, "album-1", &files);
+    let held = match_rows(&rig, "album-1");
+    let seal = AutomaticSeal {
+        local_album_id: "album-1".to_owned(),
+        release_group_mbid: GROUP_A.to_owned(),
+        release_mbid: Some(RELEASE_A2.to_owned()),
+        tracks: files
+            .iter()
+            .map(|(file, recording)| TrackIdentity {
+                local_track_id: (*file).to_owned(),
+                provider: "musicbrainz".to_owned(),
+                recording_mbid: Some((*recording).to_owned()),
+                release_track_mbid: Some(format!("rt-{file}")),
+                decision_source: DecisionSource::Automatic,
+                row_revision: 0,
+            })
+            .collect(),
+        flag: None,
+    };
+
+    assert!(rig.store.seal_automatic(&seal).expect("seal lands"));
+
+    assert_eq!(match_rows(&rig, "album-1"), held);
+}
+
+/// A recheck accepting the edition an album already holds, its files
+/// already on the tracks it would place them on, writes nothing: no row
+/// revision moves and the live automatic-edition undo stays the one kept
+/// before.
+#[test]
+fn accepting_the_held_edition_writes_nothing() {
+    use droppedneedle_library::edition::choice::accept_automatic;
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-1", &[("t1", None), ("t2", None)]));
+    stamped_match(&rig, "album-1", &[("t1", RECORDING_1), ("t2", RECORDING_1)]);
+    let held = match_rows(&rig, "album-1");
+    let revision = rig.catalog_revision();
+
+    let accepted = rig.change(|tx| {
+        accept_automatic(
+            tx,
+            "album-1",
+            &offering(RELEASE_A2, &["t1", "t2"], &[]),
+            "R",
+            None,
+            None,
+            1.0,
+        )
+    });
+
+    assert_eq!(accepted, Ok(None));
+    assert_eq!(match_rows(&rig, "album-1"), held);
+    assert_eq!(rig.catalog_revision(), revision);
+}
+
 /// Undoing an automatic acceptance on an album that had no match before
 /// takes the album back to no match, and leaves neither undo row behind:
 /// one kept for the acceptance could otherwise put its match back over
