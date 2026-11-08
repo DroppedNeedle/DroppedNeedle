@@ -379,6 +379,16 @@ struct Mp4Box {
     end: usize,
 }
 
+/// The payload of every top-level `mdat` box, in file order: the audio,
+/// which a save leaves as it is while it moves boxes around it.
+pub(super) fn mdat_payloads(bytes: &[u8]) -> Result<Vec<&[u8]>, String> {
+    Ok(read_boxes(bytes, 0, bytes.len())?
+        .iter()
+        .filter(|found| &found.kind == b"mdat")
+        .map(|found| &bytes[found.content..found.end])
+        .collect())
+}
+
 fn find_box<'a>(boxes: &'a [Mp4Box], kind: &[u8; 4]) -> Option<&'a Mp4Box> {
     boxes.iter().find(|candidate| &candidate.kind == kind)
 }
@@ -408,16 +418,17 @@ fn read_boxes(bytes: &[u8], mut offset: usize, end: usize) -> Result<Vec<Mp4Box>
         } else if size == 0 {
             size = end - offset;
         }
-        if size < content - offset || offset + size > end {
-            return Err("box overruns its parent".to_owned());
-        }
+        let box_end = offset
+            .checked_add(size)
+            .filter(|box_end| size >= content - offset && *box_end <= end)
+            .ok_or_else(|| "box overruns its parent".to_owned())?;
         out.push(Mp4Box {
             kind,
             start: offset,
             content,
-            end: offset + size,
+            end: box_end,
         });
-        offset += size;
+        offset = box_end;
     }
     Ok(out)
 }

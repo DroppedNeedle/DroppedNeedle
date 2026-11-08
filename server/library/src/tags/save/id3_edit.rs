@@ -486,9 +486,25 @@ pub(super) fn apply(
         Some(tag) => tag.major == 3,
         None => matches!(native.original_version(), Id3v2Version::V3),
     };
+    // With no tag at the start, the window depends on the file's first
+    // kilobyte, which is all this reads of it.
+    let head = if truth.is_some() {
+        Vec::new()
+    } else {
+        let mut head = Vec::with_capacity(DEFAULT_JUNK_WINDOW);
+        std::fs::File::open(temp)
+            .and_then(|file| {
+                std::io::Read::read_to_end(
+                    &mut std::io::Read::take(file, DEFAULT_JUNK_WINDOW as u64),
+                    &mut head,
+                )
+            })
+            .map_err(save_failed)?;
+        head
+    };
     let options = WriteOptions::new()
         .use_id3v23(pin_v23)
-        .parse_options(save_parse_options(truth.is_some()));
+        .parse_options(save_parse_options(truth.is_some(), &head));
     native.save_to_path(temp, options).map_err(save_failed)
 }
 
@@ -497,19 +513,33 @@ pub(super) fn apply(
 /// tag, and padding left after a tag's size can be longer than its
 /// default. The same window also lets its writer search that far for an
 /// "ID3" header and replace everything from byte 0 to that header's end
-/// (lofty 0.25.4, `id3/v2/write/mod.rs` and `find_id3v2`), so it is
-/// widened only when our own parse found the tag at byte 0: on a file
-/// with no tag there, a stray "ID3" in the audio could be spliced over.
-pub(super) fn save_parse_options(tag_at_start: bool) -> lofty::config::ParseOptions {
+/// (lofty 0.25.4: `write_id3v2` in `id3/v2/write/mod.rs` sets the
+/// window from `max_junk_bytes`, and `find_id3v2_in_junk` in
+/// `id3/mod.rs` reads that many bytes and matches "ID3" only once all
+/// three are read). So it is widened only when our own parse found the
+/// tag at byte 0 (`tag_at_start`). With none there it stays lofty's
+/// default, cut to end just before the "3" of the first "ID3" in `head`
+/// (the file's first kilobyte): the frame search before it still works,
+/// and a stray "ID3" in the audio can never be matched and spliced over.
+pub(super) fn save_parse_options(tag_at_start: bool, head: &[u8]) -> lofty::config::ParseOptions {
+    let window = if tag_at_start {
+        MAX_PADDING_AFTER_TAG
+    } else {
+        let head = &head[..head.len().min(DEFAULT_JUNK_WINDOW)];
+        head.windows(3)
+            .position(|window| window == b"ID3")
+            .map_or(DEFAULT_JUNK_WINDOW, |at| at + 2)
+    };
     let mut options = lofty::config::ParseOptions::new();
-    if tag_at_start {
-        options.max_junk_bytes(MAX_PADDING_AFTER_TAG);
-    }
+    options.max_junk_bytes(window);
     options
 }
 
 /// How far past an ID3v2 tag a save still finds the first MPEG frame.
 const MAX_PADDING_AFTER_TAG: usize = 64 * 1024;
+
+/// lofty's own window (`ParseOptions::DEFAULT_MAX_JUNK_BYTES`).
+const DEFAULT_JUNK_WINDOW: usize = lofty::config::ParseOptions::DEFAULT_MAX_JUNK_BYTES;
 
 /// Timestamp ids that alias across ID3 versions: the merge emits v2.4
 /// ids that the writer converts on v2.3 saves, so each family is cleared

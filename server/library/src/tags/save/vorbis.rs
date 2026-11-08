@@ -312,6 +312,24 @@ fn parse_vorbis_truth(format: AudioFormat, bytes: &[u8]) -> Result<Option<Vorbis
 }
 
 fn flac_comment_block(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    let mut comment = None;
+    flac_metadata(bytes, |kind, block| {
+        if kind == 4 && comment.is_none() {
+            comment = Some(block.to_vec());
+        }
+    })?;
+    Ok(comment)
+}
+
+/// Where a FLAC stream's audio starts: right after its last metadata
+/// block.
+pub(super) fn flac_audio_start(bytes: &[u8]) -> Result<usize, String> {
+    flac_metadata(bytes, |_, _| {})
+}
+
+/// Walk a FLAC stream's metadata blocks, handing each block's type and
+/// body to `block`, and return the offset just past the last one.
+fn flac_metadata(bytes: &[u8], mut block: impl FnMut(u8, &[u8])) -> Result<usize, String> {
     if bytes.len() < 4 || &bytes[..4] != b"fLaC" {
         return Err("not a FLAC stream".to_owned());
     }
@@ -326,82 +344,26 @@ fn flac_comment_block(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
         if offset + 4 + len > bytes.len() {
             return Err("FLAC block overruns the file".to_owned());
         }
-        if header & 0x7F == 4 {
-            return Ok(Some(bytes[offset + 4..offset + 4 + len].to_vec()));
-        }
+        block(header & 0x7F, &bytes[offset + 4..offset + 4 + len]);
         offset += 4 + len;
         if header & 0x80 != 0 {
-            return Ok(None);
+            return Ok(offset);
         }
     }
 }
 
-/// Walk OGG pages, assemble the first stream's packets, and return the
-/// comment packet (index 1). Anything chained or multiplexed is refused.
+/// The comment packet (index 1) of the first OGG stream.
 fn ogg_comment_packet(format: AudioFormat, bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
-    let mut offset = 0;
-    let mut serial: Option<u32> = None;
-    let mut assembly: Vec<u8> = Vec::new();
-    let mut packets: Vec<Vec<u8>> = Vec::new();
-    while offset + 27 <= bytes.len() {
-        if &bytes[offset..offset + 4] != b"OggS" {
-            return Err("broken OGG page header".to_owned());
+    let mut comment = None;
+    ogg_packets(bytes, |stream, index, data| {
+        if stream == 0 && index == 1 {
+            comment = Some(data);
         }
-        if bytes[offset + 4] != 0 {
-            return Err("unsupported OGG version".to_owned());
-        }
-        let page_serial = u32::from_le_bytes(
-            bytes[offset + 14..offset + 18]
-                .try_into()
-                .map_err(|_| "broken OGG page".to_owned())?,
-        );
-        let is_bos = bytes[offset + 5] & 0x02 != 0;
-        match serial {
-            None => serial = Some(page_serial),
-            Some(first) if first == page_serial => {}
-            Some(_) if is_bos => {
-                return Err("chained OGG streams cannot be inventoried".to_owned());
-            }
-            Some(_) => {
-                // Another multiplexed stream; skip its pages.
-                let segments = bytes[offset + 26] as usize;
-                if offset + 27 + segments > bytes.len() {
-                    return Err("broken OGG page".to_owned());
-                }
-                let data: usize = bytes[offset + 27..offset + 27 + segments]
-                    .iter()
-                    .map(|segment| *segment as usize)
-                    .sum();
-                offset += 27 + segments + data;
-                continue;
-            }
-        }
-        let segments = bytes[offset + 26] as usize;
-        if offset + 27 + segments > bytes.len() {
-            return Err("broken OGG page".to_owned());
-        }
-        let table = &bytes[offset + 27..offset + 27 + segments];
-        let mut data_at = offset + 27 + segments;
-        for segment in table {
-            let len = *segment as usize;
-            if data_at + len > bytes.len() {
-                return Err("broken OGG page".to_owned());
-            }
-            assembly.extend_from_slice(&bytes[data_at..data_at + len]);
-            data_at += len;
-            if len < 255 {
-                packets.push(std::mem::take(&mut assembly));
-            }
-        }
-        offset = data_at;
-        if packets.len() >= 2 {
-            break;
-        }
-    }
-    if packets.len() < 2 {
+        stream == 0 && index < 1
+    })?;
+    let Some(packet) = comment else {
         return Err("comment packet missing".to_owned());
-    }
-    let packet = &packets[1];
+    };
     let magic_len = match format {
         AudioFormat::Opus => {
             if packet.len() < 8 || &packet[..8] != b"OpusTags" {
@@ -417,6 +379,96 @@ fn ogg_comment_packet(format: AudioFormat, bytes: &[u8]) -> Result<Option<Vec<u8
         }
     };
     Ok(Some(packet[magic_len..].to_vec()))
+}
+
+/// Walk OGG pages and hand out the first stream's packets, then each
+/// chained stream's, in order, as (stream, index in it, packet), until
+/// `packet` returns false. A stream that ends mid-packet hands out what
+/// it has. Pages of another multiplexed stream are skipped; one
+/// beginning before the first stream's comment packet is refused, and so
+/// are bytes after the last whole page, which a save drops.
+pub(super) fn ogg_packets(
+    bytes: &[u8],
+    mut packet: impl FnMut(usize, usize, Vec<u8>) -> bool,
+) -> Result<(), String> {
+    let mut offset = 0;
+    let mut serial: Option<u32> = None;
+    let mut assembly: Vec<u8> = Vec::new();
+    let mut stream = 0;
+    let mut index = 0;
+    let mut hand_out = |stream: usize, index: &mut usize, data: Vec<u8>| {
+        let more = packet(stream, *index, data);
+        *index += 1;
+        more
+    };
+    while offset < bytes.len() {
+        let headers_read = stream > 0 || index >= 2;
+        if offset + 27 > bytes.len() || &bytes[offset..offset + 4] != b"OggS" {
+            return Err(if headers_read {
+                "bytes after the last OGG page".to_owned()
+            } else {
+                "broken OGG page header".to_owned()
+            });
+        }
+        if bytes[offset + 4] != 0 {
+            return Err("unsupported OGG version".to_owned());
+        }
+        let page_serial = u32::from_le_bytes(
+            bytes[offset + 14..offset + 18]
+                .try_into()
+                .map_err(|_| "broken OGG page".to_owned())?,
+        );
+        let is_bos = bytes[offset + 5] & 0x02 != 0;
+        let segments = bytes[offset + 26] as usize;
+        if offset + 27 + segments > bytes.len() {
+            return Err("broken OGG page".to_owned());
+        }
+        let table = &bytes[offset + 27..offset + 27 + segments];
+        match serial {
+            None => serial = Some(page_serial),
+            Some(current) if current == page_serial => {}
+            Some(_) if is_bos && headers_read => {
+                // A chained stream: the one before it has ended.
+                if !assembly.is_empty()
+                    && !hand_out(stream, &mut index, std::mem::take(&mut assembly))
+                {
+                    return Ok(());
+                }
+                serial = Some(page_serial);
+                stream += 1;
+                index = 0;
+            }
+            Some(_) if is_bos => {
+                return Err("multiplexed OGG streams cannot be inventoried".to_owned());
+            }
+            Some(_) => {
+                // Another multiplexed stream; skip its pages.
+                let data: usize = table.iter().map(|segment| *segment as usize).sum();
+                offset += 27 + segments + data;
+                if offset > bytes.len() {
+                    return Err("broken OGG page".to_owned());
+                }
+                continue;
+            }
+        }
+        let mut data_at = offset + 27 + segments;
+        for segment in table {
+            let len = *segment as usize;
+            if data_at + len > bytes.len() {
+                return Err("broken OGG page".to_owned());
+            }
+            assembly.extend_from_slice(&bytes[data_at..data_at + len]);
+            data_at += len;
+            if len < 255 && !hand_out(stream, &mut index, std::mem::take(&mut assembly)) {
+                return Ok(());
+            }
+        }
+        offset = data_at;
+    }
+    if !assembly.is_empty() {
+        hand_out(stream, &mut index, assembly);
+    }
+    Ok(())
 }
 
 fn parse_vorbis_payload(payload: &[u8]) -> Result<VorbisTruth, String> {

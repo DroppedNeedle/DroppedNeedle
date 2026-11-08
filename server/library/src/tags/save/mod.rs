@@ -33,8 +33,9 @@
 //! and byte-identical audio. An empty Vorbis value reads as absent and
 //! is dropped. Refused: values a field cannot hold (see [`Refusal`]), a
 //! performer or arranger in MP4 (which has no home for either), a NUL
-//! in a credit or comment, unparseable tag bytes, and any post-save
-//! delta outside the edit.
+//! in a credit or comment, unparseable tag bytes, audio whose bounds
+//! cannot be worked out, and any post-save delta outside the edit, the
+//! audio included (see [`audio`]).
 //!
 //! An MP3 keeps its ID3 version, except an ID3v2.3 tag that also holds
 //! ID3v2.4 frames: lofty's v2.3 writer would drop those, so such a tag is
@@ -43,6 +44,7 @@
 //! `WAV` and `AAC` are read-only (the ID3-chunk fork and the never-persist
 //! APE tag, per the measured format matrix), and WMA is unrecognized like everywhere.
 
+mod audio;
 mod document;
 mod edit;
 mod id3;
@@ -75,6 +77,7 @@ use thiserror::Error;
 
 use super::fields::TagField;
 use super::{AudioFormat, TagsError, format_for_path};
+use audio::{AudioDigest, audio_digest};
 use document::read_pictures;
 use edit::{check_edit, resolve_edits};
 use id3::Id3;
@@ -480,7 +483,7 @@ fn save_as<F: TagFormat>(
     // The verify read: its hash is the saved file's.
     let (after, sha256, size) = {
         let (saved_bytes, sha256) = read_hashed(path)?;
-        let after = Snapshot::<F>::capture(format, &saved_bytes)
+        let after = Snapshot::<F>::capture_saved(format, &saved_bytes)
             .map_err(|refusal| refused(path, refusal))?;
         (after, sha256, saved_bytes.len() as u64)
     };
@@ -509,18 +512,37 @@ fn save_as<F: TagFormat>(
     })
 }
 
-/// A file's tag and pictures, before or after a save.
+/// A file's tag, pictures and audio digest, before or after a save.
 struct Snapshot<F: TagFormat> {
     truth: Option<F::Truth>,
     pictures: Vec<PictureSpec>,
+    audio: AudioDigest,
 }
 
 impl<F: TagFormat> Snapshot<F> {
     fn capture(format: AudioFormat, file_bytes: &[u8]) -> Result<Self, Refusal> {
-        let truth = F::parse(format, file_bytes)?;
+        let audio = audio_digest(format, file_bytes)?;
+        Self::with_audio(format, file_bytes, audio)
+    }
+
+    /// [`Self::capture`] of the saved file: audio whose bounds no longer
+    /// read is audio the save changed.
+    fn capture_saved(format: AudioFormat, file_bytes: &[u8]) -> Result<Self, Refusal> {
+        let audio = audio_digest(format, file_bytes).map_err(|_| Refusal::VerifyMismatch {
+            detail: "audio changed".to_owned(),
+        })?;
+        Self::with_audio(format, file_bytes, audio)
+    }
+
+    fn with_audio(
+        format: AudioFormat,
+        file_bytes: &[u8],
+        audio: AudioDigest,
+    ) -> Result<Self, Refusal> {
         Ok(Self {
-            truth,
+            truth: F::parse(format, file_bytes)?,
             pictures: read_pictures(file_bytes, format)?,
+            audio,
         })
     }
 
@@ -530,6 +552,9 @@ impl<F: TagFormat> Snapshot<F> {
         edits: &[F::Edit],
         pictures: Option<&[PictureSpec]>,
     ) -> Result<(), Refusal> {
+        if self.audio != after.audio {
+            return mismatch("audio changed".to_owned());
+        }
         F::verify(
             self.truth.as_ref(),
             after.truth.as_ref(),
@@ -578,5 +603,39 @@ fn lofty_picture(spec: &PictureSpec) -> lofty::picture::Picture {
 fn save_failed<E: std::error::Error>(error: E) -> Refusal {
     Refusal::SaveFailed {
         reason: error_chain(&error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Id3, Refusal, Snapshot, audio_digest};
+    use crate::tags::AudioFormat;
+
+    fn snapshot(bytes: &[u8]) -> Snapshot<Id3> {
+        Snapshot {
+            truth: None,
+            pictures: Vec::new(),
+            audio: audio_digest(AudioFormat::Mp3, bytes).unwrap(),
+        }
+    }
+
+    /// A save that leaves every tag as it was but changes one audio byte
+    /// is refused; a new tag in front of the same audio is not a change.
+    #[test]
+    fn a_changed_audio_region_is_refused() {
+        let audio: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
+        let mut tagged = b"ID3\x04\x00\x00\x00\x00\x00\x00".to_vec();
+        tagged.extend_from_slice(&audio);
+        let mut damaged = audio.clone();
+        damaged[100] ^= 0xFF;
+
+        let before = snapshot(&audio);
+        assert_eq!(before.verify_against(&snapshot(&tagged), &[], None), Ok(()));
+        assert_eq!(
+            before.verify_against(&snapshot(&damaged), &[], None),
+            Err(Refusal::VerifyMismatch {
+                detail: "audio changed".to_owned()
+            })
+        );
     }
 }

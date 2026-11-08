@@ -107,6 +107,37 @@ fn is_text_id(id: &str) -> bool {
     (id.starts_with('T') && !is_key_value_id(id)) || matches!(id, "MVNM" | "MVIN")
 }
 
+/// Where the ID3v2 tag at the start of `data` ends, its footer included
+/// (lofty honours the footer flag on v2.3 and v2.4 alike); 0 when no tag
+/// is there.
+pub(super) fn id3v2_end(data: &[u8]) -> Result<usize, Refusal> {
+    if data.len() < 10 || &data[..3] != b"ID3" {
+        return Ok(0);
+    }
+    let end = frames_end(data)?;
+    if data[5] & 0x10 == 0 {
+        return Ok(end);
+    }
+    if data.len() < end + 10 || &data[end..end + 3] != b"3DI" {
+        return Err(Refusal::NoByteInventory {
+            detail: "tag footer missing".to_owned(),
+        });
+    }
+    Ok(end + 10)
+}
+
+/// Where the frames of the ID3v2 tag at the start of `data` end, from
+/// its header's size.
+fn frames_end(data: &[u8]) -> Result<usize, Refusal> {
+    let end = 10usize.saturating_add(syncsafe_u32(&data[6..10]) as usize);
+    if end > data.len() {
+        return Err(Refusal::NoByteInventory {
+            detail: "tag overruns the file".to_owned(),
+        });
+    }
+    Ok(end)
+}
+
 pub(super) fn parse_id3_deep(data: &[u8]) -> Result<Option<DeepId3>, Refusal> {
     if data.len() < 10 || &data[..3] != b"ID3" {
         return Ok(None);
@@ -130,11 +161,8 @@ pub(super) fn parse_id3_deep(data: &[u8]) -> Result<Option<DeepId3>, Refusal> {
             "extended header cannot be inventoried".to_owned(),
         ));
     }
-    let size = syncsafe_u32(&data[6..10]) as usize;
-    if 10usize.saturating_add(size) > data.len() {
-        return Err(no_inventory("tag overruns the file".to_owned()));
-    }
-    let tag_end = 10 + size;
+    let tag_end = frames_end(data)?;
+    let size = tag_end - 10;
     let mut frames = Vec::new();
     let mut offset = 10usize;
     while offset + 10 <= tag_end {

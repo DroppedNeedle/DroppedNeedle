@@ -147,7 +147,7 @@ pub(super) fn read_pictures(
             if format == AudioFormat::Mp3 {
                 let tag_at_start = matches!(parse_id3_deep(bytes), Ok(Some(_)));
                 let guessed = lofty::probe::Probe::new(std::io::Cursor::new(bytes))
-                    .options(save_parse_options(tag_at_start))
+                    .options(save_parse_options(tag_at_start, bytes))
                     .guess_file_type()
                     .map_err(failed)?
                     .file_type();

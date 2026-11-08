@@ -1067,6 +1067,128 @@ fn title_save_keeps_other_tags_and_audio() {
 
 const MIXED_V23: &str = "management_full_v23.mp3";
 
+/// A tagless MP3 whose audio holds the bytes of an ID3v2 header within
+/// its first kilobyte gains a tag in front of byte 0, and keeps every
+/// audio byte: the save never takes that header for a tag and splices
+/// away the audio before it.
+#[test]
+fn tagless_mp3_with_id3_bytes_in_its_audio_keeps_its_audio() {
+    let (_scratch, path) = temp_copy("management_full.mp3", "mp3-stray-id3");
+    let mut audio = mp3_audio_tail(&std::fs::read(&path).unwrap()).to_vec();
+    audio[400..410].copy_from_slice(b"ID3\x04\x00\x00\x00\x00\x00\x00");
+    std::fs::write(&path, &audio).unwrap();
+
+    tags::save_tags(&path, &[TagEdit::set_title("STRAY")]).unwrap();
+
+    assert_eq!(after_id3v2(&path), audio);
+    let (tag, _) = tags::read_tags(track_file(&path)).unwrap();
+    assert_eq!(tag.title, "STRAY");
+}
+
+/// A tagless MP3 with other bytes before its first frame, as stream rips
+/// have, still saves a title and keeps every byte after the new tag.
+#[test]
+fn tagless_mp3_with_junk_before_its_first_frame_saves() {
+    let (_scratch, path) = temp_copy("management_full.mp3", "mp3-junk-start");
+    let mut bytes = vec![0u8; 300];
+    bytes.extend_from_slice(mp3_audio_tail(&std::fs::read(&path).unwrap()));
+    std::fs::write(&path, &bytes).unwrap();
+
+    tags::save_tags(&path, &[TagEdit::set_title("JUNK")]).unwrap();
+
+    assert_eq!(after_id3v2(&path), bytes);
+    let (tag, _) = tags::read_tags(track_file(&path)).unwrap();
+    assert_eq!(tag.title, "JUNK");
+}
+
+/// Each OGG stream's packets, by serial, in the order the streams start.
+fn ogg_streams(bytes: &[u8]) -> Vec<(u32, Vec<Vec<u8>>)> {
+    let mut streams: Vec<(u32, Vec<Vec<u8>>)> = Vec::new();
+    let mut assembly = Vec::new();
+    let mut offset = 0;
+    while offset < bytes.len() {
+        assert_eq!(&bytes[offset..offset + 4], b"OggS");
+        let serial = u32::from_le_bytes(bytes[offset + 14..offset + 18].try_into().unwrap());
+        if streams.last().is_none_or(|(last, _)| *last != serial) {
+            streams.push((serial, Vec::new()));
+        }
+        let segments = bytes[offset + 26] as usize;
+        let mut data = offset + 27 + segments;
+        for len in &bytes[offset + 27..offset + 27 + segments] {
+            let len = *len as usize;
+            assembly.extend_from_slice(&bytes[data..data + len]);
+            if len < 255 {
+                streams
+                    .last_mut()
+                    .unwrap()
+                    .1
+                    .push(std::mem::take(&mut assembly));
+            }
+            data += len;
+        }
+        offset = data;
+    }
+    streams
+}
+
+/// A chained OGG file (a second stream after the first ends) saves a
+/// title on its first stream, and every audio packet of both streams
+/// comes through.
+#[test]
+fn chained_ogg_saves_and_keeps_both_streams() {
+    for name in ["management_full.ogg", "management_full.opus"] {
+        let (_scratch, path) = temp_copy(name, "ogg-chained");
+        let first = std::fs::read(&path).unwrap();
+        let mut second = first.clone();
+        let mut offset = 0;
+        while offset < second.len() {
+            let serial = u32::from_le_bytes(second[offset + 14..offset + 18].try_into().unwrap());
+            second[offset + 14..offset + 18].copy_from_slice(&(serial ^ 1).to_le_bytes());
+            let segments = second[offset + 26] as usize;
+            let data: usize = second[offset + 27..offset + 27 + segments]
+                .iter()
+                .map(|len| *len as usize)
+                .sum();
+            offset += 27 + segments + data;
+        }
+        let mut chained = first;
+        chained.extend_from_slice(&second);
+        std::fs::write(&path, &chained).unwrap();
+        let before = ogg_streams(&chained);
+
+        tags::save_tags(&path, &[TagEdit::set_title("CHAINED")]).unwrap();
+
+        let after = ogg_streams(&std::fs::read(&path).unwrap());
+        assert_eq!(after.len(), 2, "{name}");
+        assert_eq!(after[0].1[0], before[0].1[0], "{name}: first header");
+        assert_eq!(after[0].1[2..], before[0].1[2..], "{name}: first stream");
+        assert_eq!(after[1], before[1], "{name}: second stream");
+        let (tag, _) = tags::read_tags(track_file(&path)).unwrap();
+        assert_eq!(tag.title, "CHAINED", "{name}");
+    }
+}
+
+/// An OGG file with bytes after its last page, which a save would drop,
+/// is refused before the save and left as it was.
+#[test]
+fn ogg_with_bytes_after_its_last_page_is_refused() {
+    let (_scratch, path) = temp_copy("management_full.ogg", "ogg-tail");
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.extend_from_slice(&[b'T'; 128]);
+    std::fs::write(&path, &bytes).unwrap();
+
+    let refusal = match tags::save_tags(&path, &[TagEdit::set_title("TAIL")]) {
+        Err(TagsError::SaveRefused { refusal, .. }) => refusal,
+        other => panic!("expected a refusal, got {other:?}"),
+    };
+
+    assert!(
+        matches!(&refusal, Refusal::NoByteInventory { detail } if detail.contains("after the last OGG page")),
+        "{refusal:?}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+}
+
 /// One ID3 frame as compared here: user text keyed `TXXX:<description>`
 /// and text frames by their values, any other frame by its payload.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
