@@ -8,6 +8,8 @@ export const h = {
 	items: {} as Record<string, unknown>,
 	/** The plan-items query's params, as the page passes them. */
 	itemParams: null as (() => Record<string, unknown>) | null,
+	/** Artists the library search finds. */
+	searchArtists: [] as Array<{ id: string; name: string }>,
 	apply: vi.fn(),
 	discard: vi.fn(),
 	resolve: vi.fn(),
@@ -36,7 +38,7 @@ export const policyQueriesMock = {
 };
 
 export const libraryQueriesMock = {
-	getLibrarySearchQuery: () => ({ data: { artists: [], albums: [], tracks: [] } })
+	getLibrarySearchQuery: () => ({ data: { artists: h.searchArtists, albums: [], tracks: [] } })
 };
 
 export const queriesMock = {
@@ -178,6 +180,7 @@ export function resetPreviewMocks(): void {
 	vi.clearAllMocks();
 	sessionStorage.clear();
 	h.itemParams = null;
+	h.searchArtists = [];
 	h.preview = { data: detail(), isLoading: false, isError: false };
 	h.items = {
 		data: { pages: [{ items: [collisionItem], next_cursor: null }] },

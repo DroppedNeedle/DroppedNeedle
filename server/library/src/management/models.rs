@@ -656,8 +656,10 @@ pub struct ItemFilter {
     pub reason_code: Option<String>,
     pub root_id: Option<String>,
     pub album_id: Option<String>,
+    /// Files on albums by or credited to this local artist.
+    pub artist_id: Option<String>,
     pub audio_format: Option<String>,
-    /// `tags`, `path`, `sidecars`, or `no_change`.
+    /// `tags`, `path`, `sidecars`, `artwork`, or `no_change`.
     pub change_kind: Option<String>,
     /// Only the files that change, or only the others; none lists all.
     pub scope: Option<ItemScope>,

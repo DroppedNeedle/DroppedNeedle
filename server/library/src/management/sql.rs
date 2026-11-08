@@ -400,13 +400,19 @@ droppedneedle_kernel::sql! {
          AND (?4 IS NULL OR reason_code = ?4) AND (?5 IS NULL OR expected_root_id = ?5) \
          AND (?6 IS NULL OR local_album_id = ?6) \
          AND (?7 IS NULL OR json_extract(capability_json, '$.audio_format') = ?7) \
-         AND (?8 IS NULL \
-           OR (?8 = 'tags' AND json_extract(diff_json, '$.tags_changed') = 1) \
-           OR (?8 = 'path' AND json_extract(diff_json, '$.path_changed') = 1) \
-           OR (?8 = 'sidecars' AND json_array_length(diff_json, '$.sidecars') > 0) \
-           OR (?8 = 'no_change' AND COALESCE(json_extract(diff_json, '$.tags_changed'), 0) = 0 \
-               AND COALESCE(json_extract(diff_json, '$.path_changed'), 0) = 0)) \
+         AND (?8 IS NULL OR (eligibility IN ('eligible', 'warning') AND ( \
+           (?8 = 'tags' AND COALESCE(json_extract(diff_json, '$.tags_changed'), 0) = 1) \
+           OR (?8 = 'path' AND COALESCE(json_extract(diff_json, '$.path_changed'), 0) = 1) \
+           OR (?8 = 'sidecars' AND COALESCE(json_array_length(diff_json, '$.sidecars'), 0) > 0) \
+           OR (?8 = 'artwork' AND (COALESCE(json_extract(diff_json, '$.artwork_changed'), 0) = 1 \
+               OR EXISTS (SELECT 1 FROM json_each(diff_json, '$.generated') g \
+                 WHERE json_extract(g.value, '$.kind') = 'artwork'))) \
+           OR (?8 = 'no_change' AND NOT " + ITEM_CHANGES + ")))) \
          AND (?10 IS NULL OR (?10 = 'changing') = " + ITEM_CHANGES + ") \
+         AND (?11 IS NULL OR EXISTS (SELECT 1 FROM local_albums a \
+           WHERE a.id = library_management_plan_items.local_album_id \
+           AND (a.album_artist_id = ?11 OR EXISTS (SELECT 1 FROM local_album_artists x \
+             WHERE x.local_album_id = a.id AND x.local_artist_id = ?11)))) \
          ORDER BY ordinal LIMIT ?9";
     pub(super) BUNDLE_ITEMS = "SELECT " + ITEM_COLUMNS + " FROM library_management_plan_items \
          WHERE job_id = ?1 AND bundle_ordinal = ?2 ORDER BY ordinal";

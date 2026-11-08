@@ -403,6 +403,8 @@ pub struct ManagementItemsQuery {
     pub reason_code: Option<String>,
     pub root_id: Option<String>,
     pub album_id: Option<String>,
+    /// Files on albums by or credited to this local artist.
+    pub artist_id: Option<String>,
     pub audio_format: Option<String>,
     #[param(inline)]
     pub change_kind: Option<ChangeKind>,
@@ -559,6 +561,7 @@ fn item_filter(query: &ManagementItemsQuery) -> ItemFilter {
         reason_code: query.reason_code.clone(),
         root_id: query.root_id.clone(),
         album_id: query.album_id.clone(),
+        artist_id: query.artist_id.clone(),
         audio_format: query.audio_format.clone(),
         change_kind: query.change_kind.map(|kind| kind.as_str().to_owned()),
         scope: query.scope,

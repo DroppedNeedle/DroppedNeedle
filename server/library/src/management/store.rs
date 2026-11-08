@@ -357,6 +357,7 @@ pub fn items_page(
             change,
             limit + 1,
             filter.scope.map(ItemScope::as_str),
+            filter.artist_id,
         ],
         map_item,
     )?;

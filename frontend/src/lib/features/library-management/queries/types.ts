@@ -195,9 +195,6 @@ export interface LibraryManagementPlanItemParams {
 	artistId?: string;
 	albumId?: string;
 	audioFormat?: string;
-	collisionClass?: string;
-	hasPreservedValue?: boolean;
-	hasRepresentationLoss?: boolean;
 	changeKind?: ManagementChangeKind;
 	scope?: ManagementItemScope;
 }

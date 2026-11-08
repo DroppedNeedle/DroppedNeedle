@@ -1,7 +1,7 @@
 <!--
 	The filters over a preview's file list: outcome, reason, root, format and
-	change, then artist or release, collision class and preservation behind a
-	disclosure. Counts come from the preview's summary.
+	change, then artist or release behind a disclosure. Counts come from the
+	preview's summary.
 -->
 <script lang="ts">
 	import '$lib/features/library-management/components/library-management.css';
@@ -10,11 +10,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import Input from '$lib/ui/Input.svelte';
-	import {
-		managementRootLabel,
-		qualifiedManagementReasonLabel,
-		titleManagementValue
-	} from './LibraryManagementDisplay';
+	import { managementRootLabel, qualifiedManagementReasonLabel } from './LibraryManagementDisplay';
 	import type { PreviewFilters } from './previewFilters.svelte';
 
 	interface Props {
@@ -24,16 +20,6 @@
 	}
 
 	let { filters, preview, roots }: Props = $props();
-
-	const collisionClasses = [
-		'same_path_same_content',
-		'same_path_different_content',
-		'same_release_position_different_content',
-		'normalized_path_collision',
-		'normalized_catalog_path_collision',
-		'sidecar_path_collision',
-		'destination_created_after_preview'
-	];
 
 	const catalogSearchQuery = getLibrarySearchQuery(() => filters.catalogSearch);
 	const summary = $derived(preview.summary);
@@ -100,98 +86,60 @@
 		>
 	</div>
 	<details class="mt-2 rounded-xl border border-base-content/10 bg-base-200/35 p-3">
-		<summary class="cursor-pointer text-sm font-semibold"
-			>Artist, release, collision, and preservation filters</summary
-		>
-		<div class="mt-3 grid gap-3 lg:grid-cols-2">
-			<div class="space-y-2">
-				<label class="grid gap-1 text-xs"
-					><span>Find an artist or release</span><Input
-						size="sm"
-						label="Find an artist or release"
-						bind:value={filters.catalogSearch}
-						placeholder="Type at least two characters"
-					/></label
-				>
-				{#if filters.artistId || filters.albumId}<div class="flex flex-wrap gap-1">
-						{#if filters.artistId}<button
-								type="button"
-								class="badge badge-outline gap-1"
-								onclick={() => filters.clearArtist()}>Artist: {filters.artistLabel} ×</button
-							>{/if}{#if filters.albumId}<button
-								type="button"
-								class="badge badge-outline gap-1"
-								onclick={() => filters.clearAlbum()}>Release: {filters.albumLabel} ×</button
-							>{/if}
+		<summary class="cursor-pointer text-sm font-semibold">Artist and release filters</summary>
+		<div class="mt-3 space-y-2">
+			<label class="grid gap-1 text-xs"
+				><span>Find an artist or release</span><Input
+					size="sm"
+					label="Find an artist or release"
+					bind:value={filters.catalogSearch}
+					placeholder="Type at least two characters"
+				/></label
+			>
+			{#if filters.artistId || filters.albumId}<div class="flex flex-wrap gap-1">
+					{#if filters.artistId}<button
+							type="button"
+							class="badge badge-outline gap-1"
+							onclick={() => filters.clearArtist()}>Artist: {filters.artistLabel} ×</button
+						>{/if}{#if filters.albumId}<button
+							type="button"
+							class="badge badge-outline gap-1"
+							onclick={() => filters.clearAlbum()}>Release: {filters.albumLabel} ×</button
+						>{/if}
+				</div>{/if}
+			{#if filters.catalogSearch.trim().length >= 2}
+				{#if catalogSearchQuery.isLoading}<div
+						class="skeleton h-16 rounded-xl"
+						role="status"
+						aria-label="Searching artists and releases"
+					></div>{:else if catalogSearchQuery.isError}<div
+						class="alert alert-error py-2 text-xs"
+						role="alert"
+					>
+						Could not search artists and releases.
+					</div>{:else if catalogSearchQuery.data && catalogSearchQuery.data.artists.length + catalogSearchQuery.data.albums.length === 0}<p
+						class="rounded-xl border border-dashed border-base-content/15 p-3 text-xs text-muted"
+					>
+						No matching artists or releases.
+					</p>{:else if catalogSearchQuery.data}<div
+						class="grid max-h-44 gap-1 overflow-y-auto rounded-xl border border-base-content/10 bg-base-100 p-2"
+					>
+						{#each catalogSearchQuery.data.artists as artist (artist.id)}<Button
+								variant="ghost"
+								size="sm"
+								class="justify-start"
+								onclick={() => filters.chooseArtist(artist.id, artist.name)}
+								>Artist · {artist.name}</Button
+							>{/each}{#each catalogSearchQuery.data.albums as album (album.id)}<Button
+								variant="ghost"
+								size="sm"
+								class="justify-start"
+								onclick={() =>
+									filters.chooseAlbum(album.id, `${album.artist_name} · ${album.title}`)}
+								>Release · {album.artist_name} · {album.title}</Button
+							>{/each}
 					</div>{/if}
-				{#if filters.catalogSearch.trim().length >= 2}
-					{#if catalogSearchQuery.isLoading}<div
-							class="skeleton h-16 rounded-xl"
-							role="status"
-							aria-label="Searching artists and releases"
-						></div>{:else if catalogSearchQuery.isError}<div
-							class="alert alert-error py-2 text-xs"
-							role="alert"
-						>
-							Could not search artists and releases.
-						</div>{:else if catalogSearchQuery.data && catalogSearchQuery.data.artists.length + catalogSearchQuery.data.albums.length === 0}<p
-							class="rounded-xl border border-dashed border-base-content/15 p-3 text-xs text-muted"
-						>
-							No matching artists or releases.
-						</p>{:else if catalogSearchQuery.data}<div
-							class="grid max-h-44 gap-1 overflow-y-auto rounded-xl border border-base-content/10 bg-base-100 p-2"
-						>
-							{#each catalogSearchQuery.data.artists as artist (artist.id)}<Button
-									variant="ghost"
-									size="sm"
-									class="justify-start"
-									onclick={() => filters.chooseArtist(artist.id, artist.name)}
-									>Artist · {artist.name}</Button
-								>{/each}{#each catalogSearchQuery.data.albums as album (album.id)}<Button
-									variant="ghost"
-									size="sm"
-									class="justify-start"
-									onclick={() =>
-										filters.chooseAlbum(album.id, `${album.artist_name} · ${album.title}`)}
-									>Release · {album.artist_name} · {album.title}</Button
-								>{/each}
-						</div>{/if}
-				{/if}
-			</div>
-			<div class="grid gap-2 sm:grid-cols-2">
-				<label class="grid gap-1 text-xs sm:col-span-2"
-					><span>Collision class</span><select
-						class="select select-sm"
-						bind:value={filters.collisionClass}
-						><option value="">All collision classes</option
-						>{#each collisionClasses as option (option)}<option value={option}
-								>{titleManagementValue(option)}</option
-							>{/each}</select
-					></label
-				>
-				<label class="management-trigger"
-					><input
-						type="checkbox"
-						class="checkbox checkbox-sm"
-						bind:checked={filters.hasPreservedValue}
-					/><span
-						><strong>Preserved / local override</strong><small
-							>Values intentionally left unchanged</small
-						></span
-					></label
-				>
-				<label class="management-trigger"
-					><input
-						type="checkbox"
-						class="checkbox checkbox-sm"
-						bind:checked={filters.hasRepresentationLoss}
-					/><span
-						><strong>Lossy representation</strong><small
-							>Format cannot store the exact value shape</small
-						></span
-					></label
-				>
-			</div>
+			{/if}
 		</div>
 	</details>
 </Card>

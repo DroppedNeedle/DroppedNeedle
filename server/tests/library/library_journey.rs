@@ -12946,6 +12946,146 @@ async fn management_lists_split_into_changing_and_not_changing() {
     }
 }
 
+/// Each change filter on a preview's file list lists exactly the files the
+/// summary counts for that change, and the artist filter lists only files
+/// on that artist's albums.
+#[tokio::test]
+async fn management_change_filters_list_what_the_summary_counts() {
+    use droppedneedle_library::management::models::{
+        GeneratedFile, ItemDiff, ItemFilter, SelectionKind, SidecarMove, Summary,
+    };
+
+    let managed = ManagedLibrary::start("lib-management-filters", |_| {}).await;
+    let (kinds, _) = managed.add_album("kinds", 6).await;
+    let (other, _) = managed.add_album("other", 1).await;
+    let (handle, items) = managed
+        .preview(SelectionKind::Albums, &[&kinds, &other], "filters-preview")
+        .await;
+    let ordinals: Vec<i64> = items
+        .iter()
+        .filter(|item| item.album_id == kinds)
+        .map(|item| item.ordinal)
+        .collect();
+    assert_eq!(ordinals.len(), 6);
+    let generated = |kind: &str| GeneratedFile {
+        kind: kind.to_owned(),
+        destination_relative_path: format!("kinds/{kind}"),
+    };
+    let diffs = [
+        ItemDiff {
+            tags_changed: true,
+            ..ItemDiff::default()
+        },
+        ItemDiff {
+            artwork_changed: true,
+            ..ItemDiff::default()
+        },
+        ItemDiff {
+            generated: vec![generated("artwork")],
+            ..ItemDiff::default()
+        },
+        ItemDiff {
+            sidecars: vec![SidecarMove {
+                source_relative_path: "kinds/a.cue".to_owned(),
+                destination_relative_path: "kinds/b.cue".to_owned(),
+            }],
+            ..ItemDiff::default()
+        },
+        ItemDiff::default(),
+        ItemDiff {
+            tags_changed: true,
+            artwork_changed: true,
+            ..ItemDiff::default()
+        },
+    ];
+    let db = managed.db();
+    for (ordinal, diff) in ordinals.iter().zip(&diffs) {
+        db.execute(
+            "UPDATE library_management_plan_items SET diff_json = ?3 WHERE job_id = ?1 AND ordinal = ?2",
+            rusqlite::params![handle.job_id, ordinal, serde_json::to_string(diff).expect("diff")],
+        )
+        .expect("diff planned");
+    }
+    db.execute(
+        "UPDATE library_management_plan_items SET eligibility = 'blocked', \
+         reason_code = 'UNCONFIRMED_MATCH' WHERE job_id = ?1 AND ordinal = ?2",
+        rusqlite::params![handle.job_id, ordinals[5]],
+    )
+    .expect("blocked");
+    db.execute(
+        "INSERT INTO local_artists (id, display_name, folded_name, normalized_name, kind, \
+         created_at, updated_at, row_revision) \
+         VALUES ('filter-artist', 'Filter Artist', 'filter artist', 'filter artist', 'person', 0, 0, 1)",
+        [],
+    )
+    .expect("artist");
+    db.execute(
+        "UPDATE local_albums SET album_artist_id = 'filter-artist' WHERE id = ?1",
+        [&other],
+    )
+    .expect("album artist");
+
+    let management = managed.management();
+    let list = |filter: ItemFilter| -> Vec<i64> {
+        management
+            .items(&handle.job_id, -1, 100, &filter)
+            .expect("items page")
+            .items
+            .iter()
+            .map(|item| item.ordinal)
+            .collect()
+    };
+    let planned = management
+        .items(&handle.job_id, -1, 100, &ItemFilter::default())
+        .expect("items")
+        .items;
+    let counted = |count: fn(&Summary) -> i64| -> Vec<i64> {
+        planned
+            .iter()
+            .filter(|item| {
+                let mut summary = Summary::default();
+                summary.count(item);
+                count(&summary) == 1
+            })
+            .map(|item| item.ordinal)
+            .collect()
+    };
+    let kinds_of: [(&str, fn(&Summary) -> i64); 5] = [
+        ("tags", |summary| summary.tag_change_count),
+        ("path", |summary| summary.path_change_count),
+        ("sidecars", |summary| summary.sidecar_change_count),
+        ("artwork", |summary| summary.artwork_change_count),
+        ("no_change", |summary| summary.no_change_count),
+    ];
+    for (kind, count) in kinds_of {
+        let filter = ItemFilter {
+            change_kind: Some(kind.to_owned()),
+            ..ItemFilter::default()
+        };
+        assert_eq!(
+            list(filter),
+            counted(count),
+            "{kind} lists what the summary counts"
+        );
+    }
+    let artwork = ItemFilter {
+        change_kind: Some("artwork".to_owned()),
+        ..ItemFilter::default()
+    };
+    assert_eq!(list(artwork), vec![ordinals[1], ordinals[2]]);
+    let artist = ItemFilter {
+        artist_id: Some("filter-artist".to_owned()),
+        ..ItemFilter::default()
+    };
+    let others: Vec<i64> = planned
+        .iter()
+        .filter(|item| item.album_id == other)
+        .map(|item| item.ordinal)
+        .collect();
+    assert_eq!(others.len(), 1);
+    assert_eq!(list(artist), others);
+}
+
 /// Automatic management settles album by album: catalog changes made for
 /// other albums never hold one back. An album is looked at 30 s after it
 /// was queued, while no identification job of its own is live and no scan

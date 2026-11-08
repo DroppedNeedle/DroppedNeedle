@@ -17585,6 +17585,15 @@
             }
           },
           {
+            "name": "artist_id",
+            "in": "query",
+            "description": "Files on albums by or credited to this local artist.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "audio_format",
             "in": "query",
             "required": false,

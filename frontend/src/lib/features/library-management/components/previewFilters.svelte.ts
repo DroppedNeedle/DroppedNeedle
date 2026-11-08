@@ -20,9 +20,6 @@ export class PreviewFilters {
 	catalogSearch = $state('');
 	audioFormat = $state('');
 	#changeKind = $state<ManagementChangeKind | ''>('');
-	collisionClass = $state('');
-	hasPreservedValue = $state(false);
-	hasRepresentationLoss = $state(false);
 
 	// Blocked, stale and unchanged files are never on the Changing tab, so
 	// picking one of them shows every file instead of an empty list.
@@ -58,9 +55,6 @@ export class PreviewFilters {
 			artistId: this.artistId || undefined,
 			albumId: this.albumId || undefined,
 			audioFormat: this.audioFormat || undefined,
-			collisionClass: this.collisionClass || undefined,
-			hasPreservedValue: this.hasPreservedValue || undefined,
-			hasRepresentationLoss: this.hasRepresentationLoss || undefined,
 			changeKind: this.changeKind || undefined
 		};
 	}
@@ -103,8 +97,5 @@ export class PreviewFilters {
 		this.catalogSearch = '';
 		this.audioFormat = '';
 		this.#changeKind = '';
-		this.collisionClass = '';
-		this.hasPreservedValue = false;
-		this.hasRepresentationLoss = false;
 	}
 }

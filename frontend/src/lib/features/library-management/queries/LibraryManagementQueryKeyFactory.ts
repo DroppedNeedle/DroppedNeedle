@@ -24,9 +24,6 @@ const normalizedItems = (params: LibraryManagementPlanItemParams) => ({
 	artistId: params.artistId ?? null,
 	albumId: params.albumId ?? null,
 	audioFormat: params.audioFormat ?? null,
-	collisionClass: params.collisionClass ?? null,
-	hasPreservedValue: params.hasPreservedValue ?? null,
-	hasRepresentationLoss: params.hasRepresentationLoss ?? null,
 	changeKind: params.changeKind ?? null,
 	scope: params.scope ?? null
 });

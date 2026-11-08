@@ -12,7 +12,10 @@ vi.mock('$lib/api/client', () => ({
 
 import { api } from '$lib/api/client';
 import { LibraryManagementQueryKeyFactory } from './LibraryManagementQueryKeyFactory';
-import { getLibraryManagementActivationPreviewQuery } from './LibraryManagementQueries.svelte';
+import {
+	getLibraryManagementActivationPreviewQuery,
+	getLibraryManagementPlanItemsQuery
+} from './LibraryManagementQueries.svelte';
 
 const mockGet = vi.mocked(api.v3.GET) as unknown as Mock;
 
@@ -33,11 +36,7 @@ describe('LibraryManagementQueryKeyFactory', () => {
 			expect(first).not.toEqual(keys.operations('admin-a', other));
 		}
 
-		const filters = {
-			artistId: 'artist-1',
-			collisionClass: 'normalized_path_collision',
-			hasRepresentationLoss: true
-		} as const;
+		const filters = { artistId: 'artist-1', changeKind: 'artwork' } as const;
 		expect(keys.previewItems('admin-a', 'job-1', filters)).not.toEqual(
 			keys.previewItems('admin-a', 'job-1', { ...filters, artistId: 'artist-2' })
 		);
@@ -51,6 +50,23 @@ describe('LibraryManagementQueryKeyFactory', () => {
 });
 
 describe('Library Management query endpoints', () => {
+	it('sends the plan-item filters, the artist included', async () => {
+		mockGet.mockResolvedValue({ items: [], next_cursor: null });
+		const options = getLibraryManagementPlanItemsQuery(
+			() => 'admin-a',
+			() => 'job-1',
+			() => ({ artistId: 'artist-1', changeKind: 'artwork' })
+		) as unknown as {
+			queryFn: (context: { pageParam?: string; signal: AbortSignal }) => Promise<unknown>;
+		};
+		await options.queryFn({ signal: new AbortController().signal });
+
+		const url = new URL(String(mockGet.mock.calls[0]?.[0]), 'http://app');
+		expect(url.pathname).toBe('/api/v3/library/management/previews/job-1/items');
+		expect(url.searchParams.get('artist_id')).toBe('artist-1');
+		expect(url.searchParams.get('change_kind')).toBe('artwork');
+	});
+
 	it('polls an activation preview until it is ready or terminal', () => {
 		const options = getLibraryManagementActivationPreviewQuery(
 			() => 'admin-a',

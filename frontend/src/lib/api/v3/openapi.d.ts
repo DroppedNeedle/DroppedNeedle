@@ -37245,6 +37245,8 @@ export interface operations {
                 reason_code?: string;
                 root_id?: string;
                 album_id?: string;
+                /** @description Files on albums by or credited to this local artist. */
+                artist_id?: string;
                 audio_format?: string;
                 change_kind?: "tags" | "path" | "sidecars" | "artwork" | "no_change";
                 /** @description Only the files that change, or only the others; all when absent. */

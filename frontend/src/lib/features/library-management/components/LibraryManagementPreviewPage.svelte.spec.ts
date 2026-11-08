@@ -236,4 +236,18 @@ describe('LibraryManagementPreviewPage', () => {
 			.element(page.getByRole('tab', { name: /^All/ }))
 			.toHaveAttribute('aria-selected', 'true');
 	});
+
+	it('filters by an artist from the library search, and offers no unhonoured filters', async () => {
+		h.searchArtists = [{ id: 'artist-1', name: 'Artist One' }];
+		await render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await page.getByText('Artist and release filters').click();
+		await page.getByRole('textbox', { name: 'Find an artist or release' }).fill('Artist');
+		await page.getByRole('button', { name: 'Artist · Artist One' }).click();
+		expect(h.itemParams?.()).toMatchObject({ artistId: 'artist-1' });
+		await expect.element(page.getByText('Artist: Artist One')).toBeVisible();
+		await expect.element(page.getByText('Collision class')).not.toBeInTheDocument();
+		await expect.element(page.getByText('Lossy representation')).not.toBeInTheDocument();
+		await expect.element(page.getByText('Preserved / local override')).not.toBeInTheDocument();
+	});
 });
