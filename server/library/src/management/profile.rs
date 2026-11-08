@@ -395,6 +395,16 @@ fn derived_variables(fields: &BTreeMap<String, Vec<String>>) -> [(&'static str, 
     ]
 }
 
+/// An empty derived value reads as absent, as a missing field does.
+fn absent_when_empty(value: Value) -> Value {
+    let empty = match &value {
+        Value::Text(text) => text.is_empty(),
+        Value::List(values) => values.is_empty(),
+        _ => false,
+    };
+    if empty { Value::Null } else { value }
+}
+
 /// The variables a tagging script reads: the fields, their script
 /// spellings, the values worked out from them, and the file's own custom
 /// tags (`custom`, from [`custom_variables`]). A name the script itself
@@ -405,7 +415,8 @@ pub fn tagging_variables(fields: &BTreeMap<String, Vec<String>>, custom: &Variab
         let values = fields.get(field.name()).cloned().unwrap_or_default();
         (*name, script_value(&values))
     });
-    for (name, value) in spellings.chain(derived_variables(fields)) {
+    let derived = derived_variables(fields).map(|(name, value)| (name, absent_when_empty(value)));
+    for (name, value) in spellings.chain(derived) {
         if !fields.contains_key(name) {
             variables.insert(name.to_owned(), value);
         }

@@ -313,5 +313,12 @@ async fn the_script_preview_shows_each_example_album_and_a_fix_for_a_misspelt_na
             {"name": "label", "before": ["Parlophone"], "after": ["Capitol"]},
         ])
     );
+
+    // The example albums have no genre: `primary_genre` reads as absent,
+    // so setting the genre from it changes nothing. An empty `set` leaves
+    // the comment as it is.
+    let (status, body) = preview("tagging", "set genre = primary_genre\nset comment = \"\"").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(sample(&body, "one_disc")["tags"], json!([]), "{body}");
     app.stop().await;
 }

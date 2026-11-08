@@ -145,7 +145,7 @@ A script may be up to 32,768 characters, nest functions 20 deep, and make values
 
 A tagging script changes the tags a profile writes, after the profile's fields and before the file is written. It has one statement a line, and the profile runs its tagging scripts in the order they are attached. Values a person saved in the tag editor or as overrides win over every script.
 
-- `set title = title(title)` sets a tag to an expression's value (no braces; the expression is as in a naming script).
+- `set title = title(title)` sets a tag to an expression's value (no braces; the expression is as in a naming script). A `set` whose value is empty leaves the tag as it is; use `delete` to clear a tag.
 - `append genre = "Alternative Rock"` adds a value to a tag that can hold several: the artist and album artist tags and their sort names, release type, label, catalog number, ISRC, the MusicBrainz artist, album artist and work IDs, the credit fields, genre and comment.
 - `delete comment` removes a tag.
 - `if equals(total_discs, "1"):` starts lines that run only when the test is yes; `else:` starts the lines for no, and `end` closes it. Indenting is up to you.

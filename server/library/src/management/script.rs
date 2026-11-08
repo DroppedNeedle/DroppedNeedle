@@ -1241,7 +1241,8 @@ pub type Refresh = dyn Fn(&BTreeMap<String, Vec<String>>) -> Variables;
 /// Run a tagging program over `fields` (managed field name to values).
 /// `variables` supplies read-only values; it is refreshed from `fields`
 /// before each statement by `refresh`. Fields in `protected` keep their
-/// value (a manual override wins). Custom targets (`custom.NAME`) are
+/// value (a manual override wins). An empty value changes nothing, so
+/// `delete` is how a field is cleared. Custom targets (`custom.NAME`) are
 /// evaluated but not written: the staged writer only writes managed
 /// fields.
 pub fn run_tagging(
@@ -1271,7 +1272,8 @@ pub fn run_tagging(
             Statement::Set(Target { name: target, .. }, expr)
             | Statement::Append(Target { name: target, .. }, expr) => {
                 let value = evaluate(expr, &variables, budget)?;
-                if protected.contains(target) || is_custom_name(target) {
+                // An empty value changes nothing; `delete` clears a tag.
+                if value.is_empty() || protected.contains(target) || is_custom_name(target) {
                     continue;
                 }
                 let mut values = if matches!(statement, Statement::Append(..)) {
@@ -1399,5 +1401,36 @@ mod tests {
         assert_eq!(fields["title"], vec!["SONG"]);
         assert_eq!(fields["genre"], vec!["Pop", "Rock"]);
         assert_eq!(fields["album"], vec!["X"]);
+    }
+
+    /// An empty value changes nothing: a set from a value the file lacks
+    /// keeps the tag, and only `delete` clears one.
+    #[test]
+    fn an_empty_value_leaves_its_field_as_it_is() {
+        let program = compile_tagging(
+            "set artist = album_artist_display\nset comment = \"\"\nappend genre = \"\"\ndelete title",
+        )
+        .expect("compiles");
+        let mut fields = BTreeMap::from([
+            ("artist".to_owned(), vec!["Radiohead".to_owned()]),
+            ("comment".to_owned(), vec!["Ripped".to_owned()]),
+            ("genre".to_owned(), vec!["Rock".to_owned()]),
+            ("title".to_owned(), vec!["Paranoid Android".to_owned()]),
+        ]);
+        let refresh = |fields: &BTreeMap<String, Vec<String>>| {
+            crate::management::profile::tagging_variables(fields, &Variables::new())
+        };
+        run_tagging(
+            &program,
+            &mut fields,
+            &std::collections::BTreeSet::new(),
+            &refresh,
+            &mut Budget::default(),
+        )
+        .expect("runs");
+        assert_eq!(fields["artist"], vec!["Radiohead"]);
+        assert_eq!(fields["comment"], vec!["Ripped"]);
+        assert_eq!(fields["genre"], vec!["Rock"]);
+        assert!(fields["title"].is_empty());
     }
 }
