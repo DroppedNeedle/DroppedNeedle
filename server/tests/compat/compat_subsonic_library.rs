@@ -1334,7 +1334,7 @@ async fn binary_endpoints_render_errors_as_text() {
     let one = Ids::read(&client).await.song("One");
 
     let answer = client.get("stream", &[("id", &one)]).await;
-    assert_eq!(answer.header("content-encoding"), Some("identity"));
+    assert_eq!(answer.header("content-encoding"), None);
     assert_eq!(answer.body, rig.file("one"));
 
     let answer = client.get("download", &[("id", &one)]).await;

@@ -56,7 +56,7 @@
 use axum::{
     Router,
     extract::Request,
-    http::{StatusCode, header},
+    http::{Extensions, HeaderMap, StatusCode, Version, header},
     middleware,
     response::IntoResponse,
 };
@@ -439,13 +439,15 @@ fn routes(state: &AppState, web: Option<WebUi>) -> Router {
 /// Subsonic and Jellyfin bodies: a 500-song sync page is several hundred KB
 /// of JSON or XML and shrinks about tenfold. Media is never compressed:
 /// audio and images are already compressed, ranged and sized, and
-/// transcodes stream live. Responses that already carry a
-/// `Content-Encoding` (the web UI's precompressed assets, audio's
-/// `identity`) pass through untouched, as do bodies under 32 bytes and
-/// event streams: an encoder buffers its output, which would hold
-/// `/api/v3/events/stream` frames back. `DefaultPredicate` skips
-/// `text/event-stream` too; the explicit rule keeps that true if the base
-/// predicate ever changes.
+/// transcodes stream live. Any response that carries `Accept-Ranges` is
+/// never compressed, whatever its type: a ranged or sized media body must
+/// reach the client byte for byte. Only media answers carry it: the web UI
+/// drops it from its files (see `asset` in `web.rs`). Responses that already
+/// carry a `Content-Encoding` (the web UI's precompressed assets) pass through
+/// untouched, as do bodies under 32 bytes and event streams: an encoder
+/// buffers its output, which would hold `/api/v3/events/stream` frames back.
+/// `DefaultPredicate` skips `text/event-stream` too; the explicit rule keeps
+/// that true if the base predicate ever changes.
 fn compression_layer() -> tower_http::compression::CompressionLayer<impl Predicate> {
     let predicate = DefaultPredicate::new()
         .and(NotForContentType::SSE)
@@ -454,7 +456,12 @@ fn compression_layer() -> tower_http::compression::CompressionLayer<impl Predica
         .and(NotForContentType::const_new("application/ogg"))
         .and(NotForContentType::const_new("application/octet-stream"))
         .and(NotForContentType::const_new("application/zip"))
-        .and(NotForContentType::const_new("application/gzip"));
+        .and(NotForContentType::const_new("application/gzip"))
+        .and(
+            |_: StatusCode, _: Version, headers: &HeaderMap, _: &Extensions| {
+                !headers.contains_key(header::ACCEPT_RANGES)
+            },
+        );
     tower_http::compression::CompressionLayer::new().compress_when(predicate)
 }
 

@@ -818,7 +818,12 @@ async fn streaming_ranges_and_head_on_every_stream_route() {
     let auth = rig.subsonic_auth("matrix");
     let key = format!("api_key={}", rig.secret);
     let session = player_web_session(&rig).await;
-    let bearer = [("authorization", session.as_str())];
+    // Every route asks for a compressed answer, and a stream must not get one.
+    let native = [
+        ("authorization", session.as_str()),
+        ("accept-encoding", "gzip, br"),
+    ];
+    let gzip = [("accept-encoding", "gzip, br")];
 
     let (_, items) = app
         .call(
@@ -863,17 +868,17 @@ async fn streaming_ranges_and_head_on_every_stream_route() {
                 (
                     "native",
                     format!("/api/v3/stream/local/{local}"),
-                    &bearer[..],
+                    &native[..],
                 ),
                 (
                     "subsonic",
                     format!("/subsonic/rest/stream?id={song}&{auth}"),
-                    &[][..],
+                    &gzip[..],
                 ),
                 (
                     "jellyfin",
                     format!("/jellyfin/Audio/{item}/stream?{key}"),
-                    &[][..],
+                    &gzip[..],
                 ),
             ],
             rig.file(file),
@@ -894,7 +899,7 @@ async fn streaming_ranges_and_head_on_every_stream_route() {
                 total.to_string(),
                 "{case}"
             );
-            assert_eq!(header_str(&got, "content-encoding"), "identity", "{case}");
+            assert!(got.get("content-encoding").is_none(), "{case}");
             assert_eq!(&bytes, file, "{case}");
             let (status, got, bytes) = app.raw("HEAD", url, headers, None).await;
             assert_eq!(status, StatusCode::OK, "HEAD {case}");
@@ -1151,7 +1156,7 @@ async fn transcodes_alike_on_every_stream_route() {
                 crate::common::through_busy(|| app.raw(method, url, headers, None)).await;
             let label = format!("{case}: {route}");
             assert_eq!(status, StatusCode::OK, "{label}");
-            assert_eq!(header_str(&got, "content-encoding"), "identity", "{label}");
+            assert!(got.get("content-encoding").is_none(), "{label}");
             match &transcoded {
                 Some(body) => {
                     assert_eq!(header_str(&got, "content-type"), "audio/mpeg", "{label}");

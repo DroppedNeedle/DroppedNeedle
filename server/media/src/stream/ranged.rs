@@ -55,6 +55,7 @@ pub fn byte_window(chunks: ChunkStream, skip: u64, take: u64) -> ChunkStream {
             }
         }
     })
+    .fuse()
     .boxed()
 }
 
@@ -116,6 +117,7 @@ pub fn response_chunks(response: reqwest::Response) -> ChunkStream {
             Err(_) => Some((Err(std::io::Error::other("upstream audio stalled")), None)),
         }
     })
+    .fuse()
     .boxed()
 }
 

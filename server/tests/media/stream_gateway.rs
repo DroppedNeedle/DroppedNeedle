@@ -1,5 +1,5 @@
-//! Gateway tests: range matrix, HEAD, content types, identity
-//! encoding, and lease exhaustion over a scripted fake engine.
+//! Gateway tests: range matrix, HEAD, content types, no Content-Encoding,
+//! and lease exhaustion over a scripted fake engine.
 //!
 //! No live servers: local fixtures are deterministic byte vectors and remote
 //! bodies are scripted per key. The fake resolves local content types through
@@ -199,11 +199,11 @@ fn local_app(ext: &str, len: usize) -> (Arc<FakeEngine>, Router) {
 }
 
 // ---------------------------------------------------------------------------
-// Full reads and identity encoding
+// Full reads are never encoded
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn full_get_returns_exact_bytes_with_identity_headers() {
+async fn full_get_returns_exact_bytes_unencoded() {
     let (_engine, router) = local_app(".flac", 256);
     let (status, headers, body) = get(router, "/stream/local/song", &[]).await;
 
@@ -215,10 +215,7 @@ async fn full_get_returns_exact_bytes_with_identity_headers() {
     );
     assert_eq!(header(&headers, "content-length"), Some("256".to_owned()));
     assert_eq!(header(&headers, "accept-ranges"), Some("bytes".to_owned()));
-    assert_eq!(
-        header(&headers, "content-encoding"),
-        Some("identity".to_owned())
-    );
+    assert_eq!(header(&headers, "content-encoding"), None);
     assert_eq!(header(&headers, "content-range"), None);
 }
 
@@ -316,11 +313,7 @@ async fn head_mirrors_get_without_body() {
         Some("bytes".to_owned()),
         "full"
     );
-    assert_eq!(
-        header(&headers, "content-encoding"),
-        Some("identity".to_owned()),
-        "full"
-    );
+    assert_eq!(header(&headers, "content-encoding"), None, "full");
 
     let (_engine, router) = local_app(".flac", 256);
     let (status, headers, body) = call(
@@ -507,7 +500,7 @@ async fn faults_map_to_status_and_code() {
 }
 
 // ---------------------------------------------------------------------------
-// Transcode landing: no ranges, no cache, identity, optional estimate
+// Transcode landing: no ranges, no cache, no encoding, optional estimate
 // ---------------------------------------------------------------------------
 
 fn transcode_engine() -> Arc<FakeEngine> {
@@ -548,11 +541,7 @@ async fn transcode_answers_lengthless_unless_asked() {
         Some("no-store".to_owned()),
         "ranged GET"
     );
-    assert_eq!(
-        header(&headers, "content-encoding"),
-        Some("identity".to_owned()),
-        "ranged GET"
-    );
+    assert_eq!(header(&headers, "content-encoding"), None, "ranged GET");
     assert_eq!(header(&headers, "content-range"), None, "ranged GET");
     assert_eq!(
         header(&headers, "content-length"),

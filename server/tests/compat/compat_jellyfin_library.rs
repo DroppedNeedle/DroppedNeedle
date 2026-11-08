@@ -974,7 +974,7 @@ async fn audio_routes_stream_direct_while_transcoding_is_off() {
     )
     .await;
     assert_eq!(direct.status, StatusCode::OK);
-    assert_eq!(direct.header("content-encoding"), "identity");
+    assert!(direct.headers.get("content-encoding").is_none());
     assert!(direct.body == file, "stream serves another file");
 
     // Unknown tails and non-track ids 404 on GET and HEAD alike.

@@ -172,6 +172,51 @@ async fn media_connect_browse_play_seek_stop() {
     app.stop().await;
 }
 
+/// A part the server relays under a type the compression rules do not list is
+/// still sent raw to a client that accepts gzip and br, because its answer
+/// advertises Accept-Ranges.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plex_part_relayed_under_an_unlisted_type_is_not_encoded() {
+    let app = TestApp::start("media-plex-encoding").await;
+    let auth = app.login_admin().await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            "/api/v3/settings/plex",
+            &[("authorization", auth.as_str())],
+            Some(json!({
+                "plex_url": app.plex.base_url,
+                "plex_token": PLEX_TOKEN,
+                "enabled": true,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (status, headers, bytes) = app
+        .raw(
+            "GET",
+            "/api/v3/stream/plex/library/parts/1/file.m4a",
+            &[
+                ("authorization", auth.as_str()),
+                ("accept-encoding", "gzip, br"),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get("content-type").and_then(|v| v.to_str().ok()),
+        Some("application/mp4")
+    );
+    assert!(headers.get("content-encoding").is_none());
+    assert_eq!(
+        headers.get("accept-ranges").and_then(|v| v.to_str().ok()),
+        Some("bytes")
+    );
+    assert_eq!(bytes, canned_stream_bytes(b'P'));
+}
+
 /// A media server that refuses connections answers the closed-list
 /// `REMOTE_UNAVAILABLE` through the whole app, not the generic internal
 /// error, on browse and on stream alike: the session gate and the rate

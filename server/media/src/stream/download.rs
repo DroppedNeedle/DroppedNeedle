@@ -356,10 +356,6 @@ async fn album_archive(library: &LibraryFiles, album_id: &str) -> Result<Respons
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/zip"),
     );
-    headers.insert(
-        header::CONTENT_ENCODING,
-        HeaderValue::from_static("identity"),
-    );
     attachment_headers(&mut headers, &archive_name);
     headers.insert(header::CONTENT_LENGTH, HeaderValue::from(layout.total_len));
     let body = Body::from_stream(archive_stream(members, entries, layout));

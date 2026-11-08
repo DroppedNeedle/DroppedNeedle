@@ -1948,7 +1948,9 @@ async fn px_history(
 }
 
 /// Direct audio bytes for any part key. The adapter validates the key
-/// shape before requesting, so the mock only checks the token.
+/// shape before requesting, so the mock only checks the token. An `.m4a`
+/// part answers as application/mp4, a type the server's compression rules
+/// do not list.
 async fn px_part(
     State(recorder): State<MockRecorder>,
     headers: HeaderMap,
@@ -1960,9 +1962,14 @@ async fn px_part(
     if key.trim().is_empty() {
         return (StatusCode::NOT_FOUND, Json(json!({}))).into_response();
     }
+    let content_type = if key.ends_with(".m4a") {
+        "application/mp4"
+    } else {
+        "audio/mpeg"
+    };
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "audio/mpeg")],
+        [(header::CONTENT_TYPE, content_type)],
         Body::from(canned_stream_bytes(b'P')),
     )
         .into_response()

@@ -330,7 +330,7 @@ pub async fn serve<E: StreamEngine + 'static>(
         .play_subsonic(file_id, params, head_only)
         .await?
         .ok_or_else(|| SubsonicError::code_only(super::error::NOT_FOUND))?;
-    let mut headers = vec![("Content-Encoding".to_owned(), "identity".to_owned())];
+    let mut headers = Vec::new();
     let opened = match played {
         PlayedAudio::Original(opened) => opened,
         PlayedAudio::Transcoded(transcoded) => {

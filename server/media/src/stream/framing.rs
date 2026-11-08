@@ -86,9 +86,8 @@ pub fn range_header(headers: &HeaderMap) -> Option<&str> {
 pub struct Framed {
     /// 200 or 206.
     pub status: StatusCode,
-    /// `Content-Type`, `Content-Encoding`, `Accept-Ranges`, and
-    /// `Content-Length` and `Content-Range` where they apply; a transcode
-    /// adds `Cache-Control`.
+    /// `Content-Type`, `Accept-Ranges`, and `Content-Length` and
+    /// `Content-Range` where they apply; a transcode adds `Cache-Control`.
     pub headers: HeaderMap,
     /// What to send.
     pub body: FramedBody,
@@ -143,10 +142,9 @@ pub fn frame(
     };
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, upstream_content_type(&content_type));
-    headers.insert(
-        header::CONTENT_ENCODING,
-        HeaderValue::from_static("identity"),
-    );
+    // No Content-Encoding: Firefox would not seek an encoded body. The
+    // compression layer leaves every framed answer alone, since each one
+    // carries Accept-Ranges.
     if transcoded {
         headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("none"));
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -353,6 +351,7 @@ pub fn file_range(located: LocatedFile, start: u64, len: u64) -> ChunkStream {
             Err(error) => (Err(error), None),
         })
     })
+    .fuse()
     .boxed()
 }
 

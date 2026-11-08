@@ -261,9 +261,11 @@ impl WebUi {
             header::CACHE_CONTROL,
             HeaderValue::from_static(cache_control(relative)),
         );
-        // Any file may have a precompressed sibling, and the compression
-        // layer varies the rest.
+        // Any file may have a precompressed sibling, so every answer varies
+        // on Accept-Encoding.
         headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+        // Without this, the compression layer skips files that lack a sibling.
+        headers.remove(header::ACCEPT_RANGES);
         if headers.contains_key(header::CONTENT_TYPE) {
             headers.insert(
                 header::CONTENT_TYPE,
