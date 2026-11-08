@@ -13368,6 +13368,92 @@ fn title_edit(value: &str) -> droppedneedle_library::tags::TagEdit {
     )
 }
 
+/// A run that writes files has the scan read them back once it ends: the
+/// track shows the title and size it wrote, a preview made after that applies
+/// rather than being refused as changed, and the scan of the app's own
+/// write starts no run.
+#[tokio::test]
+async fn a_management_run_has_the_scan_read_what_it_wrote() {
+    use droppedneedle_library::management::models::{SelectionKind, TagEditMode};
+    use droppedneedle_library::management::tag_edit::TagEditRequest;
+    use droppedneedle_library::tags::{TagField, read_fields};
+
+    let managed = ManagedLibrary::start("lib-scan-after-run", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 1).await;
+    managed.activate().await;
+    let track = &tracks[0];
+    let row = || -> (String, i64) {
+        managed
+            .db()
+            .query_row(
+                "SELECT title, file_size_bytes FROM local_tracks WHERE id = ?1",
+                [track],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("track row")
+    };
+    managed.edit_outside(track, title_edit("Before")).await;
+    assert_eq!(row().0, "Before");
+    managed.library.dirty.clear(&managed.library.dirty.list());
+
+    managed
+        .apply(SelectionKind::Albums, &[&album], "retag")
+        .await;
+    let marked = managed.library.dirty.list();
+    // Only the supervisor's pass, which scans what is marked: no startup
+    // reconciliation and no full rescan.
+    for _ in 0..100 {
+        managed.library.scans.supervisor_tick().await;
+        if managed.library.coordinator.current().is_empty() {
+            break;
+        }
+    }
+    let size = std::fs::metadata(managed.path(track))
+        .expect("file stat")
+        .len();
+    assert_eq!(
+        row(),
+        ("first 1".to_owned(), size as i64),
+        "the scan read the edition's title and the new size"
+    );
+    assert_eq!(marked, vec!["music".to_owned()]);
+    assert!(managed.library.dirty.is_empty(), "the scan took the marks");
+
+    let runs = managed.automatic_runs().len();
+    managed.worker_looks().await;
+    assert_eq!(managed.automatic_runs().len(), runs, "no new run");
+
+    let management = managed.management();
+    let edit = management
+        .create_tag_edit(
+            TagEditRequest {
+                local_track_id: track.clone(),
+                mode: TagEditMode::SaveOverride,
+                expected_settings_revision: managed.settings_revision(),
+                expected_policy_revision: managed
+                    .library
+                    .core
+                    .policy_revision()
+                    .expect("policy revision"),
+                fields: vec![("title".to_owned(), serde_json::json!("Fixed"))],
+                idempotency_key: Some("edit-after-scan".to_owned()),
+            },
+            "admin",
+        )
+        .expect("edit preview");
+    assert!(
+        management_step(&managed.library).await,
+        "edit planning runs"
+    );
+    let applied = management_apply(&managed.library, &edit).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+    assert_eq!(
+        read_fields(track_file(&managed.path(track))).expect("tags read")[&TagField::Title],
+        vec!["Fixed".to_owned()],
+        "the edit was written, not refused"
+    );
+}
+
 /// A file the app wrote that is retagged outside it is the user's: the
 /// next automatic run writes nothing, marks the album as taken over and
 /// parks it, and never touches the album's match. The app's own write

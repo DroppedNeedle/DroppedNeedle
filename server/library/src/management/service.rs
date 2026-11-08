@@ -1132,6 +1132,9 @@ impl Management {
                             self.parts.clock.now_secs(),
                         )?)
                     })?;
+                if phase != Some(ManagementPhase::Planning) {
+                    self.scan_written_roots(&job_id);
+                }
                 Ok(true)
             }
         }
@@ -1162,6 +1165,47 @@ impl Management {
             .write_blocking(Lane::Background, "management.checkpoint", |tx| {
                 Ok(jobs::checkpoint(tx, job_id, worker, self.parts.clock.now_secs())?.is_some())
             })
+    }
+
+    /// Have the scan read the library folders a run's published albums
+    /// wrote in, soon, so their tags and sizes show and a new preview is
+    /// not refused as changed. Asked when the run ends, never between
+    /// albums: a scan that starts hands the run back to the queue. Also
+    /// asked at a shutdown and when this worker lost the job's lease; then
+    /// another worker may still be running it, and the scan pauses that
+    /// run before its next album.
+    fn scan_written_roots(&self, job_id: &str) {
+        // One snapshot, so the bundles and their journals agree.
+        let roots = self
+            .parts
+            .db
+            .read_blocking("management.written_roots", |conn| {
+                let mut roots = std::collections::BTreeSet::new();
+                for (_, bundle_id) in store::applied_bundles(conn, job_id)? {
+                    let journals = JournalStore::new(conn)
+                        .bundle(&bundle_id)
+                        .map_err(|error| ManagementError::Store(error.to_string()))?;
+                    for journal in journals {
+                        roots.insert(journal.dest_root);
+                        if let Some((root, _)) = journal.source {
+                            roots.insert(root);
+                        }
+                    }
+                }
+                Ok::<_, ManagementError>(roots)
+            });
+        match roots {
+            Ok(roots) if roots.is_empty() => {}
+            Ok(roots) => {
+                for root in &roots {
+                    self.parts.core.dirty.mark(root);
+                }
+                self.parts.wakeups.notify("scan");
+            }
+            Err(error) => {
+                tracing::warn!(%error, job_id, "written folders unreadable; the next scan reads them");
+            }
+        }
     }
 
     pub(super) fn heartbeat(&self, job_id: &str, worker: &str) -> Result<bool, ManagementError> {
@@ -1948,6 +1992,7 @@ impl Management {
                 }));
         loop {
             if self.checkpoint(job_id, worker)? {
+                self.scan_written_roots(job_id);
                 return Ok(());
             }
             // A scan starting or the library being switched off hands the
@@ -1986,6 +2031,7 @@ impl Management {
                         Ok::<_, ManagementError>(())
                     },
                 )?;
+                self.scan_written_roots(job_id);
                 return Ok(());
             };
             let Some((failure, bundle_id, mut result)) =

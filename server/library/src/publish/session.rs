@@ -3098,6 +3098,12 @@ impl Publishing {
             .publisher
             .publish(&sealed, &live, &docs)
             .map_err(publish_error)?;
+        // The scan the sweep wakes reads the files back, so their tags and
+        // sizes show and a new preview is not refused as changed.
+        for item in &sealed.bundle.items {
+            self.core.dirty.mark(&item.source_root);
+            self.core.dirty.mark(&item.dest_root);
+        }
         self.core.sweep_soon();
         Ok(AppliedBundle {
             bundle_id: sealed.bundle.id.clone(),
