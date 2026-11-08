@@ -6504,7 +6504,7 @@ async fn an_album_without_files_leaves_the_lists() {
         copies(&kept).await.is_empty(),
         "gone from its copy's Copies"
     );
-    assert_eq!(copies(&gone).await, [kept.clone()], "its own Copies");
+    assert_eq!(copies(&gone).await, std::slice::from_ref(&kept), "its own Copies");
     let opened = get(format!("/api/v3/library/albums/{gone}")).await;
     assert_eq!(opened["id"], json!(gone), "its link still opens it");
     assert_eq!(opened["track_count"], json!(0), "{opened}");
@@ -6601,7 +6601,7 @@ async fn marks_on_a_copy_without_files_follow_to_the_copy_with_files() {
     );
     assert_eq!(
         read("SELECT local_album_id FROM library_play_history"),
-        [gone.clone()],
+        std::slice::from_ref(&gone),
         "plays stay"
     );
     let ops = crate::common::library::operations(&library);
