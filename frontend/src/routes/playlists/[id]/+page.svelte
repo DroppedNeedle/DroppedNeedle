@@ -198,14 +198,14 @@
 
 	function playFromTrack(index: number) {
 		if (!playlist || playlist.tracks.length === 0) return;
-		const items = playlist.tracks
-			.map(playlistTrackToQueueItem)
-			.filter((item): item is NonNullable<typeof item> => item !== null);
-		if (items.length === 0) {
-			toastStore.show({ message: 'Nothing here can be played right now', type: 'info' });
+		const rowItems = playlist.tracks.map(playlistTrackToQueueItem);
+		if (!rowItems[index]) {
+			toastStore.show({ message: 'Track is not playable', type: 'error' });
 			return;
 		}
-		const startIndex = Math.min(index, items.length - 1);
+		const items = rowItems.filter((item): item is NonNullable<typeof item> => item !== null);
+		// Rows with no file are not queued, so count only the playable rows above this one.
+		const startIndex = rowItems.slice(0, index).filter((item) => item !== null).length;
 		playerStore.playQueue(items, startIndex, false);
 	}
 

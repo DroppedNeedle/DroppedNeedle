@@ -203,4 +203,32 @@ describe('Playlist detail page', () => {
 			expect(mockForgetSources).toHaveBeenCalledWith('pl-1');
 		});
 	});
+
+	it('plays the clicked row when an earlier row has no file to play', async () => {
+		detailQuery.data = makePlaylist({
+			track_count: 4,
+			tracks: [
+				makeTrack({
+					id: 'trk-0',
+					position: 0,
+					track_name: 'Unplayable Track',
+					track_source_id: null,
+					available_sources: []
+				}),
+				makeTrack({ id: 'trk-1', position: 1, track_name: 'Second Track' }),
+				makeTrack({ id: 'trk-2', position: 2, track_name: 'Third Track' }),
+				makeTrack({ id: 'trk-3', position: 3, track_name: 'Fourth Track' })
+			]
+		});
+		await renderDetail('pl-1');
+
+		await page.getByRole('button', { name: 'Play Third Track' }).click();
+		expect(mockPlayQueue).toHaveBeenCalledTimes(1);
+		const [items, startIndex] = mockPlayQueue.mock.calls[0];
+		expect(items[startIndex]).toMatchObject({ trackName: 'Third Track' });
+
+		await page.getByRole('button', { name: 'Play Unplayable Track' }).click();
+		expect(mockPlayQueue).toHaveBeenCalledTimes(1);
+		expect(mockToastShow).toHaveBeenCalledWith({ message: 'Track is not playable', type: 'error' });
+	});
 });
