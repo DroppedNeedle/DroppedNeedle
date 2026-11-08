@@ -13,6 +13,7 @@
 import type { components } from '$lib/api/v3/openapi';
 
 type Reason = components['schemas']['Reason'];
+type TaskReason = components['schemas']['DownloadTaskReason'];
 
 /** Shown when a zero-byte wait has no deadline and nothing further can follow. */
 export const NO_FALLBACK_COPY = 'No fallback accepted';
@@ -102,8 +103,7 @@ export type AcquisitionEmptyState =
 	| 'source-failure';
 
 export interface EmptyStateSource {
-	status?: string;
-	outcome_code?: Reason | null;
+	reason?: TaskReason | null;
 }
 
 export const EMPTY_STATE_COPY: Record<AcquisitionEmptyState, { title: string; detail: string }> = {
@@ -140,17 +140,20 @@ const NOTHING_FOUND: ReadonlySet<Reason> = new Set<Reason>([
 ]);
 
 /**
- * Classifies a non-productive task purely from persisted fields. Precedence:
- * a quality refusal -> probe mismatch; only refused copies -> outside-settings; unlisted
- * files held -> held-outside-settings; no source had it -> nothing-found; any other
- * outcome -> source-failure; otherwise null (healthy/active task, no extra UI).
+ * The empty-state box for a finished task, from its reason. A format the settings
+ * do not list gets the held box, and a source reason gets a source box: a refused
+ * quality, a setting that allows no copy, a search that found nothing, or a source
+ * that gave up. Other held, settled, waiting and library reasons get no box; the
+ * reason note already explains them.
  */
 export function classifyEmptyState(task: EmptyStateSource): AcquisitionEmptyState | null {
-	const outcome = task.outcome_code ?? null;
-	if (outcome === 'quality_rejected') return 'probe-mismatch';
-	if (outcome === null) return null;
-	if (outcome === 'nothing_allowed') return 'outside-settings';
-	if (outcome === 'format_not_listed') return 'held-outside-settings';
-	if (NOTHING_FOUND.has(outcome)) return 'nothing-found';
+	const reason = task.reason;
+	if (reason?.kind === 'hold') {
+		return reason.code === 'format_not_listed' ? 'held-outside-settings' : null;
+	}
+	if (reason?.kind !== 'source') return null;
+	if (reason.code === 'quality_rejected') return 'probe-mismatch';
+	if (reason.code === 'nothing_allowed') return 'outside-settings';
+	if (NOTHING_FOUND.has(reason.code)) return 'nothing-found';
 	return 'source-failure';
 }

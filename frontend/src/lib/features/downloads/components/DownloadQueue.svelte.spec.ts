@@ -275,4 +275,89 @@ describe('finished downloads on the Downloads queue', () => {
 		await expect.element(retry).toHaveTextContent(/^\s*Retry\s*$/);
 		await expect.element(retry).toBeEnabled();
 	});
+
+	it('shows the failure box only where a source failed or found nothing', async () => {
+		fakeApi({
+			'GET /api/v3/downloads/tasks': {
+				items: [
+					task('upgrade', {
+						status: 'cancelled',
+						outcome_code: 'no_better_copy',
+						reason: {
+							code: 'no_better_copy',
+							kind: 'settled',
+							text: 'No better copy was found, so yours stays.',
+							action: 'Nothing to do. To choose a copy yourself, use Pick a source.'
+						}
+					}),
+					task('stalled', {
+						status: 'failed',
+						outcome_code: 'stalled',
+						reason: {
+							code: 'stalled',
+							kind: 'source',
+							text: 'The transfer stopped moving and timed out.',
+							action: 'Nothing to do: DroppedNeedle retries later, or retry it now.'
+						}
+					}),
+					task('none', {
+						status: 'failed',
+						outcome_code: 'no_source',
+						reason: {
+							code: 'no_source',
+							kind: 'source',
+							text: 'No download source had this release.',
+							action:
+								'DroppedNeedle retries later. You can also search by hand or pick another edition.'
+						}
+					})
+				],
+				page: 1,
+				page_size: 100
+			},
+			'GET /api/v3/held': { entries: [] }
+		});
+		await renderWithQuery(DownloadQueue, {});
+
+		await page.getByRole('button', { name: /^History/ }).click();
+		const row = (id: string) => page.getByRole('article').filter({ hasText: `Album ${id}` });
+
+		await expect
+			.element(row('upgrade').getByText('No better copy was found, so yours stays.'))
+			.toBeVisible();
+		await expect.element(row('upgrade').getByText('The source gave up')).not.toBeInTheDocument();
+		await expect.element(row('stalled').getByText('The source gave up')).toBeVisible();
+		await expect.element(row('none').getByText('Nothing found yet')).toBeVisible();
+	});
+
+	it('shows the held box for a format the settings do not list', async () => {
+		fakeApi({
+			'GET /api/v3/downloads/tasks': {
+				items: [
+					task('unlisted', {
+						status: 'failed',
+						outcome_code: 'format_not_listed',
+						reason: {
+							code: 'format_not_listed',
+							kind: 'hold',
+							text: "The files are in a format or quality your download settings don't list.",
+							action:
+								'Import them from the held list if you want them. DroppedNeedle tries another source.'
+						}
+					})
+				],
+				page: 1,
+				page_size: 100
+			},
+			'GET /api/v3/held': { entries: [] }
+		});
+		await renderWithQuery(DownloadQueue, {});
+
+		await page.getByRole('button', { name: /^History/ }).click();
+		const row = page.getByRole('article').filter({ hasText: 'Album unlisted' });
+		await expect.element(row.getByText('Held: not in your quality settings')).toBeVisible();
+		await expect
+			.element(row.getByText('The files wait on the Held list for you to import or discard.'))
+			.toBeVisible();
+	});
 });
