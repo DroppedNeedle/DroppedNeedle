@@ -149,7 +149,7 @@
 		setSource(next);
 	}
 
-	async function put(text: string, ownLine = false): Promise<void> {
+	async function put(text: string, ownLine = false, caret?: number): Promise<void> {
 		const box = element;
 		const start = box?.selectionStart ?? value.length;
 		const end = box?.selectionEnd ?? value.length;
@@ -164,7 +164,8 @@
 		if (!box) return;
 		const from = start + insert.indexOf(text);
 		box.focus();
-		box.setSelectionRange(from, from + text.length);
+		if (caret === undefined) box.setSelectionRange(from, from + text.length);
+		else box.setSelectionRange(from + caret, from + caret);
 	}
 
 	function undo(): void {
@@ -336,7 +337,7 @@
 							variant={block.look === 'value' ? 'outline' : 'neutral'}
 							wrap
 							title={block.code}
-							onclick={() => put(block.code, block.ownLine)}
+							onclick={() => put(block.code, block.ownLine, block.caret)}
 						>
 							<span class={['font-semibold', block.look === 'between' && 'font-mono']}
 								>{block.label}</span

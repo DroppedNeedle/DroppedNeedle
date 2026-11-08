@@ -14,6 +14,9 @@ export interface ScriptBlock {
 	look: 'value' | 'ready' | 'between' | 'line';
 	/** A line block starts on a line of its own. */
 	ownLine?: boolean;
+	/** Where the cursor goes in `code` instead of selecting it: a line that
+	 * needs a value puts the cursor inside its empty quotes. */
+	caret?: number;
 }
 
 export interface ScriptBlockGroup {
@@ -107,7 +110,15 @@ export const NAMING_BLOCKS: ScriptBlockGroup[] = [
 ];
 
 function line(label: string, code: string): ScriptBlock {
-	return { label, code, sample: () => null, look: 'line', ownLine: true };
+	const quotes = code.indexOf('""');
+	return {
+		label,
+		code,
+		sample: () => null,
+		look: 'line',
+		ownLine: true,
+		caret: quotes < 0 ? undefined : quotes + 1
+	};
 }
 
 function tag(label: string, name: string): ScriptBlock {

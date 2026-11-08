@@ -44,6 +44,7 @@
 	// The admin's switch. While it is off, Connect could only fail.
 	const integrationQuery = getIntegrationStatusQuery();
 	const lfmOff = $derived(integrationQuery.data?.lastfm === false);
+	const lfmNote = $derived(lfmOff ? 'Off on this server.' : 'Link Last.fm above to scrobble.');
 
 	const prefsQuery = getScrobblePreferencesQuery();
 	const prefs = $derived(prefsQuery.data);
@@ -79,6 +80,9 @@
 	let scrobbleListenbrainz = $state(false);
 	let navidromeHandlesExternalScrobbles = $state(true);
 	let primarySource = $state<MusicSource>('listenbrainz');
+	// While Last.fm is off, Home and Discover follow ListenBrainz whatever the
+	// stored choice, so that is the one shown.
+	const shownSource = $derived<MusicSource>(lfmOff ? 'listenbrainz' : primarySource);
 	let nowPlayingVisibility = $state<NowPlayingVisibility>('full');
 	let autoRequestPersonalMix = $state(false);
 	let mixRefreshMessage = $state<string | null>(null);
@@ -445,8 +449,8 @@
 		<div class="space-y-3 px-1">
 			<ToggleRow
 				label="Scrobble to Last.fm"
-				description={lfmLinked ? undefined : 'Link Last.fm above to scrobble.'}
-				disabled={!lfmLinked || updatePrefsMutation.isPending}
+				description={lfmLinked && !lfmOff ? undefined : lfmNote}
+				disabled={!lfmLinked || lfmOff || updatePrefsMutation.isPending}
 				bind:checked={
 					() => scrobbleLastfm,
 					(checked) => {
@@ -499,10 +503,10 @@
 			>
 				{#each SOURCES as opt (opt.value)}
 					<Button
-						variant={primarySource === opt.value ? 'primary' : 'ghost'}
+						variant={shownSource === opt.value ? 'primary' : 'ghost'}
 						size="sm"
-						aria-pressed={primarySource === opt.value}
-						disabled={updatePrefsMutation.isPending}
+						aria-pressed={shownSource === opt.value}
+						disabled={updatePrefsMutation.isPending || (lfmOff && opt.value === 'lastfm')}
 						onclick={() => selectSource(opt.value)}
 					>
 						{opt.label}

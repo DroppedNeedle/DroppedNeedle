@@ -82,4 +82,23 @@ describe('the script workbench', () => {
 		await page.getByLabelText('Import naming script').fill('{albumartist}/{year} {title}.{ext}');
 		await expect.element(page.getByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
 	});
+
+	it('puts the cursor in the quotes of a line that needs a value', async () => {
+		fakeApi({ 'POST /api/v3/settings/library/script-preview': answer });
+		await renderWithQuery(ScriptWorkbench, {
+			kind: 'tagging',
+			label: 'Tagging script',
+			value: 'delete comment'
+		});
+		const box = page.getByLabelText('Tagging script').element() as HTMLTextAreaElement;
+		box.focus();
+		box.setSelectionRange(box.value.length, box.value.length);
+		await page.getByRole('button', { name: /^Set a tag/ }).click();
+
+		await expect
+			.element(page.getByLabelText('Tagging script'))
+			.toHaveValue('delete comment\nset comment = ""');
+		expect(box.selectionStart).toBe(box.value.length - 1);
+		expect(box.selectionEnd).toBe(box.value.length - 1);
+	});
 });

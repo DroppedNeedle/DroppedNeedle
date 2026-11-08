@@ -87,7 +87,7 @@ describe('Last.fm link on the profile', () => {
 	it('says Last.fm is off instead of offering Connect while the admin left it off', async () => {
 		fakeApi({
 			'GET /api/v3/me/connections': { connections: [] },
-			'GET /api/v3/me/scrobble-preferences': prefs,
+			'GET /api/v3/me/scrobble-preferences': { ...prefs, primary_music_source: 'lastfm' },
 			'GET /api/v3/home/integration-status': integrations(false)
 		});
 		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
@@ -96,6 +96,14 @@ describe('Last.fm link on the profile', () => {
 		// Only ListenBrainz's Connect is left.
 		await expect.element(page.getByRole('button', { name: 'Connect' })).toBeVisible();
 		expect(page.getByRole('button', { name: 'Connect' }).elements()).toHaveLength(1);
+
+		// The rows below follow the switch: no scrobbling, and Home and
+		// Discover follow ListenBrainz.
+		await expect.element(page.getByText('Off on this server.', { exact: true })).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Last.fm', exact: true })).toBeDisabled();
+		await expect
+			.element(page.getByRole('button', { name: 'ListenBrainz', exact: true }))
+			.toHaveAttribute('aria-pressed', 'true');
 	});
 
 	it('asks for the user’s own key pair when no key pair is set up', async () => {
