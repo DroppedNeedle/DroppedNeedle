@@ -192,9 +192,12 @@ impl Sandbox {
     }
 
     /// Probe a bin whose placement mode is still `Unknown`, because a file
-    /// is about to go into it; the bin's folder is made first. On a disk
-    /// with neither safe step files go in by check-then-rename, which is
-    /// safe here: every entry is a fresh, uniquely named folder.
+    /// is about to go into it. A library folder's plain `.recycle` is made
+    /// first when it is missing; any other bin's folder must already be
+    /// there, since the app never makes a configured bin (a share that is
+    /// not mounted would fill the local disk instead). On a disk with
+    /// neither safe step files go in by check-then-rename, which is safe
+    /// here: every entry is a fresh, uniquely named folder.
     pub fn probe_bin_placement(&self, bin: &Root) -> PlacementMode {
         let known = self.bin_placement_mode(&bin.id);
         if known != PlacementMode::Unknown {
@@ -204,14 +207,14 @@ impl Sandbox {
             tracing::warn!(bin = bin.id, %error, "recycle bin folder refused");
             return PlacementMode::Unknown;
         }
-        match make_dirs(&bin.dir) {
+        match make_below(self.bin_base(bin), &bin.dir) {
             Ok(made) => {
                 if let Err(error) = sync_made(&made) {
                     tracing::warn!(bin = bin.id, %error, "recycle bin folder sync failed");
                 }
             }
             Err(error) => {
-                tracing::warn!(bin = bin.id, %error, "recycle bin folder could not be made");
+                tracing::warn!(bin = bin.id, %error, "recycle bin folder can't be used");
                 return PlacementMode::Unknown;
             }
         }
@@ -421,13 +424,7 @@ impl Sandbox {
     /// configured bin, or the target of a `.recycle` link) is checked all
     /// the way down, since it held no link when the session opened.
     pub(crate) fn ensure_bin_dir(&self, bin: &Root) -> Result<(), PublishError> {
-        let plain_recycle = match &bin.kind {
-            RootKind::Bin { serves: Some(root) } => self
-                .removal_root_dir(root)
-                .is_ok_and(|dir| dir.join(RECYCLE_BIN_DIRECTORY_NAME) == bin.dir),
-            _ => false,
-        };
-        if !plain_recycle {
+        if !self.plain_recycle(bin) {
             return ensure_no_symlink(&bin.dir);
         }
         match std::fs::symlink_metadata(&bin.dir) {
@@ -437,6 +434,27 @@ impl Sandbox {
             Ok(_) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(PublishError::Io(error.to_string().into())),
+        }
+    }
+
+    /// Whether `bin` is a library or remove-only root's own `.recycle`,
+    /// not the configured bin or the target of a `.recycle` link.
+    fn plain_recycle(&self, bin: &Root) -> bool {
+        match &bin.kind {
+            RootKind::Bin { serves: Some(root) } => self
+                .removal_root_dir(root)
+                .is_ok_and(|dir| dir.join(RECYCLE_BIN_DIRECTORY_NAME) == bin.dir),
+            _ => false,
+        }
+    }
+
+    /// The folder that must already be there for a file to go into `bin`:
+    /// the library folder for its plain `.recycle`, which the app makes,
+    /// and the bin's own folder for any other bin, which it never makes.
+    pub fn bin_base<'b>(&self, bin: &'b Root) -> &'b Path {
+        match bin.dir.parent() {
+            Some(parent) if self.plain_recycle(bin) => parent,
+            _ => &bin.dir,
         }
     }
 
@@ -1017,14 +1035,17 @@ impl FileStat {
 /// copied under a temporary name with the file's permission bits, synced,
 /// read back and checked against the bytes read, placed the same way, and
 /// only then, with the folders above the copy on disk, is the set-aside
-/// file removed. A copy that fails part way is removed. `mode` is the
-/// placement mode where `recycle_to` is; the caller has checked that
-/// `recycle_to` is a place the file may go. True when the file is there
+/// file removed. A copy that fails part way is removed. The folders
+/// between `base`, which must already be there, and `recycle_to` are made
+/// one level at a time, each a new folder or one that is not a link.
+/// `mode` is the placement mode where `recycle_to` is; the caller has
+/// checked that `recycle_to` is a place the file may go. True when the file is there
 /// now; false when there was nothing left to move. Cheap checks come
 /// first, so a retry while the bin cannot take the file reads nothing.
 pub fn recycle_backup(
     mode: PlacementMode,
     seams: Seams,
+    base: &Path,
     backup: &Path,
     recycle_to: &Path,
     sha256: &str,
@@ -1076,7 +1097,7 @@ pub fn recycle_backup(
         }
         return Err(taken(recycle_to));
     }
-    let made = make_dirs(parent).map_err(PublishError::from)?;
+    let made = make_below(base, parent).map_err(PublishError::from)?;
     let made_synced = sync_made(&made);
     // Whether the bytes read are the ones expected: a trusted file that
     // changed in place goes as it is now, logged.
@@ -1220,24 +1241,48 @@ fn probe_held_dir(dir: &Path) -> std::io::Result<PlacementMode> {
     Ok(place::probe(dir))
 }
 
-/// Make `dir` and any folder above it that is missing. Answers the
-/// folders made, top first.
-fn make_dirs(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
-    let mut missing = Vec::new();
-    let mut cursor = Some(dir);
-    while let Some(path) = cursor {
-        match std::fs::symlink_metadata(path) {
-            Ok(_) => break,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                missing.push(path.to_path_buf());
-                cursor = path.parent();
+/// Make each missing folder from `base` down to `dir`, one level at a
+/// time. `base` itself is never made: it must already be a folder. A name
+/// already there must be a folder and not a link, so no part can turn
+/// into a link and be followed. Answers the folders made, top first.
+fn make_below(base: &Path, dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let below = dir.strip_prefix(base).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "folder is not inside its recycle bin",
+        )
+    })?;
+    if !std::fs::metadata(base)?.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotADirectory,
+            "the recycle bin's folder is not a folder",
+        ));
+    }
+    let mut cursor = base.to_path_buf();
+    let mut made = Vec::new();
+    for part in below.components() {
+        let Component::Normal(name) = part else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "folder path is not plain names",
+            ));
+        };
+        cursor.push(name);
+        match std::fs::create_dir(&cursor) {
+            Ok(()) => made.push(cursor.clone()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let meta = std::fs::symlink_metadata(&cursor)?;
+                if meta.file_type().is_symlink() || !meta.is_dir() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        "something other than a folder holds a recycle bin folder's place",
+                    ));
+                }
             }
             Err(error) => return Err(error),
         }
     }
-    std::fs::create_dir_all(dir)?;
-    missing.reverse();
-    Ok(missing)
+    Ok(made)
 }
 
 /// Put each made folder's own entry on disk, by syncing the folder that

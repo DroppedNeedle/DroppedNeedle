@@ -9,8 +9,10 @@
 //! overlaps a download folder, is not used: each root's `.recycle` takes
 //! its place, logged once per change and shown on the Library Management
 //! settings. While those settings cannot be read, or the configured bin's
-//! folder cannot be reached, the bins are unknown and nothing that would
-//! go into a bin moves: no `.recycle` stands in for a bin that is down.
+//! folder cannot be reached or is not there (a share not mounted), the
+//! bins are unknown and nothing that would go into a bin moves: no
+//! `.recycle` stands in for a bin that is down. The app never makes the
+//! configured folder; an admin makes it or mounts the share.
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
@@ -45,9 +47,10 @@ pub type DownloadTrees = Arc<dyn Fn() -> Option<Vec<PathBuf>> + Send + Sync>;
 pub enum BinRefusal {
     /// The path is not absolute, or has a `..` in it.
     NotAbsolute,
-    /// The path could not be resolved: permission denied, an I/O error or
-    /// a link loop. A configured bin like this makes files wait; a
-    /// `.recycle` link like this leaves its root with no bin.
+    /// The path could not be resolved or is a folder that isn't there (a
+    /// share not mounted): permission denied, an I/O error, a link loop,
+    /// or nothing at the path. A configured bin like this makes files
+    /// wait; a `.recycle` link like this leaves its root with no bin.
     Unresolvable,
     /// It is, holds or sits inside a library folder.
     OverlapsLibrary,
@@ -63,7 +66,7 @@ impl BinRefusal {
                 "The recycle bin path is not a full path, so each library folder's .recycle is used instead."
             }
             Self::Unresolvable => {
-                "The recycle bin folder can't be reached, so removals and upgrades wait until it can."
+                "The recycle bin folder isn't there or can't be opened, so removals and upgrades wait."
             }
             Self::OverlapsLibrary => {
                 "The recycle bin overlaps a library folder, so each library folder's .recycle is used instead."
@@ -95,8 +98,10 @@ pub struct BinChoice {
 /// roots come resolved; the download folders are asked for only when a
 /// bin could reach them (a configured one, or a `.recycle` link), once.
 /// `Err` while they cannot be read, or while the configured folder cannot
-/// be reached ([`BinsUnknown::Unreachable`]): then nothing moves into a bin and no
-/// `.recycle` stands in.
+/// be reached or is not a folder that exists ([`BinsUnknown::Unreachable`]):
+/// then nothing moves into a bin and no `.recycle` stands in. The overlap
+/// checks come first, so a bin path inside a download folder is refused
+/// whether or not it exists yet.
 pub fn choose(
     configured: &str,
     library: &[ResolvedRoot],
@@ -134,6 +139,11 @@ pub fn choose(
             match clear(&resolved)? {
                 Some(refusal) => refused = Some(refusal),
                 None => {
+                    let folder = std::fs::symlink_metadata(&resolved)
+                        .is_ok_and(|meta| meta.file_type().is_dir());
+                    if !folder {
+                        return Err(BinsUnknown::Unreachable);
+                    }
                     return Ok(BinChoice {
                         roots: vec![Root::bin(CONFIGURED_BIN_ID, resolved)],
                         refused: None,
@@ -233,8 +243,9 @@ pub enum BinsUnknown {
     /// cannot be read.
     DownloadsUnread,
     /// The configured bin folder cannot be reached (permission denied, an
-    /// I/O error, a link loop): files wait for it rather than go to a
-    /// library folder's `.recycle`.
+    /// I/O error, a link loop) or is a folder that isn't there (a share
+    /// not mounted): files wait for it rather than go to a library
+    /// folder's `.recycle`.
     Unreachable,
 }
 
@@ -243,7 +254,7 @@ impl std::fmt::Display for BinsUnknown {
         f.write_str(match self {
             Self::SettingsUnread => "the Library Management settings can't be read",
             Self::DownloadsUnread => "the slskd or SABnzbd settings can't be read",
-            Self::Unreachable => "the recycle bin folder can't be reached",
+            Self::Unreachable => "the recycle bin folder isn't there or can't be reached",
         })
     }
 }
@@ -646,7 +657,15 @@ pub(super) fn recycle_replaced(
     }
     let bin = sandbox.ensure_under_bin(&recycle_to)?;
     let mode = sandbox.probe_bin_placement(bin);
-    let moved = paths::recycle_backup(mode, seams, backup, &recycle_to, &replaced.sha256, known)?;
+    let moved = paths::recycle_backup(
+        mode,
+        seams,
+        sandbox.bin_base(bin),
+        backup,
+        &recycle_to,
+        &replaced.sha256,
+        known,
+    )?;
     if moved {
         // What the copy is once it landed: expiry deletes it while it is
         // still exactly this, whatever bytes it was given.

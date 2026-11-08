@@ -221,6 +221,7 @@ fn fixture(tag: &str) -> Fixture {
     let incoming = dir.join("incoming");
     std::fs::create_dir_all(&music).unwrap();
     std::fs::create_dir_all(&incoming).unwrap();
+    std::fs::create_dir_all(dir.join("bin")).unwrap();
     let sandbox = Sandbox::new(vec![
         Root::library("music", music),
         Root::library("incoming", incoming),
@@ -3219,6 +3220,128 @@ fn an_unreachable_bin_makes_the_replaced_file_wait() {
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
+/// A configured recycle bin whose folder is not there (a share not
+/// mounted) is never made. A new session finds no bin and waits; one that
+/// opened while the folder was there leaves a replaced file under its
+/// hidden name and a removed file in place, and nothing appears at the
+/// bin's path. Once the folder is made, the waiting replaced file goes
+/// into it by itself.
+#[test]
+fn a_bin_folder_that_is_not_there_is_never_made() {
+    use publish::bin::{BinsUnknown, CONFIGURED_BIN_ID, fresh_entry};
+
+    let fix = fixture("bin-not-there");
+    let music = fix.dir.join("music");
+    let share = fix.dir.join("share");
+    std::fs::create_dir_all(&share).unwrap();
+    let bin = std::fs::canonicalize(&share).unwrap().join("bin");
+    let configured = bin.display().to_string();
+    let library = vec![
+        Root::library("music", music.clone()),
+        Root::library("incoming", fix.dir.join("incoming")),
+    ];
+    assert_eq!(
+        choose_bins(&configured, &library, &[]),
+        Err(BinsUnknown::Unreachable)
+    );
+    let sandbox_now = || match choose_bins(&configured, &library, &[]) {
+        Ok(choice) => {
+            let mut roots = library.clone();
+            roots.extend(choice.roots);
+            Sandbox::new(roots).unwrap()
+        }
+        Err(cause) => Sandbox::new(library.clone())
+            .unwrap()
+            .with_bins_unknown(cause),
+    };
+    let opened = |fix: &Fixture, bin: &std::path::Path| {
+        Sandbox::new(vec![
+            Root::library("music", fix.dir.join("music")),
+            Root::library("incoming", fix.dir.join("incoming")),
+            Root::bin(CONFIGURED_BIN_ID, bin.to_path_buf()),
+        ])
+        .unwrap()
+    };
+    let publisher_over = |fix: &Fixture, sandbox: Sandbox| {
+        Publisher::new(
+            sandbox,
+            restart(fix),
+            FixedSpace(u64::MAX),
+            jobs(&restart(fix)),
+            std::sync::Arc::new(ManualClock::at(DAY_50_MS)),
+            blobs(fix),
+        )
+    };
+
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let entry = fresh_entry(&bin, "a.flac", std::time::SystemTime::now()).unwrap();
+    replace_into(&fix, &mut bundle, &entry);
+    let (sealed, live) = seal(&bundle);
+    let err = publisher_over(&fix, sandbox_now())
+        .publish(&sealed, &live, &docs)
+        .unwrap_err();
+    assert!(matches!(err, PublishError::BinsUnknown(_)), "got {err:?}");
+    let outcome = publisher_over(&fix, opened(&fix, &bin))
+        .publish(&sealed, &live, &docs)
+        .unwrap();
+    assert_eq!(outcome, PublishOutcome::CleanupPending);
+    reconcile(&restart(&fix), &sandbox_now()).unwrap();
+    reconcile(&restart(&fix), &opened(&fix, &bin)).unwrap();
+    assert!(
+        std::fs::symlink_metadata(&bin).is_err(),
+        "the bin folder was not made"
+    );
+    assert!(!music.join(".recycle").exists(), "no other bin stood in");
+    let set_aside = hidden_leftovers(&music)
+        .iter()
+        .filter(|path| {
+            std::fs::read(path).ok().as_deref() == Some(b"replaced-library-file".as_slice())
+        })
+        .count();
+    assert_eq!(
+        set_aside, 1,
+        "the replaced file waits under its hidden name"
+    );
+
+    std::fs::create_dir(&bin).unwrap();
+    reconcile(&restart(&fix), &sandbox_now()).unwrap();
+    assert_eq!(std::fs::read(&entry).unwrap(), b"replaced-library-file");
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+
+    let fix = fixture("bin-not-there-removal");
+    let bin = std::fs::canonicalize(&fix.dir)
+        .unwrap()
+        .join("bin-on-share");
+    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    let file = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    let bytes = std::fs::read(&file).unwrap();
+    let sandbox = opened(&fix, &bin);
+    let bundle = removal_bundle(&fix, &sandbox, "music", &[("track-a", "staging/a.flac")]);
+    let (sealed, live) = seal(&bundle);
+    let outcome = publisher_over(&fix, sandbox)
+        .publish(&sealed, &live, &BTreeMap::new())
+        .unwrap();
+    assert_eq!(outcome, PublishOutcome::CleanupPending);
+    assert!(
+        std::fs::symlink_metadata(&bin).is_err(),
+        "the bin folder was not made"
+    );
+    assert!(
+        !fix.dir.join("music/.recycle").exists(),
+        "no other bin stood in"
+    );
+    let kept = std::fs::read(&file).ok().into_iter().chain(
+        hidden_leftovers(&fix.dir.join("music"))
+            .into_iter()
+            .filter_map(|path| std::fs::read(path).ok()),
+    );
+    assert_eq!(
+        kept.filter(|held| *held == bytes).count(),
+        1,
+        "the file is kept"
+    );
+}
+
 /// A replaced file whose bin is no longer the session's goes to a fresh
 /// entry in the bin that serves its folder now, and every record of where
 /// it went follows: the journal and the retired track's path. A removed
@@ -3227,6 +3350,7 @@ fn an_unreachable_bin_makes_the_replaced_file_wait() {
 fn a_rebind_moves_every_record_of_the_replaced_file() {
     let fix = fixture("rebind-records");
     let other_bin = |fix: &Fixture| {
+        std::fs::create_dir_all(fix.dir.join("bin2")).unwrap();
         Sandbox::new(vec![
             Root::library("music", fix.dir.join("music")),
             Root::library("incoming", fix.dir.join("incoming")),
@@ -3718,6 +3842,7 @@ fn a_removal_the_bin_cannot_take_stays_set_aside() {
     let blocker = fix.dir.join("bin");
     let planted = blocker.clone();
     publisher.set_before_set_aside(Some(Box::new(move |_| {
+        std::fs::remove_dir(&planted).unwrap();
         std::fs::write(&planted, b"in the way").unwrap();
     })));
 
@@ -3745,6 +3870,7 @@ fn a_removal_the_bin_cannot_take_stays_set_aside() {
     held(&fix);
 
     std::fs::remove_file(&blocker).unwrap();
+    std::fs::create_dir(&blocker).unwrap();
     reconcile(&restart(&fix), &fix.sandbox).unwrap();
     let binned = files_under(&blocker);
     assert_eq!(binned.len(), 1);
@@ -4017,6 +4143,7 @@ fn a_removed_file_edited_in_place_still_reaches_the_bin() {
             cross_device: true,
             ..Seams::default()
         },
+        &fix.dir.join("bin"),
         &from,
         &to,
         &sha256_hex(b"removed-library-file"),
@@ -4047,6 +4174,7 @@ fn a_copy_that_fails_part_way_leaves_nothing_behind() {
     let err = publish::paths::recycle_backup(
         PlacementMode::Unknown,
         seams,
+        &fix.dir.join("music"),
         &from,
         &to,
         &sha256_hex(b"removed-library-file"),

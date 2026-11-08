@@ -368,7 +368,7 @@
 								label="Recycle bin folder"
 								mono
 								placeholder="/srv/music-recycle"
-								help="Where removed and replaced files go. Empty uses a .recycle folder in each library folder."
+								help="Where removed and replaced files go. The folder must already exist. Empty uses a .recycle folder in each library folder."
 								bind:value={draft.recycle_bin_path}
 							/>
 						</div>
