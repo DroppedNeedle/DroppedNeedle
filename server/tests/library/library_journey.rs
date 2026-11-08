@@ -6504,7 +6504,11 @@ async fn an_album_without_files_leaves_the_lists() {
         copies(&kept).await.is_empty(),
         "gone from its copy's Copies"
     );
-    assert_eq!(copies(&gone).await, std::slice::from_ref(&kept), "its own Copies");
+    assert_eq!(
+        copies(&gone).await,
+        std::slice::from_ref(&kept),
+        "its own Copies"
+    );
     let opened = get(format!("/api/v3/library/albums/{gone}")).await;
     assert_eq!(opened["id"], json!(gone), "its link still opens it");
     assert_eq!(opened["track_count"], json!(0), "{opened}");
