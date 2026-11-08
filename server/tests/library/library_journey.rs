@@ -1631,6 +1631,144 @@ async fn an_editions_tags_are_written_as_the_folders_profile_says() {
     rig.stop().await;
 }
 
+/// A tagging script reads what it is allowed to: `primary_genre` keeps
+/// the file's genre rather than clearing it, `custom.MOOD` is the file's
+/// own mood tag, and `publisher` writes the label, except on a file whose
+/// label a person saved.
+#[tokio::test]
+async fn a_tagging_script_reads_the_files_values_and_writes_the_label() {
+    use droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID as PICARD;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::{TagField, read_fields};
+
+    let rig = Rig::start("lib-script-reads").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let admin = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    let file = plant(&music, "album-r/01.flac", "flac_full_01.flac");
+    let other = plant(&music, "album-r/02.flac", "flac_full_02.flac");
+    save_tags(
+        &file,
+        &[TagEdit::native("vorbis:MOOD", vec!["Restless".to_owned()])],
+    )
+    .expect("the mood is set");
+    let paused_at = rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    let track = rig
+        .scan_store
+        .track_at("music", "album-r/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    let fit = tagged_release(&rig.identify_store, &album);
+    rig.identify.set_recall(RecallResult {
+        releases: vec![fit.clone()],
+        ..RecallResult::default()
+    });
+    rig.resume_identification(paused_at).await;
+    rig.identified(&album, 1).await;
+    let edition = format!("/api/v3/library/albums/{album}/edition");
+    let (status, body) = app
+        .call(
+            "PUT",
+            &edition,
+            &admin,
+            Some(json!({
+                "release_mbid": fit.id,
+                "expected_identity_revision": edition_revision(app, &admin, &album).await,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.edition_settled(&album).await;
+
+    let page = "/api/v3/settings/library-management";
+    let (status, saved) = app.call("GET", page, &admin, None).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let mut settings = saved.clone();
+    settings
+        .as_object_mut()
+        .expect("settings")
+        .remove("settings_revision");
+    settings["tagging_scripts"]
+        .as_array_mut()
+        .expect("scripts")
+        .push(json!({
+            "id": "44444444-4444-4444-8444-444444444444",
+            "name": "Reads",
+            "source": "set genre = primary_genre\nset comment = custom.MOOD\nset publisher = \"Indie Label\"",
+        }));
+    for profile in settings["profiles"].as_array_mut().expect("profiles") {
+        if profile["id"] == json!(PICARD) {
+            profile["metadata"]["enabled"] = json!(false);
+            profile["metadata"]["tagging_script_ids"] =
+                json!(["44444444-4444-4444-8444-444444444444"]);
+        }
+    }
+    settings["root_assignments"] = json!([{
+        "root_id": "music",
+        "profile_id": PICARD,
+        "enabled": false,
+        "overrides": {"metadata_enabled": true},
+    }]);
+    let (status, body) = app
+        .call(
+            "PUT",
+            page,
+            &admin,
+            Some(json!({
+                "settings": settings,
+                "expected_settings_revision": saved["settings_revision"],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    app.seed_with(
+        "INSERT INTO library_management_overrides (id, subject_kind, local_track_id, \
+         field_name, value_json, mode, subject_revision, created_at, updated_at) \
+         VALUES ('ov-label', 'track', ?1, 'label', '\"Kept Label\"', 'replace', 1, 1, 1)",
+        [&track],
+    )
+    .await;
+
+    let revision = edition_status(app, &admin, &edition).await["identity_revision"].clone();
+    let tags = format!("{edition}/tags");
+    let ask = json!({"release_mbid": fit.id, "expected_identity_revision": revision});
+    let (status, queued) = app.call("POST", &tags, &admin, Some(ask)).await;
+    assert_eq!(status, StatusCode::OK, "{queued}");
+    let job = queued["job_id"].as_str().expect("job id");
+    let uri = format!("{tags}/{job}");
+    let planned = settled_tag_write(app, &admin, &uri).await;
+    assert_eq!(planned["step"], json!("ready"), "{planned}");
+    write_planned(app, &admin, &uri, &queued["preview_token"]).await;
+
+    // The profile's genres come first, in MusicBrainz's spelling.
+    let fields = read_fields(track_file(&file)).expect("fields read");
+    assert_eq!(
+        fields.get(&TagField::Genre),
+        Some(&vec!["alternative rock".to_owned()])
+    );
+    assert_eq!(
+        fields.get(&TagField::Comment),
+        Some(&vec!["Restless".to_owned()])
+    );
+    assert_eq!(
+        fields.get(&TagField::Label),
+        Some(&vec!["Kept Label".to_owned()])
+    );
+    let fields = read_fields(track_file(&other)).expect("fields read");
+    assert_eq!(
+        fields.get(&TagField::Label),
+        Some(&vec!["Indie Label".to_owned()])
+    );
+    rig.stop().await;
+}
+
 /// A tag write asked for one edition writes nothing when another edition
 /// is chosen before the worker plans it: planning finds the album's
 /// identity moved on and blocks every file.

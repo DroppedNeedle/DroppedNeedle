@@ -203,10 +203,6 @@ struct TaggingRules {
     read_only: BTreeSet<&'static str>,
 }
 
-fn is_custom(name: &str) -> bool {
-    name.len() > 7 && name.is_char_boundary(7) && name[..7].eq_ignore_ascii_case("custom.")
-}
-
 impl TaggingRules {
     fn new() -> Self {
         Self {
@@ -237,10 +233,14 @@ impl TaggingRules {
 
     fn check_target(&self, target: &Target, append: bool) -> Result<(), LanguageFault> {
         let name = target.name.as_str();
-        let custom = is_custom(name).then(|| name[7..].trim());
-        let custom_valid = custom
-            .is_some_and(|name| !name.is_empty() && !name.contains('\x00') && name.len() <= 255);
-        if !self.allowed.contains(name) && !custom_valid {
+        if script::is_custom_name(name) {
+            return Err(rule_fault(
+                format!("Custom tags can be read but not written: {name}."),
+                target.line,
+                target.column,
+            ));
+        }
+        if !self.allowed.contains(name) {
             return Err(unknown(
                 format!("Unknown or invalid tagging target: {name}."),
                 name,
@@ -248,7 +248,7 @@ impl TaggingRules {
                 target.column,
             ));
         }
-        if append && !self.ordered.contains(name) && custom.is_none() {
+        if append && !self.ordered.contains(name) {
             return Err(rule_fault(
                 format!("Field {name} does not accept append."),
                 target.line,
@@ -260,7 +260,10 @@ impl TaggingRules {
 
     fn check_reads(&self, expr: &script::Expr) -> Result<(), LanguageFault> {
         for (name, line, column) in expr.variables() {
-            if !(self.allowed.contains(name) || self.read_only.contains(name) || is_custom(name)) {
+            if !(self.allowed.contains(name)
+                || self.read_only.contains(name)
+                || script::is_custom_name(name))
+            {
                 return Err(unknown(
                     format!("Unknown tagging variable: {name}."),
                     name,

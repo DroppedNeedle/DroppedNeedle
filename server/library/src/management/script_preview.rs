@@ -10,7 +10,7 @@ use droppedneedle_kernel::runtime_config::sections::PathCompatibilitySettings;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::profile::{field_variables, fold_script_names};
+use super::profile::{self, fold_script_names};
 use super::script::{self, MAX_SOURCE_CHARACTERS, ScriptFault, Variables};
 use super::settings::{
     LanguageFault, check_naming_language, check_tagging_language, naming_variables,
@@ -196,7 +196,10 @@ fn tagging_sample(example: &ExampleTrack, source: &str, compiles: bool) -> Scrip
     if !example.comment.is_empty() {
         before.insert("comment".to_owned(), vec![example.comment.to_owned()]);
     }
-    let mut sample = empty_sample(texts(&field_variables(&before)));
+    let mut sample = empty_sample(texts(&profile::tagging_variables(
+        &before,
+        &Variables::new(),
+    )));
     if !compiles {
         return sample;
     }
@@ -208,7 +211,9 @@ fn tagging_sample(example: &ExampleTrack, source: &str, compiles: bool) -> Scrip
         }
     };
     let mut after = before.clone();
-    let refresh = |fields: &BTreeMap<String, Vec<String>>| field_variables(fields);
+    let refresh = |fields: &BTreeMap<String, Vec<String>>| {
+        profile::tagging_variables(fields, &Variables::new())
+    };
     if let Err(fault) = script::run_tagging(
         &program,
         &mut after,

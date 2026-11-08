@@ -504,7 +504,7 @@ fn config_json_carries_the_recycle_bin() {
 /// stored script it refuses neither fails the read nor blocks a save that
 /// leaves it untouched; a new or edited script it refuses is refused with
 /// its line and column, without breaking later saves; a tagging script
-/// using `else:` saves.
+/// using `else:` saves, and one that sets a custom tag is refused.
 #[test]
 fn scripts_validate_with_the_running_compiler() {
     use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
@@ -582,6 +582,19 @@ fn scripts_validate_with_the_running_compiler() {
     assert_eq!(
         refused(wide),
         "Wide line 1, column 1: Numeric format 070000d is not valid."
+    );
+    let mut mood = saved.settings.clone();
+    mood.tagging_scripts.push(
+        serde_json::from_value(serde_json::json!({
+            "id": "99999999-9999-4999-8999-999999999999",
+            "name": "Mood",
+            "source": "set comment = custom.MOOD\nset custom.MOOD = \"x\""
+        }))
+        .expect("script"),
+    );
+    assert_eq!(
+        refused(mood),
+        "Mood line 2, column 1: Custom tags can be read but not written: custom.MOOD."
     );
 
     service

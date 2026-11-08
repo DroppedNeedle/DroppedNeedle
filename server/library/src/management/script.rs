@@ -1227,6 +1227,14 @@ pub fn compile_tagging(source: &str) -> Result<Vec<Statement>, ScriptFault> {
     Ok(statements)
 }
 
+/// Whether a name is a custom tag (`custom.NAME`, whatever its capitals).
+pub fn is_custom_name(name: &str) -> bool {
+    name.len() > 7
+        && name
+            .get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("custom."))
+}
+
 /// Script variables from the fields a tagging program is editing.
 pub type Refresh = dyn Fn(&BTreeMap<String, Vec<String>>) -> Variables;
 
@@ -1256,14 +1264,14 @@ pub fn run_tagging(
                 run_tagging(branch, fields, protected, refresh, budget)?;
             }
             Statement::Delete(Target { name: target, .. }) => {
-                if !protected.contains(target) && !target.starts_with("custom.") {
+                if !protected.contains(target) && !is_custom_name(target) {
                     fields.insert(target.clone(), Vec::new());
                 }
             }
             Statement::Set(Target { name: target, .. }, expr)
             | Statement::Append(Target { name: target, .. }, expr) => {
                 let value = evaluate(expr, &variables, budget)?;
-                if protected.contains(target) || target.starts_with("custom.") {
+                if protected.contains(target) || is_custom_name(target) {
                     continue;
                 }
                 let mut values = if matches!(statement, Statement::Append(..)) {

@@ -82,7 +82,7 @@ A profile has a naming script for albums of one disc, and can have another for a
 
 Every tag the file will have is a value under its field name (see [Profiles and fields](#profiles-and-fields)): `title`, `album`, `artist`, `artists`, `artist_sort`, `album_artist`, `album_artists`, `album_artist_sort`, `track_number`, `total_tracks`, `disc_number`, `total_discs`, `disc_subtitle`, `date`, `original_date`, `release_status`, `release_country`, `release_type`, `compilation`, `asin`, `media`, `label`, `catalog_number`, `barcode`, `isrc`, the `musicbrainz_..._id` fields, and in Library Management also `genre` and the credit fields (`composer`, `conductor` and the rest) when the profile writes them. A tag with one value is text, a tag with several is a list, which reads as its values joined by `; `. Tag values are text: `total_discs` is `"1"`, not `1`.
 
-Naming scripts can also read:
+Naming scripts can also read these. Tagging scripts read `year`, `artist_display`, `album_artist_display`, `genres` and `primary_genre` too.
 
 | Value | What it holds | On the one-disc sample |
 | --- | --- | --- |
@@ -151,7 +151,9 @@ A tagging script changes the tags a profile writes, after the profile's fields a
 - `if equals(total_discs, "1"):` starts lines that run only when the test is yes; `else:` starts the lines for no, and `end` closes it. Indenting is up to you.
 - A line starting with `#` is a note, and blank lines are skipped.
 
-A tagging script reads and writes tags by their field names. It may also write `albumartist`, `track`, `disc` and `year`, which set `album_artist`, `track_number`, `disc_number` and `date`. It can't read the values only naming scripts have (`quality`, `initial` and the like).
+A tagging script reads and writes tags by their field names. It may also use `albumartist`, `albumartists`, `track`, `disc`, `year` and `publisher`, which set and read `album_artist`, `album_artists`, `track_number`, `disc_number`, `date` and `label` (`year` reads as the date's first four characters, and `set year = ...` writes the date, so the file keeps only what the script gives, such as a four-digit year). It can't read the values only naming scripts have (`quality`, `initial` and the like).
+
+A tagging script can read the file's other tags as `custom.NAME`: `custom.MOOD` is the file's MOOD tag (a Vorbis comment, an ID3 `TXXX` frame or an MP4 freeform item, whatever its capitals), and empty when the file has none or spells the Vorbis key two ways. It can't change them: a script that sets or deletes a `custom.` tag is refused when it is saved, and one saved before that rule leaves those lines out and says so in the run's warnings.
 
 ```
 set album = concat(album, " [", upper(first(release_type)), "]")

@@ -297,5 +297,21 @@ async fn the_script_preview_shows_each_example_album_and_a_fix_for_a_misspelt_na
         sample(&body, "one_disc")["tags"],
         json!([{"name": "comment", "before": ["Ripped with EAC"], "after": []}])
     );
+
+    // A tagging script reads the worked-out values and writes `publisher`
+    // to the label.
+    let (status, body) = preview(
+        "tagging",
+        "set comment = concat(year, \" \", artist_display)\nset publisher = \"Capitol\"",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        sample(&body, "one_disc")["tags"],
+        json!([
+            {"name": "comment", "before": ["Ripped with EAC"], "after": ["1997 Radiohead"]},
+            {"name": "label", "before": ["Parlophone"], "after": ["Capitol"]},
+        ])
+    );
     app.stop().await;
 }
