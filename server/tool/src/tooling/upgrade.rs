@@ -58,6 +58,7 @@ use thiserror::Error;
 
 use crate::export::callbacks::{self, AddressChange, CallbackCheck, check_callbacks};
 use crate::export::exporter::{V2_COPY_PREFIX, V2Snapshot};
+use crate::export::scratch::{ScratchFolder, remove_unless_owned};
 use crate::export::v2dir::{self, V2Dirs};
 use crate::export::{ExportError, ExportRequest, export_v2_to_file};
 use crate::import::{
@@ -1103,11 +1104,8 @@ fn scratch_export(
 ) -> Result<Exported, UpgradeError> {
     let dirs = &request.dirs;
     let passphrase = fresh_passphrase()?;
-    let mut name = [0u8; 8];
-    getrandom::fill(&mut name).map_err(|_| UpgradeError::RandomFailed)?;
-    let hex: String = name.iter().map(|byte| format!("{byte:02x}")).collect();
-    let scratch = temp_dir.join(format!("{CHECK_SCRATCH_PREFIX}{hex}"));
-    create_private_dir(&scratch)?;
+    let scratch = ScratchFolder::create(temp_dir, CHECK_SCRATCH_PREFIX)
+        .map_err(|error| failed("create", temp_dir, error))?;
     let export = ExportRequest {
         v2: V2Dirs {
             config_dir: dirs.config_dir.clone(),
@@ -1119,16 +1117,17 @@ fn scratch_export(
         exported_at: None,
         v2_commit: request.v2_commit.clone(),
     };
-    let exported = export_validated(&export, &scratch.join(EXPORT_FILE_NAME));
-    let removed = remove_entry(&scratch);
+    let exported = export_validated(&export, &scratch.path().join(EXPORT_FILE_NAME));
+    let shown = scratch.path().to_owned();
+    let removed = scratch.remove();
     let exported = exported?;
-    removed?;
+    removed.map_err(|error| failed("delete", &shown, error))?;
     Ok(exported)
 }
 
 /// Remove the scratch folders and v2 database copies of checks and runs
 /// that were killed before they could: they hold password hashes and
-/// listening history.
+/// listening history. Those of live checks and runs are left alone.
 fn remove_stale_scratch(temp_dir: &Path) {
     let Ok(entries) = std::fs::read_dir(temp_dir) else {
         return;
@@ -1137,7 +1136,7 @@ fn remove_stale_scratch(temp_dir: &Path) {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         let stale = name.starts_with(CHECK_SCRATCH_PREFIX) || name.starts_with(V2_COPY_PREFIX);
-        if stale && let Err(error) = remove_entry(&entry.path()) {
+        if stale && let Err(error) = remove_unless_owned(&entry.path()) {
             tracing::warn!(%error, "cannot remove an earlier upgrade check's scratch folder");
         }
     }

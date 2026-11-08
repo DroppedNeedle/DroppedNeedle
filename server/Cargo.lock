@@ -888,6 +888,7 @@ dependencies = [
  "droppedneedle-tool",
  "getrandom 0.3.4",
  "hmac",
+ "libc",
  "regex",
  "rusqlite",
  "serde",

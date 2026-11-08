@@ -30,6 +30,7 @@ use crate::export::envelope::{
 };
 use crate::export::error::ExportError;
 use crate::export::fernet::FernetKey;
+use crate::export::scratch::ScratchFolder;
 use crate::export::seal::Sealer;
 use crate::export::sql::{
     APP_PASSWORDS, APPROVALS, CONNECTIONS, Checkpoint, EVENT_CITIES, EVENT_SEEN, FOLLOWS,
@@ -395,7 +396,7 @@ pub const V2_COPY_PREFIX: &str = "droppedneedle-v2-copy-";
 #[derive(Debug)]
 pub struct V2Snapshot {
     path: PathBuf,
-    copy_dir: Option<PathBuf>,
+    copy_dir: Option<ScratchFolder>,
 }
 
 impl V2Snapshot {
@@ -412,10 +413,11 @@ impl V2Snapshot {
             WalState::HoldsData(_) => {}
             WalState::Unreadable(error) => return Err(unreadable_wal(db_path, &error)),
         }
-        let copy_dir = private_copy_dir(scratch)?;
+        let copy_dir = ScratchFolder::create(scratch, V2_COPY_PREFIX)
+            .map_err(|error| copy_error(scratch, &error))?;
         // From here on a failure drops the snapshot, which removes the copy.
         let snapshot = Self {
-            path: copy_dir.join("library.db"),
+            path: copy_dir.path().join("library.db"),
             copy_dir: Some(copy_dir),
         };
         let database = std::fs::File::open(db_path).map_err(|error| ExportError::V2Database {
@@ -439,10 +441,11 @@ impl V2Snapshot {
 
 impl Drop for V2Snapshot {
     fn drop(&mut self) {
-        if let Some(dir) = &self.copy_dir
-            && let Err(error) = std::fs::remove_dir_all(dir)
-        {
-            tracing::warn!(%error, dir = %dir.display(), "cannot remove the copy of the v2 database");
+        if let Some(dir) = self.copy_dir.take() {
+            let shown = dir.path().display().to_string();
+            if let Err(error) = dir.remove() {
+                tracing::warn!(%error, dir = %shown, "cannot remove the copy of the v2 database");
+            }
         }
     }
 }
@@ -452,27 +455,6 @@ fn unreadable_wal(db_path: &Path, error: &std::io::Error) -> ExportError {
         path: wal_path(db_path),
         reason: error.to_string(),
     }
-}
-
-/// A new owner-only folder in `scratch` for one copy. The copy holds
-/// password hashes and listening history.
-fn private_copy_dir(scratch: &Path) -> Result<PathBuf, ExportError> {
-    let mut name = [0u8; 8];
-    getrandom::fill(&mut name).map_err(|_| ExportError::ExportWrite {
-        reason: "cannot pick a name for the copy of the v2 database".to_owned(),
-    })?;
-    let hex: String = name.iter().map(|byte| format!("{byte:02x}")).collect();
-    let dir = scratch.join(format!("{V2_COPY_PREFIX}{hex}"));
-    let mut builder = std::fs::DirBuilder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt as _;
-        builder.mode(0o700);
-    }
-    builder
-        .create(&dir)
-        .map_err(|error| copy_error(&dir, &error))?;
-    Ok(dir)
 }
 
 /// Copy `from` byte for byte into a new owner-only file at `to`, writable

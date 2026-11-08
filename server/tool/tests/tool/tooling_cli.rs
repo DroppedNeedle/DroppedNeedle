@@ -13,6 +13,8 @@ use droppedneedle::bootstrap::data_dirs;
 use droppedneedle::bootstrap::upgrade_progress::{
     Code, Event, Finished, FoundLayout, Line, Outcome, StepId, V2Files,
 };
+use droppedneedle_tool::export::exporter::V2_COPY_PREFIX;
+use droppedneedle_tool::export::scratch::ScratchFolder;
 use droppedneedle_tool::tooling::upgrade;
 
 use crate::common;
@@ -1492,6 +1494,46 @@ async fn an_interrupted_upgrade_is_rolled_back_first() {
     assert!(is_v3(&root));
     assert_eq!(data_dirs::check_bootable(&dirs), Ok(()));
     assert_eq!(backup_trees(&root), original);
+}
+
+/// A check clears away the copies of the v2 database that killed checks
+/// and older builds left in the shared temp folder, and leaves alone the
+/// copy a live check or run still holds.
+#[test]
+fn a_check_keeps_a_live_copy_and_removes_a_dead_one() {
+    let scratch = scratch_dir("upgrade-sweep");
+    let root = scratch.join("data");
+    droppedneedle_tool::test_support::fixture::build_v2_fixture(&root).expect("fixture builds");
+    let temp_dir = scratch.join("tmp");
+    std::fs::create_dir(&temp_dir).expect("temp folder");
+    let live = ScratchFolder::create(&temp_dir, V2_COPY_PREFIX).expect("live copy folder");
+    std::fs::write(live.path().join("library.db"), b"live").expect("live copy");
+    let dead = temp_dir.join(format!("{V2_COPY_PREFIX}dead"));
+    std::fs::create_dir(&dead).expect("dead copy folder");
+    std::fs::write(dead.join("library.db"), b"dead").expect("dead copy");
+    let killed = ScratchFolder::create(&temp_dir, V2_COPY_PREFIX).expect("killed copy folder");
+    std::fs::write(killed.path().join("library.db"), b"killed").expect("killed copy");
+    let killed_path = killed.path().to_owned();
+    drop(killed);
+
+    let request = upgrade::UpgradeRequest {
+        dirs: upgrade_dirs(&root),
+        keep_backup: true,
+        v2_commit: None,
+        base_path: String::new(),
+        callbacks_changed: false,
+        temp_dir: temp_dir.clone(),
+        fault: None,
+    };
+    let checked = upgrade::check(&request);
+    assert_eq!(checked.blockers, []);
+    assert!(
+        live.path().join("library.db").is_file(),
+        "the live copy stays"
+    );
+    assert!(!dead.exists(), "an older build's copy is removed");
+    assert!(!killed_path.exists(), "a killed check's copy is removed");
+    live.remove().expect("live copy removed");
 }
 
 /// `--undo --yes` deletes the v3 data and puts the v2 files back as they

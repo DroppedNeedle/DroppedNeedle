@@ -25,6 +25,7 @@ cbc.workspace = true
 chacha20poly1305.workspace = true
 getrandom.workspace = true
 hmac.workspace = true
+libc.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true

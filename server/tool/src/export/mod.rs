@@ -15,6 +15,7 @@ pub mod exporter;
 pub mod fernet;
 pub mod inventory;
 pub mod library_keys;
+pub mod scratch;
 pub mod seal;
 pub mod sections;
 pub(crate) mod sql;
