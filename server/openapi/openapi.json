@@ -22570,6 +22570,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Last.fm is switched off on this server (LASTFM_OFF)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -22627,6 +22637,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Last.fm is switched off on this server (LASTFM_OFF), there is no key pair to sign with (PROVIDER_NOT_CONFIGURED), or the sign-in is not approved, expired or not started here (CONFLICT)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -22652,6 +22672,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LastFmTokenResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Last.fm is switched off on this server (LASTFM_OFF), or there is no key pair to sign with (PROVIDER_NOT_CONFIGURED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -48007,7 +48037,7 @@
           },
           "lastfm": {
             "type": "boolean",
-            "description": "Last.fm is connected."
+            "description": "The admin has switched Last.fm on for this server."
           },
           "library": {
             "type": "boolean",

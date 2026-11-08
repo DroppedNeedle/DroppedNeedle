@@ -1,8 +1,9 @@
 //! Thin Axum handlers and route assembly.
 //!
 //! Every handler answers one route: extract, call the service, render.
-//! Status mapping lives here, in the one `From<UsersError> for ApiError`:
-//! the services return the domain [`UsersError`] and know nothing of HTTP.
+//! Status mapping lives here, in `From<UsersError> for ApiError` and, for
+//! the Last.fm link routes, `From<LastFmLinkError> for ApiError`: the
+//! services return domain errors and know nothing of HTTP.
 
 use axum::{
     Json,
@@ -26,7 +27,7 @@ use super::models::{
     RoleUpdate, SessionListResponse, UserResponse, UsernameUpdate,
 };
 use super::roles::{Admin, Role, User};
-use super::services;
+use super::services::{self, LastFmLinkError};
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
@@ -62,6 +63,29 @@ impl From<UsersError> for ApiError {
                 ApiError::unavailable(Unavailable::ServerBusy, "password hashing slots busy")
             }
             UsersError::Internal { cause } => ApiError::internal(cause),
+        }
+    }
+}
+
+/// 409 code for a Last.fm link route while the admin has Last.fm switched
+/// off. A missing key pair answers `PROVIDER_NOT_CONFIGURED` instead.
+pub const LASTFM_OFF: &str = "LASTFM_OFF";
+
+impl From<LastFmLinkError> for ApiError {
+    fn from(error: LastFmLinkError) -> Self {
+        match error {
+            LastFmLinkError::Off => ApiError::new(
+                StatusCode::CONFLICT,
+                LASTFM_OFF,
+                "Last.fm is off on this server.",
+            )
+            .with_details(serde_json::json!({ "provider": "lastfm" })),
+            LastFmLinkError::NoKeyPair => ApiError::provider_not_configured(
+                "lastfm",
+                "Last.fm is not set up yet. Ask your admin to add the Last.fm app key, \
+                 or add your own key and secret.",
+            ),
+            LastFmLinkError::Users(error) => error.into(),
         }
     }
 }
@@ -401,7 +425,10 @@ pub async fn revoke_app_password(
     tag = "users",
     path = "/api/v3/me/connections/lastfm",
     request_body = LastFmCredentialsSet,
-    responses((status = 200, description = "Stored", body = LastFmConfiguredResponse))
+    responses(
+        (status = 200, description = "Stored", body = LastFmConfiguredResponse),
+        (status = 409, description = "Last.fm is switched off on this server (LASTFM_OFF)")
+    )
 )]
 pub async fn lastfm_set_credentials(
     State(deps): State<UsersDeps>,
@@ -424,7 +451,11 @@ pub async fn lastfm_set_credentials(
     post,
     tag = "users",
     path = "/api/v3/me/connections/lastfm/token",
-    responses((status = 200, description = "Token and approval URL", body = LastFmTokenResponse))
+    responses(
+        (status = 200, description = "Token and approval URL", body = LastFmTokenResponse),
+        (status = 409, description = "Last.fm is switched off on this server (LASTFM_OFF), \
+            or there is no key pair to sign with (PROVIDER_NOT_CONFIGURED)")
+    )
 )]
 pub async fn lastfm_token(
     State(deps): State<UsersDeps>,
@@ -442,7 +473,12 @@ pub async fn lastfm_token(
     tag = "users",
     path = "/api/v3/me/connections/lastfm/session",
     request_body = LastFmSessionExchange,
-    responses((status = 200, description = "Linked session", body = LastFmSessionResponse))
+    responses(
+        (status = 200, description = "Linked session", body = LastFmSessionResponse),
+        (status = 409, description = "Last.fm is switched off on this server (LASTFM_OFF), \
+            there is no key pair to sign with (PROVIDER_NOT_CONFIGURED), or the sign-in \
+            is not approved, expired or not started here (CONFLICT)")
+    )
 )]
 pub async fn lastfm_session(
     State(deps): State<UsersDeps>,

@@ -213,7 +213,7 @@ pub struct IntegrationStatus {
     pub download_client: bool,
     /// YouTube playback is configured.
     pub youtube: bool,
-    /// Last.fm is connected.
+    /// The admin has switched Last.fm on for this server.
     pub lastfm: bool,
     /// A Navidrome source is connected.
     pub navidrome: bool,

@@ -15438,7 +15438,7 @@ export interface components {
             download_client: boolean;
             /** @description A Jellyfin source is connected. */
             jellyfin: boolean;
-            /** @description Last.fm is connected. */
+            /** @description The admin has switched Last.fm on for this server. */
             lastfm: boolean;
             /** @description The native library has files. */
             library: boolean;
@@ -40689,6 +40689,15 @@ export interface operations {
                     "application/json": components["schemas"]["LastFmConfiguredResponse"];
                 };
             };
+            /** @description Last.fm is switched off on this server (LASTFM_OFF) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     lastfm_unlink: {
@@ -40731,6 +40740,15 @@ export interface operations {
                     "application/json": components["schemas"]["LastFmSessionResponse"];
                 };
             };
+            /** @description Last.fm is switched off on this server (LASTFM_OFF), there is no key pair to sign with (PROVIDER_NOT_CONFIGURED), or the sign-in is not approved, expired or not started here (CONFLICT) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     lastfm_token: {
@@ -40749,6 +40767,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LastFmTokenResponse"];
+                };
+            };
+            /** @description Last.fm is switched off on this server (LASTFM_OFF), or there is no key pair to sign with (PROVIDER_NOT_CONFIGURED) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

@@ -18,6 +18,7 @@ use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::{self, Role, import, models, stores::DirectoryUser};
 use droppedneedle_auth::{Admin, Principal};
 use droppedneedle_kernel::extract::ValidJson;
+use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -349,6 +350,42 @@ async fn lastfm_link_flow_keeps_secrets_sealed() {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["linked"], json!(linked), "{key}");
+    }
+}
+
+#[tokio::test]
+async fn lastfm_refusals_say_whether_it_is_off_or_has_no_key_pair() {
+    let (rig, _, user) = rig_with_admin().await;
+    let app = || test_app(&rig, Some(principal_for(&user, "sess-molly")));
+
+    // On, with no key pair anywhere: the web UI asks for the user's own.
+    let (status, body) = call(app(), "POST", "/api/v3/me/connections/lastfm/token", None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "PROVIDER_NOT_CONFIGURED");
+    assert_eq!(body["error"]["details"]["provider"], "lastfm");
+
+    rig.config
+        .save_secret_blocking(LastFmSettings {
+            enabled: false,
+            ..LastFmSettings::default()
+        })
+        .unwrap();
+    for (method, uri, body) in [
+        ("POST", "/api/v3/me/connections/lastfm/token", None),
+        (
+            "POST",
+            "/api/v3/me/connections/lastfm/session",
+            Some(json!({"token": "t"})),
+        ),
+        (
+            "PUT",
+            "/api/v3/me/connections/lastfm",
+            Some(json!({"api_key": "k", "shared_secret": "s"})),
+        ),
+    ] {
+        let (status, answer) = call(app(), method, uri, body).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{uri}");
+        assert_eq!(answer["error"]["code"], "LASTFM_OFF", "{uri}");
     }
 }
 

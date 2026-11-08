@@ -1,8 +1,10 @@
 import { page } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fakeApi, type FakeRequest } from '$lib/test/api';
+import { apiError, fakeApi, type FakeRequest } from '$lib/test/api';
+import { queryClient } from '$lib/queries/QueryClient';
 import { renderWithQuery } from '$lib/test/render';
 import type { ScrobblePreferences } from '$lib/features/profile/queries/scrobble-preferences.svelte';
+import type { IntegrationStatus } from '$lib/features/home/queries/home.svelte';
 
 // The preferences read waits for a signed-in user.
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -21,8 +23,23 @@ const prefs: ScrobblePreferences = {
 	auto_request_personal_mix: false
 };
 
+const integrations = (lastfm: boolean): IntegrationStatus => ({
+	download_client: false,
+	jellyfin: false,
+	lastfm,
+	library: false,
+	listenbrainz: false,
+	localfiles: false,
+	navidrome: false,
+	plex: false,
+	youtube: false,
+	youtube_api: false
+});
+
 afterEach(() => {
 	vi.restoreAllMocks();
+	// The switch is read through the app's own query client.
+	queryClient.clear();
 });
 
 describe('Last.fm link on the profile', () => {
@@ -36,6 +53,7 @@ describe('Last.fm link on the profile', () => {
 				connections: [{ service: 'lastfm', enabled: true, username: '' }]
 			},
 			'GET /api/v3/me/scrobble-preferences': prefs,
+			'GET /api/v3/home/integration-status': integrations(true),
 			'POST /api/v3/me/connections/lastfm/token': {
 				token: 'lfm-token',
 				auth_url: 'https://www.last.fm/api/auth/?api_key=k&token=lfm-token'
@@ -64,5 +82,39 @@ describe('Last.fm link on the profile', () => {
 		// here the exchange itself is the proof.
 		await expect.poll(() => exchanged).toEqual([{ token: 'lfm-token' }]);
 		await expect.element(page.getByRole('button', { name: 'Finish' })).not.toBeInTheDocument();
+	});
+
+	it('says Last.fm is off instead of offering Connect while the admin left it off', async () => {
+		fakeApi({
+			'GET /api/v3/me/connections': { connections: [] },
+			'GET /api/v3/me/scrobble-preferences': prefs,
+			'GET /api/v3/home/integration-status': integrations(false)
+		});
+		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
+
+		await expect.element(page.getByText('Last.fm is off on this server.')).toBeVisible();
+		// Only ListenBrainz's Connect is left.
+		await expect.element(page.getByRole('button', { name: 'Connect' })).toBeVisible();
+		expect(page.getByRole('button', { name: 'Connect' }).elements()).toHaveLength(1);
+	});
+
+	it('asks for the user’s own key pair when no key pair is set up', async () => {
+		fakeApi({
+			'GET /api/v3/me/connections': { connections: [] },
+			'GET /api/v3/me/scrobble-preferences': prefs,
+			'GET /api/v3/home/integration-status': integrations(true),
+			'POST /api/v3/me/connections/lastfm/token': apiError(
+				409,
+				'PROVIDER_NOT_CONFIGURED',
+				'Last.fm is not set up yet.',
+				{ provider: 'lastfm' }
+			)
+		});
+		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
+
+		const connectLastFm = page.getByRole('button', { name: 'Connect' }).last();
+		await expect.element(connectLastFm).toBeVisible();
+		await connectLastFm.click();
+		await expect.element(page.getByLabelText('Last.fm API key')).toBeVisible();
 	});
 });

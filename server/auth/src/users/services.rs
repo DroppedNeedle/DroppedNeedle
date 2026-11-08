@@ -1101,14 +1101,30 @@ pub async fn reset_password(deps: &UsersDeps, body: &PasswordReset) -> Result<()
 // Per-user Last.fm (v3 has no admin-global pair)
 // ---------------------------------------------------------------------------
 
+/// Why a Last.fm link route refused. The two 409s get their own codes so
+/// the web UI offers the key form only when a key pair is missing.
+#[derive(Debug)]
+pub enum LastFmLinkError {
+    /// The admin left Last.fm switched off on this server.
+    Off,
+    /// Neither the server nor the user has a key pair to sign with.
+    NoKeyPair,
+    /// Any other users failure.
+    Users(UsersError),
+}
+
+impl From<UsersError> for LastFmLinkError {
+    fn from(error: UsersError) -> Self {
+        Self::Users(error)
+    }
+}
+
 /// Last.fm master-switch guard. Reads live on every call.
-fn require_lastfm_enabled(deps: &UsersDeps) -> Result<(), UsersError> {
+fn require_lastfm_enabled(deps: &UsersDeps) -> Result<(), LastFmLinkError> {
     if deps.lastfm_switch.enabled() {
         Ok(())
     } else {
-        Err(UsersError::Conflict {
-            message: "Last.fm is disabled".to_owned(),
-        })
+        Err(LastFmLinkError::Off)
     }
 }
 
@@ -1138,7 +1154,7 @@ pub async fn lastfm_set_credentials(
     user_id: &str,
     api_key: &str,
     shared_secret: &str,
-) -> Result<LastFmConnection, UsersError> {
+) -> Result<LastFmConnection, LastFmLinkError> {
     require_lastfm_enabled(deps)?;
     let mask = droppedneedle_kernel::runtime_config::SECRET_MASK;
     let current = deps.lastfm.get(user_id).await.map_err(store_internal)?;
@@ -1211,12 +1227,15 @@ pub async fn lastfm_set_credentials(
 
 /// Decrypt one user's own key pair. Decrypt failure is a 500: the row is
 /// corrupt or the install was re-keyed.
-fn own_lastfm_keys(deps: &UsersDeps, link: &LastFmConnection) -> Result<LastFmKeys, UsersError> {
+fn own_lastfm_keys(
+    deps: &UsersDeps,
+    link: &LastFmConnection,
+) -> Result<LastFmKeys, LastFmLinkError> {
     let (Some(key_cipher), Some(secret_cipher)) = (
         link.api_key_encrypted.as_deref(),
         link.shared_secret_encrypted.as_deref(),
     ) else {
-        return Err(lastfm_not_set_up());
+        return Err(LastFmLinkError::NoKeyPair);
     };
     let decrypt = |cipher: &str| {
         deps.crypto
@@ -1234,21 +1253,13 @@ fn own_lastfm_keys(deps: &UsersDeps, link: &LastFmConnection) -> Result<LastFmKe
 fn lastfm_keys_for(
     deps: &UsersDeps,
     link: Option<&LastFmConnection>,
-) -> Result<LastFmKeys, UsersError> {
+) -> Result<LastFmKeys, LastFmLinkError> {
     match link.filter(|link| link.configured) {
         Some(link) => own_lastfm_keys(deps, link),
         None => deps
             .lastfm_switch
             .instance_keys()
-            .ok_or_else(lastfm_not_set_up),
-    }
-}
-
-fn lastfm_not_set_up() -> UsersError {
-    UsersError::Conflict {
-        message: "Last.fm is not set up yet. Ask your admin to add the Last.fm app key, \
-                  or add your own key and secret."
-            .to_owned(),
+            .ok_or(LastFmLinkError::NoKeyPair),
     }
 }
 
@@ -1256,7 +1267,7 @@ fn lastfm_not_set_up() -> UsersError {
 pub async fn lastfm_request_token(
     deps: &UsersDeps,
     user_id: &str,
-) -> Result<LastFmTokenResponse, UsersError> {
+) -> Result<LastFmTokenResponse, LastFmLinkError> {
     require_lastfm_enabled(deps)?;
     let link = deps.lastfm.get(user_id).await.map_err(store_internal)?;
     let keys = lastfm_keys_for(deps, link.as_ref())?;
@@ -1276,14 +1287,15 @@ pub async fn lastfm_exchange_session(
     deps: &UsersDeps,
     user_id: &str,
     token: &str,
-) -> Result<LastFmSessionResponse, UsersError> {
+) -> Result<LastFmSessionResponse, LastFmLinkError> {
     require_lastfm_enabled(deps)?;
     // Only the user who asked for this token may exchange it.
     if !deps.lastfm_pending.is_pending_for(user_id, token) {
         return Err(UsersError::Conflict {
             message: "This Last.fm sign-in has expired or was not started here. Start again."
                 .to_owned(),
-        });
+        }
+        .into());
     }
     let link = deps.lastfm.get(user_id).await.map_err(store_internal)?;
     let keys = lastfm_keys_for(deps, link.as_ref())?;
