@@ -52,6 +52,33 @@ pub(super) const PARKED: i64 = 1_000_000_000_000_000_000;
 /// Skip code of an album with files a scan found in a folder it holds
 /// back.
 pub const SCAN_HELD_BACK: &str = "SCAN_HELD_BACK";
+/// Skip code of an album whose last automatic run could not read a
+/// source (genres, lyrics, a cover, AcoustID): it is run again by itself.
+pub const SOURCES_DEFERRED: &str = "SOURCES_DEFERRED";
+/// How long after a run that missed a source each retry comes: about an
+/// hour, six hours and a day. After the last one the album is left until
+/// something changes.
+const SOURCES_RETRY_SECONDS: [f64; 3] = [3600.0, 6.0 * 3600.0, 24.0 * 3600.0];
+
+/// The wait before the retry after `retries`, the last one's once they are
+/// used.
+fn retry_delay(retries: i64) -> f64 {
+    usize::try_from(retries)
+        .ok()
+        .and_then(|retries| SOURCES_RETRY_SECONDS.get(retries))
+        .copied()
+        .unwrap_or(SOURCES_RETRY_SECONDS[2])
+}
+
+/// An album that waits for MusicBrainz or AcoustID before it is planned.
+/// A retry of missed sources waits as one, so it keeps its count and its
+/// reason, and is looked at again after the first retry's wait.
+fn source_wait(retry: Option<i64>, code: &'static str, now: f64) -> Verdict {
+    match retry {
+        Some(_) => Verdict::RetryAt(SOURCES_DEFERRED, now + SOURCES_RETRY_SECONDS[0]),
+        None => Verdict::Wait(code),
+    }
+}
 
 /// When the worker first looked, so the first looks after a start wait.
 #[derive(Debug, Clone, Default)]
@@ -104,6 +131,9 @@ struct Opened {
 enum Verdict {
     /// A run was queued.
     Started(String),
+    /// A retry of the sources the album's last run missed was queued: the
+    /// album's retries so far, this one counted.
+    Retried(String, i64),
     /// Nothing to do; nothing to tell anyone.
     Done(&'static str),
     /// Skipped until something changes; the reason is shown.
@@ -183,6 +213,11 @@ pub fn skip_reason(code: &str) -> ItemReason {
             "AcoustID could not be reached for this album's AcoustID IDs, so it waits.",
             "Nothing to do: it is looked at again by itself, at least every six hours.",
         ),
+        SOURCES_DEFERRED => reason(
+            code,
+            "Genres, lyrics, a cover or AcoustID IDs could not be read when this album was last written.",
+            "Nothing to do: it is run again by itself about an hour, six hours and a day later. After that, preview it by hand to try again.",
+        ),
         IDENTIFYING => reason(
             code,
             "This album is being identified, so it waits.",
@@ -210,7 +245,39 @@ pub fn skip_reason(code: &str) -> ItemReason {
 pub fn queue(conn: &Connection, album_id: &str, now: f64) -> rusqlite::Result<()> {
     conn.execute(
         crate::management::sql::QUEUE.text(),
-        params![album_id, crate::clock::ms(now)],
+        params![album_id, crate::clock::ms(now), SOURCES_DEFERRED],
+    )?;
+    Ok(())
+}
+
+/// After an automatic run of the album: when it missed a source, it waits
+/// for its next retry (or, once the retries are used, until something
+/// changes); when it missed none, any retry it waited for is done with.
+pub(super) fn after_run(
+    conn: &Connection,
+    album_id: &str,
+    missed_sources: bool,
+    now: f64,
+) -> rusqlite::Result<()> {
+    if !missed_sources {
+        conn.execute(
+            crate::management::sql::DROP_SOURCES_RETRY.text(),
+            params![album_id, SOURCES_DEFERRED],
+        )?;
+        return Ok(());
+    }
+    let [first, second, third] = SOURCES_RETRY_SECONDS.map(|delay| crate::clock::ms(now + delay));
+    conn.execute(
+        crate::management::sql::QUEUE_SOURCES_RETRY.text(),
+        params![
+            album_id,
+            crate::clock::ms(now),
+            SOURCES_DEFERRED,
+            first,
+            second,
+            third,
+            PARKED
+        ],
     )?;
     Ok(())
 }
@@ -523,11 +590,13 @@ impl Management {
         let Some(AutomaticDueRow {
             local_album_id: album_id,
             attempts,
+            last_reason_code,
         }) = due
         else {
             return Ok(false);
         };
-        let verdict = match self.automatic_verdict(&album_id) {
+        let retries = (last_reason_code.as_deref() == Some(SOURCES_DEFERRED)).then_some(attempts);
+        let verdict = match self.automatic_verdict(&album_id, retries, now) {
             Ok(verdict) => verdict,
             // A busy database says nothing about the album: it stays due,
             // the try is not counted, and the loop waits before the next.
@@ -542,6 +611,21 @@ impl Management {
             Verdict::Started(job_id) => {
                 tracing::info!(album_id, job_id, "automatic management started");
                 None
+            }
+            // The row keeps the count. The run's end sets when the next
+            // retry comes; this time stands only if it never ends.
+            Verdict::Retried(job_id, retry) => {
+                tracing::info!(
+                    album_id,
+                    job_id,
+                    retry,
+                    "automatic management retries the sources an album missed"
+                );
+                let fallback = usize::try_from(retry)
+                    .ok()
+                    .and_then(|retry| SOURCES_RETRY_SECONDS.get(retry))
+                    .map_or(PARKED, |delay| crate::clock::ms(now + delay));
+                Some((fallback, 1, SOURCES_DEFERRED))
             }
             Verdict::Done(code) => {
                 tracing::debug!(album_id, code, "automatic management has nothing to do");
@@ -582,7 +666,7 @@ impl Management {
                     )?,
                     Some((at, added, code)) => conn.execute(
                         crate::management::sql::PUT_OFF_AUTOMATIC_ALBUM.text(),
-                        params![album_id, added, at, code],
+                        params![album_id, added, at, code, SOURCES_DEFERRED],
                     )?,
                 };
                 Ok::<_, ManagementError>(())
@@ -849,7 +933,14 @@ impl Management {
             .is_none())
     }
 
-    fn automatic_verdict(&self, album_id: &str) -> Result<Verdict, ManagementError> {
+    /// `retries` is set for an album waiting to retry the sources its last
+    /// run missed: how many retries it has had.
+    fn automatic_verdict(
+        &self,
+        album_id: &str,
+        retries: Option<i64>,
+        now: f64,
+    ) -> Result<Verdict, ManagementError> {
         let mut gate = self.automatic_gate(album_id, false)?;
         if let Gate::Judge { .. } = gate {
             if self.parts.db.write_blocking(
@@ -930,60 +1021,6 @@ impl Management {
         if managed {
             return Ok(Verdict::Done("ALREADY_MANAGED"));
         }
-        // Credits and artist names are fetched before the run starts: an
-        // album whose credits or names cannot be read now waits and is
-        // looked at again by itself, rather than being planned without
-        // them.
-        if let Some(release_mbid) = identity.release_mbid.as_deref()
-            && let Some(mut release) = self.parts.identify_store.release(release_mbid, None)?
-            && super::enrich::ensure_release_extras(
-                &*self.parts.enrichment,
-                &self.parts.identify_store,
-                &pinned,
-                &mut release,
-                true,
-            )
-            .unavailable()
-        {
-            return Ok(Verdict::Wait("METADATA_UNAVAILABLE"));
-        }
-        // AcoustID ids the same way: an album whose ids cannot be looked
-        // up now waits, rather than being written without them and never
-        // planned again. No key, or a key AcoustID refuses, goes ahead.
-        // The answer is kept a while, so the plan reuses it.
-        if let Some(sandbox) = sandbox.as_ref() {
-            let saved = files
-                .iter()
-                .map(|file| {
-                    self.parts.db.read_blocking("management.overrides", |conn| {
-                        Ok(planner::overrides(conn, album_id, &file.id)?)
-                    })
-                })
-                .collect::<Result<Vec<_>, ManagementError>>()?;
-            let subjects: Vec<planner::AcoustIdSubject<'_>> = files
-                .iter()
-                .zip(&saved)
-                .map(|(file, overrides)| planner::AcoustIdSubject {
-                    track_id: &file.id,
-                    root_id: &file.root_id,
-                    relative_path: &file.relative_path,
-                    overrides,
-                })
-                .collect();
-            let lookup = planner::acoustid_values(
-                &self.parts,
-                sandbox,
-                &pinned.profile,
-                &subjects,
-                std::time::Instant::now() + planner::RUN_ANALYSIS_BUDGET,
-                true,
-                true,
-                &mut super::enrich::AlbumExtras::default(),
-            );
-            if lookup == planner::AcoustIdLookup::Unavailable {
-                return Ok(Verdict::Wait("ACOUSTID_UNAVAILABLE"));
-            }
-        }
         let key_material = format!(
             "{album_id}\u{0}{}\u{0}{}\u{0}{}\u{0}{}\u{0}{}\u{0}{}",
             identity.row_revision,
@@ -1024,7 +1061,107 @@ impl Management {
             0 => key_material,
             count => format!("{key_material}\u{0}handed-back:{count}"),
         };
-        let mut key = format!("automatic:{}", sha256_hex(key_material.as_bytes()));
+        // Each retry of missed sources is a run of its own, even when
+        // nothing else changed since the last.
+        let key_for = |retry: Option<i64>| {
+            let material = match retry {
+                Some(retry) => format!("{key_material}\u{0}sources-retry:{retry}"),
+                None => key_material.clone(),
+            };
+            format!("automatic:{}", sha256_hex(material.as_bytes()))
+        };
+        // An album whose last run missed a source, and that is unchanged
+        // since but for that, runs again only once its next retry is due,
+        // and is left when the retries are used.
+        let mut retry = None;
+        if let (Some(retries), Some(sandbox)) = (retries, sandbox.as_ref())
+            && let Some(last_run) = self.organized_but_for_sources(
+                album_id,
+                &at,
+                &OrganizedPins {
+                    profile_id: &pinned.profile.id,
+                    profile_revision: &revisions.profile,
+                    naming_revision: &revisions.naming,
+                    tagging_scripts: organized::script_pins(&pinned.tagging_scripts),
+                    expected_root: None,
+                },
+                sandbox,
+            )?
+        {
+            // The last retry's preview may still wait to be applied (the
+            // database was busy, or the library was off when it was
+            // planned): it is applied now, and spends no retry.
+            if retries > 0
+                && let Some(verdict) = self.pending_retry(&key_for(Some(retries)), retries, now)?
+            {
+                return Ok(verdict);
+            }
+            let Some(delay) = usize::try_from(retries)
+                .ok()
+                .and_then(|retries| SOURCES_RETRY_SECONDS.get(retries))
+            else {
+                return Ok(Verdict::Park(SOURCES_DEFERRED));
+            };
+            if last_run + delay > now {
+                return Ok(Verdict::RetryAt(SOURCES_DEFERRED, last_run + delay));
+            }
+            retry = Some(retries + 1);
+        }
+        // Credits and artist names are fetched before the run starts: an
+        // album whose credits or names cannot be read now waits and is
+        // looked at again by itself, rather than being planned without
+        // them.
+        if let Some(release_mbid) = identity.release_mbid.as_deref()
+            && let Some(mut release) = self.parts.identify_store.release(release_mbid, None)?
+            && super::enrich::ensure_release_extras(
+                &*self.parts.enrichment,
+                &self.parts.identify_store,
+                &pinned,
+                &mut release,
+                true,
+            )
+            .unavailable()
+        {
+            return Ok(source_wait(retry, "METADATA_UNAVAILABLE", now));
+        }
+        // AcoustID ids the same way: an album whose ids cannot be looked
+        // up now waits, rather than being written without them and never
+        // planned again. No key, or a key AcoustID refuses, goes ahead.
+        // The answer is kept a while, so the plan reuses it.
+        if let Some(sandbox) = sandbox.as_ref() {
+            let saved = files
+                .iter()
+                .map(|file| {
+                    self.parts.db.read_blocking("management.overrides", |conn| {
+                        Ok(planner::overrides(conn, album_id, &file.id)?)
+                    })
+                })
+                .collect::<Result<Vec<_>, ManagementError>>()?;
+            let subjects: Vec<planner::AcoustIdSubject<'_>> = files
+                .iter()
+                .zip(&saved)
+                .map(|(file, overrides)| planner::AcoustIdSubject {
+                    track_id: &file.id,
+                    root_id: &file.root_id,
+                    relative_path: &file.relative_path,
+                    overrides,
+                })
+                .collect();
+            let lookup = planner::acoustid_values(
+                &self.parts,
+                sandbox,
+                &pinned.profile,
+                &subjects,
+                std::time::Instant::now() + planner::RUN_ANALYSIS_BUDGET,
+                true,
+                true,
+                &mut super::enrich::AlbumExtras::default(),
+            );
+            if lookup == planner::AcoustIdLookup::Unavailable {
+                return Ok(source_wait(retry, "ACOUSTID_UNAVAILABLE", now));
+            }
+        }
+        let mut key = key_for(retry);
         if let Some(existing) = self
             .parts
             .db
@@ -1077,6 +1214,47 @@ impl Management {
         if handle.existing {
             return Ok(Verdict::Done("ALREADY_QUEUED"));
         }
-        Ok(Verdict::Started(handle.job_id))
+        Ok(match retry {
+            Some(retry) => Verdict::Retried(handle.job_id, retry),
+            None => Verdict::Started(handle.job_id),
+        })
+    }
+
+    /// The preview a retry of missed sources started under `key`, while it
+    /// is still to be applied: a ready one is applied now. The album keeps
+    /// its count of `retries`; `None` when there is no such preview.
+    fn pending_retry(
+        &self,
+        key: &str,
+        retries: i64,
+        now: f64,
+    ) -> Result<Option<Verdict>, ManagementError> {
+        let Some(existing) = self
+            .parts
+            .db
+            .read_blocking("management.retry_for_key", |conn| {
+                Ok::<_, ManagementError>(store::job_for_key(conn, key)?)
+            })?
+        else {
+            return Ok(None);
+        };
+        let snapshot = self.snapshot(&existing)?;
+        let expires = snapshot.preview_expires_at.unwrap_or(0.0);
+        // Looked at again once the run has had time to end; its end sets
+        // when the next retry comes.
+        let later = now + retry_delay(retries);
+        Ok(match (snapshot.job.state, snapshot.phase) {
+            (OperationState::Queued | OperationState::Running | OperationState::Paused, _) => {
+                Some(Verdict::RetryAt(SOURCES_DEFERRED, later))
+            }
+            (OperationState::Ready, ManagementPhase::Ready) if expires > now => {
+                if self.apply_automatic(&existing, &snapshot.summary())? {
+                    Some(Verdict::RetryAt(SOURCES_DEFERRED, later))
+                } else {
+                    Some(Verdict::RetryAt(SOURCES_DEFERRED, expires))
+                }
+            }
+            _ => None,
+        })
     }
 }

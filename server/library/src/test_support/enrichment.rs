@@ -9,6 +9,8 @@ use crate::matching::model::ReleaseExtras;
 /// Scripted answers for the test suite.
 #[derive(Default)]
 pub struct ScriptedEnrichment {
+    /// ListenBrainz's genres; `None` as if it were not attached. Last.fm
+    /// is never attached.
     pub listenbrainz: Option<Vec<Candidate>>,
     pub lyrics: Option<LyricsFound>,
     pub cover: Option<Cover>,
@@ -49,11 +51,10 @@ impl EnrichmentPort for ScriptedEnrichment {
         _release_group_mbid: &'a str,
         _background: bool,
     ) -> BoxFuture<'a, Result<GenreAnswer, String>> {
-        let answer = self
+        let answer = Ok(self
             .listenbrainz
             .clone()
-            .map(GenreAnswer::Genres)
-            .ok_or_else(|| "not scripted".to_owned());
+            .map_or(GenreAnswer::Off, GenreAnswer::Genres));
         Box::pin(async move { answer })
     }
 
@@ -63,7 +64,7 @@ impl EnrichmentPort for ScriptedEnrichment {
         _album: &'a str,
         _background: bool,
     ) -> BoxFuture<'a, Result<GenreAnswer, String>> {
-        Box::pin(async { Err("not scripted".to_owned()) })
+        Box::pin(async { Ok(GenreAnswer::Off) })
     }
 
     fn lyrics<'a>(

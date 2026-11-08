@@ -12544,8 +12544,26 @@ impl ManagedLibrary {
         ),
         enrichment: Option<Arc<dyn droppedneedle_library::management::enrich::EnrichmentPort>>,
     ) -> Self {
+        Self::start_on(
+            tag,
+            configure,
+            enrichment,
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        )
+        .await
+    }
+
+    /// As [`Self::start_with`], with the platform on `clock`.
+    async fn start_on(
+        tag: &str,
+        configure: impl Fn(
+            &mut droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
+        ),
+        enrichment: Option<Arc<dyn droppedneedle_library::management::enrich::EnrichmentPort>>,
+        clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    ) -> Self {
         use droppedneedle_library::management::settings as lm;
-        let (scratch, library, music) = bare_library_with(tag, enrichment).await;
+        let (scratch, library, music) = bare_library_at(tag, enrichment, clock).await;
         std::fs::create_dir_all(&music).expect("music folder");
         add_music_root(&library, &music).await;
         library
@@ -13926,8 +13944,8 @@ async fn a_folder_preview_records_albums_it_finds_already_right() {
     use droppedneedle_library::management::models::SelectionKind;
 
     let managed = ManagedLibrary::start("lib-record-organized", |profile| {
-        // No genre source answers here, and a file planned with that
-        // warning is never recorded as left as it is.
+        // No genre source is attached here, and genres stay off so the
+        // album is right as it stands.
         profile.genres.enabled = false;
     })
     .await;
@@ -13979,8 +13997,8 @@ async fn a_folder_preview_plans_an_album_matched_again_to_another_release() {
     use droppedneedle_library::management::models::SelectionKind;
 
     let managed = ManagedLibrary::start("lib-organized-rematch", |profile| {
-        // No genre source answers here, and a file planned with that
-        // warning is never recorded as left as it is.
+        // No genre source is attached here, and genres stay off so the
+        // album is right as it stands.
         profile.genres.enabled = false;
     })
     .await;
@@ -29350,4 +29368,379 @@ async fn restore_brings_the_replaced_cover_back_when_the_archive_cover_is_gone()
         std::fs::read(&cover).expect("the original cover is back"),
         own
     );
+}
+
+/// The scripted sources, with ListenBrainz's genres switched on and off
+/// as the test goes: `None` while it cannot be reached.
+struct FlakyGenres {
+    scripted: Arc<droppedneedle_library::test_support::ScriptedEnrichment>,
+    listenbrainz:
+        std::sync::Mutex<Option<Vec<droppedneedle_library::management::genre::Candidate>>>,
+    /// Run once at the next ListenBrainz read, while a run is planned.
+    on_read: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl droppedneedle_library::management::enrich::EnrichmentPort for FlakyGenres {
+    fn listenbrainz_genres<'a>(
+        &'a self,
+        _release_group_mbid: &'a str,
+        _background: bool,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<droppedneedle_library::management::enrich::GenreAnswer, String>,
+    > {
+        use droppedneedle_library::management::enrich::GenreAnswer;
+        if let Some(hook) = self.on_read.lock().expect("hook").take() {
+            hook();
+        }
+        let answer = self
+            .listenbrainz
+            .lock()
+            .expect("script")
+            .clone()
+            .map(GenreAnswer::Genres)
+            .ok_or_else(|| "ListenBrainz is down".to_owned());
+        Box::pin(async move { answer })
+    }
+
+    fn lastfm_genres<'a>(
+        &'a self,
+        artist: &'a str,
+        album: &'a str,
+        background: bool,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<droppedneedle_library::management::enrich::GenreAnswer, String>,
+    > {
+        self.scripted.lastfm_genres(artist, album, background)
+    }
+
+    fn lyrics<'a>(
+        &'a self,
+        query: &'a droppedneedle_library::management::enrich::LyricsQuery,
+        background: bool,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Option<droppedneedle_library::management::enrich::LyricsFound>, String>,
+    > {
+        self.scripted.lyrics(query, background)
+    }
+
+    fn front_cover<'a>(
+        &'a self,
+        release_mbid: &'a str,
+        release_group_mbid: &'a str,
+        background: bool,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Option<droppedneedle_library::management::enrich::Cover>, String>,
+    > {
+        self.scripted
+            .front_cover(release_mbid, release_group_mbid, background)
+    }
+
+    fn edition_cover<'a>(
+        &'a self,
+        release_mbid: &'a str,
+        background: bool,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Option<droppedneedle_library::management::enrich::Cover>, String>,
+    > {
+        self.scripted.edition_cover(release_mbid, background)
+    }
+
+    fn release_extras<'a>(
+        &'a self,
+        release_mbid: &'a str,
+        wants: droppedneedle_library::management::enrich::ExtrasWanted,
+        background: bool,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<droppedneedle_library::matching::model::ReleaseExtras, String>,
+    > {
+        self.scripted
+            .release_extras(release_mbid, wants, background)
+    }
+
+    fn acoustid_lookup<'a>(
+        &'a self,
+        prints: &'a [droppedneedle_library::management::enrich::AcoustIdPrint],
+        background: bool,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        droppedneedle_library::management::enrich::AcoustIdAnswer,
+    > {
+        self.scripted.acoustid_lookup(prints, background)
+    }
+}
+
+/// `not_before_at` of an album left until something changes.
+const LEFT_UNTIL_CHANGED: i64 = 1_000_000_000_000_000_000;
+
+/// A library folder managed automatically, on a clock the test moves,
+/// whose one album writes ListenBrainz genres. ListenBrainz starts down
+/// when `listenbrainz_down`.
+async fn flaky_genre_library(
+    tag: &str,
+    listenbrainz_down: bool,
+) -> (
+    ManagedLibrary,
+    Arc<FlakyGenres>,
+    Arc<droppedneedle_kernel::test_support::ManualClock>,
+    String,
+    Vec<String>,
+) {
+    use droppedneedle_kernel::clock::Clock as _;
+    use droppedneedle_kernel::runtime_config::sections::GenreSource;
+    let scripted = Arc::new(droppedneedle_library::test_support::ScriptedEnrichment::default());
+    let flaky = Arc::new(FlakyGenres {
+        scripted: scripted.clone(),
+        listenbrainz: std::sync::Mutex::new((!listenbrainz_down).then(rock)),
+        on_read: std::sync::Mutex::new(None),
+    });
+    let clock = Arc::new(droppedneedle_kernel::test_support::ManualClock::at(
+        droppedneedle_kernel::clock::SystemClock.now_ms(),
+    ));
+    let managed = ManagedLibrary::start_on(
+        tag,
+        |profile| {
+            profile.genres.enabled = true;
+            profile.genres.sources = vec![GenreSource::Listenbrainz];
+        },
+        Some(flaky.clone()),
+        clock.clone(),
+    )
+    .await;
+    let (album, tracks) = managed.add_album("first", 1).await;
+    *scripted.relations.lock().expect("script") =
+        Some(managed.scripted_credits(&tracks, |_| concerto_credits()));
+    managed.activate().await;
+    (managed, flaky, clock, album, tracks)
+}
+
+fn rock() -> Vec<droppedneedle_library::management::genre::Candidate> {
+    vec![droppedneedle_library::management::genre::Candidate {
+        name: "Rock".to_owned(),
+        count: Some(10),
+        curated: true,
+    }]
+}
+
+impl ManagedLibrary {
+    /// The album's automatic queue row: reason, tries and when it is due.
+    fn queue_row(&self, album: &str) -> Option<(Option<String>, i64, i64)> {
+        use rusqlite::OptionalExtension as _;
+        self.db()
+            .query_row(
+                "SELECT last_reason_code, attempts, not_before_at \
+                 FROM library_management_automatic_queue WHERE local_album_id = ?1",
+                [album],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .expect("queue read")
+    }
+
+    /// What the last run recorded for the track's file.
+    fn outcome(&self, track: &str) -> Option<String> {
+        self.db()
+            .query_row(
+                "SELECT last_outcome FROM library_track_management_state \
+                 WHERE local_track_id = ?1",
+                [track],
+                |row| row.get(0),
+            )
+            .expect("state read")
+    }
+
+    /// Whether a preview of the whole folder plans the album again.
+    async fn folder_plans(&self, album: &str, key: &str) -> bool {
+        use droppedneedle_library::management::models::SelectionKind;
+        let (_, items) = self.preview(SelectionKind::Roots, &["music"], key).await;
+        items.iter().any(|item| item.album_id == album)
+    }
+}
+
+/// An automatic run that could not read ListenBrainz's genres writes the
+/// album without them and leaves it not organized: a preview of the
+/// folder plans it again, and it is run again by itself about an hour
+/// later. The scan of the run's own writes neither runs it sooner nor
+/// starts its count again. Once ListenBrainz answers, the retry writes
+/// the genres and the album counts as organized.
+#[tokio::test]
+async fn an_automatic_run_that_missed_genres_is_retried_by_itself() {
+    use droppedneedle_kernel::clock::Clock as _;
+    use droppedneedle_library::tags::{TagField, read_fields};
+
+    let (managed, flaky, clock, album, tracks) =
+        flaky_genre_library("lib-missed-genres", true).await;
+    let track = &tracks[0];
+    managed.look(&album).await;
+    assert_eq!(managed.automatic_runs().len(), 1, "the album was written");
+    assert_eq!(managed.outcome(track).as_deref(), Some("managed"));
+    let (code, tries, due) = managed.queue_row(&album).expect("the album waits");
+    assert_eq!((code.as_deref(), tries), (Some("SOURCES_DEFERRED"), 0));
+    let hour = 3_600_000;
+    assert!(
+        (due - clock.now_ms() - hour).abs() <= 1,
+        "about an hour on: {}",
+        due - clock.now_ms()
+    );
+    let skipped = managed.management().automatic_skipped(10).expect("skipped");
+    assert_eq!(skipped[0].reason.code, "SOURCES_DEFERRED");
+    let writes = managed
+        .management()
+        .writes_by_itself(&album)
+        .expect("writes read");
+    assert!(writes.by_itself);
+    assert!(
+        !writes.pending,
+        "the album page does not show a write under way while the retry waits"
+    );
+    assert!(managed.folder_plans(&album, "missed").await);
+
+    // The scan reads the run's writes and queues the album: the worker
+    // looks, and leaves it until its retry is due.
+    rescan(&managed.library).await;
+    managed.worker_looks().await;
+    clock.advance(hour - 60_000);
+    managed.worker_looks().await;
+    assert_eq!(managed.automatic_runs().len(), 1, "not run again yet");
+    let (code, tries, again) = managed.queue_row(&album).expect("the album waits");
+    assert_eq!((code.as_deref(), tries), (Some("SOURCES_DEFERRED"), 0));
+    assert!((again - due).abs() <= 1, "still due at the hour");
+
+    *flaky.listenbrainz.lock().expect("script") = Some(rock());
+    clock.advance(60_000);
+    managed.worker_looks().await;
+    assert_eq!(managed.automatic_runs().len(), 2, "the retry ran");
+    assert_eq!(
+        read_fields(track_file(&managed.path(track))).expect("tags read")[&TagField::Genre],
+        vec!["rock".to_owned()],
+        "the retry wrote the genres"
+    );
+    assert_eq!(managed.outcome(track).as_deref(), Some("succeeded"));
+    assert_eq!(managed.queue_row(&album), None, "nothing left to retry");
+    rescan(&managed.library).await;
+    managed.worker_looks().await;
+    assert_eq!(managed.automatic_runs().len(), 2);
+    assert!(
+        !managed.folder_plans(&album, "organized").await,
+        "the album counts as organized"
+    );
+}
+
+/// While the genre source stays down, the album is run again about an
+/// hour, six hours and a day after each run, then left until something
+/// changes: nothing loops.
+#[tokio::test]
+async fn missed_genres_are_retried_three_times_then_left() {
+    let (managed, _flaky, clock, album, tracks) =
+        flaky_genre_library("lib-missed-genres-retries", true).await;
+    managed.look(&album).await;
+    let hour = 3_600_000;
+    for (retry, wait) in [(1, hour), (2, 6 * hour), (3, 24 * hour)] {
+        clock.advance(wait - 60_000);
+        managed.worker_looks().await;
+        assert_eq!(managed.automatic_runs().len(), retry, "retry {retry} waits");
+        clock.advance(60_000);
+        managed.worker_looks().await;
+        assert_eq!(
+            managed.automatic_runs().len(),
+            retry + 1,
+            "retry {retry} ran"
+        );
+        assert_eq!(managed.outcome(&tracks[0]).as_deref(), Some("managed"));
+    }
+    let (code, tries, due) = managed.queue_row(&album).expect("the album is listed");
+    assert_eq!((code.as_deref(), tries), (Some("SOURCES_DEFERRED"), 3));
+    assert_eq!(due, LEFT_UNTIL_CHANGED, "left until something changes");
+    clock.advance(30 * 24 * hour);
+    managed.worker_looks().await;
+    assert_eq!(managed.automatic_runs().len(), 4, "nothing more");
+}
+
+/// A retry whose preview could not be applied when its planning ended
+/// (the library was switched off meanwhile) is applied at the next look
+/// once the library is back on, and spends no retry.
+#[tokio::test]
+async fn a_retry_planned_as_the_library_went_off_is_applied_once_it_is_back() {
+    use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+    use droppedneedle_library::tags::{TagField, read_fields};
+
+    let (managed, flaky, clock, album, tracks) =
+        flaky_genre_library("lib-missed-genres-off", true).await;
+    managed.look(&album).await;
+    let switch = {
+        let store = managed.library.settings.store().clone();
+        let core = managed.library.core.clone();
+        move |on: bool| {
+            store
+                .update_secret_blocking::<TypedLibrary, String, _>(move |stored| {
+                    let mut settings = stored.into_inner();
+                    settings.enabled = on;
+                    Ok(settings)
+                })
+                .expect("library switch saved");
+            core.refresh_registry();
+        }
+    };
+    let off = switch.clone();
+    *flaky.listenbrainz.lock().expect("script") = Some(rock());
+    *flaky.on_read.lock().expect("hook") = Some(Box::new(move || off(false)));
+    clock.advance(3_600_000);
+    managed.worker_looks().await;
+    let genre = || read_fields(track_file(&managed.path(&tracks[0]))).expect("tags read");
+    assert!(
+        !genre()[&TagField::Genre].contains(&"rock".to_owned()),
+        "nothing written while the library is off"
+    );
+
+    switch(true);
+    managed.worker_looks().await;
+    assert_eq!(
+        genre()[&TagField::Genre],
+        vec!["rock".to_owned()],
+        "the retry's preview was applied"
+    );
+    assert_eq!(managed.outcome(&tracks[0]).as_deref(), Some("succeeded"));
+    assert_eq!(managed.queue_row(&album), None);
+}
+
+/// A run whose only warnings are lasting ones (no AcoustID key) still
+/// counts as organized: nothing is retried, and a preview of the folder
+/// leaves the album out.
+#[tokio::test]
+async fn a_lasting_warning_still_counts_as_organized() {
+    let (managed, _flaky, _clock, album, tracks) =
+        flaky_genre_library("lib-lasting-warning", false).await;
+    managed.strip_acoustid(&tracks).await;
+    managed.seed_print(&tracks[0], None);
+    managed.look(&album).await;
+    let management = managed.management();
+    let (history, _) = management.history(Default::default()).expect("history");
+    let run = &history
+        .iter()
+        .find(|item| item.origin == "scan_discovered")
+        .expect("the automatic run")
+        .job
+        .id;
+    let items = management
+        .items(run, -1, 100, &Default::default())
+        .expect("items")
+        .items;
+    assert!(
+        items[0]
+            .facts
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("need an AcoustID key")),
+        "{:?}",
+        items[0].facts.warnings
+    );
+    assert!(items[0].diff.deferred_sources.is_empty());
+    assert_eq!(managed.outcome(&tracks[0]).as_deref(), Some("succeeded"));
+    assert_eq!(managed.queue_row(&album), None, "nothing to retry");
+    assert!(!managed.folder_plans(&album, "organized").await);
 }

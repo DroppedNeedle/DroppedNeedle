@@ -705,7 +705,25 @@ fn plan_file(
             }
         })
         .collect();
+    // The outside sources this file's plan could not read now. A file
+    // that names one is not counted as organized, so it is planned again.
     item.diff.deferred_sources = tag_plan.deferred.clone();
+    if ctx.pinned.profile.enrichment.lyrics.enabled
+        && lyrics == super::enrich::LyricsAnswer::Deferred
+    {
+        item.diff.deferred_sources.push("lrclib".to_owned());
+    }
+    if extras.cover_deferred {
+        item.diff.deferred_sources.push("cover".to_owned());
+    }
+    if extras.acoustid_waiting.contains(&track.id)
+        || extras
+            .acoustid_notes
+            .iter()
+            .any(|(id, note)| id == &track.id && note == ACOUSTID_OUT_OF_TIME)
+    {
+        item.diff.deferred_sources.push("acoustid".to_owned());
+    }
     item.diff.field_mutations = tag_plan.mutations;
     item.diff.tags_changed = !tag_plan.updates.is_empty();
     if item.diff.tags_changed {
@@ -1553,6 +1571,11 @@ fn acoustid_unavailable() -> ItemReason {
     }
 }
 
+/// The note on the file whose AcoustID values a run's time for analysing
+/// audio ran out before; its plan counts AcoustID as a source not read.
+const ACOUSTID_OUT_OF_TIME: &str = "AcoustID values were not worked out: this run's time for \
+     analysing audio ran out, so the next run does them.";
+
 /// How an album's AcoustID lookup went.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AcoustIdLookup {
@@ -1790,12 +1813,9 @@ pub(crate) fn acoustid_values(
         }
     }
     if let Some(track) = out_of_time {
-        extras.acoustid_notes.push((
-            track.to_owned(),
-            "AcoustID values were not worked out: this run's time for analysing audio ran out, \
-             so the next run does them."
-                .to_owned(),
-        ));
+        extras
+            .acoustid_notes
+            .push((track.to_owned(), ACOUSTID_OUT_OF_TIME.to_owned()));
     }
     let mut unanswered: Option<Unanswered> = None;
     let mut refused = false;

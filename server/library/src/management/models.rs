@@ -348,7 +348,8 @@ pub struct ItemDiff {
     pub artwork_changed: bool,
     /// Native tags outside the managed fields a scrub removes.
     pub scrubbed_raw_tags: Vec<ScrubbedTag>,
-    /// Genre sources that could not be asked.
+    /// Outside sources that could not be read now: a genre source
+    /// (`listenbrainz`, `lastfm`), `lrclib`, `cover` or `acoustid`.
     pub deferred_sources: Vec<String>,
 }
 

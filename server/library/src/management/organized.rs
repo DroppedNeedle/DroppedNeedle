@@ -146,12 +146,17 @@ struct FileFacts<'a> {
     root_id: &'a str,
 }
 
-/// Whether one file is as this run would leave it.
-fn file_organized(pins: &OrganizedPins<'_>, facts: &FileFacts<'_>) -> bool {
+/// Whether one file is as this run would leave it, its recorded outcome
+/// one `written` accepts.
+fn file_organized(
+    pins: &OrganizedPins<'_>,
+    facts: &FileFacts<'_>,
+    written: fn(&TrackState) -> bool,
+) -> bool {
     let state = facts.state;
     let identity = facts.identity;
     let revision = |value: Option<u64>| value.and_then(|value| i64::try_from(value).ok());
-    state.last_run_succeeded()
+    written(state)
         && state.profile_id.as_deref() == Some(pins.profile_id)
         && state.profile_revision.as_deref() == Some(pins.profile_revision)
         && state.naming_revision.as_deref() == Some(pins.naming_revision)
@@ -175,9 +180,10 @@ fn file_organized(pins: &OrganizedPins<'_>, facts: &FileFacts<'_>) -> bool {
 
 /// Whether a planned file is left exactly as it is: eligible with no
 /// warning (an outside source that could not be read plans with one), no
-/// reason, nothing to change and nothing to move.
+/// source left unread, no reason, nothing to change and nothing to move.
 fn plans_no_change(item: &PlannedItem, file: &FileAt<'_>) -> bool {
     item.eligibility == Eligibility::Eligible
+        && item.diff.deferred_sources.is_empty()
         && item.reason().is_none()
         && item.facts.blockers.is_empty()
         && !item.diff.changes_anything()
@@ -230,8 +236,52 @@ impl Management {
         sandbox: &Sandbox,
         applied: &mut AppliedScripts,
     ) -> Result<bool, ManagementError> {
+        Ok(self
+            .organized_as(
+                album_id,
+                files,
+                pins,
+                sandbox,
+                applied,
+                TrackState::last_run_succeeded,
+            )?
+            .is_some())
+    }
+
+    /// Whether the album is as its last runs left it, under `pins`, with
+    /// only the outside sources a plan could not read missing: organized
+    /// in every way but that its files are recorded `managed`. When it
+    /// is, the time the last of its files was recorded. Blocking.
+    pub(super) fn organized_but_for_sources(
+        &self,
+        album_id: &str,
+        files: &[FileAt<'_>],
+        pins: &OrganizedPins<'_>,
+        sandbox: &Sandbox,
+    ) -> Result<Option<f64>, ManagementError> {
+        self.organized_as(
+            album_id,
+            files,
+            pins,
+            sandbox,
+            &mut AppliedScripts::default(),
+            TrackState::last_run_wrote,
+        )
+    }
+
+    /// The check both share, with `written` saying which outcomes count:
+    /// the time the last file was recorded, when every file is organized.
+    fn organized_as(
+        &self,
+        album_id: &str,
+        files: &[FileAt<'_>],
+        pins: &OrganizedPins<'_>,
+        sandbox: &Sandbox,
+        applied: &mut AppliedScripts,
+        written: fn(&TrackState) -> bool,
+    ) -> Result<Option<f64>, ManagementError> {
         if files.is_empty() {
-            return Ok(false);
+            return Ok(None);
         }
         let known = &applied.0;
         let read = self
@@ -247,7 +297,7 @@ impl Management {
                     let Some(state) = store::track_state(conn, file.track_id)? else {
                         return Ok::<_, ManagementError>(None);
                     };
-                    if !state.last_run_succeeded() {
+                    if !written(&state) {
                         return Ok(None);
                     }
                     if let Some(job) = state.last_operation_job_id.as_deref()
@@ -265,9 +315,10 @@ impl Management {
                 )))
             })?;
         let Some((states, identities, scripts)) = read else {
-            return Ok(false);
+            return Ok(None);
         };
         applied.0.extend(scripts);
+        let mut last = 0.0f64;
         for ((file, state), identity) in files.iter().zip(&states).zip(&identities.files) {
             let live = automatic::path_revision(sandbox, file.root_id, file.relative_path);
             let facts = FileFacts {
@@ -283,11 +334,12 @@ impl Management {
                 live_path_revision: live.as_deref(),
                 root_id: file.root_id,
             };
-            if !file_organized(pins, &facts) {
-                return Ok(false);
+            if !file_organized(pins, &facts, written) {
+                return Ok(None);
             }
+            last = last.max(state.managed_at.unwrap_or(0.0));
         }
-        Ok(true)
+        Ok(Some(last))
     }
 
     /// The album's matches and its files' places, before it is planned.
@@ -394,6 +446,7 @@ impl Management {
                             release_track_mbid: identity.release_track.as_deref(),
                             path_revision: path.clone(),
                             found_sha256: Some(sha),
+                            sources_deferred: false,
                         },
                         now,
                     )?;
@@ -478,6 +531,10 @@ mod tests {
     }
 
     fn judge(case: &Case) -> bool {
+        judge_as(case, TrackState::last_run_succeeded)
+    }
+
+    fn judge_as(case: &Case, written: fn(&TrackState) -> bool) -> bool {
         file_organized(
             &pins(case.expected_root),
             &FileFacts {
@@ -493,6 +550,7 @@ mod tests {
                 live_path_revision: case.live,
                 root_id: "music",
             },
+            written,
         )
     }
 
@@ -586,6 +644,16 @@ mod tests {
             judge(&moved_there),
             "already in the folder the run moves files into"
         );
+        // A file whose run missed a source is left `managed`: organized
+        // in every way but that, so only its retry plans it again.
+        let mut missed = organized();
+        missed.state.outcome = Some("managed".to_owned());
+        assert!(judge_as(&missed, TrackState::last_run_wrote));
+        missed.live = Some("other");
+        assert!(
+            !judge_as(&missed, TrackState::last_run_wrote),
+            "changed since its run"
+        );
     }
 
     /// A file planned with a warning (an outside source that could not be
@@ -620,6 +688,12 @@ mod tests {
         assert!(
             !plans_no_change(&item(Eligibility::Warning), &file),
             "a warning is looked at again"
+        );
+        let mut unread = item(Eligibility::Eligible);
+        unread.diff.deferred_sources = vec!["cover".to_owned()];
+        assert!(
+            !plans_no_change(&unread, &file),
+            "a source left unread is looked at again"
         );
     }
 }

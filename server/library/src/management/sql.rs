@@ -32,10 +32,10 @@ droppedneedle_kernel::sql! {
     pub(super) WORK_RESULT = "SELECT state, failure_code, result_json, bundle_id \
              FROM library_operation_work WHERE job_id = ?1 AND ordinal = ?2";
     /// The next album automatic management looks at (`?1` now): (album,
-    /// tries). With `?2` set (unix milliseconds), only an album queued at or
+    /// tries, why it waited). With `?2` set (unix milliseconds), only an album queued at or
     /// before it whose identification has no job queued, running or
     /// deferred, nor one that landed after it.
-    pub(super) AUTOMATIC_DUE = "SELECT q.local_album_id, q.attempts \
+    pub(super) AUTOMATIC_DUE = "SELECT q.local_album_id, q.attempts, q.last_reason_code \
              FROM library_management_automatic_queue q WHERE q.not_before_at <= ?1 \
              AND (?2 IS NULL OR (q.queued_at <= ?2 AND NOT EXISTS (SELECT 1 \
                  FROM library_identify_jobs j WHERE j.local_album_id = q.local_album_id \
@@ -70,10 +70,32 @@ droppedneedle_kernel::sql! {
                  AND s.track_id = w.track_id AND s.expires_at > ?2)) AS expired, \
                (SELECT MIN(s.expires_at) / 86400000 FROM library_publish_snapshots s JOIN bundles b \
                  ON b.bundle_id = s.bundle_id WHERE s.expires_at > ?2) AS first_expiry_day";
+    /// Queue album `?1` at `?2`. An album waiting to retry the sources its
+    /// last run missed (`?3`) keeps its count of retries, so the scan of
+    /// that run's own writes does not start the count again.
     pub(super) QUEUE = "INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before_at) \
          SELECT ?1, ?2, ?2 WHERE EXISTS (SELECT 1 FROM local_albums WHERE id = ?1) \
          ON CONFLICT (local_album_id) DO UPDATE SET queued_at = excluded.queued_at, \
-         not_before_at = excluded.not_before_at, attempts = 0, last_reason_code = NULL";
+         not_before_at = excluded.not_before_at, \
+         attempts = CASE WHEN last_reason_code IS ?3 THEN attempts ELSE 0 END, \
+         last_reason_code = CASE WHEN last_reason_code IS ?3 THEN last_reason_code ELSE NULL END";
+    /// After an automatic run of album `?1` (`?2` now) that missed a
+    /// source: it waits for its retry (`?3`), due by its count of retries
+    /// so far at `?4` (none), `?5` (one) or `?6` (two), and at `?7` once
+    /// all three are used. A row queued for another reason keeps its own
+    /// time when that is sooner.
+    pub(super) QUEUE_SOURCES_RETRY = "INSERT INTO library_management_automatic_queue \
+         (local_album_id, queued_at, not_before_at, attempts, last_reason_code) \
+         SELECT ?1, ?2, ?4, 0, ?3 WHERE EXISTS (SELECT 1 FROM local_albums WHERE id = ?1) \
+         ON CONFLICT (local_album_id) DO UPDATE SET \
+         not_before_at = CASE WHEN last_reason_code IS NOT ?3 THEN MIN(not_before_at, ?4) \
+             WHEN attempts = 0 THEN ?4 WHEN attempts = 1 THEN ?5 WHEN attempts = 2 THEN ?6 \
+             ELSE ?7 END, \
+         attempts = CASE WHEN last_reason_code IS ?3 THEN attempts ELSE 0 END, \
+         last_reason_code = ?3";
+    /// A run of album `?1` missed nothing: its retry (`?2`) is done with.
+    pub(super) DROP_SOURCES_RETRY = "DELETE FROM library_management_automatic_queue \
+         WHERE local_album_id = ?1 AND last_reason_code IS ?2";
     pub(super) STAMP_RETAG_FOLLOWED = "UPDATE library_management_automatic_queue SET retag_followed_at = ?2 \
          WHERE local_album_id = ?1";
     pub(super) HAND_BACK_STAMPED = "SELECT 1 FROM library_album_takeovers \
@@ -87,7 +109,8 @@ droppedneedle_kernel::sql! {
          WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY id";
     pub(super) WRITES_BY_ITSELF = "SELECT EXISTS(SELECT 1 FROM library_management_automatic_queue \
                  WHERE local_album_id = ?1 AND not_before_at < ?2 \
-                 AND last_reason_code IS NOT 'PREVIEW_BLOCKED') \
+                 AND last_reason_code IS NOT 'PREVIEW_BLOCKED' \
+                 AND last_reason_code IS NOT 'SOURCES_DEFERRED') \
                  OR EXISTS(SELECT 1 FROM library_operation_jobs j \
                  JOIN library_management_job_snapshots s ON s.job_id = j.id \
                  WHERE j.kind = ?3 AND j.state IN (?4, ?5, ?6) \
@@ -95,7 +118,12 @@ droppedneedle_kernel::sql! {
                  AND EXISTS(SELECT 1 FROM json_each(s.selection_json, '$.ids') \
                  WHERE value = ?1))";
     pub(super) DROP_AUTOMATIC_QUEUE_ROW = "DELETE FROM library_management_automatic_queue WHERE local_album_id = ?1";
-    pub(super) PUT_OFF_AUTOMATIC_ALBUM = "UPDATE library_management_automatic_queue SET attempts = attempts + ?2, \
+    /// Put album `?1` off to `?3` for reason `?4`, adding `?2` tries. An
+    /// album that leaves its retry of missed sources (`?5`) for another
+    /// reason starts that reason's count afresh.
+    pub(super) PUT_OFF_AUTOMATIC_ALBUM = "UPDATE library_management_automatic_queue SET \
+                     attempts = CASE WHEN last_reason_code IS ?5 AND ?4 IS NOT ?5 THEN ?2 \
+                         ELSE attempts + ?2 END, \
                      not_before_at = ?3, last_reason_code = ?4 WHERE local_album_id = ?1";
     pub(super) AUTOMATIC_SKIPPED = "SELECT q.local_album_id, a.title, a.album_artist_name, \
                  COALESCE(q.last_reason_code, ?2) AS reason_code, q.attempts, \
@@ -245,7 +273,7 @@ droppedneedle_kernel::sql! {
          applied_profile_revision, applied_naming_script_revision, applied_override_revision, \
          last_operation_job_id, managed_root_id, last_managed_at, last_outcome, \
          managed_path_revision, written_sha256) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'succeeded', ?9, ?10) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?11, ?9, ?10) \
          ON CONFLICT (local_track_id) DO UPDATE SET \
          written_sha256 = COALESCE(excluded.written_sha256, \
          library_track_management_state.written_sha256), \
@@ -255,7 +283,7 @@ droppedneedle_kernel::sql! {
          applied_override_revision = excluded.applied_override_revision, \
          last_operation_job_id = excluded.last_operation_job_id, \
          managed_root_id = excluded.managed_root_id, \
-         last_managed_at = excluded.last_managed_at, last_outcome = 'succeeded', \
+         last_managed_at = excluded.last_managed_at, last_outcome = excluded.last_outcome, \
          managed_path_revision = excluded.managed_path_revision, \
          last_reason_code = NULL, \
          row_revision = library_track_management_state.row_revision + 1";
@@ -474,6 +502,7 @@ droppedneedle_kernel::sql! {
     pub(super) row AutomaticDueRow for [AUTOMATIC_DUE] {
         local_album_id: String,
         attempts: i64,
+        last_reason_code: Option<String>,
     }
     pub(super) row AppliedBundle for [APPLIED_BUNDLES] {
         ordinal: i64,

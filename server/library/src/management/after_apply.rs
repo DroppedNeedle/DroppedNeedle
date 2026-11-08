@@ -137,8 +137,12 @@ impl Management {
             // A profile run: remember what it applied. Tag edits and
             // duplicate resolutions apply no whole profile. An undo leaves
             // the row as its commit wrote it, `managed`, never the
-            // `succeeded` that says the profile is applied.
-            Some(JobMode::Apply | JobMode::AutomaticApply) if intent.tag_edit.is_none() => {
+            // `succeeded` that says the profile is applied. A file whose
+            // plan missed a source (genres, lyrics, a cover, AcoustID) stays
+            // `managed` too, so it is planned again.
+            Some(mode @ (JobMode::Apply | JobMode::AutomaticApply))
+                if intent.tag_edit.is_none() =>
+            {
                 let (profile_id, _) = snapshot.profile_label();
                 let sandbox = self.parts.publishing.publish_sandbox().ok();
                 struct Mark {
@@ -148,6 +152,7 @@ impl Management {
                     override_revision: u64,
                     path: Option<String>,
                     found: Option<String>,
+                    sources_deferred: bool,
                 }
                 let marks: Vec<Mark> = written
                     .filter_map(|item| {
@@ -164,11 +169,35 @@ impl Management {
                             // the plan read it.
                             found: (item.desired.plan.is_none() && !item.fingerprint.is_empty())
                                 .then(|| item.fingerprint.clone()),
+                            sources_deferred: !item.diff.deferred_sources.is_empty(),
                             track_id,
                             root,
                         })
                     })
                     .collect();
+                let missed_sources = marks.iter().any(|mark| mark.sources_deferred);
+                let album_id = items.first().map(|item| item.album_id.as_str());
+                // In a folder managed without asking, an album that missed
+                // a source is run again by itself, whoever ran it: a
+                // person's run as well, so the scan of its writes does not
+                // start an automatic run straight away. Any run that missed
+                // none ends the retries.
+                let settle_retry = match album_id {
+                    // Only the retry reads this: a read that fails leaves
+                    // the album without one, never without its record.
+                    Some(album_id) if missed_sources && mode == JobMode::Apply => self
+                        .managed_automatically(album_id)
+                        .unwrap_or_else(|error| {
+                            tracing::warn!(
+                                %error,
+                                album_id,
+                                "no retry queued for the sources a run missed"
+                            );
+                            false
+                        }),
+                    Some(_) => true,
+                    None => false,
+                };
                 self.parts
                     .db
                     .write_blocking(Lane::Background, "management.mark_managed", |tx| {
@@ -205,9 +234,15 @@ impl Management {
                                     release_track_mbid: release_track.as_deref(),
                                     path_revision: mark.path.clone(),
                                     found_sha256: mark.found.as_deref(),
+                                    sources_deferred: mark.sources_deferred,
                                 },
                                 now,
                             )?;
+                        }
+                        if let Some(album_id) = album_id
+                            && settle_retry
+                        {
+                            super::automatic::after_run(tx, album_id, missed_sources, now)?;
                         }
                         Ok(())
                     })

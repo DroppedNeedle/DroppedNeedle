@@ -859,6 +859,10 @@ pub struct ManagedMark<'a> {
     /// recorded the bytes it placed, and the plan's hash is of the bytes
     /// before the write.
     pub found_sha256: Option<&'a str>,
+    /// The plan could not read an outside source for the file (genres,
+    /// lyrics, a cover, AcoustID): it is recorded `managed`, not
+    /// `succeeded`, so it does not count as organized.
+    pub sources_deferred: bool,
 }
 
 /// Record that a profile run wrote (or left as it wanted) one file.
@@ -881,6 +885,11 @@ pub fn mark_managed(
             crate::clock::ms(now),
             mark.path_revision,
             mark.found_sha256,
+            if mark.sources_deferred {
+                "managed"
+            } else {
+                "succeeded"
+            },
         ],
     )?;
     tx.execute(
@@ -940,6 +949,12 @@ impl TrackState {
     /// publisher keeps other text there too, so it stays text.
     pub fn last_run_succeeded(&self) -> bool {
         self.outcome.as_deref() == Some("succeeded")
+    }
+
+    /// The last run wrote this file, or it was published and left
+    /// `managed` (a source its plan could not read, an undo).
+    pub fn last_run_wrote(&self) -> bool {
+        self.last_run_succeeded() || self.outcome.as_deref() == Some("managed")
     }
 
     /// A baseline restore put this file back last.
