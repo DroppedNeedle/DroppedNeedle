@@ -13210,7 +13210,8 @@ async fn management_change_filters_list_what_the_summary_counts() {
             .map(|item| item.ordinal)
             .collect()
     };
-    let kinds_of: [(&str, fn(&Summary) -> i64); 5] = [
+    type Count = fn(&Summary) -> i64;
+    let kinds_of: [(&str, Count); 5] = [
         ("tags", |summary| summary.tag_change_count),
         ("path", |summary| summary.path_change_count),
         ("sidecars", |summary| summary.sidecar_change_count),
