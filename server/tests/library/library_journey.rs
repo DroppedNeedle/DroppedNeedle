@@ -5280,6 +5280,122 @@ async fn an_upgrade_plans_again_when_a_replaced_track_comes_back() {
     assert_eq!(availability, "missing");
 }
 
+/// A replacement copy imported into the folder of an album whose own file
+/// went away rejoins that album: an import has no scan run to have seen
+/// the file go, and a second album would give the same release a second
+/// match.
+#[tokio::test]
+async fn an_import_rejoins_the_album_its_lost_copy_left_empty() {
+    use droppedneedle_library::import::{DownloadImport, ImportOrigin, ImportSource};
+
+    const RELEASE: &str = "77777777-7777-4777-8777-777777777777";
+    let (scratch, library, music) = bare_library("lib-import-rejoin").await;
+    std::fs::create_dir_all(&music).expect("music folder");
+    add_music_root(&library, &music).await;
+    // Something stays behind, so the walk is not a mount point gone.
+    plant(&music, "keep/01.flac", "flac_no_tags.flac");
+    rescan(&library).await;
+    let release = Release {
+        id: RELEASE.to_owned(),
+        release_group_id: "77777777-7777-4777-8777-777777777778".to_owned(),
+        title: "Rejoined".to_owned(),
+        artists: vec![CreditedArtist {
+            id: "77777777-7777-4777-8777-777777777779".to_owned(),
+            name: "The Band".to_owned(),
+            sort_name: None,
+            join: String::new(),
+            disambiguation: None,
+        }],
+        tracks: vec![ReleaseTrack {
+            id: "77777777-7777-4777-8777-77777777777a".to_owned(),
+            recording_id: "77777777-7777-4777-8777-77777777777b".to_owned(),
+            title: "Song".to_owned(),
+            disc: 1,
+            position: 1,
+            absolute_position: 1,
+            ..ReleaseTrack::default()
+        }],
+        ..Release::default()
+    };
+    let import = |task: &str, fixture: &str| {
+        let source = scratch
+            .to_path_buf()
+            .join(format!("incoming/{task}/{fixture}"));
+        std::fs::create_dir_all(source.parent().expect("parent")).expect("mkdir");
+        std::fs::copy(fixtures_dir().join(fixture), &source).expect("download planted");
+        DownloadImport {
+            task_id: task.to_owned(),
+            origin: ImportOrigin::Download,
+            staging: None,
+            release: release.clone(),
+            files: vec![ImportSource {
+                path: source,
+                track: 0,
+                replaces: Vec::new(),
+            }],
+            extras: Vec::new(),
+            actor: None,
+        }
+    };
+    let relative = |path: &Path| {
+        path.strip_prefix(&music)
+            .expect("under the root")
+            .to_string_lossy()
+            .into_owned()
+    };
+    let first = library
+        .imports
+        .import_download(&import("task-flac", "flac_full_02.flac"))
+        .expect("imported");
+    let lost = relative(&first.paths[0]);
+    let album = library
+        .scan_store
+        .album_for_track(&indexed_at(&library, &lost))
+        .unwrap()
+        .expect("album");
+
+    // The file goes, and a scan marks its track missing long before the
+    // replacement is imported.
+    std::fs::remove_file(music.join(&lost)).expect("deleted");
+    rescan(&library).await;
+    assert_eq!(library.scan_store.track_at("music", &lost).unwrap(), None);
+
+    let back = library
+        .imports
+        .import_download(&import("task-mp3", "management_full.mp3"))
+        .expect("imported");
+    let replaced = relative(&back.paths[0]);
+    assert_ne!(replaced, lost, "another file name, in the same folder");
+    assert_eq!(
+        library
+            .scan_store
+            .album_for_track(&indexed_at(&library, &replaced))
+            .unwrap(),
+        Some(album),
+        "the album its replaced copy left is reused"
+    );
+    let db = library.scan_store.db();
+    let count = |sql: &str| {
+        db.query_i64(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    };
+    assert_eq!(
+        count(&format!(
+            "SELECT COUNT(*) FROM local_albums WHERE grouping_key = 'mbid:{RELEASE}'"
+        )),
+        1,
+        "one album for the release"
+    );
+    assert_eq!(
+        count(&format!(
+            "SELECT COUNT(*) FROM local_album_external_identities \
+             WHERE release_mbid = '{RELEASE}'"
+        )),
+        1,
+        "the album keeps the one match"
+    );
+}
+
 /// "Put back" never replaces a file that now sits where the removed one
 /// was: it is refused, the newer file is untouched and the removed file
 /// stays in the recycle bin, where a later "Put back" finds it once the

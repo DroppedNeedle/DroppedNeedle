@@ -146,6 +146,24 @@ fn album_presence(
     Ok(presence)
 }
 
+/// Whether the album has rows in the folder `place` names.
+fn album_rows_in_folder(
+    tx: &Connection,
+    place: &Place<'_>,
+    album_id: &str,
+) -> rusqlite::Result<bool> {
+    let mut stmt = tx.prepare_cached(crate::scan::sql::ALBUM_TRACK_PLACES.text())?;
+    let mut rows = stmt.query(params![album_id])?;
+    while let Some(row) = rows.next()? {
+        let row = crate::scan::sql::TrackPlaceRow::read(row)?;
+        if row.root_id == place.root_id && grouping_directory(&row.relative_path) == place.directory
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The album a track files under. Copies of one album in different
 /// folders stay different albums (duplicate resolution depends on it),
 /// so the persistent key only carries an album along when it moved or
@@ -159,7 +177,8 @@ fn album_presence(
 ///    whole);
 /// 3. an album with the key that has no present tracks anywhere and
 ///    whose files this run found gone, so they moved here (the oldest
-///    first);
+///    first); an import, which has no run to watch them go, takes one
+///    with rows in the folder it lands in;
 /// 4. else a new album.
 ///
 /// A track whose grouping came from an earlier DroppedNeedle version
@@ -173,6 +192,7 @@ fn resolve_album(
     place: &Place<'_>,
     previous: Option<&str>,
     legacy: bool,
+    importing: bool,
 ) -> rusqlite::Result<String> {
     if legacy && let Some(previous) = previous {
         let named: bool = tx
@@ -226,9 +246,12 @@ fn resolve_album(
             return Ok(id);
         }
         // An album missing since an earlier run may be a different
-        // release that happens to share the names; only one this run
-        // emptied is taken over.
-        if exact && !presence.elsewhere && presence.gone_this_run && takeover.is_none() {
+        // release that happens to share the names; only one a run emptied
+        // is taken over. An import has no run behind it, so its own rows
+        // in that folder stand in for one.
+        let emptied =
+            presence.gone_this_run || (importing && album_rows_in_folder(tx, place, &id)?);
+        if exact && !presence.elsewhere && emptied && takeover.is_none() {
             takeover = Some(id);
         }
     }
@@ -1137,6 +1160,7 @@ fn write_item(
             },
             previous.as_ref().map(|(_, album)| album.as_str()),
             legacy,
+            adopted.is_some(),
         )?,
     };
     let (album_artist_ids, track_artist_ids) = artists::resolve(
@@ -3108,7 +3132,7 @@ pub(crate) fn automatic_album_for(
         root_id: &stored.root_id,
         directory: &directory,
     };
-    let album_id = resolve_album(tx, &names, &place, Some(&stored.album_id), false)?;
+    let album_id = resolve_album(tx, &names, &place, Some(&stored.album_id), false, false)?;
     let exists: bool = tx
         .prepare_cached(crate::scan::sql::ALBUM_EXISTS.text())?
         .query_row(params![album_id], |row| row.get(0))?;
