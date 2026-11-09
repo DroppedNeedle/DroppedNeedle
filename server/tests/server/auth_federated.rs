@@ -351,9 +351,11 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
             client_secret: Secret::new(OIDC_SECRET),
             scopes: "openid email profile".to_owned(),
             redirect_uri: "http://e2e.test/api/v3/auth/oidc/callback".to_owned(),
+            auto_redirect: false,
         })
         .expect("oidc settings save");
     assert_eq!(providers(e2e.router()).await["oidc"], true);
+    assert_eq!(providers(e2e.router()).await["oidc_auto_redirect"], false);
 
     // One app throughout: the one-time exchange codes live in its memory.
     let app = e2e.router_with_fresh_buckets();
@@ -487,6 +489,45 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
 
 /// A callback the `oidc` row cannot cover answers "try again" before it
 /// spends the login state, so reloading it still finishes the sign-in.
+/// The login page goes straight to single sign-on only when the admin asks
+/// for it and single sign-on is on and set up; off by default.
+#[tokio::test]
+async fn the_login_page_goes_straight_to_sso_only_when_asked_and_set_up() {
+    let e2e = E2e::open("oidc-auto-redirect").await;
+    let answer = providers(e2e.router()).await;
+    assert_eq!(
+        (answer["oidc"].clone(), answer["oidc_auto_redirect"].clone()),
+        (json!(false), json!(false)),
+        "off by default"
+    );
+    let connection = |enabled: bool, auto_redirect: bool| OidcConnection {
+        enabled,
+        issuer: "https://sso.example.test".to_owned(),
+        client_id: OIDC_CLIENT.to_owned(),
+        client_secret: Secret::new(OIDC_SECRET),
+        scopes: "openid email profile".to_owned(),
+        redirect_uri: "http://e2e.test/api/v3/auth/oidc/callback".to_owned(),
+        auto_redirect,
+    };
+    for (enabled, auto_redirect, expected) in [
+        (false, true, false),
+        (true, false, false),
+        (true, true, true),
+    ] {
+        e2e.store
+            .save_secret_blocking(connection(enabled, auto_redirect))
+            .expect("oidc settings save");
+        let answer = providers(e2e.router()).await;
+        assert_eq!(answer["oidc"], json!(enabled));
+        assert_eq!(
+            answer["oidc_auto_redirect"],
+            json!(expected),
+            "enabled={enabled} auto_redirect={auto_redirect}"
+        );
+        assert_eq!(answer["local"], json!(true), "the form stays reachable");
+    }
+}
+
 #[tokio::test]
 async fn a_paced_oidc_callback_keeps_its_login_state() {
     use droppedneedle_auth::federated::FederatedError;

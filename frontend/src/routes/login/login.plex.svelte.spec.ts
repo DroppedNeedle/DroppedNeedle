@@ -6,7 +6,13 @@ import { renderWithQuery } from '$lib/test/render';
 
 import Login from './+page.svelte';
 
-const providers = { local: false, plex: true, jellyfin: false, oidc: false };
+const providers = {
+	local: false,
+	plex: true,
+	jellyfin: false,
+	oidc: false,
+	oidc_auto_redirect: false
+};
 
 describe('signing in with Plex while requests are limited', () => {
 	it('rides out a 429: keeps polling through one, and says to wait when the start is limited', async () => {

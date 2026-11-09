@@ -28,6 +28,8 @@ pub struct EnabledProviders {
     pub jellyfin: bool,
     /// OIDC single sign-on.
     pub oidc: bool,
+    /// The login page starts OIDC sign-on at once; only with `oidc` on.
+    pub oidc_auto_redirect: bool,
 }
 
 /// The sign-in sections, read live: an admin's change applies to the next
@@ -53,12 +55,23 @@ impl SignInSettings {
     /// Read the sign-in switches. An unreadable section reads as off.
     #[must_use]
     pub fn enabled_providers(&self) -> EnabledProviders {
+        let oidc = self.oidc_config().is_usable();
         EnabledProviders {
             local: true,
             plex: self.plex_login_enabled(),
             jellyfin: self.jellyfin_login_server().is_some(),
-            oidc: self.oidc_config().is_usable(),
+            oidc,
+            oidc_auto_redirect: oidc && self.oidc_auto_redirect(),
         }
+    }
+
+    /// True when the admin asked the login page to start single sign-on at
+    /// once. An unreadable section reads as off.
+    fn oidc_auto_redirect(&self) -> bool {
+        self.oidc
+            .get()
+            .map(|connection| connection.auto_redirect)
+            .unwrap_or(false)
     }
 
     /// True when the admin turned Plex login on. Plex login works without

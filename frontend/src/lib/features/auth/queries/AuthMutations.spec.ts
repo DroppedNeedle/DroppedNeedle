@@ -120,7 +120,13 @@ describe('auth calls', () => {
 			expect(mockV3Post).toHaveBeenCalledWith(...expected);
 		}
 
-		mockV3Get.mockResolvedValue({ local: true, plex: false, jellyfin: false, oidc: false });
+		mockV3Get.mockResolvedValue({
+			local: true,
+			plex: false,
+			jellyfin: false,
+			oidc: false,
+			oidc_auto_redirect: false
+		});
 		getAuthProvidersQuery();
 		const factory = mockCreateQuery.mock.calls[
 			mockCreateQuery.mock.calls.length - 1
