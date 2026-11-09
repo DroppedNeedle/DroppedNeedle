@@ -1520,3 +1520,43 @@ async fn library_holds_a_group_only_through_an_indexed_track_on_a_live_copy() {
         "a merged-away copy holds nothing"
     );
 }
+
+/// A `0` year tag names no decade: the decade list shows no 0s card,
+/// which the shelf filter would refuse and so open empty.
+#[tokio::test]
+async fn zero_years_never_open_a_0s_shelf() {
+    let fixture = sqlite_fixture().await;
+    seed(
+        &fixture,
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, year, \
+         grouping_source, created_at, updated_at) VALUES \
+         ('z1', 'r1', 'gz1', 'No Date', 'no date', 'Aurora', 'aurora', 'a1', 0, \
+          'automatic', 1700, 1700); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         artist_name, artist_name_folded, album_title, album_title_folded, album_artist_name, \
+         album_artist_name_folded, disc_number, track_number, year, duration_seconds, \
+         file_format, availability, ingest_source, imported_at, membership_source) VALUES \
+         ('zt1', 'z1', 'r1', '/m/zt1.flac', 'zt1.flac', 'hz1', 1000, 1, 'sz1', 'One', 'one', \
+          'Aurora', 'aurora', 'No Date', 'no date', 'Aurora', 'aurora', 1, 1, 0, 200.0, \
+          'flac', 'indexed', 'scan', 1700.0, 'automatic')",
+    )
+    .await;
+    let beside = AuthRig::new("reads-library-zero-year").await;
+
+    let (status, body) = get(
+        app(deps(&beside, fixture.runtime.db(), None), Some(ADA)),
+        "/api/v3/library/decades",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let decades: Vec<i64> = body["items"]
+        .as_array()
+        .expect("decade items")
+        .iter()
+        .filter_map(|item| item["decade"].as_i64())
+        .collect();
+    assert!(!decades.is_empty(), "the seeded decades are listed: {body}");
+    assert!(!decades.contains(&0), "a zero year has no shelf: {body}");
+}

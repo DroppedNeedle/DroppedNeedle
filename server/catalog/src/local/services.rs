@@ -821,12 +821,14 @@ pub async fn album_format_counts(deps: &LibraryDeps) -> Result<AlbumFormatCounts
     })
 }
 
-/// Decade shelves, oldest first.
+/// Decade shelves, oldest first. Only decades the shelf filter accepts
+/// are listed, so a `0` year tag never shows a card that opens empty.
 pub async fn decades(deps: &LibraryDeps) -> Result<DecadesResponse, LibraryFailure> {
     let records = deps.catalog.decades().await?;
     Ok(DecadesResponse {
         items: records
             .iter()
+            .filter(|record| check_decade(Some(record.decade)).is_ok())
             .map(|record| DecadeShelf {
                 decade: record.decade,
                 label: format!("{}s", record.decade),
