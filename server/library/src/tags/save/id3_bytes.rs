@@ -183,19 +183,23 @@ pub(super) fn parse_id3_deep(data: &[u8]) -> Result<Option<DeepId3>, Refusal> {
                 data[offset + 7],
             ]) as usize
         };
+        // The first flag byte holds status flags (tag/file alter
+        // preservation, read only); they describe handling, not payload,
+        // and the writer drops them. Format flags in the second byte and
+        // reserved bits still refuse.
         let flag0 = data[offset + 8];
         let flag1 = data[offset + 9];
-        // Any alteration, compression, encryption, grouping, or
-        // unsynchronisation flag means reconstruction would not be
-        // faithful; refuse rather than clear or misread bits.
-        let risky = if major == 4 {
-            flag0 != 0 || flag1 & 0x4F != 0
+        let (status, format): (u8, u8) = if major == 4 {
+            // %0abc0000 %0h00kmnp
+            (0x70, 0x4F)
         } else {
-            flag0 != 0 || flag1 & 0xE0 != 0
+            // %abc00000 %ijk00000
+            (0xE0, 0xE0)
         };
+        let risky = flag0 & !status != 0 || flag1 & format != 0;
         if risky {
             return Err(no_inventory(format!(
-                "frame {} carries flags this wrapper cannot preserve",
+                "frame {} carries format flags this wrapper cannot preserve",
                 String::from_utf8_lossy(id)
             )));
         }
