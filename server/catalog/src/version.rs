@@ -4,8 +4,10 @@
 //! runs [`GitHubReleases`], the build tag plus the GitHub releases client
 //! (cached for an hour, quiet on failure).
 //!
-//! Comparison rules: strip leading `v`s, compare numeric release
-//! cores; anything else fails closed as `comparison_failed`. A `dev`
+//! Comparison rules: strip leading `v`s and any build metadata, then order
+//! semver-style: numeric release cores first, a release above any prerelease
+//! of the same core, prerelease identifiers dot by dot with numeric before
+//! alphanumeric. Anything else fails closed as `comparison_failed`. A `dev`
 //! build reports an update as available when comparison fails so the full
 //! UI stays testable. `latest_release` ships only when an
 //! update is available; a missing latest release answers with the current
@@ -14,6 +16,7 @@
 //! The running version is the image's `COMMIT_TAG`, which `AppConfig`
 //! reads at start, else `dev`.
 
+use std::cmp::Ordering;
 use std::sync::Arc;
 
 use axum::{Json, extract::State};
@@ -163,29 +166,102 @@ pub fn routes() -> Routes<VersionState> {
         .user(routes!(get_releases))
 }
 
-/// Parse a tag into numeric release segments. Leading `v`s are stripped;
-/// the rest must be pure dotted numbers or the tag is unparseable and
-/// comparison fails closed.
-fn release_core(tag: &str) -> Option<Vec<u64>> {
+/// One parsed tag: numeric release segments plus the prerelease tail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Version {
+    /// Numeric release segments, e.g. `[3, 0, 0]`.
+    core: Vec<u64>,
+    /// Dot-separated prerelease identifiers, empty for a release.
+    pre: Vec<String>,
+}
+
+/// Parse a tag into a comparable version. Leading `v`s and any build
+/// metadata after `+` are stripped; the release core must be dotted numbers
+/// and the prerelease tail dot-separated alphanumeric identifiers. Anything
+/// else is unparseable and comparison fails closed.
+fn parse_tag(tag: &str) -> Option<Version> {
     let stripped = tag.trim_start_matches('v');
-    if stripped.is_empty() {
+    let without_build = stripped.split('+').next().unwrap_or(stripped);
+    let (core, pre) = match without_build.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (without_build, None),
+    };
+    if core.is_empty() {
         return None;
     }
     let mut segments = Vec::new();
-    for part in stripped.split('.') {
+    for part in core.split('.') {
         if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
             return None;
         }
         segments.push(part.parse::<u64>().ok()?);
     }
-    Some(segments)
+    let mut prerelease = Vec::new();
+    if let Some(pre) = pre {
+        for part in pre.split('.') {
+            // Empty identifiers (`3.0.0-`, `3.0.0-beta..1`) are malformed.
+            if part.is_empty() || !part.bytes().all(|b| b.is_ascii_alphanumeric()) {
+                return None;
+            }
+            prerelease.push(part.to_owned());
+        }
+    }
+    Some(Version {
+        core: segments,
+        pre: prerelease,
+    })
+}
+
+/// Prerelease identifier as a number, when it is all digits.
+fn numeric_id(id: &str) -> Option<u64> {
+    if id.bytes().all(|b| b.is_ascii_digit()) {
+        id.parse::<u64>().ok()
+    } else {
+        None
+    }
+}
+
+impl Version {
+    /// Semver order: release core segment by segment (a missing segment
+    /// counts as zero), then a release above any prerelease of the same
+    /// core, then prerelease identifiers dot by dot with numeric before
+    /// alphanumeric and the shorter prefix first.
+    fn compare(&self, other: &Self) -> Ordering {
+        let len = self.core.len().max(other.core.len());
+        for i in 0..len {
+            let a = self.core.get(i).copied().unwrap_or(0);
+            let b = other.core.get(i).copied().unwrap_or(0);
+            if a != b {
+                return a.cmp(&b);
+            }
+        }
+        match (self.pre.is_empty(), other.pre.is_empty()) {
+            (true, true) => Ordering::Equal,
+            (true, false) => Ordering::Greater,
+            (false, true) => Ordering::Less,
+            (false, false) => {
+                for (a, b) in self.pre.iter().zip(other.pre.iter()) {
+                    let ordering = match (numeric_id(a), numeric_id(b)) {
+                        (Some(a), Some(b)) => a.cmp(&b),
+                        (Some(_), None) => Ordering::Less,
+                        (None, Some(_)) => Ordering::Greater,
+                        (None, None) => a.cmp(b),
+                    };
+                    if ordering.is_ne() {
+                        return ordering;
+                    }
+                }
+                self.pre.len().cmp(&other.pre.len())
+            }
+        }
+    }
 }
 
 /// Compare two tags. Returns `(update_available, comparison_failed)`.
 /// Unparseable tags fail closed.
 fn is_newer(latest_tag: &str, current_tag: &str) -> (bool, bool) {
-    match (release_core(latest_tag), release_core(current_tag)) {
-        (Some(latest), Some(current)) => (latest > current, false),
+    match (parse_tag(latest_tag), parse_tag(current_tag)) {
+        (Some(latest), Some(current)) => (latest.compare(&current).is_gt(), false),
         _ => (false, true),
     }
 }
@@ -330,5 +406,52 @@ mod tests {
         assert!(answer.update_available, "dev build");
         assert!(answer.comparison_failed, "dev build");
         assert!(answer.latest_release.is_some(), "dev build");
+    }
+
+    /// A v3 prerelease compares instead of failing: a later beta or the
+    /// final release is an update, an equal or older one is not; the live
+    /// beta.3 answer (latest `v2.15.0`) is up to date.
+    #[test]
+    fn update_check_compares_v3_prereleases() {
+        let beta = current("3.0.0-beta.3");
+
+        for tag in ["v3.0.0-beta.4", "v3.0.0-beta.10", "v3.0.0"] {
+            let answer = build_update_response(&beta, Some(&release(tag)));
+            assert!(answer.update_available, "tag {tag}");
+            assert!(!answer.comparison_failed, "tag {tag}");
+            assert_eq!(answer.latest_version.as_deref(), Some(tag), "tag {tag}");
+            assert!(answer.latest_release.is_some(), "tag {tag}");
+        }
+
+        for tag in ["v3.0.0-beta.3", "v3.0.0-beta.2", "v3.0.0-alpha.9"] {
+            let answer = build_update_response(&beta, Some(&release(tag)));
+            assert!(!answer.update_available, "tag {tag}");
+            assert!(!answer.comparison_failed, "tag {tag}");
+            assert!(answer.latest_release.is_none(), "tag {tag}");
+        }
+
+        // GitHub's latest release is the v2 line; a v3 beta is ahead of it.
+        let answer = build_update_response(&beta, Some(&release("v2.15.0")));
+        assert_eq!(answer.current_version, "3.0.0-beta.3", "v2 latest");
+        assert_eq!(
+            answer.latest_version.as_deref(),
+            Some("v2.15.0"),
+            "v2 latest"
+        );
+        assert!(!answer.update_available, "v2 latest");
+        assert!(!answer.comparison_failed, "v2 latest");
+        assert!(answer.latest_release.is_none(), "v2 latest");
+
+        // A release outranks the beta before it; build metadata is ignored.
+        let answer = build_update_response(&current("3.0.0"), Some(&release("v3.0.0-beta.3")));
+        assert!(!answer.update_available, "release vs beta");
+        assert!(!answer.comparison_failed, "release vs beta");
+
+        let answer = build_update_response(
+            &current("3.0.0-beta.3+sha.abc"),
+            Some(&release("v3.0.0-beta.3")),
+        );
+        assert!(!answer.update_available, "build metadata");
+        assert!(!answer.comparison_failed, "build metadata");
     }
 }
