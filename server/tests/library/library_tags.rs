@@ -4107,6 +4107,19 @@ fn mp4_integer_atoms_keep_their_type_and_order() {
 /// An MP3 whose ID3 tag (`major` 3 or 4) holds exactly these frames,
 /// built by bytes over the management fixture's audio.
 fn raw_id3_mp3(test: &str, major: u8, frames: &[(&str, Vec<u8>)]) -> (ScratchDir, PathBuf) {
+    let unflagged: Vec<(&str, Vec<u8>, [u8; 2])> = frames
+        .iter()
+        .map(|(id, payload)| (*id, payload.clone(), [0, 0]))
+        .collect();
+    raw_id3_mp3_flagged(test, major, &unflagged)
+}
+
+/// [`raw_id3_mp3`] with each frame's two header flag bytes spelled out.
+fn raw_id3_mp3_flagged(
+    test: &str,
+    major: u8,
+    frames: &[(&str, Vec<u8>, [u8; 2])],
+) -> (ScratchDir, PathBuf) {
     let syncsafe = |size: usize| {
         [
             ((size >> 21) & 0x7F) as u8,
@@ -4116,14 +4129,14 @@ fn raw_id3_mp3(test: &str, major: u8, frames: &[(&str, Vec<u8>)]) -> (ScratchDir
         ]
     };
     let mut body = Vec::new();
-    for (id, payload) in frames {
+    for (id, payload, flags) in frames {
         body.extend_from_slice(id.as_bytes());
         if major == 4 {
             body.extend_from_slice(&syncsafe(payload.len()));
         } else {
             body.extend_from_slice(&(payload.len() as u32).to_be_bytes());
         }
-        body.extend_from_slice(&[0, 0]);
+        body.extend_from_slice(flags);
         body.extend_from_slice(payload);
     }
     body.resize(body.len() + 256, 0);
@@ -4204,6 +4217,77 @@ fn title_save_keeps_frames_lofty_rewrites() {
         );
         assert_eq!(id3_text_values(&path, "TIT2"), texts(&["New"]));
         assert_eq!(after_id3v2(&path), tail);
+    }
+}
+
+/// A save keeps the frame's bytes and drops its status flags, so the
+/// `ETCO` from #671 (flags `0x2000`) imports instead of refusing. Format
+/// flags and reserved bits still refuse.
+#[test]
+fn frame_status_flags_do_not_block_a_save() {
+    let etco = vec![2, 3, 0, 0, 0, 1];
+    // v2.4: 0x20 file alter, 0x10 read only, 0x40 tag alter; v2.3 spells
+    // them one bit higher.
+    for (test, major, flags) in [
+        ("status-v24", 4, [0x20, 0x00]),
+        ("status-v24-read-only", 4, [0x10, 0x00]),
+        ("status-v23", 3, [0xE0, 0x00]),
+    ] {
+        let frames: Vec<(&str, Vec<u8>, [u8; 2])> = vec![
+            ("TIT2", latin1(&["Probe"]), [0, 0]),
+            ("ETCO", etco.clone(), flags),
+        ];
+        let (_dir, path) = raw_id3_mp3_flagged(test, major, &frames);
+        let tail = after_id3v2(&path);
+        assert_eq!(
+            tags::save::tags_kept(track_file(&path), PicturesPlan::Untouched)
+                .unwrap()
+                .refusal,
+            None,
+            "{test}"
+        );
+
+        tags::save_tags(&path, &[TagEdit::set_title("New")]).unwrap();
+        let (after_major, after) = id3_view(&path);
+        assert_eq!(after_major, major, "{test}");
+        assert_eq!(
+            after
+                .iter()
+                .find(|(id, _)| id == "ETCO")
+                .map(|(_, body)| body),
+            Some(&FrameBody::Raw(etco.clone())),
+            "{test}: the ETCO payload survives"
+        );
+        assert_eq!(id3_text_values(&path, "TIT2"), texts(&["New"]), "{test}");
+        assert_eq!(after_id3v2(&path), tail, "{test}");
+    }
+
+    // A format flag (compression 0x08/0x80) or a reserved bit changes or
+    // hides the payload, so the inventory refuses and leaves the file.
+    for (test, major, flags) in [
+        ("format-v24", 4, [0x00, 0x08]),
+        ("format-v23", 3, [0x00, 0x80]),
+        ("reserved-v24", 4, [0x01, 0x00]),
+    ] {
+        let frames: Vec<(&str, Vec<u8>, [u8; 2])> = vec![
+            ("TIT2", latin1(&["Probe"]), [0, 0]),
+            ("ETCO", etco.clone(), flags),
+        ];
+        let (_dir, path) = raw_id3_mp3_flagged(test, major, &frames);
+        let before = std::fs::read(&path).unwrap();
+        let reason = match tags::save::tags_kept(track_file(&path), PicturesPlan::Untouched) {
+            Err(TagsError::TagRead { reason, .. }) => reason,
+            other => panic!("expected a refusal, got {other:?}"),
+        };
+        assert!(
+            reason.contains("carries format flags this wrapper cannot preserve"),
+            "{test}: {reason}"
+        );
+        assert!(
+            tags::save_tags(&path, &[TagEdit::set_title("New")]).is_err(),
+            "{test}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before, "{test}");
     }
 }
 
