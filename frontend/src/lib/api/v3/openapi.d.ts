@@ -11377,6 +11377,11 @@ export interface components {
             local: boolean;
             /** @description OIDC sign-in is switched on with an issuer and client id. */
             oidc: boolean;
+            /**
+             * @description The login page starts OIDC sign-in at once (`/login?local` still
+             *     shows the other methods); never true while `oidc` is false.
+             */
+            oidc_auto_redirect: boolean;
             /** @description Plex sign-in is switched on. */
             plex: boolean;
         };
@@ -18146,6 +18151,13 @@ export interface components {
         };
         /** @description OIDC connection. */
         OidcConnection: {
+            /**
+             * @description The login page starts single sign-on at once instead of showing its
+             *     sign-in methods; `/login?local` still shows them. Only while single
+             *     sign-on is on and set up.
+             * @default false
+             */
+            auto_redirect: boolean;
             /**
              * @description Client id.
              * @default

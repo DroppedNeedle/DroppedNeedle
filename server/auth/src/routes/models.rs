@@ -215,6 +215,9 @@ pub struct AuthProvidersBody {
     pub jellyfin: bool,
     /// OIDC sign-in is switched on with an issuer and client id.
     pub oidc: bool,
+    /// The login page starts OIDC sign-in at once (`/login?local` still
+    /// shows the other methods); never true while `oidc` is false.
+    pub oidc_auto_redirect: bool,
 }
 
 /// Settings-completion poll answer: the raw auth token, untouched.

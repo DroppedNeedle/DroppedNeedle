@@ -285,6 +285,10 @@ pub struct OidcConnection {
     pub scopes: String,
     /// Redirect URI.
     pub redirect_uri: String,
+    /// The login page starts single sign-on at once instead of showing its
+    /// sign-in methods; `/login?local` still shows them. Only while single
+    /// sign-on is on and set up.
+    pub auto_redirect: bool,
 }
 
 impl Default for OidcConnection {
@@ -296,6 +300,7 @@ impl Default for OidcConnection {
             client_secret: Secret::default(),
             scopes: "openid email profile".to_owned(),
             redirect_uri: String::new(),
+            auto_redirect: false,
         }
     }
 }

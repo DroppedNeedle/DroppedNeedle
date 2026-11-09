@@ -29,7 +29,7 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 // Two providers so the tab bar renders (it only shows when >1 method is enabled).
 vi.mock('$lib/features/auth/queries/AuthProvidersQuery.svelte', () => ({
 	getAuthProvidersQuery: () => ({
-		data: { local: true, plex: false, jellyfin: true, oidc: false },
+		data: { local: true, plex: false, jellyfin: true, oidc: false, oidc_auto_redirect: false },
 		isSuccess: true
 	})
 }));

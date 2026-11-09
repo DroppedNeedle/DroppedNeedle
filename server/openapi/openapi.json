@@ -38983,7 +38983,8 @@
           "local",
           "plex",
           "jellyfin",
-          "oidc"
+          "oidc",
+          "oidc_auto_redirect"
         ],
         "properties": {
           "jellyfin": {
@@ -38997,6 +38998,10 @@
           "oidc": {
             "type": "boolean",
             "description": "OIDC sign-in is switched on with an issuer and client id."
+          },
+          "oidc_auto_redirect": {
+            "type": "boolean",
+            "description": "The login page starts OIDC sign-in at once (`/login?local` still\nshows the other methods); never true while `oidc` is false."
           },
           "plex": {
             "type": "boolean",
@@ -53728,6 +53733,11 @@
         "type": "object",
         "description": "OIDC connection.",
         "properties": {
+          "auto_redirect": {
+            "type": "boolean",
+            "description": "The login page starts single sign-on at once instead of showing its\nsign-in methods; `/login?local` still shows them. Only while single\nsign-on is on and set up.",
+            "default": false
+          },
           "client_id": {
             "type": "string",
             "description": "Client id.",

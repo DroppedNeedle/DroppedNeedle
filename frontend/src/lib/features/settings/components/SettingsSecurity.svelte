@@ -532,6 +532,13 @@
 							disabled={!hasOidcCredentials || oidcLocked}
 						/>
 
+						<ToggleRow
+							label="Go straight to SSO"
+							description="The login page starts single sign-on right away instead of showing the sign-in methods. Add ?local to the login address to reach them, for an admin who can't use SSO."
+							bind:checked={draft.auto_redirect}
+							disabled={!draft.enabled}
+						/>
+
 						<SaveBar {...oidc.bar} testLabel="Test connection" />
 					</div>
 				{/snippet}

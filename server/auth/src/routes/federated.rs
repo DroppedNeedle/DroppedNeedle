@@ -69,6 +69,7 @@ pub async fn providers_handler(State(settings): State<SignInSettings>) -> Json<A
         plex: providers.plex,
         jellyfin: providers.jellyfin,
         oidc: providers.oidc,
+        oidc_auto_redirect: providers.oidc_auto_redirect,
     })
 }
 

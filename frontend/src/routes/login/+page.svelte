@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../../auth.css';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { ApiError } from '$lib/api/errors';
 	import { getAuthProvidersQuery } from '$lib/features/auth/queries/AuthProvidersQuery.svelte';
@@ -36,7 +37,8 @@
 		local: true,
 		plex: false,
 		jellyfin: false,
-		oidc: false
+		oidc: false,
+		oidc_auto_redirect: false
 	};
 
 	const providersQuery = getAuthProvidersQuery();
@@ -166,6 +168,19 @@
 			oidcLoading = false;
 		}
 	}
+
+	// With "go straight to single sign-on" on, the page starts it once on
+	// load; `?local` shows the sign-in methods instead, for an admin who
+	// can't use single sign-on. Once per load, so a refused start shows
+	// its error rather than trying again.
+	let autoRedirected = false;
+	$effect(() => {
+		if (autoRedirected || !providersQuery.isSuccess) return;
+		if (!providers.oidc_auto_redirect || page.url.searchParams.has('local')) return;
+		autoRedirected = true;
+		activeTab = 'oidc';
+		void handleOidcLogin();
+	});
 
 	const availableTabs = $derived(
 		(['local', 'plex', 'jellyfin', 'oidc'] as Tab[]).filter((t) => providers[t])
