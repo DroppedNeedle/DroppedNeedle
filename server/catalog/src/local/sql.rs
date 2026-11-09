@@ -98,6 +98,26 @@ macro_rules! owned_album {
     };
 }
 
+/// An album's year as a decade shelf reads it: the release year when it
+/// names one, else `original_release_date`. A `0`/`0000` tag reads as
+/// NULL, as does a year outside `check_decade`'s bounds.
+macro_rules! shelf_year {
+    ($album:literal) => {
+        concat!(
+            "CASE WHEN ",
+            $album,
+            ".year BETWEEN 1800 AND 2109 THEN ",
+            $album,
+            ".year WHEN CAST(substr(",
+            $album,
+            ".original_release_date, 1, 4) AS INTEGER) BETWEEN 1800 AND 2109 \
+             THEN CAST(substr(",
+            $album,
+            ".original_release_date, 1, 4) AS INTEGER) END"
+        )
+    };
+}
+
 /// The provider every identity join names, over an identity alias.
 macro_rules! musicbrainz {
     ($identity:literal) => {
@@ -285,7 +305,11 @@ droppedneedle_kernel::sql! {
         " AND (? IS NULL OR a.title_folded LIKE ? ESCAPE '\\' \
          OR a.album_artist_name_folded LIKE ? ESCAPE '\\') \
          AND (? IS NULL OR a.album_artist_id = ?) \
-         AND (? IS NULL OR (a.year >= ? AND a.year < ? + 10)) \
+         AND (? IS NULL OR (",
+        shelf_year!("a"),
+        " >= ? AND ",
+        shelf_year!("a"),
+        " < ? + 10)) \
          AND (? IS NULL OR (instr(?, ',' || COALESCE(",
         album_primary_format!("a"),
         ", '') || ',') > 0) = ?) AND ",
@@ -377,9 +401,11 @@ droppedneedle_kernel::sql! {
     /// The newest owned albums' ids, walking the creation index.
     pub(crate) RECENT_ALBUM_IDS = "SELECT a.id FROM local_albums a WHERE "
         + (owned_album!("a")) + " ORDER BY a.created_at DESC, a.id DESC LIMIT ?";
-    /// Owned albums per decade, oldest first; albums without a year sit out.
-    pub(crate) DECADES = "SELECT (a.year / 10 * 10) AS decade, COUNT(*) AS album_count \
-        FROM local_albums a WHERE a.year IS NOT NULL AND " + (owned_album!("a"))
+    /// Owned albums per decade, oldest first; a missing or `0` release year
+    /// reads `original_release_date`, and an album with neither sits out.
+    pub(crate) DECADES = "SELECT (" + (shelf_year!("a")) + " / 10 * 10) AS decade, \
+        COUNT(*) AS album_count FROM local_albums a WHERE " + (shelf_year!("a"))
+        + " IS NOT NULL AND " + (owned_album!("a"))
         + " GROUP BY decade ORDER BY decade ASC";
 
     /// One track's columns over [`TRACK_JOINS`].

@@ -106,7 +106,8 @@
 	const faceByDecade = $derived.by(() => {
 		const faces = new SvelteMap<number, AlbumCardV3>();
 		for (const card of [...(recentQuery.data ?? []), ...(rediscoverQuery.data?.items ?? [])]) {
-			if (card.year == null) continue;
+			// A zero or junk year names no decade, so it gets no crate.
+			if (card.year == null || card.year <= 0) continue;
 			const decade = Math.floor(card.year / 10) * 10;
 			if (!faces.has(decade)) faces.set(decade, card);
 		}

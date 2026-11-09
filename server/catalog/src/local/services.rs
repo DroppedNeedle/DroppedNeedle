@@ -369,7 +369,8 @@ fn rating_bound(
     }
 }
 
-/// Decade start years are multiples of ten in a sane range.
+/// Decade start years are multiples of ten in a sane range; `0` is an
+/// unknown-year placeholder, not a shelf.
 fn check_decade(decade: Option<i64>) -> Result<Option<i64>, LibraryFailure> {
     match decade {
         None => Ok(None),
@@ -1215,5 +1216,13 @@ mod tests {
         );
         assert_eq!(check_min_tracks(Some(1)).ok(), Some(None));
         assert!(check_min_tracks(Some(0)).is_err());
+        assert_eq!(check_decade(Some(1990)).ok(), Some(Some(1990)));
+        assert_eq!(check_decade(None).ok(), Some(None));
+        assert!(
+            check_decade(Some(0)).is_err(),
+            "a zero year is an unknown-year placeholder, not a shelf"
+        );
+        assert!(check_decade(Some(1790)).is_err(), "below the shelf range");
+        assert!(check_decade(Some(2110)).is_err(), "above the shelf range");
     }
 }

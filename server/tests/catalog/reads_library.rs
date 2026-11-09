@@ -149,6 +149,7 @@ async fn bad_input_stays_in_the_envelope() {
         "/api/v3/library/albums?after=not-a-cursor",
         "/api/v3/library/tracks?after=not-a-cursor",
         "/api/v3/library/albums?decade=1995",
+        "/api/v3/library/albums?decade=0",
         "/api/v3/library/artists?scope=nope",
         "/api/v3/library/artists?sort=nope",
         "/api/v3/library/tracks?sort=nope",
@@ -1518,5 +1519,70 @@ async fn library_holds_a_group_only_through_an_indexed_track_on_a_live_copy() {
     assert!(
         !library_holds(db, "rg3").await.unwrap(),
         "a merged-away copy holds nothing"
+    );
+}
+
+/// A `0`/`0000` release year is a placeholder: the shelf falls back to
+/// `original_release_date`, and `decade=0` is refused.
+#[tokio::test]
+async fn zero_years_never_open_a_0s_shelf() {
+    let fixture = sqlite_fixture().await;
+    seed(
+        &fixture,
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, year, \
+         original_release_date, grouping_source, created_at, updated_at) VALUES \
+         ('z1', 'r1', 'gz1', 'Romanza', 'romanza', 'Aurora', 'aurora', 'a1', 0, \
+          '1996-01-01', 'automatic', 1700, 1700), \
+         ('z2', 'r1', 'gz2', 'No Date', 'no date', 'Aurora', 'aurora', 'a1', 0, \
+          NULL, 'automatic', 1701, 1701), \
+         ('z3', 'r1', 'gz3', 'Zero Date', 'zero date', 'Aurora', 'aurora', 'a1', 0, \
+          '0000', 'automatic', 1702, 1702); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         artist_name, artist_name_folded, album_title, album_title_folded, album_artist_name, \
+         album_artist_name_folded, disc_number, track_number, year, duration_seconds, \
+         file_format, availability, ingest_source, imported_at, membership_source) VALUES \
+         ('zt1', 'z1', 'r1', '/m/zt1.flac', 'zt1.flac', 'hz1', 1000, 1, 'sz1', 'One', 'one', \
+          'Aurora', 'aurora', 'Romanza', 'romanza', 'Aurora', 'aurora', 1, 1, 0, 200.0, \
+          'flac', 'indexed', 'scan', 1700.0, 'automatic'), \
+         ('zt2', 'z2', 'r1', '/m/zt2.flac', 'zt2.flac', 'hz2', 1000, 1, 'sz2', 'Two', 'two', \
+          'Aurora', 'aurora', 'No Date', 'no date', 'Aurora', 'aurora', 1, 1, 0, 200.0, \
+          'flac', 'indexed', 'scan', 1701.0, 'automatic'), \
+         ('zt3', 'z3', 'r1', '/m/zt3.flac', 'zt3.flac', 'hz3', 1000, 1, 'sz3', 'Three', 'three', \
+          'Aurora', 'aurora', 'Zero Date', 'zero date', 'Aurora', 'aurora', 1, 1, 0, 200.0, \
+          'flac', 'indexed', 'scan', 1702.0, 'automatic')",
+    )
+    .await;
+
+    let decades = fixture.catalog.decades().await.expect("decades list");
+    assert_eq!(
+        decades
+            .iter()
+            .map(|decade| (decade.decade, decade.album_count))
+            .collect::<Vec<_>>(),
+        [(1990, 3), (2000, 1)],
+        "the original date settles the year; a placeholder has no shelf"
+    );
+
+    let (albums, total) = fixture
+        .catalog
+        .list_albums(
+            &AlbumFilter {
+                decade: Some(1990),
+                ..Default::default()
+            },
+            AlbumSort::Name,
+            false,
+            50,
+            &After::default(),
+        )
+        .await
+        .map(|page| (page.items, page.total))
+        .expect("decade albums");
+    assert_eq!(total, 3, "the shelf opens on the albums its card counts");
+    assert!(
+        albums.iter().any(|album| album.id == "z1"),
+        "the album whose zero year fell back to 1996 is on the 1990s shelf"
     );
 }
