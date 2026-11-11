@@ -15,10 +15,11 @@
 //!   (gone from disk or in the recycle bin) and excluded ones do not count.
 //!   Player apps never see a live album without files.
 //! - **Listed.** The web UI's lists show a live album with files, and one
-//!   with none only while Put back can still bring something of it home:
-//!   one definition, [`droppedneedle_library::listed_album`], which the
-//!   lists, their counts and Check albums read. Every album still opens by
-//!   its id.
+//!   with none only while a publish or a library task still holds it and
+//!   nothing of it can be put back: one definition,
+//!   [`droppedneedle_library::listed_album`], which the lists, their
+//!   counts and Check albums read. A removed album leaves the lists while
+//!   its files are in the recycle bin. Every album still opens by its id.
 //! - **Live track.** A track every read shows is indexed and sits on a
 //!   live album. Merges retire only emptied albums, so a track left on a
 //!   retired one is a leftover no read lists, counts or returns.

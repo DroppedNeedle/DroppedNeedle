@@ -303,13 +303,17 @@ droppedneedle_kernel::sql! {
      AND mty.id <> a.id AND +mty.has_indexed_track = 1 \
      AND lower(yi.release_group_mbid) = lower(xi.release_group_mbid) AND "
      + (accepted!("yi"));
-    /// An album with no files that the lists hide, holding a person's
-    /// heart or rating, whose marks can move to [`MARKS_TARGET`]. Read
-    /// from the marks first, so it is empty once they have moved.
+    /// An album with no files that the lists hide, whose removal can no
+    /// longer be put back, holding a person's heart or rating, whose
+    /// marks can move to [`MARKS_TARGET`]. Read from the marks first, so
+    /// it is empty once they have moved. A removed album in the recycle
+    /// bin keeps its marks: Put back returns it with them.
     pub(super) fragment MARKS_CANDIDATE = "(+a.has_indexed_track = 0 \
      AND a.id IN (SELECT item_id FROM catalog_user_favorites WHERE item_kind = 'album' \
      UNION SELECT item_id FROM catalog_user_ratings WHERE item_kind = 'album') \
-     AND NOT (" + (crate::listed_album!("a")) + ") AND EXISTS (" + MARKS_TARGET + "))";
+     AND NOT (" + (crate::listed_album!("a")) + ") \
+     AND NOT (" + (crate::album_removal_offered!("a")) + ") \
+     AND EXISTS (" + MARKS_TARGET + "))";
     pub(super) HYGIENE_CANDIDATES_EXIST = "SELECT EXISTS(SELECT 1 FROM local_albums a \
              WHERE a.retired_into_album_id IS NULL AND (" + HYGIENE_CANDIDATE + " OR "
              + MARKS_CANDIDATE + "))";

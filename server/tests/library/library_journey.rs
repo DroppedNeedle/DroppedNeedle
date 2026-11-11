@@ -6383,12 +6383,13 @@ async fn expiry_and_an_empty_at_once_mark_every_copy() {
     );
 }
 
-/// A removed album stays in the album list and on its artist's page,
-/// marked as having no files, while its files are in the recycle bin.
-/// Once the bin is emptied it leaves both lists, and its link still
-/// opens it.
+/// A removed album leaves the album list and its artist's page while its
+/// files are in the recycle bin, even with a MusicBrainz identity that
+/// another copy shares. The bin still shows the removal, and Put back
+/// lists the album again. Once the bin is emptied it leaves both lists,
+/// and its link still opens it.
 #[tokio::test]
-async fn a_removed_album_is_listed_until_the_bin_lets_go_of_it() {
+async fn a_removed_album_leaves_the_lists_until_it_is_put_back() {
     let rig = Rig::start("lib-removed-listed").await;
     let app = &rig.app;
     let auth = app.login_admin().await;
@@ -6412,6 +6413,13 @@ async fn a_removed_album_is_listed_until_the_bin_lets_go_of_it() {
             .expect("album id")
     };
     let (removed, kept) = (album_at("One/LP/01.flac"), album_at("Two/LP/01.flac"));
+    app.seed_with(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, decision_source, selected_at) \
+         VALUES (?1, 'musicbrainz', 'rg-removed', 'manual', 1)",
+        [&removed],
+    )
+    .await;
     let get = |uri: String| {
         let headers = &headers;
         async move {
@@ -6454,10 +6462,49 @@ async fn a_removed_album_is_listed_until_the_bin_lets_go_of_it() {
     );
     let (status, body) = app.call("DELETE", &uri, &headers, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let mut both = vec![(removed.clone(), 0), (kept.clone(), 1)];
-    both.sort();
-    assert_eq!(lists().await, [both.clone(), both], "in the bin: listed");
+    let only = vec![(kept.clone(), 1)];
+    assert_eq!(
+        lists().await,
+        [only.clone(), only.clone()],
+        "in the bin: not listed"
+    );
 
+    let bin = get("/api/v3/library/recycle-bin?limit=50".to_owned()).await;
+    let row = bin["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|item| item["album"]["id"] == json!(removed))
+        .expect("the removal is in the bin");
+    assert_eq!(row["files"], json!(1), "{row}");
+    assert_eq!(row["can_put_back"], json!(true), "{row}");
+
+    let removals = get(format!("/api/v3/library/albums/{removed}/removals")).await;
+    let removal = removals["items"][0]["id"]
+        .as_str()
+        .expect("removal id")
+        .to_owned();
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/albums/{removed}/removals/{removal}/put-back"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["missing"], json!([]), "{body}");
+    let mut both = vec![(removed.clone(), 1), (kept.clone(), 1)];
+    both.sort();
+    assert_eq!(lists().await, [both.clone(), both], "put back: listed");
+
+    let album = get(format!("/api/v3/library/albums/{removed}")).await;
+    let uri = format!(
+        "/api/v3/library/albums/{removed}?expected_revision={}&expected_listing_revision={}&delete_files=true",
+        album["row_revision"], album["listing_revision"]
+    );
+    let (status, body) = app.call("DELETE", &uri, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     let summary = get("/api/v3/library/recycle-bin/summary".to_owned()).await;
     assert_eq!(summary["files"], json!(1), "{summary}");
     let before = summary["as_of"].as_i64().expect("as of") + 1000;
@@ -6485,12 +6532,247 @@ async fn a_removed_album_is_listed_until_the_bin_lets_go_of_it() {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
 
-    let only = vec![(kept.clone(), 1)];
     assert_eq!(lists().await, [only.clone(), only], "out of the bin: gone");
     let opened = get(format!("/api/v3/library/albums/{removed}")).await;
     assert_eq!(opened["id"], json!(removed), "its link still opens it");
     assert_eq!(opened["track_count"], json!(0));
     rig.stop().await;
+}
+
+/// An album whose files are gone stays listed while a publish or a
+/// library task still holds it, and leaves the lists once the task
+/// settles: a live import must not vanish.
+#[tokio::test]
+async fn an_album_held_by_a_live_task_stays_listed() {
+    let rig = Rig::start("lib-task-listed").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "One/LP/01.flac", "flac_full_01.flac");
+    // A second album keeps the scope from tripping the mass-missing guard
+    // when One's only file goes: the guard would hold the whole scope back
+    // and leave the track indexed, which is the behaviour under test.
+    plant(&music, "Two/LP/01.flac", "flac_full_01.flac");
+    app.add_library_folder("music", &music).await;
+    let track = rig
+        .scan_store
+        .track_at("music", "One/LP/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album: String = app
+        .db()
+        .query_row(
+            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+            [&track],
+            |row| row.get(0),
+        )
+        .expect("album id");
+    let list = || {
+        let headers = &headers;
+        async move {
+            let (status, body) = app
+                .call("GET", "/api/v3/library/albums?limit=50", headers, None)
+                .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body
+        }
+    };
+    let listed = || {
+        let list = &list;
+        async move {
+            let page = list().await;
+            let ids: Vec<String> = page["items"]
+                .as_array()
+                .expect("items")
+                .iter()
+                .map(|item| item["id"].as_str().expect("id").to_owned())
+                .collect();
+            assert_eq!(page["total"], json!(ids.len()), "{page}");
+            ids
+        }
+    };
+
+    std::fs::remove_dir_all(music.join("One")).expect("the folder is deleted");
+    app.scan_library().await;
+    assert!(
+        !listed().await.contains(&album),
+        "no files and no task: not listed"
+    );
+
+    app.seed_with(
+        "INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+         staged, staged_sha256, track_id, state) VALUES \
+         ('task-import-000', 'task-import', 'audio', 'music', 'One/LP/01.flac', \
+         '.dropping/import', 'sha', ?1, 'prepared')",
+        [&track],
+    )
+    .await;
+    app.seed_with(
+        "UPDATE library_catalog_revision SET value = value + 1",
+        [0i64; 0],
+    )
+    .await;
+
+    assert!(listed().await.contains(&album), "a live import: listed");
+    app.seed_with(
+        "UPDATE library_publish_journal SET state = 'cleaned' WHERE id = 'task-import-000'",
+        [0i64; 0],
+    )
+    .await;
+    app.seed_with(
+        "UPDATE library_catalog_revision SET value = value + 1",
+        [0i64; 0],
+    )
+    .await;
+
+    assert!(
+        !listed().await.contains(&album),
+        "the import settled: not listed"
+    );
+
+    app.seed_with(
+        "INSERT INTO library_operation_jobs (id, kind, state, created_at, updated_at) \
+         VALUES ('task-job', 'repair', 'running', 0, 0)",
+        [0i64; 0],
+    )
+    .await;
+    app.seed_with(
+        "INSERT INTO library_operation_work (job_id, ordinal, local_album_id, \
+         expected_subject_revision, expected_input_revision, action, idempotency_key, \
+         state, updated_at) VALUES ('task-job', 0, ?1, 0, '', 'repair', 'task-job-0', \
+         'pending', 0)",
+        [&album],
+    )
+    .await;
+    app.seed_with(
+        "UPDATE library_catalog_revision SET value = value + 1",
+        [0i64; 0],
+    )
+    .await;
+
+    assert!(
+        listed().await.contains(&album),
+        "a running library task: listed"
+    );
+    app.seed_with(
+        "UPDATE library_operation_jobs SET state = 'succeeded' WHERE id = 'task-job'",
+        [0i64; 0],
+    )
+    .await;
+    app.seed_with(
+        "UPDATE library_catalog_revision SET value = value + 1",
+        [0i64; 0],
+    )
+    .await;
+
+    assert!(
+        !listed().await.contains(&album),
+        "the job finished: not listed"
+    );
+    app.seed_with(
+        "UPDATE library_operation_jobs SET state = 'running' WHERE id = 'task-job'",
+        [0i64; 0],
+    )
+    .await;
+    app.seed_with(
+        "UPDATE library_operation_work SET state = 'succeeded' WHERE job_id = 'task-job'",
+        [0i64; 0],
+    )
+    .await;
+    app.seed_with(
+        "UPDATE library_catalog_revision SET value = value + 1",
+        [0i64; 0],
+    )
+    .await;
+
+    assert!(
+        !listed().await.contains(&album),
+        "the work finished: not listed"
+    );
+    rig.stop().await;
+}
+
+/// A remove row set aside for an admin bumps the catalog revision: the
+/// listing rule reads that row's state as a hide guard, so clients must
+/// re-read. An audio row set aside does not bump it.
+#[tokio::test]
+async fn a_remove_set_aside_bumps_the_catalog_revision() {
+    use droppedneedle_kernel::db::DurableLane;
+    use droppedneedle_library::publish::journal::{JournalState, JournalWriter};
+
+    let (scratch, library, music) = bare_library("lib-attention-bump").await;
+    plant(&music, "One/01.flac", "flac_no_tags.flac");
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let conn = scratch_db(&scratch);
+    let album: String = conn
+        .query_row("SELECT id FROM local_albums LIMIT 1", [], |row| row.get(0))
+        .expect("album");
+    // The removal emptied the album and its row is still being written;
+    // its copy is in the bin.
+    conn.execute_batch(&format!(
+        "UPDATE local_albums SET has_indexed_track = 0 WHERE id = '{album}';
+         INSERT INTO library_catalog_actions (id, action_kind, local_album_id, \
+         before_json, after_json, reason_code, created_at) VALUES \
+         ('attention-removal', 'files_recycled', '{album}', '{{}}', '{{}}', \
+         'ALBUM_FILES_RECYCLED', 1);
+         INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+         staged, staged_sha256, state) VALUES ('attention-remove-row', 'attention-removal', \
+         'remove', 'music', 'One/01.flac', '.droppedneedle-management-attention', 'sha', \
+         'prepared');
+         INSERT INTO library_publish_replacements (journal_id, replaced_rel, \
+         replaced_sha256, recycle_to, recycled_at) VALUES ('attention-remove-row', \
+         'One/01.flac', 'sha', '.recycle/attention', 1);
+         INSERT INTO library_publish_journal (id, bundle_id, kind, dest_root, dest_rel, \
+         staged, staged_sha256, state) VALUES ('attention-audio-row', 'attention-audio', \
+         'audio', 'music', 'One/01.flac', '.droppedneedle-management-audio', 'sha', \
+         'prepared');"
+    ))
+    .expect("attention rows");
+    let revision = |conn: &rusqlite::Connection| -> i64 {
+        conn.query_row(
+            "SELECT value FROM library_catalog_revision WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("catalog revision")
+    };
+    let before = revision(&conn);
+    assert!(
+        library
+            .db
+            .write_durable(DurableLane::Background, "test.attention-remove", |tx| {
+                JournalWriter::new(tx).transition(
+                    "attention-remove-row",
+                    JournalState::Prepared,
+                    JournalState::NeedsAttention,
+                )
+            })
+            .expect("the remove is set aside")
+    );
+    assert!(
+        revision(&conn) > before,
+        "the remove set-aside bumps the catalog revision"
+    );
+    let before_audio = revision(&conn);
+    assert!(
+        library
+            .db
+            .write_durable(DurableLane::Background, "test.attention-audio", |tx| {
+                JournalWriter::new(tx).transition(
+                    "attention-audio-row",
+                    JournalState::Prepared,
+                    JournalState::NeedsAttention,
+                )
+            })
+            .expect("the audio write is set aside")
+    );
+    assert_eq!(
+        revision(&conn),
+        before_audio,
+        "an audio set-aside does not bump the catalog revision"
+    );
 }
 
 /// An album removed and put back whose folder then vanishes from disk
@@ -6821,6 +7103,81 @@ async fn the_bin_lists_a_removal_until_it_is_put_back() {
     assert!(
         page.items.is_empty(),
         "a removal put back has left the bin: {page:?}"
+    );
+}
+
+/// A removed album in the bin keeps its heart and rating, even when
+/// another copy of it has files: Put back returns it with them. The
+/// marks move to the copy only once nothing can be put back.
+#[tokio::test]
+async fn a_removed_album_keeps_its_marks_until_the_bin_lets_go() {
+    use droppedneedle_library::removal::Mutations;
+
+    let (scratch, library, music) = bare_library("lib-removed-marks").await;
+    for folder in ["One", "Two"] {
+        plant(&music, &format!("{folder}/01.flac"), "flac_no_tags.flac");
+    }
+    add_music_root(&library, &music).await;
+    add_admin(&library);
+    let conn = scratch_db(&scratch);
+    let album_of = |folder: &str| -> String {
+        conn.query_row(
+            "SELECT local_album_id FROM local_tracks WHERE relative_path = ?1",
+            [format!("{folder}/01.flac")],
+            |row| row.get(0),
+        )
+        .expect("album")
+    };
+    let (removed, kept) = (album_of("One"), album_of("Two"));
+    conn.execute_batch(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at) VALUES \
+         ('{removed}', 'musicbrainz', 'rg-shared', 'rel-removed', 'automatic', 1), \
+         ('{kept}', 'musicbrainz', 'rg-shared', 'rel-kept', 'automatic', 1); \
+         INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('fan', 'Fan', 'user', 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
+         ('fan', 'album', '{removed}', 7); \
+         INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at) VALUES \
+         ('fan', 'album', '{removed}', 4, 7);"
+    ))
+    .expect("marks planted");
+    let removal = Mutations::new(&library)
+        .remove_album(&removed, true, true, "admin")
+        .expect("album removed")
+        .removal_id
+        .expect("removal id");
+    let worker = crate::common::library::repair_worker(&library);
+    for _ in 0..20 {
+        if !droppedneedle_library::repairs::tick(&worker, "worker").await {
+            break;
+        }
+    }
+    let marks = || -> Vec<String> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT 'favorite ' || item_id FROM catalog_user_favorites \
+                 WHERE item_kind = 'album' UNION ALL SELECT 'rating ' || item_id \
+                 FROM catalog_user_ratings WHERE item_kind = 'album' ORDER BY 1",
+            )
+            .expect("prepare");
+        stmt.query_map([], |row| row.get(0))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("rows")
+    };
+    assert_eq!(
+        marks(),
+        [format!("favorite {removed}"), format!("rating {removed}")],
+        "in the bin: the marks stay"
+    );
+    Mutations::new(&library)
+        .put_back(&removed, &removal, "admin")
+        .expect("put back");
+    assert_eq!(
+        marks(),
+        [format!("favorite {removed}"), format!("rating {removed}")],
+        "put back: the marks come home"
     );
 }
 

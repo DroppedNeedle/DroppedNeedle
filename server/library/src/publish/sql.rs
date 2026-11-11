@@ -63,10 +63,59 @@ macro_rules! removal_offered {
     };
 }
 
+/// Whether album `$album` has a removal Put back can still bring home:
+/// one of its `files_recycled` rows is still offered
+/// ([`removal_offered!`]). The album's page lists such a removal and the
+/// recycle bin shows it; the album itself is no longer listed.
+#[macro_export]
+macro_rules! album_removal_offered {
+    ($album:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM library_catalog_actions lra \
+             WHERE lra.local_album_id = ",
+            $album,
+            ".id AND lra.action_kind = 'files_recycled' AND ",
+            $crate::removal_offered!("lra"),
+            ")"
+        )
+    };
+}
+
+/// Whether a publish or a library task still holds album `$album`: an
+/// audio row on one of its tracks that has not settled, or work a live
+/// job has not finished. A file the publisher is still placing, and an
+/// album a repair or management job pinned, keep the album listed while
+/// a scan would otherwise find nothing. Remove and put-back rows do not
+/// count: a removal leaves the lists, and a put-back lists the album when
+/// its files are back.
+#[macro_export]
+macro_rules! album_task_open {
+    ($album:literal) => {
+        concat!(
+            "(EXISTS (SELECT 1 FROM library_publish_journal j \
+             JOIN local_tracks t ON t.id = j.track_id \
+             WHERE t.local_album_id = ",
+            $album,
+            ".id AND j.kind = 'audio' AND j.state IN ('prepared', 'staged', \
+             'published', 'committed', 'cleanup_pending')) OR EXISTS (SELECT 1 \
+             FROM library_operation_work w \
+             JOIN library_operation_jobs oj ON oj.id = w.job_id \
+             WHERE w.local_album_id = ",
+            $album,
+            ".id AND w.state IN ('pending', 'running') \
+             AND oj.state IN ('queued', 'running', 'paused')))"
+        )
+    };
+}
+
 /// An album the web UI's lists show, over an album alias: live, and with
-/// files, or with a removal that Put back can still bring home
-/// ([`removal_offered!`]). The catalog's lists and counts, Check albums
-/// and the cleanup that moves marks off a hidden album read this one rule.
+/// files, or with none while a publish or a library task still holds it
+/// ([`album_task_open!`]) and nothing of it can be put back
+/// ([`album_removal_offered!`]). A removed album is not listed while its
+/// copies are in the recycle bin; its page, its removals and the bin
+/// still open by its id, and Put back lists it again. The catalog's
+/// lists and counts, Check albums and the cleanup that moves marks off a
+/// hidden album read this one rule.
 #[macro_export]
 macro_rules! listed_album {
     ($album:literal) => {
@@ -75,11 +124,10 @@ macro_rules! listed_album {
             $album,
             ".retired_into_album_id IS NULL AND (+",
             $album,
-            ".has_indexed_track = 1 OR EXISTS (SELECT 1 FROM library_catalog_actions lra \
-             WHERE lra.local_album_id = ",
-            $album,
-            ".id AND lra.action_kind = 'files_recycled' AND ",
-            $crate::removal_offered!("lra"),
+            ".has_indexed_track = 1 OR (NOT ",
+            $crate::album_removal_offered!($album),
+            " AND ",
+            $crate::album_task_open!($album),
             "))"
         )
     };
@@ -850,6 +898,32 @@ mod tests {
         );
         for part in [removal, held, writing] {
             assert!(rule.contains(&part), "{part} is missing");
+        }
+    }
+
+    /// [`album_task_open!`] names every journal state that is not
+    /// terminal, and only those: a row still holding the album counts,
+    /// and a settled one does not.
+    #[test]
+    fn the_task_rule_quotes_live_journal_states() {
+        let rule = crate::album_task_open!("a");
+        for state in [
+            JournalState::Prepared,
+            JournalState::Staged,
+            JournalState::Published,
+            JournalState::Committed,
+            JournalState::CleanupPending,
+        ] {
+            let quoted = format!("'{}'", state.as_str());
+            assert!(rule.contains(&quoted), "{state:?} is missing");
+        }
+        for state in [
+            JournalState::Cleaned,
+            JournalState::Compensated,
+            JournalState::NeedsAttention,
+        ] {
+            let quoted = format!("'{}'", state.as_str());
+            assert!(!rule.contains(&quoted), "{state:?} is terminal");
         }
     }
 }
