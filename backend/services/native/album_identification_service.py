@@ -440,7 +440,7 @@ def _enforce_raw_track_identities(
         )
         for item in candidate.track_evidence:
             row = rows.get(item.local_track_id)
-            if row is None:
+            if row is None or "embedded_ids_reconciled" in item.evidence_kinds:
                 continue
             recording_values = {
                 str(value)

@@ -42,6 +42,7 @@ from infrastructure.persistence.native_library_store import (
 from infrastructure.resilience.retry import CircuitOpenError
 from models.audio import FingerprintResult
 from models.identification import (
+    track_reassignment_plan,
     AlbumCandidate,
     CandidateEvidence,
     CandidateTrack,
@@ -1148,6 +1149,164 @@ async def test_manual_candidate_override_records_choice_and_attaches_only_suppor
     }
     callback.assert_awaited_once_with(
         "album-1", album_input_revisions(context["tracks"])[2]
+    )
+
+
+async def _seed_reassignment_review(
+    store: NativeLibraryStore, *, second_track_kinds: list[str]
+) -> None:
+    """Two-track album whose second file carries another edition's embedded IDs."""
+
+    await _seed_album(store, "1", two_tracks=True)
+    context = await store.get_album_identification_context("album-1")
+    assert context is not None
+    tag_revision, file_revision, policy_revision = album_input_revisions(
+        context["tracks"]
+    )
+    attempt = IdentificationAttempt(
+        id="attempt-reassign",
+        local_album_id="album-1",
+        input_tag_revision=tag_revision,
+        input_policy_revision=policy_revision,
+        input_file_revision=file_revision,
+        input_identity_revision=album_identity_revision(
+            context["identity"], context["tracks"]
+        ),
+        matcher_version="feedback-fixes-v1",
+        state="contradictory",
+        terminal_reason_code="HARD_CONTRADICTION",
+        started_at=2,
+        completed_at=2,
+    )
+    evidence = CandidateEvidence(
+        release_group_mbid="rg-reassign",
+        release_mbid="release-reassign",
+        matcher_version="feedback-fixes-v1",
+        album_title_classification="supported",
+        album_artist_classification="supported",
+        track_evidence=[
+            TrackEvidence(
+                local_track_id="track-1-1",
+                classification="supported",
+                candidate_track_title="Track 1",
+                candidate_disc_number=1,
+                candidate_track_position=1,
+                recording_mbid="recording-1",
+                release_track_mbid="release-track-1",
+            ),
+            TrackEvidence(
+                local_track_id="track-1-2",
+                classification="contradictory",
+                evidence_kinds=second_track_kinds,
+                candidate_track_title="Track 2",
+                candidate_disc_number=1,
+                candidate_track_position=2,
+                recording_mbid="recording-2",
+                release_track_mbid="release-track-2",
+            ),
+        ],
+        unmatched_expected_tracks=["1:2:Track 2"],
+        reason_code="CONFLICTING_TRACK_EVIDENCE",
+    )
+    await store.replace_review_attempt(
+        "review-1",
+        expected_review_revision=1,
+        attempt=attempt,
+        evidence=[
+            IdentificationEvidenceRecord(
+                id="evidence-reassign",
+                attempt_id=attempt.id,
+                candidate_key="rg-reassign:release-reassign",
+                evidence=evidence,
+                created_at=2,
+            )
+        ],
+        updated_at=2,
+    )
+
+
+def _reassign_request(
+    catalog_revision: int, *, reassign: bool
+) -> CandidateAcceptanceRequest:
+    return CandidateAcceptanceRequest(
+        expected_review_revision=2,
+        expected_catalog_revision=catalog_revision,
+        expected_evidence_revision="evidence-reassign",
+        candidate_key="rg-reassign:release-reassign",
+        manual_override=True,
+        reassign_conflicting_tracks=reassign,
+        confirmation=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_manual_override_can_reassign_tracks_that_only_conflict_on_embedded_ids(
+    store: NativeLibraryStore,
+) -> None:
+    await _seed_reassignment_review(
+        store, second_track_kinds=["release_track_mbid_conflict"]
+    )
+    response = await LibraryReviewService(store).accept_candidate(
+        "review-1",
+        _reassign_request(await store.get_catalog_revision(), reassign=True),
+        "admin",
+        now=3,
+    )
+    context = await store.get_album_identification_context("album-1")
+    assert response.state == "resolved"
+    assert context is not None
+    assert context["identity"]["decision_source"] == "manual"
+    identities = {track["id"]: track["recording_mbid"] for track in context["tracks"]}
+    assert identities == {"track-1-1": "recording-1", "track-1-2": "recording-2"}
+    with sqlite3.connect(store.db_path) as connection:
+        release_track = connection.execute(
+            "SELECT release_track_mbid, release_track_position FROM "
+            "local_track_external_identities WHERE local_track_id = 'track-1-2'"
+        ).fetchone()
+        audit = connection.execute(
+            "SELECT after_json FROM library_catalog_actions "
+            "WHERE action_kind = 'accept_candidate'"
+        ).fetchone()
+    assert release_track == ("release-track-2", 2)
+    assert json.loads(audit[0])["reassigned_track_ids"] == ["track-1-2"]
+
+
+@pytest.mark.asyncio
+async def test_plain_manual_override_still_leaves_the_conflicting_track_unassigned(
+    store: NativeLibraryStore,
+) -> None:
+    await _seed_reassignment_review(
+        store, second_track_kinds=["release_track_mbid_conflict"]
+    )
+    await LibraryReviewService(store).accept_candidate(
+        "review-1",
+        _reassign_request(await store.get_catalog_revision(), reassign=False),
+        "admin",
+        now=3,
+    )
+    context = await store.get_album_identification_context("album-1")
+    assert context is not None
+    identities = {track["id"]: track["recording_mbid"] for track in context["tracks"]}
+    assert identities == {"track-1-1": "recording-1", "track-1-2": None}
+
+
+@pytest.mark.asyncio
+async def test_reassignment_is_refused_when_the_conflict_is_not_only_embedded_ids(
+    store: NativeLibraryStore,
+) -> None:
+    await _seed_reassignment_review(store, second_track_kinds=["duration_conflict"])
+    with pytest.raises(ValidationError):
+        await LibraryReviewService(store).accept_candidate(
+            "review-1",
+            _reassign_request(await store.get_catalog_revision(), reassign=True),
+            "admin",
+            now=3,
+        )
+    context = await store.get_album_identification_context("album-1")
+    assert context is not None
+    assert (
+        context["identity"] is None
+        or context["identity"].get("decision_source") != "manual"
     )
 
 
@@ -2675,6 +2834,105 @@ async def test_explicit_reidentification_requires_confirmation_for_conflicting_c
     )
 
     assert selected["state"] == "succeeded"
+
+
+class _TwoTrackProvider(_IdentificationProvider):
+    async def get_album_candidate(
+        self, release_group_mbid, target_track_count, priority
+    ):
+        return AlbumCandidate(
+            release_group_mbid="rg-explicit",
+            release_mbid="release-explicit",
+            album_title="Album 1",
+            album_artist_name="Artist 1",
+            tracks=[
+                CandidateTrack(
+                    title=f"Track {index}",
+                    position=index,
+                    absolute_position=index,
+                    recording_mbid=f"recording-{index}",
+                    release_track_mbid=f"release-track-{index}",
+                )
+                for index in (1, 2)
+            ],
+        )
+
+
+async def _ready_two_track_reidentification(
+    store: NativeLibraryStore, db_path: Path, *, embedded_release_track: str
+):
+    """Two files; the second one carries a release-track ID of another edition."""
+
+    await _seed_album(store, "1", two_tracks=True)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE local_tracks SET embedded_release_track_mbid = ? "
+            "WHERE id = 'track-1-2'",
+            (embedded_release_track,),
+        )
+    created = await ReidentificationService(store).create_or_coalesce(
+        "album-1", "admin", now=1
+    )
+    claimed = await store.claim_operation_job(
+        "worker", now=2, lease_seconds=60, kind="explicit_reidentification"
+    )
+    assert claimed is not None
+    worker = ExplicitReidentificationWorker(
+        store,
+        AlbumCandidateService(_TwoTrackProvider()),
+        AlbumEvidenceEngine(),
+    )
+    ready = await worker.run_claimed(claimed, "worker", now=3)
+    return worker, created, ready
+
+
+@pytest.mark.asyncio
+async def test_explicit_exact_release_maps_a_track_that_only_conflicts_on_its_embedded_release_track_id(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    worker, created, ready = await _ready_two_track_reidentification(
+        store, db_path, embedded_release_track="4b2174ec-d9b7-4de2-a8c0-ae8128c7d5ab"
+    )
+    snapshot = await store.get_operation_snapshot(created["id"])
+    assert snapshot is not None
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT evidence_json FROM library_identification_evidence "
+            "WHERE candidate_key = 'rg-explicit:release-explicit'"
+        ).fetchone()
+    evidence = msgspec.json.decode(bytes(row[0]), type=CandidateEvidence)
+    by_id = {item.local_track_id: item for item in evidence.track_evidence}
+    # The engine proposes the one edition track the file matches by title and
+    # position, and records only the identifier conflict against it.
+    assert by_id["track-1-2"].classification == "contradictory"
+    assert by_id["track-1-2"].evidence_kinds == ["release_track_mbid_conflict"]
+    assert by_id["track-1-2"].release_track_mbid == "release-track-2"
+    assert track_reassignment_plan(evidence, 2) != []
+
+    with pytest.raises(ValidationError, match="Confirm the conflicting"):
+        await worker.select_candidate(
+            created["id"],
+            expected_job_revision=int(ready["row_revision"]),
+            candidate_key="rg-explicit:release-explicit",
+            confirmation=False,
+            actor_user_id="admin",
+            now=4,
+        )
+    selected = await worker.select_candidate(
+        created["id"],
+        expected_job_revision=int(ready["row_revision"]),
+        candidate_key="rg-explicit:release-explicit",
+        confirmation=True,
+        actor_user_id="admin",
+        now=5,
+    )
+    context = await store.get_album_identification_context("album-1")
+    assert selected["state"] == "succeeded"
+    assert context is not None
+    assert {track["id"]: track["recording_mbid"] for track in context["tracks"]} == {
+        "track-1-1": "recording-1",
+        "track-1-2": "recording-2",
+    }
 
 
 @pytest.mark.asyncio

@@ -342,6 +342,8 @@ export interface ReviewActionRequest {
 export interface CandidateAcceptanceRequest extends ReviewActionRequest {
 	candidate_key: string;
 	manual_override: boolean;
+	/** Also assign tracks whose only disagreement is their embedded recording/release-track IDs. */
+	reassign_conflicting_tracks?: boolean;
 }
 
 export interface ReviewActionResponse {

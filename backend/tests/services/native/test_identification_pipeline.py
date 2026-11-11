@@ -23,6 +23,7 @@ from infrastructure.queue.priority_queue import RequestPriority
 from models.audio import FingerprintResult
 from models.identification import (
     AlbumCandidate,
+    IdentificationDecision,
     CandidateEvidence,
     CandidateTrack,
     FingerprintOutcome,
@@ -59,6 +60,7 @@ from services.native.album_identification_service import (
     MAX_NEW_FINGERPRINTS_PER_ATTEMPT,
     AlbumIdentificationService,
     _edition_hold_metrics,
+    _enforce_raw_track_identities,
 )
 from services.native.conditional_fingerprint_service import (
     FINGERPRINTER_VERSION,
@@ -7867,3 +7869,59 @@ async def test_reidentification_lane_unneeded_track_writes_skipped_row(
     assert skipped is not None and skipped.state == "skipped"
     # Both needed tracks did fresh work: the skipped call charged no budget.
     assert fake.generate_calls == 2
+
+
+def _decision_with_one_track(kinds: list[str]) -> IdentificationDecision:
+    evidence = CandidateEvidence(
+        release_group_mbid="group",
+        release_mbid="release",
+        track_evidence=[
+            TrackEvidence(
+                local_track_id="t1",
+                classification="supported",
+                evidence_kinds=kinds,
+                candidate_track_title="One",
+                candidate_disc_number=1,
+                candidate_track_position=1,
+                recording_mbid="recording-edition",
+                release_track_mbid="track-edition",
+            )
+        ],
+        reason_code="SUPPORTED",
+    )
+    return IdentificationDecision(
+        outcome="identified",
+        reason_code="SUPPORTED",
+        selected_candidate_key="group:release",
+        candidates=[evidence],
+    )
+
+
+_RAW_TRACK_OF_ANOTHER_EDITION = [
+    {
+        "id": "t1",
+        "embedded_release_group_mbid": "group",
+        "embedded_recording_mbid": "recording-other",
+        "recording_mbid": None,
+        "embedded_release_track_mbid": "track-other",
+        "release_track_mbid": None,
+    }
+]
+
+
+def test_second_pass_keeps_a_track_reconciled_by_the_unanimous_release() -> None:
+    decision = _decision_with_one_track(["embedded_ids_reconciled"])
+    _enforce_raw_track_identities(decision, _RAW_TRACK_OF_ANOTHER_EDITION)
+
+    candidate = decision.candidates[0]
+    assert candidate.track_evidence[0].classification == "supported"
+    assert decision.outcome == "identified"
+
+
+def test_second_pass_still_flags_an_ordinary_embedded_id_conflict() -> None:
+    decision = _decision_with_one_track(["normalized_title"])
+    _enforce_raw_track_identities(decision, _RAW_TRACK_OF_ANOTHER_EDITION)
+
+    assert decision.candidates[0].track_evidence[0].classification == "contradictory"
+    assert decision.outcome == "contradictory"
+

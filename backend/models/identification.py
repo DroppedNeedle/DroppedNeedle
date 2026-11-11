@@ -104,6 +104,95 @@ class CandidateEvidence(AppStruct):
     matcher_version: str = ""
 
 
+# Conflicts that come only from the identifiers embedded in a file (its recording or
+# release-track MBID belongs to another edition of the same release group). They say
+# nothing about the audio itself, unlike a duration conflict or an ambiguous pairing.
+ID_ONLY_CONFLICT_KINDS = frozenset(
+    {"recording_mbid_conflict", "release_track_mbid_conflict"}
+)
+
+
+def is_reassignable_track(item: TrackEvidence) -> bool:
+    """A contradictory track whose only disagreement is its embedded identifiers.
+
+    The evidence engine records a proposed candidate track only when exactly one
+    candidate track is consistent with the file on descriptive grounds (normalized
+    title plus position or duration), without trusting the conflicting identifiers.
+    """
+
+    return (
+        item.classification == "contradictory"
+        and bool(item.evidence_kinds)
+        and set(item.evidence_kinds) <= ID_ONLY_CONFLICT_KINDS
+        and item.candidate_track_title is not None
+        and item.candidate_track_position is not None
+        and bool(item.recording_mbid)
+        and bool(item.release_track_mbid)
+    )
+
+
+def id_only_reassignments(
+    track_evidence: list[TrackEvidence],
+    unmatched_expected_tracks: list[str],
+    indexed_track_count: int,
+) -> list[TrackEvidence]:
+    """Identifier-only conflicts that can be assigned to the candidate, or [] if not eligible.
+
+    Every local track is either supported or an identifier-only conflict with a proposed
+    edition track, at least one is the latter, no two tracks claim the same edition track,
+    and the expected tracks left unmatched are exactly the ones the reassigned tracks fill,
+    so a track that is really missing can never be hidden by a reassignment.
+    """
+
+    if len(track_evidence) != indexed_track_count:
+        return []
+    reassigned: list[TrackEvidence] = []
+    for item in track_evidence:
+        if item.classification == "supported":
+            continue
+        if not is_reassignable_track(item):
+            return []
+        reassigned.append(item)
+    if not reassigned:
+        return []
+    slots = [
+        (item.candidate_disc_number, item.candidate_track_position)
+        for item in track_evidence
+        if item.candidate_track_position is not None
+    ]
+    if len(slots) != len(set(slots)):
+        return []
+    filled = sorted(
+        f"{item.candidate_disc_number}:{item.candidate_track_position}:"
+        f"{item.candidate_track_title}"
+        for item in reassigned
+    )
+    if filled != sorted(unmatched_expected_tracks):
+        return []
+    return reassigned
+
+
+def track_reassignment_plan(
+    evidence: CandidateEvidence, indexed_track_count: int
+) -> list[TrackEvidence]:
+    """Tracks an administrator may reassign to this edition, or [] when not eligible.
+
+    Eligible only when the album title and artist are not contradicted and the tracks
+    satisfy `id_only_reassignments`.
+    """
+
+    if (
+        evidence.album_title_classification == "contradictory"
+        or evidence.album_artist_classification == "contradictory"
+    ):
+        return []
+    return id_only_reassignments(
+        evidence.track_evidence,
+        evidence.unmatched_expected_tracks,
+        indexed_track_count,
+    )
+
+
 class IdentificationDecision(AppStruct):
     outcome: IdentificationOutcome
     reason_code: str

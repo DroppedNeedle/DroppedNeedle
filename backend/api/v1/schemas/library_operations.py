@@ -123,6 +123,10 @@ class ReviewActionRequest(AppStruct):
 class CandidateAcceptanceRequest(ReviewActionRequest):
     candidate_key: str = ""
     manual_override: bool = False
+    # Also assign the tracks whose only disagreement is their embedded recording or
+    # release-track identifiers (they match the edition by title and position or
+    # duration). Requires manual_override and an eligible candidate.
+    reassign_conflicting_tracks: bool = False
 
 
 class ReviewActionResponse(AppStruct):

@@ -51,6 +51,7 @@ from models.identification import (
     IdentificationAttempt,
     IdentificationEvidenceRecord,
     TrackEvidence,
+    track_reassignment_plan,
 )
 from models.edition_management import (
     CustomEditionManifest,
@@ -19431,6 +19432,7 @@ class NativeLibraryStore(PersistenceBase):
         action_id: str,
         idempotency_key: str | None,
         now: float,
+        reassign_conflicting_tracks: bool = False,
     ) -> dict[str, Any]:
         def operation(connection: sqlite3.Connection) -> dict[str, Any]:
             if idempotency_key:
@@ -19533,6 +19535,18 @@ class NativeLibraryStore(PersistenceBase):
                 raise StaleRevisionError(
                     "This candidate no longer passes every automatic safety gate."
                 )
+            reassigned: dict[str, TrackEvidence] = {}
+            if reassign_conflicting_tracks:
+                if not manual_override:
+                    raise ValidationError(
+                        "Reassigning conflicting tracks needs an explicit administrator override."
+                    )
+                plan = track_reassignment_plan(evidence, len(current_tracks))
+                if not plan:
+                    raise ValidationError(
+                        "No track of this candidate can be safely reassigned to it."
+                    )
+                reassigned = {item.local_track_id: item for item in plan}
             connection.execute(
                 "INSERT INTO local_album_external_identities "
                 "(local_album_id, provider, release_group_mbid, release_mbid, decision_source, "
@@ -19560,7 +19574,10 @@ class NativeLibraryStore(PersistenceBase):
                 (review["local_album_id"],),
             )
             for track in evidence.track_evidence:
-                if track.classification == "supported" and track.recording_mbid:
+                if (
+                    track.classification == "supported"
+                    or track.local_track_id in reassigned
+                ) and track.recording_mbid:
                     connection.execute(
                         "INSERT INTO local_track_external_identities "
                         "(local_track_id, provider, recording_mbid, release_mbid, "
@@ -19616,6 +19633,7 @@ class NativeLibraryStore(PersistenceBase):
                         {
                             "candidate_key": candidate_key,
                             "manual_override": manual_override,
+                            "reassigned_track_ids": sorted(reassigned),
                         }
                     ),
                     "MANUAL_CANDIDATE_OVERRIDE"

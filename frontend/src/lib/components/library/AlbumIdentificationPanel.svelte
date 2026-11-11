@@ -43,6 +43,7 @@
 	} from '$lib/queries/library/EditionConversionQueries.svelte';
 	import { rememberLibraryManagementPreviewToken } from '$lib/queries/library-management/LibraryManagementPreviewTokens';
 	import { withBasePath } from '$lib/utils/basePath';
+	import { reassignableTracks } from '$lib/utils/identityReassignment';
 
 	interface Props {
 		album: LibraryAlbumDetail;
@@ -212,6 +213,21 @@
 		);
 	}
 
+	/** Local tracks that match this edition by title and position but carry another edition's IDs. */
+	function reassignTracks(candidate: Candidate) {
+		return reassignableTracks(candidate.evidence, album.track_count);
+	}
+
+	/**
+	 * Expected tracks still unmatched. When every unmatched track is one that can be assigned to
+	 * this edition, nothing is really missing: the local file exists and only its identifiers differ.
+	 */
+	function missingTrackCount(candidate: Candidate): number {
+		return reassignTracks(candidate).length > 0
+			? 0
+			: candidate.evidence.unmatched_expected_tracks.length;
+	}
+
 	function canSealCustomEdition(candidate: Candidate): boolean {
 		return (
 			candidate.evidence.album_title_classification !== 'contradictory' &&
@@ -253,7 +269,7 @@
 	function reviewReason(candidate: Candidate): string {
 		const conflictingTracks = countEvidence(candidate, 'contradictory');
 		const unknownTracks = countEvidence(candidate, 'unknown');
-		const missingTracks = candidate.evidence.unmatched_expected_tracks.length;
+		const missingTracks = missingTrackCount(candidate);
 		if (conflictingTracks) {
 			return `${conflictingTracks} local ${conflictingTracks === 1 ? 'track conflicts' : 'tracks conflict'} with this edition`;
 		}
@@ -864,8 +880,8 @@
 												{#if countEvidence(candidate, 'contradictory')}<span data-tone="warning"
 														>{countEvidence(candidate, 'contradictory')} conflicts</span
 													>{/if}
-												{#if candidate.evidence.unmatched_expected_tracks.length}<span
-														>{candidate.evidence.unmatched_expected_tracks.length} missing</span
+												{#if missingTrackCount(candidate)}<span
+														>{missingTrackCount(candidate)} missing</span
 													>{/if}
 											</span>
 										</span>
@@ -975,6 +991,20 @@
 											identity.
 										</p>
 									</div>
+								{:else if reassignTracks(selectedCandidate).length > 0}
+									<div class="identification-insight" data-tone="success">
+										<FileCheck class="h-5 w-5 shrink-0" />
+										<p>
+											<strong>Every local track matches this edition by title and position.</strong>
+											{reassignTracks(selectedCandidate).length === 1
+												? '1 track carries'
+												: `${reassignTracks(selectedCandidate).length} tracks carry`}
+											identifiers from another edition of the same release. An administrator can attach
+											this edition and assign {reassignTracks(selectedCandidate).length === 1
+												? 'that track'
+												: 'those tracks'} to it.
+										</p>
+									</div>
 								{:else if selectedCandidate.automatic_safe}
 									<div class="identification-insight" data-tone="success">
 										<ShieldCheck class="h-5 w-5 shrink-0" />
@@ -1004,13 +1034,12 @@
 									</section>
 								{/if}
 
-								{#if countEvidence(selectedCandidate, 'unknown') || selectedCandidate.evidence.unmatched_expected_tracks.length}
+								{#if countEvidence(selectedCandidate, 'unknown') || missingTrackCount(selectedCandidate)}
 									<div class="identification-track-note">
 										<ListMusic class="h-4 w-4 shrink-0" />
 										<span>
 											{countEvidence(selectedCandidate, 'unknown')} local tracks have unknown evidence;
-											{selectedCandidate.evidence.unmatched_expected_tracks.length} expected release tracks
-											are missing.
+											{missingTrackCount(selectedCandidate)} expected release tracks are missing.
 										</span>
 									</div>
 								{/if}
@@ -1028,10 +1057,14 @@
 								</details>
 							</div>
 
-							{#if hasCompleteTrackMap(selectedCandidate)}
+							{#if hasCompleteTrackMap(selectedCandidate) || reassignTracks(selectedCandidate).length > 0}
 								<footer class="identification-dossier-action">
 									<div>
-										<strong>Attach exact edition</strong>
+										<strong
+											>{hasCompleteTrackMap(selectedCandidate)
+												? 'Attach exact edition'
+												: `Attach exact edition and assign ${reassignTracks(selectedCandidate).length} conflicting ${reassignTracks(selectedCandidate).length === 1 ? 'track' : 'tracks'}`}</strong
+										>
 										<span>Audio, tags, artwork, and file paths stay untouched.</span>
 									</div>
 									<button
@@ -1240,6 +1273,11 @@
 								><BadgeCheck class="h-3.5 w-3.5" /> All {confirmationCandidate.evidence
 									.track_evidence.length} tracks mapped</span
 							>
+						{:else if reassignTracks(confirmationCandidate).length > 0}
+							<span class="identification-complete-map"
+								><BadgeCheck class="h-3.5 w-3.5" /> All {confirmationCandidate.evidence
+									.track_evidence.length} tracks map by title and position</span
+							>
 						{/if}
 					</div>
 				</section>
@@ -1254,6 +1292,28 @@
 						<span><strong>Untouched</strong>Audio, tags, artwork, folders, and filenames</span>
 					</div>
 				</div>
+
+				{#if reassignTracks(confirmationCandidate).length > 0}
+					<section
+						class="identification-warning-card"
+						data-testid="identification-reassigned-tracks"
+					>
+						<p class="identification-kicker">Tracks that will be assigned to this edition</p>
+						<ul>
+							{#each reassignTracks(confirmationCandidate) as item (item.local_track_id)}
+								<li>
+									<strong>{item.candidate_track_title}</strong>
+									(track {item.candidate_track_position}): its file carries identifiers from another
+									edition of this release, but its title and position match this one.
+								</li>
+							{/each}
+						</ul>
+						<p>
+							Library Management corrects the embedded identifiers on its next run for this album.
+							Nothing is rewritten by this decision.
+						</p>
+					</section>
+				{/if}
 
 				<section class="identification-warning-card">
 					<div class="identification-section-heading">
@@ -1287,12 +1347,10 @@
 								>
 							</li>
 						{/if}
-						{#if confirmationCandidate.evidence.unmatched_expected_tracks.length}
+						{#if missingTrackCount(confirmationCandidate)}
 							<li>
 								<span>Edition completeness</span>
-								<strong
-									>{confirmationCandidate.evidence.unmatched_expected_tracks.length} missing</strong
-								>
+								<strong>{missingTrackCount(confirmationCandidate)} missing</strong>
 							</li>
 						{/if}
 					</ul>

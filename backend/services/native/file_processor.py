@@ -261,8 +261,14 @@ def _slskd_expected_track(
     corroborated = False
     if tag.musicbrainz_recording_id and track.recording_mbid:
         if tag.musicbrainz_recording_id.casefold() != track.recording_mbid.casefold():
-            return track, False, "recording MBID conflicts with the exact edition"
-        corroborated = True
+            # Editions of one release group carry their own recording and release-track
+            # IDs, so a file fetched from another edition legitimately names a different
+            # recording. Only the same track by normalized title AND near-identical
+            # duration is that case; anything weaker stays a conflict.
+            if not _same_track_of_another_edition(tag, info, track):
+                return track, False, "recording MBID conflicts with the exact edition"
+        else:
+            corroborated = True
     if tag.title and track.title:
         if title_containment_score(track.title, tag.title) < _TAG_TITLE_WEAK:
             return track, False, "title conflicts with the exact edition"
@@ -282,6 +288,25 @@ def _slskd_expected_track(
         and track.disc_number > 0
     )
     return track, authoritative, None
+
+
+_SAME_TRACK_DURATION_TOLERANCE = 3.0
+
+
+def _same_track_of_another_edition(
+    tag: AudioTag, info: AudioInfo, track: ExpectedTrack
+) -> bool:
+    """Same normalized title and a duration within seconds: only the edition IDs differ."""
+
+    if not (tag.title and track.title and track.duration_seconds):
+        return False
+    if not info.duration_seconds:
+        return False
+    return (
+        normalize_recording_title(tag.title) == normalize_recording_title(track.title)
+        and abs(info.duration_seconds - track.duration_seconds)
+        <= _SAME_TRACK_DURATION_TOLERANCE
+    )
 
 
 _TITLE_CONFLICT_RATIO = 50  # at or below this, a real title tag names a different track

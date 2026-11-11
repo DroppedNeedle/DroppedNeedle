@@ -13,6 +13,7 @@
 	} from '$lib/queries/library/LibraryOperationsTypes';
 	import { isEditionToConfirmReview } from '$lib/queries/library/LibraryOperationsTypes';
 	import { createUuid } from '$lib/utils/uuid';
+	import { reassignableTracks } from '$lib/utils/identityReassignment';
 
 	type ReviewCandidate = ReviewDetailResponse['candidates'][number];
 
@@ -40,6 +41,7 @@
 	let focusedReviewId = $state<string | null>(null);
 	let confirmation = $state<'detach' | 'exclude' | 'retry' | null>(null);
 	let overrideCandidate = $state<ReviewCandidate | null>(null);
+	let reassignConflicting = $state(true);
 
 	$effect(() => {
 		if (!dialog) return;
@@ -67,9 +69,20 @@
 		};
 	}
 
+	function indexedTrackCount(): number {
+		return (query.data?.tracks ?? []).filter((track) => track.availability === 'indexed').length;
+	}
+
+	function overrideReassignTracks() {
+		return overrideCandidate
+			? reassignableTracks(overrideCandidate.evidence, indexedTrackCount())
+			: [];
+	}
+
 	async function acceptCandidate(
 		candidate: ReviewCandidate,
-		manualOverride: boolean
+		manualOverride: boolean,
+		reassign = false
 	): Promise<void> {
 		const detail = query.data;
 		if (!detail || !reviewId) return;
@@ -83,7 +96,8 @@
 				idempotency_key: createUuid(),
 				confirmation: true,
 				candidate_key: candidate.candidate_key,
-				manual_override: manualOverride
+				manual_override: manualOverride,
+				reassign_conflicting_tracks: reassign
 			}
 		});
 	}
@@ -94,6 +108,7 @@
 	): void {
 		overrideOpener = event.currentTarget;
 		overrideCandidate = candidate;
+		reassignConflicting = true;
 		overrideDialog.showModal();
 		overrideHeading.focus();
 	}
@@ -101,7 +116,11 @@
 	async function confirmOverride(): Promise<void> {
 		if (!overrideCandidate) return;
 		try {
-			await acceptCandidate(overrideCandidate, true);
+			await acceptCandidate(
+				overrideCandidate,
+				true,
+				reassignConflicting && overrideReassignTracks().length > 0
+			);
 		} catch {
 			return;
 		}
@@ -507,6 +526,27 @@
 						{/if}
 					</ul>
 				</section>
+				{#if overrideReassignTracks().length > 0}
+					<section data-testid="review-reassign-option">
+						<label class="flex cursor-pointer items-start gap-2">
+							<input
+								type="checkbox"
+								class="checkbox checkbox-sm mt-0.5"
+								bind:checked={reassignConflicting}
+							/>
+							<span>
+								<strong
+									>Also assign {overrideReassignTracks().length} conflicting
+									{overrideReassignTracks().length === 1 ? 'track' : 'tracks'} to this edition</strong
+								>
+								<span class="mt-1 block text-xs text-base-content/70">
+									Their title and position match this edition; only the recording or release-track
+									identifiers embedded in the files belong to another edition of this release.
+								</span>
+							</span>
+						</label>
+					</section>
+				{/if}
 				{#if countCandidateEvidence(overrideCandidate, 'contradictory')}
 					<section>
 						<h3 class="font-semibold text-warning">Contradictory local tracks</h3>
@@ -549,7 +589,9 @@
 					{/if}
 					<p class="mt-2 text-xs text-base-content/60">
 						This becomes a durable manual identity. Later scans will preserve it until an
-						administrator resets it. Contradictory and unknown tracks remain local-only.
+						administrator resets it. {reassignConflicting && overrideReassignTracks().length > 0
+							? 'Unknown tracks remain local-only.'
+							: 'Contradictory and unknown tracks remain local-only.'}
 					</p>
 				</section>
 			</div>

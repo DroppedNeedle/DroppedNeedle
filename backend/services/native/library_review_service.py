@@ -539,6 +539,7 @@ class LibraryReviewService:
             review_id,
             candidate_key=request.candidate_key,
             manual_override=request.manual_override,
+            reassign_conflicting_tracks=request.reassign_conflicting_tracks,
             actor_user_id=actor_user_id,
             expected_review_revision=request.expected_review_revision,
             expected_catalog_revision=request.expected_catalog_revision,

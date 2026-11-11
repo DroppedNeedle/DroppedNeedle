@@ -10,6 +10,7 @@ from difflib import SequenceMatcher
 from unidecode import unidecode
 
 from models.identification import (
+    id_only_reassignments,
     AlbumCandidate,
     CandidateEvidence,
     CandidateTrack,
@@ -115,6 +116,55 @@ def _duration_difference(
     if local.duration_seconds is None or candidate.duration_seconds is None:
         return None
     return abs(local.duration_seconds - candidate.duration_seconds)
+
+
+def _unanimous_embedded_release(
+    candidate: AlbumCandidate, local_tracks: list[GroupingTrack]
+) -> bool:
+    """Every local file embeds this very release, and no file names another release group."""
+
+    if not candidate.release_mbid or not local_tracks:
+        return False
+    release = candidate.release_mbid.casefold()
+    group = candidate.release_group_mbid.casefold()
+    return all(
+        track.release_mbid
+        and track.release_mbid.casefold() == release
+        and (not track.release_group_mbid or track.release_group_mbid.casefold() == group)
+        for track in local_tracks
+    )
+
+
+def _reconcile_embedded_id_conflicts(
+    candidate: AlbumCandidate,
+    local_tracks: list[GroupingTrack],
+    track_evidence: list[TrackEvidence],
+    missing: list[str],
+) -> bool:
+    """Treat identifier-only conflicts as supported when the files unanimously name this release.
+
+    MusicBrainz keeps separate recording and release-track entries per edition, so a file
+    tagged from another edition of the same release group carries IDs that "conflict" with
+    the edition its album-level tags name. When every file embeds this release, every
+    conflict is identifier-only with a unique title-and-position match, and the conflicts
+    are the minority, the album-level claim decides: those tracks are marked supported and
+    the matching expected tracks are no longer missing. Anything else keeps its conflict.
+    Returns whether any track was reconciled.
+    """
+
+    if not _unanimous_embedded_release(candidate, local_tracks):
+        return False
+    reassigned = id_only_reassignments(track_evidence, missing, len(local_tracks))
+    if not reassigned:
+        return False
+    supported = sum(item.classification == "supported" for item in track_evidence)
+    if supported * 2 <= len(track_evidence):
+        return False
+    for item in reassigned:
+        item.classification = "supported"
+        item.evidence_kinds = ["embedded_ids_reconciled"]
+    missing.clear()
+    return True
 
 
 class _Pair:
@@ -862,6 +912,10 @@ class AlbumEvidenceEngine:
             track_evidence=track_evidence,
             local_tracks=local_tracks,
         )
+        if title_class != "contradictory" and artist_class != "contradictory":
+            _reconcile_embedded_id_conflicts(
+                candidate, local_tracks, track_evidence, missing
+            )
         present_evidence = [
             item
             for item, track in zip(track_evidence, local_tracks, strict=True)

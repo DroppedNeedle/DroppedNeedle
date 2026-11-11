@@ -43,6 +43,8 @@ def _track(
     recording: str | None = None,
     fingerprint_recording: str | None = None,
     release_track: str | None = None,
+    release: str | None = None,
+    release_group: str | None = None,
     album: str = "Album",
     artist: str = "Artist",
     compilation: bool = False,
@@ -68,6 +70,8 @@ def _track(
         recording_mbid=recording,
         fingerprint_recording_mbid=fingerprint_recording,
         release_track_mbid=release_track,
+        release_mbid=release,
+        release_group_mbid=release_group,
         is_compilation=compilation,
         tags_readable=readable,
     )
@@ -2428,3 +2432,89 @@ def test_lone_quorum_opt_out_serves_human_verified_attachment() -> None:
         .outcome
         == "contradictory"
     )
+
+
+def _unanimous_release_album(
+    *,
+    third_release: str | None = "release-group",
+    third_duration: float | None = 180,
+    third_recording: str = "recording-other-edition",
+    third_release_track: str = "track-other-edition",
+    count: int = 3,
+):
+    """Files tagged from one edition, except one file whose track IDs come from another."""
+
+    titles = ["One", "Two", "Three", "Four", "Five"][:count]
+    local = []
+    candidates = []
+    for index, title in enumerate(titles, start=1):
+        odd = index == count
+        local.append(
+            _track(
+                f"t{index}",
+                title,
+                number=index,
+                duration=third_duration if odd else 180,
+                recording=third_recording if odd else f"recording-{index}",
+                release_track=third_release_track if odd else f"track-{index}",
+                release=(third_release if odd else "release-group"),
+                release_group="group",
+            )
+        )
+        candidates.append(
+            _candidate_track(
+                title, index, recording=f"recording-{index}", release_track=f"track-{index}"
+            )
+        )
+    return local, _candidate("group", candidates)
+
+
+def test_unanimous_embedded_release_reconciles_a_track_that_only_conflicts_on_ids() -> None:
+    local, candidate = _unanimous_release_album()
+    evidence = AlbumEvidenceEngine().evaluate_candidate(local, candidate)
+
+    assert evidence.reason_code == "SUPPORTED"
+    odd = next(item for item in evidence.track_evidence if item.local_track_id == "t3")
+    assert odd.classification == "supported"
+    assert odd.evidence_kinds == ["embedded_ids_reconciled"]
+    assert odd.recording_mbid == "recording-3"
+    assert odd.release_track_mbid == "track-3"
+    assert evidence.unmatched_expected_tracks == []
+
+
+def test_a_reconciled_album_is_identified_by_the_decision() -> None:
+    local, candidate = _unanimous_release_album()
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+
+    assert decision.outcome == "identified"
+    assert decision.selected_candidate_key == "group:release-group"
+
+
+def test_no_reconciliation_when_a_file_does_not_name_the_release() -> None:
+    local, candidate = _unanimous_release_album(third_release=None)
+    evidence = AlbumEvidenceEngine().evaluate_candidate(local, candidate)
+
+    assert evidence.reason_code == "CONFLICTING_TRACK_EVIDENCE"
+
+
+def test_no_reconciliation_when_the_files_name_a_different_release() -> None:
+    local, candidate = _unanimous_release_album(third_release="another-release")
+    evidence = AlbumEvidenceEngine().evaluate_candidate(local, candidate)
+
+    assert evidence.reason_code == "CONFLICTING_TRACK_EVIDENCE"
+
+
+def test_no_reconciliation_when_the_conflict_is_a_duration_mismatch() -> None:
+    local, candidate = _unanimous_release_album(third_duration=400)
+    evidence = AlbumEvidenceEngine().evaluate_candidate(local, candidate)
+
+    assert evidence.reason_code == "CONFLICTING_TRACK_EVIDENCE"
+
+
+def test_no_reconciliation_when_the_conflicts_are_not_the_minority() -> None:
+    # One supported track out of two: the album-level claim alone is not enough.
+    local, candidate = _unanimous_release_album(count=2)
+    evidence = AlbumEvidenceEngine().evaluate_candidate(local, candidate)
+
+    assert evidence.reason_code == "CONFLICTING_TRACK_EVIDENCE"
+
