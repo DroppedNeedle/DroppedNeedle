@@ -4,6 +4,7 @@ import type { components } from '$lib/api/v3/openapi';
 import {
 	MATCH_MAKES_IT_YOURS,
 	MATCH_WRITTEN,
+	countryLabel,
 	filesPlacedSentence,
 	fitLine,
 	formatsLabel,
@@ -84,6 +85,20 @@ function plan(counts: {
 	} as EditionPlan;
 }
 
+describe('countryLabel', () => {
+	it('names the special codes and leaves every other code as it is', () => {
+		expect(countryLabel('XW')).toBe('Worldwide');
+		expect(countryLabel('xw')).toBe('Worldwide');
+		expect(countryLabel('XE')).toBe('Europe');
+		expect(countryLabel('xu')).toBe('Unknown Country');
+		expect(countryLabel('US')).toBe('US');
+		expect(countryLabel('ZZ')).toBe('ZZ');
+		expect(countryLabel(null)).toBeNull();
+		expect(countryLabel(undefined)).toBeNull();
+		expect(countryLabel('')).toBe('');
+	});
+});
+
 describe('the edition plate', () => {
 	it('words the plate for every edition state', () => {
 		{
@@ -95,12 +110,28 @@ describe('the edition plate', () => {
 			);
 			expect(copy.line1).toBe('5th anniversary remaster');
 			expect(copy.chip?.label).toBe('Your choice');
-			expect(copy.line2).toBe('Released 2024 · XW · Digital Media · 3 of 4 tracks');
+			expect(copy.line2).toBe('Released 2024 · Worldwide · Digital Media · 3 of 4 tracks');
 			expect(copy.warnings).toEqual(['1 in another version']);
 			expect(copy.label).toBe(
-				'Edition: 5th anniversary remaster. Released 2024 · XW · Digital Media · 3 of 4 tracks · 1 in another version. Change edition'
+				'Edition: 5th anniversary remaster. Released 2024 · Worldwide · Digital Media · 3 of 4 tracks · 1 in another version. Change edition'
 			);
 			expect(copy.disc.tone).toBe('warning');
+		}
+
+		{
+			const unknown = plan({ files: 2, kept: 2 });
+			unknown.edition.country = 'ZZ';
+			expect(plateCopy(status(), unknown, 2).line2).toBe(
+				'Released 2024 · ZZ · Digital Media · 2 of 2 tracks'
+			);
+		}
+
+		{
+			const europe = plan({ files: 2, kept: 2 });
+			europe.edition.country = 'XE';
+			expect(plateCopy(status(), europe, 2).line2).toBe(
+				'Released 2024 · Europe · Digital Media · 2 of 2 tracks'
+			);
 		}
 
 		{
@@ -120,7 +151,7 @@ describe('the edition plate', () => {
 			cd.edition.formats = ['CD', 'CD'];
 			const copy = plateCopy(status({ state: 'confirmed' }), cd, 2);
 			expect(copy.line1).toBe('CD edition');
-			expect(copy.line2).toBe('Released 2024 · XW · 2×CD · 2 of 2 tracks');
+			expect(copy.line2).toBe('Released 2024 · Worldwide · 2×CD · 2 of 2 tracks');
 			expect(copy.disc.tone).toBe('accent');
 		}
 
