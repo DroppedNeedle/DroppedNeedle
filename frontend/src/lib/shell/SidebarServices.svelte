@@ -12,9 +12,21 @@
 	import PlexIcon from '$lib/media/icons/PlexIcon.svelte';
 	import SidebarServiceHint from '$lib/shell/SidebarServiceHint.svelte';
 	import SidebarVisualiser from '$lib/shell/SidebarVisualiser.svelte';
+	import { servicePath, within, type ServiceSource } from '$lib/shell/navItems';
 	import { withBasePath } from '$lib/utils/basePath';
 
+	interface Props {
+		currentPath: string;
+	}
+
+	let { currentPath }: Props = $props();
+
 	const integrations = useIntegrationStatus();
+
+	/** The rail marks the service whose page is showing, so Library stays the way back. */
+	function onService(source: ServiceSource): boolean {
+		return within(servicePath(source))(currentPath);
+	}
 
 	const prefsQuery = getSectionPrefsQuery();
 	// fail-open: until prefs load, every service is visible
@@ -48,10 +60,12 @@
 	{#if integrations.current.youtube}
 		<li>
 			<a
-				href={withBasePath('/library/youtube')}
+				href={withBasePath(servicePath('youtube'))}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+				class:menu-active={onService('youtube')}
 				data-tip="YouTube"
 				aria-label="YouTube"
+				aria-current={onService('youtube') ? 'page' : undefined}
 			>
 				<YouTubeIcon class="h-5 w-5 text-error" />
 				<span class="is-drawer-close:hidden">YouTube</span>
@@ -68,10 +82,12 @@
 	{#if integrations.current.jellyfin}
 		<li>
 			<a
-				href={withBasePath('/library/jellyfin')}
+				href={withBasePath(servicePath('jellyfin'))}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+				class:menu-active={onService('jellyfin')}
 				data-tip="Jellyfin"
 				aria-label="Jellyfin"
+				aria-current={onService('jellyfin') ? 'page' : undefined}
 			>
 				<div class="relative inline-flex">
 					<JellyfinIcon class="h-5 w-5 text-info" />
@@ -99,10 +115,12 @@
 	{#if integrations.current.navidrome}
 		<li>
 			<a
-				href={withBasePath('/library/navidrome')}
+				href={withBasePath(servicePath('navidrome'))}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+				class:menu-active={onService('navidrome')}
 				data-tip="Navidrome"
 				aria-label="Navidrome"
+				aria-current={onService('navidrome') ? 'page' : undefined}
 			>
 				<div class="relative inline-flex">
 					<NavidromeIcon class="h-5 w-5 text-primary" />
@@ -130,10 +148,12 @@
 	{#if integrations.current.plex}
 		<li>
 			<a
-				href={withBasePath('/library/plex')}
+				href={withBasePath(servicePath('plex'))}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+				class:menu-active={onService('plex')}
 				data-tip="Plex"
 				aria-label="Plex"
+				aria-current={onService('plex') ? 'page' : undefined}
 			>
 				<div class="relative inline-flex">
 					<PlexIcon class="h-5 w-5 text-[rgb(var(--brand-plex))]" />
@@ -161,10 +181,12 @@
 	{#if integrations.current.localfiles}
 		<li>
 			<a
-				href={withBasePath('/library/local')}
+				href={withBasePath(servicePath('localfiles'))}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+				class:menu-active={onService('localfiles')}
 				data-tip="Local Files"
 				aria-label="Local Files"
+				aria-current={onService('localfiles') ? 'page' : undefined}
 			>
 				<div class="relative inline-flex">
 					<Headphones class="h-5 w-5 text-accent" />

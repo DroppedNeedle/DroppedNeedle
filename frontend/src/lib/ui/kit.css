@@ -285,6 +285,10 @@
 	.dn-toolbar__select {
 		width: 15rem;
 	}
+	/* a short select beside a long one: the A-Z jump's letters */
+	.dn-toolbar__select--letters {
+		width: 7.5rem;
+	}
 	@media (max-width: 639px) {
 		.dn-toolbar {
 			gap: 0.625rem 0.375rem;
@@ -311,7 +315,8 @@
 		.dn-toolbar > :is(.dn-toolbar__grow, [role='tablist']) {
 			flex-basis: 100%;
 		}
-		.dn-toolbar__select {
+		.dn-toolbar__select,
+		.dn-toolbar__select--letters {
 			width: auto;
 		}
 	}

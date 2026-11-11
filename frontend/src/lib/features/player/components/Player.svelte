@@ -5,7 +5,8 @@
 	width and up), the buttons that open the drawer on its Queue, Lyrics and
 	Equalizer tabs, the volume and where the track comes from. "Close
 	player" is a tab on the bar's top edge. Phones get the cover, the names,
-	the heart and previous, play and next.
+	previous, play and next, and a queue tab that opens the drawer (its own
+	tabs hold the lyrics and the equalizer).
 -->
 <script lang="ts">
 	import { isValidMbid } from '$lib/utils/formatting';
@@ -207,16 +208,29 @@
 {#if barShowing && playerStore.nowPlaying}
 	{@const np = playerStore.nowPlaying}
 	<div class="droppedneedle-player-bar dn-player" data-part={part('player-bar')}>
-		<Button
-			variant="neutral"
-			size="xs"
-			icon={X}
-			aria-label="Close player"
-			class="dn-player__close"
-			onclick={() => playerStore.stop()}
-		>
-			<span class="hidden md:inline">Close player</span>
-		</Button>
+		<div class="dn-player__tabs">
+			<!-- Phones have no room in the bar for the tools, so one tab opens the drawer,
+			     whose own tabs hold the queue, the lyrics and the equalizer. -->
+			<Button
+				variant="neutral"
+				size="xs"
+				icon={ListMusic}
+				aria-label="Toggle queue"
+				aria-pressed={isOpenOn('queue')}
+				class="dn-player__tab md:hidden"
+				onclick={() => toggleTab('queue')}
+			/>
+			<Button
+				variant="neutral"
+				size="xs"
+				icon={X}
+				aria-label="Close player"
+				class="dn-player__tab"
+				onclick={() => playerStore.stop()}
+			>
+				<span class="hidden md:inline">Close player</span>
+			</Button>
+		</div>
 
 		<span class="dn-player__phone-progress" style:--progress="{progressPct}%" aria-hidden="true"
 		></span>
@@ -539,13 +553,20 @@
 		box-shadow: 0 -10px 36px -12px rgb(0 0 0 / 0.55);
 	}
 
-	.dn-player :global(.dn-player__close) {
+	/* tabs on the bar's top edge, clear of the bar's own grid */
+	.dn-player__tabs {
 		position: absolute;
 		right: 1rem;
 		bottom: 100%;
+		display: flex;
+	}
+	.dn-player__tabs :global(.dn-player__tab) {
 		border-bottom-width: 0;
 		border-bottom-right-radius: 0;
 		border-bottom-left-radius: 0;
+	}
+	.dn-player__tabs :global(.dn-player__tab + .dn-player__tab) {
+		margin-left: -1px;
 	}
 
 	.dn-player__grid {

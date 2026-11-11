@@ -6,6 +6,7 @@ import {
 	Cog,
 	Compass,
 	Download,
+	Headphones,
 	Heart,
 	House,
 	Inbox,
@@ -69,13 +70,33 @@ export const within =
 	(path) =>
 		path === prefix || path.startsWith(`${prefix}/`);
 
+/** Where a connected service's pages start, and the rail's service row entry. */
+export type ServiceSource = 'youtube' | 'jellyfin' | 'navidrome' | 'plex' | 'localfiles';
+
+const SERVICE_PATHS: Record<ServiceSource, string> = {
+	youtube: '/library/youtube',
+	jellyfin: '/library/jellyfin',
+	navidrome: '/library/navidrome',
+	plex: '/library/plex',
+	localfiles: '/library/local'
+};
+
+/** A service's own page, without the base path. */
+export const servicePath = (source: ServiceSource): string => SERVICE_PATHS[source];
+
+// A service's pages sit under /library but are the service's own; the rail marks the
+// service instead, so Library stays the way back to the hub.
+const inService: NavMatch = (path) =>
+	Object.values(SERVICE_PATHS).some((prefix) => within(prefix)(path));
+
 // Library Management, Check albums and the Recycle Bin live under /library but are their
-// own destinations.
+// own destinations; so do the services.
 const inLibrary: NavMatch = (path) =>
 	within('/library')(path) &&
 	!within('/library/management')(path) &&
 	!within('/library/review')(path) &&
-	!within('/library/recycle-bin')(path);
+	!within('/library/recycle-bin')(path) &&
+	!inService(path);
 
 export const navItems: NavItem[] = [
 	{
@@ -113,6 +134,16 @@ export const navItems: NavItem[] = [
 		badge: 'library-sync',
 		sidebar: { group: 'browse', active: inLibrary },
 		bottom: { active: inLibrary }
+	},
+	{
+		// The Listening Room is the local service's page. The rail already lists the
+		// service; on a phone the bottom bar has no room, so the More sheet holds it.
+		id: 'listening-room',
+		label: 'Listening Room',
+		icon: Headphones,
+		href: servicePath('localfiles'),
+		audience: 'everyone',
+		more: { active: within(servicePath('localfiles')) }
 	},
 	{
 		id: 'downloads',

@@ -198,7 +198,7 @@
 						{#if featured.reasons.length > 0}
 							<div class="mt-2 flex flex-wrap justify-center gap-1.5 sm:justify-start">
 								{#each featured.reasons as reason (reason)}
-									<StatusChip tone="success" size="xs">{reason}</StatusChip>
+									<StatusChip tone="success" size="xs" wrap>{reason}</StatusChip>
 								{/each}
 							</div>
 						{/if}

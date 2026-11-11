@@ -33,6 +33,26 @@ function write(key: string, current: Record<string, string>): void {
 	}
 }
 
+/**
+ * One kept value of `list`, read now. For a list whose default must be in place
+ * before its first render, which a restored address cannot do.
+ */
+export function keptFilter(list: string, name: string): string | null {
+	const key = storageKey(list);
+	if (!key) return null;
+	return read(key)[name] ?? null;
+}
+
+/** Keep one value of `list` beside its filters; `null` forgets it. */
+export function keepFilter(list: string, name: string, value: string | null): void {
+	const key = storageKey(list);
+	if (!key) return;
+	const kept = read(key);
+	if (value === null) delete kept[name];
+	else kept[name] = value;
+	write(key, kept);
+}
+
 // A shared browser never carries one person's filters to the next.
 registerUserSessionReset(() => {
 	try {

@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
+	import { toastStore } from '$lib/stores/toast';
 	import { Disc3, Heart, Search, X } from 'lucide-svelte';
 	import {
 		getLibraryAlbumFormatsQuery,
@@ -12,7 +14,11 @@
 		type RatingMode,
 		type TracksMode
 	} from '$lib/features/library/components/LibraryFilterMenu.svelte';
-	import { rememberFilters } from '$lib/features/library/state/rememberedFilters.svelte';
+	import {
+		keepFilter,
+		keptFilter,
+		rememberFilters
+	} from '$lib/features/library/state/rememberedFilters.svelte';
 	import type { LibraryV3AlbumsParams } from '$lib/features/library/queries/LibraryQueryKeyFactory';
 	import LibraryAlbumCard from '$lib/features/library/components/LibraryAlbumCard.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -27,6 +33,15 @@
 	type Sort = 'recent' | 'title' | 'artist' | 'hearted';
 	const VALID_SORTS: Sort[] = ['recent', 'title', 'artist'];
 
+	function isSort(value: string | null): value is Sort {
+		return VALID_SORTS.some((sort) => sort === value);
+	}
+
+	// All Albums starts on the sort this browser last chose here, in place before the
+	// first render; the favourites view has its own order and never writes this.
+	const keptSort = keptFilter('album-sort', 'sort');
+	let defaultSort = $state<Sort>(isSort(keptSort) ? keptSort : 'recent');
+
 	// browse state lives in the url so it's shareable and back-button stable
 	const params = $derived.by(() => {
 		const sp = page.url.searchParams;
@@ -35,7 +50,7 @@
 		const valid =
 			rawSort && (VALID_SORTS.includes(rawSort) || (favorites && rawSort === 'hearted'));
 		return {
-			sort: valid ? rawSort : favorites ? 'hearted' : 'recent',
+			sort: valid ? rawSort : favorites ? 'hearted' : defaultSort,
 			q: sp.get('q') ?? '',
 			// `format` is the one-format link of before the filter menu.
 			formats: (sp.get('formats') ?? sp.get('format') ?? '')
@@ -131,6 +146,90 @@
 	function toggleFavorites() {
 		setParams({ favorites: params.favorites ? null : '1', sort: null });
 	}
+
+	function setSort(value: string) {
+		setParams({ sort: value });
+		// Only the All Albums order is the default; the favourites view has its own.
+		if (!params.favorites && isSort(value)) {
+			defaultSort = value;
+			keepFilter('album-sort', 'sort', value);
+		}
+	}
+
+	// The A-Z jump. The grid is flat and read a page at a time, so a letter is
+	// reached by loading on until it shows. It follows the list's order: the
+	// title, or the artist on Artist A-Z; any other order switches to Title A-Z.
+	const LETTERS = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
+	// A jump reads at most this many pages (2,000 albums) before it gives up.
+	const JUMP_PAGE_LIMIT = 40;
+
+	let gridEl = $state<HTMLElement | null>(null);
+	let jumpLetter = $state('');
+	let jumping = $state(false);
+	// A letter picked on a date order: the jump runs once the list is in title order.
+	let pendingJump = $state<string | null>(null);
+
+	/** The letter a name sorts under, in the A-Z strip's buckets. */
+	function initialOf(name: string): string {
+		const first = name.trim().charAt(0).toUpperCase();
+		return first >= 'A' && first <= 'Z' ? first : '#';
+	}
+
+	/** The letter the list's order files an album under: its artist or its title. */
+	function albumInitial(album: AlbumView): string {
+		return initialOf(params.sort === 'artist' ? album.artist_name : album.title);
+	}
+
+	async function loadUntil(letter: string): Promise<boolean> {
+		for (let pages = 0; pages < JUMP_PAGE_LIMIT; pages++) {
+			if (albums.some((album) => albumInitial(album) === letter)) return true;
+			if (!albumsQuery.hasNextPage) return false;
+			try {
+				await albumsQuery.fetchNextPage();
+			} catch {
+				return false;
+			}
+		}
+		return albums.some((album) => albumInitial(album) === letter);
+	}
+
+	async function runJump(letter: string): Promise<void> {
+		jumping = true;
+		try {
+			if (!(await loadUntil(letter))) {
+				toastStore.notify('That letter is further down the list - load more albums to reach it.');
+				return;
+			}
+			await tick();
+			const index = albums.findIndex((album) => albumInitial(album) === letter);
+			const card = gridEl?.children[index];
+			if (!(card instanceof HTMLElement)) return;
+			const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+			card.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });
+		} finally {
+			jumping = false;
+		}
+	}
+
+	async function jumpToLetter(letter: string): Promise<void> {
+		if (!letter || jumping) return;
+		jumpLetter = letter;
+		jumping = true;
+		if (params.sort !== 'title' && params.sort !== 'artist') {
+			pendingJump = letter;
+			setParams({ sort: 'title' });
+			return;
+		}
+		await runJump(letter);
+	}
+
+	$effect(() => {
+		const letter = pendingJump;
+		if (!letter || params.sort !== 'title') return;
+		if (albumsQuery.isLoading || albumsQuery.isPlaceholderData) return;
+		pendingJump = null;
+		void runJump(letter);
+	});
 </script>
 
 <svelte:head><title>Albums · Library</title></svelte:head>
@@ -173,13 +272,24 @@
 		<select
 			class="select dn-toolbar__select"
 			value={params.sort}
-			onchange={(e) => setParams({ sort: (e.target as HTMLSelectElement).value })}
+			onchange={(e) => setSort((e.target as HTMLSelectElement).value)}
 			aria-label="Sort albums"
 		>
 			{#if params.favorites}<option value="hearted">Recently Favourited</option>{/if}
 			<option value="recent">Newest First</option>
 			<option value="title">Title A-Z</option>
 			<option value="artist">Artist A-Z</option>
+		</select>
+		<select
+			class="select dn-toolbar__select dn-toolbar__select--letters"
+			bind:value={jumpLetter}
+			onchange={(e) => void jumpToLetter((e.target as HTMLSelectElement).value)}
+			disabled={jumping}
+			aria-label="Jump to a letter"
+			title="Jump to a letter in the list's order"
+		>
+			<option value="">Jump to...</option>
+			{#each LETTERS as letter (letter)}<option value={letter}>{letter}</option>{/each}
 		</select>
 		<LibraryFilterMenu
 			minTracks={params.minTracks}
@@ -234,7 +344,7 @@
 			</p>
 		</div>
 	{:else}
-		<div class="dn-list-grid">
+		<div class="dn-list-grid" bind:this={gridEl}>
 			{#each albums as album (album.id)}
 				<LibraryAlbumCard {album} />
 			{/each}
@@ -254,3 +364,10 @@
 		{/if}
 	{/if}
 </div>
+
+<style>
+	/* The A-Z jump lands a card clear of the sticky top bar and its safe area. */
+	.dn-list-grid > :global(*) {
+		scroll-margin-top: calc(4rem + var(--ms-safe-top) + 0.75rem);
+	}
+</style>
