@@ -106,10 +106,12 @@
 	const isError = $derived(suggestionsQuery.isError);
 	const queryError = $derived(suggestionsQuery.error);
 
-	const visibleAlbums = $derived.by(() => {
-		if (!suggestions || suggestions.type !== 'albums') return [];
-		return albumRows(suggestions).filter((a) => !ignoredIds.has(a.musicbrainz_id ?? a.title));
-	});
+	const suggestedAlbums = $derived(
+		suggestions && suggestions.type === 'albums' ? albumRows(suggestions) : []
+	);
+	const visibleAlbums = $derived(
+		suggestedAlbums.filter((a) => !ignoredIds.has(a.musicbrainz_id ?? a.title))
+	);
 
 	const topGenres = $derived.by(() => {
 		const distribution = profile?.genre_distribution ?? {};
@@ -194,7 +196,13 @@
 	]);
 	const showPicker = $derived(!isPreselected && !activePlaylistId);
 	const showResults = $derived(!!activePlaylistId);
-	const allIgnored = $derived(showResults && !isLoading && !isError && visibleAlbums.length === 0);
+	const allIgnored = $derived(
+		showResults &&
+			!isLoading &&
+			!isError &&
+			suggestedAlbums.length > 0 &&
+			visibleAlbums.length === 0
+	);
 </script>
 
 <Modal bind:open size="sheet" icon={Sparkles} iconTone="action" title="Playlist suggestions">
@@ -280,26 +288,25 @@
 					</div>
 				{:else if isError}
 					<div class="flex flex-col items-center justify-center gap-3 px-8 py-12 text-center">
-						{#if errorStatus === 422}
+						{#if errorStatus === 400}
 							<ListMusic class="size-10 text-warning" aria-hidden="true" />
-							<p class="max-w-md text-muted">
-								This playlist doesn't have enough artist data for discovery. Add more tracks with
-								known artists and try again.
-							</p>
-						{:else if errorStatus === 404}
-							<p class="text-muted">Playlist not found.</p>
+							<p class="max-w-md text-muted">{queryError?.message}</p>
 						{:else}
-							<p class="text-muted">Couldn't load suggestions. Try again.</p>
+							{#if errorStatus === 404}
+								<p class="text-muted">Playlist not found.</p>
+							{:else}
+								<p class="text-muted">Couldn't load suggestions. Try again.</p>
+							{/if}
+							<Button
+								variant="primary"
+								size="display-sm"
+								icon={RefreshCw}
+								class="mt-2"
+								onclick={() => suggestionsQuery.refetch()}
+							>
+								Try Again
+							</Button>
 						{/if}
-						<Button
-							variant="primary"
-							size="display-sm"
-							icon={RefreshCw}
-							class="mt-2"
-							onclick={() => suggestionsQuery.refetch()}
-						>
-							Try Again
-						</Button>
 					</div>
 				{:else if allIgnored}
 					<p class="px-8 py-12 text-center text-muted">

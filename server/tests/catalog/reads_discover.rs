@@ -1,7 +1,8 @@
 //! Discover routes through the production app: input validation, and
 //! fixed 5xx envelopes that name an outage's service
 //! and wait. Plus the live charts: "your top" read for the calling user's
-//! own link, and Last.fm reading the instance key on every call.
+//! own link, and Last.fm reading the instance key on every call. And the
+//! artists a playlist seeds its suggestions with.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -357,4 +358,107 @@ async fn lastfm_charts_read_the_instance_key_per_call() {
         .unwrap();
     assert_eq!(fallback.items[0].name, "One");
     assert_eq!(*seen.lock().unwrap(), ["instance-key"], "one Last.fm read");
+}
+
+// ---------------------------------------------------------------------------
+// Playlist suggestions: the artists a playlist seeds them with
+// ---------------------------------------------------------------------------
+
+/// A playlist imported from Jellyfin stores Jellyfin's own artist ids. Each
+/// entry seeds suggestions with a MusicBrainz artist id: its own when it is
+/// one, else the library artist of a track with its recording id, else the
+/// one library artist its name keys to. A special-purpose id and a name two
+/// library artists share seed nothing; every entry still counts.
+#[tokio::test]
+async fn playlist_artists_resolve_media_server_ids_to_musicbrainz() {
+    use droppedneedle_catalog::discover::radio::library::RadioLibrary;
+    use droppedneedle_kernel::db::{DbError, Lane};
+
+    const BY_RECORDING: &str = "5b11f4ce-a62d-471e-81fc-a69a8278c7da";
+    const BY_NAME: &str = "87c5dedd-371d-4a53-9f7f-80522fb7f3cb";
+    const NATIVE: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    const RECORDING: &str = "0f5a2b4c-1d3e-4f60-8a7b-9c0d1e2f3a4b";
+    const VARIOUS: &str = "89ad4ac3-39f7-470e-963a-56509c546377";
+    const BY_TAG: &str = "d1e2f3a4-b5c6-4d7e-8f90-a1b2c3d4e5f6";
+    const TAGGED_RECORDING: &str = "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f";
+
+    let dir = crate::common::ScratchDir::new("playlist-artists");
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
+    let entry = |position: i64, artist_id: &str, artist_name: &str, recording: &str| {
+        format!(
+            "INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, \
+             artist_name, album_name, artist_id, recording_mbid, source_type, created_at) \
+             VALUES ('e{position}', 'pl1', {position}, 'Song', '{artist_name}', 'Album', \
+             '{artist_id}', {recording}, 'jellyfin', 1);"
+        )
+    };
+    let seed = [
+        format!(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('user-1', 'Ada', 'user', 0); \
+             INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('a1', 'Aurora', 'aurora', 'group', 1, 1), \
+             ('a2', 'Björk', 'bjork', 'person', 1, 1), ('a3', 'Twin', 'twin', 'group', 1, 1), \
+             ('a4', 'Twin', 'twin', 'group', 1, 1), ('a5', 'Tagged', 'tagged', 'group', 1, 1); \
+             INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+             provider_artist_id, decision_source, selected_at) VALUES \
+             ('a1', 'musicbrainz', '{BY_RECORDING}', 'manual', 1), \
+             ('a2', 'musicbrainz', '{BY_NAME}', 'manual', 1), \
+             ('a3', 'musicbrainz', 'c0000000-0000-4000-8000-000000000003', 'manual', 1), \
+             ('a4', 'musicbrainz', 'c0000000-0000-4000-8000-000000000004', 'manual', 1); \
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) \
+             VALUES ('al1', 'r1', 'g1', 'First Light', 'first light', 'a1', 'automatic', 1, 1); \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, availability, ingest_source, \
+             imported_at, membership_source, embedded_recording_mbid) VALUES ('t1', 'al1', \
+             'r1', '/music/t1.flac', 't1.flac', 'h1', 1, 1, 's1', 'Opener', 'opener', \
+             'First Light', 'first light', 'flac', 'indexed', 'scan', 1, 'automatic', \
+             '{RECORDING}'); \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, availability, ingest_source, \
+             imported_at, membership_source, embedded_recording_mbid, embedded_artist_mbid) \
+             VALUES ('t2', 'al1', 'r1', '/music/t2.flac', 't2.flac', 'h2', 1, 1, 's2', 'Second', \
+             'second', 'First Light', 'first light', 'flac', 'indexed', 'scan', 1, 'automatic', \
+             '{TAGGED_RECORDING}', '{BY_TAG}'); \
+             INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
+             VALUES ('t1', 0, 'a1', 'main'), ('t2', 0, 'a5', 'main'); \
+             INSERT INTO catalog_playlists (id, name, created_at, updated_at, user_id) \
+             VALUES ('pl1', 'From Jellyfin', 1, 1, 'user-1');"
+        ),
+        entry(
+            0,
+            "4f8a1c2e9b7d4e6f8a1c2e9b7d4e6f8a",
+            "Someone Else",
+            &format!("'{RECORDING}'"),
+        ),
+        entry(1, "9d2b3c4e5f6a4b7c8d9e0f1a2b3c4d5e", "BJÖRK ", "NULL"),
+        entry(2, VARIOUS, "Various Artists", "NULL"),
+        entry(3, "1a2b3c4d5e6f4a7b8c9d0e1f2a3b4c5d", "Twin", "NULL"),
+        entry(4, &NATIVE.to_uppercase(), "Native", "NULL"),
+        entry(
+            5,
+            "6e7f8a9b0c1d4e2f8a3b4c5d6e7f8a9b",
+            "Not In The Library",
+            &format!("'{TAGGED_RECORDING}'"),
+        ),
+    ]
+    .concat();
+    runtime
+        .db()
+        .write(Lane::Foreground, "playlist seed", move |tx| {
+            tx.execute_batch(&seed).map_err(DbError::from)
+        })
+        .await
+        .expect("seed");
+
+    let (artists, count) = RadioLibrary::new(runtime.db().clone())
+        .playlist_artists("user-1", "pl1")
+        .await
+        .expect("read")
+        .expect("visible to its owner");
+    assert_eq!(artists, [BY_RECORDING, BY_NAME, NATIVE, BY_TAG]);
+    assert_eq!(count, 6);
 }

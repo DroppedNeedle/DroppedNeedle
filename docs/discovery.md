@@ -45,7 +45,7 @@ Radio plays a station from an artist, an album, a genre or a whole shelf. An art
 
 ## Playlist suggestions
 
-"Suggest Albums" on a playlist's page lists albums to add: albums by artists similar to the ones on it, plus albums in their genres. Artists already on the playlist are left out. It works for your own playlists and public ones.
+"Suggest Albums" on a playlist's page lists albums to add: albums by artists similar to the ones on it, plus albums in their genres. Artists already on the playlist are left out. It works for your own playlists and public ones. Suggestions start from the artists' MusicBrainz ids. A playlist imported from Jellyfin, Navidrome or Plex doesn't carry those, so each track's artist is looked up in your library: by the track's MusicBrainz recording id, or else by the artist's name when exactly one library artist linked to MusicBrainz has that name. Tracks whose artist isn't found that way don't shape the suggestions. When there is nothing to suggest, the window says why.
 
 ## Download all
 

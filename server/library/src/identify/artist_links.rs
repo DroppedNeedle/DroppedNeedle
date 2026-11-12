@@ -314,7 +314,9 @@ fn names_agree(
         })
 }
 
-pub(crate) fn placeholder(mbid: &str) -> bool {
+/// One of MusicBrainz's special-purpose artists (`PLACEHOLDER_ARTISTS`),
+/// given a lowercase id.
+pub fn placeholder(mbid: &str) -> bool {
     PLACEHOLDER_ARTISTS.contains(&mbid)
 }
 

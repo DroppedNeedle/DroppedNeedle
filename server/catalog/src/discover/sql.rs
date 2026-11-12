@@ -362,9 +362,54 @@ droppedneedle_kernel::sql! {
     /// A playlist the caller may read: their own or a public one.
     pub(super) VISIBLE_PLAYLIST = "SELECT id FROM catalog_playlists \
          WHERE id = ?1 AND (user_id = ?2 OR is_public = 1)";
-    /// A playlist's track artists, in playlist order.
-    pub(super) PLAYLIST_TRACK_ARTISTS = "SELECT artist_id FROM catalog_playlist_tracks \
-         WHERE playlist_id = ?1 ORDER BY position";
+    /// A playlist's entries in playlist order: the stored artist id (a
+    /// media server's own id for an imported playlist), the artist name,
+    /// and the MusicBrainz id of the first credited artist of a library
+    /// track with the entry's recording id (its identity, else the credit's
+    /// or the file's id). The `t.id IN` list reaches the tracks through the
+    /// lowered-id indexes.
+    pub(super) PLAYLIST_ENTRIES = "SELECT p.artist_id AS artist_id, \
+         p.artist_name AS artist_name, \
+         (SELECT lower(COALESCE(ai.provider_artist_id, ta.artist_mbid, t.embedded_artist_mbid)) \
+          FROM local_tracks t \
+          JOIN local_albums b ON b.id = t.local_album_id AND b.retired_into_album_id IS NULL \
+          LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id AND "
+         + (musicbrainz!("ti"))
+         + " JOIN local_track_artists ta ON ta.local_track_id = t.id AND ta.position = 0 \
+          JOIN local_artists r ON r.id = ta.local_artist_id AND r.retired_into_artist_id IS NULL \
+          LEFT JOIN local_artist_external_identities ai ON ai.local_artist_id = r.id AND "
+         + (musicbrainz!("ai"))
+         + " WHERE t.availability = 'indexed' AND p.recording_mbid <> '' \
+            AND t.id IN (SELECT local_track_id FROM local_track_external_identities \
+                WHERE lower(recording_mbid) = lower(p.recording_mbid) \
+              UNION ALL SELECT id FROM local_tracks \
+                WHERE lower(COALESCE(embedded_recording_mbid, '')) = lower(p.recording_mbid)) \
+            AND lower(COALESCE("
+         + (recording_mbid!("ti", "t"))
+         + ", '')) = lower(p.recording_mbid) \
+          ORDER BY t.id LIMIT 1) AS recording_artist_mbid \
+         FROM catalog_playlist_tracks p WHERE p.playlist_id = ?1 ORDER BY p.position";
+    pub(super) row PlaylistEntry for [PLAYLIST_ENTRIES] {
+        artist_id: Option<String>,
+        artist_name: String,
+        recording_artist_mbid: Option<String>,
+    }
+    /// Live library artists with a MusicBrainz id, up to the folded-name
+    /// list.
+    fragment NAMED_ARTISTS_START = (concat!(
+        "SELECT a.display_name AS name, \
+         lower(ai.provider_artist_id) AS mbid FROM local_artists a \
+         JOIN local_artist_external_identities ai ON ai.local_artist_id = a.id AND ",
+        musicbrainz!("ai"),
+        " WHERE a.retired_into_artist_id IS NULL AND a.kind <> 'various_artists' \
+             AND a.folded_name IN ("
+    ));
+    /// Live library artists with a MusicBrainz id, by folded name.
+    family NAMED_ARTISTS = named_artists;
+    pub(super) row NamedArtist for family [named_artists] {
+        name: String,
+        mbid: String,
+    }
 
     // -- settings and status ----------------------------------------------------
 
@@ -553,6 +598,11 @@ pub(super) fn artists_for_genres(genres: ListLen) -> String {
 /// `LIBRARY_ARTIST_NAMES`.
 pub(super) fn library_artist_names(artists: ListLen) -> String {
     format!("{LIBRARY_ARTIST_NAMES_START}{})", marks(artists))
+}
+
+/// `NAMED_ARTISTS`.
+pub(super) fn named_artists(names: ListLen) -> String {
+    format!("{NAMED_ARTISTS_START}{})", marks(names))
 }
 
 /// `LIBRARY_ARTIST_GENRES`.
