@@ -463,9 +463,13 @@ Run from the repo root. `make help` lists every target.
   The catalog revision is a change counter, bumped by every commit that
   changes catalog rows and never compared (a plugin's added file or its
   take-back changes none, so it skips the bump). A write that changes catalog rows bumps it inside its own
-  transaction through `catalog_revision::bump_catalog`; so does a bin
-  change that takes a file-less album off the lists. Event loops wait on
+  transaction through `catalog_revision::bump_catalog`. Event loops wait on
   the lane's commit counter (`Db::commits`), never a timer.
+- The web UI lists an album only while it is live and has files: one
+  definition, `owned_album!` in `library/src/identity/sql.rs`, which every
+  list, count, Check albums and Copies read. A removed album leaves the
+  lists at once and comes back through Put back; every album still opens
+  by its id.
 - Automatic work needs an enabled root, the matching trigger, an accepted
   exact MusicBrainz release or a custom edition a curator chose for the
   album where the folder's settings allow it, and a track mapping for every
@@ -632,9 +636,10 @@ Run from the repo root. `make help` lists every target.
   made on it; files the app wrote meanwhile are undone through Library
   management.
 - A person's album hearts and ratings on an album with no files move to
-  the copy its release group opens, when both are accepted and that copy
-  has files; a rating on both keeps the copy's. Plays stay, local-only
-  albums keep theirs, and the album's history shows the move.
+  the copy its release group opens, when both are accepted, that copy has
+  files and nothing of the album can still be put back; a rating on both
+  keeps the copy's. Plays stay, local-only albums keep theirs, and the
+  album's history shows the move.
 - Album and track identities, match state and their undo rows are written
   only through `library/src/identity/`; a source gate holds it.
 

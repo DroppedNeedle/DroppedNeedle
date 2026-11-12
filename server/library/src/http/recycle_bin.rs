@@ -1,12 +1,12 @@
-//! The recycle bin page's routes, for admins: what the bin holds, grouped
-//! by the removal or change that put it there; what emptying it now would
-//! delete; whether it is being emptied; and Empty itself, which queues a
-//! run of the bin's expiry with no retention. Put back is the album's
-//! removal route.
+//! The recycle bin page's routes: what the bin holds, grouped by the
+//! removal or change that put it there; what emptying it now would delete;
+//! whether it is being emptied; and Empty itself, which queues a run of the
+//! bin's expiry with no retention. The list is for curators; its summary,
+//! status and Empty are for admins. Put back is the album's removal route.
 
 use crate::publish::session::Publishing;
 use axum::{Json, extract::State, http::StatusCode};
-use droppedneedle_auth::Admin;
+use droppedneedle_auth::{Admin, Curator};
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
@@ -23,7 +23,7 @@ use crate::wiring::LibraryServices;
 /// Recycle bin routes.
 pub fn routes() -> Routes<LibraryServices> {
     Routes::new()
-        .admin(routes!(list_recycle_bin))
+        .curator(routes!(list_recycle_bin))
         .admin(routes!(recycle_bin_summary))
         .admin(routes!(recycle_bin_status))
         .admin(routes!(empty_recycle_bin))
@@ -141,13 +141,13 @@ pub struct EmptyRecycleBinView {
         (status = 200, description = "A page of the recycle bin", body = RecycleBinPage),
         (status = 400, description = "Bad cursor"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin role required"),
+        (status = 403, description = "Curator role required"),
         (status = 503, description = "The server is busy; try again"),
     )
 )]
 pub async fn list_recycle_bin(
     State(state): State<Publishing>,
-    _caller: Admin,
+    _caller: Curator,
     ValidQuery(query): ValidQuery<RecycleBinQuery>,
 ) -> Result<Json<RecycleBinPage>, ApiError> {
     let paging = PageRequest::read(query.limit, query.cursor.as_deref(), 50, 100)?;

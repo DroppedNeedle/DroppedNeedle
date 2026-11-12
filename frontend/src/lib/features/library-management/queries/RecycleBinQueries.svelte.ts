@@ -22,11 +22,12 @@ export type Emptied = components['schemas']['Emptied'];
 const PAGE_SIZE = 50;
 const POLL_MS = 2000;
 
-// What the recycle bin holds, newest first, a page at a time. Admins only.
+// What the recycle bin holds, newest first, a page at a time. Curators
+// only; the summary and status below are for admins.
 export const getRecycleBinQuery = () =>
 	createInfiniteQuery(() => ({
 		queryKey: LibraryQueryKeyFactory.catalog.recycleBinPages(authStore.user?.id),
-		enabled: authStore.isAdmin,
+		enabled: authStore.isTrusted,
 		initialPageParam: null as string | null,
 		queryFn: ({ pageParam, signal }) =>
 			api.v3.GET(

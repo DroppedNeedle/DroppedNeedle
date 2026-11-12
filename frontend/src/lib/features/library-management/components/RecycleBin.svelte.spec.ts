@@ -105,6 +105,30 @@ describe('the recycle bin page', () => {
 		expect(call?.body).toEqual({ before: AS_OF });
 	});
 
+	it('lets a trusted user put back, but not empty or read the emptying', async () => {
+		authStore.setUser(
+			toAuthUser({
+				id: 'trusted-1',
+				display_name: 'Trusted',
+				role: 'trusted',
+				email: null,
+				avatar_url: null,
+				username: 'trusted',
+				username_display: 'Trusted'
+			})
+		);
+		const api = binApi();
+		await renderWithQuery(RecycleBin, {});
+
+		await expect.element(page.getByText('Album · 2 files · 2.0 MB')).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Put back' })).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: 'Empty recycle bin' }))
+			.not.toBeInTheDocument();
+		expect(api.calls('GET /api/v3/library/recycle-bin/status')).toHaveLength(0);
+		expect(api.calls('GET /api/v3/library/recycle-bin/summary')).toHaveLength(0);
+	});
+
 	it('offers no Empty when a fresh count finds nothing to delete', async () => {
 		binApi({ files: 0, bytes: 0, staying: 2 });
 		await renderWithQuery(RecycleBin, {});

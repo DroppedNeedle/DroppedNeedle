@@ -18674,7 +18674,7 @@
             }
           },
           "403": {
-            "description": "Admin role required",
+            "description": "Curator role required",
             "content": {
               "application/json": {
                 "schema": {
@@ -18697,7 +18697,7 @@
         "security": [
           {
             "session": [
-              "admin"
+              "curator"
             ]
           }
         ]

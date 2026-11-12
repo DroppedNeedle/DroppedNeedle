@@ -14,17 +14,16 @@
 //!   by triggers): at least one of its tracks is indexed. Missing tracks
 //!   (gone from disk or in the recycle bin) and excluded ones do not count.
 //!   Player apps never see a live album without files.
-//! - **Listed.** The web UI's lists show a live album with files, and one
-//!   with none only while Put back can still bring something of it home:
-//!   one definition, [`droppedneedle_library::listed_album`], which the
-//!   lists, their counts and Check albums read. Every album still opens by
-//!   its id.
+//! - **Listed.** The web UI's lists show owned albums only; every album
+//!   still opens by its id.
 //! - **Live track.** A track every read shows is indexed and sits on a
 //!   live album. Merges retire only emptied albums, so a track left on a
 //!   retired one is a leftover no read lists, counts or returns.
-//! - **Owned** means live and has files. Membership, search's
-//!   `in_library`, the catalog pages' local fallback, Discover and follows
-//!   all read this one meaning. A release group is owned by the one
+//! - **Owned** means live and has files: one definition,
+//!   [`droppedneedle_library::owned_album`]. The web UI's lists, their
+//!   counts, Check albums, Copies, membership, search's `in_library`, the
+//!   catalog pages' local fallback, Discover and follows all read this one
+//!   meaning. A release group is owned by the one
 //!   definition catalog and acquisition share,
 //!   [`droppedneedle_library::owns_group`]. An artist is owned when it is
 //!   live and credited on an owned album. Being identified (`linked`) is not
@@ -59,8 +58,8 @@ use super::player::{
 use super::stores::{AlbumSort, ArtistScope, ArtistSort, TrackSort};
 use droppedneedle_library::identity::asked_groups;
 use droppedneedle_library::{
-    all_owners, copy_of_group, listed_album, match_flag_state, named_group_guess,
-    not_yet_identified, owns_group, recording_mbid,
+    all_owners, copy_of_group, match_flag_state, named_group_guess, not_yet_identified, owns_group,
+    recording_mbid,
 };
 
 /// An album that has not been merged into another, over an album alias.
@@ -80,20 +79,6 @@ macro_rules! live_track {
              WHERE ra.id = ",
             $track,
             ".local_album_id AND +ra.retired_into_album_id IS NOT NULL)"
-        )
-    };
-}
-
-/// An album that is live and has at least one indexed track, over an
-/// album alias.
-macro_rules! owned_album {
-    ($album:literal) => {
-        concat!(
-            "+",
-            $album,
-            ".retired_into_album_id IS NULL AND +",
-            $album,
-            ".has_indexed_track = 1"
         )
     };
 }
@@ -137,7 +122,8 @@ macro_rules! owned_artist {
     };
 }
 
-pub(crate) use {live_album, live_track, musicbrainz, owned_album, owned_artist, track_codec};
+pub(crate) use droppedneedle_library::owned_album;
+pub(crate) use {live_album, live_track, musicbrainz, owned_artist, track_codec};
 
 /// A track an album's track count counts, over a track alias and the
 /// album's id column: an indexed track on that album, whoever is credited
@@ -281,7 +267,7 @@ droppedneedle_kernel::sql! {
     /// [`album_min_tracks!`] binds it, then the user whose stars it keeps
     /// (or NULL) and [`rated_within!`]'s binds.
     pub(crate) fragment ALBUM_FILTER = (concat!(
-        listed_album!("a"),
+        owned_album!("a"),
         " AND (? IS NULL OR a.title_folded LIKE ? ESCAPE '\\' \
          OR a.album_artist_name_folded LIKE ? ESCAPE '\\') \
          AND (? IS NULL OR a.album_artist_id = ?) \
@@ -353,13 +339,13 @@ droppedneedle_kernel::sql! {
         + " WHERE ae.release_group_mbid = \
         (SELECT i.release_group_mbid FROM local_album_external_identities i \
          WHERE i.local_album_id = ? AND " + (musicbrainz!("i")) + ") \
-        AND a.id != ? AND " + (listed_album!("a"))
+        AND a.id != ? AND " + (owned_album!("a"))
         + " GROUP BY a.id ORDER BY a.created_at ASC, a.id ASC";
     /// A page of the listed albums an artist leads, by title.
     family LED_ALBUM_PAGE = led_album_page;
     /// How many listed albums an artist leads.
     pub(crate) LED_ALBUM_COUNT = "SELECT COUNT(*) FROM local_albums a \
-        WHERE a.album_artist_id = ? AND " + (listed_album!("a"));
+        WHERE a.album_artist_id = ? AND " + (owned_album!("a"));
     /// Live albums an artist (bound twice) appears on without leading,
     /// reached from the artist's credits.
     pub(crate) fragment APPEARANCE_FILTER = (concat!(
@@ -664,14 +650,14 @@ droppedneedle_kernel::sql! {
     /// is the newest completed run.
     pub(crate) STATS_EXTRAS = "SELECT \
         (SELECT COUNT(*) FROM library_identify_reviews WHERE state = 'pending') AS reviews, \
-        (SELECT COUNT(*) FROM local_albums a WHERE " + (listed_album!("a")) + " \
+        (SELECT COUNT(*) FROM local_albums a WHERE " + (owned_album!("a")) + " \
          AND " + (match_flag_state!("a.id", "unconfirmed")) + ") AS guesses, \
-        (SELECT COUNT(*) FROM local_albums a WHERE " + (listed_album!("a")) + " \
+        (SELECT COUNT(*) FROM local_albums a WHERE " + (owned_album!("a")) + " \
          AND " + (match_flag_state!("a.id", "unmatched")) + ") AS not_found, \
         (SELECT COUNT(DISTINCT w.local_album_id) FROM library_album_looks_wrong w \
          JOIN local_albums a ON a.id = w.local_album_id \
-         WHERE " + (listed_album!("a")) + ") AS looks_wrong, \
-        (SELECT COUNT(*) FROM local_albums a WHERE " + (listed_album!("a")) + " AND ("
+         WHERE " + (owned_album!("a")) + ") AS looks_wrong, \
+        (SELECT COUNT(*) FROM local_albums a WHERE " + (owned_album!("a")) + " AND ("
         + (match_flag_state!("a.id", "unconfirmed")) + " \
          OR EXISTS (SELECT 1 FROM library_album_looks_wrong w WHERE w.local_album_id = a.id) \
          OR EXISTS (SELECT 1 FROM library_identify_reviews r \
@@ -688,7 +674,7 @@ droppedneedle_kernel::sql! {
     pub(crate) FAVORITE_COUNTS = "SELECT f.item_kind AS kind, COUNT(*) AS total \
         FROM catalog_user_favorites f WHERE f.user_id = ? \
         AND (f.item_kind <> 'album' OR EXISTS (SELECT 1 FROM local_albums a \
-        WHERE a.id = f.item_id AND " + (listed_album!("a")) + ")) GROUP BY f.item_kind";
+        WHERE a.id = f.item_id AND " + (owned_album!("a")) + ")) GROUP BY f.item_kind";
 
     /// The live album a local id or alias names now: the album itself while
     /// it is live, else the album its alias points at (every merge points
@@ -1327,7 +1313,7 @@ pub(crate) fn led_album_page(after_cursor: bool) -> String {
         "SELECT {} FROM local_albums a WHERE a.album_artist_id = ? AND {}{} \
          ORDER BY {} LIMIT ?",
         key_columns(&keys),
-        listed_album!("a"),
+        owned_album!("a"),
         after(&keys, after_cursor),
         order_by(&keys)
     )

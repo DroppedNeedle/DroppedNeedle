@@ -15,10 +15,11 @@
 //!   writes an album's artist only from files it reads, so a row an
 //!   earlier version left on the placeholder stays there while its files
 //!   are unchanged.
-//! - People's hearts and ratings on an album with no files, which the
-//!   lists hide, move to the copy with files its release group opens, when
-//!   both are accepted on that group. A person who rated both keeps the
-//!   copy's rating; the one dropped is kept in the audit row. Plays stay.
+//! - People's hearts and ratings on an album with no files, once nothing
+//!   of it can be put back, move to the copy with files its release group
+//!   opens, when both are accepted on that group. A person who rated both
+//!   keeps the copy's rating; the one dropped is kept in the audit row.
+//!   Plays stay.
 //!
 //! A person's edition choice is never lost: an album holding a chosen
 //! edition, made now or in v2, is only retired into an album with the same
@@ -369,11 +370,12 @@ fn fold_split_legacy_album(
 /// The reason code of the audit row [`marks_follow_copy`] writes.
 pub const MARKS_FOLLOWED_REASON: &str = "MARKS_FOLLOWED_TO_COPY";
 
-/// Move people's hearts and ratings off an album with no files that the
-/// lists hide onto the copy with files its release group opens, when both
-/// are accepted on that group. A person who rated both keeps the copy's
-/// rating, and the audit row keeps the one dropped. Plays stay: a play
-/// names the track played. Nothing moves them back if the files return.
+/// Move people's hearts and ratings off an album with no files, once
+/// nothing of it can be put back, onto the copy with files its release
+/// group opens, when both are accepted on that group. A person who rated
+/// both keeps the copy's rating, and the audit row keeps the one dropped.
+/// Plays stay: a play names the track played. Nothing moves them back if
+/// the files return.
 fn marks_follow_copy(
     tx: &Transaction<'_>,
     album: &Album,

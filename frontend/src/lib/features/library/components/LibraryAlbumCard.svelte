@@ -4,7 +4,6 @@
 	import MediaTile from '$lib/media/MediaTile.svelte';
 	import LibraryFormatBadge from './LibraryFormatBadge.svelte';
 	import LocalIdentityBadge from './LocalIdentityBadge.svelte';
-	import NoFilesBadge from './NoFilesBadge.svelte';
 	import type { AlbumView } from '$lib/features/library/queries/types';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import { trackCountLabel } from '$lib/utils/trackCount';
@@ -59,11 +58,7 @@
 	{/snippet}
 	{#snippet overlay()}
 		<div class="absolute top-2 right-2 z-10">
-			{#if album.track_count === 0}
-				<NoFilesBadge />
-			{:else}
-				<LibraryFormatBadge format={album.format} />
-			{/if}
+			<LibraryFormatBadge format={album.format} />
 		</div>
 		{#if album.identity_state === 'local_only'}
 			<LocalIdentityBadge

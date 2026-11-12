@@ -1488,11 +1488,9 @@ async fn assert_hot_plans(db: &Db) {
 }
 
 /// The album and artist lists' filters (formats, the track bound, the
-/// caller's rating, an album out of the recycle bin) reach each album's
-/// tracks, an artist's credits and led albums, a rating and a track's bin
-/// rows by key: a filtered page walks
-/// the same index its unfiltered page does, and only the format counts
-/// walk every album.
+/// caller's rating) reach each album's tracks, an artist's credits and led
+/// albums and a rating by key: a filtered page walks the same index its
+/// unfiltered page does, and only the format counts walk every album.
 async fn assert_filter_plans(db: &Db) {
     let by_key = |plan: &[String], aliases: &[&str]| {
         aliases.iter().all(|alias| {
@@ -1505,7 +1503,7 @@ async fn assert_filter_plans(db: &Db) {
                 .all(|line| line.starts_with("SEARCH ") && line.contains("=?"))
         })
     };
-    let album_aliases = ["t2", "mat", "lra", "rop", "roj", "rok", "ror", "ur"];
+    let album_aliases = ["t2", "mat", "ur"];
     for (name, text) in [
         ("album page", sql::album_page(AlbumSort::Name, false, false)),
         (

@@ -38036,7 +38036,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Admin role required */
+            /** @description Curator role required */
             403: {
                 headers: {
                     [name: string]: unknown;

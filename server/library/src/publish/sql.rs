@@ -37,7 +37,7 @@ macro_rules! in_bin {
 /// `files_recycled` row in `library_catalog_actions`: no put-back spent
 /// it, none of its file rows is still being written, and one of its
 /// copies is still in the recycle bin or its row waits for an admin. The
-/// album page's removals and the web UI's lists read this one rule. The
+/// album page's removals and the marks cleanup read this one rule. The
 /// unary plus drops the id's affinity, so the put-back probe can use its
 /// expression index.
 #[macro_export]
@@ -63,24 +63,22 @@ macro_rules! removal_offered {
     };
 }
 
-/// An album the web UI's lists show, over an album alias: live, and with
-/// files, or with a removal that Put back can still bring home
-/// ([`removal_offered!`]). The catalog's lists and counts, Check albums
-/// and the cleanup that moves marks off a hidden album read this one rule.
+/// Album `$album`, or an album merged into it, has a removal Put back can
+/// still bring home: the removals its page offers (`ALBUM_REMOVALS`).
 #[macro_export]
-macro_rules! listed_album {
+macro_rules! album_removal_offered {
     ($album:literal) => {
         concat!(
-            "+",
+            "EXISTS (SELECT 1 FROM library_catalog_actions lra \
+             WHERE lra.action_kind = 'files_recycled' AND lra.local_album_id IN ( \
+             WITH RECURSIVE held(id, hops) AS (SELECT ",
             $album,
-            ".retired_into_album_id IS NULL AND (+",
-            $album,
-            ".has_indexed_track = 1 OR EXISTS (SELECT 1 FROM library_catalog_actions lra \
-             WHERE lra.local_album_id = ",
-            $album,
-            ".id AND lra.action_kind = 'files_recycled' AND ",
+            ".id, 0 \
+             UNION SELECT hb.id, held.hops + 1 FROM local_albums hb \
+             JOIN held ON hb.retired_into_album_id = held.id WHERE held.hops < 8) \
+             SELECT id FROM held) AND ",
             $crate::removal_offered!("lra"),
-            "))"
+            ")"
         )
     };
 }
@@ -115,17 +113,6 @@ droppedneedle_kernel::sql! {
     /// Move a row (`?2`) from `?3` to `?1` only.
     pub(super) JOURNAL_TRANSITION = "UPDATE library_publish_journal SET state = ?1, seq = seq + 1 \
              WHERE id = ?2 AND state = ?3";
-    /// Whether moving removal row `?1` to `needs_attention` may change
-    /// whether its album is listed ([`listed_album!`]): the album has no
-    /// files, and the row was still being written (`?2`) or its copy left
-    /// the bin, so the removal can be offered now.
-    pub(super) ATTENTION_CHANGES_LISTING = "SELECT EXISTS (SELECT 1 FROM library_publish_journal j \
-             JOIN library_catalog_actions a ON a.id = j.bundle_id \
-             AND a.action_kind = 'files_recycled' \
-             JOIN local_albums al ON al.id = a.local_album_id \
-             JOIN library_publish_replacements r ON r.journal_id = j.id \
-             WHERE j.id = ?1 AND j.kind = 'remove' AND +al.has_indexed_track = 0 \
-             AND (?2 OR r.expired_at IS NOT NULL))";
     /// Move a row (`?2`) from `?3` to `?1` only, recording the hash of its
     /// staged bytes (`?4`).
     pub(super) JOURNAL_STAGE = "UPDATE library_publish_journal \
@@ -166,12 +153,6 @@ droppedneedle_kernel::sql! {
     pub(super) EXPIRY_HELD_PUT_BACKS = "SELECT id, bundle_id, track_id \
              FROM library_publish_journal \
              WHERE state IN (?1, ?2, ?3, ?4, ?5, ?6) AND kind = ?7";
-    /// Whether row `?1`'s copy was of a track on an album with no files.
-    pub(super) EXPIRY_OF_FILELESS_ALBUM = "SELECT EXISTS (SELECT 1 \
-             FROM library_publish_replacements r \
-             JOIN local_tracks t ON t.id = r.replaced_track_id \
-             JOIN local_albums a ON a.id = t.local_album_id \
-             WHERE r.journal_id = ?1 AND a.has_indexed_track = 0)";
     /// Record that row `?1`'s copy left the bin at `?2` (unix
     /// milliseconds): expired, found gone, or put back.
     pub(super) EXPIRY_MARK = "UPDATE library_publish_replacements SET expired_at = ?2 \
@@ -823,14 +804,18 @@ droppedneedle_kernel::sql! {
 mod tests {
     use super::{JournalKind, JournalState};
 
-    /// [`removal_offered!`] and the album page's removals write journal
-    /// kinds and states as text: each word they quote outside the action
-    /// kinds is one the enums spell, and the rule names every state it
-    /// means.
+    /// [`removal_offered!`], the album page's removals and the marks
+    /// cleanup's guard write journal kinds and states as text: each word
+    /// they quote outside the action kinds is one the enums spell, and the
+    /// rule names every state it means.
     #[test]
     fn the_removal_rule_quotes_journal_words() {
         let actions = ["files_put_back", "files_recycled", "$.undoes"];
-        for text in [removal_offered!("a"), super::ALBUM_REMOVALS.text()] {
+        for text in [
+            removal_offered!("a"),
+            album_removal_offered!("a"),
+            super::ALBUM_REMOVALS.text(),
+        ] {
             for word in text.split('\'').skip(1).step_by(2) {
                 let known = actions.contains(&word)
                     || JournalState::parse(word).is_some()

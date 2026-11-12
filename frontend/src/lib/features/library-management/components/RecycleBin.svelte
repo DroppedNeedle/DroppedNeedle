@@ -1,7 +1,8 @@
 <!--
-	The recycle bin for admins: each removal or replaced copy still in the bin,
-	with Put back where it can be, and "Empty recycle bin", which deletes what
-	the bin held when its confirm was read, in the background.
+	The recycle bin for curators: each removal or replaced copy still in the bin,
+	with Put back where it can be. Admins also get "Empty recycle bin", which
+	deletes what the bin held when its confirm was read, in the background, and
+	the lines saying how the last empty went.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
@@ -23,6 +24,7 @@
 		invalidateRecycleBin,
 		type BinRemoval
 	} from '$lib/features/library-management/queries/RecycleBinQueries.svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
@@ -116,23 +118,30 @@
 	}
 </script>
 
-<PageShell title="Recycle Bin" subtitle={retentionLine(firstPage?.retention_days)} width="narrow">
-	{#snippet actions()}
-		<Button
-			variant="danger"
-			icon={Trash2}
-			disabled={emptying}
-			loading={emptying}
-			onclick={openConfirm}>{emptying ? 'Emptying...' : 'Empty recycle bin'}</Button
-		>
-	{/snippet}
+{#snippet emptyAction()}
+	<Button
+		variant="danger"
+		icon={Trash2}
+		disabled={emptying}
+		loading={emptying}
+		onclick={openConfirm}>{emptying ? 'Emptying...' : 'Empty recycle bin'}</Button
+	>
+{/snippet}
 
+<PageShell
+	title="Recycle Bin"
+	subtitle={retentionLine(firstPage?.retention_days)}
+	width="narrow"
+	actions={authStore.isAdmin ? emptyAction : undefined}
+>
 	<div class="flex flex-col gap-3">
-		{#if status.data?.state === 'stopped'}
-			<p class="text-sm text-warning" role="status">Emptying stopped. Try again.</p>
-		{/if}
-		{#if status.data?.last_emptied}
-			<p class="text-sm text-muted">{lastEmptiedLine(status.data.last_emptied)}</p>
+		{#if authStore.isAdmin}
+			{#if status.data?.state === 'stopped'}
+				<p class="text-sm text-warning" role="status">Emptying stopped. Try again.</p>
+			{/if}
+			{#if status.data?.last_emptied}
+				<p class="text-sm text-muted">{lastEmptiedLine(status.data.last_emptied)}</p>
+			{/if}
 		{/if}
 		{#if firstPage && !firstPage.bins_known}
 			<p class="text-sm text-warning" role="status">Can't check the recycle bin right now.</p>
@@ -183,9 +192,13 @@
 										{/each}
 										{#if removal.held > 0}
 											<p class="text-xs text-muted">
-												Held: settle it in <a class="link" href={resolve('/library/management')}
-													>Library Management</a
-												>
+												{#if authStore.isAdmin}
+													Held: settle it in <a class="link" href={resolve('/library/management')}
+														>Library Management</a
+													>
+												{:else}
+													Held for an admin
+												{/if}
 											</p>
 										{/if}
 									</div>
@@ -221,23 +234,25 @@
 	</div>
 </PageShell>
 
-<ConfirmDialog
-	bind:open={confirmOpen}
-	title="Empty the recycle bin?"
-	confirmLabel="Empty"
-	tone="danger"
-	pending={summary.isFetching}
-	canConfirm={!summary.data || somethingToDelete}
-	onconfirm={runEmpty}
->
-	{#if summary.data}
-		{@const question = emptyQuestion(summary.data)}
-		<p>{question ?? 'Nothing to delete right now.'}</p>
-		{#if stayingLine(summary.data)}
-			<p class="mt-2 text-sm text-muted">{stayingLine(summary.data)}</p>
+{#if authStore.isAdmin}
+	<ConfirmDialog
+		bind:open={confirmOpen}
+		title="Empty the recycle bin?"
+		confirmLabel="Empty"
+		tone="danger"
+		pending={summary.isFetching}
+		canConfirm={!summary.data || somethingToDelete}
+		onconfirm={runEmpty}
+	>
+		{#if summary.data}
+			{@const question = emptyQuestion(summary.data)}
+			<p>{question ?? 'Nothing to delete right now.'}</p>
+			{#if stayingLine(summary.data)}
+				<p class="mt-2 text-sm text-muted">{stayingLine(summary.data)}</p>
+			{/if}
+			{#if question}
+				<p class="mt-2 text-sm text-muted">Files changed in the bin are kept.</p>
+			{/if}
 		{/if}
-		{#if question}
-			<p class="mt-2 text-sm text-muted">Files changed in the bin are kept.</p>
-		{/if}
-	{/if}
-</ConfirmDialog>
+	</ConfirmDialog>
+{/if}

@@ -193,7 +193,7 @@ export const navItems: NavItem[] = [
 		label: 'Recycle Bin',
 		icon: Trash2,
 		href: '/library/recycle-bin',
-		audience: 'admin',
+		audience: 'curator',
 		sidebar: { group: 'admin', active: within('/library/recycle-bin') },
 		more: { active: within('/library/recycle-bin') }
 	},

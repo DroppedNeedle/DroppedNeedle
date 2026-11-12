@@ -310,6 +310,23 @@ macro_rules! all_owners {
     };
 }
 
+/// An album that is live and has at least one indexed track, over an album
+/// alias. The web UI's lists, their counts, Check albums, Copies,
+/// membership, search, Discover and follows all read this one rule. Every
+/// album still opens by its id.
+#[macro_export]
+macro_rules! owned_album {
+    ($album:literal) => {
+        concat!(
+            "+",
+            $album,
+            ".retired_into_album_id IS NULL AND +",
+            $album,
+            ".has_indexed_track = 1"
+        )
+    };
+}
+
 /// The `asked(g)` table an [`owns_group!`] list form reads,
 /// one bound lowered group per row, ready to go before its `SELECT`.
 pub fn asked_groups(len: droppedneedle_kernel::db::statement::ListLen) -> String {

@@ -405,8 +405,7 @@ impl<'a> JournalWriter<'a> {
     /// Compare-and-swap transition: moves only when the row still holds
     /// `expected`, and bumps the monotonic sequence. Returns `false`
     /// when the row had already moved. For records that follow a file
-    /// step and guard none. A removal set aside for an admin may make its
-    /// album listed again, so that move bumps the catalog revision.
+    /// step and guard none.
     pub fn transition(
         &self,
         id: &str,
@@ -418,19 +417,6 @@ impl<'a> JournalWriter<'a> {
             .tx
             .prepare_cached(sql::JOURNAL_TRANSITION.text())?
             .execute(rusqlite::params![next.as_str(), id, expected.as_str()])?;
-        if changed == 1 && next == JournalState::NeedsAttention && expected != next {
-            let writing = matches!(
-                expected,
-                JournalState::Prepared | JournalState::Staged | JournalState::Published
-            );
-            let listing: bool = self
-                .tx
-                .prepare_cached(sql::ATTENTION_CHANGES_LISTING.text())?
-                .query_row(rusqlite::params![id, writing], |row| row.get(0))?;
-            if listing {
-                crate::catalog_revision::bump_catalog(self.tx)?;
-            }
-        }
         Ok(changed == 1)
     }
 

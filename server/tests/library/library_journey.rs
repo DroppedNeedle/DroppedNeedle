@@ -6383,12 +6383,11 @@ async fn expiry_and_an_empty_at_once_mark_every_copy() {
     );
 }
 
-/// A removed album stays in the album list and on its artist's page,
-/// marked as having no files, while its files are in the recycle bin.
-/// Once the bin is emptied it leaves both lists, and its link still
-/// opens it.
+/// A removed album leaves the album list and its artist's page at once,
+/// with both totals, while its link still opens it. Put back lists it
+/// again.
 #[tokio::test]
-async fn a_removed_album_is_listed_until_the_bin_lets_go_of_it() {
+async fn a_removed_album_leaves_the_lists_until_it_is_put_back() {
     let rig = Rig::start("lib-removed-listed").await;
     let app = &rig.app;
     let auth = app.login_admin().await;
@@ -6448,93 +6447,23 @@ async fn a_removed_album_is_listed_until_the_bin_lets_go_of_it() {
         }
     };
 
+    let mut both = vec![(removed.clone(), 1), (kept.clone(), 1)];
+    both.sort();
+    assert_eq!(lists().await, [both.clone(), both.clone()], "before");
+
     let uri = format!(
         "/api/v3/library/albums/{removed}?expected_revision={}&expected_listing_revision={}&delete_files=true",
         album["row_revision"], album["listing_revision"]
     );
     let (status, body) = app.call("DELETE", &uri, &headers, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let mut both = vec![(removed.clone(), 0), (kept.clone(), 1)];
-    both.sort();
-    assert_eq!(lists().await, [both.clone(), both], "in the bin: listed");
-
-    let summary = get("/api/v3/library/recycle-bin/summary".to_owned()).await;
-    assert_eq!(summary["files"], json!(1), "{summary}");
-    let before = summary["as_of"].as_i64().expect("as of") + 1000;
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/library/recycle-bin/empty",
-            &headers,
-            Some(json!({ "before": before })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
-    // The empty runs on the job runner's blocking threads: the bound is
-    // wall time.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    loop {
-        let status = get("/api/v3/library/recycle-bin/status".to_owned()).await;
-        if status["state"] == "idle" && status["last_emptied"]["deleted"] == json!(1) {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the bin empties: {status}"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-
     let only = vec![(kept.clone(), 1)];
-    assert_eq!(lists().await, [only.clone(), only], "out of the bin: gone");
+    assert_eq!(lists().await, [only.clone(), only], "in the bin: gone");
     let opened = get(format!("/api/v3/library/albums/{removed}")).await;
     assert_eq!(opened["id"], json!(removed), "its link still opens it");
     assert_eq!(opened["track_count"], json!(0));
-    rig.stop().await;
-}
 
-/// An album removed and put back whose folder then vanishes from disk
-/// leaves the lists: the put-back spent its removal, so nothing of it can
-/// be brought home.
-#[tokio::test]
-async fn an_album_put_back_then_vanished_leaves_the_lists() {
-    let rig = Rig::start("lib-put-back-vanished").await;
-    let app = &rig.app;
-    let auth = app.login_admin().await;
-    let headers = [("authorization", auth.as_str())];
-    let music = app.config.root_app_dir.join("music");
-    plant(&music, "One/LP/01.flac", "flac_full_01.flac");
-    plant(&music, "Two/LP/01.flac", "flac_full_01.flac");
-    app.add_library_folder("music", &music).await;
-    let track = rig
-        .scan_store
-        .track_at("music", "One/LP/01.flac")
-        .unwrap()
-        .expect("track indexed");
-    let album: String = app
-        .db()
-        .query_row(
-            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
-            [&track],
-            |row| row.get(0),
-        )
-        .expect("album id");
-    let get = |uri: String| {
-        let headers = &headers;
-        async move {
-            let (status, body) = app.call("GET", &uri, headers, None).await;
-            assert_eq!(status, StatusCode::OK, "{uri}: {body}");
-            body
-        }
-    };
-    let shown = get(format!("/api/v3/library/albums/{album}")).await;
-    let uri = format!(
-        "/api/v3/library/albums/{album}?expected_revision={}&expected_listing_revision={}&delete_files=true",
-        shown["row_revision"], shown["listing_revision"]
-    );
-    let (status, body) = app.call("DELETE", &uri, &headers, None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let removals = get(format!("/api/v3/library/albums/{album}/removals")).await;
+    let removals = get(format!("/api/v3/library/albums/{removed}/removals")).await;
     let removal = removals["items"][0]["id"]
         .as_str()
         .expect("removal id")
@@ -6542,28 +6471,13 @@ async fn an_album_put_back_then_vanished_leaves_the_lists() {
     let (status, body) = app
         .call(
             "POST",
-            &format!("/api/v3/library/albums/{album}/removals/{removal}/put-back"),
+            &format!("/api/v3/library/albums/{removed}/removals/{removal}/put-back"),
             &headers,
             None,
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["missing"], json!([]), "{body}");
-
-    std::fs::remove_dir_all(music.join("One")).expect("the folder vanishes");
-    app.scan_library().await;
-
-    let page = get("/api/v3/library/albums?limit=50".to_owned()).await;
-    let listed: Vec<&str> = page["items"]
-        .as_array()
-        .expect("items")
-        .iter()
-        .map(|item| item["id"].as_str().expect("id"))
-        .collect();
-    assert!(
-        !listed.contains(&album.as_str()),
-        "a vanished album leaves the list: {page}"
-    );
+    assert_eq!(lists().await, [both.clone(), both], "put back: listed");
     rig.stop().await;
 }
 
@@ -6661,13 +6575,15 @@ async fn an_album_without_files_leaves_the_lists() {
 
 /// A heart and rating on a copy whose files are gone follow to the copy
 /// with files; that copy keeps its own rating; plays stay; a local-only
-/// album keeps its heart; the copy's history shows the move.
+/// album keeps its heart; the copy's history shows the move. A copy whose
+/// files Put back can still bring home keeps its heart.
 #[tokio::test]
 async fn marks_on_a_copy_without_files_follow_to_the_copy_with_files() {
     use droppedneedle_library::http::history::album_history_view;
+    use droppedneedle_library::removal::Mutations;
 
     let (scratch, library, music) = bare_library("lib-marks-follow-copy").await;
-    for folder in ["gone", "kept", "local"] {
+    for folder in ["gone", "kept", "local", "binned"] {
         plant(&music, &format!("{folder}/01.flac"), "flac_full_01.flac");
     }
     add_music_root(&library, &music).await;
@@ -6689,15 +6605,18 @@ async fn marks_on_a_copy_without_files_follow_to_the_copy_with_files() {
         .expect("album found")
     };
     let (gone, kept, local) = (album_of("gone"), album_of("kept"), album_of("local"));
+    let binned = album_of("binned");
     db.execute_batch(&format!(
         "INSERT INTO local_album_external_identities (local_album_id, provider, \
          release_group_mbid, release_mbid, decision_source, selected_at) VALUES \
          ('{gone}', 'musicbrainz', 'rg-shared', 'rel-gone', 'automatic', 1), \
-         ('{kept}', 'musicbrainz', 'rg-shared', 'rel-kept', 'automatic', 1); \
+         ('{kept}', 'musicbrainz', 'rg-shared', 'rel-kept', 'automatic', 1), \
+         ('{binned}', 'musicbrainz', 'rg-shared', 'rel-binned', 'automatic', 1); \
          INSERT INTO auth_users (id, display_name, role, created_at) \
          VALUES ('fan', 'Fan', 'user', 1); \
          INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
-         ('fan', 'album', '{gone}', 7), ('fan', 'album', '{local}', 7); \
+         ('fan', 'album', '{gone}', 7), ('fan', 'album', '{local}', 7), \
+         ('fan', 'album', '{binned}', 7); \
          INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at) VALUES \
          ('fan', 'album', '{gone}', 4, 7), ('fan', 'album', '{kept}', 2, 8); \
          INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
@@ -6709,6 +6628,10 @@ async fn marks_on_a_copy_without_files_follow_to_the_copy_with_files() {
          'fan', 'tag_editor', 1, 7, 7);"
     ))
     .expect("marks and a tag edit planted");
+    add_admin(&library);
+    Mutations::new(&library)
+        .remove_album(&binned, true, true, "admin")
+        .expect("the binned copy is removed");
 
     std::fs::remove_dir_all(music.join("gone")).expect("the copy's folder is deleted");
     std::fs::remove_dir_all(music.join("local")).expect("the local album's folder is deleted");
@@ -6720,12 +6643,13 @@ async fn marks_on_a_copy_without_files_follow_to_the_copy_with_files() {
         }
     }
 
-    let mut hearts = vec![kept.clone(), local.clone()];
+    let mut hearts = vec![kept.clone(), local.clone(), binned.clone()];
     hearts.sort();
     assert_eq!(
         read("SELECT item_id FROM catalog_user_favorites ORDER BY item_id"),
         hearts,
-        "the heart followed to the copy with files; the local album kept its own"
+        "the heart followed to the copy with files; the local album and the \
+         copy in the recycle bin kept their own"
     );
     assert_eq!(
         read("SELECT item_id || ' ' || rating FROM catalog_user_ratings"),

@@ -21,7 +21,6 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import MediaTile from '$lib/media/MediaTile.svelte';
-	import NoFilesBadge from '$lib/features/library/components/NoFilesBadge.svelte';
 	import ContextMenu, { menuTrigger, type MenuPoint } from '$lib/ui/ContextMenu.svelte';
 	import {
 		getLocalRecentV3Query,
@@ -380,7 +379,6 @@
 			<div
 				class="w-36 shrink-0 sm:w-40 lg:w-44"
 				use:menuTrigger={{
-					enabled: album.track_count > 0,
 					open: (at) => (albumMenu = { ...at, album }),
 					close: () => (albumMenu = null)
 				}}
@@ -403,18 +401,14 @@
 						/>
 					{/snippet}
 					{#snippet overlay()}
-						{#if album.track_count === 0}
-							<NoFilesBadge className="absolute right-2 top-2" />
-						{:else}
-							<IconButton
-								variant="primary"
-								size="sm"
-								icon={Play}
-								label="Play {album.title}"
-								class="tile-play absolute right-2 bottom-2 shadow-lg"
-								onclick={() => playAlbum(album)}
-							/>
-						{/if}
+						<IconButton
+							variant="primary"
+							size="sm"
+							icon={Play}
+							label="Play {album.title}"
+							class="tile-play absolute right-2 bottom-2 shadow-lg"
+							onclick={() => playAlbum(album)}
+						/>
 					{/snippet}
 				</MediaTile>
 				{#if isMbid(album.artist_mbid)}

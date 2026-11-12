@@ -16,7 +16,7 @@ Who can do what, the ways people sign in, and how to get back in when a password
 | Role | Requests | Admin |
 |-|-|-|
 | Admin | Requests start immediately, no approval | Everything: users, approvals, all settings |
-| Trusted | Requests start immediately, no approval | Library curation: editions, matches, the review queue, drop imports, removals and upgrades. No settings or users |
+| Trusted | Requests start immediately, no approval | Library curation: editions, matches, the review queue, drop imports, removals, the Recycle Bin (not emptying it) and upgrades. No settings or users |
 | User | Requests wait for admin approval | Nothing admin side |
 
 The first account is always admin. Later accounts are created by an admin or automatically on first Jellyfin, Plex, or OIDC sign-in (all start as User). Every login method is switched on and off in the UI; no environment variables involved.
