@@ -611,6 +611,33 @@ def test_tagging_custom_tag_count_and_duplicate_name_bounds() -> None:
         )
 
 
+def test_an_oversized_custom_tag_already_in_the_file_does_not_block_the_profile() -> None:
+    document = AudioMetadataDocument(
+        fields=(AudioSemanticField(name="title", value="Original"),)
+    )
+    oversized = CustomTagValue(name="NOTES", values=("x" * 9_000,))
+    script = _tagging('set catalog_number = "CAT-1"')
+
+    result = TaggingScriptEngine().apply(document, (script,), custom_tags=(oversized,))
+
+    assert result.metadata.value_for("catalog_number") == ("CAT-1",)
+    assert result.custom_tags == (oversized,)
+    # Unchanged, so it is never planned for writing.
+    assert TaggingScriptEngine.desired_custom_tags((oversized,), result) == ()
+
+
+def test_a_script_cannot_write_an_oversized_custom_tag_even_over_an_existing_one() -> None:
+    document = AudioMetadataDocument(fields=())
+    existing = CustomTagValue(name="NOTES", values=("x" * 9_000,))
+
+    with pytest.raises(ScriptValidationError, match="too long"):
+        TaggingScriptEngine().apply(
+            document,
+            (_tagging('append custom.NOTES = "more"'),),
+            custom_tags=(existing,),
+        )
+
+
 def test_script_depth_list_output_and_runtime_bounds() -> None:
     deeply_nested = "fallback(" * 21 + '"x"' + ")" * 21
     with pytest.raises(ScriptValidationError, match="nested too deeply"):

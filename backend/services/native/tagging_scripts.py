@@ -225,7 +225,10 @@ class TaggingScriptEngine:
                 _raise("Custom tag names must be unique.", "tagging input", 1, 1)
             seen_custom.add(folded)
             custom[value.name] = value.values
-        self._validate_custom_output(custom, "tagging input", 1, 1)
+        # Tags already in the file are validated only if a script changes them: an
+        # unchanged tag is never written back, so its size cannot make the write unsafe.
+        baseline = dict(custom)
+        self._validate_custom_output(custom, "tagging input", 1, 1, baseline=baseline)
         transformations: list[TaggingTransformation] = []
         for script in scripts:
             program = validate_tagging_script(script.source, script_name=script.name)
@@ -240,7 +243,9 @@ class TaggingScriptEngine:
                 budget,
                 document,
             )
-            self._validate_custom_output(custom, script.name, 1, 1)
+            self._validate_custom_output(
+                custom, script.name, 1, 1, baseline=baseline
+            )
         return TaggingScriptResult(
             metadata=AudioMetadataDocument(
                 fields=tuple(
@@ -482,6 +487,8 @@ class TaggingScriptEngine:
         script_name: str,
         line: int,
         column: int,
+        *,
+        baseline: dict[str, tuple[str, ...]] | None = None,
     ) -> None:
         if len(custom) > MAX_CUSTOM_TAGS:
             _raise(
@@ -492,6 +499,8 @@ class TaggingScriptEngine:
             )
         total = 0
         for name, values in custom.items():
+            if baseline is not None and baseline.get(name) == values:
+                continue
             if (
                 not name
                 or "\x00" in name
