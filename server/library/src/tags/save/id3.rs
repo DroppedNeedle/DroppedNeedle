@@ -8,8 +8,9 @@ use lofty::file::TaggedFile;
 
 use super::document::{FieldDocument, FieldRead, collect_reads, values_or_absent};
 use super::id3_bytes::{
-    DeepId3, Id3FrameTruth, Id3TextTruth, comment_owned, decode_lang_text, decode_uslt,
-    parse_id3_deep, people_pairs, people_sources, performer_pair, performer_text, role_owns,
+    DeepId3, FrameStatus, Id3FrameTruth, Id3TextTruth, comment_owned, decode_lang_text,
+    decode_uslt, parse_id3_deep, people_pairs, people_sources, performer_pair, performer_text,
+    role_owns,
 };
 use super::id3_edit::{self, Id3Edit};
 use super::id3_upgrade::{as_saved, frames_kept_once, unmovable_frames, upgrade_notes};
@@ -101,6 +102,62 @@ impl TagFormat for Id3 {
 
     fn same_target(a: &Id3Edit, b: &Id3Edit) -> bool {
         a.key() == b.key()
+    }
+
+    /// A text, user text or `UFID` edit whose frame already holds its
+    /// values (or that removes a frame the tag lacks) changes nothing;
+    /// dropping it keeps the frame's status flags.
+    fn unchanged(tag: &DeepId3, edit: &Id3Edit) -> bool {
+        match edit {
+            Id3Edit::Text { id, values } => {
+                let held: Vec<&Id3FrameTruth> =
+                    tag.frames.iter().filter(|frame| frame.id == *id).collect();
+                match held[..] {
+                    [] => values.is_empty(),
+                    [frame] => frame
+                        .text
+                        .as_ref()
+                        .is_some_and(|text| text.desc.is_none() && text.values == *values),
+                    _ => false,
+                }
+            }
+            Id3Edit::User { desc, values } => {
+                let held: Vec<(&String, &Vec<String>)> = tag
+                    .frames
+                    .iter()
+                    .filter_map(|frame| {
+                        let text = frame.text.as_ref()?;
+                        let held = text.desc.as_ref()?;
+                        held.eq_ignore_ascii_case(desc)
+                            .then_some((held, &text.values))
+                    })
+                    .collect();
+                match held[..] {
+                    [] => values.is_empty(),
+                    [(held, held_values)] => held == desc && held_values == values,
+                    _ => false,
+                }
+            }
+            Id3Edit::Ufid { owner, value } => {
+                let key = format!("UFID:{owner}");
+                let held: Vec<&Id3FrameTruth> = tag
+                    .frames
+                    .iter()
+                    .filter(|frame| frame_key(frame) == key)
+                    .collect();
+                match (&held[..], value) {
+                    ([], None) => true,
+                    ([frame], Some(value)) => {
+                        let mut payload = owner.as_bytes().to_vec();
+                        payload.push(0);
+                        payload.extend_from_slice(value.as_bytes());
+                        frame.payload == payload
+                    }
+                    _ => false,
+                }
+            }
+            Id3Edit::Lyrics { .. } | Id3Edit::Raw { .. } => false,
+        }
     }
 
     fn apply(
@@ -636,6 +693,18 @@ fn verify_id3(
                     .collect();
                 return mismatch(format!("untouched frame payload changed: {changed:?}"));
             }
+            let (before_status, after_status) = (
+                strip_status(status_map(&before.frames), &edited),
+                strip_status(status_map(&after.frames), &edited),
+            );
+            if before_status != after_status {
+                let changed: Vec<&String> = before_status
+                    .iter()
+                    .filter(|(key, flags)| after_status.get(*key) != Some(*flags))
+                    .map(|(key, _)| key)
+                    .collect();
+                return mismatch(format!("untouched frame status flags changed: {changed:?}"));
+            }
         }
         (true, _, None) if removal_only => return Ok(()),
         (true, _, _) => {
@@ -677,13 +746,17 @@ fn verify_id3(
                         && decode_uslt(&landed[0].payload).ok().as_deref() == Some(text.as_str())
                 }
             },
-            Id3Edit::Raw { payloads, .. } => {
+            Id3Edit::Raw { id, payloads } => {
                 // Every frame of the id, byte for byte, the ones the edit
-                // left alone included.
-                let mut want: Vec<&[u8]> = payloads.iter().map(Vec::as_slice).collect();
-                let mut got: Vec<&[u8]> = landed
+                // left alone included, each with its status flags.
+                let mut want: Vec<(&[u8], FrameStatus)> = payloads
                     .iter()
-                    .map(|frame| frame.payload.as_slice())
+                    .map(Vec::as_slice)
+                    .zip(id3_edit::raw_statuses(before, id, payloads))
+                    .collect();
+                let mut got: Vec<(&[u8], FrameStatus)> = landed
+                    .iter()
+                    .map(|frame| (frame.payload.as_slice(), frame.status))
                     .collect();
                 want.sort();
                 got.sort();
@@ -720,6 +793,37 @@ pub(super) fn raw_map(frames: &[Id3FrameTruth]) -> BTreeMap<String, Vec<Vec<u8>>
     }
     for payloads in map.values_mut() {
         payloads.sort();
+    }
+    map
+}
+
+/// Each frame key's status flags, paired with the payload for raw frames
+/// (a key may hold several) and alone for text frames (one per key, and
+/// its bytes are rebuilt).
+fn status_map(frames: &[Id3FrameTruth]) -> BTreeMap<String, Vec<(Vec<u8>, FrameStatus)>> {
+    let mut map: BTreeMap<String, Vec<(Vec<u8>, FrameStatus)>> = BTreeMap::new();
+    for frame in frames {
+        let payload = if frame.text.is_some() {
+            Vec::new()
+        } else {
+            frame.payload.clone()
+        };
+        map.entry(frame_key(frame))
+            .or_default()
+            .push((payload, frame.status));
+    }
+    for flags in map.values_mut() {
+        flags.sort();
+    }
+    map
+}
+
+fn strip_status(
+    mut map: BTreeMap<String, Vec<(Vec<u8>, FrameStatus)>>,
+    edited: &[String],
+) -> BTreeMap<String, Vec<(Vec<u8>, FrameStatus)>> {
+    for key in edited {
+        map.remove(key);
     }
     map
 }

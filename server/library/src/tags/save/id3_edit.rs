@@ -13,11 +13,11 @@ use lofty::tag::{TagExt as _, TagType};
 use super::document::FieldRead;
 use super::edit::{foreign, supersede};
 use super::id3::{
-    Id3, date_parts, existing_txxx, id3_pair, id3_read, is_raw_native_id, raw_after,
+    Id3, date_parts, existing_txxx, frame_key, id3_pair, id3_read, is_raw_native_id, raw_after,
     split_v23_date, year_of,
 };
 use super::id3_bytes::{
-    DeepId3, People, comment_owned, comment_payload, decode_lang_text, decode_people,
+    DeepId3, FrameStatus, People, comment_owned, comment_payload, decode_lang_text, decode_people,
     is_key_value_id, people_pairs, people_payload, people_sources, performer_pair, performer_text,
     replace_people, role_owns,
 };
@@ -447,11 +447,14 @@ pub(super) fn apply(
             Id3Edit::Raw { id, payloads } => {
                 let frame_id = FrameId::Valid(std::borrow::Cow::Owned(id.clone()));
                 let _ = native.remove(&frame_id).count();
-                for payload in payloads {
-                    native.insert(Frame::Binary(lofty::id3::v2::BinaryFrame::new(
-                        frame_id.clone(),
-                        payload.clone(),
-                    )));
+                for (payload, status) in payloads.iter().zip(raw_statuses(truth, id, payloads)) {
+                    native.insert(flagged(
+                        Frame::Binary(lofty::id3::v2::BinaryFrame::new(
+                            frame_id.clone(),
+                            payload.clone(),
+                        )),
+                        status,
+                    ));
                 }
             }
             Id3Edit::Lyrics { text } => {
@@ -604,18 +607,24 @@ fn repair_id3_text(native: &mut Id3v2Tag, truth: Option<&DeepId3>) {
                 let _ = native.remove(&FrameId::Valid(std::borrow::Cow::Borrowed("TXXX")));
                 txxx_seen = true;
             }
-            native.insert(Frame::UserText(ExtendedTextFrame::new(
-                TextEncoding::UTF8,
-                desc.clone(),
-                text.values.join("\0"),
-            )));
+            native.insert(flagged(
+                Frame::UserText(ExtendedTextFrame::new(
+                    TextEncoding::UTF8,
+                    desc.clone(),
+                    text.values.join("\0"),
+                )),
+                frame.status,
+            ));
         } else {
             let _ = native.remove(&FrameId::Valid(std::borrow::Cow::Owned(frame.id.clone())));
-            native.insert(Frame::Text(TextInformationFrame::new(
-                FrameId::Valid(std::borrow::Cow::Owned(frame.id.clone())),
-                TextEncoding::UTF8,
-                text.values.join("\0"),
-            )));
+            native.insert(flagged(
+                Frame::Text(TextInformationFrame::new(
+                    FrameId::Valid(std::borrow::Cow::Owned(frame.id.clone())),
+                    TextEncoding::UTF8,
+                    text.values.join("\0"),
+                )),
+                frame.status,
+            ));
         }
     }
     // Every other frame but `UFID` goes back as the bytes it was. The
@@ -626,7 +635,8 @@ fn repair_id3_text(native: &mut Id3v2Tag, truth: Option<&DeepId3>) {
     // even becomes "MusicBee"), `ETCO` and `OWNE` cannot be written at
     // all, and `IPLS` is read as a `TIPL` the sweep above removes. `UFID`
     // survives, and its edits find it by owner. An edit of any of these
-    // removes them by id after this.
+    // removes them by id after this. Every frame put back here keeps its
+    // status flags, which the round-trip drops; `UFID` gets its owner's.
     let mut raw_ids: Vec<&str> = truth
         .frames
         .iter()
@@ -639,10 +649,64 @@ fn repair_id3_text(native: &mut Id3v2Tag, truth: Option<&DeepId3>) {
         let frame_id = FrameId::Valid(std::borrow::Cow::Owned(id.to_owned()));
         let _ = native.remove(&frame_id).count();
         for frame in truth.frames.iter().filter(|frame| frame.id == id) {
-            native.insert(Frame::Binary(lofty::id3::v2::BinaryFrame::new(
-                frame_id.clone(),
-                frame.payload.clone(),
-            )));
+            native.insert(flagged(
+                Frame::Binary(lofty::id3::v2::BinaryFrame::new(
+                    frame_id.clone(),
+                    frame.payload.clone(),
+                )),
+                frame.status,
+            ));
         }
     }
+    native.retain_mut(|frame| {
+        let status = match &*frame {
+            Frame::UniqueFileIdentifier(ufid) => {
+                let key = format!("UFID:{}", ufid.owner);
+                truth
+                    .frames
+                    .iter()
+                    .find(|held| frame_key(held) == key)
+                    .map(|held| held.status)
+            }
+            _ => None,
+        };
+        if let Some(status) = status {
+            frame.set_flags(status.lofty());
+        }
+        true
+    });
+}
+
+/// `frame` carrying `status` as its status flags.
+fn flagged(mut frame: Frame<'static>, status: FrameStatus) -> Frame<'static> {
+    frame.set_flags(status.lofty());
+    frame
+}
+
+/// The status flags each of a raw edit's `payloads` goes out with: a
+/// payload the frame held before (a comment the edit leaves alone) keeps
+/// that frame's flags, and a new one has none.
+pub(super) fn raw_statuses(
+    truth: Option<&DeepId3>,
+    id: &str,
+    payloads: &[Vec<u8>],
+) -> Vec<FrameStatus> {
+    let mut held: Vec<_> = truth
+        .map(|truth| {
+            truth
+                .frames
+                .iter()
+                .filter(|frame| frame.text.is_none() && frame.id == id)
+                .collect()
+        })
+        .unwrap_or_default();
+    payloads
+        .iter()
+        .map(|payload| {
+            held.iter()
+                .position(|frame| frame.payload == *payload)
+                .map(|at| held.swap_remove(at).status)
+                .unwrap_or_default()
+        })
+        .collect()
 }

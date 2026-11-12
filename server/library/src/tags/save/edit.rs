@@ -95,6 +95,11 @@ pub(super) fn resolve_edits<F: TagFormat>(
         let native = F::resolve_native(truth, key, &edit.values, &resolved)?;
         supersede::<F>(&mut resolved, native);
     }
+    // An edit that writes what the tag already holds (a restore replays
+    // every field) is dropped, so its home is kept whole.
+    if let Some(truth) = truth {
+        resolved.retain(|edit| !F::unchanged(truth, edit));
+    }
     Ok(resolved)
 }
 

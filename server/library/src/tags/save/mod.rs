@@ -421,6 +421,12 @@ trait TagFormat {
     /// True when both edits write one home, so the later one wins.
     fn same_target(a: &Self::Edit, b: &Self::Edit) -> bool;
 
+    /// True when the tag already holds exactly what `edit` writes, so the
+    /// save leaves that home as it is.
+    fn unchanged(_truth: &Self::Truth, _edit: &Self::Edit) -> bool {
+        false
+    }
+
     /// Write the edits, and the pictures when given, to `temp`.
     fn apply(
         truth: Option<&Self::Truth>,

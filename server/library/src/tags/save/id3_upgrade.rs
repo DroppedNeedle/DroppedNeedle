@@ -4,7 +4,7 @@ use super::Refusal;
 use super::document::FieldRead;
 use super::id3::{date_parts, frame_key, id3_read_as, id3_text, key_multiset, raw_map, text_map};
 use super::id3_bytes::{
-    DeepId3, Id3FrameTruth, Id3TextTruth, People, decode_people, encode_id3_strings,
+    DeepId3, FrameStatus, Id3FrameTruth, Id3TextTruth, People, decode_people, encode_id3_strings,
     parse_id3_deep, people_payload,
 };
 use super::kept::PicturesPlan;
@@ -225,6 +225,7 @@ fn v24_text_frame(id: &str, values: Vec<String>) -> Id3FrameTruth {
         id: id.to_owned(),
         payload,
         text: Some(Id3TextTruth { desc: None, values }),
+        status: FrameStatus::default(),
     }
 }
 
@@ -361,6 +362,7 @@ pub(super) fn upgrade_to_v24(tag: &DeepId3) -> Result<Upgrade, Refusal> {
             id: "TIPL".to_owned(),
             payload: people_payload(false, &people.pairs),
             text: None,
+            status: FrameStatus::default(),
         };
         match people.tipl {
             // Every IPLS pair was there already: TIPL keeps its bytes.

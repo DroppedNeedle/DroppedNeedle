@@ -74,12 +74,51 @@ fn syncsafe_u32(bytes: &[u8]) -> u32 {
 }
 
 /// One frame's truth: raw payload bytes plus decoded text when the frame
-/// is a text kind this wrapper rebuilds.
+/// is a text kind this wrapper rebuilds, and its status flags.
 #[derive(Clone)]
 pub(super) struct Id3FrameTruth {
     pub(super) id: String,
     pub(super) payload: Vec<u8>,
     pub(super) text: Option<Id3TextTruth>,
+    pub(super) status: FrameStatus,
+}
+
+/// A frame's status flags: how a tagger should treat the frame, not how
+/// its payload is stored. The same three in ID3v2.3 and v2.4, one bit
+/// apart. A frame written back unchanged keeps them; an edited one goes
+/// out with none.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct FrameStatus {
+    pub(super) tag_alter_preservation: bool,
+    pub(super) file_alter_preservation: bool,
+    pub(super) read_only: bool,
+}
+
+impl FrameStatus {
+    /// The status bits of a frame's first flag byte (`%0abc0000` in
+    /// v2.4, `%abc00000` in v2.3).
+    fn mask(major: u8) -> u8 {
+        if major == 4 { 0x70 } else { 0xE0 }
+    }
+
+    fn parse(major: u8, byte: u8) -> Self {
+        let byte = if major == 4 { byte << 1 } else { byte };
+        Self {
+            tag_alter_preservation: byte & 0x80 != 0,
+            file_alter_preservation: byte & 0x40 != 0,
+            read_only: byte & 0x20 != 0,
+        }
+    }
+
+    /// The flags lofty writes these as, in either version.
+    pub(super) fn lofty(self) -> lofty::id3::v2::FrameFlags {
+        lofty::id3::v2::FrameFlags {
+            tag_alter_preservation: self.tag_alter_preservation,
+            file_alter_preservation: self.file_alter_preservation,
+            read_only: self.read_only,
+            ..lofty::id3::v2::FrameFlags::default()
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -183,26 +222,26 @@ pub(super) fn parse_id3_deep(data: &[u8]) -> Result<Option<DeepId3>, Refusal> {
                 data[offset + 7],
             ]) as usize
         };
-        // The first flag byte holds status flags (tag/file alter
-        // preservation, read only); they describe handling, not payload,
-        // and the writer drops them. Format flags in the second byte and
-        // reserved bits still refuse.
+        // The first flag byte holds the status flags, which the save keeps.
+        // A reserved bit there, or any bit of the second byte (a format
+        // flag: grouping, compression, encryption, unsynchronisation, data
+        // length, or a reserved one), means the frame would not be rebuilt
+        // faithfully; refuse rather than clear or misread bits.
         let flag0 = data[offset + 8];
         let flag1 = data[offset + 9];
-        let (status, format): (u8, u8) = if major == 4 {
-            // %0abc0000 %0h00kmnp
-            (0x70, 0x4F)
-        } else {
-            // %abc00000 %ijk00000
-            (0xE0, 0xE0)
-        };
-        let risky = flag0 & !status != 0 || flag1 & format != 0;
-        if risky {
+        if flag0 & !FrameStatus::mask(major) != 0 {
             return Err(no_inventory(format!(
-                "frame {} carries format flags this wrapper cannot preserve",
+                "frame {} sets a reserved status bit this wrapper cannot preserve",
                 String::from_utf8_lossy(id)
             )));
         }
+        if flag1 != 0 {
+            return Err(no_inventory(format!(
+                "frame {} carries format or reserved flags this wrapper cannot preserve",
+                String::from_utf8_lossy(id)
+            )));
+        }
+        let status = FrameStatus::parse(major, flag0);
         let payload_end = offset.saturating_add(10).saturating_add(frame_size);
         if payload_end > tag_end {
             return Err(no_inventory("tag bytes end mid-frame".to_owned()));
@@ -219,7 +258,12 @@ pub(super) fn parse_id3_deep(data: &[u8]) -> Result<Option<DeepId3>, Refusal> {
         } else {
             None
         };
-        frames.push(Id3FrameTruth { id, payload, text });
+        frames.push(Id3FrameTruth {
+            id,
+            payload,
+            text,
+            status,
+        });
         offset = payload_end;
     }
     // A sized tag that yields zero frames is corrupt, not empty (an
