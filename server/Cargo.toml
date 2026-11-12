@@ -41,7 +41,8 @@ ring = "0.17"
 sha1 = "0.10"
 rubato = "0.16"
 percent-encoding = "2"
-rusqlite = { version = "0.32", features = ["bundled", "backup", "hooks"] }
+# fallible_uint keeps the u64 and usize conversions, which fail out of i64 range.
+rusqlite = { version = "0.42", features = ["bundled", "backup", "hooks", "fallible_uint"] }
 rusty-chromaprint = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }

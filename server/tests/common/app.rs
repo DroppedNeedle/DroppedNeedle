@@ -546,7 +546,9 @@ impl TestApp {
             .into_iter()
             .map(
                 |param| match param.to_sql().expect("seed parameter converts") {
-                    rusqlite::types::ToSqlOutput::Borrowed(value) => value.into(),
+                    rusqlite::types::ToSqlOutput::Borrowed(value) => {
+                        rusqlite::types::Value::try_from(value).expect("seed parameter converts")
+                    }
                     rusqlite::types::ToSqlOutput::Owned(value) => value,
                     other => panic!("unsupported seed parameter: {other:?}"),
                 },

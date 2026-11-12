@@ -3271,9 +3271,9 @@ async fn a_restored_backup_still_undoes_and_restores_originals() {
     rusqlite::Connection::open(scratch.join("settings.db"))
         .unwrap()
         .backup(
-            rusqlite::DatabaseName::Main,
+            rusqlite::MAIN_DB,
             restored.join("settings.db"),
-            None,
+            rusqlite::backup::NO_PROGRESS,
         )
         .unwrap();
     let library = open_library(&restored).await;

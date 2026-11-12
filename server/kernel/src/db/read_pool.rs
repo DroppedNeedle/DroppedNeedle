@@ -397,7 +397,7 @@ impl Pool {
         };
         if connection.is_autocommit()
             && matches!(
-                connection.transaction_state(None),
+                connection.transaction_state(None::<&str>),
                 Ok(TransactionState::None)
             )
         {

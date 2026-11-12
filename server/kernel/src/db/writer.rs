@@ -1707,11 +1707,11 @@ struct WriterConnection {
 
 impl WriterConnection {
     fn open(path: &Path, lane: LaneId) -> Result<Self, DbError> {
-        let connection = open_connection(path)?;
+        let mut connection = open_connection(path)?;
         connection.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
         let clock = Arc::new(AbortClock::new());
         let handler_clock = Arc::clone(&clock);
-        connection.progress_handler(PROGRESS_OPS, Some(move || handler_clock.check()));
+        connection.progress_handler(PROGRESS_OPS, Some(move || handler_clock.check()))?;
         // Verified against SQLite 3.46.0 (libsqlite3-sys 0.30.1, rusqlite
         // 0.32.1): a commit hook that refuses rolls back an autocommit
         // statement and a raw `COMMIT`, and a refused `RELEASE` at depth
@@ -1720,9 +1720,9 @@ impl WriterConnection {
         // alone.
         let watch = Arc::new(TxWatch::default());
         let commit_watch = Arc::clone(&watch);
-        connection.commit_hook(Some(move || commit_watch.refuses_commit()));
+        connection.commit_hook(Some(move || commit_watch.refuses_commit()))?;
         let rollback_watch = Arc::clone(&watch);
-        connection.rollback_hook(Some(move || rollback_watch.note_rollback()));
+        connection.rollback_hook(Some(move || rollback_watch.note_rollback()))?;
         Ok(Self {
             lane,
             path: path.to_owned(),

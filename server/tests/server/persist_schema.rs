@@ -2465,9 +2465,9 @@ fn import_target(dir: &crate::common::ScratchDir) -> rusqlite::Connection {
     target
 }
 
-/// Prepare one statement, and refuse a text holding more than one:
-/// `prepare` alone compiles the first and ignores the rest.
+/// Prepare one statement, and refuse a text holding more than one.
 fn prepare_one(connection: &rusqlite::Connection, name: &str, text: &str) -> Option<String> {
+    use rusqlite::fallible_iterator::FallibleIterator as _;
     let mut batch = rusqlite::Batch::new(connection, text);
     match batch.next() {
         Err(error) => Some(format!("{name}: {error}")),
@@ -2489,7 +2489,7 @@ fn row_mismatch(
     text: &str,
 ) -> Option<String> {
     let prepared = connection.prepare(text).ok()?;
-    let answers = prepared.column_names();
+    let answers: Vec<&str> = prepared.column_names().collect();
     (answers != shape.columns()).then(|| {
         format!(
             "{} reads {}: the statement answers {answers:?}, the struct has {:?}",

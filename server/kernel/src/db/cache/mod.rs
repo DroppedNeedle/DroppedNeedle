@@ -778,7 +778,7 @@ fn counted_wait(turn: i32) -> bool {
     u128::try_from(turn).is_ok_and(|turn| turn < BUSY_TIMEOUT.as_millis())
 }
 
-fn writer_pragmas(connection: &Connection) -> rusqlite::Result<()> {
+fn writer_pragmas(connection: &mut Connection) -> rusqlite::Result<()> {
     connection.busy_timeout(BUSY_TIMEOUT)?;
     #[cfg(test)]
     connection.busy_handler(Some(counted_wait))?;
@@ -792,12 +792,12 @@ fn writer_pragmas(connection: &Connection) -> rusqlite::Result<()> {
 /// is not the current one. The total is read from every table page, so a
 /// damaged table fails here and the file is made fresh.
 fn open_current(path: &Path) -> rusqlite::Result<Option<(Connection, i64)>> {
-    let connection = Connection::open_with_flags(path, open_flags(false))?;
+    let mut connection = Connection::open_with_flags(path, open_flags(false))?;
     let found: i32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if found != version() {
         return Ok(None);
     }
-    writer_pragmas(&connection)?;
+    writer_pragmas(&mut connection)?;
     let total = connection.query_row(sql::TOTAL_SIZE.text(), [], |row| row.get(0))?;
     Ok(Some((connection, total)))
 }
@@ -806,7 +806,7 @@ fn create(path: &Path) -> rusqlite::Result<Connection> {
     let mut connection = Connection::open_with_flags(path, open_flags(true))?;
     // Set before any table exists, so freed pages can go back to the disk.
     connection.execute_batch("PRAGMA auto_vacuum = INCREMENTAL")?;
-    writer_pragmas(&connection)?;
+    writer_pragmas(&mut connection)?;
     let transaction = connection.transaction()?;
     transaction.execute_batch(SCHEMA)?;
     transaction.execute_batch(&format!("PRAGMA user_version = {}", version()))?;

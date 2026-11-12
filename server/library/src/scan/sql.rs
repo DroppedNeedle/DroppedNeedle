@@ -916,7 +916,8 @@ droppedneedle_kernel::sql! {
     /// at the new one. One read: the open and waiting rows by the state index
     /// (the open states listed are every state `fenced_by!` does not call
     /// terminal), the rows moved since the run's earliest walk by their
-    /// revision.
+    /// revision. The CROSS JOIN keeps the fencing rows outer, so tracks are
+    /// read by id: without statistics SQLite 3.54 would walk them instead.
     pub(super) FENCED_PATHS = "WITH fencing AS ( \
        SELECT id, state, fence_revision, track_id, source_root, source_rel, dest_root, dest_rel \
          FROM library_publish_journal \
@@ -931,7 +932,7 @@ droppedneedle_kernel::sql! {
        SELECT f.state, f.fence_revision, r.replaced_track_id FROM fencing f \
          JOIN library_publish_replacements r ON r.journal_id = f.id \
          WHERE r.replaced_track_id IS NOT NULL) \
-     SELECT t.root_id, t.relative_path FROM named j JOIN local_tracks t ON t.id = j.track_id \
+     SELECT t.root_id, t.relative_path FROM named j CROSS JOIN local_tracks t ON t.id = j.track_id \
       WHERE EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
         AND s.root_id = t.root_id \
         AND (s.relative_path = '.' OR t.relative_path = s.relative_path \

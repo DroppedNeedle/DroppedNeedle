@@ -43,11 +43,7 @@ fn rows(
     limit: usize,
     drop: &[&str],
 ) -> rusqlite::Result<(Vec<Value>, bool)> {
-    let names: Vec<String> = stmt
-        .column_names()
-        .iter()
-        .map(|name| name.to_string())
-        .collect();
+    let names: Vec<String> = stmt.column_names().map(|name| name.to_string()).collect();
     let mut out = Vec::new();
     let mut more = false;
     let mut cursor = stmt.query(params)?;
