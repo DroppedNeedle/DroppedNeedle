@@ -85,6 +85,7 @@ WORKDIR /build
 
 # The image carries what the LGPL asks of whoever ships the program: the licence
 # files, the exact source and, in BUILD, the version and configure line.
+# libmp3lame's Debian source is in lame/, fetched by the step below.
 RUN curl -fsSL --retry 3 -o "ffmpeg-${FFMPEG_VERSION}.tar.xz" "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
     && echo "${FFMPEG_SHA256}  ffmpeg-${FFMPEG_VERSION}.tar.xz" | sha256sum -c - \
     && tar xf "ffmpeg-${FFMPEG_VERSION}.tar.xz" \
@@ -107,6 +108,20 @@ RUN curl -fsSL --retry 3 -o "ffmpeg-${FFMPEG_VERSION}.tar.xz" "https://ffmpeg.or
     && cp COPYING.* CREDITS LICENSE.md /out/doc/ \
     && ./ffmpeg -version > /out/doc/BUILD \
     && cp "../ffmpeg-${FFMPEG_VERSION}.tar.xz" /out/doc/
+
+# libmp3lame is LGPL too, so its Debian source goes beside FFmpeg's: the
+# source package and version dpkg records for the -dev package the build links.
+# The apt sandbox user cannot write to /out, so apt would run this download as
+# root with a warning; the option drops the warning.
+RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && src=$(dpkg-query -W -f='${source:Package}=${source:Version}' libmp3lame-dev) \
+    && ver=$(dpkg-query -W -f='${Version}' libmp3lame-dev) \
+    && mkdir -p /out/doc/lame \
+    && cd /out/doc/lame \
+    && apt-get -o APT::Sandbox::User=root source --download-only "$src" \
+    && echo "$ver" > VERSION \
+    && rm -rf /var/lib/apt/lists/*
 
 FROM debian:bookworm-slim
 
@@ -136,6 +151,13 @@ COPY --from=builder /out/droppedneedle /usr/local/bin/droppedneedle
 COPY --from=builder /out/droppedneedle-tool /usr/local/bin/droppedneedle-tool
 COPY --from=ffmpeg /out/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg /out/doc /usr/share/doc/ffmpeg
+# Fails the build when the runtime libmp3lame0 is not the version of the source
+# beside it, so a Debian update between the two stages cannot ship a binary
+# without its source.
+RUN lame=$(dpkg-query -W -f='${Version}' libmp3lame0) \
+    && [ -n "$lame" ] \
+    && [ "$lame" = "$(cat /usr/share/doc/ffmpeg/lame/VERSION)" ] \
+    || { echo "libmp3lame0 $lame does not match the source in /usr/share/doc/ffmpeg/lame; build again without the cache" >&2; exit 1; }
 # The pristine web UI; the server stamps a copy into /app/cache/static at
 # startup (DROPPEDNEEDLE_STATIC_DIR defaults to /app/static).
 COPY --from=frontend /app/frontend/build /app/static

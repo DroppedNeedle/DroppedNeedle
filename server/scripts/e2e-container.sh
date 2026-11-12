@@ -1,9 +1,10 @@
 #!/bin/sh
 # Container end-to-end test.
 #
-# 1. ffmpeg: the image's build is LGPL only with its notices beside it, and
-#    every format the scan accepts transcodes to every output, with and without
-#    a seek, using the argument shape of build_cmd in transcode.rs.
+# 1. ffmpeg: the image's build is LGPL only, with its notices and libmp3lame's
+#    source beside it, and every format the scan accepts transcodes to every
+#    output, with and without a seek, using the argument shape of build_cmd in
+#    transcode.rs.
 # 2. Smoke: fresh boot, healthy, clean SIGTERM shutdown. Prints cold and
 #    warm boot time, idle RSS and shutdown time.
 # 3. PUID: a boot with PUID=568 hands the config and cache folders to uid 568
@@ -173,6 +174,17 @@ check_ffmpeg() {
   VERSION=$(docker exec "$FFMPEG" ffmpeg -version | sed -n 's/^ffmpeg version \([^ ]*\).*/\1/p')
   docker exec "$FFMPEG" test -s "/usr/share/doc/ffmpeg/ffmpeg-$VERSION.tar.xz" \
     || fail "no source tarball for ffmpeg $VERSION"
+
+  # libmp3lame's Debian source for the version the image links. Debian's file
+  # names drop the epoch.
+  SOURCE=$(docker exec "$FFMPEG" dpkg-query -W -f='${source:Package}' libmp3lame0) \
+    || fail "libmp3lame0 is not installed"
+  LAME=$(docker exec "$FFMPEG" dpkg-query -W -f='${source:Version}' libmp3lame0)
+  LAME=${LAME#*:}
+  for FILE in "${SOURCE}_$LAME.dsc" "${SOURCE}_${LAME%-*}.orig.tar.[gx]z" "${SOURCE}_$LAME.debian.tar.[gx]z"; do
+    docker exec "$FFMPEG" sh -c "test -s /usr/share/doc/ffmpeg/lame/$FILE" \
+      || fail "no $FILE in /usr/share/doc/ffmpeg/lame"
+  done
 
   COUNT=0
   for INPUT in \
