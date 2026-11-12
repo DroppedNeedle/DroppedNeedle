@@ -4,19 +4,16 @@
 //! runs [`GitHubReleases`], the build tag plus the GitHub releases client
 //! (cached for an hour, quiet on failure).
 //!
-//! Comparison rules: strip leading `v`s and any build metadata, then order
-//! semver-style: numeric release cores first, a release above any prerelease
-//! of the same core, prerelease identifiers dot by dot with numeric before
-//! alphanumeric. Anything else fails closed as `comparison_failed`. A `dev`
-//! build reports an update as available when comparison fails so the full
-//! UI stays testable. `latest_release` ships only when an
-//! update is available; a missing latest release answers with the current
-//! version alone.
+//! Comparison rules: trim a leading `v`, parse both tags as semver and
+//! compare by precedence (build metadata ignored). Anything else fails
+//! closed as `comparison_failed`. A `dev` build reports an update as
+//! available when comparison fails so the full UI stays testable.
+//! `latest_release` ships only when an update is available; a missing
+//! latest release answers with the current version alone.
 //!
 //! The running version is the image's `COMMIT_TAG`, which `AppConfig`
 //! reads at start, else `dev`.
 
-use std::cmp::Ordering;
 use std::sync::Arc;
 
 use axum::{Json, extract::State};
@@ -166,102 +163,17 @@ pub fn routes() -> Routes<VersionState> {
         .user(routes!(get_releases))
 }
 
-/// One parsed tag: numeric release segments plus the prerelease tail.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Version {
-    /// Numeric release segments, e.g. `[3, 0, 0]`.
-    core: Vec<u64>,
-    /// Dot-separated prerelease identifiers, empty for a release.
-    pre: Vec<String>,
-}
-
-/// Parse a tag into a comparable version. Leading `v`s and any build
-/// metadata after `+` are stripped; the release core must be dotted numbers
-/// and the prerelease tail dot-separated alphanumeric identifiers. Anything
-/// else is unparseable and comparison fails closed.
-fn parse_tag(tag: &str) -> Option<Version> {
-    let stripped = tag.trim_start_matches('v');
-    let without_build = stripped.split('+').next().unwrap_or(stripped);
-    let (core, pre) = match without_build.split_once('-') {
-        Some((core, pre)) => (core, Some(pre)),
-        None => (without_build, None),
-    };
-    if core.is_empty() {
-        return None;
-    }
-    let mut segments = Vec::new();
-    for part in core.split('.') {
-        if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
-            return None;
-        }
-        segments.push(part.parse::<u64>().ok()?);
-    }
-    let mut prerelease = Vec::new();
-    if let Some(pre) = pre {
-        for part in pre.split('.') {
-            // Empty identifiers (`3.0.0-`, `3.0.0-beta..1`) are malformed.
-            if part.is_empty() || !part.bytes().all(|b| b.is_ascii_alphanumeric()) {
-                return None;
-            }
-            prerelease.push(part.to_owned());
-        }
-    }
-    Some(Version {
-        core: segments,
-        pre: prerelease,
-    })
-}
-
-/// Prerelease identifier as a number, when it is all digits.
-fn numeric_id(id: &str) -> Option<u64> {
-    if id.bytes().all(|b| b.is_ascii_digit()) {
-        id.parse::<u64>().ok()
-    } else {
-        None
-    }
-}
-
-impl Version {
-    /// Semver order: release core segment by segment (a missing segment
-    /// counts as zero), then a release above any prerelease of the same
-    /// core, then prerelease identifiers dot by dot with numeric before
-    /// alphanumeric and the shorter prefix first.
-    fn compare(&self, other: &Self) -> Ordering {
-        let len = self.core.len().max(other.core.len());
-        for i in 0..len {
-            let a = self.core.get(i).copied().unwrap_or(0);
-            let b = other.core.get(i).copied().unwrap_or(0);
-            if a != b {
-                return a.cmp(&b);
-            }
-        }
-        match (self.pre.is_empty(), other.pre.is_empty()) {
-            (true, true) => Ordering::Equal,
-            (true, false) => Ordering::Greater,
-            (false, true) => Ordering::Less,
-            (false, false) => {
-                for (a, b) in self.pre.iter().zip(other.pre.iter()) {
-                    let ordering = match (numeric_id(a), numeric_id(b)) {
-                        (Some(a), Some(b)) => a.cmp(&b),
-                        (Some(_), None) => Ordering::Less,
-                        (None, Some(_)) => Ordering::Greater,
-                        (None, None) => a.cmp(b),
-                    };
-                    if ordering.is_ne() {
-                        return ordering;
-                    }
-                }
-                self.pre.len().cmp(&other.pre.len())
-            }
-        }
-    }
+/// Parse a tag as semver after trimming a leading `v`. Anything that is
+/// not a full semver version is unparseable and comparison fails closed.
+fn parse_tag(tag: &str) -> Option<semver::Version> {
+    semver::Version::parse(tag.strip_prefix('v').unwrap_or(tag)).ok()
 }
 
 /// Compare two tags. Returns `(update_available, comparison_failed)`.
 /// Unparseable tags fail closed.
 fn is_newer(latest_tag: &str, current_tag: &str) -> (bool, bool) {
     match (parse_tag(latest_tag), parse_tag(current_tag)) {
-        (Some(latest), Some(current)) => (latest.compare(&current).is_gt(), false),
+        (Some(latest), Some(current)) => (latest.cmp_precedence(&current).is_gt(), false),
         _ => (false, true),
     }
 }

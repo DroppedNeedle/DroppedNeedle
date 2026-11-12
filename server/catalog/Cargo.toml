@@ -24,6 +24,7 @@ image.workspace = true
 md5.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true
+semver = "1.0.28"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
