@@ -375,9 +375,9 @@
 						</div>
 						{#if settings.query.data?.recycle_bin_warning}
 							{@const binWarning = settings.query.data.recycle_bin_warning}
-							<div class="alert alert-warning items-start text-sm sm:col-span-2">
+							<div class="alert alert-warning flex flex-wrap items-start text-sm sm:col-span-2">
 								<TriangleAlert class="mt-0.5 h-5 w-5" aria-hidden="true" />
-								<p class="min-w-0 flex-1" role="status">{binWarning.message}</p>
+								<p class="min-w-48 flex-1" role="status">{binWarning.message}</p>
 								{#if binWarning.accept_folder && authStore.isAdmin}
 									<RecycleBinFolderAccept path={settings.query.data.recycle_bin_path} />
 								{/if}
