@@ -117,7 +117,7 @@ describe('SessionsManager', () => {
 		await page.getByRole('dialog').getByRole('button', { name: 'Sign out everywhere' }).click();
 
 		await expect.poll(() => vi.mocked(goto).mock.calls.length).toBe(1);
-		expect(vi.mocked(goto).mock.calls[0]?.[0]).toMatch(/\/login$/);
+		expect(vi.mocked(goto).mock.calls[0]?.[0]).toMatch(/\/login\?local$/);
 		expect(api.calls('POST /api/v3/auth/logout-all')).toHaveLength(1);
 		expect(authStore.user).toBeNull();
 		expect(localStorage.getItem(LAST_USER_ID_KEY)).toBeNull();
