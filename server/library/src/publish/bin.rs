@@ -13,14 +13,25 @@
 //! bins are unknown and nothing that would go into a bin moves: no
 //! `.recycle` stands in for a bin that is down. The app never makes the
 //! configured folder; an admin makes it or mounts the share.
+//!
+//! An empty folder left under a share's mount point looks like any other,
+//! so the configured bin is known by the marker file ([`BIN_MARKER`]) a
+//! session leaves in it the first time it uses the path, marker first and
+//! the path's row second. A path with a row whose folder lacks the marker
+//! is not the bin, and nor is an unmarked folder holding none of the
+//! copies the journal still has in it: files wait, as for a bin that
+//! can't be reached, until the share is back or an admin accepts the
+//! folder ([`BinSource::accept_folder`]), which marks it again. The
+//! settings and expiry only compare; they never mark.
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::SystemTime;
 
+use droppedneedle_auth::Admin;
 use droppedneedle_kernel::clock::Clock;
-use droppedneedle_kernel::db::Db;
+use droppedneedle_kernel::db::{Db, DbError, Lane};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
@@ -32,9 +43,23 @@ use super::place::Seams;
 use super::publisher::durable;
 use crate::scan::fs::RECYCLE_BIN_DIRECTORY_NAME;
 use crate::scan::roots::RootRegistry;
+use crate::settings_models::RecycleBinWarning;
 
 /// Id of the configured bin in a session.
 pub const CONFIGURED_BIN_ID: &str = "recycle-bin";
+
+/// The file a session leaves in the configured bin's folder the first
+/// time it uses the path. Expiry and Empty leave it alone (it is not named
+/// like an entry), and nothing lists it.
+pub const BIN_MARKER: &str = ".droppedneedle-recycle-bin";
+
+/// What the marker says to a person who finds it.
+const MARKER_TEXT: &[u8] = b"DroppedNeedle keeps its recycle bin in this folder. \
+Leave this file here: without it the folder does not count as the bin, and removals wait.\n";
+
+/// The settings warning while the configured bin's folder is not the one
+/// marked as the bin.
+const UNMARKED_WARNING: &str = "This isn't the recycle bin folder used before. If its share isn't mounted, mount it. Removals and upgrades wait until then.";
 
 /// Folders a configured bin must stay clear of besides the library: the
 /// download staging folder and SABnzbd's completed-downloads folder.
@@ -247,6 +272,11 @@ pub enum BinsUnknown {
     /// not mounted): files wait for it rather than go to a library
     /// folder's `.recycle`.
     Unreachable,
+    /// The configured bin's folder has no marker though its path was
+    /// marked, or holds none of the copies the journal has in it (a share
+    /// not mounted leaves an empty folder): files wait for the share or
+    /// for an admin to accept the folder.
+    Unmarked,
 }
 
 impl std::fmt::Display for BinsUnknown {
@@ -255,6 +285,7 @@ impl std::fmt::Display for BinsUnknown {
             Self::SettingsUnread => "the Library Management settings can't be read",
             Self::DownloadsUnread => "the slskd or SABnzbd settings can't be read",
             Self::Unreachable => "the recycle bin folder isn't there or can't be reached",
+            Self::Unmarked => "the recycle bin folder isn't the one used before",
         })
     }
 }
@@ -263,10 +294,42 @@ impl std::fmt::Display for BinsUnknown {
 /// path, checked against the library roots and the download folders.
 #[derive(Clone)]
 pub struct BinSource {
+    db: Db,
+    clock: Arc<dyn Clock>,
     management: Live<LibraryManagement>,
     library: Live<TypedLibrary>,
     downloads: DownloadTrees,
     logged: Arc<Mutex<Logged>>,
+    /// The bin paths known to have their row, so a session that finds the
+    /// marker reads the table once per path.
+    recorded: Arc<Mutex<BTreeSet<String>>>,
+}
+
+/// Whether a check of the configured bin may mark it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Marking {
+    /// A session, about to move files: a path used for the first time is
+    /// marked.
+    Record,
+    /// The settings and expiry: they look and write nothing.
+    Compare,
+}
+
+/// Why an admin's choice of the recycle bin folder was not taken.
+#[derive(Debug, thiserror::Error)]
+pub enum AcceptFolderError {
+    /// The saved recycle bin path is not the one the admin was shown.
+    #[error("the recycle bin path changed")]
+    PathChanged,
+    /// The saved settings do not give that folder as the bin: it can't be
+    /// reached, is refused, or the settings can't be read.
+    #[error("the recycle bin path is not used as it is set")]
+    NotTheBin,
+    /// The marker could not be made in the folder.
+    #[error("the recycle bin marker could not be written: {0}")]
+    Unwritable(std::io::Error),
+    #[error(transparent)]
+    Db(#[from] DbError),
 }
 
 /// What was logged about the bins: the last problem line, so each change
@@ -280,17 +343,23 @@ struct Logged {
 
 impl BinSource {
     /// Bins from `management`, checked against the roots in `library` and
-    /// the folders `downloads` names.
+    /// the folders `downloads` names. The marked bin paths are kept in
+    /// `db`, stamped by `clock`.
     pub fn new(
+        db: Db,
+        clock: Arc<dyn Clock>,
         management: Live<LibraryManagement>,
         library: Live<TypedLibrary>,
         downloads: DownloadTrees,
     ) -> Self {
         Self {
+            db,
+            clock,
             management,
             library,
             downloads,
             logged: Arc::default(),
+            recorded: Arc::default(),
         }
     }
 
@@ -300,12 +369,14 @@ impl BinSource {
         self.current_over(&resolve_roots(registry))
     }
 
-    /// The bins for `roots`, already resolved, now. `Err` with the cause
-    /// while the Library Management settings or a setting naming a download folder
-    /// cannot be read, or while the configured bin cannot be reached: then
-    /// nothing moves into a bin and no other bin stands in.
+    /// The bins for `roots`, already resolved, now, for a session about to
+    /// move files: a configured bin path used for the first time is marked
+    /// here. `Err` with the cause while the Library Management settings or
+    /// a setting naming a download folder cannot be read, or while the
+    /// configured bin cannot be reached or is not the folder marked as the
+    /// bin: then nothing moves into a bin and no other bin stands in.
     pub fn current_over(&self, roots: &[ResolvedRoot]) -> Result<BinChoice, BinsUnknown> {
-        let choice = self.read(roots, None);
+        let choice = self.read(roots, None, Marking::Record);
         self.log(&choice);
         choice
     }
@@ -314,13 +385,161 @@ impl BinSource {
         &self,
         roots: &[ResolvedRoot],
         downloads: Option<&[PathBuf]>,
+        marking: Marking,
     ) -> Result<BinChoice, BinsUnknown> {
         let management = self.management.read().ok_or(BinsUnknown::SettingsUnread)?;
         let mut trees = || match downloads {
             Some(trees) => Ok(trees.to_vec()),
             None => (self.downloads)().ok_or(BinsUnknown::DownloadsUnread),
         };
-        choose(&management.recycle_bin_path, roots, &mut trees)
+        let choice = choose(&management.recycle_bin_path, roots, &mut trees)?;
+        self.held_to_mark(management.recycle_bin_path.trim(), choice, marking)
+    }
+
+    /// `choice` while its configured bin, when it has one, may be used:
+    /// its folder holds the marker, or the path `path` was never marked
+    /// and the folder does not look like a share that is not mounted.
+    /// [`BinsUnknown::Unmarked`] otherwise. With [`Marking::Record`], a
+    /// path used for the first time is marked: the marker first, then the
+    /// path's row, so a stop between them marks it again on the next use.
+    fn held_to_mark(
+        &self,
+        path: &str,
+        choice: BinChoice,
+        marking: Marking,
+    ) -> Result<BinChoice, BinsUnknown> {
+        let Some(dir) = configured_dir(&choice) else {
+            return Ok(choice);
+        };
+        if has_marker(dir) {
+            if marking == Marking::Record {
+                self.record(path);
+            }
+            return Ok(choice);
+        }
+        let marked = self.marked(path).map_err(|error| {
+            tracing::warn!(%error, "the recycle bin's mark could not be read; removals and upgrades wait");
+            BinsUnknown::Unreachable
+        })?;
+        if marked || self.copies_missing(dir)? {
+            return Err(BinsUnknown::Unmarked);
+        }
+        if marking == Marking::Record {
+            if let Err(error) = mark_folder(dir) {
+                tracing::warn!(%error, "the recycle bin marker could not be written; removals and upgrades wait");
+                return Err(BinsUnknown::Unreachable);
+            }
+            self.record(path);
+        }
+        Ok(choice)
+    }
+
+    /// Whether the journal still has copies in the bin at `dir` while the
+    /// folder holds no entry folder at all: a bin used before the marker
+    /// existed, on a share that is not mounted.
+    fn copies_missing(&self, dir: &Path) -> Result<bool, BinsUnknown> {
+        if super::expiry::gone_for_sure(dir, None) {
+            return Ok(false);
+        }
+        let below = format!("{}/", dir.to_string_lossy());
+        self.db
+            .read_blocking("publish.bin_holds_copies", |conn| -> Result<bool, DbError> {
+                Ok(conn
+                    .prepare_cached(super::sql::BIN_HOLDS_COPIES.text())?
+                    .query_row(rusqlite::params![below], |row| row.get(0))?)
+            })
+            .map_err(|error| {
+                tracing::warn!(%error, "the recycle bin's copies could not be read; removals and upgrades wait");
+                BinsUnknown::Unreachable
+            })
+    }
+
+    /// Whether the bin path `path` has its row.
+    fn marked(&self, path: &str) -> Result<bool, DbError> {
+        if self.known_recorded(path) {
+            return Ok(true);
+        }
+        let marked =
+            self.db
+                .read_blocking("publish.bin_marked", |conn| -> Result<bool, DbError> {
+                    Ok(conn
+                        .prepare_cached(super::sql::BIN_MARKED.text())?
+                        .query_row(rusqlite::params![path], |row| row.get(0))?)
+                })?;
+        if marked {
+            self.note_recorded(path);
+        }
+        Ok(marked)
+    }
+
+    /// Give the bin path `path`, whose folder holds the marker, its row
+    /// when it has none. A write that fails is logged and tried again on
+    /// the next use: the marker already proves the folder.
+    fn record(&self, path: &str) {
+        match self.marked(path) {
+            Ok(true) => {}
+            Ok(false) => match self.mark_row(path, Lane::Background) {
+                Ok(()) => tracing::info!(path, "the recycle bin is marked"),
+                Err(error) => tracing::warn!(%error, "the recycle bin's mark was not recorded"),
+            },
+            Err(error) => tracing::warn!(%error, "the recycle bin's mark could not be read"),
+        }
+    }
+
+    fn mark_row(&self, path: &str, lane: Lane) -> Result<(), DbError> {
+        let at = self.clock.now_ms();
+        self.db
+            .write_blocking(lane, "publish.bin_mark", |tx| -> Result<(), DbError> {
+                tx.prepare_cached(super::sql::BIN_MARK.text())?
+                    .execute(rusqlite::params![path, at])?;
+                Ok(())
+            })?;
+        self.note_recorded(path);
+        Ok(())
+    }
+
+    fn known_recorded(&self, path: &str) -> bool {
+        self.recorded
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(path)
+    }
+
+    fn note_recorded(&self, path: &str) {
+        self.recorded
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(path.to_owned());
+    }
+
+    /// An admin's answer to [`BinsUnknown::Unmarked`]: the folder the saved
+    /// recycle bin path `path` names is the bin from now on, so it is
+    /// marked again. True when it was marked; false when it already held
+    /// the marker, and nothing was written. Refused when the saved path is
+    /// another, or while the saved settings would not use that folder as
+    /// the bin. Blocking: it resolves paths.
+    pub fn accept_folder(&self, _admin: &Admin, path: &str) -> Result<bool, AcceptFolderError> {
+        let management = self.management.read().ok_or(AcceptFolderError::NotTheBin)?;
+        let saved = management.recycle_bin_path.trim();
+        if saved != path.trim() {
+            return Err(AcceptFolderError::PathChanged);
+        }
+        let library = self.library.read().ok_or(AcceptFolderError::NotTheBin)?;
+        let registry = crate::settings::registry_from(&library);
+        let mut trees = || (self.downloads)().ok_or(BinsUnknown::DownloadsUnread);
+        let choice = choose(saved, &resolve_roots(&registry), &mut trees)
+            .map_err(|_| AcceptFolderError::NotTheBin)?;
+        let dir = configured_dir(&choice).ok_or(AcceptFolderError::NotTheBin)?;
+        if has_marker(dir) {
+            return Ok(false);
+        }
+        mark_folder(dir).map_err(AcceptFolderError::Unwritable)?;
+        self.mark_row(saved, Lane::Foreground)?;
+        tracing::info!(
+            path = saved,
+            "an admin chose the recycle bin folder; it is marked again"
+        );
+        Ok(true)
     }
 
     /// The bins expiry may delete from for `registry`'s roots now, with a
@@ -334,7 +553,7 @@ impl BinSource {
     ) -> Result<(Vec<Root>, Vec<String>), BinsUnknown> {
         let resolved = resolve_roots(registry);
         let downloads = (self.downloads)().ok_or(BinsUnknown::DownloadsUnread)?;
-        let choice = self.read(&resolved, Some(&downloads))?;
+        let choice = self.read(&resolved, Some(&downloads), Marking::Compare)?;
         let left_out = paths::left_out(&resolved);
         Ok(expiry_guard(
             choice.roots,
@@ -348,17 +567,25 @@ impl BinSource {
     /// `configured` as the bin path: why it would not be used, and each
     /// library folder whose `.recycle` is a link the checks refuse, so its
     /// removals wait. `None` when every bin would be used, or while that
-    /// cannot be told. Blocking: it resolves paths.
-    pub fn warning(&self, configured: &str) -> Option<String> {
+    /// cannot be told. It marks nothing. Blocking: it resolves paths.
+    pub fn warning(&self, configured: &str) -> Option<RecycleBinWarning> {
         let library = self.library.read()?;
         let registry = crate::settings::registry_from(&library);
         let mut trees = || (self.downloads)().ok_or(BinsUnknown::DownloadsUnread);
-        let choice = match choose(configured, &resolve_roots(&registry), &mut trees) {
+        let checked = choose(configured, &resolve_roots(&registry), &mut trees)
+            .and_then(|choice| self.held_to_mark(configured.trim(), choice, Marking::Compare));
+        let choice = match checked {
             Ok(choice) => choice,
             Err(BinsUnknown::Unreachable) => {
-                return Some(BinRefusal::Unresolvable.message().to_owned());
+                return Some(RecycleBinWarning::new(BinRefusal::Unresolvable.message()));
             }
-            Err(_) => return None,
+            Err(BinsUnknown::Unmarked) => {
+                return Some(RecycleBinWarning {
+                    message: UNMARKED_WARNING.to_owned(),
+                    accept_folder: true,
+                });
+            }
+            Err(BinsUnknown::SettingsUnread | BinsUnknown::DownloadsUnread) => return None,
         };
         let mut lines: Vec<String> = choice
             .refused
@@ -380,7 +607,7 @@ impl BinSource {
                 root.path.display()
             ));
         }
-        (!lines.is_empty()).then(|| lines.join(" "))
+        (!lines.is_empty()).then(|| RecycleBinWarning::new(&lines.join(" ")))
     }
 
     fn log(&self, choice: &Result<BinChoice, BinsUnknown>) {
@@ -405,6 +632,62 @@ impl BinSource {
             }
         }
     }
+}
+
+/// The configured bin's folder, when `choice` uses it.
+fn configured_dir(choice: &BinChoice) -> Option<&Path> {
+    choice
+        .roots
+        .iter()
+        .find(|root| root.id == CONFIGURED_BIN_ID)
+        .map(|root| root.dir.as_path())
+}
+
+/// Whether the folder `dir` holds the marker, as a plain file.
+fn has_marker(dir: &Path) -> bool {
+    std::fs::symlink_metadata(dir.join(BIN_MARKER)).is_ok_and(|meta| meta.file_type().is_file())
+}
+
+/// Make the marker in `dir`, a resolved folder, unless a plain file is
+/// already at its name. Anything else there fails with `AlreadyExists`.
+fn mark_folder(dir: &Path) -> std::io::Result<()> {
+    match write_marker(dir) {
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && has_marker(dir) => {
+            Ok(())
+        }
+        written => written,
+    }
+}
+
+/// Make the marker in `dir`, a resolved folder: every folder on the way is
+/// opened without following a link, and the marker is made new, never
+/// through a link at its name. It and its folder are synced before the
+/// path's row is written. `AlreadyExists` when anything is at its name.
+fn write_marker(dir: &Path) -> std::io::Result<()> {
+    use droppedneedle_kernel::beneath::{RootLinks, parent_beneath};
+    use std::io::Write as _;
+    use std::os::fd::{AsRawFd as _, FromRawFd as _};
+
+    let (folder, name) = parent_beneath(dir, &dir.join(BIN_MARKER), RootLinks::Refuse)?;
+    // SAFETY: `folder` is an open descriptor and `name` a NUL-terminated
+    // string, both alive for the call.
+    let fd = unsafe {
+        libc::openat(
+            folder.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o644 as libc::c_uint,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `fd` was just returned by a successful `openat` and nothing
+    // else owns it.
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    file.write_all(MARKER_TEXT)?;
+    file.sync_all()?;
+    std::fs::File::open(dir)?.sync_all()
 }
 
 /// Every saved root of `registry` with the real folder it resolves to now.

@@ -340,6 +340,11 @@ export const EFFECTS = {
 	recycleBinStatusChanged: (userId: UserId): Sweep[] => [
 		{ key: LibraryQueryKeyFactory.catalog.recycleBinStatus(userId) }
 	],
+	/** Which folder is the recycle bin: the settings' warning and the bin's page. */
+	recycleBinFolderChanged: (userId: UserId): Sweep[] => [
+		{ key: LibraryManagementQueryKeyFactory.settings(userId) },
+		{ key: LibraryQueryKeyFactory.catalog.recycleBinPrefix(userId) }
+	],
 	/** Whether each library folder can take managed file moves. */
 	libraryPlacementChanged: (userId: UserId): Sweep[] => [
 		{ key: LibraryManagementQueryKeyFactory.placement(userId) }
@@ -550,6 +555,7 @@ export const retagPairsChanged = fact('retagPairsChanged');
 export const searchResultsChanged = fact('searchResultsChanged');
 export const recycleBinChanged = fact('recycleBinChanged');
 export const recycleBinStatusChanged = fact('recycleBinStatusChanged');
+export const recycleBinFolderChanged = fact('recycleBinFolderChanged');
 export const libraryPlacementChanged = fact('libraryPlacementChanged');
 export const lidarrSettingsChanged = fact('lidarrSettingsChanged');
 export const lidarrCandidatesChanged = fact('lidarrCandidatesChanged');

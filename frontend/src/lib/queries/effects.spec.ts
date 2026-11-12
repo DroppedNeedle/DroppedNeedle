@@ -114,6 +114,10 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	searchResultsChanged: [key(U, 'search')],
 	recycleBinChanged: [key(U, 'library', 'catalog', 'recycle-bin')],
 	recycleBinStatusChanged: [key(U, 'library', 'catalog', 'recycle-bin', 'status')],
+	recycleBinFolderChanged: [
+		key(U, 'library-management', 'settings'),
+		key(U, 'library', 'catalog', 'recycle-bin')
+	],
 	libraryPlacementChanged: [key(U, 'library-management', 'placement')],
 	lidarrSettingsChanged: [key('admin', 'lidarr-import', 'config')],
 	lidarrCandidatesChanged: [key(U, 'lidarr-import', 'candidates')],

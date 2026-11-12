@@ -30,6 +30,7 @@ pub static MIGRATIONS: &[Migration<'static>] = &[
     migration!(142, "0142_management_applied_release.sql"),
     migration!(143, "0143_appearance.sql"),
     migration!(144, "0144_v3_cover_paths.sql"),
+    migration!(145, "0145_v3_recycle_bin_marks.sql"),
 ];
 
 /// The stamp of a database made by the migration chain the baseline

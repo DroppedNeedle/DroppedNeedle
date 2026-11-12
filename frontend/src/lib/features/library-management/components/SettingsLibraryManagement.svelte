@@ -26,6 +26,7 @@
 	import LibraryManagementProfileSharing from './LibraryManagementProfileSharing.svelte';
 	import LibraryManagementPurgeDialog from './LibraryManagementPurgeDialog.svelte';
 	import LibraryManagementRootAssignment from './LibraryManagementRootAssignment.svelte';
+	import RecycleBinFolderAccept from './RecycleBinFolderAccept.svelte';
 	import { ActivationWizard } from './activationWizard.svelte';
 	import { createManagementSettings, writesAutomatically } from './managementSettingsDraft.svelte';
 	import { ApiError } from '$lib/api/errors';
@@ -373,9 +374,13 @@
 							/>
 						</div>
 						{#if settings.query.data?.recycle_bin_warning}
-							<div class="alert alert-warning items-start text-sm sm:col-span-2" role="status">
+							{@const binWarning = settings.query.data.recycle_bin_warning}
+							<div class="alert alert-warning items-start text-sm sm:col-span-2">
 								<TriangleAlert class="mt-0.5 h-5 w-5" aria-hidden="true" />
-								<p class="min-w-0 flex-1">{settings.query.data.recycle_bin_warning}</p>
+								<p class="min-w-0 flex-1" role="status">{binWarning.message}</p>
+								{#if binWarning.accept_folder && authStore.isAdmin}
+									<RecycleBinFolderAccept path={settings.query.data.recycle_bin_path} />
+								{/if}
 							</div>
 						{/if}
 						<NumberField

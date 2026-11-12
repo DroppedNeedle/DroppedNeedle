@@ -495,6 +495,12 @@ Run from the repo root. `make help` lists every target.
 - A configured recycle bin that cannot be reached makes removals and
   upgrades wait; files never fall back to a library folder's `.recycle`
   while it is down.
+- The configured recycle bin is known by the marker file the app leaves
+  in it on first use. A bin path with a record but no marker in its
+  folder (a share not mounted leaves an empty folder), or, before it is
+  marked, one holding none of the journal's copies, is not there:
+  removals and upgrades wait, and only an admin accepting the folder
+  marks it again.
 - A removal sends the sidecars matching the folder's Library Management
   patterns (the default list while none is set up) to the recycle bin
   with the music, and Put back brings them home. One named like a removed

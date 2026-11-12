@@ -10,6 +10,7 @@ import {
 	applyEffects,
 	createAppMutation,
 	recycleBinChanged,
+	recycleBinFolderChanged,
 	recycleBinStatusChanged
 } from '$lib/queries/effects';
 
@@ -75,5 +76,15 @@ export function createEmptyRecycleBinMutation() {
 			api.v3.POST(v3('/api/v3/library/recycle-bin/empty'), { before }),
 		effects: () => [recycleBinStatusChanged(authStore.user?.id)],
 		onError: () => applyEffects(recycleBinStatusChanged(authStore.user?.id))
+	}));
+}
+
+// Use the folder the saved recycle bin path names as the bin, when the
+// server found it is not the folder used before. Admins only.
+export function createAcceptRecycleBinFolderMutation() {
+	return createAppMutation(() => ({
+		mutationFn: (path: string) =>
+			api.v3.POST(v3('/api/v3/library/recycle-bin/accept-folder'), { path }),
+		effects: () => [recycleBinFolderChanged(authStore.user?.id)]
 	}));
 }

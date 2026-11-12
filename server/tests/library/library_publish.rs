@@ -3220,6 +3220,203 @@ fn an_unreachable_bin_makes_the_replaced_file_wait() {
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
+/// The bins a session takes for the fixture's two library folders, from a
+/// bin source over `db` whose Library Management settings name
+/// `configured` as the recycle bin. The runtime and platform it runs on
+/// come back with it, to be held for as long as it is used.
+fn bin_source(
+    fix: &Fixture,
+    db: &Db,
+    configured: &str,
+) -> (
+    tokio::runtime::Runtime,
+    droppedneedle_kernel::platform::Platform,
+    publish::bin::BinSource,
+) {
+    use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let platform = runtime.block_on(crate::common::TestPlatform::on(db, &fix.dir).build());
+    let path = configured.to_owned();
+    platform
+        .settings
+        .update_blocking::<LibraryManagement, String, _>(
+            DurableLane::Foreground,
+            move |mut stored| {
+                stored.recycle_bin_path = path;
+                Ok(stored)
+            },
+        )
+        .unwrap();
+    let bins = publish::bin::BinSource::new(
+        db.clone(),
+        platform.clock.clone(),
+        platform.settings.live(),
+        platform.settings.live(),
+        std::sync::Arc::new(|| Some(Vec::new())),
+    );
+    (runtime, platform, bins)
+}
+
+/// The fixture's two library folders as a session resolves them.
+fn fixture_roots(fix: &Fixture) -> (Vec<Root>, Vec<publish::paths::ResolvedRoot>) {
+    let library = vec![
+        Root::library("music", fix.dir.join("music")),
+        Root::library("incoming", fix.dir.join("incoming")),
+    ];
+    let resolved = library
+        .iter()
+        .map(|root| publish::paths::ResolvedRoot::of(&root.id, &root.dir))
+        .collect();
+    (library, resolved)
+}
+
+/// The first session to use the configured bin marks it. When its share
+/// is not mounted, the empty folder left at its path has no marker: a
+/// committed replacement waits under its hidden name, nothing lands in
+/// that folder, it is not marked, and no `.recycle` stands in. Once the
+/// share is back the file goes into the bin by itself.
+#[test]
+fn a_bin_folder_without_its_marker_makes_the_replaced_file_wait() {
+    use publish::bin::{BIN_MARKER, BinsUnknown, fresh_entry};
+
+    let fix = fixture("bin-unmarked");
+    let music = fix.dir.join("music");
+    let vault = fix.dir.join("vault");
+    std::fs::create_dir_all(vault.join("bin")).unwrap();
+    let bin = std::fs::canonicalize(vault.join("bin")).unwrap();
+    let db = restart(&fix);
+    let (_runtime, _platform, bins) = bin_source(&fix, &db, &bin.display().to_string());
+    let (library, resolved) = fixture_roots(&fix);
+    let sandbox_now = || match bins.current_over(&resolved) {
+        Ok(choice) => {
+            let mut roots = library.clone();
+            roots.extend(choice.roots);
+            Sandbox::new(roots).unwrap()
+        }
+        Err(cause) => Sandbox::new(library.clone())
+            .unwrap()
+            .with_bins_unknown(cause),
+    };
+    let opened = sandbox_now();
+    assert!(bin.join(BIN_MARKER).is_file(), "the session marked the bin");
+
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let entry = fresh_entry(&bin, "a.flac", std::time::SystemTime::now()).unwrap();
+    replace_into(&fix, &mut bundle, &entry);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = Publisher::new(
+        opened,
+        db.clone(),
+        FixedSpace(u64::MAX),
+        jobs(&db),
+        std::sync::Arc::new(ManualClock::at(DAY_50_MS)),
+        blobs(&fix),
+    );
+    publisher.set_crash_point(Some(CrashPoint::AfterCatalogCommit));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &docs),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+
+    // The share is not mounted: an empty folder is left at its path.
+    let share = vault.join("share");
+    std::fs::rename(&bin, &share).unwrap();
+    std::fs::create_dir(&bin).unwrap();
+    assert_eq!(
+        bins.current_over(&resolved).err(),
+        Some(BinsUnknown::Unmarked)
+    );
+    reconcile(&db, &sandbox_now()).unwrap();
+    assert_eq!(
+        std::fs::read_dir(&bin).unwrap().count(),
+        0,
+        "nothing landed in the empty folder and it was not marked"
+    );
+    assert!(!music.join(".recycle").exists(), "no other bin stood in");
+    let set_aside = hidden_leftovers(&music)
+        .iter()
+        .filter(|path| {
+            std::fs::read(path).ok().as_deref() == Some(b"replaced-library-file".as_slice())
+        })
+        .count();
+    assert_eq!(
+        set_aside, 1,
+        "the replaced file waits under its hidden name"
+    );
+
+    std::fs::remove_dir(&bin).unwrap();
+    std::fs::rename(&share, &bin).unwrap();
+    reconcile(&db, &sandbox_now()).unwrap();
+    assert_eq!(std::fs::read(&entry).unwrap(), b"replaced-library-file");
+    assert!(!music.join(".recycle").exists());
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A bin used before it was ever marked, whose share is not mounted at
+/// the next start: the journal still has a copy in it and the folder left
+/// at its path holds none, so that folder is not marked and files wait.
+/// With the share back, the next session marks the real folder.
+#[test]
+fn a_bin_holding_none_of_its_copies_is_never_marked() {
+    use publish::bin::{BIN_MARKER, BinsUnknown, fresh_entry};
+
+    let fix = fixture("bin-first-mark");
+    let vault = fix.dir.join("vault");
+    std::fs::create_dir_all(vault.join("bin")).unwrap();
+    let bin = std::fs::canonicalize(vault.join("bin")).unwrap();
+    let configured = bin.display().to_string();
+    let (library, resolved) = fixture_roots(&fix);
+    let mut roots = library.clone();
+    roots.extend(choose_bins(&configured, &library, &[]).unwrap().roots);
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let entry = fresh_entry(&bin, "a.flac", std::time::SystemTime::now()).unwrap();
+    replace_into(&fix, &mut bundle, &entry);
+    let (sealed, live) = seal(&bundle);
+    let db = restart(&fix);
+    Publisher::new(
+        Sandbox::new(roots).unwrap(),
+        db.clone(),
+        FixedSpace(u64::MAX),
+        jobs(&db),
+        std::sync::Arc::new(ManualClock::at(DAY_50_MS)),
+        blobs(&fix),
+    )
+    .publish(&sealed, &live, &docs)
+    .unwrap();
+    assert_eq!(std::fs::read(&entry).unwrap(), b"replaced-library-file");
+    assert!(!bin.join(BIN_MARKER).exists());
+
+    let share = vault.join("share");
+    std::fs::rename(&bin, &share).unwrap();
+    std::fs::create_dir(&bin).unwrap();
+    let (_runtime, _platform, bins) = bin_source(&fix, &db, &configured);
+    let marks = || -> i64 {
+        open_db(&fix)
+            .query_row(
+                "SELECT COUNT(*) FROM library_recycle_bin_marks",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    assert_eq!(
+        bins.current_over(&resolved).err(),
+        Some(BinsUnknown::Unmarked)
+    );
+    assert_eq!(std::fs::read_dir(&bin).unwrap().count(), 0, "no marker");
+    assert_eq!(marks(), 0);
+
+    std::fs::remove_dir(&bin).unwrap();
+    std::fs::rename(&share, &bin).unwrap();
+    assert!(bins.current_over(&resolved).is_ok());
+    assert!(bin.join(BIN_MARKER).is_file());
+    assert_eq!(marks(), 1);
+}
+
 /// A configured recycle bin whose folder is not there (a share not
 /// mounted) is never made. A new session finds no bin and waits; one that
 /// opened while the folder was there leaves a replaced file under its
@@ -6027,7 +6224,9 @@ async fn a_refused_recycle_link_shows_in_the_settings() {
         .call("GET", "/api/v3/settings/library-management", &headers, None)
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let warning = body["recycle_bin_warning"].as_str().unwrap_or_default();
+    let warning = body["recycle_bin_warning"]["message"]
+        .as_str()
+        .unwrap_or_default();
     assert!(
         warning.contains(&*music.to_string_lossy()) && warning.contains(".recycle"),
         "{warning:?}"

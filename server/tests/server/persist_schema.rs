@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 177);
+    assert_eq!(table_names(&connection).len(), 178);
     assert_eq!(
         scalar(
             &connection,
@@ -347,6 +347,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0144_v3_cover_paths.sql",
         "930574621d42b5857f928daec93146f506e6a14b900d3f825d2215af010127f8",
+    ),
+    (
+        "0145_v3_recycle_bin_marks.sql",
+        "0f4d672ae37160275b52a9a7ef61945ba26f81042b2374566f2c49feab411cc1",
     ),
 ];
 
@@ -1319,6 +1323,47 @@ fn v3_cover_paths_upgrade_moves_v2_covers() {
             "{table}"
         );
     }
+}
+
+/// 0145 adds the table of marked recycle bin paths, empty, and changes
+/// nothing else: a bin used before the upgrade is marked on its next use.
+#[test]
+fn recycle_bin_marks_upgrade_adds_an_empty_table() {
+    let dir = ScratchDir::new("recycle-bin-marks");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..10], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 144);
+    let before_schema = schema_rows(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..11], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 145);
+    let mut after = schema_rows(&connection);
+    after.retain(|(_, _, table, _)| table != "library_recycle_bin_marks");
+    assert_eq!(after, before_schema, "nothing else changes");
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM library_recycle_bin_marks"
+        ),
+        0
+    );
+    connection
+        .execute_batch("INSERT INTO library_recycle_bin_marks (path, marked_at) VALUES ('/bin', 1)")
+        .unwrap();
+    assert!(
+        connection
+            .execute_batch(
+                "INSERT INTO library_recycle_bin_marks (path, marked_at) VALUES ('/x', 'soon')"
+            )
+            .is_err(),
+        "the table is strict"
+    );
 }
 
 /// 0140 rebuilds the catalog action log to take the undo of an artist

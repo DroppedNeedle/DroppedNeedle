@@ -4883,6 +4883,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/recycle-bin/accept-folder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Use the folder the recycle bin path names as the bin.
+         * @description For when the app finds it is not the folder used before, because the
+         *     bin was moved. It is marked as the bin, and removals and upgrades go
+         *     ahead. Nothing is written when it already holds the marker.
+         */
+        post: operations["accept_recycle_bin_folder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/recycle-bin/empty": {
         parameters: {
             query?: never;
@@ -9690,6 +9712,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description The folder an admin chooses as the recycle bin. */
+        AcceptRecycleBinFolderBody: {
+            /** @description The recycle bin path the warning was shown for. */
+            path: string;
+        };
         /**
          * @description Whose account a source is reached through.
          * @enum {string}
@@ -16303,7 +16330,7 @@ export interface components {
              *     folder's `.recycle` takes its place, or files wait for a folder
              *     that can't be reached. Set on the settings read and save only.
              */
-            recycle_bin_warning?: string | null;
+            recycle_bin_warning?: null | components["schemas"]["RecycleBinWarning"];
             /** @description Settings content revision. */
             settings_revision: string;
             /**
@@ -20694,6 +20721,17 @@ export interface components {
              *     a bin it may not empty.
              */
             staying: number;
+        };
+        /** @description Why the recycle bin path is not used. */
+        RecycleBinWarning: {
+            /**
+             * @description The folder is not the one used as the bin before, so files wait;
+             *     an admin who moved the bin may use it
+             *     (`POST /api/v3/library/recycle-bin/accept-folder`).
+             */
+            accept_folder: boolean;
+            /** @description What the settings say. */
+            message: string;
         };
         /**
          * @description A private playlist the caller may not read: existence, count, and owner
@@ -38038,6 +38076,73 @@ export interface operations {
             };
             /** @description Curator role required */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    accept_recycle_bin_folder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptRecycleBinFolderBody"];
+            };
+        };
+        responses: {
+            /** @description The folder is the recycle bin */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The path changed, the saved folder can't be used as the bin now, or it can't be written to */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

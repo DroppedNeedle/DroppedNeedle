@@ -4686,8 +4686,142 @@ async fn removals_use_the_bin_library_management_names() {
         .remove_track_now(&track, seen_track(&library, &track), true, "admin")
         .expect("track removed");
     assert!(!file.exists());
-    assert_eq!(std::fs::read_dir(&bin).expect("bin").count(), 1);
+    assert_eq!(
+        std::fs::read_dir(&bin).expect("bin").count(),
+        2,
+        "the removal's entry and the bin's marker"
+    );
     assert!(!music.join(".recycle").exists());
+}
+
+/// A removal is refused while the bin's folder lacks the marker its first
+/// use left (an empty folder where a share is not mounted), and the file
+/// stays; the settings say so and offer the folder. An admin who moved the
+/// bin uses it: a stale path is refused, the saved one is marked again and
+/// the removal lands there.
+#[tokio::test]
+async fn a_bin_without_its_marker_waits_until_an_admin_uses_the_folder() {
+    use droppedneedle_kernel::db::DurableLane;
+    use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
+    use droppedneedle_library::removal::{MutationError, Mutations, RECYCLE_BIN_UNKNOWN};
+    // The name the docs tell people to leave in place.
+    const BIN_MARKER: &str = ".droppedneedle-recycle-bin";
+
+    let rig = Rig::start("lib-remove-unmarked-bin").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    let first = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
+    let second = plant(&music, "Band/LP/02.flac", "flac_full_02.flac");
+    app.add_library_folder("music", &music).await;
+    let vault = app.config.root_app_dir.join("vault");
+    let bin = vault.join("bin");
+    std::fs::create_dir_all(&bin).expect("bin made");
+    let configured = bin.display().to_string();
+    let saved = configured.clone();
+    app.state()
+        .library_services
+        .setup
+        .settings
+        .store()
+        .update_blocking::<LibraryManagement, String, _>(
+            DurableLane::Foreground,
+            move |mut stored| {
+                stored.recycle_bin_path = saved;
+                Ok(stored)
+            },
+        )
+        .expect("bin saved");
+    let admin: String = app
+        .db()
+        .query_row(
+            "SELECT id FROM auth_users WHERE role = 'admin'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("admin id");
+    let remove = |path: &str| {
+        let track = rig
+            .scan_store
+            .track_at("music", path)
+            .unwrap()
+            .expect("track indexed");
+        let library = app.state().library.clone();
+        let admin = admin.clone();
+        tokio::task::spawn_blocking(move || {
+            let seen = seen_track(&library, &track);
+            Mutations::new(&library).remove_track_now(&track, seen, true, &admin)
+        })
+    };
+    let warning = || async {
+        let (status, body) = app
+            .call("GET", "/api/v3/settings/library-management", &headers, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["recycle_bin_warning"].clone()
+    };
+    let accept = |path: &str| {
+        let body = json!({ "path": path });
+        async move {
+            app.call(
+                "POST",
+                "/api/v3/library/recycle-bin/accept-folder",
+                &headers,
+                Some(body),
+            )
+            .await
+        }
+    };
+
+    remove("Band/LP/01.flac")
+        .await
+        .expect("removal ran")
+        .expect("first track removed");
+    assert!(!first.exists());
+    assert!(
+        bin.join(BIN_MARKER).is_file(),
+        "its first use marked the bin"
+    );
+    assert_eq!(warning().await, json!(null));
+
+    // The share is not mounted: an empty folder is left at its path.
+    std::fs::rename(&bin, vault.join("share")).expect("share away");
+    std::fs::create_dir(&bin).expect("empty folder");
+    let refused = remove("Band/LP/02.flac").await.expect("removal ran");
+    let Err(MutationError::Conflict(reason)) = refused else {
+        panic!("expected a refusal, got {refused:?}");
+    };
+    assert_eq!(reason.code, RECYCLE_BIN_UNKNOWN);
+    assert!(
+        reason.message.contains("isn't the one used before"),
+        "{reason:?}"
+    );
+    assert!(second.exists(), "the file stays");
+    assert_eq!(std::fs::read_dir(&bin).expect("bin").count(), 0);
+    assert!(!music.join(".recycle").exists(), "no other bin stood in");
+    let shown = warning().await;
+    assert_eq!(shown["accept_folder"], json!(true), "{shown}");
+
+    let (status, body) = accept("/srv/elsewhere").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(std::fs::read_dir(&bin).expect("bin").count(), 0);
+    let (status, body) = accept(&configured).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert!(bin.join(BIN_MARKER).is_file(), "the folder is marked again");
+    assert_eq!(warning().await, json!(null));
+
+    remove("Band/LP/02.flac")
+        .await
+        .expect("removal ran")
+        .expect("second track removed");
+    assert!(!second.exists());
+    assert_eq!(
+        std::fs::read_dir(&bin).expect("bin").count(),
+        2,
+        "the removal's entry and the marker"
+    );
+    rig.stop().await;
 }
 
 /// A `library_management` row that does not decode stops removals with no

@@ -18703,6 +18703,88 @@
         ]
       }
     },
+    "/api/v3/library/recycle-bin/accept-folder": {
+      "post": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Use the folder the recycle bin path names as the bin.",
+        "description": "For when the app finds it is not the folder used before, because the\nbin was moved. It is marked as the bin, and removals and upgrades go\nahead. Nothing is written when it already holds the marker.",
+        "operationId": "accept_recycle_bin_folder",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptRecycleBinFolderBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "The folder is the recycle bin"
+          },
+          "400": {
+            "description": "Bad body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The path changed, the saved folder can't be used as the bin now, or it can't be written to",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/recycle-bin/empty": {
       "post": {
         "tags": [
@@ -35289,6 +35371,19 @@
   },
   "components": {
     "schemas": {
+      "AcceptRecycleBinFolderBody": {
+        "type": "object",
+        "description": "The folder an admin chooses as the recycle bin.",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The recycle bin path the warning was shown for."
+          }
+        }
+      },
       "AccountMode": {
         "type": "string",
         "description": "Whose account a source is reached through.",
@@ -49585,9 +49680,13 @@
                 "description": "Every tag field a profile can manage, in the editor's order, with\nthe genre row last."
               },
               "recycle_bin_warning": {
-                "type": [
-                  "string",
-                  "null"
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RecycleBinWarning"
+                  }
                 ],
                 "description": "Why the recycle bin path is not used, when it is not: each library\nfolder's `.recycle` takes its place, or files wait for a folder\nthat can't be reached. Set on the settings read and save only."
               },
@@ -59544,6 +59643,24 @@
             "format": "int32",
             "description": "Files it would leave: held, in use by a put-back, not found, or in\na bin it may not empty.",
             "minimum": 0
+          }
+        }
+      },
+      "RecycleBinWarning": {
+        "type": "object",
+        "description": "Why the recycle bin path is not used.",
+        "required": [
+          "message",
+          "accept_folder"
+        ],
+        "properties": {
+          "accept_folder": {
+            "type": "boolean",
+            "description": "The folder is not the one used as the bin before, so files wait;\nan admin who moved the bin may use it\n(`POST /api/v3/library/recycle-bin/accept-folder`)."
+          },
+          "message": {
+            "type": "string",
+            "description": "What the settings say."
           }
         }
       },

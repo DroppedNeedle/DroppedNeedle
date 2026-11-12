@@ -178,6 +178,29 @@ const BIN_UNREACHABLE: [Reason; 5] = bin_reasons!(
     "The recycle bin folder can't be reached",
     "Check that its drive or share is mounted and the server can open it"
 );
+const BIN_UNMARKED: [Reason; 5] = bin_reasons!(
+    "The recycle bin folder isn't the one used before",
+    "Mount its share (restart DroppedNeedle if it started while the share was down), or choose Use this folder under Library Management"
+);
+
+/// The saved recycle bin path is not the one an admin chose to use.
+pub const BIN_PATH_CHANGED: Reason = reason(
+    "STALE_REVISION",
+    "The recycle bin path changed, so nothing was marked.",
+    "Reload the page and try again.",
+);
+/// The saved settings would not use the folder an admin chose as the bin.
+pub const BIN_NOT_USED: Reason = reason(
+    RECYCLE_BIN_UNKNOWN,
+    "The saved recycle bin folder can't be used right now, so nothing was marked.",
+    "Check the recycle bin warning under Library Management.",
+);
+/// The marker could not be made in the folder an admin chose as the bin.
+pub const BIN_UNWRITABLE: Reason = reason(
+    RECYCLE_BIN_UNKNOWN,
+    "The recycle bin folder can't be written to, so nothing was marked.",
+    "Check that the server can write to it, then try again.",
+);
 
 /// What a person reads while no recycle bin is known because `cause`,
 /// worded for what was being done.
@@ -187,6 +210,7 @@ pub fn bins_unknown(cause: BinsUnknown, during: BinUse) -> Reason {
         BinsUnknown::SettingsUnread => &SETTINGS_UNREAD,
         BinsUnknown::DownloadsUnread => &DOWNLOADS_UNREAD,
         BinsUnknown::Unreachable => &BIN_UNREACHABLE,
+        BinsUnknown::Unmarked => &BIN_UNMARKED,
     };
     wordings[during as usize]
 }

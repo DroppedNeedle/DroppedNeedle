@@ -56,12 +56,33 @@ pub struct LibraryManagementSettingsResponse {
     /// folder's `.recycle` takes its place, or files wait for a folder
     /// that can't be reached. Set on the settings read and save only.
     #[serde(default)]
-    pub recycle_bin_warning: Option<String>,
+    pub recycle_bin_warning: Option<RecycleBinWarning>,
     /// The stored settings cannot be read, so these are the seeded ones
     /// and a save replaces the row. Removals, upgrades and automatic work
     /// wait until then.
     #[serde(default)]
     pub settings_unreadable: bool,
+}
+
+/// Why the recycle bin path is not used.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RecycleBinWarning {
+    /// What the settings say.
+    pub message: String,
+    /// The folder is not the one used as the bin before, so files wait;
+    /// an admin who moved the bin may use it
+    /// (`POST /api/v3/library/recycle-bin/accept-folder`).
+    pub accept_folder: bool,
+}
+
+impl RecycleBinWarning {
+    /// A warning with nothing to accept.
+    pub fn new(message: &str) -> Self {
+        Self {
+            message: message.to_owned(),
+            accept_folder: false,
+        }
+    }
 }
 
 /// One row of a profile's field table.

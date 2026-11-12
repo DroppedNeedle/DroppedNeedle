@@ -657,6 +657,8 @@ pub fn settings_at(
             platform.clock.clone(),
         )),
         droppedneedle_library::publish::bin::BinSource::new(
+            platform.db.clone(),
+            platform.clock.clone(),
             store.live(),
             store.live(),
             Arc::new(|| Some(Vec::new())),

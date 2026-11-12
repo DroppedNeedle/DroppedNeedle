@@ -308,6 +308,19 @@ droppedneedle_kernel::sql! {
              freed_bytes = freed_bytes + excluded.freed_bytes, \
              older_folders = older_folders + excluded.older_folders, kept = excluded.kept, \
              waited = excluded.waited, kept_json = excluded.kept_json";
+    /// Whether the recycle bin path `?1` (trimmed, as configured) was
+    /// marked as the bin.
+    pub(super) BIN_MARKED = "SELECT EXISTS (SELECT 1 FROM library_recycle_bin_marks \
+             WHERE path = ?1)";
+    /// Record the recycle bin path `?1` as marked at `?2` (unix
+    /// milliseconds).
+    pub(super) BIN_MARK = "INSERT INTO library_recycle_bin_marks (path, marked_at) \
+             VALUES (?1, ?2) ON CONFLICT(path) DO UPDATE SET marked_at = excluded.marked_at";
+    /// Whether the journal holds a copy that reached a bin below folder
+    /// `?1` (ending in `/`) and has not left it.
+    pub(super) BIN_HOLDS_COPIES = "SELECT EXISTS (SELECT 1 FROM library_publish_replacements \
+             WHERE expired_at IS NULL AND recycled_at IS NOT NULL \
+             AND substr(recycle_to, 1, length(?1)) = ?1)";
     /// The last finished empty of the bin, with who asked.
     pub(crate) BIN_EMPTIED_LAST = "SELECT e.finished_at, u.display_name, e.deleted, \
              e.freed_bytes, e.older_folders, e.kept, e.waited, e.kept_json \

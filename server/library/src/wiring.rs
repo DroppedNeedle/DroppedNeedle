@@ -231,6 +231,8 @@ impl LibraryCore {
             Arc::new(move || registry.resolver().registry().root_paths())
         };
         let bins = super::publish::bin::BinSource::new(
+            platform.db.clone(),
+            platform.clock.clone(),
             settings.management.clone(),
             settings.library.clone(),
             download_trees,
