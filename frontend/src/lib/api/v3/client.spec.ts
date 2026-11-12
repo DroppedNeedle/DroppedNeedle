@@ -212,7 +212,11 @@ describe('v3 errors', () => {
 		authMock.isAuthenticated = true;
 		const win = { location: { href: '' } };
 		vi.stubGlobal('window', win);
-		fetchMock.mockResolvedValue(errorResponse(401, { error: { code: 'UNAUTH', message: 'expired' } }));
+		fetchMock.mockResolvedValue(
+			errorResponse(401, {
+				error: { code: 'UNAUTHORIZED', message: 'Authentication required', details: null }
+			})
+		);
 		const client = createV3Client(fetchMock);
 
 		const failure = await client.GET(v3('/api/v3/acquire/slskd/status')).catch((cause: unknown) => cause);

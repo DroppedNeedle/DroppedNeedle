@@ -25,13 +25,6 @@ export interface UploadOptions {
 
 async function handleResponse<T = void>(res: Response): Promise<T> {
 	if (!res.ok) {
-		// Session expired mid-use: hard redirect so layout re-initialises cleanly
-		if (res.status === 401 && browser && authStore.isAuthenticated) {
-			await clearUserSessionState().catch(() => undefined);
-			window.location.href = withBasePath('/login');
-			throw new SessionExpiredError();
-		}
-
 		const text = await res.text().catch(() => '');
 		let message = text || `Request failed with status ${res.status}`;
 		let code = '';
@@ -47,6 +40,14 @@ async function handleResponse<T = void>(res: Response): Promise<T> {
 			}
 		} catch {
 			// preserve non-JSON error bodies
+		}
+		// Session expired mid-use: hard redirect so layout re-initialises cleanly.
+		// Only the session gate's own 401 ends the session; any other 401, such
+		// as one a plugin route relays, is an ordinary error.
+		if (res.status === 401 && code === 'UNAUTHORIZED' && browser && authStore.isAuthenticated) {
+			await clearUserSessionState().catch(() => undefined);
+			window.location.href = withBasePath('/login');
+			throw new SessionExpiredError();
 		}
 		// The server restarted on v2 data: only the upgrade page answers now.
 		if (

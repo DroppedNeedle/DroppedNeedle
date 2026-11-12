@@ -297,6 +297,75 @@ async fn a_server_that_is_down_answers_remote_unavailable() {
     app.stop().await;
 }
 
+/// A media server refusing a person's saved link answers 409
+/// `REMOTE_AUTH_FAILED` with no sign-in challenge, never a 401: the person
+/// is still signed in, and the same session goes on reading the app.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_saved_link_is_a_conflict_and_the_session_stays() {
+    use droppedneedle_media::remotes::connections::UserLink;
+    use droppedneedle_testkit::remotes::{JELLYFIN_KEY, serve_jellyfin};
+
+    let jellyfin = serve_jellyfin().await.expect("mock Jellyfin starts");
+    let app = TestApp::start("media-link-refused").await;
+    let admin = app.login_admin().await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            "/api/v3/settings/jellyfin",
+            &[("authorization", admin.as_str())],
+            Some(json!({
+                "jellyfin_url": jellyfin.base_url,
+                "api_key": JELLYFIN_KEY,
+                "user_id": "jf-user-1",
+                "enabled": true,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let user = app.login_user("carried").await;
+    // The mock refuses every token but JELLYFIN_KEY, so this link is refused.
+    // Saving it through the resolver stands in for a link carried from v2.
+    app.state()
+        .media
+        .remotes
+        .service
+        .resolver()
+        .save_link(
+            &user.user_id,
+            &UserLink::Jellyfin {
+                access_token: "token-jellyfin-no-longer-takes".to_owned(),
+                jellyfin_user_id: "jf-user-1".to_owned(),
+                username: "carried".to_owned(),
+            },
+        )
+        .await
+        .expect("link saves");
+
+    let (status, headers, bytes) = app
+        .raw(
+            "GET",
+            "/api/v3/remotes/jellyfin/stats",
+            &[("authorization", user.authorization.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(headers.get("www-authenticate").is_none(), "{headers:?}");
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("body is json");
+    assert_eq!(body["error"]["code"], "REMOTE_AUTH_FAILED", "{body}");
+
+    let (status, body) = app
+        .call(
+            "GET",
+            "/api/v3/me",
+            &[("authorization", user.authorization.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    app.stop().await;
+}
+
 /// Minimal artist/album/track rows behind the playback lifecycle.
 async fn seed_track(app: &TestApp) {
     let seed = [

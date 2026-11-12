@@ -478,6 +478,10 @@ Then check:
   the import. A template that can't be carried exactly
   falls back to the default script, and the report names it. See
   [Import naming script](downloads.md#import-naming-script).
+- A Navidrome, Jellyfin or Plex account linked in v2 that no longer works
+  (an old token or a changed password) stops loading from that server, and
+  its library pages say to reconnect it. Under Profile > Media Server
+  Accounts, disconnect it and connect it again.
 - If you import Spotify playlists: the redirect address under Settings >
   Spotify is listed in your Spotify app in the developer dashboard. Linked
   Spotify accounts carry over, so nobody has to click Connect again.

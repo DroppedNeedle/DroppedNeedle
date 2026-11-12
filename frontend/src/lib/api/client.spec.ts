@@ -204,6 +204,10 @@ describe('api client', () => {
 	});
 
 	describe('session expiry (401)', () => {
+		const GATE_401 = {
+			error: { code: 'UNAUTHORIZED', message: 'Authentication required', details: null }
+		};
+
 		it('clears the session, waits for its cleanup to settle, then throws and redirects', async () => {
 			const failure = new Error('IndexedDB unavailable');
 			for (const cleanup of ['done', 'resolves late', 'rejects late', 'rejects at once'] as const) {
@@ -212,7 +216,7 @@ describe('api client', () => {
 				sessionCleanupMock.run.mockClear();
 				const win = { location: { href: '' } };
 				vi.stubGlobal('window', win);
-				mockGlobalFetch.mockResolvedValue(errorResponse(401, { detail: 'expired' }));
+				mockGlobalFetch.mockResolvedValue(errorResponse(401, GATE_401));
 				let settle: ((ok: boolean) => void) | undefined;
 				if (cleanup === 'resolves late' || cleanup === 'rejects late') {
 					const pending = new Promise<void>((resolve, reject) => {
@@ -244,6 +248,31 @@ describe('api client', () => {
 				expect(authMock.clear, cleanup).toHaveBeenCalledOnce();
 				expect(win.location.href, cleanup).toBe('/login');
 			}
+		});
+
+		it('keeps the session on a 401 from anywhere but the session gate', async () => {
+			authMock.isAuthenticated = true;
+			const win = { location: { href: '' } };
+			vi.stubGlobal('window', win);
+			// A plugin route relaying its own upstream's 401.
+			mockGlobalFetch.mockResolvedValueOnce(
+				errorResponse(401, {
+					error: { code: 'PLUGIN_AUTH', message: 'The plugin was refused', details: null }
+				})
+			);
+			mockGlobalFetch.mockResolvedValueOnce(errorResponse(401));
+
+			const relayed = await api.v3.GET(HEALTH).catch((cause: unknown) => cause);
+			const empty = await api.v3.GET(HEALTH).catch((cause: unknown) => cause);
+
+			expect(relayed).toBeInstanceOf(ApiError);
+			expect(relayed).not.toBeInstanceOf(SessionExpiredError);
+			expect(relayed).toMatchObject({ status: 401, code: 'PLUGIN_AUTH' });
+			expect(empty).toBeInstanceOf(ApiError);
+			expect(empty).not.toBeInstanceOf(SessionExpiredError);
+			expect(empty).toMatchObject({ status: 401, code: '' });
+			expect(sessionCleanupMock.run).not.toHaveBeenCalled();
+			expect(win.location.href).toBe('');
 		});
 
 		it('falls through to a plain ApiError (no redirect) when unauthenticated, e.g. bad login', async () => {

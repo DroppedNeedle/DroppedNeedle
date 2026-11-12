@@ -4,12 +4,14 @@
 //! closed-list `REMOTE_UNAVAILABLE`, a busy database `SERVER_BUSY`, and any
 //! other fault the fixed internal error; their detail goes to the log only.
 
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::StatusCode;
 use droppedneedle_kernel::error::{ApiError, CONFLICT, INVALID_INPUT, Unavailable};
 
 /// No credential stored for this source, or the source is disabled.
 pub const REMOTE_NOT_CONFIGURED: &str = "REMOTE_NOT_CONFIGURED";
 /// The stored credential was rejected upstream (HTTP 401/403, Subsonic 40/41).
+/// A 409: the caller is signed in, only their saved link is refused, so a
+/// 401 would read as the session ending.
 pub const REMOTE_AUTH_FAILED: &str = "REMOTE_AUTH_FAILED";
 /// The source has no such capability (Plex similar, Jellyfin top songs).
 pub const REMOTE_UNSUPPORTED: &str = "REMOTE_UNSUPPORTED";
@@ -70,8 +72,7 @@ impl From<RemotesError> for ApiError {
                 ApiError::new(StatusCode::BAD_REQUEST, REMOTE_NOT_CONFIGURED, message)
             }
             RemotesError::AuthFailed { message } => {
-                ApiError::new(StatusCode::UNAUTHORIZED, REMOTE_AUTH_FAILED, message)
-                    .with_header(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"))
+                ApiError::new(StatusCode::CONFLICT, REMOTE_AUTH_FAILED, message)
             }
             RemotesError::Unavailable { cause } => {
                 ApiError::unavailable(Unavailable::MediaServer, cause)
