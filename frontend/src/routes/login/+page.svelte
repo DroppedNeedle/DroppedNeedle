@@ -13,6 +13,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { providerUnavailableMessage } from '$lib/utils/serviceError';
 	import { takeSignInReturn } from '$lib/utils/signInReturn';
+	import { markSsoAutoStart, ssoAutoStartedRecently } from '$lib/utils/ssoAutoStart';
 	import { outsideLink } from '$lib/ui/outsideLink';
 	import { createPlexStartMutation } from '$lib/features/settings/queries/plex.svelte';
 	import { pollPlexFlow } from '$lib/features/settings/queries/plex.svelte';
@@ -149,7 +150,9 @@
 		}
 	}
 
-	async function handleOidcLogin() {
+	// `replace` keeps the login page out of the tab's history, so Back from
+	// the provider does not land on it and start single sign-on again.
+	async function handleOidcLogin({ replace = false } = {}) {
 		oidcError = null;
 		oidcLoading = true;
 		try {
@@ -162,7 +165,8 @@
 				oidcLoading = false;
 				return;
 			}
-			window.location.href = authorizeLink;
+			if (replace) window.location.replace(authorizeLink);
+			else window.location.href = authorizeLink;
 		} catch (e) {
 			oidcError = waitMessage(e) ?? 'SSO is not configured';
 			oidcLoading = false;
@@ -172,14 +176,27 @@
 	// With "go straight to single sign-on" on, the page starts it once on
 	// load; `?local` shows the sign-in methods instead, for an admin who
 	// can't use single sign-on. Once per load, so a refused start shows
-	// its error rather than trying again.
-	let autoRedirected = false;
+	// its error rather than trying again, and not when this tab started it
+	// under a minute ago, so a sign-in that comes straight back stops here.
+	// A late providers answer never cuts off a sign-in the person started.
+	let tabChosen = $state(false);
+	const interacted = $derived(
+		tabChosen ||
+			username !== '' ||
+			password !== '' ||
+			localLogin.isPending ||
+			jellyfinLogin.isPending ||
+			plexLoading
+	);
+	let autoStartDecided = false;
 	$effect(() => {
-		if (autoRedirected || !providersQuery.isSuccess) return;
+		if (autoStartDecided || !providersQuery.isSuccess) return;
+		autoStartDecided = true;
 		if (!providers.oidc_auto_redirect || page.url.searchParams.has('local')) return;
-		autoRedirected = true;
+		if (interacted || ssoAutoStartedRecently()) return;
+		markSsoAutoStart();
 		activeTab = 'oidc';
-		void handleOidcLogin();
+		void handleOidcLogin({ replace: true });
 	});
 
 	const availableTabs = $derived(
@@ -317,7 +334,10 @@
 			type="button"
 			class="dn-auth-tab"
 			aria-pressed={activeTab === tab}
-			onclick={() => (activeTab = tab)}
+			onclick={() => {
+				tabChosen = true;
+				activeTab = tab;
+			}}
 		>
 			{#if tab === 'plex'}<PlexIcon class="text-current" />
 			{:else if tab === 'jellyfin'}<JellyfinIcon class="text-current" />

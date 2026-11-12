@@ -6,9 +6,10 @@ import { clearUserSessionState } from '$lib/utils/userSessionCleanup';
 
 // Clears browser-wide cache before navigating so the next user on a shared browser
 // sees no prior personalized data; local state clears regardless of network success.
+// `?local` shows the sign-in methods, so "go straight to SSO" can't sign them back in.
 export async function leaveSignedOut(): Promise<void> {
 	await clearUserSessionState().catch(() => undefined);
-	await goto(withBasePath('/login'));
+	await goto(withBasePath('/login?local'));
 }
 
 export async function logout(): Promise<void> {

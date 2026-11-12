@@ -45,7 +45,7 @@
 <AuthFrame kicker={error ? 'Sign in to continue' : 'Signing you in…'}>
 	{#if error}
 		<AuthCard {error}>
-			<Button href={withBasePath('/login')} variant="primary" size="display" class="w-full">
+			<Button href={withBasePath('/login?local')} variant="primary" size="display" class="w-full">
 				Back to sign in
 			</Button>
 		</AuthCard>

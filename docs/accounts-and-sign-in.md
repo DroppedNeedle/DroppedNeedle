@@ -49,7 +49,7 @@ Any OpenID Connect provider works (Authelia, Keycloak, Authentik, Pocket ID, and
 2. Under Settings > Security, enter the issuer URL, the client ID, the client secret (leave it empty for a public client), and the same redirect URI. Keep `openid` in the scopes; `openid email profile` is the default.
 3. Test, switch it on and save. A single sign-on button appears on the login page.
 
-When everyone signs in through your provider, turn on "Go straight to SSO" there as well: the login page then starts single sign-on right away instead of showing the sign-in methods. `/login?local` still shows them, for an admin who can't use single sign-on. It does nothing while single sign-on is off.
+When everyone signs in through your provider, turn on "Go straight to SSO" there as well: the login page then starts single sign-on right away instead of showing the sign-in methods. `/login?local` still shows them, for an admin who can't use single sign-on. Signing out, and the "Back to sign in" link after a failed single sign-on, land on `/login?local`, so the provider doesn't sign you straight back in; a session that runs out goes to `/login` and signs in again by itself. "Sign out everywhere" ends DroppedNeedle's sessions, not your provider's, so another device sent to sign in again may go straight back in through single sign-on. The switch does nothing while single sign-on is off.
 
 Things worth knowing:
 

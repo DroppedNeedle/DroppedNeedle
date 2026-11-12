@@ -55,23 +55,15 @@ impl SignInSettings {
     /// Read the sign-in switches. An unreadable section reads as off.
     #[must_use]
     pub fn enabled_providers(&self) -> EnabledProviders {
-        let oidc = self.oidc_config().is_usable();
+        let (oidc_config, auto_redirect) = self.oidc_settings();
+        let oidc = oidc_config.is_usable();
         EnabledProviders {
             local: true,
             plex: self.plex_login_enabled(),
             jellyfin: self.jellyfin_login_server().is_some(),
             oidc,
-            oidc_auto_redirect: oidc && self.oidc_auto_redirect(),
+            oidc_auto_redirect: oidc && auto_redirect,
         }
-    }
-
-    /// True when the admin asked the login page to start single sign-on at
-    /// once. An unreadable section reads as off.
-    fn oidc_auto_redirect(&self) -> bool {
-        self.oidc
-            .get()
-            .map(|connection| connection.auto_redirect)
-            .unwrap_or(false)
     }
 
     /// True when the admin turned Plex login on. Plex login works without
@@ -117,28 +109,36 @@ impl SignInSettings {
     /// An unreadable section reads as disabled.
     #[must_use]
     pub fn oidc_config(&self) -> OidcConfig {
+        self.oidc_settings().0
+    }
+
+    /// The OIDC connection and its "go straight to SSO" switch, from one
+    /// read of the section. An unreadable section reads as disabled and off.
+    fn oidc_settings(&self) -> (OidcConfig, bool) {
         match self.oidc.get() {
             Ok(connection) => {
                 let secret = connection.client_secret.expose();
-                OidcConfig {
+                let config = OidcConfig {
                     enabled: connection.enabled,
                     issuer: connection.issuer.clone(),
                     client_id: connection.client_id.clone(),
                     client_secret: (!secret.is_empty()).then(|| secret.to_owned()),
                     redirect_uri: connection.redirect_uri.clone(),
                     scopes: connection.scopes.clone(),
-                }
+                };
+                (config, connection.auto_redirect)
             }
             Err(error) => {
                 tracing::warn!(%error, "cannot read oidc settings; oidc login is off");
-                OidcConfig {
+                let config = OidcConfig {
                     enabled: false,
                     issuer: String::new(),
                     client_id: String::new(),
                     client_secret: None,
                     redirect_uri: String::new(),
                     scopes: String::new(),
-                }
+                };
+                (config, false)
             }
         }
     }

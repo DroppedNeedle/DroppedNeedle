@@ -487,8 +487,6 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     );
 }
 
-/// A callback the `oidc` row cannot cover answers "try again" before it
-/// spends the login state, so reloading it still finishes the sign-in.
 /// The login page goes straight to single sign-on only when the admin asks
 /// for it and single sign-on is on and set up; off by default.
 #[tokio::test]
@@ -528,6 +526,8 @@ async fn the_login_page_goes_straight_to_sso_only_when_asked_and_set_up() {
     }
 }
 
+/// A callback the `oidc` row cannot cover answers "try again" before it
+/// spends the login state, so reloading it still finishes the sign-in.
 #[tokio::test]
 async fn a_paced_oidc_callback_keeps_its_login_state() {
     use droppedneedle_auth::federated::FederatedError;

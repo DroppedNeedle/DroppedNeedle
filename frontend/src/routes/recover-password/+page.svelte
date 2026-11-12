@@ -100,7 +100,12 @@
 					someone accessed your account.
 				</p>
 				{#snippet actions()}
-					<Button href={withBasePath('/login')} variant="primary" size="display" class="w-full">
+					<Button
+						href={withBasePath('/login?local')}
+						variant="primary"
+						size="display"
+						class="w-full"
+					>
 						Return to sign in
 					</Button>
 				{/snippet}
@@ -247,7 +252,7 @@
 		</details>
 	{/if}
 	<div class="recovery-back">
-		<Button href={withBasePath('/login')} variant="caps" size="sm" icon={ArrowLeft}>
+		<Button href={withBasePath('/login?local')} variant="caps" size="sm" icon={ArrowLeft}>
 			Back to sign in
 		</Button>
 	</div>

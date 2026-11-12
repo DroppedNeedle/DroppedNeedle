@@ -1,69 +1,94 @@
 import { page } from 'vitest/browser';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render } from 'vitest-browser-svelte';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fakeApi, type RouteData } from '$lib/test/api';
+import { renderWithQuery } from '$lib/test/render';
 
-const state = vi.hoisted(() => ({
-	url: new URL('http://localhost/login'),
-	providers: { local: true, plex: false, jellyfin: false, oidc: true, oidc_auto_redirect: true }
-}));
-// An address the page refuses to follow, so the test page never navigates.
-const mockAuthorize = vi.fn().mockResolvedValue({ authorize_url: 'javascript:void(0)' });
-
-vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
-vi.mock('$app/state', () => ({
-	page: {
-		get url() {
-			return state.url;
-		}
-	}
-}));
-vi.mock('$lib/api/client', () => ({ api: { get: vi.fn() } }));
-vi.mock('$lib/stores/authStore.svelte', () => ({ authStore: { setUser: vi.fn() } }));
-vi.mock('$lib/features/auth/queries/AuthProvidersQuery.svelte', () => ({
-	getAuthProvidersQuery: () => ({ data: state.providers, isSuccess: true })
-}));
-vi.mock('$lib/features/auth/queries/AuthMutations.svelte', () => ({
-	createLocalLoginMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	createJellyfinLoginMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	createOidcAuthorizeMutation: () => ({ mutateAsync: mockAuthorize, isPending: false })
-}));
-vi.mock('$lib/features/settings/queries/plex.svelte', () => ({
-	createPlexStartMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	pollPlexFlow: vi.fn()
+vi.mock('$app/state', async () => ({ page: (await import('$lib/test/page.svelte')).testPage }));
+vi.mock('$app/navigation', async () => ({
+	goto: (await import('$lib/test/page.svelte')).testGoto
 }));
 
 import Login from './+page.svelte';
+import { testPage } from '$lib/test/page.svelte';
+import { SSO_AUTO_START_KEY } from '$lib/utils/ssoAutoStart';
+
+const straightToSso: RouteData<'GET /api/v3/auth/providers'> = {
+	local: true,
+	plex: false,
+	jellyfin: false,
+	oidc: true,
+	oidc_auto_redirect: true
+};
+
+// An address the page refuses to follow, so the test page never navigates.
+const refusedStart: RouteData<'POST /api/v3/auth/oidc/authorize'> = {
+	authorize_url: 'javascript:void(0)'
+};
+
+// The SSO tab shows once the providers answer is in; a start would have
+// switched the page to that tab, so the username field would be gone.
+async function expectMethodsAfterProvidersLoad() {
+	await expect.element(page.getByRole('button', { name: 'SSO', exact: true })).toBeVisible();
+	await expect.element(page.getByPlaceholder('Username')).toBeVisible();
+}
 
 beforeEach(() => {
-	mockAuthorize.mockClear();
-	state.url = new URL('http://localhost/login');
-	state.providers = {
-		local: true,
-		plex: false,
-		jellyfin: false,
-		oidc: true,
-		oidc_auto_redirect: true
-	};
+	testPage.url = new URL('http://localhost/login');
+});
+
+afterEach(() => {
+	sessionStorage.removeItem(SSO_AUTO_START_KEY);
 });
 
 describe('login page going straight to single sign-on', () => {
-	it('starts single sign-on on load when the admin asked for it', async () => {
-		await render(Login);
-		await expect.poll(() => mockAuthorize.mock.calls.length).toBe(1);
+	it('starts single sign-on once on load when the admin asked for it', async () => {
+		const api = fakeApi({
+			'GET /api/v3/auth/providers': straightToSso,
+			'POST /api/v3/auth/oidc/authorize': refusedStart
+		});
+
+		await renderWithQuery(Login, {});
+
 		await expect.element(page.getByText('Sign-in provider address refused')).toBeVisible();
+		expect(api.calls('POST /api/v3/auth/oidc/authorize')).toHaveLength(1);
+	});
+
+	it('shows the sign-in methods when this tab started it under a minute ago', async () => {
+		// A sign-in that came straight back to the login page: starting again would loop.
+		sessionStorage.setItem(SSO_AUTO_START_KEY, String(Date.now() - 5_000));
+		const api = fakeApi({
+			'GET /api/v3/auth/providers': straightToSso,
+			'POST /api/v3/auth/oidc/authorize': refusedStart
+		});
+
+		await renderWithQuery(Login, {});
+
+		await expectMethodsAfterProvidersLoad();
+		expect(api.calls('POST /api/v3/auth/oidc/authorize')).toHaveLength(0);
 	});
 
 	it('shows the sign-in methods with ?local', async () => {
-		state.url = new URL('http://localhost/login?local');
-		await render(Login);
-		await expect.element(page.getByPlaceholder('Username')).toBeVisible();
-		expect(mockAuthorize).not.toHaveBeenCalled();
+		testPage.url = new URL('http://localhost/login?local');
+		const api = fakeApi({
+			'GET /api/v3/auth/providers': straightToSso,
+			'POST /api/v3/auth/oidc/authorize': refusedStart
+		});
+
+		await renderWithQuery(Login, {});
+
+		await expectMethodsAfterProvidersLoad();
+		expect(api.calls('POST /api/v3/auth/oidc/authorize')).toHaveLength(0);
 	});
 
 	it('waits for a click while the setting is off', async () => {
-		state.providers = { ...state.providers, oidc_auto_redirect: false };
-		await render(Login);
-		await expect.element(page.getByPlaceholder('Username')).toBeVisible();
-		expect(mockAuthorize).not.toHaveBeenCalled();
+		const api = fakeApi({
+			'GET /api/v3/auth/providers': { ...straightToSso, oidc_auto_redirect: false },
+			'POST /api/v3/auth/oidc/authorize': refusedStart
+		});
+
+		await renderWithQuery(Login, {});
+
+		await expectMethodsAfterProvidersLoad();
+		expect(api.calls('POST /api/v3/auth/oidc/authorize')).toHaveLength(0);
 	});
 });

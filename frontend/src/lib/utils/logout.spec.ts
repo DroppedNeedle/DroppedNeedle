@@ -31,5 +31,5 @@ it('finishes logout navigation when session cleanup rejects after the revoke att
 
 	expect(state.apiLogout).toHaveBeenCalledWith('/api/v3/auth/logout');
 	expect(state.cleanup).toHaveBeenCalledOnce();
-	expect(state.goto).toHaveBeenCalledWith('/login');
+	expect(state.goto).toHaveBeenCalledWith('/login?local');
 });

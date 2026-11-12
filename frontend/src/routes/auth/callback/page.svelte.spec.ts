@@ -1,6 +1,6 @@
 import { page } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fakeApi, type RouteData } from '$lib/test/api';
+import { apiError, fakeApi, type RouteData } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 import { authStore } from '$lib/stores/authStore.svelte';
 
@@ -52,5 +52,15 @@ describe('OIDC callback', () => {
 			code: 'one-time-code'
 		});
 		await expect.element(page.getByText('Could not reach the server.')).not.toBeInTheDocument();
+	});
+
+	it('leads a failed sign-in back to the sign-in methods, not into single sign-on again', async () => {
+		fakeApi({ 'POST /api/v3/auth/oidc/exchange': apiError(401, 'AUTHENTICATION_FAILED') });
+
+		await renderWithQuery(Callback, {});
+
+		await expect
+			.element(page.getByRole('link', { name: 'Back to sign in' }))
+			.toHaveAttribute('href', '/login?local');
 	});
 });
