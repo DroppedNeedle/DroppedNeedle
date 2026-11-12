@@ -18,7 +18,7 @@ test('a fresh server is set up and its admin signs in again', async ({ page }) =
 	await expect(logOut).toBeVisible();
 
 	await logOut.click();
-	await expect(page).toHaveURL(/\/login$/);
+	await expect(page).toHaveURL(/\/login\?local$/);
 
 	await page.getByLabel('Username').fill(admin.username);
 	await page.getByLabel('Password', { exact: true }).fill(admin.password);
