@@ -7,7 +7,7 @@
 //! fails exactly like an unknown credential. `note_use` throttles
 //! `last_used_at` writes to one per secret per five minutes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -41,6 +41,8 @@ pub struct CompatPasswords {
     users: UsersDeps,
     crypto: Arc<Crypto>,
     touched: Arc<Mutex<HashMap<String, Instant>>>,
+    /// App passwords already logged as blank, so each is logged once.
+    blank_logged: Arc<Mutex<HashSet<String>>>,
 }
 
 impl CompatPasswords {
@@ -50,6 +52,7 @@ impl CompatPasswords {
             users,
             crypto,
             touched: Arc::new(Mutex::new(HashMap::new())),
+            blank_logged: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -116,7 +119,8 @@ impl CompatPasswords {
         Ok(row.map(|row| row.id))
     }
 
-    /// Active secrets for a user (plaintext needed for `t/s` auth).
+    /// Active secrets for a user (plaintext needed for `t/s` auth). A blank
+    /// secret is left out: it proves nothing.
     pub(crate) async fn active_secrets(
         &self,
         user_id: &str,
@@ -133,6 +137,19 @@ impl CompatPasswords {
                 .crypto
                 .decrypt(&row.secret_encrypted)
                 .map_err(|_| SubsonicStoreError)?;
+            if plaintext.is_empty() {
+                let first = match self.blank_logged.lock() {
+                    Ok(mut logged) => logged.insert(row.id.clone()),
+                    Err(_) => true,
+                };
+                if first {
+                    tracing::warn!(
+                        app_password_id = %row.id,
+                        "app password has an empty secret, skipping it"
+                    );
+                }
+                continue;
+            }
             out.push(AppSecret {
                 sha256: row.secret_sha256,
                 plaintext,
@@ -157,8 +174,12 @@ impl CompatPasswords {
 
     /// What a presented secret is, from one read by its SHA-256: a live
     /// app password and its user, a revoked one, or none. A live row whose
-    /// user is gone answers [`SecretMatch::Unknown`].
+    /// user is gone answers [`SecretMatch::Unknown`], and so does an empty
+    /// secret, which proves nothing and is not read.
     pub async fn match_secret(&self, secret: &str) -> Result<SecretMatch, JellyfinStoreError> {
+        if secret.is_empty() {
+            return Ok(SecretMatch::Unknown);
+        }
         let row = self
             .users
             .app_passwords

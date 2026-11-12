@@ -204,7 +204,8 @@ pub async fn authenticate(
 
     if let Some(password) = p {
         let secret = decode_subsonic_password(password);
-        if secret.len() > MAX_AUTH_VALUE_LENGTH {
+        // A blank secret proves nothing, so it is refused before the lookup.
+        if secret.is_empty() || secret.len() > MAX_AUTH_VALUE_LENGTH {
             return Err(SubsonicDenied::new(WRONG_CREDENTIALS));
         }
         let owner = store

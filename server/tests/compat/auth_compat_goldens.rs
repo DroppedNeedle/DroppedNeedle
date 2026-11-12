@@ -7,7 +7,7 @@ use droppedneedle_auth::compat_auth::jellyfin::{
     authenticate_by_name, effective_name, extract_client, extract_device, extract_token,
     login_echo_json, resolve_token, server_id,
 };
-use droppedneedle_auth::compat_auth::prod::CompatPasswords;
+use droppedneedle_auth::compat_auth::prod::{CompatPasswords, SecretMatch};
 use droppedneedle_auth::compat_auth::subsonic::{
     MAX_CLIENT_NAME_LENGTH, MAX_ENCODED_PASSWORD_LENGTH, SubsonicDenied, SubsonicParams,
     authenticate, decode_subsonic_password, md5_hex, sha256_hex,
@@ -264,6 +264,35 @@ async fn password_scheme_handles_plain_hex_and_rejection() {
     assert_eq!(
         authenticate(&store, &account).await,
         Err(SubsonicDenied::new(WRONG_CREDENTIALS))
+    );
+}
+
+#[tokio::test]
+async fn a_blank_app_password_never_signs_anyone_in() {
+    let (rig, store) = passwords("compat-blank-secret").await;
+    rig.seed_app_password("user-alice", "").await;
+    let salt = "pepper";
+
+    // A blank secret's token is md5 of the salt alone.
+    let blank_token = md5_hex(salt);
+    let params = SubsonicParams::new(vec![("u", "alice"), ("t", &blank_token), ("s", salt)]);
+    assert_eq!(
+        authenticate(&store, &params).await,
+        Err(SubsonicDenied::new(WRONG_CREDENTIALS))
+    );
+
+    let params = SubsonicParams::new(vec![("u", "alice"), ("p", "")]);
+    assert_eq!(
+        authenticate(&store, &params).await,
+        Err(SubsonicDenied::new(WRONG_CREDENTIALS))
+    );
+    assert_eq!(store.match_secret("").await.unwrap(), SecretMatch::Unknown);
+
+    let real_token = md5_hex(&format!("alice-secret{salt}"));
+    let params = SubsonicParams::new(vec![("u", "alice"), ("t", &real_token), ("s", salt)]);
+    assert_eq!(
+        authenticate(&store, &params).await.unwrap().user_id,
+        "user-alice"
     );
 }
 
