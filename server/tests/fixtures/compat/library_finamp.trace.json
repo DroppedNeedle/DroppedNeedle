@@ -80,6 +80,185 @@
     },
     {
       "body": {
+        "BackdropImageTags": [],
+        "CanDelete": false,
+        "CanDownload": false,
+        "ChildCount": 5,
+        "CollectionType": "music",
+        "DateCreated": "0000-00-00T00:00:00.0000000Z",
+        "DisplayPreferencesId": "<id-2>",
+        "EnableMediaSourceDisplay": true,
+        "Etag": "<id-3>",
+        "ExternalUrls": [],
+        "GenreItems": [],
+        "Genres": [],
+        "Id": "<id-2>",
+        "ImageBlurHashes": {},
+        "ImageTags": {
+          "Primary": "<id-2>"
+        },
+        "IsFolder": true,
+        "LocalTrailerCount": 0,
+        "LocationType": "FileSystem",
+        "LockData": false,
+        "LockedFields": [],
+        "MediaType": "Unknown",
+        "Name": "Music",
+        "ParentId": "<id-4>",
+        "Path": "",
+        "People": [],
+        "PlayAccess": "Full",
+        "ProviderIds": {},
+        "RemoteTrailers": [],
+        "ServerId": "<id-1>",
+        "SortName": "Music",
+        "SpecialFeatureCount": 0,
+        "Studios": [],
+        "Taglines": [],
+        "Tags": [],
+        "Type": "CollectionFolder",
+        "UserData": {
+          "IsFavorite": false,
+          "ItemId": "<id-2>",
+          "Key": "<id-2>",
+          "PlayCount": 0,
+          "PlaybackPositionTicks": 0,
+          "Played": false
+        }
+      },
+      "headers": {
+        "content-length": "1032",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/Users/<id-5>/Items/<id-2>",
+      "status": 200
+    },
+    {
+      "body": {
+        "BackdropImageTags": [],
+        "CanDelete": false,
+        "CanDownload": false,
+        "ChildCount": 5,
+        "CollectionType": "music",
+        "DateCreated": "0000-00-00T00:00:00.0000000Z",
+        "DisplayPreferencesId": "<id-2>",
+        "EnableMediaSourceDisplay": true,
+        "Etag": "<id-3>",
+        "ExternalUrls": [],
+        "GenreItems": [],
+        "Genres": [],
+        "Id": "<id-2>",
+        "ImageBlurHashes": {},
+        "ImageTags": {
+          "Primary": "<id-2>"
+        },
+        "IsFolder": true,
+        "LocalTrailerCount": 0,
+        "LocationType": "FileSystem",
+        "LockData": false,
+        "LockedFields": [],
+        "MediaType": "Unknown",
+        "Name": "Music",
+        "ParentId": "<id-4>",
+        "Path": "",
+        "People": [],
+        "PlayAccess": "Full",
+        "ProviderIds": {},
+        "RemoteTrailers": [],
+        "ServerId": "<id-1>",
+        "SortName": "Music",
+        "SpecialFeatureCount": 0,
+        "Studios": [],
+        "Taglines": [],
+        "Tags": [],
+        "Type": "CollectionFolder",
+        "UserData": {
+          "IsFavorite": false,
+          "ItemId": "<id-2>",
+          "Key": "<id-2>",
+          "PlayCount": 0,
+          "PlaybackPositionTicks": 0,
+          "Played": false
+        }
+      },
+      "headers": {
+        "content-length": "1032",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/Items/<id-2>",
+      "status": 200
+    },
+    {
+      "body": {
+        "Items": [
+          {
+            "BackdropImageTags": [],
+            "CanDelete": false,
+            "CanDownload": false,
+            "ChildCount": 5,
+            "CollectionType": "music",
+            "DateCreated": "0000-00-00T00:00:00.0000000Z",
+            "DisplayPreferencesId": "<id-2>",
+            "EnableMediaSourceDisplay": true,
+            "Etag": "<id-3>",
+            "ExternalUrls": [],
+            "GenreItems": [],
+            "Genres": [],
+            "Id": "<id-2>",
+            "ImageBlurHashes": {},
+            "ImageTags": {
+              "Primary": "<id-2>"
+            },
+            "IsFolder": true,
+            "LocalTrailerCount": 0,
+            "LocationType": "FileSystem",
+            "LockData": false,
+            "LockedFields": [],
+            "MediaType": "Unknown",
+            "Name": "Music",
+            "ParentId": "<id-4>",
+            "Path": "",
+            "People": [],
+            "PlayAccess": "Full",
+            "ProviderIds": {},
+            "RemoteTrailers": [],
+            "ServerId": "<id-1>",
+            "SortName": "Music",
+            "SpecialFeatureCount": 0,
+            "Studios": [],
+            "Taglines": [],
+            "Tags": [],
+            "Type": "CollectionFolder",
+            "UserData": {
+              "IsFavorite": false,
+              "ItemId": "<id-2>",
+              "Key": "<id-2>",
+              "PlayCount": 0,
+              "PlaybackPositionTicks": 0,
+              "Played": false
+            }
+          }
+        ],
+        "StartIndex": 0,
+        "TotalRecordCount": 1
+      },
+      "headers": {
+        "content-length": "1080",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/Users/<id-5>/Items?Ids=<id-2>",
+      "status": 200
+    },
+    {
+      "body": null,
+      "headers": {
+        "content-length": "0"
+      },
+      "request": "POST /jellyfin/Sessions/Capabilities?playableMediaTypes=Audio&supportsMediaControl=true",
+      "status": 204
+    },
+    {
+      "body": {
         "Items": [
           {
             "Album": "OK Computer",

@@ -139,8 +139,42 @@ async fn finamp_browse_stream_favorite_playlist_progress() {
     let one = rig.file("one");
 
     trace.get("/jellyfin/System/Info/Public", &[]).await;
-    trace
+    // Finamp 1.0 opens the library it picked from Views by its id, and its
+    // home screen fails when that fetch does.
+    let views = trace
         .get(&format!("/jellyfin/Users/{user}/Views"), &auth)
+        .await;
+    let view_id = views["Items"][0]["Id"]
+        .as_str()
+        .expect("view id")
+        .to_owned();
+    for uri in [
+        format!("/jellyfin/Users/{user}/Items/{view_id}"),
+        format!("/jellyfin/Items/{view_id}"),
+    ] {
+        let view = trace.get(&uri, &auth).await;
+        assert_eq!(view["Type"], json!("CollectionFolder"), "{uri}: {view}");
+        assert_eq!(view["Id"], json!(view_id), "{uri}: {view}");
+    }
+    let listed = trace
+        .get(
+            &format!("/jellyfin/Users/{user}/Items?Ids={view_id}"),
+            &auth,
+        )
+        .await;
+    assert_eq!(
+        listed["Items"][0]["Type"],
+        json!("CollectionFolder"),
+        "{listed}"
+    );
+    assert_eq!(listed["Items"][0]["Id"], json!(view_id), "{listed}");
+    trace
+        .call(
+            "POST",
+            "/jellyfin/Sessions/Capabilities?playableMediaTypes=Audio&supportsMediaControl=true",
+            &auth,
+            None,
+        )
         .await;
     let items = trace
         .get(

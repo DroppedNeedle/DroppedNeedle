@@ -253,6 +253,7 @@ route_table! {
     SignedIn Post "/jellyfin/Sessions/Playing/Progress" => playing_progress;
     SignedIn Post "/jellyfin/Sessions/Playing/Stopped" => playing_stopped;
     SignedIn Post "/jellyfin/Sessions/Playing/Ping" => sessions_ping;
+    SignedIn Post "/jellyfin/Sessions/Capabilities" => sessions_capabilities;
     SignedIn Post "/jellyfin/Sessions/Capabilities/Full" => sessions_capabilities;
     SignedIn Post "/jellyfin/Playlists" => create_playlist;
     SignedIn Get "/jellyfin/Playlists/{playlist_id}" => get_playlist;

@@ -25,24 +25,30 @@ pub(super) async fn views(
     State(state): State<JellyfinState>,
     authed: Authed,
 ) -> Result<Response, ApiError> {
-    let library_id = state.ids.to_jf("library", LIBRARY_INTERNAL_ID).await;
-    let (_, album_artists) = state
-        .library
-        .artist_page(&authed.principal.id, ArtistScope::Album, None, 0, 0)
-        .await?;
     Ok(json(
         StatusCode::OK,
         &BaseItemDtoQueryResult {
-            items: vec![builders::music_view(
-                &library_id,
-                &server_id(),
-                album_artists,
-            )],
+            items: vec![library_view(&state, &authed.principal.id).await?],
             total_record_count: 1,
             start_index: 0,
         },
     ))
 }
+
+/// The "Music" view as Views lists it and a fetch by its id answers it.
+async fn library_view(state: &JellyfinState, user_id: &str) -> Result<BaseItemDto, ReadFailed> {
+    let library_id = state.ids.to_jf("library", LIBRARY_INTERNAL_ID).await;
+    let (_, album_artists) = state
+        .library
+        .artist_page(user_id, ArtistScope::Album, None, 0, 0)
+        .await?;
+    Ok(builders::music_view(
+        &library_id,
+        &server_id(),
+        album_artists,
+    ))
+}
+
 /// Decode a Jellyfin id to an artist mbid, `Ok(None)` when undecodable or
 /// not an artist.
 pub(super) async fn decode_artist(
@@ -55,9 +61,10 @@ pub(super) async fn decode_artist(
     })
 }
 
-/// One item by decoded kind. Quirk (v2): genre and library kinds have no
-/// branch in the single-item lookup, so they resolve to `None` (skipped in `Ids`
-/// lookups, 404 for direct fetch).
+/// One item by decoded kind. The library is the "Music" view, which Finamp
+/// fetches by id after Views. Quirk (v2): genres have no branch in the
+/// single-item lookup, so they resolve to `None` (skipped in `Ids` lookups,
+/// 404 for direct fetch).
 pub(super) async fn fetch_item(
     state: &JellyfinState,
     user_id: &str,
@@ -82,6 +89,7 @@ pub(super) async fn fetch_item(
             Some(found) => Some(b.playlist(&found).await),
             None => None,
         },
+        "library" if internal == LIBRARY_INTERNAL_ID => Some(library_view(state, user_id).await?),
         _ => None,
     })
 }
@@ -100,7 +108,8 @@ fn result(items: Vec<BaseItemDto>, total: Option<usize>, start: usize) -> Respon
     )
 }
 
-/// One item in the long form Jellyfin sends for a fetch by id.
+/// One item in the long form Jellyfin sends for a fetch by id, the "Music"
+/// view included (see [`fetch_item`]).
 async fn fetch_full_item(
     state: &JellyfinState,
     user: &super::views::Principal,
@@ -133,6 +142,7 @@ async fn fetch_full_item(
             Some(found) => Some(b.playlist_full(&found).await),
             None => None,
         },
+        "library" if internal == LIBRARY_INTERNAL_ID => Some(library_view(state, &user.id).await?),
         _ => None,
     })
 }
