@@ -43,14 +43,11 @@ export function keptFilter(list: string, name: string): string | null {
 	return read(key)[name] ?? null;
 }
 
-/** Keep one value of `list` beside its filters; `null` forgets it. */
-export function keepFilter(list: string, name: string, value: string | null): void {
+/** Keep one value of `list` beside its filters. */
+export function keepFilter(list: string, name: string, value: string): void {
 	const key = storageKey(list);
 	if (!key) return;
-	const kept = read(key);
-	if (value === null) delete kept[name];
-	else kept[name] = value;
-	write(key, kept);
+	write(key, { ...read(key), [name]: value });
 }
 
 // A shared browser never carries one person's filters to the next.

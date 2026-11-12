@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -160,76 +160,138 @@
 	// reached by loading on until it shows. It follows the list's order: the
 	// title, or the artist on Artist A-Z; any other order switches to Title A-Z.
 	const LETTERS = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
-	// A jump reads at most this many pages (2,000 albums) before it gives up.
+	// A jump stops once the list holds this many pages (2,000 albums).
 	const JUMP_PAGE_LIMIT = 40;
 
-	let gridEl = $state<HTMLElement | null>(null);
-	let jumpLetter = $state('');
-	let jumping = $state(false);
-	// A letter picked on a date order: the jump runs once the list is in title order.
-	let pendingJump = $state<string | null>(null);
+	interface Jump {
+		letter: string;
+		/** The order it runs in, and the one the list was in when it was picked. */
+		sort: Sort;
+		from: Sort;
+		/** The list it was picked on: a change of search, filter or favourites ends it. */
+		list: string;
+		stop: AbortController;
+		started: boolean;
+	}
 
-	/** The letter a name sorts under, in the A-Z strip's buckets. */
-	function initialOf(name: string): string {
-		const first = name.trim().charAt(0).toUpperCase();
+	const listKey = $derived.by(() => {
+		const { sort: _sort, ...rest } = params;
+		return JSON.stringify(rest);
+	});
+
+	let jumpLetter = $state('');
+	let jump = $state.raw<Jump | null>(null);
+
+	/**
+	 * The letter an album is filed under in the list's order, folded the way the
+	 * server sorts (accents and case off), so "Élan" is under E.
+	 */
+	function albumInitial(album: AlbumView, sort: Sort): string {
+		const name = sort === 'artist' ? album.artist_name : album.title;
+		const first = name.normalize('NFKD').replace(/\p{M}/gu, '').trim().toUpperCase().charAt(0);
 		return first >= 'A' && first <= 'Z' ? first : '#';
 	}
 
-	/** The letter the list's order files an album under: its artist or its title. */
-	function albumInitial(album: AlbumView): string {
-		return initialOf(params.sort === 'artist' ? album.artist_name : album.title);
-	}
+	type Reach = 'found' | 'none' | 'far' | 'stopped';
 
-	async function loadUntil(letter: string): Promise<boolean> {
-		for (let pages = 0; pages < JUMP_PAGE_LIMIT; pages++) {
-			if (albums.some((album) => albumInitial(album) === letter)) return true;
-			if (!albumsQuery.hasNextPage) return false;
-			try {
-				await albumsQuery.fetchNextPage();
-			} catch {
-				return false;
-			}
-		}
-		return albums.some((album) => albumInitial(album) === letter);
-	}
-
-	async function runJump(letter: string): Promise<void> {
-		jumping = true;
+	/** Resolves once the list is not fetching (a refetch of kept pages), or the jump stops. */
+	async function whenIdle(stop: AbortSignal): Promise<void> {
+		let end = () => {};
 		try {
-			if (!(await loadUntil(letter))) {
-				toastStore.notify('That letter is further down the list - load more albums to reach it.');
+			await new Promise<void>((resolve) => {
+				stop.addEventListener('abort', () => resolve(), { once: true });
+				end = $effect.root(() => {
+					$effect(() => {
+						if (!albumsQuery.isFetching) resolve();
+					});
+				});
+			});
+		} finally {
+			end();
+		}
+	}
+
+	async function loadUntil({ letter, sort, stop }: Jump): Promise<Reach> {
+		for (;;) {
+			// A failed page resolves rather than throws; the page shows the query's error.
+			if (stop.signal.aborted || albumsQuery.isError) return 'stopped';
+			const initials = albums.map((album) => albumInitial(album, sort));
+			if (initials.includes(letter)) return 'found';
+			// Titles are sorted by their folded initial, so once a later letter shows this
+			// one has no albums. Artist A-Z sorts on the tags' name, which a card may not show.
+			if (
+				sort === 'title' &&
+				letter !== '#' &&
+				initials.some((initial) => initial !== '#' && initial > letter)
+			) {
+				return 'none';
+			}
+			if (!albumsQuery.hasNextPage) return 'none';
+			if ((albumsQuery.data?.pages.length ?? 0) >= JUMP_PAGE_LIMIT) return 'far';
+			// A next page fetched now would cancel a refetch in flight.
+			await whenIdle(stop.signal);
+			if (stop.signal.aborted) return 'stopped';
+			await albumsQuery.fetchNextPage();
+		}
+	}
+
+	async function runJump(current: Jump): Promise<void> {
+		try {
+			const reach = await loadUntil(current);
+			if (reach === 'none') toastStore.notify(`No albums under ${current.letter}`);
+			if (reach === 'far') toastStore.notify('Too far down to jump; scroll or search instead');
+			if (reach !== 'found') return;
+			await tick();
+			if (current.stop.signal.aborted) return;
+			const target = albums.find((album) => albumInitial(album, current.sort) === current.letter);
+			if (!target) return;
+			// Instant: a smooth scroll passes every card on the way and loads all their covers.
+			document
+				.querySelector(`[data-album-id="${CSS.escape(target.id)}"]`)
+				?.scrollIntoView({ behavior: 'instant', block: 'start' });
+		} finally {
+			endJump(current);
+		}
+	}
+
+	function endJump(current: Jump): void {
+		current.stop.abort();
+		if (jump !== current) return;
+		jump = null;
+		// Back to "Jump to...", so the same letter can be picked again.
+		jumpLetter = '';
+	}
+
+	function jumpToLetter(letter: string): void {
+		if (!letter || jump) return;
+		const sort: Sort = params.sort === 'artist' ? 'artist' : 'title';
+		const from = params.sort;
+		jump = { letter, sort, from, list: listKey, stop: new AbortController(), started: false };
+		if (from !== sort) setSort(sort);
+	}
+
+	// Runs the jump once the list is loaded in its order, and ends it when the search,
+	// a filter, favourites or the order change under it.
+	$effect(() => {
+		const current = jump;
+		if (!current) return;
+		const sort = params.sort;
+		const list = listKey;
+		const ready = !albumsQuery.isLoading && !albumsQuery.isPlaceholderData;
+		untrack(() => {
+			const switching = !current.started && sort === current.from;
+			if (list !== current.list || (sort !== current.sort && !switching)) {
+				endJump(current);
 				return;
 			}
-			await tick();
-			const index = albums.findIndex((album) => albumInitial(album) === letter);
-			const card = gridEl?.children[index];
-			if (!(card instanceof HTMLElement)) return;
-			const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
-			card.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });
-		} finally {
-			jumping = false;
-		}
-	}
-
-	async function jumpToLetter(letter: string): Promise<void> {
-		if (!letter || jumping) return;
-		jumpLetter = letter;
-		jumping = true;
-		if (params.sort !== 'title' && params.sort !== 'artist') {
-			pendingJump = letter;
-			setParams({ sort: 'title' });
-			return;
-		}
-		await runJump(letter);
-	}
-
-	$effect(() => {
-		const letter = pendingJump;
-		if (!letter || params.sort !== 'title') return;
-		if (albumsQuery.isLoading || albumsQuery.isPlaceholderData) return;
-		pendingJump = null;
-		void runJump(letter);
+			if (current.started || sort !== current.sort || !ready) return;
+			current.started = true;
+			void runJump(current);
+		});
 	});
+
+	// Leaving the page stops a jump between pages.
+	$effect(() => () => jump?.stop.abort());
 </script>
 
 <svelte:head><title>Albums · Library</title></svelte:head>
@@ -283,8 +345,8 @@
 		<select
 			class="select dn-toolbar__select dn-toolbar__select--letters"
 			bind:value={jumpLetter}
-			onchange={(e) => void jumpToLetter((e.target as HTMLSelectElement).value)}
-			disabled={jumping}
+			onchange={(e) => jumpToLetter((e.target as HTMLSelectElement).value)}
+			disabled={jump !== null}
 			aria-label="Jump to a letter"
 			title="Jump to a letter in the list's order"
 		>
@@ -344,9 +406,9 @@
 			</p>
 		</div>
 	{:else}
-		<div class="dn-list-grid" bind:this={gridEl}>
+		<div class="dn-list-grid">
 			{#each albums as album (album.id)}
-				<LibraryAlbumCard {album} />
+				<div data-album-id={album.id}><LibraryAlbumCard {album} /></div>
 			{/each}
 		</div>
 

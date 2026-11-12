@@ -173,10 +173,6 @@
 		color: var(--dn-action-content);
 		box-shadow: inset 0 0 0 1px var(--dn-action-edge);
 	}
-	/* an active service's mark takes the fill's ink, whatever its brand colour */
-	.dn-rail :global(.menu li > a.menu-active svg) {
-		color: inherit;
-	}
 	.dn-rail :global(.dn-rail__rule) {
 		height: 1px;
 		margin: 0.375rem 0.5rem;

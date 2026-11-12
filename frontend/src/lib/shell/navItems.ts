@@ -45,6 +45,8 @@ export interface NavItem {
 	/** Where it points instead while an update is waiting. */
 	updateHref?: string;
 	audience: NavAudience;
+	/** A service's own page: listed only while the service is set up and not hidden. */
+	service?: ServiceSource;
 	badge?: NavBadge;
 	/** In the sidebar; with no `active` it never highlights there. */
 	sidebar?: { group: SidebarGroup; active?: NavMatch };
@@ -84,19 +86,24 @@ const SERVICE_PATHS: Record<ServiceSource, string> = {
 /** A service's own page, without the base path. */
 export const servicePath = (source: ServiceSource): string => SERVICE_PATHS[source];
 
-// A service's pages sit under /library but are the service's own; the rail marks the
-// service instead, so Library stays the way back to the hub.
 const inService: NavMatch = (path) =>
 	Object.values(SERVICE_PATHS).some((prefix) => within(prefix)(path));
 
 // Library Management, Check albums and the Recycle Bin live under /library but are their
-// own destinations; so do the services.
-const inLibrary: NavMatch = (path) =>
+// own destinations.
+const inLibraryArea: NavMatch = (path) =>
 	within('/library')(path) &&
 	!within('/library/management')(path) &&
 	!within('/library/review')(path) &&
-	!within('/library/recycle-bin')(path) &&
-	!inService(path);
+	!within('/library/recycle-bin')(path);
+
+// The rail marks a service on its own pages, so Library stays the way back to the hub.
+const inLibrary: NavMatch = (path) => inLibraryArea(path) && !inService(path);
+
+// The bottom bar has no service tabs, so Library stays lit on their pages, except the
+// Listening Room, which lights More.
+const inLibraryOnPhone: NavMatch = (path) =>
+	inLibraryArea(path) && !within(servicePath('localfiles'))(path);
 
 export const navItems: NavItem[] = [
 	{
@@ -133,7 +140,7 @@ export const navItems: NavItem[] = [
 		audience: 'everyone',
 		badge: 'library-sync',
 		sidebar: { group: 'browse', active: inLibrary },
-		bottom: { active: inLibrary }
+		bottom: { active: inLibraryOnPhone }
 	},
 	{
 		// The Listening Room is the local service's page. The rail already lists the
@@ -143,6 +150,7 @@ export const navItems: NavItem[] = [
 		icon: Headphones,
 		href: servicePath('localfiles'),
 		audience: 'everyone',
+		service: 'localfiles',
 		more: { active: within(servicePath('localfiles')) }
 	},
 	{

@@ -18,7 +18,6 @@ vi.mock('$lib/utils/userSessionCleanup', () => ({
 }));
 
 import RememberedFiltersTestHarness from './RememberedFiltersTestHarness.svelte';
-import { keepFilter, keptFilter } from './rememberedFilters.svelte';
 
 const KEY = 'library.filters.user-1.albums';
 
@@ -75,36 +74,5 @@ describe('rememberFilters', () => {
 		for (const reset of h.resets) reset();
 		expect(localStorage.getItem(KEY)).toBeNull();
 		expect(localStorage.getItem('other')).toBe('kept');
-	});
-});
-
-describe('keptFilter', () => {
-	const SORT_KEY = 'library.filters.user-1.album-sort';
-
-	beforeEach(() => {
-		localStorage.clear();
-		h.auth.user = { id: 'user-1' };
-	});
-
-	it('keeps one value where the next visit reads it before rendering', () => {
-		keepFilter('album-sort', 'sort', 'artist');
-
-		expect(localStorage.getItem(SORT_KEY)).toBe('{"sort":"artist"}');
-		expect(keptFilter('album-sort', 'sort')).toBe('artist');
-	});
-
-	it('forgets the value set to null', () => {
-		keepFilter('album-sort', 'sort', 'artist');
-		keepFilter('album-sort', 'sort', null);
-
-		expect(keptFilter('album-sort', 'sort')).toBeNull();
-		expect(localStorage.getItem(SORT_KEY)).toBeNull();
-	});
-
-	it('keeps nothing without a signed-in user', () => {
-		h.auth.user = null;
-		keepFilter('album-sort', 'sort', 'artist');
-
-		expect(keptFilter('album-sort', 'sort')).toBeNull();
 	});
 });

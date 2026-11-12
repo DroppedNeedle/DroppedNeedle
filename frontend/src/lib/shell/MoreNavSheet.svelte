@@ -4,6 +4,7 @@
 	import NavIcon from './NavIcon.svelte';
 	import NavItemBadge from './NavItemBadge.svelte';
 	import { canSee, navHref, navItems, type NavViewer } from './navItems';
+	import { useServiceEntries } from './serviceEntries.svelte';
 
 	interface Props {
 		open: boolean;
@@ -14,7 +15,14 @@
 
 	let { open = $bindable(false), currentPath, viewer, updateAvailable }: Props = $props();
 
-	const items = $derived(navItems.filter((item) => item.more && canSee(item, viewer)));
+	const services = useServiceEntries();
+
+	const items = $derived(
+		navItems.filter(
+			(item) =>
+				item.more && canSee(item, viewer) && (!item.service || services.hasEntry(item.service))
+		)
+	);
 </script>
 
 <Modal bind:open title="More" size="sm" bottomSheet closeButton>

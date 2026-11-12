@@ -5,8 +5,9 @@
 	width and up), the buttons that open the drawer on its Queue, Lyrics and
 	Equalizer tabs, the volume and where the track comes from. "Close
 	player" is a tab on the bar's top edge. Phones get the cover, the names,
-	previous, play and next, and a queue tab that opens the drawer (its own
-	tabs hold the lyrics and the equalizer).
+	the heart and previous, play and next, and a queue tab beside "Close
+	player" that opens the drawer (its own tabs hold the lyrics and the
+	equalizer).
 -->
 <script lang="ts">
 	import { isValidMbid } from '$lib/utils/formatting';
@@ -212,7 +213,7 @@
 			<!-- Phones have no room in the bar for the tools, so one tab opens the drawer,
 			     whose own tabs hold the queue, the lyrics and the equalizer. -->
 			<Button
-				variant="neutral"
+				variant={isOpenOn('queue') ? 'primary' : 'neutral'}
 				size="xs"
 				icon={ListMusic}
 				aria-label="Toggle queue"

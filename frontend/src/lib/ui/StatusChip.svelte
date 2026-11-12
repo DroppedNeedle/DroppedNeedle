@@ -51,20 +51,31 @@
 		error: 'bg-error/15 text-error'
 	};
 	const sizes = {
-		xs: 'rounded-full border px-1.5 text-xs font-bold tracking-wide uppercase',
-		sm: 'rounded-full border px-2 text-xs font-bold tracking-wide uppercase',
-		md: 'gap-1.5 rounded-field px-3.5 text-sm font-semibold [&_svg]:size-4'
+		xs: 'border text-xs font-bold tracking-wide uppercase',
+		sm: 'border text-xs font-bold tracking-wide uppercase',
+		md: 'gap-1.5 text-sm font-semibold [&_svg]:size-4'
 	};
-	const heights = { xs: 'h-5', sm: 'h-6', md: 'h-10' };
+	// One line: a pill at the size's height.
+	const oneLine = {
+		xs: 'h-5 rounded-full px-1.5',
+		sm: 'h-6 rounded-full px-2',
+		md: 'h-10 rounded-field px-3.5'
+	};
+	// Wrapped: softer corners and padding that keep every line inside the chip.
+	const wrapped = {
+		xs: 'rounded-xl px-2 py-1',
+		sm: 'rounded-xl px-2.5 py-1',
+		md: 'rounded-field px-3.5 py-2'
+	};
 	const layout = $derived(
 		wrap
-			? 'min-w-0 max-w-full items-start whitespace-normal text-left py-0.5'
-			: `shrink-0 items-center whitespace-nowrap ${heights[size]}`
+			? `min-w-0 max-w-full items-start whitespace-normal text-left leading-snug ${wrapped[size]}`
+			: `shrink-0 items-center whitespace-nowrap leading-none ${oneLine[size]}`
 	);
 </script>
 
 <span
-	class="inline-flex gap-1 leading-none {layout} {sizes[size]} {size === 'md'
+	class="inline-flex gap-1 {layout} {sizes[size]} {size === 'md'
 		? fills[tone]
 		: chips[tone]} {className}"
 >

@@ -22,7 +22,7 @@ How DroppedNeedle scans your music, works out which album and edition each folde
 
 ## Browsing
 
-The Albums, Artists and Tracks lists show the first page and add the next with Load more, however large the library. Tracks sort by date added, title, artist (then album and track number) or album. Shuffle on the Tracks page plays every track once in a random order.
+The Albums, Artists and Tracks lists show the first page and add the next with Load more, however large the library. Albums sort newest first, by title or by artist; the list keeps the order you last chose in this browser, and signing out forgets it. Jump to... scrolls to the first album under a letter, loading more as it goes: by title, or by artist on Artist A-Z. From Newest First or Recently Favourited it switches to Title A-Z. Accents don't count, so "Élan" is under E. A jump stops at 2,000 albums. Tracks sort by date added, title, artist (then album and track number) or album. Shuffle on the Tracks page plays every track once in a random order.
 
 An artist's page also has an "Appears on" section when they are credited on albums someone else leads, such as a guest or featured spot. It shows those albums and tracks, whether or not the artist has albums of their own, and the Contributors view of the Artists list counts them: an artist with albums of their own is listed there too. When an album has an identification review waiting, curators see "Needs you: open its review" under its edition plate.
 
@@ -150,7 +150,7 @@ You can give an album 1 to 5 stars on its page, and each of its tracks that has 
 
 Ratings are kept per account, and they are the same ratings Subsonic apps show and set: a rating given in either place shows in the other. In a Subsonic app, setting 0 stars clears your rating. Subsonic apps also show the average of every user's rating of an item. Once two or more users have rated it, the average can give your rating away to the others: with two users, the other one can work it out from the average and their own. The web app shows only your own.
 
-The player bar shows the heart and stars of the track playing, under its name; on a narrower screen only the heart, and on a phone the heart sits left of Previous. A Jellyfin, Navidrome or Plex track rates its copy in your library, and one with no library copy shows neither. The Listening Room's deck shows the same heart and stars under the track's title and artist, at every width.
+The player bar shows the heart and stars of the track playing, under its name; on a narrower screen only the heart, and on a phone the heart sits left of Previous. On a phone a queue tab above the bar, beside Close player, opens the queue, and the Listening Room is in the More menu while Local Files is on and not hidden. A Jellyfin, Navidrome or Plex track rates its copy in your library, and one with no library copy shows neither. The Listening Room's deck shows the same heart and stars under the track's title and artist, at every width.
 
 In the player bar and on the deck, the artist and album names link to their pages. An album links when it has a MusicBrainz match, or when it is a local album on a track from your library.
 
