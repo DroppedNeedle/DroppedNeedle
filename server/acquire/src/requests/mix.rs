@@ -3,10 +3,11 @@
 //! The mix starts from the user's ListenBrainz recommendation playlists
 //! (weekly-jams, then weekly-exploration) and is topped up to 100 tracks
 //! with the top recording of artists similar to the first eight artists in
-//! it. Tracks the library holds point at the local file, so they play
-//! straight away. When the user has asked for it and holds the standing
-//! grant (admins and trusted users always do; everyone else needs an
-//! admin's approval), up to five missing albums per build are requested.
+//! it, each on the album ListenBrainz places that recording on. Tracks the
+//! library holds point at the local file, so they play straight away. When
+//! the user has asked for it and holds the standing grant (admins and
+//! trusted users always do; everyone else needs an admin's approval), up to
+//! five missing albums per build are requested.
 //!
 //! A build is skipped, with a stable reason, when the user has no
 //! ListenBrainz link, the mix is less than six days old (ListenBrainz
@@ -28,8 +29,6 @@ use super::service::RequestsService;
 
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_catalog::collections::store::playlists::{NewEntry, PlaylistStore, Written};
-use droppedneedle_catalog::discover::models::QueueItemLight;
-use droppedneedle_catalog::discover::queue::select::{self, Shuffler};
 use droppedneedle_catalog::metadata::library::LocalCatalog;
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::db::statement::ListLen;
@@ -41,9 +40,7 @@ use droppedneedle_media::playback::models::MixGrantState;
 use droppedneedle_providers::listenbrainz::playlists::{
     RecommendationPlaylist, RecommendationTrack,
 };
-use droppedneedle_providers::listenbrainz::{
-    ListenBrainzCredentials, SimilarArtist, TopRecording, TopReleaseGroup,
-};
+use droppedneedle_providers::listenbrainz::{ListenBrainzCredentials, SimilarArtist, TopRecording};
 
 /// The playlist's display name.
 pub const PLAYLIST_NAME: &str = "Your Weekly Mix";
@@ -57,13 +54,11 @@ pub const RECOMMENDATION_PATCHES: [&str; 2] = ["weekly-jams", "weekly-exploratio
 pub const MAX_SEED_ARTISTS: usize = 8;
 /// Similar artists read per seed.
 pub const SIMILAR_LIMIT: usize = 10;
-/// Albums taken per similar artist.
-pub const ALBUMS_PER_SEED: usize = 2;
 /// Tracks in a full mix.
 pub const TRACK_CAP: usize = 100;
 /// Most albums one build may request. Exploration and top-up tracks are
-/// missing by construction, so an uncapped walk would request most of the
-/// mix every week.
+/// mostly missing, so an uncapped walk would request most of the mix every
+/// week.
 pub const MAX_AUTO_REQUESTS: usize = 5;
 /// MusicBrainz "Various Artists": never a useful similar artist.
 const VARIOUS_ARTISTS_MBID: &str = "89ad4ac3-39f7-470e-963a-56509c546377";
@@ -151,6 +146,8 @@ pub struct MixSweep {
 
 /// The ListenBrainz reads a build needs. Errors carry a log-only cause;
 /// the builder treats every read as optional and carries on without it.
+/// The artist reads lend `user_id`'s own link: ListenBrainz answers an
+/// artist's top songs only to a linked account.
 pub trait MixSources: Send + Sync {
     /// Whether ListenBrainz may be read now: false while an admin switched
     /// its reads off or their setting does not read.
@@ -180,18 +177,14 @@ pub trait MixSources: Send + Sync {
     /// Artists similar to one artist, most listened first.
     fn similar_artists<'a>(
         &'a self,
+        user_id: &'a str,
         artist_mbid: &'a str,
         limit: usize,
     ) -> BoxFuture<'a, Result<Vec<SimilarArtist>, String>>;
-    /// An artist's most played release groups.
-    fn top_release_groups<'a>(
-        &'a self,
-        artist_mbid: &'a str,
-        count: usize,
-    ) -> BoxFuture<'a, Result<Vec<TopReleaseGroup>, String>>;
     /// An artist's most played recording.
     fn top_recording<'a>(
         &'a self,
+        user_id: &'a str,
         artist_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<TopRecording>, String>>;
 }
@@ -416,8 +409,10 @@ impl PersonalMixBuilder {
         let mut mix = self.recommended_tracks(&creds, &owned).await;
         let seeds = pick_seed_artists(&mix);
         if !seeds.is_empty() && mix.len() < TRACK_CAP {
-            let needed = TRACK_CAP - mix.len();
-            mix.extend(self.similar_artist_tracks(&seeds, &owned, needed).await);
+            let top_up = self
+                .similar_artist_tracks(user_id, &creds, &seeds, &mix, &owned)
+                .await;
+            mix.extend(top_up);
         }
         mix.truncate(TRACK_CAP);
         if mix.is_empty() {
@@ -517,104 +512,118 @@ impl PersonalMixBuilder {
         tracks
     }
 
-    /// Top-up: albums of artists similar to the seeds, picked round-robin
-    /// across seeds, each carrying its artist's most played recording.
+    /// Top-up: the most played recording of artists similar to the seeds,
+    /// one per artist, each on the album its own recording lookup names. A
+    /// recording already in the mix, or one placed on no album, is left out.
     async fn similar_artist_tracks(
         &self,
-        seeds: &[(String, String)],
+        user_id: &str,
+        creds: &ListenBrainzCredentials,
+        seeds: &[String],
+        mix: &[MixTrack],
         owned: &HashSet<String>,
-        needed: usize,
     ) -> Vec<MixTrack> {
-        let mut pools: Vec<Vec<QueueItemLight>> = Vec::with_capacity(seeds.len());
-        for (seed_mbid, seed_name) in seeds {
-            let mut pool = Vec::new();
-            let mut pool_seen: HashSet<String> = HashSet::new();
+        let needed = TRACK_CAP.saturating_sub(mix.len());
+        let mut taken: HashSet<String> = mix
+            .iter()
+            .filter_map(|track| track.recording_mbid.as_deref())
+            .map(str::to_ascii_lowercase)
+            .collect();
+        let mut picks: Vec<(SimilarArtist, TopRecording, String)> = Vec::new();
+        let artists = self.similar_to_seeds(user_id, seeds).await;
+        // Headroom: some artists have no top recording to offer.
+        for artist in artists.into_iter().take(needed.saturating_mul(2)) {
+            if picks.len() >= needed {
+                break;
+            }
+            let recording = self
+                .sources
+                .top_recording(user_id, &artist.artist_mbid)
+                .await
+                .unwrap_or_else(|cause| {
+                    tracing::debug!(%cause, "personal mix: top recording unavailable");
+                    None
+                });
+            let Some(recording) = recording else {
+                continue;
+            };
+            let Some(id) = recording.recording_mbid.clone() else {
+                continue;
+            };
+            if taken.insert(id.to_ascii_lowercase()) {
+                picks.push((artist, recording, id));
+            }
+        }
+        if picks.is_empty() {
+            return Vec::new();
+        }
+        let ids: Vec<String> = picks.iter().map(|(_, _, id)| id.clone()).collect();
+        let groups = match self.sources.release_groups(&ids, creds).await {
+            Ok(groups) => groups,
+            Err(cause) => {
+                tracing::warn!(%cause, "personal mix: top-up album lookup unavailable");
+                return Vec::new();
+            }
+        };
+        picks
+            .into_iter()
+            .filter_map(|(artist, recording, id)| {
+                let group = groups.get(&id)?.to_ascii_lowercase();
+                Some(MixTrack {
+                    in_library: owned.contains(&group),
+                    track_name: recording.title,
+                    artist_name: if recording.artist_name.is_empty() {
+                        artist.artist_name
+                    } else {
+                        recording.artist_name
+                    },
+                    album_name: recording.release_name.unwrap_or_default(),
+                    release_group_mbid: group,
+                    artist_mbid: Some(artist.artist_mbid),
+                    recording_mbid: Some(id),
+                    library_file_id: None,
+                    track_number: None,
+                    disc_number: 1,
+                })
+            })
+            .collect()
+    }
+
+    /// Artists similar to the seeds, each seed's in ListenBrainz's order,
+    /// taken one per seed in turn. Each artist comes once, Various Artists
+    /// never.
+    async fn similar_to_seeds(&self, user_id: &str, seeds: &[String]) -> Vec<SimilarArtist> {
+        let mut lists = Vec::with_capacity(seeds.len());
+        for seed in seeds {
             let similar = self
                 .sources
-                .similar_artists(seed_mbid, SIMILAR_LIMIT)
+                .similar_artists(user_id, seed, SIMILAR_LIMIT)
                 .await
                 .unwrap_or_else(|cause| {
                     tracing::debug!(%cause, "personal mix: similar artists unavailable");
                     Vec::new()
                 });
-            for artist in similar {
-                let artist_mbid = artist.artist_mbid.to_ascii_lowercase();
-                if artist_mbid == VARIOUS_ARTISTS_MBID {
-                    continue;
-                }
-                let groups = self
-                    .sources
-                    .top_release_groups(&artist_mbid, ALBUMS_PER_SEED)
-                    .await
-                    .unwrap_or_else(|cause| {
-                        tracing::debug!(%cause, "personal mix: artist albums unavailable");
-                        Vec::new()
-                    });
-                for group in groups {
-                    let group_mbid = group.release_group_mbid.to_ascii_lowercase();
-                    if owned.contains(&group_mbid) || !pool_seen.insert(group_mbid.clone()) {
-                        continue;
+            lists.push(similar.into_iter());
+        }
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut artists = Vec::new();
+        loop {
+            let before = artists.len();
+            for list in &mut lists {
+                for mut artist in list.by_ref() {
+                    artist.artist_mbid = artist.artist_mbid.to_ascii_lowercase();
+                    if artist.artist_mbid != VARIOUS_ARTISTS_MBID
+                        && seen.insert(artist.artist_mbid.clone())
+                    {
+                        artists.push(artist);
+                        break;
                     }
-                    pool.push(QueueItemLight {
-                        musicbrainz_id: group_mbid,
-                        title: group.name,
-                        artist_name: if group.artist_name.is_empty() {
-                            artist.artist_name.clone()
-                        } else {
-                            group.artist_name
-                        },
-                        artist_id: artist_mbid.clone(),
-                        recommendation_reason: format!("Similar to {seed_name}"),
-                        cover_url: None,
-                        is_wildcard: false,
-                        in_library: false,
-                    });
                 }
             }
-            pools.push(pool);
-        }
-        // Headroom: some artists have no top recording to offer.
-        let candidates = select::round_robin(
-            pools,
-            needed.saturating_mul(2),
-            select::MAX_PER_ARTIST,
-            &mut Shuffler::random(),
-        );
-        let mut top: HashMap<String, Option<TopRecording>> = HashMap::new();
-        let mut tracks = Vec::new();
-        for item in candidates {
-            if tracks.len() >= needed {
-                break;
+            if artists.len() == before {
+                return artists;
             }
-            if !top.contains_key(&item.artist_id) {
-                let recording = self
-                    .sources
-                    .top_recording(&item.artist_id)
-                    .await
-                    .unwrap_or_else(|cause| {
-                        tracing::debug!(%cause, "personal mix: top recording unavailable");
-                        None
-                    });
-                top.insert(item.artist_id.clone(), recording);
-            }
-            let Some(Some(recording)) = top.get(&item.artist_id) else {
-                continue;
-            };
-            tracks.push(MixTrack {
-                track_name: recording.title.clone(),
-                artist_name: item.artist_name,
-                album_name: item.title,
-                release_group_mbid: item.musicbrainz_id,
-                artist_mbid: Some(item.artist_id),
-                recording_mbid: recording.recording_mbid.clone(),
-                // Owned albums never enter the pools.
-                in_library: false,
-                library_file_id: None,
-                track_number: None,
-                disc_number: 1,
-            });
         }
-        tracks
     }
 
     /// Point owned tracks at their library file, matched by recording.
@@ -789,17 +798,17 @@ impl PersonalMixBuilder {
     }
 }
 
-/// The first distinct `(artist_mbid, artist_name)` pairs, in mix order.
-fn pick_seed_artists(tracks: &[MixTrack]) -> Vec<(String, String)> {
-    let mut seeds: Vec<(String, String)> = Vec::new();
+/// The first distinct artist MBIDs, in mix order.
+fn pick_seed_artists(tracks: &[MixTrack]) -> Vec<String> {
+    let mut seeds: Vec<String> = Vec::new();
     for track in tracks {
         if seeds.len() >= MAX_SEED_ARTISTS {
             break;
         }
         if let Some(mbid) = &track.artist_mbid
-            && !seeds.iter().any(|(seen, _)| seen == mbid)
+            && !seeds.contains(mbid)
         {
-            seeds.push((mbid.clone(), track.artist_name.clone()));
+            seeds.push(mbid.clone());
         }
     }
     seeds

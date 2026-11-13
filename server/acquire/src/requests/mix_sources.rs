@@ -1,8 +1,9 @@
 //! [`MixSources`] over the one ListenBrainz client and the per-user link
-//! store, read only while an admin leaves ListenBrainz reads on.
-//! Popularity and similar-artist reads are public, so they go out without
-//! the user's token, and share the rows Discover keeps; playlist reads
-//! lend it.
+//! store, read only while an admin leaves ListenBrainz reads on. Every
+//! read lends the user's own link, which ListenBrainz needs for an
+//! artist's top songs. Popularity, similar-artist and album answers are
+//! public, so their keys carry no token; similar artists and a
+//! recording's album share the rows Discover keeps.
 //!
 //! Every read runs at background priority: the weekly sweep is scheduled,
 //! and a manual refresh runs in a spawned task whose result reaches the
@@ -24,7 +25,7 @@ use droppedneedle_providers::listenbrainz::playlists::{
     RecommendationPlaylist, RecommendationTrack,
 };
 use droppedneedle_providers::listenbrainz::{
-    ListenBrainzClient, ListenBrainzCredentials, SimilarArtist, TopRecording, TopReleaseGroup,
+    ListenBrainzClient, ListenBrainzCredentials, SimilarArtist, TopRecording,
 };
 use droppedneedle_providers::{
     CacheKey, Fetched, Policy, ProviderCacheStore, ProviderError, RequestPriority, Source,
@@ -61,15 +62,16 @@ impl LiveMixSources {
             switch,
         }
     }
+
+    /// The user's own link, read only when a fetch goes out.
+    fn lender(&self, user_id: &str) -> Lender {
+        Lender::Person(self.links.clone(), user_id.to_owned())
+    }
 }
 
 /// A failed read becomes an error carrying ListenBrainz's reason.
 fn settle<T>(result: Result<T, ProviderError>) -> Result<T, String> {
     result.map_err(|error| error.to_string())
-}
-
-fn anonymous() -> ListenBrainzCredentials {
-    ListenBrainzCredentials::default()
 }
 
 impl MixSources for LiveMixSources {
@@ -141,6 +143,7 @@ impl MixSources for LiveMixSources {
 
     fn similar_artists<'a>(
         &'a self,
+        user_id: &'a str,
         artist_mbid: &'a str,
         limit: usize,
     ) -> BoxFuture<'a, Result<Vec<SimilarArtist>, String>> {
@@ -151,7 +154,7 @@ impl MixSources for LiveMixSources {
                     &self.client,
                     artist_mbid,
                     limit,
-                    &Lender::Anonymous,
+                    &self.lender(user_id),
                     PRIORITY,
                 )
                 .await,
@@ -169,37 +172,9 @@ impl MixSources for LiveMixSources {
         })
     }
 
-    fn top_release_groups<'a>(
-        &'a self,
-        artist_mbid: &'a str,
-        count: usize,
-    ) -> BoxFuture<'a, Result<Vec<TopReleaseGroup>, String>> {
-        Box::pin(async move {
-            let rows = settle(
-                shared::artist_albums(
-                    &self.cache,
-                    &self.client,
-                    artist_mbid,
-                    count,
-                    &Lender::Anonymous,
-                    PRIORITY,
-                )
-                .await,
-            )?;
-            Ok(rows
-                .into_iter()
-                .map(|row| TopReleaseGroup {
-                    release_group_mbid: row.album.release_group_mbid,
-                    name: row.album.title,
-                    artist_name: row.album.artist_name,
-                    listen_count: row.listen_count,
-                })
-                .collect())
-        })
-    }
-
     fn top_recording<'a>(
         &'a self,
+        user_id: &'a str,
         artist_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<TopRecording>, String>> {
         Box::pin(async move {
@@ -207,7 +182,11 @@ impl MixSources for LiveMixSources {
                 Source::ListenBrainz,
                 &["top_recording", &artist_mbid.to_lowercase()],
             );
-            let (client, mbid) = (self.client.clone(), artist_mbid.to_owned());
+            let (client, mbid, lender) = (
+                self.client.clone(),
+                artist_mbid.to_owned(),
+                self.lender(user_id),
+            );
             let found = self
                 .cache
                 .get_or_fetch(
@@ -215,8 +194,9 @@ impl MixSources for LiveMixSources {
                     Policy::LISTENBRAINZ_ARTIST,
                     PRIORITY,
                     move |priority| async move {
+                        let creds = lender.credentials().await;
                         let recordings = client
-                            .artist_top_recordings(&mbid, 1, &anonymous(), priority)
+                            .artist_top_recordings(&mbid, 1, &creds, priority)
                             .await?;
                         Ok(recordings
                             .into_iter()

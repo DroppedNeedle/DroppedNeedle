@@ -24,9 +24,7 @@ use droppedneedle_media::playback::models::MixGrantState;
 use droppedneedle_providers::listenbrainz::playlists::{
     RecommendationPlaylist, RecommendationTrack,
 };
-use droppedneedle_providers::listenbrainz::{
-    ListenBrainzCredentials, SimilarArtist, TopRecording, TopReleaseGroup,
-};
+use droppedneedle_providers::listenbrainz::{ListenBrainzCredentials, SimilarArtist, TopRecording};
 use futures_util::future::BoxFuture;
 
 use axum::{
@@ -1378,24 +1376,207 @@ impl MixSources for FakeMix {
     }
     fn similar_artists<'a>(
         &'a self,
+        _user_id: &'a str,
         _mbid: &'a str,
         _limit: usize,
     ) -> BoxFuture<'a, Result<Vec<SimilarArtist>, String>> {
         Box::pin(async { Ok(Vec::new()) })
     }
-    fn top_release_groups<'a>(
-        &'a self,
-        _mbid: &'a str,
-        _count: usize,
-    ) -> BoxFuture<'a, Result<Vec<TopReleaseGroup>, String>> {
-        Box::pin(async { Ok(Vec::new()) })
-    }
     fn top_recording<'a>(
         &'a self,
+        _user_id: &'a str,
         _mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<TopRecording>, String>> {
         Box::pin(async { Ok(None) })
     }
+}
+
+/// Radiohead, Karma Police and OK Computer: the artist, recording and
+/// album the recorded ListenBrainz answers are for.
+const RADIOHEAD: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+const KARMA_POLICE: &str = "9e2ad5bc-c6f9-40d2-a36f-3122ee2072a3";
+const OK_COMPUTER: &str = "b1392450-e666-3926-a536-22c65f834433";
+/// The two artists the recorded LB Radio answer finds like Radiohead, each
+/// with a top song of its own, the album ListenBrainz places it on and that
+/// album's name.
+const SIMILAR_TOPS: [(&str, &str, &str, &str); 2] = [
+    (
+        "ada7a83c-e3e1-40f1-93f9-3e73dbc9298a",
+        "5e1a0000-0000-4000-8000-00000000000a",
+        "a1b00000-0000-4000-8000-00000000000a",
+        "Album A",
+    ),
+    (
+        "f181961b-20f7-459e-89de-920ef03c7ed0",
+        "5e1a0000-0000-4000-8000-00000000000b",
+        "a1b00000-0000-4000-8000-00000000000b",
+        "Album B",
+    ),
+];
+
+/// A linked person's Weekly Mix is topped up with the top song of each
+/// artist similar to the ones in it, on the album ListenBrainz places that
+/// song on, and no song twice. ListenBrainz gives an artist's top songs only
+/// to a linked account, so those reads and the album lookup carry the
+/// person's own token; an artist's top albums are never asked for. An
+/// unlinked person gets no mix and nothing is sent.
+#[tokio::test]
+async fn a_weekly_mix_tops_up_with_the_persons_own_link() {
+    use droppedneedle_providers::listenbrainz::DEFAULT_BASE_URL;
+    use droppedneedle_providers::test_support::{Scripted, ScriptedWire};
+
+    let (state, db, _) = setup().await;
+    let lb = |path: &str| format!("{DEFAULT_BASE_URL}/1/{path}");
+    let wire = Arc::new(ScriptedWire::new());
+    // The recording account has no recommended playlist, so these two
+    // answers are written to the models' shape.
+    let playlists = json!({"playlists": [{"playlist": {
+        "identifier": "https://listenbrainz.org/playlist/jams",
+        "extension": {"https://musicbrainz.org/doc/jspf#playlist": {"additional_metadata":
+            {"algorithm_metadata": {"source_patch": "weekly-jams"}}}}}}]});
+    let jams = json!({"playlist": {"title": "Weekly Jams", "track": [{
+        "title": "Karma Police", "creator": "Radiohead", "album": "OK Computer",
+        "identifier": [format!("https://musicbrainz.org/recording/{KARMA_POLICE}")],
+        "extension": {"https://musicbrainz.org/doc/jspf#track": {"additional_metadata":
+            {"artists": [{"artist_mbid": RADIOHEAD}]}}}}]}});
+    wire.answer(
+        &lb("user/ada-lb/playlists/recommendations"),
+        200,
+        &[],
+        playlists.to_string(),
+    );
+    wire.answer(&lb("playlist/jams"), 200, &[], jams.to_string());
+    // The recorded album lookup for Karma Police, with the similar artists'
+    // songs added in its shape.
+    let mut lookup: Value = serde_json::from_str(include_str!(
+        "../fixtures/listenbrainz/recording_metadata_post.json"
+    ))
+    .unwrap();
+    for (_, song, album, _) in SIMILAR_TOPS {
+        let mut entry = lookup[KARMA_POLICE].clone();
+        entry["release"]["release_group_mbid"] = json!(album);
+        lookup[song] = entry;
+    }
+    wire.on(
+        droppedneedle_providers::executor::Method::Post,
+        &lb("metadata/recording/"),
+        Scripted::Answer {
+            status: 200,
+            headers: Vec::new(),
+            body: lookup.to_string().into_bytes(),
+        },
+    );
+    let radio = include_str!("../fixtures/listenbrainz/lb_radio_artist.json");
+    wire.answer(
+        &lb(&format!("lb-radio/artist/{RADIOHEAD}")),
+        200,
+        &[],
+        radio,
+    );
+    for (artist, song, _, release) in SIMILAR_TOPS {
+        let top = json!([{"recording_name": format!("Song on {release}"),
+            "artist_name": "Someone", "total_listen_count": 900, "recording_mbid": song,
+            "release_name": release}]);
+        wire.answer(
+            &lb(&format!("popularity/top-recordings-for-artist/{artist}")),
+            200,
+            &[],
+            top.to_string(),
+        );
+        // ListenBrainz would answer the artist's top albums too; the mix
+        // never asks for them.
+        wire.answer(
+            &lb(&format!(
+                "popularity/top-release-groups-for-artist/{artist}"
+            )),
+            200,
+            &[],
+            include_str!("../fixtures/listenbrainz/top_release_groups_radiohead.json"),
+        );
+    }
+    let providers = droppedneedle_providers::Providers::unpaced_at(
+        wire.clone(),
+        droppedneedle_providers::ProviderEndpoints {
+            listenbrainz: DEFAULT_BASE_URL.to_owned(),
+            ..droppedneedle_providers::ProviderEndpoints::closed()
+        },
+    );
+    let listening = ListeningStore::new(
+        db.db().clone(),
+        Arc::new(droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]).unwrap()),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+    listening
+        .save_listenbrainz("u-ada", "ada-lb", "ada-token")
+        .await
+        .expect("link");
+    let dir = db.path().parent().expect("scratch dir").join("lb-settings");
+    let settings = droppedneedle_acquire::test_support::scratch_settings(&dir).expect("settings");
+    let playlists = PlaylistStore::new(CollectionsDb::new(db.db().clone(), db.clock().clone()));
+    let builder = droppedneedle_acquire::requests::mix_sources::live_builder(
+        &state,
+        &providers,
+        listening,
+        playlists.clone(),
+        EventHub::new(),
+        settings.live(),
+    );
+
+    let built = builder.build_for_user("u-ada", true).await.unwrap();
+    assert_eq!(built.skipped, None);
+    let entries = playlists
+        .owned_by("u-ada")
+        .tracks(&built.playlist_id.expect("mix playlist"))
+        .await
+        .unwrap();
+    let mut placed: Vec<(Option<String>, Option<String>, String)> = entries
+        .into_iter()
+        .map(|entry| (entry.track_source_id, entry.album_id, entry.album_name))
+        .collect();
+    placed.sort();
+    let mut expected = vec![(
+        Some(KARMA_POLICE.to_owned()),
+        Some(OK_COMPUTER.to_owned()),
+        "OK Computer".to_owned(),
+    )];
+    for (_, song, album, release) in SIMILAR_TOPS {
+        expected.push((
+            Some(song.to_owned()),
+            Some(album.to_owned()),
+            release.to_owned(),
+        ));
+    }
+    expected.sort();
+    assert_eq!(
+        placed, expected,
+        "each song once, on the album its own lookup names"
+    );
+
+    let sent = wire.sent();
+    let asked = |path: &str| {
+        sent.iter()
+            .filter(|sent| sent.url.path().contains(path))
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        asked("top-release-groups-for-artist").is_empty(),
+        "an artist's top albums are never asked for"
+    );
+    for read in ["top-recordings-for-artist", "metadata/recording"] {
+        assert!(!asked(read).is_empty(), "{read} was asked");
+        for sent in asked(read) {
+            let token = sent
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                .map(|(_, value)| value.as_str());
+            assert_eq!(token, Some("Token ada-token"), "{}", sent.url);
+        }
+    }
+
+    let unlinked = builder.build_for_user("u-bob", true).await.unwrap();
+    assert_eq!(unlinked.skipped, Some(SkipReason::NotLinked));
+    assert_eq!(wire.sent().len(), sent.len(), "nothing was sent for Bob");
 }
 
 // History pages; a user hides a row from their own view while an admin
