@@ -42,7 +42,7 @@ Everything user-editable lives in the web UI and is stored in the database, so a
 | `CACHE_DIR` | `/app/cache` | Database, backups, served web UI, caches |
 | `COVER_CACHE_MAX_SIZE_MB` | `500` | Size cap for downloaded and extracted cover art under `CACHE_DIR/covers`; the least recently shown covers go first |
 | `LIBRARY_DB_PATH` | `/app/cache/library.db` | The database file; backups go in `backups/` and Undo's saved copies in `undo/` next to it. `droppedneedle-tool restore` writes a backup back under this file name |
-| `CONFIG_DIR` | `/app/config` | Holds `data_enc.key`, the key that seals stored secrets. Replaces `CONFIG_FILE_PATH`, which now stops the start: set `CONFIG_DIR` to that file's folder |
+| `CONFIG_DIR` | `/app/config` | Holds `data_enc.key`, the key that seals stored secrets. `CONFIG_FILE_PATH` is no longer read and stops the start: remove it, and if it named a `config.json` outside `ROOT_APP_DIR/config`, move that file there first, beside v2's `.env` |
 | `DROPPEDNEEDLE_STATIC_DIR` | `/app/static` | The web UI build shipped in the image |
 | `TMPDIR` | `/tmp` | Folder for plugin stream spools, up to 2 GB at once |
 
@@ -60,10 +60,10 @@ Behind a reverse proxy, list the proxy in `TRUSTED_PROXY_IPS` and have it pass `
 
 | Data | Container path | Notes |
 |-|-|-|
-| Settings and encryption key | `/app/config` | Persist it |
+| Encryption key (`data_enc.key`) | `/app/config` | Persist it, and keep it with your backups. Settings are in the database, under `/app/cache` |
 | Database, backups, cover art and metadata cache | `/app/cache` | Persist it. The `undo` folder beside `library.db` holds the tags, pictures and files Undo and "Restore original state" put back; backups copy it into `backups/undo`, so keep the whole `backups` folder. Provider answers (MusicBrainz, Last.fm and the like) live in `metadata-cache.db`, which survives a restart, is not in the backups, and can be deleted safely while the server is stopped |
 | Plugins | `/app/plugins` | Persist it or installs vanish on recreate |
-| Download and drop-import staging | `/app/imports` | Optional; without it, staged downloads, large uploads and unmatched files live on the container layer |
+| Drop-import uploads | `/app/imports` | Persist it. Uploads wait here until they are matched; without it they live on the container layer and vanish on recreate |
 | Media | `/data` | Shared parent for library (`/data/music`) and client completions |
 
 Backups are covered in [Backups and restore](backups-and-restore.md).
@@ -72,11 +72,11 @@ Backups are covered in [Backups and restore](backups-and-restore.md).
 
 Keep `UMASK=027` for a private box. Use `002` when DroppedNeedle and another trusted service in the same group both write the same media. Skip `000`: it makes new files writable by every local account the filesystem allows. `UMASK` shapes new files only; a move can keep the source mode the download client set.
 
-Unraid commonly uses `nobody:users` (PUID 99, PGID 100). Point PUID and PGID at whoever owns the mounted config and cache paths. After a PUID change, back to 1000 included, the next start hands the files the old id owns in `/app/config`, `/app/cache`, `/app/plugins` and `/app/imports` to the new one. The container skips ownership changes it cannot make, which covers FUSE, NFS, CIFS, and rootless setups. A read-only config or cache mount refuses to start before anything gets written.
+Unraid commonly uses `nobody:users` (PUID 99, PGID 100). Point PUID and PGID at whoever owns the mounted config and cache paths. After a PUID change, back to 1000 included, the next start hands the files the old id owns in `/app/config`, `/app/cache`, `/app/plugins` and `/app/imports` to the new one. The container skips ownership changes it cannot make, which covers FUSE, NFS, CIFS, and rootless setups. A read-only config or cache mount refuses to start before anything gets written. On every start the container also makes `/app/plugins` and `/app/imports` writable by PUID and PGID, mounted or not, so a folder Docker created owned by root works. One it cannot make writable only logs a warning, and a link or a file at either path is left as it is.
 
 `/app/config` and `/app/cache` must be writable and honor SQLite locking, `fsync`, and atomic replacement. Plain bind mounts, named volumes, Unraid pool or disk paths, and TrueNAS datasets with normal permissions all qualify. The database (`/app/cache/library.db` unless `LIBRARY_DB_PATH` moves it) must be on a local filesystem: DroppedNeedle refuses to start with it on NFS, SMB/CIFS or a FUSE mount, whatever locking the mount offers, or behind a symlink.
 
-On Unraid, keep `/app/cache` on a pool path such as `/mnt/cache/appdata/droppedneedle/cache`, as the template does: a `/mnt/user` share is a FUSE mount unless it is set to exclusive access. An exclusive share works too. If `LIBRARY_DB_PATH` puts the database on a local disk while `/app/cache` is on a network or FUSE mount, or is a symlink, `metadata-cache.db` is kept beside the database instead; if that place is refused too, provider answers are fetched each time and the server log says the provider cache is off. On Docker Desktop for Windows, prefer named volumes for those two paths.
+On Unraid, keep `/app/cache` on a pool path such as `/mnt/cache/appdata/droppedneedle/cache`, as the template does: a `/mnt/user` share is a FUSE mount unless it is set to exclusive access. An exclusive share works too. With no pool, use an array disk path such as `/mnt/disk1/appdata/droppedneedle/cache`: a pool name that does not exist puts the database in memory, and it is gone at the next reboot. If `LIBRARY_DB_PATH` puts the database on a local disk while `/app/cache` is on a network or FUSE mount, or is a symlink, `metadata-cache.db` is kept beside the database instead; if that place is refused too, provider answers are fetched each time and the server log says the provider cache is off. On Docker Desktop for Windows, prefer named volumes for those two paths.
 
 For the media mount, one shared parent (`/data`) with the library and the download client's completions under it keeps imports fast; see [Download clients](download-clients.md#slskd).
 
@@ -101,7 +101,7 @@ services:
 | Download clients (slskd, SABnzbd), source priority, quality tiers, picking a copy, wanted watcher, Usenet retention days | Settings > Download Client |
 | Newznab indexers or Prowlarr | Settings > Indexers / Prowlarr |
 | Edition preferences, managing unconfirmed matches | Settings > Editions |
-| Lidarr import | Settings > Lidarr Import |
+| Lidarr import ([below](#lidarr-import)) | Settings > Lidarr Import |
 | Subsonic and Jellyfin APIs, app passwords, transcoding, apps that sign in through the browser | Settings > Connect Apps |
 | Jellyfin | Settings > Jellyfin |
 | Navidrome | Settings > Navidrome |
@@ -125,7 +125,7 @@ services:
 | Password breach checking, HSTS, the content-security policy, single sign-on (OIDC), who can download library files | Settings > Security |
 | Plugins | Settings > Plugins |
 | Library images, cache counts and clearing | Settings > Cache |
-| Wrapped API | Settings > Wrapped API |
+| Wrapped API key ([Wrapped API](accounts-and-sign-in.md#wrapped-api)) | Settings > Wrapped API |
 | Outbound provider calls, rate limits and background jobs | Settings > Diagnostics |
 | Discover queue and top picks tuning | Settings > Advanced |
 | AudioDB images: on or off, key, name search fallback, direct remote images, preferring local cover art | Settings > Advanced |
@@ -133,6 +133,15 @@ services:
 | App version, update check and release notes | Settings > About |
 | Theme and your own CSS (kept on your account) | Profile > Appearance |
 | Site CSS for every signed-in page, and whether people may add their own (admin) | Settings > Appearance |
+
+### Lidarr import
+
+Settings > Lidarr Import (admin) adds the artists your Lidarr monitors to your follows, so their new releases reach you as they would for any [followed artist](downloads.md#following-artists).
+
+1. Enter your Lidarr address and its API key (in Lidarr under Settings > General > Security), Test, then save.
+2. Under Artist sync, every artist Lidarr monitors is listed, except any without a valid MusicBrainz id. Those you already follow are marked Following; the rest are ticked. Untick any you don't want and press Import.
+
+When Lidarr monitors every new album of an artist, the list marks it Auto-download, and the new follow gets auto-download turned on. An artist you already follow keeps its own auto-download setting. The follows go to the admin who runs the import. DroppedNeedle only reads Lidarr's status and artist list and changes nothing in Lidarr. It does not sync by itself: open the tab again and import to pick up artists added to Lidarr since.
 
 ### Custom CSS
 

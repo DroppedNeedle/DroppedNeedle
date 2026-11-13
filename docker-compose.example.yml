@@ -33,8 +33,8 @@ services:
       # library root as /data/music.
       # Avoid nested binds beneath /data: they create new mount boundaries even on one disk.
       - /path/to/media:/data:rw
-      # OPTIONAL download and drop-import staging. Put its host path beneath /path/to/media and
-      # map it to /app/imports if staged downloads and uploads awaiting a match must survive recreation.
+      # OPTIONAL drop-import staging. Put its host path beneath /path/to/media and
+      # map it to /app/imports if uploads awaiting a match must survive recreation.
       - /path/to/media/imports:/app/imports
       # OPTIONAL (Usenet): point the SABnzbd Downloads mount setting at
       # /data/sabnzbd/complete so it also uses this common media mount.

@@ -34,10 +34,9 @@ Apps that use OpenSubsonic API keys can send the app password as the key instead
 
 | App | Server type to pick | Notes |
 |-|-|-|
-| Symfonium | OpenSubsonic, or Jellyfin | Either works; pick one per server you add |
+| Symfonium | OpenSubsonic | Its Jellyfin mode is not tested with DroppedNeedle |
 | Finamp | Jellyfin | Transcoded playback uses HLS, which needs transcoding on under Settings > Connect Apps |
 | Feishin | Subsonic or OpenSubsonic | |
-| Amperfy | Subsonic | |
 | Arpeggi | Subsonic | |
 | Jellify | Jellyfin | |
 | Manet | Jellyfin | |

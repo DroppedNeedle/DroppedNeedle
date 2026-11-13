@@ -35,7 +35,28 @@ docker compose run --rm droppedneedle droppedneedle-tool recovery-code USERNAME
 docker compose up -d droppedneedle
 ```
 
-`droppedneedle` is the service name in your compose file; use yours if it differs. The code works once, for 15 minutes: open "Forgot password?" on the sign-in page and enter the username, the code and a new password. `USERNAME` is the DroppedNeedle username, which can differ from the name the account has with an OIDC provider; `droppedneedle-tool recovery-code --list-admins` prints the admin usernames.
+`droppedneedle` is the service name in your compose file; use yours if it differs.
+
+Without Compose (Unraid, Portainer, Synology, where `docker` needs `sudo` over SSH), stop the container and run the command with `docker run`:
+
+```bash
+docker stop droppedneedle
+docker run --rm -e PUID=1000 -e PGID=1000 \
+  -v /path/to/config:/app/config -v /path/to/cache:/app/cache \
+  droppedneedle/droppedneedle:TAG droppedneedle-tool recovery-code USERNAME
+docker start droppedneedle
+```
+
+Use the server's own values:
+
+- Its PUID and PGID (99 and 100 on Unraid), so the files keep their owner.
+- The host folders it mounts at `/app/config` and `/app/cache` (on Unraid, the template's Config and Data paths).
+- Any `ROOT_APP_DIR`, `CONFIG_DIR`, `CACHE_DIR` or `LIBRARY_DB_PATH` it sets, each as `-e NAME=value`. A `LIBRARY_DB_PATH` outside `/app/cache` needs its own `-v` as well.
+- The image it runs, in place of `droppedneedle/droppedneedle:TAG`: `docker inspect -f '{{.Config.Image}}' droppedneedle` prints it. If you pulled a newer one since and the container has not been recreated, use the id `docker inspect -f '{{.Image}}' droppedneedle` prints instead. A newer image may upgrade the database, and the server then refuses to start on it.
+
+`droppedneedle` is the container's name; use yours if it differs.
+
+The code works once, for 15 minutes: open "Forgot password?" on the sign-in page and enter the username, the code and a new password. `USERNAME` is the DroppedNeedle username, which can differ from the name the account has with an OIDC provider; `droppedneedle-tool recovery-code --list-admins` prints the admin usernames.
 
 An account that only signs in through OIDC, Plex or Jellyfin has no password yet. The command says so, and the code then gives the account its first password; its other sign-in stays linked. Only the host command can do that: a code made by an admin under Settings > Users is for accounts that already have a password. It is still simpler to keep one admin with a username and password.
 
@@ -74,3 +95,19 @@ Either way the user's own media account is linked for playback, so plays count f
 ## Scripts and the API
 
 The OpenAPI document is served at `/openapi.json` on your instance. Apart from sign-in, setup and the OAuth callbacks, every `/api/v3/*` route takes a Bearer token or the session cookie; the Wrapped API takes its own key. Everything under `/api/v3/settings/*` needs Admin, except reading the Connect Apps settings, and `/health` stays public for the container check.
+
+### Wrapped API
+
+The Wrapped API lets an outside service, such as a newsletterr instance, read your users' year in review. An admin sets it up under Settings > Wrapped API: press "Generate new key", save, and paste the same key into the other service. While no key is saved, every Wrapped request is refused.
+
+The service sends the key in an `X-Wrapped-API-Key` header and needs no account. It can read:
+
+| Route | What it answers |
+|-|-|
+| `GET /api/v3/wrapped/users` | Every user's id and display name, their email address when one is set, and whether they linked ListenBrainz |
+| `GET /api/v3/wrapped/user/{user_id}` | One user's year so far: their top 10 artists, songs, albums and genres, how many songs they loved (counted up to 100) and an estimate of their listens |
+| `GET /api/v3/wrapped/server` | A leaderboard of those estimates for every user with data, and ListenBrainz's top artist and album across all its listeners this year |
+
+The numbers come from each user's own ListenBrainz account, linked under Profile > Scrobbling & Discovery. A user with no ListenBrainz link, or an id that matches no user, gets an empty answer (`has_data` false), not an error, and so does everyone while "ListenBrainz recommendations" is off under Settings > ListenBrainz. The listen estimate adds up the top artists only, not every play.
+
+Anyone with the key can read every user's name and email address, so keep it like a password. Generating and saving a new key shuts the old one out at once.

@@ -32,6 +32,8 @@ Backups leave out `metadata-cache.db` on purpose: it holds only provider answers
    docker compose stop droppedneedle
    ```
 
+   Without Compose, `docker stop droppedneedle`.
+
 2. Restore the backup into an empty folder:
 
    ```bash
@@ -40,7 +42,32 @@ Backups leave out `metadata-cache.db` on purpose: it holds only provider answers
 
    `restore` checks the backup first and never replaces a file. It puts the undo copies the backup names back beside the restored database.
 
-3. Point `LIBRARY_DB_PATH` at the restored database, or move it into place.
+   Without Compose (Unraid, Portainer, Synology, where `docker` needs `sudo` over SSH), run it with `docker run` instead:
+
+   ```bash
+   docker run --rm -e PUID=1000 -e PGID=1000 \
+     -v /path/to/config:/app/config -v /path/to/cache:/app/cache \
+     droppedneedle/droppedneedle:TAG \
+     droppedneedle-tool restore --backup /app/cache/backups/BACKUP.db --target-dir /app/cache/restored
+   ```
+
+   Use the server's own values:
+
+   - Its PUID and PGID (99 and 100 on Unraid), so the files keep their owner.
+   - The host folders it mounts at `/app/config` and `/app/cache` (on Unraid, the template's Config and Data paths).
+   - Any `ROOT_APP_DIR`, `CONFIG_DIR`, `CACHE_DIR` or `LIBRARY_DB_PATH` it sets, each as `-e NAME=value`. A `LIBRARY_DB_PATH` outside `/app/cache` needs its own `-v` as well.
+   - The image it runs, in place of `droppedneedle/droppedneedle:TAG`: `docker inspect -f '{{.Config.Image}}' droppedneedle` prints it. If you pulled a newer one since and the container has not been recreated, use the id `docker inspect -f '{{.Image}}' droppedneedle` prints instead.
+
+3. Point `LIBRARY_DB_PATH` at the restored database (`/app/cache/restored/library.db`), or move it into place. To move it, run this on the host, in the folder the server mounts at `/app/cache`:
+
+   ```bash
+   cd /path/to/cache
+   rm -f library.db-wal library.db-shm
+   mv restored/library.db library.db
+   cp -an restored/undo/. undo/
+   ```
+
+   The `-wal` and `-shm` files belong to the old database, so they go first. `cp -an` keeps each undo copy's owner and mode and skips files already there. These names assume the default `LIBRARY_DB_PATH`.
 
 4. Check that `config/data_enc.key` is the key saved with this backup.
 
@@ -50,7 +77,9 @@ Backups leave out `metadata-cache.db` on purpose: it holds only provider answers
    docker compose up -d droppedneedle
    ```
 
-`droppedneedle` is the service name in your compose file; use yours if it differs.
+   Without Compose, `docker start droppedneedle`.
+
+`droppedneedle` is the service name in your compose file, or the container's name; use yours if it differs.
 
 ## Going back after a failed update
 
@@ -58,8 +87,8 @@ If an update goes wrong, you can put the backup made before it back by hand and 
 
 1. Stop the container.
 2. Delete `library.db-wal` and `library.db-shm` in `/app/cache` if they exist.
-3. Put the backup from `/app/cache/backups` in place of `/app/cache/library.db`.
-4. Copy everything in `/app/cache/backups/undo` into `/app/cache/undo`. Files there are named by their content, so a plain copy that skips existing files is safe.
+3. Put the backup from `/app/cache/backups` in place of `/app/cache/library.db`, keeping its owner and mode: on the host, `cp -a /path/to/cache/backups/BACKUP.db /path/to/cache/library.db`.
+4. Copy everything in `/app/cache/backups/undo` into `/app/cache/undo`, keeping each file's owner and mode and skipping files already there: on the host, `cp -an /path/to/cache/backups/undo/. /path/to/cache/undo/`. Files there are named by their content, so skipping existing ones is safe.
 5. Change the image tag back to the previous version and start the container.
 
 `droppedneedle-tool restore` does steps 3 and 4 for you, into an empty folder (see [Restoring a backup](#restoring-a-backup)).
@@ -78,6 +107,26 @@ The restore also refuses a target folder on a network filesystem, as the server 
 
 Put `config/data_enc.key` back beside a restored database. Without it, DroppedNeedle refuses to start on that database, and changes nothing, rather than lose the stored secrets. The database remembers which key it belongs to, so a key file from another instance or another backup is refused as well.
 
-If that key is lost for good, stop the server and run `droppedneedle-tool reset-key --yes`. It gives the instance a new key and clears every stored password and API key: the secrets in Settings, every app password, and every user's link to Plex, Jellyfin, Navidrome, Spotify, ListenBrainz and Last.fm. It prints the settings it cleared so you know what to enter again.
+If that key is lost for good, stop the server and run `droppedneedle-tool reset-key --yes`:
+
+```bash
+docker compose stop droppedneedle
+docker compose run --rm droppedneedle droppedneedle-tool reset-key --yes
+docker compose up -d droppedneedle
+```
+
+Without Compose (on Synology, with `sudo` over SSH):
+
+```bash
+docker stop droppedneedle
+docker run --rm -e PUID=1000 -e PGID=1000 \
+  -v /path/to/config:/app/config -v /path/to/cache:/app/cache \
+  droppedneedle/droppedneedle:TAG droppedneedle-tool reset-key --yes
+docker start droppedneedle
+```
+
+Use the server's own PUID, PGID, folders and variables, as in [Restoring a backup](#restoring-a-backup), and the image it runs in place of `droppedneedle/droppedneedle:TAG` (`docker inspect -f '{{.Config.Image}}' droppedneedle` prints it; after a pull the container was not recreated for, use the id `docker inspect -f '{{.Image}}' droppedneedle` prints). A newer image may upgrade the database, and the server then refuses to start on it.
+
+It gives the instance a new key and clears every stored password and API key: the secrets in Settings, every app password, and every user's link to Plex, Jellyfin, Navidrome, Spotify, ListenBrainz and Last.fm. It prints the settings it cleared so you know what to enter again.
 
 It replaces a lost key and does not change the Jellyfin ids of what you already have: stored album and artist ids survive the reset, so Finamp and Jellify keep their pins and downloads, and only items added afterwards get ids under the new key. Whoever holds the old key can still work out the picture ids of albums and artists stored before the reset. Subsonic picture, corrections and transcode links made before the reset stop opening. The replaced key is kept as `config/data_enc.key.old` (or `.old.1`, `.old.2` when that name is taken). The command refuses, changing nothing, while the key file still belongs to the database. If `reset-key` is stopped partway, run `reset-key --yes` again to finish it.

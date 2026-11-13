@@ -91,6 +91,7 @@ services:
       - ./config:/app/config
       - ./cache:/app/cache
       - ./plugins:/app/plugins  # omit and installed plugins vanish on recreate
+      - ./imports:/app/imports  # uploads waiting for a match; omit and they vanish on recreate
       # One shared parent mount keeps the library and completed downloads on one
       # boundary so imports move fast. Do not nest extra binds under /data.
       - /path/to/media:/data:rw
@@ -127,7 +128,7 @@ Follow [Upgrading from v2](docs/upgrading-from-v2.md), and read [What changed in
 
 ## Works with your apps
 
-- **Music apps.** DroppedNeedle answers the OpenSubsonic and Jellyfin APIs, so Symfonium, Finamp, Feishin, Amperfy, Arpeggi, Jellify and Manet can play your library. [Connect your music app](docs/connect-your-app.md) says what to enter.
+- **Music apps.** DroppedNeedle answers the OpenSubsonic and Jellyfin APIs, so Subsonic apps (Symfonium, Feishin, Arpeggi) and Jellyfin apps (Finamp, Jellify, Manet) can play your library. [Connect your music app](docs/connect-your-app.md) says what to enter.
 - **Media servers.** It plays from Jellyfin, Navidrome, Plex or local files, and reports plays back to your own account there.
 - **Scrobbling.** ListenBrainz and Last.fm, per user.
 - **Sign-in.** Single sign-on through any OpenID Connect provider, and sign-in with Plex or Jellyfin: see [Accounts and sign-in](docs/accounts-and-sign-in.md).
@@ -166,3 +167,5 @@ If DroppedNeedle earns its keep, fuel it. Monthly or one-off, both welcome.
 DroppedNeedle is [AGPL-3.0](LICENSE). Copyright (c) 2025 DroppedNeedle and contributors. For commercial licensing, write to contact@droppedneedle.com.
 
 The Docker image bundles [FFmpeg](https://ffmpeg.org) under the LGPL, built with libmp3lame and libopus, to transcode FLAC, MP3, Ogg Vorbis, Opus, AAC, ALAC and WAV. Its license files, configure line and source are in `/usr/share/doc/ffmpeg/` inside the image, and libmp3lame's Debian source is in `/usr/share/doc/ffmpeg/lame/`.
+
+The licenses of the Rust crates and web UI packages DroppedNeedle is built from are in `/usr/share/doc/droppedneedle/` inside the image (`NOTICES-server.txt` and `NOTICES-web-ui.txt`), beside DroppedNeedle's own `LICENSE`.
