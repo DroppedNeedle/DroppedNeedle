@@ -60,9 +60,9 @@ struct Built {
 pub struct LiveClients {
     /// The shared client, for SABnzbd.
     http: reqwest::Client,
-    /// The factory's client that follows no redirect, for an NZB fetched
-    /// straight from a Prowlarr or plugin release's link, which checks
-    /// each hop itself.
+    /// The factory's client that follows no redirect, for SABnzbd's client
+    /// to fetch an NZB straight from a Prowlarr or plugin release's link,
+    /// which checks each hop itself.
     no_redirect: reqwest::Client,
     /// The factory's client that follows a redirect only on the same host,
     /// for slskd and Prowlarr: their key rides in a header a redirect
@@ -191,7 +191,7 @@ impl LiveClients {
             &self.slskd_downloads,
             slskd_policy,
         );
-        let sab_queue = sabnzbd_queue(http, &settings.sabnzbd, &usenet_policy);
+        let sab_queue = sabnzbd_queue(http, &self.no_redirect, &settings.sabnzbd, &usenet_policy);
         let newznab = Arc::new(newznab_indexer(&self.newznab, &settings.indexers));
         let prowlarr = Arc::new(prowlarr_indexer(&self.same_host, &settings.prowlarr));
         let mut sources: Vec<Arc<dyn DownloadSource>> = Vec::new();
@@ -216,7 +216,6 @@ impl LiveClients {
                 self.journal.clone(),
                 Some(settings.sabnzbd.sabnzbd.category.clone()),
                 self.targets.clone(),
-                self.no_redirect.clone(),
             )));
         }
         let probe_inputs = Arc::new(ProbeInputs {
@@ -266,9 +265,11 @@ fn slskd_repository(
     Some(Arc::new(repo))
 }
 
-/// SABnzbd queue, when the section configures one.
+/// SABnzbd queue, when the section configures one. Its API goes through
+/// `http`, and an NZB fetched from its link through `no_redirect`.
 fn sabnzbd_queue(
     http: &reqwest::Client,
+    no_redirect: &reqwest::Client,
     section: &DownloadClients,
     policy: &UsenetPolicy,
 ) -> Option<Arc<SabnzbdQueue>> {
@@ -278,6 +279,7 @@ fn sabnzbd_queue(
     }
     let client = SabnzbdClient::new(
         http.clone(),
+        no_redirect.clone(),
         &sab.url,
         sab.api_key.expose(),
         3,

@@ -208,21 +208,6 @@ const LATE_ALLOWED: &[(&str, &str, &str)] = &[
         "runs one call, retrying 429s; the closure is that call, not a builder",
     ),
     (
-        "acquire/src/usenet/sabnzbd.rs",
-        "grab",
-        "the release's own indexer, there only for a release found through one",
-    ),
-    (
-        "acquire/src/usenet/sabnzbd.rs",
-        "grab",
-        "the same indexer for a track, passed on to enqueue",
-    ),
-    (
-        "acquire/src/usenet/sabnzbd.rs",
-        "grab",
-        "the same indexer, which enqueue fetches the NZB through",
-    ),
-    (
         "auth/src/session/stated.rs",
         "config",
         "no address list in upgrade mode, which runs before the settings are open",

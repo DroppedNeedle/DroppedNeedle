@@ -104,6 +104,7 @@ impl SettingsSetup {
         Arc::new(LiveProbes::new(
             platform.http.shared().clone(),
             platform.http.same_host_redirects().clone(),
+            platform.http.no_redirect().clone(),
             providers,
             droppedneedle_auth::federated::settings::InstallIds::new(platform.settings.clone()),
         ))

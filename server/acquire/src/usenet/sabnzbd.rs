@@ -106,10 +106,9 @@ pub enum NzbGrab<'a> {
     /// Through the release's indexer client, which paces the grab and
     /// counts it against the indexer's grab cap.
     Indexer(&'a NewznabClient),
-    /// From the link itself (a Prowlarr or plugin release) through this
-    /// client, which follows no redirect: [`SabnzbdClient::fetch_nzb`]
-    /// checks each hop.
-    Direct(&'a Client),
+    /// From the link itself (a Prowlarr or plugin release), through
+    /// [`SabnzbdClient::fetch_nzb`].
+    Direct,
 }
 
 /// NZB fetch failure, classified so the enqueue path can decide: only a
@@ -423,12 +422,16 @@ fn looks_like_key(segment: &[u8]) -> bool {
 // Raw client.
 // ---------------------------------------------------------------------------
 
-/// Raw SABnzbd API wrapper. The HTTP client is injected; the
+/// Raw SABnzbd API wrapper. The HTTP clients are injected; the
 /// full `apikey` is required (the add-only `nzbkey` can't do
 /// queue/history/delete) and is never logged. Debug is hand-written: the
 /// key never appears in debug output.
 pub struct SabnzbdClient {
+    /// The shared client, for SABnzbd's API.
     http: Client,
+    /// The factory's client that follows no redirect, for an NZB fetched
+    /// straight from its link: [`Self::fetch_nzb`] checks each hop.
+    nzb_http: Client,
     base_url: String,
     api_key: String,
     max_attempts: u32,
@@ -447,10 +450,12 @@ impl std::fmt::Debug for SabnzbdClient {
 }
 
 impl SabnzbdClient {
-    /// Build over an injected client. `base_url` is the SABnzbd origin
-    /// (`/api` is appended per call).
+    /// Build over the injected clients: `http` for the API and `nzb_http`,
+    /// which follows no redirect, for NZB links. `base_url` is the SABnzbd
+    /// origin (`/api` is appended per call).
     pub fn new(
         http: Client,
+        nzb_http: Client,
         base_url: &str,
         api_key: &str,
         max_attempts: u32,
@@ -458,6 +463,7 @@ impl SabnzbdClient {
     ) -> Self {
         SabnzbdClient {
             http,
+            nzb_http,
             base_url: base_url.trim_end_matches('/').to_owned(),
             api_key: api_key.to_owned(),
             max_attempts: max_attempts.max(1),
@@ -649,22 +655,17 @@ impl SabnzbdClient {
     }
 
     /// GET the release's NZB URL (the enclosure, apikey already embedded)
-    /// through `http`, a client that follows no redirect, and validate the
+    /// through the client that follows no redirect, and validate the
     /// bytes are a real NZB, not an indexer error page. Redirects are
     /// followed here under the hop rules an indexer's grab follows; one
     /// they refuse ends the fetch, logged, as a definitive answer.
-    pub async fn fetch_nzb(
-        &self,
-        http: &Client,
-        url: &str,
-        timeout: Duration,
-    ) -> Result<Vec<u8>, NzbFetchError> {
+    pub async fn fetch_nzb(&self, url: &str, timeout: Duration) -> Result<Vec<u8>, NzbFetchError> {
         let mut link = reqwest::Url::parse(url)
             .map_err(|_| NzbFetchError::Transport("the NZB link is not an address".to_owned()))?;
         let mut hops = 0;
         let response = loop {
             let response = self
-                .get_with_retry(http, link.as_str(), &[], timeout)
+                .get_with_retry(&self.nzb_http, link.as_str(), &[], timeout)
                 .await
                 .map_err(|err| NzbFetchError::Transport(transport_error(err)))?;
             let status = response.status();
@@ -1317,9 +1318,9 @@ impl SabnzbdQueue {
         };
         let fetched = match grab {
             NzbGrab::Indexer(grab) => grab_nzb(grab, url).await,
-            NzbGrab::Direct(http) => {
+            NzbGrab::Direct => {
                 self.client
-                    .fetch_nzb(http, url, self.policy.enqueue_timeout)
+                    .fetch_nzb(url, self.policy.enqueue_timeout)
                     .await
             }
         };

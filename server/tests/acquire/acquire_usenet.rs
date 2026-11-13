@@ -47,7 +47,14 @@ fn grab_http() -> reqwest::Client {
 }
 
 fn sab_client(base: &str) -> SabnzbdClient {
-    SabnzbdClient::new(http(), base, "SABKEY", 3, Duration::from_millis(1))
+    SabnzbdClient::new(
+        http(),
+        grab_http(),
+        base,
+        "SABKEY",
+        3,
+        Duration::from_millis(1),
+    )
 }
 
 fn test_policy() -> UsenetPolicy {
@@ -128,7 +135,7 @@ async fn sab_request_wire_shape() {
         .enqueue_album(
             "t1",
             Some(&format!("{base}/nzb/good")),
-            NzbGrab::Direct(&grab_http()),
+            NzbGrab::Direct,
             Some("audio"),
             None,
             None,
@@ -179,7 +186,7 @@ async fn sab_request_wire_shape() {
         .enqueue_album(
             "t1",
             Some(&format!("{base}/nzb/good")),
-            NzbGrab::Direct(&grab_http()),
+            NzbGrab::Direct,
             Some("audio"),
             None,
             None,
@@ -211,7 +218,7 @@ async fn sab_enqueue_falls_back_only_on_transport_failure() {
         .enqueue_album(
             "t9",
             Some(&nzb_url),
-            NzbGrab::Direct(&grab_http()),
+            NzbGrab::Direct,
             Some("audio"),
             None,
             None,
@@ -247,7 +254,7 @@ async fn sab_enqueue_falls_back_only_on_transport_failure() {
         .enqueue_album(
             "t2",
             Some(&format!("{base}/nzb/errorpage")),
-            NzbGrab::Direct(&grab_http()),
+            NzbGrab::Direct,
             None,
             None,
             None,
@@ -261,7 +268,7 @@ async fn sab_enqueue_falls_back_only_on_transport_failure() {
     // The raw client marks the rejection for blocklist handling.
     let client = sab_client(&base);
     let err = client
-        .fetch_nzb(&grab_http(), &format!("{base}/nzb/errorpage"), TIMEOUT)
+        .fetch_nzb(&format!("{base}/nzb/errorpage"), TIMEOUT)
         .await
         .expect_err("rejection");
     assert!(
@@ -284,14 +291,7 @@ async fn a_direct_nzb_link_redirects_only_where_a_grab_goes() {
 
     mock.statuses().redirect_next(&format!("{base}/nzb/good"));
     queue
-        .enqueue_album(
-            "t-hop",
-            Some(&link),
-            NzbGrab::Direct(&grab_http()),
-            None,
-            None,
-            None,
-        )
+        .enqueue_album("t-hop", Some(&link), NzbGrab::Direct, None, None, None)
         .await
         .expect("a web hop is followed");
     assert_eq!(mock.state().add_file_requests.len(), 1);
@@ -302,14 +302,7 @@ async fn a_direct_nzb_link_redirects_only_where_a_grab_goes() {
     ] {
         mock.statuses().redirect_next(location);
         let err = queue
-            .enqueue_album(
-                "t-refused",
-                Some(&link),
-                NzbGrab::Direct(&grab_http()),
-                None,
-                None,
-                None,
-            )
+            .enqueue_album("t-refused", Some(&link), NzbGrab::Direct, None, None, None)
             .await
             .expect_err("the hop is refused");
         assert!(
@@ -892,14 +885,7 @@ async fn redaction_scrubs_every_key_form() {
     let queue = queue_for(&mock, &base, mount.to_path_buf());
     let nzb_url = format!("{}/getnzb/x.nzb?i=7&r=PERUSERKEY", refused_url("").await);
     let err = queue
-        .enqueue_album(
-            "t7",
-            Some(&nzb_url),
-            NzbGrab::Direct(&grab_http()),
-            None,
-            None,
-            None,
-        )
+        .enqueue_album("t7", Some(&nzb_url), NzbGrab::Direct, None, None, None)
         .await
         .expect_err("echoed");
     assert!(err.to_string().contains("r=***"), "echoed addurl: {err}");
@@ -1442,7 +1428,7 @@ async fn hostile_bodies_are_refused() {
     );
     let (base, _server) = serve_streamed(nzb.into_bytes()).await;
     let err = sab_client(&base)
-        .fetch_nzb(&grab_http(), &format!("{base}/big.nzb"), TIMEOUT)
+        .fetch_nzb(&format!("{base}/big.nzb"), TIMEOUT)
         .await
         .expect_err("too large");
     assert!(matches!(err, NzbFetchError::TooLarge), "nzb: {err:?}");
@@ -1515,7 +1501,16 @@ fn shown(error: &(impl std::fmt::Display + std::fmt::Debug)) -> String {
 async fn transport_errors_never_carry_the_url() {
     let (logs, _guard) = capture_logs();
     let base = refused_url("").await;
-    let client = || SabnzbdClient::new(http(), &base, MARKER, 1, Duration::from_millis(1));
+    let client = || {
+        SabnzbdClient::new(
+            http(),
+            grab_http(),
+            &base,
+            MARKER,
+            1,
+            Duration::from_millis(1),
+        )
+    };
 
     let err = client().queue(TIMEOUT).await.expect_err("refused");
     assert!(
@@ -1538,7 +1533,7 @@ async fn transport_errors_never_carry_the_url() {
     assert!(!shown(&err).contains(MARKER), "sabnzbd: {}", shown(&err));
 
     let err = client()
-        .fetch_nzb(&grab_http(), &enclosure, TIMEOUT)
+        .fetch_nzb(&enclosure, TIMEOUT)
         .await
         .expect_err("refused");
     assert!(
@@ -1654,6 +1649,7 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
     let queue = Arc::new(SabnzbdQueue::new(
         SabnzbdClient::new(
             reqwest::Client::new(),
+            grab_http(),
             &base,
             "SABKEY",
             3,
@@ -1675,7 +1671,6 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
         journal.clone(),
         None,
         no_targets(&journal),
-        grab_http(),
     );
     let handle = source.enqueue(task_id, 0).await.expect("re-attaches");
     assert_eq!(handle.job_name, job_name);

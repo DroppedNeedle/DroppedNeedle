@@ -234,6 +234,9 @@ pub struct LiveProbes {
     /// for slskd and Prowlarr: their key rides in a header a redirect
     /// elsewhere would carry to another address.
     pub same_host: reqwest::Client,
+    /// The factory's client that follows no redirect, which SABnzbd's
+    /// client fetches NZB links through.
+    pub no_redirect: reqwest::Client,
     /// The MusicBrainz client, over the official, BrainzMash and mirror
     /// rows.
     pub musicbrainz: MusicBrainzClient,
@@ -255,17 +258,20 @@ pub struct LiveProbes {
 
 impl LiveProbes {
     /// Build over the shared client, the client that follows a redirect
-    /// only on the same host and the providers' clients, presenting this install's stored Plex
-    /// client id from `install`, as every other Plex call does.
+    /// only on the same host, the one that follows none and the providers'
+    /// clients, presenting this install's stored Plex client id from
+    /// `install`, as every other Plex call does.
     pub fn new(
         http: reqwest::Client,
         same_host: reqwest::Client,
+        no_redirect: reqwest::Client,
         providers: &Providers,
         install: InstallIds,
     ) -> Self {
         Self {
             http,
             same_host,
+            no_redirect,
             musicbrainz: providers.musicbrainz.clone(),
             lastfm: providers.lastfm.clone(),
             youtube: providers.youtube.clone(),
@@ -693,12 +699,21 @@ impl VerifyProbes for LiveProbes {
                 poll_timeout: PROBE_TIMEOUT,
                 ..UsenetPolicy::default()
             };
-            // Two clients over the one HTTP handle: the queue owns its
-            // clone for health + diagnosis, the spare serves the picker.
-            let cats_client =
-                SabnzbdClient::new(self.http.clone(), url, key, 1, Duration::from_secs(1));
+            // Two clients over the same HTTP handles: the queue owns one
+            // for health + diagnosis, the spare serves the picker.
+            let client = || {
+                SabnzbdClient::new(
+                    self.http.clone(),
+                    self.no_redirect.clone(),
+                    url,
+                    key,
+                    1,
+                    Duration::from_secs(1),
+                )
+            };
+            let cats_client = client();
             let queue = SabnzbdQueue::new(
-                SabnzbdClient::new(self.http.clone(), url, key, 1, Duration::from_secs(1)),
+                client(),
                 url,
                 key,
                 std::path::PathBuf::from(downloads_mount),

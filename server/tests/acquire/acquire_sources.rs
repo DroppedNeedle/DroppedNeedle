@@ -203,6 +203,7 @@ async fn sabnzbd_conforms() {
     let queue = SabnzbdQueue::new(
         SabnzbdClient::new(
             reqwest::Client::new(),
+            grab_http(),
             &sab,
             "SABKEY",
             3,
@@ -234,7 +235,6 @@ async fn sabnzbd_conforms() {
         journal.clone(),
         None,
         no_targets(&journal),
-        grab_http(),
     ));
     conforms(source, SourceTag::Usenet, "t-sab", |handle| {
         // SABnzbd finishes the job into its complete folder.
@@ -287,6 +287,7 @@ async fn a_usenet_pick_grabs_through_its_indexer() {
     let queue = SabnzbdQueue::new(
         SabnzbdClient::new(
             reqwest::Client::new(),
+            grab_http(),
             &sab,
             "SABKEY",
             3,
@@ -318,7 +319,6 @@ async fn a_usenet_pick_grabs_through_its_indexer() {
         journal.clone(),
         None,
         no_targets(&journal),
-        grab_http(),
     );
     source.enqueue("t-grab", 0).await.expect("enqueues");
     assert_eq!(mock.state().add_file_requests.len(), 1);
@@ -379,6 +379,7 @@ async fn a_copy_turned_down_as_not_better_is_not_picked_again() {
     let queue = SabnzbdQueue::new(
         SabnzbdClient::new(
             reqwest::Client::new(),
+            grab_http(),
             &sab,
             "SABKEY",
             3,
@@ -455,7 +456,6 @@ async fn a_copy_turned_down_as_not_better_is_not_picked_again() {
         journal.clone(),
         None,
         no_targets(&journal),
-        grab_http(),
     );
 
     let picked = source.enqueue("t-next", 0).await.expect("enqueues");
