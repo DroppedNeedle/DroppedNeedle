@@ -1,9 +1,9 @@
 //! Subsonic wire contract through the whole app, over a library its own
 //! scanner filled: envelopes, error codes, response shapes per endpoint,
-//! cover art, binary endpoints, the transcode decision, transcoded streams
-//! and mutations. The library is the one `reference/compat/library.json`
-//! lays out. Only the transcoding app is given an ffmpeg: the committed
-//! stand-in.
+//! cover art, binary endpoints, the transcode decision, transcoded streams,
+//! mutations and the rate budget a form post takes. The library is the one
+//! `reference/compat/library.json` lays out. Only the transcoding app is
+//! given an ffmpeg: the committed stand-in.
 
 use axum::http::{HeaderMap, StatusCode};
 use serde_json::{Value, json};
@@ -128,6 +128,23 @@ impl<'a> Client<'a> {
             &signed,
             Some(content_type),
             body,
+        )
+        .await
+    }
+
+    /// A form post, as an app that uses `formPost` sends every call: the
+    /// credentials and `pairs` in the body, nothing in the query.
+    async fn form(&self, endpoint: &str, pairs: &[(&str, &str)]) -> Answer {
+        let mut body = reqwest::Url::parse("http://test.local/").expect("base parses");
+        body.query_pairs_mut().extend_pairs(self.signed(pairs));
+        let body = body.query().unwrap_or("").as_bytes().to_vec();
+        request(
+            self.rig,
+            "POST",
+            endpoint,
+            &[],
+            Some("application/x-www-form-urlencoded"),
+            &body,
         )
         .await
     }
@@ -1619,6 +1636,37 @@ async fn mutations_persist() {
     );
     let scan = admin.get("startScan", &[]).await;
     assert!(scan.text().contains("scanning=\"true\""), "{}", scan.text());
+    rig.stop().await;
+}
+
+/// An app that uses `formPost` (Feishin) sends every call as a POST, so the
+/// endpoint decides the budget: a page's burst of reads takes the browse
+/// budget and is answered, while writes still stop after 20 at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn form_posts_take_the_budget_of_their_endpoint() {
+    let rig = CompatApp::start("compat-sub-form-budget").await;
+    let client = Client::player(&rig);
+    let ids = Ids::read(&client).await;
+    let album = ids.album("OK Computer");
+    for read in 0..40 {
+        let answer = client.form("getAlbum.view", &[("id", &album)]).await;
+        assert_ok(&answer, &format!("read {read}"));
+    }
+    // The write budget refills five a second, so the burst may run past 20
+    // on a slow host, but never stops before.
+    let mut limited = Vec::new();
+    for write in 0..40 {
+        let answer = client.form("star.view", &[("albumId", &album)]).await;
+        if answer.text().contains("Rate limit exceeded") {
+            limited.push(write);
+        } else {
+            assert_ok(&answer, &format!("write {write}"));
+        }
+    }
+    assert!(
+        limited.first().is_some_and(|first| *first >= 20),
+        "{limited:?}"
+    );
     rig.stop().await;
 }
 

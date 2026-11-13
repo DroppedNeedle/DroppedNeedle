@@ -8,6 +8,7 @@ use axum::http::Request;
 use droppedneedle_compat::settings::LiveSettings;
 use droppedneedle_compat::shared::address::{ListenerConfig, base_address};
 use droppedneedle_compat::shared::{auth, ratelimit, redact};
+use droppedneedle_compat::subsonic;
 use droppedneedle_compat::subsonic::picture::{PURPOSE, PictureKind, PictureSigner};
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::runtime_config::Crypto;
@@ -78,7 +79,8 @@ fn rate_limit_budgets() {
     assert!(limits.principal_retry_after("user:1", true, 0.0).is_some());
 
     // Media is exempt from the buckets; logins and PlaybackInfo are not
-    // mutations.
+    // mutations. A Subsonic POST is one only by its endpoint, and every
+    // endpoint listed as a write is one the router serves.
     assert!(ratelimit::is_media_request("/subsonic/rest/stream.view"));
     assert!(ratelimit::is_media_request("/jellyfin/audio/abc/stream"));
     assert!(ratelimit::is_media_request("/jellyfin/Items/abc/File"));
@@ -93,8 +95,19 @@ fn rate_limit_budgets() {
     assert!(!ratelimit::is_artwork_request("/jellyfin/Items/abc"));
     assert!(ratelimit::is_mutation_request(
         "POST",
-        "/subsonic/rest/star"
+        "/subsonic/rest/star.view"
     ));
+    assert!(!ratelimit::is_mutation_request(
+        "GET",
+        "/subsonic/rest/setRating.view"
+    ));
+    assert!(!ratelimit::is_mutation_request(
+        "POST",
+        "/subsonic/rest/getAlbum.view"
+    ));
+    for name in ratelimit::SUBSONIC_WRITES {
+        assert!(subsonic::endpoint(name).is_some(), "{name} is not served");
+    }
     assert!(ratelimit::is_mutation_request("DELETE", "/jellyfin/x"));
     assert!(!ratelimit::is_mutation_request(
         "POST",

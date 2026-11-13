@@ -3,8 +3,9 @@
 //! The compat rate limiter: a public-IP bucket
 //! (5/s, burst 20) for unauthenticated routes only (login, public probes),
 //! per-principal browse (30/s, burst 120) and mutation (5/s, burst 20)
-//! buckets for signed-in callers, and per-IP auth-failure backoff (5
-//! failures in 60s locks out for 10s, doubling to 5min). A repeat of one
+//! buckets for signed-in callers ([`is_mutation_request`] picks one), and
+//! per-IP auth-failure backoff (5 failures in 60s locks out for 10s,
+//! doubling to 5min). A repeat of one
 //! refused credential from one address counts once a minute, so a stale
 //! device sending the same wrong password does not lock its address out,
 //! while every new guess still counts. Those repeats take a bucket of
@@ -264,9 +265,35 @@ pub fn is_artwork_request(path: &str) -> bool {
     super::auth::is_image_route(&low)
 }
 
-/// Mutation classification: DELETE/PATCH/PUT
-/// always; POST except the login and PlaybackInfo reads.
+/// The Subsonic endpoints that change something, as the endpoint table
+/// names them.
+pub const SUBSONIC_WRITES: &[&str] = &[
+    "createplaylist",
+    "updateplaylist",
+    "deleteplaylist",
+    "star",
+    "unstar",
+    "setrating",
+    "scrobble",
+    "reportplayback",
+    "saveplayqueue",
+    "saveplayqueuebyindex",
+    "createbookmark",
+    "deletebookmark",
+    "startscan",
+];
+
+/// Mutation classification: DELETE/PATCH/PUT always; POST except the
+/// login and PlaybackInfo reads. A Subsonic POST is one only for an
+/// endpoint in [`SUBSONIC_WRITES`], since an app that uses `formPost`
+/// sends its reads as POSTs too.
 pub fn is_mutation_request(method: &str, path: &str) -> bool {
+    let low = path.to_lowercase();
+    if method.eq_ignore_ascii_case("POST")
+        && let Some(endpoint) = subsonic_endpoint(&low)
+    {
+        return SUBSONIC_WRITES.contains(&endpoint);
+    }
     if matches!(
         method.to_ascii_uppercase().as_str(),
         "DELETE" | "PATCH" | "PUT"
@@ -276,6 +303,5 @@ pub fn is_mutation_request(method: &str, path: &str) -> bool {
     if !method.eq_ignore_ascii_case("POST") {
         return false;
     }
-    let low = path.to_lowercase();
     !low.ends_with("/authenticatebyname") && !low.contains("/playbackinfo")
 }
