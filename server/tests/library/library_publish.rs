@@ -343,6 +343,7 @@ fn two_track_bundle(fix: &Fixture, kind: PlanKind) -> (PlanBundle, BTreeMap<Stri
         put_back: None,
         added: None,
         removal: None,
+        from_match: false,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-a".to_string(), TagDocument::empty());
@@ -2377,6 +2378,7 @@ fn generated_files_land_and_go_away_journaled() {
         put_back: None,
         added: None,
         removal: None,
+        from_match: false,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-a".to_string(), TagDocument::empty());
@@ -2498,6 +2500,7 @@ fn replace_cover(
         put_back: None,
         added: None,
         removal: None,
+        from_match: false,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-a".to_string(), TagDocument::empty());
@@ -2762,6 +2765,7 @@ fn interrupted_generated_put_back_is_finished_by_recovery() {
         put_back: None,
         added: None,
         removal: None,
+        from_match: false,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-a".to_string(), TagDocument::empty());
@@ -3730,6 +3734,7 @@ fn removal_bundle(
         put_back: None,
         added: None,
         removal: Some(removal),
+        from_match: false,
     }
 }
 
@@ -4183,6 +4188,7 @@ fn upgrade_bundle(
         put_back: None,
         added: None,
         removal: Some(removal),
+        from_match: false,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-a".to_string(), TagDocument::empty());
@@ -4504,6 +4510,7 @@ fn a_remove_only_root_takes_removals_only() {
         put_back: None,
         added: None,
         removal: None,
+        from_match: false,
     };
     let (sealed, live) = seal(&bundle);
     let mut docs = BTreeMap::new();
@@ -4568,6 +4575,7 @@ fn unknown_empty_and_multivalued_tags_survive_apply() {
         put_back: None,
         added: None,
         removal: None,
+        from_match: false,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-s".to_string(), before);
@@ -5200,6 +5208,7 @@ fn retag_bundle(
         put_back: None,
         added: None,
         removal: None,
+        from_match: false,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-s".to_string(), TagDocument::empty());
@@ -5225,6 +5234,7 @@ fn a_240_byte_file_name_is_published_and_retagged() {
         put_back: None,
         added: None,
         removal: None,
+        from_match: false,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-s".to_string(), TagDocument::empty());
@@ -5447,6 +5457,7 @@ fn mp3_unknown_frames_survive_publish_staging() {
         put_back: None,
         added: None,
         removal: None,
+        from_match: false,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-s".to_string(), TagDocument::empty());
@@ -6074,6 +6085,7 @@ fn plugin_add(id: &str, rel: &str, bytes: &[u8]) -> PlanBundle {
             undoes: None,
         }),
         removal: None,
+        from_match: false,
     }
 }
 
@@ -6931,6 +6943,7 @@ fn undo_takes_away_the_lyrics_a_move_generated() {
         put_back: None,
         added: None,
         removal: None,
+        from_match: false,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-b".to_string(), TagDocument::empty());

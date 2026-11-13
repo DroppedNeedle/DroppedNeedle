@@ -2188,6 +2188,7 @@ fn check_collisions(ctx: &PlanContext<'_>, items: &mut [PlannedItem]) {
             put_back: None,
             added: None,
             removal: None,
+            from_match: false,
         };
         match CollisionGate::check_bundle(ctx.sandbox, &single) {
             Ok(()) => {}
@@ -2366,6 +2367,7 @@ pub fn plan_album(
             put_back: None,
             added: None,
             removal: None,
+            from_match: false,
         };
         let probe = crate::adapters::FsSpaceProbe::new(ctx.parts.root_dirs.clone());
         if DiskPreflight::check(&bundle, &probe).is_err() {

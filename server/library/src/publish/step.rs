@@ -32,7 +32,7 @@ use super::place::{
 use super::planner::PlanBundle;
 use super::publisher::{
     BundleCommit, CrashPoint, TrackCommit, commit_bundle, durable, enqueue_after_commit, locate,
-    long_read, mark_missing, probe_root, read_adopted,
+    long_read, mark_missing, probe_root, read_adopted, read_placed_stats,
 };
 use super::recovery::{
     compensate_bundle, flag_attention, flag_rows, placements_first, removals_first, remove_folders,
@@ -1219,6 +1219,7 @@ impl Run<'_> {
                         .map(|track| (track, replaced.recycle_to.clone()))
                 }),
                 indexed: None,
+                placed_stat: None,
                 sealed: item.and_then(|item| item.commit_seal()),
                 identity: item.filter(|_| adopted).map(|item| item.identity.clone()),
             });
@@ -1228,9 +1229,13 @@ impl Run<'_> {
 
     /// The catalog commit, checked against the plan's seals, and every row
     /// `published -> committed`, in one durable transaction. The adopted
-    /// files are read before it.
+    /// files, and the stats of a bundle written from the album's match,
+    /// are read before it.
     fn commit(&self, plan: &PlanBundle, mut tracks: Vec<TrackCommit>) -> Result<(), PublishError> {
         read_adopted(&mut tracks, self.clock)?;
+        if plan.from_match {
+            read_placed_stats(&mut tracks);
+        }
         let put_back = plan
             .put_back
             .as_ref()

@@ -905,6 +905,7 @@ impl crate::wiring::LibraryCore {
                 },
                 undoes: None,
             }),
+            from_match: false,
         };
         let (sealed, live) = seal_pinned(
             bundle,
@@ -1716,6 +1717,7 @@ impl Publishing {
             put_back: None,
             added: None,
             removal: None,
+            from_match: false,
         };
         // The tracks' rows as previewed: Apply is refused if they move.
         crate::publish::planner::seal_rows(&self.db, &mut bundle).map_err(publish_error)?;
@@ -2011,6 +2013,7 @@ impl Publishing {
             put_back: None,
             added: None,
             removal: Some(removal),
+            from_match: false,
         };
         let token_hash = sha256_hex(self.core.ids.new_id().as_bytes());
         let sealed = SealedPreview::seal(
@@ -2135,6 +2138,7 @@ impl Publishing {
             removal: None,
             put_back: Some(plan),
             added: None,
+            from_match: false,
         };
         let token_hash = sha256_hex(self.core.ids.new_id().as_bytes());
         let sealed = SealedPreview::seal(
@@ -2177,13 +2181,16 @@ impl Publishing {
     /// Publish one album a management job planned. The tags to write and
     /// the destinations were fixed at planning; the before-state is read
     /// now, and the seal refuses any file, identity, override or revision
-    /// that moved since. Blocking: the job worker runs it.
+    /// that moved since. `from_match` says a profile run wrote it from the
+    /// album's match ([`PlanBundle::from_match`]); it holds only while every
+    /// source is as the last scan read it. Blocking: the job worker runs it.
     pub(crate) fn publish_plans(
         &self,
         bundle_id: &str,
         plan_items: Vec<PlanItem>,
         pins: SealPins,
         override_of: &dyn Fn(&str) -> u64,
+        from_match: bool,
     ) -> Result<AppliedBundle, PublishError> {
         let retention = self.undo_retention_days()?;
         let mut cell = self
@@ -2195,11 +2202,17 @@ impl Publishing {
         cell.refresh(&registry, &self.core.root_dirs)?;
         let open = cell.open()?;
         let mut docs = BTreeMap::new();
+        let mut stats = BTreeMap::new();
         for item in &plan_items {
             let path = open
                 .sandbox
                 .resolve_no_symlink(&item.source_root, &item.source_rel)?;
             let root = open.sandbox.root_dir(&item.source_root)?;
+            let stat = crate::publish::paths::FileStat::read(&path)?;
+            stats.insert(
+                item.track_id.clone(),
+                crate::scan::exact_stat_revision(stat.size, stat.mtime_ns),
+            );
             docs.insert(
                 item.track_id.clone(),
                 crate::publish::staging::document_for_write(
@@ -2218,11 +2231,21 @@ impl Publishing {
             put_back: None,
             added: None,
             removal: None,
+            from_match: false,
         };
         // What moved since planning is caught by the seal recheck below;
         // the rows are sealed now, so the commit refuses only what moves
         // while the album is being saved.
         crate::publish::planner::seal_rows(&self.db, &mut bundle)?;
+        // A source changed since the scan last read it holds what
+        // identification has not seen: the write records no stat, and the
+        // scan that reads it back offers its album as for any change.
+        bundle.from_match = from_match
+            && bundle.items.iter().all(|item| {
+                item.sealed
+                    .as_ref()
+                    .is_some_and(|row| stats.get(&item.track_id) == Some(&row.stat_revision))
+            });
         let token_hash = sha256_hex(self.core.ids.new_id().as_bytes());
         let sealed = SealedPreview::seal(
             bundle,
@@ -2380,6 +2403,7 @@ impl Publishing {
             removal: None,
             put_back: None,
             added: Some(added),
+            from_match: false,
         };
         let (sealed, live) = seal_pinned(
             bundle,
@@ -3077,6 +3101,7 @@ impl Publishing {
             put_back: None,
             added: None,
             removal: None,
+            from_match: false,
         };
         crate::publish::planner::seal_rows(&self.db, &mut bundle).map_err(publish_error)?;
         // Restoration bundles re-run the dry-run gates: a restore

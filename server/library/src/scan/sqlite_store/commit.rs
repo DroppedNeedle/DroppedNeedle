@@ -2602,6 +2602,25 @@ fn record_new_copies(
     Ok(())
 }
 
+/// Whether a changed file the window read is exactly as a profile run last
+/// placed it from the album's match, with the app's record still those
+/// bytes. Its tags are what the app wrote from the match over the file as
+/// it was, so its album is not offered to identification for it.
+fn as_the_app_placed_it(
+    tx: &Connection,
+    track_id: &str,
+    item: &CommitIndexedItem,
+) -> rusqlite::Result<bool> {
+    tx.prepare_cached(crate::scan::sql::AS_THE_APP_PLACED_IT.text())?
+        .query_row(
+            params![
+                track_id,
+                exact_stat_revision(item.size_bytes, item.mtime_ns)
+            ],
+            |row| row.get(0),
+        )
+}
+
 fn fenced_paths(tx: &Connection, run_id: &str) -> rusqlite::Result<HashSet<(String, String)>> {
     let mut statement = tx.prepare_cached(crate::scan::sql::FENCED_PATHS.text())?;
     let rows = statement.query_map(params![run_id], |row| {
@@ -2695,8 +2714,15 @@ fn write_window(
                         .or_default()
                         .push(copy);
                 }
+                // A file as the app placed it is not offered, even when its
+                // new tags moved it to another album: an album that took it
+                // is offered at the run's end, unless the album it left
+                // follows it back.
+                let offer = item.effective_policy == EffectivePolicy::Automatic
+                    && !(item.verdict_counter == Counter::Changed.column()
+                        && as_the_app_placed_it(tx, &track_id, item)?);
                 indexed.push((item.root_id.clone(), item.relative_path.clone(), track_id));
-                if item.effective_policy == EffectivePolicy::Automatic {
+                if offer {
                     offered.push(album_id);
                 }
                 emptied.extend(moved_from);

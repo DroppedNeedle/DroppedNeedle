@@ -1976,11 +1976,7 @@ impl Management {
     fn apply_work(&self, job_id: &str, worker: &str) -> Result<(), ManagementError> {
         let snapshot = self.snapshot(job_id)?;
         let undo = snapshot.job_mode().is_some_and(JobMode::restores);
-        // A profile run writes every managed field of the files it writes.
-        let whole_profile = matches!(
-            snapshot.job_mode(),
-            Some(JobMode::Apply | JobMode::AutomaticApply)
-        ) && snapshot.intent().tag_edit.is_none();
+        let whole_profile = profile_run(&snapshot);
         // Whether the job moves files: then an album must still be
         // exactly the files that were planned.
         // A duplicate resolution moves one file of an album on purpose.
@@ -2346,7 +2342,7 @@ impl Management {
         };
         self.parts
             .publishing
-            .publish_plans(bundle_id, plans, pins, &override_of)
+            .publish_plans(bundle_id, plans, pins, &override_of, profile_run(snapshot))
             .map_err(|error| {
                 // The database refused a call, or no recycle bin is known:
                 // the publish stopped where it was, and the job goes back
@@ -2434,6 +2430,16 @@ fn planning_intent(snapshot: &Snapshot) -> Result<JobIntent, ManagementError> {
         )),
         Err(_) => Ok(JobIntent::default()),
     }
+}
+
+/// Whether the job is a profile run, not a tag edit, an Undo or a restore:
+/// it writes every managed field of the files it writes, from the album's
+/// match.
+fn profile_run(snapshot: &Snapshot) -> bool {
+    matches!(
+        snapshot.job_mode(),
+        Some(JobMode::Apply | JobMode::AutomaticApply)
+    ) && snapshot.intent().tag_edit.is_none()
 }
 
 /// A dry run for turning on automatic management only proves settings;

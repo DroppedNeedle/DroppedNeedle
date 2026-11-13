@@ -356,6 +356,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0146_v2_recycle_bin_paths.sql",
         "209f36d809799bb4e7a8c80bdc39344f04aff470c4d275be1d57e99182224a26",
     ),
+    (
+        "0147_management_written_stat.sql",
+        "416464a8803407293e0c21a3a3b3ba2c18e02dfd91158ce3bdb936ac9985ea19",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -1411,6 +1415,55 @@ fn v2_recycle_bin_paths_upgrade_adds_an_empty_table() {
             .is_err(),
         "the table is strict"
     );
+}
+
+/// 0147 gives each file's management record the stat revision of the file
+/// a profile run last placed from the album's match, NULL on carried rows,
+/// which keep every value. Nothing else in the schema changes.
+#[test]
+fn management_written_stat_upgrade_keeps_every_row() {
+    let dir = ScratchDir::new("management-written-stat");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..12], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 146);
+    connection
+        .execute_batch(
+            // The row alone, without the track it belongs to.
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO library_track_management_state (local_track_id,
+                 applied_projection_hash, written_sha256, last_outcome, row_revision)
+             VALUES ('t1', 'placed', 'placed', 'succeeded', 4);",
+        )
+        .unwrap();
+    let table = "library_track_management_state";
+    let others = |connection: &Connection| {
+        let mut rows = schema_rows(connection);
+        rows.retain(|(_, name, _, _)| name != table);
+        rows
+    };
+    let before_schema = others(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..13], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 147);
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT rowid || ':' || local_track_id || ':' || applied_projection_hash || ':'
+                 || written_sha256 || ':' || last_outcome || ':' || row_revision || ':'
+                 || COALESCE(written_stat_revision, '-')
+             FROM library_track_management_state",
+            [],
+        ),
+        ["1:t1:placed:placed:succeeded:4:-"],
+        "the row is kept, with no stat yet"
+    );
+    assert_eq!(others(&connection), before_schema, "nothing else changes");
 }
 
 /// 0140 rebuilds the catalog action log to take the undo of an artist

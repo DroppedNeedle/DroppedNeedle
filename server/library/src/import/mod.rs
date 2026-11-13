@@ -1034,6 +1034,7 @@ impl Imports {
                     album_removed: None,
                     guard: None,
                 }),
+                from_match: false,
             };
             let token_hash = sha256_hex(bundle.id.as_bytes());
             let live = SealRecheck {

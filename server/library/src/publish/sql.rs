@@ -522,13 +522,19 @@ droppedneedle_kernel::sql! {
              FROM local_tracks t \
              LEFT JOIN library_track_management_state m ON m.local_track_id = t.id \
              WHERE t.id = ?1";
+    /// Record what a commit placed for track `?1`: its root `?2`, the
+    /// placed bytes `?3`, the app's record `?6`, its outcome `?4` at `?5`,
+    /// and the placed file's stat revision `?7` (NULL unless a profile run
+    /// wrote it from the album's match).
     pub(super) COMMIT_BUNDLE = "INSERT INTO library_track_management_state (local_track_id, managed_root_id, \
-                 applied_projection_hash, written_sha256, last_outcome, last_managed_at) \
-                 VALUES (?1, ?2, ?3, ?6, ?4, ?5) \
+                 applied_projection_hash, written_sha256, written_stat_revision, last_outcome, \
+                 last_managed_at) \
+                 VALUES (?1, ?2, ?3, ?6, ?7, ?4, ?5) \
                  ON CONFLICT (local_track_id) DO UPDATE SET \
                  managed_root_id = excluded.managed_root_id, \
                  applied_projection_hash = excluded.applied_projection_hash, \
                  written_sha256 = excluded.written_sha256, \
+                 written_stat_revision = excluded.written_stat_revision, \
                  last_outcome = excluded.last_outcome, \
                  last_managed_at = excluded.last_managed_at, \
                  row_revision = library_track_management_state.row_revision + 1";
@@ -538,7 +544,7 @@ droppedneedle_kernel::sql! {
          row_revision = row_revision + 1 \
          WHERE id = ?1 AND root_id = ?2 AND relative_path = ?3";
     pub(super) FORGET_REPLACED_STATE = "UPDATE library_track_management_state SET written_sha256 = NULL, \
-         managed_path_revision = NULL, row_revision = row_revision + 1 \
+         written_stat_revision = NULL, managed_path_revision = NULL, row_revision = row_revision + 1 \
          WHERE local_track_id = ?1";
     pub(super) GIVE_UP_DESTINATION = "SELECT id, availability FROM local_tracks \
              WHERE root_id = ?1 AND relative_path = ?2 AND id <> ?3";
@@ -610,7 +616,7 @@ droppedneedle_kernel::sql! {
              FROM library_track_management_state s WHERE s.local_track_id = ?1";
     /// Forget the record of track `?1`'s file. `managed_path_revision` goes only where no job wrote it: such a value is v2's.
     pub(super) FORGET_RECORD = "UPDATE library_track_management_state AS s SET written_sha256 = NULL, \
-             managed_path_revision = CASE WHEN s.last_operation_job_id IS NULL THEN NULL \
+             written_stat_revision = NULL, managed_path_revision = CASE WHEN s.last_operation_job_id IS NULL THEN NULL \
              ELSE s.managed_path_revision END, row_revision = s.row_revision + 1 \
              WHERE s.local_track_id = ?1 AND " + HAS_BYTES_RECORD;
     /// Whether another row of track `?1`'s album, whose file went missing, has a record.

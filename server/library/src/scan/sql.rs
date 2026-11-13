@@ -949,6 +949,12 @@ droppedneedle_kernel::sql! {
      SELECT j.dest_root, j.dest_rel FROM library_publish_journal j \
       WHERE j.track_id IS NOT NULL AND j.source_root IS NOT NULL \
         AND (j.source_root IS NOT j.dest_root OR j.source_rel IS NOT j.dest_rel) AND " + (awaits_admin!());
+    /// Whether track `?1`'s file, at stat revision `?2`, is as a profile run
+    /// last placed it from the album's match, with the app's record still
+    /// the bytes it placed.
+    pub(super) AS_THE_APP_PLACED_IT = "SELECT EXISTS (SELECT 1 FROM library_track_management_state \
+             WHERE local_track_id = ?1 AND written_stat_revision = ?2 \
+             AND written_sha256 = applied_projection_hash)";
     /// Lift the holds run `?1` settled (`?2` is now).
     pub(super) LIFT_SETTLED_HOLDS = "DELETE FROM library_scan_held_scopes AS h WHERE " + HOLD_LIFTS;
     /// The held rows of live albums the holds run `?1` lifts let go, with each one's earliest hold.

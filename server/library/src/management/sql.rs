@@ -379,7 +379,8 @@ droppedneedle_kernel::sql! {
              row_revision = row_revision + 1 WHERE managed_path_revision IS NOT NULL \
              AND last_operation_job_id IS NULL AND local_track_id IN \
              (SELECT id FROM local_tracks WHERE local_album_id = ?1)";
-    pub(super) FORGET_WRITTEN_HASHES = "UPDATE library_track_management_state SET written_sha256 = NULL \
+    pub(super) FORGET_WRITTEN_HASHES = "UPDATE library_track_management_state SET written_sha256 = NULL, \
+             written_stat_revision = NULL \
              WHERE written_sha256 IS NOT NULL AND local_track_id IN \
              (SELECT id FROM local_tracks WHERE local_album_id = ?1)";
     pub(super) ADOPT_WRITTEN_HASH = "INSERT INTO library_track_management_state (local_track_id, written_sha256) \

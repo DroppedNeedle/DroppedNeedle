@@ -326,6 +326,13 @@ pub struct PlanBundle {
     /// undo. A bundle that carries one carries nothing else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub added: Option<super::add::Added>,
+    /// A profile run wrote the bundle from the album's match, over files as
+    /// the last scan read them (not a tag edit, an Undo or a restore): its
+    /// commit records each placed file's stat, so the scan that reads the
+    /// files back does not identify the album again. False on every other
+    /// bundle and on bundles recorded before it was kept.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub from_match: bool,
 }
 
 /// A removal's undo: files one removal took to the recycle bin, going

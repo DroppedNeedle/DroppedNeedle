@@ -13678,12 +13678,13 @@ async fn a_management_run_has_the_scan_read_what_it_wrote() {
 
 /// An album the app matched by itself, its rows carrying what an upgrade
 /// from v2 leaves on them (a matcher stamp, each file's disc and position),
-/// is retagged by a run. The scan reads the files back and sends the album
-/// to identification, which finds the same release: the match keeps its
-/// revisions and its automatic-edition undo, so the run's Undo still puts
-/// the files back.
+/// is retagged by a run. The scan reads the files back, and identification,
+/// asked again, finds the same release: the match keeps its revisions and
+/// its automatic-edition undo, so the run's Undo still puts the files back,
+/// and the scan after the Undo identifies the album again.
 #[tokio::test]
 async fn a_run_stays_undoable_after_identification_finds_the_same_release() {
+    use droppedneedle_library::identify::models::IdentifyKind;
     use droppedneedle_library::management::models::SelectionKind;
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
     use droppedneedle_library::tags::{TagField, read_fields};
@@ -13772,15 +13773,147 @@ async fn a_run_stays_undoable_after_identification_finds_the_same_release() {
             break;
         }
     }
+    managed
+        .library
+        .identification
+        .enqueue_identify(&album, IdentifyKind::Manual, "admin")
+        .expect("identification queued");
     let mut identified = 0;
     while managed.library.identification.identify_tick().await > 0 {
         identified += 1;
     }
 
-    assert!(identified > 0, "the scan sent the album to identification");
+    assert!(identified > 0, "the album was identified again");
     assert_eq!(held(), matched, "the same release changes nothing");
     managed.undo_run(&run, "undo").await;
     assert_eq!(title(), vec!["Before".to_owned()], "Undo put the file back");
+    let jobs = || {
+        managed.count(&format!(
+            "SELECT COUNT(*) FROM library_identify_jobs WHERE local_album_id = '{album}'"
+        ))
+    };
+    let queued = jobs();
+    rescan(&managed.library).await;
+    assert_eq!(jobs(), queued + 1, "the undone album is identified again");
+}
+
+/// The app's own write sends no album back to identification. An album
+/// the app matched by itself is retagged and filed by a run, and the scan
+/// that reads the files back (their new release ID groups them as a new
+/// album, which the old one follows) queues no identification, so
+/// MusicBrainz is not asked again: the tags are the ones the app wrote
+/// from the album's match. A file then changed outside the app sends the
+/// album back.
+#[tokio::test]
+async fn the_apps_own_write_is_not_identified_again() {
+    use droppedneedle_library::management::models::SelectionKind;
+
+    let managed = ManagedLibrary::start("lib-own-write-not-identified", |_| {}).await;
+    let (album, tracks) = managed.add_album("own", 2).await;
+    managed.match_by_the_app(&album);
+    let jobs = || {
+        managed.count(&format!(
+            "SELECT COUNT(*) FROM library_identify_jobs WHERE local_album_id = '{album}'"
+        ))
+    };
+    let (queued, bytes) = (jobs(), managed.bytes(&tracks));
+    managed
+        .apply(SelectionKind::Albums, &[&album], "retag")
+        .await;
+    assert_ne!(managed.bytes(&tracks), bytes, "the run wrote the files");
+    rescan(&managed.library).await;
+    assert_eq!(jobs(), queued, "the scan queues no identification");
+    assert_eq!(
+        managed.library.identification.identify_tick().await,
+        0,
+        "no identification runs, so MusicBrainz is not asked"
+    );
+
+    managed
+        .edit_outside(&tracks[0], title_edit("Changed by hand"))
+        .await;
+    assert_eq!(jobs(), queued + 1, "the changed file is identified again");
+}
+
+/// A tag edit in the app writes a person's values, not the album's match:
+/// a file whose MusicBrainz release ID was changed with the tag editor
+/// sends its album back to identification on the next scan, as an edit
+/// outside the app does.
+#[tokio::test]
+async fn a_tag_edit_in_the_app_is_identified_again() {
+    use droppedneedle_library::management::models::TagEditMode;
+    use droppedneedle_library::management::tag_edit::TagEditRequest;
+    use droppedneedle_library::tags::{TagField, read_fields};
+
+    let managed = ManagedLibrary::start("lib-tag-edit-identified", |_| {}).await;
+    let (album, tracks) = managed.add_album("edited", 1).await;
+    managed.match_by_the_app(&album);
+    let jobs = || {
+        managed.count(&format!(
+            "SELECT COUNT(*) FROM library_identify_jobs WHERE local_album_id = '{album}'"
+        ))
+    };
+    let queued = jobs();
+    let management = managed.management();
+    let edit = management
+        .create_tag_edit(
+            TagEditRequest {
+                local_track_id: tracks[0].clone(),
+                mode: TagEditMode::WriteOnce,
+                expected_settings_revision: managed.settings_revision(),
+                expected_policy_revision: managed
+                    .library
+                    .core
+                    .policy_revision()
+                    .expect("policy revision"),
+                fields: vec![("musicbrainz_release_id".to_owned(), json!(REL_2))],
+                idempotency_key: Some("edit-release".to_owned()),
+            },
+            "admin",
+        )
+        .expect("edit preview");
+    assert!(
+        management_step(&managed.library).await,
+        "edit planning runs"
+    );
+    let applied = management_apply(&managed.library, &edit).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+    assert_eq!(
+        read_fields(track_file(&managed.path(&tracks[0]))).expect("tags read")
+            [&TagField::MusicBrainzReleaseId],
+        vec![REL_2.to_owned()],
+        "the edit was written"
+    );
+    rescan(&managed.library).await;
+    assert_eq!(jobs(), queued + 1, "the edited album is identified again");
+}
+
+/// A file changed outside the app since its last scan holds what
+/// identification has not read, even once a profile run writes over it:
+/// the scan after the run sends its album back to identification.
+#[tokio::test]
+async fn a_run_over_a_file_changed_since_its_scan_is_identified_again() {
+    use droppedneedle_library::management::models::SelectionKind;
+
+    let managed = ManagedLibrary::start("lib-run-over-unscanned-edit", |_| {}).await;
+    let (album, tracks) = managed.add_album("unscanned", 2).await;
+    managed.match_by_the_app(&album);
+    let jobs = || {
+        managed.count(&format!(
+            "SELECT COUNT(*) FROM library_identify_jobs WHERE local_album_id = '{album}'"
+        ))
+    };
+    let queued = jobs();
+    droppedneedle_library::tags::save_tags(
+        &managed.path(&tracks[0]),
+        &[title_edit("Changed before the run")],
+    )
+    .expect("retagged outside the app");
+    managed
+        .apply(SelectionKind::Albums, &[&album], "retag")
+        .await;
+    rescan(&managed.library).await;
+    assert_eq!(jobs(), queued + 1, "the album is identified again");
 }
 
 /// A file the app wrote that is retagged outside it is the user's: the

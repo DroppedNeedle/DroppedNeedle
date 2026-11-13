@@ -68,6 +68,10 @@ pub struct TrackCommit {
     /// What an adopted file indexes as, read from the published file
     /// before the commit's transaction by [`read_adopted`].
     pub indexed: Option<crate::scan::store::CommitIndexedItem>,
+    /// The placed file's stat revision as a scan spells it, read by
+    /// [`read_placed_stats`] for a bundle written from the album's match;
+    /// `None` otherwise.
+    pub placed_stat: Option<String>,
     /// The rows a track that is not adopted was sealed against. The commit
     /// refuses the bundle when they moved, or when there is no seal.
     pub sealed: Option<CommitSeal>,
@@ -258,7 +262,8 @@ pub(super) fn commit_bundle(
                 track.fingerprint,
                 track.mgmt_state.as_str(),
                 crate::clock::ms(now),
-                written
+                written,
+                track.placed_stat
             ],
         )?;
     }
@@ -659,6 +664,27 @@ pub(super) fn read_adopted(
         )?);
     }
     Ok(())
+}
+
+/// Read the stat of each library file a commit placed, never through a
+/// link, before its transaction, as a scan spells it. Only a bundle
+/// written from the album's match ([`super::planner::PlanBundle::from_match`])
+/// reads them. A file whose stat cannot be read records none: the next
+/// scan then offers its album to identification as for any change.
+pub(super) fn read_placed_stats(tracks: &mut [TrackCommit]) {
+    for track in tracks.iter_mut().filter(|track| track.adopt.is_none()) {
+        track.placed_stat = match paths::FileStat::read(Path::new(&track.file_path)) {
+            Ok(stat) => Some(crate::scan::exact_stat_revision(stat.size, stat.mtime_ns)),
+            Err(error) => {
+                tracing::warn!(
+                    track_id = %track.track_id,
+                    %error,
+                    "the placed file's stat was not read; the next scan reads it as any change"
+                );
+                None
+            }
+        };
+    }
 }
 
 /// What the published file at `path` (`root_id:rel_path`) indexes as,
