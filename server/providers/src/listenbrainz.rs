@@ -64,7 +64,9 @@ const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// URL, so a caller can tell it from a token that cannot be sent.
 pub const UNUSABLE_ADDRESS: &str = "the ListenBrainz address is not usable";
 
-/// ListenBrainz on the wire. A policy block is [`ProviderError::Disabled`];
+/// ListenBrainz on the wire. Popularity switched off for load is
+/// [`ProviderError::Disabled`]; a read sent without a token to an endpoint
+/// that needs one is [`ProviderError::NotConfigured`], never an outage;
 /// a 429 waits for `X-RateLimit-Reset-In`, else `Retry-After`, and never
 /// more than an hour. The rate-limit headers are described at
 /// https://listenbrainz.readthedocs.io/en/latest/users/api/index.html (read
@@ -90,11 +92,14 @@ pub static SPEC: Spec = Spec {
 fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
     let reply = answer.reply;
     let status = reply.status();
-    if is_policy_block(status, &String::from_utf8_lossy(reply.bytes())) {
+    if status == 500 && String::from_utf8_lossy(reply.bytes()).contains("currently disabled") {
         return Err(ProviderError::Disabled {
             provider: SOURCE,
             message: format!("ListenBrainz switched this endpoint off upstream ({status})"),
         });
+    }
+    if status == 401 && wants_token(&String::from_utf8_lossy(reply.bytes())) {
+        return Err(needs_account());
     }
     if status == 429 {
         return Err(ProviderError::RateLimited {
@@ -123,14 +128,37 @@ fn window_spent(reply: &Reply) -> Option<Duration> {
         .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok())
 }
 
-/// Whether this answer is a deterministic upstream policy block rather
-/// than an ordinary error: the popularity
-/// feature-flag 500, and the anti-scraper 401 added in 2026-07 when
-/// ListenBrainz began gating anonymous popularity calls.
-fn is_policy_block(status: u16, body: &str) -> bool {
-    (status == 500 && body.contains("currently disabled"))
-        || (status == 401
-            && (body.contains("provide an Auth token") || body.contains("AI scrapers")))
+/// Whether a 401 asks for a token rather than refusing one. ListenBrainz
+/// answers an anonymous read of an artist's top release groups or top
+/// recordings this way, while the release-group popularity POST and LB
+/// Radio still answer one (probed 2026-11-13: "Due to bad actors and AI
+/// scrapers causing undue traffic on our sites, you need to provide an Auth
+/// token for this endpoint."), so those two reads are never sent without a
+/// token. Any other 401 is a refused token.
+fn wants_token(body: &str) -> bool {
+    body.contains("provide an Auth token") || body.contains("AI scrapers")
+}
+
+/// A read ListenBrainz answers only with a token, asked without one.
+fn needs_account() -> ProviderError {
+    ProviderError::NotConfigured {
+        provider: SOURCE,
+        message: "ListenBrainz answers this read only with an account".to_owned(),
+    }
+}
+
+/// `creds` when they carry a token, else [`needs_account`]: for the reads
+/// ListenBrainz refuses without one, which are then not sent.
+fn with_token(creds: &ListenBrainzCredentials) -> Result<&ListenBrainzCredentials, ProviderError> {
+    if creds
+        .user_token
+        .as_deref()
+        .is_some_and(|token| !token.is_empty())
+    {
+        Ok(creds)
+    } else {
+        Err(needs_account())
+    }
 }
 
 /// The positive `X-RateLimit-Reset-In` wait in seconds, read by the shared
@@ -553,7 +581,8 @@ impl ListenBrainzClient {
     ///
     /// # Errors
     ///
-    /// The typed failure of the call.
+    /// The typed failure of the call; [`ProviderError::NotConfigured`],
+    /// with nothing sent, when `creds` carry no token.
     pub async fn artist_top_release_groups(
         &self,
         artist_mbid: &str,
@@ -573,7 +602,7 @@ impl ListenBrainzClient {
                 artist_mbid,
             ],
             &[],
-            creds,
+            with_token(creds)?,
         )?;
         Ok(self
             .read_unconfirmed::<TopReleaseGroupsAnswer>(request, priority)
@@ -592,7 +621,8 @@ impl ListenBrainzClient {
     ///
     /// # Errors
     ///
-    /// The typed failure of the call.
+    /// The typed failure of the call; [`ProviderError::NotConfigured`],
+    /// with nothing sent, when `creds` carry no token.
     pub async fn artist_top_recordings(
         &self,
         artist_mbid: &str,
@@ -607,7 +637,7 @@ impl ListenBrainzClient {
         let request = self.get(
             &["1", "popularity", "top-recordings-for-artist", artist_mbid],
             &[],
-            creds,
+            with_token(creds)?,
         )?;
         Ok(self
             .read_unconfirmed::<TopRecordingsAnswer>(request, priority)

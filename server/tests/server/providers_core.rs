@@ -748,9 +748,9 @@ async fn cover_art_archive_hooks() {
     );
 }
 
-/// The ListenBrainz rules: a policy block (the popularity 500 "currently
-/// disabled", the anti-scraper 401) is a deliberate switch-off that is not
-/// retried and never rests the bucket; a 429 rests it for
+/// The ListenBrainz rules: the popularity 500 "currently disabled" is a
+/// deliberate switch-off and the anti-scraper 401 an account the read
+/// needs, neither retried nor resting the bucket; a 429 rests it for
 /// `X-RateLimit-Reset-In`, else `Retry-After`, else from a minute (jittered
 /// down by at most half), without a second try; and an answer that says
 /// the window is spent rests it until the window resets.
@@ -778,9 +778,9 @@ async fn listenbrainz_hooks() {
             answer(
                 401,
                 &[],
-                r#"{"code": 401, "error": "Due to AI scrapers, please provide an Auth token"}"#,
+                r#"{"code":401,"error":"Due to bad actors and AI scrapers causing undue traffic on our sites, you need to provide an Auth token for this endpoint. Sorry for this mess."}"#,
             ),
-            |result| matches!(result, Err(ProviderError::Disabled { .. })),
+            |result| matches!(result, Err(ProviderError::NotConfigured { .. })),
             1,
             Duration::ZERO,
         ),
@@ -860,6 +860,58 @@ async fn listenbrainz_hooks() {
             "{name}: rests {cooling:?}, expected {rest:?}"
         );
     }
+}
+
+/// An artist's top release groups and top recordings, which ListenBrainz
+/// refuses without a token, are never sent without one: the read is
+/// "not configured" with nothing on the wire. With a token each goes out.
+#[tokio::test(start_paused = true)]
+async fn listenbrainz_token_only_reads_send_nothing_without_a_token() {
+    use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
+    const ARTIST: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    let base = listenbrainz::DEFAULT_BASE_URL;
+    let wire = Arc::new(ScriptedWire::new());
+    for path in ["top-release-groups-for-artist", "top-recordings-for-artist"] {
+        wire.on(
+            Method::Get,
+            &format!("{base}/1/popularity/{path}/{ARTIST}"),
+            answer(200, &[], "[]"),
+        );
+    }
+    let client = &providers_over(&wire).listenbrainz;
+    let priority = RequestPriority::UserInitiated;
+    let linked = ListenBrainzCredentials {
+        username: Some("listener".to_owned()),
+        user_token: Some("token".to_owned()),
+    };
+    let named_only = ListenBrainzCredentials {
+        username: Some("listener".to_owned()),
+        user_token: Some(String::new()),
+    };
+    for creds in [ListenBrainzCredentials::default(), named_only] {
+        let albums = client
+            .artist_top_release_groups(ARTIST, 5, &creds, priority)
+            .await;
+        let songs = client
+            .artist_top_recordings(ARTIST, 5, &creds, priority)
+            .await;
+        assert!(
+            matches!(albums, Err(ProviderError::NotConfigured { .. }))
+                && matches!(songs, Err(ProviderError::NotConfigured { .. })),
+            "{albums:?} {songs:?}"
+        );
+    }
+    assert_eq!(wire.sent().len(), 0, "nothing reached ListenBrainz");
+
+    client
+        .artist_top_release_groups(ARTIST, 5, &linked, priority)
+        .await
+        .expect("albums read with a token");
+    client
+        .artist_top_recordings(ARTIST, 5, &linked, priority)
+        .await
+        .expect("songs read with a token");
+    assert_eq!(wire.sent().len(), 2, "each went out once");
 }
 
 /// The Last.fm rules: an error code inside an answer is read whatever the

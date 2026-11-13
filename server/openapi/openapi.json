@@ -65131,7 +65131,8 @@
           "source",
           "configured",
           "asked_source",
-          "unavailable_sources"
+          "unavailable_sources",
+          "needs_account"
         ],
         "properties": {
           "asked_source": {
@@ -65141,6 +65142,13 @@
           "configured": {
             "type": "boolean",
             "description": "False when the provider is not set up; the list is then empty."
+          },
+          "needs_account": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ListenSource"
+            },
+            "description": "Services that give this list only to an account the person has not\nlinked (ListenBrainz's popular songs and albums). Not a failure."
           },
           "similar_artists": {
             "type": "array",
@@ -66342,7 +66350,8 @@
           "source",
           "configured",
           "asked_source",
-          "unavailable_sources"
+          "unavailable_sources",
+          "needs_account"
         ],
         "properties": {
           "albums": {
@@ -66359,6 +66368,13 @@
           "configured": {
             "type": "boolean",
             "description": "False when the provider is not set up."
+          },
+          "needs_account": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ListenSource"
+            },
+            "description": "Services that give this list only to an account the person has not\nlinked (ListenBrainz's popular songs and albums). Not a failure."
           },
           "source": {
             "$ref": "#/components/schemas/ListenSource",
@@ -66524,7 +66540,8 @@
           "source",
           "configured",
           "asked_source",
-          "unavailable_sources"
+          "unavailable_sources",
+          "needs_account"
         ],
         "properties": {
           "asked_source": {
@@ -66534,6 +66551,13 @@
           "configured": {
             "type": "boolean",
             "description": "False when the provider is not set up."
+          },
+          "needs_account": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ListenSource"
+            },
+            "description": "Services that give this list only to an account the person has not\nlinked (ListenBrainz's popular songs and albums). Not a failure."
           },
           "songs": {
             "type": "array",

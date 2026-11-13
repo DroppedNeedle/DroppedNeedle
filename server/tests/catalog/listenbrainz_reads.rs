@@ -170,6 +170,11 @@ impl Reads {
 async fn listenbrainz_reads_are_on_unless_switched_off() {
     let rig = AuthRig::new("listenbrainz-reads").await;
     rig.seed_user("ada", Role::User).await;
+    // Similar albums read artists' top albums, which need an account.
+    crate::common::listening_store(&rig.platform)
+        .save_listenbrainz(USER, "ada-lb", "ada-token")
+        .await
+        .expect("link");
     let reads = Reads::new(&rig);
     let store = |text: &str| {
         rig.config
@@ -292,6 +297,48 @@ async fn reads_lend_the_persons_own_link() {
         None,
         "an unlinked person reads anonymous"
     );
+}
+
+/// ListenBrainz gives an artist's top albums only to a linked account. An
+/// unlinked person's artist page sends nothing, keeps nothing under the
+/// albums' shared key and says to link rather than that ListenBrainz is
+/// down; a linked person reading next still gets the albums from
+/// ListenBrainz.
+#[tokio::test]
+async fn an_unlinked_read_keeps_nothing_a_linked_one_needs() {
+    let rig = AuthRig::new("listenbrainz-unlinked").await;
+    rig.seed_user("ada", Role::User).await;
+    rig.seed_user("bob", Role::User).await;
+    crate::common::listening_store(&rig.platform)
+        .save_listenbrainz(USER, "ada-lb", "ada-token")
+        .await
+        .expect("link");
+    let reads = Reads::new(&rig);
+    let artist = RADIO_ARTISTS[0];
+    let top = |user: &'static str| {
+        reads.catalog.top_albums(
+            user,
+            artist,
+            5,
+            Some(ListenSource::Listenbrainz),
+            RequestPriority::UserInitiated,
+        )
+    };
+
+    let unlinked = top("user-bob").await.unwrap();
+    assert!(unlinked.albums.is_empty());
+    assert_eq!(
+        (&unlinked.needs_account, &unlinked.unavailable_sources),
+        (&vec![ListenSource::Listenbrainz], &Vec::new()),
+        "an account is needed, nothing is down"
+    );
+    assert_eq!(reads.sent(), 0, "nothing was sent without a token");
+
+    let linked = top(USER).await.unwrap();
+    assert_eq!(linked.source, ListenSource::Listenbrainz);
+    assert!(!linked.albums.is_empty(), "{linked:?}");
+    assert!(linked.needs_account.is_empty());
+    assert_eq!(reads.sent(), 1, "nothing was kept, so the read went out");
 }
 
 /// Two genre plans for the same album ask ListenBrainz once.

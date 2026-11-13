@@ -3,7 +3,8 @@
 //! the built page carries the listening shelves with ownership marked and
 //! genre tiles drawn from the collection, a restart serves the built
 //! shelves at once, the genre page joins owned and popular rows, and a
-//! collage whose art file is gone falls back to a gradient.
+//! collage whose art file is gone falls back to a gradient. A release
+//! group the sitewide chart lists twice is one popular album.
 
 use std::sync::Arc;
 
@@ -38,7 +39,8 @@ fn artist(name: &str, mbid: &str) -> ArtistRow {
     }
 }
 
-/// A ListenBrainz user who listens to shoegaze.
+/// A ListenBrainz user who listens to shoegaze. The sitewide chart lists
+/// one release group twice, as ListenBrainz's can.
 fn home_script() -> Script {
     Script {
         user: UserMusic {
@@ -46,13 +48,22 @@ fn home_script() -> Script {
             ..UserMusic::default()
         },
         sitewide_artists: vec![artist("Everyone", OTHER_ARTIST)],
-        sitewide_albums: vec![ListenedAlbum {
-            release_group_mbid: Some(OWNED_RG.to_owned()),
-            title: "First Light".to_owned(),
-            artist_name: "Aurora".to_owned(),
-            artist_mbid: Some(OWNED_ARTIST.to_owned()),
-            listen_count: 900,
-        }],
+        sitewide_albums: vec![
+            ListenedAlbum {
+                release_group_mbid: Some(OWNED_RG.to_owned()),
+                title: "First Light".to_owned(),
+                artist_name: "Aurora".to_owned(),
+                artist_mbid: Some(OWNED_ARTIST.to_owned()),
+                listen_count: 400,
+            },
+            ListenedAlbum {
+                release_group_mbid: Some(OWNED_RG.to_owned()),
+                title: "First Light".to_owned(),
+                artist_name: "Aurora".to_owned(),
+                artist_mbid: Some(OWNED_ARTIST.to_owned()),
+                listen_count: 900,
+            },
+        ],
         loved: vec![LovedTrack {
             name: "Opener".to_owned(),
             artist_name: "Aurora".to_owned(),
@@ -185,11 +196,17 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     })
     .await;
     assert!(shelf_of(&page.sections, SectionKey::FavoriteArtists).is_some());
-    let Some(SectionItem::Album(popular)) =
-        shelf_of(&page.sections, SectionKey::PopularAlbums).and_then(|shelf| shelf.items.first())
+    let popular_shelf = shelf_of(&page.sections, SectionKey::PopularAlbums);
+    assert_eq!(
+        popular_shelf.map(|shelf| shelf.items.len()),
+        Some(1),
+        "one release group is one popular album"
+    );
+    let Some(SectionItem::Album(popular)) = popular_shelf.and_then(|shelf| shelf.items.first())
     else {
         panic!("popular albums built");
     };
+    assert_eq!(popular.listen_count, Some(900), "with its higher count");
     assert!(popular.in_library, "owned albums are marked");
     assert_eq!(popular.local_id.as_deref(), Some("al1"));
     let tile = page.genre_artwork.get("Shoegaze").expect("genre tile art");

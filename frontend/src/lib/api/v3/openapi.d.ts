@@ -23088,6 +23088,11 @@ export interface components {
             asked_source: components["schemas"]["ListenSource"];
             /** @description False when the provider is not set up; the list is then empty. */
             configured: boolean;
+            /**
+             * @description Services that give this list only to an account the person has not
+             *     linked (ListenBrainz's popular songs and albums). Not a failure.
+             */
+            needs_account: components["schemas"]["ListenSource"][];
             /** @description Similar artists, most similar first. */
             similar_artists: components["schemas"]["ArtistRef"][];
             /** @description Provider that answered. */
@@ -23618,6 +23623,11 @@ export interface components {
             asked_source: components["schemas"]["ListenSource"];
             /** @description False when the provider is not set up. */
             configured: boolean;
+            /**
+             * @description Services that give this list only to an account the person has not
+             *     linked (ListenBrainz's popular songs and albums). Not a failure.
+             */
+            needs_account: components["schemas"]["ListenSource"][];
             /** @description Provider that answered. */
             source: components["schemas"]["ListenSource"];
             /** @description Services that failed, or are switched off, while the list was built. */
@@ -23690,6 +23700,11 @@ export interface components {
             asked_source: components["schemas"]["ListenSource"];
             /** @description False when the provider is not set up. */
             configured: boolean;
+            /**
+             * @description Services that give this list only to an account the person has not
+             *     linked (ListenBrainz's popular songs and albums). Not a failure.
+             */
+            needs_account: components["schemas"]["ListenSource"][];
             /** @description Songs, most played first. */
             songs: components["schemas"]["TopSong"][];
             /** @description Provider that answered. */

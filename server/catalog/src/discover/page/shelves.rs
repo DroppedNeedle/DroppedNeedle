@@ -129,12 +129,15 @@ impl SectionContent {
             .collect()
     }
 
-    /// Whether it has no rows.
+    /// Whether it has nothing to show: no rows, and no shelf saying why.
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Picks { picks } => picks.items.is_empty(),
             Self::Weekly { weekly } => weekly.tracks.is_empty(),
-            _ => self.shelves().iter().all(|shelf| shelf.items.is_empty()),
+            _ => self
+                .shelves()
+                .iter()
+                .all(|shelf| shelf.items.is_empty() && shelf.fallback_message.is_none()),
         }
     }
 
@@ -290,12 +293,12 @@ pub fn service_prompts(
         prompts.push(prompt(
             PromptService::Listenbrainz,
             "Connect ListenBrainz",
-            "Pulls recommendations from your listening history, finds similar artists, and tracks your top genres. Add Last.fm for global listener stats.",
+            "Shows each artist's popular albums and songs, and recommends music from what you play.",
             "LB",
             "primary",
             [
+                "Popular albums and songs",
                 "Personalized recommendations",
-                "Similar artists",
                 "Listening stats",
                 "Genre insights",
             ],

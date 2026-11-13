@@ -4,12 +4,13 @@
 //! activity is recorded for the warm cycle, and refresh is accepted. A
 //! user with Last.fm and ListenBrainz both linked gets shelves grown from
 //! both, unless the server turns the blend off. Unreadable settings hold
-//! every build, and a page built past a failed read is rebuilt soon.
+//! every build, a page built past a failed read is rebuilt soon, and a
+//! background warm that keeps nothing waits before it is tried again.
 
 use crate::common::Probe;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::{
     Router,
@@ -18,8 +19,12 @@ use axum::{
 };
 use droppedneedle_catalog::discover::cache::{PageKind, Timing, UserPageCache, Variant, clear_all};
 use droppedneedle_catalog::discover::listening::{
-    AlbumRow, ArtistRow, ListenedAlbum, RankedAlbum, ScoredArtist, SourceContext, UserMusic,
+    AlbumRow, ArtistRow, ListenedAlbum, ListeningData, RankedAlbum, ScoredArtist, SourceContext,
+    UserMusic,
 };
+use droppedneedle_catalog::discover::ports::BoxFuture;
+use droppedneedle_catalog::discover::scheduler::activity::ActivityDb;
+use droppedneedle_catalog::discover::scheduler::{ArtistDetail, Feature, Warm, WarmScheduler};
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_kernel::runtime_config::sections::ListenSource;
@@ -617,4 +622,69 @@ async fn a_shelf_whose_read_failed_is_built_again_soon() {
     rig.clock().advance(301_000);
     let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
     assert_eq!(page["refreshing"], false, "a whole page is kept");
+}
+
+/// A home warm that keeps nothing, as every warm does while ListenBrainz
+/// is down, counting its tries.
+#[derive(Default)]
+struct KeepsNothing(AtomicUsize);
+
+impl Warm for KeepsNothing {
+    fn feature(&self) -> Feature {
+        Feature::Home
+    }
+
+    fn warm<'a>(&'a self, _user_id: &'a str) -> BoxFuture<'a, bool> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { false })
+    }
+}
+
+/// The warm cycle passes every 90 seconds. A warm that kept nothing is
+/// tried again after 15 minutes, not on the next pass, and a build that
+/// failed is not claimed again within the page's wait, which the warm
+/// cycle claims through without asking whether a build is due.
+#[tokio::test]
+async fn a_warm_that_kept_nothing_waits_before_it_is_tried_again() {
+    let rig = AuthRig::new("discover-warm-wait").await;
+    seed_user(&rig.platform.db).await;
+    let warm = Arc::new(KeepsNothing::default());
+    let scheduler = WarmScheduler::new(
+        ActivityDb::new(rig.platform.db.clone()),
+        ListeningData::new(Arc::new(Script::default()), Providers::closed().cache),
+        rig.platform.clock.clone(),
+        true,
+        vec![warm.clone()],
+    );
+    let tries = || warm.0.load(Ordering::SeqCst);
+    scheduler
+        .record("user-1", Feature::Home, ArtistDetail::default())
+        .await
+        .expect("activity recorded");
+    scheduler.tick().await;
+    assert_eq!(tries(), 1, "the first pass warms");
+    for _ in 0..9 {
+        rig.clock().advance(90_000);
+        scheduler.tick().await;
+    }
+    assert_eq!(tries(), 1, "no pass within 15 minutes tries again");
+    rig.clock().advance(90_000);
+    scheduler.tick().await;
+    assert_eq!(tries(), 2, "the pass after them does");
+
+    let cache = page_cache(&rig);
+    let claim = cache.claim("user-1").await.expect("first build");
+    assert!(
+        !cache
+            .run(claim, &built_for(), async { None::<String> })
+            .await,
+        "a failed build"
+    );
+    rig.clock().advance(299_000);
+    assert!(
+        cache.claim("user-1").await.is_none(),
+        "no build is claimed within the wait"
+    );
+    rig.clock().advance(2_000);
+    assert!(cache.claim("user-1").await.is_some(), "one is after it");
 }

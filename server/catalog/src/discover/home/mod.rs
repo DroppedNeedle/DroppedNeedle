@@ -237,9 +237,14 @@ pub struct HomeInputs {
     pub discover: DiscoverPages,
 }
 
-/// Sitewide or user album rows that map to a release group.
+/// Sitewide or user album rows that map to a release group, one per
+/// group.
 fn ranked(rows: Vec<ListenedAlbum>) -> Vec<super::listening::RankedAlbum> {
-    rows.into_iter().filter_map(ListenedAlbum::ranked).collect()
+    super::listening::one_per_group(
+        rows.into_iter().filter_map(ListenedAlbum::ranked).collect(),
+        |row| Some(row.album.release_group_mbid.as_str()),
+        |row| row.listen_count,
+    )
 }
 
 impl LiveHome {

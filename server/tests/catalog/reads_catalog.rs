@@ -452,9 +452,18 @@ fn seed_library(app_db: &Path) {
     }
 }
 
+/// Link the test user's ListenBrainz account: ListenBrainz gives an
+/// artist's popular songs and albums only to a linked account.
+async fn link_listenbrainz(rig: &AuthRig) {
+    crate::common::listening_store(&rig.platform)
+        .save_listenbrainz(USER, "ada-lb", "ada-token")
+        .await
+        .expect("ListenBrainz link");
+}
+
 /// The catalog and search routes behind the session gate and request
 /// scope, with MusicBrainz at `mb_url`. The test user has a Last.fm key
-/// and is signed in with [`TOKEN`]. Hold the rig and the app while the
+/// and a linked ListenBrainz account, and is signed in with [`TOKEN`]. Hold the rig and the app while the
 /// router serves: the rig's database and the request wrapper go with them.
 async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRig, TestApp)) {
     app_seeded(fixtures, mb_url, &[]).await
@@ -473,6 +482,7 @@ async fn app_seeded(
     }
     let rig = AuthRig::new("reads-catalog").await;
     rig.seed_user("ada", Role::User).await;
+    link_listenbrainz(&rig).await;
     rig.sign_in(USER, TOKEN).await;
     let sealed = rig.deps.crypto.encrypt("test-lastfm-key").unwrap();
     rig.deps
@@ -1634,6 +1644,8 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
     let dir = crate::common::ScratchDir::new("reads-catalog-passing");
     crate::common::migrated_db(&dir.join("app.db"));
     let rig = AuthRig::new("reads-catalog-passing").await;
+    rig.seed_user("ada", Role::User).await;
+    link_listenbrainz(&rig).await;
     let catalog = catalog_on(
         Upstream::new(
             providers,
@@ -1962,6 +1974,8 @@ async fn a_song_nothing_places_is_asked_again_after_a_day() {
     let dir = crate::common::ScratchDir::new("reads-catalog-song-miss");
     crate::common::migrated_db(&dir.join("app.db"));
     let rig = AuthRig::new("reads-catalog-song-miss").await;
+    rig.seed_user("ada", Role::User).await;
+    link_listenbrainz(&rig).await;
     let catalog = catalog_on(
         Upstream::new(
             providers,

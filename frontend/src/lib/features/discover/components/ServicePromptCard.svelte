@@ -1,5 +1,17 @@
-<script lang="ts">
+<script lang="ts" module>
 	import type { ServicePrompt } from '$lib/features/discover/queries/types';
+
+	// Media servers and download clients are set up under the admin's
+	// Settings tabs, so only an admin can act on their cards.
+	const adminOnly = new Set<ServicePrompt['service']>(['jellyfin', 'download-client']);
+
+	/** The cards this person can act on. */
+	export function promptsFor(prompts: ServicePrompt[], isAdmin: boolean): ServicePrompt[] {
+		return isAdmin ? prompts : prompts.filter((prompt) => !adminOnly.has(prompt.service));
+	}
+</script>
+
+<script lang="ts">
 	import {
 		BarChart3,
 		Bell,

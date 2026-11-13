@@ -349,10 +349,12 @@ struct Notes(Vec<Degradation>);
 
 impl Notes {
     /// The answer of a call that succeeded; a failure is logged, noted
-    /// once for its source, and reads as no answer.
+    /// once for its source, and reads as no answer. A read that needs an
+    /// account the person has not linked is no answer and no failure.
     fn keep<T>(&mut self, outcome: Result<T, ProviderError>) -> Option<T> {
         match outcome {
             Ok(value) => Some(value),
+            Err(ProviderError::NotConfigured { .. }) => None,
             Err(error) => {
                 let source = error.source();
                 tracing::debug!(source, cause = %error, "search counts degraded");

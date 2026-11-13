@@ -23,8 +23,8 @@ pub const SIMILAR_ROWS: usize = 25;
 pub const ARTIST_ALBUM_ROWS: usize = 25;
 
 /// Whose ListenBrainz link a read lends: a person's own, looked up only
-/// when the read goes out, so a held answer costs no store read; or no
-/// one's. A read never lends the server's account.
+/// when no fresh answer is held, so a fresh one costs no store read; or
+/// no one's. A read never lends the server's account.
 #[derive(Clone)]
 pub enum Lender {
     /// No one's: the read goes out anonymous.
@@ -43,6 +43,15 @@ impl Lender {
             _ => ListenBrainzCredentials::default(),
         }
     }
+}
+
+/// Whether `creds` carry a token, which ListenBrainz needs for an
+/// artist's top albums and songs.
+pub fn has_token(creds: &ListenBrainzCredentials) -> bool {
+    creds
+        .user_token
+        .as_deref()
+        .is_some_and(|token| !token.is_empty())
 }
 
 fn lower(text: &str) -> String {
@@ -140,7 +149,8 @@ pub(super) fn ranked_albums(rows: Vec<TopReleaseGroup>, artist_mbid: &str) -> Ve
 }
 
 /// One artist's most played release groups, `count` at most, read through
-/// the shared rows.
+/// the shared rows. ListenBrainz answers them only with a token: without
+/// one, what is held answers and no fetch is started or joined.
 ///
 /// # Errors
 ///
@@ -154,18 +164,30 @@ pub async fn artist_albums(
     priority: RequestPriority,
 ) -> Result<Vec<RankedAlbum>, ProviderError> {
     let read = count.max(ARTIST_ALBUM_ROWS);
+    let key = artist_albums_key(artist_mbid, read);
+    if !cache.fresh(&key).await && !has_token(&lender.credentials().await) {
+        let held: Option<Vec<RankedAlbum>> = cache.peek(&key).await.flatten();
+        let mut rows = held.unwrap_or_default();
+        rows.truncate(count);
+        return Ok(rows);
+    }
     let (client, mbid, lender) = (client.clone(), artist_mbid.to_owned(), lender.clone());
     let rows = cache
         .get_or_fetch(
-            &artist_albums_key(artist_mbid, read),
+            &key,
             Policy::LISTENBRAINZ_ARTIST,
             priority,
             move |priority| async move {
                 let creds = lender.credentials().await;
-                let rows = client
+                match client
                     .artist_top_release_groups(&mbid, read, &creds, priority)
-                    .await?;
-                Ok(found_or_missing(ranked_albums(rows, &mbid)))
+                    .await
+                {
+                    Ok(rows) => Ok(found_or_missing(ranked_albums(rows, &mbid))),
+                    // Not sent: shown as nothing, kept for no one.
+                    Err(ProviderError::NotConfigured { .. }) => Ok(Fetched::Partial(Vec::new())),
+                    Err(error) => Err(error),
+                }
             },
         )
         .await?;

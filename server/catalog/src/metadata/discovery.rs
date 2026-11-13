@@ -7,6 +7,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures_util::FutureExt as _;
@@ -18,8 +20,8 @@ use droppedneedle_providers::musicbrainz::{
     Criticality, RecordingRelease, RecordingSearchHit, ReleaseGroupRef,
 };
 use droppedneedle_providers::{
-    CacheKey, Fetched, IntegrationStatus, Policy, RequestPriority, Source, lastfm, listenbrainz,
-    record_current,
+    CacheKey, Fetched, IntegrationStatus, Policy, ProviderError, RequestPriority, Source, lastfm,
+    listenbrainz, record_current,
 };
 
 use super::artist::checked_mbid;
@@ -58,6 +60,11 @@ enum Section {
 }
 
 impl Section {
+    /// Whether ListenBrainz answers the section only with a token.
+    fn needs_token(self) -> bool {
+        matches!(self, Self::TopSongs | Self::TopAlbums)
+    }
+
     /// The cache key part. A part names its row shape too, so a cached
     /// answer in an older shape is never read as the new one.
     fn key_part(self) -> &'static str {
@@ -93,6 +100,9 @@ struct Answer {
     /// Sources that failed, or are switched off, while the section was
     /// built.
     unavailable: Vec<ListenSource>,
+    /// Sources that answer the section only for an account the person
+    /// has not linked.
+    needs_account: Vec<ListenSource>,
 }
 
 /// The listening service that stands in for `source`.
@@ -120,6 +130,25 @@ fn section_answer(
     } else {
         Fetched::Found(rows)
     })
+}
+
+/// The answer of `source` with `rows`, saying it needs the person's
+/// account when it was `refused` for want of one and has nothing.
+fn answer_from(source: ListenSource, rows: Option<SectionRows>, refused: &AtomicBool) -> Answer {
+    let rows = rows.unwrap_or_default();
+    let needs_account = if refused.load(Ordering::Relaxed) && rows.is_empty() {
+        vec![source]
+    } else {
+        Vec::new()
+    };
+    Answer {
+        unavailable: Vec::new(),
+        needs_account,
+        rows,
+        source,
+        configured: true,
+        asked: source,
+    }
 }
 
 impl Catalog {
@@ -163,12 +192,16 @@ impl Catalog {
                 .await;
             let mut unavailable = std::mem::take(&mut first.unavailable);
             unavailable.append(&mut fallback.unavailable);
+            let mut needs_account = std::mem::take(&mut first.needs_account);
+            needs_account.append(&mut fallback.needs_account);
             if fallback.configured && !fallback.rows.is_empty() {
                 fallback.asked = source;
                 fallback.unavailable = unavailable;
+                fallback.needs_account = needs_account;
                 return Ok(fallback);
             }
             first.unavailable = unavailable;
+            first.needs_account = needs_account;
         }
         Ok(first)
     }
@@ -220,15 +253,29 @@ impl Catalog {
             configured: false,
             asked: source,
             unavailable: Vec::new(),
+            needs_account: Vec::new(),
         };
+        // Set when the read was not sent for want of the person's account.
+        let refused = Arc::new(AtomicBool::new(false));
         let rows = match source {
             ListenSource::Listenbrainz => {
                 let Some(client) = self.upstream().listenbrainz() else {
                     return unconfigured;
                 };
                 let lender = self.upstream().lender(user_id);
+                let cache = self.upstream().cache();
+                if section.needs_token()
+                    && !cache.fresh(&key).await
+                    && !shared::has_token(&lender.credentials().await)
+                {
+                    // Not sent without the person's account: what is held
+                    // answers, and no fetch is started or joined.
+                    refused.store(true, Ordering::Relaxed);
+                    return answer_from(source, cache.peek(&key).await.flatten(), &refused);
+                }
                 let catalog = self.clone();
                 let mbid = mbid.to_owned();
+                let refused = Arc::clone(&refused);
                 self.cached(
                     &key,
                     Policy::LISTENBRAINZ_ARTIST,
@@ -244,7 +291,16 @@ impl Catalog {
                                 &mut hold,
                             )
                             .await;
-                        section_answer(rows, hold)
+                        match rows {
+                            // Nothing was sent: the person has no account
+                            // for this read. What is held answers; nothing
+                            // is kept, and it is no failure.
+                            Err(ProviderError::NotConfigured { .. }) => {
+                                refused.store(true, Ordering::Relaxed);
+                                Ok(Fetched::Partial(SectionRows::default()))
+                            }
+                            rows => section_answer(rows.ok(), hold),
+                        }
                     },
                 )
                 .await
@@ -295,16 +351,12 @@ impl Catalog {
                 .await
             }
         };
-        Answer {
-            unavailable: if rows.is_err() {
-                vec![source]
-            } else {
-                Vec::new()
+        match rows {
+            Ok(rows) => answer_from(source, rows, &refused),
+            Err(_) => Answer {
+                unavailable: vec![source],
+                ..answer_from(source, None, &refused)
             },
-            rows: rows.ok().flatten().unwrap_or_default(),
-            source,
-            configured: true,
-            asked: source,
         }
     }
 
@@ -356,23 +408,20 @@ impl Catalog {
         self.upstream().lastfm(user_id).await.is_some()
     }
 
-    /// ListenBrainz rows for one section; `None` when ListenBrainz failed.
-    /// A secondary read that failed is noted in `hold`.
+    /// ListenBrainz rows for one section, or the failure of its read. A
+    /// secondary read that failed is noted in `hold`.
     async fn listenbrainz_rows(
         &self,
         client: &super::upstream::CatalogListenBrainz,
         creds: &listenbrainz::ListenBrainzCredentials,
         (mbid, count, section, priority): (&str, u32, Section, RequestPriority),
         hold: &mut CacheHold,
-    ) -> Option<SectionRows> {
+    ) -> Result<SectionRows, ProviderError> {
         let count = count as usize;
         match section {
             Section::Similar => {
-                let similar = client
-                    .similar_artists(mbid, count, creds, priority)
-                    .await
-                    .ok()?;
-                Some(SectionRows {
+                let similar = client.similar_artists(mbid, count, creds, priority).await?;
+                Ok(SectionRows {
                     similar: similar
                         .into_iter()
                         .filter(|artist| is_mbid(&artist.artist_mbid))
@@ -389,8 +438,7 @@ impl Catalog {
             Section::TopSongs => {
                 let recordings = client
                     .artist_top_recordings(mbid, count, creds, priority)
-                    .await
-                    .ok()?;
+                    .await?;
                 let ids: Vec<String> = recordings
                     .iter()
                     .filter_map(|recording| recording.recording_mbid.clone())
@@ -402,7 +450,7 @@ impl Catalog {
                         hold.provider(&error);
                         HashMap::new()
                     });
-                Some(SectionRows {
+                Ok(SectionRows {
                     songs: recordings
                         .into_iter()
                         .map(|recording| TopSong {
@@ -429,13 +477,15 @@ impl Catalog {
                     .await
                 {
                     Ok(groups) if !groups.is_empty() => groups,
+                    // Without an account the recordings are refused too.
+                    Err(error @ ProviderError::NotConfigured { .. }) => return Err(error),
                     // No popularity rows, or the popularity read failed: the
                     // list is rebuilt from the top recordings instead.
                     other => {
                         if let Err(error) = &other {
                             hold.provider(error);
                         }
-                        return Some(SectionRows {
+                        return Ok(SectionRows {
                             albums: albums_from_recordings(
                                 self.upstream().cache(),
                                 client,
@@ -448,7 +498,7 @@ impl Catalog {
                         });
                     }
                 };
-                Some(SectionRows {
+                Ok(SectionRows {
                     albums: groups
                         .into_iter()
                         .map(|group| AlbumRef {
@@ -512,6 +562,7 @@ impl Catalog {
             configured: answer.configured,
             asked_source: answer.asked,
             unavailable_sources: answer.unavailable,
+            needs_account: answer.needs_account,
         })
     }
 
@@ -536,6 +587,7 @@ impl Catalog {
             configured: answer.configured,
             asked_source: answer.asked,
             unavailable_sources: answer.unavailable,
+            needs_account: answer.needs_account,
         })
     }
 
@@ -820,6 +872,7 @@ impl Catalog {
             configured: answer.configured,
             asked_source: answer.asked,
             unavailable_sources: answer.unavailable,
+            needs_account: answer.needs_account,
         })
     }
 
@@ -926,6 +979,12 @@ impl Catalog {
                         .await
                         {
                             Ok(groups) => groups,
+                            // Not sent without the person's account: what is
+                            // held is shown and nothing is kept for others.
+                            Err(ProviderError::NotConfigured { .. }) => {
+                                hold.local();
+                                continue;
+                            }
                             Err(error) => {
                                 hold.provider(&error);
                                 continue;
@@ -1302,19 +1361,18 @@ async fn lastfm_rows(
 
 /// Rebuild an artist's top albums from their most played recordings: listens
 /// add up per release group (or per release title when the group is
-/// unknown), most played first. `None` when ListenBrainz failed; a failed
-/// release group lookup is noted in `hold`.
+/// unknown), most played first. The failure of the recordings read when
+/// ListenBrainz failed; a failed release group lookup is noted in `hold`.
 async fn albums_from_recordings(
     cache: &droppedneedle_providers::ProviderCacheStore,
     client: &super::upstream::CatalogListenBrainz,
     creds: &listenbrainz::ListenBrainzCredentials,
     (mbid, count, priority): (&str, usize, RequestPriority),
     hold: &mut CacheHold,
-) -> Option<Vec<AlbumRef>> {
+) -> Result<Vec<AlbumRef>, ProviderError> {
     let recordings = client
         .artist_top_recordings(mbid, (count * 8).max(80), creds, priority)
-        .await
-        .ok()?;
+        .await?;
     let ids: Vec<String> = recordings
         .iter()
         .filter_map(|recording| recording.recording_mbid.clone())
@@ -1361,7 +1419,7 @@ async fn albums_from_recordings(
         .collect();
     albums.sort_by(|left, right| right.listen_count.cmp(&left.listen_count));
     albums.truncate(count);
-    Some(albums)
+    Ok(albums)
 }
 
 /// Note a catalog read an answer was built past: a MusicBrainz outage

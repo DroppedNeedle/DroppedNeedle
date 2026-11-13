@@ -6,8 +6,9 @@
 //! prunes activity older than a day, takes the user whose due activity
 //! was serviced longest ago, and warms each of their features through
 //! its registration (the discover page, home, the queue deck). A feature
-//! that built is due again in twelve hours, one that did not in 90 seconds,
-//! and one that timed out in 15 minutes. Activity recorded through the
+//! that built is due again in twelve hours, and one that did not build,
+//! found nothing or timed out in 15 minutes, so a provider that is down or
+//! refusing is not asked again every pass. Activity recorded through the
 //! page also starts a pass for that user at once, so the loop is the
 //! backstop.
 
@@ -31,10 +32,9 @@ const DEBOUNCE_MS: i64 = 300_000;
 const FEATURE_TIMEOUT: Duration = Duration::from_secs(300);
 /// When a warmed feature is due again, ms.
 const WARM_AGAIN_MS: i64 = 12 * 3_600_000;
-/// Retry after a feature that did not build, ms.
-const RETRY_MS: i64 = 90_000;
-/// Retry after a feature that timed out, ms.
-const TIMED_OUT_RETRY_MS: i64 = 900_000;
+/// Retry after a feature that did not build, found nothing or timed out,
+/// ms.
+const RETRY_MS: i64 = 900_000;
 
 /// A discover feature a user can use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -225,7 +225,7 @@ impl WarmScheduler {
             Ok(false) => RETRY_MS,
             Err(_) => {
                 tracing::warn!(feature = row.feature.as_str(), "discover warm timed out");
-                TIMED_OUT_RETRY_MS
+                RETRY_MS
             }
         }
     }

@@ -3,7 +3,9 @@
 	import HomeSection from '$lib/features/discover/components/HomeSection.svelte';
 	import ServiceErrorState from '$lib/ui/ServiceErrorState.svelte';
 	import WeeklyExploration from '$lib/features/discover/components/WeeklyExploration.svelte';
-	import ServicePromptCard from '$lib/features/discover/components/ServicePromptCard.svelte';
+	import ServicePromptCard, {
+		promptsFor
+	} from '$lib/features/discover/components/ServicePromptCard.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import GenreGrid from '$lib/features/genre/components/GenreGrid.svelte';
 	import LiveUpdatingBadge from '$lib/ui/LiveUpdatingBadge.svelte';
@@ -79,9 +81,11 @@
 	let genreList = $derived(shelfOf(homeData?.sections, 'genre_list'));
 	let postGenreSections = $derived(blocks('your_library'));
 	let hasContent = $derived((homeData?.sections.length ?? 0) > 0);
-	let servicePrompts = $derived(homeData?.service_prompts || []);
+	let servicePrompts = $derived(promptsFor(homeData?.service_prompts || [], authStore.isAdmin));
 	let downloadClientConfigured = $derived(homeData?.integration_status?.download_client ?? true);
 	let downloadClientPrompt = $derived(servicePrompts.find((p) => p.service === 'download-client'));
+	// the welcome card stands in for the other cards until a download source is set
+	let welcome = $derived(!downloadClientConfigured && !!downloadClientPrompt);
 
 	const getOtherPrompts = () => {
 		return servicePrompts.filter((p) => p.service !== 'download-client' && !isDismissed(p.service));
@@ -141,7 +145,7 @@
 				class="space-y-6 px-4 sm:space-y-8 sm:px-6 lg:px-8"
 				class:is-refreshing={homeData?.refreshing}
 			>
-				{#if !downloadClientConfigured && downloadClientPrompt}
+				{#if welcome && downloadClientPrompt}
 					<Card
 						class="relative overflow-hidden border-2 border-accent/40 bg-linear-to-br from-accent/20 via-accent/10 to-base-200 shadow-xl"
 					>
@@ -170,7 +174,7 @@
 					</Card>
 				{/if}
 
-				{#if otherPrompts.length > 0 && downloadClientConfigured}
+				{#if otherPrompts.length > 0 && !welcome}
 					<div class="space-y-3">
 						{#each otherPrompts as prompt, i (`prompt-${i}`)}
 							<ServicePromptCard {prompt} ondismiss={handlePromptDismiss} />

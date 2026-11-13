@@ -5,12 +5,13 @@ const answer = (overrides: Partial<SectionSources>): SectionSources => ({
 	source: 'listenbrainz',
 	asked_source: 'listenbrainz',
 	unavailable_sources: [],
+	needs_account: [],
 	configured: true,
 	...overrides
 });
 
 describe('listeningSourceNotice', () => {
-	it('says which listening service stood in or failed, and nothing when all is well', () => {
+	it('says which listening service stood in, failed or needs an account, and nothing when all is well', () => {
 		const cases: [SectionSources, (SectionSources | undefined)[], string | null][] = [
 			[answer({}), [undefined], null],
 			[answer({ configured: false, unavailable_sources: ['listenbrainz'] }), [], null],
@@ -33,6 +34,16 @@ describe('listeningSourceNotice', () => {
 				answer({ unavailable_sources: ['listenbrainz', 'lastfm'] }),
 				[],
 				'ListenBrainz and Last.fm are off or unavailable.'
+			],
+			[
+				answer({ needs_account: ['listenbrainz'] }),
+				[answer({})],
+				'Link ListenBrainz under Profile > Scrobbling & Discovery to see popular songs and albums.'
+			],
+			[
+				answer({ source: 'lastfm', needs_account: ['listenbrainz'] }),
+				[],
+				'ListenBrainz needs your account, so these lists come from Last.fm.'
 			]
 		];
 		for (const [first, rest, expected] of cases) {

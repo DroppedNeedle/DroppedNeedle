@@ -1,5 +1,7 @@
 //! The rows the listening reads answer with, shared by every feature.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 pub use crate::discover::models::StatsRange;
@@ -306,4 +308,35 @@ impl ListenedAlbum {
     pub fn row(self) -> Option<AlbumRow> {
         self.ranked().map(|ranked| ranked.album)
     }
+}
+
+/// `rows` with one row per release group: of the rows that share one, the
+/// one with the most listens, in the first one's place. ListenBrainz's
+/// sitewide chart can list a release group twice. Rows without a group
+/// are kept as they are.
+pub fn one_per_group<T>(
+    rows: Vec<T>,
+    group: impl Fn(&T) -> Option<&str>,
+    listens: impl Fn(&T) -> i64,
+) -> Vec<T> {
+    let mut kept: Vec<T> = Vec::with_capacity(rows.len());
+    let mut at: HashMap<String, usize> = HashMap::new();
+    for row in rows {
+        let Some(key) = group(&row).map(str::to_ascii_lowercase) else {
+            kept.push(row);
+            continue;
+        };
+        match at.get(&key).and_then(|&index| kept.get_mut(index)) {
+            Some(first) => {
+                if listens(&row) > listens(first) {
+                    *first = row;
+                }
+            }
+            None => {
+                at.insert(key, kept.len());
+                kept.push(row);
+            }
+        }
+    }
+    kept
 }

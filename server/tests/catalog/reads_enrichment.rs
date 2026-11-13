@@ -2,8 +2,9 @@
 //! ListenBrainz and the recorded Last.fm answer: a failed row stays on its
 //! row.
 
-/// ListenBrainz on a loopback origin, refusing the second artist, and
-/// Last.fm answering every read with the recorded `artist.getInfo`.
+/// ListenBrainz on a loopback origin, taking any token and refusing the
+/// second artist, and Last.fm answering every read with the recorded
+/// `artist.getInfo`.
 fn counts_stub() -> axum::Router {
     use axum::extract::Path;
     use axum::http::StatusCode;
@@ -33,6 +34,10 @@ fn counts_stub() -> axum::Router {
             }),
         )
         .route(
+            "/listenbrainz/1/validate-token",
+            get(|| async { axum::Json(serde_json::json!({"valid": true, "user_name": "owner"})) }),
+        )
+        .route(
             "/listenbrainz/1/popularity/release-group",
             post(|| async {
                 axum::Json(serde_json::json!([
@@ -42,9 +47,10 @@ fn counts_stub() -> axum::Router {
         )
 }
 
-/// ListenBrainz counts sum an artist's top release groups and read album
-/// counts in one call; a refused artist call leaves that row without a
-/// count and notes ListenBrainz once, and the other rows still count.
+/// ListenBrainz counts sum an artist's top release groups, read with the
+/// person's linked account, and read album counts in one call; a refused
+/// artist call leaves that row without a count and notes ListenBrainz
+/// once, and the other rows still count.
 /// With ListenBrainz off, an instance Last.fm key gives Last.fm counts.
 #[tokio::test]
 async fn a_failed_count_stays_on_its_row() {
@@ -56,6 +62,15 @@ async fn a_failed_count_stays_on_its_row() {
             .await;
     let admin = app.login_admin().await;
     let auth = [("authorization", admin.as_str())];
+    let (status, body) = app
+        .call(
+            "PUT",
+            "/api/v3/me/connections/listenbrainz",
+            &auth,
+            Some(serde_json::json!({"username": "owner", "user_token": "owner-token"})),
+        )
+        .await;
+    assert!(status.is_success(), "{status} {body}");
     let (status, body) = app
         .call(
             "PUT",

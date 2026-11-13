@@ -20,6 +20,7 @@
 	} from '$lib/utils/entityRoutes';
 	import { formatListenCount, formatListenedAt } from '$lib/utils/formatting';
 	import { libraryStore } from '$lib/stores/library';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import { EAGER_IMAGE_COUNT } from '$lib/media/lazyImage';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
@@ -84,6 +85,22 @@
 		}
 	}
 
+	// Where the person connects the service a shelf waits on: their own
+	// listening accounts on the profile, a media server in the admin's
+	// settings. Null when they cannot connect it themselves.
+	const connect = $derived.by(() => {
+		switch (section.connect_service) {
+			case 'listenbrainz':
+				return { name: 'ListenBrainz', href: '/profile#scrobbling' };
+			case 'lastfm':
+				return { name: 'Last.fm', href: '/profile#scrobbling' };
+			case 'jellyfin':
+				return authStore.isAdmin ? { name: 'Jellyfin', href: '/settings?tab=jellyfin' } : null;
+			default:
+				return null;
+		}
+	});
+
 	function rowKey(item: SectionItem, i: number): string {
 		return `${item.kind === 'album' || item.kind === 'track' ? item.title : item.name}-${i}`;
 	}
@@ -117,15 +134,9 @@
 					{/if}
 				</div>
 				<p class="text-muted text-sm">{section.fallback_message}</p>
-				{#if section.connect_service}
-					<Button variant="primary" size="sm" href={withBasePath('/settings')} class="mt-2">
-						Connect {section.connect_service === 'listenbrainz'
-							? 'ListenBrainz'
-							: section.connect_service === 'lastfm'
-								? 'Last.fm'
-								: section.connect_service === 'jellyfin'
-									? 'Jellyfin'
-									: section.connect_service}
+				{#if connect}
+					<Button variant="primary" size="sm" href={withBasePath(connect.href)} class="mt-2">
+						Connect {connect.name}
 					</Button>
 				{/if}
 			</div>

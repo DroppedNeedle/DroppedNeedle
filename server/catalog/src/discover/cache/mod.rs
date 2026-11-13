@@ -11,9 +11,9 @@
 //! A visit gets whatever row there is, however old, and starts a rebuild
 //! behind it when the page is missing or past its freshness. One build
 //! runs per user and page at a time. A build that fails or finds nothing
-//! keeps the old page and is not tried again for a while, so a dead
-//! provider does not cost every visit a build. Times come from the kernel
-//! clock.
+//! keeps the old page and is not tried again for a while, by a visit or
+//! the warm cycle, so a dead provider does not cost every visit a build.
+//! Times come from the kernel clock.
 //!
 //! A save that finds the database busy is not a failed build: the page is
 //! held in memory and served until a later visit writes it. A clear of the
@@ -407,12 +407,20 @@ impl<T: Serialize + DeserializeOwned> UserPageCache<T> {
     }
 
     /// Claim the user's one build in the clear generation now; `None`
-    /// while another runs or when the generation cannot be read.
+    /// while another runs, within the retry wait after a failed build
+    /// (the warm cycle claims without asking [`Self::due`]; a refresh drops
+    /// the wait first), or when the generation cannot be read.
     pub async fn claim(&self, user_id: &str) -> Option<Claim> {
         let generation = self.generation().await?;
         let now = self.now_ms();
+        let retry_ms = self.inner.timing.retry_ms;
         let mut flights = self.inner.flights();
-        if flights.running.contains_key(user_id) {
+        if flights.running.contains_key(user_id)
+            || flights
+                .failed
+                .get(user_id)
+                .is_some_and(|at| now - at < retry_ms)
+        {
             return None;
         }
         flights.running.insert(user_id.to_owned(), now);

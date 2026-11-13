@@ -255,6 +255,10 @@ impl ListeningNetwork for LiveNetwork {
         Box::pin(async move { self.lastfm(user_id).await.is_some() })
     }
 
+    fn lends_token<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, bool> {
+        Box::pin(async move { super::shared::has_token(&self.credentials(user_id).await) })
+    }
+
     fn sitewide_artists(
         &self,
         range: StatsRange,

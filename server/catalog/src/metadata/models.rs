@@ -340,6 +340,9 @@ pub struct SimilarArtistsResponse {
     pub asked_source: ListenSource,
     /// Services that failed, or are switched off, while the list was built.
     pub unavailable_sources: Vec<ListenSource>,
+    /// Services that give this list only to an account the person has not
+    /// linked (ListenBrainz's popular songs and albums). Not a failure.
+    pub needs_account: Vec<ListenSource>,
 }
 
 /// One of an artist's most played songs.
@@ -379,6 +382,9 @@ pub struct TopSongsResponse {
     pub asked_source: ListenSource,
     /// Services that failed, or are switched off, while the list was built.
     pub unavailable_sources: Vec<ListenSource>,
+    /// Services that give this list only to an account the person has not
+    /// linked (ListenBrainz's popular songs and albums). Not a failure.
+    pub needs_account: Vec<ListenSource>,
 }
 
 /// `GET /artists/{artist_mbid}/top-albums`.
@@ -395,6 +401,9 @@ pub struct TopAlbumsResponse {
     pub asked_source: ListenSource,
     /// Services that failed, or are switched off, while the list was built.
     pub unavailable_sources: Vec<ListenSource>,
+    /// Services that give this list only to an account the person has not
+    /// linked (ListenBrainz's popular songs and albums). Not a failure.
+    pub needs_account: Vec<ListenSource>,
 }
 
 /// A Last.fm tag.

@@ -261,13 +261,13 @@ pub fn service_prompts(
             prompts.push(prompt(
                 PromptService::Listenbrainz,
                 "Connect ListenBrainz",
-                "Get recommendations from your listening history, spot new releases from artists you already love, and keep an eye on your top genres. Connect Last.fm too if you want global listener stats.",
+                "Shows each artist's popular albums and songs, and recommends music from what you play.",
                 "LB",
                 "primary",
                 [
+                    "Popular albums and songs",
                     "Personalized recommendations",
                     "New release alerts",
-                    "Listening stats",
                     "Top genres",
                 ],
             ));

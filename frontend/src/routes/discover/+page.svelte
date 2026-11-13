@@ -19,7 +19,9 @@
 	import HiddenAlbumsModal from '$lib/features/discover/components/HiddenAlbumsModal.svelte';
 	import PlaylistDiscoveryModal from '$lib/features/discover/components/PlaylistDiscoveryModal.svelte';
 	import WeeklyExploration from '$lib/features/discover/components/WeeklyExploration.svelte';
-	import ServicePromptCard from '$lib/features/discover/components/ServicePromptCard.svelte';
+	import ServicePromptCard, {
+		promptsFor
+	} from '$lib/features/discover/components/ServicePromptCard.svelte';
 	import DiscoverArtistHero from '$lib/features/discover/components/DiscoverArtistHero.svelte';
 	import DiscoverArtistMiniBand from '$lib/features/discover/components/DiscoverArtistMiniBand.svelte';
 	import SectionDivider from '$lib/ui/SectionDivider.svelte';
@@ -28,6 +30,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import { isDismissed } from '$lib/features/discover/state/dismissedPrompts';
 	import { withBasePath } from '$lib/utils/basePath';
+	import { PROVIDER_NAMES } from '$lib/utils/serviceError';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
 		EyeOff,
@@ -119,9 +122,7 @@
 	// build-time degradation summary; explains an empty or slow page instead of
 	// leaving the user on endless skeletons
 	const degradedSources = $derived(Object.keys(discoverData?.service_status ?? {}));
-	const degradedLabel = $derived(
-		degradedSources.map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(', ')
-	);
+	const degradedLabel = $derived(degradedSources.map((s) => PROVIDER_NAMES[s] ?? s).join(', '));
 	const degradedVerb = $derived(degradedSources.length > 1 ? 'are' : 'is');
 	let isBuilding = $derived(
 		!!discoverData && !hasContent && (!!discoverData.refreshing || isUpdating)
@@ -131,7 +132,9 @@
 	let dismissVersion = $state(0);
 	let servicePrompts = $derived.by(() => {
 		void dismissVersion;
-		return (discoverData?.service_prompts ?? []).filter((p) => !isDismissed(p.service));
+		return promptsFor(discoverData?.service_prompts ?? [], authStore.isAdmin).filter(
+			(p) => !isDismissed(p.service)
+		);
 	});
 
 	let queueEnabled = $derived(discoverData?.discover_queue_enabled ?? true);

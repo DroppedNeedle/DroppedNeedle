@@ -36,6 +36,10 @@ pub trait ListeningNetwork: Send + Sync {
     fn lastfm_ready<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, bool> {
         Box::pin(async move { self.accounts(user_id).await.lastfm })
     }
+    /// Whether the user's reads carry a ListenBrainz token.
+    fn lends_token<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, bool> {
+        Box::pin(async move { self.accounts(user_id).await.listenbrainz.is_some() })
+    }
 
     /// One page of the sitewide ListenBrainz artist chart.
     fn sitewide_artists(
@@ -81,6 +85,10 @@ pub trait ListeningNetwork: Send + Sync {
         priority: RequestPriority,
     ) -> Read<'a, Vec<ScoredArtist>>;
     /// One artist's most played release groups (a popularity read).
+    /// ListenBrainz answers it only with the user's token: without one it
+    /// is [`ProviderError::NotConfigured`](droppedneedle_providers::ProviderError::NotConfigured)
+    /// and nothing is sent, never an empty answer that would be kept for
+    /// every user.
     fn artist_albums<'a>(
         &'a self,
         user_id: &'a str,

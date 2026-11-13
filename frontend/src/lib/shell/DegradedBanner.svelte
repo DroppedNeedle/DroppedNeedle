@@ -3,6 +3,7 @@
 	import { fromStore } from 'svelte/store';
 	import { TriangleAlert, X } from 'lucide-svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import { PROVIDER_NAMES } from '$lib/utils/serviceError';
 
 	const status = fromStore(serviceStatusStore);
 
@@ -11,9 +12,7 @@
 	const degradedSources = $derived(Object.keys(status.current));
 	const hasDegradation = $derived(degradedSources.length > 0 && !dismissed);
 
-	const sourceLabel = $derived(
-		degradedSources.map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(', ')
-	);
+	const sourceLabel = $derived(degradedSources.map((s) => PROVIDER_NAMES[s] ?? s).join(', '));
 
 	const verb = $derived(degradedSources.length > 1 ? 'are' : 'is');
 

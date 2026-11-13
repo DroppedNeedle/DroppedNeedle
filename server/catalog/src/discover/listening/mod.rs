@@ -346,6 +346,13 @@ fn cut<T>(rows: Vec<T>, count: usize) -> Vec<T> {
     rows.into_iter().take(count).collect()
 }
 
+/// The albums of `rows` that have a title.
+fn titled(rows: Vec<RankedAlbum>) -> Vec<RankedAlbum> {
+    rows.into_iter()
+        .filter(|row| !row.album.title.is_empty())
+        .collect()
+}
+
 impl ListeningData {
     /// The reads over `network`, cached in `cache`.
     pub fn new(network: Arc<dyn ListeningNetwork>, cache: ProviderCacheStore) -> Self {
@@ -658,7 +665,10 @@ impl ListeningData {
     }
 
     /// One artist's most played release groups, empty while ListenBrainz
-    /// popularity is down. `user_id` lends its token.
+    /// popularity is down. `user_id` lends its token. ListenBrainz answers
+    /// it only for a linked account: anyone else gets what the cache holds
+    /// from other people's reads, else an empty answer that is not kept and
+    /// is not a failed read.
     pub async fn artist_albums(
         &self,
         user_id: &str,
@@ -674,23 +684,33 @@ impl ListeningData {
         }
         let read = count.max(ARTIST_ALBUMS_FLOOR);
         let key = shared::artist_albums_key(artist_mbid, read);
+        // Without a token the read is never sent, so it starts or joins no
+        // fetch another user's read could share: what is held answers.
+        if !self.cache.fresh(&key).await && !self.network.lends_token(user_id).await {
+            let held: Option<Vec<RankedAlbum>> = self.cache.peek(&key).await.flatten();
+            return Ok(cut(titled(held.unwrap_or_default()), count));
+        }
         let (user, mbid, health) = (
             user_id.to_owned(),
             artist_mbid.to_owned(),
             Arc::clone(&self.health),
         );
         let rows = self
-            .list(key, ARTIST, ask, move |network, priority| async move {
+            .lookup(key, ARTIST, ask, move |network, priority| async move {
                 let found = network.artist_albums(&user, &mbid, read, priority).await;
                 health.note(&found, priority);
-                found
+                match found {
+                    Ok(rows) if rows.is_empty() => Ok(Fetched::Missing),
+                    Ok(rows) => Ok(Fetched::Found(rows)),
+                    Err(ListeningError::Provider(ProviderError::NotConfigured { .. })) => {
+                        Ok(Fetched::Partial(Vec::new()))
+                    }
+                    Err(error) => Err(error),
+                }
             })
-            .await?;
-        let titled: Vec<RankedAlbum> = rows
-            .into_iter()
-            .filter(|row: &RankedAlbum| !row.album.title.is_empty())
-            .collect();
-        Ok(cut(titled, count))
+            .await?
+            .unwrap_or_default();
+        Ok(cut(titled(rows), count))
     }
 
     /// A ListenBrainz user's genres with their listens, most listened

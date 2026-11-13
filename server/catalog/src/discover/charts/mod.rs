@@ -9,7 +9,8 @@
 //! ListenBrainz (the default source): trending artists and popular albums
 //! come from the sitewide stats, "your top albums" from the user's own
 //! stats through their linked ListenBrainz account. One row more than asked
-//! for tells whether another page follows. Artists without an
+//! for tells whether another page follows, and a page shows each release
+//! group once, with its higher count. Artists without an
 //! MBID are dropped (they cannot link anywhere). When ListenBrainz is down
 //! and the user can read Last.fm, trending artists and "your top albums"
 //! come from Last.fm instead, marked as Last.fm rows.
@@ -30,7 +31,7 @@ use droppedneedle_kernel::db::Db;
 use super::ownership::{owned_albums, owned_artists};
 use crate::discover::listening::{
     ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListenedAlbum, ListeningData, ListeningError,
-    SourcePolicy, StatsRange,
+    SourcePolicy, StatsRange, one_per_group,
 };
 use crate::discover::{
     models::{AlbumRef, ArtistRef, ChartPage},
@@ -113,6 +114,12 @@ impl LiveCharts {
         }
         let has_more = albums.len() as i64 > limit;
         albums.truncate(usize::try_from(limit).unwrap_or(0));
+        // After the page is cut, so a repeated group never ends the list.
+        let albums = one_per_group(
+            albums,
+            |album| album.musicbrainz_id.as_deref(),
+            |album| album.listen_count.unwrap_or(0),
+        );
         Ok(ChartPage {
             range_key: range,
             label: range.label().to_owned(),

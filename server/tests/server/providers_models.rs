@@ -1438,9 +1438,18 @@ fn listenbrainz_answer(method: Method, path: &str, status: u16, body: &str) -> P
     )
 }
 
+/// A linked person's identity: an artist's top release groups and
+/// recordings are read only with a token.
+fn linked() -> ListenBrainzCredentials {
+    ListenBrainzCredentials {
+        username: Some("listener".to_owned()),
+        user_token: Some("token".to_owned()),
+    }
+}
+
 /// Serves `body` from where `read` asks and reads it through the client.
 async fn listenbrainz(read: ListenBrainzRead, body: &str) -> Result<bool, ProviderError> {
-    let creds = ListenBrainzCredentials::default();
+    let creds = linked();
     let answer = |method, path: String| listenbrainz_answer(method, &path, 200, body);
     Ok(match read {
         ListenBrainzRead::RecordingGroups => {
@@ -1877,7 +1886,7 @@ async fn a_lastfm_count_that_was_not_sent_reads_as_absent() {
 /// names among its own similar artists.
 #[tokio::test]
 async fn listenbrainz_recorded_values_read_as_answered() {
-    let creds = ListenBrainzCredentials::default();
+    let creds = linked();
     let top = listenbrainz_answer(
         Method::Get,
         &format!("/1/popularity/top-recordings-for-artist/{MB_RADIOHEAD_MBID}"),

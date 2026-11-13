@@ -73,6 +73,9 @@ const REDISCOVER_IDLE_DAYS: f64 = 90.0;
 const ESSENTIALS_MIN_ALBUMS: usize = 3;
 /// Missing Essentials: at most this many albums per artist.
 const ESSENTIALS_PER_ARTIST: usize = 3;
+/// What Missing Essentials says when only a ListenBrainz link would fill it.
+const ESSENTIALS_NEED_LISTENBRAINZ: &str =
+    "Connect ListenBrainz to see the popular albums you're missing.";
 /// Genres to Explore: genres with fewer library artists than this.
 const UNEXPLORED_THRESHOLD: i64 = 2;
 /// Genres to Explore: at most this many.
@@ -839,7 +842,8 @@ impl Builder<'_> {
             .collect();
         artists.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         artists.truncate(10);
-        let found = if self.lastfm_for_popularity(user) {
+        let lastfm = self.lastfm_for_popularity(user);
+        let found = if lastfm {
             let mbids: Vec<String> = artists.iter().map(|(mbid, _)| mbid.clone()).collect();
             self.lastfm_ranked_albums(user_id, &mbids).await
         } else {
@@ -853,6 +857,7 @@ impl Builder<'_> {
             }))
             .await
         };
+        let answered = found.iter().any(|albums| !albums.is_empty());
         let mut missing: Vec<(i64, AlbumRef)> = Vec::new();
         for albums in found {
             let mut taken = 0;
@@ -878,6 +883,26 @@ impl Builder<'_> {
             }
         }
         missing.sort_by(|a, b| b.0.cmp(&a.0));
+        if !answered
+            && !artists.is_empty()
+            && !lastfm
+            && user.listenbrainz.is_none()
+            && self.listening.listenbrainz_on()
+            && !self.listening.popularity_down()
+        {
+            // ListenBrainz ranks an artist's albums only for a linked
+            // account: say so rather than leave the shelf out.
+            return Some(ChartSection {
+                title: "Missing Essentials".to_owned(),
+                kind: SectionKind::Albums,
+                items: Vec::new(),
+                source: None,
+                fallback_message: Some(ESSENTIALS_NEED_LISTENBRAINZ.to_owned()),
+                connect_service: Some(ShelfSource::Listenbrainz),
+                radio_seed_type: None,
+                radio_seed_id: None,
+            });
+        }
         shelf(
             "Missing Essentials",
             SectionKind::Albums,
