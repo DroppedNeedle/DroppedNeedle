@@ -117,74 +117,28 @@ impl Default for MusicBrainzSettings {
     }
 }
 
-/// Public MusicBrainz origins for transport-rate policy (v2
-/// `_MB_RATE_POLICY_PUBLIC_ORIGINS`, both schemes so insecure transport
-/// cannot bypass the ceiling). Never identity proof.
-const MB_RATE_POLICY_PUBLIC_ORIGINS: [&str; 8] = [
-    "http://musicbrainz.org",
-    "http://musicbrainz.org:80",
-    "http://www.musicbrainz.org",
-    "http://www.musicbrainz.org:80",
-    "https://musicbrainz.org",
-    "https://musicbrainz.org:443",
-    "https://www.musicbrainz.org",
-    "https://www.musicbrainz.org:443",
-];
+/// The domain MetaBrainz serves MusicBrainz from. Every host in it
+/// (`beta.`, `test.`, `www.` and the rest) is the public service.
+const MB_PUBLIC_DOMAIN: &str = "musicbrainz.org";
 
-/// Privacy-safe origin label: `scheme://host[:port]`, lowercased, no
-/// credentials or path (v2 `normalize_mb_source_label`, without a URL
-/// crate). Returns "" for non-HTTP(S) input.
-#[must_use]
-pub fn normalize_mb_source_label(url: &str) -> String {
-    let trimmed = url.trim();
-    let Some((scheme, rest)) = trimmed.split_once("://") else {
-        return String::new();
-    };
-    let scheme = scheme.to_ascii_lowercase();
-    if scheme != "http" && scheme != "https" {
-        return String::new();
-    }
-    let authority = rest.split('/').next().unwrap_or("");
-    let host_port = authority.rsplit('@').next().unwrap_or("");
-    if host_port.is_empty() {
-        return String::new();
-    }
-    let (host, port) = if host_port.starts_with('[') {
-        match host_port.split_once("]:") {
-            Some((host, port)) => (format!("{host}]"), Some(port)),
-            None => {
-                if host_port.ends_with(']') {
-                    (host_port.to_owned(), None)
-                } else {
-                    return String::new();
-                }
-            }
-        }
-    } else {
-        match host_port.split_once(':') {
-            Some((host, port)) => (host.to_owned(), Some(port)),
-            None => (host_port.to_owned(), None),
-        }
-    };
-    if host.is_empty() || host.contains(':') && !host.starts_with('[') {
-        return String::new();
-    }
-    let mut label = format!("{scheme}://{}", host.to_ascii_lowercase());
-    if let Some(port) = port {
-        if port.is_empty() || !port.bytes().all(|byte| byte.is_ascii_digit()) {
-            return String::new();
-        }
-        label.push(':');
-        label.push_str(port);
-    }
-    label
-}
-
-/// Whether the URL sits on a public MusicBrainz origin (rate ceiling
-/// applies).
+/// Whether the URL's host is musicbrainz.org or any host under it, on any
+/// scheme or port, so the official ceiling applies. The host is read with
+/// the parser the MusicBrainz client connects with, so a query, fragment,
+/// backslash or credentials in the address cannot hide it. Never identity
+/// proof.
 #[must_use]
 pub fn is_mb_rate_policy_public_host(url: &str) -> bool {
-    MB_RATE_POLICY_PUBLIC_ORIGINS.contains(&normalize_mb_source_label(url).as_str())
+    let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host = host.strip_suffix('.').unwrap_or(host);
+    host == MB_PUBLIC_DOMAIN
+        || host
+            .strip_suffix(MB_PUBLIC_DOMAIN)
+            .is_some_and(|subdomain| subdomain.ends_with('.'))
 }
 
 /// True for a value with no surrounding whitespace that is not empty.

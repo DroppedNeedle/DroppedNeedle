@@ -18,6 +18,15 @@ use axum::{
 };
 use droppedneedle_auth::session::middleware::require_session;
 use droppedneedle_auth::users::roles::Role;
+use droppedneedle_catalog::metadata::Catalog;
+use droppedneedle_catalog::metadata::library::LocalCatalog;
+use droppedneedle_catalog::metadata::upstream::{CatalogSettings, Upstream};
+use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_kernel::runtime_config::sections::{
+    MbSourceMode, MusicBrainzSettings, UserPreferences,
+};
+use droppedneedle_providers::Providers;
+use droppedneedle_providers::test_support::ScriptedWire;
 use search::SearchDeps;
 use search::models::{EnrichmentBatchRequest, EnrichmentResponse};
 use search::ports::{EnrichmentPort, EnrichmentPortError};
@@ -116,16 +125,79 @@ fn seed_catalog(app_db: &Path) {
     );
 }
 
-/// The search deps over `app_db`, MusicBrainz search failing at once
-/// without a request: these tests read the library's own hits.
+/// The search deps over `app_db`. With no wire, MusicBrainz search fails
+/// at once without a request and the tests read the library's own hits;
+/// with one, the official MusicBrainz answers on it.
 fn search_deps(
     app_db: PathBuf,
     enrichment: Arc<dyn EnrichmentPort>,
     users: droppedneedle_auth::users::UsersDeps,
+    wire: Option<Arc<ScriptedWire>>,
 ) -> SearchDeps {
     let db = droppedneedle_kernel::db::Db::open_for_tests(&app_db).expect("search database opens");
-    let remote = crate::common::bundles::offline_catalog(&db, users);
+    let remote = match wire {
+        Some(wire) => scripted_catalog(&db, users, wire),
+        None => crate::common::bundles::offline_catalog(&db, users),
+    };
     SearchDeps::new(SearchService::new(db, remote), enrichment)
+}
+
+/// A metadata catalog over `db` reading the official MusicBrainz, which
+/// the closed provider endpoints put at [`MUSICBRAINZ`] on `wire`.
+fn scripted_catalog(
+    db: &droppedneedle_kernel::db::Db,
+    users: droppedneedle_auth::users::UsersDeps,
+    wire: Arc<ScriptedWire>,
+) -> Catalog {
+    Catalog::new(
+        Upstream::new(
+            Arc::new(Providers::unpaced(wire)),
+            Arc::new(OfficialMusicBrainz),
+            users.clone(),
+            droppedneedle_media::playback::listening::ListeningStore::new(
+                db.clone(),
+                users.crypto.clone(),
+                users.clock.clone(),
+            ),
+        ),
+        LocalCatalog::new(db.clone()),
+        crate::common::bundles::quiet_page_sources(crate::common::bundles::cover_warm_at(
+            db,
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        )),
+    )
+}
+
+/// Where the official MusicBrainz answers in [`scripted_catalog`].
+const MUSICBRAINZ: &str = "http://127.0.0.1:9/musicbrainz/ws/2";
+
+/// Catalog settings on the official MusicBrainz, everything else at its
+/// default and ListenBrainz off.
+struct OfficialMusicBrainz;
+
+impl CatalogSettings for OfficialMusicBrainz {
+    fn musicbrainz(&self) -> Option<MusicBrainzSettings> {
+        Some(MusicBrainzSettings {
+            source_mode: MbSourceMode::Official,
+            ..MusicBrainzSettings::default()
+        })
+    }
+
+    fn preferences(&self) -> UserPreferences {
+        UserPreferences::default()
+    }
+
+    fn advanced(&self) -> AdvancedSettings {
+        AdvancedSettings::default()
+    }
+
+    fn listenbrainz_enabled(&self) -> bool {
+        false
+    }
+
+    fn store_region(&self) -> Option<String> {
+        None
+    }
 }
 
 /// What a test's router needs alive: the rig its session lives in and the
@@ -137,6 +209,15 @@ type Held = (AuthRig, TestApp);
 /// production posture in `create_app` for these paths. A test user is
 /// signed in with [`TEST_TOKEN`].
 async fn app(app_db: PathBuf, enrichment: Arc<dyn EnrichmentPort>) -> (axum::Router, Held) {
+    app_on(app_db, enrichment, None).await
+}
+
+/// [`app`] with MusicBrainz answering on `wire`, when there is one.
+async fn app_on(
+    app_db: PathBuf,
+    enrichment: Arc<dyn EnrichmentPort>,
+    wire: Option<Arc<ScriptedWire>>,
+) -> (axum::Router, Held) {
     let rig = AuthRig::new("reads-search").await;
     let user = rig.seed_user("ada", Role::User).await;
     rig.sign_in(&user.id, TEST_TOKEN).await;
@@ -144,7 +225,7 @@ async fn app(app_db: PathBuf, enrichment: Arc<dyn EnrichmentPort>) -> (axum::Rou
     let app = scope
         .request_scope(
             search::routes()
-                .with_state(search_deps(app_db, enrichment, rig.deps.clone()))
+                .with_state(search_deps(app_db, enrichment, rig.deps.clone(), wire))
                 .into_router()
                 .layer(middleware::from_fn_with_state(
                     rig.session_gate(),
@@ -740,6 +821,240 @@ async fn track_search_survives_vacuum_and_a_table_rebuild() {
             &track_hits(&app, query).await,
             expected,
             "{query} after a table rebuild"
+        );
+    }
+}
+
+/// One MusicBrainz search answer listing `hits` under `key`.
+fn search_answer(key: &str, hits: Vec<serde_json::Value>) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({"count": hits.len(), "offset": 0, key: hits}))
+        .expect("answer encodes")
+}
+
+/// One artist search hit.
+fn artist_hit(name: &str, score: u32) -> serde_json::Value {
+    serde_json::json!({"id": format!("artist-{name}"), "score": score, "name": name})
+}
+
+/// One release-group search hit: id, title, credited artist, primary type,
+/// score and how many releases the group holds.
+type Group<'a> = (&'a str, &'a str, &'a str, &'a str, u32, u32);
+
+fn group_hit((id, title, artist, kind, score, count): Group<'_>) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "score": score,
+        "count": count,
+        "title": title,
+        "primary-type": kind,
+        "artist-credit": [{
+            "name": artist,
+            "joinphrase": "",
+            "artist": {"id": format!("artist-{artist}"), "name": artist},
+        }],
+    })
+}
+
+/// MusicBrainz scores an album's tributes and namesakes as high as the
+/// album, so a hit whose title is the query ranks as exact and the group
+/// with more releases goes first, then the library, then the title. The
+/// score shown stays MusicBrainz's, the ranking runs before the cut to the
+/// limit, and the release count never lifts an album above an artist. The
+/// hits keep the order, scores and release counts of BrainzMash's answers
+/// on 2026-11-13, with one namesake more for "the beatles".
+#[tokio::test]
+async fn exact_title_albums_rank_by_their_releases() {
+    let beatles: Vec<Group<'_>> = vec![
+        (
+            "rg-dreamsound",
+            "The Beatles",
+            "The Dreamsound Orchestra",
+            "Album",
+            100,
+            1,
+        ),
+        (
+            "rg-mersey",
+            "The Beatles",
+            "The Mersey Sound Orchestra",
+            "Album",
+            100,
+            1,
+        ),
+        (
+            "rg-ukulele",
+            "The Beatles",
+            "Various Artists",
+            "Album",
+            100,
+            1,
+        ),
+        ("rg-1994", "The Beatles", "The Beatles", "Album", 100, 1),
+        ("rg-porter", "The Beatles", "Cheryl Porter", "Album", 100, 1),
+        (
+            "rg-slumber",
+            "The Beatles",
+            "Slumberlandband",
+            "Single",
+            100,
+            1,
+        ),
+        (
+            "rg-child",
+            "The Beatles",
+            "Child Pornography",
+            "Album",
+            100,
+            1,
+        ),
+        (
+            "rg-twilley",
+            "The Beatles",
+            "Dwight Twilley",
+            "Album",
+            100,
+            2,
+        ),
+        ("rg-famous", "The Beatles", "Famous", "Single", 100, 1),
+        ("rg-revival", "The Beatles", "Revival Band", "Album", 100, 1),
+        (
+            "rg-white-album",
+            "The Beatles",
+            "The Beatles",
+            "Album",
+            95,
+            58,
+        ),
+        (
+            "rg-introducing",
+            "Introducing… The Beatles",
+            "The Beatles",
+            "Album",
+            89,
+            27,
+        ),
+    ];
+    let queen: Vec<Group<'_>> = vec![
+        ("rg-queen", "Queen", "Queen", "Album", 100, 60),
+        ("rg-jessie", "Queen", "Jessie J", "Single", 100, 2),
+        ("rg-nicki", "Queen", "Nicki Minaj", "Album", 100, 19),
+        ("rg-monae", "Q.U.E.E.N.", "Janelle Monáe", "Single", 99, 1),
+        ("rg-perfume", "Queen", "Perfume Genius", "Single", 99, 1),
+        ("rg-kaya", "QUEEN", "Kaya", "Album", 99, 3),
+    ];
+    let computer: Vec<Group<'_>> = vec![
+        ("rg-lemaitre", "Ok Computer", "Lemaitre", "Single", 100, 1),
+        ("rg-radiohead", "OK Computer", "Radiohead", "Album", 95, 39),
+        (
+            "rg-turns-10",
+            "OK Computer Turns 10",
+            "Various Artists",
+            "Album",
+            77,
+            1,
+        ),
+    ];
+    // Answers queue per address, in the order the calls below ask.
+    let wire = Arc::new(ScriptedWire::new());
+    for (artist, groups) in [
+        ("The Beatles", &beatles),
+        ("Queen", &queen),
+        ("OK Go", &computer),
+        ("The Beatles", &beatles),
+    ] {
+        let artists = vec![artist_hit(artist, 100)];
+        let groups = groups.iter().copied().map(group_hit).collect();
+        let answer = |path: &str, key: &str, hits| {
+            wire.answer(
+                &format!("{MUSICBRAINZ}/{path}"),
+                200,
+                &[],
+                search_answer(key, hits),
+            );
+        };
+        answer("artist", "artists", artists);
+        answer("release-group", "release-groups", groups);
+    }
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-exact");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+    let get = |path: &str, query: &str| {
+        let (app, uri) = (app.clone(), format!("{path}?{}", urlencode_query(query)));
+        async move {
+            let (status, _, bytes) = call(app, Method::GET, &uri, Some(TEST_TOKEN), None).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+            json(&bytes)
+        }
+    };
+    let albums = |body: &serde_json::Value| -> Vec<String> {
+        let albums = body["albums"].as_array().expect("albums");
+        albums
+            .iter()
+            .map(|album| album["musicbrainz_id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    // Eleventh after the type filter, past the default cut of ten.
+    let body = get("/api/v3/search", "the beatles").await;
+    let found = albums(&body);
+    assert_eq!(found.len(), 10, "{found:?}");
+    assert_eq!(
+        found[..3],
+        ["rg-white-album", "rg-twilley", "rg-dreamsound"],
+        "{found:?}"
+    );
+    assert_eq!(
+        body["albums"][0]["score"], 95,
+        "the score shown is MusicBrainz's"
+    );
+    assert_eq!(body["top_album"]["musicbrainz_id"], "rg-white-album");
+
+    let body = get("/api/v3/search", "queen").await;
+    assert_eq!(
+        albums(&body),
+        [
+            "rg-queen",
+            "rg-nicki",
+            "rg-kaya",
+            "rg-jessie",
+            "rg-perfume",
+            "rg-monae"
+        ]
+    );
+
+    let body = get("/api/v3/search", "ok computer").await;
+    assert_eq!(
+        albums(&body),
+        ["rg-radiohead", "rg-lemaitre", "rg-turns-10"]
+    );
+
+    let body = get("/api/v3/search/suggest", "the beatles").await;
+    assert_eq!(body["results"][0]["kind"], "artist", "suggest: {body}");
+    assert_eq!(
+        body["results"][0]["title"], "The Beatles",
+        "suggest: {body}"
+    );
+    assert_eq!(body["results"][1]["kind"], "album", "suggest: {body}");
+    let asked: Vec<String> = wire
+        .sent()
+        .iter()
+        .filter(|sent| sent.url.path().ends_with("/release-group"))
+        .filter_map(|sent| sent.query("query"))
+        .collect();
+    let expected = ["the beatles", "queen", "ok computer", "the beatles"];
+    assert_eq!(
+        asked.len(),
+        expected.len(),
+        "one album search per call: {asked:?}"
+    );
+    for (sent, query) in asked.iter().zip(expected) {
+        assert!(
+            sent.contains(&format!("\"{query}\"")),
+            "{sent} answers {query}"
         );
     }
 }

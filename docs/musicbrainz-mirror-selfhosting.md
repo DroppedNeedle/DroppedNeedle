@@ -228,7 +228,7 @@ Open **Settings > MusicBrainz** and choose **Self-hosted mirror**. Set:
 
 On hardware you run, a higher limit or Unlimited can make sense, though it promises nothing about the server. Be reasonable with servers you do not own: do not set Unlimited against a Community server just because the form allows it.
 
-Press **Test Connection** before saving. While BrainzMash is the active source the test is off, so save and watch for errors. The test checks the server you entered, paced like real traffic: at the rate you entered, or at 1 request a second when the address is a public MusicBrainz host. A passed test does not prove that every lookup, browse, search, include, redirect or error shape DroppedNeedle uses works there.
+Press **Test Connection** before saving. While BrainzMash is the active source the test is off, so save and watch for errors. The test checks the server you entered, paced like real traffic: at the rate you entered, or at 1 request a second for any musicbrainz.org address. A passed test does not prove that every lookup, browse, search, include, redirect or error shape DroppedNeedle uses works there.
 
 To move between Official, a mirror and Community / external, test and save the source you selected. DroppedNeedle does not switch to another source when this server is down.
 

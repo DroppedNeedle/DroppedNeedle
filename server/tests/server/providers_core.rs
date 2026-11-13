@@ -1022,9 +1022,9 @@ async fn lastfm_hooks() {
     );
 }
 
-/// TheAudioDB paces by the key saved: the free key, or none, at the free
-/// row of 30 a minute; any other key at the premium row. A 429 that names
-/// no wait rests the free row a minute.
+/// TheAudioDB paces by the key saved: a shared free key, or none, at the
+/// free row of 30 a minute; any other key at the premium row. A 429 that
+/// names no wait rests the free row a minute.
 #[tokio::test(start_paused = true)]
 async fn audiodb_rows_follow_the_saved_key() {
     const ARTIST: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
@@ -1059,6 +1059,22 @@ async fn audiodb_rows_follow_the_saved_key() {
             "/api/v1/json/premium-key/artist-mb.php"
         ]
     );
+
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(&url("2"), 200, &[], r#"{"artists": null}"#);
+    let providers = providers_over(&wire);
+    let found = providers.audiodb.artist_by_mbid(" 2 ", ARTIST, user).await;
+    assert!(matches!(found, Ok(None)), "{found:?}");
+    let (free, premium) = (
+        providers.limiter("audiodb").unwrap(),
+        providers.limiter("audiodb-premium").unwrap(),
+    );
+    assert_eq!(
+        (free.remaining(), premium.remaining()),
+        (0, 2),
+        "the other shared key paces on the free row"
+    );
+    assert_eq!(wire.sent()[0].url.path(), "/api/v1/json/2/artist-mb.php");
 
     let wire = Arc::new(ScriptedWire::new());
     wire.answer(&url("123"), 429, &[], "");

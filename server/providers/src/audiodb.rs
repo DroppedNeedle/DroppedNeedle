@@ -6,10 +6,10 @@
 //! [`ProviderError`].
 //!
 //! The key rides in the path, and which rate row a call takes follows the
-//! key the caller passes, read per call so a new key applies at once: the
-//! free key (`123`, or none saved) paces at the documented 30 requests a
-//! minute, any other key at the premium row. The free row is never raised:
-//! the shared key is banned when over-used.
+//! key the caller passes, read per call so a new key applies at once: a
+//! shared free key (`123` or `2`, or none saved) paces at the documented 30
+//! requests a minute, any other key at the premium row. The free row is
+//! never raised: the shared key is banned when over-used.
 
 use std::time::Duration;
 
@@ -29,6 +29,11 @@ pub use models::{AudioDbAlbum, AudioDbArtist};
 pub const DEFAULT_BASE_URL: &str = "https://www.theaudiodb.com/api/v1/json";
 /// Free key, used when no settings key is configured.
 pub const FREE_API_KEY: &str = "123";
+/// The shared free keys TheAudioDB's API page names: "The current free API
+/// key is: 123", and its browser example still uses "the free '2' API key"
+/// (https://www.theaudiodb.com/free_music_api, read 2026-11-13). Premium
+/// keys are each supporter's own, from their profile.
+const SHARED_FREE_KEYS: [&str; 2] = [FREE_API_KEY, "2"];
 /// The provider name errors carry, and the free key's rate row.
 pub const SOURCE: &str = "audiodb";
 /// The rate row a saved premium key paces at.
@@ -78,12 +83,14 @@ impl AudioDbClient {
     }
 
     /// The executor a call with `api_key` goes through, and the key it
-    /// sends: the free row for the free key or none, the premium row for
-    /// any other.
+    /// sends: the free row for a shared free key, or the free key when none
+    /// is saved; the premium row for any other.
     fn row_for<'a>(&'a self, api_key: &'a str) -> (&'a Executor, &'a str) {
         let key = api_key.trim();
-        if key.is_empty() || key == FREE_API_KEY {
+        if key.is_empty() {
             (&self.free, FREE_API_KEY)
+        } else if SHARED_FREE_KEYS.contains(&key) {
+            (&self.free, key)
         } else {
             (&self.premium, key)
         }

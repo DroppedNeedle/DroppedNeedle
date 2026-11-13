@@ -44,6 +44,11 @@ pub struct RemoteHit {
     pub type_info: Option<String>,
     /// MusicBrainz relevance score, 0-100.
     pub score: i32,
+    /// How many releases the group holds, for albums; `None` when
+    /// MusicBrainz did not say. Answers kept from before it was read have
+    /// none.
+    #[serde(default)]
+    pub releases: Option<u32>,
 }
 
 /// One bucket's hits as cached.
@@ -133,6 +138,7 @@ impl Catalog {
                         disambiguation: hit.disambiguation.clone().filter(|text| !text.is_empty()),
                         type_info: hit.artist_type.clone(),
                         score: i32::try_from(hit_score(hit.score, hit.ext_score)).unwrap_or(0),
+                        releases: None,
                         mbid: hit.id,
                     })
                 })
@@ -143,8 +149,10 @@ impl Catalog {
         self.remote_bucket(key, deadline, fetch).await
     }
 
-    /// Search MusicBrainz release groups, filtered by
-    /// the release-type preferences, at most `limit` hits.
+    /// Search MusicBrainz release groups for a page of `limit`, filtered by
+    /// the release-type preferences. The page is asked wider than `limit`
+    /// so the filter leaves enough, and every hit it keeps comes back: the
+    /// caller cuts, after ranking or in MusicBrainz's order.
     pub async fn search_albums_remote(
         &self,
         query: &str,
@@ -221,9 +229,9 @@ impl Catalog {
                         &hit.secondary_types,
                     ),
                     score: i32::try_from(hit_score(hit.score, hit.ext_score)).unwrap_or(0),
+                    releases: hit.count,
                     mbid: hit.id,
                 })
-                .take(limit as usize)
                 .collect();
             Ok(found_hits(items))
         };

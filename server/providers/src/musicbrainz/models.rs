@@ -719,6 +719,12 @@ pub struct ReleaseGroupSearchHit {
     /// Disambiguation comment.
     #[serde(default)]
     pub disambiguation: Option<String>,
+    /// How many releases the group holds. Every hit of the fixture above,
+    /// and of BrainzMash text searches for "the beatles", "queen" and "ok
+    /// computer" on 2026-11-13, carries it. A missing key means not sent,
+    /// never none.
+    #[serde(default)]
+    pub count: Option<u32>,
 }
 
 /// Artist search hit.
