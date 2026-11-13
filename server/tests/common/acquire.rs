@@ -205,6 +205,8 @@ pub async fn worker_over(
         )),
         settings.live(),
         dir.join("held"),
+        settings.live(),
+        settings.live(),
     ));
     let plugins =
         plugins.unwrap_or_else(|| super::bundles::idle_host(&platform, library.core.clone()));
@@ -253,6 +255,8 @@ pub fn worker_with(
 ) -> Arc<DownloadWorker> {
     let clients = Arc::new(LiveClients::new(
         platform.http.shared().clone(),
+        platform.http.no_redirect().clone(),
+        platform.http.same_host_redirects().clone(),
         droppedneedle_providers::Providers::closed().newznab,
         ClientLives::new(settings),
         slskd_downloads,

@@ -416,13 +416,15 @@ pub(crate) fn usenet_indexers(
 }
 
 /// The download folders no recycle bin may overlap: the staging folder,
-/// slskd's downloads and incomplete folders while slskd is set up, and
-/// SABnzbd's completed-downloads folder. An empty folder setting names no
-/// folder, so it guards nothing.
+/// slskd's downloads and incomplete folders while slskd is set up,
+/// SABnzbd's completed-downloads folder, and each enabled download
+/// plugin's folders. An empty folder setting names no folder, so it guards
+/// nothing.
 fn download_trees(
     staging_root: &Path,
     slskd: Option<(PathBuf, PathBuf)>,
     sab_mount: Option<PathBuf>,
+    plugins: Vec<PathBuf>,
 ) -> Vec<PathBuf> {
     std::iter::once(staging_root.to_owned())
         .chain(
@@ -431,8 +433,93 @@ fn download_trees(
                 .flat_map(|(downloads, incomplete)| [downloads, incomplete]),
         )
         .chain(sab_mount)
+        .chain(plugins)
         .filter(|tree| !tree.as_os_str().is_empty())
         .collect()
+}
+
+/// The folders each enabled download plugin's landings read and remove
+/// from, as its download source names them: its data folder, and the
+/// folder its `downloads_dir` setting names when its manifest declares
+/// one. Read from the plugins folder and the stored plugin settings, not
+/// the plugin host, so the library's guard has them before plugins load.
+/// `None` while an enabled download plugin's settings cannot be read.
+/// Blocking.
+fn plugin_trees(store: &ConfigStore, plugins_dir: &Path) -> Option<Vec<PathBuf>> {
+    use std::collections::HashSet;
+
+    use droppedneedle_kernel::runtime_config::crypto::CIPHER_PREFIX;
+    use droppedneedle_plugins::manifest::{Capability, load_manifest};
+
+    let Ok(entries) = std::fs::read_dir(plugins_dir) else {
+        return Some(Vec::new());
+    };
+    let mut trees = Vec::new();
+    for folder in entries.flatten().map(|entry| entry.path()) {
+        // The host skips hidden folders, its data folder among them.
+        let shown = folder
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| !name.starts_with(['.', '_']));
+        if !shown || !folder.is_dir() {
+            continue;
+        }
+        let Ok(manifest) = load_manifest(&folder) else {
+            continue;
+        };
+        if !manifest.declares(Capability::DownloadClient) {
+            continue;
+        }
+        let name = &manifest.name;
+        // Read as stored: only the switch and the folder are used, and no
+        // value is opened unless the folder itself was sealed.
+        let stored = match store.get_plugin(name) {
+            Ok(stored) => stored,
+            Err(error) => {
+                tracing::warn!(plugin = %name, %error, "plugin settings unreadable; its download folders are not known");
+                return None;
+            }
+        };
+        if !stored.enabled {
+            continue;
+        }
+        trees.push(
+            plugins_dir
+                .join(droppedneedle_plugins::host::DATA_FOLDER)
+                .join(name),
+        );
+        if !manifest
+            .settings
+            .iter()
+            .any(|field| field.key == "downloads_dir")
+        {
+            continue;
+        }
+        let Some(stored_dir) = stored.settings.get("downloads_dir") else {
+            continue;
+        };
+        let dir = if stored_dir.starts_with(CIPHER_PREFIX) {
+            // A v2 import seals every value of a plugin it had no manifest
+            // for. Only then is the folder opened, through the plain read,
+            // which never fails on a value that will not open.
+            match store.get_plugin_raw(name, &HashSet::new()) {
+                Ok(opened) => opened
+                    .into_settings()
+                    .remove("downloads_dir")
+                    .unwrap_or_default(),
+                Err(error) => {
+                    tracing::warn!(plugin = %name, %error, "plugin settings unreadable; its download folders are not known");
+                    return None;
+                }
+            }
+        } else {
+            stored_dir.clone()
+        };
+        if !dir.trim().is_empty() {
+            trees.push(PathBuf::from(dir.trim()));
+        }
+    }
+    Some(trees)
 }
 
 /// slskd's downloads mount (`slskd_downloads`, the whole of it, whatever
@@ -446,16 +533,21 @@ fn slskd_trees(section: &SlskdConnection, slskd_downloads: &Path) -> Option<(Pat
     })
 }
 
-/// The download folders a configured recycle bin must stay clear of, read
-/// live from the slskd and SABnzbd settings, for the library's builder.
+/// The download folders a configured recycle bin (and the import folder)
+/// must stay clear of, read live from the slskd, SABnzbd and plugin
+/// settings and the plugins in `plugins_dir`, for the library's builder.
 /// `None` while those settings cannot be read.
 pub fn recycle_guard(
     store: &ConfigStore,
     staging_root: PathBuf,
     slskd_downloads: PathBuf,
+    plugins_dir: PathBuf,
 ) -> DownloadTrees {
     let slskd: Live<SlskdConnection> = store.live();
     let sabnzbd: Live<DownloadClients> = store.live();
+    // Plugin settings are not a listed section, so they have no live
+    // handle: they are read through the store's plugin read.
+    let plugins = store.clone();
     Arc::new(move || {
         let slskd_section = slskd.read()?;
         let slskd_folders = slskd_trees(&slskd_section, &slskd_downloads);
@@ -464,6 +556,7 @@ pub fn recycle_guard(
             &staging_root,
             slskd_folders,
             sabnzbd_mount(&section),
+            plugin_trees(&plugins, &plugins_dir)?,
         ))
     })
 }
@@ -493,6 +586,8 @@ impl AcquireSetup {
         let quota = Arc::new(QuotaLedger::new(config_store.live(), db.clone()));
         let clients = Arc::new(LiveClients::new(
             http.clone(),
+            platform.http.no_redirect().clone(),
+            platform.http.same_host_redirects().clone(),
             ports.providers.newznab.clone(),
             ClientLives::new(&config_store),
             config.slskd_downloads_path.clone(),
@@ -587,6 +682,8 @@ impl AcquireSetup {
             ports.library,
             config_store.live(),
             stores.folders.held.clone(),
+            config_store.live(),
+            config_store.live(),
         ));
 
         // Worker over the live sources and tuning.
@@ -618,6 +715,7 @@ impl AcquireSetup {
                 &config_store,
                 staging_root.clone(),
                 config.slskd_downloads_path.clone(),
+                config.plugins_dir(),
             ),
             config_store.live(),
             [

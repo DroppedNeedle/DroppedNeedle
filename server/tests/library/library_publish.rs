@@ -6035,6 +6035,7 @@ fn a_bin_inside_slskds_folders_is_refused() {
         &store,
         dir.join("imports"),
         downloads.clone(),
+        dir.join("plugins"),
     );
     let trees = guard().expect("the download settings read");
     let library = [Root::library("music", music)];

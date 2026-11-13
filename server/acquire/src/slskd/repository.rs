@@ -192,6 +192,13 @@ impl<T: SlskdHttp> SlskdRepository<T> {
                     message,
                 }
             }
+            Err(ClientError::Redirected { status, .. }) => ServiceStatus {
+                ok: false,
+                version: None,
+                message: format!(
+                    "slskd answered with a redirect ({status}), which is not followed: set the URL to the address slskd answers on"
+                ),
+            },
             Err(err) => {
                 // Plain summary on the surface; technical detail in the log.
                 tracing::warn!(%err, "slskd health check failed");

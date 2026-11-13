@@ -100,6 +100,18 @@ impl SabnzbdError {
     }
 }
 
+/// How a release's NZB is fetched.
+#[derive(Debug, Clone, Copy)]
+pub enum NzbGrab<'a> {
+    /// Through the release's indexer client, which paces the grab and
+    /// counts it against the indexer's grab cap.
+    Indexer(&'a NewznabClient),
+    /// From the link itself (a Prowlarr or plugin release) through this
+    /// client, which follows no redirect: [`SabnzbdClient::fetch_nzb`]
+    /// checks each hop.
+    Direct(&'a Client),
+}
+
 /// NZB fetch failure, classified so the enqueue path can decide: only a
 /// no-response transport failure falls back to addurl; a definitive indexer
 /// HTTP error or a content rejection never does.
@@ -636,14 +648,51 @@ impl SabnzbdClient {
         Ok(reply.ok())
     }
 
-    /// GET the release's NZB URL (the Newznab enclosure, apikey already
-    /// embedded) and validate the bytes are a real NZB, not an indexer
-    /// error page. Redirects are followed (reqwest's default policy).
-    pub async fn fetch_nzb(&self, url: &str, timeout: Duration) -> Result<Vec<u8>, NzbFetchError> {
-        let response = self
-            .get_with_retry(url, &[], timeout)
-            .await
-            .map_err(|err| NzbFetchError::Transport(transport_error(err)))?;
+    /// GET the release's NZB URL (the enclosure, apikey already embedded)
+    /// through `http`, a client that follows no redirect, and validate the
+    /// bytes are a real NZB, not an indexer error page. Redirects are
+    /// followed here under the hop rules an indexer's grab follows; one
+    /// they refuse ends the fetch, logged, as a definitive answer.
+    pub async fn fetch_nzb(
+        &self,
+        http: &Client,
+        url: &str,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, NzbFetchError> {
+        let mut link = reqwest::Url::parse(url)
+            .map_err(|_| NzbFetchError::Transport("the NZB link is not an address".to_owned()))?;
+        let mut hops = 0;
+        let response = loop {
+            let response = self
+                .get_with_retry(http, link.as_str(), &[], timeout)
+                .await
+                .map_err(|err| NzbFetchError::Transport(transport_error(err)))?;
+            let status = response.status();
+            if !status.is_redirection() {
+                break response;
+            }
+            let next = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|location| location.to_str().ok())
+                .and_then(|location| link.join(location).ok())
+                .filter(|_| hops < MAX_GRAB_HOPS)
+                .and_then(grab_hop);
+            let Some(next) = next else {
+                // The link carries a key, so neither address is logged.
+                tracing::warn!(
+                    status = status.as_u16(),
+                    hops,
+                    "an NZB link redirected where a grab does not go; not followed"
+                );
+                return Err(NzbFetchError::Definitive {
+                    status: status.as_u16(),
+                    snippet: String::new(),
+                });
+            };
+            link = next;
+            hops += 1;
+        };
         let status = response.status().as_u16();
         if status >= 400 {
             let snippet = response_snippet(response).await;
@@ -690,30 +739,26 @@ impl SabnzbdClient {
             .map(|(key, value)| (key.as_str(), value.as_str()))
             .collect();
         let response = self
-            .get_with_retry(&url, &query_refs, timeout)
+            .get_with_retry(&self.http, &url, &query_refs, timeout)
             .await
             .map_err(|err| ClientError::transport(Service::Sabnzbd, transport_error(err)))?;
         let data = self.parse_json(response).await?;
         serde_json::from_value(data).map_err(|err| non_json(decode_failure(&err)))
     }
 
-    /// Idempotent GETs only: transient transport errors + 5xx retry with
-    /// exponential backoff. 4xx and logical errors return for the caller.
+    /// Idempotent GETs only, through `http`: transient transport errors +
+    /// 5xx retry with exponential backoff. 4xx and logical errors return
+    /// for the caller.
     async fn get_with_retry(
         &self,
+        http: &Client,
         url: &str,
         query: &[(&str, &str)],
         timeout: Duration,
     ) -> Result<reqwest::Response, reqwest::Error> {
         let mut attempt = 0;
         loop {
-            let send = self
-                .http
-                .get(url)
-                .query(query)
-                .timeout(timeout)
-                .send()
-                .await;
+            let send = http.get(url).query(query).timeout(timeout).send().await;
             match send {
                 Ok(response) if response.status().as_u16() < 500 => return Ok(response),
                 Ok(response) if attempt + 1 >= self.max_attempts => return Ok(response),
@@ -998,6 +1043,23 @@ pub struct Health {
     pub message: String,
 }
 
+/// Redirects a direct NZB fetch follows at most, as an indexer's grab does.
+const MAX_GRAB_HOPS: usize = 5;
+
+/// Where a redirect from an NZB link may go, by the rule an indexer's grab
+/// follows (`providers::newznab`): an http or https address carrying no
+/// credentials, its fragment dropped. `None` refuses the hop.
+fn grab_hop(mut to: reqwest::Url) -> Option<reqwest::Url> {
+    if !to.username().is_empty()
+        || to.password().is_some()
+        || !matches!(to.scheme(), "http" | "https")
+    {
+        return None;
+    }
+    to.set_fragment(None);
+    Some(to)
+}
+
 /// The bytes, when they are a real NZB and not an indexer's error page.
 fn checked_nzb(
     bytes: Vec<u8>,
@@ -1156,12 +1218,13 @@ impl SabnzbdQueue {
     }
 
     /// Enqueue one album release: `droppedneedle-{task_id}` job, NZB
-    /// fetched + validated, `addfile`'d. `category`/`priority`/`pp` ride
-    /// along.
+    /// fetched as `grab` says + validated, `addfile`'d.
+    /// `category`/`priority`/`pp` ride along.
     pub async fn enqueue_album(
         &self,
         task_id: &str,
         nzb_url: Option<&str>,
+        grab: NzbGrab<'_>,
         category: Option<&str>,
         priority: Option<i32>,
         post_processing: Option<i32>,
@@ -1170,7 +1233,7 @@ impl SabnzbdQueue {
             task_id,
             None,
             nzb_url,
-            None,
+            grab,
             category,
             priority,
             post_processing,
@@ -1181,15 +1244,15 @@ impl SabnzbdQueue {
     /// Enqueue one album release under a worker-built job name. The worker
     /// passes `droppedneedle-{task_id}-{candidate_index}`:
     /// the counter keeps failover attempts distinct on the client and is
-    /// the shape the orphan reconciler recognises. `grab` is the release's
-    /// indexer, when it has one.
+    /// the shape the orphan reconciler recognises. `grab` says how the
+    /// release's NZB is fetched.
     #[allow(clippy::too_many_arguments)]
     pub async fn enqueue_album_as(
         &self,
         task_id: &str,
         job_name: &str,
         nzb_url: Option<&str>,
-        grab: Option<&NewznabClient>,
+        grab: NzbGrab<'_>,
         category: Option<&str>,
         priority: Option<i32>,
         post_processing: Option<i32>,
@@ -1215,7 +1278,7 @@ impl SabnzbdQueue {
         task_id: &str,
         track_job: &str,
         nzb_url: Option<&str>,
-        grab: Option<&NewznabClient>,
+        grab: NzbGrab<'_>,
         category: Option<&str>,
         priority: Option<i32>,
         post_processing: Option<i32>,
@@ -1238,7 +1301,7 @@ impl SabnzbdQueue {
         task_id: &str,
         job_name: Option<&str>,
         nzb_url: Option<&str>,
-        grab: Option<&NewznabClient>,
+        grab: NzbGrab<'_>,
         category: Option<&str>,
         priority: Option<i32>,
         post_processing: Option<i32>,
@@ -1253,10 +1316,10 @@ impl SabnzbdQueue {
             job_name
         };
         let fetched = match grab {
-            Some(grab) => grab_nzb(grab, url).await,
-            None => {
+            NzbGrab::Indexer(grab) => grab_nzb(grab, url).await,
+            NzbGrab::Direct(http) => {
                 self.client
-                    .fetch_nzb(url, self.policy.enqueue_timeout)
+                    .fetch_nzb(http, url, self.policy.enqueue_timeout)
                     .await
             }
         };

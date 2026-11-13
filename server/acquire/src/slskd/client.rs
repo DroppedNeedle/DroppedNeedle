@@ -32,6 +32,19 @@ fn transport(fault: HttpFault) -> ClientError {
     ClientError::transport(Service::Slskd, fault.0)
 }
 
+/// A peer name or an id slskd gave, as one path segment. Any Soulseek user
+/// picks their own name; an empty one, `.` or `..` names no segment a URL
+/// can carry and would reach another slskd route, so it is refused here.
+fn segment(value: &str) -> Result<&str, ClientError> {
+    if matches!(value, "" | "." | "..") {
+        return Err(ClientError::BadRequest {
+            service: Service::Slskd,
+            detail: "a peer name or id that cannot be sent to slskd".to_owned(),
+        });
+    }
+    Ok(value)
+}
+
 /// Thin slskd REST client over an injected [`SlskdHttp`] transport.
 #[derive(Debug, Clone)]
 pub struct SlskdClient<T: SlskdHttp> {
@@ -90,7 +103,7 @@ impl<T: SlskdHttp> SlskdClient<T> {
     /// GET /api/v0/application; returns raw JSON (version/server state).
     pub async fn health_check(&self) -> Result<Map<String, Value>, ClientError> {
         let reply = self
-            .with_rate_limit_retry(|| self.http.get("/application", &[]))
+            .with_rate_limit_retry(|| self.http.get(&["application"], &[]))
             .await?;
         Self::check(&reply)?;
         Self::decode(&reply)
@@ -101,7 +114,7 @@ impl<T: SlskdHttp> SlskdClient<T> {
     /// downloads-mount diagnostic, not a hot path).
     pub async fn get_options(&self) -> Result<SlskdOptions, ClientError> {
         let reply = self
-            .with_rate_limit_retry(|| self.http.get("/options", &[]))
+            .with_rate_limit_retry(|| self.http.get(&["options"], &[]))
             .await?;
         Self::check(&reply)?;
         Self::decode(&reply)
@@ -125,7 +138,7 @@ impl<T: SlskdHttp> SlskdClient<T> {
             service: Service::Slskd,
             detail: format!("enqueue payload encode: {error}"),
         })?;
-        let path = format!("/transfers/downloads/{username}");
+        let path = ["transfers", "downloads", segment(username)?];
         let reply = self
             .with_rate_limit_retry(|| self.http.post(&path, body.clone()))
             .await?;
@@ -136,7 +149,7 @@ impl<T: SlskdHttp> SlskdClient<T> {
     /// GET /api/v0/transfers/downloads/{username}, flattened to transfers.
     /// A 404 means "no such user bucket" and yields an empty list.
     pub async fn get_downloads(&self, username: &str) -> Result<Vec<SlskdTransfer>, ClientError> {
-        let path = format!("/transfers/downloads/{username}");
+        let path = ["transfers", "downloads", segment(username)?];
         let reply = self
             .with_rate_limit_retry(|| self.http.get(&path, &[]))
             .await?;
@@ -154,7 +167,7 @@ impl<T: SlskdHttp> SlskdClient<T> {
     /// per-task poll.
     pub async fn get_all_downloads(&self) -> Result<Vec<SlskdTransfer>, ClientError> {
         let reply = self
-            .with_rate_limit_retry(|| self.http.get("/transfers/downloads", &[]))
+            .with_rate_limit_retry(|| self.http.get(&["transfers", "downloads"], &[]))
             .await?;
         if reply.status == 404 {
             return Ok(Vec::new());
@@ -176,7 +189,12 @@ impl<T: SlskdHttp> SlskdClient<T> {
         username: &str,
         transfer_id: &str,
     ) -> Result<bool, ClientError> {
-        let path = format!("/transfers/downloads/{username}/{transfer_id}");
+        let path = [
+            "transfers",
+            "downloads",
+            segment(username)?,
+            segment(transfer_id)?,
+        ];
         let reply = self
             .with_rate_limit_retry(|| self.http.delete(&path, &[("remove", "true")]))
             .await?;
@@ -207,7 +225,7 @@ impl<T: SlskdHttp> SlskdClient<T> {
             detail: format!("search payload encode: {error}"),
         })?;
         let reply = self
-            .with_rate_limit_retry(|| self.http.post("/searches", bytes.clone()))
+            .with_rate_limit_retry(|| self.http.post(&["searches"], bytes.clone()))
             .await?;
         Self::check(&reply)?;
         Self::decode(&reply)
@@ -218,7 +236,7 @@ impl<T: SlskdHttp> SlskdClient<T> {
         &self,
         search_id: &str,
     ) -> Result<SlskdSearchResponse, ClientError> {
-        let path = format!("/searches/{search_id}");
+        let path = ["searches", segment(search_id)?];
         let reply = self.http.get(&path, &[]).await.map_err(transport)?;
         Self::check(&reply)?;
         Self::decode(&reply)
@@ -229,7 +247,7 @@ impl<T: SlskdHttp> SlskdClient<T> {
         &self,
         search_id: &str,
     ) -> Result<Vec<SlskdUserSearchResponse>, ClientError> {
-        let path = format!("/searches/{search_id}/responses");
+        let path = ["searches", segment(search_id)?, "responses"];
         let reply = self.http.get(&path, &[]).await.map_err(transport)?;
         Self::check(&reply)?;
         Self::decode(&reply)

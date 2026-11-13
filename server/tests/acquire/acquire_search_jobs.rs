@@ -753,6 +753,8 @@ async fn kept_rig_with(copies: &[Copy], saved: Value) -> KeptRig {
         Arc::new(LibraryLanding::new(&library, every_priority(releases))),
         settings.live(),
         dir.join("held"),
+        settings.live(),
+        settings.live(),
     ));
     let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
         journal.clone(),

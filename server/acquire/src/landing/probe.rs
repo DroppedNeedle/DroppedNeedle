@@ -4,7 +4,8 @@
 //! them (never following symlinks), sorts audio from everything else, and
 //! reads each audio file's tags and stream header the way the library
 //! scan does: container headers only, no decode. A file is read beneath
-//! the reported path it was found under, following no link below it.
+//! the reported path it was found under, following no link below it; a
+//! download's paths are real ones, and its files follow no link at all.
 //! Blocking work: callers run it on a blocking thread.
 
 use std::path::{Path, PathBuf};
@@ -100,28 +101,56 @@ impl Landing {
     }
 }
 
-/// Walk and read the reported paths, never entering `libraries` (the
-/// canonical library folders): a job folder that contains the library
+/// Where the probe reads each file from.
+#[derive(Clone, Copy)]
+enum ReadFrom<'a> {
+    /// Beneath the reported path it was found under, which may itself be
+    /// reached through a link: one of the app's own folders.
+    Reported,
+    /// The same, but the reported paths are real paths, as confinement
+    /// places a download's: no link is followed anywhere on the way.
+    ReportedReal,
+    /// Beneath this real folder, with no link anywhere on the way.
+    Real(&'a Path),
+}
+
+/// Walk and read the reported paths in one of the app's own folders (a
+/// held copy, an upload), never entering `skipped` (canonical folders,
+/// such as the library folders): a job folder that contains the library
 /// must not pull library files into an import. Blocking.
-pub fn probe(paths: &[PathBuf], libraries: &[PathBuf]) -> Landing {
-    probe_beneath(paths, libraries, None)
+pub fn probe(paths: &[PathBuf], skipped: &[PathBuf]) -> Landing {
+    probe_from(paths, skipped, ReadFrom::Reported)
+}
+
+/// [`probe`] for a finished download, whose reported paths are the real
+/// paths confinement placed below its client's folders: a folder swapped
+/// for a link since then fails the read instead of leading outside.
+/// Blocking.
+pub fn probe_landed(paths: &[PathBuf], skipped: &[PathBuf]) -> Landing {
+    probe_from(paths, skipped, ReadFrom::ReportedReal)
 }
 
 /// [`probe`], with every file read beneath `beneath` (a real folder path,
-/// such as the import folder's) instead of beneath the path it was found
-/// under. Blocking.
-pub fn probe_beneath(paths: &[PathBuf], libraries: &[PathBuf], beneath: Option<&Path>) -> Landing {
+/// such as the import folder's), with no link followed anywhere on the
+/// way, instead of beneath the path it was found under. Blocking.
+pub fn probe_beneath(paths: &[PathBuf], skipped: &[PathBuf], beneath: Option<&Path>) -> Landing {
+    let from = beneath.map_or(ReadFrom::Reported, ReadFrom::Real);
+    probe_from(paths, skipped, from)
+}
+
+fn probe_from(paths: &[PathBuf], skipped: &[PathBuf], from: ReadFrom<'_>) -> Landing {
     let mut files = Vec::new();
     let mut landing = Landing::default();
     for path in paths {
-        collect(path, path, 0, libraries, &mut files, &mut landing);
+        collect(path, path, 0, skipped, &mut files, &mut landing);
     }
-    if let Some(beneath) = beneath {
+    if let ReadFrom::Real(beneath) = from {
         files.retain(|(_, path)| path.starts_with(beneath));
         for (root, _) in &mut files {
             *root = beneath.to_path_buf();
         }
     }
+    let real = !matches!(from, ReadFrom::Reported);
     files.sort_by(|left, right| left.1.cmp(&right.1));
     files.dedup_by(|left, right| left.1 == right.1);
     for (root, path) in files {
@@ -137,7 +166,12 @@ pub fn probe_beneath(paths: &[PathBuf], libraries: &[PathBuf], beneath: Option<&
             landing.samples.push(path);
             continue;
         }
-        match read_one(TrackFile::new(&root, &path), format) {
+        let file = if real {
+            TrackFile::beneath_real(&root, &path)
+        } else {
+            TrackFile::new(&root, &path)
+        };
+        match read_one(file, format) {
             Some(file) => landing.audio.push(file),
             None => landing.unreadable.push(path),
         }
@@ -151,12 +185,12 @@ fn collect(
     top: &Path,
     path: &Path,
     depth: usize,
-    libraries: &[PathBuf],
+    skipped: &[PathBuf],
     files: &mut Vec<(PathBuf, PathBuf)>,
     landing: &mut Landing,
 ) {
-    if libraries.iter().any(|dir| path.starts_with(dir)) {
-        tracing::warn!(path = %path.display(), "landing probe skips a library folder");
+    if skipped.iter().any(|dir| path.starts_with(dir)) {
+        tracing::warn!(path = %path.display(), "landing probe skips a folder it never reads");
         return;
     }
     let meta = match std::fs::symlink_metadata(path) {
@@ -191,7 +225,7 @@ fn collect(
         if name.to_string_lossy().starts_with('.') {
             continue;
         }
-        collect(top, &entry.path(), depth + 1, libraries, files, landing);
+        collect(top, &entry.path(), depth + 1, skipped, files, landing);
     }
 }
 

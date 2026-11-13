@@ -284,7 +284,7 @@ impl std::fmt::Display for BinsUnknown {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::SettingsUnread => "the Library Management settings can't be read",
-            Self::DownloadsUnread => "the slskd or SABnzbd settings can't be read",
+            Self::DownloadsUnread => "the slskd, SABnzbd or download plugin settings can't be read",
             Self::Unreachable => "the recycle bin folder isn't there or can't be reached",
             Self::Unmarked => "the recycle bin folder may not be the one used before",
         })

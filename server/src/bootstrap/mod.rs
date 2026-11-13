@@ -350,6 +350,7 @@ pub(crate) async fn build_on(
             &p.settings,
             p.config.imports_dir(),
             p.config.slskd_downloads_path.clone(),
+            p.config.plugins_dir(),
         ),
     )
     .map_err(stage("library setup"))?;

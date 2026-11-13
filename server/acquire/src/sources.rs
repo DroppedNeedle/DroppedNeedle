@@ -50,7 +50,7 @@ use super::target::{SearchTarget, TargetError, Targets};
 use super::usenet::indexer::{Indexer, IndexerQuery};
 use super::usenet::newznab::{IndexerResult, usenet_identity};
 use super::usenet::policy::UsenetPolicy;
-use super::usenet::sabnzbd::{SabnzbdError, SabnzbdQueue};
+use super::usenet::sabnzbd::{NzbGrab, SabnzbdError, SabnzbdQueue};
 use droppedneedle_providers::RequestPriority;
 
 /// A refused request or an answer of the wrong shape is the client
@@ -62,6 +62,7 @@ fn client_error(error: ClientError) -> SourceError {
             SourceError::rejected(Reason::DownloadFailed, error.to_string())
         }
         ClientError::Auth { .. }
+        | ClientError::Redirected { .. }
         | ClientError::NotFound { .. }
         | ClientError::RateLimited { .. }
         | ClientError::Unavailable { .. } => SourceError::Unavailable(error.to_string()),
@@ -488,12 +489,15 @@ pub struct SabnzbdSource {
     /// Each task's album (a single track is fetched in its album's
     /// release) and the edition tracklist releases are ordered against.
     targets: Arc<Targets>,
+    /// The client a release with no indexer client of its own (Prowlarr,
+    /// a plugin) has its NZB fetched through; it follows no redirect.
+    grab_http: reqwest::Client,
 }
 
 impl SabnzbdSource {
     /// Adapter over a configured queue, the indexers it searches (in
-    /// order: the first copy of a release wins), the journal, and each
-    /// task's target.
+    /// order: the first copy of a release wins), the journal, each task's
+    /// target, and the no-redirect client direct NZB fetches go through.
     pub fn new(
         queue: Arc<SabnzbdQueue>,
         indexers: Vec<Arc<dyn Indexer>>,
@@ -501,6 +505,7 @@ impl SabnzbdSource {
         journal: Arc<Journal>,
         category: Option<String>,
         targets: Arc<Targets>,
+        grab_http: reqwest::Client,
     ) -> Self {
         Self {
             queue,
@@ -509,6 +514,7 @@ impl SabnzbdSource {
             journal,
             category,
             targets,
+            grab_http,
         }
     }
 
@@ -800,10 +806,14 @@ impl SabnzbdSource {
             }
         };
         let category = self.category.as_deref().filter(|cat| *cat != "*");
-        let grab = self
+        let indexer_client = self
             .indexers
             .iter()
             .find_map(|indexer| indexer.grab_client(&pick.usenet.indexer_id));
+        let grab = match &indexer_client {
+            Some(client) => NzbGrab::Indexer(client),
+            None => NzbGrab::Direct(&self.grab_http),
+        };
         // Worker-built job name: the counter keeps failover
         // attempts distinct on the client and matches the orphan shape.
         let handle = if task.download_type == "track" {
@@ -812,7 +822,7 @@ impl SabnzbdSource {
                     task_id,
                     &job_name,
                     Some(pick.usenet.nzb_url.as_str()),
-                    grab.as_ref(),
+                    grab,
                     category,
                     None,
                     None,
@@ -824,7 +834,7 @@ impl SabnzbdSource {
                     task_id,
                     &job_name,
                     Some(pick.usenet.nzb_url.as_str()),
-                    grab.as_ref(),
+                    grab,
                     category,
                     None,
                     None,

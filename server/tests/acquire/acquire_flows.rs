@@ -214,12 +214,12 @@ async fn sources_over(
         .expect("slskd connection saves");
     let dir = db.path().parent().expect("scratch dir").to_path_buf();
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
-    let http = droppedneedle_kernel::http_client::HttpClientFactory::new()
-        .expect("http client factory")
-        .shared()
-        .clone();
+    let http =
+        droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http client factory");
     let clients = Arc::new(LiveClients::new(
-        http,
+        http.shared().clone(),
+        http.no_redirect().clone(),
+        http.same_host_redirects().clone(),
         droppedneedle_providers::Providers::closed().newznab,
         ClientLives::new(settings),
         dir.join("slskd"),

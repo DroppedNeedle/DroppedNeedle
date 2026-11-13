@@ -265,6 +265,49 @@ async fn rate_limits_are_retried_or_returned() {
     );
 }
 
+/// Any Soulseek user picks their own name. One holding `/`, `?` or `#`
+/// reaches slskd as one path segment on every call that names a peer, and
+/// a name no segment can carry (`..`) is refused before anything is sent.
+#[tokio::test]
+async fn a_peer_name_is_one_path_segment() {
+    let mock = MockSlskd::start().await.expect("mock starts");
+    let client = SlskdClient::new(ReqwestSlskdHttp::new(
+        reqwest::Client::new(),
+        &mock.base_url(),
+        MOCK_API_KEY,
+    ));
+    let peer = "dj/../a?b#c";
+    let file = r"@@music\Artist\Album\01 - Song.flac".to_owned();
+
+    let enqueued = client
+        .enqueue(peer, &[(file.clone(), 1000)])
+        .await
+        .expect("enqueue reaches the peer's route");
+    assert_eq!(enqueued.enqueued.len(), 1, "{enqueued:?}");
+    let transfers = client.get_downloads(peer).await.expect("peer's transfers");
+    assert_eq!(transfers.len(), 1, "{transfers:?}");
+    assert_eq!(transfers[0].username, peer);
+    assert_eq!(transfers[0].filename, file);
+    assert!(
+        client
+            .cancel_transfer(peer, &transfers[0].id)
+            .await
+            .expect("removal reaches the peer's route"),
+        "the transfer is removed"
+    );
+
+    let sent = mock.statuses().requests();
+    let refused = client
+        .enqueue("..", &[(file, 1000)])
+        .await
+        .expect_err("no segment carries the name");
+    assert!(
+        matches!(refused, ClientError::BadRequest { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(mock.statuses().requests(), sent, "nothing is sent");
+}
+
 /// Scripted slskd answers, served in order, for the paused-clock test.
 struct ScriptedHttp(Mutex<VecDeque<HttpReply>>);
 
@@ -279,13 +322,13 @@ impl ScriptedHttp {
 }
 
 impl SlskdHttp for ScriptedHttp {
-    async fn get(&self, _: &str, _: &[(&str, &str)]) -> Result<HttpReply, HttpFault> {
+    async fn get(&self, _: &[&str], _: &[(&str, &str)]) -> Result<HttpReply, HttpFault> {
         self.next()
     }
-    async fn post(&self, _: &str, _: Vec<u8>) -> Result<HttpReply, HttpFault> {
+    async fn post(&self, _: &[&str], _: Vec<u8>) -> Result<HttpReply, HttpFault> {
         self.next()
     }
-    async fn delete(&self, _: &str, _: &[(&str, &str)]) -> Result<HttpReply, HttpFault> {
+    async fn delete(&self, _: &[&str], _: &[(&str, &str)]) -> Result<HttpReply, HttpFault> {
         self.next()
     }
 }

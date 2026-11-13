@@ -907,6 +907,8 @@ async fn failing_cleanup_shows_on_service_health_until_it_clears() {
             ),
             platform.settings.live(),
             dir.join("held"),
+            platform.settings.live(),
+            platform.settings.live(),
         )),
         health.clone(),
         droppedneedle_kernel::events::EventHub::new(),
@@ -1408,6 +1410,71 @@ async fn a_matched_download_is_retried_onto_its_match() {
     assert_eq!(held_file(&rig.db, "matched.flac").0, "imported");
     assert!(taken.is_file(), "placed on the album it was matched to");
     assert!(!dummy_dir.join("0101 Mysterons.flac").exists());
+}
+
+/// A curator matched a held download to another album whose edition
+/// MusicBrainz no longer gives. The retry cannot tell which album that
+/// was, so it never falls back onto the album the file was downloaded
+/// for, though the same recording is on it: the file waits for a person.
+#[tokio::test]
+async fn a_match_that_no_longer_reads_waits_for_a_person() {
+    let dummy = held_release();
+    let live = portishead(
+        LIVE_RELEASE,
+        LIVE_GROUP,
+        "Roseland",
+        &[(MYSTERONS, "Mysterons")],
+    );
+    let rig = HeldRig::new(vec![dummy.clone()]).await;
+    let dummy_dir = rig.music.join("Portishead/Dummy");
+    held_copy(
+        &rig.held_dir,
+        "sour.flac",
+        "flac_full_02.flac",
+        "Sour Times",
+        2,
+    );
+    seed_held(
+        &rig.db,
+        "task:t-sour",
+        "held",
+        vec![("sour.flac", dummy.tracks[1].clone(), Reason::TargetOccupied)],
+    )
+    .await;
+    rig.acquire.held.tend().await;
+    assert!(dummy_dir.join("0102 Sour Times.flac").is_file());
+
+    held_copy(
+        &rig.held_dir,
+        "matched.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    );
+    seed_held_on(
+        &rig.db,
+        &format!("album:{HELD_GROUP}"),
+        HELD_GROUP,
+        LIVE_RELEASE,
+        "held",
+        vec![(
+            "matched.flac",
+            live.tracks[0].clone(),
+            Reason::TargetOccupied,
+        )],
+    )
+    .await;
+
+    rig.acquire.held.tend().await;
+    assert!(
+        !dummy_dir.join("0101 Mysterons.flac").exists(),
+        "never placed on the album the curator matched it away from"
+    );
+    assert_eq!(
+        held_file(&rig.db, "matched.flac"),
+        ("held".to_owned(), "target_occupied".to_owned())
+    );
+    assert!(rig.held_dir.join("matched.flac").is_file());
 }
 
 /// A file held because its place was taken, whose track the library has

@@ -51,13 +51,31 @@ use thiserror::Error;
 pub struct TrackFile<'a> {
     root: &'a Path,
     path: &'a Path,
+    links: RootLinks,
 }
 
 impl<'a> TrackFile<'a> {
-    /// The file at `path`, read beneath `root`.
+    /// The file at `path`, read beneath `root`, which may itself be reached
+    /// through a link.
     #[must_use]
     pub fn new(root: &'a Path, path: &'a Path) -> Self {
-        Self { root, path }
+        Self {
+            root,
+            path,
+            links: RootLinks::Follow,
+        }
+    }
+
+    /// The file at `path`, read beneath `root`, a real path already
+    /// resolved: no link is followed anywhere on the way, the folder's own
+    /// path included.
+    #[must_use]
+    pub fn beneath_real(root: &'a Path, path: &'a Path) -> Self {
+        Self {
+            root,
+            path,
+            links: RootLinks::Refuse,
+        }
     }
 
     /// The file at `path` that lies at `relative` below its library
@@ -69,16 +87,13 @@ impl<'a> TrackFile<'a> {
     pub fn in_library(path: &'a Path, relative: &str) -> Option<Self> {
         let depth = Path::new(relative).components().count();
         let root = path.ancestors().nth(depth).filter(|_| depth > 0)?;
-        Some(Self { root, path })
+        Some(Self::new(root, path))
     }
 
     /// Another file below the same folder, such as a track's `.lrc`.
     #[must_use]
     pub fn beside(self, path: &'a Path) -> Self {
-        Self {
-            root: self.root,
-            path,
-        }
+        Self { path, ..self }
     }
 
     /// The file's path.
@@ -95,7 +110,7 @@ impl<'a> TrackFile<'a> {
 
     /// Open the regular file for reading. Blocking.
     pub fn open(self) -> std::io::Result<File> {
-        open_file_beneath(self.root, self.path, RootLinks::Follow)
+        open_file_beneath(self.root, self.path, self.links)
     }
 
     /// The whole file's bytes. Blocking.

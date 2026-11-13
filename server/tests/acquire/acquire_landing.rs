@@ -2123,6 +2123,105 @@ async fn a_download_outside_its_clients_folder_is_refused() {
     );
 }
 
+/// Confinement places a download's files as real paths. An album folder
+/// swapped for a link after that is never read through: the probe opens
+/// every folder on the way without following a link, so the same-named
+/// file the link leads to stays unread.
+#[test]
+fn a_folder_swapped_for_a_link_after_confinement_is_not_read() {
+    let scratch = crate::common::ScratchDir::new("probe-link");
+    let dir = scratch.canonicalize().expect("scratch dir");
+    let downloads = dir.join("downloads");
+    let real = land_file(
+        &downloads.join("Real"),
+        "01.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    );
+    land_file(
+        &dir.join("outside"),
+        "01.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    );
+    let album = downloads.join("Album");
+    std::os::unix::fs::symlink(dir.join("outside"), &album).expect("link");
+    let swapped = album.join("01.flac");
+
+    let probed =
+        droppedneedle_acquire::landing::probe::probe_landed(&[real.clone(), swapped.clone()], &[]);
+    let read: Vec<&Path> = probed
+        .audio
+        .iter()
+        .map(|file| file.path.as_path())
+        .collect();
+    assert_eq!(read, vec![real.as_path()], "only the real folder is read");
+    assert_eq!(probed.unreadable, vec![swapped]);
+}
+
+/// A recycle bin inside the client's downloads folder holds the person's
+/// copies, so a landing never reads from it. One set to a folder that holds
+/// the downloads folder is refused as the bin, and the download inside it
+/// is read as usual.
+#[tokio::test]
+async fn a_landing_skips_only_a_bin_inside_the_downloads_folder() {
+    use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
+
+    let (acquire, dir, _auth) = bare_acquire().await;
+    let mount = dir.join("downloads");
+    let file = land_file(
+        &mount.join("bin").join("job"),
+        "01.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    );
+    for (case, bin, code) in [
+        ("inside", mount.join("bin"), Reason::FilesMissing),
+        ("holding", dir.clone(), Reason::MusicbrainzUnavailable),
+    ] {
+        let settings = dir.join(format!("settings-{case}"));
+        std::fs::create_dir_all(&settings).expect("settings dir");
+        let store =
+            droppedneedle_acquire::test_support::scratch_settings(&settings).expect("settings");
+        store
+            .save_blocking(LibraryManagement {
+                recycle_bin_path: bin.to_string_lossy().into_owned(),
+                ..LibraryManagement::default()
+            })
+            .expect("bin saves");
+        let landing = droppedneedle_acquire::landing::LandingService::new(
+            acquire.journal.clone(),
+            acquire.landing.library().clone(),
+            store.live(),
+            dir.join("held"),
+            store.live(),
+            store.live(),
+        );
+        let task_id = format!("t-bin-{case}");
+        let task = new_task(&task_id, GOOD_GROUP);
+        acquire
+            .journal
+            .run("test.seed", move |store| store.insert_task(&task, 1.0))
+            .await
+            .expect("task");
+        let task = acquire.journal.read_task(&task_id).await.unwrap().unwrap();
+        let landed = Landed {
+            mounts: vec![mount.clone().into()],
+            files: vec![Reported::path(file.clone())],
+        };
+        let LandingResult::Rejected(rejection) =
+            landing.land(&task, None, landed, false).await.result
+        else {
+            panic!("{case}: this rig's MusicBrainz is closed, so the landing stops");
+        };
+        assert_eq!(rejection.code, code, "{case}");
+        assert!(file.exists(), "{case}");
+    }
+}
+
 /// A landing whose download policy or chosen edition does not read never
 /// takes the default or none: it waits with a temporary rejection, the files
 /// stay where they are, and nothing is said against the source.
@@ -2138,6 +2237,8 @@ async fn a_landing_waits_while_what_it_reads_does_not_read() {
             acquire.landing.library().clone(),
             store.live(),
             dir.join("held"),
+            store.live(),
+            store.live(),
         );
         let mount = dir.join("downloads");
         let file = land_file(
@@ -2623,6 +2724,8 @@ async fn a_quality_waiver_keeps_only_the_pinned_attempts_files() {
             acquire.landing.library().clone(),
             store.live(),
             dir.join("held"),
+            store.live(),
+            store.live(),
         );
         let handle = serde_json::json!({
             "source": "soulseek", "username": "peer", "job_name": "", "pinned": pinned,

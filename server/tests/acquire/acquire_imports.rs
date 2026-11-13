@@ -183,6 +183,8 @@ fn rig_with(
     });
     let clients = Arc::new(LiveClients::new(
         platform.http.shared().clone(),
+        platform.http.no_redirect().clone(),
+        platform.http.same_host_redirects().clone(),
         droppedneedle_providers::Providers::closed().newznab,
         ClientLives::new(&platform.settings),
         platform.config.slskd_downloads_path.clone(),
@@ -1616,6 +1618,8 @@ async fn readiness_answers(setup: SourceSetup) -> Vec<bool> {
         ),
         platform.settings.live(),
         scratch.join("held"),
+        platform.settings.live(),
+        platform.settings.live(),
     ));
     let worker = Arc::new(DownloadWorker::new(
         journal,

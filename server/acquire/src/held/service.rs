@@ -1112,7 +1112,7 @@ impl HeldService {
         let first = &files[0];
         let (task, target) = self.task_target(first).await?;
         let (release, join) = self
-            .release_for(&library, entry, first, target.as_ref(), asker.priority())
+            .release_for(&library, entry, first, target.as_ref(), asker)
             .await?;
         let mut batch_files = Vec::with_capacity(files.len());
         let mut pairing = intake::Pairing::default();
@@ -1320,8 +1320,9 @@ impl HeldService {
         entry: &Entry,
         file: &HeldFile,
         target: Option<&specs::Target>,
-        priority: RequestPriority,
+        asker: Asker,
     ) -> Result<(Release, Option<PlannedAlbum>), HeldError> {
+        let priority = asker.priority();
         let unmatched = || {
             HeldError::Refused(
                 "This file was never matched to an album, so it cannot be imported as it is. \
@@ -1351,9 +1352,12 @@ impl HeldService {
             },
         };
         let release = read_release(library, entry, &release_mbid, priority).await?;
-        // A paired edition MusicBrainz no longer has leaves the chosen one.
-        // One it could not be asked about refuses for now: the pairing may
-        // name another album, so the chosen one is never assumed.
+        // A paired edition MusicBrainz no longer has leaves the chosen one
+        // when a person imports. The retry cannot tell which album that
+        // edition was on (a curator may have matched the file away from
+        // this one), so it waits for a person. One MusicBrainz could not be
+        // asked about refuses for now: the pairing may name another album,
+        // so the chosen one is never assumed.
         if let Some(paired) = paired.filter(|mbid| !release.answers_to(mbid)) {
             match library.release(&paired, priority).await {
                 Ok(Some(other))
@@ -1362,6 +1366,13 @@ impl HeldService {
                         .eq_ignore_ascii_case(&release.release_group_id) =>
                 {
                     return Ok((other, None));
+                }
+                Ok(None) if asker == Asker::Loop => {
+                    return Err(HeldError::Refused(
+                        "The album this file was matched to is no longer on MusicBrainz. \
+                         Match it again, or discard it."
+                            .to_owned(),
+                    ));
                 }
                 Ok(_) => {}
                 Err(error) => {
@@ -1812,11 +1823,9 @@ impl HeldService {
                     absent.push(file.id);
                     continue;
                 }
-                let hashed = tokio::task::spawn_blocking(move || {
-                    droppedneedle_kernel::db::backup::file_sha256(&path)
-                })
-                .await;
-                if let Ok(Ok((sha, _))) = hashed
+                let relative = file.path.clone();
+                let hashed = tokio::task::spawn_blocking(move || hash_held(&path, &relative)).await;
+                if let Ok(Ok(sha)) = hashed
                     && placed.contains(&sha)
                 {
                     committed.push(file.clone());
@@ -2030,6 +2039,22 @@ enum Checked {
 /// The answer for a file that stays held.
 fn refused(reason: Reason) -> HeldError {
     HeldError::Refused(format!("{} {}", reason.message(), reason.action()))
+}
+
+/// The SHA-256 of the held file at `path`, which lies at `relative` below
+/// its folder: read beneath that folder's real path, never through a link
+/// below it. Blocking.
+fn hash_held(path: &Path, relative: &str) -> std::io::Result<String> {
+    let depth = Path::new(relative).components().count();
+    let folder = path
+        .ancestors()
+        .nth(depth)
+        .filter(|_| depth > 0)
+        .ok_or_else(|| std::io::Error::other("held file path is not below its folder"))?;
+    let real = std::fs::canonicalize(folder)?;
+    let at = super::below(&real, relative)
+        .ok_or_else(|| std::io::Error::other("held file path is not below its folder"))?;
+    Ok(confine::hash_beneath(&[real], &at)?.sha256)
 }
 
 /// Read files off the async workers, never entering the library.

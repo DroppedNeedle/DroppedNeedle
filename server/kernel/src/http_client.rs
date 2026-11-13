@@ -1,10 +1,13 @@
 //! The single factory for outbound HTTP clients.
 //!
 //! The factory owns timeouts, pool behavior, and the DroppedNeedle
-//! User-Agent. It builds three clients once at boot: the shared one follows
+//! User-Agent. It builds its clients once at boot: the shared one follows
 //! redirects, the [`no_redirect`](HttpClientFactory::no_redirect) one never
 //! does, for callers that validate every hop themselves or must not be
-//! bounced to another host, and the
+//! bounced to another host, the
+//! [`same_host_redirects`](HttpClientFactory::same_host_redirects) one
+//! follows only a hop that stays on the first URL's host, for services
+//! that take a key in a header, and the
 //! [`direct_no_redirect`](HttpClientFactory::direct_no_redirect) one also
 //! skips any proxy and has no total timeout, for plugin audio streams.
 //! Provider rates live in the providers crate's rate table, and every
@@ -13,7 +16,10 @@
 
 use std::time::Duration;
 
-use reqwest::{Client, redirect::Policy};
+use reqwest::{
+    Client, Url,
+    redirect::{Attempt, Policy},
+};
 use thiserror::Error;
 
 /// Default total request timeout.
@@ -69,6 +75,7 @@ impl HttpSettings {
 pub struct HttpClientFactory {
     client: Client,
     no_redirect: Client,
+    same_host: Client,
     remote_audio: Client,
     direct: Client,
 }
@@ -91,6 +98,15 @@ impl HttpClientFactory {
         Ok(Self {
             client: builder().build()?,
             no_redirect: builder().redirect(Policy::none()).build()?,
+            same_host: builder()
+                .redirect(Policy::custom(|attempt| {
+                    if same_host_hop(&attempt) {
+                        attempt.follow()
+                    } else {
+                        attempt.stop()
+                    }
+                }))
+                .build()?,
             // Remote server audio: no total timeout (a long track streams
             // for minutes; the caller times the answer and each chunk), and
             // no redirects, so a server token never goes to another host.
@@ -121,6 +137,14 @@ impl HttpClientFactory {
         &self.no_redirect
     }
 
+    /// The same client following a redirect only while it stays on the
+    /// host the request was sent to (`same_host_hop`): a key sent in
+    /// a header goes to no other address. Any other 3xx comes back as the
+    /// response.
+    pub fn same_host_redirects(&self) -> &Client {
+        &self.same_host
+    }
+
     /// For audio streamed from the user's own remote servers (Jellyfin,
     /// Navidrome, Plex): no total timeout and no redirects.
     pub fn remote_audio(&self) -> &Client {
@@ -132,6 +156,43 @@ impl HttpClientFactory {
     /// peer (plugin stream URLs) sees the real server, not a proxy.
     pub fn direct_no_redirect(&self) -> &Client {
         &self.direct
+    }
+}
+
+/// Redirects [`HttpClientFactory::same_host_redirects`] follows at most.
+const SAME_HOST_HOPS: usize = 3;
+
+/// Whether a redirect stays where the request was sent, as a Newznab
+/// indexer's API redirects must (`providers::newznab`): the first URL's
+/// host, no credentials, never from https to http, and the same port, or
+/// each scheme's own default when http moves to https. At most
+/// [`SAME_HOST_HOPS`] are followed.
+fn same_host_hop(attempt: &Attempt<'_>) -> bool {
+    let to = attempt.url();
+    let previous = attempt.previous();
+    let Some(first) = previous.first() else {
+        return false;
+    };
+    if previous.len() > SAME_HOST_HOPS
+        || !to.username().is_empty()
+        || to.password().is_some()
+        || to.host_str() != first.host_str()
+    {
+        return false;
+    }
+    let downgrade = to.scheme() == "http" && previous.iter().any(|url| url.scheme() == "https");
+    !downgrade && same_port(first, to)
+}
+
+/// The same scheme on the same port, or http on its default port moving to
+/// https on its own.
+fn same_port(first: &Url, to: &Url) -> bool {
+    match (first.scheme(), to.scheme()) {
+        ("http", "http") | ("https", "https") => {
+            first.port_or_known_default() == to.port_or_known_default()
+        }
+        ("http", "https") => first.port().is_none() && to.port().is_none(),
+        _ => false,
     }
 }
 

@@ -32,22 +32,25 @@ pub struct HttpReply {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpFault(pub String);
 
-/// GET + POST + DELETE against one base URL. Bodies are raw bytes; the
-/// client owns JSON encoding. `query` holds raw `key=value` pairs.
+/// GET + POST + DELETE against one base URL. `path` is the route below
+/// `/api/v0`, one value per path segment: each is encoded as one segment,
+/// so a peer name holding `/`, `?` or `#` stays one name. Bodies are raw
+/// bytes; the client owns JSON encoding. `query` holds raw `key=value`
+/// pairs.
 pub trait SlskdHttp: Send + Sync {
     fn get(
         &self,
-        path: &str,
+        path: &[&str],
         query: &[(&str, &str)],
     ) -> impl Future<Output = Result<HttpReply, HttpFault>> + Send;
     fn post(
         &self,
-        path: &str,
+        path: &[&str],
         body: Vec<u8>,
     ) -> impl Future<Output = Result<HttpReply, HttpFault>> + Send;
     fn delete(
         &self,
-        path: &str,
+        path: &[&str],
         query: &[(&str, &str)],
     ) -> impl Future<Output = Result<HttpReply, HttpFault>> + Send;
 }
@@ -55,9 +58,10 @@ pub trait SlskdHttp: Send + Sync {
 /// Production [`SlskdHttp`] over one shared reqwest client.
 ///
 /// The `reqwest::Client` is injected (the HTTP client is owned by the
-/// caller, never acquired here). The API key travels only in the
-/// `X-API-Key` header and is never logged. Debug is hand-written: the key
-/// never appears in debug output.
+/// caller, never acquired here) and follows a redirect only on the same
+/// host. The API key travels only in the `X-API-Key` header, which a
+/// redirect elsewhere would carry to another address, and is never logged.
+/// Debug is hand-written: the key never appears in debug output.
 #[derive(Clone)]
 pub struct ReqwestSlskdHttp {
     http: reqwest::Client,
@@ -84,8 +88,17 @@ impl ReqwestSlskdHttp {
         }
     }
 
-    fn url(&self, path: &str) -> String {
-        format!("{}/api/v0{path}", self.base_url)
+    /// The address of `path` below `/api/v0`, built on the parsed base URL
+    /// with each value pushed as one encoded segment.
+    fn url(&self, path: &[&str]) -> Result<reqwest::Url, HttpFault> {
+        let unusable = || HttpFault("the slskd URL is not a usable address".to_owned());
+        let mut url = reqwest::Url::parse(&self.base_url).map_err(|_| unusable())?;
+        url.path_segments_mut()
+            .map_err(|()| unusable())?
+            .pop_if_empty()
+            .extend(["api", "v0"])
+            .extend(path);
+        Ok(url)
     }
 
     async fn send(&self, request: reqwest::RequestBuilder) -> Result<HttpReply, HttpFault> {
@@ -110,29 +123,29 @@ impl ReqwestSlskdHttp {
 }
 
 impl SlskdHttp for ReqwestSlskdHttp {
-    async fn get(&self, path: &str, query: &[(&str, &str)]) -> Result<HttpReply, HttpFault> {
+    async fn get(&self, path: &[&str], query: &[(&str, &str)]) -> Result<HttpReply, HttpFault> {
         let request = self
             .http
-            .get(self.url(path))
+            .get(self.url(path)?)
             .header("X-API-Key", &self.api_key)
             .query(query);
         self.send(request).await
     }
 
-    async fn post(&self, path: &str, body: Vec<u8>) -> Result<HttpReply, HttpFault> {
+    async fn post(&self, path: &[&str], body: Vec<u8>) -> Result<HttpReply, HttpFault> {
         let request = self
             .http
-            .post(self.url(path))
+            .post(self.url(path)?)
             .header("X-API-Key", &self.api_key)
             .header("Content-Type", "application/json")
             .body(body);
         self.send(request).await
     }
 
-    async fn delete(&self, path: &str, query: &[(&str, &str)]) -> Result<HttpReply, HttpFault> {
+    async fn delete(&self, path: &[&str], query: &[(&str, &str)]) -> Result<HttpReply, HttpFault> {
         let request = self
             .http
-            .delete(self.url(path))
+            .delete(self.url(path)?)
             .header("X-API-Key", &self.api_key)
             .query(query);
         self.send(request).await

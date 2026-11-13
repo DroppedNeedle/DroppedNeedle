@@ -293,6 +293,7 @@ pub fn library_core(
             &platform.settings,
             platform.config.imports_dir(),
             platform.config.slskd_downloads_path.clone(),
+            platform.config.plugins_dir(),
         ),
     )
     .expect("library write side builds")

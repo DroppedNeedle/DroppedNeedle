@@ -1,11 +1,12 @@
 //! The one error every download client and indexer maps its HTTP failures
 //! into: slskd, SABnzbd, Newznab and Prowlarr.
 //!
-//! Statuses map the same way for each: 401 and 403 are a refused key, 404
-//! and 410 a missing item, 429 a rate limit with the server's
-//! `Retry-After`, any other 4xx a refused request, and 5xx or no answer at
-//! all an unavailable service. A body that does not decode is `Decode`.
-//! Details never hold a request URL, a key or a header.
+//! Statuses map the same way for each: a 3xx is a redirect, which is never
+//! followed, 401 and 403 a refused key, 404 and 410 a missing item, 429 a
+//! rate limit with the server's `Retry-After`, any other 4xx a refused
+//! request, and 5xx or no answer at all an unavailable service. A body
+//! that does not decode is `Decode`. Details never hold a request URL, a
+//! key or a header.
 
 use std::fmt;
 use std::time::Duration;
@@ -43,6 +44,12 @@ pub enum ClientError {
         /// The service's own words, at most a short line.
         detail: String,
     },
+    /// HTTP 3xx the client did not follow (one off the host the request
+    /// went to), so the key sent with the request went to no other address.
+    #[error(
+        "{service} answered with a redirect (HTTP {status}), which is not followed: set its URL in Settings to the address it answers on"
+    )]
+    Redirected { service: Service, status: u16 },
     /// HTTP 404 or 410.
     #[error("{service} has no such item")]
     NotFound { service: Service },
@@ -87,6 +94,7 @@ impl ClientError {
         body: &[u8],
     ) -> Self {
         match status {
+            300..=399 => Self::Redirected { service, status },
             401 | 403 => Self::Auth {
                 service,
                 status: Some(status),
@@ -131,6 +139,7 @@ impl ClientError {
     pub fn service(&self) -> Service {
         match self {
             Self::Auth { service, .. }
+            | Self::Redirected { service, .. }
             | Self::NotFound { service }
             | Self::BadRequest { service, .. }
             | Self::RateLimited { service, .. }

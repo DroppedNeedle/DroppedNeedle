@@ -103,6 +103,7 @@ impl SettingsSetup {
     pub fn live_probes(platform: &Platform, providers: &Providers) -> Arc<dyn VerifyProbes> {
         Arc::new(LiveProbes::new(
             platform.http.shared().clone(),
+            platform.http.same_host_redirects().clone(),
             providers,
             droppedneedle_auth::federated::settings::InstallIds::new(platform.settings.clone()),
         ))

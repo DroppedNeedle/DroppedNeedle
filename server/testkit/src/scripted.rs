@@ -1,8 +1,9 @@
 //! Scripted error statuses for the mock servers.
 //!
 //! A mock wraps its router with [`ScriptedStatuses::layer`]; a test queues
-//! statuses with [`ScriptedStatuses::answer_next`], and each queued one
-//! answers the next request in place of the route, with a `Retry-After`
+//! statuses with [`ScriptedStatuses::answer_next`] (or a redirect with
+//! [`ScriptedStatuses::redirect_next`]), and each queued one answers the
+//! next request in place of the route, with a `Retry-After` or `Location`
 //! header when one was given. Every request through the layer is counted,
 //! so a test can tell whether a client retried.
 
@@ -19,6 +20,7 @@ use axum::response::{IntoResponse, Response};
 struct Scripted {
     status: StatusCode,
     retry_after: Option<String>,
+    location: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -46,6 +48,16 @@ impl ScriptedStatuses {
         self.lock().queue.push_back(Scripted {
             status: StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             retry_after: retry_after.map(str::to_owned),
+            location: None,
+        });
+    }
+
+    /// The next request answers `302 Found` with `Location: location`.
+    pub fn redirect_next(&self, location: &str) {
+        self.lock().queue.push_back(Scripted {
+            status: StatusCode::FOUND,
+            retry_after: None,
+            location: Some(location.to_owned()),
         });
     }
 
@@ -87,6 +99,12 @@ async fn answer(
         .and_then(|value| HeaderValue::from_str(&value).ok())
     {
         response.headers_mut().insert(header::RETRY_AFTER, value);
+    }
+    if let Some(value) = scripted
+        .location
+        .and_then(|value| HeaderValue::from_str(&value).ok())
+    {
+        response.headers_mut().insert(header::LOCATION, value);
     }
     response
 }

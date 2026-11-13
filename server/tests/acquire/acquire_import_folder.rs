@@ -154,6 +154,8 @@ struct Rig {
     clock: Arc<ManualClock>,
     music: PathBuf,
     import: ScratchDir,
+    /// The plugins folder the bundle reads.
+    plugins: PathBuf,
     _db: AcquireDb,
 }
 
@@ -205,6 +207,7 @@ impl Rig {
             clock,
             music,
             import,
+            plugins: auth.platform.config.plugins_dir(),
             _db: scratch,
         };
         rig.set_folder(&rig.import);
@@ -515,6 +518,57 @@ async fn links_and_overlaps_are_refused() {
         inside
             .join("Portishead - Dummy/01 Mysterons.flac")
             .is_file()
+    );
+}
+
+/// An enabled download plugin's folder inside the import folder imports
+/// nothing: the loop would take the plugin's downloads as the person's
+/// albums, and the plugin's landings could remove the person's files.
+#[tokio::test]
+async fn a_download_plugins_folder_inside_is_refused() {
+    use droppedneedle_kernel::runtime_config::sections::PluginConfig;
+
+    let rig = Rig::new().await;
+    let plugin = rig.plugins.join("fetcher");
+    std::fs::create_dir_all(&plugin).expect("plugin folder");
+    std::fs::write(
+        plugin.join("plugin.toml"),
+        "[plugin]\n\
+         name = \"fetcher\"\n\
+         version = \"1.0.0\"\n\
+         api_version = 2\n\
+         entrypoint = \"plugin:Fetcher\"\n\
+         capabilities = [\"download_client\"]\n\
+         [[capability]]\n\
+         id = \"download_client\"\n\
+         source = \"fetcher\"\n\
+         display_name = \"Fetcher\"\n\
+         [[settings]]\n\
+         key = \"downloads_dir\"\n\
+         label = \"Downloads directory\"\n",
+    )
+    .expect("manifest");
+    let downloads = rig.import.join("fetcher-downloads");
+    std::fs::create_dir_all(&downloads).expect("plugin downloads");
+    rig.config
+        .save_plugin_blocking(
+            "fetcher",
+            PluginConfig {
+                enabled: true,
+                settings: std::collections::HashMap::from([(
+                    "downloads_dir".to_owned(),
+                    downloads.to_string_lossy().into_owned(),
+                )]),
+            },
+            &std::collections::HashSet::new(),
+        )
+        .expect("plugin saves");
+
+    let status = rig.acquire.import_folder.status().await;
+    assert_eq!(status.state, ImportFolderState::Overlaps);
+    assert_eq!(
+        status.overlap.map(|(kind, _)| kind),
+        Some(ImportFolderOverlap::Downloads)
     );
 }
 

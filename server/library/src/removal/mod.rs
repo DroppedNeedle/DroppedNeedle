@@ -171,7 +171,7 @@ const SETTINGS_UNREAD: [Reason; 5] = bin_reasons!(
     "Open the Automation tab of Library Management and save it"
 );
 const DOWNLOADS_UNREAD: [Reason; 5] = bin_reasons!(
-    "No recycle bin is known while the slskd or SABnzbd settings can't be read",
+    "No recycle bin is known while the slskd, SABnzbd or download plugin settings can't be read",
     "Open those settings and save them again"
 );
 const BIN_UNREACHABLE: [Reason; 5] = bin_reasons!(

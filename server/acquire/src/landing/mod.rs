@@ -60,7 +60,9 @@ use crate::held::store::{
 use crate::intake;
 use crate::reason::Reason;
 use droppedneedle_kernel::runtime_config::Live;
-use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
+use droppedneedle_kernel::runtime_config::sections::{
+    DownloadPolicy, ImportFolder, LibraryManagement,
+};
 use droppedneedle_library::identify::sources::AcoustIdUnavailable;
 use droppedneedle_library::matching::score::MERGE_LOOKUPS;
 use droppedneedle_providers::RequestPriority;
@@ -168,6 +170,10 @@ pub struct LandingService {
     /// The quality band landed files must sit in, read per landing.
     policy: Live<DownloadPolicy>,
     held_dir: PathBuf,
+    /// The import folder and the recycle bin, which a landing never reads
+    /// from, read per landing.
+    import_folder: Live<ImportFolder>,
+    management: Live<LibraryManagement>,
 }
 
 /// What one landing did, before it is recorded.
@@ -223,13 +229,35 @@ impl LandingService {
         library: Arc<dyn LandingLibrary>,
         policy: Live<DownloadPolicy>,
         held_dir: PathBuf,
+        import_folder: Live<ImportFolder>,
+        management: Live<LibraryManagement>,
     ) -> Self {
         Self {
             journal,
             library,
             policy,
             held_dir,
+            import_folder,
+            management,
         }
+    }
+
+    /// The person's folders a download never reads from, as set: the
+    /// import folder and the recycle bin, either of which a client's folder
+    /// may hold. `None` while either setting cannot be read.
+    fn kept_out(&self) -> Option<Vec<PathBuf>> {
+        let import_folder = self.import_folder.read()?;
+        let management = self.management.read()?;
+        Some(
+            [
+                import_folder.path.trim(),
+                management.recycle_bin_path.trim(),
+            ]
+            .into_iter()
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .collect(),
+        )
     }
 
     /// The library files land in.
@@ -251,6 +279,15 @@ impl LandingService {
     ) -> LandingReport {
         let library = self.library.clone();
         let library_dirs = library.library_dirs();
+        let Some(kept_out) = self.kept_out() else {
+            let rejection = Rejection {
+                code: Reason::SettingsUnreadable,
+                disposition: Disposition::Temporary,
+                quarantine: None,
+                detail: "the import folder or recycle bin settings cannot be read".to_owned(),
+            };
+            return self.reject_unprobed(task, attempt_id, rejection).await;
+        };
         let confined = tokio::task::spawn_blocking(move || {
             let libraries = canonical_dirs(&library_dirs);
             let folders: Vec<PathBuf> = landed
@@ -259,11 +296,20 @@ impl LandingService {
                 .filter_map(|mount| mount.resolve().ok())
                 .collect();
             let confined = confine(landed, &libraries);
-            (confined, libraries, folders)
+            // The probe enters neither the library nor the person's own
+            // folders inside a client's folder. One that is or holds a
+            // client's folder is refused as the bin or import folder by its
+            // own guard, and skipping it would skip every download there.
+            let kept_out: Vec<PathBuf> = canonical_dirs(&kept_out)
+                .into_iter()
+                .filter(|kept| !folders.iter().any(|folder| folder.starts_with(kept)))
+                .collect();
+            let skipped = [libraries, kept_out].concat();
+            (confined, skipped, folders)
         })
         .await;
-        let (reported, libraries, folders) = match confined {
-            Ok((Ok(reported), libraries, folders)) => (reported, libraries, folders),
+        let (reported, skipped, folders) = match confined {
+            Ok((Ok(reported), skipped, folders)) => (reported, skipped, folders),
             Ok((Err(rejection), _, _)) => {
                 return self.reject_unprobed(task, attempt_id, rejection).await;
             }
@@ -352,7 +398,8 @@ impl LandingService {
             return self.reject_unprobed(task, attempt_id, rejection).await;
         };
         let paths: Vec<PathBuf> = reported.into_iter().map(|file| file.path).collect();
-        let probed = tokio::task::spawn_blocking(move || probe::probe(&paths, &libraries)).await;
+        let probed =
+            tokio::task::spawn_blocking(move || probe::probe_landed(&paths, &skipped)).await;
         let landing = match probed {
             Ok(landing) => Landing {
                 downloads_folders: folders,

@@ -234,6 +234,7 @@ async fn sabnzbd_conforms() {
         journal.clone(),
         None,
         no_targets(&journal),
+        grab_http(),
     ));
     conforms(source, SourceTag::Usenet, "t-sab", |handle| {
         // SABnzbd finishes the job into its complete folder.
@@ -317,6 +318,7 @@ async fn a_usenet_pick_grabs_through_its_indexer() {
         journal.clone(),
         None,
         no_targets(&journal),
+        grab_http(),
     );
     source.enqueue("t-grab", 0).await.expect("enqueues");
     assert_eq!(mock.state().add_file_requests.len(), 1);
@@ -453,6 +455,7 @@ async fn a_copy_turned_down_as_not_better_is_not_picked_again() {
         journal.clone(),
         None,
         no_targets(&journal),
+        grab_http(),
     );
 
     let picked = source.enqueue("t-next", 0).await.expect("enqueues");
@@ -536,6 +539,14 @@ async fn answers(who: &str, indexer: &dyn Indexer) {
         assert_eq!(hit.source, SourceTag::Usenet, "{who}");
         assert!(!hit.usenet.nzb_url.is_empty(), "{who}: {:?}", hit.usenet);
     }
+}
+
+/// The client a direct NZB fetch goes through: it follows no redirect.
+fn grab_http() -> reqwest::Client {
+    droppedneedle_kernel::http_client::HttpClientFactory::new()
+        .expect("http client factory")
+        .no_redirect()
+        .clone()
 }
 
 /// A refused key is no releases, never a failure.
@@ -647,6 +658,104 @@ async fn indexers_conform() {
     })
     .await;
     limited("prowlarr", &indexer, || mock.calls().len()).await;
+}
+
+/// slskd and Prowlarr take their key in a header, which a redirect to
+/// another address would carry there. A redirect on the same host (a path
+/// moved) is followed with the key; one to another host or port is an
+/// error that names the URL to set, and nothing is sent where it points.
+/// slskd is built as the acquisition clients build it from the saved
+/// settings, Prowlarr over the factory's same-host client.
+#[tokio::test]
+async fn a_redirect_takes_no_key_elsewhere() {
+    use droppedneedle_acquire::client_error::ClientError;
+    use droppedneedle_acquire::clients::LiveClients;
+    use droppedneedle_acquire::wiring::ClientLives;
+
+    let elsewhere = MockSlskd::start().await.expect("mock starts");
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
+    // The same server under another host name, and another server.
+    let away = |base: &str, path: &str| {
+        let port = reqwest::Url::parse(base)
+            .expect("base parses")
+            .port()
+            .expect("port");
+        [
+            format!("http://localhost:{port}{path}"),
+            format!("{}{path}", elsewhere.base_url()),
+        ]
+    };
+
+    let slskd = MockSlskd::start().await.expect("mock starts");
+    slskd.set_expected_api_key(Some(MOCK_API_KEY));
+    let db = AcquireDb::scratch().expect("scratch db");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let settings = droppedneedle_acquire::test_support::scratch_settings(&dir.join("settings"))
+        .expect("settings open");
+    crate::common::acquire::save_slskd(&settings, &slskd.base_url());
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
+    let clients = LiveClients::new(
+        http.shared().clone(),
+        http.no_redirect().clone(),
+        http.same_host_redirects().clone(),
+        Providers::closed().newznab,
+        ClientLives::new(&settings),
+        dir.join("slskd"),
+        journal.clone(),
+        no_targets(&journal),
+        crate::common::bundles::idle_host_over(&db).await,
+    );
+    let repo = clients
+        .current()
+        .probe_inputs
+        .slskd
+        .clone()
+        .expect("slskd is set up");
+    slskd
+        .statuses()
+        .redirect_next(&format!("{}/api/v0/application", slskd.base_url()));
+    let health = repo.health_check().await;
+    assert!(health.ok, "a path moved on slskd: {}", health.message);
+    for target in away(&slskd.base_url(), "/api/v0/application") {
+        slskd.statuses().redirect_next(&target);
+        let health = repo.health_check().await;
+        assert!(!health.ok, "{target}: {}", health.message);
+        assert!(health.message.contains("redirect"), "{}", health.message);
+    }
+
+    let prowlarr = ProwlarrMock::new();
+    let (base, _server) = serve_loopback(prowlarr.router(ProwlarrScenario::default()))
+        .await
+        .expect("mock serves");
+    let client = ProwlarrClient::new(
+        http.same_host_redirects().clone(),
+        &base,
+        "PRKEY",
+        "prowlarr",
+    );
+    prowlarr
+        .statuses()
+        .redirect_next(&format!("{base}/api/v1/indexer"));
+    client
+        .list_indexers(WAIT)
+        .await
+        .expect("a path moved on Prowlarr is followed");
+    for target in away(&base, "/api/v1/indexer") {
+        prowlarr.statuses().redirect_next(&target);
+        let error = client
+            .list_indexers(WAIT)
+            .await
+            .expect_err("a redirect elsewhere is no answer");
+        assert!(
+            matches!(error, ClientError::Redirected { status: 302, .. }),
+            "{target}: {error:?}"
+        );
+    }
+    assert_eq!(
+        elsewhere.statuses().requests(),
+        0,
+        "no request followed a redirect to another port"
+    );
 }
 
 fn repo() -> PathBuf {

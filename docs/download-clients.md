@@ -24,7 +24,7 @@ slskd and Usenet can run side by side; the source priority control under Setting
 DroppedNeedle talks to your own running slskd over its local HTTP API (`X-API-Key`). You bring slskd; DroppedNeedle drives it.
 
 - Use slskd 0.25.0 or newer (0.25.1 is the verified pin: `slskd/slskd:0.25.1`), with a Soulseek account inside it.
-- Give DroppedNeedle the URL plus API key under Settings > Download Client, then Test and Save. The key is stored encrypted and never logged.
+- Give DroppedNeedle the URL plus API key under Settings > Download Client, then Test and Save. The key is stored encrypted and never logged. A redirect is followed only on the same host, never from https to http, so the key never goes anywhere else: use the address slskd answers on.
 
 > [!IMPORTANT]
 > Soulseek bans clients that share nothing, so give slskd at least one shared folder or searches and downloads fail. Everything in a shared folder goes out to the network. Choose it like you mean it.
@@ -69,7 +69,7 @@ The second source is Usenet through SABnzbd. For searching, either add Newznab-c
 
 1. Expose SABnzbd's completed-downloads directory read-write, ideally under the same shared parent mount as the library so the [mount rules](#slskd) hold. In SABnzbd, point its Downloads folder setting at the matching path (e.g. `/data/sabnzbd/complete`).
 2. Under Settings > Download Client, enable Usenet, enter your SABnzbd URL and API key, and set Downloads mount to that directory as mounted, not a folder below it (only what lies below the path you set is checked for links).
-3. Under Settings > Indexers / Prowlarr, pick one search backend: add each indexer's URL plus API key, or enter your Prowlarr URL plus API key. Then Test and Save.
+3. Under Settings > Indexers / Prowlarr, pick one search backend: add each indexer's URL plus API key, or enter your Prowlarr URL plus API key. Then Test and Save. A redirect from Prowlarr's API is followed only on the same host, never from https to http, so its key never goes anywhere else: use the address Prowlarr answers on. An NZB link may redirect at most five times, each time to a plain web address with no user name or password in it; a release whose link goes anywhere else is not downloaded, and the log says so.
 
 Indexers added one by one are asked at most about once a second each. Many cap API calls and NZB grabs per day and report how much is used; DroppedNeedle keeps to those caps, skipping an indexer that has used up its day until its allowance comes back, and waits out any slow-down an indexer asks for. More in [Indexer limits](downloads.md#indexer-limits).
 

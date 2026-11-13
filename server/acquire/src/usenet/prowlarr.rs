@@ -144,8 +144,10 @@ pub struct ProwlarrSystemStatus {
 // Raw client. Debug is hand-written: the key never appears in debug output.
 // ---------------------------------------------------------------------------
 
-/// Raw wrapper around one Prowlarr instance. The HTTP client is injected;
-/// the key travels in the `X-Api-Key` header only.
+/// Raw wrapper around one Prowlarr instance. The HTTP client is injected
+/// and follows a redirect only on the same host: the key travels in the
+/// `X-Api-Key` header only, which a redirect elsewhere would carry to
+/// another address.
 pub struct ProwlarrClient {
     http: Client,
     base_url: String,
@@ -286,7 +288,9 @@ impl ProwlarrClient {
             .await
             .map_err(|err| ClientError::transport(Service::Prowlarr, transport_error(err)))?;
         let status = response.status().as_u16();
-        if status >= 400 {
+        // A 3xx here is a redirect the client would not follow, not an
+        // answer.
+        if status >= 300 {
             let wait = retry_after(response.headers());
             return Err(ClientError::for_status(
                 Service::Prowlarr,

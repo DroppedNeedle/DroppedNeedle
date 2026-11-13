@@ -336,7 +336,9 @@ Run from the repo root. `make help` lists every target.
   `ConnectionResolver` (below), and slskd, SABnzbd, Lidarr and Prowlarr
   through their client in acquire. The caller always states its priority
   (a person waiting is user priority, background work is background);
-  there is no default.
+  there is no default. slskd and Prowlarr calls follow a redirect only on
+  the same host and never to http (the factory's `same_host_redirects`),
+  so their keys go nowhere else; an NZB link follows the grab hop rules.
 - Keep 401/403, 404 and 400 distinct. Raw transport errors never reach a
   response.
 - A client for a user's media server (Jellyfin, Navidrome, Plex) is built
@@ -696,8 +698,10 @@ Run from the repo root. `make help` lists every target.
   only judged gone when the filesystem says it is absent, never on a read
   error. A held file the library could not take is retried by
   itself (`Gate::HeldRetry`), and that retry never places a file on an
-  album a person moved it away from, never adds a second copy and never
-  replaces a library copy: those wait for a person.
+  album a person moved it away from and never adds a second copy. It
+  replaces a library copy only to finish an upgrade already decided
+  (`UpgradeBlocked`: held because the old copy could not be taken away,
+  such as while the recycle bin is down). The rest wait for a person.
 - A source outside the download settings, or a format or step the quality
   recipe doesn't list, is never taken by automatic work (picks, failover,
   the search review, the wanted watcher); such a landing is held, one set

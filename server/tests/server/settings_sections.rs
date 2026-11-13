@@ -868,6 +868,7 @@ async fn live_probes_answer_honest_verdicts() {
     let install = InstallIds::new(common::config_store(&dir));
     let probes = LiveProbes::new(
         reqwest::Client::new(),
+        http.same_host_redirects().clone(),
         &droppedneedle_providers::Providers::unpaced_at(
             Arc::new(droppedneedle_providers::ReqwestWire::new(&http)),
             droppedneedle_providers::ProviderEndpoints {
@@ -883,6 +884,7 @@ async fn live_probes_answer_honest_verdicts() {
     let dead = "http://127.0.0.1:9";
     let unreachable = LiveProbes::new(
         reqwest::Client::new(),
+        http.same_host_redirects().clone(),
         &droppedneedle_providers::Providers::closed(),
         install,
     );

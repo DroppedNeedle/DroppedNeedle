@@ -230,6 +230,10 @@ pub trait VerifyProbes: Send + Sync {
 pub struct LiveProbes {
     /// Outbound client.
     pub http: reqwest::Client,
+    /// The factory's client that follows a redirect only on the same host,
+    /// for slskd and Prowlarr: their key rides in a header a redirect
+    /// elsewhere would carry to another address.
+    pub same_host: reqwest::Client,
     /// The MusicBrainz client, over the official, BrainzMash and mirror
     /// rows.
     pub musicbrainz: MusicBrainzClient,
@@ -250,12 +254,18 @@ pub struct LiveProbes {
 }
 
 impl LiveProbes {
-    /// Build over the shared client and the providers' clients, presenting
-    /// this install's stored Plex client id from `install`, as every other
-    /// Plex call does.
-    pub fn new(http: reqwest::Client, providers: &Providers, install: InstallIds) -> Self {
+    /// Build over the shared client, the client that follows a redirect
+    /// only on the same host and the providers' clients, presenting this install's stored Plex
+    /// client id from `install`, as every other Plex call does.
+    pub fn new(
+        http: reqwest::Client,
+        same_host: reqwest::Client,
+        providers: &Providers,
+        install: InstallIds,
+    ) -> Self {
         Self {
             http,
+            same_host,
             musicbrainz: providers.musicbrainz.clone(),
             lastfm: providers.lastfm.clone(),
             youtube: providers.youtube.clone(),
@@ -643,7 +653,7 @@ impl VerifyProbes for LiveProbes {
                 };
             }
             let repo = SlskdRepository::new(
-                SlskdClient::new(ReqwestSlskdHttp::new(self.http.clone(), url, key)),
+                SlskdClient::new(ReqwestSlskdHttp::new(self.same_host.clone(), url, key)),
                 url,
                 key,
                 std::path::PathBuf::new(),
@@ -760,7 +770,7 @@ impl VerifyProbes for LiveProbes {
                     indexer_count: None,
                 };
             }
-            let client = ProwlarrClient::new(self.http.clone(), url, key, "prowlarr");
+            let client = ProwlarrClient::new(self.same_host.clone(), url, key, "prowlarr");
             let status = match client.system_status(PROBE_TIMEOUT).await {
                 Ok(status) => status,
                 Err(error) => return prowlarr_failure(&error),
@@ -951,6 +961,10 @@ fn prowlarr_failure(error: &droppedneedle_acquire::client_error::ClientError) ->
         }
         Source::RateLimited { .. } => {
             "Prowlarr rate-limited the test. Try again shortly.".to_owned()
+        }
+        Source::Redirected { .. } => {
+            "Prowlarr answered with a redirect, which is not followed. Use the address Prowlarr answers on."
+                .to_owned()
         }
         _ => "Couldn't reach Prowlarr. Check the URL and that Prowlarr is running.".to_owned(),
     };
