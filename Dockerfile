@@ -24,7 +24,10 @@ COPY frontend/ ./
 # server can stamp in any BASE_PATH at startup without a rebuild (see
 # frontend/svelte.config.js and server/src/web.rs).
 ENV DROPPEDNEEDLE_BASE_PATH_PLACEHOLDER=1
-RUN pnpm run build
+# The source maps name the packages in the build, for its licence notices; the
+# script removes them once read.
+RUN pnpm run build --sourcemap hidden \
+    && node scripts/notices.mjs build /app/NOTICES-web-ui.txt
 
 FROM rust:1.89.0-bookworm AS chef
 
@@ -48,6 +51,12 @@ FROM chef AS planner
 COPY server/ ./server/
 RUN cd server && cargo chef prepare --recipe-path /app/recipe.json
 
+# cargo-about writes the licence notices for the crates the binaries link
+# (server/about.toml). It is built apart from the dependencies, so their
+# cached layer stays valid.
+FROM chef AS about
+RUN cargo install cargo-about --version 0.9.3 --locked --features cli
+
 FROM chef AS dependencies
 COPY --from=planner /app/recipe.json ./recipe.json
 RUN mkdir -p server \
@@ -60,6 +69,17 @@ COPY server/ ./server/
 COPY sdk/ ./sdk/
 # The custom CSS rules, which the server's check shares with the web UI's.
 COPY frontend/src/lib/stores/customCssRules.json ./frontend/src/lib/stores/customCssRules.json
+
+COPY --from=about /usr/local/cargo/bin/cargo-about /usr/local/cargo/bin/cargo-about
+# The tool links the server, so its graph holds every crate of both binaries.
+# A clarification in about.toml that cannot be fetched or checked only warns,
+# and its crate falls back to a placeholder copyright line, so that warning
+# fails the build.
+RUN mkdir /notices \
+    && cargo about generate --locked --fail --manifest-path server/tool/Cargo.toml --config server/about.toml \
+        --output-file /notices/NOTICES-server.txt server/about.hbs 2>/notices/log \
+    && ! grep -q clarification /notices/log \
+    || { cat /notices/log >&2; exit 1; }
 
 # Only the binaries stay in this layer, which keeps the build cache small.
 RUN cargo build --release --locked --manifest-path server/Cargo.toml --bins -p droppedneedle -p droppedneedle-tool \
@@ -161,6 +181,11 @@ RUN lame=$(dpkg-query -W -f='${Version}' libmp3lame0) \
 # The pristine web UI; the server stamps a copy into /app/cache/static at
 # startup (DROPPEDNEEDLE_STATIC_DIR defaults to /app/static).
 COPY --from=frontend /app/frontend/build /app/static
+# DroppedNeedle's licence, and the notices for the crates and the web UI
+# packages it is built from.
+COPY LICENSE /usr/share/doc/droppedneedle/LICENSE
+COPY --from=builder /notices/NOTICES-server.txt /usr/share/doc/droppedneedle/NOTICES-server.txt
+COPY --from=frontend /app/NOTICES-web-ui.txt /usr/share/doc/droppedneedle/NOTICES-web-ui.txt
 COPY entrypoint.sh /app/entrypoint.sh
 
 RUN mkdir -p /app/cache /app/config /app/plugins /app/imports \

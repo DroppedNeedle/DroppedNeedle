@@ -1,0 +1,63 @@
+# cargo-about's settings for the licence notices of the Rust crates the two
+# shipped binaries link, which the Dockerfile writes into the image through
+# about.hbs. The accepted licences are deny.toml's list. Where a crate offers a
+# choice, its notice gives the first one listed here: Apache-2.0 leads because
+# its standard text needs no copyright line, which a package that leaves out
+# its licence files cannot give.
+accepted = [
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "MIT",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "BSL-1.0",
+  "Unlicense",
+  "CDLA-Permissive-2.0",
+  "MPL-2.0",
+]
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+# Crates only build scripts or tests use are not in the binaries.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# Leaves out the workspace crates marked publish = false. The root crate,
+# droppedneedle, is not marked, so it is listed under its AGPL-3.0-or-later,
+# which deny.toml allows for it alone.
+private = { ignore = true }
+
+[droppedneedle]
+accepted = ["AGPL-3.0-or-later"]
+
+# Crates whose packages hold no licence text the scan can use. A `git` file is
+# fetched from the crate's repository, at the commit the crate was published
+# from unless another is named, and each checksum pins the text. The files and
+# commits were read on 2026-11-13.
+
+# alloc-stdlib holds no licence file; its repository's root LICENSE covers it.
+[alloc-stdlib.clarify]
+license = "BSD-3-Clause"
+
+[[alloc-stdlib.clarify.git]]
+path = "LICENSE"
+checksum = "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
+
+# md5 holds both licences in one LICENSE.md, which the scan does not recognise.
+[md5.clarify]
+license = "Apache-2.0 OR MIT"
+
+[[md5.clarify.files]]
+path = "LICENSE.md"
+checksum = "c9759868ce3cef7bf419e389a0bc4408d48d0880fee20cdf640bcb027aca4bb6"
+
+# realfft 3.5.0 was published before its repository had a licence file. The
+# MIT LICENSE its author added for 3.5.1 names the copyright holders.
+[realfft.clarify]
+license = "MIT"
+override-git-commit = "9fdcf59c60c7ecacbf75774d378a068811a2e6ea"
+
+[[realfft.clarify.git]]
+path = "LICENSE"
+checksum = "080766c57f9e48f00218f4e43c7d671d4b6ffee85a39417b5ab3c916dfe29b0d"
+
+# rusty-chromaprint has no licence file in its package or its repository, at
+# 0.3.0's commit or since, so its notice keeps the standard MIT text.

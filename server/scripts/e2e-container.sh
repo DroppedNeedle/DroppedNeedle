@@ -1,15 +1,18 @@
 #!/bin/sh
 # Container end-to-end test.
 #
-# 1. ffmpeg: the image's build is LGPL only, with its notices and libmp3lame's
+# 1. Notices: DroppedNeedle's licence and the notices for the crates and web UI
+#    packages it is built from are in the image, libopus's among the crates'
+#    and svelte, read from the source maps, among the packages.
+# 2. ffmpeg: the image's build is LGPL only, with its notices and libmp3lame's
 #    source beside it, and every format the scan accepts transcodes to every
 #    output, with and without a seek, using the argument shape of build_cmd in
 #    transcode.rs.
-# 2. Smoke: fresh boot, healthy, clean SIGTERM shutdown. Prints cold and
+# 3. Smoke: fresh boot, healthy, clean SIGTERM shutdown. Prints cold and
 #    warm boot time, idle RSS and shutdown time.
-# 3. PUID: a boot with PUID=568 hands the config and cache folders to uid 568
+# 4. PUID: a boot with PUID=568 hands the config and cache folders to uid 568
 #    and the server writes as it; a boot with PUID back at 1000 hands them back.
-# 4. Journeys: on an internal network with no route out, starts the mock
+# 5. Journeys: on an internal network with no route out, starts the mock
 #    slskd and MusicBrainz (e2e-mocks.Dockerfile), then runs each browser
 #    journey in frontend/tests/journeys against a fresh server of its own,
 #    after checking that nothing outside resolves or routes from it.
@@ -147,6 +150,18 @@ transcode() {
   check_output "$MUXER" "$OUT/out" "$LABEL"
 }
 
+check_notices() {
+  for FILE in LICENSE NOTICES-server.txt NOTICES-web-ui.txt; do
+    docker run --rm --network none --entrypoint test "$IMAGE" -s "/usr/share/doc/droppedneedle/$FILE" \
+      || fail "no $FILE in /usr/share/doc/droppedneedle"
+  done
+  docker run --rm --network none --entrypoint grep "$IMAGE" -q Xiph.Org /usr/share/doc/droppedneedle/NOTICES-server.txt \
+    || fail "NOTICES-server.txt has no libopus notice"
+  docker run --rm --network none --entrypoint grep "$IMAGE" -q '^  svelte [0-9]' /usr/share/doc/droppedneedle/NOTICES-web-ui.txt \
+    || fail "NOTICES-web-ui.txt does not list svelte, which only the source maps name"
+  echo "notices: LICENSE, NOTICES-server.txt and NOTICES-web-ui.txt"
+}
+
 check_ffmpeg() {
   docker run -d --name "$FFMPEG" --network none --user 1000:1000 --entrypoint sleep \
     -v "$FIXTURES:/fixtures:ro" "$IMAGE" 600 >/dev/null || fail "ffmpeg container did not start"
@@ -224,6 +239,9 @@ fi
 cleanup
 
 echo "image size: $(docker image inspect --format '{{.Size}}' "$IMAGE") bytes"
+
+echo "--- notices ---"
+check_notices
 
 echo "--- ffmpeg ---"
 check_ffmpeg

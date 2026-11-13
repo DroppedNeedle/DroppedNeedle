@@ -2,7 +2,7 @@
 # by default, no lint levels). CI runs `cargo deny check`, which covers
 # advisories, licenses, bans, and sources from this one file.
 [graph]
-targets = ["x86_64-unknown-linux-gnu"]
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 
 [advisories]
 # RUSTSEC-2024-0436: `paste` unmaintained, via lofty (tag reading and writing)
@@ -13,18 +13,22 @@ targets = ["x86_64-unknown-linux-gnu"]
 ignore = ["RUSTSEC-2024-0436"]
 
 [licenses]
-# Copyleft applies to our own crate only; every dependency must be permissive
-# or a data license, except the reviewed weak-copyleft carve-out below.
-# The graph is scoped to the Linux target below, so target-gated crates
-# (wasi, r-efi) never appear here. A new target or a license outside this
-# list fails the check until it is reviewed and added deliberately.
+# Copyleft applies to our own crates only; every dependency must be permissive
+# or a data license, except the reviewed weak-copyleft carve-out below. Our
+# AGPL-3.0-or-later crates are the unpublished workspace crates, which the
+# check skips, and the root crate, droppedneedle, the one exception.
+# The graph is scoped to the two Linux targets the image ships (amd64 and
+# arm64) above, so target-gated crates (wasi, r-efi) never appear here. A new
+# target or a license outside this list fails the check until it is reviewed
+# and added deliberately. A license added here goes on about.toml's accepted
+# list too, or the image build fails.
 # MPL-2.0 (reviewed): the symphonia 0.6 family (audio decode
 # for tag probing) is file-scoped weak copyleft. The server links it
-# unmodified over crates.io; no MPL-covered file is modified, so no
-# source-disclosure obligation triggers. Re-check if symphonia is forked,
-# patched, or statically distributed outside this container.
+# unmodified from crates.io, and the image's notices (about.toml) say where
+# that source is, as the MPL asks of a program that ships it. Re-check if
+# symphonia is forked, patched, or statically distributed outside this
+# container.
 allow = [
-  "AGPL-3.0-or-later",
   "Apache-2.0",
   "BSD-3-Clause",
   "BSL-1.0",
@@ -36,7 +40,10 @@ allow = [
   "Unlicense",
   "Zlib",
 ]
-exceptions = []
+exceptions = [{ crate = "droppedneedle", allow = ["AGPL-3.0-or-later"] }]
+
+[licenses.private]
+ignore = true
 
 [bans]
 multiple-versions = "warn"

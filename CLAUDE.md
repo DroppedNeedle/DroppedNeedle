@@ -448,6 +448,12 @@ Run from the repo root. `make help` lists every target.
 - Prefer a healthy, maintained crate over home-made parser, crypto or retry
   code. New licenses and advisory ignores are reviewed edits to
   `server/deny.toml`, with the reason beside them.
+- The image carries `LICENSE` and notices written at build time for every
+  crate the two binaries link (`server/about.toml`) and every package in the
+  web UI build (`frontend/scripts/notices.mjs`), in
+  `/usr/share/doc/droppedneedle/`. A license `deny.toml` allows also goes on
+  `about.toml`'s accepted list, and a crate whose package holds no license
+  text gets a clarification there.
 
 **Library management** (product rules, not up for debate)
 - Scanning and identification never write music files.

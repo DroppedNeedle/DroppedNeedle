@@ -4,9 +4,8 @@
 .gitignore
 .dockerignore
 
-# Docs and metadata
+# Docs and metadata (LICENSE goes into the image)
 *.md
-LICENSE
 Images/
 templates/
 ca_profile.xml

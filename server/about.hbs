@@ -1,0 +1,26 @@
+Rust crates in the DroppedNeedle server
+=======================================
+
+The droppedneedle and droppedneedle-tool programs in this image are built
+from the Rust crates below. Each licence text found in their packages is
+given in full, under the list of crates it covers. A crate whose package holds
+no text of its licence gets that licence's standard text, and its authors are
+named beside it. The address beside a crate is its published source on
+crates.io; that is where the source of the MPL-2.0 crates is.
+
+Licences:
+{{#each overview}}
+  {{{name}}} ({{count}})
+{{/each}}
+{{#each licenses}}
+
+--------------------------------------------------------------------------------
+{{{name}}}
+
+Used by:
+{{#each used_by}}
+  {{{crate.name}}} {{{crate.version}}}{{#if crate.source}} https://crates.io/crates/{{{crate.name}}}/{{{crate.version}}}{{/if}}{{#unless ../source_path}}{{#if crate.authors}} ({{#each crate.authors}}{{#unless @first}}, {{/unless}}{{{this}}}{{/each}}){{/if}}{{/unless}}
+{{/each}}
+
+{{{text}}}
+{{/each}}
