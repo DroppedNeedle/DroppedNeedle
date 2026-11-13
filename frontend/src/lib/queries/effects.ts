@@ -37,6 +37,7 @@ import { PluginQueryKeyFactory } from '$lib/features/settings/queries/plugins/Pl
 import { ProfileQueryKeyFactory } from '$lib/queries/featureKeys';
 import { RemoteQueryKeyFactory } from '$lib/features/remote-library/queries/RemoteQueryKeyFactory';
 import { ScrobblePreferencesQueryKeyFactory } from '$lib/queries/featureKeys';
+import { SectionPrefsQueryKeyFactory } from '$lib/queries/featureKeys';
 import { SessionsQueryKeyFactory } from '$lib/queries/featureKeys';
 import { SettingsQueryKeyFactory } from '$lib/features/settings/queries/SettingsQueryKeyFactory';
 import { SourcePlaylistQueryKeyFactory } from '$lib/queries/featureKeys';
@@ -224,6 +225,16 @@ export const EFFECTS = {
 	/** The caller's Discover page. */
 	discoverHomeChanged: (userId: UserId): Sweep[] => [
 		{ key: DiscoverQueryKeyFactory.v3.home(userId) }
+	],
+	/**
+	 * Where recommendations come from changed (the ListenBrainz switch or the
+	 * caller's primary source): the album and artist shelves and which
+	 * sections can show.
+	 */
+	recommendationSourcesChanged: (userId: UserId): Sweep[] => [
+		{ key: key(userScope(userId), AlbumQueryKeyFactory.feature, 'similar') },
+		{ key: key(userScope(userId), ArtistQueryKeyFactory.feature) },
+		{ key: SectionPrefsQueryKeyFactory.prefs(userId) }
 	],
 	/** The caller's discovery batches. */
 	discoveryBatchesChanged: (userId: UserId): Sweep[] => [
@@ -521,6 +532,7 @@ export const connectionsChanged = fact('connectionsChanged');
 export const sourcePlaylistsChanged = fact('sourcePlaylistsChanged');
 export const spotifyPlaylistsChanged = fact('spotifyPlaylistsChanged');
 export const discoverHomeChanged = fact('discoverHomeChanged');
+export const recommendationSourcesChanged = fact('recommendationSourcesChanged');
 export const discoveryBatchesChanged = fact('discoveryBatchesChanged');
 export const discoveryBatchChanged = fact('discoveryBatchChanged');
 export const libraryCountsChanged = fact('libraryCountsChanged');

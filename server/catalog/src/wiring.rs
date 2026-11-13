@@ -228,6 +228,7 @@ fn wrapped_state(
         users.users.clone(),
         inputs.listening,
         inputs.providers.listenbrainz.clone(),
+        settings.live(),
         Arc::clone(&users.clock),
     ));
     WrappedState::new(ConfigWrappedKey::new(settings.live()), data)

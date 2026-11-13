@@ -18,13 +18,14 @@ use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::runtime_config::secret_sections::{
-    AdvancedSettings, EventsSettings, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
-    NavidromeConnection, OidcConnection, PlexConnection, ProwlarrConnection, SlskdConnection,
-    WrappedSettings, YouTubeConnection,
+    AdvancedSettings, EventsSettings, JellyfinConnection, LastFmSettings, NavidromeConnection,
+    OidcConnection, PlexConnection, ProwlarrConnection, SlskdConnection, WrappedSettings,
+    YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
     AppConnect, ConnectApps, EditionPreferences, FilesystemWatcher, GetIt, ImportFolder,
-    LyricsSettings, PlainSection, PublicAddress, SecuritySettings, UserPreferences, WantedWatcher,
+    ListenBrainzSettings, LyricsSettings, PlainSection, PublicAddress, SecuritySettings,
+    UserPreferences, WantedWatcher,
 };
 use droppedneedle_kernel::runtime_config::{Masked, SecretSection, Section};
 
@@ -160,6 +161,12 @@ section_routes! {
         put put_import_folder: "Save the import folder. Music copied there is imported, then\nremoved from it."
             => "Saved import folder";
     }
+    plain ListenBrainzSettings at "/api/v3/settings/listenbrainz", read admin, write admin {
+        get get_listenbrainz: "Read the ListenBrainz reads switch."
+            => "ListenBrainz reads switch";
+        put put_listenbrainz: "Save the ListenBrainz reads switch."
+            => "Saved switch";
+    }
     plain LyricsSettings at "/api/v3/settings/lyrics", read admin, write admin {
         get get_lyrics_settings: "Read the online lyrics lookup switch."
             => "Lyrics lookup switch";
@@ -241,12 +248,6 @@ section_routes! {
             => "Last.fm settings";
         put put_lastfm: "Save the Last.fm switch and the instance app key pair (a masked value\nkeeps the stored one)."
             => "Saved settings";
-    }
-    secret ListenBrainzConnection at "/api/v3/settings/listenbrainz", read admin, write admin {
-        get get_listenbrainz: "Read the ListenBrainz connection (token masked unless unset)."
-            => "ListenBrainz connection";
-        put put_listenbrainz: "Save the ListenBrainz connection (a masked token keeps the stored one)."
-            => "Saved connection";
     }
     secret NavidromeConnection at "/api/v3/settings/navidrome", read admin, write admin {
         get get_navidrome: "Read the Navidrome connection (password masked unless unset)."

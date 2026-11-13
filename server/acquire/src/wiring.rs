@@ -377,6 +377,7 @@ fn core(
         ports.listening,
         ports.playlists,
         events,
+        settings.live(),
     );
     let ticks = stores.ticks.clone();
     let flows = Arc::new(flows_bundle(

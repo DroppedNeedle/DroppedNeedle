@@ -500,6 +500,18 @@ impl ListeningData {
         self.health.popularity_down()
     }
 
+    /// Whether ListenBrainz reads are switched on (false while their
+    /// setting does not read). While they are off every ListenBrainz read
+    /// here answers empty before the cache, so no empty answer is kept for
+    /// when they come back on.
+    pub fn listenbrainz_on(&self) -> bool {
+        self.network.listenbrainz_ready()
+    }
+
+    fn listenbrainz_off(&self) -> bool {
+        !self.listenbrainz_on()
+    }
+
     /// The sitewide ListenBrainz artist chart.
     pub async fn sitewide_artists(
         &self,
@@ -508,6 +520,9 @@ impl ListeningData {
         offset: u32,
         ask: &Ask,
     ) -> ListeningResult<Vec<ArtistRow>> {
+        if self.listenbrainz_off() {
+            return Ok(Default::default());
+        }
         let key = |at: u32| {
             CacheKey::new(
                 Source::ListenBrainz,
@@ -535,6 +550,9 @@ impl ListeningData {
         offset: u32,
         ask: &Ask,
     ) -> ListeningResult<Vec<ListenedAlbum>> {
+        if self.listenbrainz_off() {
+            return Ok(Default::default());
+        }
         let key = |at: u32| {
             CacheKey::new(
                 Source::ListenBrainz,
@@ -562,6 +580,9 @@ impl ListeningData {
         count: u32,
         ask: &Ask,
     ) -> ListeningResult<Vec<ArtistRow>> {
+        if self.listenbrainz_off() {
+            return Ok(Default::default());
+        }
         let user = lower(username);
         let name = username.to_owned();
         let key = |at: u32| {
@@ -587,6 +608,9 @@ impl ListeningData {
         offset: u32,
         ask: &Ask,
     ) -> ListeningResult<Vec<ListenedAlbum>> {
+        if self.listenbrainz_off() {
+            return Ok(Default::default());
+        }
         let user = lower(username);
         let name = username.to_owned();
         let key = |at: u32| {
@@ -619,6 +643,9 @@ impl ListeningData {
         limit: usize,
         ask: &Ask,
     ) -> ListeningResult<Vec<ScoredArtist>> {
+        if self.listenbrainz_off() {
+            return Ok(Default::default());
+        }
         let read = limit.max(SIMILAR_FLOOR);
         let key = shared::similar_key(artist_mbid, read);
         let (user, mbid) = (user_id.to_owned(), artist_mbid.to_owned());
@@ -639,6 +666,9 @@ impl ListeningData {
         count: usize,
         ask: &Ask,
     ) -> ListeningResult<Vec<RankedAlbum>> {
+        if self.listenbrainz_off() {
+            return Ok(Default::default());
+        }
         if self.popularity_down() {
             return Ok(Vec::new());
         }
@@ -666,6 +696,9 @@ impl ListeningData {
     /// A ListenBrainz user's genres with their listens, most listened
     /// first.
     pub async fn genres(&self, username: &str, ask: &Ask) -> ListeningResult<Vec<(String, i64)>> {
+        if self.listenbrainz_off() {
+            return Ok(Default::default());
+        }
         let key = CacheKey::new(Source::ListenBrainz, &["genres", &lower(username)]).personal();
         let name = username.to_owned();
         self.list(
@@ -683,6 +716,9 @@ impl ListeningData {
         username: &str,
         ask: &Ask,
     ) -> ListeningResult<Vec<AlbumRow>> {
+        if self.listenbrainz_off() {
+            return Ok(Default::default());
+        }
         let key = CacheKey::new(Source::ListenBrainz, &["fresh", &lower(username)]).personal();
         let name = username.to_owned();
         self.list(
@@ -701,6 +737,9 @@ impl ListeningData {
         count: u32,
         ask: &Ask,
     ) -> ListeningResult<Vec<LovedTrack>> {
+        if self.listenbrainz_off() {
+            return Ok(Default::default());
+        }
         let key = CacheKey::new(Source::ListenBrainz, &["loved", &lower(username)]).personal();
         let name = username.to_owned();
         let rows = self
@@ -713,6 +752,9 @@ impl ListeningData {
 
     /// Users whose listening is like this user's, most similar first.
     pub async fn similar_users(&self, username: &str, ask: &Ask) -> ListeningResult<Vec<String>> {
+        if self.listenbrainz_off() {
+            return Ok(Default::default());
+        }
         let key =
             CacheKey::new(Source::ListenBrainz, &["similar_users", &lower(username)]).personal();
         let name = username.to_owned();
@@ -733,6 +775,9 @@ impl ListeningData {
         username: &str,
         ask: &Ask,
     ) -> ListeningResult<Option<WeeklyPlaylist>> {
+        if self.listenbrainz_off() {
+            return Ok(Default::default());
+        }
         let key = CacheKey::new(Source::ListenBrainz, &["weekly", &lower(username)]).personal();
         let (user, name) = (user_id.to_owned(), username.to_owned());
         self.lookup(key, STATS, ask, move |network, priority| async move {
@@ -753,6 +798,9 @@ impl ListeningData {
         recording_mbids: &[String],
         ask: &Ask,
     ) -> ListeningResult<HashMap<String, String>> {
+        if self.listenbrainz_off() {
+            return Ok(Default::default());
+        }
         let watch = Watch::new(ask);
         let found = self
             .cache
@@ -783,6 +831,9 @@ impl ListeningData {
         release_group_mbids: &[String],
         ask: &Ask,
     ) -> ListeningResult<HashMap<String, i64>> {
+        if self.listenbrainz_off() {
+            return Ok(Default::default());
+        }
         if self.popularity_down() {
             let (counts, _) = self
                 .cache

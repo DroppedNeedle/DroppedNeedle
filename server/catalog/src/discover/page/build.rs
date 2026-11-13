@@ -464,7 +464,7 @@ impl Builder<'_> {
             .collect();
         shelves::dedupe_albums(&mut page.sections);
         page.service_prompts = shelves::service_prompts(
-            lb_user.is_some(),
+            lb_user.is_some() || !self.listening.listenbrainz_on(),
             user.jellyfin,
             self.settings.download_client,
             user.lastfm,

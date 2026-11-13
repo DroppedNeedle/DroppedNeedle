@@ -1,10 +1,11 @@
 //! Listening and discovery preferences: release-type filters, the primary
-//! music source and lyrics.
+//! music source, the ListenBrainz reads switch and lyrics.
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::Section;
+use crate::runtime_config::Live;
 
 // --- user_preferences -----------------------------------------------------
 
@@ -52,6 +53,43 @@ crate::spelled!(ListenSource {
     Listenbrainz => "listenbrainz",
     Lastfm => "lastfm",
 });
+
+// --- listenbrainz_settings ------------------------------------------------
+// The switch for every ListenBrainz read the app makes (recommendations,
+// popularity, search counts, genres, Discover, the Weekly Mix and Wrapped),
+// on by default: a missing section or a stored `{}` reads on. v2 and earlier
+// v3 builds stored `enabled`, `username` and `user_token` here for an
+// instance account nothing used; those fields are ignored, so an old stored
+// `"enabled": false` does not turn reads off. Each person's own scrobbling
+// goes through their own link and is not affected.
+
+/// ListenBrainz settings: the switch for the app's ListenBrainz reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct ListenBrainzSettings {
+    /// Read recommendations, popularity and genres from ListenBrainz.
+    pub reads_enabled: bool,
+}
+
+impl Default for ListenBrainzSettings {
+    fn default() -> Self {
+        Self {
+            reads_enabled: true,
+        }
+    }
+}
+
+impl Section for ListenBrainzSettings {
+    const KEY: &'static str = "listenbrainz_settings";
+}
+
+/// Whether the app may read ListenBrainz now. A section that does not read
+/// is off, never its default: the reads wait until it is saved again.
+pub fn listenbrainz_reads_on(settings: &Live<ListenBrainzSettings>) -> bool {
+    settings
+        .read()
+        .is_some_and(|settings| settings.reads_enabled)
+}
 
 // --- lyrics_settings (read-path lyrics provider) ---------------------------
 // The switch for the online LRCLIB lookup on the library read path, on by

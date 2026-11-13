@@ -32453,15 +32453,15 @@
         "tags": [
           "settings"
         ],
-        "summary": "Read the ListenBrainz connection (token masked unless unset).",
+        "summary": "Read the ListenBrainz reads switch.",
         "operationId": "get_listenbrainz",
         "responses": {
           "200": {
-            "description": "ListenBrainz connection",
+            "description": "ListenBrainz reads switch",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListenBrainzConnection"
+                  "$ref": "#/components/schemas/ListenBrainzSettings"
                 }
               }
             }
@@ -32479,13 +32479,13 @@
         "tags": [
           "settings"
         ],
-        "summary": "Save the ListenBrainz connection (a masked token keeps the stored one).",
+        "summary": "Save the ListenBrainz reads switch.",
         "operationId": "put_listenbrainz",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ListenBrainzConnection"
+                "$ref": "#/components/schemas/ListenBrainzSettings"
               }
             }
           },
@@ -32493,59 +32493,11 @@
         },
         "responses": {
           "200": {
-            "description": "Saved connection",
+            "description": "Saved switch",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListenBrainzConnection"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/settings/listenbrainz/verify": {
-      "post": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Test the submitted ListenBrainz values (a masked token tests the\nstored one). Rate limiting answers 429.",
-        "operationId": "verify_listenbrainz",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ListenBrainzConnection"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Verify verdict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VerifyConnectionResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "ListenBrainz is rate-limiting this server",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
+                  "$ref": "#/components/schemas/ListenBrainzSettings"
                 }
               }
             }
@@ -48145,7 +48097,7 @@
           },
           "listenbrainz": {
             "type": "boolean",
-            "description": "ListenBrainz charts and history are available."
+            "description": "ListenBrainz reads are switched on for this server. The home page's\ncopy is also false while the person has no ListenBrainz link."
           },
           "localfiles": {
             "type": "boolean",
@@ -50561,24 +50513,14 @@
           }
         }
       },
-      "ListenBrainzConnection": {
+      "ListenBrainzSettings": {
         "type": "object",
-        "description": "ListenBrainz connection.",
+        "description": "ListenBrainz settings: the switch for the app's ListenBrainz reads.",
         "properties": {
-          "enabled": {
+          "reads_enabled": {
             "type": "boolean",
-            "description": "Master switch.",
-            "default": false
-          },
-          "user_token": {
-            "type": "string",
-            "description": "User token (encrypted at rest; v2 returned it plaintext on GET).",
-            "default": ""
-          },
-          "username": {
-            "type": "string",
-            "description": "Username.",
-            "default": ""
+            "description": "Read recommendations, popularity and genres from ListenBrainz.",
+            "default": true
           }
         }
       },
@@ -64579,7 +64521,8 @@
           "description",
           "zone",
           "enabled",
-          "available"
+          "available",
+          "turned_off"
         ],
         "properties": {
           "available": {
@@ -64608,6 +64551,10 @@
           "title": {
             "type": "string",
             "description": "Display title."
+          },
+          "turned_off": {
+            "type": "boolean",
+            "description": "An admin switched off the service this section needs, so linking\nit would not make the section available."
           },
           "zone": {
             "type": "string",

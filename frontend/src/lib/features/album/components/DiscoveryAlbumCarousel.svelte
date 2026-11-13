@@ -2,6 +2,7 @@
 	import { EAGER_IMAGE_COUNT } from '$lib/media/lazyImage';
 	import type { Album } from '$lib/features/album/queries/types';
 	import type { AlbumRef } from '$lib/features/discover/queries/types';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import HorizontalCarousel from '$lib/ui/HorizontalCarousel.svelte';
 	import CarouselSkeleton from '$lib/ui/CarouselSkeleton.svelte';
@@ -12,6 +13,7 @@
 	interface Props {
 		albums: AlbumRef[];
 		loading?: boolean;
+		/** False while neither listening service can be asked: an admin turned ListenBrainz off. */
 		configured?: boolean;
 		title: string;
 		emptyMessage?: string;
@@ -46,10 +48,17 @@
 	{:else if !configured}
 		<Card>
 			<div class="text-center">
-				<p class="text-muted">Connect a music service to see recommendations</p>
-				<Button variant="primary" size="sm" href={withBasePath('/profile#scrobbling')} class="mt-3">
-					Configure
-				</Button>
+				<p class="text-muted">Recommendations are turned off.</p>
+				{#if authStore.isAdmin}
+					<Button
+						variant="primary"
+						size="sm"
+						href={withBasePath('/settings?tab=listenbrainz')}
+						class="mt-3"
+					>
+						Settings
+					</Button>
+				{/if}
 			</div>
 		</Card>
 	{:else if albums.length === 0}

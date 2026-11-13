@@ -80,6 +80,8 @@ pub enum SkipReason {
     NoTracks,
     /// The account no longer exists.
     UserNotFound,
+    /// An admin switched ListenBrainz reads off.
+    ListenBrainzOff,
 }
 
 impl SkipReason {
@@ -90,6 +92,7 @@ impl SkipReason {
             Self::Fresh => "fresh",
             Self::NoTracks => "no_tracks",
             Self::UserNotFound => "user_not_found",
+            Self::ListenBrainzOff => "listenbrainz_off",
         }
     }
 }
@@ -149,6 +152,9 @@ pub struct MixSweep {
 /// The ListenBrainz reads a build needs. Errors carry a log-only cause;
 /// the builder treats every read as optional and carries on without it.
 pub trait MixSources: Send + Sync {
+    /// Whether ListenBrainz may be read now: false while an admin switched
+    /// its reads off or their setting does not read.
+    fn reads_on(&self) -> bool;
     /// The user's ListenBrainz identity; `None` when unlinked or when the
     /// stored token no longer opens.
     fn identity<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Option<ListenBrainzCredentials>>;
@@ -327,6 +333,10 @@ impl PersonalMixBuilder {
     /// Rebuild every linked user's mix. One user's failure never stops the
     /// sweep; only a failed user listing fails it.
     pub async fn run_for_all_users(&self) -> Result<MixSweep, String> {
+        if !self.sources.reads_on() {
+            tracing::info!("ListenBrainz reads are off; the personal mix refresh waits");
+            return Ok(MixSweep::default());
+        }
         let users = self.sources.linked_users().await?;
         let mut sweep = MixSweep {
             considered: u32::try_from(users.len()).unwrap_or(u32::MAX),
@@ -364,6 +374,9 @@ impl PersonalMixBuilder {
     }
 
     async fn build_locked(&self, user_id: &str, force: bool) -> Result<MixOutcome, RequestsError> {
+        if !self.sources.reads_on() {
+            return Ok(MixOutcome::skipped(SkipReason::ListenBrainzOff, None));
+        }
         let Some(creds) = self
             .sources
             .identity(user_id)

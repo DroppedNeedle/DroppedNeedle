@@ -25,8 +25,12 @@ pub type Read<'a, T> = BoxFuture<'a, ListeningResult<T>>;
 pub trait ListeningNetwork: Send + Sync {
     /// The MusicBrainz source in use.
     fn source(&self) -> SourceContext;
-    /// The user's listening accounts and preference.
+    /// The user's listening accounts and preference. While ListenBrainz
+    /// reads are off the user reads as having no ListenBrainz link.
     fn accounts<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, UserMusic>;
+    /// Whether ListenBrainz reads are switched on (false while their
+    /// setting does not read).
+    fn listenbrainz_ready(&self) -> bool;
     /// Whether the user can read Last.fm (switched on, with their own key or
     /// the server's).
     fn lastfm_ready<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, bool> {

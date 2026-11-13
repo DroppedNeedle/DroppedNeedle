@@ -124,6 +124,9 @@ impl ListeningNetwork for Script {
         user.lastfm |= self.lastfm_users.iter().any(|id| id == user_id);
         Box::pin(async move { user })
     }
+    fn listenbrainz_ready(&self) -> bool {
+        true
+    }
     fn sitewide_artists(
         &self,
         _r: StatsRange,

@@ -7,6 +7,8 @@
 	import MediaTile from '$lib/media/MediaTile.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { artistHref } from '$lib/utils/entityRoutes';
+	import type { components } from '$lib/api/v3/openapi';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
 
@@ -14,9 +16,11 @@
 		artists: ArtistRef[];
 		loading?: boolean;
 		configured?: boolean;
+		/** The service that answered; unconfigured ListenBrainz means an admin turned it off. */
+		source?: components['schemas']['ListenSource'];
 	}
 
-	let { artists, loading = false, configured = true }: Props = $props();
+	let { artists, loading = false, configured = true, source }: Props = $props();
 
 	const linked = $derived(
 		artists.flatMap((artist) =>
@@ -27,6 +31,15 @@
 
 {#if loading}
 	<CarouselSkeleton count={8} cardWidth="w-32" rounded="full" showSubtitle={false} />
+{:else if !configured && source === 'listenbrainz'}
+	<div class="flex flex-wrap items-center gap-3 text-sm text-muted">
+		<p>Recommendations are turned off.</p>
+		{#if authStore.isAdmin}
+			<Button variant="primary" size="sm" href={withBasePath('/settings?tab=listenbrainz')}
+				>Settings</Button
+			>
+		{/if}
+	</div>
 {:else if !configured}
 	<div class="flex flex-wrap items-center gap-3 text-sm text-muted">
 		<p>Connect a music service to see similar artists</p>

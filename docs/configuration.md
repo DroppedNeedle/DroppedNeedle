@@ -111,7 +111,7 @@ services:
 | YouTube API key | Settings > YouTube |
 | Spotify client ID and secret | Settings > Spotify |
 | Ticketmaster and Skiddle keys, sweep scope | Settings > Live Events |
-| ListenBrainz connection for scrobbling (admin) | Settings > ListenBrainz |
+| ListenBrainz recommendations, on by default (admin) | Settings > ListenBrainz |
 | Buy links | Settings > Get it |
 | Scrobbling and discovery accounts | Profile > Scrobbling & Discovery |
 | Release types | Settings > Release Types |

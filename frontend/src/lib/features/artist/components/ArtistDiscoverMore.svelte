@@ -1,22 +1,26 @@
 <!--
 	What the artist page shows in place of its popular lists and similar
-	artists while no listening service is linked: one card that says what a
-	service would add, and the way to connect one.
+	artists while no listening service can be read: one card that says what
+	a service would add and the way to connect one, or, while an admin has
+	ListenBrainz recommendations turned off, says so.
 -->
 <script lang="ts">
 	import { Plug } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import VinylRecord from '$lib/ui/VinylRecord.svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	interface Props {
 		artistName: string;
+		/** An admin turned ListenBrainz recommendations off. */
+		turnedOff?: boolean;
 		/** Layout only. */
 		class?: string;
 	}
 
-	let { artistName, class: className = '' }: Props = $props();
+	let { artistName, turnedOff = false, class: className = '' }: Props = $props();
 </script>
 
 <Card
@@ -33,15 +37,27 @@
 		<div class="dn-more__text">
 			<h2 id="artist-discover-more-title" class="dn-more__title">Discover more</h2>
 			<p class="mt-1 text-sm">
-				Connect a music service to see popular albums, popular songs and similar artists for {artistName}.
+				{#if turnedOff}
+					Recommendations are turned off.
+				{:else}
+					Connect a music service to see popular albums, popular songs and similar artists for {artistName}.
+				{/if}
 			</p>
 		</div>
-		<Button
-			variant="primary"
-			icon={Plug}
-			class="dn-more__cta"
-			href={withBasePath('/profile#scrobbling')}>Connect a service</Button
-		>
+		{#if !turnedOff}
+			<Button
+				variant="primary"
+				icon={Plug}
+				class="dn-more__cta"
+				href={withBasePath('/profile#scrobbling')}>Connect a service</Button
+			>
+		{:else if authStore.isAdmin}
+			<Button
+				variant="primary"
+				class="dn-more__cta"
+				href={withBasePath('/settings?tab=listenbrainz')}>Settings</Button
+			>
+		{/if}
 	</div>
 </Card>
 

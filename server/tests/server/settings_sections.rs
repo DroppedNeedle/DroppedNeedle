@@ -20,8 +20,8 @@ use droppedneedle::settings::models::LibrarySettingsSaveRequest;
 use droppedneedle::settings::musicbrainz::BRAINZMASH_DISCLOSURE_VERSION;
 use droppedneedle::settings::services::SettingsService;
 use droppedneedle::settings::verify::{
-    JellyfinVerdict, ListenBrainzVerdict, LiveProbes, NewznabVerdict, PlexVerdict, ProbeVerdict,
-    ProwlarrVerdict, SabnzbdMountDiagnosis, SabnzbdVerdict, VerifyProbes, VersionVerdict,
+    JellyfinVerdict, LiveProbes, NewznabVerdict, PlexVerdict, ProbeVerdict, ProwlarrVerdict,
+    SabnzbdMountDiagnosis, SabnzbdVerdict, VerifyProbes, VersionVerdict,
 };
 use droppedneedle::settings::wiring::SettingsSetup;
 use droppedneedle_auth::federated::settings::InstallIds;
@@ -75,7 +75,6 @@ fn scratch_service() -> (SettingsService, Arc<RecorderEffects>, ScratchDir) {
 struct FakeProbes {
     calls: Mutex<Vec<String>>,
     valid: bool,
-    rate_limited: bool,
 }
 
 impl FakeProbes {
@@ -83,7 +82,6 @@ impl FakeProbes {
         Self {
             calls: Mutex::new(Vec::new()),
             valid: true,
-            rate_limited: false,
         }
     }
 
@@ -91,7 +89,6 @@ impl FakeProbes {
         Self {
             calls: Mutex::new(Vec::new()),
             valid: false,
-            rate_limited: false,
         }
     }
 
@@ -158,21 +155,6 @@ impl VerifyProbes for FakeProbes {
         Box::pin(async move {
             self.recorded("plex_libraries", &[url, token]);
             Ok(vec![("1".to_owned(), "Music".to_owned())])
-        })
-    }
-
-    fn listenbrainz<'a>(
-        &'a self,
-        username: &'a str,
-        token: &'a str,
-    ) -> BoxFuture<'a, ListenBrainzVerdict> {
-        Box::pin(async move {
-            self.recorded("listenbrainz", &[username, token]);
-            ListenBrainzVerdict {
-                valid: self.valid,
-                message: "fake listenbrainz".to_owned(),
-                rate_limited: self.rate_limited,
-            }
         })
     }
 
@@ -605,31 +587,6 @@ async fn verify_resolves_masks_and_maps_verdicts() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(verdict["valid"], false);
-
-    // ListenBrainz rate limiting answers 429.
-    let rig = AuthRig::new("settings").await;
-    let admin = rig.seed_user("brenda", Role::Admin).await;
-    let probes = Arc::new(FakeProbes {
-        calls: Mutex::new(Vec::new()),
-        valid: false,
-        rate_limited: true,
-    });
-    let settings = crate::common::bundles::settings_at(&rig.platform, probes);
-    let app = with_test_principal(
-        droppedneedle::settings::wiring::routes()
-            .with_state(settings)
-            .into_router(),
-        test_principal(&admin.id, Role::Admin, "sess-1", SessionKind::Standard),
-    );
-    let (status, limited) = call(
-        app,
-        "POST",
-        "/api/v3/settings/listenbrainz/verify",
-        Some(json!({"username": "ada", "user_token": "tok", "enabled": true})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(limited["error"]["code"], "RATE_LIMITED");
 }
 
 /// The online lyrics lookup is on until an admin turns it off, and a
@@ -800,27 +757,6 @@ fn stub_app(lastfm_hits: Arc<std::sync::atomic::AtomicUsize>) -> Router {
             }),
         )
         .route(
-            "/1/validate-token",
-            axum::routing::get(|headers: HeaderMap| async move {
-                match headers
-                    .get("authorization")
-                    .and_then(|value| value.to_str().ok())
-                {
-                    Some("Token bad") => StatusCode::UNAUTHORIZED.into_response(),
-                    // A long wait, so the check answers at once instead of
-                    // trying again.
-                    Some("Token limited") => {
-                        (StatusCode::TOO_MANY_REQUESTS, [("retry-after", "60")]).into_response()
-                    }
-                    _ => Json(json!({"valid": true, "user_name": "ada"})).into_response(),
-                }
-            }),
-        )
-        .route(
-            "/1/user/{name}/listen-count",
-            axum::routing::get(|| async { Json(json!({"payload": {"count": 7}})) }),
-        )
-        .route(
             "/youtube/v3/videos",
             axum::routing::get(|Query(query): Query<HashMap<String, String>>| async move {
                 let (status, body) = if query.get("key").map(String::as_str) == Some("bad") {
@@ -935,7 +871,6 @@ async fn live_probes_answer_honest_verdicts() {
         &droppedneedle_providers::Providers::unpaced_at(
             Arc::new(droppedneedle_providers::ReqwestWire::new(&http)),
             droppedneedle_providers::ProviderEndpoints {
-                listenbrainz: base.clone(),
                 youtube: base.clone(),
                 ticketmaster: base.clone(),
                 skiddle: base.clone(),
@@ -984,14 +919,6 @@ async fn live_probes_answer_honest_verdicts() {
     assert!(!probes.plex(dead, "token").await.valid);
     let libraries = probes.plex_libraries(&base, "token").await.expect("lists");
     assert_eq!(libraries.len(), 1);
-
-    let lb = probes.listenbrainz("ada", "tok").await;
-    assert!(lb.valid);
-    assert!(!lb.rate_limited);
-    let lb = probes.listenbrainz("ada", "bad").await;
-    assert!(!lb.valid);
-    let lb = probes.listenbrainz("ada", "limited").await;
-    assert!(lb.rate_limited);
 
     let youtube = probes.youtube("key").await;
     assert!(youtube.valid);

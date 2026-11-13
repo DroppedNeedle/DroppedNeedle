@@ -118,6 +118,7 @@ async fn youtube_links_journey() {
             )),
             Arc::new(LiveCatalogSettings::new(&rig.config)),
             rig.deps.clone(),
+            crate::common::listening_store(&rig.platform),
         ),
         LocalCatalog::new(rig.platform.db.clone()),
         crate::common::bundles::quiet_page_sources(crate::common::bundles::cover_warm_at(

@@ -25369,6 +25369,7 @@ async fn automatic_acoustid_waits_while_library_settings_do_not_read() {
             providers.clone(),
             Arc::new(LiveCatalogSettings::new(&settings)),
             rig.deps.clone(),
+            crate::common::listening_store(&rig.platform),
         ),
         droppedneedle_catalog::test_support::artwork(&rig.platform, &providers),
         OnlineLyrics::new(&providers, settings.live()),

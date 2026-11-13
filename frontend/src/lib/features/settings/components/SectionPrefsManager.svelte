@@ -181,7 +181,20 @@
 										bind:checked={() => section.enabled, () => toggleSection(section.key)}
 										disabled={!section.available}
 									/>
-									{#if !section.available && section.requires}
+									{#if !section.available && section.turned_off}
+										<p class="mt-1 text-xs text-muted">
+											Turned off.
+											{#if authStore.isAdmin}
+												<a
+													href={withBasePath(`/settings?tab=${section.requires}`)}
+													class="link inline-flex items-center gap-1 text-primary/80"
+												>
+													Settings
+													<ExternalLink class="h-3 w-3" />
+												</a>
+											{/if}
+										</p>
+									{:else if !section.available && section.requires}
 										{@const link = connectLink(section.requires)}
 										{#if link}
 											<a

@@ -148,6 +148,11 @@ export const ScrobblePreferencesQueryKeyFactory = {
 	personalMixApprovals: () => key(ADMIN, 'me', 'scrobble-preferences', 'personal-mix-approvals')
 };
 
+// Which Home, Discover and sidebar sections the caller shows.
+export const SectionPrefsQueryKeyFactory = {
+	prefs: (userId: UserId) => key(userScope(userId), 'section-prefs')
+};
+
 // Under the auth feature, beside the other sign-in data.
 export const SessionsQueryKeyFactory = {
 	list: (userId: string | null | undefined) => key(userScope(userId), 'auth', 'sessions', 'list')

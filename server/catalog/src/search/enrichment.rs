@@ -15,9 +15,8 @@ use futures_util::stream::{self, StreamExt as _};
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::error::PROVIDER_UNAVAILABLE;
 use droppedneedle_kernel::runtime_config::Live;
-use droppedneedle_kernel::runtime_config::secret_sections::{
-    LastFmSettings, ListenBrainzConnection,
-};
+use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
+use droppedneedle_kernel::runtime_config::sections::ListenBrainzSettings;
 use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
@@ -45,7 +44,7 @@ const DEGRADED_MESSAGE: &str = "Enrichment temporarily unavailable";
 #[derive(Clone)]
 pub struct SearchCounts {
     listenbrainz: ListenBrainzClient,
-    listenbrainz_settings: Live<ListenBrainzConnection>,
+    listenbrainz_settings: Live<ListenBrainzSettings>,
     lastfm: LastFmClient,
     lastfm_settings: Live<LastFmSettings>,
     cache: ProviderCacheStore,
@@ -71,7 +70,7 @@ impl SearchCounts {
     /// the service each user follows in `listening`.
     pub fn new(
         providers: &Providers,
-        listenbrainz: Live<ListenBrainzConnection>,
+        listenbrainz: Live<ListenBrainzSettings>,
         lastfm: Live<LastFmSettings>,
         listening: ListeningStore,
         users: UsersDeps,
@@ -103,7 +102,7 @@ impl SearchCounts {
         if follows_lastfm && let Some(creds) = self.lastfm_for(user_id, &instance_key).await {
             return Source::LastFm(creds);
         }
-        if listenbrainz.enabled {
+        if listenbrainz.reads_enabled {
             return Source::ListenBrainz;
         }
         match instance_key {
@@ -113,6 +112,11 @@ impl SearchCounts {
             }),
             None => Source::None,
         }
+    }
+
+    /// The person's own ListenBrainz link, lent to the reads that go out.
+    fn lender(&self, user_id: &str) -> shared::Lender {
+        shared::Lender::Person(self.listening.clone(), user_id.to_owned())
     }
 
     /// The key a user who follows Last.fm reads with: their own, else the
@@ -147,8 +151,9 @@ impl SearchCounts {
         let (source, artists, albums) = match self.source(user_id).await {
             Source::ListenBrainz => (
                 Some(ListenSource::Listenbrainz),
-                self.listenbrainz_artists(artists, &mut notes).await,
-                self.listenbrainz_albums(albums, &mut notes).await,
+                self.listenbrainz_artists(user_id, artists, &mut notes)
+                    .await,
+                self.listenbrainz_albums(user_id, albums, &mut notes).await,
             ),
             Source::LastFm(creds) => (
                 Some(ListenSource::Lastfm),
@@ -173,9 +178,11 @@ impl SearchCounts {
     /// artist's kept rows.
     async fn listenbrainz_artists(
         &self,
+        user_id: &str,
         artists: Vec<ArtistEnrichmentRequest>,
         notes: &mut Notes,
     ) -> Vec<ArtistEnrichment> {
+        let lender = &self.lender(user_id);
         let outcomes: Vec<_> = stream::iter(
             artists
                 .iter()
@@ -185,6 +192,7 @@ impl SearchCounts {
                         &self.listenbrainz,
                         &item.musicbrainz_id,
                         ARTIST_TOP_RELEASES,
+                        lender,
                         RequestPriority::UserInitiated,
                     )
                     .await
@@ -215,6 +223,7 @@ impl SearchCounts {
     /// One call answers whatever of the album bucket no kept row holds.
     async fn listenbrainz_albums(
         &self,
+        user_id: &str,
         albums: Vec<AlbumEnrichmentRequest>,
         notes: &mut Notes,
     ) -> Vec<AlbumEnrichment> {
@@ -226,6 +235,7 @@ impl SearchCounts {
             &self.cache,
             &self.listenbrainz,
             &mbids,
+            &self.lender(user_id),
             RequestPriority::UserInitiated,
         )
         .await;

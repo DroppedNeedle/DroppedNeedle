@@ -5,8 +5,9 @@
 //! groups, ten of each, genre activity, and a loved-recordings sample);
 //! the server summary adds up the users who have data and takes the
 //! sitewide top artist and album. A failed leg is logged and left empty
-//! rather than failing the whole payload. Users without a link
-//! get the empty payload with their display name.
+//! rather than failing the whole payload. Users without a link, and
+//! everyone while an admin has ListenBrainz reads switched off, get the
+//! empty payload with their display name.
 
 use std::sync::Arc;
 
@@ -18,6 +19,8 @@ use super::{
 };
 use droppedneedle_auth::sqlite::Users;
 use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::sections::{ListenBrainzSettings, listenbrainz_reads_on};
 use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::{ProviderError, RequestPriority};
@@ -40,21 +43,25 @@ pub struct ListenBrainzWrapped {
     users: Users,
     links: ListeningStore,
     client: ListenBrainzClient,
+    switch: Live<ListenBrainzSettings>,
     clock: Arc<dyn Clock>,
 }
 
 impl ListenBrainzWrapped {
-    /// Wire the data source; `clock` says which year is current.
+    /// Wire the data source; `switch` says whether ListenBrainz may be
+    /// read and `clock` which year is current.
     pub fn new(
         users: Users,
         links: ListeningStore,
         client: ListenBrainzClient,
+        switch: Live<ListenBrainzSettings>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             users,
             links,
             client,
+            switch,
             clock,
         }
     }
@@ -103,6 +110,9 @@ impl ListenBrainzWrapped {
             loved_tracks_count: 0,
             total_listens_estimated: 0,
         };
+        if !listenbrainz_reads_on(&self.switch) {
+            return Some(payload);
+        }
         let Some(link) = self.links.listenbrainz_link(user_id).await else {
             return Some(payload);
         };
@@ -204,6 +214,16 @@ impl WrappedData for ListenBrainzWrapped {
 
     fn server_wrapped(&self) -> BoxFuture<'_, ServerWrappedResponse> {
         Box::pin(async move {
+            if !listenbrainz_reads_on(&self.switch) {
+                return ServerWrappedResponse {
+                    year: self.current_year(),
+                    total_users_tracked: 0,
+                    total_listens_estimated: 0,
+                    leaderboard: Vec::new(),
+                    top_artist_sitewide: None,
+                    top_album_sitewide: None,
+                };
+            }
             let mut with_data = Vec::new();
             for user in self.list_users().await {
                 if !user.has_listenbrainz {

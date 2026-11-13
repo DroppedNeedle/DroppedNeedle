@@ -1828,6 +1828,7 @@ async fn a_plugin_that_runs_late_is_asked_again_and_a_whole_answer_is_kept() {
             Arc::new(providers),
             Arc::new(RecordedMusicBrainz),
             users.deps.clone(),
+            crate::common::listening_store(&users.platform),
         ),
         LocalCatalog::new(rig.platform.db.clone()),
         droppedneedle_catalog::metadata::PageSources {

@@ -69,6 +69,11 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	sourcePlaylistsChanged: [key(U, 'source-playlists', 'job')],
 	spotifyPlaylistsChanged: [key(U, 'spotify', 'playlists')],
 	discoverHomeChanged: [key(U, 'discover', 'home')],
+	recommendationSourcesChanged: [
+		key(U, 'albums', 'similar'),
+		key(U, 'artist'),
+		key(U, 'section-prefs')
+	],
 	discoveryBatchesChanged: [key(U, 'discover', 'batches')],
 	discoveryBatchChanged: [key(U, 'discover', 'batch', 'job')],
 	libraryCountsChanged: [

@@ -221,7 +221,7 @@
 	const topAlbums = $derived(discoveryEnabled ? topAlbumsQuery.data : undefined);
 	const sourceNotice = $derived(listeningSourceNotice([topSongs, topAlbums, similarArtists]));
 	const loadingTopAlbums = $derived(!discoveryEnabled || topAlbumsQuery.isLoading);
-	// Every list answered that no listening service is linked: one card says so.
+	// Every list answered that no listening service can be read: one card says so.
 	const noService = $derived(
 		!loadingTopAlbums &&
 			!loadingTopSongs &&
@@ -230,6 +230,8 @@
 			topSongs?.configured === false &&
 			similarArtists?.configured === false
 	);
+	// Unconfigured ListenBrainz means an admin turned its recommendations off.
+	const recommendationsOff = $derived(noService && similarArtists?.source === 'listenbrainz');
 
 	const lastFmEnrichmentQuery = getArtistLastFmEnrichmentQuery(() => ({
 		artistId: data.artistId,
@@ -674,7 +676,10 @@
 							menu={albumMenu}
 						/>
 						{#if genreTags.length > 0}<ArtistGenres tags={genreTags} />{/if}
-						{#if noService}<ArtistDiscoverMore artistName={artist.name} />{/if}
+						{#if noService}<ArtistDiscoverMore
+								artistName={artist.name}
+								turnedOff={recommendationsOff}
+							/>{/if}
 					</div>
 				{/if}
 				<ArtistAbout
@@ -702,7 +707,7 @@
 
 			{#if noService && !ownsAlbums}
 				<div class="dn-artist-row" class:dn-artist-row--wide={genresBelow}>
-					<ArtistDiscoverMore artistName={artist.name} />
+					<ArtistDiscoverMore artistName={artist.name} turnedOff={recommendationsOff} />
 					{#if genresBelow}<ArtistGenres tags={genreTags} />{/if}
 				</div>
 			{:else if !noService}
@@ -763,6 +768,7 @@
 							artists={similarArtists?.similar_artists || []}
 							loading={loadingSimilar}
 							configured={similarArtists?.configured ?? true}
+							source={similarArtists?.source}
 						/>
 					</section>
 					{#if genresBelow}<ArtistGenres tags={genreTags} class="self-start" />{/if}

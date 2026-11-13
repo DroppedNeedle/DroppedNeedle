@@ -186,7 +186,7 @@ pub struct Listen {
 
 /// A genre tag on a release group. Curated genre entries carry
 /// `genre_mbid`; ordinary folksonomy entries omit it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GenreTag {
     /// Tag text (never blank).
     pub tag: String,
@@ -197,7 +197,7 @@ pub struct GenreTag {
 }
 
 /// Release-group metadata: the tags of the group and of its artists.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct ReleaseGroupMetadata {
     /// Artist tags.
     pub artist_tags: Vec<GenreTag>,
@@ -257,6 +257,18 @@ pub fn recording_group_key(recording_mbid: &str) -> CacheKey {
     CacheKey::new(
         Source::ListenBrainz,
         &["recording_group", &recording_mbid.trim().to_lowercase()],
+    )
+}
+
+/// The cache key of one release group's genre tags.
+#[must_use]
+pub fn release_group_genres_key(release_group_mbid: &str) -> CacheKey {
+    CacheKey::new(
+        Source::ListenBrainz,
+        &[
+            "release_group_genres",
+            &release_group_mbid.trim().to_lowercase(),
+        ],
     )
 }
 
@@ -406,19 +418,61 @@ impl ListenBrainzClient {
         creds: &ListenBrainzCredentials,
         priority: RequestPriority,
     ) -> Result<HashMap<String, ReleaseGroupMetadata>, ProviderError> {
-        let mut unique: Vec<String> = Vec::new();
-        for mbid in release_group_mbids {
-            let trimmed = mbid.trim();
-            if !trimmed.is_empty() && !unique.iter().any(|known| known == trimmed) {
-                unique.push(trimmed.to_owned());
-            }
-        }
+        let unique = unique_trimmed(release_group_mbids);
+        let mut known = self.known_genres(&unique, creds, priority).await?;
+        Ok(unique
+            .into_iter()
+            .map(|mbid| {
+                let metadata = known.remove(&mbid).unwrap_or_default();
+                (mbid, metadata)
+            })
+            .collect())
+    }
+
+    /// [`release_group_genres`](Self::release_group_genres) through
+    /// `cache`, each release group kept on its own under
+    /// [`release_group_genres_key`], so only groups not held go out. An id
+    /// the answer leaves out is kept as "nothing there", for the miss time,
+    /// rather than as a group with no tags.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the first batch that failed.
+    pub async fn cached_release_group_genres(
+        &self,
+        cache: &ProviderCacheStore,
+        release_group_mbids: &[String],
+        creds: &ListenBrainzCredentials,
+        priority: RequestPriority,
+    ) -> Result<HashMap<String, ReleaseGroupMetadata>, ProviderError> {
+        cache
+            .fetch_each(
+                release_group_mbids,
+                release_group_genres_key,
+                Policy::LISTENBRAINZ_RELEASE_GROUP,
+                |missing| async move {
+                    self.known_genres(&unique_trimmed(&missing), creds, priority)
+                        .await
+                },
+            )
+            .await
+    }
+
+    /// Genre tags of the release groups ListenBrainz knows among `unique`;
+    /// the ones it left out are absent from the map.
+    async fn known_genres(
+        &self,
+        unique: &[String],
+        creds: &ListenBrainzCredentials,
+        priority: RequestPriority,
+    ) -> Result<HashMap<String, ReleaseGroupMetadata>, ProviderError> {
         if unique.len() > MAX_GENRE_IDS {
             return Err(invalid("too many release groups for one genre lookup"));
         }
         let mut resolved: HashMap<String, ReleaseGroupMetadata> = HashMap::new();
-        unique.sort();
-        for batch in unique.chunks(RELEASE_GROUP_BATCH) {
+        let mut sorted = unique.to_vec();
+        sorted.sort();
+        for batch in sorted.chunks(RELEASE_GROUP_BATCH) {
             let ids = batch.join(",");
             let request = self
                 .get(
@@ -442,11 +496,9 @@ impl ListenBrainzClient {
                 });
             };
             for mbid in batch {
-                let metadata = answer
-                    .remove(mbid)
-                    .map(release_group_metadata)
-                    .unwrap_or_default();
-                resolved.insert(mbid.clone(), metadata);
+                if let Some(entry) = answer.remove(mbid) {
+                    resolved.insert(mbid.clone(), release_group_metadata(entry));
+                }
             }
         }
         Ok(resolved)
@@ -938,6 +990,18 @@ fn genre_tag(item: TagItem) -> Option<GenreTag> {
 }
 
 /// The tags of one release group and its artists.
+/// The ids once each, trimmed, blanks dropped, in first-seen order.
+fn unique_trimmed(ids: &[String]) -> Vec<String> {
+    let mut unique: Vec<String> = Vec::new();
+    for mbid in ids {
+        let trimmed = mbid.trim();
+        if !trimmed.is_empty() && !unique.iter().any(|known| known == trimmed) {
+            unique.push(trimmed.to_owned());
+        }
+    }
+    unique
+}
+
 fn release_group_metadata(entry: ReleaseGroupEntry) -> ReleaseGroupMetadata {
     let tags = entry.tag.unwrap_or_default();
     ReleaseGroupMetadata {

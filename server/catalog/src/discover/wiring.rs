@@ -189,5 +189,6 @@ fn live_upstream(inputs: &DiscoverInputs, config: &ConfigStore) -> Upstream {
         inputs.providers.clone(),
         Arc::new(LiveCatalogSettings::new(config)),
         inputs.users.clone(),
+        inputs.listening.clone(),
     )
 }

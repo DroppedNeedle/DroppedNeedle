@@ -17,7 +17,7 @@ describe('listeningSourceNotice', () => {
 			[
 				answer({ source: 'lastfm', unavailable_sources: ['listenbrainz'] }),
 				[answer({})],
-				'ListenBrainz is unavailable, so these lists come from Last.fm.'
+				'ListenBrainz is off or unavailable, so these lists come from Last.fm.'
 			],
 			[
 				answer({ source: 'lastfm' }),
@@ -27,12 +27,12 @@ describe('listeningSourceNotice', () => {
 			[
 				answer({ asked_source: 'lastfm', source: 'lastfm', unavailable_sources: ['lastfm'] }),
 				[],
-				'Last.fm is unavailable. These lists may be out of date.'
+				'Last.fm is off or unavailable. These lists may be out of date.'
 			],
 			[
 				answer({ unavailable_sources: ['listenbrainz', 'lastfm'] }),
 				[],
-				'ListenBrainz and Last.fm are unavailable.'
+				'ListenBrainz and Last.fm are off or unavailable.'
 			]
 		];
 		for (const [first, rest, expected] of cases) {

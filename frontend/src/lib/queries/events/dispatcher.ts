@@ -128,9 +128,13 @@ export const EVENT_TABLE: { [N in ServerEventName]: EventEntry<N> } = {
 
 function mixMessage(data: ServerEventData<'personal_mix_refreshed'>): string {
 	if (data.skipped) {
-		return data.reason === 'no_tracks'
-			? "Couldn't build Your Weekly Mix yet - listen to a bit more first."
-			: "Couldn't refresh Your Weekly Mix.";
+		if (data.reason === 'no_tracks') {
+			return "Couldn't build Your Weekly Mix yet - listen to a bit more first.";
+		}
+		if (data.reason === 'listenbrainz_off') {
+			return 'ListenBrainz recommendations are turned off.';
+		}
+		return "Couldn't refresh Your Weekly Mix.";
 	}
 	const requested = data.requested_albums
 		? `, ${data.requested_albums} ${data.requested_albums === 1 ? 'album' : 'albums'} requested`

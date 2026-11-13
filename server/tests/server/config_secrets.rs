@@ -11,9 +11,8 @@ use droppedneedle_kernel::runtime_config::mask::SECRET_MASK;
 use droppedneedle_kernel::runtime_config::secret::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, DownloadClients, EventsSettings, JellyfinConnection, LidarrImportConnection,
-    ListenBrainzConnection, NavidromeConnection, NewznabIndexer, OidcConnection, PlexConnection,
-    ProwlarrConnection, SlskdConnection, SpotifySettings, TypedLibrary, WrappedSettings,
-    YouTubeConnection,
+    NavidromeConnection, NewznabIndexer, OidcConnection, PlexConnection, ProwlarrConnection,
+    SlskdConnection, SpotifySettings, TypedLibrary, WrappedSettings, YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
     LibraryScanSchedule, MusicBrainzSettings, PluginConfig, ScanFrequency,
@@ -113,7 +112,6 @@ fn every_secret_section_masks_and_keeps() {
     check!(JellyfinConnection, api_key, SECRET_MASK, false, "");
     check!(NavidromeConnection, password, SECRET_MASK, false, "");
     check!(PlexConnection, plex_token, SECRET_MASK, false, "");
-    check!(ListenBrainzConnection, user_token, SECRET_MASK, false, "");
     check!(YouTubeConnection, api_key, SECRET_MASK, true, "");
     check!(SpotifySettings, client_secret, SECRET_MASK, false, "");
     check!(WrappedSettings, api_key, SECRET_MASK, true, "");
@@ -316,9 +314,6 @@ fn secrets_never_appear_in_debug_output() {
     let mut plex = PlexConnection::default();
     *plex.plex_token.expose_mut() = "redact-me".to_owned();
     assert_redacted(plex, "redact-me");
-    let mut listenbrainz = ListenBrainzConnection::default();
-    *listenbrainz.user_token.expose_mut() = "redact-me".to_owned();
-    assert_redacted(listenbrainz, "redact-me");
     let mut youtube = YouTubeConnection::default();
     *youtube.api_key.expose_mut() = "redact-me".to_owned();
     assert_redacted(youtube, "redact-me");

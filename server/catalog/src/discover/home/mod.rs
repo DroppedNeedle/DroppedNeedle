@@ -352,6 +352,7 @@ impl LiveHome {
         status: IntegrationStatus,
         off: &HashSet<SectionKey>,
     ) -> HomeResponse {
+        let listenbrainz_on = status.listenbrainz;
         let status = user_status(status, music);
         let library = &self.inner.library;
         let (recent, artists, plays) = tokio::join!(
@@ -374,8 +375,12 @@ impl LiveHome {
                 page_shelves::section(Page::Home, def.key, content)
             })
             .collect();
-        page.service_prompts =
-            shelves::service_prompts(status.listenbrainz, status.download_client, status.lastfm);
+        page.service_prompts = shelves::service_prompts(
+            status.listenbrainz,
+            listenbrainz_on,
+            status.download_client,
+            status.lastfm,
+        );
         page.discover_preview = self.discover_preview(user_id).await;
         page
     }

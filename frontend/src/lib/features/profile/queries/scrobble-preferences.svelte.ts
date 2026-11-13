@@ -10,7 +10,8 @@ import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import {
 	createAppMutation,
 	pendingApprovalsChanged,
-	personalMixApprovalsChanged
+	personalMixApprovalsChanged,
+	recommendationSourcesChanged
 } from '$lib/queries/effects';
 
 // how a user's listening appears to others in the now-playing feed
@@ -66,10 +67,11 @@ export const getScrobblePreferencesQuery = () =>
 		enabled: Boolean(authStore.user?.id)
 	}));
 
-// invalidate so the card and home/discover re-read the new primary source
+// invalidate so the card and home/discover re-read the new primary source;
+// the album and artist shelves follow it too
 export const createUpdateScrobblePreferencesMutation = () =>
 	createAppMutation(() => ({
-		effects: () => [],
+		effects: () => [recommendationSourcesChanged(authStore.user?.id)],
 		mutationFn: (vars: ScrobblePreferencesUpdate) =>
 			// Partial by design (absent keeps stored values); the generated body
 			// type over-states requiredness, so the patch is asserted at the call.

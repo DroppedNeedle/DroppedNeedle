@@ -26,9 +26,9 @@ use super::models::{
 use super::verify::{VerifyProbes, check_hibp_file, require_service_url};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::secret_sections::{
-    DownloadClients, EventsSettings, JellyfinConnection, ListenBrainzConnection,
-    NavidromeConnection, NewznabIndexer, OidcConnection, PlexConnection, ProwlarrConnection,
-    SabnzbdConnection, SlskdConnection, TypedLibrary, YouTubeConnection,
+    DownloadClients, EventsSettings, JellyfinConnection, NavidromeConnection, NewznabIndexer,
+    OidcConnection, PlexConnection, ProwlarrConnection, SabnzbdConnection, SlskdConnection,
+    TypedLibrary, YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, LibraryScanSchedule, PlainSection, SecuritySettings, SourcePriority,
@@ -474,26 +474,6 @@ impl SettingsService {
                 }
             })?;
         Ok(plex_sections(libraries))
-    }
-
-    /// Test the submitted ListenBrainz values. Rate limiting is a 429.
-    pub async fn verify_listenbrainz(
-        &self,
-        incoming: Masked<ListenBrainzConnection>,
-    ) -> Result<VerifyConnectionResponse, SettingsError> {
-        let resolved = self.unmask(incoming)?;
-        let verdict = self
-            .probes
-            .listenbrainz(&resolved.username, resolved.user_token.expose())
-            .await;
-        if verdict.rate_limited {
-            return Err(SettingsError::RateLimited {
-                message:
-                    "ListenBrainz is temporarily rate-limiting this server. Try again shortly."
-                        .to_owned(),
-            });
-        }
-        Ok(verdict_response(verdict.valid, verdict.message))
     }
 
     /// Test the submitted YouTube key.

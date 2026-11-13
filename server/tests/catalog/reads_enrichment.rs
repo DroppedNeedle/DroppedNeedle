@@ -56,6 +56,15 @@ async fn a_failed_count_stays_on_its_row() {
             .await;
     let admin = app.login_admin().await;
     let auth = [("authorization", admin.as_str())];
+    let (status, body) = app
+        .call(
+            "PUT",
+            "/api/v3/settings/listenbrainz",
+            &auth,
+            Some(serde_json::json!({"reads_enabled": false})),
+        )
+        .await;
+    assert!(status.is_success(), "{status} {body}");
 
     // With neither service on, the ids echo back with no counts.
     let (status, body) = app
@@ -108,7 +117,7 @@ async fn a_failed_count_stays_on_its_row() {
             "PUT",
             "/api/v3/settings/listenbrainz",
             &auth,
-            Some(serde_json::json!({"enabled": true, "username": "", "user_token": ""})),
+            Some(serde_json::json!({"reads_enabled": true})),
         )
         .await;
     assert!(status.is_success(), "{status} {body}");
@@ -197,6 +206,7 @@ async fn acoustid_answers_are_reused_and_failures_are_not() {
             providers.clone(),
             Arc::new(LiveCatalogSettings::new(&rig.config)),
             rig.deps.clone(),
+            crate::common::listening_store(&rig.platform),
         ),
         droppedneedle_catalog::test_support::artwork(&rig.platform, &providers),
         OnlineLyrics::new(&providers, rig.config.live()),
@@ -239,7 +249,7 @@ async fn acoustid_answers_are_reused_and_failures_are_not() {
     assert_eq!(partial, AcoustIdAnswer::Unavailable(Unanswered::Failed));
 }
 
-/// A genre source the admin left switched off answers "off" and is never
+/// A genre source the admin switched off answers "off" and is never
 /// asked; switched on, one that cannot be reached is a failure, never
 /// "off", so the plan keeps the file's genres.
 #[tokio::test]
@@ -247,8 +257,7 @@ async fn a_switched_off_genre_source_is_off_and_an_unreachable_one_fails() {
     use droppedneedle_catalog::enrichment::library::LiveEnrichment;
     use droppedneedle_catalog::lyrics::OnlineLyrics;
     use droppedneedle_catalog::metadata::upstream::{LiveCatalogSettings, Upstream};
-    use droppedneedle_kernel::runtime_config::Secret;
-    use droppedneedle_kernel::runtime_config::secret_sections::ListenBrainzConnection;
+    use droppedneedle_kernel::runtime_config::sections::ListenBrainzSettings;
     use droppedneedle_library::management::enrich::{EnrichmentPort as _, GenreAnswer};
     use droppedneedle_providers::test_support::ScriptedWire;
     use droppedneedle_providers::{ProviderEndpoints, Providers};
@@ -265,6 +274,7 @@ async fn a_switched_off_genre_source_is_off_and_an_unreachable_one_fails() {
             providers.clone(),
             Arc::new(LiveCatalogSettings::new(&rig.config)),
             rig.deps.clone(),
+            crate::common::listening_store(&rig.platform),
         ),
         droppedneedle_catalog::test_support::artwork(&rig.platform, &providers),
         OnlineLyrics::new(&providers, rig.config.live()),
@@ -272,6 +282,11 @@ async fn a_switched_off_genre_source_is_off_and_an_unreachable_one_fails() {
         rig.config.live(),
     );
 
+    rig.config
+        .save_blocking(ListenBrainzSettings {
+            reads_enabled: false,
+        })
+        .expect("ListenBrainz off");
     let group = "f5093c06-23e3-404f-aeaa-40f72885ee3a";
     assert_eq!(
         enrichment.listenbrainz_genres(group, false).await,
@@ -284,10 +299,8 @@ async fn a_switched_off_genre_source_is_off_and_an_unreachable_one_fails() {
     assert!(wire.sent().is_empty(), "nothing was asked");
 
     rig.config
-        .save_secret_blocking(ListenBrainzConnection {
-            username: String::new(),
-            user_token: Secret::new(""),
-            enabled: true,
+        .save_blocking(ListenBrainzSettings {
+            reads_enabled: true,
         })
         .expect("ListenBrainz on");
     assert!(

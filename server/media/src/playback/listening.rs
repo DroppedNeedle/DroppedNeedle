@@ -24,6 +24,7 @@ use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 use droppedneedle_kernel::runtime_config::crypto::{Crypto, CryptoError};
 use droppedneedle_kernel::runtime_config::sections::ListenSource;
+use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
 use rusqlite::{Connection, OptionalExtension};
 
 use super::ports::{ScrobbleTargets, Visibility};
@@ -369,6 +370,22 @@ impl ListeningStore {
     pub async fn listenbrainz_token(&self, user_id: &str) -> Option<String> {
         let sealed = self.listenbrainz_document(user_id, "token").await?;
         usable_token(open_link(&self.crypto, &sealed))
+    }
+
+    /// The ListenBrainz identity a read made for `user_id` lends: their own
+    /// username and token when they have a usable link, otherwise none, so
+    /// the read goes out anonymous. One read and one decrypt.
+    pub async fn listenbrainz_credentials(&self, user_id: &str) -> ListenBrainzCredentials {
+        let Some(sealed) = self.listenbrainz_document(user_id, "credentials").await else {
+            return ListenBrainzCredentials::default();
+        };
+        match open_link(&self.crypto, &sealed) {
+            Some((username, token)) => ListenBrainzCredentials {
+                username: Some(username),
+                user_token: Some(token).filter(|token| !token.is_empty()),
+            },
+            None => ListenBrainzCredentials::default(),
+        }
     }
 
     /// Remove one user's ListenBrainz link. False means there was none.

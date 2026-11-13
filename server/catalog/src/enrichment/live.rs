@@ -8,9 +8,8 @@ use crate::search::enrichment::SearchCounts;
 use crate::search::ports::EnrichmentPort;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::runtime_config::Live;
-use droppedneedle_kernel::runtime_config::secret_sections::{
-    LastFmSettings, ListenBrainzConnection,
-};
+use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
+use droppedneedle_kernel::runtime_config::sections::ListenBrainzSettings;
 use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_providers::Providers;
 
@@ -29,7 +28,7 @@ pub struct CatalogEnrichment {
 /// Management also asks.
 pub fn production_enrichment(
     providers: &Arc<Providers>,
-    listenbrainz: Live<ListenBrainzConnection>,
+    listenbrainz: Live<ListenBrainzSettings>,
     lastfm: Live<LastFmSettings>,
     listening: ListeningStore,
     users: UsersDeps,

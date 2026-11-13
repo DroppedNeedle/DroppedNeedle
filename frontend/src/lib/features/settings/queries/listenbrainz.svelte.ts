@@ -5,21 +5,25 @@ import { api } from '$lib/api/client';
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
-import { createAppMutation } from '$lib/queries/effects';
+import {
+	createAppMutation,
+	discoverHomeChanged,
+	homeChanged,
+	recommendationSourcesChanged
+} from '$lib/queries/effects';
 
-export type ListenBrainzConnection = components['schemas']['ListenBrainzConnection'];
-export type VerifyConnectionResponse = components['schemas']['VerifyConnectionResponse'];
+export type ListenBrainzSettings = components['schemas']['ListenBrainzSettings'];
 
-// The instance's ListenBrainz connection, an admin setting.
+// The switch for the app's ListenBrainz reads, an admin setting.
 export const ListenBrainzQueryKeyFactory = {
-	connection: () => key(ADMIN, 'settings', 'listenbrainz')
+	settings: () => key(ADMIN, 'settings', 'listenbrainz')
 };
 
 const LISTENBRAINZ_TIMEOUT_MS = 10_000;
 
-export const getListenBrainzConnectionQueryOptions = () =>
+export const getListenBrainzSettingsQueryOptions = () =>
 	queryOptions({
-		queryKey: ListenBrainzQueryKeyFactory.connection(),
+		queryKey: ListenBrainzQueryKeyFactory.settings(),
 		queryFn: ({ signal }) =>
 			api.v3.GET(v3('/api/v3/settings/listenbrainz'), {
 				signal,
@@ -27,31 +31,26 @@ export const getListenBrainzConnectionQueryOptions = () =>
 			})
 	});
 
-export const getListenBrainzConnectionQuery = () =>
+export const getListenBrainzSettingsQuery = () =>
 	createQuery(() => ({
-		...getListenBrainzConnectionQueryOptions(),
+		...getListenBrainzSettingsQueryOptions(),
 		enabled: authStore.isAdmin
 	}));
 
-// Save mutations refresh the cache and stay quiet: the settings tab shows
-// inline receipts, which read better than toasts on a form.
+// The save stays quiet (the tab shows an inline receipt) and refreshes every
+// shelf that reads ListenBrainz, so switching it back on fills them at once.
 export const createSaveListenBrainzMutation = () =>
 	createAppMutation(() => ({
-		effects: () => [],
-		mutationFn: (vars: ListenBrainzConnection) =>
+		effects: () => {
+			const userId = authStore.user?.id;
+			return [recommendationSourcesChanged(userId), discoverHomeChanged(userId), homeChanged()];
+		},
+		mutationFn: (vars: ListenBrainzSettings) =>
 			api.v3.PUT(v3('/api/v3/settings/listenbrainz'), vars),
 		onMutate: () => ({ admin: authStore.isAdmin }),
 		onSuccess: async (saved, _vars, context) => {
 			if (context.admin && authStore.isAdmin) {
-				await setQueryDataWithPersister(ListenBrainzQueryKeyFactory.connection(), saved);
+				await setQueryDataWithPersister(ListenBrainzQueryKeyFactory.settings(), saved);
 			}
 		}
-	}));
-
-// Verify only probes the submitted values; the tab renders the verdict.
-export const createVerifyListenBrainzMutation = () =>
-	createAppMutation(() => ({
-		effects: () => [],
-		mutationFn: (vars: ListenBrainzConnection) =>
-			api.v3.POST(v3('/api/v3/settings/listenbrainz/verify'), vars)
 	}));

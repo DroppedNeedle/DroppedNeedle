@@ -87,19 +87,7 @@ impl LiveNetwork {
     /// The user's ListenBrainz identity, lending the token to reads that
     /// ListenBrainz gates for anonymous callers.
     async fn credentials(&self, user_id: &str) -> ListenBrainzCredentials {
-        let username = self
-            .listening
-            .listenbrainz_link(user_id)
-            .await
-            .map(|link| link.username);
-        let user_token = match username {
-            Some(_) => self.listening.listenbrainz_token(user_id).await,
-            None => None,
-        };
-        ListenBrainzCredentials {
-            username,
-            user_token,
-        }
+        self.listening.listenbrainz_credentials(user_id).await
     }
 
     async fn lastfm(&self, user_id: &str) -> Option<(CatalogLastFm, LastFmCredentials)> {
@@ -227,11 +215,14 @@ impl ListeningNetwork for LiveNetwork {
 
     fn accounts<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, UserMusic> {
         Box::pin(async move {
-            let listenbrainz = self
-                .listening
-                .listenbrainz_link(user_id)
-                .await
-                .map(|link| link.username);
+            let listenbrainz = if self.listenbrainz_ready() {
+                self.listening
+                    .listenbrainz_link(user_id)
+                    .await
+                    .map(|link| link.username)
+            } else {
+                None
+            };
             let lastfm_link = user_lastfm(self.upstream.users(), user_id).await;
             let lastfm = self.lastfm(user_id).await.is_some();
             let jellyfin = match self
@@ -254,6 +245,10 @@ impl ListeningNetwork for LiveNetwork {
                 primary: self.primary_source(user_id).await,
             }
         })
+    }
+
+    fn listenbrainz_ready(&self) -> bool {
+        self.upstream.settings().listenbrainz_enabled()
     }
 
     fn lastfm_ready<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, bool> {

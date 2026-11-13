@@ -11,20 +11,23 @@
 use std::sync::Arc;
 
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_kernel::runtime_config::secret_sections::{
-    AdvancedSettings, ListenBrainzConnection,
+use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_kernel::runtime_config::sections::{
+    ListenBrainzSettings, ListenSource, MusicBrainzSettings, UserPreferences, listenbrainz_reads_on,
 };
-use droppedneedle_kernel::runtime_config::sections::{MusicBrainzSettings, UserPreferences};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Listed, Live};
 use droppedneedle_library::edition_prefs::LivePreferences;
+use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_providers::audiodb::AudioDbClient;
 use droppedneedle_providers::itunes::ITunesClient;
 use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
-use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
+use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzView};
 use droppedneedle_providers::preview::PreviewClient;
 use droppedneedle_providers::wikidata::WikidataClient;
 use droppedneedle_providers::{ProviderCacheStore, ProviderError, Providers, RequestPriority};
+
+use crate::discover::listening::shared::Lender;
 
 /// The settings the catalog reads, once per call.
 pub trait CatalogSettings: Send + Sync {
@@ -34,7 +37,8 @@ pub trait CatalogSettings: Send + Sync {
     fn preferences(&self) -> UserPreferences;
     /// Cache lifetimes and the AudioDB switch and key.
     fn advanced(&self) -> AdvancedSettings;
-    /// Whether ListenBrainz reads are switched on.
+    /// Whether ListenBrainz reads are switched on; false while the setting
+    /// does not read.
     fn listenbrainz_enabled(&self) -> bool;
     /// Whether ListenBrainz reads are switched on; `None` while the
     /// setting does not read, which is never "off".
@@ -80,7 +84,7 @@ pub struct LiveCatalogSettings {
     musicbrainz: Live<MusicBrainzSettings>,
     preferences: Live<UserPreferences>,
     advanced: Live<AdvancedSettings>,
-    listenbrainz: Live<ListenBrainzConnection>,
+    listenbrainz: Live<ListenBrainzSettings>,
     editions: LivePreferences,
 }
 
@@ -115,11 +119,13 @@ impl CatalogSettings for LiveCatalogSettings {
     }
 
     fn listenbrainz_enabled(&self) -> bool {
-        or_default(&self.listenbrainz).enabled
+        listenbrainz_reads_on(&self.listenbrainz)
     }
 
     fn listenbrainz_switch(&self) -> Option<bool> {
-        self.listenbrainz.read().map(|settings| settings.enabled)
+        self.listenbrainz
+            .read()
+            .map(|settings| settings.reads_enabled)
     }
 
     fn store_region(&self) -> Option<String> {
@@ -199,6 +205,7 @@ pub struct Upstream {
     providers: Arc<Providers>,
     settings: Arc<dyn CatalogSettings>,
     users: UsersDeps,
+    listening: ListeningStore,
 }
 
 /// The API key the admin saved under Settings > Last.fm (the sealed
@@ -251,16 +258,19 @@ pub async fn user_lastfm(users: &UsersDeps, user_id: &str) -> UserLastFm {
 }
 
 impl Upstream {
-    /// Assemble from the shared provider deps.
+    /// Assemble from the shared provider deps; `listening` holds each
+    /// person's ListenBrainz link and preferred source.
     pub fn new(
         providers: Arc<Providers>,
         settings: Arc<dyn CatalogSettings>,
         users: UsersDeps,
+        listening: ListeningStore,
     ) -> Self {
         Self {
             providers,
             settings,
             users,
+            listening,
         }
     }
 
@@ -292,15 +302,24 @@ impl Upstream {
         (musicbrainz.fixed(source, priority), namespace)
     }
 
-    /// The ListenBrainz client, or `None` when ListenBrainz is switched off.
-    /// The reads used here are public and need no token.
-    pub fn listenbrainz(&self) -> Option<(CatalogListenBrainz, ListenBrainzCredentials)> {
-        self.settings.listenbrainz_enabled().then(|| {
-            (
-                self.providers.listenbrainz.clone(),
-                ListenBrainzCredentials::default(),
-            )
-        })
+    /// The ListenBrainz client, or `None` while ListenBrainz reads are
+    /// switched off or their setting does not read.
+    pub fn listenbrainz(&self) -> Option<CatalogListenBrainz> {
+        self.settings
+            .listenbrainz_enabled()
+            .then(|| self.providers.listenbrainz.clone())
+    }
+
+    /// Whose ListenBrainz link a read for `user_id` lends: their own when
+    /// they have one, anonymous otherwise. The answers are public, so a
+    /// lent link changes no cache key.
+    pub fn lender(&self, user_id: &str) -> Lender {
+        Lender::Person(self.listening.clone(), user_id.to_owned())
+    }
+
+    /// The service `user_id` prefers for listening data.
+    pub async fn preferred_source(&self, user_id: &str) -> ListenSource {
+        self.listening.prefs(user_id).await.primary_music_source
     }
 
     /// Whether the admin switched ListenBrainz off, as its setting reads

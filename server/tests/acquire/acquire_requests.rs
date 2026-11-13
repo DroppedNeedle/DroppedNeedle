@@ -1322,6 +1322,9 @@ const MIX_REC_A: &str = "aaaa0000-0000-4000-8000-000000000001";
 const MIX_REC_B: &str = "aaaa0000-0000-4000-8000-000000000002";
 
 impl MixSources for FakeMix {
+    fn reads_on(&self) -> bool {
+        true
+    }
     fn identity<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Option<ListenBrainzCredentials>> {
         Box::pin(async move {
             matches!(user_id, "u-ada" | "u-tris").then(|| ListenBrainzCredentials {

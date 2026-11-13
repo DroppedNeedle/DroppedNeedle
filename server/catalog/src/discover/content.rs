@@ -23,9 +23,9 @@ use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_kernel::runtime_config::{
     ConfigStore, Listed, Live, Plain,
     secret_sections::{
-        JellyfinConnection, LastFmSettings, ListenBrainzConnection, NavidromeConnection,
-        PlexConnection, YouTubeConnection,
+        JellyfinConnection, LastFmSettings, NavidromeConnection, PlexConnection, YouTubeConnection,
     },
+    sections::{ListenBrainzSettings, listenbrainz_reads_on},
 };
 
 /// Whether a download source is on: slskd, SABnzbd or a plugin download
@@ -51,7 +51,7 @@ fn read<S: Listed + Default>(settings: &Live<S>) -> Arc<Plain<S>> {
 #[derive(Clone)]
 pub struct IntegrationSettings {
     downloads: Arc<dyn DownloadReadiness>,
-    listenbrainz: Live<ListenBrainzConnection>,
+    listenbrainz: Live<ListenBrainzSettings>,
     lastfm: Live<LastFmSettings>,
     youtube: Live<YouTubeConnection>,
     jellyfin: Live<JellyfinConnection>,
@@ -81,14 +81,13 @@ impl IntegrationSettings {
 
     /// The integration flags, read from the current settings.
     pub fn status(&self) -> IntegrationStatus {
-        let lb = read(&self.listenbrainz);
         let lastfm = read(&self.lastfm);
         let youtube = read(&self.youtube);
         let jellyfin = read(&self.jellyfin);
         let navidrome = read(&self.navidrome);
         let plex = read(&self.plex);
         IntegrationStatus {
-            listenbrainz: lb.enabled && !lb.username.is_empty(),
+            listenbrainz: listenbrainz_reads_on(&self.listenbrainz),
             jellyfin: jellyfin.enabled
                 && !jellyfin.jellyfin_url.is_empty()
                 && !jellyfin.api_key.is_empty(),

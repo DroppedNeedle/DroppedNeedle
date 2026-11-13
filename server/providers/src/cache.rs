@@ -251,6 +251,8 @@ impl Policy {
         fresh: Duration::from_secs(14 * 24 * HOUR),
         miss: Duration::from_secs(24 * HOUR),
     };
+    /// A release group's genre tags: kept as long as an artist's lists.
+    pub const LISTENBRAINZ_RELEASE_GROUP: Self = Self::LISTENBRAINZ_ARTIST;
     /// The release group of a recording: it barely changes.
     pub const RECORDING_TO_GROUP: Self = Self {
         fresh: Duration::from_secs(30 * 24 * HOUR),

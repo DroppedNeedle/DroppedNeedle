@@ -31,12 +31,12 @@ use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::runtime_config::Masked;
 use droppedneedle_kernel::runtime_config::secret_sections::{
-    EventsSettings, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
-    NavidromeConnection, NewznabIndexer, OidcConnection, PlexConnection, ProwlarrConnection,
-    SabnzbdConnection, SlskdConnection, YouTubeConnection,
+    EventsSettings, JellyfinConnection, LastFmSettings, NavidromeConnection, NewznabIndexer,
+    OidcConnection, PlexConnection, ProwlarrConnection, SabnzbdConnection, SlskdConnection,
+    YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy, LibraryScanSchedule, SecuritySettings,
+    DownloadPolicy, LibraryScanSchedule, SecuritySettings, listenbrainz_reads_on,
 };
 use droppedneedle_library::management::script_preview::{
     self, ScriptPreviewRequest, ScriptPreviewResponse,
@@ -460,31 +460,6 @@ pub async fn get_plex_libraries(
     settings
         .service()
         .plex_libraries()
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Test the submitted ListenBrainz values (a masked token tests the
-/// stored one). Rate limiting answers 429.
-#[utoipa::path(
-    post,
-    tag = "settings",
-    path = "/api/v3/settings/listenbrainz/verify",
-    request_body = ListenBrainzConnection,
-    responses(
-        (status = 200, description = "Verify verdict", body = VerifyConnectionResponse),
-        (status = 429, description = "ListenBrainz is rate-limiting this server")
-    )
-)]
-pub async fn verify_listenbrainz(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<Masked<ListenBrainzConnection>>,
-) -> JsonResult<VerifyConnectionResponse> {
-    settings
-        .service()
-        .verify_listenbrainz(body)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -1246,12 +1221,8 @@ pub async fn get_section_prefs(
     State(settings): State<SettingsSetup>,
     User(caller): User,
 ) -> JsonResult<SectionPrefsResponse> {
-    let lastfm_master = settings
-        .service()
-        .get_masked::<LastFmSettings>()?
-        .into_inner()
-        .enabled;
-    super::section_prefs::full_response(settings.prefs(), caller.user_id(), lastfm_master)
+    let masters = section_masters(&settings)?;
+    super::section_prefs::full_response(settings.prefs(), caller.user_id(), masters)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -1273,15 +1244,20 @@ pub async fn put_section_prefs(
     User(caller): User,
     ValidJson(body): ValidJson<SectionPrefsUpdate>,
 ) -> JsonResult<SectionPrefsResponse> {
-    let lastfm_master = settings
-        .service()
-        .get_masked::<LastFmSettings>()?
-        .into_inner()
-        .enabled;
+    let masters = section_masters(&settings)?;
     let items =
-        super::section_prefs::save_page(settings.prefs(), caller.user_id(), &body, lastfm_master)
-            .await?;
+        super::section_prefs::save_page(settings.prefs(), caller.user_id(), &body, masters).await?;
     Ok(Json(SectionPrefsResponse {
         pages: BTreeMap::from([(body.page.as_str().to_owned(), items)]),
     }))
+}
+
+/// The admin switches behind section availability. A ListenBrainz
+/// section that does not read counts as off.
+fn section_masters(settings: &SettingsSetup) -> Result<super::section_prefs::Masters, ApiError> {
+    let service = settings.service();
+    Ok(super::section_prefs::Masters {
+        lastfm: service.get_masked::<LastFmSettings>()?.into_inner().enabled,
+        listenbrainz: listenbrainz_reads_on(&service.store.live()),
+    })
 }

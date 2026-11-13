@@ -8,6 +8,7 @@ mod discover_page;
 mod discover_queue;
 mod home_page;
 mod listenbrainz_load;
+mod listenbrainz_reads;
 mod reads_artwork;
 mod reads_catalog;
 mod reads_collections;

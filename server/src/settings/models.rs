@@ -459,6 +459,9 @@ pub struct SectionPrefItem {
     pub available: bool,
     /// Service requirement, when any.
     pub requires: Option<String>,
+    /// An admin switched off the service this section needs, so linking
+    /// it would not make the section available.
+    pub turned_off: bool,
 }
 
 /// Section prefs by page.

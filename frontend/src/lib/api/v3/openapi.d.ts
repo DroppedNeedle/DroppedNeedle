@@ -8774,31 +8774,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read the ListenBrainz connection (token masked unless unset). */
+        /** Read the ListenBrainz reads switch. */
         get: operations["get_listenbrainz"];
-        /** Save the ListenBrainz connection (a masked token keeps the stored one). */
+        /** Save the ListenBrainz reads switch. */
         put: operations["put_listenbrainz"];
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/settings/listenbrainz/verify": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Test the submitted ListenBrainz values (a masked token tests the
-         *     stored one). Rate limiting answers 429.
-         */
-        post: operations["verify_listenbrainz"];
         delete?: never;
         options?: never;
         head?: never;
@@ -15474,7 +15454,10 @@ export interface components {
             lastfm: boolean;
             /** @description The native library has files. */
             library: boolean;
-            /** @description ListenBrainz charts and history are available. */
+            /**
+             * @description ListenBrainz reads are switched on for this server. The home page's
+             *     copy is also false while the person has no ListenBrainz link.
+             */
             listenbrainz: boolean;
             /** @description Local files back playback. Home-only; discover leaves it false. */
             localfiles: boolean;
@@ -16769,23 +16752,13 @@ export interface components {
             /** @description ListenBrainz username. */
             username?: string;
         };
-        /** @description ListenBrainz connection. */
-        ListenBrainzConnection: {
+        /** @description ListenBrainz settings: the switch for the app's ListenBrainz reads. */
+        ListenBrainzSettings: {
             /**
-             * @description Master switch.
-             * @default false
+             * @description Read recommendations, popularity and genres from ListenBrainz.
+             * @default true
              */
-            enabled: boolean;
-            /**
-             * @description User token (encrypted at rest; v2 returned it plaintext on GET).
-             * @default
-             */
-            user_token: string;
-            /**
-             * @description Username.
-             * @default
-             */
-            username: string;
+            reads_enabled: boolean;
         };
         /**
          * @description A listening-data service: the one the discover shelves, charts, radio and
@@ -22833,6 +22806,11 @@ export interface components {
             requires?: string | null;
             /** @description Display title. */
             title: string;
+            /**
+             * @description An admin switched off the service this section needs, so linking
+             *     it would not make the section available.
+             */
+            turned_off: boolean;
             /** @description Layout zone. */
             zone: string;
         };
@@ -47167,13 +47145,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ListenBrainz connection */
+            /** @description ListenBrainz reads switch */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ListenBrainzConnection"];
+                    "application/json": components["schemas"]["ListenBrainzSettings"];
                 };
             };
         };
@@ -47187,50 +47165,17 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ListenBrainzConnection"];
+                "application/json": components["schemas"]["ListenBrainzSettings"];
             };
         };
         responses: {
-            /** @description Saved connection */
+            /** @description Saved switch */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ListenBrainzConnection"];
-                };
-            };
-        };
-    };
-    verify_listenbrainz: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ListenBrainzConnection"];
-            };
-        };
-        responses: {
-            /** @description Verify verdict */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VerifyConnectionResponse"];
-                };
-            };
-            /** @description ListenBrainz is rate-limiting this server */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
+                    "application/json": components["schemas"]["ListenBrainzSettings"];
                 };
             };
         };

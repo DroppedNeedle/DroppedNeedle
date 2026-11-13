@@ -8,7 +8,7 @@
 //! 5xx, and never echo the URL or host.
 //!
 //! Probes reuse the production clients (media adapters, slskd and
-//! Usenet clients, the provider clients for MusicBrainz, ListenBrainz,
+//! Usenet clients, the provider clients for MusicBrainz,
 //! Last.fm, YouTube, Ticketmaster and Skiddle), so a passing verify means
 //! the same code path the app uses can reach the upstream. The
 //! [`VerifyProbes`] port keeps tests hermetic: HTTP tests run against
@@ -25,7 +25,6 @@ use droppedneedle_media::remotes::connections::{ConnectionResolver, ResolvedConn
 use droppedneedle_media::remotes::models::SourceName;
 use droppedneedle_media::remotes::source::RemoteHandle;
 use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials};
-use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzClient};
 use droppedneedle_providers::oidc::OidcClient;
 use droppedneedle_providers::skiddle::SkiddleClient;
@@ -98,18 +97,6 @@ pub struct PlexVerdict {
     pub message: String,
     /// Music libraries as `(key, title)` (empty unless the probe passed).
     pub libraries: Vec<(String, String)>,
-}
-
-/// ListenBrainz verdict. Rate limiting is its own flag because the
-/// route answers 429 there (v2 parity), not a body verdict.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListenBrainzVerdict {
-    /// Whether the submitted values checked out.
-    pub valid: bool,
-    /// Human summary.
-    pub message: String,
-    /// The upstream is rate-limiting; the caller answers 429.
-    pub rate_limited: bool,
 }
 
 /// slskd verdict, with the reported server version.
@@ -208,12 +195,6 @@ pub trait VerifyProbes: Send + Sync {
         url: &'a str,
         token: &'a str,
     ) -> BoxFuture<'a, Result<Vec<(String, String)>, String>>;
-    /// ListenBrainz token (or username-only) check.
-    fn listenbrainz<'a>(
-        &'a self,
-        username: &'a str,
-        token: &'a str,
-    ) -> BoxFuture<'a, ListenBrainzVerdict>;
     /// Last.fm app key check, then the shared secret through a signed
     /// `auth.getToken`.
     fn lastfm<'a>(&'a self, key: &'a str, secret: &'a str) -> BoxFuture<'a, ProbeVerdict>;
@@ -252,8 +233,6 @@ pub struct LiveProbes {
     /// The MusicBrainz client, over the official, BrainzMash and mirror
     /// rows.
     pub musicbrainz: MusicBrainzClient,
-    /// The one ListenBrainz client, which checks ListenBrainz credentials.
-    pub listenbrainz: ListenBrainzClient,
     /// The Last.fm client.
     pub lastfm: LastFmClient,
     /// The YouTube Data API client.
@@ -278,7 +257,6 @@ impl LiveProbes {
         Self {
             http,
             musicbrainz: providers.musicbrainz.clone(),
-            listenbrainz: providers.listenbrainz.clone(),
             lastfm: providers.lastfm.clone(),
             youtube: providers.youtube.clone(),
             ticketmaster: providers.ticketmaster.clone(),
@@ -555,25 +533,6 @@ impl VerifyProbes for LiveProbes {
                 Err(error) => Err(error),
             };
             libraries.map_err(|_| "Could not fetch libraries from Plex.".to_owned())
-        })
-    }
-
-    fn listenbrainz<'a>(
-        &'a self,
-        username: &'a str,
-        token: &'a str,
-    ) -> BoxFuture<'a, ListenBrainzVerdict> {
-        Box::pin(async move {
-            // An admin waits on the Verify button.
-            let outcome = self
-                .listenbrainz
-                .verify(username, token, RequestPriority::UserInitiated)
-                .await;
-            ListenBrainzVerdict {
-                valid: outcome.valid,
-                message: outcome.message,
-                rate_limited: outcome.rate_limited,
-            }
         })
     }
 

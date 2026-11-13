@@ -1594,10 +1594,12 @@ async fn a_v2_policy_lands_as_a_recipe_with_its_range() {
 /// report names each removed setting as dropped, the fields kept beside
 /// them land, and the stored download policy still decodes. Its recycle
 /// bin path moves to Library Management, where v3 sets the bin, over a path
-/// removals never used, and the report names the path dropped.
+/// removals never used, and the report names the path dropped. v2's
+/// ListenBrainz instance account is dropped, and the section left reads
+/// with ListenBrainz reads on.
 #[tokio::test]
 async fn removed_settings_import_and_are_reported() {
-    use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
+    use droppedneedle_kernel::runtime_config::sections::{DownloadPolicy, ListenBrainzSettings};
 
     let fixture = Fixture::shared();
     let mut export = fixture.shell();
@@ -1627,6 +1629,11 @@ async fn removed_settings_import_and_are_reported() {
         json!({"plex_client_id": "plex-1", "brainzmash_consent_admin": "u1"});
     export["settings"]["scrobble_settings"] = json!({"scrobble_to_lastfm": true});
     export["settings"]["primary_music_source"] = json!({"source": "lastfm"});
+    export["settings"]["listenbrainz_settings"] = json!({
+        "username": "instance",
+        "user_token": fixture.seal("instance-token"),
+        "enabled": false,
+    });
 
     let (target_db, _target) = migrated_file();
     let (_dir, config_path, crypto) = scratch_config("removed");
@@ -1659,6 +1666,9 @@ async fn removed_settings_import_and_are_reported() {
             "download_policy.verify_downloads",
             "indexers[0].type",
             "library_management.recycle_bin_path (/srv/stale)",
+            "listenbrainz_settings.enabled",
+            "listenbrainz_settings.user_token",
+            "listenbrainz_settings.username",
             "primary_music_source",
             "scrobble_settings",
         ]
@@ -1672,6 +1682,10 @@ async fn removed_settings_import_and_are_reported() {
     assert_eq!(stored["_internal"], json!({"plex_client_id": "plex-1"}));
     assert!(stored.get("scrobble_settings").is_none());
     assert!(stored.get("primary_music_source").is_none());
+    assert_eq!(stored["listenbrainz_settings"], json!({}));
+    let listenbrainz: ListenBrainzSettings =
+        serde_json::from_value(stored["listenbrainz_settings"].clone()).expect("decodes");
+    assert!(listenbrainz.reads_enabled);
     let policy: DownloadPolicy =
         serde_json::from_value(stored["download_policy"].clone()).expect("the policy decodes");
     assert_eq!(policy.quality_recipe[0].max_bitrate_kbps, Some(320));

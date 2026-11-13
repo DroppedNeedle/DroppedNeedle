@@ -1,4 +1,3 @@
-import { key, userScope } from '$lib/queries/keys';
 import { api } from '$lib/api/client';
 import { v3 } from '$lib/api/v3/endpoint';
 import { authStore } from '$lib/stores/authStore.svelte';
@@ -6,15 +5,12 @@ import type { components } from '$lib/api/v3/openapi';
 import { createQuery } from '@tanstack/svelte-query';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { anyDiscoverChanged, applyEffects, homeChanged } from '$lib/queries/effects';
+import { SectionPrefsQueryKeyFactory } from '$lib/queries/featureKeys';
 
 export type SectionPrefItem = components['schemas']['SectionPrefItem'];
 export type SectionPrefsResponse = components['schemas']['SectionPrefsResponse'];
 export type SectionPrefsUpdate = components['schemas']['SectionPrefsUpdate'];
 export type SectionPage = components['schemas']['SectionPage'];
-
-export const SectionPrefsQueryKeyFactory = {
-	prefs: (userId: string | null | undefined) => key(userScope(userId), 'section-prefs')
-};
 
 const SECTION_PREFS_ENDPOINT = () => v3('/api/v3/me/section-prefs');
 

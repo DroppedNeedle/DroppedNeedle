@@ -277,6 +277,8 @@ fn prompt(
 }
 
 /// The connect-a-service cards for what the user has not linked yet.
+/// `listenbrainz` is true when there is nothing to ask of ListenBrainz:
+/// the person linked it, or its reads are switched off.
 pub fn service_prompts(
     listenbrainz: bool,
     jellyfin: bool,

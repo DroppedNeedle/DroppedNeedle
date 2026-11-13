@@ -205,7 +205,8 @@ pub struct ServicePrompt {
 /// Which integrations back the shelves right now.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct IntegrationStatus {
-    /// ListenBrainz charts and history are available.
+    /// ListenBrainz reads are switched on for this server. The home page's
+    /// copy is also false while the person has no ListenBrainz link.
     pub listenbrainz: bool,
     /// A Jellyfin source is connected.
     pub jellyfin: bool,

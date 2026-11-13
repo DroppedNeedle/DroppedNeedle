@@ -337,6 +337,9 @@ impl LiveDiscover {
         let inner = &self.pages.inner;
         let off = sections::switched_off(inner.library.db(), user_id, Page::Discover).await;
         let variant = Variant::for_user(&inner.listening, user_id).await;
+        // The ListenBrainz card asks the person to link their own account,
+        // so it shows only while reads are on and they have no link.
+        let listenbrainz_settled = !status.listenbrainz || variant.listenbrainz;
         let saved = inner.cache.load(user_id, &variant).await;
         // A page that left out a section switched on since, or one built
         // past a failed read more than the retry wait ago, is rebuilt as
@@ -361,7 +364,7 @@ impl LiveDiscover {
             None => {
                 let mut page = empty_page();
                 page.service_prompts = shelves::service_prompts(
-                    status.listenbrainz,
+                    listenbrainz_settled,
                     status.jellyfin,
                     status.download_client,
                     status.lastfm,

@@ -32,8 +32,6 @@ use droppedneedle_catalog::search::models::{
 use droppedneedle_kernel::clock::Clock as _;
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::events::EventHub;
-use droppedneedle_kernel::runtime_config::Secret;
-use droppedneedle_kernel::runtime_config::secret_sections::ListenBrainzConnection;
 use droppedneedle_media::playback::listening::PrefsPatch;
 use droppedneedle_providers::{
     CallOutcome, ProviderEndpoints, Providers, RequestPriority, ReqwestWire,
@@ -503,13 +501,6 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
             ..ProviderEndpoints::closed()
         },
     );
-    rig.config
-        .save_secret_blocking(ListenBrainzConnection {
-            username: String::new(),
-            user_token: Secret::new(""),
-            enabled: true,
-        })
-        .expect("ListenBrainz on");
     let listening = crate::common::listening_store(&rig.platform);
     if lastfm {
         rig.set_lastfm_instance_key("instance-key");
@@ -556,6 +547,7 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
             providers.clone(),
             Arc::new(LiveCatalogSettings::new(&rig.config)),
             rig.deps.clone(),
+            crate::common::listening_store(&rig.platform),
         ),
         LocalCatalog::new(rig.platform.db.clone()),
         crate::common::bundles::quiet_page_sources(crate::common::bundles::cover_warm_at(
@@ -591,6 +583,7 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
         listening.clone(),
         PlaylistStore::new(collections.db.clone()),
         EventHub::new(),
+        rig.config.live(),
     );
 
     let activity = ActivityDb::new(rig.platform.db.clone());

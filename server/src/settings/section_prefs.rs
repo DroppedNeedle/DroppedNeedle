@@ -183,26 +183,40 @@ impl SectionPrefs {
     }
 }
 
+/// The admin switches that gate a service's sections.
+#[derive(Debug, Clone, Copy)]
+pub struct Masters {
+    /// Last.fm is switched on.
+    pub lastfm: bool,
+    /// ListenBrainz reads are switched on.
+    pub listenbrainz: bool,
+}
+
 /// Build one page: catalog entries overlaid with the disabled set,
-/// `available` from requirements plus link state. The Last.fm master
-/// switch gates `lastfm` sections (v2 required global creds, which v3
-/// dropped); the library is always present.
+/// `available` from requirements plus link state. The Last.fm switch
+/// gates `lastfm` sections (v2 required global creds, which v3 dropped)
+/// and the ListenBrainz reads switch gates `listenbrainz` ones; the
+/// library is always present.
 pub async fn page(
     prefs: &SectionPrefs,
     user_id: &str,
     page: SectionPage,
-    lastfm_master: bool,
+    masters: Masters,
 ) -> Result<Vec<SectionPrefItem>, SettingsError> {
     let disabled = prefs
         .disabled(user_id, page)
         .await
         .map_err(|cause| store_failure("section prefs read", cause))?;
-    let listenbrainz = prefs.is_listenbrainz_linked(user_id).await;
-    let lastfm = lastfm_master && prefs.is_lastfm_linked(user_id).await;
+    let listenbrainz = masters.listenbrainz && prefs.is_listenbrainz_linked(user_id).await;
+    let lastfm = masters.lastfm && prefs.is_lastfm_linked(user_id).await;
     let availability: HashMap<&str, bool> = HashMap::from([
         ("listenbrainz", listenbrainz),
         ("lastfm", lastfm),
         ("library", true),
+    ]);
+    let switched_on: HashMap<&str, bool> = HashMap::from([
+        ("listenbrainz", masters.listenbrainz),
+        ("lastfm", masters.lastfm),
     ]);
     Ok(catalog(page)
         .into_iter()
@@ -216,6 +230,10 @@ pub async fn page(
                 .requires
                 .and_then(|requirement| availability.get(requirement).copied())
                 .unwrap_or(true),
+            turned_off: entry
+                .requires
+                .and_then(|requirement| switched_on.get(requirement))
+                .is_some_and(|on| !on),
             requires: entry.requires.map(str::to_owned),
         })
         .collect())
@@ -225,13 +243,13 @@ pub async fn page(
 pub async fn full_response(
     prefs: &SectionPrefs,
     user_id: &str,
-    lastfm_master: bool,
+    masters: Masters,
 ) -> Result<SectionPrefsResponse, SettingsError> {
     let mut pages = BTreeMap::new();
     for page_key in SectionPage::ALL {
         pages.insert(
             page_key.as_str().to_owned(),
-            page(prefs, user_id, page_key, lastfm_master).await?,
+            page(prefs, user_id, page_key, masters).await?,
         );
     }
     Ok(SectionPrefsResponse { pages })
@@ -245,7 +263,7 @@ pub async fn save_page(
     prefs: &SectionPrefs,
     user_id: &str,
     update: &SectionPrefsUpdate,
-    lastfm_master: bool,
+    masters: Masters,
 ) -> Result<Vec<SectionPrefItem>, SettingsError> {
     let known = valid_keys(update.page);
     let mut unknown: Vec<&str> = update
@@ -271,7 +289,7 @@ pub async fn save_page(
         .set_disabled(user_id, update.page, &disabled)
         .await
         .map_err(|cause| store_failure("section prefs write", cause))?;
-    page(prefs, user_id, update.page, lastfm_master).await
+    page(prefs, user_id, update.page, masters).await
 }
 
 /// A busy database answers `SERVER_BUSY`; anything else is a 500.

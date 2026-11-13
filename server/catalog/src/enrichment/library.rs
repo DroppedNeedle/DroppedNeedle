@@ -22,6 +22,7 @@ use droppedneedle_library::management::genre::Candidate;
 use droppedneedle_library::matching::model::ReleaseExtras;
 use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::acoustid::BatchResult;
+use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
 
 /// The priority a call asks at: background for automatic runs, user for a
 /// person's own preview.
@@ -139,14 +140,15 @@ impl EnrichmentPort for LiveEnrichment {
             if self.upstream.listenbrainz_switched_off() {
                 return Ok(GenreAnswer::Off);
             }
-            let (client, creds) = self
+            let client = self
                 .upstream
                 .listenbrainz()
                 .ok_or_else(|| "the ListenBrainz setting could not be read".to_owned())?;
             let groups = client
-                .release_group_genres(
+                .cached_release_group_genres(
+                    self.upstream.cache(),
                     &[release_group_mbid.to_owned()],
-                    &creds,
+                    &ListenBrainzCredentials::default(),
                     priority(background),
                 )
                 .await

@@ -1,35 +1,7 @@
-//! Third-party accounts and keys: ListenBrainz, YouTube, Spotify, the
+//! Third-party accounts and keys: YouTube, Spotify, the
 //! events sources, Wrapped, OIDC, and the Last.fm app key pair.
 
 use super::*;
-
-// --- listenbrainz_settings (mask gap closed) --------------------------------
-
-/// ListenBrainz connection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
-#[serde(default)]
-pub struct ListenBrainzConnection {
-    /// Username.
-    pub username: String,
-    /// User token (encrypted at rest; v2 returned it plaintext on GET).
-    #[schema(value_type = String)]
-    pub user_token: Secret,
-    /// Master switch.
-    pub enabled: bool,
-}
-
-impl Section for ListenBrainzConnection {
-    const KEY: &'static str = "listenbrainz_settings";
-}
-
-impl SecretSection for ListenBrainzConnection {
-    fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
-        vec![SecretField {
-            value: &mut self.user_token,
-            strip: false,
-        }]
-    }
-}
 
 // --- youtube_settings (mask gap closed) -------------------------------------
 

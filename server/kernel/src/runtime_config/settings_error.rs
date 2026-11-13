@@ -15,7 +15,7 @@
 //! [`ConfigError::Validation`]: crate::runtime_config::ConfigError::Validation
 //! [`ConfigError::SectionDecode`]: crate::runtime_config::ConfigError::SectionDecode
 
-use crate::error::{ApiError, RATE_LIMITED, Unavailable};
+use crate::error::{ApiError, Unavailable};
 use axum::http::StatusCode;
 use serde_json::json;
 
@@ -45,11 +45,6 @@ pub enum SettingsError {
     /// Expected revision missed the stored one.
     StaleRevision {
         /// What was wrong.
-        message: String,
-    },
-    /// The upstream provider is rate-limiting this server.
-    RateLimited {
-        /// User-safe reason.
         message: String,
     },
     /// The upstream answered badly or not at all (502).
@@ -115,8 +110,7 @@ impl std::fmt::Display for SettingsError {
         match self {
             Self::InvalidInput { message }
             | Self::Conflict { message }
-            | Self::StaleRevision { message }
-            | Self::RateLimited { message } => f.write_str(message),
+            | Self::StaleRevision { message } => f.write_str(message),
             Self::InvalidField { field, reason } => {
                 write!(f, "{}: {reason}", field_in_words(field))
             }
@@ -140,9 +134,6 @@ impl From<SettingsError> for ApiError {
             SettingsError::Conflict { message } => ApiError::conflict(message),
             SettingsError::StaleRevision { message } => {
                 ApiError::new(StatusCode::CONFLICT, STALE_REVISION, message)
-            }
-            SettingsError::RateLimited { message } => {
-                ApiError::new(StatusCode::TOO_MANY_REQUESTS, RATE_LIMITED, message)
             }
             SettingsError::Upstream { cause } => ApiError::fault(StatusCode::BAD_GATEWAY, cause),
             SettingsError::ProviderUnavailable {

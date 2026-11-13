@@ -232,9 +232,11 @@ fn prompt(
 }
 
 /// The connect-a-service cards home shows: a download client when none is
-/// set up, and ListenBrainz and Last.fm while neither is linked.
+/// set up, and ListenBrainz and Last.fm while neither is linked. The
+/// ListenBrainz card shows only while its reads are on (`listenbrainz_on`).
 pub fn service_prompts(
     listenbrainz: bool,
+    listenbrainz_on: bool,
     download_client: bool,
     lastfm: bool,
 ) -> Vec<ServicePrompt> {
@@ -255,19 +257,21 @@ pub fn service_prompts(
         ));
     }
     if !listenbrainz && !lastfm {
-        prompts.push(prompt(
-            PromptService::Listenbrainz,
-            "Connect ListenBrainz",
-            "Get recommendations from your listening history, spot new releases from artists you already love, and keep an eye on your top genres. Connect Last.fm too if you want global listener stats.",
-            "LB",
-            "primary",
-            [
-                "Personalized recommendations",
-                "New release alerts",
-                "Listening stats",
-                "Top genres",
-            ],
-        ));
+        if listenbrainz_on {
+            prompts.push(prompt(
+                PromptService::Listenbrainz,
+                "Connect ListenBrainz",
+                "Get recommendations from your listening history, spot new releases from artists you already love, and keep an eye on your top genres. Connect Last.fm too if you want global listener stats.",
+                "LB",
+                "primary",
+                [
+                    "Personalized recommendations",
+                    "New release alerts",
+                    "Listening stats",
+                    "Top genres",
+                ],
+            ));
+        }
         prompts.push(prompt(
             PromptService::Lastfm,
             "Connect Last.fm",

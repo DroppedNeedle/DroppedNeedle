@@ -413,6 +413,8 @@ report lists it too (`left_behind`). In short:
 - Plugins. Their settings come across, switched off, and the report lists
   each one as needing porting. Port it, install it again from Settings >
   Plugins, then switch it on.
+- The instance ListenBrainz account (username and token) under Settings >
+  ListenBrainz. Each person links their own ListenBrainz account instead.
 
 ## Library Management originals
 
