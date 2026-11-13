@@ -5,9 +5,11 @@
 # PUID/PGID, hands the data folders over to it, and drops to it with gosu.
 # Started with `docker run --user`, it skips user setup and runs the command
 # as that user. Any command works, e.g. `droppedneedle-tool upgrade`, which
-# then writes its files as the same user the server runs as. Only the server
-# (`droppedneedle`) has its /app/config and /app/cache checked and chowned
-# here; the tool reports a folder it cannot write to itself.
+# then writes its files as the same user the server runs as. When started as
+# root, the server checks and chowns /app/config, /app/cache, /app/plugins and
+# /app/imports where the runtime user cannot write them. With --user, it checks
+# only /app/config and /app/cache. The tool reports a folder it cannot write to
+# itself.
 set -e
 
 REQUESTED_UMASK=${UMASK:-027}
@@ -42,6 +44,20 @@ check_writable() {
         rm -f "$_probe" 2>/dev/null
     fi
     return "$_rc"
+}
+
+# Makes $1 writable by the runtime user, chowning the folder itself when it is
+# not. Returns 1 if it still is not. The chown never reaches inside the folder.
+make_writable() {
+    if check_writable "$1" "$TARGET_UID:$TARGET_GID"; then
+        return 0
+    fi
+    if chown -h droppedneedle:droppedneedle "$1" 2>/dev/null; then
+        echo "[init] Adjusted ownership of $1; checking write access again."
+    else
+        echo "[init] WARNING: Could not chown $1 (the mount may not support ownership changes)."
+    fi
+    check_writable "$1" "$TARGET_UID:$TARGET_GID"
 }
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -103,19 +119,28 @@ if is_server "$1"; then
     echo "[init] Runtime user: droppedneedle (uid=$TARGET_UID gid=$TARGET_GID)"
     for dir in /app/config /app/cache; do
         mkdir -p "$dir" 2>/dev/null || true
-        if check_writable "$dir" "$TARGET_UID:$TARGET_GID"; then
-            continue
+        if [ ! -d "$dir" ]; then
+            echo "[init] FATAL: $dir is not a folder."
+            exit 1
         fi
-        if chown -h droppedneedle:droppedneedle "$dir" 2>/dev/null; then
-            echo "[init] Adjusted ownership of $dir; checking write access again."
-        else
-            echo "[init] WARNING: Could not chown $dir (the mount may not support ownership changes)."
-        fi
-        if ! check_writable "$dir" "$TARGET_UID:$TARGET_GID"; then
+        if ! make_writable "$dir"; then
             echo "[init] FATAL: $dir is not writable by uid=$TARGET_UID gid=$TARGET_GID."
             echo "[init]   Common causes: FUSE/shfs (Unraid), NFS root_squash, CIFS/SMB, dropped CAP_CHOWN."
             echo "[init]   Fix: make the host directory writable by uid=$TARGET_UID gid=$TARGET_GID."
             exit 1
+        fi
+    done
+    # Plugins and imports only warn: a read-only plugins mount starts today, and
+    # a stop would take the whole app down for one feature.
+    for dir in /app/plugins /app/imports; do
+        mkdir -p "$dir" 2>/dev/null || true
+        if [ -L "$dir" ] || [ ! -d "$dir" ]; then
+            echo "[init] WARNING: $dir is a link or not a folder; it is left as it is."
+            continue
+        fi
+        if ! make_writable "$dir"; then
+            echo "[init] WARNING: $dir is not writable by uid=$TARGET_UID gid=$TARGET_GID; writes there will fail."
+            echo "[init]   Common causes: a mount that refuses ownership changes (FUSE/shfs, NFS root_squash, CIFS/SMB), dropped CAP_CHOWN."
         fi
     done
 fi

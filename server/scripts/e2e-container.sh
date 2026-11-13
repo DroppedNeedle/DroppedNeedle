@@ -10,8 +10,9 @@
 #    transcode.rs.
 # 3. Smoke: fresh boot, healthy, clean SIGTERM shutdown. Prints cold and
 #    warm boot time, idle RSS and shutdown time.
-# 4. PUID: a boot with PUID=568 hands the config and cache folders to uid 568
-#    and the server writes as it; a boot with PUID back at 1000 hands them back.
+# 4. PUID: a boot with PUID=568 hands the config and cache folders, and the
+#    imports and plugins folders Docker created owned by root, to uid 568 and
+#    the server writes as it; a boot with PUID back at 1000 hands them back.
 # 5. Journeys: on an internal network with no route out, starts the mock
 #    slskd and MusicBrainz (e2e-mocks.Dockerfile), then runs each browser
 #    journey in frontend/tests/journeys against a fresh server of its own,
@@ -19,10 +20,10 @@
 #
 # Everything runs against containers this script starts under its own names,
 # never against an address passed in. They are removed on exit, pass or fail,
-# as are the two volumes the PUID check makes. The folders mounted are the audio
-# fixtures, read-only, for the ffmpeg check and, as the library at /music, a
-# throwaway copy of two of them, removed on exit. The journeys need the
-# frontend dependencies and Playwright's Chromium
+# as are the two volumes and the imports and plugins folders the PUID check
+# makes. The folders mounted are the audio fixtures, read-only, for the ffmpeg
+# check and, as the library at /music, a throwaway copy of two of them, removed
+# on exit. The journeys need the frontend dependencies and Playwright's Chromium
 # (make frontend-install frontend-browser-install).
 #
 # DN_E2E_IMAGE and DN_E2E_MOCKS_IMAGE name images already built; each one set
@@ -42,6 +43,7 @@ FFMPEG="dn-e2e-ffmpeg"
 FIXTURES="$ROOT/server/tests/fixtures/library"
 WORK=""
 OUT=""
+PUID_WORK=""
 
 cleanup() {
   docker rm -f "$NAME" "$APP" "$MOCKS" "$FFMPEG" >/dev/null 2>&1 || true
@@ -49,6 +51,12 @@ cleanup() {
   docker volume rm "$CONFIG_VOLUME" "$CACHE_VOLUME" >/dev/null 2>&1 || true
   if [ -n "$WORK" ]; then rm -rf "$WORK" || true; fi
   if [ -n "$OUT" ]; then rm -rf "$OUT" || true; fi
+  if [ -n "$PUID_WORK" ]; then
+    # The server writes into the plugins folder as the runtime uid, so the
+    # folders are emptied as root, in the image.
+    docker run --rm -v "$PUID_WORK:/work" --entrypoint rm "$IMAGE" -rf /work/imports /work/plugins >/dev/null 2>&1 || true
+    rm -rf "$PUID_WORK" || true
+  fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
@@ -279,21 +287,33 @@ echo "exit code 0, graceful-shutdown log line present"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 
 # Fail unless the database the server wrote, and everything else in the config
-# and cache volumes, belongs to the given uid.
+# and cache volumes, belongs to the given uid, and so do the imports and plugins
+# folders.
 data_owned_by() {
   [ "$(docker exec "$NAME" stat -c %u /app/cache/library.db)" = "$1" ] \
     || fail "PUID=$1: library.db is not owned by uid $1"
   OTHERS=$(docker exec "$NAME" find /app/config /app/cache ! -user "$1")
   [ -z "$OTHERS" ] || fail "PUID=$1: not handed over: $OTHERS"
+  for FOLDER in /app/imports /app/plugins; do
+    [ "$(docker exec "$NAME" stat -c %u "$FOLDER")" = "$1" ] \
+      || fail "PUID=$1: $FOLDER is not owned by uid $1"
+  done
 }
 
 echo "--- PUID ---"
+# Docker creates a missing host folder owned by root, as a fresh install's
+# imports and plugins folders are.
+PUID_WORK=$(mktemp -d)
+IMPORTS="$PUID_WORK/imports"
+PLUGINS="$PUID_WORK/plugins"
 boot_and_wait -e PUID=568 -e PGID=568 \
-  -v "$CONFIG_VOLUME:/app/config" -v "$CACHE_VOLUME:/app/cache" >/dev/null
+  -v "$CONFIG_VOLUME:/app/config" -v "$CACHE_VOLUME:/app/cache" \
+  -v "$IMPORTS:/app/imports" -v "$PLUGINS:/app/plugins" >/dev/null
 data_owned_by 568
 docker stop -t 10 "$NAME" >/dev/null || fail "PUID=568 stop failed"
 docker rm -f "$NAME" >/dev/null || fail "PUID=568 rm failed"
-boot_and_wait -v "$CONFIG_VOLUME:/app/config" -v "$CACHE_VOLUME:/app/cache" >/dev/null
+boot_and_wait -v "$CONFIG_VOLUME:/app/config" -v "$CACHE_VOLUME:/app/cache" \
+  -v "$IMPORTS:/app/imports" -v "$PLUGINS:/app/plugins" >/dev/null
 data_owned_by 1000
 echo "PUID=568 took the data folders over, PUID=1000 took them back"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
