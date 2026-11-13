@@ -455,8 +455,8 @@
 												activationPreview?.summary.bundle_count ?? 0
 											).toLocaleString()}
 											release bundles{:else}
-											· Discovering files and release bundles{/if}{:else}Every required dry run is
-										accepted. Automatic writes are still off.{/if}
+											· Finding files and albums{/if}{:else}Every required dry run is accepted.
+										Automatic writes are still off.{/if}
 								</p>
 							</div>
 							{#if !wizard.coversDraft}<Button
@@ -492,7 +492,7 @@
 										'This root'} · {remoteActivation.profile_name} · {remoteActivation.operation
 										.state === 'ready'
 										? 'Ready to review'
-										: 'Discovering files and release bundles'}
+										: 'Finding files and albums'}
 								</p>
 							</div>
 							<Button

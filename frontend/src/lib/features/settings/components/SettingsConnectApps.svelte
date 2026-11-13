@@ -85,13 +85,13 @@
 				<div class="mt-3 flex flex-col gap-5">
 					<ToggleRow
 						label="OpenSubsonic API"
-						description="Symfonium, Feishin, Amperfy and other Subsonic apps."
+						description="Tested with Symfonium, Feishin and Arpeggi."
 						bind:checked={draft.subsonic_enabled}
 					/>
 
 					<ToggleRow
 						label="Jellyfin-compatible API"
-						description="Finamp, Jellify, Manet Music and Symfonium's Jellyfin mode."
+						description="Tested with Finamp, Jellify and Manet."
 						bind:checked={draft.jellyfin_enabled}
 					/>
 

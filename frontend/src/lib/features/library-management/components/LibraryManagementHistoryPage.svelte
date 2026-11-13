@@ -90,7 +90,7 @@
 	}
 </script>
 
-<svelte:head><title>Organization history · DroppedNeedle</title></svelte:head>
+<svelte:head><title>Organization history - DroppedNeedle</title></svelte:head>
 
 <div class="management-preview-shell px-4 py-8 sm:px-6 lg:px-8">
 	<main class="mx-auto max-w-7xl space-y-6">

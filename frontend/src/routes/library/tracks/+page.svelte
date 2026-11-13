@@ -214,7 +214,7 @@
 	}
 </script>
 
-<svelte:head><title>Tracks · Library</title></svelte:head>
+<svelte:head><title>Tracks - DroppedNeedle</title></svelte:head>
 
 {#snippet playButtons()}
 	{#if queue.loading}

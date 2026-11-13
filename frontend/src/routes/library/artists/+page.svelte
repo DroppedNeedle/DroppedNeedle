@@ -144,7 +144,7 @@
 	}
 </script>
 
-<svelte:head><title>Artists · Library</title></svelte:head>
+<svelte:head><title>Artists - DroppedNeedle</title></svelte:head>
 
 <ListPageHeader
 	title={browse.favorites ? 'Favourite Artists' : 'All Artists'}

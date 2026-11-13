@@ -6,6 +6,8 @@
 	const remote = $derived(data.remote);
 </script>
 
+<svelte:head><title>{remote.label} Playlists - DroppedNeedle</title></svelte:head>
+
 <SourcePlaylistList
 	source={remote.source}
 	sourceLabel={remote.label}

@@ -100,9 +100,7 @@
 		if (active.operation.expected_work_count > 0) {
 			return `${active.operation.completed_count.toLocaleString()} / ${active.operation.expected_work_count.toLocaleString()}`;
 		}
-		return active.phase === 'planning'
-			? 'Discovering files and release bundles'
-			: 'Preparing the preview';
+		return active.phase === 'planning' ? 'Finding files and albums' : 'Preparing the preview';
 	});
 	const readyPreviews = $derived(
 		history
@@ -202,6 +200,10 @@
 
 	function title(value: string): string {
 		return value.replaceAll('_', ' ').replace(/^\w/, (letter) => letter.toUpperCase());
+	}
+
+	function modeTitle(mode: string): string {
+		return mode === 'baseline_restore' ? 'Restore original state' : title(mode);
 	}
 
 	function operationHref(
@@ -359,7 +361,7 @@
 						><Layers class="size-4" aria-hidden="true" />Automatic write access</span
 					><strong class="lm-tile__value"
 						>{activeAssignments.length
-							? `${activeAssignments.length} active root${activeAssignments.length === 1 ? '' : 's'}`
+							? `${activeAssignments.length} library folder${activeAssignments.length === 1 ? '' : 's'}`
 							: 'Off everywhere'}</strong
 					><small class="lm-tile__note"
 						>Manual previews remain available whether automation is on or off.</small
@@ -380,8 +382,8 @@
 						>{recoveryUnavailable ? 'Status unavailable' : attentionCount}</strong
 					><small class="lm-tile__note"
 						>{recoveryUnavailable
-							? 'Recovery diagnostics could not be loaded.'
-							: `${recoveryQuery.data?.nonterminal_journal_count ?? 0} nonterminal recovery journals.`}</small
+							? "Couldn't check for unfinished file changes."
+							: `Unfinished file changes: ${recoveryQuery.data?.nonterminal_journal_count ?? 0}`}</small
 					>
 				</div>
 			</div>
@@ -400,7 +402,7 @@
 							</p>
 							<h3 class="lm-title cr-section-title">{active.profile_name}</h3>
 							<p class="text-sm text-muted">
-								{title(active.mode)} · {title(active.phase)} · {activeProgressLabel}
+								{modeTitle(active.mode)} · {title(active.phase)} · {activeProgressLabel}
 							</p>
 						</div>
 					</div>
@@ -460,7 +462,7 @@
 								><Sparkles class="h-4 w-4 shrink-0 text-library-manage" /><span
 									class="min-w-0 flex-1"
 									><strong>{item.profile_name}</strong><small
-										>{title(item.mode)} · {date(item.operation.updated_at)}</small
+										>{modeTitle(item.mode)} · {date(item.operation.updated_at)}</small
 									><span class="mt-1 flex flex-wrap gap-1"
 										>{#if (item.eligible_count ?? 0) > 0}<span class="badge badge-success badge-sm"
 												>{item.eligible_count} eligible</span
@@ -505,7 +507,7 @@
 								class="management-history-row"
 								><History class="h-4 w-4 text-muted" /><span class="min-w-0 flex-1"
 									><strong>{item.profile_name}</strong><small
-										>{title(item.mode)} · {title(item.operation.state)} · {date(
+										>{modeTitle(item.mode)} · {title(item.operation.state)} · {date(
 											item.operation.updated_at
 										)}</small
 									><span class="mt-1 flex flex-wrap gap-1"
@@ -558,9 +560,9 @@
 														: 'text-error'}"
 												>
 													<span
-														>{title(member.mode)} · {isStaleInputTerminal(member.operation)
+														>{modeTitle(member.mode)} · {isStaleInputTerminal(member.operation)
 															? 'Superseded · inputs moved'
-															: `${title(member.operation.state)}${member.operation.terminal_code ? ` · ${title(member.operation.terminal_code)}` : ''}`}
+															: `${title(member.operation.state)}${member.operation.terminal_code ? ` · ${title(member.operation.terminal_code.toLowerCase())}` : ''}`}
 														· {date(member.operation.updated_at)}</span
 													>
 													<a
@@ -608,7 +610,7 @@
 									class="management-history-row"
 									><History class="h-4 w-4 text-muted" /><span class="min-w-0 flex-1"
 										><strong>{single.profile_name}</strong><small
-											>{title(single.mode)} · {singleStale
+											>{modeTitle(single.mode)} · {singleStale
 												? 'Superseded · inputs moved'
 												: title(single.operation.state)} · {date(
 												single.operation.updated_at
@@ -683,8 +685,8 @@
 						</ul>{/if}
 				</div>{:else if recoveryUnavailable}<div class="alert alert-error items-start" role="alert">
 					<TriangleAlert class="mt-0.5 h-5 w-5" /><span
-						><strong>Recovery status is unavailable</strong><br />Do not start new file writes until
-						diagnostics load successfully. Refresh this page or check the server logs.</span
+						><strong>Recovery status is unavailable</strong><br />Don't start new file writes until
+						it loads. Refresh this page or check the server log.</span
 					>
 				</div>{/if}
 			{#if retryingBundles.length > 0}<div class="alert alert-warning items-start">

@@ -146,6 +146,8 @@
 	}
 </script>
 
+<svelte:head><title>{remote.label} Tracks - DroppedNeedle</title></svelte:head>
+
 <div class="container mx-auto max-w-7xl px-4 py-6">
 	<ListHeader {remote} kind="Tracks" {total} />
 

@@ -620,9 +620,10 @@ describe('the page agrees with the edition', () => {
 		await expect.element(missing.getByText('Missing', { exact: true })).not.toBeInTheDocument();
 	});
 
-	it("shows a file's note on its row", async () => {
+	it("says once how many files carry another edition's track id, and a left-out file's note on its row", async () => {
 		chooseRemaster();
 		const files = plan?.files ?? [];
+		files[0].note = { code: 'TRACK_ID_CORRECTED', message: '', action: '' };
 		files[2].note = { code: 'TRACK_ID_CORRECTED', message: '', action: '' };
 		files.push({
 			...files[0],
@@ -636,11 +637,12 @@ describe('the page agrees with the edition', () => {
 
 		await expect
 			.element(
-				trackRow('Ambrosia').getByText(
-					"This file's track id belonged to another edition; it will be corrected when tags are written"
+				page.getByText(
+					"2 files have another edition's track id. Writing this album's MusicBrainz tags fixes this."
 				)
 			)
 			.toBeVisible();
+		await expect.element(trackRow('Ambrosia').getByText(/track id/)).not.toBeInTheDocument();
 		const leftOut = page.getByRole('listitem').filter({ hasText: 'Genesis' });
 		await expect.element(leftOut.getByText('Not on this edition')).toBeVisible();
 		await expect

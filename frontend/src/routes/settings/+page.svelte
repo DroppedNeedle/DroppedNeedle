@@ -132,6 +132,8 @@
 	});
 </script>
 
+<svelte:head><title>Settings - DroppedNeedle</title></svelte:head>
+
 <div class="dn-settings flex min-h-screen flex-col lg:h-full lg:min-h-0">
 	<!-- Desktop is an app-style two-pane layout inside the shell's locked
 	     viewport column: the page itself doesn't scroll; the rail and the

@@ -6,4 +6,4 @@
 	onMount(() => void goto(withBasePath('/library/review'), { replaceState: true }));
 </script>
 
-<svelte:head><title>Identification review · DroppedNeedle</title></svelte:head>
+<svelte:head><title>Identification review - DroppedNeedle</title></svelte:head>

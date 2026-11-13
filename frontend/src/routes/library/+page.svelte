@@ -30,7 +30,7 @@
 	}
 </script>
 
-<svelte:head><title>Library · DroppedNeedle</title></svelte:head>
+<svelte:head><title>Library - DroppedNeedle</title></svelte:head>
 
 <div class="min-h-[calc(100vh-200px)]">
 	<ListPageHeader title="Library" subtitle="Your scanned music library" ticket="DN / CC 3.2">

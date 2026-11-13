@@ -27,7 +27,7 @@
 	const hasQuery = $derived(query.length > 0);
 </script>
 
-<svelte:head><title>{hasQuery ? `${query} · Search` : 'Search'}</title></svelte:head>
+<svelte:head><title>{hasQuery ? `Search: ${query}` : 'Search'} - DroppedNeedle</title></svelte:head>
 
 {#snippet tabsRow()}
 	<nav class="search-tabs" aria-label="Search results">

@@ -28,6 +28,8 @@
 	const totalPages = $derived(Math.ceil(historyTotal / PAGE_SIZE));
 </script>
 
+<svelte:head><title>{remote.label} Activity - DroppedNeedle</title></svelte:head>
+
 <div class="container mx-auto space-y-6 p-6">
 	<div class="flex items-center gap-3">
 		<Button

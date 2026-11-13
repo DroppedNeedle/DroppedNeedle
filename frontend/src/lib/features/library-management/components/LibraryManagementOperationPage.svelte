@@ -316,7 +316,7 @@
 	}
 </script>
 
-<svelte:head><title>Organization operation · DroppedNeedle</title></svelte:head>
+<svelte:head><title>Organization operation - DroppedNeedle</title></svelte:head>
 
 {#snippet resultsState()}
 	{#if resultsQuery.isLoading}<div
@@ -397,7 +397,7 @@
 							{planningPreview
 								? plannedItems > 0
 									? `${plannedItems.toLocaleString()} files planned so far`
-									: 'Discovering files'
+									: 'Finding files and albums'
 								: `${operation.completed_count.toLocaleString()} / ${operation.expected_work_count.toLocaleString()}`}
 						</span>
 					</div>

@@ -197,6 +197,8 @@
 	}
 </script>
 
+<svelte:head><title>{remote.label} Albums - DroppedNeedle</title></svelte:head>
+
 {#snippet shelf(title: string, items: RemoteAlbum[])}
 	<div class="mb-8">
 		<h2 class="text-lg font-semibold mb-3 opacity-80">{title}</h2>

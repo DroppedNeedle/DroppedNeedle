@@ -8,6 +8,8 @@
 	const playlistId = $derived(page.params.id ?? '');
 </script>
 
+<svelte:head><title>{remote.label} Playlist - DroppedNeedle</title></svelte:head>
+
 <SourcePlaylistDetail
 	{playlistId}
 	source={remote.source}

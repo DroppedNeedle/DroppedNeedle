@@ -309,7 +309,7 @@
 	const dimmed = $derived(isPlaying && deckFocus.inView && !reducedMotion);
 </script>
 
-<svelte:head><title>Listening Room &middot; DroppedNeedle</title></svelte:head>
+<svelte:head><title>Listening Room - DroppedNeedle</title></svelte:head>
 
 <div class="listening-room px-4 pt-4 pb-16 sm:px-6 sm:pt-6 lg:px-8">
 	<div

@@ -22,6 +22,7 @@
 		getSpotifyPlaylistsQuery,
 		createImportSpotifyPlaylistMutation
 	} from '$lib/features/playlists/queries/spotify.svelte';
+	import { ApiError } from '$lib/api/errors';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { providerUnavailableMessage } from '$lib/utils/serviceError';
 
@@ -93,7 +94,9 @@
 	const playlistList = $derived(playlistsQuery.data?.playlists ?? []);
 	const importedCount = $derived(playlistList.length - unimportedCount);
 	const notConnected = $derived(
-		playlistsQuery.error instanceof Error && playlistsQuery.error.message.includes('400')
+		playlistsQuery.error instanceof ApiError &&
+			playlistsQuery.error.status === 400 &&
+			playlistsQuery.error.code === 'IMPORT_NOT_CONFIGURED'
 	);
 </script>
 

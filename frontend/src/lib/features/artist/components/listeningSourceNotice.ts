@@ -10,6 +10,9 @@ export type SectionSources = Pick<
 
 const LABEL: Record<ListenSource, string> = { listenbrainz: 'ListenBrainz', lastfm: 'Last.fm' };
 
+/** Where a person links a listening service; the page shows it as a link. */
+export const SCROBBLING_PLACE = 'Profile > Scrobbling & Discovery';
+
 /**
  * One line saying why the popular lists do not come from the chosen
  * service as asked: it is off or unavailable (switched off, not set up or
@@ -41,7 +44,7 @@ export function listeningSourceNotice(
 		return `${LABEL[asked]} is off or unavailable. These lists may be out of date.`;
 	}
 	if (unlinked.has(asked)) {
-		return `Link ${LABEL[asked]} under Profile > Scrobbling & Discovery to see popular songs and albums.`;
+		return `Link ${LABEL[asked]} under ${SCROBBLING_PLACE} to see popular songs and albums.`;
 	}
 	return null;
 }

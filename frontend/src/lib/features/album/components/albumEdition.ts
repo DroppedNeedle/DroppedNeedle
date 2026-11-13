@@ -16,6 +16,8 @@ export interface EditionTrackRow {
 	lengthMs: number | null;
 	/** The length of a file that is another version of this missing track. */
 	yourVersionMs: number | null;
+	/** The file's track id is another edition's; the album's one note covers it. */
+	trackIdCorrected: boolean;
 	note: string | null;
 }
 
@@ -33,14 +35,25 @@ export interface UnmatchedFile {
 }
 
 const FILE_NOTES: Record<string, string> = {
-	TRACK_ID_CORRECTED:
-		"This file's track id belonged to another edition; it will be corrected when tags are written",
 	TRACK_ID_ELSEWHERE: "This file's track id belongs to another edition of this album"
 };
 
+/** A kept file matched by its recording because its track id is another edition's. */
+export function isTrackIdCorrected(file: Pick<EditionPlanFile, 'note'>): boolean {
+	return file.note?.code === 'TRACK_ID_CORRECTED';
+}
+
+/** The sentence a file's own row shows. A corrected track id has the album's note instead. */
 export function fileNote(file: Pick<EditionPlanFile, 'note'>): string | null {
-	if (!file.note) return null;
+	if (!file.note || isTrackIdCorrected(file)) return null;
 	return FILE_NOTES[file.note.code] ?? file.note.message;
+}
+
+/** One line over the track list for the files whose track id is another edition's. */
+export function trackIdNote(count: number): string | null {
+	if (count === 0) return null;
+	const files = count === 1 ? '1 file has' : `${count} files have`;
+	return `${files} another edition's track id. Writing this album's MusicBrainz tags fixes this.`;
 }
 
 /** The plan's sentence about each file that has one, by track id. */
@@ -77,6 +90,7 @@ export function editionTrackRows(
 			file: track.local_track_id ? (filesById.get(track.local_track_id) ?? null) : null,
 			lengthMs: planFile?.length_ms ?? track.length_ms ?? null,
 			yourVersionMs: version ? (version.length_ms ?? null) : null,
+			trackIdCorrected: planFile ? isTrackIdCorrected(planFile) : false,
 			note: planFile ? fileNote(planFile) : null
 		});
 	}

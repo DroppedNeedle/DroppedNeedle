@@ -102,7 +102,7 @@
 	);
 </script>
 
-<svelte:head><title>{artist?.name ?? 'Artist'} · Library</title></svelte:head>
+<svelte:head><title>{artist?.name ?? 'Artist'} - DroppedNeedle</title></svelte:head>
 
 {#snippet back()}
 	<IconButton

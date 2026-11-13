@@ -139,6 +139,8 @@
 	}
 </script>
 
+<svelte:head><title>YouTube Links - DroppedNeedle</title></svelte:head>
+
 <div class="container mx-auto p-6">
 	<div class="flex items-center gap-3 mb-6">
 		<YouTubeIcon class="h-8 w-8 text-red-500" />

@@ -36,7 +36,7 @@
 		getAlbumEditionStatusQuery,
 		getEditionPlanQuery
 	} from '$lib/features/library/queries/EditionQueries.svelte';
-	import { notesByFile } from './albumEdition';
+	import { isTrackIdCorrected, notesByFile, trackIdNote } from './albumEdition';
 	import AddToPlaylistModal from '$lib/features/playlists/components/AddToPlaylistModal.svelte';
 	import { getTrackContextMenuItems } from './albumPlaybackHandlers';
 	import type { QueueItem } from '$lib/features/player/playback/types';
@@ -89,8 +89,12 @@
 			editionStatusQuery.data?.album_id === albumId &&
 			editionStatusQuery.data.edition_kind === 'release'
 	);
-	const fileNotes = $derived(
-		editionPlanQuery.data?.album_id === albumId ? notesByFile(editionPlanQuery.data) : undefined
+	const editionPlan = $derived(
+		editionPlanQuery.data?.album_id === albumId ? editionPlanQuery.data : undefined
+	);
+	const fileNotes = $derived(editionPlan ? notesByFile(editionPlan) : undefined);
+	const editionNote = $derived(
+		trackIdNote(editionPlan?.files.filter(isTrackIdCorrected).length ?? 0)
 	);
 
 	function play(shuffle: boolean): void {
@@ -184,7 +188,7 @@
 	}
 </script>
 
-<svelte:head><title>{album?.title ?? 'Album'} · Library</title></svelte:head>
+<svelte:head><title>{album?.title ?? 'Album'} - DroppedNeedle</title></svelte:head>
 
 {#snippet back()}
 	<BackButton fallback="/library/albums" />
@@ -309,6 +313,9 @@
 						<p>No playable tracks are attached to this album.</p>
 					</Card>
 				{:else}
+					{#if editionNote}
+						<p class="text-sm text-info">{editionNote}</p>
+					{/if}
 					<PaperPanel>
 						{#snippet head()}
 							<AlbumSourceBar

@@ -56,13 +56,12 @@
 	const SUGGESTED_NAMES = [
 		'Symfonium (phone)',
 		'Feishin (desktop)',
-		'Amperfy (phone)',
 		'Finamp (tablet)',
 		'Jellify (phone)',
 		'Manet (iPad)'
 	];
-	const SUBSONIC_CLIENTS = 'Symfonium, Feishin, Amperfy, DSub, Substreamer, play:Sub, Tempo';
-	const JELLYFIN_CLIENTS = 'Finamp, Jellify, Manet Music (iOS), Symfonium (Jellyfin mode)';
+	const SUBSONIC_CLIENTS = 'Symfonium, Feishin, Arpeggi';
+	const JELLYFIN_CLIENTS = 'Finamp, Jellify, Manet';
 
 	// the list folds away once there is something in it
 	let listOpen = $state<boolean | null>(null);

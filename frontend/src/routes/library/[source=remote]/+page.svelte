@@ -135,6 +135,8 @@
 	);
 </script>
 
+<svelte:head><title>{remote.label} - DroppedNeedle</title></svelte:head>
+
 <div
 	class="hub"
 	style:--hub-brand="rgb(var(--brand-{remote.source}))"

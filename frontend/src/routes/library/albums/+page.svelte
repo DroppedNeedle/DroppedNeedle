@@ -294,7 +294,7 @@
 	$effect(() => () => jump?.stop.abort());
 </script>
 
-<svelte:head><title>Albums · Library</title></svelte:head>
+<svelte:head><title>Albums - DroppedNeedle</title></svelte:head>
 
 <ListPageHeader
 	title={params.favorites ? 'Favourite Albums' : 'All Albums'}

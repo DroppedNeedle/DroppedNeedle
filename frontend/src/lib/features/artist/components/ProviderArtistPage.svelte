@@ -65,7 +65,10 @@
 		RefreshCw,
 		Shuffle
 	} from 'lucide-svelte';
-	import { listeningSourceNotice } from '$lib/features/artist/components/listeningSourceNotice';
+	import {
+		SCROBBLING_PLACE,
+		listeningSourceNotice
+	} from '$lib/features/artist/components/listeningSourceNotice';
 	import { mergeArtistReleasePages } from '$lib/features/artist/queries/artistReleasePages';
 	import { mergeArtistImages } from '$lib/features/album/queries/catalogAdapters';
 	import type { ReleaseGroup } from '$lib/features/album/queries/types';
@@ -220,6 +223,8 @@
 	}));
 	const topAlbums = $derived(discoveryEnabled ? topAlbumsQuery.data : undefined);
 	const sourceNotice = $derived(listeningSourceNotice([topSongs, topAlbums, similarArtists]));
+	// The notice around the profile section it names, which shows as a link.
+	const sourceNoticeParts = $derived(sourceNotice?.split(SCROBBLING_PLACE) ?? []);
 	const loadingTopAlbums = $derived(!discoveryEnabled || topAlbumsQuery.isLoading);
 	// Every list answered that no listening service can be read: one card says so.
 	const noService = $derived(
@@ -531,6 +536,10 @@
 	});
 </script>
 
+<svelte:head
+	><title>{artist?.name ?? localArtist?.name ?? 'Artist'} - DroppedNeedle</title></svelte:head
+>
+
 {#snippet back()}
 	<BackButton />
 {/snippet}
@@ -730,7 +739,12 @@
 							class="alert alert-warning alert-soft mb-4 flex items-center gap-2 text-sm"
 						>
 							<CircleAlert class="h-4 w-4 shrink-0" />
-							<span>{sourceNotice}</span>
+							<span
+								>{sourceNoticeParts[0]}{#if sourceNoticeParts.length > 1}<a
+										class="link font-semibold"
+										href={withBasePath('/profile#scrobbling')}>{SCROBBLING_PLACE}</a
+									>{sourceNoticeParts[1]}{/if}</span
+							>
 						</div>
 					{/if}
 

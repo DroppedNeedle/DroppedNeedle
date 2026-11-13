@@ -225,7 +225,7 @@
 	}
 </script>
 
-<svelte:head><title>Organization preview · DroppedNeedle</title></svelte:head>
+<svelte:head><title>Organization preview - DroppedNeedle</title></svelte:head>
 
 {#snippet previewInspector(ordinal: number)}
 	{@const item = items.find((candidate) => candidate.ordinal === ordinal)}
