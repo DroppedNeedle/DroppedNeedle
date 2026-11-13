@@ -72,16 +72,21 @@ pub enum PathRefusal {
 /// a folder swapped for a link after the lookup is refused at the read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocatedFile {
-    /// The library folder as configured, which may itself be a link.
+    /// The folder the file is read beneath.
     pub root: PathBuf,
     /// The file, below `root`.
     pub path: PathBuf,
+    /// Whether `root` itself may be reached through a link. Library reads
+    /// and plugin file streams follow it (a library folder as configured
+    /// may be a link); held playback refuses it, its root being a real path
+    /// it already resolved.
+    pub links: RootLinks,
 }
 
 impl LocatedFile {
     /// Open the regular file for reading. Blocking.
     pub fn open(&self) -> std::io::Result<std::fs::File> {
-        open_file_beneath(&self.root, &self.path, RootLinks::Follow)
+        open_file_beneath(&self.root, &self.path, self.links)
     }
 }
 
@@ -206,6 +211,7 @@ pub fn resolve(registry: &RootRegistry, file: &CatalogFile) -> Result<LocatedFil
         Some(root) => LocatedFile {
             path: join_relative(&root.path, &file.relative_path).ok_or(PathRefusal::Outside)?,
             root: root.path.clone(),
+            links: RootLinks::Follow,
         },
         // A root removed from settings keeps its rows until the next scan;
         // the recorded path still serves while it lies below a configured
@@ -219,7 +225,11 @@ pub fn resolve(registry: &RootRegistry, file: &CatalogFile) -> Result<LocatedFil
                 .map(|root| root.path.clone())
                 .find(|root| path.starts_with(root) && path != *root)
                 .ok_or(PathRefusal::Outside)?;
-            LocatedFile { root, path }
+            LocatedFile {
+                root,
+                path,
+                links: RootLinks::Follow,
+            }
         }
     };
     match located.open() {

@@ -1,4 +1,5 @@
 import type { PlaybackSource, PlaybackState } from './types';
+import type { StreamRefusal } from './streamRefusal';
 import { getAudioElement, resumeAudioEngine } from './audioElement';
 
 const LOAD_TIMEOUT_MS = 15_000;
@@ -6,8 +7,10 @@ const STALL_TIMEOUT_MS = 15_000;
 const MEDIA_ERR_DECODE = 3;
 const MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
 
-/** The browser could not read what it was given. The server's refusals read the same to it. */
+/** The browser could not read what the server sent. */
 export const UNPLAYABLE_ERROR = 'UNPLAYABLE';
+/** The server would not send the stream; the error's message is the StreamRefusal. */
+export const STREAM_REFUSED = 'STREAM_REFUSED';
 
 type NativeSourceType = 'jellyfin' | 'local' | 'navidrome' | 'plex';
 
@@ -29,6 +32,7 @@ export class NativeAudioSource implements PlaybackSource {
 	private readonly url: string;
 	private readonly seekable: boolean;
 	private readonly transcode?: LiveTranscode;
+	private readonly whyRefused?: (url: string) => Promise<StreamRefusal | null>;
 	/** Where in the track the current pipe started. */
 	private pipeStart = 0;
 
@@ -45,13 +49,20 @@ export class NativeAudioSource implements PlaybackSource {
 
 	constructor(
 		type: NativeSourceType,
-		opts: { url: string; seekable: boolean; transcode?: LiveTranscode }
+		opts: {
+			url: string;
+			seekable: boolean;
+			transcode?: LiveTranscode;
+			/** Asks the server why it refused the address the element failed on. */
+			whyRefused?: (url: string) => Promise<StreamRefusal | null>;
+		}
 	) {
 		this.type = type;
 		this.url = opts.url;
 		// A pipe of unknown length has no scale to seek on.
 		this.seekable = opts.seekable && !(opts.transcode && !opts.transcode.duration);
 		this.transcode = opts.transcode;
+		this.whyRefused = opts.whyRefused;
 		this.audio = getAudioElement();
 	}
 
@@ -116,14 +127,23 @@ export class NativeAudioSource implements PlaybackSource {
 			const onError = () => {
 				const code = this.audio.error?.code ?? 0;
 				const message = this.getMediaErrorMessage(code);
+				const failed = this.audio.src;
 				this.emitStateChange('error');
-				this.emitError(
-					code === MEDIA_ERR_DECODE || code === MEDIA_ERR_SRC_NOT_SUPPORTED
-						? UNPLAYABLE_ERROR
-						: 'LOAD_ERROR',
-					message
-				);
-				finalize(() => reject(new Error(message)));
+				// The element reads a refused stream as one it cannot decode.
+				void this.refusalOf(failed).then((refusal) => {
+					if (this.destroyed) return;
+					if (refusal) {
+						this.emitError(STREAM_REFUSED, refusal);
+					} else {
+						this.emitError(
+							code === MEDIA_ERR_DECODE || code === MEDIA_ERR_SRC_NOT_SUPPORTED
+								? UNPLAYABLE_ERROR
+								: 'LOAD_ERROR',
+							message
+						);
+					}
+					finalize(() => reject(new Error(message)));
+				});
 			};
 
 			const onStalled = () => {
@@ -243,6 +263,11 @@ export class NativeAudioSource implements PlaybackSource {
 
 	isSeekable(): boolean {
 		return this.seekable;
+	}
+
+	private async refusalOf(url: string): Promise<StreamRefusal | null> {
+		if (!this.whyRefused || !url) return null;
+		return this.whyRefused(url);
 	}
 
 	private restartPipe(transcode: LiveTranscode, seconds: number): void {

@@ -1,4 +1,5 @@
 import type { PlaybackSource, SourceType } from './types';
+import type { StreamRefusal } from './streamRefusal';
 import { YouTubePlaybackSource } from './YouTubePlaybackSource';
 import { NativeAudioSource, type LiveTranscode } from './NativeAudioSource';
 import { YOUTUBE_PLAYER_ELEMENT_ID } from '$lib/constants';
@@ -8,6 +9,8 @@ export type NativeSourceOptions = {
 	seekable: boolean;
 	/** Set when the url is a live transcode, which cannot seek or report a length itself. */
 	transcode?: LiveTranscode;
+	/** Asks the server why it refused the address the element failed on. */
+	whyRefused?: (url: string) => Promise<StreamRefusal | null>;
 };
 
 export function createPlaybackSource(type: SourceType, opts?: NativeSourceOptions): PlaybackSource {

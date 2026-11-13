@@ -13,7 +13,12 @@ import {
 } from '$lib/features/player/playback/playbackSession';
 import { prefetchPathFor, streamUrlFor } from '$lib/features/player/playback/streamUrl';
 import { browserPlays, transcodeTarget } from '$lib/features/player/playback/transcodeTarget';
-import { UNPLAYABLE_ERROR } from '$lib/features/player/playback/NativeAudioSource';
+import { STREAM_REFUSED, UNPLAYABLE_ERROR } from '$lib/features/player/playback/NativeAudioSource';
+import {
+	REFUSAL_SAYS,
+	askWhyRefused,
+	isSaidRefusal
+} from '$lib/features/player/playback/streamRefusal';
 import {
 	getPlaybackConversionQueryOptions,
 	type Conversion
@@ -97,7 +102,9 @@ const RATINGS_WAIT_MS = 5000;
  * failures in a row stop playback. A track that fails soon after starting spends the same steps,
  * and only real playback clears the count. Thirty seconds heard since the last load earns the
  * steps back, so a dropped connection on a long track retries each time. A decode error after
- * that point is the file's, and is not retried: it would fail there again, for ever.
+ * that point is the file's, and is not retried: it would fail there again, for ever. A load
+ * the server refused (the source asks it why) is reloaded as it was, never as a transcode, and
+ * its message says why; a conversion it refused fails as one it is not making.
  *
  * A track the browser cannot play while the server is not converting is never asked for: it
  * fails at once, may still move to another source, and is marked with why.
@@ -109,8 +116,8 @@ interface Recovery {
 	phase: RecoveryPhase;
 	/** Bumped by every load: a callback from an older load is ignored. */
 	generation: number;
-	/** The tracks that failed in a row; its length is the error count. */
-	failed: string[];
+	/** The tracks that failed in a row and why; its length is the error count. */
+	failed: { track: string; why: string }[];
 	/** The current load asked the server for a transcode. */
 	transcoded: boolean;
 	/** The browser could not read this track's original, so its reloads stay transcodes. */
@@ -377,10 +384,11 @@ function createPlayerStore() {
 		storeSessionData(null);
 	}
 
-	/** Reads whether the server converts, from the cache while it is fresh. */
-	async function readConversion(): Promise<Conversion | null> {
+	/** Reads whether the server converts, from the cache while it is fresh unless `fresh`. */
+	async function readConversion(fresh = false): Promise<Conversion | null> {
+		const options = getPlaybackConversionQueryOptions();
 		try {
-			const answer = await queryClient.fetchQuery(getPlaybackConversionQueryOptions());
+			const answer = await queryClient.fetchQuery(fresh ? { ...options, staleTime: 0 } : options);
 			conversion = answer.conversion;
 		} catch {
 			conversion = null;
@@ -423,6 +431,12 @@ function createPlayerStore() {
 		const source = createPlaybackSource(item.sourceType, {
 			url: url!,
 			seekable: true,
+			whyRefused: async (failed) => {
+				const why = await askWhyRefused(failed, sourceType !== 'local');
+				// Converting stopped since it was read: whether it is off or cannot is read again.
+				if (why === 'not_converting') await readConversion(true);
+				return why;
+			},
 			transcode: format
 				? {
 						duration: item.duration ?? 0,
@@ -523,15 +537,22 @@ function createPlayerStore() {
 		return alternates[0] ?? null;
 	}
 
-	function handleTrackError(gen: number, error?: { code: string; message: string }): void {
+	function handleTrackError(gen: number, reported?: { code: string; message: string }): void {
 		// A failed load reports twice, through the source and through its promise.
 		if (!isCurrent(gen) || recovery.phase === 'failed') return;
+		// A conversion the server refused fails as one it was found not making before the load.
+		const error =
+			reported?.code === STREAM_REFUSED && reported.message === 'not_converting'
+				? { code: NOT_CONVERTING, message: conversion === 'off' ? 'off' : 'unavailable' }
+				: reported;
 		const index = currentIndex;
 		const item = queue[index];
 		const trackName = nowPlaying?.trackName ?? item?.trackName ?? 'Unknown track';
 		const { phase, transcoded } = recovery;
 		const undecodable = error?.code === UNPLAYABLE_ERROR;
 		const notConverting = error?.code === NOT_CONVERTING;
+		const refusal =
+			error?.code === STREAM_REFUSED && isSaidRefusal(error.message) ? error.message : null;
 		const fileBroke = undecodable && recovery.heard >= REARM_AFTER_PLAYED_S;
 		// A first failure may be transient: reload once. A transcode that failed is
 		// not one to repeat, and an original the browser could not read becomes one,
@@ -554,25 +575,36 @@ function createPlayerStore() {
 		}
 		cancelSkip();
 		recovery.phase = 'failed';
-		recovery.failed.push(trackName);
 		playbackState = 'error';
+		// A refusal is the server's, not the track's, so the queue does not mark it.
 		const reason: UnplayableReason | null = notConverting
 			? error?.message === 'off'
 				? 'converting_off'
 				: 'cannot_convert'
-			: transcoded
+			: transcoded && !refusal
 				? 'conversion_failed'
 				: null;
 		if (item && reason) unplayable = { ...unplayable, [itemKey(item)]: reason };
+		const why = notConverting
+			? `this browser can't play ${formatLabel(item?.format)}`
+			: refusal
+				? REFUSAL_SAYS[refusal]
+				: "can't play it";
+		recovery.failed.push({ track: trackName, why });
 		if (recovery.failed.length >= MAX_CONSECUTIVE_ERRORS) {
-			const named = recovery.failed.map((n) => `"${n}"`).join(', ');
-			toastStore.notify(`Stopped: can't play ${named}`, 'error');
+			const named = recovery.failed.map((failure) => `"${failure.track}"`).join(', ');
+			const shared = recovery.failed.every((failure) => failure.why === why);
+			toastStore.notify(
+				!shared
+					? "Stopped after three tracks in a row couldn't play"
+					: refusal
+						? `Stopped: ${why}`
+						: `Stopped: can't play ${named}`,
+				'error'
+			);
 			applyResetState();
 			return;
 		}
-		const why = notConverting
-			? `this browser can't play ${formatLabel(item?.format)}`
-			: "can't play it";
 		// An admin can turn transcoding on; the note says where.
 		const action =
 			reason === 'converting_off' && authStore.isAdmin
@@ -592,7 +624,9 @@ function createPlayerStore() {
 			}, ERROR_SKIP_DELAY_MS);
 		} else {
 			say(
-				notConverting ? `Can't play "${trackName}": ${why}` : `Can't play "${trackName}"`,
+				notConverting || refusal
+					? `Can't play "${trackName}": ${why}`
+					: `Can't play "${trackName}"`,
 				'error'
 			);
 		}

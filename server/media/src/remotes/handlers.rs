@@ -652,11 +652,13 @@ pub async fn get_image(
         .image(user.user_id(), source, id, query.clamped())
         .await
         .map_err(render)?;
+    // Private: the picture came through this user's own media server
+    // sign-in, so no shared cache in front may keep it for anyone else.
     bytes_response(
         source,
         bytes,
         &content_type,
-        "public, max-age=31536000, immutable",
+        "private, max-age=31536000, immutable",
     )
 }
 

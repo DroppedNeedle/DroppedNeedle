@@ -23,6 +23,7 @@ use crate::downloads::queue_rows::Viewer;
 use crate::reason::{Reason, ReasonKind};
 use crate::requests::error::RequestsError;
 use droppedneedle_auth::{Curator, Principal, User};
+use droppedneedle_kernel::beneath::RootLinks;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
@@ -554,11 +555,17 @@ pub async fn audio_handler(
         .extension()
         .and_then(|ext| content_type_for_extension(&ext.to_string_lossy()))
         .unwrap_or("application/octet-stream");
-    // The held copy's real path, checked to lie in its folder.
+    // The held copy's real path, checked to lie in its folder. The read
+    // walks it from `/` with no link followed, so a folder swapped for a
+    // link after the check is refused.
     let Some(root) = path.parent().map(std::path::Path::to_path_buf) else {
         return Err(ApiError::from(RequestsError::NotFound));
     };
-    let file = LocatedFile { root, path };
+    let file = LocatedFile {
+        root,
+        path,
+        links: RootLinks::Refuse,
+    };
     let mut response = Response::new(Body::from_stream(file_range(file, span.start, span.len)));
     *response.status_mut() = span.status();
     span.write_headers(response.headers_mut());

@@ -41,13 +41,15 @@ function fakeElement(fails: (url: string) => number | null) {
 	return { element, loads };
 }
 
-// The server: whether it converts, and the session reports a media server track sends.
+// The server: whether it converts, the session reports a media server track
+// sends, and its answer when a failed load asks again (it sends the stream).
 function server(conversion: 'on' | 'off') {
 	return fakeApi({
 		'GET /api/v3/playback/conversion': { conversion },
 		'POST /api/v3/playback/start': { accepted: true, session: 's' },
 		'POST /api/v3/playback/progress': { accepted: true },
-		'POST /api/v3/playback/stop': { accepted: true, scrobbled: false }
+		'POST /api/v3/playback/stop': { accepted: true, scrobbled: false },
+		'HEAD /api/v3/stream/{source}/{*key}': undefined
 	});
 }
 

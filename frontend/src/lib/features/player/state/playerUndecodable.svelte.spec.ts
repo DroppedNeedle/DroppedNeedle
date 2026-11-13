@@ -7,7 +7,7 @@ import { launchRemotePlayback } from '$lib/features/player/playback/launchRemote
 import type { PlaybackMeta, QueueItem } from '$lib/features/player/playback/types';
 import { queryClient } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
-import { fakeApi } from '$lib/test/api';
+import { apiError, fakeApi, type FakeApi } from '$lib/test/api';
 import { playerStore } from './player.svelte';
 
 const MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
@@ -64,8 +64,18 @@ function item(id: string, format: string): QueueItem {
 	};
 }
 
+function onJellyfin(id: string): QueueItem {
+	return {
+		...item(id, 'mp3'),
+		sourceType: 'jellyfin',
+		availableSources: ['jellyfin'],
+		sourceIds: { jellyfin: id }
+	};
+}
+
 describe('a track the browser cannot play', () => {
 	let refused: string[];
+	let server: FakeApi;
 
 	beforeEach(async () => {
 		// Playback starts from a person's click; the audio engine waits for one.
@@ -75,12 +85,14 @@ describe('a track the browser cannot play', () => {
 		await userEvent.click(button);
 		button.remove();
 		queryClient.clear();
-		fakeApi({
+		server = fakeApi({
 			'GET /api/v3/playback/conversion': { conversion: 'on' },
 			// A media server track reports its play session.
 			'POST /api/v3/playback/start': { accepted: true, session: 's' },
 			'POST /api/v3/playback/progress': { accepted: true },
-			'POST /api/v3/playback/stop': { accepted: true, scrobbled: false }
+			'POST /api/v3/playback/stop': { accepted: true, scrobbled: false },
+			// A failed load asks the server again; it sends the stream.
+			'HEAD /api/v3/stream/{source}/{*key}': undefined
 		});
 		refused = [ALAC];
 		vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockImplementation((type) =>
@@ -209,5 +221,48 @@ describe('a track the browser cannot play', () => {
 		expect(loads).toEqual(['/api/v3/stream/local/broken?format=flac', '/api/v3/stream/local/next']);
 		expect(toastStore.notify).toHaveBeenCalledTimes(1);
 		expect(toastStore.notify).toHaveBeenCalledWith('Skipped "broken": can\'t play it', 'warning');
+	});
+
+	it.each([
+		{ status: 502, code: 'REMOTE_UNAVAILABLE', says: "your media server isn't answering" },
+		{ status: 503, code: 'SERVER_BUSY', says: 'the server is busy, try again shortly' },
+		{ status: 404, code: 'STREAM_NOT_FOUND', says: "the file isn't there" }
+	])(
+		'says why the server refused a stream, and asks for no transcode ($status)',
+		async ({ status, code, says }) => {
+			// The element reads a refusal as a file it cannot decode.
+			const { loads } = fakeElement(() => false);
+			server.use({ 'HEAD /api/v3/stream/{source}/{*key}': apiError(status, code) });
+
+			playerStore.playQueue([onJellyfin('refused')]);
+			await expect
+				.poll(() => vi.mocked(toastStore.notify).mock.calls)
+				.toEqual([[`Can't play "refused": ${says}`, 'error']]);
+
+			expect(loads).toEqual(['/api/v3/stream/jellyfin/refused', '/api/v3/stream/jellyfin/refused']);
+		}
+	);
+
+	it('stops asking a server that does not answer, and says it cannot be reached', async () => {
+		const { loads } = fakeElement(() => false);
+		// The asked limit passes in a millisecond.
+		const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+		const limit = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => realTimeout(1));
+		server.use({
+			// Never answers: only the request's own abort ends it.
+			'HEAD /api/v3/stream/{source}/{*key}': ({ signal }) =>
+				new Promise<never>((_, reject) => {
+					if (signal?.aborted) reject(signal.reason);
+					signal?.addEventListener('abort', () => reject(signal.reason));
+				})
+		});
+
+		playerStore.playQueue([onJellyfin('silent')]);
+		await expect
+			.poll(() => vi.mocked(toastStore.notify).mock.calls)
+			.toEqual([[`Can't play "silent": the server can't be reached`, 'error']]);
+
+		expect(limit).toHaveBeenCalledWith(5_000);
+		expect(loads).toEqual(['/api/v3/stream/jellyfin/silent', '/api/v3/stream/jellyfin/silent']);
 	});
 });

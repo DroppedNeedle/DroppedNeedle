@@ -8,8 +8,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use axum::extract::{Path as AxumPath, State};
+use axum::http::{HeaderMap, StatusCode};
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::queue_rows::Viewer;
+use droppedneedle_acquire::held::http::audio_handler;
 use droppedneedle_acquire::held::store::{EntryOrigin, HeldRoot};
 use droppedneedle_acquire::import_folder::ImportFolderState;
 use droppedneedle_acquire::import_folder::site::ImportFolderOverlap;
@@ -17,6 +20,8 @@ use droppedneedle_acquire::landing::library::LibraryLanding;
 use droppedneedle_acquire::landing::ports::{
     ImportFile, ImportOrigin, ImportRequest, LandingLibrary as _,
 };
+use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_auth::{Role, User};
 use droppedneedle_kernel::runtime_config::sections::ImportFolder;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_kernel::test_support::ManualClock;
@@ -29,7 +34,7 @@ use droppedneedle_library::tags::save::{TagEdit, save_tags};
 use futures_util::future::BoxFuture;
 
 use crate::common::ScratchDir;
-use crate::common::auth::AuthRig;
+use crate::common::auth::{AuthRig, test_principal};
 use crate::common::library::{every_priority, library_at};
 use crate::common::probe::Probe as _;
 
@@ -771,4 +776,63 @@ async fn a_new_folder_neither_blocks_nor_drops_the_old_ones_leftovers() {
     let left = leftovers().await;
     assert_eq!(left.len(), 1);
     assert_ne!(left[0].id, old[0].id);
+}
+
+/// Play reads a leftover beneath its real folder and follows no link on
+/// the way: an album folder swapped for a link once the file is checked
+/// streams nothing from where the link points.
+#[tokio::test]
+async fn play_never_streams_through_a_folder_swapped_for_a_link() {
+    let rig = Rig::new().await;
+    let odd = rig.import.join("Odds/09 Glory Box.flac");
+    tagged(&odd, "flac_full_01.flac", "Nothing Alike", "Glory Box", 9);
+    rig.pass_after_quiet().await;
+    let entry = rig
+        .acquire
+        .held
+        .list(&admin(), None, None, false)
+        .await
+        .expect("held list")
+        .into_iter()
+        .find(|entry| entry.origin == EntryOrigin::ImportFolder)
+        .expect("the leftover is listed");
+    let file_id = entry.files[0].id.to_string();
+    let play = || {
+        audio_handler(
+            State(rig.acquire.held.clone()),
+            User(test_principal(
+                "u-admin",
+                Role::Admin,
+                "sess-admin",
+                SessionKind::Standard,
+            )),
+            AxumPath(file_id.clone()),
+            HeaderMap::new(),
+        )
+    };
+    let heard = play().await.expect("it plays").into_body();
+    assert_eq!(
+        axum::body::to_bytes(heard, usize::MAX)
+            .await
+            .expect("the whole file"),
+        std::fs::read(&odd).expect("leftover")
+    );
+
+    let answer = play().await.expect("the file is checked");
+    assert_eq!(answer.status(), StatusCode::OK);
+
+    let elsewhere = ScratchDir::new("import-elsewhere");
+    let size = std::fs::metadata(&odd).expect("leftover").len();
+    std::fs::create_dir_all(elsewhere.join("Odds")).expect("folder");
+    std::fs::write(
+        elsewhere.join("Odds/09 Glory Box.flac"),
+        vec![b'x'; usize::try_from(size).expect("size")],
+    )
+    .expect("a file of the same size");
+    std::fs::rename(rig.import.join("Odds"), elsewhere.join("moved")).expect("moved out");
+    std::os::unix::fs::symlink(elsewhere.join("Odds"), rig.import.join("Odds"))
+        .expect("swapped for a link");
+
+    let body = axum::body::to_bytes(answer.into_body(), usize::MAX).await;
+    assert!(body.is_err(), "the swapped folder is refused at the read");
 }

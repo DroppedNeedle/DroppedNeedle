@@ -1,7 +1,7 @@
 import { onTestFinished, vi } from 'vitest';
 import type { paths } from '$lib/api/v3/openapi';
 
-type Method = 'get' | 'post' | 'put' | 'patch' | 'delete';
+type Method = 'get' | 'head' | 'post' | 'put' | 'patch' | 'delete';
 type SuccessCode = 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207 | 208 | 226;
 
 /** `'GET /api/v3/albums/{album_id}/basic'`: a method and a contract template. */
@@ -37,6 +37,11 @@ export interface FakeRequest {
 	query: URLSearchParams;
 	/** The parsed JSON body, or undefined when there is none. */
 	body: unknown;
+	/**
+	 * The request's abort signal. A handler that never answers rejects with
+	 * its reason when it fires, as the browser's fetch does.
+	 */
+	signal?: AbortSignal;
 	/**
 	 * Uploads only: report `bytes` of the body as sent, as the browser does
 	 * while an upload is in flight. The whole body counts as sent once the
@@ -243,6 +248,7 @@ export function fakeApi(routes: FakeRoutes): FakeApi {
 				params,
 				query: url.searchParams,
 				body: await readBody(init?.body ?? (request ? await request.text() : undefined)),
+				signal: init?.signal ?? request?.signal,
 				sent
 			};
 			answered.push({ key: route.key, request: fake });

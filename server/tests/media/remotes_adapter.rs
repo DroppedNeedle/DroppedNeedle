@@ -1329,10 +1329,10 @@ async fn routes_serve_images_with_cache_contract() {
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
     assert_eq!(header_map.get("content-type"), Some(&"image/jpeg"));
-    assert!(
-        header_map
-            .get("cache-control")
-            .is_some_and(|value| value.contains("immutable"))
+    assert_eq!(
+        header_map.get("cache-control"),
+        Some(&"private, max-age=31536000, immutable"),
+        "a picture relayed through one user's sign-in is never shared"
     );
     assert_eq!(header_map.get("x-content-type-options"), Some(&"nosniff"));
     assert_eq!(header_map.get("content-security-policy"), Some(&"sandbox"));

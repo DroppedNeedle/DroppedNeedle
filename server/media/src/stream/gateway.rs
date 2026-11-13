@@ -36,6 +36,7 @@ use std::sync::Arc;
 use super::leases::DirectGate;
 use super::local_files::{CatalogFile, LibraryFiles, LocateError, LocatedFile, PathRefusal};
 use super::plugin_url;
+use droppedneedle_kernel::beneath::RootLinks;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::ConnectApps;
 use droppedneedle_plugins::capabilities::stream::{open_url, proxy_chunks};
@@ -455,7 +456,12 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                 // The plugin layer resolved the path to its real spelling,
                 // inside a folder the plugin may serve from.
                 let root = path.parent().ok_or(StreamFault::NotFound)?.to_path_buf();
-                let read = self.read_plan(LocatedFile { root, path }, None, request)?;
+                let file = LocatedFile {
+                    root,
+                    path,
+                    links: RootLinks::Follow,
+                };
+                let read = self.read_plan(file, None, request)?;
                 self.stream_read(read, request, head_only, lease).await
             }
             PluginStream::Remote {
