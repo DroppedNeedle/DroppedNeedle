@@ -353,8 +353,8 @@ Run from the repo root. `make help` lists every target.
 - Pace per install is not enough. MetaBrainz counts the total across every
   install, so ListenBrainz and MusicBrainz reads are cached for as long as the
   data allows, background work never refetches what a kept row can answer, and
-  a user's chosen source is honoured. A change that adds calls to them says how
-  many a day, for one active install.
+  a user's chosen source is asked first, the other only when it cannot answer.
+  A change that adds calls to them says how many a day, for one active install.
 - The User-Agent is `DroppedNeedleApp/v<version> (<contact>; <site>)`, the form
   MetaBrainz's gateway matches. Never change it, or send another name to get
   past a refusal, without asking the provider first.
