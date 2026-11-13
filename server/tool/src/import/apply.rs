@@ -21,6 +21,7 @@ use droppedneedle_catalog::concerts::store::{insert_city_in, set_seen_in};
 use droppedneedle_kernel::db::open_connection;
 use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_kernel::runtime_config::{Crypto, LegacyConfig};
+use droppedneedle_library::publish::bin::record_v2_path;
 
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 use serde_json::Value;
@@ -30,7 +31,9 @@ use super::carry::bundle::{Bundle, BundleRejection};
 use super::envelope::{ExportFile, Opener, collect_sealed, unseal_value};
 use super::plan::{Plan, Planned, sha_hex};
 use super::report::{ExitCode, ExportProvenance, ImportReport, ReportBuilder, now_ms};
-use super::settings::{configs_equivalent, current_settings, stage_settings, write_settings};
+use super::settings::{
+    configs_equivalent, current_settings, stage_settings, v2_recycle_bin_path, write_settings,
+};
 use super::snapshot::DatabaseSnapshot;
 use super::sql;
 use super::validate::{ValidationIssue, read_export};
@@ -483,9 +486,15 @@ fn run_guarded(
     let plan = Plan::decide(doc, &snapshot, unsealed, report);
     plan.apply(&tx, &request.crypto, unsealed)?;
     let settings_written = write_settings(&tx, &staged_config, &request.crypto)?;
+    // Recorded so v2's bin folder is taken by itself only while it holds
+    // entries.
+    let bin_recorded = match v2_recycle_bin_path(&staged_config) {
+        Some(bin) => record_v2_path(&tx, &bin, now_ms())?,
+        None => 0,
+    };
     // A pure re-import (every record and setting identical) writes nothing
     // at all, not even an audit row: idempotency means zero writes.
-    let run_id = if plan.has_writes() || settings_written > 0 {
+    let run_id = if plan.has_writes() || settings_written + bin_recorded > 0 {
         Some(record_import_run(&tx, doc, report, completed_exit(report))?)
     } else {
         None

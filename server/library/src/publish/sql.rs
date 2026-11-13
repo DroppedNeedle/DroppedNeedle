@@ -316,6 +316,14 @@ droppedneedle_kernel::sql! {
     /// milliseconds).
     pub(super) BIN_MARK = "INSERT INTO library_recycle_bin_marks (path, marked_at) \
              VALUES (?1, ?2) ON CONFLICT(path) DO UPDATE SET marked_at = excluded.marked_at";
+    /// Record that v2 used the recycle bin path `?1` (trimmed, as
+    /// configured), at `?2` (unix milliseconds). A path already recorded
+    /// keeps its row.
+    pub(super) BIN_V2_CARRY = "INSERT INTO library_recycle_bin_v2_paths (path, carried_at) \
+             VALUES (?1, ?2) ON CONFLICT(path) DO NOTHING";
+    /// Whether v2 used the recycle bin path `?1` (trimmed, as configured).
+    pub(super) BIN_V2_USED = "SELECT EXISTS (SELECT 1 FROM library_recycle_bin_v2_paths \
+             WHERE path = ?1)";
     /// Whether the journal holds a copy that reached a bin below folder
     /// `?1` (ending in `/`) and has not left it.
     pub(super) BIN_HOLDS_COPIES = "SELECT EXISTS (SELECT 1 FROM library_publish_replacements \

@@ -439,6 +439,7 @@ async fn reimport_is_identical_with_zero_writes() {
     export["follows"] = json!([fixture.follow("u1", MBID)]);
     export["approvals"] = json!([fixture.approval("u1", MBID)]);
     export["settings"]["wanted"] = json!({"enabled": true});
+    export["settings"]["library_management"] = json!({"recycle_bin_path": "/srv/bin"});
 
     let (target_db, _target) = migrated_file();
     let (_dir, config_path, _crypto) = scratch_config("idempotent");
@@ -1594,7 +1595,8 @@ async fn a_v2_policy_lands_as_a_recipe_with_its_range() {
 /// report names each removed setting as dropped, the fields kept beside
 /// them land, and the stored download policy still decodes. Its recycle
 /// bin path moves to Library Management, where v3 sets the bin, over a path
-/// removals never used, and the report names the path dropped. v2's
+/// removals never used, and the report names the path dropped; the path
+/// removals used is recorded as v2's bin, the dropped one is not. v2's
 /// ListenBrainz instance account is dropped, and the section left reads
 /// with ListenBrainz reads on.
 #[tokio::test]
@@ -1698,6 +1700,13 @@ async fn removed_settings_import_and_are_reported() {
     assert_eq!(
         stored["library_management"],
         json!({"recycle_bin_path": "/srv/bin", "recycle_retention_days": 12})
+    );
+    assert_eq!(
+        target_db.column::<String>(
+            "SELECT path FROM library_recycle_bin_v2_paths ORDER BY path",
+            []
+        ),
+        ["/srv/bin"]
     );
 }
 

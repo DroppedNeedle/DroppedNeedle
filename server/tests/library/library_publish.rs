@@ -3417,6 +3417,61 @@ fn a_bin_holding_none_of_its_copies_is_never_marked() {
     assert_eq!(marks(), 1);
 }
 
+/// After an upgrade from v2, the bin path v2 used holds no entry folder at
+/// the first use (its share not mounted, or v2 never put a file there): it
+/// is not marked, files wait and Library Management offers the folder to
+/// an admin. Once it holds v2's dated entry folders, the next session
+/// marks it and leaves v2's entries where they are.
+#[test]
+fn a_v2_bin_holding_no_entry_folder_is_never_marked() {
+    use publish::bin::{BIN_MARKER, BinsUnknown, record_v2_path};
+
+    let fix = fixture("bin-v2-first-mark");
+    let vault = fix.dir.join("vault");
+    std::fs::create_dir_all(vault.join("bin")).unwrap();
+    let bin = std::fs::canonicalize(vault.join("bin")).unwrap();
+    let configured = bin.display().to_string();
+    let (_, resolved) = fixture_roots(&fix);
+    let db = restart(&fix);
+    let mut conn = open_db(&fix);
+    let tx = conn.transaction().unwrap();
+    assert_eq!(record_v2_path(&tx, &configured, 1).unwrap(), 1);
+    tx.commit().unwrap();
+    let (_runtime, _platform, bins) = bin_source(&fix, &db, &configured);
+    let marks = || -> i64 {
+        open_db(&fix)
+            .query_row(
+                "SELECT COUNT(*) FROM library_recycle_bin_marks",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+
+    assert_eq!(
+        bins.current_over(&resolved).err(),
+        Some(BinsUnknown::Unmarked)
+    );
+    assert!(
+        bins.warning(&configured)
+            .is_some_and(|warning| warning.accept_folder),
+        "an admin may use the folder"
+    );
+    assert_eq!(std::fs::read_dir(&bin).unwrap().count(), 0, "no marker");
+    assert_eq!(marks(), 0);
+
+    let entry = bin.join("20250101T000000-deadbeef");
+    std::fs::create_dir(&entry).unwrap();
+    std::fs::write(entry.join("a.flac"), b"v2-binned-file").unwrap();
+    assert!(bins.current_over(&resolved).is_ok());
+    assert!(bin.join(BIN_MARKER).is_file());
+    assert_eq!(marks(), 1);
+    assert_eq!(
+        std::fs::read(entry.join("a.flac")).unwrap(),
+        b"v2-binned-file"
+    );
+}
+
 /// A configured recycle bin whose folder is not there (a share not
 /// mounted) is never made. A new session finds no bin and waits; one that
 /// opened while the folder was there leaves a replaced file under its
@@ -5863,6 +5918,59 @@ fn old_entries_no_row_names_lose_only_their_plain_files() {
     assert!(foreign.join("old.flac").is_file());
     assert!(young.join("young.flac").is_file());
     assert!(copies.values().all(|copy| copy.is_file()));
+}
+
+/// The old entries v2 left in its bin are deleted by their date only once
+/// the bin is marked: a pass over the folder before any removal or upgrade
+/// marked it keeps an entry past the retention, so the first use still
+/// finds them and marks the folder. The next pass deletes it.
+#[test]
+fn a_v2_bin_keeps_its_old_entries_until_it_is_marked() {
+    use droppedneedle_library::scan::models::EffectivePolicy;
+    use droppedneedle_library::scan::roots::{LibraryRoot, RootRegistry};
+    use publish::bin::{BIN_MARKER, record_v2_path};
+
+    let fix = fixture("bin-v2-expiry");
+    let vault = fix.dir.join("vault");
+    std::fs::create_dir_all(vault.join("bin")).unwrap();
+    let bin = std::fs::canonicalize(vault.join("bin")).unwrap();
+    let configured = bin.display().to_string();
+    let old = bin.join("20200101T000000-0a1b2c3d");
+    std::fs::create_dir(&old).unwrap();
+    std::fs::write(old.join("old.flac"), b"v2-binned-file").unwrap();
+    let db = restart(&fix);
+    let mut conn = open_db(&fix);
+    let tx = conn.transaction().unwrap();
+    record_v2_path(&tx, &configured, 1).unwrap();
+    tx.commit().unwrap();
+    let (_runtime, _platform, bins) = bin_source(&fix, &db, &configured);
+    let (library, resolved) = fixture_roots(&fix);
+    let registry = RootRegistry::new(
+        library
+            .iter()
+            .map(|root| LibraryRoot::new(&root.id, root.dir.clone(), EffectivePolicy::Automatic))
+            .collect(),
+        true,
+        "rev-1",
+    );
+    let pruned = || {
+        let mut roots = library.clone();
+        roots.extend(bins.for_expiry(&registry).unwrap().0);
+        Sandbox::new(roots).unwrap()
+    };
+
+    let report = run_expiry(&fix, &pruned(), 200);
+    assert_eq!(report.legacy_deleted, 0);
+    assert!(old.join("old.flac").is_file(), "the old entry stays");
+    assert!(!bin.join(BIN_MARKER).exists(), "expiry marks nothing");
+
+    assert!(
+        bins.current_over(&resolved).is_ok(),
+        "its first use marks it"
+    );
+    let report = run_expiry(&fix, &pruned(), 200);
+    assert_eq!(report.legacy_deleted, 1);
+    assert!(!old.exists());
 }
 
 /// Expiry never deletes from a bin that is `/`, is or holds a download

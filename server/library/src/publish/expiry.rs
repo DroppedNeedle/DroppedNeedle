@@ -31,7 +31,7 @@ use rusqlite::params;
 use sha2::{Digest as _, Sha256};
 
 use super::journal::{JournalKind, JournalState};
-use super::paths::{FileStat, Sandbox, incoming_temp};
+use super::paths::{FileStat, Root, Sandbox, incoming_temp};
 use super::{PublishError, sql};
 
 /// What expiry remembers between passes: what it last logged about each
@@ -748,12 +748,13 @@ pub(super) fn drop_entry(copy: &Path) {
     }
 }
 
-/// Entries no row names, in every bin of the pass: a top-level folder
-/// named like ours (any release's `<stamp>-<hex>`) whose stamp is past
-/// the retention loses its plain files, then itself. A folder holding
-/// anything else is kept and logged; a name not like ours is never
-/// touched (a `.recycle` may be a Samba share's). Answers how many went.
-/// An empty entry folder whose rows are all marked goes too.
+/// Entries no row names, in every bin of the pass whose old entries may
+/// go ([`super::bin::prunes_old_entries`]): a top-level folder named like
+/// ours (any release's `<stamp>-<hex>`) whose stamp is past the retention
+/// loses its plain files, then itself. A folder holding anything else is
+/// kept and logged; a name not like ours is never touched (a `.recycle`
+/// may be a Samba share's). Answers how many went. An empty entry folder
+/// whose rows are all marked goes too, in every bin.
 ///
 /// Every entry made since removals went through the publisher has a row,
 /// recorded before the file moves, and rows are never purged, so this
@@ -791,7 +792,7 @@ fn legacy(
 }
 
 /// The old entry folders no row names, stamped before `cutoff`, at the top
-/// of every bin of `sandbox`. Only names are read.
+/// of every bin of `sandbox` whose old entries may go. Only names are read.
 pub(crate) fn legacy_entries(
     db: &Db,
     sandbox: &Sandbox,
@@ -805,7 +806,7 @@ fn legacy_from(
     cutoff: f64,
     names: &HashMap<String, bool>,
 ) -> Result<Vec<PathBuf>, PublishError> {
-    Ok(entry_folders(sandbox)?
+    Ok(entry_folders(sandbox, super::bin::prunes_old_entries)?
         .into_iter()
         .filter(|(name, _)| {
             !names.contains_key(name)
@@ -815,12 +816,16 @@ fn legacy_from(
         .collect())
 }
 
-/// The folders at the top of every bin of `sandbox` with an entry's
-/// name (`<stamp>-<hex>`), with that name. Only names are read.
-fn entry_folders(sandbox: &Sandbox) -> Result<Vec<(String, PathBuf)>, PublishError> {
+/// The folders at the top of every bin of `sandbox` that `from` takes
+/// with an entry's name (`<stamp>-<hex>`), with that name. Only names are
+/// read.
+fn entry_folders(
+    sandbox: &Sandbox,
+    from: fn(&Root) -> bool,
+) -> Result<Vec<(String, PathBuf)>, PublishError> {
     let mut found = Vec::new();
     for bin in sandbox.bins()? {
-        if sandbox.ensure_bin_dir(bin).is_err() {
+        if !from(bin) || sandbox.ensure_bin_dir(bin).is_err() {
             continue;
         }
         let Ok(children) = std::fs::read_dir(&bin.dir) else {
@@ -846,7 +851,7 @@ fn drop_spent_entries(
     names: &HashMap<String, bool>,
 ) -> Result<(), PublishError> {
     let mut touched = HashSet::new();
-    for (name, path) in entry_folders(sandbox)? {
+    for (name, path) in entry_folders(sandbox, |_| true)? {
         if names.get(&name) != Some(&true) {
             continue;
         }

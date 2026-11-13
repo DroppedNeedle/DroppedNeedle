@@ -503,10 +503,11 @@ Run from the repo root. `make help` lists every target.
   while it is down.
 - The configured recycle bin is known by the marker file the app leaves
   in it on first use. A bin path with a record but no marker in its
-  folder (a share not mounted leaves an empty folder), or, before it is
-  marked, one holding none of the journal's copies, is not there:
-  removals and upgrades wait, and only an admin accepting the folder
-  marks it again.
+  folder (a share not mounted leaves an empty folder) is not there, and,
+  before it is marked, neither is a folder holding no entry folder while
+  the journal has copies in it or v2 used the path (the upgrade records
+  it): removals and upgrades wait, and only an admin accepting the folder
+  marks it.
 - A removal sends the sidecars matching the folder's Library Management
   patterns (the default list while none is set up) to the recycle bin
   with the music, and Put back brings them home. One named like a removed
@@ -525,7 +526,12 @@ Run from the repo root. `make help` lists every target.
   disk before the file moves.
 - A recycle bin copy is deleted only when the identity recorded when it
   landed in the bin (device, inode, size, mtime, ctime) still matches, or its
-  bytes match the plan hash. Anything else is kept.
+  bytes match the plan hash. Anything else is kept. The one exception is an
+  entry folder no journal row names (every entry v2 left): it is deleted by
+  the date in its name once the retention is up or an admin empties the
+  bin, as v2 did, only at the top of a library folder's `.recycle` or of a
+  marked configured bin, and only while the folder holds nothing but plain
+  files.
 - A scan judges a track gone (walked past) in one place, `walked_past!`
   in `library/src/scan/sqlite_store/`, and never under a folder the run
   refused as a link (`refused_scope!`, a rule's scope or a link the walk

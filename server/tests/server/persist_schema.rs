@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 178);
+    assert_eq!(table_names(&connection).len(), 179);
     assert_eq!(
         scalar(
             &connection,
@@ -351,6 +351,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0145_v3_recycle_bin_marks.sql",
         "0f4d672ae37160275b52a9a7ef61945ba26f81042b2374566f2c49feab411cc1",
+    ),
+    (
+        "0146_v2_recycle_bin_paths.sql",
+        "209f36d809799bb4e7a8c80bdc39344f04aff470c4d275be1d57e99182224a26",
     ),
 ];
 
@@ -1360,6 +1364,49 @@ fn recycle_bin_marks_upgrade_adds_an_empty_table() {
         connection
             .execute_batch(
                 "INSERT INTO library_recycle_bin_marks (path, marked_at) VALUES ('/x', 'soon')"
+            )
+            .is_err(),
+        "the table is strict"
+    );
+}
+
+/// 0146 adds the table of recycle bin paths v2 used, empty, and changes
+/// nothing else: only an upgrade from v2 records a path in it.
+#[test]
+fn v2_recycle_bin_paths_upgrade_adds_an_empty_table() {
+    let dir = ScratchDir::new("v2-recycle-bin-paths");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..11], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 145);
+    let before_schema = schema_rows(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..12], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 146);
+    let mut after = schema_rows(&connection);
+    after.retain(|(_, _, table, _)| table != "library_recycle_bin_v2_paths");
+    assert_eq!(after, before_schema, "nothing else changes");
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM library_recycle_bin_v2_paths"
+        ),
+        0
+    );
+    connection
+        .execute_batch(
+            "INSERT INTO library_recycle_bin_v2_paths (path, carried_at) VALUES ('/bin', 1)",
+        )
+        .unwrap();
+    assert!(
+        connection
+            .execute_batch(
+                "INSERT INTO library_recycle_bin_v2_paths (path, carried_at) VALUES ('/x', 'soon')"
             )
             .is_err(),
         "the table is strict"

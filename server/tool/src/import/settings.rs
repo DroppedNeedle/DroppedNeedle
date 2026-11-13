@@ -273,6 +273,20 @@ pub(super) fn stage_settings(
     Ok(staged)
 }
 
+/// The recycle bin path v2 used, trimmed, from the staged settings: the
+/// export's Library Management path or the one moved there from its
+/// download policy. Library Management is a section the import replaces,
+/// so it never holds a path the target set. `None` when it names none.
+pub(super) fn v2_recycle_bin_path(staged: &Value) -> Option<String> {
+    staged
+        .get("library_management")?
+        .get("recycle_bin_path")?
+        .as_str()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+}
+
 /// v2 answered single sign-on at `/api/v1/auth/oidc/callback`, which v3
 /// does not serve: a redirect address ending there moves to v3's path. One
 /// that ends elsewhere (a proxy's own path) is kept, since only the

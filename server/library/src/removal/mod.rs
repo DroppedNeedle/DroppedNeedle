@@ -179,8 +179,8 @@ const BIN_UNREACHABLE: [Reason; 5] = bin_reasons!(
     "Check that its drive or share is mounted and the server can open it"
 );
 const BIN_UNMARKED: [Reason; 5] = bin_reasons!(
-    "The recycle bin folder isn't the one used before",
-    "Mount its share (restart DroppedNeedle if it started while the share was down), or choose Use this folder under Library Management"
+    "DroppedNeedle can't tell the recycle bin folder is the one used before",
+    "If its share isn't mounted, mount it (and restart DroppedNeedle if it started while the share was down); otherwise choose Use this folder under Library Management"
 );
 
 /// The saved recycle bin path is not the one an admin chose to use.

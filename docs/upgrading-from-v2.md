@@ -375,6 +375,9 @@ says how to use the code, and covers accounts that never had a password.
   providers. A password recovery code from v2 does not move across: it only
   lasts 15 minutes anyway, so make a new one if you need it.
 - Settings, including saved API keys and secrets.
+- The recycle bin folder. It is used again by itself only if it holds v2's
+  dated folders; if it was empty, an admin chooses "Use this folder" in
+  Library Management's warning.
 - Each user's linked Last.fm, ListenBrainz, Spotify, Navidrome, Jellyfin
   and Plex accounts. Scrobbling, Wrapped and Spotify playlist import keep
   working without linking again.

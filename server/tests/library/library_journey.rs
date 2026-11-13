@@ -4794,7 +4794,9 @@ async fn a_bin_without_its_marker_waits_until_an_admin_uses_the_folder() {
     };
     assert_eq!(reason.code, RECYCLE_BIN_UNKNOWN);
     assert!(
-        reason.message.contains("isn't the one used before"),
+        reason
+            .message
+            .contains("can't tell the recycle bin folder is the one used before"),
         "{reason:?}"
     );
     assert!(second.exists(), "the file stays");

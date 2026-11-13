@@ -18,8 +18,9 @@
 //! so the configured bin is known by the marker file ([`BIN_MARKER`]) a
 //! session leaves in it the first time it uses the path, marker first and
 //! the path's row second. A path with a row whose folder lacks the marker
-//! is not the bin, and nor is an unmarked folder holding none of the
-//! copies the journal still has in it: files wait, as for a bin that
+//! is not the bin, and nor is an unmarked folder holding no entry folder
+//! while the journal still has copies in it or v2 used the path (the
+//! upgrade records it, [`record_v2_path`]): files wait, as for a bin that
 //! can't be reached, until the share is back or an admin accepts the
 //! folder ([`BinSource::accept_folder`]), which marks it again. The
 //! settings and expiry only compare; they never mark.
@@ -59,7 +60,7 @@ Leave this file here: without it the folder does not count as the bin, and remov
 
 /// The settings warning while the configured bin's folder is not the one
 /// marked as the bin.
-const UNMARKED_WARNING: &str = "This isn't the recycle bin folder used before. If its share isn't mounted, mount it. Removals and upgrades wait until then.";
+const UNMARKED_WARNING: &str = "DroppedNeedle can't tell this is the recycle bin folder used before, so removals and upgrades wait. If its share isn't mounted, mount it; otherwise choose Use this folder.";
 
 /// Folders a configured bin must stay clear of besides the library: the
 /// download staging folder and SABnzbd's completed-downloads folder.
@@ -273,9 +274,9 @@ pub enum BinsUnknown {
     /// folder's `.recycle`.
     Unreachable,
     /// The configured bin's folder has no marker though its path was
-    /// marked, or holds none of the copies the journal has in it (a share
-    /// not mounted leaves an empty folder): files wait for the share or
-    /// for an admin to accept the folder.
+    /// marked, or holds no entry folder while the journal has copies in it
+    /// or v2 used its path (a share not mounted leaves an empty folder):
+    /// files wait for the share or for an admin to accept the folder.
     Unmarked,
 }
 
@@ -285,7 +286,7 @@ impl std::fmt::Display for BinsUnknown {
             Self::SettingsUnread => "the Library Management settings can't be read",
             Self::DownloadsUnread => "the slskd or SABnzbd settings can't be read",
             Self::Unreachable => "the recycle bin folder isn't there or can't be reached",
-            Self::Unmarked => "the recycle bin folder isn't the one used before",
+            Self::Unmarked => "the recycle bin folder may not be the one used before",
         })
     }
 }
@@ -421,7 +422,7 @@ impl BinSource {
             tracing::warn!(%error, "the recycle bin's mark could not be read; removals and upgrades wait");
             BinsUnknown::Unreachable
         })?;
-        if marked || self.copies_missing(dir)? {
+        if marked || self.looks_unmounted(path, dir)? {
             return Err(BinsUnknown::Unmarked);
         }
         if marking == Marking::Record {
@@ -434,13 +435,33 @@ impl BinSource {
         Ok(choice)
     }
 
-    /// Whether the journal still has copies in the bin at `dir` while the
-    /// folder holds no entry folder at all: a bin used before the marker
-    /// existed, on a share that is not mounted.
-    fn copies_missing(&self, dir: &Path) -> Result<bool, BinsUnknown> {
+    /// Whether the folder `dir` of the bin path `path`, not yet marked,
+    /// looks like a share that is not mounted: it holds no entry folder at
+    /// all while the journal still has copies in it (a bin used before the
+    /// marker existed) or v2 used the path.
+    fn looks_unmounted(&self, path: &str, dir: &Path) -> Result<bool, BinsUnknown> {
         if super::expiry::gone_for_sure(dir, None) {
             return Ok(false);
         }
+        Ok(self.used_by_v2(path)? || self.holds_copies(dir)?)
+    }
+
+    /// Whether the upgrade recorded that v2 used the bin path `path`.
+    fn used_by_v2(&self, path: &str) -> Result<bool, BinsUnknown> {
+        self.db
+            .read_blocking("publish.bin_v2_used", |conn| -> Result<bool, DbError> {
+                Ok(conn
+                    .prepare_cached(super::sql::BIN_V2_USED.text())?
+                    .query_row(rusqlite::params![path], |row| row.get(0))?)
+            })
+            .map_err(|error| {
+                tracing::warn!(%error, "the recycle bin's v2 record could not be read; removals and upgrades wait");
+                BinsUnknown::Unreachable
+            })
+    }
+
+    /// Whether the journal still has copies in the bin at `dir`.
+    fn holds_copies(&self, dir: &Path) -> Result<bool, BinsUnknown> {
         let below = format!("{}/", dir.to_string_lossy());
         self.db
             .read_blocking("publish.bin_holds_copies", |conn| -> Result<bool, DbError> {
@@ -634,6 +655,19 @@ impl BinSource {
     }
 }
 
+/// Record, in the upgrade's transaction `tx`, that v2 used the recycle bin
+/// path `path`, at `at_ms` (unix milliseconds). Until that path is marked,
+/// its folder is taken for the bin only while it holds an entry folder.
+/// Answers how many rows it wrote: none when the path was recorded before.
+pub fn record_v2_path(
+    tx: &rusqlite::Transaction<'_>,
+    path: &str,
+    at_ms: i64,
+) -> rusqlite::Result<usize> {
+    tx.prepare_cached(super::sql::BIN_V2_CARRY.text())?
+        .execute(rusqlite::params![path.trim(), at_ms])
+}
+
 /// The configured bin's folder, when `choice` uses it.
 fn configured_dir(choice: &BinChoice) -> Option<&Path> {
     choice
@@ -641,6 +675,15 @@ fn configured_dir(choice: &BinChoice) -> Option<&Path> {
         .iter()
         .find(|root| root.id == CONFIGURED_BIN_ID)
         .map(|root| root.dir.as_path())
+}
+
+/// Whether expiry may delete the old entries no journal row names at the
+/// top of `bin` by their date: a library folder's `.recycle`, or the
+/// configured bin once its folder holds the marker. Until then the entries
+/// v2 left are what shows its folder is the bin, so they wait for its first
+/// use to mark it.
+pub(super) fn prunes_old_entries(bin: &Root) -> bool {
+    bin.id != CONFIGURED_BIN_ID || has_marker(&bin.dir)
 }
 
 /// Whether the folder `dir` holds the marker, as a plain file.
