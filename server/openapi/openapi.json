@@ -67440,7 +67440,7 @@
       },
       "UpgradeCheck": {
         "type": "object",
-        "description": "What `upgrade --check` found. It runs every check the upgrade runs\nbefore it moves anything, and changes nothing.",
+        "description": "What `upgrade --check` found. It runs every check the upgrade runs\nbefore it moves anything, and leaves the v2 files as they are: its\nexport goes into the cache folder's `.upgrade-check` and is removed.",
         "required": [
           "layout",
           "orphans",
@@ -67495,6 +67495,8 @@
         "enum": [
           "UNKNOWN_LAYOUT",
           "UNSUPPORTED_PATHS",
+          "DATABASE_BEHIND_LINK",
+          "NON_LOCAL_FILESYSTEM",
           "BACKUP_EXISTS",
           "V2_WAL_UNREADABLE",
           "NOT_ENOUGH_DISK",
@@ -67505,6 +67507,7 @@
           "V2_CONFIG_INVALID",
           "MISSING_INSTANCE_ID",
           "V2_DATABASE_ERROR",
+          "V2_TOO_OLD",
           "EXPORT_FAILED",
           "VALIDATION_FAILED",
           "CALLBACKS_TO_CHANGE",

@@ -159,7 +159,8 @@ pub enum FoundLayout {
 }
 
 /// What `upgrade --check` found. It runs every check the upgrade runs
-/// before it moves anything, and changes nothing.
+/// before it moves anything, and leaves the v2 files as they are: its
+/// export goes into the cache folder's `.upgrade-check` and is removed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = UpgradeCheck)]
 pub struct CheckResult {
@@ -327,6 +328,11 @@ pub enum Code {
     UnknownLayout,
     /// The folders are laid out in a way the in-place upgrade does not handle.
     UnsupportedPaths,
+    /// The database's path goes through a link, which the server refuses.
+    DatabaseBehindLink,
+    /// The cache folder is on a network or FUSE filesystem, which the
+    /// server refuses: SQLite needs a local disk.
+    NonLocalFilesystem,
     /// A `v2-backup` folder is already there.
     BackupExists,
     /// v2's database `-wal` file cannot be read.
@@ -347,6 +353,8 @@ pub enum Code {
     MissingInstanceId,
     /// v2's database cannot be read.
     V2DatabaseError,
+    /// v2 is older than its last release and lacks data v3 needs.
+    V2TooOld,
     /// The export failed for another reason.
     ExportFailed,
     /// The export did not pass validation.

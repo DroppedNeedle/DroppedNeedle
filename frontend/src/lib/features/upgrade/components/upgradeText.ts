@@ -79,6 +79,8 @@ const FAILURE_FIXES: Partial<Record<Code, string>> = {
 	FILE_ERROR: 'Check that the user in PUID and PGID owns the config and cache folders.',
 	OCCUPIED: 'Move away what is in the way, then try again.',
 	NOT_ENOUGH_DISK: 'Free some space in the cache folder, then try again.',
+	DATABASE_BEHIND_LINK:
+		'Use the real cache folder and database, not links to them, then try again.',
 	ROLLBACK_FAILED: 'Go back to v2 to put the rest back.',
 	CALLBACKS_TO_CHANGE: 'Try again to see the addresses to change.'
 };

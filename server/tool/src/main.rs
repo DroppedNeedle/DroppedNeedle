@@ -90,11 +90,13 @@ the two folders except the v2-backup folders, then puts the v2 files back.
 remove-v2-backup deletes the kept v2 files.
 
 upgrade --check runs every check the upgrade runs before it moves anything,
-exports to the temporary folder (TMPDIR) to count what would move, and
-changes nothing in the data folders. It exits 1 while something must be fixed first and 3 while the
-upgrade would stop on callback addresses. upgrade --fresh --yes moves the
-v2 files into the v2-backup folders as the upgrade does and imports nothing,
-so v3 starts empty; upgrade --undo --yes goes back. With --progress json
+exports to count what would move, and checks that export as the import
+would. It leaves the v2 files as they are: its export goes in the cache
+folder's .upgrade-check folder and is deleted again. It exits 1 while
+something must be fixed first and 3 while the upgrade would stop on
+callback addresses. upgrade --fresh --yes moves the v2 files into the
+v2-backup folders as the upgrade does and imports nothing, so v3 starts
+empty; upgrade --undo --yes goes back. With --progress json
 these commands write one JSON object a line to stdout, and their other text
 to stderr.
 
@@ -857,7 +859,6 @@ fn upgrade_command(args: &[String], out: &mut Progress) -> Result<(), UpgradeFai
         v2_commit,
         base_path: config.base_path,
         callbacks_changed,
-        temp_dir: config.temp_dir,
         fault: None,
     };
     if check {

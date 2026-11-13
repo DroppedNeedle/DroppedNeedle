@@ -199,10 +199,8 @@ impl AppConfig {
         }
         if let Some(file) = path(deployment::REMOVED_CONFIG_FILE_VAR) {
             return Err(ConfigError::ConfigFilePathRemoved {
-                suggested: file
-                    .parent()
-                    .filter(|parent| !parent.as_os_str().is_empty())
-                    .map_or_else(|| root.join("config"), Path::to_path_buf),
+                file,
+                config_dir: path("CONFIG_DIR").unwrap_or_else(|| root.join("config")),
             });
         }
         if let Some(dir) = path("CONFIG_DIR") {
@@ -413,18 +411,39 @@ pub enum ConfigError {
     #[error("invalid CONTACT_EMAIL value {0:?}: spaces and control characters are not allowed")]
     InvalidContactEmail(String),
     /// `CONFIG_FILE_PATH` is set. Settings live in the database now, and
-    /// silently ignoring the variable would mint a new key in another
-    /// folder and leave every stored secret unreadable.
-    #[error(
-        "CONFIG_FILE_PATH is no longer read: settings live in the database. Remove it and set \
-         CONFIG_DIR={} instead, the folder that holds data_enc.key. Keep that key file where it \
-         is: without it the stored secrets cannot be read",
-        .suggested.display()
-    )]
+    /// the upgrade reads v2's `config.json` from the folder beside v2's
+    /// key file, so a file kept elsewhere has to move there first.
+    #[error("{}", config_file_path_removed(.file, .config_dir))]
     ConfigFilePathRemoved {
-        /// The folder the old value named.
-        suggested: PathBuf,
+        /// The file the variable names.
+        file: PathBuf,
+        /// The folder the upgrade reads v2's key file and settings from:
+        /// `CONFIG_DIR`, else `ROOT_APP_DIR/config`, where v2 kept `.env`.
+        config_dir: PathBuf,
     },
+}
+
+/// [`ConfigError::ConfigFilePathRemoved`]'s message.
+fn config_file_path_removed(file: &Path, config_dir: &Path) -> String {
+    let start = "CONFIG_FILE_PATH is no longer read: settings live in the database. Remove it";
+    let keep = "Keep the key file where it is: without it the stored secrets cannot be read";
+    let dir = config_dir.display();
+    if file.parent() == Some(config_dir) {
+        format!("{start}, and keep {dir} as it is. {keep}")
+    } else if file.is_absolute() {
+        format!(
+            "{start}, and move {} into {dir} first, beside v2's key file .env: the upgrade \
+             reads both from there. {keep}",
+            file.display()
+        )
+    } else {
+        format!(
+            "{start}. It names {}, which is not a full path: find that config.json by its full \
+             path and move it into {dir} first, beside v2's key file .env, where the upgrade \
+             reads both. {keep}",
+            file.display()
+        )
+    }
 }
 
 #[cfg(test)]
@@ -457,25 +476,41 @@ mod tests {
         assert_eq!(asked.into_inner(), registry);
     }
 
-    /// `CONFIG_FILE_PATH` refuses the start and names the `CONFIG_DIR` to
-    /// set, so the key file is not left behind in a folder no longer read.
+    /// `CONFIG_FILE_PATH` refuses the start. A `config.json` kept outside
+    /// the folder the upgrade reads (`CONFIG_DIR`, else where v2 kept its
+    /// key file) is to move there, so the upgrade finds the two together.
     #[test]
     fn config_file_path_refuses_and_config_dir_sets_the_folder() {
-        let refused =
-            |value: &str| match load(&[("ROOT_APP_DIR", "/srv/dn"), ("CONFIG_FILE_PATH", value)]) {
-                Err(ConfigError::ConfigFilePathRemoved { suggested }) => suggested,
-                other => panic!("{value}: {other:?}"),
-            };
-        assert_eq!(
-            refused("/data/conf/config.json"),
-            PathBuf::from("/data/conf")
+        let message = |vars: &[(&str, &str)]| load(vars).unwrap_err().to_string();
+        let moved = message(&[("CONFIG_FILE_PATH", "/data/conf/config.json")]);
+        assert!(
+            moved.contains(
+                "move /data/conf/config.json into /app/config first, beside v2's key file .env"
+            ),
+            "{moved}"
         );
-        assert_eq!(refused("config.json"), PathBuf::from("/srv/dn/config"));
-        let message = load(&[("CONFIG_FILE_PATH", "/data/conf/config.json")])
-            .unwrap_err()
-            .to_string();
-        assert!(message.contains("CONFIG_DIR=/data/conf"), "{message}");
-        assert!(message.contains("data_enc.key"), "{message}");
+        assert!(!moved.contains("CONFIG_DIR"), "{moved}");
+        let in_place = message(&[
+            ("ROOT_APP_DIR", "/srv/dn"),
+            ("CONFIG_FILE_PATH", "/srv/dn/config/config.json"),
+        ]);
+        assert!(
+            in_place.contains("keep /srv/dn/config as it is"),
+            "{in_place}"
+        );
+        let config_dir = ("CONFIG_DIR", "/data/conf");
+        let beside = message(&[config_dir, ("CONFIG_FILE_PATH", "/data/conf/config.json")]);
+        assert!(beside.contains("keep /data/conf as it is"), "{beside}");
+        let elsewhere = message(&[config_dir, ("CONFIG_FILE_PATH", "/opt/config.json")]);
+        assert!(
+            elsewhere.contains("move /opt/config.json into /data/conf first"),
+            "{elsewhere}"
+        );
+        let relative = message(&[("CONFIG_FILE_PATH", "config.json")]);
+        assert!(
+            relative.contains("not a full path") && relative.contains("into /app/config first"),
+            "{relative}"
+        );
 
         assert_eq!(
             load(&[("CONFIG_FILE_PATH", "  ")]).unwrap().config_dir,

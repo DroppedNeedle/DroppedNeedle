@@ -24069,7 +24069,8 @@ export interface components {
         UpgradeCallbackFeature: "single_sign_on" | "spotify" | "musicbrainz_contributions";
         /**
          * @description What `upgrade --check` found. It runs every check the upgrade runs
-         *     before it moves anything, and changes nothing.
+         *     before it moves anything, and leaves the v2 files as they are: its
+         *     export goes into the cache folder's `.upgrade-check` and is removed.
          */
         UpgradeCheck: {
             /** @description What stops the upgrade until it is fixed. */
@@ -24101,7 +24102,7 @@ export interface components {
          * @description Why the upgrade cannot start, or why a run failed.
          * @enum {string}
          */
-        UpgradeCode: "UNKNOWN_LAYOUT" | "UNSUPPORTED_PATHS" | "BACKUP_EXISTS" | "V2_WAL_UNREADABLE" | "NOT_ENOUGH_DISK" | "V2_KEY_NOT_FOUND" | "V2_KEY_INVALID" | "V2_KEY_MISMATCH" | "V2_CONFIG_UNREADABLE" | "V2_CONFIG_INVALID" | "MISSING_INSTANCE_ID" | "V2_DATABASE_ERROR" | "EXPORT_FAILED" | "VALIDATION_FAILED" | "CALLBACKS_TO_CHANGE" | "NO_ADMIN_CAN_SIGN_IN" | "LOCKED" | "TOOL_RUNNING" | "FILE_ERROR" | "OCCUPIED" | "NOT_A_FOLDER" | "RANDOM_FAILED" | "ORPHAN_REPAIR_FAILED" | "IMPORT_SETUP_FAILED" | "IMPORT_FAILED" | "ROLLBACK_FAILED" | "BACKUP_NOT_REMOVED" | "NO_BACKUP" | "ALREADY_V2" | "BACKUP_STILL_NEEDED" | "CONFIRMATION_NEEDED" | "USAGE" | "ENVIRONMENT_INVALID" | "INTERNAL";
+        UpgradeCode: "UNKNOWN_LAYOUT" | "UNSUPPORTED_PATHS" | "DATABASE_BEHIND_LINK" | "NON_LOCAL_FILESYSTEM" | "BACKUP_EXISTS" | "V2_WAL_UNREADABLE" | "NOT_ENOUGH_DISK" | "V2_KEY_NOT_FOUND" | "V2_KEY_INVALID" | "V2_KEY_MISMATCH" | "V2_CONFIG_UNREADABLE" | "V2_CONFIG_INVALID" | "MISSING_INSTANCE_ID" | "V2_DATABASE_ERROR" | "V2_TOO_OLD" | "EXPORT_FAILED" | "VALIDATION_FAILED" | "CALLBACKS_TO_CHANGE" | "NO_ADMIN_CAN_SIGN_IN" | "LOCKED" | "TOOL_RUNNING" | "FILE_ERROR" | "OCCUPIED" | "NOT_A_FOLDER" | "RANDOM_FAILED" | "ORPHAN_REPAIR_FAILED" | "IMPORT_SETUP_FAILED" | "IMPORT_FAILED" | "ROLLBACK_FAILED" | "BACKUP_NOT_REMOVED" | "NO_BACKUP" | "ALREADY_V2" | "BACKUP_STILL_NEEDED" | "CONFIRMATION_NEEDED" | "USAGE" | "ENVIRONMENT_INVALID" | "INTERNAL";
         /** @description The run failed or stopped. */
         UpgradeFailure: {
             /** @description What went wrong. */

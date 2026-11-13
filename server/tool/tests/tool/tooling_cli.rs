@@ -13,9 +13,8 @@ use droppedneedle::bootstrap::data_dirs;
 use droppedneedle::bootstrap::upgrade_progress::{
     Code, Event, Finished, FoundLayout, Line, Outcome, StepId, V2Files,
 };
-use droppedneedle_tool::export::exporter::V2_COPY_PREFIX;
-use droppedneedle_tool::export::scratch::ScratchFolder;
-use droppedneedle_tool::tooling::upgrade;
+use droppedneedle_tool::export::scratch::{ScratchFolder, UNLOCKED_PREFIX};
+use droppedneedle_tool::tooling::upgrade::{self, CHECK_SCRATCH_PREFIX};
 
 use crate::common;
 
@@ -678,6 +677,7 @@ fn is_v3(root: &Path) -> bool {
     schema_stamp(&cache.join("library.db")) > 0
         && root.join("config").join("data_enc.key").is_file()
         && !cache.join(".upgrade-work").exists()
+        && !cache.join(".upgrade-check").exists()
         && !cache.join(".upgrade-in-progress").exists()
 }
 
@@ -697,7 +697,6 @@ pub(crate) async fn upgrade_with_fault(
         v2_commit: None,
         base_path: String::new(),
         callbacks_changed: false,
-        temp_dir: std::env::temp_dir(),
         fault: Some(fault),
     };
     upgrade::run(&request, &mut |_| {}).await
@@ -1496,22 +1495,25 @@ async fn an_interrupted_upgrade_is_rolled_back_first() {
     assert_eq!(backup_trees(&root), original);
 }
 
-/// A check clears away the copies of the v2 database that killed checks
-/// and older builds left in the shared temp folder, and leaves alone the
-/// copy a live check or run still holds.
+/// A check clears away the scratch folders that killed checks left in its
+/// folder in the cache folder, half-made ones included, and leaves alone
+/// the one a live check or run still holds, and the folder with it.
 #[test]
 fn a_check_keeps_a_live_copy_and_removes_a_dead_one() {
     let scratch = scratch_dir("upgrade-sweep");
     let root = scratch.join("data");
     droppedneedle_tool::test_support::fixture::build_v2_fixture(&root).expect("fixture builds");
-    let temp_dir = scratch.join("tmp");
-    std::fs::create_dir(&temp_dir).expect("temp folder");
-    let live = ScratchFolder::create(&temp_dir, V2_COPY_PREFIX).expect("live copy folder");
+    let check_dir = root.join("cache").join(".upgrade-check");
+    std::fs::create_dir(&check_dir).expect("check folder");
+    let live = ScratchFolder::create(&check_dir, CHECK_SCRATCH_PREFIX).expect("live folder");
     std::fs::write(live.path().join("library.db"), b"live").expect("live copy");
-    let dead = temp_dir.join(format!("{V2_COPY_PREFIX}dead"));
-    std::fs::create_dir(&dead).expect("dead copy folder");
-    std::fs::write(dead.join("library.db"), b"dead").expect("dead copy");
-    let killed = ScratchFolder::create(&temp_dir, V2_COPY_PREFIX).expect("killed copy folder");
+    let unlocked = check_dir.join(format!("{CHECK_SCRATCH_PREFIX}unlocked"));
+    let half_made = check_dir.join(format!("{UNLOCKED_PREFIX}killed"));
+    for dead in [&unlocked, &half_made] {
+        std::fs::create_dir(dead).expect("dead folder");
+        std::fs::write(dead.join("library.db"), b"dead").expect("dead copy");
+    }
+    let killed = ScratchFolder::create(&check_dir, CHECK_SCRATCH_PREFIX).expect("killed folder");
     std::fs::write(killed.path().join("library.db"), b"killed").expect("killed copy");
     let killed_path = killed.path().to_owned();
     drop(killed);
@@ -1522,7 +1524,6 @@ fn a_check_keeps_a_live_copy_and_removes_a_dead_one() {
         v2_commit: None,
         base_path: String::new(),
         callbacks_changed: false,
-        temp_dir: temp_dir.clone(),
         fault: None,
     };
     let checked = upgrade::check(&request);
@@ -1531,9 +1532,155 @@ fn a_check_keeps_a_live_copy_and_removes_a_dead_one() {
         live.path().join("library.db").is_file(),
         "the live copy stays"
     );
-    assert!(!dead.exists(), "an older build's copy is removed");
-    assert!(!killed_path.exists(), "a killed check's copy is removed");
-    live.remove().expect("live copy removed");
+    assert!(!unlocked.exists(), "a folder without its lock is removed");
+    assert!(!half_made.exists(), "a half-made folder is removed");
+    assert!(!killed_path.exists(), "a killed check's folder is removed");
+    live.remove().expect("live folder removed");
+}
+
+/// A database reached through a link is refused before anything moves, as
+/// the server never opens its database through one: a cache folder that is
+/// a link, and a v2 database file that is one, whose `-wal` file SQLite
+/// keeps beside what it points at. The check lists it with what to do and
+/// exports nothing, and the upgrade and a fresh start stop before the move.
+/// A database on a network or FUSE filesystem meets the same refusals; no
+/// test here can mount one.
+#[test]
+fn a_database_behind_a_link_is_refused_before_anything_moves() {
+    let scratch = scratch_dir("upgrade-link");
+    let folder_link = scratch.join("folder");
+    clean_v2(&folder_link);
+    let real = scratch.join("real-cache");
+    std::fs::rename(folder_link.join("cache"), &real).expect("cache moves");
+    std::os::unix::fs::symlink(&real, folder_link.join("cache")).expect("folder link");
+    let file_link = scratch.join("file");
+    clean_v2(&file_link);
+    let db = file_link.join("cache").join("library.db");
+    let elsewhere = scratch.join("elsewhere.db");
+    assert!(!PathBuf::from(format!("{}-wal", db.display())).exists());
+    std::fs::rename(&db, &elsewhere).expect("database moves");
+    std::os::unix::fs::symlink(&elsewhere, &db).expect("file link");
+
+    for (root, fix) in [
+        (&folder_link, "not a link to it"),
+        (&file_link, "in place of the link"),
+    ] {
+        let before = data_trees(root);
+        let checked = tool_in(root, &["upgrade", "--check", "--progress", "json"]);
+        assert_eq!(
+            checked.status.code(),
+            Some(1),
+            "stderr: {}",
+            stderr_of(&checked)
+        );
+        let lines = json_lines(&checked);
+        let [
+            Line {
+                event: Event::Check(check),
+                ..
+            },
+        ] = lines.as_slice()
+        else {
+            panic!("one check line: {lines:?}");
+        };
+        let [blocker] = check.blockers.as_slice() else {
+            panic!("one blocker: {:?}", check.blockers);
+        };
+        assert_eq!(blocker.code, Code::DatabaseBehindLink);
+        assert!(blocker.fix.contains(fix), "{blocker:?}");
+        assert_eq!(check.counts, None, "nothing was exported");
+        assert_eq!(data_trees(root), before);
+
+        for args in [
+            &["upgrade", "--progress", "json"][..],
+            &["upgrade", "--fresh", "--yes", "--progress", "json"],
+        ] {
+            let run = tool_in(root, args);
+            assert_eq!(run.status.code(), Some(1), "{args:?}: {}", stderr_of(&run));
+            let lines = json_lines(&run);
+            let [
+                Line {
+                    event: Event::Failed(failed),
+                    ..
+                },
+            ] = lines.as_slice()
+            else {
+                panic!("{args:?}: only a failed line, no step: {lines:?}");
+            };
+            assert_eq!(failed.code, Code::DatabaseBehindLink, "{args:?}");
+            assert_eq!(failed.v2_files, V2Files::Untouched, "{args:?}");
+            assert_eq!(data_trees(root), before, "{args:?} moved nothing");
+        }
+    }
+}
+
+/// A v2 older than its last release lacks values v3 needs, here every
+/// playlist's name. The check runs the import's own check of the export's
+/// bundle, so it says so before anything moves, and names the release to
+/// update to.
+#[test]
+fn the_check_refuses_a_v2_too_old_to_upgrade() {
+    let scratch = scratch_dir("upgrade-old-v2");
+    let root = scratch.join("data");
+    clean_v2(&root);
+    rusqlite::Connection::open(root.join("cache").join("library.db"))
+        .expect("v2 database opens")
+        .execute_batch("ALTER TABLE library_playlists DROP COLUMN name")
+        .expect("playlist names dropped");
+    let before = data_trees(&root);
+
+    let checked = tool_in(&root, &["upgrade", "--check", "--progress", "json"]);
+    assert_eq!(
+        checked.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr_of(&checked)
+    );
+    let lines = json_lines(&checked);
+    let [
+        Line {
+            event: Event::Check(check),
+            ..
+        },
+    ] = lines.as_slice()
+    else {
+        panic!("one check line: {lines:?}");
+    };
+    let [blocker] = check.blockers.as_slice() else {
+        panic!("one blocker: {:?}", check.blockers);
+    };
+    assert_eq!(blocker.code, Code::V2TooOld);
+    assert!(
+        blocker
+            .message
+            .contains("BUNDLE_COLUMN_MISSING: playlist has no name values"),
+        "{}",
+        blocker.message
+    );
+    assert!(blocker.fix.contains("v2.15.0"), "{}", blocker.fix);
+    assert_eq!(data_trees(&root), before);
+
+    // Run without the check, the upgrade finds it only after the move, puts
+    // the v2 files back and says the same.
+    let run = tool_in(&root, &["upgrade", "--progress", "json"]);
+    assert_eq!(run.status.code(), Some(1), "stderr: {}", stderr_of(&run));
+    let Some(Line {
+        event: Event::Failed(failed),
+        ..
+    }) = json_lines(&run).pop()
+    else {
+        panic!("the run ends failed: {}", stderr_of(&run));
+    };
+    assert_eq!(failed.code, Code::V2TooOld);
+    assert_eq!(failed.v2_files, V2Files::PutBack);
+    assert!(
+        failed
+            .message
+            .contains("image tag droppedneedle/droppedneedle:v2.15.0"),
+        "{}",
+        failed.message
+    );
+    assert_eq!(data_trees(&root), before);
 }
 
 /// `--undo --yes` deletes the v3 data and puts the v2 files back as they

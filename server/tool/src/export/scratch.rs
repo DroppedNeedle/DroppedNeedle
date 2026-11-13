@@ -11,9 +11,11 @@ use std::path::{Path, PathBuf};
 /// The lock file inside each scratch folder.
 const LOCK_FILE: &str = ".owner.lock";
 
-/// The name a folder is made under, before its lock is taken. No sweep
-/// matches it, so a sweep never sees a folder that has no lock yet.
-const UNLOCKED_PREFIX: &str = "droppedneedle-scratch-new-";
+/// The name a folder is made under, before its lock is taken. Only the
+/// upgrade check's sweep matches it, in a folder of the check's own, to
+/// clear what a killed one left; a folder it removes mid-make fails
+/// [`ScratchFolder::create`] with `NotFound`, and the check makes it again.
+pub const UNLOCKED_PREFIX: &str = "droppedneedle-scratch-new-";
 
 /// An owner-only folder, locked while this lives. It holds password hashes
 /// and listening history, so its owner removes it with [`Self::remove`].

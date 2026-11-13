@@ -38,15 +38,22 @@ checks the library against your files on its first scan.
   once v3 signs in. If your provider allows only one, change it as you run
   the upgrade, not before.
 - **`CONFIG_FILE_PATH`.** Remove it from your compose file if you set it:
-  v3 refuses to start with it. Set `CONFIG_DIR` to that file's folder
-  instead.
-- **Unraid data folder.** v3 refuses to start with its database on a FUSE
-  mount, and Unraid's `/mnt/user` paths are one unless the share is set to
-  exclusive access. v2 ran there, so an existing install keeps that path.
-  Before the v3 container first starts, either set the `appdata` share to
-  exclusive access, or, with the container stopped, move the data folder's
-  contents to a pool path such as `/mnt/cache/appdata/droppedneedle/cache`
-  and point the container's `/app/cache` at it.
+  v3 refuses to start with it. If it named a `config.json` outside the
+  config folder (the one mounted at `/app/config`), move that file into the
+  config folder first, beside v2's `.env`: the upgrade reads both from
+  there.
+- **Cache folder on a network share or FUSE mount.** v3 keeps its database
+  in the cache folder and needs a local disk for it. It refuses a cache
+  folder on NFS, SMB, FUSE (sshfs, mergerfs and the like) or one reached
+  through a link. v2 ran on them, so an existing install may use one. The
+  pre-flight checks this before anything moves. On Unraid every
+  `/mnt/user` path is a FUSE mount unless the share is set to exclusive
+  access. Before the v3 container first starts, either set the `appdata`
+  share to exclusive access, or, with the container stopped, move the
+  cache folder's contents to a pool path such as
+  `/mnt/cache/appdata/droppedneedle/cache` and point the container's
+  `/app/cache` at it. Elsewhere, move the cache folder to a local disk. The
+  config folder can stay where it is.
 - **What changed.** [What changed in v3](v3-changes.md) lists what v2 did
   that v3 removed, changed or moved.
 
@@ -76,7 +83,7 @@ checks the library against your files on its first scan.
    On v2 data, v3 serves only the upgrade page. Until the upgrade is done,
    everything else answers that an upgrade is needed: the web app's API with
    `503 UPGRADE_REQUIRED`, and Subsonic and Jellyfin apps with their own
-   error. Nothing in your data folders changes until you press Upgrade.
+   error. Your v2 files stay as they are until you press Upgrade.
 
 4. Open DroppedNeedle's address in your browser. It shows the upgrade page.
 
@@ -85,8 +92,14 @@ checks the library against your files on its first scan.
 
 6. Follow the page:
    - The pre-flight runs every check the upgrade runs before it moves
-     anything, and changes nothing. It shows what it found, and anything to
-     fix first, each with what to do. Fix it, then press Check again.
+     anything, such as a cache folder on a local disk with room for the
+     upgrade. It also exports your v2 data to count it, and checks that
+     export as the import will, so a v2 too old to upgrade from shows here.
+     Your v2 files stay as they are: the export goes into a folder of its
+     own in the cache folder, `.upgrade-check`, and is deleted again, so a
+     cache folder mounted read-only cannot be checked. The page shows what
+     it found, and anything to fix first, each with what to do. Fix it,
+     then press Check again.
    - If v2 uses single sign-on, Spotify playlist import or MusicBrainz
      contributions, the addresses those services call back on change in v3,
      and v2's stop working (see [Callback addresses](#before-you-upgrade)).
@@ -126,7 +139,9 @@ docker compose logs droppedneedle
 
 It is on the line that contains `upgrade sign-in code`, after `code=` at the
 end. `droppedneedle` is the service name in your compose file. Use yours if it
-differs. A code works once: after it is used, the server prints a new one.
+differs. Without Compose, `docker logs droppedneedle` shows the same log, as
+does the container's log page on Unraid, Portainer or Synology. A code works
+once: after it is used, the server prints a new one.
 
 Attempts are limited per address and per username, as on v3's own sign-in.
 The sign-in lasts 12 hours, or until the upgrade page closes.
@@ -189,7 +204,8 @@ The upgrade does need some free space in the cache folder while it runs:
 about twice the size of the v2 database, once more for a copy of it when
 v2 left writes in its `-wal` file, plus the files the upgrade carries
 (saved originals, held downloads, profile pictures and playlist covers),
-plus a little headroom. The pre-flight checks that.
+plus a little headroom. The pre-flight checks that. Its own export, which
+it writes there and deletes again, needs less.
 
 The backup sits on the same disk as your data. It lets you go back to v2,
 but it is not a second copy. If you want one, copy your config and cache
@@ -199,6 +215,14 @@ Once you are happy with v3, delete the backup:
 
 ```sh
 docker compose run --rm droppedneedle droppedneedle-tool remove-v2-backup
+```
+
+Without Compose (see [Without Docker Compose](#without-docker-compose)):
+
+```sh
+docker run --rm -e PUID=1000 -e PGID=1000 -v /path/to/config:/app/config \
+  -v /path/to/cache:/app/cache -v /path/to/plugins:/app/plugins \
+  droppedneedle/droppedneedle:v3.0.0 droppedneedle-tool remove-v2-backup
 ```
 
 This works while v3 is running. To keep no backup in the first place, upgrade
@@ -222,11 +246,27 @@ instead, with the server stopped:
 
 1. Stop v2 and change the image tag, as in steps 1 and 2 above.
 
-2. Run the upgrade:
+2. Check first, then run the upgrade:
 
    ```sh
+   docker compose run --rm droppedneedle droppedneedle-tool upgrade --check
    docker compose run --rm droppedneedle droppedneedle-tool upgrade
    ```
+
+   Without Compose (see [Without Docker Compose](#without-docker-compose)),
+   the upgrade is below; for the check, end it with `upgrade --check`:
+
+   ```sh
+   docker run --rm -e PUID=1000 -e PGID=1000 -v /path/to/config:/app/config \
+     -v /path/to/cache:/app/cache -v /path/to/plugins:/app/plugins \
+     droppedneedle/droppedneedle:v3.0.0 droppedneedle-tool upgrade
+   ```
+
+   The check is the page's pre-flight (see
+   [Checking first](#checking-first-starting-fresh-scripted-installs)).
+   The upgrade runs the same checks before it moves anything, except the
+   check of the export: it exports after the move, so it finds a v2 too
+   old to upgrade from only then, and puts your v2 files back.
 
    If callback addresses change, the upgrade lists each one, old and new,
    and where to change it, and stops before it moves anything. If an earlier
@@ -235,6 +275,14 @@ instead, with the server stopped:
 
    ```sh
    docker compose run --rm droppedneedle droppedneedle-tool upgrade --callbacks-changed
+   ```
+
+   Without Compose:
+
+   ```sh
+   docker run --rm -e PUID=1000 -e PGID=1000 -v /path/to/config:/app/config \
+     -v /path/to/cache:/app/cache -v /path/to/plugins:/app/plugins \
+     droppedneedle/droppedneedle:v3.0.0 droppedneedle-tool upgrade --callbacks-changed
    ```
 
    The flag skips no other check.
@@ -252,15 +300,39 @@ back, then starts over. The upgrade refuses to run while a server is using
 the data directory, and it does nothing on a data directory that is already
 on v3.
 
+### Without Docker Compose
+
+Each `docker compose run --rm droppedneedle ...` command on this page runs
+the tool once in a new container, from the same image and with the same
+folders as the server. On Unraid, Portainer or Synology, stop the
+DroppedNeedle container, then run the `docker run` form beside the command
+in a terminal on the host (on Synology, over SSH with `sudo`). A console
+inside the running container, such as `docker exec` or Portainer's
+Console, cannot stand in: the upgrade, its undo and `recovery-code` refuse
+while the server runs.
+
+Change the example values to your container's:
+
+- `PUID` and `PGID`: the user and group ids the container runs with.
+- Each `-v`: the host folder the container mounts at `/app/config`,
+  `/app/cache` and `/app/plugins`. On Unraid they are the template's
+  Config, Data and Plugins paths, in Portainer the container's Volumes, and
+  on Synology the container's Volume Settings.
+- Add each `-e` setting your container has that moves a folder
+  (`CONFIG_DIR`, `CACHE_DIR`, `LIBRARY_DB_PATH`) or sets `BASE_PATH`, the
+  same way as `PUID`.
+- `v3.0.0`: the v3 image tag your container runs.
+
 ### Checking first, starting fresh, scripted installs
 
 `droppedneedle-tool upgrade --check` runs every check the upgrade runs
-before it moves anything, counts what the export would carry, and changes
-nothing in your data folders. It writes that export to the temporary folder
-(`TMPDIR`) and deletes it again, so that folder needs the same free space
-the upgrade asks of the cache folder. It exits 1 while something must be
-fixed first, and 3 while the upgrade would stop on callback addresses or on
-an admin nobody could get back in.
+before it moves anything, counts what the export would carry, and checks
+that export as the import will. It leaves your v2 files as they are: it
+writes the export into a folder of its own in the cache folder,
+`.upgrade-check`, and deletes it again, which takes less space than the
+upgrade asks of that folder. It exits 1 while something must be fixed
+first, and 3 while the upgrade would stop on callback addresses or on an
+admin nobody could get back in.
 
 `droppedneedle-tool upgrade --fresh --yes` moves your v2 files into the
 `v2-backup` folders as the upgrade does, and imports nothing. v3 then starts
@@ -279,9 +351,22 @@ The usual text goes to stderr.
 
 If nobody can sign in to v3 (single sign-on fails and no admin remembers a
 password), stop the server and make a one-time password recovery code on
-the host with `droppedneedle-tool recovery-code USERNAME`.
+the host:
+
+```sh
+docker compose run --rm droppedneedle droppedneedle-tool recovery-code USERNAME
+```
+
+Without Compose (see [Without Docker Compose](#without-docker-compose)):
+
+```sh
+docker run --rm -e PUID=1000 -e PGID=1000 -v /path/to/config:/app/config \
+  -v /path/to/cache:/app/cache -v /path/to/plugins:/app/plugins \
+  droppedneedle/droppedneedle:v3.0.0 droppedneedle-tool recovery-code USERNAME
+```
+
 [Forgotten passwords and recovery](accounts-and-sign-in.md#forgotten-passwords-and-recovery)
-has the commands, and covers accounts that never had a password.
+says how to use the code, and covers accounts that never had a password.
 
 ## What moves across
 
@@ -497,18 +582,28 @@ As long as the `v2-backup` folders are there.
 
 Right after the upgrade, before you press Continue, the page's "Go back to
 v2" does it: it asks first, deletes the v3 data and puts the v2 files back.
-Then set the image tag back to your v2 version and start it again.
+Then set the image tag to `droppedneedle/droppedneedle:v2.15.0`, v2's last
+release (not `:latest`, which is v3 from v3.0.0 on), and start it again.
 
 Later, from the command line:
 
 1. Stop v3: `docker compose stop`.
-2. Run the undo:
+2. Run the undo with the v3 image:
 
    ```sh
    docker compose run --rm droppedneedle droppedneedle-tool upgrade --undo --yes
    ```
 
-3. Set the image tag back to your v2 version and start it.
+   Without Compose (see [Without Docker Compose](#without-docker-compose)):
+
+   ```sh
+   docker run --rm -e PUID=1000 -e PGID=1000 -v /path/to/config:/app/config \
+     -v /path/to/cache:/app/cache -v /path/to/plugins:/app/plugins \
+     droppedneedle/droppedneedle:v3.0.0 droppedneedle-tool upgrade --undo --yes
+   ```
+
+3. Set the image tag to `droppedneedle/droppedneedle:v2.15.0`, v2's last
+   release, and start it.
 
 The undo deletes everything in the config and cache folders except the
 `v2-backup` folders, then puts the v2 files back where they were. Anything
@@ -545,13 +640,21 @@ v2's back there.
 | `No admin could get back in if single sign-on failed` (exit code 3) | Single sign-on is on and no admin has a password or a username | Your v2 files are in place. Set a username for the admin it names in v2 (Profile), then run again |
 | `an upgrade from v2 did not finish` | An upgrade was killed partway | On the page, Finish the upgrade or Go back to v2. From the command line, run the upgrade again, or `upgrade --undo --yes` |
 | `Stop the server, then try again` | A server is using the data directory | Stop it and re-run |
-| `cannot tell what this data directory holds` | The folders are neither a v2 nor a v3 data directory, for example a v2 database beside a v3 key file | Nothing was changed. Check that the mounts point at the right folders |
+| `cannot tell what this data directory holds` | The folders are neither a v2 nor a v3 data directory, for example a v2 database beside a v3 key file, or a `library.db` that is a link (`it is not a regular file`) | Nothing was changed. Check that the mounts point at the right folders. For a link, see `DATABASE_BEHIND_LINK` |
+| `in-place upgrade does not handle` (`UNSUPPORTED_PATHS`) | `LIBRARY_DB_PATH` puts the database outside the cache folder, or the config and cache folders sit inside one another | Nothing was changed. Leave `LIBRARY_DB_PATH` unset, or point it at a file directly inside the cache folder, and keep config and cache two separate folders. Or upgrade [by hand](upgrading-by-hand.md) |
+| `refusing database on non-local filesystem` (`NON_LOCAL_FILESYSTEM`) | The cache folder is on NFS, SMB, FUSE or a similar mount, where SQLite cannot lock its database safely | Nothing was changed. With the container stopped, move the cache folder to a local disk (see [Before you upgrade](#before-you-upgrade)), then check again |
+| `is a link` or `refusing database behind a symlink` (`DATABASE_BEHIND_LINK`) | The cache folder, or `library.db` itself, is a link. SQLite keeps a linked database's `-wal` file beside the file it points at, where the upgrade would miss v2's newest writes | Nothing was changed. Mount the real folder at `/app/cache`, or set `CACHE_DIR` to its real path. For a linked `library.db`, with v2 stopped, move the file it points at, with its `-wal` file if there is one, into the cache folder in place of the link. Then check again |
 | `already exists. Move it away or delete it` | A `v2-backup` folder is left from an earlier upgrade | Move or delete it, then run the upgrade again |
 | `the upgrade needs about N MiB free` | Not enough free space in the cache folder | Free some space and run the upgrade again |
-| `cannot move ...: Permission denied` | A file or folder in the config or cache folder could not be moved, because the user the tool runs as does not own it | Nothing is deleted. The upgrade normally puts the v2 files back itself; if it says that failed too, the next run does it. Fix the ownership (`chown -R` to your `PUID` and `PGID`) and run the upgrade again |
+| `cannot move ...` or `cannot create ...`: `Permission denied` | A file or folder in the config or cache folder could not be moved or made, because the user the tool runs as does not own it | Nothing is deleted. The upgrade normally puts the v2 files back itself; if it says that failed too, the next run does it. Fix the ownership (`chown -R` to your `PUID` and `PGID`) and run the upgrade again |
+| `something else is in its place` (`OCCUPIED`) | While putting the v2 files back, the upgrade found another file under the same name | Nothing was deleted, and the rest of the v2 files are still in `v2-backup`. Move that file out of the way. Then, on the page, Finish the upgrade or Go back to v2; from the command line, run the upgrade or `upgrade --undo --yes`. Each puts the v2 files back first |
+| `Putting the v2 files back also failed` (`ROLLBACK_FAILED`) | The upgrade failed, then putting the v2 files back failed too | Some v2 files are still in `v2-backup`. Fix the second cause the message names. Then, on the page, Finish the upgrade or Go back to v2; from the command line, run the upgrade or `upgrade --undo --yes`. Each puts the v2 files back first |
 | `no complete v2 backup` | `--undo` found no `v2-backup` folders to go back to | Restore your own copy of the v2 folders |
 | `V2_KEY_NOT_FOUND` | v2's `config/.env` is missing | Put it back from a copy of your own, then run again |
 | `V2_KEY_MISMATCH` | The key in `config/.env` does not decrypt your stored secrets | Use the `config/.env` that v2 actually ran with |
+| `V2_CONFIG_UNREADABLE` | v2's `config/config.json` is missing or cannot be read | Put back the `config.json` v2 ran with, readable by the user the upgrade runs as. If `CONFIG_FILE_PATH` kept it elsewhere, move it beside `config/.env` |
+| `V2_CONFIG_INVALID` | `config/config.json` is not a v2 settings file | Put back the `config.json` v2 ran with |
+| `MISSING_INSTANCE_ID` | v2's `config.json` names no instance id | Put back the `config.json` v2 ran with |
 | `V2_WAL_UNREADABLE` | The upgrade cannot read v2's `library.db-wal`, which may hold its newest writes | Make the file readable by the user the upgrade runs as (`chown` to your `PUID` and `PGID`), then run again |
 | `DANGLING_USER_REF` | Orphan follows or approvals in v2 | The upgrade removes them itself. By hand: the cleanup in [Validate](upgrading-by-hand.md#4-validate), then export again |
 | `INSTANCE_MISMATCH` | The export came from a different v2 instance | Export from the right `V2_ROOT` |
@@ -560,7 +663,7 @@ v2's back there.
 | `BUNDLE_MISSING` | `export.bundle.sqlite` is not next to `export.json` | Put the two files in the same folder |
 | `BUNDLE_MISMATCH` | The bundle next to the export comes from another export, or was changed | Use the bundle written together with that export, or export again |
 | `BUNDLE_SECTION_MISSING` | The bundle lacks a part the export says it holds | Export again; do not edit the bundle |
-| `BUNDLE_COLUMN_MISSING` | Your v2 is too old to have a value v3 needs for some data | Update v2 to its last release, start and stop it once, then upgrade again |
+| `V2_TOO_OLD`, or `BUNDLE_COLUMN_MISSING` from the import by hand | Your v2 is too old to have a value v3 needs for some data | Update v2 to its last release, `droppedneedle/droppedneedle:v2.15.0`, start it and stop it once, then upgrade again |
 | `target database is locked` | A server has the v3 database open | Stop it and re-run |
 | `is held by another process` | A server, or another import, has the v3 data open | Stop it and re-run |
 | `the key file ... is missing` or `does not belong to the database` | The database's `data_enc.key` is not in the config folder | Nothing was changed. Put back the `data_enc.key` saved with the database, or set `CONFIG_DIR` to its folder. Only if it is lost for good: `reset-key --yes` (see [The key file](backups-and-restore.md#the-key-file)) |

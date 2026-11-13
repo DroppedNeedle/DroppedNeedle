@@ -26,6 +26,9 @@ pub(crate) struct Bundle {
 pub(crate) enum BundleRejection {
     /// The file is missing, swapped, or inconsistent with the export.
     Invalid(String),
+    /// A section lacks values v3 needs and has no default for: the v2 the
+    /// export came from is older than its last release.
+    TooOld(String),
     /// Reading it failed for reasons outside the file.
     Internal(String),
 }
@@ -167,7 +170,7 @@ pub(crate) fn check(
                     .any(|column| column.in_target() && column.name == name)
             };
             if let Some(missing) = required.iter().find(|name| !lands(name)) {
-                return Err(BundleRejection::Invalid(format!(
+                return Err(BundleRejection::TooOld(format!(
                     "BUNDLE_COLUMN_MISSING: {} has no {missing} values and v3 has no default",
                     section.name
                 )));

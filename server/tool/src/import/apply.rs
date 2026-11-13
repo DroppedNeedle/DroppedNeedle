@@ -10,7 +10,7 @@
 //! an import lands whole or not at all.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use droppedneedle_acquire::follows::rows;
 use droppedneedle_auth::federated::users::ProviderBinding;
@@ -231,7 +231,7 @@ fn import_blocking(request: ImportRequest, provenance: ExportProvenance) -> Impo
     // swapped or inconsistent bundle refuses the import with zero writes.
     let bundle = match prepare_bundle(&conn, &request, &doc) {
         Ok(bundle) => bundle,
-        Err(BundleRejection::Invalid(reason)) => {
+        Err(BundleRejection::Invalid(reason) | BundleRejection::TooOld(reason)) => {
             report.note("export", "attachments".to_owned(), "error", reason.clone());
             return report.finish(ExitCode::FailedValidation, reason);
         }
@@ -280,6 +280,31 @@ fn prepare_bundle(
     };
     super::carry::check_bundle(conn, &found, doc)?;
     Ok(Some(found))
+}
+
+/// The bundle check [`prepare_bundle`] runs, for an export in `folder` that
+/// has no target yet: on v3's schema made in memory, the schema a new
+/// target is migrated to. The upgrade's check runs it, so a v2 the import
+/// would refuse is caught before anything moves.
+pub(crate) fn check_bundle_on_new_schema(
+    root: &Value,
+    folder: &Path,
+) -> Result<(), BundleRejection> {
+    let internal = |what: &str, error: &dyn std::fmt::Display| {
+        BundleRejection::Internal(format!("cannot {what}: {error}"))
+    };
+    let doc: ExportDoc = serde_json::from_value(root.clone())
+        .map_err(|error| internal("read the export", &error))?;
+    let Some(found) = super::carry::bundle::locate(&doc, Some(folder))? else {
+        return Ok(());
+    };
+    let conn =
+        Connection::open_in_memory().map_err(|error| internal("make v3's schema", &error))?;
+    droppedneedle_kernel::db::apply_connection_pragmas(&conn)
+        .map_err(|error| internal("make v3's schema", &error))?;
+    let conn = droppedneedle_kernel::db::migrate(conn, &droppedneedle_kernel::schema::CHAIN)
+        .map_err(|error| internal("make v3's schema", &error))?;
+    super::carry::check_bundle(&conn, &found, &doc)
 }
 
 /// Best-effort provenance for reports on unparseable files.

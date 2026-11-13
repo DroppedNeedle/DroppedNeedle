@@ -5,11 +5,11 @@
 //! pair into a v3 pair without the user moving anything:
 //!
 //! 1. [`detect`] classifies the folders. Only a v2 layout is upgraded.
-//! 2. What the run could not finish is refused (a `-wal` file that cannot
-//!    be read, too little free disk), and the callback addresses that
-//!    change are listed ([`check_callbacks`]). Without
-//!    `callbacks_changed` the run stops there, before anything is locked
-//!    or moved.
+//! 2. What the run could not finish is refused (a database path the server
+//!    would not open, a `-wal` file that cannot be read, too little free
+//!    disk), and the callback addresses that change are listed
+//!    ([`check_callbacks`]). Without `callbacks_changed` the run stops
+//!    there, before anything is locked or moved.
 //! 3. The exclusive [`DataLock`] is taken (so a running server refuses the
 //!    run) and the same refusals run again.
 //! 4. A marker is written, then every v2 entry is renamed into a
@@ -38,10 +38,14 @@
 //! entries back, so a rollback that is itself interrupted can never delete
 //! a v2 file it already restored.
 //!
-//! [`check`] runs every check of steps 1 and 2, and the export and its
-//! validation, changing nothing. [`start_fresh`] moves the v2 entries into
-//! the backup as step 4 does and imports nothing, so v3 starts empty and
-//! [`undo`] still goes back to v2.
+//! [`check`] runs every check of steps 1 and 2, then the export with its
+//! validation and the import's check of its bundle, leaving the v2 files
+//! as they are. Its scratch files, and those of step 2's callback read,
+//! go into a folder of their own in `cache/`, which the move and the
+//! rollback leave in place, and are removed again; a finished upgrade or
+//! fresh start deletes the folder. [`start_fresh`] moves the v2 entries
+//! into the backup as step 4 does and imports nothing, so v3 starts empty
+//! and [`undo`] still goes back to v2.
 //!
 //! [`run_offline_import`] is the import both this upgrade and the tool's
 //! `import` and `dry-run` commands run.
@@ -57,10 +61,12 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::export::callbacks::{self, AddressChange, CallbackCheck, check_callbacks};
-use crate::export::exporter::{V2_COPY_PREFIX, V2Snapshot};
-use crate::export::scratch::{ScratchFolder, remove_unless_owned};
+use crate::export::exporter::V2Snapshot;
+use crate::export::scratch::{ScratchFolder, UNLOCKED_PREFIX, remove_unless_owned};
 use crate::export::v2dir::{self, V2Dirs};
 use crate::export::{ExportError, ExportRequest, export_v2_to_file};
+use crate::import::apply::check_bundle_on_new_schema;
+use crate::import::carry::bundle::BundleRejection;
 use crate::import::{
     ExitCode, ExportFile, ImportReport, ImportRequest, ValidationIssue, check_attachments,
     run_import, validate_export,
@@ -75,7 +81,9 @@ use droppedneedle::bootstrap::upgrade_progress::{
 use droppedneedle_kernel::db::backup::{WalState, wal_path, wal_state};
 use droppedneedle_kernel::db::datalock::{DataLock, DataLockError, lock_path, server_lock_path};
 use droppedneedle_kernel::db::error::DbError;
-use droppedneedle_kernel::db::{DbConfig, open_connection, open_runtime};
+use droppedneedle_kernel::db::{
+    DbConfig, open_connection, open_runtime, reject_remote_filesystem, reject_symlink,
+};
 use droppedneedle_kernel::runtime_config::crypto::{CryptoError, KEY_FILE_NAME};
 use droppedneedle_kernel::runtime_config::ingest::{LEGACY_CONFIG_FILE_NAME, mark_skip};
 use droppedneedle_kernel::runtime_config::key_check::{Assessment, KeyCheck, assess, enforce};
@@ -83,6 +91,11 @@ use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, KeyOrigin, Legac
 
 /// Work folder in `cache/` for the export file and its bundle.
 const WORK_DIR_NAME: &str = ".upgrade-work";
+/// Folder in `cache/` for the scratch files written before anything
+/// moves: the check's export, and the copy of a v2 database that left
+/// writes in its `-wal` file. On the cache folder's own disk, so the room
+/// the upgrade needs there covers them.
+const CHECK_DIR_NAME: &str = ".upgrade-check";
 const EXPORT_FILE_NAME: &str = "export.json";
 const MARKER_FORMAT: &str = "droppedneedle-upgrade-marker";
 /// The validator's code for a follow or approval of a deleted user.
@@ -102,6 +115,10 @@ fn work_dir(dirs: &DataDirs) -> PathBuf {
     dirs.cache_dir.join(WORK_DIR_NAME)
 }
 
+fn check_dir(dirs: &DataDirs) -> PathBuf {
+    dirs.cache_dir.join(CHECK_DIR_NAME)
+}
+
 /// The same layout inside the two backup folders.
 fn backup_side(dirs: &DataDirs) -> DataDirs {
     let config_dir = dirs.config_backup();
@@ -118,7 +135,13 @@ fn backup_side(dirs: &DataDirs) -> DataDirs {
 /// entries it never moves or deletes.
 fn folders(dirs: &DataDirs) -> [Folder; 2] {
     let marker = OsString::from(MARKER_FILE_NAME);
-    let mut cache_kept = vec![OsString::from(BACKUP_DIR_NAME), tmp_name(&marker), marker];
+    // A check can run beside the upgrade, so its folder stays put too.
+    let mut cache_kept = vec![
+        OsString::from(BACKUP_DIR_NAME),
+        OsString::from(CHECK_DIR_NAME),
+        tmp_name(&marker),
+        marker,
+    ];
     // The locks are held for the whole run and have to stay where the
     // server looks for them, so the upgrade never moves or deletes them.
     for lock in [lock_path(&dirs.db_path), server_lock_path(&dirs.db_path)] {
@@ -161,10 +184,6 @@ pub struct UpgradeRequest {
     /// The operator changed the callback addresses the run lists, so it
     /// goes on past them.
     pub callbacks_changed: bool,
-    /// Where the callback check reads its copy of a v2 database that left
-    /// writes in its `-wal` file, before anything in the data folders may
-    /// change.
-    pub temp_dir: PathBuf,
     /// Test-only failure point. The tool never sets one.
     pub fault: Option<Fault>,
 }
@@ -271,6 +290,27 @@ pub enum UpgradeError {
         /// What is unusual about the paths.
         reason: &'static str,
     },
+    /// The database's path is one the server never opens a database at:
+    /// behind a link, or on a network or FUSE filesystem.
+    #[error(transparent)]
+    DatabasePlace(DbError),
+    /// The v2 database file is a link. v3 never opens its database through
+    /// one, and SQLite keeps the `-wal` file of a linked database beside
+    /// the file it points at, where the upgrade would not read v2's newest
+    /// writes.
+    #[error(
+        "{} is a link to {}, and v3 never opens its database through one. With v2 stopped, \
+         move the file it points at, with its -wal file if there is one, into the cache folder \
+         in place of the link",
+        .path.display(),
+        .target.display()
+    )]
+    LinkedDatabaseFile {
+        /// The database path, a link.
+        path: PathBuf,
+        /// What the link points at.
+        target: PathBuf,
+    },
     /// Callback addresses change with the upgrade and the operator has not
     /// said they are done, or no admin could get back in if single sign-on
     /// failed. The run stopped before moving anything.
@@ -331,6 +371,12 @@ pub enum UpgradeError {
     /// The export did not pass validation.
     #[error("the export did not pass validation: {}", issue_list(.0))]
     Invalid(Vec<ValidationIssue>),
+    /// The import's check of the export's bundle refused it.
+    #[error("the export's bundle did not pass the import's check: {0}")]
+    BundleRefused(String),
+    /// The export lacks values v3 needs: v2 is older than its last release.
+    #[error("{}", too_old(.0))]
+    V2TooOld(String),
     /// Removing orphan rows from the v2 database failed.
     #[error("cannot remove orphan rows from the v2 database: {0}")]
     OrphanRepair(String),
@@ -421,6 +467,25 @@ fn import_kind(dry_run: bool) -> &'static str {
     if dry_run { "dry run" } else { "import" }
 }
 
+/// v2's last release, which an older v2 updates to before it upgrades.
+const LAST_V2: &str = "v2.15.0";
+
+/// What to do about a v2 older than [`LAST_V2`], ending with `then`.
+fn too_old_fix(then: &str) -> String {
+    format!(
+        "Update v2 to its last release, {LAST_V2} (image tag \
+         droppedneedle/droppedneedle:{LAST_V2}), start it and stop it once, then {then}"
+    )
+}
+
+/// [`UpgradeError::V2TooOld`]'s message.
+fn too_old(reason: &str) -> String {
+    format!(
+        "this v2 is too old to upgrade from: {reason}. {}",
+        too_old_fix("run the upgrade again")
+    )
+}
+
 impl UpgradeError {
     /// The code the tool reports this failure under.
     #[must_use]
@@ -430,6 +495,10 @@ impl UpgradeError {
             Self::ToolRunning => Code::ToolRunning,
             Self::UnknownLayout(_) => Code::UnknownLayout,
             Self::UnsupportedPaths { .. } => Code::UnsupportedPaths,
+            Self::DatabasePlace(DbError::SymlinkRefused { .. })
+            | Self::LinkedDatabaseFile { .. } => Code::DatabaseBehindLink,
+            Self::DatabasePlace(DbError::NonLocalFilesystem { .. }) => Code::NonLocalFilesystem,
+            Self::DatabasePlace(_) => Code::FileError,
             Self::CallbacksToChange { check, .. } if check.unreachable_admins().is_some() => {
                 Code::NoAdminCanSignIn
             }
@@ -441,7 +510,8 @@ impl UpgradeError {
             Self::Io { .. } => Code::FileError,
             Self::Occupied(_) => Code::Occupied,
             Self::RandomFailed => Code::RandomFailed,
-            Self::Invalid(_) => Code::ValidationFailed,
+            Self::Invalid(_) | Self::BundleRefused(_) => Code::ValidationFailed,
+            Self::V2TooOld(_) => Code::V2TooOld,
             Self::OrphanRepair(_) => Code::OrphanRepairFailed,
             Self::ImportSetup(_) => Code::ImportSetupFailed,
             Self::ImportFailed { .. } => Code::ImportFailed,
@@ -493,7 +563,7 @@ pub async fn run(
     let mut callbacks = None;
     match detect(dirs) {
         layout @ (Layout::Empty | Layout::V3) => return Ok(Upgraded::NothingToDo(layout)),
-        Layout::Unknown(reason) => return Err(UpgradeError::UnknownLayout(reason)),
+        Layout::Unknown(reason) => return Err(unknown_layout(reason)),
         Layout::V2 => {
             preflight(dirs, true)?;
             callbacks = Some(confirm_callbacks(request)?);
@@ -563,9 +633,24 @@ fn recover(
     match detect(dirs) {
         Layout::V2 => Ok(None),
         layout @ (Layout::Empty | Layout::V3) => Ok(Some(layout)),
-        Layout::Unknown(reason) => Err(UpgradeError::UnknownLayout(reason)),
+        Layout::Unknown(reason) => Err(unknown_layout(reason)),
         Layout::Interrupted => Err(failed("clear", &dirs.marker(), "the marker is still there")),
     }
+}
+
+/// The refusal of a layout [`detect`] cannot tell. A database file that is
+/// a link reads as unreadable, since nothing reads a database through one,
+/// and its refusal says how to put the file in its place.
+fn unknown_layout(reason: UnknownLayout) -> UpgradeError {
+    if let UnknownLayout::DatabaseUnreadable { path, .. } = &reason
+        && let Ok(target) = std::fs::read_link(path)
+    {
+        return UpgradeError::LinkedDatabaseFile {
+            path: path.clone(),
+            target,
+        };
+    }
+    UpgradeError::UnknownLayout(reason)
 }
 
 /// Start v3 empty: move the v2 entries into the backup folders the way the
@@ -579,7 +664,7 @@ pub fn start_fresh(
 ) -> Result<FreshStart, UpgradeError> {
     match detect(dirs) {
         layout @ (Layout::Empty | Layout::V3) => return Ok(FreshStart::NothingToDo(layout)),
-        Layout::Unknown(reason) => return Err(UpgradeError::UnknownLayout(reason)),
+        Layout::Unknown(reason) => return Err(unknown_layout(reason)),
         Layout::V2 => preflight(dirs, false)?,
         Layout::Interrupted => {}
     }
@@ -589,7 +674,10 @@ pub fn start_fresh(
     }
     preflight(dirs, false)?;
     progress(Step::MovingAside);
-    let moved = move_aside(dirs, None, progress).and_then(|()| remove_marker(dirs));
+    let moved = move_aside(dirs, None, progress).and_then(|()| {
+        clear_check_dir(dirs);
+        remove_marker(dirs)
+    });
     if let Err(cause) = moved {
         progress(Step::RollingBack);
         return Err(match roll_back(dirs, None, progress) {
@@ -674,12 +762,15 @@ pub fn delete_orphan_rows(db_path: &Path) -> rusqlite::Result<usize> {
 /// either way.
 fn confirm_callbacks(request: &UpgradeRequest) -> Result<CallbackCheck, UpgradeError> {
     let dirs = &request.dirs;
+    let scratch = open_check_dir(dirs)?;
     let check = check_callbacks(
         &dirs.config_dir,
         &dirs.db_path,
         &request.base_path,
-        &request.temp_dir,
-    )?;
+        scratch.path(),
+    );
+    close_check_dir(dirs, scratch);
+    let check = check?;
     if check.stops(request.callbacks_changed) {
         return Err(UpgradeError::CallbacksToChange {
             check: Box::new(check),
@@ -710,10 +801,18 @@ fn preflight(dirs: &DataDirs, export_inputs: bool) -> Result<(), UpgradeError> {
         .map_or(Ok(()), Err)
 }
 
-/// Everything that refuses the run before anything moves, in the order the
-/// run meets them. `export_inputs` adds the two files every export needs;
-/// a fresh start exports nothing.
+/// Everything that refuses the run before anything moves: first
+/// [`place_refusals`], then [`data_refusals`].
 fn refusals(dirs: &DataDirs, export_inputs: bool) -> Vec<UpgradeError> {
+    let mut found = place_refusals(dirs);
+    found.extend(data_refusals(dirs, export_inputs));
+    found
+}
+
+/// What makes the cache folder no place for the upgrade's files: paths
+/// the in-place upgrade does not handle, a database the server would not
+/// open there, too little free disk.
+fn place_refusals(dirs: &DataDirs) -> Vec<UpgradeError> {
     let mut found = Vec::new();
     if dirs.db_path.parent() != Some(dirs.cache_dir.as_path()) {
         found.push(UpgradeError::UnsupportedPaths {
@@ -729,6 +828,34 @@ fn refusals(dirs: &DataDirs, export_inputs: bool) -> Vec<UpgradeError> {
             reason: "the config and cache folders are inside one another",
         });
     }
+    // The import opens the new database where v2's was, as the server
+    // does, and both refuse a path through a link or a filesystem SQLite
+    // cannot lock safely. Found only then, the run would already have
+    // moved the v2 files, and a fresh start would leave a server that
+    // cannot start. A database file that is a link never gets here: the
+    // layout reads it as unknown, and `unknown_layout` says what to do.
+    for refused in [
+        reject_symlink(&dirs.db_path),
+        reject_remote_filesystem(&dirs.db_path),
+    ] {
+        match refused {
+            Ok(()) => {}
+            Err(DbError::Io(error)) => {
+                found.push(failed("read the filesystem of", &dirs.cache_dir, error));
+            }
+            Err(error) => found.push(UpgradeError::DatabasePlace(error)),
+        }
+    }
+    if let Err(error) = check_free_disk(dirs) {
+        found.push(error);
+    }
+    found
+}
+
+/// What in the v2 files refuses the run. `export_inputs` adds the two
+/// files every export needs; a fresh start exports nothing.
+fn data_refusals(dirs: &DataDirs, export_inputs: bool) -> Vec<UpgradeError> {
+    let mut found = Vec::new();
     for backup in [dirs.config_backup(), dirs.cache_backup()] {
         if std::fs::symlink_metadata(&backup).is_ok() {
             found.push(UpgradeError::BackupExists(backup));
@@ -752,42 +879,25 @@ fn refusals(dirs: &DataDirs, export_inputs: bool) -> Vec<UpgradeError> {
             found.push(error.into());
         }
     }
-    if let Err(error) = check_free_disk(dirs) {
-        found.push(error);
-    }
     found
 }
 
 /// The export bundle and the new database both land in the cache folder
 /// while the v2 files are still there. Each is at most the size of the v2
 /// database plus the files the bundle carries. A v2 that left writes in its
-/// `-wal` file also needs room for the copy they are read from.
+/// `-wal` file also needs room for the copy they are read from. The check
+/// writes less than that there: the copy and one export.
 fn check_free_disk(dirs: &DataDirs) -> Result<(), UpgradeError> {
-    check_free_disk_in(dirs, &dirs.cache_dir, copy_bytes(dirs))
-}
-
-/// The size of the copy a v2 database that left writes in its `-wal` file
-/// is read from ([`V2Snapshot`]); 0 when it is read where it is.
-fn copy_bytes(dirs: &DataDirs) -> u64 {
-    match wal_state(&dirs.db_path) {
-        WalState::HoldsData(wal) => std::fs::metadata(&dirs.db_path)
-            .map_or(0, |meta| meta.len())
-            .saturating_add(wal),
-        WalState::Absent | WalState::Empty | WalState::Unreadable(_) => 0,
-    }
-}
-
-/// The same estimate plus `extra` bytes, against the free space in `dir`.
-fn check_free_disk_in(dirs: &DataDirs, dir: &Path, extra: u64) -> Result<(), UpgradeError> {
+    let dir = dirs.cache_dir.as_path();
     let database = std::fs::metadata(&dirs.db_path).map_or(0, |meta| meta.len());
     let carried: u64 = CARRIED_FILE_DIRS
         .iter()
-        .map(|dir| dir_bytes(&dirs.cache_dir.join(dir)))
+        .map(|carried| dir_bytes(&dir.join(carried)))
         .sum();
     let needed = database
         .saturating_add(carried)
         .saturating_mul(2)
-        .saturating_add(extra)
+        .saturating_add(copy_bytes(dirs))
         .saturating_add(DISK_HEADROOM_BYTES);
     let free = droppedneedle_library::adapters::free_bytes_for(dir)
         .map_err(|error| failed("measure free space in", dir, error))?;
@@ -799,6 +909,17 @@ fn check_free_disk_in(dirs: &DataDirs, dir: &Path, extra: u64) -> Result<(), Upg
         needed_mib: needed.div_ceil(MIB),
         free_mib: free / MIB,
     })
+}
+
+/// The size of the copy a v2 database that left writes in its `-wal` file
+/// is read from ([`V2Snapshot`]); 0 when it is read where it is.
+fn copy_bytes(dirs: &DataDirs) -> u64 {
+    match wal_state(&dirs.db_path) {
+        WalState::HoldsData(wal) => std::fs::metadata(&dirs.db_path)
+            .map_or(0, |meta| meta.len())
+            .saturating_add(wal),
+        WalState::Absent | WalState::Empty | WalState::Unreadable(_) => 0,
+    }
 }
 
 /// Bytes held by the regular files under `dir`. Links are not followed and
@@ -890,8 +1011,8 @@ async fn convert(
     };
 
     let mut orphans_removed = 0;
-    let export_bytes = match export_checked(&export, &export_path)? {
-        Checked::Valid(bytes) => bytes,
+    let exported = match export_checked(&export, &export_path)? {
+        Checked::Valid(exported) => exported,
         Checked::Refused(issues) if issues.iter().all(|issue| issue.code == DANGLING_USER_REF) => {
             orphans_removed = delete_orphan_rows(v2_db.path())
                 .map_err(|error| UpgradeError::OrphanRepair(error.to_string()))?;
@@ -900,12 +1021,18 @@ async fn convert(
             }
             progress(Step::OrphansRemoved(orphans_removed));
             match export_checked(&export, &export_path)? {
-                Checked::Valid(bytes) => bytes,
+                Checked::Valid(exported) => exported,
                 Checked::Refused(issues) => return Err(UpgradeError::Invalid(issues)),
             }
         }
         Checked::Refused(issues) => return Err(UpgradeError::Invalid(issues)),
     };
+    // The dry run would refuse the same bundle; this says why in the words
+    // the check uses, a v2 too old to upgrade from included.
+    if let Some(refused) = bundle_refusal(&exported.root, &work) {
+        return Err(refused);
+    }
+    let export_bytes = exported.bytes;
 
     let job = |dry_run: bool| OfflineImport {
         export_bytes: export_bytes.clone(),
@@ -934,13 +1061,26 @@ async fn convert(
     write_durably(&dirs.report_file(), report.to_json().as_bytes())?;
     drop(v2_db);
     remove_entry(&work)?;
+    clear_check_dir(dirs);
     remove_marker(dirs)?;
     Ok((report, orphans_removed))
 }
 
+/// Delete the check's folder and all in it once the v2 files are in the
+/// backup, so nothing of v2's stays in v3's cache folder. The move leaves
+/// the folder in place. A check still writing there can keep it from
+/// going, which must not undo a finished run: that is logged, and the
+/// check removes its own files when it ends.
+fn clear_check_dir(dirs: &DataDirs) {
+    let dir = check_dir(dirs);
+    if let Err(error) = remove_entry(&dir) {
+        tracing::warn!(%error, dir = %dir.display(), "cannot remove the upgrade check's folder");
+    }
+}
+
 /// An export that either passed the validator or was refused by it.
 enum Checked {
-    Valid(Vec<u8>),
+    Valid(Exported),
     Refused(Vec<ValidationIssue>),
 }
 
@@ -948,7 +1088,7 @@ enum Checked {
 fn export_checked(request: &ExportRequest, export_path: &Path) -> Result<Checked, UpgradeError> {
     let exported = export_validated(request, export_path)?;
     Ok(if exported.errors.is_empty() {
-        Checked::Valid(exported.bytes)
+        Checked::Valid(exported)
     } else {
         Checked::Refused(exported.errors)
     })
@@ -984,20 +1124,26 @@ fn export_validated(request: &ExportRequest, export_path: &Path) -> Result<Expor
 /// Said of a blocker the operator cannot put right in the v2 data.
 const REPORT_IT: &str = "If the check finds it again, report it with this message.";
 
-/// The start of the name of each scratch folder the check exports into.
-const CHECK_SCRATCH_PREFIX: &str = "droppedneedle-upgrade-check-";
+/// Said of a file or folder the upgrade could not read or write.
+const OWNER_FIX: &str =
+    "Check that the user in PUID and PGID owns the config and cache folders, then check again.";
 
-/// What the upgrade would find, changing nothing: the layout, every check
-/// it runs before it moves anything, the callback addresses that change,
-/// and an export of the v2 data with its validation, which also counts
-/// what would move. The export, and the copy of a v2 database that left
-/// writes in its `-wal` file, are written to private folders in the
-/// request's `temp_dir`, never into the data folders, and removed again. An
-/// interrupted layout is reported as it is: the upgrade rolls it back
-/// before it checks anything, and so can the check only after that.
+/// The start of the name of each scratch folder a check or the run's
+/// callback read makes in the cache folder's `.upgrade-check`.
+pub const CHECK_SCRATCH_PREFIX: &str = "droppedneedle-upgrade-check-";
+
+/// What the upgrade would find, leaving the v2 files as they are: the
+/// layout, every check it runs before it moves anything, the callback
+/// addresses that change, and an export of the v2 data with its validation
+/// and the import's check of its bundle, which also counts what would move.
+/// The export, and the copy of a v2 database that left writes in its
+/// `-wal` file, are written to private folders in the cache folder's
+/// `.upgrade-check` and removed again; they wait until the cache folder
+/// could take the upgrade, which writes more there. An interrupted layout
+/// is reported as it is: the upgrade rolls it back before it checks
+/// anything, and so can the check only after that.
 pub fn check(request: &UpgradeRequest) -> CheckResult {
     let dirs = &request.dirs;
-    let temp_dir = request.temp_dir.as_path();
     let mut result = CheckResult {
         layout: FoundLayout::V2,
         counts: None,
@@ -1012,35 +1158,49 @@ pub fn check(request: &UpgradeRequest) -> CheckResult {
         Layout::Empty => result.layout = FoundLayout::Empty,
         Layout::Unknown(reason) => {
             result.layout = FoundLayout::Unknown;
-            add_blocker(&mut result.blockers, &UpgradeError::UnknownLayout(reason));
+            add_blocker(&mut result.blockers, &unknown_layout(reason));
         }
     }
     if result.layout != FoundLayout::V2 {
         return result;
     }
-    for refusal in refusals(dirs, true) {
-        add_blocker(&mut result.blockers, &refusal);
+    let place = place_refusals(dirs);
+    let fits = place.is_empty();
+    let data = data_refusals(dirs, true);
+    for refusal in place.iter().chain(&data) {
+        add_blocker(&mut result.blockers, refusal);
     }
-    let mut exportable = result.blockers.is_empty();
-    // Before the copy below, which is named like a stale one.
-    remove_stale_scratch(temp_dir);
-    let copy = copy_bytes(dirs);
-    if copy > 0
-        && let Err(short) = check_free_disk_in(dirs, temp_dir, copy)
-    {
-        add_blocker(&mut result.blockers, &short);
+    if !fits {
         return result;
     }
-    // One copy of a v2 database that left writes in its -wal file serves
-    // the callback read and the export.
-    let v2_db = match V2Snapshot::take(&dirs.db_path, temp_dir) {
-        Ok(v2_db) => v2_db,
+    let exportable = result.blockers.is_empty();
+    let scratch = match open_check_dir(dirs) {
+        Ok(scratch) => scratch,
         Err(error) => {
-            add_blocker(&mut result.blockers, &error.into());
+            add_blocker(&mut result.blockers, &error);
             return result;
         }
     };
-    match check_callbacks(&dirs.config_dir, v2_db.path(), &request.base_path, temp_dir) {
+    look(request, scratch.path(), exportable, &mut result);
+    close_check_dir(dirs, scratch);
+    result
+}
+
+/// Read the callback addresses, then, when `exportable`, export and
+/// validate, writing every scratch file in `scratch`. Each is removed
+/// before this returns.
+fn look(request: &UpgradeRequest, scratch: &Path, mut exportable: bool, result: &mut CheckResult) {
+    let dirs = &request.dirs;
+    // One copy of a v2 database that left writes in its -wal file serves
+    // the callback read and the export.
+    let v2_db = match V2Snapshot::take(&dirs.db_path, scratch) {
+        Ok(v2_db) => v2_db,
+        Err(error) => {
+            add_blocker(&mut result.blockers, &error.into());
+            return;
+        }
+    };
+    match check_callbacks(&dirs.config_dir, v2_db.path(), &request.base_path, scratch) {
         Ok(callbacks) => {
             result.warnings = warnings(&callbacks);
             if let Some(names) = callbacks.unreachable_admins() {
@@ -1053,59 +1213,65 @@ pub fn check(request: &UpgradeRequest) -> CheckResult {
         }
     }
     if exportable {
-        check_export(request, v2_db.path(), temp_dir, &mut result);
+        check_export(request, v2_db.path(), scratch, result);
     }
-    result
 }
 
-/// Export the v2 data, reading the database at `v2_db`, and validate it as
-/// the upgrade does, and count what it carries. Anything that stops the
-/// export is a blocker, as are validation errors other than the orphan
-/// rows the upgrade removes by itself.
-fn check_export(request: &UpgradeRequest, v2_db: &Path, temp_dir: &Path, result: &mut CheckResult) {
-    // The copy of the database is made already, so it is not counted again.
-    if let Err(short) = check_free_disk_in(&request.dirs, temp_dir, 0) {
-        add_blocker(&mut result.blockers, &short);
-        return;
-    }
-    let exported = match scratch_export(request, v2_db, temp_dir) {
-        Ok(exported) => exported,
+/// Export the v2 data, reading the database at `v2_db`, validate it as
+/// the upgrade does, check its bundle as the import does, and count what
+/// it carries. Anything that stops the export is a blocker, as are
+/// validation errors other than the orphan rows the upgrade removes by
+/// itself, and anything the bundle check refuses.
+fn check_export(request: &UpgradeRequest, v2_db: &Path, scratch: &Path, result: &mut CheckResult) {
+    let (exported, bundle) = match scratch_export(request, v2_db, scratch) {
+        Ok(checked) => checked,
         Err(error) => {
             add_blocker(&mut result.blockers, &error);
             return;
         }
     };
-    // The records the upgrade's orphan repair removes: follows and
-    // approvals of a user the export does not hold.
     let mut orphans = HashSet::new();
     let mut invalid = Vec::new();
     for issue in exported.errors {
-        let record = issue.path.split('.').next().unwrap_or_default().to_owned();
-        let repaired = record.starts_with("follows[") || record.starts_with("approvals[");
-        if issue.code == DANGLING_USER_REF && repaired {
-            orphans.insert(record);
-        } else {
-            invalid.push(issue);
+        match repaired_record(&issue) {
+            Some(record) => {
+                orphans.insert(record);
+            }
+            None => invalid.push(issue),
         }
     }
     if !invalid.is_empty() {
         add_blocker(&mut result.blockers, &UpgradeError::Invalid(invalid));
     }
+    if let Some(refused) = bundle {
+        add_blocker(&mut result.blockers, &refused);
+    }
     result.counts = Some(export_counts(&exported.root, &orphans));
     result.orphans = count(orphans.len());
 }
 
-/// Export into a private scratch folder of its own in `temp_dir` and
-/// validate the result, then remove the folder.
+/// The record a validation error names when the upgrade's orphan repair
+/// removes it: a follow or approval of a user the export does not hold.
+fn repaired_record(issue: &ValidationIssue) -> Option<String> {
+    let record = issue.path.split('.').next().unwrap_or_default();
+    let repaired = record.starts_with("follows[") || record.starts_with("approvals[");
+    (issue.code == DANGLING_USER_REF && repaired).then(|| record.to_owned())
+}
+
+/// Export into a private scratch folder of its own in `scratch` and
+/// validate the result, then remove the folder. Once nothing but orphan
+/// rows stands in the way, the bundle gets the check the import gives it
+/// before it writes anything; what that refuses comes back beside the
+/// export.
 fn scratch_export(
     request: &UpgradeRequest,
     v2_db: &Path,
-    temp_dir: &Path,
-) -> Result<Exported, UpgradeError> {
+    scratch: &Path,
+) -> Result<(Exported, Option<UpgradeError>), UpgradeError> {
     let dirs = &request.dirs;
     let passphrase = fresh_passphrase()?;
-    let scratch = ScratchFolder::create(temp_dir, CHECK_SCRATCH_PREFIX)
-        .map_err(|error| failed("create", temp_dir, error))?;
+    let folder = ScratchFolder::create(scratch, CHECK_SCRATCH_PREFIX)
+        .map_err(|error| failed("create", scratch, error))?;
     let export = ExportRequest {
         v2: V2Dirs {
             config_dir: dirs.config_dir.clone(),
@@ -1117,25 +1283,108 @@ fn scratch_export(
         exported_at: None,
         v2_commit: request.v2_commit.clone(),
     };
-    let exported = export_validated(&export, &scratch.path().join(EXPORT_FILE_NAME));
-    let shown = scratch.path().to_owned();
-    let removed = scratch.remove();
+    let exported = export_validated(&export, &folder.path().join(EXPORT_FILE_NAME));
+    let importable = |exported: &Exported| {
+        let mut errors = exported.errors.iter();
+        errors.all(|issue| repaired_record(issue).is_some())
+    };
+    let bundle = match &exported {
+        Ok(exported) if importable(exported) => bundle_refusal(&exported.root, folder.path()),
+        _ => None,
+    };
+    let shown = folder.path().to_owned();
+    let removed = folder.remove();
     let exported = exported?;
     removed.map_err(|error| failed("delete", &shown, error))?;
-    Ok(exported)
+    Ok((exported, bundle))
 }
 
-/// Remove the scratch folders and v2 database copies of checks and runs
-/// that were killed before they could: they hold password hashes and
+/// What the import's check of the bundle beside the export in `folder`
+/// refuses, before any target exists; `None` when it passes.
+fn bundle_refusal(root: &Value, folder: &Path) -> Option<UpgradeError> {
+    match check_bundle_on_new_schema(root, folder) {
+        Ok(()) => None,
+        Err(BundleRejection::TooOld(reason)) => Some(UpgradeError::V2TooOld(reason)),
+        Err(BundleRejection::Invalid(reason) | BundleRejection::Internal(reason)) => {
+            Some(UpgradeError::BundleRefused(reason))
+        }
+    }
+}
+
+/// A scratch folder of this check's own inside the cache folder's check
+/// folder, after removing what killed checks left there. The check folder
+/// is made owner-only when it is not there.
+fn open_check_dir(dirs: &DataDirs) -> Result<ScratchFolder, UpgradeError> {
+    let dir = check_dir(dirs);
+    match std::fs::symlink_metadata(&dir) {
+        Ok(meta) if meta.is_dir() => remove_stale_scratch(&dir),
+        Ok(_) => return Err(UpgradeError::NotAFolder(dir)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(failed("read", &dir, error)),
+    }
+    // A check ending beside this one removes the check folder once it is
+    // empty, and its sweep removes a folder still being made, so either can
+    // vanish under this one: then it is made once more.
+    let mut tries = 2;
+    loop {
+        tries -= 1;
+        let made = ensure_private_dir(&dir)
+            .and_then(|()| ScratchFolder::create(&dir, CHECK_SCRATCH_PREFIX));
+        match made {
+            Ok(owned) => return Ok(owned),
+            Err(error) if tries > 0 && error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(failed("create", &dir, error)),
+        }
+    }
+}
+
+/// An owner-only folder at `dir`, unless one is there already.
+fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    match builder.create(dir) {
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        made => made,
+    }
+}
+
+/// Remove this check's scratch folder, then the check folder once it is
+/// empty. A check running beside this one keeps its own folder there, and
+/// removes the check folder after it.
+fn close_check_dir(dirs: &DataDirs, owned: ScratchFolder) {
+    let shown = owned.path().display().to_string();
+    if let Err(error) = owned.remove() {
+        tracing::warn!(%error, dir = %shown, "cannot remove the upgrade check's scratch folder");
+    }
+    let dir = check_dir(dirs);
+    match std::fs::remove_dir(&dir) {
+        Ok(()) => {}
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+            ) => {}
+        Err(error) => {
+            tracing::warn!(%error, dir = %dir.display(), "cannot remove the upgrade check's folder");
+        }
+    }
+}
+
+/// Remove the scratch folders of checks and runs that were killed before
+/// they could, half-made ones included: they hold password hashes and
 /// listening history. Those of live checks and runs are left alone.
-fn remove_stale_scratch(temp_dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(temp_dir) else {
+fn remove_stale_scratch(scratch: &Path) {
+    let Ok(entries) = std::fs::read_dir(scratch) else {
         return;
     };
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        let stale = name.starts_with(CHECK_SCRATCH_PREFIX) || name.starts_with(V2_COPY_PREFIX);
+        let stale = name.starts_with(CHECK_SCRATCH_PREFIX) || name.starts_with(UNLOCKED_PREFIX);
         if stale && let Err(error) = remove_unless_owned(&entry.path()) {
             tracing::warn!(%error, "cannot remove an earlier upgrade check's scratch folder");
         }
@@ -1208,6 +1457,13 @@ fn add_blocker(blockers: &mut Vec<Blocker>, error: &UpgradeError) {
 
 /// What is wrong and what to do about it, for one refusal.
 fn blocker(error: &UpgradeError) -> Blocker {
+    if let UpgradeError::V2TooOld(reason) = error {
+        return Blocker {
+            code: error.code(),
+            message: format!("This v2 is too old to upgrade from: {reason}."),
+            fix: too_old_fix("check again."),
+        };
+    }
     let key_fix = "Put back the key file v2 ran with, which holds DATA_ENC_KEY.";
     let (message, fix) = match error {
         UpgradeError::UnknownLayout(reason) => (
@@ -1218,6 +1474,28 @@ fn blocker(error: &UpgradeError) -> Blocker {
             format!("The in-place upgrade does not handle this layout: {reason}."),
             "Use the export and import commands instead.",
         ),
+        UpgradeError::DatabasePlace(DbError::SymlinkRefused { path }) => (
+            format!(
+                "{} is a link, and v3 never opens its database through one.",
+                path.display()
+            ),
+            "Use the real folder as the cache folder, not a link to it.",
+        ),
+        UpgradeError::DatabasePlace(error @ DbError::NonLocalFilesystem { .. }) => (
+            sentence(error),
+            "Do that with the container stopped, then check again.",
+        ),
+        UpgradeError::LinkedDatabaseFile { path, target } => (
+            format!(
+                "{} is a link to {}, and v3 never opens its database through one.",
+                path.display(),
+                target.display()
+            ),
+            "With v2 stopped, move the file it points at, with its -wal file if there is one, \
+             into the cache folder in place of the link, then check again.",
+        ),
+        UpgradeError::NotAFolder(_) => (sentence(error), "Move it away, then check again."),
+        UpgradeError::Io { .. } | UpgradeError::DatabasePlace(_) => (sentence(error), OWNER_FIX),
         UpgradeError::BackupExists(path) => (
             format!("{} already exists.", path.display()),
             "Move it away or delete it.",

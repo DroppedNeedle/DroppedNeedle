@@ -17,6 +17,10 @@ The examples run the tool with `docker run`, passing your own user and group
 ids so the files it writes belong to you. Mount whatever directories each
 command needs.
 
+Run every step with the same image tag. The import takes the bundle's values
+as the export wrote them, so a bundle from another build can come in wrong.
+If you change the tag, export again.
+
 ## 1. Stop v2 and take a copy
 
 ```sh
