@@ -95,7 +95,7 @@ pub const DUPLICATE_PLAYLIST_ID: &str = "playlist-alice-again";
 const SHARED_SOURCE_REF: &str = "spotify:playlist:road";
 /// Alice's finished request.
 pub const FINISHED_REQUEST_MBID: &str = "aaaaaaaa-0000-4000-8000-000000000001";
-/// Bob's request still waiting for approval; it stays behind.
+/// Bob's request still waiting for approval; it carries still waiting.
 pub const PENDING_REQUEST_MBID: &str = "aaaaaaaa-0000-4000-8000-000000000002";
 /// Alice's dormant wanted watch; v3 has no dormant state, so it lands
 /// watching and due.

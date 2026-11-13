@@ -1,8 +1,10 @@
 //! The request ledger, wanted watches and per-user quotas.
 //!
-//! Only finished requests carry: one still waiting for approval or a
-//! download would need v3 to pick the work back up, so it stays behind
-//! and the user asks again. Requesters and dismissals follow their request.
+//! Every request carries. One v2 had not finished lands as one v3 still has
+//! to do: waiting for approval, or approved with no download yet, which v3
+//! starts with a fresh search (the import's request step settles the ones
+//! the library already holds). Nothing of v2's download progress comes with
+//! it. Requesters and dismissals follow their request.
 //! Request counts per user come from the requester rows, so carrying them
 //! keeps quota usage where it was.
 //!
@@ -169,20 +171,43 @@ const ON_REQUEST: &[Parent] = &[Parent::required(
     &[("musicbrainz_id_lower", "musicbrainz_id_lower")],
 )];
 
-/// v2's terminal request states.
-const FINISHED: &str = "s.status IN ('imported', 'incomplete', 'failed', 'cancelled', 'rejected')";
+// v2's request states, as v2's `request_history.py` and `request_service.py`
+// list them (`_TERMINAL_STATUSES`, `_TASK_ACTIVE_STATUSES`,
+// `_ACTIVE_REQUEST_STATUSES`, `_CANCELLING_STATUS`): finished, still to do,
+// or being cancelled.
 
-/// Requester and dismissal rows of a finished request.
-const OF_FINISHED: &str = "s.musicbrainz_id_lower IN (SELECT musicbrainz_id_lower \
-     FROM v2.request_history WHERE status IN \
-     ('imported', 'incomplete', 'failed', 'cancelled', 'rejected'))";
+/// v2's finished states, which v3 keeps as they are.
+macro_rules! finished {
+    () => {
+        "('imported', 'incomplete', 'failed', 'cancelled', 'rejected')"
+    };
+}
 
-/// Finished requests.
+/// v2's states of a request still to do: waiting for approval, about to
+/// start, queued or downloading.
+macro_rules! unfinished {
+    () => {
+        "('awaiting_approval', 'pending', 'queued', 'downloading')"
+    };
+}
+
+/// A request v2 had approved and was getting: v3 starts it again by
+/// itself. One with no owner, or whose owner was deleted, cannot, as its
+/// download needs one, so it waits for an admin, who becomes its owner on
+/// approval.
+macro_rules! starts_again {
+    () => {
+        "s.status IN ('pending', 'queued', 'downloading') \
+         AND s.user_id IN (SELECT id FROM v2.auth_users)"
+    };
+}
+
+/// Every request, in the state v3 reads.
 pub const REQUESTS: TableSection = TableSection {
     name: "request",
     source: Source::Table {
         table: "request_history",
-        filter: FINISHED,
+        filter: "",
         requires: &[],
     },
     target: Target::Table("request_history"),
@@ -203,30 +228,63 @@ pub const REQUESTS: TableSection = TableSection {
             now_millis!(),
             ")"
         )),
-        Column::new("completed_at").from_sql(millis!("completed_at")),
-        // A live status would send a finished request back to work, so anything
-        // else reads as failed.
+        // A request being cancelled is cancelled as the import finishes it.
+        Column::new("completed_at").from_sql(concat!(
+            "CASE WHEN s.status IN ",
+            unfinished!(),
+            " THEN NULL WHEN s.status = 'cancelling' THEN COALESCE(",
+            millis!("completed_at"),
+            ", ",
+            now_millis!(),
+            ") ELSE ",
+            millis!("completed_at"),
+            " END"
+        )),
+        // A request under way starts again with no download, so v3 searches
+        // afresh. A state v2 never wrote would read as live work, so it
+        // reads as failed.
         Column::new("status").from_sql_of(
             "status",
-            set_or!(
-                "status",
-                "failed",
-                "imported" => "imported",
-                "incomplete" => "incomplete",
-                "failed" => "failed",
-                "cancelled" => "cancelled",
-                "rejected" => "rejected",
+            concat!(
+                "CASE WHEN ",
+                starts_again!(),
+                " THEN 'pending' WHEN s.status IN ",
+                unfinished!(),
+                " THEN 'awaiting_approval' WHEN s.status = 'cancelling' THEN 'cancelled' \
+                 WHEN s.status IN ",
+                finished!(),
+                " THEN s.status ELSE 'failed' END"
             ),
         ),
         Column::new("monitor_artist").from_sql_of("monitor_artist", flag!("monitor_artist")),
         Column::new("auto_download_artist")
             .from_sql_of("auto_download_artist", flag!("auto_download_artist")),
-        col("user_id"),
+        // v2 keeps a deleted owner's id on their requests. An unfinished one
+        // lands with no owner, waiting for an admin; the user filter reads
+        // this value, so the row and the asks others joined it with carry.
+        Column::new("user_id").from_sql_of(
+            "user_id",
+            concat!(
+                "CASE WHEN s.status IN ",
+                unfinished!(),
+                " THEN ",
+                live_user!("user_id"),
+                " ELSE s.user_id END"
+            ),
+        ),
         col("requested_by_name"),
         Column::new("reviewed_by_id").from_sql(live_user!("reviewed_by_id")),
         col("reviewed_by_name"),
         Column::new("reviewed_at").from_sql(millis!("reviewed_at")),
-        col("download_task_id"),
+        // Only finished downloads carry, so only a finished request keeps one.
+        Column::new("download_task_id").from_sql_of(
+            "download_task_id",
+            concat!(
+                "CASE WHEN s.status IN ",
+                finished!(),
+                " THEN s.download_task_id END"
+            ),
+        ),
         col("release_mbid"),
         Column::new("request_kind").from_sql_of(
             "request_kind",
@@ -235,23 +293,36 @@ pub const REQUESTS: TableSection = TableSection {
         col("track_title"),
         Column::new("duration_seconds").from_sql(whole!("duration_seconds")),
         col("track_release_group_mbid"),
-        Column::new("dispatch_authorized")
-            .from_sql_of("dispatch_authorized", flag!("dispatch_authorized")),
+        // v3's startup recovery starts an approved request with no download.
+        // One waiting for approval is not approved yet, and a cancelled one
+        // is not any more, as v3's own cancel leaves it.
+        Column::new("dispatch_authorized").from_sql_of(
+            "dispatch_authorized",
+            concat!(
+                "CASE WHEN ",
+                starts_again!(),
+                " THEN 1 WHEN s.status IN ",
+                unfinished!(),
+                " OR s.status = 'cancelling' THEN 0 ELSE ",
+                flag!("dispatch_authorized"),
+                " END"
+            ),
+        ),
         Column::new("generation").from_sql_of("generation", whole_or!("generation", 1)),
     ],
     key: &["musicbrainz_id_lower"],
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "requests still waiting or downloading; request them again in v3",
+    left_behind: "finished requests whose owner was deleted in v2",
 };
 
-/// Who asked for each finished request.
+/// Who asked for each request.
 pub const REQUEST_REQUESTERS: TableSection = TableSection {
     name: "request_requester",
     source: Source::Table {
         table: "request_history_requesters",
-        filter: OF_FINISHED,
+        filter: "",
         requires: &[],
     },
     target: Target::Table("request_history_requesters"),
@@ -265,7 +336,8 @@ pub const REQUEST_REQUESTERS: TableSection = TableSection {
     unique: &[],
     parents: ON_REQUEST,
     user_column: Some("user_id"),
-    left_behind: "requesters of unfinished requests; request again in v3",
+    left_behind: "requesters that are deleted users; nothing to do, those accounts were deleted \
+                  in v2",
 };
 
 /// Requests a user cleared from their list.
@@ -273,7 +345,7 @@ pub const REQUEST_DISMISSALS: TableSection = TableSection {
     name: "request_dismissal",
     source: Source::Table {
         table: "request_history_dismissals",
-        filter: OF_FINISHED,
+        filter: "",
         requires: &[],
     },
     target: Target::Table("request_history_dismissals"),
@@ -292,7 +364,7 @@ pub const REQUEST_DISMISSALS: TableSection = TableSection {
     unique: &[],
     parents: ON_REQUEST,
     user_column: Some("user_id"),
-    left_behind: "dismissals of unfinished requests; nothing to do",
+    left_behind: "dismissals of deleted users; nothing to do, those accounts were deleted in v2",
 };
 
 /// Wanted watches, every state: live ones keep checking in v3.

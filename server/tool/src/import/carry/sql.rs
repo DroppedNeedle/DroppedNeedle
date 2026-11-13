@@ -10,7 +10,12 @@
 //! families prepare them over every spec column, which names every column
 //! a smaller list can.
 
+// `sql!` joins one token per part, so a part built by a definition macro
+// is written in parentheses.
+#![allow(unused_parens, clippy::double_parens)]
+
 use droppedneedle_kernel::db::statement::Choice;
+use droppedneedle_library::owns_group;
 
 use crate::export::sections::requests::now_millis;
 use crate::export::sections::{
@@ -297,6 +302,41 @@ droppedneedle_kernel::sql! {
              (SELECT p.rowid FROM main.import_pending_links p WHERE " + LINK_RESOLVED + ")";
     /// How many pending links are left.
     pub(super) LINKS_WAITING = "SELECT COUNT(*) FROM main.import_pending_links";
+
+    /// Request `rh` is one the request section carried unfinished and still
+    /// as it landed: the bundle holds it in the same state at the same time,
+    /// with no download.
+    fragment CARRIED_UNFINISHED = "EXISTS (SELECT 1 FROM bundle.\"request\" b \
+             WHERE b.musicbrainz_id_lower = rh.musicbrainz_id_lower AND b.status = rh.status \
+             AND b.requested_at = rh.requested_at) AND rh.download_task_id IS NULL";
+    /// How many requests in state ?1 the bundle holds.
+    pub(super) UNFINISHED_BUNDLED = "SELECT COUNT(*) FROM bundle.\"request\" WHERE status = ?1";
+    /// How many carried unfinished requests are in state ?1.
+    pub(super) UNFINISHED_LANDED = "SELECT COUNT(*) FROM main.request_history rh \
+             WHERE rh.status = ?1 AND " + CARRIED_UNFINISHED;
+    /// Settle as imported at ?1 each carried unfinished album request whose
+    /// album the library holds, as acquire's request sweep does.
+    pub(super) SETTLE_UNFINISHED_OWNED = "UPDATE main.request_history AS rh \
+             SET status = 'imported', completed_at = ?1, generation = rh.generation + 1 \
+             WHERE rh.request_kind = 'album' AND rh.status IN ('pending', 'awaiting_approval') \
+             AND " + CARRIED_UNFINISHED + " AND EXISTS (" + (owns_group!("= rh.musicbrainz_id_lower")) + ")";
+    /// The downloads `rh`'s owner started for its album or song, matched as
+    /// acquire's startup recovery matches them (`TASK_SINCE`). Recovery
+    /// follows the newest one started in or after the second the request
+    /// reads as made.
+    fragment OWNERS_DOWNLOADS = "FROM main.download_tasks t WHERE t.user_id = rh.user_id \
+             AND ((rh.request_kind = 'track' AND t.recording_mbid = \
+             CASE WHEN substr(rh.musicbrainz_id_lower, 1, 6) = 'track:' \
+             THEN substr(rh.musicbrainz_id_lower, 7) ELSE rh.musicbrainz_id_lower END) \
+             OR (rh.request_kind != 'track' AND t.download_type = 'album' \
+             AND t.release_group_mbid = rh.musicbrainz_id_lower))";
+    /// Move each carried request that starts again to the second after the
+    /// newest download its owner started for it, so recovery searches
+    /// afresh rather than follow a download v2 finished.
+    pub(super) START_UNFINISHED_AFRESH = "UPDATE main.request_history AS rh \
+             SET requested_at = (SELECT (MAX(t.created_at) / 1000 + 1) * 1000 " + OWNERS_DOWNLOADS + ") \
+             WHERE rh.status = 'pending' AND " + CARRIED_UNFINISHED + " \
+             AND (SELECT MAX(t.created_at) " + OWNERS_DOWNLOADS + ") >= rh.requested_at / 1000 * 1000";
 }
 
 /// Any carried section.

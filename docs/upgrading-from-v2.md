@@ -390,8 +390,15 @@ says how to use the code, and covers accounts that never had a password.
   v3, deleting a user deletes their playlists, favorites and follows.
   Each song's album art comes across too; the rare one v3 has no way to
   show falls back to a placeholder.
-- Finished requests and finished downloads, wanted watches, and the list of
-  bad download sources.
+- Requests, finished downloads, wanted watches, and the list of bad
+  download sources. A request still waiting for approval waits in v3. One
+  that was downloading or queued searches again by itself once a download
+  source is ready; nothing of its v2 download comes across, and if v2 had
+  already tried one, the request shows the time of that last try. One with
+  no owner, or whose owner was deleted in v2, waits for an admin's approval
+  instead, keeping everyone who joined it. One whose album is already in
+  your library is marked imported, and one being cancelled is cancelled.
+  The summary says how many wait and how many search again.
 - Per-user quota overrides. Past requests still count toward each user's
   request limit, and storage counts each finished download v2 recorded a
   size for.
@@ -488,8 +495,7 @@ report lists it too (`left_behind`). In short:
   again.
 - Held downloads you already imported or threw away.
 - Playlists of users deleted in v2.
-- Requests still waiting for approval or downloading, and unfinished
-  downloads. Ask again in v3.
+- Unfinished downloads. Their requests come across and search again.
 - Download attempts still cleaning up their download folder.
 - Sign-in sessions. Everyone signs in again.
 - MusicBrainz contributions that were already linked, cancelled or out of

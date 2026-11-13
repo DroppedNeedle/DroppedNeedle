@@ -497,8 +497,8 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
         ("catalog_playlist_covers", 1),
         ("catalog_user_favorites", 2),
         ("library_play_history", 2),
-        ("request_history", 1),
-        ("request_history_requesters", 1),
+        ("request_history", 2),
+        ("request_history_requesters", 2),
         ("request_history_dismissals", 1),
         ("download_tasks", 1),
         ("download_attempts", 1),
@@ -528,8 +528,9 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
     // lands watching and due.
     let request: (i64, i64) = target_db.row(
         "SELECT h.requested_at, r.requested_at FROM request_history h \
-         JOIN request_history_requesters r USING (musicbrainz_id_lower)",
-        [],
+         JOIN request_history_requesters r USING (musicbrainz_id_lower) \
+         WHERE musicbrainz_id_lower = ?",
+        rusqlite::params![droppedneedle_tool::test_support::fixture::FINISHED_REQUEST_MBID],
     );
     assert_eq!(request, (1_700_000_000_250, 1_700_000_000_250));
     // v2's REAL-second download, quarantine, seen and approval times land
@@ -612,7 +613,10 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
             None
         ]
     );
-    let request_cover: Option<String> = target_db.one("SELECT cover_url FROM request_history", []);
+    let request_cover: Option<String> = target_db.one(
+        "SELECT cover_url FROM request_history WHERE musicbrainz_id_lower = ?",
+        rusqlite::params![droppedneedle_tool::test_support::fixture::FINISHED_REQUEST_MBID],
+    );
     assert_eq!(
         request_cover.as_deref(),
         Some("/api/v3/covers/release-group/aaaaaaaa-0000-4000-8000-000000000001")
@@ -623,7 +627,6 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
         .join(format!("{}.png", fixture.alice_id));
     assert_eq!(std::fs::read(avatar).expect("avatar file"), AVATAR_BYTES);
     for (table, left) in [
-        ("request_history", 1),
         ("download_tasks", 1),
         ("download_attempts", 2),
         ("auth_tokens", 1),
@@ -1172,6 +1175,179 @@ async fn stray_v2_values_carry_as_null_or_default() {
         (None, None, None, "held_by_earlier_version".to_owned()),
         "reals and fixed sets"
     );
+}
+
+/// Requests v2 had not finished carry with their owner, requesters and the
+/// time they were asked. One waiting for approval still waits. One being
+/// downloaded lands approved with no download, and no v2 download of it,
+/// the failed try included, reads as made for it, so v3's startup recovery
+/// starts it afresh. One with no owner, or whose owner was deleted in v2,
+/// waits for approval with the asks others joined it with. One being
+/// cancelled is cancelled, and one whose album the library holds is
+/// imported. The summary counts them, and a repeat import changes nothing.
+#[tokio::test]
+async fn unfinished_v2_requests_carry_waiting_or_starting_again() {
+    use droppedneedle_tool::test_support::fixture::{
+        PENDING_REQUEST_MBID, UNKNOWN_USER_ID, V2_ALBUM_ID,
+    };
+    const DOWNLOADING: &str = "aaaaaaaa-0000-4000-8000-000000000003";
+    const CANCELLING: &str = "aaaaaaaa-0000-4000-8000-000000000004";
+    const OWNED: &str = "aaaaaaaa-0000-4000-8000-000000000005";
+    const OWNER_DELETED: &str = "aaaaaaaa-0000-4000-8000-000000000006";
+    const NO_OWNER: &str = "aaaaaaaa-0000-4000-8000-000000000007";
+    let root = scratch_dir("unfinished");
+    let fixture = build_v2_fixture(&root.join("v2")).expect("fixture builds");
+    let v2_db = root.join("v2").join("cache").join("library.db");
+    delete_orphan_rows(&v2_db).expect("repair runs");
+    let (alice, bob) = (&fixture.alice_id, &fixture.bob_id);
+    let v2 = rusqlite::Connection::open(&v2_db).expect("v2 db opens");
+    v2.execute_batch(&format!(
+        "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name,
+             album_title, requested_at, status, user_id, download_task_id,
+             dispatch_authorized, generation)
+         VALUES ('{DOWNLOADING}', '{DOWNLOADING}', 'Artist', 'Getting', '1700002000',
+                 'downloading', '{alice}', 'download-again', 1, 3),
+                ('{CANCELLING}', '{CANCELLING}', 'Artist', 'Stopping', '1700003000',
+                 'cancelling', '{alice}', 'download-stopping', 1, 1),
+                ('{OWNED}', '{OWNED}', 'John Coltrane', 'Blue Train', '1700004000',
+                 'queued', '{alice}', NULL, 1, 1),
+                ('{OWNER_DELETED}', '{OWNER_DELETED}', 'Artist', 'Orphaned', '1700005000',
+                 'downloading', '{UNKNOWN_USER_ID}', NULL, 1, 1),
+                ('{NO_OWNER}', '{NO_OWNER}', 'Artist', 'Nobody', '1700006000',
+                 'queued', NULL, NULL, 1, 1);
+         INSERT INTO request_history_requesters (user_id, musicbrainz_id_lower, requested_at)
+         VALUES ('{alice}', '{DOWNLOADING}', '1700002000'),
+                ('{UNKNOWN_USER_ID}', '{OWNER_DELETED}', '1700005000'),
+                ('{alice}', '{OWNER_DELETED}', '1700005100');
+         INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name,
+             album_title, status, created_at, completed_at, updated_at)
+         VALUES ('download-tried', '{alice}', '{DOWNLOADING}', 'Artist', 'Getting', 'failed',
+                 1700002100.5, 1700002150.0, 1700002150.0),
+                ('download-again', '{alice}', '{DOWNLOADING}', 'Artist', 'Getting',
+                 'downloading', 1700002200.0, NULL, 1700002200.0);
+         INSERT INTO local_album_external_identities (local_album_id, provider,
+             release_group_mbid, decision_source, selected_at)
+         VALUES ('{V2_ALBUM_ID}', 'musicbrainz', '{OWNED}', 'manual', 1700000000.0);"
+    ))
+    .expect("v2 rows seed");
+    drop(v2);
+    let export_path = root.join("export.json");
+    droppedneedle_tool::export::export_v2_to_file(
+        &export_request(&root.join("v2"), PASSPHRASE),
+        &export_path,
+    )
+    .expect("export writes");
+    let text = std::fs::read_to_string(&export_path).expect("export reads back");
+    let (v3_root, target_db) = seeded_target(&root);
+    let report = run_pipeline(&text, PASSPHRASE, &v3_root, &target_db, false).await;
+
+    let request = |key: &str| -> (String, Option<String>, i64, Option<String>, Option<i64>) {
+        target_db.row(
+            "SELECT status, user_id, dispatch_authorized, download_task_id, completed_at \
+             FROM request_history WHERE musicbrainz_id_lower = ?",
+            rusqlite::params![key],
+        )
+    };
+    assert_eq!(
+        request(PENDING_REQUEST_MBID),
+        (
+            "awaiting_approval".to_owned(),
+            Some(bob.clone()),
+            0,
+            None,
+            None
+        )
+    );
+    assert_eq!(
+        request(DOWNLOADING),
+        ("pending".to_owned(), Some(alice.clone()), 1, None, None)
+    );
+    // v2 keeps a deleted owner's id on their requests; the asks others
+    // joined it with come across.
+    let waits = ("awaiting_approval".to_owned(), None, 0, None, None);
+    assert_eq!(request(OWNER_DELETED), waits);
+    let joined: Vec<(String, i64)> = target_db.rows(
+        "SELECT user_id, requested_at FROM request_history_requesters \
+         WHERE musicbrainz_id_lower = ?",
+        rusqlite::params![OWNER_DELETED],
+    );
+    assert_eq!(joined, [(alice.clone(), 1_700_005_100_000)]);
+    assert_eq!(request(NO_OWNER), waits);
+    let generation: i64 = target_db.one(
+        "SELECT generation FROM request_history WHERE musicbrainz_id_lower = ?",
+        rusqlite::params![DOWNLOADING],
+    );
+    assert_eq!(generation, 3);
+    let asked: Vec<(String, String, i64)> = target_db.rows(
+        "SELECT musicbrainz_id_lower, user_id, requested_at FROM request_history_requesters \
+         WHERE musicbrainz_id_lower IN (?, ?) ORDER BY musicbrainz_id_lower",
+        rusqlite::params![PENDING_REQUEST_MBID, DOWNLOADING],
+    );
+    assert_eq!(
+        asked,
+        [
+            (
+                PENDING_REQUEST_MBID.to_owned(),
+                bob.clone(),
+                1_700_001_000_000
+            ),
+            (DOWNLOADING.to_owned(), alice.clone(), 1_700_002_000_000),
+        ]
+    );
+    // The failed try is kept, but recovery follows a download only when its
+    // owner started it in or after the second the request reads as asked.
+    let tried: String = target_db.one(
+        "SELECT status FROM download_tasks WHERE id = 'download-tried'",
+        [],
+    );
+    assert_eq!(tried, "failed");
+    let followed: i64 = target_db.one(
+        "SELECT COUNT(*) FROM download_tasks t JOIN request_history rh \
+         ON t.user_id = rh.user_id AND t.release_group_mbid = rh.musicbrainz_id_lower \
+         WHERE rh.musicbrainz_id_lower = ? AND t.created_at >= rh.requested_at / 1000 * 1000",
+        rusqlite::params![DOWNLOADING],
+    );
+    assert_eq!(followed, 0, "the request searches afresh");
+    let (cancelled, owned) = (request(CANCELLING), request(OWNED));
+    assert_eq!(
+        (cancelled.0.as_str(), cancelled.2, cancelled.3.as_deref()),
+        ("cancelled", 0, None)
+    );
+    assert!(cancelled.4.is_some(), "a cancelled request has its time");
+    assert_eq!(owned.0, "imported");
+    for line in [
+        "3 unfinished requests wait for an admin's approval.",
+        "1 request still downloading or queued in v2 searches again by itself once a \
+         download source is ready.",
+        "1 unfinished request for an album already in your library is marked imported.",
+    ] {
+        assert!(
+            report.notes.iter().any(|note| note == line),
+            "{line}: {:?}",
+            report.notes
+        );
+    }
+    assert!(
+        !report
+            .left_behind
+            .iter()
+            .any(|item| item.table == "request_history"),
+        "{:?}",
+        report.left_behind
+    );
+
+    let before: Vec<(String, String, i64)> = target_db.rows(
+        "SELECT musicbrainz_id_lower, status, requested_at FROM request_history \
+         ORDER BY musicbrainz_id_lower",
+        [],
+    );
+    run_pipeline(&text, PASSPHRASE, &v3_root, &target_db, false).await;
+    let after: Vec<(String, String, i64)> = target_db.rows(
+        "SELECT musicbrainz_id_lower, status, requested_at FROM request_history \
+         ORDER BY musicbrainz_id_lower",
+        [],
+    );
+    assert_eq!(after, before, "a repeat import changes nothing");
 }
 
 /// The listening preferences Alice lands with after `v2_sql` runs on the v2

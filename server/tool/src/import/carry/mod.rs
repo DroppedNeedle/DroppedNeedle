@@ -30,6 +30,7 @@ pub(crate) mod editions;
 pub(crate) mod held;
 pub(crate) mod jellyfin_ids;
 pub(crate) mod links;
+pub(crate) mod requests;
 pub(crate) mod sql;
 pub(crate) mod unknown_artist;
 
@@ -124,6 +125,9 @@ enum Work {
     Baselines,
     /// Store the Jellyfin ids v2 handed out (after the catalog).
     JellyfinIds,
+    /// Settle and start the requests v2 had not finished (after the
+    /// catalog and the downloads).
+    UnfinishedRequests,
     /// Settle pending library links (on every import).
     Links,
     /// Fold v2's Unknown Artist into the built-in one (after the links, so
@@ -139,6 +143,7 @@ impl Work {
             Self::Editions => editions::ENTITY,
             Self::Baselines => baselines::ENTITY,
             Self::JellyfinIds => jellyfin_ids::ENTITY,
+            Self::UnfinishedRequests => requests::ENTITY,
             Self::Links => links::ENTITY,
             Self::UnknownArtist => unknown_artist::ENTITY,
         }
@@ -196,6 +201,7 @@ fn run_sections(
         work.push(Work::Editions);
         work.push(Work::Baselines);
         work.push(Work::JellyfinIds);
+        work.push(Work::UnfinishedRequests);
     }
     work.push(Work::Links);
     if run.bundle.is_some() {
@@ -308,6 +314,7 @@ fn apply(conn: &Connection, run: &CarryRun<'_>, unit: Work) -> Result<SectionRes
         Work::Editions => return editions::apply(conn, run.dry_run),
         Work::Baselines => return baselines::apply(conn, run.dry_run),
         Work::JellyfinIds => return jellyfin_ids::apply(conn, run.dry_run),
+        Work::UnfinishedRequests => return requests::apply(conn, run.dry_run),
         Work::Links => return links::apply(conn, run.dry_run),
         // A real run folds through `carry_section`, on its transaction.
         Work::UnknownArtist => return unknown_artist::would_fold(conn),

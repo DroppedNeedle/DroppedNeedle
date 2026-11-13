@@ -7,11 +7,14 @@
 //! dispatches on it. A bcrypt success returns the replacement Argon2id hash,
 //! which the login writes with its session.
 //!
-//! Sessions do not survive import ([`SESSIONS_SURVIVE_IMPORT`]): the export
+//! No v2 session reaches v3 ([`SESSIONS_SURVIVE_IMPORT`]): the export
 //! carries no sessions and no transient OIDC or Spotify states, so each
-//! user logs in once more. Recovery codes and app passwords do survive:
+//! user logs in once more. Recovery codes and app passwords do carry:
 //! recovery code hashes carry over, `secret_sha256` carries over verbatim,
-//! and `secret_encrypted` is re-sealed under the v3 key at import.
+//! and `secret_encrypted` is re-sealed under the v3 key at import. The
+//! import never replaces a credential: a user or provider row v3 already
+//! holds is kept as it is, so a session v3 already has still belongs to
+//! the credential it signed in with.
 
 /// Hash scheme tag for a local credential row. Imports land as
 /// [`HashScheme::Bcrypt`]; every new or rehashed row is
@@ -47,8 +50,9 @@ impl HashScheme {
     }
 }
 
-/// Import drops every session: users log in once more after migration.
-/// None of `auth_tokens`, `auth_oidc_states` or `spotify_oauth_states` is
-/// exported from v2, while recovery codes and app passwords are, and app
-/// passwords still verify after import.
+/// No v2 session carries: none of `auth_tokens`, `auth_oidc_states` or
+/// `spotify_oauth_states` is exported, so users log in once more after the
+/// upgrade. Recovery codes and app passwords are exported, and app
+/// passwords still verify after import. The import leaves v3's own
+/// sessions alone and never changes the credentials they rest on.
 pub const SESSIONS_SURVIVE_IMPORT: bool = false;
