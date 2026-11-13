@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use droppedneedle_compat::http::redact_target;
 use serde_json::{Value, json};
 
@@ -447,6 +447,35 @@ impl<'a> Trace<'a> {
     ) -> Value {
         let (status, header_map, raw) =
             super::through_busy(|| self.rig.app.raw(method, uri, headers, json_body.clone())).await;
+        self.record(method, uri, None, status, &header_map, &raw)
+    }
+
+    /// POST `form` as a form body, as an OpenSubsonic app does once the
+    /// server lists `formPost`, and record it as [`Trace::call`] does, with
+    /// the body, redacted, beside the request.
+    pub async fn form(&mut self, uri: &str, form: &str) -> Value {
+        let headers = [("content-type", "application/x-www-form-urlencoded")];
+        let (status, header_map, raw) = super::through_busy(|| {
+            self.rig
+                .app
+                .raw_bytes("POST", uri, &headers, form.as_bytes().to_vec())
+        })
+        .await;
+        let sent = redact_target(&format!("?{form}"));
+        let sent = self.settle_text(sent.trim_start_matches('?'));
+        self.record("POST", uri, Some(sent), status, &header_map, &raw)
+    }
+
+    /// Record one answer as a step and hand back its body as it came.
+    fn record(
+        &mut self,
+        method: &str,
+        uri: &str,
+        form: Option<String>,
+        status: StatusCode,
+        header_map: &HeaderMap,
+        raw: &[u8],
+    ) -> Value {
         let header = |name: &str| header_map.get(name).and_then(|value| value.to_str().ok());
         let mut headers_out = serde_json::Map::new();
         for name in [
@@ -462,7 +491,7 @@ impl<'a> Trace<'a> {
         let live = if raw.is_empty() {
             Value::Null
         } else if header("content-type").is_some_and(|kind| kind.contains("json")) {
-            serde_json::from_slice(&raw).expect("json parses")
+            serde_json::from_slice(raw).expect("json parses")
         } else {
             json!({ "byte_len": raw.len(), "head": raw.iter().take(8).collect::<Vec<_>>() })
         };
@@ -471,12 +500,15 @@ impl<'a> Trace<'a> {
         // The production redactor first, so no trace carries the app
         // password.
         let target = self.settle_text(&redact_target(uri));
-        let step = json!({
+        let mut step = json!({
             "request": format!("{method} {target}"),
             "status": status.as_u16(),
             "headers": headers_out,
             "body": body,
         });
+        if let Some(form) = form {
+            step["form"] = Value::String(form);
+        }
         assert!(
             !step.to_string().contains(&self.rig.secret),
             "the app password reached a trace: {method} {target}"

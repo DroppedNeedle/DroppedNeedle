@@ -4,7 +4,9 @@
 //! Symfonium (Subsonic) and Finamp (Jellyfin) each run browse, stream,
 //! favorite, playlist and scrobble; Jellify fetches `Latest` and plays the
 //! stream URL with no auth headers, the token in its `api_key` query.
-//! Arpeggi syncs its artist list and opens one artist.
+//! Arpeggi syncs its artist list and opens one artist. Feishin connects
+//! over OpenSubsonic, then browses, plays, stars, scrobbles and makes a
+//! playlist, mostly in form posts.
 //! Every step lands in a `library_*` golden under `tests/fixtures/compat/`.
 //! `COMPAT_BLESS=1` rewrites them, never in CI: review the diff before
 //! committing.
@@ -398,6 +400,280 @@ async fn arpeggi_syncs_artists_then_opens_one() {
 
     assert_golden("library_arpeggi.trace.json", &trace.body());
     rig.stop().await;
+}
+
+/// Feishin 1.17.0 on OpenSubsonic, with the calls and parameters its source
+/// sends at tag v1.17.0 (`src/renderer/api/subsonic/subsonic-api.ts`,
+/// `subsonic-controller.ts` and `features/player/hooks/use-scrobble.ts`).
+/// Every call says `c=Feishin` and `v=1.13.0` and carries the salt and
+/// token made at sign-in. Connecting asks `getUser`, `ping`, the extensions
+/// and `jukeboxControl` as GETs; once the extensions list `formPost`, every
+/// API call is a form post except `getTranscodeDecision`, which goes as a
+/// JSON POST, and the stream address stays a GET.
+/// Playing asks `getTranscodeDecision`, then reports with `scrobble` and
+/// `reportPlayback`: the listener shows as Feishin until the stop, and the
+/// submission counts the play.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn feishin_connects_browses_plays_stars_scrobbles_and_makes_a_playlist() {
+    use droppedneedle_auth::compat_auth::subsonic::md5_hex;
+
+    let rig = CompatApp::start("compat-feishin").await;
+    let mut trace = Trace::new(&rig);
+    let one = rig.file("one");
+    let salt = "k3Vq8LwZ2nXe";
+    let token = md5_hex(&format!("{}{salt}", rig.secret));
+    let credential = format!("u={PLAYER}&s={salt}&t={token}");
+    let signed = format!("c=Feishin&f=json&v=1.13.0&{credential}");
+    let get = |call: &str, params: &str| format!("/subsonic/rest/{call}.view?{signed}{params}");
+    let post = |call: &str| format!("/subsonic/rest/{call}.view");
+    let form = |params: &str| format!("{signed}{params}");
+
+    // Adding the server: the username comes before the credential.
+    let added = trace
+        .get(
+            &format!(
+                "/subsonic/rest/getUser.view?c=Feishin&f=json&v=1.13.0\
+                 &username={PLAYER}&s={salt}&t={token}&u={PLAYER}"
+            ),
+            &[],
+        )
+        .await;
+    let user = &added["subsonic-response"]["user"];
+    assert_eq!(user["username"], json!(PLAYER), "{added}");
+    assert_eq!(user["adminRole"], json!(false), "{added}");
+    // Opening it: the user again, then what the server supports.
+    trace
+        .get(&get("getUser", &format!("&username={PLAYER}")), &[])
+        .await;
+    let ping = trace.get(&get("ping", ""), &[]).await;
+    assert_eq!(ping["subsonic-response"]["openSubsonic"], json!(true));
+    assert!(ping["subsonic-response"]["serverVersion"].is_string());
+    let extensions = trace.get(&get("getOpenSubsonicExtensions", ""), &[]).await;
+    let listed: Vec<&str> = extensions["subsonic-response"]["openSubsonicExtensions"]
+        .as_array()
+        .expect("extensions")
+        .iter()
+        .filter_map(|extension| extension["name"].as_str())
+        .collect();
+    for name in ["formPost", "transcoding", "playbackReport"] {
+        assert!(listed.contains(&name), "{name}: {extensions}");
+    }
+    // No jukebox here: a 404, which Feishin logs and carries on past.
+    trace
+        .get(&get("jukeboxControl", "&action=status"), &[])
+        .await;
+
+    // Browsing: the library folder menu, the home page's newest albums,
+    // then one album.
+    let folders = trace.form(&post("getMusicFolders"), &form("")).await;
+    assert!(
+        folders["subsonic-response"]["musicFolders"]["musicFolder"].is_array(),
+        "{folders}"
+    );
+    let newest = trace
+        .form(
+            &post("getAlbumList2"),
+            &form("&offset=0&size=20&type=newest"),
+        )
+        .await;
+    let album_id = named(
+        &newest["subsonic-response"]["albumList2"]["album"],
+        "name",
+        "Achtung Baby",
+    )["id"]
+        .as_str()
+        .expect("album id")
+        .to_owned();
+    let album = trace
+        .form(&post("getAlbum"), &form(&format!("&id={album_id}")))
+        .await;
+    let found = named(&album["subsonic-response"]["album"]["song"], "title", "One");
+    feishin_reads_song(found);
+    let song = found["id"].as_str().expect("song id").to_owned();
+
+    // Playing: the web player asks how to play the song, then streams it
+    // from the first byte and reports the start.
+    let decision = trace
+        .call(
+            "POST",
+            &get(
+                "getTranscodeDecision",
+                &format!("&mediaId={song}&mediaType=song"),
+            ),
+            &[],
+            Some(feishin_web_player()),
+        )
+        .await;
+    assert_eq!(
+        decision["subsonic-response"]["transcodeDecision"]["canDirectPlay"],
+        json!(true),
+        "{decision}"
+    );
+    let stream = format!("/subsonic/rest/stream.view?id={song}&v=1.13.0&c=Feishin&{credential}");
+    let played = trace.get(&stream, &[("Range", "bytes=0-")]).await;
+    assert_eq!(played["byte_len"], json!(one.len()));
+    let report = |state: &str, position_ms: i64| {
+        form(&format!(
+            "&ignoreScrobble=true&mediaId={song}&mediaType=song&playbackRate=1\
+             &positionMs={position_ms}&state={state}"
+        ))
+    };
+    trace
+        .form(
+            &post("scrobble"),
+            &form(&format!("&id={song}&submission=false")),
+        )
+        .await;
+    for state in ["starting", "playing"] {
+        trace.form(&post("reportPlayback"), &report(state, 0)).await;
+    }
+    let admin = rig.app.login_admin().await;
+    let listening = now_playing(&rig, &admin).await;
+    assert_eq!(listening.len(), 1, "{listening:?}");
+    assert_eq!(listening[0]["source"], json!("feishin"), "{listening:?}");
+
+    // Starring it while it plays, then the favourites page.
+    trace
+        .form(&post("star"), &form(&format!("&id={song}")))
+        .await;
+    let starred = trace.form(&post("getStarred"), &form("")).await;
+    feishin_reads_song(named(
+        &starred["subsonic-response"]["starred"]["song"],
+        "id",
+        &song,
+    ));
+
+    // The listened time passes the threshold, then the queue ends.
+    trace
+        .form(
+            &post("scrobble"),
+            &form(&format!("&id={song}&submission=true")),
+        )
+        .await;
+    let plays: i64 = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT COUNT(*) FROM library_play_history WHERE track_name = 'One'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("history counts");
+    assert_eq!(plays, 1, "the submission counts the play");
+    // The fixture is under a second long, so the stop's position is 0.
+    trace
+        .form(&post("reportPlayback"), &report("stopped", 0))
+        .await;
+    assert_eq!(now_playing(&rig, &admin).await, Vec::<Value>::new());
+
+    // A playlist is made empty, then the song is added from its menu.
+    let created = trace
+        .form(&post("createPlaylist"), &form("&name=Journey%20Mix"))
+        .await;
+    let playlist = &created["subsonic-response"]["playlist"];
+    feishin_reads_playlist(playlist);
+    let playlist_id = playlist["id"].as_str().expect("playlist id").to_owned();
+    trace
+        .form(
+            &post("updatePlaylist"),
+            &form(&format!("&playlistId={playlist_id}&songIdToAdd={song}")),
+        )
+        .await;
+    let lists = trace.form(&post("getPlaylists"), &form("")).await;
+    feishin_reads_playlist(named(
+        &lists["subsonic-response"]["playlists"]["playlist"],
+        "id",
+        &playlist_id,
+    ));
+    let opened = trace
+        .form(&post("getPlaylist"), &form(&format!("&id={playlist_id}")))
+        .await;
+    let entries = &opened["subsonic-response"]["playlist"]["entry"];
+    assert_eq!(entries.as_array().map(Vec::len), Some(1), "{opened}");
+    assert_eq!(entries[0]["id"], json!(song), "{opened}");
+    feishin_reads_song(&entries[0]);
+
+    assert_golden("library_feishin.trace.json", &trace.body());
+    rig.stop().await;
+}
+
+/// The client Feishin 1.17.0's web player describes to
+/// `getTranscodeDecision` (`getStreamUrl`), in a browser that plays every
+/// format it probes for (`CODEC_PROBES` in
+/// `features/player/components/audio-players.tsx`), with the browser's user
+/// agent as the platform.
+fn feishin_web_player() -> Value {
+    let plays = |codecs: &[&str], container: &str| {
+        json!({
+            "audioCodecs": codecs,
+            "containers": [container],
+            "protocols": ["http"],
+        })
+    };
+    json!({
+        "codecProfiles": [],
+        "directPlayProfiles": [
+            plays(&["mp3"], "mp3"),
+            // Two of Feishin's probes are aac in mp4, so this comes twice.
+            plays(&["aac"], "mp4"),
+            plays(&["aac"], "aac"),
+            plays(&["aac"], "mp4"),
+            plays(&["opus"], "ogg"),
+            plays(&["opus"], "webm"),
+            plays(&["vorbis"], "ogg"),
+            plays(&["vorbis"], "webm"),
+            plays(&["flac"], "flac"),
+            plays(&["pcm", "wav"], "wav"),
+            plays(&["alac"], "mp4"),
+        ],
+        "maxAudioBitrate": 0,
+        "maxTranscodingAudioBitrate": 0,
+        "name": "Feishin",
+        "platform": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) \
+                     Chrome/138.0.0.0 Safari/537.36",
+        "transcodingProfiles": [
+            { "audioCodec": "flac", "container": "flac", "protocol": "http" },
+            { "audioCodec": "opus", "container": "ogg", "protocol": "http" },
+            { "audioCodec": "mp3", "container": "mp3", "protocol": "http" },
+        ],
+    })
+}
+
+/// What Feishin 1.17.0 reads from a song without checking it is there
+/// (`normalizeSong` in `src/shared/api/subsonic/subsonic-normalize.ts`).
+fn feishin_reads_song(song: &Value) {
+    assert!(song["id"].is_string(), "{song}");
+    assert!(
+        song["contentType"]
+            .as_str()
+            .is_some_and(|kind| kind.starts_with("audio/")),
+        "{song}"
+    );
+}
+
+/// What Feishin 1.17.0 reads from a playlist (`normalizePlaylist`).
+fn feishin_reads_playlist(playlist: &Value) {
+    assert!(playlist["id"].is_string(), "{playlist}");
+    for number in ["duration", "songCount"] {
+        assert!(playlist[number].is_number(), "{number}: {playlist}");
+    }
+    assert!(playlist["public"].is_boolean(), "{playlist}");
+    assert_eq!(playlist["owner"], json!(PLAYER), "{playlist}");
+}
+
+/// The listeners the admin's now-playing feed shows.
+async fn now_playing(rig: &CompatApp, admin: &str) -> Vec<Value> {
+    let (status, feed) = rig
+        .app
+        .call(
+            "GET",
+            "/api/v3/now-playing",
+            &[("authorization", admin)],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{feed}");
+    feed["sessions"].as_array().expect("sessions").clone()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
