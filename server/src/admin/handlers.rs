@@ -47,7 +47,8 @@ pub async fn list_backups(
     _caller: Admin,
 ) -> Result<Json<BackupListResponse>, ApiError> {
     let dir = admin.backups.backup_dir().to_owned();
-    blocking(move || super::backups::list_backups(&dir))
+    let in_memory = admin.backups.database_in_memory();
+    blocking(move || super::backups::list_backups(&dir, in_memory))
         .await
         .map(Json)
 }

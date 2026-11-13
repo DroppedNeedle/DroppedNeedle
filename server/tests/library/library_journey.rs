@@ -3238,6 +3238,7 @@ async fn a_restored_backup_still_undoes_and_restores_originals() {
         &scratch.join("app.db"),
         &backups,
         Arc::new(droppedneedle_kernel::clock::SystemClock),
+        false,
     );
     let report = service
         .backup(None, &CancelFlag::never())

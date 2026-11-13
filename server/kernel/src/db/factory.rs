@@ -1,12 +1,13 @@
 //! Runtime factory: one call from a path to a serving database.
 //!
 //! [`open_runtime`] runs the boot checks in order: create the parent
-//! directory, refuse symlinks and network filesystems, work out the schema
-//! plan from the stamp (a stamp the runner refuses stops boot here, before
-//! any backup), take a verified backup when the plan changes the file, run
-//! the schema runner on one connection with the full pragma set (a file
-//! that refuses WAL mode stops boot here), then start the writer lane, open
-//! the read pools and wire the checkpoint, wakeup, and backup services.
+//! directory, refuse symlinks and network filesystems, warn about one held
+//! in memory, work out the schema plan from the stamp (a stamp the runner
+//! refuses stops boot here, before any backup), take a verified backup when
+//! the plan changes the file, run the schema runner on one connection with
+//! the full pragma set (a file that refuses WAL mode stops boot here), then
+//! start the writer lane, open the read pools and wire the checkpoint,
+//! wakeup, and backup services.
 //!
 //! Backups live in `backups/` next to the database file, so they share its
 //! volume and filesystem (the backup stages and renames in place).
@@ -35,7 +36,7 @@ use super::{
     backup::BackupService,
     checkpoint::{ACTIVE_HIGH_WATER_BYTES, ACTIVE_LOW_WATER_BYTES, CheckpointService},
     error::DbError,
-    fs::{reject_remote_filesystem, reject_symlink},
+    fs::{IN_MEMORY_WARNING, check_filesystem, reject_symlink},
     handle::Db,
     migrate::{Stamp, migrate},
     read_pool::{ReadActivity, ReadPools},
@@ -142,7 +143,10 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
         std::fs::create_dir_all(parent)?;
     }
     reject_symlink(&path)?;
-    reject_remote_filesystem(&path)?;
+    let in_memory = check_filesystem(&path)?;
+    if let Some(filesystem) = in_memory {
+        tracing::warn!(path = %path.display(), filesystem, "{IN_MEMORY_WARNING}");
+    }
 
     let backup_dir = path
         .parent()
@@ -152,6 +156,7 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
         &path,
         &backup_dir,
         Arc::clone(&config.clock),
+        in_memory.is_some(),
     ));
     let upgrade = backup_before_upgrade(&path, &backups).await?;
     migrate_at_boot(&path, upgrade).await?;

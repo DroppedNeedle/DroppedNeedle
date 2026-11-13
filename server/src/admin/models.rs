@@ -34,6 +34,9 @@ pub struct BackupListResponse {
     pub backups: Vec<BackupView>,
     /// Rolling retention: the directory keeps this many.
     pub keep: u32,
+    /// True when the database sits on a filesystem held in memory (tmpfs
+    /// or ramfs): it and these backups are lost when the server restarts.
+    pub database_in_memory: bool,
 }
 
 /// What one backup run produced.

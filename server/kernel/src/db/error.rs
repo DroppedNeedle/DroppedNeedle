@@ -18,13 +18,18 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum DbError {
     /// The database path or one of its sidecars sits on a network filesystem.
-    /// The message says how to fix it, Unraid's `/mnt/user` being the usual
-    /// cause.
+    /// The message says how to fix it, Unraid's `/mnt/user` and Docker
+    /// Desktop's bind mounts being the usual causes: 9P on Windows, and
+    /// VirtioFS on macOS, which Linux runs on its FUSE driver and reports
+    /// with the FUSE magic (`fs/fuse/virtio_fs.c`; `linux/magic.h` 6.12
+    /// gives it no magic of its own). The upgrade check shows the message
+    /// as its blocker, so it stays short.
     #[error(
         "refusing database on non-local filesystem {fs_type} at mount {mount}: {path:?}. \
-         SQLite needs a local disk. On Unraid, point the container's /app/cache at a pool \
-         path such as /mnt/cache/appdata/droppedneedle, or set the appdata share to \
-         exclusive access; elsewhere, move it to a local disk"
+         SQLite needs a local disk. Map /app/cache to one: on Unraid a pool or disk path \
+         such as /mnt/cache/appdata/droppedneedle/cache or \
+         /mnt/disk1/appdata/droppedneedle/cache, or an exclusive share; on Docker Desktop a \
+         named volume"
     )]
     NonLocalFilesystem {
         /// The path that was refused.

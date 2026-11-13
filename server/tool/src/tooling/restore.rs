@@ -105,6 +105,7 @@ pub fn restore_backup(
         backup_db,
         parent,
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        false,
     );
     let restored = service
         .restore(backup_db, target_dir, db_name, allow_downgrade)

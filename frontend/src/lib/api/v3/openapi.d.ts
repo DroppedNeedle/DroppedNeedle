@@ -11495,6 +11495,11 @@ export interface components {
             /** @description Backups on disk, oldest first. */
             backups: components["schemas"]["BackupView"][];
             /**
+             * @description True when the database sits on a filesystem held in memory (tmpfs
+             *     or ramfs): it and these backups are lost when the server restarts.
+             */
+            database_in_memory: boolean;
+            /**
              * Format: int32
              * @description Rolling retention: the directory keeps this many.
              */

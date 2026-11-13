@@ -38,9 +38,13 @@ pub const UNDO_COPIES_CHECK: &str = "undo-copies";
 /// Unlike `schema-version`, `--allow-downgrade` never overrides it.
 pub const SCHEMA_FLOOR_CHECK: &str = "schema-floor";
 
-/// List the backups on disk, oldest first. Blocking file IO. Files without a manifest sidecar
-/// still list with their on-disk size; only the manifest fields stay empty.
-pub fn list_backups(backup_dir: &Path) -> Result<BackupListResponse, AdminError> {
+/// List the backups on disk, oldest first, with whether the boot check found the database
+/// held in memory. Blocking file IO. Files without a manifest sidecar still list with their
+/// on-disk size; only the manifest fields stay empty.
+pub fn list_backups(
+    backup_dir: &Path,
+    database_in_memory: bool,
+) -> Result<BackupListResponse, AdminError> {
     let mut names: Vec<String> = Vec::new();
     let entries = match std::fs::read_dir(backup_dir) {
         Ok(entries) => entries,
@@ -48,6 +52,7 @@ pub fn list_backups(backup_dir: &Path) -> Result<BackupListResponse, AdminError>
             return Ok(BackupListResponse {
                 backups: Vec::new(),
                 keep: BACKUP_KEEP as u32,
+                database_in_memory,
             });
         }
         Err(error) => {
@@ -86,6 +91,7 @@ pub fn list_backups(backup_dir: &Path) -> Result<BackupListResponse, AdminError>
     Ok(BackupListResponse {
         backups,
         keep: BACKUP_KEEP as u32,
+        database_in_memory,
     })
 }
 

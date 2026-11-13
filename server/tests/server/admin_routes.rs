@@ -87,6 +87,7 @@ impl Rig {
                 &dir.join("app.db"),
                 &dir.join("backups"),
                 std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+                false,
             )),
             runtime.checkpoint().clone(),
             jobs.precache_trigger(),

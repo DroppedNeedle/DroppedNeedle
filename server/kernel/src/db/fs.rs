@@ -13,6 +13,12 @@
 //! for the database, and SQLite locking is correct on them. A strict
 //! allow-list would refuse Docker deployments and the test scratch area for
 //! no safety gain.
+//!
+//! A database held in memory (tmpfs, ramfs) is lost with its backups when
+//! the machine or container restarts, as on an Unraid box whose appdata
+//! path names a pool it does not have. Boot logs a warning and the admin
+//! backups list says so, but neither refuses: tests and some setups keep
+//! the database in memory on purpose.
 
 use std::path::{Path, PathBuf};
 
@@ -51,6 +57,24 @@ const REMOTE_MAGICS: &[(i64, &str)] = &[
 /// network share.
 pub fn filesystem_is_local(magic: i64) -> bool {
     !REMOTE_MAGICS.iter().any(|(known, _)| *known == magic)
+}
+
+/// statfs magics for filesystems held in memory, from `linux/magic.h`.
+const MEMORY_MAGICS: &[(i64, &str)] = &[(0x01021994, "tmpfs"), (0x858458F6, "ramfs")];
+
+/// The warning boot logs for a database held in memory. How to move it
+/// safely depends on the setup, so the docs hold the steps.
+pub const IN_MEMORY_WARNING: &str = "database held in memory: it and its backups are lost on \
+     restart. Map /app/cache to a disk or pool path (docs/configuration.md, Storage and \
+     permissions)";
+
+/// The name of the filesystem a statfs magic names when that filesystem is
+/// held in memory, `None` for any other.
+fn memory_filesystem(magic: i64) -> Option<&'static str> {
+    MEMORY_MAGICS
+        .iter()
+        .find(|(known, _)| *known == magic)
+        .map(|(_, name)| *name)
 }
 
 /// Name a refused magic for the error, falling back to the hex value.
@@ -134,6 +158,12 @@ pub fn reject_symlink(path: &Path) -> Result<(), DbError> {
 /// The error names the filesystem type and the mount point so the operator
 /// knows what to move.
 pub fn reject_remote_filesystem(path: &Path) -> Result<(), DbError> {
+    check_filesystem(path).map(|_| ())
+}
+
+/// [`reject_remote_filesystem`], also naming the filesystem held in memory
+/// that the database sits on, if it sits on one, from the same statfs.
+pub fn check_filesystem(path: &Path) -> Result<Option<&'static str>, DbError> {
     let anchor = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -141,7 +171,7 @@ pub fn reject_remote_filesystem(path: &Path) -> Result<(), DbError> {
         .unwrap_or_else(|| PathBuf::from("."));
     let magic = statfs_magic(&anchor)?;
     if filesystem_is_local(magic) {
-        return Ok(());
+        return Ok(memory_filesystem(magic));
     }
     let (mount, fs_type) = mount_of(&anchor);
     let fs_type = if fs_type == "unknown" {
@@ -185,8 +215,9 @@ mod tests {
         }
     }
 
-    /// The refusal says what to do: a local disk, and on Unraid a pool path
-    /// or an exclusive share.
+    /// The refusal says what to do: map /app/cache to a local disk, on
+    /// Unraid the template's pool path, a disk path for a box with no pool
+    /// or an exclusive share, on Docker Desktop a named volume.
     #[test]
     fn the_remote_filesystem_refusal_names_the_fix() {
         let refusal = DbError::NonLocalFilesystem {
@@ -196,11 +227,32 @@ mod tests {
         }
         .to_string();
         for fix in [
-            "/mnt/cache/appdata/droppedneedle",
+            "/mnt/cache/appdata/droppedneedle/cache",
+            "/mnt/disk1/appdata/droppedneedle/cache",
             "exclusive",
+            "Docker Desktop",
+            "named volume",
             "local disk",
         ] {
             assert!(refusal.contains(fix), "{fix}: {refusal}");
+        }
+    }
+
+    /// tmpfs and ramfs are held in memory and warn, without being refused;
+    /// a disk or a container layer does not warn.
+    #[test]
+    fn a_database_held_in_memory_warns() {
+        for (magic, name) in [(0x01021994, "tmpfs"), (0x858458F6, "ramfs")] {
+            assert_eq!(memory_filesystem(magic), Some(name));
+            assert!(filesystem_is_local(magic), "{name} must not be refused");
+        }
+        for (magic, name) in [
+            (0xEF53, "ext4"),
+            (0x58465342, "xfs"),
+            (0x9123683E, "btrfs"),
+            (0x794C7630, "overlayfs"),
+        ] {
+            assert_eq!(memory_filesystem(magic), None, "{name}");
         }
     }
 

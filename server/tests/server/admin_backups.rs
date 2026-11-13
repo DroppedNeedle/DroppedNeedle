@@ -71,6 +71,7 @@ impl Rig {
                 &dir.join("app.db"),
                 &backup_dir,
                 std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+                false,
             )),
             runtime.checkpoint().clone(),
             jobs.precache_trigger(),
@@ -334,6 +335,7 @@ async fn a_backup_carries_the_undo_copies_its_database_names() {
         &backup,
         &backups,
         Arc::new(droppedneedle_kernel::clock::SystemClock),
+        false,
     );
     let restored = service
         .restore(&backup, &target, "library.db", false)

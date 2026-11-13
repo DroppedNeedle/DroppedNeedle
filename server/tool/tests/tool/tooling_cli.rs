@@ -1874,6 +1874,7 @@ async fn restore_round_trips_and_refuses() {
         &live,
         &backup_dir,
         std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+        false,
     );
     let taken = service
         .backup(None, &CancelFlag::never())

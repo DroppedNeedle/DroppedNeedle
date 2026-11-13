@@ -187,6 +187,7 @@ pub struct BackupService {
     clock: Arc<dyn Clock>,
     staging_seq: AtomicU64,
     live: Mutex<HashSet<PathBuf>>,
+    database_in_memory: bool,
 }
 
 impl std::fmt::Debug for BackupService {
@@ -200,14 +201,22 @@ impl std::fmt::Debug for BackupService {
 
 impl BackupService {
     /// Wire the service; `clock` dates and names each backup. The
-    /// directory is created on the first backup.
-    pub fn new(db_path: &Path, backup_dir: &Path, clock: Arc<dyn Clock>) -> Self {
+    /// directory is created on the first backup. `database_in_memory` is
+    /// what the boot check found: the database sits on a filesystem held in
+    /// memory, so it and these backups are lost on restart.
+    pub fn new(
+        db_path: &Path,
+        backup_dir: &Path,
+        clock: Arc<dyn Clock>,
+        database_in_memory: bool,
+    ) -> Self {
         Self {
             db_path: db_path.to_owned(),
             backup_dir: backup_dir.to_owned(),
             clock,
             staging_seq: AtomicU64::new(0),
             live: Mutex::new(HashSet::new()),
+            database_in_memory,
         }
     }
 
@@ -219,6 +228,12 @@ impl BackupService {
     /// Backups directory this service rotates within.
     pub fn backup_dir(&self) -> &Path {
         &self.backup_dir
+    }
+
+    /// True when the database sits on a filesystem held in memory, as the
+    /// boot check found.
+    pub fn database_in_memory(&self) -> bool {
+        self.database_in_memory
     }
 
     /// Copy the live database out: sweep stale staging, stage, verify,
@@ -1222,7 +1237,12 @@ mod tests {
             .execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE t (x INTEGER);")
             .unwrap();
         assert!(matches!(wal_state(&backup), WalState::HoldsData(_)));
-        let service = BackupService::new(&backup, dir.path(), Arc::new(crate::clock::SystemClock));
+        let service = BackupService::new(
+            &backup,
+            dir.path(),
+            Arc::new(crate::clock::SystemClock),
+            false,
+        );
         let target = dir.join("restored");
         assert!(matches!(
             service.restore(&backup, &target, "library.db", false),

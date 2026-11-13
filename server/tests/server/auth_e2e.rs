@@ -311,6 +311,7 @@ impl E2e {
                 &self.db_path,
                 &backup_dir,
                 p.clock.clone(),
+                false,
             )),
             self.runtime.checkpoint().clone(),
             jobs.precache_trigger(),

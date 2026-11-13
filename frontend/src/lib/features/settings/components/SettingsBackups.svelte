@@ -1,6 +1,6 @@
 <script lang="ts">
 	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
-	import { CircleCheck, CircleX, DatabaseBackup } from 'lucide-svelte';
+	import { CircleCheck, CircleX, DatabaseBackup, TriangleAlert } from 'lucide-svelte';
 	import {
 		createRunBackupMutation,
 		getBackupsQuery,
@@ -18,6 +18,8 @@
 
 	const RESTORE_DOCS =
 		'https://github.com/DroppedNeedle/DroppedNeedle/blob/v3/docs/reverse-proxy-and-security.md#backups';
+	const STORAGE_DOCS =
+		'https://github.com/DroppedNeedle/DroppedNeedle/blob/v3/docs/configuration.md#storage-and-permissions';
 
 	const backupsQuery = getBackupsQuery();
 	const runBackup = createRunBackupMutation();
@@ -76,6 +78,23 @@
 			</AsyncButton>
 		{/snippet}
 	</SettingsPaneHeader>
+	{#if backupsQuery.data?.database_in_memory}
+		<div class="alert alert-warning items-start" role="status">
+			<TriangleAlert class="mt-0.5 h-5 w-5" aria-hidden="true" />
+			<div class="min-w-0 flex-1 space-y-1 text-sm">
+				<strong>Database in memory</strong>
+				<p>
+					It and its backups are lost on restart. Map /app/cache to a disk or pool path.
+					<a
+						class="link whitespace-nowrap"
+						href={outsideLink(STORAGE_DOCS)}
+						target="_blank"
+						rel="noopener noreferrer">How to move it</a
+					>
+				</p>
+			</div>
+		</div>
+	{/if}
 	<Card variant="bordered" padding="md">
 		<QueryBoundary
 			query={backupsQuery}
