@@ -308,13 +308,14 @@ fn most_held(albums: &[Option<String>]) -> Option<String> {
 }
 
 /// A value read back that does not decode: a column of the wrong type, a
-/// number out of its type's range, or a value no Rust type here admits
-/// (an unknown decision source).
+/// number out of its type's range, text that is not UTF-8, or a value no
+/// Rust type here admits (an unknown decision source).
 fn does_not_decode(error: &rusqlite::Error) -> bool {
     matches!(
         error,
         rusqlite::Error::FromSqlConversionFailure(..)
             | rusqlite::Error::InvalidColumnType(..)
             | rusqlite::Error::IntegralValueOutOfRange(..)
+            | rusqlite::Error::Utf8Error(..)
     )
 }
