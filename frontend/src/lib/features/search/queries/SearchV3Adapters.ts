@@ -8,6 +8,7 @@ import { libraryCoverPath } from '$lib/features/library/queries/LocalV3Adapters'
 
 export type SearchResultItemV3 = components['schemas']['SearchResultItem'];
 export type SearchTrackDetailV3 = components['schemas']['SearchTrackDetail'];
+export type SearchRemoteTrackDetailV3 = components['schemas']['SearchRemoteTrackDetail'];
 export type SuggestResultV3 = components['schemas']['SuggestResult'];
 
 // Transitional bridge: the search routes read through the v3 hooks while the
@@ -115,15 +116,36 @@ export function toSuggestResultsV1(rows: SuggestResultV3[]): SuggestResult[] {
 }
 
 /** A library song hit: a track row with its id and library details. */
-export type SearchSong = SearchResultItemV3 & { id: string; track: SearchTrackDetailV3 };
+export type SearchLibrarySong = SearchResultItemV3 & { id: string; track: SearchTrackDetailV3 };
 
-/** The playable song hits of a tracks bucket, in rank order. */
+/** A song the library lacks: a track row with its recording and what requesting it needs. */
+export type SearchRemoteSong = SearchResultItemV3 & {
+	musicbrainz_id: string;
+	remote_track: SearchRemoteTrackDetailV3;
+};
+
+export type SearchSong = SearchLibrarySong | SearchRemoteSong;
+
+export function isLibrarySong(song: SearchSong): song is SearchLibrarySong {
+	return !!song.id && !!song.track;
+}
+
+/** The song hits of a tracks bucket, in rank order: the library's, playable, and MusicBrainz's, requestable. */
 export function toSearchSongs(rows: SearchResultItemV3[]): SearchSong[] {
-	return rows.filter((row): row is SearchSong => row.kind === 'track' && !!row.id && !!row.track);
+	return rows.filter(
+		(row): row is SearchSong =>
+			row.kind === 'track' &&
+			((!!row.id && !!row.track) || (!!row.musicbrainz_id && !!row.remote_track))
+	);
+}
+
+/** The key a song list renders a song under: its library id, else its recording. */
+export function searchSongKey(song: SearchSong): string {
+	return song.id ?? song.musicbrainz_id ?? '';
 }
 
 /** The queue item that plays one library song. */
-export function searchSongQueueItem(song: SearchSong): QueueItem {
+export function searchSongQueueItem(song: SearchLibrarySong): QueueItem {
 	const detail = song.track;
 	const cover = libraryCoverPath(
 		detail.album_id,

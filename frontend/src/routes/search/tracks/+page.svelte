@@ -3,12 +3,19 @@
 	import { browser } from '$app/environment';
 	import SearchEmpty from '$lib/features/search/components/SearchEmpty.svelte';
 	import SearchHeader from '$lib/features/search/components/SearchHeader.svelte';
+	import SearchNotice from '$lib/features/search/components/SearchNotice.svelte';
 	import SearchSongList from '$lib/features/search/components/SearchSongList.svelte';
+	import { getSearchStatusNotice } from '$lib/features/search/components/searchStatus';
+	import type { SearchRemoteStatus } from '$lib/features/search/queries/types';
 	import {
 		SEARCH_BUCKET_PAGE_SIZE,
 		getSearchBucketV3Query
 	} from '$lib/features/search/queries/SearchV3Queries.svelte';
-	import { toSearchSongs, type SearchSong } from '$lib/features/search/queries/SearchV3Adapters';
+	import {
+		searchSongKey,
+		toSearchSongs,
+		type SearchSong
+	} from '$lib/features/search/queries/SearchV3Adapters';
 	import { Music } from 'lucide-svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
@@ -23,7 +30,10 @@
 	let offset = $state(0);
 	// Answered pages filed under their echoed offset, so pages land in order
 	// even if they resolve out of order.
-	let pages = new SvelteMap<number, { items: SearchSong[]; source: unknown }>();
+	let pages = new SvelteMap<
+		number,
+		{ items: SearchSong[]; status: SearchRemoteStatus; source: unknown }
+	>();
 	let sentinel = $state<HTMLElement>();
 
 	const pageQuery = getSearchBucketV3Query(
@@ -40,13 +50,18 @@
 		const out: SearchSong[] = [];
 		for (const [, page] of [...pages.entries()].sort(([left], [right]) => left - right)) {
 			for (const song of page.items) {
-				if (seen[song.id]) continue;
-				seen[song.id] = true;
+				const key = searchSongKey(song);
+				if (seen[key]) continue;
+				seen[key] = true;
 				out.push(song);
 			}
 		}
 		return out;
 	});
+	let remoteStatus: SearchRemoteStatus = $derived(
+		pageQuery.isError ? 'error' : (pages.get(0)?.status ?? 'ok')
+	);
+	let statusNotice = $derived(getSearchStatusNotice(remoteStatus, 'tracks', false));
 	let loading = $derived(pageQuery.isPending || pageQuery.isFetching);
 	// The boundary answers for the first page: later pages load under the
 	// rows already shown, with the spinner below them.
@@ -86,7 +101,11 @@
 	$effect(() => {
 		const page = pageQuery.data;
 		if (!page || pages.get(page.offset)?.source === page) return;
-		pages.set(page.offset, { items: toSearchSongs(page.results), source: page });
+		pages.set(page.offset, {
+			items: toSearchSongs(page.results),
+			status: page.status,
+			source: page
+		});
 	});
 
 	$effect(() => {
@@ -112,6 +131,11 @@
 <SearchHeader query={normalizedQuery} current="tracks" />
 
 <div class="px-4 pt-4 pb-10 sm:px-6 lg:px-8">
+	{#if normalizedQuery && statusNotice}
+		<div class="mb-8">
+			<SearchNotice notice={statusNotice} onretry={resetAndLoad} />
+		</div>
+	{/if}
 	{#if !normalizedQuery}
 		<p class="mt-12 text-center text-lg text-muted">Enter a search query to get started.</p>
 	{:else}

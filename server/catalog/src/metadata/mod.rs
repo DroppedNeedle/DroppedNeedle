@@ -239,6 +239,27 @@ impl Catalog {
         (owned, requested)
     }
 
+    /// Owned and requested flags for a set of recording MBIDs, failing soft
+    /// like [`Self::album_flags`].
+    pub(crate) async fn track_flags(&self, mbids: &[String]) -> (HashSet<String>, HashSet<String>) {
+        if mbids.is_empty() {
+            return (HashSet::new(), HashSet::new());
+        }
+        let (owned, requested) = tokio::join!(
+            self.local().owned_tracks(mbids),
+            self.local().requested_tracks(mbids)
+        );
+        let owned = owned.unwrap_or_else(|error| {
+            tracing::warn!(%error, "library song flags failed; showing none");
+            HashSet::new()
+        });
+        let requested = requested.unwrap_or_else(|error| {
+            tracing::warn!(%error, "song request flags failed; showing none");
+            HashSet::new()
+        });
+        (owned, requested)
+    }
+
     /// Owned flags for a set of artist MBIDs, failing soft like
     /// [`Self::album_flags`].
     pub(crate) async fn artist_flags(&self, mbids: &[String]) -> HashSet<String> {
