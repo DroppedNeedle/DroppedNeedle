@@ -1,7 +1,7 @@
 //! Unified search: the library's `local_*` tables joined with MusicBrainz.
 //!
-//! MusicBrainz answers artists and albums under a deadline, with a stale copy
-//! standing in when it is down; library
+//! MusicBrainz answers artists, albums and songs under a deadline, with a
+//! stale copy standing in when it is down; library
 //! copies attach their local id and the in-library flag, and library rows
 //! MusicBrainz did not return still show. Every list ranks through one
 //! [`rank`]: a library row that matches exactly or as a prefix comes
@@ -28,11 +28,13 @@ use rusqlite::params;
 use rusqlite::types::Value;
 
 use crate::metadata::Catalog;
-use crate::metadata::search::{RemoteBucket, RemoteHit, RemoteKind, RemoteState};
+use crate::metadata::search::{
+    RemoteBucket, RemoteHit, RemoteKind, RemoteState, SearchFlags, SearchIds,
+};
 
 use super::models::{
-    SearchBucketResponse, SearchKind, SearchRemoteStatus, SearchResponse, SearchResultItem,
-    SearchScope, SearchTrackDetail, SuggestResponse, SuggestResult,
+    SearchBucketResponse, SearchKind, SearchRemoteStatus, SearchRemoteTrackDetail, SearchResponse,
+    SearchResultItem, SearchScope, SearchTrackDetail, SuggestResponse, SuggestResult,
 };
 use super::sql;
 
@@ -116,9 +118,9 @@ impl SearchService {
     }
 
     /// Ranked hits per selected bucket plus each bucket's standout hit.
-    /// Artists and albums join MusicBrainz hits with the library's own
-    /// (local copies attach their id and the in-library flag); tracks are
-    /// local only. Albums are ranked over every hit MusicBrainz's page
+    /// Each bucket joins MusicBrainz hits with the library's own (local
+    /// copies attach their id and the in-library flag). Albums are ranked
+    /// over every hit MusicBrainz's page
     /// holds before the cut, so an album its namesakes push down still
     /// shows. The library scope leaves MusicBrainz out. A blank-after-fold
     /// query matches nothing.
@@ -180,16 +182,28 @@ impl SearchService {
             FULL_SEARCH_DEADLINE,
             remote_wants(Bucket::Albums, limits.albums),
         );
-        let (local, remote_artists, remote_albums) =
-            tokio::join!(local, remote_artists, remote_albums);
-        let (local_artists, local_albums, tracks) = local?;
+        let remote_tracks = self.remote_bucket(
+            Bucket::Tracks,
+            query,
+            limits.tracks,
+            0,
+            FULL_SEARCH_DEADLINE,
+            remote_wants(Bucket::Tracks, limits.tracks),
+        );
+        let (local, remote_artists, remote_albums, remote_tracks) =
+            tokio::join!(local, remote_artists, remote_albums, remote_tracks);
+        let (local_artists, local_albums, local_tracks) = local?;
         let artist_status = status_of(remote_artists.as_ref());
         let album_status = status_of(remote_albums.as_ref());
+        let track_status = status_of(remote_tracks.as_ref());
         let mut artists = join(local_artists, remote_hits(remote_artists));
         let mut albums = join(local_albums, remote_hits(remote_albums));
-        self.apply_flags(&mut artists, &mut albums).await;
+        let mut tracks = join(local_tracks, remote_hits(remote_tracks));
+        self.apply_flags(&mut artists, &mut albums, &mut tracks)
+            .await;
         let artists = best(artists, limits.artists, &folded);
         let albums = best(albums, limits.albums, &folded);
+        let tracks = best(tracks, limits.tracks, &folded);
         Ok(SearchResponse {
             top_artist: detect_top_result(&artists, &folded),
             top_album: detect_top_result(&albums, &folded),
@@ -199,15 +213,14 @@ impl SearchService {
             tracks,
             artist_status,
             album_status,
-            track_status: SearchRemoteStatus::Ok,
+            track_status,
         })
     }
 
-    /// One page of one bucket. Artists and albums page through MusicBrainz
-    /// joined with the library page at the same offset, and fall back to
-    /// the library's own page when MusicBrainz fails with nothing stale to
-    /// show; tracks page locally. The standout hit rides only the first
-    /// page.
+    /// One page of one bucket: MusicBrainz joined with the library page at
+    /// the same offset, falling back to the library's own page when
+    /// MusicBrainz fails with nothing stale to show. The standout hit rides
+    /// only the first page.
     pub async fn search_bucket(
         &self,
         bucket: Bucket,
@@ -246,14 +259,7 @@ impl SearchService {
         offset: u32,
     ) -> Result<(Vec<SearchResultItem>, SearchRemoteStatus), DbError> {
         let remote = self
-            .remote_bucket(
-                bucket,
-                query,
-                limit,
-                offset,
-                FULL_SEARCH_DEADLINE,
-                bucket != Bucket::Tracks,
-            )
+            .remote_bucket(bucket, query, limit, offset, FULL_SEARCH_DEADLINE, true)
             .await;
         let status = status_of(remote.as_ref());
         let answered = remote
@@ -290,15 +296,23 @@ impl SearchService {
                 };
                 (joined, page)
             }
-            Bucket::Tracks => (Vec::new(), Vec::new()),
+            Bucket::Tracks => {
+                let joined = self.search_tracks(folded, MAX_LOCAL_JOIN, 0).await?;
+                let page = match slice_of(&joined, limit, offset) {
+                    Some(page) => page,
+                    None => self.search_tracks(folded, limit, offset).await?,
+                };
+                (joined, page)
+            }
         };
         let mut candidates = join_page(&joined, page, first_hits(remote, limit));
-        let mut none = Vec::new();
-        let (artists, albums) = match bucket {
-            Bucket::Artists => (&mut candidates, &mut none),
-            _ => (&mut none, &mut candidates),
+        let (mut none, mut other) = (Vec::new(), Vec::new());
+        let (artists, albums, tracks) = match bucket {
+            Bucket::Artists => (&mut candidates, &mut none, &mut other),
+            Bucket::Albums => (&mut none, &mut candidates, &mut other),
+            Bucket::Tracks => (&mut none, &mut other, &mut candidates),
         };
-        self.apply_flags(artists, albums).await;
+        self.apply_flags(artists, albums, tracks).await;
         let items = ranked(candidates, folded)
             .into_iter()
             .map(|(_, item)| item)
@@ -351,7 +365,7 @@ impl SearchService {
         );
         let mut artists = join(local_artists, remote_hits(remote_artists));
         let mut albums = join(local_albums, first_hits(remote_albums, remote_limit));
-        self.apply_flags(&mut artists, &mut albums).await;
+        self.apply_flags(&mut artists, &mut albums, &mut []).await;
         let tracks = tracks.into_iter().map(Candidate::local).collect();
         let mut merged: Vec<(Rank, SuggestResult)> = [artists, albums, tracks]
             .into_iter()
@@ -402,13 +416,22 @@ impl SearchService {
                     .search_albums_remote(query, limit, offset, deadline)
                     .await,
             ),
-            Bucket::Tracks => None,
+            Bucket::Tracks => Some(
+                catalog
+                    .search_tracks_remote(query, limit, offset, deadline)
+                    .await,
+            ),
         }
     }
 
-    /// Fill in library flags for provider hits: owned artists and albums,
-    /// and open requests for albums the library lacks.
-    async fn apply_flags(&self, artists: &mut [Candidate], albums: &mut [Candidate]) {
+    /// Fill in library flags for provider hits: owned artists, albums and
+    /// songs, and open requests for albums and songs the library lacks.
+    async fn apply_flags(
+        &self,
+        artists: &mut [Candidate],
+        albums: &mut [Candidate],
+        tracks: &mut [Candidate],
+    ) {
         let catalog = &self.remote;
         let ids = |rows: &[Candidate]| -> Vec<String> {
             rows.iter()
@@ -416,8 +439,18 @@ impl SearchService {
                 .filter_map(|row| row.item.musicbrainz_id.clone())
                 .collect()
         };
-        let (owned_artists, owned_albums, requested) =
-            catalog.search_flags(&ids(artists), &ids(albums)).await;
+        let (artist_ids, album_ids, track_ids) = (ids(artists), ids(albums), ids(tracks));
+        let SearchFlags {
+            artists: owned_artists,
+            albums: (owned_albums, requested_albums),
+            tracks: (owned_tracks, requested_tracks),
+        } = catalog
+            .search_flags(SearchIds {
+                artists: &artist_ids,
+                albums: &album_ids,
+                tracks: &track_ids,
+            })
+            .await;
         let mbid = |item: &SearchResultItem| {
             item.musicbrainz_id
                 .as_deref()
@@ -427,10 +460,15 @@ impl SearchService {
         for row in artists.iter_mut().filter(|row| row.item.id.is_none()) {
             row.item.in_library = owned_artists.contains(&mbid(&row.item));
         }
-        for row in albums.iter_mut().filter(|row| row.item.id.is_none()) {
-            let mbid = mbid(&row.item);
-            row.item.in_library = owned_albums.contains(&mbid);
-            row.item.requested = !row.item.in_library && requested.contains(&mbid);
+        for (rows, owned, requested) in [
+            (albums, owned_albums, requested_albums),
+            (tracks, owned_tracks, requested_tracks),
+        ] {
+            for row in rows.iter_mut().filter(|row| row.item.id.is_none()) {
+                let mbid = mbid(&row.item);
+                row.item.in_library = owned.contains(&mbid);
+                row.item.requested = !row.item.in_library && requested.contains(&mbid);
+            }
         }
     }
 
@@ -485,6 +523,7 @@ impl SearchService {
                 type_info: None,
                 art_missing: false,
                 track: None,
+                remote_track: None,
             })
             .collect())
     }
@@ -541,6 +580,7 @@ impl SearchService {
                 disambiguation: None,
                 type_info: None,
                 track: None,
+                remote_track: None,
             })
             .collect())
     }
@@ -601,6 +641,7 @@ pub(crate) async fn song_hits(
                 format: row.file_format,
                 cover_available: row.cover_available,
             }),
+            remote_track: None,
         })
         .collect())
 }
@@ -792,6 +833,7 @@ fn remote_item(hit: RemoteHit) -> SearchResultItem {
         kind: match hit.kind {
             RemoteKind::Artist => SearchKind::Artist,
             RemoteKind::Album => SearchKind::Album,
+            RemoteKind::Track => SearchKind::Track,
         },
         id: None,
         title: hit.title,
@@ -805,6 +847,13 @@ fn remote_item(hit: RemoteHit) -> SearchResultItem {
         type_info: hit.type_info,
         art_missing: false,
         track: None,
+        remote_track: hit.track.map(|track| SearchRemoteTrackDetail {
+            release_group_mbid: track.release_group_mbid,
+            release_mbid: track.release_mbid,
+            album_title: track.album_title,
+            duration_seconds: track.duration_seconds,
+            artist_mbid: track.artist_mbid,
+        }),
     }
 }
 
@@ -961,6 +1010,9 @@ fn attach_local(remote: Vec<RemoteHit>, local: &[SearchResultItem]) -> (Vec<Cand
                     if !hit.in_library {
                         hit.id = row.id.clone();
                         hit.in_library = true;
+                        // A song the library holds plays the library's copy.
+                        hit.track = row.track.clone();
+                        hit.remote_track = None;
                     }
                     local_tier = local_tier.max(Some(row.score));
                     claimed[index] = true;
@@ -1094,6 +1146,7 @@ mod tests {
             type_info: None,
             art_missing: false,
             track: None,
+            remote_track: None,
         }
     }
 
@@ -1116,6 +1169,7 @@ mod tests {
             type_info: None,
             score: 95,
             releases: None,
+            track: None,
         }];
         let merged = best(join(local, remote), 10, "vis");
         let ids: Vec<_> = merged

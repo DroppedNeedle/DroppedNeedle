@@ -18,7 +18,7 @@ pub enum SearchKind {
     Artist,
     /// An album (release group).
     Album,
-    /// A library track.
+    /// A song (recording).
     Track,
 }
 
@@ -79,8 +79,27 @@ pub struct SearchResultItem {
     /// group to look one up by. False means ask the cover routes.
     pub art_missing: bool,
     /// Library details of a song hit; present exactly when `kind` is
-    /// `track`.
+    /// `track` and the library holds the song.
     pub track: Option<SearchTrackDetail>,
+    /// What requesting a song needs; present exactly when `kind` is
+    /// `track` and the library lacks the song.
+    pub remote_track: Option<SearchRemoteTrackDetail>,
+}
+
+/// What requesting a MusicBrainz song and showing its cover need: the
+/// release it is shown under, its group and the credited artist.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct SearchRemoteTrackDetail {
+    /// The release's group, when MusicBrainz named one; covers come from it.
+    pub release_group_mbid: Option<String>,
+    /// The release.
+    pub release_mbid: String,
+    /// The release's title.
+    pub album_title: Option<String>,
+    /// Recording length, whole seconds.
+    pub duration_seconds: Option<i64>,
+    /// First credited artist.
+    pub artist_mbid: Option<String>,
 }
 
 /// What playing a library song and linking its album need.

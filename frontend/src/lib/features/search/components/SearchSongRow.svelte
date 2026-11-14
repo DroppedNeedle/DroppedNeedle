@@ -11,7 +11,7 @@
 	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
 	import {
 		searchSongQueueItem,
-		type SearchSong
+		type SearchLibrarySong
 	} from '$lib/features/search/queries/SearchV3Adapters';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -19,7 +19,7 @@
 	import { formatDurationSec } from '$lib/utils/formatting';
 
 	interface Props {
-		song: SearchSong;
+		song: SearchLibrarySong;
 	}
 
 	let { song }: Props = $props();
