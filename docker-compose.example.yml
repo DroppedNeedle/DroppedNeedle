@@ -9,8 +9,7 @@
 services:
   droppedneedle:
     image: droppedneedle/droppedneedle:latest
-    # :dev is built from main on each code change and may break. Until v3 is released,
-    # main is v2.
+    # :dev is built from main on each code change and may break.
     container_name: droppedneedle
     environment:
       - PUID=1000            # your host user/group; run `id` to find them (Unraid: usually 99/100)

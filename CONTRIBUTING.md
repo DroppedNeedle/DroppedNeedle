@@ -51,7 +51,7 @@ make frontend-dev
 
 `frontend/src/lib/` is grouped by feature. A feature (album, artist, library, downloads, settings and so on) lives in `lib/features/<name>/`: its components and their helper modules in `components/`, its query and mutation hooks, key factories and adapters in `queries/`, and its client state in `state/`. Another feature imports only the modules on its public list in `lib/features/public.json`, by their `$lib` path; lint refuses any other path into a feature's folders. When another feature needs one of its modules, add the module to the list. A new feature folder gets an entry there too, which a spec checks along with every listed path. Shared code sits outside the features: the UI kit and the generic page pieces in `lib/ui`, cover and artist images and brand icons in `lib/media`, the app shell and navigation in `lib/shell`, the query client, keys, effects and event dispatcher in `lib/queries`, the API client in `lib/api`, app-wide stores in `lib/stores` and small utilities in `lib/utils`. Routes in `src/routes` stay thin and render their feature's components.
 
-Migrations live in `server/migrations/`, starting from the v3 baseline, and are listed in `server/kernel/src/schema/mod.rs`. A new one takes the next number, is never edited or renumbered once it is on `v3`, and ships its upgrade test. A local development database from before the baseline starts once on a build from before it (which brings it to the last number the baseline replaced), or starts from an empty data folder.
+Migrations live in `server/migrations/`, starting from the v3 baseline, and are listed in `server/kernel/src/schema/mod.rs`. A new one takes the next number, is never edited or renumbered once it is on `main`, and ships its upgrade test. A local development database from before the baseline starts once on a build from before it (which brings it to the last number the baseline replaced), or starts from an empty data folder.
 
 ### Running tests and checks
 
@@ -125,7 +125,7 @@ A column that stores an enum as text declares the enum's spellings with `dropped
 
 ## Pull requests
 
-1. Fork the repo and create a branch from `v3`. Until v3 is released, the default branch, `main`, holds v2.
+1. Fork the repo and create a branch from `main`.
 2. Give your branch a descriptive name: `fix-scrobble-timing`, `feature-playlist-export`, etc.
 3. If you're fixing a bug, mention the issue number in the PR description.
 4. Make sure tests pass before submitting.
@@ -156,15 +156,15 @@ If you used AI, say so in the pull request: the tool and model (for example Clau
 
 ## Releases
 
-Maintainers cut releases. A release is a version tag, `v3.1.0` or `v3.1.0-rc.1` for a pre-release, on a commit of the release branch that CI has passed on. Bump `version` under `[workspace.package]` in `server/Cargo.toml` to the same version, without the `v`, before tagging: the workflow rejects a tag that does not match it. A pre-release keeps the version it leads up to, so `v3.1.0-rc.1` and `v3.1.0-beta.2` both need `3.1.0`. Pushing the tag starts the Release workflow, which checks the tag, the branch and CI, then waits for a maintainer to approve the `release` environment before it publishes `droppedneedle/droppedneedle:<tag>`. `:latest` only moves forward: a pre-release never moves it, and neither does a patch to an older line once a higher full version is tagged. `:beta` follows the newest pre-release and is never moved by a full release.
+Maintainers cut releases. A release is a version tag, `v3.1.0` or `v3.1.0-rc.1` for a pre-release, on a commit of `main` that CI has passed on. Bump `version` under `[workspace.package]` in `server/Cargo.toml` to the same version, without the `v`, before tagging: the workflow rejects a tag that does not match it. A pre-release keeps the version it leads up to, so `v3.1.0-rc.1` and `v3.1.0-beta.2` both need `3.1.0`. Pushing the tag starts the Release workflow, which checks the tag, the branch and CI, then waits for a maintainer to approve the `release` environment before it publishes `droppedneedle/droppedneedle:<tag>`. `:latest` only moves forward: a pre-release never moves it, and neither does a patch to an older line once a higher full version is tagged. `:beta` follows the newest pre-release and is never moved by a full release.
 
 CI is path-filtered: a commit that changes no code gets no CI run, and a run on one that changes only some areas skips the other jobs and still passes. The Release workflow takes any passing CI run on the commit, so start a full one by hand.
 
 Only maintainers tag, and nothing but a version tag publishes a release image. To cut one:
 
-1. Bump `version` in `server/Cargo.toml` to the release version and push that commit to the release branch.
+1. Bump `version` in `server/Cargo.toml` to the release version and push that commit to `main`.
 2. Start CI by hand on that commit, so every job runs, and wait for it to pass.
-3. Check that the latest Frontend CI run on the release branch and the weekly Perf budgets run are green.
+3. Check that the latest Frontend CI run on `main` and the weekly Perf budgets run are green.
 4. Run the release dry run described below.
 5. Push the tag, or publish a GitHub release that creates it (ticking "Set as a pre-release" for a pre-release).
 6. Approve the `release` environment when the Release workflow asks.

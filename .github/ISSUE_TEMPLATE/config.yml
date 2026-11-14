@@ -4,5 +4,5 @@ contact_links:
     url: https://discord.gg/B5suDg7gu2
     about: For support questions and general chat.
   - name: Documentation
-    url: https://github.com/DroppedNeedle/DroppedNeedle/tree/v3/docs
+    url: https://github.com/DroppedNeedle/DroppedNeedle/tree/main/docs
     about: Check the docs before opening an issue.

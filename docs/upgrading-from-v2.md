@@ -71,8 +71,8 @@ checks the library against your files on its first scan.
    database and that file, and keeps every write v2 had saved, as v2's own
    next start would. v2's files are never changed.
 
-2. Change the image in your compose file to a v3 tag (such as `:v3.0.0`, or
-   `:latest` once v3 is released). Leave the volumes as they are.
+2. Change the image in your compose file to `:latest` (or a version such as
+   `:v3.0.0`). Leave the volumes as they are.
 
 3. Start it:
 

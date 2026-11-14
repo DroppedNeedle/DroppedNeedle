@@ -17,9 +17,9 @@
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 
 	const RESTORE_DOCS =
-		'https://github.com/DroppedNeedle/DroppedNeedle/blob/v3/docs/reverse-proxy-and-security.md#backups';
+		'https://github.com/DroppedNeedle/DroppedNeedle/blob/main/docs/reverse-proxy-and-security.md#backups';
 	const STORAGE_DOCS =
-		'https://github.com/DroppedNeedle/DroppedNeedle/blob/v3/docs/configuration.md#storage-and-permissions';
+		'https://github.com/DroppedNeedle/DroppedNeedle/blob/main/docs/configuration.md#storage-and-permissions';
 
 	const backupsQuery = getBackupsQuery();
 	const runBackup = createRunBackupMutation();

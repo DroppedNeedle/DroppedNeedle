@@ -1,6 +1,7 @@
 # DroppedNeedle v3 - working contract
 
-Rules for all work on the `v3` branch. `main` holds v2 and is frozen.
+Rules for all work on `main`, which holds v3. v2 is frozen; its last
+release is `v2.15.0`.
 
 DroppedNeedle is a self-hosted, multi-user music request and discovery app:
 one Rust server (Axum, tokio, SQLite) that manages a library, acquires music
@@ -277,9 +278,9 @@ Run from the repo root. `make help` lists every target.
   its own stamp; a file whose first line is `-- no-transaction` runs as
   written. A stamp the runner does not expect is refused before anything is
   written, the pre-upgrade backup included. Never edit, renumber or remove a
-  migration once it is on `v3`, the baseline included (a test pins each
+  migration once it is on `main`, the baseline included (a test pins each
   file's hash): a schema change is a new number. Each new one ships an
-  upgrade test. They land on `v3` in number order: the runner skips any
+  upgrade test. They land on `main` in number order: the runner skips any
   migration below the database's version, so a later number landing first
   loses the earlier one on every database that boots in between.
 - A migration that rebuilds a table other tables reference starts with

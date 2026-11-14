@@ -42,7 +42,7 @@
 	let { kind, label, value = $bindable(''), help, error, rows = 2, oninput }: Props = $props();
 
 	const REFERENCE =
-		'https://github.com/DroppedNeedle/DroppedNeedle/blob/v3/docs/library-management.md';
+		'https://github.com/DroppedNeedle/DroppedNeedle/blob/main/docs/library-management.md';
 	const SAMPLES: { id: ExampleAlbum; label: string }[] = [
 		{ id: 'one_disc', label: 'One disc' },
 		{ id: 'two_discs', label: 'Two discs' },

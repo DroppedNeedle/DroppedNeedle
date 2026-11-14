@@ -3,7 +3,7 @@
 //! [`crate::db::migrate`] before anything serves.
 //!
 //! The list starts with the v3 baseline. A schema change is a new file with
-//! the next number, added here in order; a file on `v3` is never edited,
+//! the next number, added here in order; a file on `main` is never edited,
 //! renumbered or removed.
 
 use crate::db::migrate::{Chain, Migration};

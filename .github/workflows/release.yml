@@ -35,7 +35,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   # The branch releases are cut from. Set the repository variable when the
   # branch is renamed.
-  RELEASE_BRANCH: ${{ vars.RELEASE_BRANCH || 'v3' }}
+  RELEASE_BRANCH: ${{ vars.RELEASE_BRANCH || 'main' }}
 
 jobs:
   checks:

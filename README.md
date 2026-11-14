@@ -8,6 +8,7 @@ DroppedNeedle is a self-hosted music request and discovery app for you and the p
 
 One container. No Lidarr.
 
+[![CI](https://github.com/DroppedNeedle/DroppedNeedle/actions/workflows/v3-ci.yml/badge.svg?branch=main)](https://github.com/DroppedNeedle/DroppedNeedle/actions/workflows/v3-ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/DroppedNeedle/DroppedNeedle?label=stars&logo=github&logoColor=white)](https://github.com/DroppedNeedle/DroppedNeedle)
 [![Docker Hub](https://img.shields.io/badge/docker-hub-blue?logo=docker&logoColor=white)](https://hub.docker.com/r/droppedneedle/droppedneedle)
@@ -122,7 +123,7 @@ To update, run `docker compose pull` and `docker compose up -d`. DroppedNeedle b
 
 ## Coming from v2
 
-Stop v2, switch the image to a v3 tag (such as `:v3.0.0`, or `:latest` once v3 is released) and start it. It serves an upgrade page that checks first, upgrades your data in place and keeps your v2 files so you can go back.
+Stop v2, switch the image to `:latest` (or a version such as `:v3.0.0`) and start it. It serves an upgrade page that checks first, upgrades your data in place and keeps your v2 files so you can go back.
 Callback addresses for single sign-on, Spotify playlist import and MusicBrainz contributions change, and v2 plugins need porting.
 Follow [Upgrading from v2](docs/upgrading-from-v2.md), and read [What changed in v3](docs/v3-changes.md) first.
 

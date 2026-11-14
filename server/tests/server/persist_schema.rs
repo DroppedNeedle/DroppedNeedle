@@ -304,7 +304,7 @@ fn sqlite_is_built_without_memory_counters() {
     );
 }
 
-/// The SHA-256 of every file in `server/migrations/`. A file on `v3` is
+/// The SHA-256 of every file in `server/migrations/`. A file on `main` is
 /// never edited, renumbered or removed: a schema change is a new file, and
 /// a new file adds its line here.
 const SHIPPED: &[(&str, &str)] = &[

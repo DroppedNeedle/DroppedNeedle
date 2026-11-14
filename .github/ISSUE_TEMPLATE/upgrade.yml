@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Check [Upgrading from v2](https://github.com/DroppedNeedle/DroppedNeedle/blob/v3/docs/upgrading-from-v2.md) first. Its table at the end lists every message the upgrade shows and what to do about it.
+        Check [Upgrading from v2](https://github.com/DroppedNeedle/DroppedNeedle/blob/main/docs/upgrading-from-v2.md) first. Its table at the end lists every message the upgrade shows and what to do about it.
   - type: input
     id: v2-version
     attributes:
