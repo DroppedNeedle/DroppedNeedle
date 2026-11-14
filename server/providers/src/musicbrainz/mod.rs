@@ -312,6 +312,59 @@ fn match_query(
     format!("{query} AND ({} OR {title_clause})", boosts.join(" OR "))
 }
 
+/// The term a text search retries with when the words as typed found
+/// nothing, or `None` when there is no second guess. A word of four
+/// letters or more may hold a typo ("beatels"), so it goes fuzzy; one
+/// alone of six or more may also be two words run together
+/// ("spiderverse"), so every split into halves of two letters or more
+/// joins it, each a phrase. Several words are ANDed. The term stands
+/// where the phrase stood.
+pub fn forgiving_term(text: &str) -> Option<String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let fuzzy = |word: &str| {
+        let escaped = escape_lucene_phrase(word);
+        if word.chars().count() >= 4 {
+            format!("{escaped}~")
+        } else {
+            escaped
+        }
+    };
+    match words.as_slice() {
+        [] => None,
+        [word] => {
+            let letters: Vec<char> = word.chars().collect();
+            if letters.len() < 4 {
+                return None;
+            }
+            let mut guesses = vec![fuzzy(word)];
+            if letters.len() >= 6 && letters.iter().all(|letter| letter.is_alphanumeric()) {
+                guesses.extend((2..=letters.len() - 2).map(|at| {
+                    let (head, tail) = letters.split_at(at);
+                    format!(
+                        "\"{} {}\"",
+                        head.iter().collect::<String>(),
+                        tail.iter().collect::<String>()
+                    )
+                }));
+            }
+            Some(format!("({})", guesses.join(" OR ")))
+        }
+        words => {
+            if words.iter().all(|word| word.chars().count() < 4) {
+                return None;
+            }
+            Some(format!(
+                "({})",
+                words
+                    .iter()
+                    .map(|word| fuzzy(word))
+                    .collect::<Vec<_>>()
+                    .join(" AND ")
+            ))
+        }
+    }
+}
+
 /// Recording query: the recording title as a phrase and, unless blank,
 /// the artist as a phrase.
 pub fn build_recording_query(title: &str, artist: &str) -> String {
@@ -504,5 +557,40 @@ mod tests {
             build_recording_query("Tuesday Morning", "Paul Kossoff"),
             r#"recording:"Tuesday Morning" AND artist:"Paul Kossoff""#
         );
+    }
+
+    #[test]
+    fn forgiving_term_fuzzes_words_and_splits_one_run_together() {
+        assert_eq!(
+            forgiving_term("spiderverse").as_deref(),
+            Some(
+                r#"(spiderverse~ OR "sp iderverse" OR "spi derverse" OR "spid erverse" OR "spide rverse" OR "spider verse" OR "spiderv erse" OR "spiderve rse" OR "spiderver se")"#
+            )
+        );
+        assert_eq!(
+            forgiving_term("beatels").as_deref(),
+            Some(r#"(beatels~ OR "be atels" OR "bea tels" OR "beat els" OR "beate ls")"#)
+        );
+        assert_eq!(
+            forgiving_term("queen").as_deref(),
+            Some("(queen~)"),
+            "fuzzy alone under six letters"
+        );
+        assert_eq!(
+            forgiving_term("AC/DC").as_deref(),
+            Some(r"(AC\/DC~)"),
+            "punctuation is not a join"
+        );
+        assert_eq!(
+            forgiving_term("sunflwer post malone").as_deref(),
+            Some("(sunflwer~ AND post~ AND malone~)")
+        );
+        assert_eq!(
+            forgiving_term("the xx"),
+            None,
+            "nothing long enough to be wrong"
+        );
+        assert_eq!(forgiving_term("u2"), None);
+        assert_eq!(forgiving_term("  "), None);
     }
 }

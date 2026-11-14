@@ -1195,15 +1195,20 @@ async fn search_joins_musicbrainz_unless_scoped_to_the_library() {
     assert_eq!(body["album_status"], "ok");
     assert_eq!(
         titles(&body["albums"]),
-        ["OK Computer", "OK Computer Live Bootleg", "Kid A"],
-        "compilations filtered, library-only rows kept, ranked by score"
+        [
+            "OK Computer",
+            "OK Computer Live Bootleg",
+            "OK Computer OKNOTOK 1997 2017",
+            "Kid A"
+        ],
+        "compilations shown, library-only rows kept, ranked by score"
     );
     assert_eq!(body["albums"][0]["id"], "album-okc");
     assert_eq!(body["albums"][0]["musicbrainz_id"], OK_COMPUTER);
     assert_eq!(body["albums"][0]["in_library"], true);
     assert_eq!(body["albums"][1]["musicbrainz_id"], Value::Null);
-    assert!(body["albums"][2]["id"].is_null());
-    assert_eq!(body["albums"][2]["requested"], true);
+    assert!(body["albums"][3]["id"].is_null());
+    assert_eq!(body["albums"][3]["requested"], true);
     assert_eq!(body["top_album"]["title"], "OK Computer");
     assert_eq!(
         titles(&body["artists"]),
@@ -1218,7 +1223,11 @@ async fn search_joins_musicbrainz_unless_scoped_to_the_library() {
     // The library-only bootleg must show in "see all" too, not only in the overview.
     assert_eq!(
         titles(&page["results"]),
-        ["OK Computer", "OK Computer Live Bootleg", "Kid A"]
+        [
+            "OK Computer",
+            "OK Computer Live Bootleg",
+            "OK Computer OKNOTOK 1997 2017"
+        ]
     );
     assert_eq!(page["results"][0]["id"], "album-okc");
 

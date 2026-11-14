@@ -54,7 +54,20 @@ fn like_pattern(raw: &str) -> String {
         .replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_");
-    format!("%{folded}%")
+    format!("%{}%", any_dash(&folded))
+}
+
+/// The dashes a title is typed with: the keyboard hyphen, and the hyphen,
+/// figure dash, en and em dash, horizontal bar and minus MusicBrainz and
+/// tag editors write, which folding keeps apart.
+pub(crate) const DASHES: [char; 7] = [
+    '-', '\u{2010}', '\u{2012}', '\u{2013}', '\u{2014}', '\u{2015}', '\u{2212}',
+];
+
+/// An escaped LIKE pattern with each dash matching any one character, so
+/// "spider-verse" finds "Spider‐Verse" and "Spider Verse".
+pub(crate) fn any_dash(pattern: &str) -> String {
+    pattern.replace(DASHES, "_")
 }
 
 /// FTS5 trigram match expression for the words of 3 or more characters in
@@ -70,7 +83,7 @@ pub(crate) fn fts_match_phrase(raw: &str) -> Option<String> {
         return None;
     }
     let phrases = folded
-        .split_whitespace()
+        .split(|character: char| character.is_whitespace() || DASHES.contains(&character))
         .filter(|word| word.chars().count() >= 3)
         .map(|word| format!("\"{}\"", word.replace('"', "\"\"")))
         .collect::<Vec<_>>();
