@@ -341,6 +341,28 @@ impl MusicBrainzView {
             .await
     }
 
+    /// Search recordings by free text, the way the album search asks:
+    /// title boosted, then any field.
+    pub async fn search_recordings_text(
+        &self,
+        text: &str,
+        limit: u32,
+        offset: u32,
+        criticality: Criticality,
+    ) -> Result<SearchPage<RecordingSearchHit>, ProviderError> {
+        let escaped = escape_lucene_phrase(text.trim());
+        let query = format!(r#"recording:"{escaped}"^3 OR {escaped}"#);
+        self.search_page(
+            "recording",
+            &query,
+            limit,
+            offset,
+            "recordings",
+            criticality,
+        )
+        .await
+    }
+
     /// Search recordings with a query the caller built and escaped.
     /// Identification uses it to find an album by one of its tracks.
     pub async fn search_recordings_query(

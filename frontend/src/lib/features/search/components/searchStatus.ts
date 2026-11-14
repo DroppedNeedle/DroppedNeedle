@@ -7,12 +7,12 @@ export type SearchStatusNotice = {
 
 export function getSearchStatusNotice(
 	status: SearchRemoteStatus,
-	bucket: 'artists' | 'albums',
+	bucket: 'artists' | 'albums' | 'tracks',
 	includeLibraryMatches = true
 ): SearchStatusNotice | null {
 	if (status === 'ok') return null;
 
-	const resultType = bucket === 'artists' ? 'artist' : 'album';
+	const resultType = { artists: 'artist', albums: 'album', tracks: 'song' }[bucket];
 
 	if (status === 'stale') {
 		const libraryContext = includeLibraryMatches ? ' alongside any matches in your library' : '';

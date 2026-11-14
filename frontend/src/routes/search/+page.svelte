@@ -84,8 +84,12 @@
 	let albumStatus: SearchRemoteStatus = $derived(
 		searchQuery.isError ? 'error' : (searchQuery.data?.album_status ?? 'ok')
 	);
+	let trackStatus: SearchRemoteStatus = $derived(
+		searchQuery.isError ? 'error' : (searchQuery.data?.track_status ?? 'ok')
+	);
 	let artistNotice = $derived(getSearchStatusNotice(artistStatus, 'artists'));
 	let albumNotice = $derived(getSearchStatusNotice(albumStatus, 'albums'));
+	let trackNotice = $derived(getSearchStatusNotice(trackStatus, 'tracks'));
 	let loadingArtists = $derived(searchQuery.isPending && artists.length === 0);
 	let loadingAlbums = $derived(searchQuery.isPending && albums.length === 0);
 	let hasSearched = $derived(normalizedQuery.length >= 2);
@@ -141,13 +145,16 @@
 <div class="px-4 pb-10 sm:px-6 lg:px-8">
 	{#if hasSearched}
 		<div class="space-y-10 pt-4">
-			{#if artistNotice || albumNotice}
+			{#if artistNotice || albumNotice || trackNotice}
 				<div class="space-y-2">
 					{#if artistNotice}
 						<SearchNotice notice={artistNotice} onretry={() => searchQuery.refetch()} />
 					{/if}
 					{#if albumNotice}
 						<SearchNotice notice={albumNotice} onretry={() => searchQuery.refetch()} />
+					{/if}
+					{#if trackNotice}
+						<SearchNotice notice={trackNotice} onretry={() => searchQuery.refetch()} />
 					{/if}
 				</div>
 			{/if}

@@ -1058,3 +1058,175 @@ async fn exact_title_albums_rank_by_their_releases() {
         );
     }
 }
+
+/// One recording search hit: id, title, credited artist, score, and the
+/// releases carrying it as (release id, title, status, group id).
+fn recording_hit(
+    id: &str,
+    title: &str,
+    artist: &str,
+    score: u32,
+    releases: &[(&str, &str, &str, &str)],
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "score": score,
+        "title": title,
+        "length": 248_000,
+        "artist-credit": [{
+            "name": artist,
+            "joinphrase": "",
+            "artist": {"id": format!("artist-{artist}"), "name": artist},
+        }],
+        "releases": releases.iter().map(|(release, title, status, group)| serde_json::json!({
+            "id": release,
+            "title": title,
+            "status": status,
+            "date": "2018-10-18",
+            "release-group": {"id": group, "title": title, "primary-type": "Single"},
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// Songs the library lacks come from MusicBrainz: each row carries what
+/// requesting it needs, under its first official release, and an open
+/// request shows as requested. A recording the library holds attaches
+/// the library's copy and plays it; one on no release, or a video, is left
+/// out. The songs tab pages the same way and says how MusicBrainz did.
+#[tokio::test]
+async fn songs_the_library_lacks_come_from_musicbrainz() {
+    let wire = Arc::new(ScriptedWire::new());
+    let hits = vec![
+        recording_hit(
+            "rec-sunflower",
+            "Sunflower",
+            "Post Malone",
+            100,
+            &[
+                ("rel-promo", "Sunflower (promo)", "Promotion", "rg-promo"),
+                ("rel-single", "Sunflower", "Official", "rg-single"),
+            ],
+        ),
+        recording_hit(
+            "REC-OWNED",
+            "Sunflower",
+            "Someone",
+            99,
+            &[("rel-owned", "Renaissance", "Official", "rg-owned")],
+        ),
+        recording_hit(
+            "rec-requested",
+            "Sunflower (remix)",
+            "Post Malone",
+            90,
+            &[("rel-remix", "Sunflower (remix)", "Official", "rg-remix")],
+        ),
+        recording_hit("rec-loose", "Sunflower", "Nobody", 80, &[]),
+        serde_json::json!({
+            "id": "rec-video", "score": 80, "title": "Sunflower", "video": true,
+            "releases": [{"id": "rel-video", "title": "Sunflower", "status": "Official"}],
+        }),
+    ];
+    for _ in 0..2 {
+        wire.answer(
+            &format!("{MUSICBRAINZ}/recording"),
+            200,
+            &[],
+            search_answer("recordings", hits.clone()),
+        );
+    }
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-songs");
+    seed_catalog(&app_db);
+    seed_track(
+        &app_db,
+        "t-owned",
+        "album-renaissance",
+        "Sunflower",
+        "Renaissance",
+        "indexed",
+    );
+    app_db.exec(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, recording_mbid, \
+         decision_source, selected_at) VALUES ('t-owned', 'musicbrainz', 'rec-owned', 'manual', 0)",
+        [],
+    );
+    app_db.exec(
+        "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
+         album_title, requested_at, status, request_kind) \
+         VALUES ('track:rec-requested', 'rec-requested', 'Post Malone', 'Sunflower (remix)', \
+         1700000000000, 'pending', 'track')",
+        [],
+    );
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire),
+    )
+    .await;
+
+    let (status, _, bytes) = call(
+        app.clone(),
+        Method::GET,
+        "/api/v3/search?q=sunflower&buckets=tracks",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&bytes);
+    assert_eq!(body["track_status"], "ok");
+    let rows: Vec<(&str, Option<&str>, bool, bool)> = body["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hit| {
+            (
+                hit["musicbrainz_id"].as_str().unwrap(),
+                hit["id"].as_str(),
+                hit["in_library"].as_bool().unwrap(),
+                hit["requested"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("REC-OWNED", Some("t-owned"), true, false),
+            ("rec-sunflower", None, false, false),
+            ("rec-requested", None, false, true),
+        ],
+        "{body}"
+    );
+    let owned = &body["tracks"][0];
+    assert_eq!(owned["track"]["album_id"], "album-renaissance");
+    assert!(owned["remote_track"].is_null());
+    let remote = &body["tracks"][1];
+    assert_eq!(remote["kind"], "track");
+    assert_eq!(remote["artist"], "Post Malone");
+    assert_eq!(remote["year"], 2018);
+    assert!(remote["track"].is_null());
+    assert_eq!(remote["remote_track"]["release_mbid"], "rel-single");
+    assert_eq!(remote["remote_track"]["release_group_mbid"], "rg-single");
+    assert_eq!(remote["remote_track"]["album_title"], "Sunflower");
+    assert_eq!(remote["remote_track"]["duration_seconds"], 248);
+    assert_eq!(remote["remote_track"]["artist_mbid"], "artist-Post Malone");
+
+    let (status, _, bytes) = call(
+        app,
+        Method::GET,
+        "/api/v3/search/tracks?q=sunflower&limit=2",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&bytes);
+    assert_eq!(body["status"], "ok");
+    let ids: Vec<&str> = body["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hit| hit["musicbrainz_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["REC-OWNED", "rec-sunflower"], "{body}");
+}

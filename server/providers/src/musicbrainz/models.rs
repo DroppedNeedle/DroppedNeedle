@@ -648,7 +648,9 @@ pub struct ReleaseSearchHit {
 /// The hit's `title` and each release's `status` and `date` were checked
 /// against the same search on musicbrainz.org/ws/2/recording on
 /// 2026-11-03: every hit and release carried them, and the release-group
-/// facet carried no `first-release-date`.
+/// facet carried no `first-release-date`. The hit's `artist-credit`,
+/// `length` and `video` and each release's `title` are in the same
+/// fixture.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct RecordingSearchHit {
     /// Recording MBID: required identity.
@@ -656,6 +658,15 @@ pub struct RecordingSearchHit {
     /// Recording title.
     #[serde(default)]
     pub title: Option<String>,
+    /// Artist credit facet.
+    #[serde(rename = "artist-credit", default)]
+    pub artist_credit: Vec<ArtistCreditName>,
+    /// Length in milliseconds.
+    #[serde(default)]
+    pub length: Option<u64>,
+    /// True for a music video.
+    #[serde(default)]
+    pub video: Option<bool>,
     /// Plain score key.
     #[serde(default)]
     pub score: Option<i64>,
@@ -672,6 +683,9 @@ pub struct RecordingSearchHit {
 pub struct RecordingSearchRelease {
     /// Release MBID: required identity.
     pub id: String,
+    /// Release title.
+    #[serde(default)]
+    pub title: Option<String>,
     /// Release status (`Official`, `Bootleg`, ...).
     #[serde(default)]
     pub status: Option<String>,

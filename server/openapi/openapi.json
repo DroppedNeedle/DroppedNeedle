@@ -64020,6 +64020,48 @@
           "stale"
         ]
       },
+      "SearchRemoteTrackDetail": {
+        "type": "object",
+        "description": "What requesting a MusicBrainz song and showing its cover need: the\nrelease it is shown under, its group and the credited artist.",
+        "required": [
+          "release_mbid"
+        ],
+        "properties": {
+          "album_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release's title."
+          },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "First credited artist."
+          },
+          "duration_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Recording length, whole seconds."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release's group, when MusicBrainz named one; covers come from it."
+          },
+          "release_mbid": {
+            "type": "string",
+            "description": "The release."
+          }
+        }
+      },
       "SearchResponse": {
         "type": "object",
         "description": "Unified search response: one ranked list per bucket plus the standout\nhit per bucket, when one earns it.",
@@ -64152,6 +64194,17 @@
             ],
             "description": "MusicBrainz id: the hit's own for MusicBrainz hits, the match row's\nfor library rows. Absent means unidentified, never failure."
           },
+          "remote_track": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SearchRemoteTrackDetail"
+              }
+            ],
+            "description": "What requesting a song needs; present exactly when `kind` is\n`track` and the library lacks the song."
+          },
           "requested": {
             "type": "boolean",
             "description": "True when an acquisition request is open for this album."
@@ -64174,7 +64227,7 @@
                 "$ref": "#/components/schemas/SearchTrackDetail"
               }
             ],
-            "description": "Library details of a song hit; present exactly when `kind` is\n`track`."
+            "description": "Library details of a song hit; present exactly when `kind` is\n`track` and the library holds the song."
           },
           "type_info": {
             "type": [

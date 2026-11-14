@@ -22632,6 +22632,25 @@ export interface components {
          */
         SearchRemoteStatus: "ok" | "partial" | "timeout" | "error" | "stale";
         /**
+         * @description What requesting a MusicBrainz song and showing its cover need: the
+         *     release it is shown under, its group and the credited artist.
+         */
+        SearchRemoteTrackDetail: {
+            /** @description The release's title. */
+            album_title?: string | null;
+            /** @description First credited artist. */
+            artist_mbid?: string | null;
+            /**
+             * Format: int64
+             * @description Recording length, whole seconds.
+             */
+            duration_seconds?: number | null;
+            /** @description The release's group, when MusicBrainz named one; covers come from it. */
+            release_group_mbid?: string | null;
+            /** @description The release. */
+            release_mbid: string;
+        };
+        /**
          * @description Unified search response: one ranked list per bucket plus the standout
          *     hit per bucket, when one earns it.
          */
@@ -22684,6 +22703,11 @@ export interface components {
              *     for library rows. Absent means unidentified, never failure.
              */
             musicbrainz_id?: string | null;
+            /**
+             * @description What requesting a song needs; present exactly when `kind` is
+             *     `track` and the library lacks the song.
+             */
+            remote_track?: null | components["schemas"]["SearchRemoteTrackDetail"];
             /** @description True when an acquisition request is open for this album. */
             requested: boolean;
             /**
@@ -22700,7 +22724,7 @@ export interface components {
             title: string;
             /**
              * @description Library details of a song hit; present exactly when `kind` is
-             *     `track`.
+             *     `track` and the library holds the song.
              */
             track?: null | components["schemas"]["SearchTrackDetail"];
             /** @description Artist type, or an `Album + Live` style type label. */
