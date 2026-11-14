@@ -1058,3 +1058,135 @@ async fn exact_title_albums_rank_by_their_releases() {
         );
     }
 }
+
+/// Titles tagged with MusicBrainz's hyphen (U+2010) match a query typed
+/// with the keyboard hyphen, as an album's exact tier, as a substring and
+/// through the song index; the pattern's dash matches any dash.
+#[tokio::test]
+async fn a_typed_dash_matches_any_dash_in_a_title() {
+    let (app, app_db, _held) = authed_app().await;
+    app_db.exec(
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+         created_at, updated_at) VALUES ('album-verse', 'root-1', 'g-verse', \
+         'Across the Spider\u{2010}Verse', 'across the spider\u{2010}verse', 'Beirut', 'beirut', \
+         'artist-beirut', 'manual', 0, 0)",
+        [],
+    );
+    seed_track(
+        &app_db,
+        "t-verse",
+        "album-verse",
+        "Spider\u{2010}Verse Theme",
+        "Across the Spider\u{2010}Verse",
+        "indexed",
+    );
+    let body = {
+        let (status, _, bytes) = call(
+            app,
+            Method::GET,
+            "/api/v3/search?q=across%20the%20spider-verse&scope=library",
+            Some(TEST_TOKEN),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        json(&bytes)
+    };
+    assert_eq!(body["albums"][0]["id"], "album-verse", "{body}");
+    assert_eq!(
+        body["albums"][0]["score"], 70,
+        "a dash is any character, not exact"
+    );
+    assert_eq!(body["tracks"][0]["id"], "t-verse", "{body}");
+}
+
+/// A text search MusicBrainz answers empty is asked once more with its
+/// one word split into two, or its words fuzzy; a search that found
+/// something costs no second call.
+#[tokio::test]
+async fn an_empty_musicbrainz_answer_is_asked_again_forgivingly() {
+    let wire = Arc::new(ScriptedWire::new());
+    let groups: Vec<Group<'_>> = vec![(
+        "rg-verse",
+        "Spider‐Man: Across the Spider‐Verse",
+        "Daniel Pemberton",
+        "Album",
+        90,
+        3,
+    )];
+    let answer = |path: &str, key: &str, hits: Vec<serde_json::Value>| {
+        wire.answer(
+            &format!("{MUSICBRAINZ}/{path}"),
+            200,
+            &[],
+            search_answer(key, hits),
+        );
+    };
+    // "spiderverse": artists empty twice, albums empty then found.
+    answer("artist", "artists", vec![]);
+    answer("artist", "artists", vec![]);
+    answer("release-group", "release-groups", vec![]);
+    answer(
+        "release-group",
+        "release-groups",
+        groups.iter().copied().map(group_hit).collect(),
+    );
+    // "beatels": artists found first time, albums empty twice.
+    answer("artist", "artists", vec![artist_hit("The Beatles", 100)]);
+    answer("release-group", "release-groups", vec![]);
+    answer("release-group", "release-groups", vec![]);
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-forgiving");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+    let get = |query: &str| {
+        let (app, uri) = (
+            app.clone(),
+            format!("/api/v3/search?{}", urlencode_query(query)),
+        );
+        async move {
+            let (status, _, bytes) = call(app, Method::GET, &uri, Some(TEST_TOKEN), None).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+            json(&bytes)
+        }
+    };
+
+    let body = get("spiderverse").await;
+    assert_eq!(body["albums"][0]["musicbrainz_id"], "rg-verse", "{body}");
+    assert_eq!(body["album_status"], "ok");
+    let body = get("beatels").await;
+    assert_eq!(body["artists"][0]["title"], "The Beatles", "{body}");
+    assert!(body["albums"].as_array().unwrap().is_empty(), "{body}");
+
+    // The buckets run at once, so each path keeps its own order.
+    let asked = |path: &str| -> Vec<String> {
+        wire.sent()
+            .iter()
+            .filter(|sent| sent.url.path().ends_with(path))
+            .filter_map(|sent| sent.query("query"))
+            .collect()
+    };
+    const SPLIT: &str = r#"(spiderverse~ OR "sp iderverse" OR "spi derverse" OR "spid erverse" OR "spide rverse" OR "spider verse" OR "spiderv erse" OR "spiderve rse" OR "spiderver se")"#;
+    assert_eq!(
+        asked("/artist"),
+        vec![
+            r#"artist:"spiderverse"^3 OR artistaccent:"spiderverse"^3 OR alias:"spiderverse"^2 OR spiderverse"#.to_owned(),
+            format!("artist:{SPLIT}^3 OR artistaccent:{SPLIT}^3 OR alias:{SPLIT}^2 OR {SPLIT}"),
+            r#"artist:"beatels"^3 OR artistaccent:"beatels"^3 OR alias:"beatels"^2 OR beatels"#.to_owned(),
+        ]
+    );
+    const FUZZY: &str = r#"(beatels~ OR "be atels" OR "bea tels" OR "beat els" OR "beate ls")"#;
+    assert_eq!(
+        asked("/release-group"),
+        vec![
+            r#"releasegroup:"spiderverse"^3 OR release:"spiderverse"^2 OR spiderverse"#.to_owned(),
+            format!("releasegroup:{SPLIT}^3 OR release:{SPLIT}^2 OR {SPLIT}"),
+            r#"releasegroup:"beatels"^3 OR release:"beatels"^2 OR beatels"#.to_owned(),
+            format!("releasegroup:{FUZZY}^3 OR release:{FUZZY}^2 OR {FUZZY}"),
+        ]
+    );
+}

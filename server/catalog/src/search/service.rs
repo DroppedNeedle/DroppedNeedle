@@ -15,7 +15,8 @@
 //! Local matching is accent- and case-insensitive through the baseline folded
 //! columns (`folded_name`, `title_folded`, ...): the query is folded with
 //! the same [`fold_text`](droppedneedle_kernel::db::fold::fold_text) the writers
-//! use, so a keyboard without accents still finds the artist. Retired
+//! use, so a keyboard without accents still finds the artist, and a dash in
+//! the query matches whichever dash the title was tagged with. Retired
 //! (merged-away) artists and albums never match, and tracks outside the
 //! `indexed` availability never match. Empty results are absence, never
 //! failure.
@@ -35,6 +36,7 @@ use super::models::{
     SearchScope, SearchTrackDetail, SuggestResponse, SuggestResult,
 };
 use super::sql;
+use crate::local::sqlite::any_dash;
 
 /// Score for an exact folded-title match. Also the top-result bar.
 pub const SCORE_EXACT: i32 = 100;
@@ -654,14 +656,14 @@ pub(crate) fn song_query(folded: &str, limit: u32, offset: u32) -> (String, Vec<
 }
 
 /// LIKE pattern matching rows containing the folded query. Wildcards in
-/// the query match literally, never as patterns.
+/// the query match literally, never as patterns; a dash matches any dash.
 fn like_contains(folded: &str) -> String {
-    format!("%{}%", escape_like(folded))
+    format!("%{}%", any_dash(&escape_like(folded)))
 }
 
 /// LIKE pattern matching rows starting with the folded query.
 fn like_prefix(folded: &str) -> String {
-    format!("{}%", escape_like(folded))
+    format!("{}%", any_dash(&escape_like(folded)))
 }
 
 /// Escape the LIKE metacharacters so query text matches literally.
