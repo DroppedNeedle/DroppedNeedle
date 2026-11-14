@@ -34,9 +34,9 @@ use crate::executor::{Answer, Backoff, Executor, Reply, Request, Spec, Url, stan
 
 use self::models::{
     ListenCountAnswer, ListenItem, ListensAnswer, RadioArtistAnswer, RecordingMetadataAnswer,
-    ReleaseGroupEntry, ReleaseGroupMetadataAnswer, ReleaseGroupPopularityAnswer, TagItem,
-    TopRecordingRow, TopRecordingsAnswer, TopReleaseGroupRow, TopReleaseGroupsAnswer,
-    ValidateTokenAnswer,
+    RecordingPopularityAnswer, ReleaseGroupEntry, ReleaseGroupMetadataAnswer,
+    ReleaseGroupPopularityAnswer, TagItem, TopRecordingRow, TopRecordingsAnswer,
+    TopReleaseGroupRow, TopReleaseGroupsAnswer, ValidateTokenAnswer,
 };
 
 pub mod models;
@@ -571,6 +571,44 @@ impl ListenBrainzClient {
             .into_iter()
             .filter(|row| !row.release_group_mbid.trim().is_empty())
             .filter_map(|row| Some((row.release_group_mbid, row.total_listen_count?)))
+            .collect())
+    }
+
+    /// Listen counts for recording MBIDs (`POST /1/popularity/recording`),
+    /// read the way [`Self::release_group_popularity`] reads groups.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
+    pub async fn recording_popularity(
+        &self,
+        recording_mbids: &[String],
+        creds: &ListenBrainzCredentials,
+        priority: RequestPriority,
+    ) -> Result<HashMap<String, i64>, ProviderError> {
+        if recording_mbids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut unique: Vec<&str> = Vec::new();
+        for mbid in recording_mbids {
+            if !unique.contains(&mbid.as_str()) {
+                unique.push(mbid.as_str());
+            }
+        }
+        unique.sort_unstable();
+        let body = serde_json::json!({"recording_mbids": unique});
+        // A read sent as POST: sending it twice is safe.
+        let request = self
+            .post(&["1", "popularity", "recording"], &body, creds)?
+            .idempotent(true);
+        let rows = self
+            .read_unconfirmed::<RecordingPopularityAnswer>(request, priority)
+            .await?
+            .unwrap_or_default();
+        Ok(rows
+            .into_iter()
+            .filter(|row| !row.recording_mbid.trim().is_empty())
+            .filter_map(|row| Some((row.recording_mbid, row.total_listen_count?)))
             .collect())
     }
 

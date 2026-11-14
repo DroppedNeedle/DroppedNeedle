@@ -165,6 +165,23 @@ pub struct ReleaseGroupPopularity {
     pub total_listen_count: Option<i64>,
 }
 
+/// `POST /1/popularity/recording`: one row per asked MBID, in the shape
+/// of the release-group answer. Verified against
+/// api.listenbrainz.org/1/popularity/recording on 2026-11-13: a known
+/// recording answers a count, an unknown one `null`.
+pub type RecordingPopularityAnswer = Vec<RecordingPopularity>;
+
+/// One recording's listen count.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RecordingPopularity {
+    /// Recording MBID: required identity.
+    pub recording_mbid: String,
+    /// Total listens; absent or not a whole number when ListenBrainz has
+    /// no count, and the row is skipped.
+    #[serde(default, deserialize_with = "loose_count")]
+    pub total_listen_count: Option<i64>,
+}
+
 /// `GET /1/popularity/top-release-groups-for-artist/{mbid}`, most played
 /// first.
 ///
