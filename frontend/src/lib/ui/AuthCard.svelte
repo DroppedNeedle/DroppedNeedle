@@ -265,7 +265,7 @@
 		background: color-mix(in oklab, var(--dn-paper-content) 8%, var(--dn-paper));
 	}
 	.dn-auth-card__tabs :global(.dn-auth-tab[aria-pressed='true']) {
-		z-index: 2;
+		z-index: 0;
 		height: 4.125rem;
 		margin-top: -0.625rem;
 		background: var(--dn-action);
@@ -273,7 +273,7 @@
 		box-shadow: inset 0 0 0 1.5px var(--dn-action-edge);
 	}
 	.dn-auth-card__tabs :global(.dn-auth-tab:focus-visible) {
-		z-index: 3;
+		z-index: 0;
 		outline-offset: -4px;
 		outline-color: var(--dn-paper-content);
 	}
