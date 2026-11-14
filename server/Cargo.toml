@@ -22,7 +22,7 @@ droppedneedle-tool = { path = "tool", version = "3.0.0" }
 argon2 = { version = "0.5", features = ["alloc"] }
 axum = { version = "0.8", features = ["json", "query", "http1", "matched-path", "multipart"] }
 base64 = "0.22"
-bcrypt = "0.17"
+bcrypt = "0.19"
 caseless = "0.2"
 # Builds and reads our cookies. MIT or Apache-2.0; no optional features, so it
 # brings only time and a build-time version_check, both already in the tree.
