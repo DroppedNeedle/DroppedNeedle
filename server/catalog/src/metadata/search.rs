@@ -2,11 +2,12 @@
 //! recording buckets, cached for an hour, with the kept answer standing in
 //! when MusicBrainz is down.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
 use droppedneedle_providers::musicbrainz::{Criticality, hit_score};
 use droppedneedle_providers::{
     CacheKey, Fetched, IntegrationStatus, Policy, RequestPriority, Source, record_current, scoped,
@@ -15,6 +16,11 @@ use droppedneedle_providers::{
 use super::error::CatalogError;
 use super::mapping;
 use super::{Catalog, mb_search_error};
+use crate::discover::listening::shared::{self, Lender};
+
+/// How long a search waits for ListenBrainz's listen counts, after
+/// MusicBrainz has answered. Counts that miss it leave the text order.
+pub const LISTENS_DEADLINE: Duration = Duration::from_secs(2);
 
 /// Which MusicBrainz bucket a hit came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -414,6 +420,66 @@ impl Catalog {
             tracks,
         }
     }
+}
+
+impl Catalog {
+    /// ListenBrainz listen counts for release groups and recordings
+    /// (lowercase MBIDs), read anonymously under [`LISTENS_DEADLINE`] from
+    /// the rows discover keeps, asking only for what no kept row holds.
+    /// Empty while ListenBrainz reads are off, and for whatever failed or
+    /// missed the deadline: counts rank, they never fail a search.
+    pub async fn listen_counts(
+        &self,
+        release_groups: &[String],
+        recordings: &[String],
+    ) -> (HashMap<String, i64>, HashMap<String, i64>) {
+        let Some(client) = self.upstream().listenbrainz() else {
+            return (HashMap::new(), HashMap::new());
+        };
+        let cache = self.upstream().cache();
+        let priority = RequestPriority::UserInitiated;
+        let groups =
+            shared::listen_counts(cache, &client, release_groups, &Lender::Anonymous, priority);
+        let client = client.clone();
+        let tracks = cache.fetch_each(
+            recordings,
+            recording_listen_count_key,
+            Policy::LISTENBRAINZ_RECORDING,
+            |missing| async move {
+                client
+                    .recording_popularity(&missing, &ListenBrainzCredentials::default(), priority)
+                    .await
+            },
+        );
+        let counts = tokio::time::timeout(LISTENS_DEADLINE, async { tokio::join!(groups, tracks) });
+        let lower = |counts: HashMap<String, i64>| {
+            counts
+                .into_iter()
+                .map(|(mbid, count)| (mbid.to_ascii_lowercase(), count))
+                .collect()
+        };
+        match counts.await {
+            Ok((Ok(groups), Ok(tracks))) => (lower(groups), lower(tracks)),
+            Ok((groups, tracks)) => {
+                for error in [groups.err(), tracks.err()].into_iter().flatten() {
+                    tracing::warn!(%error, "listenbrainz counts failed; ranking by text");
+                }
+                (HashMap::new(), HashMap::new())
+            }
+            Err(_) => {
+                tracing::warn!("listenbrainz counts missed the deadline; ranking by text");
+                (HashMap::new(), HashMap::new())
+            }
+        }
+    }
+}
+
+/// The cache key of one recording's listen count.
+fn recording_listen_count_key(recording_mbid: &str) -> CacheKey {
+    CacheKey::new(
+        Source::ListenBrainz,
+        &["rec_popularity", &recording_mbid.trim().to_lowercase()],
+    )
 }
 
 /// The MusicBrainz ids of one search's rows, per bucket.
