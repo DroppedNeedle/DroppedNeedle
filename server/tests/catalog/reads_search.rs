@@ -26,7 +26,8 @@ use droppedneedle_kernel::runtime_config::sections::{
     MbSourceMode, MusicBrainzSettings, UserPreferences,
 };
 use droppedneedle_providers::Providers;
-use droppedneedle_providers::test_support::ScriptedWire;
+use droppedneedle_providers::executor::Body as WireBody;
+use droppedneedle_providers::test_support::{Scripted, ScriptedWire};
 use search::SearchDeps;
 use search::models::{EnrichmentBatchRequest, EnrichmentResponse};
 use search::ports::{EnrichmentPort, EnrichmentPortError};
@@ -127,32 +128,36 @@ fn seed_catalog(app_db: &Path) {
 
 /// The search deps over `app_db`. With no wire, MusicBrainz search fails
 /// at once without a request and the tests read the library's own hits;
-/// with one, the official MusicBrainz answers on it.
+/// with one, the official MusicBrainz answers on it, and ListenBrainz
+/// too when `listenbrainz` is on.
 fn search_deps(
     app_db: PathBuf,
     enrichment: Arc<dyn EnrichmentPort>,
     users: droppedneedle_auth::users::UsersDeps,
     wire: Option<Arc<ScriptedWire>>,
+    listenbrainz: bool,
 ) -> SearchDeps {
     let db = droppedneedle_kernel::db::Db::open_for_tests(&app_db).expect("search database opens");
     let remote = match wire {
-        Some(wire) => scripted_catalog(&db, users, wire),
+        Some(wire) => scripted_catalog(&db, users, wire, listenbrainz),
         None => crate::common::bundles::offline_catalog(&db, users),
     };
     SearchDeps::new(SearchService::new(db, remote), enrichment)
 }
 
 /// A metadata catalog over `db` reading the official MusicBrainz, which
-/// the closed provider endpoints put at [`MUSICBRAINZ`] on `wire`.
+/// the closed provider endpoints put at [`MUSICBRAINZ`] on `wire`, and
+/// ListenBrainz at [`LISTENBRAINZ`] when `listenbrainz` is on.
 fn scripted_catalog(
     db: &droppedneedle_kernel::db::Db,
     users: droppedneedle_auth::users::UsersDeps,
     wire: Arc<ScriptedWire>,
+    listenbrainz: bool,
 ) -> Catalog {
     Catalog::new(
         Upstream::new(
             Arc::new(Providers::unpaced(wire)),
-            Arc::new(OfficialMusicBrainz),
+            Arc::new(OfficialMusicBrainz { listenbrainz }),
             users.clone(),
             droppedneedle_media::playback::listening::ListeningStore::new(
                 db.clone(),
@@ -171,9 +176,14 @@ fn scripted_catalog(
 /// Where the official MusicBrainz answers in [`scripted_catalog`].
 const MUSICBRAINZ: &str = "http://127.0.0.1:9/musicbrainz/ws/2";
 
+/// Where ListenBrainz answers in [`scripted_catalog`].
+const LISTENBRAINZ: &str = "http://127.0.0.1:9/listenbrainz/1";
+
 /// Catalog settings on the official MusicBrainz, everything else at its
-/// default and ListenBrainz off.
-struct OfficialMusicBrainz;
+/// default, with ListenBrainz reads on or off.
+struct OfficialMusicBrainz {
+    listenbrainz: bool,
+}
 
 impl CatalogSettings for OfficialMusicBrainz {
     fn musicbrainz(&self) -> Option<MusicBrainzSettings> {
@@ -192,7 +202,7 @@ impl CatalogSettings for OfficialMusicBrainz {
     }
 
     fn listenbrainz_enabled(&self) -> bool {
-        false
+        self.listenbrainz
     }
 
     fn store_region(&self) -> Option<String> {
@@ -218,6 +228,16 @@ async fn app_on(
     enrichment: Arc<dyn EnrichmentPort>,
     wire: Option<Arc<ScriptedWire>>,
 ) -> (axum::Router, Held) {
+    app_listening(app_db, enrichment, wire, false).await
+}
+
+/// [`app_on`] with ListenBrainz reads on or off.
+async fn app_listening(
+    app_db: PathBuf,
+    enrichment: Arc<dyn EnrichmentPort>,
+    wire: Option<Arc<ScriptedWire>>,
+    listenbrainz: bool,
+) -> (axum::Router, Held) {
     let rig = AuthRig::new("reads-search").await;
     let user = rig.seed_user("ada", Role::User).await;
     rig.sign_in(&user.id, TEST_TOKEN).await;
@@ -225,7 +245,13 @@ async fn app_on(
     let app = scope
         .request_scope(
             search::routes()
-                .with_state(search_deps(app_db, enrichment, rig.deps.clone(), wire))
+                .with_state(search_deps(
+                    app_db,
+                    enrichment,
+                    rig.deps.clone(),
+                    wire,
+                    listenbrainz,
+                ))
                 .into_router()
                 .layer(middleware::from_fn_with_state(
                     rig.session_gate(),
@@ -1057,4 +1083,494 @@ async fn exact_title_albums_rank_by_their_releases() {
             "{sent} answers {query}"
         );
     }
+}
+
+/// One recording search hit: id, title, credited artist, score, and the
+/// releases carrying it as (release id, title, status, group id).
+fn recording_hit(
+    id: &str,
+    title: &str,
+    artist: &str,
+    score: u32,
+    releases: &[(&str, &str, &str, &str)],
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "score": score,
+        "title": title,
+        "length": 248_000,
+        "artist-credit": [{
+            "name": artist,
+            "joinphrase": "",
+            "artist": {"id": format!("artist-{artist}"), "name": artist},
+        }],
+        "releases": releases.iter().map(|(release, title, status, group)| serde_json::json!({
+            "id": release,
+            "title": title,
+            "status": status,
+            "date": "2018-10-18",
+            "release-group": {"id": group, "title": title, "primary-type": "Single"},
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// Songs the library lacks come from MusicBrainz: each row carries what
+/// requesting it needs, under its first official release, and an open
+/// request shows as requested. A recording the library holds attaches
+/// the library's copy and plays it; one on no release, or a video, is left
+/// out. The songs tab pages the same way and says how MusicBrainz did.
+#[tokio::test]
+async fn songs_the_library_lacks_come_from_musicbrainz() {
+    let wire = Arc::new(ScriptedWire::new());
+    let hits = vec![
+        recording_hit(
+            "rec-sunflower",
+            "Sunflower",
+            "Post Malone",
+            100,
+            &[
+                ("rel-promo", "Sunflower (promo)", "Promotion", "rg-promo"),
+                ("rel-single", "Sunflower", "Official", "rg-single"),
+            ],
+        ),
+        recording_hit(
+            "REC-OWNED",
+            "Sunflower",
+            "Someone",
+            99,
+            &[("rel-owned", "Renaissance", "Official", "rg-owned")],
+        ),
+        recording_hit(
+            "rec-requested",
+            "Sunflower (remix)",
+            "Post Malone",
+            90,
+            &[("rel-remix", "Sunflower (remix)", "Official", "rg-remix")],
+        ),
+        recording_hit("rec-loose", "Sunflower", "Nobody", 80, &[]),
+        serde_json::json!({
+            "id": "rec-video", "score": 80, "title": "Sunflower", "video": true,
+            "releases": [{"id": "rel-video", "title": "Sunflower", "status": "Official"}],
+        }),
+    ];
+    for _ in 0..2 {
+        wire.answer(
+            &format!("{MUSICBRAINZ}/recording"),
+            200,
+            &[],
+            search_answer("recordings", hits.clone()),
+        );
+    }
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-songs");
+    seed_catalog(&app_db);
+    seed_track(
+        &app_db,
+        "t-owned",
+        "album-renaissance",
+        "Sunflower",
+        "Renaissance",
+        "indexed",
+    );
+    app_db.exec(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, recording_mbid, \
+         decision_source, selected_at) VALUES ('t-owned', 'musicbrainz', 'rec-owned', 'manual', 0)",
+        [],
+    );
+    app_db.exec(
+        "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
+         album_title, requested_at, status, request_kind) \
+         VALUES ('track:rec-requested', 'rec-requested', 'Post Malone', 'Sunflower (remix)', \
+         1700000000000, 'pending', 'track')",
+        [],
+    );
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire),
+    )
+    .await;
+
+    let (status, _, bytes) = call(
+        app.clone(),
+        Method::GET,
+        "/api/v3/search?q=sunflower&buckets=tracks",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&bytes);
+    assert_eq!(body["track_status"], "ok");
+    let rows: Vec<(&str, Option<&str>, bool, bool)> = body["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hit| {
+            (
+                hit["musicbrainz_id"].as_str().unwrap(),
+                hit["id"].as_str(),
+                hit["in_library"].as_bool().unwrap(),
+                hit["requested"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("REC-OWNED", Some("t-owned"), true, false),
+            ("rec-sunflower", None, false, false),
+            ("rec-requested", None, false, true),
+        ],
+        "{body}"
+    );
+    let owned = &body["tracks"][0];
+    assert_eq!(owned["track"]["album_id"], "album-renaissance");
+    assert!(owned["remote_track"].is_null());
+    let remote = &body["tracks"][1];
+    assert_eq!(remote["kind"], "track");
+    assert_eq!(remote["artist"], "Post Malone");
+    assert_eq!(remote["year"], 2018);
+    assert!(remote["track"].is_null());
+    assert_eq!(remote["remote_track"]["release_mbid"], "rel-single");
+    assert_eq!(remote["remote_track"]["release_group_mbid"], "rg-single");
+    assert_eq!(remote["remote_track"]["album_title"], "Sunflower");
+    assert_eq!(remote["remote_track"]["duration_seconds"], 248);
+    assert_eq!(remote["remote_track"]["artist_mbid"], "artist-Post Malone");
+
+    let (status, _, bytes) = call(
+        app,
+        Method::GET,
+        "/api/v3/search/tracks?q=sunflower&limit=2",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&bytes);
+    assert_eq!(body["status"], "ok");
+    let ids: Vec<&str> = body["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hit| hit["musicbrainz_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["REC-OWNED", "rec-sunflower"], "{body}");
+}
+
+/// One ListenBrainz popularity answer: each id under `key` with its
+/// listens, `None` for an id ListenBrainz does not know.
+fn popularity_answer(key: &str, counts: &[(&str, Option<i64>)]) -> Scripted {
+    let rows: Vec<serde_json::Value> = counts
+        .iter()
+        .map(|(mbid, count)| serde_json::json!({key: mbid, "total_listen_count": count}))
+        .collect();
+    Scripted::Answer {
+        status: 200,
+        headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+        body: serde_json::to_vec(&rows).expect("answer encodes"),
+    }
+}
+
+/// The ids each ListenBrainz popularity request on `wire` asked about, in
+/// the order sent: (path, ids).
+fn listens_asked(wire: &ScriptedWire) -> Vec<(String, Vec<String>)> {
+    wire.sent()
+        .iter()
+        .filter(|sent| sent.url.path().starts_with("/listenbrainz/1/popularity/"))
+        .map(|sent| {
+            let body = match &sent.body {
+                WireBody::Json(json) => json.clone(),
+                other => panic!("popularity sent as {other:?}"),
+            };
+            let body: serde_json::Value = serde_json::from_slice(&body).expect("json body");
+            let ids = body
+                .as_object()
+                .and_then(|body| body.values().next())
+                .and_then(|ids| ids.as_array())
+                .expect("one list of ids")
+                .iter()
+                .map(|id| id.as_str().expect("an id").to_owned())
+                .collect();
+            (sent.url.path().to_owned(), ids)
+        })
+        .collect()
+}
+
+/// With ListenBrainz reads on, albums and songs rank by listens: the
+/// soundtrack everyone plays goes above the namesakes MusicBrainz scores
+/// higher, a song counts the more of its own listens and its album's, and
+/// a row with no count sits below the counted ones. An exact title still
+/// ranks above a popular near miss. The counts are asked once per id, by
+/// anonymous POST, and the songs tab ranks the same page the same way.
+/// Scoped to the library, search asks ListenBrainz nothing. The scores
+/// and counts are BrainzMash's and ListenBrainz's on 2026-11-14.
+#[tokio::test]
+async fn popular_albums_and_songs_rank_above_namesakes() {
+    use droppedneedle_providers::executor::Method as WireMethod;
+
+    let groups: Vec<Group<'_>> = vec![
+        (
+            "rg-pemberton",
+            "Spider-Man: Across the Spider-Verse (Original Score)",
+            "Daniel Pemberton",
+            "Album",
+            100,
+            3,
+        ),
+        (
+            "rg-tribute",
+            "Across the Spider-Verse",
+            "Tribute Players",
+            "Album",
+            100,
+            1,
+        ),
+        (
+            "rg-metro",
+            "Metro Boomin Presents Spider-Man: Across the Spider-Verse",
+            "Metro Boomin",
+            "Album",
+            55,
+            5,
+        ),
+        (
+            "rg-unheard",
+            "Across the Spider-Verse: Piano Covers",
+            "Nobody",
+            "Album",
+            80,
+            1,
+        ),
+    ];
+    let recordings = vec![
+        recording_hit(
+            "rec-calling",
+            "Calling (Spider-Man: Across the Spider-Verse)",
+            "Metro Boomin",
+            60,
+            &[("rel-metro", "Metro Boomin Presents", "Official", "rg-metro")],
+        ),
+        recording_hit(
+            "rec-score",
+            "Across the Spider-Verse (Intro)",
+            "Daniel Pemberton",
+            100,
+            &[(
+                "rel-pemberton",
+                "Original Score",
+                "Official",
+                "rg-pemberton",
+            )],
+        ),
+        recording_hit(
+            "rec-cover",
+            "Across the Spider-Verse Theme (Piano Cover)",
+            "Nobody",
+            100,
+            &[("rel-unheard", "Piano Covers", "Official", "rg-unheard")],
+        ),
+    ];
+    let wire = Arc::new(ScriptedWire::new());
+    let answer = |path: &str, key: &str, hits| {
+        wire.answer(
+            &format!("{MUSICBRAINZ}/{path}"),
+            200,
+            &[],
+            search_answer(key, hits),
+        );
+    };
+    answer("artist", "artists", Vec::new());
+    answer(
+        "release-group",
+        "release-groups",
+        groups.iter().copied().map(group_hit).collect(),
+    );
+    answer("recording", "recordings", recordings);
+    wire.on(
+        WireMethod::Post,
+        &format!("{LISTENBRAINZ}/popularity/release-group"),
+        popularity_answer(
+            "release_group_mbid",
+            &[
+                ("rg-pemberton", Some(41_316)),
+                ("rg-tribute", Some(2)),
+                ("rg-metro", Some(442_170)),
+                ("rg-unheard", None),
+            ],
+        ),
+    );
+    wire.on(
+        WireMethod::Post,
+        &format!("{LISTENBRAINZ}/popularity/recording"),
+        popularity_answer(
+            "recording_mbid",
+            &[
+                ("rec-calling", Some(118_000)),
+                ("rec-score", Some(53_000)),
+                ("rec-cover", None),
+            ],
+        ),
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-listens");
+    let (app, _held) = app_listening(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+        true,
+    )
+    .await;
+    let get = |path: &str, extra: &str| {
+        let query = urlencode_query("across the spider-verse");
+        let (app, uri) = (app.clone(), format!("{path}?{query}{extra}"));
+        async move {
+            let (status, _, bytes) = call(app, Method::GET, &uri, Some(TEST_TOKEN), None).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+            json(&bytes)
+        }
+    };
+    let ids = |rows: &serde_json::Value| -> Vec<String> {
+        rows.as_array()
+            .expect("rows")
+            .iter()
+            .map(|row| row["musicbrainz_id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    let body = get("/api/v3/search", "").await;
+    assert_eq!(
+        ids(&body["albums"]),
+        ["rg-tribute", "rg-metro", "rg-pemberton", "rg-unheard"],
+        "{body}"
+    );
+    assert_eq!(
+        body["albums"][1]["score"], 55,
+        "the score shown stays MusicBrainz's"
+    );
+    // Calling: 118k of its own, 442k on its album. The score's intro: 53k
+    // of its own, 41k on its album. The cover: no count anywhere.
+    assert_eq!(
+        ids(&body["tracks"]),
+        ["rec-calling", "rec-score", "rec-cover"],
+        "{body}"
+    );
+    let asked = listens_asked(&wire);
+    let mut paths: Vec<&str> = asked.iter().map(|(path, _)| path.as_str()).collect();
+    paths.sort_unstable();
+    assert_eq!(
+        paths,
+        [
+            "/listenbrainz/1/popularity/recording",
+            "/listenbrainz/1/popularity/release-group"
+        ],
+        "one request per kind: {asked:?}"
+    );
+    for (path, ids) in &asked {
+        let mut expected: Vec<String> = if path.ends_with("/recording") {
+            vec!["rec-calling", "rec-score", "rec-cover"]
+        } else {
+            vec!["rg-pemberton", "rg-tribute", "rg-metro", "rg-unheard"]
+        }
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        expected.sort_unstable();
+        assert_eq!(ids, &expected, "{path} asks each id once");
+    }
+    assert!(
+        wire.sent()
+            .iter()
+            .filter(|sent| sent.url.path().starts_with("/listenbrainz/"))
+            .all(|sent| sent.headers.iter().all(|(name, _)| name != "authorization")),
+        "listens are read without an account"
+    );
+
+    // The songs tab asks MusicBrainz again and ranks the cached counts.
+    let body = get("/api/v3/search/tracks", "").await;
+    assert_eq!(
+        ids(&body["results"]),
+        ["rec-calling", "rec-score", "rec-cover"],
+        "{body}"
+    );
+    assert_eq!(
+        listens_asked(&wire).len(),
+        2,
+        "the counts came from the cache"
+    );
+
+    let before = wire.sent().len();
+    let body = get("/api/v3/search", "&scope=library").await;
+    assert_eq!(body["albums"].as_array().map(Vec::len), Some(0), "{body}");
+    assert_eq!(
+        wire.sent().len(),
+        before,
+        "a library search asks neither MusicBrainz nor ListenBrainz"
+    );
+}
+
+/// When ListenBrainz cannot answer, or is off, search ranks by text as it
+/// did and the answer says nothing of it: the counts only ever reorder.
+#[tokio::test]
+async fn search_ranks_by_text_when_listenbrainz_is_down() {
+    use droppedneedle_providers::TransportKind;
+    use droppedneedle_providers::executor::Method as WireMethod;
+
+    let groups: Vec<Group<'_>> = vec![
+        ("rg-lemaitre", "Ok Computer", "Lemaitre", "Single", 100, 1),
+        ("rg-radiohead", "OK Computer", "Radiohead", "Album", 95, 39),
+    ];
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!("{MUSICBRAINZ}/artist"),
+        200,
+        &[],
+        search_answer("artists", Vec::new()),
+    );
+    wire.answer(
+        &format!("{MUSICBRAINZ}/release-group"),
+        200,
+        &[],
+        search_answer(
+            "release-groups",
+            groups.iter().copied().map(group_hit).collect(),
+        ),
+    );
+    wire.answer(
+        &format!("{MUSICBRAINZ}/recording"),
+        200,
+        &[],
+        search_answer("recordings", Vec::new()),
+    );
+    wire.on(
+        WireMethod::Post,
+        &format!("{LISTENBRAINZ}/popularity/release-group"),
+        Scripted::Transport(TransportKind::Connect),
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-listens-down");
+    let (app, _held) = app_listening(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+        true,
+    )
+    .await;
+    let uri = format!("/api/v3/search?{}", urlencode_query("ok computer"));
+    let (status, _, bytes) = call(app, Method::GET, &uri, Some(TEST_TOKEN), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&bytes);
+    assert_eq!(body["album_status"], "ok", "{body}");
+    let ids: Vec<&str> = body["albums"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["musicbrainz_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["rg-radiohead", "rg-lemaitre"], "{body}");
+    let asked = listens_asked(&wire);
+    assert!(
+        !asked.is_empty()
+            && asked
+                .iter()
+                .all(|(path, _)| path.ends_with("/release-group")),
+        "ListenBrainz was asked, retries included, and for the groups only: {asked:?}"
+    );
 }

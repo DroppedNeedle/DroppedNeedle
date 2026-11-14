@@ -1,12 +1,13 @@
-//! The MusicBrainz half of unified search: artist and release-group
-//! buckets, cached for an hour, with the kept answer standing in when
-//! MusicBrainz is down.
+//! The MusicBrainz half of unified search: artist, release-group and
+//! recording buckets, cached for an hour, with the kept answer standing in
+//! when MusicBrainz is down.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
 use droppedneedle_providers::musicbrainz::{Criticality, hit_score};
 use droppedneedle_providers::{
     CacheKey, Fetched, IntegrationStatus, Policy, RequestPriority, Source, record_current, scoped,
@@ -15,6 +16,11 @@ use droppedneedle_providers::{
 use super::error::CatalogError;
 use super::mapping;
 use super::{Catalog, mb_search_error};
+use crate::discover::listening::shared::{self, Lender};
+
+/// How long a search waits for ListenBrainz's listen counts, after
+/// MusicBrainz has answered. Counts that miss it leave the text order.
+pub const LISTENS_DEADLINE: Duration = Duration::from_secs(2);
 
 /// Which MusicBrainz bucket a hit came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,6 +29,8 @@ pub enum RemoteKind {
     Artist,
     /// A release group.
     Album,
+    /// A recording.
+    Track,
 }
 
 /// One MusicBrainz search hit, before library flags.
@@ -49,6 +57,25 @@ pub struct RemoteHit {
     /// none.
     #[serde(default)]
     pub releases: Option<u32>,
+    /// What requesting the song needs, for recordings.
+    #[serde(default)]
+    pub track: Option<RemoteTrack>,
+}
+
+/// The release a recording search hit is shown and requested under: its
+/// first official release, else its first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteTrack {
+    /// The release's group, when MusicBrainz named one.
+    pub release_group_mbid: Option<String>,
+    /// The release.
+    pub release_mbid: String,
+    /// The release's title.
+    pub album_title: Option<String>,
+    /// Recording length, whole seconds.
+    pub duration_seconds: Option<i64>,
+    /// First credited artist.
+    pub artist_mbid: Option<String>,
 }
 
 /// One bucket's hits as cached.
@@ -139,6 +166,7 @@ impl Catalog {
                         type_info: hit.artist_type.clone(),
                         score: i32::try_from(hit_score(hit.score, hit.ext_score)).unwrap_or(0),
                         releases: None,
+                        track: None,
                         mbid: hit.id,
                     })
                 })
@@ -230,7 +258,84 @@ impl Catalog {
                     ),
                     score: i32::try_from(hit_score(hit.score, hit.ext_score)).unwrap_or(0),
                     releases: hit.count,
+                    track: None,
                     mbid: hit.id,
+                })
+                .collect();
+            Ok(found_hits(items))
+        };
+        self.remote_bucket(key, deadline, fetch).await
+    }
+
+    /// Search MusicBrainz recordings for a page of `limit`: songs, not
+    /// videos, each under one of its releases. A recording on no release
+    /// is nothing to request, so it is left out.
+    pub async fn search_tracks_remote(
+        &self,
+        query: &str,
+        limit: u32,
+        offset: u32,
+        deadline: Duration,
+    ) -> RemoteBucket {
+        let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
+        let parts = [
+            namespace.as_str(),
+            query.trim(),
+            &limit.to_string(),
+            &offset.to_string(),
+        ];
+        let key = CacheKey::hashed(Source::MusicBrainz, "track_search", &parts);
+        let catalog = self.clone();
+        let text = query.trim().to_owned();
+        let fetch = move |priority| async move {
+            let (client, _) = catalog.upstream().musicbrainz(priority);
+            let wide = (limit + limit / 2).clamp(25, 100);
+            let page = client
+                .search_recordings_text(&text, wide, offset, Criticality::IdentityCritical)
+                .await
+                .map_err(mb_search_error)?;
+            let mut seen = HashSet::new();
+            let items: Vec<RemoteHit> = page
+                .items
+                .into_iter()
+                .filter(|hit| seen.insert(hit.id.to_ascii_lowercase()))
+                .filter(|hit| hit.video != Some(true))
+                .filter_map(|hit| {
+                    let release = hit
+                        .releases
+                        .iter()
+                        .find(|release| release.status.as_deref() == Some("Official"))
+                        .or(hit.releases.first())?;
+                    let group = release.release_group.as_ref();
+                    Some(RemoteHit {
+                        kind: RemoteKind::Track,
+                        title: hit
+                            .title
+                            .clone()
+                            .unwrap_or_else(|| "Unknown Track".to_owned()),
+                        artist: droppedneedle_providers::musicbrainz::credit_display_name(
+                            &hit.artist_credit,
+                        )
+                        .map(str::to_owned),
+                        year: mapping::year_of(release.date.as_deref()),
+                        disambiguation: None,
+                        type_info: None,
+                        score: i32::try_from(hit_score(hit.score, hit.ext_score)).unwrap_or(0),
+                        releases: None,
+                        track: Some(RemoteTrack {
+                            release_group_mbid: group.map(|group| group.id.clone()),
+                            release_mbid: release.id.clone(),
+                            album_title: release.title.clone(),
+                            duration_seconds: hit
+                                .length
+                                .and_then(|length| i64::try_from(length / 1000).ok()),
+                            artist_mbid: hit
+                                .artist_credit
+                                .first()
+                                .map(|credit| credit.artist.id.clone()),
+                        }),
+                        mbid: hit.id,
+                    })
                 })
                 .collect();
             Ok(found_hits(items))
@@ -300,15 +405,102 @@ impl Catalog {
         }
     }
 
-    /// Library flags for search rows: owned artists, owned albums, and
-    /// albums with open requests (all lowercase MBIDs).
-    pub async fn search_flags(
-        &self,
-        artists: &[String],
-        albums: &[String],
-    ) -> (HashSet<String>, HashSet<String>, HashSet<String>) {
-        let (owned_artists, (owned_albums, requested)) =
-            tokio::join!(self.artist_flags(artists), self.album_flags(albums));
-        (owned_artists, owned_albums, requested)
+    /// Library flags for search rows: owned artists, then owned and
+    /// requested albums, then owned and requested songs (all lowercase
+    /// MBIDs).
+    pub async fn search_flags(&self, ids: SearchIds<'_>) -> SearchFlags {
+        let (artists, albums, tracks) = tokio::join!(
+            self.artist_flags(ids.artists),
+            self.album_flags(ids.albums),
+            self.track_flags(ids.tracks)
+        );
+        SearchFlags {
+            artists,
+            albums,
+            tracks,
+        }
     }
+}
+
+impl Catalog {
+    /// ListenBrainz listen counts for release groups and recordings
+    /// (lowercase MBIDs), read anonymously under [`LISTENS_DEADLINE`] from
+    /// the rows discover keeps, asking only for what no kept row holds.
+    /// Empty while ListenBrainz reads are off, and for whatever failed or
+    /// missed the deadline: counts rank, they never fail a search.
+    pub async fn listen_counts(
+        &self,
+        release_groups: &[String],
+        recordings: &[String],
+    ) -> (HashMap<String, i64>, HashMap<String, i64>) {
+        let Some(client) = self.upstream().listenbrainz() else {
+            return (HashMap::new(), HashMap::new());
+        };
+        let cache = self.upstream().cache();
+        let priority = RequestPriority::UserInitiated;
+        let groups =
+            shared::listen_counts(cache, &client, release_groups, &Lender::Anonymous, priority);
+        let client = client.clone();
+        let tracks = cache.fetch_each(
+            recordings,
+            recording_listen_count_key,
+            Policy::LISTENBRAINZ_RECORDING,
+            |missing| async move {
+                client
+                    .recording_popularity(&missing, &ListenBrainzCredentials::default(), priority)
+                    .await
+            },
+        );
+        let counts = tokio::time::timeout(LISTENS_DEADLINE, async { tokio::join!(groups, tracks) });
+        let lower = |counts: HashMap<String, i64>| {
+            counts
+                .into_iter()
+                .map(|(mbid, count)| (mbid.to_ascii_lowercase(), count))
+                .collect()
+        };
+        match counts.await {
+            Ok((Ok(groups), Ok(tracks))) => (lower(groups), lower(tracks)),
+            Ok((groups, tracks)) => {
+                for error in [groups.err(), tracks.err()].into_iter().flatten() {
+                    tracing::warn!(%error, "listenbrainz counts failed; ranking by text");
+                }
+                (HashMap::new(), HashMap::new())
+            }
+            Err(_) => {
+                tracing::warn!("listenbrainz counts missed the deadline; ranking by text");
+                (HashMap::new(), HashMap::new())
+            }
+        }
+    }
+}
+
+/// The cache key of one recording's listen count.
+fn recording_listen_count_key(recording_mbid: &str) -> CacheKey {
+    CacheKey::new(
+        Source::ListenBrainz,
+        &["rec_popularity", &recording_mbid.trim().to_lowercase()],
+    )
+}
+
+/// The MusicBrainz ids of one search's rows, per bucket.
+#[derive(Debug, Clone, Copy)]
+pub struct SearchIds<'a> {
+    /// Artist MBIDs.
+    pub artists: &'a [String],
+    /// Release-group MBIDs.
+    pub albums: &'a [String],
+    /// Recording MBIDs.
+    pub tracks: &'a [String],
+}
+
+/// What the library says about one search's rows: owned artists, and for
+/// albums and songs the owned ids and the ids with an open request.
+#[derive(Debug, Clone, Default)]
+pub struct SearchFlags {
+    /// Owned artists.
+    pub artists: HashSet<String>,
+    /// Owned albums, requested albums.
+    pub albums: (HashSet<String>, HashSet<String>),
+    /// Owned songs, requested songs.
+    pub tracks: (HashSet<String>, HashSet<String>),
 }

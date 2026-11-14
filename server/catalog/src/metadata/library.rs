@@ -138,6 +138,10 @@ enum IdSet {
     OwnedArtists,
     /// Albums with an open request.
     Requested,
+    /// Owned songs by recording.
+    OwnedRecordings,
+    /// Songs with an open request.
+    RequestedTracks,
 }
 
 impl LocalCatalog {
@@ -146,7 +150,15 @@ impl LocalCatalog {
     async fn collect_ids(&self, set: IdSet, ids: &[String]) -> Result<HashSet<String>, StoreError> {
         let mut found = HashSet::new();
         for chunk in lowered(ids).chunks(MAX_BINDS) {
-            let values = texts(chunk);
+            // A song's ledger key is its MBID behind `track:`.
+            let keyed: Vec<String>;
+            let values = match set {
+                IdSet::RequestedTracks => {
+                    keyed = chunk.iter().map(|id| format!("track:{id}")).collect();
+                    texts(&keyed)
+                }
+                _ => texts(chunk),
+            };
             let chunk_found: Vec<String> = self
                 .read("catalog.library.ids", move |conn| {
                     let len = ListLen::new(values.len());
@@ -157,6 +169,8 @@ impl LocalCatalog {
                         IdSet::OwnedReleases => (sql::owners_by_release(len), 1),
                         IdSet::OwnedArtists => (sql::owned_artists_in(len), 0),
                         IdSet::Requested => (sql::requested_in(len), 0),
+                        IdSet::OwnedRecordings => (sql::owned_recordings_in(len), 0),
+                        IdSet::RequestedTracks => (sql::requested_tracks_in(len), 0),
                     };
                     rows(conn, &text, &values, |row| row.get::<_, String>(column))
                 })
@@ -228,6 +242,16 @@ impl LocalCatalog {
     /// The album MBIDs (lowercase) with an open acquisition request.
     pub async fn requested_albums(&self, mbids: &[String]) -> Result<HashSet<String>, StoreError> {
         self.collect_ids(IdSet::Requested, mbids).await
+    }
+
+    /// The recording MBIDs (lowercase) of owned, streamable songs.
+    pub async fn owned_tracks(&self, mbids: &[String]) -> Result<HashSet<String>, StoreError> {
+        self.collect_ids(IdSet::OwnedRecordings, mbids).await
+    }
+
+    /// The recording MBIDs (lowercase) with an open acquisition request.
+    pub async fn requested_tracks(&self, mbids: &[String]) -> Result<HashSet<String>, StoreError> {
+        self.collect_ids(IdSet::RequestedTracks, mbids).await
     }
 
     /// The live local artist behind one MBID.
