@@ -149,10 +149,12 @@ impl Catalog {
         self.remote_bucket(key, deadline, fetch).await
     }
 
-    /// Search MusicBrainz release groups for a page of `limit`, filtered by
-    /// the release-type preferences. The page is asked wider than `limit`
-    /// so the filter leaves enough, and every hit it keeps comes back: the
-    /// caller cuts, after ranking or in MusicBrainz's order.
+    /// Search MusicBrainz release groups for a page of `limit`, keeping the
+    /// preferred primary types. Every secondary type shows: a soundtrack or
+    /// a compilation someone searches for is what they mean, whatever the
+    /// discography and new-release feeds leave out. The page is asked wider
+    /// than `limit` so the filter leaves enough, and every hit it keeps
+    /// comes back: the caller cuts, after ranking or in MusicBrainz's order.
     pub async fn search_albums_remote(
         &self,
         query: &str,
@@ -162,24 +164,13 @@ impl Catalog {
     ) -> RemoteBucket {
         let preferences = self.upstream().settings().preferences();
         let primary = mapping::type_set(&preferences.primary_types);
-        let secondary = mapping::type_set(&preferences.secondary_types);
         let mut primary_key: Vec<&String> = primary.iter().collect();
         primary_key.sort();
-        let mut secondary_key: Vec<&String> = secondary.iter().collect();
-        secondary_key.sort();
-        let filter_key = format!(
-            "{}|{}",
-            primary_key
-                .iter()
-                .map(|value| value.as_str())
-                .collect::<Vec<_>>()
-                .join(","),
-            secondary_key
-                .iter()
-                .map(|value| value.as_str())
-                .collect::<Vec<_>>()
-                .join(",")
-        );
+        let filter_key = primary_key
+            .iter()
+            .map(|value| value.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
         let parts = [
             namespace.as_str(),
@@ -208,8 +199,8 @@ impl Catalog {
                         hit.primary_type.as_deref(),
                         &hit.secondary_types,
                         Some(&primary),
-                        Some(&secondary),
-                        true,
+                        None,
+                        false,
                     )
                 })
                 .map(|hit| RemoteHit {

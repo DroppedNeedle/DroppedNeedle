@@ -26,7 +26,7 @@ use super::redirects::{
 use super::{
     BRAINZMASH_MAX_COOLDOWN, Criticality, LiveSource, MAX_BODY_BYTES, MAX_PAGE_LIMIT,
     MAX_REDIRECT_HOPS, MbSource, SOURCE, build_release_search_query, escape_lucene_phrase,
-    is_valid_mbid, normalize_mb_id,
+    forgiving_term, is_valid_mbid, normalize_mb_id,
 };
 use crate::RequestPriority;
 use crate::error::{PayloadKind, ProviderError};
@@ -224,11 +224,10 @@ impl MusicBrainzView {
         offset: u32,
         criticality: Criticality,
     ) -> Result<SearchPage<ArtistSearchHit>, ProviderError> {
-        let escaped = escape_lucene_phrase(text.trim());
-        let query = format!(
-            r#"artist:"{escaped}"^3 OR artistaccent:"{escaped}"^3 OR alias:"{escaped}"^2 OR {escaped}"#
-        );
-        self.search_page("artist", &query, limit, offset, "artists", criticality)
+        let query = |term: &str, words: &str| {
+            format!(r#"artist:{term}^3 OR artistaccent:{term}^3 OR alias:{term}^2 OR {words}"#)
+        };
+        self.search_text("artist", "artists", text, query, limit, offset, criticality)
             .await
     }
 
@@ -241,14 +240,55 @@ impl MusicBrainzView {
         offset: u32,
         criticality: Criticality,
     ) -> Result<SearchPage<ReleaseGroupSearchHit>, ProviderError> {
-        let escaped = escape_lucene_phrase(text.trim());
-        let query = format!(r#"releasegroup:"{escaped}"^3 OR release:"{escaped}"^2 OR {escaped}"#);
-        self.search_page(
+        let query = |term: &str, words: &str| {
+            format!(r#"releasegroup:{term}^3 OR release:{term}^2 OR {words}"#)
+        };
+        self.search_text(
             "release-group",
-            &query,
+            "release-groups",
+            text,
+            query,
             limit,
             offset,
-            "release-groups",
+            criticality,
+        )
+        .await
+    }
+
+    /// One page of a text search. `query` builds the Lucene query from the
+    /// term its fields match and the free words its last clause takes: the
+    /// escaped text as a phrase and as words, and when that finds nothing,
+    /// the one [`forgiving_term`] (typos fuzzed, a run-together word split)
+    /// in both places, so a search costs a second call only when the first
+    /// came back empty.
+    #[allow(clippy::too_many_arguments)]
+    async fn search_text<E>(
+        &self,
+        entity: &str,
+        array_key: &str,
+        text: &str,
+        query: impl Fn(&str, &str) -> String,
+        limit: u32,
+        offset: u32,
+        criticality: Criticality,
+    ) -> Result<SearchPage<E>, ProviderError>
+    where
+        E: DeserializeOwned,
+    {
+        let escaped = escape_lucene_phrase(text.trim());
+        let typed = query(&format!("\"{escaped}\""), &escaped);
+        let page = self
+            .search_page(entity, &typed, limit, offset, array_key, criticality)
+            .await?;
+        let Some(term) = forgiving_term(text).filter(|_| page.items.is_empty()) else {
+            return Ok(page);
+        };
+        self.search_page(
+            entity,
+            &query(&term, &term),
+            limit,
+            offset,
+            array_key,
             criticality,
         )
         .await

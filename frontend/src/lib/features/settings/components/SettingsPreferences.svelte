@@ -174,7 +174,7 @@
 <div class="space-y-5">
 	<SettingsPaneHeader
 		title="Release Types"
-		description="Choose which release types appear on artist pages and in search. The same choices apply to automatic downloads for followed artists. Saving a different selection starts a new baseline, so releases already present are not queued."
+		description="Choose which release types appear on artist pages and in new releases. The same choices apply to automatic downloads for followed artists. Search keeps the primary types and shows every secondary type. Saving a different selection starts a new baseline, so releases already present are not queued."
 	/>
 	<Card>
 		<div class="mb-8">
@@ -186,7 +186,7 @@
 		<div class="mb-8">
 			<h3 class="text-xl font-semibold mb-1">Secondary Types</h3>
 			<p class="text-muted mb-4 text-sm">
-				Choose which additional release classifications to include.
+				Choose which additional release classifications to include. Search shows them all.
 			</p>
 			{@render typeTable(secondaryTypes, 'secondary_types')}
 		</div>
