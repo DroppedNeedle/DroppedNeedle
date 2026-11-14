@@ -29,7 +29,7 @@ ENV DROPPEDNEEDLE_BASE_PATH_PLACEHOLDER=1
 RUN pnpm run build --sourcemap hidden \
     && node scripts/notices.mjs build /app/NOTICES-web-ui.txt
 
-FROM rust:1.89.0-bookworm AS chef
+FROM rust:1.99.1-bookworm AS chef
 
 # Audio decode: opusic-sys (via symphonia-adapter-libopus) builds a
 # bundled C library through the `cmake` crate, which shells out to the cmake
