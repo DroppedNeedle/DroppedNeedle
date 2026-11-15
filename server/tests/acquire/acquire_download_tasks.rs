@@ -457,6 +457,113 @@ async fn a_retry_stops_once_the_album_is_on_its_way_or_in() {
     assert_eq!(row("t-plain")["status"], "failed");
 }
 
+// A failed task the retry pass never looks at again, past the retry ceiling or
+// superseded by a newer task of the same ask, is settled in the hourly slot once
+// the library holds its album. One whose album the library lacks stays failed.
+#[tokio::test]
+async fn failed_tasks_no_retry_will_touch_settle_once_the_library_holds_the_album() {
+    let db = AcquireDb::scratch().unwrap();
+    db.add_user("u-ada", "Ada", "user").await.unwrap();
+    db.add_user("u-bob", "Bob", "user").await.unwrap();
+    db.write("test.seed_library", |tx| {
+        tx.execute_batch(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
+               VALUES ('ar1', 'A', 'a', 'person', 0, 0);
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+               album_artist_id, album_artist_name, grouping_source, created_at, updated_at)
+               VALUES ('al1', 'r1', 'g', 'T', 't', 'ar1', 'A', 'automatic', 0, 0);
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path,
+               path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded,
+               album_title, album_title_folded, file_format, bit_rate, ingest_source,
+               imported_at, membership_source, availability)
+               VALUES ('tr1', 'al1', 'r1', 'a.mp3', 'a.mp3', 'h', 1, 0, 's', 'T', 't', 'T', 't',
+                 'mp3', 320, 'scan', 0, 'automatic', 'indexed');
+             INSERT INTO local_album_external_identities
+               (local_album_id, release_group_mbid, decision_source, selected_at)
+               VALUES ('al1', 'rg-held', 'automatic', 0);",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
+    journal
+        .run("test.seed", |store| {
+            // Ada's two asks ran past any retry ceiling: one for the album
+            // the library holds, one for an album it lacks.
+            for (id, group) in [("t-exhausted", "rg-held"), ("t-lost", "rg-lost")] {
+                let row = NewTask {
+                    release_group_mbid: group.to_owned(),
+                    retry_count: 99,
+                    ..task(id)
+                };
+                store.insert_task(&row, 1_000.0)?;
+                store.transition_task(
+                    id,
+                    TaskStatus::Failed,
+                    1_000.0,
+                    Some(TaskOutcome::new(Reason::NoSource, "no peers")),
+                )?;
+            }
+            // Bob's ask for the held album failed, then failed again on a retry.
+            for (id, count, at) in [("t-old", 0, 1_000.0), ("t-new", 1, 2_000.0)] {
+                let row = NewTask {
+                    user_id: "u-bob".to_owned(),
+                    release_group_mbid: "rg-held".to_owned(),
+                    retry_count: count,
+                    ..task(id)
+                };
+                store.insert_task(&row, at)?;
+                store.transition_task(
+                    id,
+                    TaskStatus::Failed,
+                    at,
+                    Some(TaskOutcome::new(Reason::NoSource, "no peers")),
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let worker = idle_worker(&journal).await;
+
+    // Off the hourly slot nothing settles: the retry pass stops the newest of
+    // Bob's two itself, and the rest stay as they were.
+    worker.run_once(1).await;
+    let (_, body) = send(&journal, get("/api/v3/downloads/tasks", ADMIN)).await;
+    let status = |body: &Value, id: &str| {
+        body["items"]
+            .as_array()
+            .and_then(|items| items.iter().find(|item| item["id"] == id))
+            .map(|item| item["status"].clone())
+            .unwrap_or_else(|| panic!("{id} listed: {body}"))
+    };
+    assert_eq!(status(&body, "t-exhausted"), "failed");
+    assert_eq!(status(&body, "t-old"), "failed");
+
+    worker.run_once(120).await;
+
+    let (_, body) = send(&journal, get("/api/v3/downloads/tasks", ADMIN)).await;
+    let items = body["items"].as_array().cloned().unwrap_or_default();
+    for id in ["t-exhausted", "t-old"] {
+        let row = items
+            .iter()
+            .find(|item| item["id"] == id)
+            .unwrap_or_else(|| panic!("{id} listed: {body}"));
+        assert_eq!(row["status"], "cancelled", "{id}: {row}");
+        assert_eq!(row["reason"]["code"], "already_in_library", "{id}: {row}");
+        assert_eq!(
+            row["reason"]["text"], "Already in your library.",
+            "{id}: {row}"
+        );
+    }
+    assert_eq!(
+        status(&body, "t-lost"),
+        "failed",
+        "the library lacks its album"
+    );
+}
+
 fn get(uri: &str, who: Who) -> (Request<Body>, Who) {
     let request = Request::builder()
         .method(Method::GET)

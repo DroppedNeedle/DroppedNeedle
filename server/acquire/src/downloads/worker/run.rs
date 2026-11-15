@@ -61,10 +61,10 @@ impl Tick for WorkerTick {
 }
 
 impl DownloadWorker {
-    /// Run every steady-state pass once, in order. The orphan sweep only
-    /// runs when `pass` hits its hourly slot. Landings the poll pass
-    /// starts run on their own tasks; [`Self::wait_for_landings`] awaits
-    /// them.
+    /// Run every steady-state pass once, in order. The orphan sweep and the
+    /// settling of stale failures only run when `pass` hits its hourly slot.
+    /// Landings the poll pass starts run on their own tasks;
+    /// [`Self::wait_for_landings`] awaits them.
     pub async fn run_once(self: &Arc<Self>, pass: u64) {
         // Settings that do not read stop the whole pass: nothing starts,
         // lands or fails over until they are saved again.
@@ -87,6 +87,7 @@ impl DownloadWorker {
         if pass.is_multiple_of(ORPHAN_EVERY_NTH_PASS) {
             self.release_kept(&pass_ctx).await;
             self.orphan_pass(&pass_ctx).await;
+            self.settle_pass(&pass_ctx).await;
         }
     }
 }
