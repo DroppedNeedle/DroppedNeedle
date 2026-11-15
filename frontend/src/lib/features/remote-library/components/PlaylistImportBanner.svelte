@@ -347,15 +347,15 @@
 	}
 
 	/* a full-width band has room for the covers */
-	@container pib (min-width: 62rem) {
+	@container pib (min-width: 80rem) {
 		.pib__fan {
 			display: grid;
 		}
 	}
 
 	/* paired beside the counts: the tag over the words, the buttons under
-	   them, the ring at the right */
-	@container pib (max-width: 46rem) {
+	   them, the ring at the right - under 80rem they leave the words no room */
+	@container pib (max-width: 79.99rem) {
 		.pib {
 			display: grid;
 			grid-template-columns: minmax(0, 1fr) auto;
