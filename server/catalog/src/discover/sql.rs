@@ -226,7 +226,9 @@ droppedneedle_kernel::sql! {
         year: Option<i64>,
         art_version: Option<i64>,
     }
-    /// The artists with the most albums.
+    /// The artists with the most albums. No placeholder ranks: not the
+    /// sentinel rows (by kind), and not a row tags keyed for one of the
+    /// names they go by, folded as the scan folds a display name.
     pub(super) TOP_ARTISTS = "SELECT ar.id AS id, ar.display_name AS display_name, \
          (SELECT aie.provider_artist_id FROM local_artist_external_identities aie \
           WHERE aie.local_artist_id = ar.id AND aie.provider = 'musicbrainz' \
@@ -237,6 +239,9 @@ droppedneedle_kernel::sql! {
            AND album.retired_into_album_id IS NULL \
          JOIN local_artists ar ON ar.id = credit.local_artist_id \
            AND ar.retired_into_artist_id IS NULL \
+           AND ar.kind NOT IN ('various_artists', 'unknown') \
+           AND ar.folded_name NOT IN ('various artists', 'various', 'va', \
+             'unknown artist', 'unknown artists') \
          WHERE EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = album.id \
            AND t.availability = 'indexed') \
          GROUP BY ar.id \
