@@ -177,11 +177,11 @@ async fn answers(world: &World, group: &str) -> Answers {
         in_discover_library: droppedneedle_catalog::discover::page::library::LibraryReads::new(
             db.clone(),
         )
-        .identified_albums(1000)
+        .owned_albums()
         .await
         .expect("discover's library")
         .iter()
-        .any(|album| album.release_group_mbid == group),
+        .any(|album| album.release_group_mbid.as_deref() == Some(group)),
     }
 }
 

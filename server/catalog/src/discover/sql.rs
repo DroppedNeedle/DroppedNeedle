@@ -50,14 +50,15 @@ droppedneedle_kernel::sql! {
 
     // -- the discover page's library reads ------------------------------------
 
-    /// Identified owned albums, newest changes first. A guess the files'
-    /// tags contradict is not one; neither is an album owned through its
-    /// tags alone, which has no match to list.
-    pub(super) IDENTIFIED_ALBUMS = (concat!(
+    /// Every owned album with the ids its identities name and its folded
+    /// names. A guess the files' tags contradict is not one.
+    pub(super) OWNED_ALBUMS = (concat!(
         "SELECT lower(ae.release_group_mbid) AS release_group_mbid, \
-         lower(aie.provider_artist_id) AS artist_mbid \
+         lower(aie.provider_artist_id) AS artist_mbid, \
+         a.title_folded AS title_folded, \
+         COALESCE(a.album_artist_name_folded, '') AS artist_name_folded \
          FROM local_albums a \
-         JOIN local_album_external_identities ae ON ae.local_album_id = a.id AND ",
+         LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id AND ",
         musicbrainz!("ae"),
         " LEFT JOIN local_artist_external_identities aie \
            ON aie.local_artist_id = a.album_artist_id AND ",
@@ -66,11 +67,13 @@ droppedneedle_kernel::sql! {
         owned_album!("a"),
         " AND NOT ",
         named_group_guess!("a.id"),
-        " GROUP BY a.id ORDER BY a.updated_at DESC, a.id LIMIT ?1"
+        " GROUP BY a.id ORDER BY a.updated_at DESC, a.id"
     ));
-    pub(super) row IdentifiedAlbum for [IDENTIFIED_ALBUMS] {
-        release_group_mbid: String,
+    pub(super) row OwnedAlbumColumns for [OWNED_ALBUMS] {
+        release_group_mbid: Option<String>,
         artist_mbid: Option<String>,
+        title_folded: String,
+        artist_name_folded: String,
     }
     /// Indexed tracks per genre, up to the place a filter on the genre goes.
     fragment GENRE_CREDITS_START = "WITH genre_tracks AS (SELECT track.id, track.local_album_id, \

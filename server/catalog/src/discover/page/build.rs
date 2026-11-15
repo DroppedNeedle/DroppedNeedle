@@ -20,11 +20,11 @@ use std::time::Duration;
 
 use futures_util::future::join_all;
 
-use super::library::{LibraryReads, fold};
+use super::library::{LibraryAlbum, LibraryReads, fold};
 use super::memo::{BuildMemo, MemoKey};
 use super::picks::{self, Candidate};
 use super::shelves::{self, RowMut, SHELF_SIZE, album, artist, genre, one, shelf};
-use droppedneedle_kernel::db::Db;
+use droppedneedle_kernel::db::{Db, fold_text};
 
 use crate::discover::cache::Variant;
 use crate::discover::listening::{
@@ -92,6 +92,93 @@ const GENRE_ARTISTS: usize = 5;
 const LEARNED_ARTIST_TAGS: usize = 5;
 /// How long a learned artist genre is kept after a build last saw it.
 const GENRES_KEPT_MS: i64 = 30 * 86_400_000;
+
+/// What Missing Essentials reads of the library: every owned album's group
+/// and folded names, and how many albums each artist has.
+struct OwnedLibrary {
+    groups: HashSet<String>,
+    names: HashSet<(String, String)>,
+    per_artist: HashMap<String, usize>,
+}
+
+impl OwnedLibrary {
+    /// Read what `albums` hold.
+    fn read(albums: &[LibraryAlbum]) -> Self {
+        let mut groups = HashSet::new();
+        let mut names = HashSet::new();
+        let mut per_artist: HashMap<String, usize> = HashMap::new();
+        for album in albums {
+            if let Some(artist) = &album.artist_mbid {
+                *per_artist.entry(artist.clone()).or_insert(0) += 1;
+            }
+            if let Some(group) = &album.release_group_mbid {
+                groups.insert(group.clone());
+            }
+            // An album owned through its tags alone is matched by name.
+            if !album.title_folded.is_empty() {
+                names.insert((album.title_folded.clone(), album.artist_name_folded.clone()));
+            }
+        }
+        Self {
+            groups,
+            names,
+            per_artist,
+        }
+    }
+
+    /// Whether the library holds `ranked`, by its group or by its names.
+    fn holds(&self, ranked: &RankedAlbum) -> bool {
+        let group = ranked.album.release_group_mbid.to_lowercase();
+        (!group.is_empty() && self.groups.contains(&group))
+            || self.names.contains(&(
+                fold_text(&ranked.album.title),
+                fold_text(&ranked.album.artist_name),
+            ))
+    }
+
+    /// The artists with at least [`ESSENTIALS_MIN_ALBUMS`] albums, most
+    /// first.
+    fn artists(&self) -> Vec<(String, usize)> {
+        let mut artists: Vec<(String, usize)> = self
+            .per_artist
+            .iter()
+            .filter(|(_, count)| **count >= ESSENTIALS_MIN_ALBUMS)
+            .map(|(artist, count)| (artist.clone(), *count))
+            .collect();
+        artists.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        artists.truncate(10);
+        artists
+    }
+}
+
+/// The albums of `found` (one ranked list per artist) the library does not
+/// hold, up to [`ESSENTIALS_PER_ARTIST`] each, in rank order.
+fn unheld(found: &[Vec<RankedAlbum>], owned: &OwnedLibrary) -> Vec<(i64, AlbumRef)> {
+    let mut missing: Vec<(i64, AlbumRef)> = Vec::new();
+    for albums in found {
+        let mut taken = 0;
+        for ranked in albums {
+            if taken >= ESSENTIALS_PER_ARTIST {
+                break;
+            }
+            if owned.holds(ranked) {
+                continue;
+            }
+            missing.push((
+                ranked.listen_count,
+                album(
+                    Some(&ranked.album.release_group_mbid),
+                    &ranked.album.title,
+                    Some(&ranked.album.artist_name),
+                    ranked.album.artist_mbid.as_deref(),
+                    (ranked.listen_count > 0).then_some(ranked.listen_count),
+                ),
+            ));
+            taken += 1;
+        }
+    }
+    missing
+}
 
 /// The settings one build reads, fresh each time.
 #[derive(Debug, Clone)]
@@ -412,7 +499,7 @@ impl Builder<'_> {
         let library_groups: HashSet<String> = shared
             .library_albums
             .iter()
-            .map(|album| album.release_group_mbid.clone())
+            .filter_map(|album| album.release_group_mbid.clone())
             .collect();
         let ctx = Ctx {
             user_id,
@@ -782,7 +869,7 @@ impl Builder<'_> {
                 return Vec::new();
             }
             tracker
-                .run("library_albums", self.library.identified_albums(500))
+                .run("library_albums", self.library.owned_albums())
                 .await
                 .unwrap_or_default()
         };
@@ -825,23 +912,8 @@ impl Builder<'_> {
         user: &UserMusic,
         shared: &Shared,
     ) -> Option<ChartSection> {
-        let mut per_artist: HashMap<String, usize> = HashMap::new();
-        for album in &shared.library_albums {
-            if let Some(artist) = &album.artist_mbid {
-                *per_artist.entry(artist.clone()).or_insert(0) += 1;
-            }
-        }
-        let owned: HashSet<&str> = shared
-            .library_albums
-            .iter()
-            .map(|album| album.release_group_mbid.as_str())
-            .collect();
-        let mut artists: Vec<(String, usize)> = per_artist
-            .into_iter()
-            .filter(|(_, count)| *count >= ESSENTIALS_MIN_ALBUMS)
-            .collect();
-        artists.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        artists.truncate(10);
+        let owned = OwnedLibrary::read(&shared.library_albums);
+        let artists = owned.artists();
         let lastfm = self.lastfm_for_popularity(user);
         let found = if lastfm {
             let mbids: Vec<String> = artists.iter().map(|(mbid, _)| mbid.clone()).collect();
@@ -858,30 +930,7 @@ impl Builder<'_> {
             .await
         };
         let answered = found.iter().any(|albums| !albums.is_empty());
-        let mut missing: Vec<(i64, AlbumRef)> = Vec::new();
-        for albums in found {
-            let mut taken = 0;
-            for ranked in albums {
-                if taken >= ESSENTIALS_PER_ARTIST {
-                    break;
-                }
-                let group = ranked.album.release_group_mbid.to_lowercase();
-                if group.is_empty() || owned.contains(group.as_str()) {
-                    continue;
-                }
-                missing.push((
-                    ranked.listen_count,
-                    album(
-                        Some(&ranked.album.release_group_mbid),
-                        &ranked.album.title,
-                        Some(&ranked.album.artist_name),
-                        ranked.album.artist_mbid.as_deref(),
-                        (ranked.listen_count > 0).then_some(ranked.listen_count),
-                    ),
-                ));
-                taken += 1;
-            }
-        }
+        let mut missing = unheld(&found, &owned);
         missing.sort_by(|a, b| b.0.cmp(&a.0));
         if !answered
             && !artists.is_empty()
@@ -2487,7 +2536,10 @@ pub async fn mark_ownership(db: &Db, page: &mut DiscoverResponse) {
 
 #[cfg(test)]
 mod tests {
-    use super::in_order_until;
+    use super::{OwnedLibrary, in_order_until, unheld};
+    use crate::discover::listening::{AlbumRow, RankedAlbum};
+    use crate::discover::page::library::LibraryReads;
+    use droppedneedle_kernel::clock::SystemClock;
 
     /// The second mix never finishes: the first is kept, the third is not
     /// reached, and the set is reported incomplete. The deadline has
@@ -2502,5 +2554,105 @@ mod tests {
             Some(n)
         });
         assert_eq!(in_order_until(deadline, builds).await, (vec![1], false));
+    }
+
+    /// One artist with 501 owned albums, the lowest id also oldest so the
+    /// newest 500 leave it out, and one album owned through its tags alone.
+    const ESSENTIALS_SEED: &str = "INSERT INTO local_artists (id, display_name, folded_name, kind, \
+         created_at, updated_at) \
+         VALUES ('ar-ess', 'Essentials Artist', 'essentials artist', 'group', 1, 1); \
+         INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+         provider_artist_id, decision_source, selected_at) \
+         VALUES ('ar-ess', 'musicbrainz', 'ess-artist', 'manual', 1); \
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 501) \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+         created_at, updated_at, has_indexed_track) \
+         SELECT printf('al-ess-%03d', i), 'root', printf('k-ess-%03d', i), \
+         printf('Owned %03d', i), printf('owned %03d', i), 'Essentials Artist', \
+         'essentials artist', 'ar-ess', 'automatic', 1000, 1000 + i, 1 FROM n; \
+         INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, decision_source, selected_at) \
+         SELECT id, 'musicbrainz', 'rg-' || id, 'manual', 1 FROM local_albums \
+         WHERE id LIKE 'al-ess-%'; \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+         created_at, updated_at, has_indexed_track) \
+         VALUES ('al-tagged', 'root', 'k-tagged', 'Tagged Only', 'tagged only', \
+         'Essentials Artist', 'essentials artist', 'ar-ess', 'automatic', 2000, 2000, 1);";
+
+    /// The artist and album ids the seed and the ranked answers share.
+    const ESSENTIALS_ARTIST: &str = "ess-artist";
+    const ESSENTIALS_ARTIST_NAME: &str = "Essentials Artist";
+
+    fn ranked_album(group: &str, title: &str) -> RankedAlbum {
+        RankedAlbum {
+            album: AlbumRow {
+                release_group_mbid: group.to_owned(),
+                title: title.to_owned(),
+                artist_name: ESSENTIALS_ARTIST_NAME.to_owned(),
+                artist_mbid: Some(ESSENTIALS_ARTIST.to_owned()),
+            },
+            listen_count: 100,
+        }
+    }
+
+    /// Missing Essentials counts every owned album: one past the newest 500
+    /// and one held through its tags alone are not offered, and one the
+    /// library lacks is.
+    #[tokio::test]
+    async fn an_album_owned_past_the_newest_five_hundred_is_not_offered() {
+        use droppedneedle_kernel::db::{DbConfig, DbError, Lane, open_runtime};
+        use droppedneedle_kernel::test_support::ScratchDir;
+
+        let dir = ScratchDir::new("essentials-owned").expect("scratch dir");
+        let path = dir.join("app.db");
+        droppedneedle_kernel::test_support::template::copy_to(&path)
+            .expect("migrated database copies");
+        let config = DbConfig::new(&path, std::sync::Arc::new(SystemClock));
+        let runtime = open_runtime(&config).await.expect("scratch runtime opens");
+        runtime
+            .db()
+            .write(Lane::Foreground, "essentials seed", |tx| {
+                tx.execute_batch(ESSENTIALS_SEED)?;
+                Ok::<_, DbError>(())
+            })
+            .await
+            .expect("seed runs");
+
+        let albums = LibraryReads::new(runtime.db().clone())
+            .owned_albums()
+            .await
+            .expect("owned albums read");
+        assert!(
+            albums
+                .iter()
+                .any(|album| album.release_group_mbid.as_deref() == Some("rg-al-ess-001")),
+            "the album oldest past the newest 500 reads as owned"
+        );
+        assert!(
+            albums
+                .iter()
+                .any(|album| album.release_group_mbid.is_none()
+                    && album.title_folded == "tagged only"),
+            "the album owned through its tags alone reads as owned"
+        );
+        let owned = OwnedLibrary::read(&albums);
+        assert_eq!(
+            owned.artists(),
+            vec![(ESSENTIALS_ARTIST.to_owned(), 502)],
+            "every album of the artist counts"
+        );
+
+        let found = vec![vec![
+            ranked_album("rg-al-ess-001", "Owned Past The Newest 500"),
+            ranked_album("rg-unmatched-provider", "Tagged Only"),
+            ranked_album("rg-genuinely-missing", "Genuinely Missing"),
+        ]];
+        let offered: Vec<String> = unheld(&found, &owned)
+            .into_iter()
+            .map(|(_, album)| album.title)
+            .collect();
+        assert_eq!(offered, ["Genuinely Missing"]);
     }
 }

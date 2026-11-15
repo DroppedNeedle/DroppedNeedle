@@ -1,6 +1,6 @@
-//! What the discover page reads from the local library: the identified
-//! albums, the genre index over the scanned tags, milestone anniversaries
-//! and new releases from followed artists.
+//! What the discover page reads from the local library: the owned albums,
+//! the genre index over the scanned tags, milestone anniversaries and new
+//! releases from followed artists.
 //!
 //! A genre counts the distinct artists credited (track, album or album
 //! artist) on indexed tracks tagged with it.
@@ -12,13 +12,17 @@ use droppedneedle_kernel::db::statement::ListLen;
 
 use crate::discover::{read_all, sql};
 
-/// One identified library album.
+/// One owned library album.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LibraryAlbum {
-    /// Lowercased release-group MBID.
-    pub release_group_mbid: String,
+    /// Lowercased release-group MBID, when identified.
+    pub release_group_mbid: Option<String>,
     /// Lowercased album-artist MBID, when identified.
     pub artist_mbid: Option<String>,
+    /// Folded album title.
+    pub title_folded: String,
+    /// Folded album artist name, empty when the album has none.
+    pub artist_name_folded: String,
 }
 
 /// One library album shown on a shelf.
@@ -86,15 +90,15 @@ impl LibraryReads {
         &self.db
     }
 
-    /// Up to `limit` identified owned albums, newest changes first. Missing
-    /// Essentials counts them per artist.
-    pub async fn identified_albums(&self, limit: i64) -> Result<Vec<LibraryAlbum>, String> {
+    /// Every owned album, newest changes first. Missing Essentials counts
+    /// them per artist and holds their groups and folded names.
+    pub async fn owned_albums(&self) -> Result<Vec<LibraryAlbum>, String> {
         let rows = read_all(
             &self.db,
-            "discover.library.identified_albums",
-            sql::IDENTIFIED_ALBUMS.text(),
-            (limit.max(1),),
-            sql::IdentifiedAlbum::read,
+            "discover.library.owned_albums",
+            sql::OWNED_ALBUMS.text(),
+            (),
+            sql::OwnedAlbumColumns::read,
         )
         .await
         .map_err(|error| format!("library albums read: {error}"))?;
@@ -103,6 +107,8 @@ impl LibraryReads {
             .map(|row| LibraryAlbum {
                 release_group_mbid: row.release_group_mbid,
                 artist_mbid: row.artist_mbid,
+                title_folded: row.title_folded,
+                artist_name_folded: row.artist_name_folded,
             })
             .collect())
     }
