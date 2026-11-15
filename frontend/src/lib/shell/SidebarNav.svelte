@@ -86,10 +86,12 @@
 <div class="drawer-side hidden md:block is-drawer-close:overflow-visible">
 	<label for="main-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
 	<div
-		class="dn-rail is-drawer-close:w-14 is-drawer-open:w-60 flex min-h-full max-h-dvh flex-col items-start overflow-x-hidden overflow-y-auto border-r border-base-300 bg-base-100"
+		class="dn-rail is-drawer-close:w-14 is-drawer-open:w-60 flex h-dvh min-h-0 flex-col items-start overflow-hidden border-r border-base-300 bg-base-100"
 		data-part={part('sidebar')}
 	>
-		<ul class="menu w-full grow gap-0.5 px-2 py-2">
+		<ul
+			class="menu w-full min-h-0 grow flex-nowrap gap-0.5 overflow-x-hidden overflow-y-auto px-2 py-2"
+		>
 			{#each searchItems as item (item.id)}
 				{@render entry(item)}
 			{/each}
@@ -123,7 +125,7 @@
 			{/if}
 		</ul>
 		<div
-			class="flex w-full flex-col gap-1 border-t border-base-300 p-2"
+			class="flex w-full shrink-0 flex-col gap-1 border-t border-base-300 p-2"
 			class:pb-24={playerStore.isPlayerVisible}
 		>
 			<!-- IconButton's own tooltip names these, so they skip the collapsed-sidebar tooltip. -->
