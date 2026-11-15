@@ -30,6 +30,9 @@
 	const match = createMatchHeldMutation();
 	const results = $derived(searchQuery.data ?? []);
 	const label = $derived(`${name || search} · ${fileCount} file${fileCount === 1 ? '' : 's'}`);
+	const matchError = $derived(
+		match.error instanceof Error && match.error.message ? match.error.message : 'Match failed'
+	);
 
 	async function pick(album: Album) {
 		if (match.isPending) return;
@@ -41,7 +44,7 @@
 			});
 			onclose();
 		} catch {
-			// the mutation's onError already toasted; keep the modal open to retry
+			// the modal shows the failure inline; keep it open to retry
 		}
 	}
 </script>
@@ -104,5 +107,9 @@
 			<span class="loading loading-spinner loading-xs"></span>
 			Importing your files…
 		</p>
+	{:else if match.isError}
+		<div class="alert alert-error mt-3 text-sm" role="alert">
+			<span>{matchError}</span>
+		</div>
 	{/if}
 </Modal>
