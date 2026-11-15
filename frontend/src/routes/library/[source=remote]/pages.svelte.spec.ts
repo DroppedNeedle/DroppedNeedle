@@ -323,3 +323,22 @@ describe('a library page whose read fails', () => {
 		}
 	});
 });
+
+// The banner sits beside the counts above 1280px, where the tag, buttons and
+// ring are wider than the column and used to squeeze the words to one letter a line.
+describe('the hub at 1696x1130', () => {
+	it('keeps the playlist banner words readable', async () => {
+		await page.viewport(1696, 1130);
+		fakeApi(remoteRoutes());
+		await renderWithQuery(HubPage, { data: pageData('navidrome') } as never);
+
+		await expect
+			.element(page.getByText('Playlists from the shared Navidrome account'))
+			.toBeVisible();
+		const body = document.querySelector('.pib__body') as HTMLElement;
+		const banner = document.querySelector('.pib') as HTMLElement;
+		expect(body.getBoundingClientRect().width).toBeGreaterThan(
+			banner.getBoundingClientRect().width / 2
+		);
+	});
+});
