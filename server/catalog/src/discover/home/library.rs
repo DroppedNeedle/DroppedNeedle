@@ -322,3 +322,67 @@ impl HomeLibrary {
         Ok(out)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use droppedneedle_kernel::db::{DbConfig, DbError, Lane, open_runtime};
+
+    use super::HomeLibrary;
+    use crate::discover::home::shelves::your_artists;
+    use crate::discover::models::SectionItem;
+    use crate::discover::page::shelves::SHELF_SIZE;
+
+    /// Your Artists ranks the artists the library credits, one row per
+    /// folded name: the sentinels and the rows tags keyed for their names
+    /// rank nowhere, and an artist's spellings count together.
+    #[tokio::test]
+    async fn your_artists_leaves_placeholders_out_and_folds_one_name() {
+        let dir = droppedneedle_kernel::test_support::ScratchDir::new("home-top-artists")
+            .expect("scratch dir");
+        let path = dir.join("app.db");
+        droppedneedle_kernel::test_support::template::copy_to(&path)
+            .expect("migrated database copies");
+        let runtime = open_runtime(&DbConfig::new(
+            &path,
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ))
+        .await
+        .expect("scratch runtime opens");
+        runtime
+            .db()
+            .write(Lane::Foreground, "top artists seed", |tx| {
+                tx.execute_batch(include_str!("top_artists_seed.sql"))?;
+                Ok::<_, DbError>(())
+            })
+            .await
+            .expect("seed batch runs");
+
+        let artists = HomeLibrary::new(runtime.db().clone())
+            .top_artists(SHELF_SIZE as i64)
+            .await
+            .expect("library artists read");
+        let listed: Vec<(&str, i64)> = artists
+            .iter()
+            .map(|row| (row.name.as_str(), row.album_count))
+            .collect();
+        assert_eq!(
+            listed,
+            vec![("Boreal", 4), ("Aurora", 2)],
+            "four albums of two spellings of one name, and no placeholder"
+        );
+        assert_eq!(artists[0].local_id, "boreal");
+
+        let shelf = your_artists(&artists).expect("shelf");
+        let shown: Vec<&str> = shelf
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                SectionItem::Artist(artist) => Some(artist.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(shown, vec!["Boreal", "Aurora"]);
+    }
+}

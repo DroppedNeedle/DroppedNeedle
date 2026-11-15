@@ -12,6 +12,7 @@ use droppedneedle_kernel::db::time::Millis;
 use crate::artwork::local::art_tracks_column;
 use crate::local::sql::{live_album, musicbrainz, owned_album, owned_artist, track_codec};
 use droppedneedle_library::identity::asked_groups;
+use droppedneedle_library::scan::naming::{UNKNOWN_ARTIST_ID, VARIOUS_ARTISTS_ID};
 use droppedneedle_library::{named_group_guess, not_yet_identified, owns_group, recording_mbid};
 
 droppedneedle_kernel::sql! {
@@ -232,21 +233,43 @@ droppedneedle_kernel::sql! {
         year: Option<i64>,
         art_version: Option<i64>,
     }
-    /// The artists with the most albums.
-    pub(super) TOP_ARTISTS = "SELECT ar.id AS id, ar.display_name AS display_name, \
-         (SELECT aie.provider_artist_id FROM local_artist_external_identities aie \
-          WHERE aie.local_artist_id = ar.id AND aie.provider = 'musicbrainz' \
-          ORDER BY aie.provider_artist_id LIMIT 1) AS mbid, \
-         COUNT(DISTINCT credit.local_album_id) AS album_count \
+    /// The artists with the most albums. No placeholder ranks: not the two
+    /// sentinel rows (`VARIOUS_ARTISTS_ID`, `UNKNOWN_ARTIST_ID`), and not a
+    /// row tags keyed under another id for one of the names they go by,
+    /// folded (`various artists`, the abbreviation `various`, and the
+    /// singular and plural `unknown artist` forms). Rows of one folded name
+    /// are one artist: it counts the albums of all of them, and its row with
+    /// the most albums of its own stands for it. `folded_name` holds the
+    /// scan's fold of the display name, the fold a credit reaches an
+    /// existing row by.
+    pub(super) TOP_ARTISTS = "WITH artist_albums AS (SELECT ar.id AS id, \
+         ar.display_name AS display_name, ar.folded_name AS folded_name, \
+         credit.local_album_id AS album_id \
          FROM local_album_artists credit \
          JOIN local_albums album ON album.id = credit.local_album_id \
            AND album.retired_into_album_id IS NULL \
          JOIN local_artists ar ON ar.id = credit.local_artist_id \
            AND ar.retired_into_artist_id IS NULL \
-         WHERE EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = album.id \
-           AND t.availability = 'indexed') \
-         GROUP BY ar.id \
-         ORDER BY album_count DESC, ar.display_name COLLATE NOCASE, ar.id LIMIT ?1";
+         WHERE ar.id NOT IN ('" + VARIOUS_ARTISTS_ID + "', '" + UNKNOWN_ARTIST_ID + "') \
+           AND ar.folded_name NOT IN ('various artists', 'various', \
+           'unknown artist', 'unknown artists') \
+           AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = album.id \
+           AND t.availability = 'indexed')), \
+         named_albums AS (SELECT folded_name, COUNT(DISTINCT album_id) AS album_count \
+         FROM artist_albums GROUP BY folded_name), \
+         own_albums AS (SELECT id, display_name, folded_name, \
+         COUNT(DISTINCT album_id) AS own_count FROM artist_albums GROUP BY id), \
+         stand_ins AS (SELECT id, display_name, folded_name, \
+         ROW_NUMBER() OVER (PARTITION BY folded_name \
+         ORDER BY own_count DESC, display_name COLLATE NOCASE, id) AS pick FROM own_albums) \
+         SELECT stand_ins.id AS id, stand_ins.display_name AS display_name, \
+         (SELECT aie.provider_artist_id FROM local_artist_external_identities aie \
+          WHERE aie.local_artist_id = stand_ins.id AND aie.provider = 'musicbrainz' \
+          ORDER BY aie.provider_artist_id LIMIT 1) AS mbid, \
+         named_albums.album_count AS album_count \
+         FROM stand_ins JOIN named_albums ON named_albums.folded_name = stand_ins.folded_name \
+         WHERE stand_ins.pick = 1 \
+         ORDER BY album_count DESC, stand_ins.display_name COLLATE NOCASE, stand_ins.id LIMIT ?1";
     /// Artists credited (track, album or album artist) on the albums of
     /// indexed tracks tagged with one genre, by name.
     pub(super) GENRE_ARTISTS = "WITH genre_tracks AS (SELECT track.id, track.local_album_id \
