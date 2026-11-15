@@ -265,6 +265,23 @@ droppedneedle_kernel::sql! {
                    AND (n.created_at > t.created_at \
                         OR (n.created_at = t.created_at AND n.rowid > t.rowid))) \
              ORDER BY t.completed_at ASC NULLS LAST";
+    /// Failed album tasks the retry pass never looks at again: past the retry
+    /// ceiling (`?1`), or with a newer task for the same ask.
+    pub(super) SETTLEABLE = TASK_ROW + " t \
+             WHERE t.status = 'failed' \
+               AND t.download_type = 'album' \
+               AND t.origin != 'upgrade' \
+               AND (t.retry_count >= ?1 \
+                    OR EXISTS ( \
+                      SELECT 1 FROM download_tasks n \
+                      WHERE n.user_id = t.user_id \
+                        AND n.download_type = t.download_type \
+                        AND n.release_group_mbid = t.release_group_mbid \
+                        AND COALESCE(n.recording_mbid, '') = COALESCE(t.recording_mbid, '') \
+                        AND n.origin != 'upgrade' \
+                        AND (n.created_at > t.created_at \
+                             OR (n.created_at = t.created_at AND n.rowid > t.rowid)))) \
+             ORDER BY t.completed_at ASC NULLS LAST";
     /// The retry anchor of one task (`?1`) while it is still the newest task
     /// for its ask.
     pub(super) RETRY_ANCHOR = "SELECT t.status, t.retry_count, t.completed_at, t.updated_at \

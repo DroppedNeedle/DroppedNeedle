@@ -1188,6 +1188,17 @@ impl<'conn> DownloadStore<'conn> {
         )
     }
 
+    /// Failed album tasks the retry pass never looks at again: past the retry
+    /// ceiling, or superseded by a newer task for the same ask. Upgrades are
+    /// excluded, as in [`Self::list_retryable`].
+    pub fn list_settleable(&self, max_retry_count: i64) -> Result<Vec<TaskRow>, StoreError> {
+        self.rows(
+            sql::SETTLEABLE.text(),
+            rusqlite::params![max_retry_count],
+            TaskRow::from_row,
+        )
+    }
+
     /// The retry anchor of one task while it is still the newest task for
     /// its target, so the wanted view can show when its retry is due.
     /// `None` once a successor exists or for an upgrade.

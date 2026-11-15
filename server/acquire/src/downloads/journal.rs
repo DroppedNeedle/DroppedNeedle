@@ -132,6 +132,15 @@ impl Journal {
         .await
     }
 
+    /// Failed tasks no retry will touch again (see
+    /// [`DownloadStore::list_settleable`]).
+    pub async fn read_settleable(&self, max_retry_count: i64) -> Result<Vec<TaskRow>, StoreError> {
+        self.read("downloads.settleable", move |store| {
+            store.list_settleable(max_retry_count)
+        })
+        .await
+    }
+
     /// Every attempt for a task, oldest first.
     pub async fn read_attempts(&self, task_id: &str) -> Result<Vec<AttemptRow>, StoreError> {
         let task_id = task_id.to_owned();

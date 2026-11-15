@@ -139,6 +139,50 @@ impl DownloadWorker {
             }
         }
     }
+
+    /// Close failed album tasks the retry pass never looks at again, once
+    /// the library holds their album: the ones past the retry ceiling and
+    /// the ones a newer task superseded. They would otherwise stay failed
+    /// for good when the album arrived another way, and Clear leaves them.
+    /// Runs in the hourly slot: it only matters after such an arrival.
+    pub(super) async fn settle_pass(&self, pass: &Pass) {
+        let now = pass.now;
+        let max = i64::from(pass.config.retry.auto_retry_max());
+        if max == 0 {
+            return;
+        }
+        let settleable = match self.journal.read_settleable(max).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(%error, "settleable download read failed");
+                return;
+            }
+        };
+        for task in settleable {
+            let source = task.clone();
+            let settled = self
+                .step("downloads.settle", move |store| {
+                    // A cancel or a retry since the read settled it already.
+                    let still_failed = store
+                        .get_task(&source.id)?
+                        .is_some_and(|task| task.status == TaskStatus::Failed);
+                    if !still_failed
+                        || crate::held::store::HeldRows::new(store.conn()).task_holds(&source.id)?
+                        || !store.retry_already_held(&source)?
+                    {
+                        return Ok(false);
+                    }
+                    store.stop_retries(&source, &RetryStop::InLibrary, now)
+                })
+                .await;
+            if settled == Some(true) {
+                tracing::info!(
+                    task_id = %task.id,
+                    "failed download settled: the library holds this album"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
