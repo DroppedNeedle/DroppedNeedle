@@ -1,4 +1,4 @@
-//! What the discover page reads from the local library: the identified
+//! What the discover page reads from the local library: the owned
 //! albums, the genre index over the scanned tags, milestone anniversaries
 //! and new releases from followed artists.
 //!
@@ -12,7 +12,7 @@ use droppedneedle_kernel::db::statement::ListLen;
 
 use crate::discover::{read_all, sql};
 
-/// One identified library album.
+/// One library album that owns a release group.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LibraryAlbum {
     /// Lowercased release-group MBID.
@@ -86,15 +86,15 @@ impl LibraryReads {
         &self.db
     }
 
-    /// Up to `limit` identified owned albums, newest changes first. Missing
-    /// Essentials counts them per artist.
-    pub async fn identified_albums(&self, limit: i64) -> Result<Vec<LibraryAlbum>, String> {
+    /// Every album that owns a release group, by the shared ownership rule.
+    /// Missing Essentials counts them per artist and hides their groups.
+    pub async fn owned_albums(&self) -> Result<Vec<LibraryAlbum>, String> {
         let rows = read_all(
             &self.db,
-            "discover.library.identified_albums",
-            sql::IDENTIFIED_ALBUMS.text(),
-            (limit.max(1),),
-            sql::IdentifiedAlbum::read,
+            "discover.library.owned_albums",
+            sql::LIBRARY_ALBUMS.text(),
+            (),
+            sql::LibraryAlbumColumns::read,
         )
         .await
         .map_err(|error| format!("library albums read: {error}"))?;

@@ -177,7 +177,7 @@ async fn answers(world: &World, group: &str) -> Answers {
         in_discover_library: droppedneedle_catalog::discover::page::library::LibraryReads::new(
             db.clone(),
         )
-        .identified_albums(1000)
+        .owned_albums()
         .await
         .expect("discover's library")
         .iter()
@@ -196,7 +196,7 @@ fn owned_by(album: &str) -> Answers {
         pinned: None,
         plays: Some(album.to_owned()),
         downloads: Some(album.to_owned()),
-        in_discover_library: false,
+        in_discover_library: true,
     }
 }
 
@@ -290,7 +290,6 @@ async fn a_same_group_guess_still_owns() {
         answers(&world, &g).await,
         Answers {
             pinned: Some(release(1)),
-            in_discover_library: true,
             ..owned_by("al-weak")
         }
     );
@@ -378,6 +377,7 @@ async fn acquisition_and_the_catalog_agree_on_every_kind_of_album() {
             said.owned,
             said.in_owned_set,
             said.discover_links.is_some(),
+            said.in_discover_library,
         ];
         assert!(
             all.iter().all(|answer| *answer == said.holds),

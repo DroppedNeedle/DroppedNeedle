@@ -782,7 +782,7 @@ impl Builder<'_> {
                 return Vec::new();
             }
             tracker
-                .run("library_albums", self.library.identified_albums(500))
+                .run("library_albums", self.library.owned_albums())
                 .await
                 .unwrap_or_default()
         };
