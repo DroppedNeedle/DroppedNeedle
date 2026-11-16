@@ -224,13 +224,13 @@ impl LiveClients {
                 UsenetClients::new(adds, nzbget),
                 clients.sabnzbd.category.clone(),
             ))
-        } else if let Some(adds) = nzbget.filter(|_| clients.nzbget.enabled) {
-            Some((
-                UsenetClients::new(adds, sab),
-                clients.nzbget.category.clone(),
-            ))
         } else {
-            None
+            nzbget.filter(|_| clients.nzbget.enabled).map(|adds| {
+                (
+                    UsenetClients::new(adds, sab),
+                    clients.nzbget.category.clone(),
+                )
+            })
         };
         if let Some((queues, category)) = usenet
             && readable
