@@ -1583,6 +1583,37 @@ async fn a_typed_dash_matches_any_dash_in_a_title() {
     assert_eq!(songs, ["t-feat"], "{body}");
 }
 
+/// An album query matches word by word across the title and the album
+/// artist, so "artist title" finds a local-only album; a lone dash between
+/// words is not a word.
+#[tokio::test]
+async fn artist_and_title_words_find_a_local_only_album() {
+    let (app, app_db, _held) = authed_app().await;
+    seed_track(
+        &app_db,
+        "t-gulag",
+        "album-gulag",
+        "Brandenburg",
+        "Gulag Orkestar",
+        "indexed",
+    );
+    for (query, path, scope, bucket) in [
+        ("beirut gulag", "/api/v3/search/albums", "", "results"),
+        (
+            "Beirut - Gulag Orkestar",
+            "/api/v3/search",
+            "&scope=library",
+            "albums",
+        ),
+    ] {
+        let uri = format!("{path}?{}{scope}", urlencode_query(query));
+        let (status, _, bytes) = call(app.clone(), Method::GET, &uri, Some(TEST_TOKEN), None).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+        let body = json(&bytes);
+        assert_eq!(body[bucket][0]["id"], "album-gulag", "{uri}: {body}");
+    }
+}
+
 /// The forgiving retry asks MusicBrainz again only when it matched nothing
 /// at all: a later "see all" page that comes back empty is the end of the
 /// list, typeahead never asks twice, and a full search reuses typeahead's
