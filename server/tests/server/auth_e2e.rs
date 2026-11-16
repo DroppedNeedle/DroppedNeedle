@@ -2580,7 +2580,9 @@ async fn password_login_off_refuses_every_password_route() {
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     assert_eq!(body["error"]["code"], json!("FORBIDDEN"), "{body}");
 
-    let refused: [(&str, &[(&str, &str)], Value); 3] = [
+    // A route, its headers and its body.
+    type Refused<'a> = (&'a str, &'a [(&'a str, &'a str)], Value);
+    let refused: [Refused; 3] = [
         (
             "/api/v3/me/password",
             &[("authorization", owner.as_str())],
