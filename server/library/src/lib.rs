@@ -36,6 +36,7 @@ mod catalog_revision;
 mod clock;
 pub mod contrib;
 pub mod corrections;
+pub mod duplicates;
 pub mod edition;
 pub mod edition_prefs;
 pub mod http;

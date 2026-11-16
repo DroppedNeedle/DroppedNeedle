@@ -4146,6 +4146,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/duplicates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Albums the library holds more than once, one group per page. */
+        get: operations["list_duplicate_albums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/folds/{fold_id}/undo": {
         parameters: {
             query?: never;
@@ -13637,11 +13654,60 @@ export interface components {
             schema_version: number;
         };
         /**
+         * @description Why a group is a duplicate. A group lists every reason that applies.
+         * @enum {string}
+         */
+        DuplicateClass: "same_release" | "different_releases" | "incomplete_copy";
+        /** @description One album in a duplicate group. */
+        DuplicateCopyView: {
+            /** @description The local album id; its page opens on it. */
+            album_id: string;
+            artist: string;
+            /** @description Who set that match. */
+            decision_source?: null | components["schemas"]["DecisionSource"];
+            /** @description Its match is a guess its files contradict. */
+            doubted: boolean;
+            /** @description How the copy names its group: its match row or its files' tags. */
+            evidence: components["schemas"]["DuplicateEvidence"];
+            /** @description The distinct file formats of its indexed tracks, sorted. */
+            formats: string[];
+            /** @description The release its match row names, when there is one. */
+            release_mbid?: string | null;
+            title: string;
+            /**
+             * Format: int64
+             * @description Their bytes.
+             */
+            total_size_bytes: number;
+            /**
+             * Format: int64
+             * @description Indexed tracks the album holds.
+             */
+            track_count: number;
+        };
+        /**
+         * @description How one copy names its group.
+         * @enum {string}
+         */
+        DuplicateEvidence: "stored_match" | "file_tags";
+        /**
          * @description Duplicate evidence kinds, ordered weakest-last:
          *     exact_discogs_url < release_group < barcode < similar.
          * @enum {string}
          */
         DuplicateEvidenceKind: "exact_discogs_url" | "release_group" | "barcode" | "similar";
+        /** @description Albums the library lists more than once. */
+        DuplicateGroupView: {
+            /** @description The copies' album ids, in the order the copies are listed. */
+            album_ids: string[];
+            /** @description Every reason the group is listed. */
+            classes: components["schemas"]["DuplicateClass"][];
+            copies: components["schemas"]["DuplicateCopyView"][];
+            /** @description The release group the copies share. */
+            id: string;
+            /** @description The release two or more copies name, when there is one. */
+            release_mbid?: string | null;
+        };
         /** @description Edition-acquire outcome. */
         EditionAcquireResponse: {
             /** @description Human outcome. */
@@ -18550,6 +18616,27 @@ export interface components {
                  *     link, or while the bins can't be told.
                  */
                 unchecked: number;
+            }[];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+            /**
+             * Format: int64
+             * @description Rows in the whole list, for lists that count them.
+             */
+            total: number | null;
+        };
+        /** @description One page of a list. */
+        Page_DuplicateGroupView: {
+            items: {
+                /** @description The copies' album ids, in the order the copies are listed. */
+                album_ids: string[];
+                /** @description Every reason the group is listed. */
+                classes: components["schemas"]["DuplicateClass"][];
+                copies: components["schemas"]["DuplicateCopyView"][];
+                /** @description The release group the copies share. */
+                id: string;
+                /** @description The release two or more copies name, when there is one. */
+                release_mbid?: string | null;
             }[];
             /** @description Pass back as `cursor` for the next page; null on the last. */
             next_cursor: string | null;
@@ -35529,6 +35616,49 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DecadesResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_duplicate_albums: {
+        parameters: {
+            query?: {
+                /** @description The previous page's `next_cursor`. */
+                cursor?: string;
+                /** @description Groups per page, 1 to 100 (50 by default); more is read as 100. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of duplicate groups */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_DuplicateGroupView"];
+                };
+            };
+            /** @description Bad cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not authenticated */

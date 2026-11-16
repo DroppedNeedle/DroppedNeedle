@@ -5,6 +5,7 @@ import type { KitIcon } from '$lib/ui/Button.svelte';
 import {
 	Cog,
 	Compass,
+	CopyCheck,
 	Download,
 	Headphones,
 	Heart,
@@ -89,12 +90,13 @@ export const servicePath = (source: ServiceSource): string => SERVICE_PATHS[sour
 const inService: NavMatch = (path) =>
 	Object.values(SERVICE_PATHS).some((prefix) => within(prefix)(path));
 
-// Library Management, Check albums and the Recycle Bin live under /library but are their
-// own destinations.
+// Library Management, Check albums, Duplicates and the Recycle Bin live under
+// /library but are their own destinations.
 const inLibraryArea: NavMatch = (path) =>
 	within('/library')(path) &&
 	!within('/library/management')(path) &&
 	!within('/library/review')(path) &&
+	!within('/library/duplicates')(path) &&
 	!within('/library/recycle-bin')(path);
 
 // The rail marks a service on its own pages, so Library stays the way back to the hub.
@@ -226,6 +228,15 @@ export const navItems: NavItem[] = [
 		badge: 'check-albums',
 		sidebar: { group: 'admin', active: within('/library/review') },
 		more: { active: within('/library/review') }
+	},
+	{
+		id: 'duplicates',
+		label: 'Duplicates',
+		icon: CopyCheck,
+		href: '/library/duplicates',
+		audience: 'curator',
+		sidebar: { group: 'admin', active: within('/library/duplicates') },
+		more: { active: within('/library/duplicates') }
 	},
 	{
 		id: 'recycle-bin',

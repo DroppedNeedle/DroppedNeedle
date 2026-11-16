@@ -2770,11 +2770,13 @@ fn every_registered_statement_prepares() {
 /// The library policy settings' three: the save preview's totals, which count
 /// every track under the scopes asked about, the list of folders the catalog
 /// holds tracks for, and the check for any track, which stops at the first
-/// row. An admin opens these by hand.
+/// row. An admin opens these by hand. The duplicates list, which reads every
+/// owned album's tracks and the owners' tagged groups together, on purpose.
 const TRACK_WALKS: &[&str] = &[
     "droppedneedle_library::scan::sql::ALBUM_TRACKS",
     "droppedneedle_library::corrections::sql::CANDIDATE_ALBUMS",
     "droppedneedle_library::corrections::sql::CANDIDATES",
+    "droppedneedle_library::duplicates::sql::DUPLICATE_ALBUMS",
     "droppedneedle_catalog::local::sql::TRACK_PAGE_LIKE",
     "droppedneedle_catalog::local::sql::TRACK_PAGE_WORDS",
     "droppedneedle_catalog::local::sql::TRACK_COUNT_LIKE",

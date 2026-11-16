@@ -25,6 +25,7 @@ use super::contrib::ContribProviders;
 use super::contrib::service::ContributionService;
 use super::contrib::worker::VerificationWorker;
 use super::corrections::service::Corrections;
+use super::duplicates::Duplicates;
 use super::identify::service::{IdentifyDeps, IdentifyService};
 use super::identify::sqlite::SqliteIdentifyStore;
 use super::import::Imports;
@@ -648,6 +649,7 @@ pub struct LibraryServices {
     pub repairs: Repairs,
     pub corrections: Corrections,
     pub reconcile: Reconcile,
+    pub duplicates: Duplicates,
     pub management: Management,
     pub mutations: Mutations,
     pub contrib: Arc<ContributionService>,
@@ -670,6 +672,7 @@ impl LibraryServices {
                 setup.clock.clone(),
             ),
             reconcile: Reconcile::new(setup.db.clone(), setup.clock.clone()),
+            duplicates: Duplicates::new(setup.db.clone()),
             management: Management::new(setup),
             mutations: Mutations::new(setup),
             contrib: setup.contrib.clone(),
@@ -753,6 +756,7 @@ substate!(
     repairs: Repairs,
     corrections: Corrections,
     reconcile: Reconcile,
+    duplicates: Duplicates,
     management: Management,
     mutations: Mutations,
     contrib: Arc<ContributionService>,

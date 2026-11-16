@@ -186,6 +186,8 @@ export const LibraryQueryKeyFactory = {
 			[...LibraryQueryKeyFactory.catalog.recycleBinPrefix(userId), 'summary'] as const,
 		recycleBinStatus: (userId: LibraryV3UserId) =>
 			[...LibraryQueryKeyFactory.catalog.recycleBinPrefix(userId), 'status'] as const,
+		duplicates: (userId: LibraryV3UserId) =>
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'duplicates'] as const,
 		unconfirmedPrefix: (userId: LibraryV3UserId) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'unconfirmed'] as const,
 		unconfirmed: (userId: LibraryV3UserId, state: string) =>

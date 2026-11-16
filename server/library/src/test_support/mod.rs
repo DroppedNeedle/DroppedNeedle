@@ -44,6 +44,7 @@ pub fn statement_files() -> Vec<StatementFile> {
         crate::sql::registered(),
         crate::activity::sql::registered(),
         crate::corrections::sql::registered(),
+        crate::duplicates::sql::registered(),
         crate::identify::sql::registered(),
         crate::import::sql::registered(),
         crate::catalog_actions::sql::registered(),
