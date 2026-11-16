@@ -7,7 +7,11 @@
 	h1.
 -->
 <script lang="ts">
-	import type { PlaylistDetail } from '$lib/api/playlists';
+	import {
+		downloadPlaylistExport,
+		type PlaylistDetail,
+		type PlaylistExportFormat
+	} from '$lib/api/playlists';
 	import {
 		createDeletePlaylistCoverV3Mutation,
 		createUpdatePlaylistV3Mutation,
@@ -33,7 +37,9 @@
 		Sparkles,
 		Globe,
 		Lock,
-		Trash2
+		Trash2,
+		FileMusic,
+		FileSpreadsheet
 	} from 'lucide-svelte';
 	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';
@@ -207,6 +213,29 @@
 		}
 	}
 
+	let exporting = $state<PlaylistExportFormat | null>(null);
+
+	async function exportPlaylist(format: PlaylistExportFormat) {
+		if (exporting) return;
+		exporting = format;
+		try {
+			const skipped = await downloadPlaylistExport(playlist.id, format);
+			if (skipped > 0) {
+				const tracks = skipped === 1 ? 'track' : 'tracks';
+				toastStore.show({
+					message: `Playlist exported. ${skipped} ${tracks} with no local file ${skipped === 1 ? 'was' : 'were'} left out.`,
+					type: 'info'
+				});
+			} else {
+				toastStore.show({ message: 'Playlist exported', type: 'success' });
+			}
+		} catch {
+			toastStore.show({ message: "Couldn't export this playlist", type: 'error' });
+		} finally {
+			exporting = null;
+		}
+	}
+
 	const menuItems = $derived.by(() => {
 		const items: MenuItem[] = [];
 		if (canEdit) {
@@ -218,6 +247,18 @@
 				onclick: () => onshare?.(!playlist.is_public)
 			});
 		}
+		items.push({
+			label: 'Export as M3U',
+			icon: FileMusic,
+			disabled: exporting !== null,
+			onclick: () => void exportPlaylist('m3u8')
+		});
+		items.push({
+			label: 'Export as CSV',
+			icon: FileSpreadsheet,
+			disabled: exporting !== null,
+			onclick: () => void exportPlaylist('csv')
+		});
 		if (canDelete) {
 			items.push({
 				label: 'Delete playlist',
@@ -255,9 +296,7 @@
 				label="Back to Playlists"
 				href={withBasePath('/playlists')}
 			/>
-			{#if menuItems.length > 0}
-				<ContextMenu items={menuItems} position="end" trigger="button" label="Playlist actions" />
-			{/if}
+			<ContextMenu items={menuItems} position="end" trigger="button" label="Playlist actions" />
 		</div>
 
 		<div class="pl-hero__grid">

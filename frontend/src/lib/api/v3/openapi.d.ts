@@ -6175,6 +6175,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/playlists/{playlist_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export one playlist as extended M3U or CSV.
+         * @description Entries with no local file are left out of either format; the
+         *     `X-DroppedNeedle-Skipped-Tracks` header counts them.
+         */
+        get: operations["export_playlist_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/playlists/{playlist_id}/resolve-sources": {
         parameters: {
             query?: never;
@@ -14448,6 +14469,11 @@ export interface components {
          * @enum {string}
          */
         ExampleAlbum: "one_disc" | "two_discs" | "name_shared";
+        /**
+         * @description File a playlist export is written as.
+         * @enum {string}
+         */
+        ExportFormat: "m3u8" | "csv";
         /**
          * @description Extension case policy.
          * @enum {string}
@@ -42013,6 +42039,59 @@ export interface operations {
                 };
             };
             /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    export_playlist_handler: {
+        parameters: {
+            query?: {
+                /** @description `m3u8` (default) or `csv`. */
+                format?: components["schemas"]["ExportFormat"];
+            };
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The playlist as extended M3U (`audio/x-mpegurl`) or CSV (`text/csv; charset=utf-8`), named in Content-Disposition */
+            200: {
+                headers: {
+                    /** @description Entries left out because they have no local file */
+                    "x-droppedneedle-skipped-tracks"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown format */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown playlist id, or one the caller may not read */
             404: {
                 headers: {
                     [name: string]: unknown;

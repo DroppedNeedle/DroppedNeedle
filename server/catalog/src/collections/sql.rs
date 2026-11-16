@@ -145,6 +145,23 @@ droppedneedle_kernel::sql! {
     /// Delete one playlist's uploaded cover.
     pub(super) DELETE_COVER = "DELETE FROM catalog_playlist_covers WHERE playlist_id = ?1";
 
+    /// One playlist's entries `?1` in order, each with its local file's
+    /// album artist and path relative to its library root.
+    pub(super) EXPORT_ENTRIES = "SELECT pt.track_name, pt.artist_name, pt.album_name, \
+         t.album_artist_name, pt.duration_ms, t.relative_path \
+         FROM catalog_playlist_tracks pt \
+         LEFT JOIN local_tracks t ON t.id = pt.library_file_id \
+         WHERE pt.playlist_id = ?1 ORDER BY pt.position";
+    /// One playlist entry as an export lists it.
+    pub(super) row PlaylistExportRow for [EXPORT_ENTRIES] {
+        track_name: String,
+        artist_name: String,
+        album_name: String,
+        album_artist_name: Option<String>,
+        duration_ms: Option<i64>,
+        relative_path: Option<String>,
+    }
+
     /// A user's favorites, of one kind `?2` or every kind, newest first.
     pub(super) FAVORITES = "SELECT f.item_id AS item_id, \
          n.display_name AS display_name, f.created_at / 1000.0 AS created_at \

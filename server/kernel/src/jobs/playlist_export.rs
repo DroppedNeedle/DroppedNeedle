@@ -4,26 +4,16 @@
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use unicode_normalization::UnicodeNormalization;
-
 use super::BoxFuture;
 use super::playlist_sync::{PlaylistExporter, PlaylistSyncConfig, PlaylistSyncResult};
 use super::sql;
 use crate::db::{Db, DbError};
+use crate::playlist_files::{
+    Entry, OWNER_MARKER, PLAYLIST_SUFFIX, render_m3u, safe_playlist_filename, writable_path,
+};
 
-/// File suffix Navidrome imports.
-pub const PLAYLIST_SUFFIX: &str = ".m3u8";
-/// Ownership marker inside every file we write.
-pub const OWNER_MARKER: &str = "#DROPPEDNEEDLE-PLAYLIST-ID:";
 /// How far into a file the marker may sit.
 const MARKER_SCAN_BYTES: usize = 512;
-/// Longest filename stem.
-const MAX_STEM: usize = 120;
-/// Names Windows refuses, applied everywhere: the folder is often a share.
-const WINDOWS_RESERVED: &[&str] = &[
-    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-];
 
 /// Writes DroppedNeedle playlists as extended M3U files for Navidrome to
 /// import (v2 `NavidromePlaylistExportService`). One-way: Navidrome's own
@@ -392,37 +382,6 @@ fn owned_playlist_id(path: &Path) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// A portable filename; the id suffix carries uniqueness since names
-/// collide.
-pub fn safe_playlist_filename(name: &str, playlist_id: &str) -> String {
-    let normalized: String = name.nfc().collect();
-    let mut stem: String = normalized
-        .trim()
-        .chars()
-        .map(|ch| {
-            if matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || ch < ' ' {
-                '_'
-            } else {
-                ch
-            }
-        })
-        .collect();
-    stem = stem.trim_matches(|ch| ch == ' ' || ch == '.').to_owned();
-    let first = stem.split('.').next().unwrap_or("").to_uppercase();
-    if WINDOWS_RESERVED.contains(&first.as_str()) {
-        stem = format!("_{stem}");
-    }
-    if stem.chars().count() > MAX_STEM {
-        stem = stem.chars().take(MAX_STEM).collect::<String>();
-        stem = stem.trim_end_matches([' ', '.']).to_owned();
-    }
-    if stem.is_empty() {
-        stem = "playlist".to_owned();
-    }
-    let short_id: String = playlist_id.chars().take(8).collect();
-    format!("{stem} [{short_id}]{PLAYLIST_SUFFIX}")
-}
-
 /// Render extended M3U. Returns the text plus the counts of entries with
 /// no local file and entries whose path cannot be written relative to the
 /// playlist folder.
@@ -432,11 +391,7 @@ fn render_playlist(
     entries: &[ExportEntry],
     playlist_dir: &Path,
 ) -> (String, u64, u64) {
-    let mut lines = vec![
-        "#EXTM3U".to_owned(),
-        format!("{OWNER_MARKER}{playlist_id}"),
-        format!("#PLAYLIST:{}", one_line(name)),
-    ];
+    let mut kept: Vec<(&ExportEntry, String)> = Vec::new();
     let (mut missing, mut unrepresentable) = (0, 0);
     for entry in entries {
         let Some(track_path) = entry.file_path.as_deref().filter(|path| !path.is_empty()) else {
@@ -447,33 +402,28 @@ fn render_playlist(
             unrepresentable += 1;
             continue;
         };
-        if relative.chars().any(char::is_control) {
+        if writable_path(&relative).is_none() {
             unrepresentable += 1;
             continue;
         }
-        let seconds = entry.duration.unwrap_or(-1);
-        let artist = one_line(&entry.artist_name);
-        let title = one_line(&entry.track_name);
-        let label = if artist.is_empty() {
-            title
-        } else {
-            format!("{artist} - {title}")
-        };
-        lines.push(format!("#EXTINF:{seconds},{label}"));
-        lines.push(relative);
+        kept.push((entry, relative));
     }
-    (format!("{}\n", lines.join("\n")), missing, unrepresentable)
-}
-
-/// M3U is line-oriented with no escaping: a newline in free text would
-/// inject a directive.
-fn one_line(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| if ch.is_control() { ' ' } else { ch })
-        .collect::<String>()
-        .trim()
-        .to_owned()
+    let rendered: Vec<Entry<'_>> = kept
+        .iter()
+        .map(|(entry, path)| Entry {
+            title: &entry.track_name,
+            artist: &entry.artist_name,
+            album: "",
+            album_artist: "",
+            duration_seconds: entry.duration,
+            path,
+        })
+        .collect();
+    (
+        render_m3u(name, playlist_id, &rendered),
+        missing,
+        unrepresentable,
+    )
 }
 
 /// The track path relative to the playlist folder, `/`-separated. `None`

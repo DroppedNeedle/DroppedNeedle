@@ -61,6 +61,25 @@ pub struct PlaylistRow {
     pub cover_urls: Vec<String>,
 }
 
+/// One playlist entry as an export lists it: the names the playlist holds,
+/// plus its local file's album artist and root-relative path when it has
+/// one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaylistExportRow {
+    /// Track title.
+    pub track_name: String,
+    /// Artist name.
+    pub artist_name: String,
+    /// Album name.
+    pub album_name: String,
+    /// Album artist of the local file, when it carries one.
+    pub album_artist_name: Option<String>,
+    /// Duration in milliseconds, when known.
+    pub duration_ms: Option<i64>,
+    /// The file relative to its library root, when the entry has one.
+    pub relative_path: Option<String>,
+}
+
 /// One row of the full list: a playlist the caller may read, or only the
 /// existence of another user's private one.
 #[derive(Debug, Clone, PartialEq)]
@@ -246,6 +265,17 @@ fn cover_from_row(row: &Row<'_>) -> rusqlite::Result<CoverImage> {
     Ok(CoverImage {
         content_type: row.get(0)?,
         bytes: row.get(1)?,
+    })
+}
+
+fn export_entry_from_row(row: &Row<'_>) -> rusqlite::Result<PlaylistExportRow> {
+    Ok(PlaylistExportRow {
+        track_name: row.get(0)?,
+        artist_name: row.get(1)?,
+        album_name: row.get(2)?,
+        album_artist_name: row.get(3)?,
+        duration_ms: row.get(4)?,
+        relative_path: row.get(5)?,
     })
 }
 
@@ -558,6 +588,24 @@ impl VisiblePlaylists<'_> {
                 Ok(conn
                     .prepare(sql::TRACKS_READABLE.text())?
                     .query_map(params![user_id, playlist_id], track_from_row)?
+                    .collect::<rusqlite::Result<_>>()?)
+            })
+            .await
+    }
+
+    /// Entries of a playlist the caller may read, in position order, each
+    /// with its local file's album artist and root-relative path.
+    pub async fn export_entries(
+        &self,
+        playlist_id: &str,
+    ) -> Result<Vec<PlaylistExportRow>, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.store
+            .db
+            .read("playlists.export_entries", move |conn| {
+                Ok(conn
+                    .prepare(sql::EXPORT_ENTRIES.text())?
+                    .query_map(params![playlist_id], export_entry_from_row)?
                     .collect::<rusqlite::Result<_>>()?)
             })
             .await

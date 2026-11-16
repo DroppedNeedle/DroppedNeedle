@@ -3,6 +3,7 @@ import { api } from '$lib/api/client';
 import type { QueueItem } from '$lib/features/player/playback/types';
 import type { components } from '$lib/api/v3/openapi';
 import { toPageDetail } from '$lib/features/playlists/queries/playlistV3Adapter';
+import { downloadBlob } from '$lib/utils/blobDownload';
 
 type Schemas = components['schemas'];
 
@@ -69,6 +70,27 @@ export async function fetchPlaylist(
 		{ signal: options?.signal }
 	);
 	return toPageDetail(data);
+}
+
+/** A playlist export file format. */
+export type PlaylistExportFormat = 'm3u8' | 'csv';
+
+/**
+ * Download one playlist as M3U8 or CSV. The server names the file and
+ * leaves out entries with no local file; returns how many it left out.
+ */
+export async function downloadPlaylistExport(
+	id: string,
+	format: PlaylistExportFormat
+): Promise<number> {
+	const response = await downloadBlob(
+		v3('/api/v3/playlists/{playlist_id}/export', {
+			path: { playlist_id: id },
+			query: { format }
+		})
+	);
+	const skipped = Number.parseInt(response.headers.get('x-droppedneedle-skipped-tracks') ?? '', 10);
+	return Number.isNaN(skipped) ? 0 : skipped;
 }
 
 export interface BatchRequestResult {

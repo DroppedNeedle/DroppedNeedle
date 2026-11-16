@@ -535,7 +535,7 @@ fn sanitize_filename(name: &str) -> String {
 
 /// `Content-Disposition: attachment` with a plain ASCII fallback name and
 /// the exact UTF-8 name (RFC 6266).
-fn attachment_headers(headers: &mut HeaderMap, filename: &str) {
+pub fn attachment_headers(headers: &mut HeaderMap, filename: &str) {
     let fallback: String = filename
         .chars()
         .map(|c| {

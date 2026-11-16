@@ -16,16 +16,17 @@ use super::CollectionsService;
 use crate::collections::error::CollectionsError;
 use crate::collections::models::{
     AddTracksBody, AddTracksResponse, CheckTracksBody, CheckTracksResponse, CoverUploadBody,
-    CreatePlaylistBody, PlaylistDetail, PlaylistListItem, PlaylistListResponse, PlaylistSummary,
-    PlaylistTrack, RedactedPlaylist, ResolveSourcesResponse, TrackInput, UpdatePlaylistBody,
-    UpdateTrackBody,
+    CreatePlaylistBody, ExportFormat, PlaylistDetail, PlaylistListItem, PlaylistListResponse,
+    PlaylistSummary, PlaylistTrack, RedactedPlaylist, ResolveSourcesResponse, TrackInput,
+    UpdatePlaylistBody, UpdateTrackBody,
 };
 use crate::collections::store::PlaylistStore;
 pub use crate::collections::store::playlists::SavedPlaylist;
 use crate::collections::store::playlists::{
-    CoverImage, EntryNames, Listed, NewEntry, PlaylistRow, Written,
+    CoverImage, EntryNames, Listed, NewEntry, PlaylistExportRow, PlaylistRow, Written,
 };
 use crate::metadata::clean_recording;
+use droppedneedle_kernel::playlist_files::{self, Entry};
 
 /// Longest accepted playlist name.
 const MAX_NAME_LEN: usize = 200;
@@ -58,6 +59,17 @@ pub struct Visible {
     pub row: PlaylistRow,
     /// True when the caller owns it.
     pub is_owner: bool,
+}
+
+/// One playlist rendered for download.
+#[derive(Debug, Clone)]
+pub struct PlaylistExport {
+    /// The playlist's name, safe as a filename stem.
+    pub file_stem: String,
+    /// The rendered file.
+    pub body: String,
+    /// Entries left out because they have no local file.
+    pub skipped: usize,
 }
 
 /// Trimmed non-empty name or 400.
@@ -333,6 +345,51 @@ impl CollectionsService<'_> {
             return Ok(None);
         }
         Ok(Some(playlists.owned_by(user_id).tracks(playlist_id).await?))
+    }
+
+    /// One playlist the caller may read, rendered as `format`. Entries
+    /// with no local file are left out; `skipped` counts them.
+    pub async fn export_playlist(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+        format: ExportFormat,
+    ) -> Result<PlaylistExport, CollectionsError> {
+        let row = self.readable_playlist(user_id, playlist_id).await?;
+        let entries: Vec<PlaylistExportRow> = self
+            .playlists()
+            .visible_to(user_id)
+            .export_entries(playlist_id)
+            .await?;
+        let mut rendered = Vec::new();
+        let mut skipped = 0;
+        for entry in &entries {
+            let Some(path) = entry
+                .relative_path
+                .as_deref()
+                .and_then(playlist_files::writable_path)
+            else {
+                skipped += 1;
+                continue;
+            };
+            rendered.push(Entry {
+                title: &entry.track_name,
+                artist: &entry.artist_name,
+                album: &entry.album_name,
+                album_artist: entry.album_artist_name.as_deref().unwrap_or(""),
+                duration_seconds: entry.duration_ms.map(|ms| ms / 1000),
+                path,
+            });
+        }
+        let body = match format {
+            ExportFormat::M3u8 => playlist_files::render_m3u(&row.name, &row.id, &rendered),
+            ExportFormat::Csv => playlist_files::render_csv(&rendered),
+        };
+        Ok(PlaylistExport {
+            file_stem: playlist_files::safe_playlist_stem(&row.name),
+            body,
+            skipped,
+        })
     }
 
     /// One playlist detail. `admin` says the caller may delete it when it
