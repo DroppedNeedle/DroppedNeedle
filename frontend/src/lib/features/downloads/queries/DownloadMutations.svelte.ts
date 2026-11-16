@@ -21,7 +21,8 @@ import {
 	anyRequestChanged,
 	applyEffects,
 	createAppMutation,
-	downloadsChanged
+	downloadsChanged,
+	searchResultsChanged
 } from '$lib/queries/effects';
 
 interface AlbumRequestInput {
@@ -184,9 +185,12 @@ export function createRequestBatchMutation() {
 	}));
 }
 
+// A requested song shows as requested in search.
+const trackRequested = () => [...tasks(), searchResultsChanged(authStore.user?.id)];
+
 export function createRequestTrackMutation() {
 	return createAppMutation(() => ({
-		effects: tasks,
+		effects: trackRequested,
 		mutationFn: (input: TrackRequestInput) =>
 			api.v3.POST(v3('/api/v3/requests/tracks'), {
 				recording_mbid: input.recording_mbid,

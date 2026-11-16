@@ -22633,7 +22633,8 @@ export interface components {
         SearchRemoteStatus: "ok" | "partial" | "timeout" | "error" | "stale";
         /**
          * @description What requesting a MusicBrainz song and showing its cover need: the
-         *     release it is shown under, its group and the credited artist.
+         *     release it is shown under (the one its request tries first), its group
+         *     and the credited artist.
          */
         SearchRemoteTrackDetail: {
             /** @description The release's title. */
@@ -22645,8 +22646,8 @@ export interface components {
              * @description Recording length, whole seconds.
              */
             duration_seconds?: number | null;
-            /** @description The release's group, when MusicBrainz named one; covers come from it. */
-            release_group_mbid?: string | null;
+            /** @description The release's group; covers come from it. */
+            release_group_mbid: string;
             /** @description The release. */
             release_mbid: string;
         };
@@ -22669,7 +22670,10 @@ export interface components {
             top_artist?: null | components["schemas"]["SearchResultItem"];
             /** @description Standout track hit, if one scored high enough to headline. */
             top_track?: null | components["schemas"]["SearchResultItem"];
-            /** @description Provider health for the track bucket. */
+            /**
+             * @description Provider health for the track bucket; `partial` while MusicBrainz's
+             *     songs are still on their way.
+             */
             track_status: components["schemas"]["SearchRemoteStatus"];
             /** @description Matching tracks, best first. */
             tracks: components["schemas"]["SearchResultItem"][];
@@ -22694,7 +22698,7 @@ export interface components {
              *     Absent for MusicBrainz hits the library lacks.
              */
             id?: string | null;
-            /** @description True when the library holds this artist or album. */
+            /** @description True when the library holds this artist, album or song. */
             in_library: boolean;
             /** @description Result bucket. */
             kind: components["schemas"]["SearchKind"];
@@ -22708,7 +22712,7 @@ export interface components {
              *     `track` and the library lacks the song.
              */
             remote_track?: null | components["schemas"]["SearchRemoteTrackDetail"];
-            /** @description True when an acquisition request is open for this album. */
+            /** @description True when an acquisition request is open for this album or song. */
             requested: boolean;
             /**
              * Format: int32

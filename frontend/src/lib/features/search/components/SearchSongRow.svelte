@@ -17,6 +17,7 @@
 	import { toastStore } from '$lib/stores/toast';
 	import { localAlbumHref } from '$lib/utils/entityRoutes';
 	import { formatDurationSec } from '$lib/utils/formatting';
+	import './searchSong.css';
 
 	interface Props {
 		song: SearchLibrarySong;
@@ -101,15 +102,6 @@
 <style>
 	.search-song {
 		position: relative;
-		display: flex;
-		align-items: center;
-		gap: 0.875rem;
-		min-height: 4rem;
-		padding: 0.5rem 0.75rem 0.5rem 0.875rem;
-		transition: background-color 150ms;
-	}
-	.search-song:hover {
-		background-color: var(--color-base-300);
 	}
 	.search-song.is-playing {
 		background-color: color-mix(in oklab, var(--dn-title) 10%, transparent);
@@ -127,47 +119,14 @@
 		outline-offset: -2px;
 	}
 
-	.search-song__title {
-		overflow: hidden;
-		font-size: 0.9375rem;
-		font-weight: 600;
-		line-height: 1.3;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
 	.is-playing .search-song__title {
 		color: var(--dn-title);
-	}
-
-	.search-song__meta {
-		margin-top: 0.125rem;
-		overflow: hidden;
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		color: var(--color-muted);
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 
 	.search-song__album,
 	.search-song__menu {
 		position: relative;
 		z-index: 2;
-	}
-	.search-song__album {
-		border-radius: 0.125rem;
-	}
-	.search-song__album:hover {
-		color: var(--color-base-content);
-		text-decoration: underline;
-	}
-
-	.search-song__time {
-		flex: none;
-		font-family: var(--font-mono);
-		font-size: 0.8125rem;
-		font-variant-numeric: tabular-nums;
-		color: var(--color-base-content);
 	}
 
 	/* the acid mark of the row's play; clicks fall through to the row */
@@ -193,10 +152,6 @@
 	}
 
 	@media (max-width: 479px) {
-		.search-song {
-			gap: 0.625rem;
-			padding-inline: 0.625rem 0.375rem;
-		}
 		.search-song__play {
 			width: 2.25rem;
 			margin-left: 0.25rem;

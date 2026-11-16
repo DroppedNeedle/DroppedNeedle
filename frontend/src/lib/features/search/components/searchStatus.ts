@@ -5,19 +5,34 @@ export type SearchStatusNotice = {
 	className: 'alert-info' | 'alert-warning';
 };
 
+export type SearchNoticeBucket = 'artists' | 'albums' | 'tracks';
+
+const RESULT_TYPE: Record<SearchNoticeBucket, string> = {
+	artists: 'artist',
+	albums: 'album',
+	tracks: 'song'
+};
+
+// Worst first: the one notice a page shows names the worst status.
+const SEVERITY: SearchRemoteStatus[] = ['error', 'timeout', 'partial', 'stale'];
+
+/**
+ * The notice for one bucket's status, or for several when `bucket` is null
+ * (the message then names no result type).
+ */
 export function getSearchStatusNotice(
 	status: SearchRemoteStatus,
-	bucket: 'artists' | 'albums' | 'tracks',
+	bucket: SearchNoticeBucket | null,
 	includeLibraryMatches = true
 ): SearchStatusNotice | null {
 	if (status === 'ok') return null;
 
-	const resultType = { artists: 'artist', albums: 'album', tracks: 'song' }[bucket];
+	const resultType = bucket ? `${RESULT_TYPE[bucket]} ` : '';
 
 	if (status === 'stale') {
 		const libraryContext = includeLibraryMatches ? ' alongside any matches in your library' : '';
 		return {
-			message: `MusicBrainz is unavailable, so we're showing cached ${resultType} results${libraryContext}.`,
+			message: `MusicBrainz is unavailable, so we're showing cached ${resultType}results${libraryContext}.`,
 			className: 'alert-info'
 		};
 	}
@@ -27,14 +42,14 @@ export function getSearchStatusNotice(
 			? ' Any matches in your library are still shown.'
 			: '';
 		return {
-			message: `MusicBrainz ${resultType} search timed out.${libraryContext}`,
+			message: `MusicBrainz ${resultType}search timed out.${libraryContext}`,
 			className: 'alert-warning'
 		};
 	}
 
 	if (status === 'partial') {
 		return {
-			message: `Some MusicBrainz ${resultType} results could not be loaded. Available results are shown below.`,
+			message: `Some MusicBrainz ${resultType}results could not be loaded. Available results are shown below.`,
 			className: 'alert-warning'
 		};
 	}
@@ -43,7 +58,25 @@ export function getSearchStatusNotice(
 		? ' Any matches in your library are still shown.'
 		: '';
 	return {
-		message: `MusicBrainz ${resultType} search is temporarily unavailable.${libraryContext}`,
+		message: `MusicBrainz ${resultType}search is temporarily unavailable.${libraryContext}`,
 		className: 'alert-warning'
 	};
+}
+
+/**
+ * One notice for a page that shows several buckets: the worst status among
+ * them, naming the bucket when it is the only one affected. Songs still on
+ * their way (`partial` on the tracks bucket) need no notice: the page asks
+ * for them again by itself.
+ */
+export function getCombinedSearchNotice(
+	statuses: Record<SearchNoticeBucket, SearchRemoteStatus>
+): SearchStatusNotice | null {
+	const shown = (Object.entries(statuses) as [SearchNoticeBucket, SearchRemoteStatus][]).filter(
+		([bucket, status]) => status !== 'ok' && !(bucket === 'tracks' && status === 'partial')
+	);
+	if (shown.length === 0) return null;
+	const worst = SEVERITY.find((status) => shown.some(([, shownStatus]) => shownStatus === status));
+	if (!worst) return null;
+	return getSearchStatusNotice(worst, shown.length === 1 ? shown[0][0] : null);
 }

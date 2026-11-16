@@ -769,9 +769,6 @@ droppedneedle_kernel::sql! {
     /// The recording MBIDs among a list with an open request. A song's
     /// ledger key is its MBID behind `track:`.
     family REQUESTED_TRACKS_IN = requested_tracks_in;
-    /// The recording MBIDs among a list that an indexed track is identified
-    /// as.
-    family OWNED_RECORDINGS_IN = owned_recordings_in;
     /// The live local artist behind one lowercase MBID.
     pub(crate) LOCAL_ARTIST = "SELECT a.display_name FROM local_artist_external_identities e \
         JOIN local_artists a ON a.id = e.local_artist_id \
@@ -2036,19 +2033,6 @@ pub(crate) fn requested_tracks_in(ids: ListLen) -> String {
         "SELECT substr(musicbrainz_id_lower, 7) FROM request_history \
          WHERE request_kind = 'track' AND {OPEN_STATUS} AND musicbrainz_id_lower IN ({})",
         marks(ids)
-    )
-}
-
-/// The recording MBIDs among `ids` lowercase that an indexed track is
-/// identified as.
-pub(crate) fn owned_recordings_in(ids: ListLen) -> String {
-    format!(
-        "SELECT DISTINCT lower(e.recording_mbid) \
-         FROM local_track_external_identities e JOIN local_tracks t ON t.id = e.local_track_id \
-         WHERE {} AND lower(e.recording_mbid) IN ({}) AND {}",
-        musicbrainz!("e"),
-        marks(ids),
-        streamable(true)
     )
 }
 

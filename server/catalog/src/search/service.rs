@@ -109,6 +109,13 @@ impl std::fmt::Debug for SearchService {
 pub const FULL_SEARCH_DEADLINE: Duration = Duration::from_secs(6);
 /// How long typeahead waits for MusicBrainz.
 pub const SUGGEST_DEADLINE: Duration = Duration::from_secs(3);
+/// How much longer a full search waits for MusicBrainz's songs once the
+/// library and the artist and album legs are in. Songs are asked last, so
+/// on a host that takes one call a second they would hold the page about
+/// two seconds; past this the page answers with the songs bucket
+/// `partial`, the fetch carries on into the cache, and the web UI asks
+/// again for them.
+pub const SONGS_GRACE: Duration = Duration::from_millis(300);
 
 impl SearchService {
     /// Serve searches from this database, and from MusicBrainz through
@@ -120,10 +127,11 @@ impl SearchService {
     /// Ranked hits per selected bucket plus each bucket's standout hit.
     /// Each bucket joins MusicBrainz hits with the library's own (local
     /// copies attach their id and the in-library flag). Albums are ranked
-    /// over every hit MusicBrainz's page
-    /// holds before the cut, so an album its namesakes push down still
-    /// shows. The library scope leaves MusicBrainz out. A blank-after-fold
-    /// query matches nothing.
+    /// over every hit MusicBrainz's page holds before the cut, so an album
+    /// its namesakes push down still shows. MusicBrainz's songs get
+    /// [`SONGS_GRACE`] past the other legs, else the bucket answers
+    /// `partial` with the library's songs. The library scope leaves
+    /// MusicBrainz out. A blank-after-fold query matches nothing.
     pub async fn search(
         &self,
         query: &str,
@@ -190,15 +198,32 @@ impl SearchService {
             FULL_SEARCH_DEADLINE,
             remote_wants(Bucket::Tracks, limits.tracks),
         );
-        let (local, remote_artists, remote_albums, remote_tracks) =
-            tokio::join!(local, remote_artists, remote_albums, remote_tracks);
-        let (local_artists, local_albums, local_tracks) = local?;
+        // Songs alone have no other leg to wait behind.
+        let grace = if remote_wants(Bucket::Artists, limits.artists)
+            || remote_wants(Bucket::Albums, limits.albums)
+        {
+            SONGS_GRACE
+        } else {
+            FULL_SEARCH_DEADLINE
+        };
+        let ((local, remote_artists, remote_albums), remote_tracks) = with_grace(
+            async { tokio::join!(local, remote_artists, remote_albums) },
+            remote_tracks,
+            grace,
+        )
+        .await;
+        let (local_artists, local_albums, mut local_tracks) = local?;
         let artist_status = status_of(remote_artists.as_ref());
         let album_status = status_of(remote_albums.as_ref());
-        let track_status = status_of(remote_tracks.as_ref());
+        let (track_status, remote_tracks) = match remote_tracks {
+            Some(bucket) => (status_of(bucket.as_ref()), remote_hits(bucket)),
+            None => (SearchRemoteStatus::Partial, Vec::new()),
+        };
+        local_tracks
+            .extend(Box::pin(self.library_copies(&folded, &local_tracks, &remote_tracks)).await?);
         let mut artists = join(local_artists, remote_hits(remote_artists));
         let mut albums = join(local_albums, remote_hits(remote_albums));
-        let mut tracks = join(local_tracks, remote_hits(remote_tracks));
+        let mut tracks = join(local_tracks, remote_tracks);
         self.apply_flags(&mut artists, &mut albums, &mut tracks)
             .await;
         let artists = best(artists, limits.artists, &folded);
@@ -297,11 +322,14 @@ impl SearchService {
                 (joined, page)
             }
             Bucket::Tracks => {
-                let joined = self.search_tracks(folded, MAX_LOCAL_JOIN, 0).await?;
+                let mut joined = self.search_tracks(folded, MAX_LOCAL_JOIN, 0).await?;
                 let page = match slice_of(&joined, limit, offset) {
                     Some(page) => page,
                     None => self.search_tracks(folded, limit, offset).await?,
                 };
+                let hits = first_hits(remote.clone(), limit);
+                let seen: Vec<SearchResultItem> = joined.iter().chain(&page).cloned().collect();
+                joined.extend(self.library_copies(folded, &seen, &hits).await?);
                 (joined, page)
             }
         };
@@ -424,8 +452,9 @@ impl SearchService {
         }
     }
 
-    /// Fill in library flags for provider hits: owned artists, albums and
-    /// songs, and open requests for albums and songs the library lacks.
+    /// Fill in library flags for provider hits: owned artists and albums,
+    /// and open requests for albums and songs the library lacks. A song the
+    /// library holds already carries its library copy ([`Self::library_copies`]).
     async fn apply_flags(
         &self,
         artists: &mut [Candidate],
@@ -443,7 +472,7 @@ impl SearchService {
         let SearchFlags {
             artists: owned_artists,
             albums: (owned_albums, requested_albums),
-            tracks: (owned_tracks, requested_tracks),
+            tracks: requested_tracks,
         } = catalog
             .search_flags(SearchIds {
                 artists: &artist_ids,
@@ -460,16 +489,65 @@ impl SearchService {
         for row in artists.iter_mut().filter(|row| row.item.id.is_none()) {
             row.item.in_library = owned_artists.contains(&mbid(&row.item));
         }
-        for (rows, owned, requested) in [
-            (albums, owned_albums, requested_albums),
-            (tracks, owned_tracks, requested_tracks),
-        ] {
-            for row in rows.iter_mut().filter(|row| row.item.id.is_none()) {
-                let mbid = mbid(&row.item);
-                row.item.in_library = owned.contains(&mbid);
-                row.item.requested = !row.item.in_library && requested.contains(&mbid);
-            }
+        for row in albums.iter_mut().filter(|row| row.item.id.is_none()) {
+            let mbid = mbid(&row.item);
+            row.item.in_library = owned_albums.contains(&mbid);
+            row.item.requested = !row.item.in_library && requested_albums.contains(&mbid);
         }
+        for row in tracks.iter_mut().filter(|row| row.item.id.is_none()) {
+            row.item.requested = requested_tracks.contains(&mbid(&row.item));
+        }
+    }
+
+    /// The library's copies of the songs among `remote` that no row in
+    /// `local` already names, so every song the library holds shows as its
+    /// library copy and plays, never as a song to request. Read by the
+    /// recording id pages use, scored against the folded query.
+    async fn library_copies(
+        &self,
+        folded: &str,
+        local: &[SearchResultItem],
+        remote: &[RemoteHit],
+    ) -> Result<Vec<SearchResultItem>, DbError> {
+        let known: std::collections::HashSet<String> = local
+            .iter()
+            .filter_map(|row| row.musicbrainz_id.as_deref())
+            .map(|mbid| mbid.trim().to_ascii_lowercase())
+            .collect();
+        let mut wanted: Vec<String> = remote
+            .iter()
+            .map(|hit| hit.mbid.trim().to_ascii_lowercase())
+            .filter(|mbid| !mbid.is_empty() && !known.contains(mbid))
+            .collect();
+        wanted.sort();
+        wanted.dedup();
+        if wanted.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut binds: Vec<Value> = [
+            folded.to_owned(),
+            like_prefix(folded),
+            like_contains(folded),
+        ]
+        .into_iter()
+        .map(Value::Text)
+        .collect();
+        for _ in 0..3 {
+            binds.extend(wanted.iter().cloned().map(Value::Text));
+        }
+        binds.extend([Value::Integer(i64::from(MAX_LOCAL_JOIN)), Value::Integer(0)]);
+        let text = sql::song_hits_by_recording(ListLen::new(wanted.len()));
+        let rows = self
+            .db
+            .read("search.track_copies", move |conn| {
+                let rows = conn
+                    .prepare(&text)?
+                    .query_map(rusqlite::params_from_iter(binds), sql::SongHit::read)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok::<_, DbError>(rows)
+            })
+            .await?;
+        Ok(rows.into_iter().map(|row| song_item(row, folded)).collect())
     }
 
     /// Best-first artist hits, capped.
@@ -615,35 +693,37 @@ pub(crate) async fn song_hits(
             Ok::<_, DbError>(rows)
         })
         .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| SearchResultItem {
-            kind: SearchKind::Track,
-            id: Some(row.id),
-            title: row.title,
-            artist: row.artist_name,
-            year: row.year,
-            musicbrainz_id: row.mbid,
-            in_library: true,
-            requested: false,
-            score: song_score(&row.title_folded, folded),
-            disambiguation: None,
-            type_info: None,
-            art_missing: art_missing(row.own_art, row.release_group_mbid.as_deref()),
-            track: Some(SearchTrackDetail {
-                album_id: row.local_album_id,
-                album_title: row.album_title,
-                artist_id: row.artist_id,
-                release_group_mbid: row.release_group_mbid,
-                disc_number: row.disc_number,
-                track_number: row.track_number,
-                duration_seconds: row.duration_seconds,
-                format: row.file_format,
-                cover_available: row.cover_available,
-            }),
-            remote_track: None,
-        })
-        .collect())
+    Ok(rows.into_iter().map(|row| song_item(row, folded)).collect())
+}
+
+/// One library song row as a search hit, scored against the folded query.
+fn song_item(row: sql::SongHit, folded: &str) -> SearchResultItem {
+    SearchResultItem {
+        kind: SearchKind::Track,
+        id: Some(row.id),
+        title: row.title,
+        artist: row.artist_name,
+        year: row.year,
+        musicbrainz_id: row.mbid,
+        in_library: true,
+        requested: false,
+        score: song_score(&row.title_folded, folded),
+        disambiguation: None,
+        type_info: None,
+        art_missing: art_missing(row.own_art, row.release_group_mbid.as_deref()),
+        track: Some(SearchTrackDetail {
+            album_id: row.local_album_id,
+            album_title: row.album_title,
+            artist_id: row.artist_id,
+            release_group_mbid: row.release_group_mbid,
+            disc_number: row.disc_number,
+            track_number: row.track_number,
+            duration_seconds: row.duration_seconds,
+            format: row.file_format,
+            cover_available: row.cover_available,
+        }),
+        remote_track: None,
+    }
 }
 
 /// Whether a library album is known to have no cover: no art of its own
@@ -982,7 +1062,8 @@ fn best(candidates: Vec<Candidate>, limit: u32, query_folded: &str) -> Vec<Searc
 /// when one exists. Returns the hits and which library rows were claimed:
 /// every copy of a release group that has a MusicBrainz hit is claimed,
 /// not just the first, so a library holding two editions of one album
-/// never adds a second row for it.
+/// never adds a second row for it. A song's hit claims only its first
+/// copy: each file of a song is a row of its own.
 fn attach_local(remote: Vec<RemoteHit>, local: &[SearchResultItem]) -> (Vec<Candidate>, Vec<bool>) {
     let mut claimed = vec![false; local.len()];
     let hits = remote
@@ -1004,7 +1085,8 @@ fn attach_local(remote: Vec<RemoteHit>, local: &[SearchResultItem]) -> (Vec<Cand
                         .musicbrainz_id
                         .as_deref()
                         .is_some_and(|id| id.trim().eq_ignore_ascii_case(&mbid));
-                    if !same {
+                    if !same || claimed[index] || (row.kind == SearchKind::Track && hit.in_library)
+                    {
                         continue;
                     }
                     if !hit.in_library {
@@ -1031,11 +1113,13 @@ fn attach_local(remote: Vec<RemoteHit>, local: &[SearchResultItem]) -> (Vec<Cand
 
 /// Keep the first library row per MusicBrainz id. Two copies of one
 /// release group (two editions on disk) read as one search hit; rows
-/// without a MusicBrainz id (or a blank one) are all kept.
+/// without a MusicBrainz id (or a blank one) are all kept, and so are
+/// songs: two files of one recording are two rows.
 fn one_per_mbid(rows: impl IntoIterator<Item = SearchResultItem>) -> Vec<SearchResultItem> {
     let mut seen = std::collections::HashSet::new();
     rows.into_iter()
         .filter(|row| match row.musicbrainz_id.as_deref().map(str::trim) {
+            _ if row.kind == SearchKind::Track => true,
             Some(mbid) if !mbid.is_empty() => seen.insert(mbid.to_ascii_lowercase()),
             _ => true,
         })
@@ -1073,13 +1157,22 @@ fn join_page(
 ) -> Vec<Candidate> {
     let local: Vec<SearchResultItem> = joined.iter().cloned().chain(page).collect();
     let (mut rows, claimed) = attach_local(remote, &local);
+    // The page repeats rows of `joined`: one a hit took there is taken here.
+    let taken: std::collections::HashSet<String> = local
+        .iter()
+        .zip(&claimed)
+        .filter(|(_, claimed)| **claimed)
+        .filter_map(|(row, _)| row.id.clone())
+        .collect();
     rows.extend(
         one_per_mbid(
             local
                 .into_iter()
                 .zip(claimed)
                 .skip(joined.len())
-                .filter(|(_, claimed)| !claimed)
+                .filter(|(row, claimed)| {
+                    !claimed && row.id.as_ref().is_none_or(|id| !taken.contains(id))
+                })
                 .map(|(row, _)| row),
         )
         .into_iter()
@@ -1098,6 +1191,37 @@ fn slice_of(rows: &[SearchResultItem], limit: u32, offset: u32) -> Option<Vec<Se
     let start = (offset as usize).min(rows.len());
     let end = (end as usize).min(rows.len());
     Some(rows[start..end].to_vec())
+}
+
+/// Run `main` and `side` together and, once `main` is done, wait at most
+/// `grace` more for `side`: `None` when it is still running then. Dropping
+/// a MusicBrainz leg never cancels its fetch, which runs on its own task
+/// and keeps its answer in the provider cache for the next ask.
+async fn with_grace<A, B>(
+    main: impl Future<Output = A>,
+    side: impl Future<Output = B>,
+    grace: Duration,
+) -> (A, Option<B>) {
+    // Boxed: the legs are large futures, and a search runs inside a
+    // request's future.
+    let (main, side) = (Box::pin(main), Box::pin(side));
+    let (done, finished) = tokio::sync::oneshot::channel::<()>();
+    let main = async move {
+        let out = main.await;
+        let _ = done.send(());
+        out
+    };
+    let side = async move {
+        tokio::select! {
+            biased;
+            out = side => Some(out),
+            _ = async {
+                let _ = finished.await;
+                tokio::time::sleep(grace).await;
+            } => None,
+        }
+    };
+    tokio::join!(main, side)
 }
 
 /// The wire status of one MusicBrainz bucket. No bucket (not wanted)

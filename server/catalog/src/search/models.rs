@@ -1,8 +1,9 @@
 //! Unified search DTOs: the native `/api/v3/search` shapes.
 //!
-//! Everything is snake_case. Artist and album hits come from MusicBrainz
-//! joined with the library (`id` set when the library holds a copy); track
-//! hits come from the library alone and carry [`SearchTrackDetail`].
+//! Everything is snake_case. Hits come from MusicBrainz joined with the
+//! library (`id` set when the library holds a copy). A song the library
+//! holds carries [`SearchTrackDetail`], one it lacks
+//! [`SearchRemoteTrackDetail`].
 //! `in_library` and `requested` are read fresh from the library and the
 //! request list on every search.
 
@@ -30,7 +31,9 @@ pub enum SearchKind {
 pub enum SearchRemoteStatus {
     /// Full results.
     Ok,
-    /// Some provider results missing; what arrived is shown.
+    /// Some provider results missing; what arrived is shown. A full
+    /// search's songs answer this while MusicBrainz's are still on their
+    /// way, and the same search asked again shortly has them.
     Partial,
     /// The provider timed out; local matches are still shown.
     Timeout,
@@ -59,9 +62,9 @@ pub struct SearchResultItem {
     /// MusicBrainz id: the hit's own for MusicBrainz hits, the match row's
     /// for library rows. Absent means unidentified, never failure.
     pub musicbrainz_id: Option<String>,
-    /// True when the library holds this artist or album.
+    /// True when the library holds this artist, album or song.
     pub in_library: bool,
-    /// True when an acquisition request is open for this album.
+    /// True when an acquisition request is open for this album or song.
     pub requested: bool,
     /// Match score, 0-100. MusicBrainz hits carry MusicBrainz's relevance;
     /// library rows score 100 exact, 90 prefix, 70 substring, and songs
@@ -87,11 +90,12 @@ pub struct SearchResultItem {
 }
 
 /// What requesting a MusicBrainz song and showing its cover need: the
-/// release it is shown under, its group and the credited artist.
+/// release it is shown under (the one its request tries first), its group
+/// and the credited artist.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct SearchRemoteTrackDetail {
-    /// The release's group, when MusicBrainz named one; covers come from it.
-    pub release_group_mbid: Option<String>,
+    /// The release's group; covers come from it.
+    pub release_group_mbid: String,
     /// The release.
     pub release_mbid: String,
     /// The release's title.
@@ -145,7 +149,8 @@ pub struct SearchResponse {
     pub artist_status: SearchRemoteStatus,
     /// Provider health for the album bucket.
     pub album_status: SearchRemoteStatus,
-    /// Provider health for the track bucket.
+    /// Provider health for the track bucket; `partial` while MusicBrainz's
+    /// songs are still on their way.
     pub track_status: SearchRemoteStatus,
 }
 

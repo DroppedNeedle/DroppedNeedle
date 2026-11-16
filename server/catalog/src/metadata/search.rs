@@ -7,7 +7,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use droppedneedle_providers::musicbrainz::{Criticality, hit_score};
+use droppedneedle_providers::musicbrainz::{
+    Criticality, RecordingSearchRelease, ReleaseGroupRef, hit_score, recording_release_group_rank,
+};
 use droppedneedle_providers::{
     CacheKey, Fetched, IntegrationStatus, Policy, RequestPriority, Source, record_current, scoped,
 };
@@ -32,13 +34,14 @@ pub enum RemoteKind {
 pub struct RemoteHit {
     /// Bucket.
     pub kind: RemoteKind,
-    /// Artist or release-group MBID.
+    /// Artist, release-group or recording MBID.
     pub mbid: String,
     /// Name or title.
     pub title: String,
-    /// Credited artist, for albums.
+    /// Credited artist, for albums and songs.
     pub artist: Option<String>,
-    /// First release year, for albums.
+    /// First release year for albums; for songs, the year of the release
+    /// they are shown under.
     pub year: Option<i32>,
     /// Disambiguation comment.
     pub disambiguation: Option<String>,
@@ -56,12 +59,11 @@ pub struct RemoteHit {
     pub track: Option<RemoteTrack>,
 }
 
-/// The release a recording search hit is shown and requested under: its
-/// first official release, else its first.
+/// The release a recording search hit is shown and requested under.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteTrack {
-    /// The release's group, when MusicBrainz named one.
-    pub release_group_mbid: Option<String>,
+    /// The release's group.
+    pub release_group_mbid: String,
     /// The release.
     pub release_mbid: String,
     /// The release's title.
@@ -262,8 +264,9 @@ impl Catalog {
     }
 
     /// Search MusicBrainz recordings for a page of `limit`: songs, not
-    /// videos, each under one of its releases. A recording on no release
-    /// is nothing to request, so it is left out.
+    /// videos, each under the release a track request tries first
+    /// ([`best_release`]). A recording on no release in a group is nothing
+    /// to request, so it is left out.
     pub async fn search_tracks_remote(
         &self,
         query: &str,
@@ -295,12 +298,7 @@ impl Catalog {
                 .filter(|hit| seen.insert(hit.id.to_ascii_lowercase()))
                 .filter(|hit| hit.video != Some(true))
                 .filter_map(|hit| {
-                    let release = hit
-                        .releases
-                        .iter()
-                        .find(|release| release.status.as_deref() == Some("Official"))
-                        .or(hit.releases.first())?;
-                    let group = release.release_group.as_ref();
+                    let (release, group) = best_release(&hit.releases)?;
                     Some(RemoteHit {
                         kind: RemoteKind::Track,
                         title: hit
@@ -317,7 +315,7 @@ impl Catalog {
                         score: i32::try_from(hit_score(hit.score, hit.ext_score)).unwrap_or(0),
                         releases: None,
                         track: Some(RemoteTrack {
-                            release_group_mbid: group.map(|group| group.id.clone()),
+                            release_group_mbid: group.id.clone(),
                             release_mbid: release.id.clone(),
                             album_title: release.title.clone(),
                             duration_seconds: hit
@@ -400,8 +398,9 @@ impl Catalog {
     }
 
     /// Library flags for search rows: owned artists, then owned and
-    /// requested albums, then owned and requested songs (all lowercase
-    /// MBIDs).
+    /// requested albums, then requested songs (all lowercase MBIDs). A
+    /// song the library holds is known by the library row search attaches
+    /// to it, not by a flag.
     pub async fn search_flags(&self, ids: SearchIds<'_>) -> SearchFlags {
         let (artists, albums, tracks) = tokio::join!(
             self.artist_flags(ids.artists),
@@ -416,6 +415,38 @@ impl Catalog {
     }
 }
 
+/// The release a song search hit is shown and requested under, with its
+/// group, in the order a track request tries a recording's releases:
+/// official, not live or remixed, no secondary type, album before EP before
+/// single, earliest, then by id. So the album a row names is the one its
+/// request starts from. `None` when no release names its group.
+fn best_release(
+    releases: &[RecordingSearchRelease],
+) -> Option<(&RecordingSearchRelease, &ReleaseGroupRef)> {
+    releases
+        .iter()
+        .filter_map(|release| Some((release, release.release_group.as_ref()?)))
+        .min_by_key(|(release, group)| {
+            let (official, version_changed, primary, secondary_penalty, date, group) =
+                recording_release_group_rank(
+                    release.status.as_deref(),
+                    &group.secondary_types,
+                    group.primary_type.as_deref(),
+                    release.date.as_deref(),
+                    &group.id,
+                );
+            (
+                official,
+                version_changed,
+                secondary_penalty,
+                primary,
+                date,
+                group,
+                release.id.clone(),
+            )
+        })
+}
+
 /// The MusicBrainz ids of one search's rows, per bucket.
 #[derive(Debug, Clone, Copy)]
 pub struct SearchIds<'a> {
@@ -427,14 +458,14 @@ pub struct SearchIds<'a> {
     pub tracks: &'a [String],
 }
 
-/// What the library says about one search's rows: owned artists, and for
-/// albums and songs the owned ids and the ids with an open request.
+/// What the library says about one search's rows: owned artists, owned and
+/// requested albums, and requested songs.
 #[derive(Debug, Clone, Default)]
 pub struct SearchFlags {
     /// Owned artists.
     pub artists: HashSet<String>,
     /// Owned albums, requested albums.
     pub albums: (HashSet<String>, HashSet<String>),
-    /// Owned songs, requested songs.
-    pub tracks: (HashSet<String>, HashSet<String>),
+    /// Requested songs.
+    pub tracks: HashSet<String>,
 }

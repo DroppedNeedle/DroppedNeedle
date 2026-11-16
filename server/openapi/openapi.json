@@ -64022,8 +64022,9 @@
       },
       "SearchRemoteTrackDetail": {
         "type": "object",
-        "description": "What requesting a MusicBrainz song and showing its cover need: the\nrelease it is shown under, its group and the credited artist.",
+        "description": "What requesting a MusicBrainz song and showing its cover need: the\nrelease it is shown under (the one its request tries first), its group\nand the credited artist.",
         "required": [
+          "release_group_mbid",
           "release_mbid"
         ],
         "properties": {
@@ -64050,11 +64051,8 @@
             "description": "Recording length, whole seconds."
           },
           "release_group_mbid": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The release's group, when MusicBrainz named one; covers come from it."
+            "type": "string",
+            "description": "The release's group; covers come from it."
           },
           "release_mbid": {
             "type": "string",
@@ -64131,7 +64129,7 @@
           },
           "track_status": {
             "$ref": "#/components/schemas/SearchRemoteStatus",
-            "description": "Provider health for the track bucket."
+            "description": "Provider health for the track bucket; `partial` while MusicBrainz's\nsongs are still on their way."
           },
           "tracks": {
             "type": "array",
@@ -64181,7 +64179,7 @@
           },
           "in_library": {
             "type": "boolean",
-            "description": "True when the library holds this artist or album."
+            "description": "True when the library holds this artist, album or song."
           },
           "kind": {
             "$ref": "#/components/schemas/SearchKind",
@@ -64207,7 +64205,7 @@
           },
           "requested": {
             "type": "boolean",
-            "description": "True when an acquisition request is open for this album."
+            "description": "True when an acquisition request is open for this album or song."
           },
           "score": {
             "type": "integer",

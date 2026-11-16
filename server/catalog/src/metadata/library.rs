@@ -138,8 +138,6 @@ enum IdSet {
     OwnedArtists,
     /// Albums with an open request.
     Requested,
-    /// Owned songs by recording.
-    OwnedRecordings,
     /// Songs with an open request.
     RequestedTracks,
 }
@@ -169,7 +167,6 @@ impl LocalCatalog {
                         IdSet::OwnedReleases => (sql::owners_by_release(len), 1),
                         IdSet::OwnedArtists => (sql::owned_artists_in(len), 0),
                         IdSet::Requested => (sql::requested_in(len), 0),
-                        IdSet::OwnedRecordings => (sql::owned_recordings_in(len), 0),
                         IdSet::RequestedTracks => (sql::requested_tracks_in(len), 0),
                     };
                     rows(conn, &text, &values, |row| row.get::<_, String>(column))
@@ -242,11 +239,6 @@ impl LocalCatalog {
     /// The album MBIDs (lowercase) with an open acquisition request.
     pub async fn requested_albums(&self, mbids: &[String]) -> Result<HashSet<String>, StoreError> {
         self.collect_ids(IdSet::Requested, mbids).await
-    }
-
-    /// The recording MBIDs (lowercase) of owned, streamable songs.
-    pub async fn owned_tracks(&self, mbids: &[String]) -> Result<HashSet<String>, StoreError> {
-        self.collect_ids(IdSet::OwnedRecordings, mbids).await
     }
 
     /// The recording MBIDs (lowercase) with an open acquisition request.

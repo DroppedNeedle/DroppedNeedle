@@ -140,6 +140,8 @@ droppedneedle_kernel::sql! {
     }
     /// Song hits through the FTS index, in `SongHit`'s columns.
     family SONG_HITS_WORDS = song_hits_words;
+    /// The library's copies of a list of recordings, in `SongHit`'s columns.
+    family SONG_HITS_BY_RECORDING = song_hits_by_recording;
 }
 
 /// `SONG_HITS_WORDS` for a query with `short` words under 3 characters.
@@ -147,5 +149,25 @@ pub(super) fn song_hits_words(short: ListLen) -> String {
     format!(
         "{SONG_START}{TRACK_TEXT_MATCH}{}{SONG_END}",
         TRACK_WORD_LIKE.repeat(short.get())
+    )
+}
+
+/// `SONG_HITS_BY_RECORDING` for `ids` lowercase recording MBIDs, each bound
+/// three times: the indexed tracks whose recording id as pages read it (the
+/// match row's, else the tags') is one of them, on an album the lists show.
+/// They rank in the tiers of the query bound first, like every song hit.
+pub(super) fn song_hits_by_recording(ids: ListLen) -> String {
+    let marks = vec!["?"; ids.get()].join(",");
+    format!(
+        "{SONG_START}t.id IN (SELECT ct.id FROM local_tracks ct \
+         JOIN local_albums cb ON cb.id = ct.local_album_id \
+         LEFT JOIN local_track_external_identities ce ON ce.local_track_id = ct.id AND {} \
+         WHERE {} AND lower({}) IN ({marks}) \
+         AND ct.id IN (SELECT local_track_id FROM local_track_external_identities \
+         WHERE recording_mbid IN ({marks}) UNION SELECT id FROM local_tracks \
+         WHERE lower(COALESCE(embedded_recording_mbid, '')) IN ({marks}))){SONG_END}",
+        musicbrainz!("ce"),
+        owned_album!("cb"),
+        recording_mbid!("ce", "ct"),
     )
 }

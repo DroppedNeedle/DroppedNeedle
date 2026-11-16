@@ -18,7 +18,7 @@
 		applyArtistEnrichment,
 		applyAlbumEnrichment
 	} from '$lib/features/search/queries/enrichment';
-	import { getSearchStatusNotice } from '$lib/features/search/components/searchStatus';
+	import { getCombinedSearchNotice } from '$lib/features/search/components/searchStatus';
 	import {
 		COMBINED_SEARCH_LIMITS,
 		getSearchEnrichBatchV3Query,
@@ -38,6 +38,8 @@
 	}
 
 	let { data }: Props = $props();
+
+	const SONGS_RETRY_MS = 1500;
 
 	let enrichment: EnrichmentResponseV3 | null = $state(null);
 	let enrichmentSource: EnrichmentSource = $state(null);
@@ -87,22 +89,24 @@
 	let trackStatus: SearchRemoteStatus = $derived(
 		searchQuery.isError ? 'error' : (searchQuery.data?.track_status ?? 'ok')
 	);
-	let artistNotice = $derived(getSearchStatusNotice(artistStatus, 'artists'));
-	let albumNotice = $derived(getSearchStatusNotice(albumStatus, 'albums'));
-	let trackNotice = $derived(getSearchStatusNotice(trackStatus, 'tracks'));
+	let notice = $derived(
+		getCombinedSearchNotice({ artists: artistStatus, albums: albumStatus, tracks: trackStatus })
+	);
+	// MusicBrainz's songs come last and the server answers without them
+	// ('partial') rather than hold the page; their fetch carries on, so the
+	// same search asked again shortly has them.
+	let songsOnTheWay = $derived(trackStatus === 'partial');
 	let loadingArtists = $derived(searchQuery.isPending && artists.length === 0);
 	let loadingAlbums = $derived(searchQuery.isPending && albums.length === 0);
 	let hasSearched = $derived(normalizedQuery.length >= 2);
 
-	let isSearching = $derived(searchQuery.isFetching);
+	let isSearching = $derived(searchQuery.isFetching && !songsOnTheWay);
 	let hasTopResult = $derived(topArtist != null || topAlbum != null);
 	let displayedArtists = $derived(
 		topArtist ? artists.filter((a) => a.musicbrainz_id !== topArtist?.musicbrainz_id) : artists
 	);
 	let artistCards = $derived(displayedArtists.slice(0, 6));
-	let artistPlaceholderCount = $derived(
-		searchQuery.isFetching ? Math.max(0, 6 - artistCards.length) : 0
-	);
+	let artistPlaceholderCount = $derived(isSearching ? Math.max(0, 6 - artistCards.length) : 0);
 	let displayedAlbums = $derived(
 		topAlbum ? albums.filter((a) => a.musicbrainz_id !== topAlbum?.musicbrainz_id) : albums
 	);
@@ -128,6 +132,12 @@
 	});
 
 	$effect(() => {
+		if (!songsOnTheWay || searchQuery.isFetching) return;
+		const timer = setTimeout(() => void searchQuery.refetch(), SONGS_RETRY_MS);
+		return () => clearTimeout(timer);
+	});
+
+	$effect(() => {
 		const handleRefresh = () => {
 			void searchQuery.refetch();
 		};
@@ -145,18 +155,8 @@
 <div class="px-4 pb-10 sm:px-6 lg:px-8">
 	{#if hasSearched}
 		<div class="space-y-10 pt-4">
-			{#if artistNotice || albumNotice || trackNotice}
-				<div class="space-y-2">
-					{#if artistNotice}
-						<SearchNotice notice={artistNotice} onretry={() => searchQuery.refetch()} />
-					{/if}
-					{#if albumNotice}
-						<SearchNotice notice={albumNotice} onretry={() => searchQuery.refetch()} />
-					{/if}
-					{#if trackNotice}
-						<SearchNotice notice={trackNotice} onretry={() => searchQuery.refetch()} />
-					{/if}
-				</div>
+			{#if notice}
+				<SearchNotice {notice} onretry={() => searchQuery.refetch()} />
 			{/if}
 
 			{#if isSearching}
@@ -196,7 +196,7 @@
 						{/each}
 					</SearchShelf>
 				{:else if displayedArtists.length > 0}
-					<SearchShelf label="Artist search results" swipe busy={searchQuery.isFetching}>
+					<SearchShelf label="Artist search results" swipe busy={isSearching}>
 						{#each artistCards as artist (artist.musicbrainz_id)}
 							<SearchArtistCard
 								{artist}

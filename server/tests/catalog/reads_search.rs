@@ -1230,3 +1230,189 @@ async fn songs_the_library_lacks_come_from_musicbrainz() {
         .collect();
     assert_eq!(ids, vec!["REC-OWNED", "rec-sunflower"], "{body}");
 }
+
+/// A song the library holds never shows as one to request: its MusicBrainz
+/// hit takes the library's copy by the recording id pages read (the tags'
+/// when no match row names one), even when the copy's own title is not
+/// what was searched. Two files of one recording stay two rows, the hit
+/// folding into one of them, and the library scope keeps both too.
+#[tokio::test]
+async fn owned_songs_show_their_library_copy_and_copies_stay_apart() {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!("{MUSICBRAINZ}/recording"),
+        200,
+        &[],
+        search_answer(
+            "recordings",
+            vec![
+                recording_hit(
+                    "rec-twice",
+                    "Sunflower",
+                    "Post Malone",
+                    100,
+                    &[("rel-a", "Hollywood's Bleeding", "Official", "rg-a")],
+                ),
+                recording_hit(
+                    "rec-tagged",
+                    "Sunflower",
+                    "Post Malone",
+                    95,
+                    &[("rel-b", "Spider-Verse", "Official", "rg-b")],
+                ),
+            ],
+        ),
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-owned-songs");
+    seed_catalog(&app_db);
+    for (id, title) in [
+        ("t-one", "Sunflower"),
+        ("t-two", "Sunflower"),
+        ("t-tagged", "Girassol"),
+    ] {
+        seed_track(
+            &app_db,
+            id,
+            "album-renaissance",
+            title,
+            "Renaissance",
+            "indexed",
+        );
+    }
+    for id in ["t-one", "t-two"] {
+        app_db.exec(
+            "INSERT INTO local_track_external_identities (local_track_id, provider, \
+             recording_mbid, decision_source, selected_at) \
+             VALUES (?, 'musicbrainz', 'rec-twice', 'manual', 0)",
+            [id],
+        );
+    }
+    app_db.exec(
+        "UPDATE local_tracks SET embedded_recording_mbid = 'rec-tagged' WHERE id = 't-tagged'",
+        [],
+    );
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire),
+    )
+    .await;
+
+    let rows = |body: &serde_json::Value| -> Vec<(String, String, bool)> {
+        let mut rows: Vec<(String, String, bool)> = body["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|hit| {
+                (
+                    hit["id"].as_str().unwrap_or("none").to_owned(),
+                    hit["musicbrainz_id"].as_str().unwrap_or("").to_owned(),
+                    hit["remote_track"].is_null(),
+                )
+            })
+            .collect();
+        rows.sort();
+        rows
+    };
+    let (status, _, bytes) = call(
+        app.clone(),
+        Method::GET,
+        "/api/v3/search?q=sunflower&buckets=tracks",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&bytes);
+    assert_eq!(
+        rows(&body),
+        vec![
+            ("t-one".to_owned(), "rec-twice".to_owned(), true),
+            ("t-tagged".to_owned(), "rec-tagged".to_owned(), true),
+            ("t-two".to_owned(), "rec-twice".to_owned(), true),
+        ],
+        "{body}"
+    );
+
+    let (status, _, bytes) = call(
+        app,
+        Method::GET,
+        "/api/v3/search?q=sunflower&buckets=tracks&scope=library",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&bytes);
+    assert_eq!(
+        rows(&body),
+        vec![
+            ("t-one".to_owned(), "rec-twice".to_owned(), true),
+            ("t-two".to_owned(), "rec-twice".to_owned(), true),
+        ],
+        "{body}"
+    );
+}
+
+/// MusicBrainz's songs never hold a full search: once the library and the
+/// artist and album legs are in, a songs leg still out leaves the page
+/// answering with the songs bucket `partial`, long before the deadline.
+#[tokio::test]
+async fn a_slow_songs_leg_does_not_hold_the_page() {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!("{MUSICBRAINZ}/artist"),
+        200,
+        &[],
+        search_answer("artists", vec![artist_hit("Sunflower Bean", 100)]),
+    );
+    wire.answer(
+        &format!("{MUSICBRAINZ}/release-group"),
+        200,
+        &[],
+        search_answer(
+            "release-groups",
+            vec![group_hit((
+                "rg-sun",
+                "Sunflower",
+                "Someone",
+                "Album",
+                100,
+                1,
+            ))],
+        ),
+    );
+    wire.on(
+        droppedneedle_providers::executor::Method::Get,
+        &format!("{MUSICBRAINZ}/recording"),
+        droppedneedle_providers::test_support::Scripted::Hang,
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-slow-songs");
+    seed_catalog(&app_db);
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire),
+    )
+    .await;
+
+    let started = std::time::Instant::now();
+    let (status, _, bytes) = call(
+        app,
+        Method::GET,
+        "/api/v3/search?q=sunflower",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        started.elapsed() < search::service::FULL_SEARCH_DEADLINE / 2,
+        "took {:?}",
+        started.elapsed()
+    );
+    let body = json(&bytes);
+    assert_eq!(body["track_status"], "partial", "{body}");
+    assert_eq!(body["album_status"], "ok", "{body}");
+    assert_eq!(body["albums"][0]["musicbrainz_id"], "rg-sun", "{body}");
+}
