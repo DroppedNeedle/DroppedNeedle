@@ -5,6 +5,7 @@ mod common;
 
 mod library_browse_journey;
 mod library_contrib;
+mod library_duplicates;
 mod library_identify;
 mod library_identify_shutdown;
 mod library_journey;

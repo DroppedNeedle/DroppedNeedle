@@ -5,6 +5,7 @@ use droppedneedle_kernel::error::ApiError;
 pub mod artist_link;
 pub mod contrib;
 pub mod corrections;
+pub mod duplicates;
 pub mod edition;
 pub mod error;
 pub mod handlers;

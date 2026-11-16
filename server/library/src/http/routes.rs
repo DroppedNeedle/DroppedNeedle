@@ -17,6 +17,7 @@ pub fn library_routes() -> Routes<LibraryServices> {
         .merge(super::management::routes())
         .merge(super::management_tools::routes())
         .merge(super::reconcile::routes())
+        .merge(super::duplicates::routes())
         .merge(super::repairs::routes())
         .merge(super::reviews::routes())
         .merge(super::removal::routes())

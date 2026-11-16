@@ -2772,10 +2772,13 @@ fn every_registered_statement_prepares() {
 /// every track under the scopes asked about, the list of folders the catalog
 /// holds tracks for, and the check for any track, which stops at the first
 /// row. An admin opens these by hand.
+/// The duplicates list, a curator's page that lists groups across the whole
+/// library: it reads every tagged file to find the groups' owners.
 const TRACK_WALKS: &[&str] = &[
     "droppedneedle_library::scan::sql::ALBUM_TRACKS",
     "droppedneedle_library::corrections::sql::CANDIDATE_ALBUMS",
     "droppedneedle_library::corrections::sql::CANDIDATES",
+    "droppedneedle_library::duplicates::sql::DUPLICATE_ALBUMS",
     "droppedneedle_catalog::local::sql::TRACK_PAGE_LIKE",
     "droppedneedle_catalog::local::sql::TRACK_PAGE_WORDS",
     "droppedneedle_catalog::local::sql::TRACK_COUNT_LIKE",

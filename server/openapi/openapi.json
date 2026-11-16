@@ -15048,6 +15048,86 @@
         ]
       }
     },
+    "/api/v3/library/duplicates": {
+      "get": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Albums the library holds more than once, a page of groups at a time.",
+        "operationId": "list_duplicate_albums",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "The previous page's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Groups per page, 1 to 100 (50 by default); more is read as 100.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of duplicate groups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_DuplicateGroupView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Curator role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/folds/{fold_id}/undo": {
       "post": {
         "tags": [
@@ -44057,6 +44137,99 @@
           }
         }
       },
+      "DuplicateClass": {
+        "type": "string",
+        "description": "What a group's copies show. A group lists every one that applies.",
+        "enum": [
+          "same_release",
+          "different_releases",
+          "incomplete_copy"
+        ]
+      },
+      "DuplicateCopyView": {
+        "type": "object",
+        "description": "One album in a duplicate group.",
+        "required": [
+          "album_id",
+          "title",
+          "artist",
+          "track_count",
+          "total_size_bytes",
+          "formats",
+          "cover_available",
+          "evidence",
+          "doubted"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "The local album id; its page opens on it."
+          },
+          "artist": {
+            "type": "string"
+          },
+          "cover_available": {
+            "type": "boolean",
+            "description": "It has cover art of its own; otherwise the group's cover stands in."
+          },
+          "decision_source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecisionSource"
+              }
+            ],
+            "description": "Who set that match."
+          },
+          "doubted": {
+            "type": "boolean",
+            "description": "Its match is a guess its files contradict."
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/DuplicateEvidence",
+            "description": "How the copy names its group: its match row or its files' tags."
+          },
+          "formats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The distinct file formats of its indexed tracks, sorted."
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release its match row names, when the row names this group."
+          },
+          "title": {
+            "type": "string"
+          },
+          "total_size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Their bytes.",
+            "minimum": 0
+          },
+          "track_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Indexed tracks the album holds.",
+            "minimum": 0
+          }
+        }
+      },
+      "DuplicateEvidence": {
+        "type": "string",
+        "description": "How one copy names its group.",
+        "enum": [
+          "stored_match",
+          "file_tags"
+        ]
+      },
       "DuplicateEvidenceKind": {
         "type": "string",
         "description": "Duplicate evidence kinds, ordered weakest-last:\nexact_discogs_url < release_group < barcode < similar.",
@@ -44066,6 +44239,44 @@
           "barcode",
           "similar"
         ]
+      },
+      "DuplicateGroupView": {
+        "type": "object",
+        "description": "Albums the library lists more than once.",
+        "required": [
+          "id",
+          "title",
+          "artist",
+          "classes",
+          "copies"
+        ],
+        "properties": {
+          "artist": {
+            "type": "string",
+            "description": "The first copy's artist."
+          },
+          "classes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DuplicateClass"
+            },
+            "description": "What the copies show: a shared release, different releases, a copy\nwith fewer tracks. Empty when none applies."
+          },
+          "copies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DuplicateCopyView"
+            }
+          },
+          "id": {
+            "type": "string",
+            "description": "The release group the copies share."
+          },
+          "title": {
+            "type": "string",
+            "description": "The first copy's title, to name the group by."
+          }
+        }
       },
       "EditionAcquireResponse": {
         "type": "object",
@@ -54644,6 +54855,74 @@
                   "format": "int32",
                   "description": "Copies that can't be checked: in a bin no longer set, behind a\nlink, or while the bins can't be told.",
                   "minimum": 0
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rows in the whole list, for lists that count them.",
+            "minimum": 0
+          }
+        }
+      },
+      "Page_DuplicateGroupView": {
+        "type": "object",
+        "description": "One page of a list.",
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Albums the library lists more than once.",
+              "required": [
+                "id",
+                "title",
+                "artist",
+                "classes",
+                "copies"
+              ],
+              "properties": {
+                "artist": {
+                  "type": "string",
+                  "description": "The first copy's artist."
+                },
+                "classes": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DuplicateClass"
+                  },
+                  "description": "What the copies show: a shared release, different releases, a copy\nwith fewer tracks. Empty when none applies."
+                },
+                "copies": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DuplicateCopyView"
+                  }
+                },
+                "id": {
+                  "type": "string",
+                  "description": "The release group the copies share."
+                },
+                "title": {
+                  "type": "string",
+                  "description": "The first copy's title, to name the group by."
                 }
               }
             }
