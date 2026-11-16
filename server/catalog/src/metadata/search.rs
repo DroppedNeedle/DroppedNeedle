@@ -13,17 +13,15 @@ use droppedneedle_providers::musicbrainz::{
     recording_release_group_rank,
 };
 use droppedneedle_providers::{
-    CacheKey, Fetched, IntegrationStatus, Policy, RequestPriority, Source, record_current, scoped,
+    CacheKey, Fetched, IntegrationStatus, Policy, ProviderError, RequestPriority, Source,
+    record_current, scoped,
 };
 
 use super::error::CatalogError;
 use super::mapping;
+use super::upstream::CatalogListenBrainz;
 use super::{Catalog, mb_search_error};
 use crate::discover::listening::shared::{self, Lender};
-
-/// How long a search waits for ListenBrainz's listen counts, after
-/// MusicBrainz has answered. Counts that miss it leave the text order.
-pub const LISTENS_DEADLINE: Duration = Duration::from_secs(2);
 
 /// Which MusicBrainz bucket a hit came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -451,6 +449,7 @@ fn best_release(
     releases
         .iter()
         .filter_map(|release| Some((release, release.release_group.as_ref()?)))
+        .filter(|(_, group)| !group.id.trim().is_empty())
         .min_by_key(|(release, group)| {
             let (official, version_changed, primary, secondary_penalty, date, group) =
                 recording_release_group_rank(
@@ -474,55 +473,183 @@ fn best_release(
 
 impl Catalog {
     /// ListenBrainz listen counts for release groups and recordings
-    /// (lowercase MBIDs), read anonymously under [`LISTENS_DEADLINE`] from
-    /// the rows discover keeps, asking only for what no kept row holds.
-    /// Empty while ListenBrainz reads are off, and for whatever failed or
-    /// missed the deadline: counts rank, they never fail a search.
-    pub async fn listen_counts(
+    /// (lowercase MBIDs), from the cache only, fresh or kept: search never
+    /// waits on ListenBrainz. With `fill`, the ids with nothing kept are
+    /// fetched in the background ([`Self::fill_listen_counts`]), so the next
+    /// search ranks by them and a hover's enrichment finds them kept. A
+    /// search fills once: not while its songs are still on their way.
+    /// Empty, and nothing fetched, while ListenBrainz reads are off.
+    pub async fn cached_listen_counts(
         &self,
         release_groups: &[String],
         recordings: &[String],
+        fill: bool,
     ) -> (HashMap<String, i64>, HashMap<String, i64>) {
         let Some(client) = self.upstream().listenbrainz() else {
             return (HashMap::new(), HashMap::new());
         };
-        let cache = self.upstream().cache();
-        let priority = RequestPriority::UserInitiated;
-        let groups =
-            shared::listen_counts(cache, &client, release_groups, &Lender::Anonymous, priority);
-        let client = client.clone();
-        let tracks = cache.fetch_each(
-            recordings,
-            recording_listen_count_key,
-            Policy::LISTENBRAINZ_RECORDING,
-            |missing| async move {
-                client
-                    .recording_popularity(&missing, &ListenBrainzCredentials::default(), priority)
-                    .await
-            },
-        );
-        let counts = tokio::time::timeout(LISTENS_DEADLINE, async { tokio::join!(groups, tracks) });
-        let lower = |counts: HashMap<String, i64>| {
-            counts
-                .into_iter()
-                .map(|(mbid, count)| (mbid.to_ascii_lowercase(), count))
-                .collect()
-        };
-        match counts.await {
-            Ok((Ok(groups), Ok(tracks))) => (lower(groups), lower(tracks)),
-            Ok((groups, tracks)) => {
-                for error in [groups.err(), tracks.err()].into_iter().flatten() {
-                    tracing::warn!(%error, "listenbrainz counts failed; ranking by text");
+        let (groups, missing_groups) = self
+            .kept_counts(release_groups, shared::listen_count_key)
+            .await;
+        let (tracks, missing_tracks) = self
+            .kept_counts(recordings, recording_listen_count_key)
+            .await;
+        if fill {
+            self.fill_listen_counts(client, missing_groups, missing_tracks);
+        }
+        (groups, tracks)
+    }
+
+    /// The counts the cache keeps for `ids`, fresh or not, by lowercase id,
+    /// read in one batch, and the ids it has no row for.
+    async fn kept_counts(
+        &self,
+        ids: &[String],
+        key_of: fn(&str) -> CacheKey,
+    ) -> (HashMap<String, i64>, Vec<String>) {
+        let keys: Vec<CacheKey> = ids.iter().map(|id| key_of(id)).collect();
+        let rows = self.upstream().cache().peek_many::<i64>(&keys).await;
+        let mut counts = HashMap::new();
+        let mut missing = Vec::new();
+        for (id, row) in ids.iter().zip(rows) {
+            match row {
+                Some(Some(count)) => {
+                    counts.insert(id.to_ascii_lowercase(), count);
                 }
-                (HashMap::new(), HashMap::new())
-            }
-            Err(_) => {
-                tracing::warn!("listenbrainz counts missed the deadline; ranking by text");
-                (HashMap::new(), HashMap::new())
+                Some(None) => {}
+                None => missing.push(id.clone()),
             }
         }
+        (counts, missing)
+    }
+
+    /// Fetch and keep the listen counts of `release_groups` and
+    /// `recordings`, anonymously and at background priority, on a task of
+    /// its own that logs its own end. An id already being fetched is
+    /// skipped. A fetch that fails stores nothing, so a later search asks
+    /// again: while fetches fail, at most one starts every
+    /// [`LISTENS_RETRY`], and the failure is logged once until one
+    /// succeeds.
+    fn fill_listen_counts(
+        &self,
+        client: CatalogListenBrainz,
+        release_groups: Vec<String>,
+        recordings: Vec<String>,
+    ) {
+        {
+            let mut failing = self
+                .inner
+                .listens_failing
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if let Some(tried) = *failing {
+                if tried.elapsed() < LISTENS_RETRY {
+                    return;
+                }
+                *failing = Some(tokio::time::Instant::now());
+            }
+        }
+        let claim = |ids: Vec<String>, kind: &str| -> Vec<String> {
+            let mut warming = self
+                .inner
+                .warming
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let mut ids: Vec<String> = ids
+                .into_iter()
+                .map(|id| id.trim().to_ascii_lowercase())
+                .filter(|id| !id.is_empty() && warming.insert(format!("listens:{kind}:{id}")))
+                .collect();
+            ids.sort();
+            ids.dedup();
+            ids
+        };
+        let groups = claim(release_groups, "group");
+        let tracks = claim(recordings, "recording");
+        if groups.is_empty() && tracks.is_empty() {
+            return;
+        }
+        let catalog = self.clone();
+        tokio::spawn(async move {
+            let outcome = catalog.fetch_listen_counts(&client, &groups, &tracks).await;
+            let was_failing = {
+                let mut failing = catalog
+                    .inner
+                    .listens_failing
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                let was = failing.is_some();
+                *failing = match outcome {
+                    Ok(()) => None,
+                    Err(_) => Some((*failing).unwrap_or_else(tokio::time::Instant::now)),
+                };
+                was
+            };
+            match outcome {
+                Ok(()) if was_failing => {
+                    tracing::info!("listenbrainz listen counts for search are back");
+                }
+                Err(error) if !was_failing => {
+                    tracing::warn!(
+                        %error,
+                        "listenbrainz listen counts for search failed; search ranks by text"
+                    );
+                }
+                _ => {}
+            }
+            let mut warming = catalog
+                .inner
+                .warming
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            for id in &groups {
+                warming.remove(&format!("listens:group:{id}"));
+            }
+            for id in &tracks {
+                warming.remove(&format!("listens:recording:{id}"));
+            }
+        });
+    }
+
+    /// One background fetch of the counts, groups then recordings, each
+    /// kept row by row.
+    async fn fetch_listen_counts(
+        &self,
+        client: &CatalogListenBrainz,
+        release_groups: &[String],
+        recordings: &[String],
+    ) -> Result<(), ProviderError> {
+        let cache = self.upstream().cache();
+        let priority = RequestPriority::BackgroundSync;
+        if !release_groups.is_empty() {
+            shared::listen_counts(cache, client, release_groups, &Lender::Anonymous, priority)
+                .await?;
+        }
+        if !recordings.is_empty() {
+            cache
+                .fetch_each(
+                    recordings,
+                    recording_listen_count_key,
+                    Policy::LISTENBRAINZ_RECORDING,
+                    |missing| async move {
+                        client
+                            .recording_popularity(
+                                &missing,
+                                &ListenBrainzCredentials::default(),
+                                priority,
+                            )
+                            .await
+                    },
+                )
+                .await?;
+        }
+        Ok(())
     }
 }
+
+/// How often a background fetch of search listen counts starts while they
+/// keep failing.
+const LISTENS_RETRY: Duration = Duration::from_secs(60);
 
 /// The cache key of one recording's listen count.
 fn recording_listen_count_key(recording_mbid: &str) -> CacheKey {

@@ -66,14 +66,16 @@ export function getSearchStatusNotice(
 /**
  * One notice for a page that shows several buckets: the worst status among
  * them, naming the bucket when it is the only one affected. Songs still on
- * their way (`partial` on the tracks bucket) need no notice: the page asks
- * for them again by itself.
+ * their way (`partial` on the tracks bucket while `songsOnTheWay`) need no
+ * notice: the page is asking for them again by itself.
  */
 export function getCombinedSearchNotice(
-	statuses: Record<SearchNoticeBucket, SearchRemoteStatus>
+	statuses: Record<SearchNoticeBucket, SearchRemoteStatus>,
+	songsOnTheWay = false
 ): SearchStatusNotice | null {
 	const shown = (Object.entries(statuses) as [SearchNoticeBucket, SearchRemoteStatus][]).filter(
-		([bucket, status]) => status !== 'ok' && !(bucket === 'tracks' && status === 'partial')
+		([bucket, status]) =>
+			status !== 'ok' && !(bucket === 'tracks' && status === 'partial' && songsOnTheWay)
 	);
 	if (shown.length === 0) return null;
 	const worst = SEVERITY.find((status) => shown.some(([, shownStatus]) => shownStatus === status));

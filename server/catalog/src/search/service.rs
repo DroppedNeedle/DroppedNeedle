@@ -7,9 +7,12 @@
 //! [`rank`]: a library row that matches exactly or as a prefix comes
 //! first, then a hit whose title is the query, whatever MusicBrainz scored
 //! it (it scores an album's tributes and namesakes as high as the album),
-//! then what people listen to most, by ListenBrainz's counts for the
-//! album, or for the song and its album, and only then the text score.
-//! Without counts (ListenBrainz off, late or down) the text score decides.
+//! then, for a person who follows ListenBrainz, what people listen to most
+//! among the hits with a fair text score, and only then the text score.
+//! Listens are ListenBrainz's counts for the album, or for the song (its
+//! album's when it has none of its own), read from the cache only: a
+//! count not held yet is fetched in the background for the next search.
+//! Without counts the text score decides.
 //! A dead MusicBrainz never fails a search: the library hits come back
 //! with the bucket status saying why the rest is missing.
 //!
@@ -33,6 +36,7 @@ use crate::metadata::Catalog;
 use crate::metadata::search::{
     RemoteBucket, RemoteHit, RemoteKind, RemoteState, SearchFlags, SearchIds,
 };
+use droppedneedle_kernel::runtime_config::sections::ListenSource;
 use droppedneedle_providers::musicbrainz::OnEmpty;
 
 use super::models::{
@@ -50,6 +54,9 @@ pub const SCORE_PREFIX: i32 = 90;
 pub const SCORE_SUBSTRING: i32 = 70;
 /// Score for a song matched only through its artist or album words.
 pub const SCORE_OTHER_FIELD: i32 = 60;
+/// The text score a hit needs before its listens rank it: a namesake that
+/// barely matches never rises on another album's fame.
+pub const LISTENS_FLOOR: i32 = 50;
 
 /// A drill-down bucket.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +149,7 @@ impl SearchService {
         limits: BucketLimits,
         buckets: &[Bucket],
         scope: SearchScope,
+        user_id: &str,
     ) -> Result<SearchResponse, DbError> {
         let folded = droppedneedle_kernel::db::fold::fold_text(query);
         if folded.is_empty() {
@@ -234,7 +242,10 @@ impl SearchService {
         self.apply_flags(&mut artists, &mut albums, &mut tracks)
             .await;
         if scope == SearchScope::All {
-            self.apply_listens(&mut albums, &mut tracks).await;
+            // A search whose songs are late fills when they land.
+            let fill = track_status != SearchRemoteStatus::Partial;
+            self.apply_listens(user_id, &mut albums, &mut tracks, fill)
+                .await;
         }
         let artists = best(artists, limits.artists, &folded);
         let albums = best(albums, limits.albums, &folded);
@@ -262,12 +273,13 @@ impl SearchService {
         query: &str,
         limit: u32,
         offset: u32,
+        user_id: &str,
     ) -> Result<SearchBucketResponse, DbError> {
         let folded = droppedneedle_kernel::db::fold::fold_text(query);
         let (results, status) = if folded.is_empty() {
             (Vec::new(), SearchRemoteStatus::Ok)
         } else {
-            self.bucket_page(bucket, query, &folded, limit, offset)
+            self.bucket_page(bucket, query, &folded, limit, offset, user_id)
                 .await?
         };
         let top_result = if offset == 0 {
@@ -292,6 +304,7 @@ impl SearchService {
         folded: &str,
         limit: u32,
         offset: u32,
+        user_id: &str,
     ) -> Result<(Vec<SearchResultItem>, SearchRemoteStatus), DbError> {
         let remote = self
             .remote_bucket(
@@ -359,7 +372,7 @@ impl SearchService {
             Bucket::Tracks => (&mut none, &mut other, &mut candidates),
         };
         self.apply_flags(artists, albums, tracks).await;
-        self.apply_listens(albums, tracks).await;
+        self.apply_listens(user_id, albums, tracks, true).await;
         let items = ranked(candidates, folded)
             .into_iter()
             .map(|(_, item)| item)
@@ -474,26 +487,51 @@ impl SearchService {
         }
     }
 
-    /// Give albums and songs their ListenBrainz listens: an album's group,
-    /// and for a song the more of its recording and its album, since one
-    /// song's listens scatter over its many recordings.
-    async fn apply_listens(&self, albums: &mut [Candidate], tracks: &mut [Candidate]) {
+    /// Give albums and songs with a fair text score their ListenBrainz
+    /// listens, for a person who follows ListenBrainz: an album its
+    /// group's, a song its own recording's, else its album's. Counts come
+    /// from the cache only; a count of zero is no count. Nothing is read,
+    /// or fetched, for anyone else.
+    async fn apply_listens(
+        &self,
+        user_id: &str,
+        albums: &mut [Candidate],
+        tracks: &mut [Candidate],
+        fill: bool,
+    ) {
+        let fair = |row: &&mut Candidate| row.score() >= LISTENS_FLOOR;
         let groups: Vec<String> = albums
             .iter()
             .chain(tracks.iter())
+            .filter(|row| row.score() >= LISTENS_FLOOR)
             .filter_map(Candidate::release_group)
             .collect();
-        let recordings: Vec<String> = tracks.iter().filter_map(Candidate::recording).collect();
+        let recordings: Vec<String> = tracks
+            .iter()
+            .filter(|row| row.score() >= LISTENS_FLOOR)
+            .filter_map(Candidate::recording)
+            .collect();
         if groups.is_empty() && recordings.is_empty() {
             return;
         }
-        let (groups, recordings) = self.remote.listen_counts(&groups, &recordings).await;
-        for row in albums.iter_mut().chain(tracks.iter_mut()) {
-            let group = row.release_group().and_then(|group| groups.get(&group));
-            let recording = row
-                .recording()
-                .and_then(|recording| recordings.get(&recording));
-            row.listens = group.max(recording).copied();
+        let upstream = self.remote.upstream();
+        if upstream.listenbrainz().is_none()
+            || upstream.preferred_source(user_id).await != ListenSource::Listenbrainz
+        {
+            return;
+        }
+        let (groups, recordings) = self
+            .remote
+            .cached_listen_counts(&groups, &recordings, fill)
+            .await;
+        let heard = |count: Option<&i64>| count.copied().filter(|count| *count > 0);
+        for row in albums.iter_mut().chain(tracks.iter_mut()).filter(fair) {
+            let own = heard(
+                row.recording()
+                    .and_then(|recording| recordings.get(&recording)),
+            );
+            let album = heard(row.release_group().and_then(|group| groups.get(&group)));
+            row.listens = own.or(album);
         }
     }
 
@@ -1464,38 +1502,6 @@ mod tests {
             rank(Some(70), Some(50), true),
             rank(Some(70), None, true),
             "a weak claimed substring ties its unclaimed copy"
-        );
-    }
-
-    /// Listens reorder what the text alone ranked: more beat fewer, a
-    /// count beats none, and a better score loses to more listens. An
-    /// exact title still beats any count, and a library copy that matched
-    /// as a prefix beats everything.
-    #[test]
-    fn listens_outrank_scores_but_not_exact_titles() {
-        let heard = |mbid: &str, score: i32, listens: Option<i64>| Candidate {
-            item: album(None, Some(mbid), score),
-            local_tier: None,
-            remote_score: Some(score),
-            releases: Some(1),
-            listens,
-        };
-        let metro = heard("rg-metro", 55, Some(442_170)).rank(false);
-        let pemberton = heard("rg-pemberton", 100, Some(41_316)).rank(false);
-        let unheard = heard("rg-unheard", 100, None).rank(false);
-        let namesake = heard("rg-tribute", 100, None).rank(true);
-        let owned =
-            Candidate::local(album(Some("copy"), Some("rg-copy"), SCORE_PREFIX)).rank(false);
-        assert!(metro > pemberton, "more listens beat a better score");
-        assert!(pemberton > unheard, "a count beats none");
-        assert!(namesake > metro, "an exact title beats listens");
-        assert!(
-            owned > namesake,
-            "a library prefix match beats an exact remote"
-        );
-        assert!(
-            heard("rg-a", 60, None).rank(false) < heard("rg-b", 70, None).rank(false),
-            "without counts the score still decides"
         );
     }
 

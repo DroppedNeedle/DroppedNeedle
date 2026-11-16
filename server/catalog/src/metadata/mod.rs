@@ -75,8 +75,13 @@ pub struct PageSources {
 struct Inner {
     upstream: Upstream,
     local: LocalCatalog,
-    /// Discographies and tracklists being fetched in the background.
+    /// Discographies, tracklists and search listen counts being fetched
+    /// in the background.
     warming: Mutex<HashSet<String>>,
+    /// While background fetches of search listen counts fail: when the
+    /// last one started, so the next waits, and its failure is not logged
+    /// again.
+    listens_failing: Mutex<Option<tokio::time::Instant>>,
 }
 
 impl Catalog {
@@ -93,6 +98,7 @@ impl Catalog {
                 upstream,
                 local,
                 warming: Mutex::new(HashSet::new()),
+                listens_failing: Mutex::new(None),
             }),
             follows,
             purchase_links,

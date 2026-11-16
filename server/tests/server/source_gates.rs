@@ -878,6 +878,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("auth/src/users/hibp.rs", 1, REQUEST),
     ("catalog/src/metadata/artist.rs", 1, CATALOG_WARM),
     ("catalog/src/metadata/discovery.rs", 1, CATALOG_WARM),
+    ("catalog/src/metadata/search.rs", 1, CATALOG_WARM),
     ("catalog/src/discover/content.rs", 1, DISCOVER_BUILD),
     ("catalog/src/discover/home/mod.rs", 1, DISCOVER_BUILD),
     ("catalog/src/discover/page/mod.rs", 2, DISCOVER_BUILD),

@@ -3,8 +3,9 @@
 //! Each handler answers one route: extract, validate, call the service,
 //! render. Status mapping lives in `From<SearchError> for ApiError`.
 //! Authentication is the deny-by-default middleware alone (any signed-in
-//! user): these routes take no principal because every role sees the same
-//! catalog and no per-user data is read or written.
+//! user): every role sees the same catalog. The caller's id is read only for
+//! their listening source, which decides whether listens rank the hits, and
+//! for enrichment's counts; nothing per user is written.
 
 use axum::{
     Json,
@@ -39,7 +40,7 @@ fn service_response<T: serde::Serialize>(result: Result<T, DbError>) -> Result<J
 )]
 pub async fn search(
     State(deps): State<super::SearchDeps>,
-    _user: User,
+    User(user): User,
     ValidQuery(query): ValidQuery<SearchQuery>,
 ) -> Result<Json<super::models::SearchResponse>, ApiError> {
     if query.q.trim().is_empty() {
@@ -55,7 +56,11 @@ pub async fn search(
     };
     let buckets = parse_buckets(query.buckets.as_deref())?;
     let scope = query.scope.unwrap_or_default();
-    service_response(deps.service.search(&query.q, limits, &buckets, scope).await)
+    service_response(
+        deps.service
+            .search(&query.q, limits, &buckets, scope, user.user_id())
+            .await,
+    )
 }
 
 /// One page of one bucket for drill-down views.
@@ -76,7 +81,7 @@ pub async fn search(
 )]
 pub async fn search_bucket(
     State(deps): State<super::SearchDeps>,
-    _user: User,
+    User(user): User,
     Path(bucket): Path<String>,
     ValidQuery(query): ValidQuery<BucketQuery>,
 ) -> Result<Json<super::models::SearchBucketResponse>, ApiError> {
@@ -91,7 +96,7 @@ pub async fn search_bucket(
     let offset = query.offset.unwrap_or(0);
     service_response(
         deps.service
-            .search_bucket(bucket, &query.q, limit, offset)
+            .search_bucket(bucket, &query.q, limit, offset, user.user_id())
             .await,
     )
 }

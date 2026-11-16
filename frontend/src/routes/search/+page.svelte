@@ -40,6 +40,9 @@
 	let { data }: Props = $props();
 
 	const SONGS_RETRY_MS = 1500;
+	// Asks for songs still on their way at most this often per search, so a
+	// MusicBrainz that keeps failing is not asked again and again.
+	const SONGS_RETRIES = 3;
 
 	let enrichment: EnrichmentResponseV3 | null = $state(null);
 	let enrichmentSource: EnrichmentSource = $state(null);
@@ -89,13 +92,17 @@
 	let trackStatus: SearchRemoteStatus = $derived(
 		searchQuery.isError ? 'error' : (searchQuery.data?.track_status ?? 'ok')
 	);
-	let notice = $derived(
-		getCombinedSearchNotice({ artists: artistStatus, albums: albumStatus, tracks: trackStatus })
-	);
 	// MusicBrainz's songs come last and the server answers without them
 	// ('partial') rather than hold the page; their fetch carries on, so the
 	// same search asked again shortly has them.
-	let songsOnTheWay = $derived(trackStatus === 'partial');
+	let songRetries = $state(0);
+	let songsOnTheWay = $derived(trackStatus === 'partial' && songRetries < SONGS_RETRIES);
+	let notice = $derived(
+		getCombinedSearchNotice(
+			{ artists: artistStatus, albums: albumStatus, tracks: trackStatus },
+			songsOnTheWay
+		)
+	);
 	let loadingArtists = $derived(searchQuery.isPending && artists.length === 0);
 	let loadingAlbums = $derived(searchQuery.isPending && albums.length === 0);
 	let hasSearched = $derived(normalizedQuery.length >= 2);
@@ -124,6 +131,11 @@
 	});
 
 	$effect(() => {
+		void normalizedQuery;
+		songRetries = 0;
+	});
+
+	$effect(() => {
 		if (normalizedQuery === enrichmentQuery) return;
 		enrichmentQuery = normalizedQuery;
 		enrichCollector.reset();
@@ -133,7 +145,10 @@
 
 	$effect(() => {
 		if (!songsOnTheWay || searchQuery.isFetching) return;
-		const timer = setTimeout(() => void searchQuery.refetch(), SONGS_RETRY_MS);
+		const timer = setTimeout(() => {
+			songRetries += 1;
+			void searchQuery.refetch();
+		}, SONGS_RETRY_MS);
 		return () => clearTimeout(timer);
 	});
 

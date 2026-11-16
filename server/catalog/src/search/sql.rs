@@ -164,7 +164,7 @@ pub(super) fn song_hits_by_recording(ids: ListLen) -> String {
          LEFT JOIN local_track_external_identities ce ON ce.local_track_id = ct.id AND {} \
          WHERE {} AND lower({}) IN ({marks}) \
          AND ct.id IN (SELECT local_track_id FROM local_track_external_identities \
-         WHERE recording_mbid IN ({marks}) UNION SELECT id FROM local_tracks \
+         WHERE lower(recording_mbid) IN ({marks}) UNION SELECT id FROM local_tracks \
          WHERE lower(COALESCE(embedded_recording_mbid, '')) IN ({marks}))){SONG_END}",
         musicbrainz!("ce"),
         owned_album!("cb"),
