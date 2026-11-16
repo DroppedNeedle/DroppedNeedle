@@ -1146,6 +1146,9 @@ impl LandingService {
             missing_positions: serde_json::to_string(&missing).unwrap_or_else(|_| "[]".into()),
             decided_at: self.journal.db().now_unix_f64(),
         };
+        // A landing that was not a clean import logs which check said so.
+        let code = row.reason_code.map(Reason::code);
+        let detail = code.and(row.detail.clone());
         // A long outage lands every pass: it records the wait once.
         let waiting = matches!(
             &result,
@@ -1187,6 +1190,8 @@ impl LandingService {
             outcome = outcome.as_str(),
             imported,
             held,
+            code,
+            detail = detail.as_deref(),
             "download landing decided"
         );
         LandingReport {

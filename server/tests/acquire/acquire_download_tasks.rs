@@ -621,6 +621,7 @@ async fn queue_journey_scopes_explains_retries_and_clears() {
                 "soulseek",
                 "peer/a.flac",
                 "download_failed",
+                None,
                 Some("rg-1"),
                 now,
                 QUARANTINE_TTL_SECONDS,

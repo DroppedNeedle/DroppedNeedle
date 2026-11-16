@@ -305,6 +305,10 @@ pub struct QuarantineRow {
     pub release_group_mbid: Option<String>,
     /// Why it was blocklisted.
     pub reason: String,
+    /// The check that blocklisted it, when it was recorded.
+    pub reason_code: Option<Reason>,
+    /// What that check found, when it was recorded.
+    pub detail: Option<String>,
     /// Block time (unix seconds; stored as milliseconds).
     pub quarantined_at: f64,
 }
@@ -318,6 +322,10 @@ impl QuarantineRow {
             identity: row.get("identity")?,
             release_group_mbid: row.get("release_group_mbid")?,
             reason: row.get("reason")?,
+            reason_code: row
+                .get::<_, Option<String>>("reason_code")?
+                .and_then(|code| Reason::from_code(&code)),
+            detail: row.get("detail")?,
             quarantined_at: secs(row.get("quarantined_at")?),
         })
     }
@@ -1081,15 +1089,18 @@ impl<'conn> DownloadStore<'conn> {
         Ok(true)
     }
 
-    /// Blocklist a release by source identity, pruning expired rows first.
+    /// Blocklist a release by source identity, pruning expired rows first,
+    /// with the outcome that blocklisted it when there is one.
     ///
     /// The prune-on-write keeps the table small
     /// and the TTL self-heal lands on disk, not just filtered on read.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_quarantine(
         &self,
         source: &str,
         identity: &str,
         reason: &str,
+        outcome: Option<TaskOutcome<'_>>,
         release_group_mbid: Option<&str>,
         now: f64,
         ttl_seconds: f64,
@@ -1100,7 +1111,15 @@ impl<'conn> DownloadStore<'conn> {
         )?;
         self.conn.execute(
             sql::INSERT_QUARANTINE.text(),
-            rusqlite::params![source, identity, release_group_mbid, reason, ms(now)],
+            rusqlite::params![
+                source,
+                identity,
+                release_group_mbid,
+                reason,
+                ms(now),
+                outcome.map(|outcome| outcome.reason.code()),
+                outcome.map(|outcome| outcome.text),
+            ],
         )?;
         Ok(())
     }

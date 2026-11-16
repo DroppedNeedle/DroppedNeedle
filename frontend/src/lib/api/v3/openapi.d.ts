@@ -20421,6 +20421,8 @@ export interface components {
         QuarantineEntry: {
             /** @description The client label: `slskd`, `sabnzbd`, or the source for plugins. */
             client_id: string;
+            /** @description What the check found, when it was recorded. */
+            detail?: string | null;
             /** @description The blocked file (soulseek) or job (usenet). */
             filename: string;
             /** Format: int64 */
@@ -20431,7 +20433,12 @@ export interface components {
             quarantined_at: number;
             /** @description Stable reason code. */
             reason: string;
-            /** @description The reason as a plain sentence. */
+            /**
+             * @description The check that blocklisted it; null on entries from before it was
+             *     recorded.
+             */
+            reason_code?: null | components["schemas"]["Reason"];
+            /** @description The reason as a plain sentence: the check's when it is recorded. */
             reason_text: string;
             release_group_mbid?: string | null;
             /** @description `soulseek`, `usenet` or `plugin:<key>`. */

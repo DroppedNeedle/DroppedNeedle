@@ -361,3 +361,125 @@ describe('finished downloads on the Downloads queue', () => {
 			.toBeVisible();
 	});
 });
+
+describe('why a source was turned down', () => {
+	const finding = 'the download holds no audio tracks';
+
+	it('shows what the check found on the download', async () => {
+		fakeApi({
+			'GET /api/v3/downloads/tasks': {
+				items: [
+					task('empty', {
+						status: 'failed',
+						outcome_code: 'no_audio',
+						reason: {
+							code: 'no_audio',
+							kind: 'source',
+							text: 'The download contains no music files.',
+							action: 'Nothing to do: DroppedNeedle tries another source.'
+						},
+						decision: {
+							outcome: 'rejected',
+							reason_code: 'no_audio',
+							detail: finding,
+							files_total: 1,
+							files_imported: 0,
+							files_held: 0,
+							decided_at: 1
+						}
+					})
+				],
+				page: 1,
+				page_size: 100
+			},
+			'GET /api/v3/held': { entries: [] }
+		});
+		await renderWithQuery(DownloadQueue, {});
+
+		await page.getByRole('button', { name: /^History/ }).click();
+		const row = page.getByRole('article').filter({ hasText: 'Album empty' });
+		await expect.element(row.getByText(finding)).toBeVisible();
+	});
+
+	it('keeps a fault on our side to its sentence', async () => {
+		const fault = 'database is locked';
+		fakeApi({
+			'GET /api/v3/downloads/tasks': {
+				items: [
+					task('local', {
+						status: 'failed',
+						outcome_code: 'local_fault',
+						reason: {
+							code: 'local_fault',
+							kind: 'library',
+							text: 'Something on this server stopped the import.',
+							action: 'Nothing to do: DroppedNeedle retries later.'
+						},
+						decision: {
+							outcome: 'rejected',
+							reason_code: 'local_fault',
+							detail: fault,
+							files_total: 1,
+							files_imported: 0,
+							files_held: 0,
+							decided_at: 1
+						}
+					})
+				],
+				page: 1,
+				page_size: 100
+			},
+			'GET /api/v3/held': { entries: [] }
+		});
+		await renderWithQuery(DownloadQueue, {});
+
+		await page.getByRole('button', { name: /^History/ }).click();
+		const row = page.getByRole('article').filter({ hasText: 'Album local' });
+		await expect
+			.element(row.getByText('Something on this server stopped the import.'))
+			.toBeVisible();
+		await expect.element(row.getByText(fault)).not.toBeInTheDocument();
+	});
+
+	it('shows what the check found on the blocklist', async () => {
+		authStore.setUser(
+			toAuthUser({
+				id: 'admin-1',
+				display_name: 'Admin',
+				role: 'admin',
+				email: null,
+				avatar_url: null,
+				username: 'admin',
+				username_display: 'Admin'
+			})
+		);
+		fakeApi({
+			'GET /api/v3/downloads/tasks': { items: [], page: 1, page_size: 100 },
+			'GET /api/v3/held': { entries: [] },
+			'GET /api/v3/downloads/quarantine': {
+				items: [
+					{
+						id: 1,
+						source: 'soulseek',
+						client_id: 'slskd',
+						username: 'peer',
+						filename: 'Drift/notes.txt',
+						identity: 'peer/Drift/notes.txt',
+						reason: 'verify_failed',
+						reason_code: 'no_audio',
+						reason_text: 'The download contains no music files.',
+						detail: finding,
+						quarantined_at: 1,
+						release_group_mbid: null
+					}
+				],
+				page: 1
+			}
+		});
+		await renderWithQuery(DownloadQueue, {});
+
+		await page.getByRole('button', { name: /^Quarantine/ }).click();
+		await expect.element(page.getByText('The download contains no music files.')).toBeVisible();
+		await expect.element(page.getByText(finding)).toBeVisible();
+	});
+});

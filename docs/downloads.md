@@ -125,6 +125,8 @@ The Wanted tab on the Requests page lists the albums DroppedNeedle keeps looking
 
 Admins can see blocked sources (Downloads > Quarantine) with the reason each was blocked, and remove one so it can be tried again. Blocks expire on their own after a week.
 
+Each block says which check turned the download down and what it found, such as "the download holds no audio tracks". Once a download stops, its line on the Downloads page shows what its last check found, and the server log writes a `download source blocklisted` line with the task id, the check (`code`) and the finding (`detail`). Blocks made by an earlier version show only the general reason.
+
 ## Drop imports
 
 Bought music somewhere else? Drop it in. For a whole collection, use the [import folder](#import-folder) instead. Admins and trusted users can upload up to 25 files at once on the downloads page, 8 GB in all: audio files, or `.zip` archives straight from the store. The drop zone shows how much has been sent. If nothing more gets through for a minute, the upload stops with an error. DroppedNeedle unpacks the archives (audio only), treats each top-level folder as one album, and works out which album it is the way a library scan would: MusicBrainz tags first, then the album and artist names (from the tags, or a folder named `Artist - Album`), then AcoustID fingerprints when you have set an AcoustID key.

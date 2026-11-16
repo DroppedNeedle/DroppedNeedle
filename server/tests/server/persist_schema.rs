@@ -360,6 +360,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0147_management_written_stat.sql",
         "416464a8803407293e0c21a3a3b3ba2c18e02dfd91158ce3bdb936ac9985ea19",
     ),
+    (
+        "0148_download_quarantine_reason.sql",
+        "6dd9190f517b20a1ab8f3f6ac546ed1d70e9e29385f4f6e7c02f6967b610473e",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -1462,6 +1466,53 @@ fn management_written_stat_upgrade_keeps_every_row() {
         ),
         ["1:t1:placed:placed:succeeded:4:-"],
         "the row is kept, with no stat yet"
+    );
+    assert_eq!(others(&connection), before_schema, "nothing else changes");
+}
+
+/// 0148 gives each blocklist row the reason and detail of the check that
+/// blocklisted it, NULL on carried rows, which keep every value. Nothing
+/// else in the schema changes.
+#[test]
+fn download_quarantine_reason_upgrade_keeps_every_row() {
+    let dir = ScratchDir::new("download-quarantine-reason");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..13], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 147);
+    connection
+        .execute_batch(
+            "INSERT INTO download_quarantine (source, identity, release_group_mbid, reason,
+                 quarantined_at)
+             VALUES ('soulseek', 'peer/a.flac', 'rg-1', 'verify_failed', 5);",
+        )
+        .unwrap();
+    let table = "download_quarantine";
+    let others = |connection: &Connection| {
+        let mut rows = schema_rows(connection);
+        rows.retain(|(_, name, _, _)| name != table);
+        rows
+    };
+    let before_schema = others(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..14], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 148);
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT id || ':' || source || ':' || identity || ':' || release_group_mbid || ':'
+                 || reason || ':' || quarantined_at || ':' || COALESCE(reason_code, '-') || ':'
+                 || COALESCE(detail, '-')
+             FROM download_quarantine",
+            [],
+        ),
+        ["1:soulseek:peer/a.flac:rg-1:verify_failed:5:-:-"],
+        "the row is kept, with no reason yet"
     );
     assert_eq!(others(&connection), before_schema, "nothing else changes");
 }

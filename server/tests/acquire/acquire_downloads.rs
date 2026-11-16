@@ -472,6 +472,7 @@ fn quarantine_expires_and_holds_files_only_in_its_sandbox() {
             "soulseek",
             &identity,
             QuarantineReason::VerifyFailed.as_str(),
+            None,
             Some("rg-1"),
             now,
             ttl,
@@ -493,6 +494,7 @@ fn quarantine_expires_and_holds_files_only_in_its_sandbox() {
             "job-1",
             QuarantineReason::Corrupt.as_str(),
             None,
+            None,
             now + ttl + 2.0,
             ttl,
         )
@@ -507,6 +509,7 @@ fn quarantine_expires_and_holds_files_only_in_its_sandbox() {
             "soulseek",
             &identity,
             QuarantineReason::VerifyFailed.as_str(),
+            None,
             Some("rg-1"),
             now + ttl + 3.0,
             ttl,

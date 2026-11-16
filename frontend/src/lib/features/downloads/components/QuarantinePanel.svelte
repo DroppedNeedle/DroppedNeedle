@@ -69,6 +69,9 @@
 							<span aria-hidden="true" class="mx-1.5">·</span>{entry.reason_text ?? entry.reason}
 							<span aria-hidden="true" class="mx-1.5">·</span>{fmtDate(entry.quarantined_at)}
 						</p>
+						{#if entry.detail}
+							<p class="mt-0.5 text-xs text-muted">{entry.detail}</p>
+						{/if}
 					</div>
 					<Button
 						variant={confirmId === entry.id ? 'danger' : 'outline'}

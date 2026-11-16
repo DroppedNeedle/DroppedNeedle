@@ -909,6 +909,7 @@ async fn failover_walks_every_peer() {
                         ),
                         "failed",
                         None,
+                        None,
                         1.0e12,
                         86_400.0,
                     )?;

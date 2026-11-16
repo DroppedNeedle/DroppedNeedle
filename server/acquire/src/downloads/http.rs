@@ -381,8 +381,13 @@ pub struct QuarantineEntry {
     pub identity: String,
     /// Stable reason code.
     pub reason: String,
-    /// The reason as a plain sentence.
+    /// The check that blocklisted it; null on entries from before it was
+    /// recorded.
+    pub reason_code: Option<Reason>,
+    /// The reason as a plain sentence: the check's when it is recorded.
     pub reason_text: String,
+    /// What the check found, when it was recorded.
+    pub detail: Option<String>,
     pub quarantined_at: f64,
     pub release_group_mbid: Option<String>,
 }
@@ -400,7 +405,12 @@ impl From<QuarantineRow> for QuarantineEntry {
         };
         Self {
             id: row.id,
-            reason_text: quarantine_reason_text(&row.reason).to_owned(),
+            reason_text: row
+                .reason_code
+                .map_or_else(|| quarantine_reason_text(&row.reason), Reason::message)
+                .to_owned(),
+            reason_code: row.reason_code,
+            detail: row.detail,
             source: row.source,
             client_id,
             username,

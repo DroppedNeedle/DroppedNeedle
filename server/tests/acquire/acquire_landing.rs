@@ -410,6 +410,96 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     assert!(!acquire.flows.library.contains(BAD_GROUP).await);
 }
 
+/// A download the import checks turn down blocklists its source with the
+/// check that failed and what it found, and the blocklist route answers
+/// both: the check's sentence, not the general one.
+#[tokio::test]
+async fn a_blocklisted_source_says_which_check_failed() {
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let config = Arc::new(
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
+    );
+    let platform = TestPlatform::on(db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .scans
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    let (acquire, fixed) = acquire_serving(
+        &platform,
+        &library,
+        Arc::new(LibraryLanding::new(
+            &library,
+            every_priority(Arc::new(Releases(Vec::new()))),
+        )),
+    );
+    let downloads = dir.join("downloads");
+    std::fs::create_dir_all(downloads.join("job")).expect("job folder");
+    let notes = downloads.join("job/notes.txt");
+    std::fs::write(&notes, "no music here").expect("notes");
+    fixed.serve(&downloads, &[notes]);
+    acquire
+        .journal
+        .run("test.seed", |store| {
+            store.insert_task(&new_task("t-empty", GOOD_GROUP), 1.0)
+        })
+        .await
+        .expect("task");
+
+    acquire.worker.run_once(1).await;
+    acquire.worker.wait_for_landings().await;
+
+    let (status, body) = {
+        let principal = test_principal("u-root", Role::Admin, "sess-test", SessionKind::Standard);
+        let router = droppedneedle_acquire::test_support::downloads_router(acquire.worker.clone())
+            .expect("router builds");
+        let response = tower::ServiceExt::oneshot(
+            with_test_principal(router, principal),
+            axum::http::Request::get("/api/v3/downloads/quarantine")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("answer");
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("body");
+        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        (status, body)
+    };
+    assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+    let items = body["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "{body}");
+    assert_eq!(
+        (
+            items[0]["reason"].as_str(),
+            items[0]["reason_code"].as_str(),
+            items[0]["reason_text"].as_str(),
+            items[0]["detail"].as_str(),
+        ),
+        (
+            Some("verify_failed"),
+            Some("no_audio"),
+            Some(Reason::NoAudio.message()),
+            Some("the download holds no audio tracks"),
+        ),
+        "{body}"
+    );
+}
+
 /// MusicBrainz as [`Releases`], where one retired recording id was merged
 /// into another. Like the live client, it refuses an id that is not a
 /// MusicBrainz id.

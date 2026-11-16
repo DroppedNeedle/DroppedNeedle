@@ -29,6 +29,16 @@
 		if (decision.files_held > 0) parts.push(`${decision.files_held} held`);
 		return parts.join(', ');
 	});
+	// What the check that turned the files down or held them found, while
+	// that check is still the task's reason. A fault on our side keeps to its
+	// sentence: its detail is server error text.
+	const finding = $derived.by(() => {
+		const decision = task.decision;
+		if (!decision || !reason || decision.reason_code !== reason.code) return null;
+		if (reason.kind !== 'source' && reason.kind !== 'hold') return null;
+		if (decision.outcome !== 'rejected' && decision.outcome !== 'held') return null;
+		return decision.detail ?? null;
+	});
 	// What a clean import did beside placing the files.
 	const importNote = $derived(
 		task.decision?.outcome === 'imported' ? (task.decision.detail ?? null) : null
@@ -38,6 +48,9 @@
 {#if reason}
 	<div class="mt-1 text-xs" data-reason-code={reason.code}>
 		<p class="line-clamp-2 {tone}">{reason.text}</p>
+		{#if finding}
+			<p class="line-clamp-2 text-muted">{finding}</p>
+		{/if}
 		<p class="line-clamp-2 text-muted">{reason.action}</p>
 		{#if tally}
 			<p class="text-muted">{tally}</p>

@@ -477,7 +477,7 @@ impl DownloadWorker {
         if let Some(quarantine) = quarantine
             && outcome.reason.against_source()
         {
-            self.quarantine_failed(task, attempt, handle, quarantine, now)
+            self.quarantine_failed(task, attempt, handle, quarantine, outcome, now)
                 .await;
         }
         let settled_state = match source.discard(handle).await {
@@ -515,38 +515,52 @@ impl DownloadWorker {
     }
 
     /// Blocklist a failed release by source identity, scoped to the album
-    /// for retry-clearing.
+    /// for retry-clearing, with the outcome that failed it.
     async fn quarantine_failed(
         &self,
         task: &TaskRow,
         attempt: &AttemptRow,
         handle: &SourceHandle,
         quarantine: QuarantineReason,
+        outcome: TaskOutcome<'_>,
         now: f64,
     ) {
         let identities = failover_identities(handle);
         if identities.is_empty() {
             return;
         }
+        let (reason, text) = (outcome.reason, outcome.text.to_owned());
         let source = attempt.source.to_string();
         let scope = if task.release_group_mbid.is_empty() {
             None
         } else {
             Some(task.release_group_mbid.clone())
         };
-        self.step("downloads.quarantine", move |store| {
-            for identity in &identities {
-                store.record_quarantine(
-                    &source,
-                    identity,
-                    quarantine.as_str(),
-                    scope.as_deref(),
-                    now,
-                    QUARANTINE_TTL_SECONDS,
-                )?;
-            }
-            Ok(())
-        })
-        .await;
+        let recorded = self
+            .step("downloads.quarantine", move |store| {
+                for identity in &identities {
+                    store.record_quarantine(
+                        &source,
+                        identity,
+                        quarantine.as_str(),
+                        Some(TaskOutcome::new(reason, &text)),
+                        scope.as_deref(),
+                        now,
+                        QUARANTINE_TTL_SECONDS,
+                    )?;
+                }
+                Ok(())
+            })
+            .await;
+        if recorded.is_some() {
+            tracing::info!(
+                task_id = %task.id,
+                source = %attempt.source,
+                blocklist = quarantine.as_str(),
+                code = outcome.reason.code(),
+                detail = outcome.text,
+                "download source blocklisted"
+            );
+        }
     }
 }

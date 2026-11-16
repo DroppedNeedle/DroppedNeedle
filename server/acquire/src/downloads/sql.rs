@@ -232,14 +232,14 @@ droppedneedle_kernel::sql! {
     pub(super) PRUNE_QUARANTINE = "DELETE FROM download_quarantine WHERE quarantined_at < ?1";
     /// Blocklist one release; nothing when it already is.
     pub(super) INSERT_QUARANTINE = "INSERT OR IGNORE INTO download_quarantine \
-             (source, identity, release_group_mbid, reason, quarantined_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5)";
+             (source, identity, release_group_mbid, reason, quarantined_at, reason_code, detail) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
     /// Live quarantine pairs at or after a cutoff.
     pub(super) QUARANTINE_SET = "SELECT source, identity FROM download_quarantine \
              WHERE quarantined_at >= ?1";
     /// Every quarantine column, for `QuarantineRow::from_row`.
     pub(super) fragment QUARANTINE_ROW = "SELECT id, source, identity, release_group_mbid, \
-             reason, quarantined_at FROM download_quarantine";
+             reason, reason_code, detail, quarantined_at FROM download_quarantine";
     /// Every quarantine row, newest first.
     pub(super) QUARANTINE_ALL = QUARANTINE_ROW + " ORDER BY quarantined_at DESC";
     /// One page of quarantine rows (`?1` rows from `?2`), newest first.
@@ -366,12 +366,13 @@ droppedneedle_kernel::sql! {
     pub(super) LAST_LANDING_OF_ATTEMPT = DECISION_ROW + " WHERE task_id = ?1 \
              AND attempt_id IS ?2 AND outcome != 'deferred' \
              ORDER BY decided_at DESC, id DESC LIMIT 1";
-    /// Every distinct reason spelling stored on decisions, task outcomes
-    /// and drop items.
+    /// Every distinct reason spelling stored on decisions, task outcomes,
+    /// drop items and blocklist rows.
     pub(super) STORED_REASONS = "SELECT reason_code FROM download_import_decisions \
                WHERE reason_code IS NOT NULL \
              UNION SELECT outcome_code FROM download_tasks WHERE outcome_code IS NOT NULL \
-             UNION SELECT reason_code FROM drop_import_items WHERE reason_code IS NOT NULL";
+             UNION SELECT reason_code FROM drop_import_items WHERE reason_code IS NOT NULL \
+             UNION SELECT reason_code FROM download_quarantine WHERE reason_code IS NOT NULL";
     /// Record one landing's decision.
     pub(super) INSERT_DECISION = "INSERT INTO download_import_decisions (task_id, attempt_id, \
              outcome, reason_code, detail, release_mbid, distance, files_total, files_imported, \

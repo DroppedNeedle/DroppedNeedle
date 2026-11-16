@@ -58974,6 +58974,13 @@
             "type": "string",
             "description": "The client label: `slskd`, `sabnzbd`, or the source for plugins."
           },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the check found, when it was recorded."
+          },
           "filename": {
             "type": "string",
             "description": "The blocked file (soulseek) or job (usenet)."
@@ -58994,9 +59001,20 @@
             "type": "string",
             "description": "Stable reason code."
           },
+          "reason_code": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Reason"
+              }
+            ],
+            "description": "The check that blocklisted it; null on entries from before it was\nrecorded."
+          },
           "reason_text": {
             "type": "string",
-            "description": "The reason as a plain sentence."
+            "description": "The reason as a plain sentence: the check's when it is recorded."
           },
           "release_group_mbid": {
             "type": [
