@@ -7,8 +7,8 @@
 	beside it, `lead` a line under it. `error` is a red-tinted bar with an
 	icon at the top of the card, announced as an alert. `tabs` holds folder
 	tabs along the card's top edge: buttons with the `dn-auth-tab` class, the
-	open one marked `aria-pressed="true"`, which prints acid and joins the
-	paper. `actions` is the row of buttons at the foot.
+	open one marked `aria-pressed="true"`, which prints acid. The card's torn
+	edge runs across every tab. `actions` is the row of buttons at the foot.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -228,7 +228,7 @@
 	}
 
 	/* Folder tabs: paper-tinted, tucked behind the card's torn edge; the
-	   open one acid, in front, joined to the paper. */
+	   open one acid. A focused tab comes in front so its ring shows whole. */
 	.dn-auth-card__tabs {
 		position: relative;
 		display: flex;
@@ -265,7 +265,6 @@
 		background: color-mix(in oklab, var(--dn-paper-content) 8%, var(--dn-paper));
 	}
 	.dn-auth-card__tabs :global(.dn-auth-tab[aria-pressed='true']) {
-		z-index: 2;
 		height: 4.125rem;
 		margin-top: -0.625rem;
 		background: var(--dn-action);
