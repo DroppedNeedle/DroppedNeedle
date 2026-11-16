@@ -95,10 +95,10 @@ describe('the edition plate', () => {
 			);
 			expect(copy.line1).toBe('5th anniversary remaster');
 			expect(copy.chip?.label).toBe('Your choice');
-			expect(copy.line2).toBe('Released 2024 · XW · Digital Media · 3 of 4 tracks');
+			expect(copy.line2).toBe('Released 2024 · Worldwide · Digital Media · 3 of 4 tracks');
 			expect(copy.warnings).toEqual(['1 in another version']);
 			expect(copy.label).toBe(
-				'Edition: 5th anniversary remaster. Released 2024 · XW · Digital Media · 3 of 4 tracks · 1 in another version. Change edition'
+				'Edition: 5th anniversary remaster. Released 2024 · Worldwide · Digital Media · 3 of 4 tracks · 1 in another version. Change edition'
 			);
 			expect(copy.disc.tone).toBe('warning');
 		}
@@ -120,7 +120,7 @@ describe('the edition plate', () => {
 			cd.edition.formats = ['CD', 'CD'];
 			const copy = plateCopy(status({ state: 'confirmed' }), cd, 2);
 			expect(copy.line1).toBe('CD edition');
-			expect(copy.line2).toBe('Released 2024 · XW · 2×CD · 2 of 2 tracks');
+			expect(copy.line2).toBe('Released 2024 · Worldwide · 2×CD · 2 of 2 tracks');
 			expect(copy.disc.tone).toBe('accent');
 		}
 

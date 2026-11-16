@@ -29,6 +29,7 @@
 		NO_SOURCE_SENTENCE,
 		REPLACE_NEEDS_MISSING_HELP,
 		REPLACE_VERSIONS_HELP,
+		countryLabel,
 		editionName,
 		editionYear,
 		extrasButton,
@@ -186,7 +187,7 @@
 						{[
 							plan.artist_name,
 							editionYear(plan.edition.date) ? `Released ${editionYear(plan.edition.date)}` : null,
-							plan.edition.country,
+							countryLabel(plan.edition.country),
 							formatsLabel(plan.edition.formats)
 						]
 							.filter(Boolean)
