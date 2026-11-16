@@ -16,9 +16,11 @@
 	interface Props {
 		profile: ProfileData;
 		hasLocalPassword: boolean;
+		/** Password sign-in is on for the server; off, the password can't be changed or set. */
+		passwordLogin: boolean;
 	}
 
-	let { profile, hasLocalPassword }: Props = $props();
+	let { profile, hasLocalPassword, passwordLogin }: Props = $props();
 
 	const userId = authStore.user?.id ?? '';
 
@@ -147,21 +149,23 @@
 				<p class="pf-value text-muted">No local password</p>
 			{/if}
 		</div>
-		<Button
-			variant="outline"
-			size="display-sm"
-			icon={showPasswordForm ? undefined : hasLocalPassword ? Pencil : KeyRound}
-			class="pf-row__action"
-			onclick={togglePasswordForm}
-		>
-			{#if showPasswordForm}
-				Cancel
-			{:else if hasLocalPassword}
-				Change
-			{:else}
-				Set a password
-			{/if}
-		</Button>
+		{#if passwordLogin}
+			<Button
+				variant="outline"
+				size="display-sm"
+				icon={showPasswordForm ? undefined : hasLocalPassword ? Pencil : KeyRound}
+				class="pf-row__action"
+				onclick={togglePasswordForm}
+			>
+				{#if showPasswordForm}
+					Cancel
+				{:else if hasLocalPassword}
+					Change
+				{:else}
+					Set a password
+				{/if}
+			</Button>
+		{/if}
 
 		{#if passwordDone && !showPasswordForm}
 			<p class="pf-row__under flex items-center gap-1.5 text-sm text-success">

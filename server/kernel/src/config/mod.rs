@@ -92,6 +92,11 @@ pub struct AppConfig {
     /// background while they use them (`DISCOVER_WARMER_ENABLED`, on by
     /// default). Off, pages still build when someone opens them.
     pub discover_warmer: bool,
+    /// Accept username and password sign-in (`ALLOW_PASSWORD_LOGIN`, on by
+    /// default). Off, people sign in only through Plex, Jellyfin or OIDC.
+    /// An environment switch, not a setting, so a host can turn it back on
+    /// when the identity provider is down.
+    pub allow_password_login: bool,
     /// The image's tag (`COMMIT_TAG`), set by the image build; `dev` when
     /// unset. The version answer and the provider cache's stamp read it.
     pub commit_tag: String,
@@ -140,6 +145,7 @@ impl AppConfig {
             http: HttpSettings::default(),
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
             discover_warmer: true,
+            allow_password_login: true,
             commit_tag: "dev".to_owned(),
             build_date: None,
             #[cfg(any(test, feature = "test-support"))]
@@ -251,16 +257,10 @@ impl AppConfig {
             config.shutdown_grace = parse_seconds("SHUTDOWN_GRACE_PERIOD", &seconds)?;
         }
         if let Some(value) = env("DISCOVER_WARMER_ENABLED") {
-            config.discover_warmer = match value.to_ascii_lowercase().as_str() {
-                "1" | "true" | "yes" | "on" => true,
-                "0" | "false" | "no" | "off" => false,
-                _ => {
-                    return Err(ConfigError::InvalidSwitch {
-                        name: "DISCOVER_WARMER_ENABLED",
-                        value,
-                    });
-                }
-            };
+            config.discover_warmer = parse_switch("DISCOVER_WARMER_ENABLED", value)?;
+        }
+        if let Some(value) = env("ALLOW_PASSWORD_LOGIN") {
+            config.allow_password_login = parse_switch("ALLOW_PASSWORD_LOGIN", value)?;
         }
         if let Some(tag) = env("COMMIT_TAG") {
             config.commit_tag = tag;
@@ -346,6 +346,15 @@ fn log_filter_for(raw: Option<&str>) -> Result<String, ConfigError> {
         _ => return Err(ConfigError::InvalidLogLevel(text.to_owned())),
     };
     Ok(format!("{level},{QUIET_DECODERS}"))
+}
+
+/// An on/off switch: `1`, `true`, `yes`, `on` or their opposites, any case.
+fn parse_switch(name: &'static str, value: String) -> Result<bool, ConfigError> {
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(ConfigError::InvalidSwitch { name, value }),
+    }
 }
 
 /// Seconds as a decimal number (`10`, `2.5`), above zero.

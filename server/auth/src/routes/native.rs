@@ -127,6 +127,7 @@ pub async fn login_handler(
     peer: PeerAddr,
     ValidJson(body): ValidJson<LoginBody>,
 ) -> Result<Response, ApiError> {
+    state.users.require_password_login()?;
     let secure = cookies::secure_for_sign_in(
         uri.scheme_str().unwrap_or("http"),
         &headers,

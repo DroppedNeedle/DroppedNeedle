@@ -80,6 +80,27 @@ pub struct UsersDeps {
     pub jellyfin_directory: Arc<dyn UserDirectory>,
     /// Plex accounts for the admin user import.
     pub plex_directory: Arc<dyn UserDirectory>,
+    /// Username and password sign-in is on (`ALLOW_PASSWORD_LOGIN`). Off,
+    /// login, recovery resets and password changes are refused.
+    pub password_login: bool,
+}
+
+/// The refusal while `ALLOW_PASSWORD_LOGIN` is off.
+pub const PASSWORD_LOGIN_OFF: &str =
+    "Password sign-in is turned off on this server. Sign in with Plex, Jellyfin or single sign-on.";
+
+impl UsersDeps {
+    /// Refuse a password sign-in, reset or change while password sign-in
+    /// is turned off.
+    pub fn require_password_login(&self) -> Result<(), UsersError> {
+        if self.password_login {
+            Ok(())
+        } else {
+            Err(UsersError::Forbidden {
+                message: PASSWORD_LOGIN_OFF.to_owned(),
+            })
+        }
+    }
 }
 
 /// Now, unix seconds, from the injected clock.

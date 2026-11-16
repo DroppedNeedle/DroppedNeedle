@@ -151,6 +151,12 @@ impl E2e {
         self
     }
 
+    /// Start with `ALLOW_PASSWORD_LOGIN` off.
+    pub(crate) fn without_password_login(mut self) -> Self {
+        self.platform.config.allow_password_login = false;
+        self
+    }
+
     /// Point the Last.fm client at a local mock.
     pub(crate) fn with_lastfm(mut self, lastfm: String) -> Self {
         self.lastfm = lastfm;
@@ -2550,5 +2556,70 @@ async fn login_p95_within_login_budget() {
          over {N} sequential logins \
          (p50 {p50:?}, max {max:?}); Argon2id work-factor verify cost counts \
          and dominates by design - slowness here is the security feature"
+    );
+}
+
+/// With `ALLOW_PASSWORD_LOGIN` off, the login page is told not to offer a
+/// password form, and login, recovery resets and password changes refuse
+/// with 403 before they look at the password. First-admin setup still
+/// works, so a fresh server is not locked out before SSO is set up.
+#[tokio::test]
+async fn password_login_off_refuses_every_password_route() {
+    let e2e = E2e::open("password-login-off")
+        .await
+        .without_password_login();
+    let (status, body, _) = call(e2e.router(), "GET", "/api/v3/auth/providers", &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["local"], json!(false), "{body}");
+
+    let (_, token) = setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+    let owner = bearer(token.as_str().expect("setup token"));
+
+    let (status, body, _) =
+        login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"]["code"], json!("FORBIDDEN"), "{body}");
+
+    let refused: [(&str, &[(&str, &str)], Value); 3] = [
+        (
+            "/api/v3/me/password",
+            &[("authorization", owner.as_str())],
+            json!({
+                "current_password": "e2e-owner-password-1",
+                "new_password": "e2e-owner-password-2",
+            }),
+        ),
+        (
+            "/api/v3/me/local-password",
+            &[("authorization", owner.as_str())],
+            json!({ "new_password": "e2e-owner-password-2" }),
+        ),
+        (
+            "/api/v3/auth/password-recovery/reset",
+            &[],
+            json!({
+                "username": "e2e-owner",
+                "recovery_code": "AAAA-BBBB-CCCC-DDDD",
+                "new_password": "e2e-owner-password-2",
+            }),
+        ),
+    ];
+    for (uri, headers, body) in refused {
+        let (status, answer, _) = call(e2e.router(), "POST", uri, headers, Some(body)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{uri}: {answer}");
+    }
+
+    let (status, body, _) = call(
+        e2e.router(),
+        "GET",
+        "/api/v3/me",
+        &[("authorization", owner.as_str())],
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the setup session still works: {body}"
     );
 }

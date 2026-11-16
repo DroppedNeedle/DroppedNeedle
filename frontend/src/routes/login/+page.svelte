@@ -221,7 +221,7 @@
 
 <AuthFrame kicker="Sign in to continue">
 	<AuthCard error={activeError} tabs={availableTabs.length > 1 ? methodTabs : undefined}>
-		{#if activeTab === 'local'}
+		{#if activeTab === 'local' && providers.local}
 			<form
 				onsubmit={(e) => {
 					e.preventDefault();
@@ -324,6 +324,11 @@
 					Continue with SSO
 				</Button>
 			</div>
+		{:else if availableTabs.length === 0}
+			<p class="login-line">
+				Password sign-in is turned off and no other sign-in method is set up. Ask the server's admin
+				to set ALLOW_PASSWORD_LOGIN=true and restart it.
+			</p>
 		{/if}
 	</AuthCard>
 </AuthFrame>

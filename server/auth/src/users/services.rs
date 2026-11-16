@@ -345,6 +345,7 @@ pub async fn change_password(
     current_password: &str,
     new_password: &str,
 ) -> Result<UserResponse, UsersError> {
+    deps.require_password_login()?;
     let local = deps
         .users
         .local_credential(caller.user_id())
@@ -390,6 +391,7 @@ pub async fn set_local_password(
     caller: &Principal,
     new_password: &str,
 ) -> Result<UserResponse, UsersError> {
+    deps.require_password_login()?;
     caller.require_standard_session()?;
     let existing = deps
         .users
@@ -1033,6 +1035,7 @@ pub async fn admin_mint_recovery_code(
 /// future path that removes a local password must delete the account's
 /// pending codes in the same transaction.
 pub async fn reset_password(deps: &UsersDeps, body: &PasswordReset) -> Result<(), UsersError> {
+    deps.require_password_login()?;
     validate_password(&body.new_password)?;
     let canonical = canonicalize_recovery_code(&body.recovery_code);
     let now = clock_now(deps);

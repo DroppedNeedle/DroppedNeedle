@@ -33,6 +33,7 @@ Everything user-editable lives in the web UI and is stored in the database, so a
 |-|-|-|
 | `CONTACT_EMAIL` | `contact@droppedneedle.com` | Contact address in the outbound User-Agent; MusicBrainz asks for one, so set your own if you run many lookups |
 | `DISCOVER_WARMER_ENABLED` | `true` | Keeps each user's Discover page and discover queue fresh in the background while they use them. `false` builds them only when someone opens the page |
+| `ALLOW_PASSWORD_LOGIN` | `true` | Username and password sign-in. `false` turns off password login, recovery and changes, so people sign in only through Plex, Jellyfin or OIDC; first-admin setup still works. Set it back to `true` and restart if the identity provider is unreachable |
 | `SHUTDOWN_GRACE_PERIOD` | `10` | Seconds to finish open requests and stop background work on shutdown |
 | `HTTP_TIMEOUT` | `30` | Outbound request timeout, seconds |
 | `HTTP_CONNECT_TIMEOUT` | `10` | Outbound connect timeout, seconds |
