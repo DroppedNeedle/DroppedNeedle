@@ -102,6 +102,18 @@ pub struct BucketLimits {
     pub tracks: u32,
 }
 
+/// One remote bucket ask: the query and its window, the deadline, and
+/// whether the bucket is wanted and may answer empty.
+#[derive(Debug, Clone, Copy)]
+struct RemoteAsk<'a> {
+    query: &'a str,
+    limit: u32,
+    offset: u32,
+    deadline: Duration,
+    on_empty: OnEmpty,
+    wanted: bool,
+}
+
 /// Unified search over one database plus MusicBrainz.
 /// Clone shares the database handle and the catalog.
 #[derive(Clone)]
@@ -188,30 +200,36 @@ impl SearchService {
         };
         let remote_artists = self.remote_bucket(
             Bucket::Artists,
-            query,
-            limits.artists,
-            0,
-            FULL_SEARCH_DEADLINE,
-            OnEmpty::AskAgain,
-            remote_wants(Bucket::Artists, limits.artists),
+            RemoteAsk {
+                query,
+                limit: limits.artists,
+                offset: 0,
+                deadline: FULL_SEARCH_DEADLINE,
+                on_empty: OnEmpty::AskAgain,
+                wanted: remote_wants(Bucket::Artists, limits.artists),
+            },
         );
         let remote_albums = self.remote_bucket(
             Bucket::Albums,
-            query,
-            limits.albums,
-            0,
-            FULL_SEARCH_DEADLINE,
-            OnEmpty::AskAgain,
-            remote_wants(Bucket::Albums, limits.albums),
+            RemoteAsk {
+                query,
+                limit: limits.albums,
+                offset: 0,
+                deadline: FULL_SEARCH_DEADLINE,
+                on_empty: OnEmpty::AskAgain,
+                wanted: remote_wants(Bucket::Albums, limits.albums),
+            },
         );
         let remote_tracks = self.remote_bucket(
             Bucket::Tracks,
-            query,
-            limits.tracks,
-            0,
-            FULL_SEARCH_DEADLINE,
-            OnEmpty::AskAgain,
-            remote_wants(Bucket::Tracks, limits.tracks),
+            RemoteAsk {
+                query,
+                limit: limits.tracks,
+                offset: 0,
+                deadline: FULL_SEARCH_DEADLINE,
+                on_empty: OnEmpty::AskAgain,
+                wanted: remote_wants(Bucket::Tracks, limits.tracks),
+            },
         );
         // Songs alone have no other leg to wait behind.
         let grace = if remote_wants(Bucket::Artists, limits.artists)
@@ -309,12 +327,14 @@ impl SearchService {
         let remote = self
             .remote_bucket(
                 bucket,
-                query,
-                limit,
-                offset,
-                FULL_SEARCH_DEADLINE,
-                OnEmpty::AskAgain,
-                true,
+                RemoteAsk {
+                    query,
+                    limit,
+                    offset,
+                    deadline: FULL_SEARCH_DEADLINE,
+                    on_empty: OnEmpty::AskAgain,
+                    wanted: true,
+                },
             )
             .await;
         let status = status_of(remote.as_ref());
@@ -403,21 +423,25 @@ impl SearchService {
             local,
             self.remote_bucket(
                 Bucket::Artists,
-                query,
-                remote_limit,
-                0,
-                SUGGEST_DEADLINE,
-                OnEmpty::Stop,
-                true
+                RemoteAsk {
+                    query,
+                    limit: remote_limit,
+                    offset: 0,
+                    deadline: SUGGEST_DEADLINE,
+                    on_empty: OnEmpty::Stop,
+                    wanted: true,
+                },
             ),
             self.remote_bucket(
                 Bucket::Albums,
-                query,
-                remote_limit,
-                0,
-                SUGGEST_DEADLINE,
-                OnEmpty::Stop,
-                true
+                RemoteAsk {
+                    query,
+                    limit: remote_limit,
+                    offset: 0,
+                    deadline: SUGGEST_DEADLINE,
+                    on_empty: OnEmpty::Stop,
+                    wanted: true,
+                },
             ),
         );
         let (local_artists, local_albums, tracks) = local?;
@@ -454,20 +478,19 @@ impl SearchService {
     }
 
     /// One MusicBrainz bucket, or `None` when the bucket is not wanted.
-    async fn remote_bucket(
-        &self,
-        bucket: Bucket,
-        query: &str,
-        limit: u32,
-        offset: u32,
-        deadline: Duration,
-        on_empty: OnEmpty,
-        wanted: bool,
-    ) -> Option<RemoteBucket> {
-        if !wanted || limit == 0 {
+    async fn remote_bucket(&self, bucket: Bucket, ask: RemoteAsk<'_>) -> Option<RemoteBucket> {
+        if !ask.wanted || ask.limit == 0 {
             return None;
         }
         let catalog = &self.remote;
+        let RemoteAsk {
+            query,
+            limit,
+            offset,
+            deadline,
+            on_empty,
+            ..
+        } = ask;
         match bucket {
             Bucket::Artists => Some(
                 catalog
