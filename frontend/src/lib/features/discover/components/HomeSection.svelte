@@ -75,14 +75,14 @@
 		}
 	}
 
-	function handleTrackAlbumSearch(track: TrackRef) {
+	// A track card's fallback target: the album search its artist and title
+	// make, the same query an album card's spyglass sends.
+	function trackAlbumSearchHref(track: TrackRef): string | null {
 		const query = [track.artist_name, track.album_name || track.title]
 			.filter(Boolean)
 			.join(' ')
 			.trim();
-		if (query) {
-			goto(withBasePath(`/search/albums?q=${encodeURIComponent(query)}`));
-		}
+		return query ? withBasePath(`/search/albums?q=${encodeURIComponent(query)}`) : null;
 	}
 
 	// Where the person connects the service a shelf waits on: their own
@@ -276,13 +276,13 @@
 						{/if}
 					</div>
 				{:else if item.kind === 'track'}
-					{@const trackArtistHref = artistHrefOrNull(item.artist_id)}
+					{@const trackHref = artistHrefOrNull(item.artist_id) ?? trackAlbumSearchHref(item)}
 					<div class="w-56 sm:w-64 md:w-72 shrink-0">
 						<Card
 							variant="raised"
 							padding="none"
-							href={trackArtistHref ?? undefined}
-							class="w-full {trackArtistHref ? '' : 'cursor-default opacity-90'}"
+							href={trackHref ?? undefined}
+							class="w-full {trackHref ? '' : 'cursor-default opacity-90'}"
 						>
 							<div class="flex items-center">
 								<figure class="w-16 h-16 shrink-0 rounded-l-box">
@@ -308,19 +308,6 @@
 									{/if}
 									{#if item.listened_at}
 										<p class="text-xs text-muted">{formatListenedAt(item.listened_at)}</p>
-									{/if}
-									{#if !item.artist_id}
-										<div class="flex justify-end pt-1">
-											<IconButton
-												size="xs"
-												icon={Search}
-												label="Search album"
-												onclick={(e) => {
-													e.stopPropagation();
-													handleTrackAlbumSearch(item);
-												}}
-											/>
-										</div>
 									{/if}
 								</div>
 							</div>
