@@ -181,6 +181,13 @@ pub trait DownloadSource: Send + Sync {
     /// Abort a live batch. Returns false when nothing was running.
     fn abort<'a>(&'a self, handle: &'a SourceHandle) -> BoxFuture<'a, Result<bool, SourceError>>;
 
+    /// Which of the source's clients holds a handle's job, when the source
+    /// has more than one (Usenet: SABnzbd or NZBGet). Polls back off per
+    /// client, so one client that is down holds up only its own jobs.
+    fn client_of(&self, _handle: &SourceHandle) -> &'static str {
+        ""
+    }
+
     /// Whether the client still owns one job (orphan evidence). `None`
     /// means the source cannot tell, and the folder stays.
     fn job_active<'a>(&'a self, _handle: &'a SourceHandle) -> BoxFuture<'a, Option<bool>> {

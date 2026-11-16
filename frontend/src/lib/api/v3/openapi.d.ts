@@ -18302,12 +18302,6 @@ export interface components {
              */
             password: string;
             /**
-             * Format: int64
-             * @description Job priority.
-             * @default 0
-             */
-            priority: number;
-            /**
              * @description NZBGet base URL.
              * @default
              */

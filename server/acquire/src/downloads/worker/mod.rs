@@ -65,7 +65,7 @@ pub use run::spawn_download_worker;
 pub use settings::WorkerSettings;
 pub(crate) use settings::usenet_mounts;
 
-use poll::{PollBackoff, PollMemory};
+use poll::{PollBackoff, PollLane, PollMemory};
 
 /// Job name of the worker loop.
 pub const DOWNLOAD_WORKER_JOB: &str = "download-worker";
@@ -190,9 +190,9 @@ pub struct DownloadWorker {
     settings: Arc<WorkerSettings>,
     ownership: JournalOwnership,
     poll_cache: Mutex<HashMap<String, PollMemory>>,
-    /// Sources whose client stopped answering, polled again only once
-    /// their backoff lapses.
-    poll_backoff: Mutex<HashMap<SourceTag, PollBackoff>>,
+    /// Clients that stopped answering, polled again only once their
+    /// backoff lapses.
+    poll_backoff: Mutex<HashMap<PollLane, PollBackoff>>,
     enqueue_not_before: Mutex<HashMap<String, f64>>,
     unsearchable_warned: Mutex<HashSet<String>>,
     /// Download starts, completions and failures go to `subscriber`

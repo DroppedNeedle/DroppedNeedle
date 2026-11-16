@@ -17,7 +17,7 @@ use crate::usenet::newznab::{NewznabIndexer, NewznabIndexerEntry};
 use crate::usenet::nzbget::{NzbgetClient, NzbgetQueue};
 use crate::usenet::policy::UsenetPolicy;
 use crate::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
-use crate::usenet::queue::UsenetQueue;
+use crate::usenet::queue::{UsenetClients, UsenetQueue};
 use crate::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
 use crate::wiring::{ClientLives, usenet_indexers};
 use droppedneedle_kernel::runtime_config::secret_sections::{
@@ -67,8 +67,8 @@ pub struct LiveClients {
     /// which checks each hop itself.
     no_redirect: reqwest::Client,
     /// The factory's client that follows a redirect only on the same host,
-    /// for slskd and Prowlarr: their key rides in a header a redirect
-    /// elsewhere would carry to another address.
+    /// for slskd, Prowlarr and NZBGet: their key or sign-in rides in a
+    /// header a redirect elsewhere would carry to another address.
     same_host: reqwest::Client,
     /// Newznab indexers, called through the providers' executor.
     newznab: NewznabIndexers,
@@ -207,30 +207,36 @@ impl LiveClients {
                 self.targets.clone(),
             )));
         }
-        let nzbget_queue = nzbget_queue(http, &self.no_redirect, &settings.sabnzbd, &usenet_policy);
-        // One Usenet client downloads: SABnzbd when it is configured and
-        // turned on, else NZBGet when it is.
+        let nzbget_queue = nzbget_queue(
+            &self.same_host,
+            &self.no_redirect,
+            &settings.sabnzbd,
+            &usenet_policy,
+        );
+        // New jobs go to SABnzbd when it is configured and turned on, else
+        // to NZBGet when it is. The other client stays reachable while it
+        // is set up, so a job it took is followed to the end.
         let clients = &settings.sabnzbd;
-        let usenet = sab_queue
-            .clone()
-            .filter(|_| clients.sabnzbd.enabled)
-            .map(|queue| {
-                (
-                    UsenetQueue::Sabnzbd(queue),
-                    clients.sabnzbd.category.clone(),
-                )
-            })
-            .or_else(|| {
-                nzbget_queue
-                    .clone()
-                    .filter(|_| clients.nzbget.enabled)
-                    .map(|queue| (UsenetQueue::Nzbget(queue), clients.nzbget.category.clone()))
-            });
-        if let Some((queue, category)) = usenet
+        let sab = sab_queue.clone().map(UsenetQueue::Sabnzbd);
+        let nzbget = nzbget_queue.clone().map(UsenetQueue::Nzbget);
+        let usenet = if let Some(adds) = sab.clone().filter(|_| clients.sabnzbd.enabled) {
+            Some((
+                UsenetClients::new(adds, nzbget),
+                clients.sabnzbd.category.clone(),
+            ))
+        } else if let Some(adds) = nzbget.filter(|_| clients.nzbget.enabled) {
+            Some((
+                UsenetClients::new(adds, sab),
+                clients.nzbget.category.clone(),
+            ))
+        } else {
+            None
+        };
+        if let Some((queues, category)) = usenet
             && readable
         {
             sources.push(Arc::new(UsenetSource::new(
-                queue,
+                queues,
                 usenet_indexers(settings.backend, &newznab, &prowlarr, &self.plugins),
                 usenet_policy,
                 self.journal.clone(),
@@ -316,7 +322,8 @@ fn sabnzbd_queue(
 }
 
 /// NZBGet queue, when the section configures one. NZBGet may run without a
-/// control password, so the URL alone configures it.
+/// control password, so the URL alone configures it. Its API goes through
+/// `same_host`, and an NZB fetched from its link through `no_redirect`.
 fn nzbget_queue(
     http: &reqwest::Client,
     no_redirect: &reqwest::Client,

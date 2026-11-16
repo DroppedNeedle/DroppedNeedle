@@ -1,9 +1,10 @@
-//! Usenet acquisition: SABnzbd or NZBGet, Newznab and Prowlarr.
+//! Usenet acquisition: SABnzbd and NZBGet, Newznab and Prowlarr.
 //!
 //! The download half of Usenet lives here: [`sabnzbd`] and [`nzbget`]
-//! enqueue NZBs and track jobs, [`queue`] hands each call to the one in
-//! use, [`newznab`] and [`prowlarr`] search indexers for releases,
-//! and [`indexer`] is the one search seam they and plugin indexers share.
+//! enqueue NZBs and track jobs, [`queue`] sends a new job to one of them
+//! and each later call to the client that took the job, [`newznab`] and
+//! [`prowlarr`] search indexers for releases, and [`indexer`] is the one
+//! search seam they and plugin indexers share.
 //! [`policy`] carries the Usenet quality tiers, search recipe, timeouts,
 //! and retention gates. The testkit crate serves the loopback
 //! SAB/Newznab/Prowlarr servers the contract tests run against. No test

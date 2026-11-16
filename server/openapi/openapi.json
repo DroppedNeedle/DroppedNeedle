@@ -54177,12 +54177,6 @@
             "description": "Control password (encrypted at rest).",
             "default": ""
           },
-          "priority": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Job priority.",
-            "default": 0
-          },
           "url": {
             "type": "string",
             "description": "NZBGet base URL.",

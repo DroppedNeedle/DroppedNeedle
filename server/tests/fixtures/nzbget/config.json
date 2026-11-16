@@ -1,0 +1,42 @@
+{
+  "version": "1.1",
+  "id": 1,
+  "result": [
+    {
+      "Name": "MainDir",
+      "Value": "/downloads"
+    },
+    {
+      "Name": "DestDir",
+      "Value": "/downloads/completed"
+    },
+    {
+      "Name": "InterDir",
+      "Value": "/downloads/intermediate"
+    },
+    {
+      "Name": "AppendCategoryDir",
+      "Value": "yes"
+    },
+    {
+      "Name": "Category1.Name",
+      "Value": "Movies"
+    },
+    {
+      "Name": "Category1.DestDir",
+      "Value": ""
+    },
+    {
+      "Name": "Category2.Name",
+      "Value": "Series"
+    },
+    {
+      "Name": "Category3.Name",
+      "Value": "Music"
+    },
+    {
+      "Name": "Category4.Name",
+      "Value": "Software"
+    }
+  ]
+}

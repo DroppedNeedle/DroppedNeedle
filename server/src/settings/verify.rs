@@ -243,11 +243,11 @@ pub struct LiveProbes {
     /// Outbound client.
     pub http: reqwest::Client,
     /// The factory's client that follows a redirect only on the same host,
-    /// for slskd and Prowlarr: their key rides in a header a redirect
-    /// elsewhere would carry to another address.
+    /// for slskd, Prowlarr and NZBGet: their key or sign-in rides in a
+    /// header a redirect elsewhere would carry to another address.
     pub same_host: reqwest::Client,
-    /// The factory's client that follows no redirect, which SABnzbd's
-    /// client fetches NZB links through.
+    /// The factory's client that follows no redirect, which the SABnzbd
+    /// and NZBGet clients fetch NZB links through.
     pub no_redirect: reqwest::Client,
     /// The MusicBrainz client, over the official, BrainzMash and mirror
     /// rows.
@@ -757,7 +757,7 @@ impl VerifyProbes for LiveProbes {
                 ..UsenetPolicy::default()
             };
             let client = NzbgetClient::new(
-                self.http.clone(),
+                self.same_host.clone(),
                 self.no_redirect.clone(),
                 url,
                 username,

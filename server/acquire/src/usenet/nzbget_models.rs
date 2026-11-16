@@ -3,9 +3,12 @@
 //! without its name, fails decoding instead of matching as an empty id.
 //! Sizes come split into 32-bit halves (`...Lo`/`...Hi`).
 //!
-//! Shapes checked on 2026-11-16 against NZBGet 26.3 (the
-//! `nzbgetcom/nzbget` image): `version`, `config`, `listgroups`, `history`,
-//! `append` and `editqueue`, and the in-repo `NzbgetMock` serves the same.
+//! Verified 2026-11-16 against NZBGet 26.3 (`nzbgetcom/nzbget:v26.3`):
+//! `version`, `config`, `listgroups`, `history`, `append`, `editqueue`, a
+//! JSON-RPC error and the 401 refusal were recorded into
+//! `tests/fixtures/nzbget/`, which the testkit's `NzbgetMock` answers from.
+//! Queue and history jobs both carried `NZBName` and `DupeKey`; they still
+//! default to empty, which matches no handle.
 
 use serde::Deserialize;
 
@@ -142,7 +145,7 @@ impl HistoryItem {
     }
 
     /// The part of `Status` before the slash, upper-cased.
-    pub fn outcome(&self) -> String {
+    pub fn status_category(&self) -> String {
         self.status
             .split('/')
             .next()

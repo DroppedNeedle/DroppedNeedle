@@ -34,7 +34,7 @@
 
 	// NZBGet only downloads what an indexer finds - a Usenet source with no indexer is inert.
 	const hasIndexer = $derived((indexersQuery.data?.length ?? 0) > 0);
-	// One Usenet client is used at a time, and SABnzbd wins when both are on.
+	// New jobs go to SABnzbd when both are on; each client finishes the jobs it took.
 	const sabnzbdOn = $derived(
 		sabnzbdQuery.data?.enabled === true && Boolean(sabnzbdQuery.data?.url)
 	);
@@ -112,8 +112,8 @@
 				<div class="alert alert-warning items-start text-sm">
 					<TriangleAlert class="size-5 shrink-0" aria-hidden="true" />
 					<p>
-						<span class="font-semibold">SABnzbd is also on.</span> DroppedNeedle uses one Usenet client
-						at a time and picks SABnzbd, so NZBGet stays idle until SABnzbd is turned off.
+						<span class="font-semibold">SABnzbd is also on.</span> New downloads go to SABnzbd. NZBGet
+						finishes the ones it already has.
 					</p>
 				</div>
 			{/if}

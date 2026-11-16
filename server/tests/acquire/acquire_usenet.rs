@@ -1662,7 +1662,7 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
         policy.clone(),
     ));
     let source = UsenetSource::new(
-        UsenetQueue::Sabnzbd(queue),
+        UsenetQueue::Sabnzbd(queue).into(),
         vec![Arc::new(NewznabIndexer::new(
             Vec::new(),
             Duration::from_secs(5),

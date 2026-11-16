@@ -1,9 +1,11 @@
 //! Loopback NZBGet JSON-RPC server for the contract tests.
 //!
-//! Serves `POST /jsonrpc` with the shapes NZBGet 26.3 answers with
-//! (`version`, `config`, `listgroups`, `history`, `append`, `editqueue`),
-//! records every call, and checks HTTP basic auth when a sign-in is set.
-//! Like the other mocks it listens on `127.0.0.1` only.
+//! Serves `POST /jsonrpc` (`version`, `config`, `listgroups`, `history`,
+//! `append`, `editqueue`) from the answers recorded from NZBGet 26.3 in
+//! `tests/fixtures/nzbget/`: the version, the config and every job are
+//! built on those files, so the mock cannot drift from NZBGet's shapes.
+//! It records every call and checks HTTP basic auth when a sign-in is
+//! set. Like the other mocks it listens on `127.0.0.1` only.
 
 use std::sync::{Arc, Mutex};
 
@@ -17,6 +19,24 @@ use serde_json::{Value, json};
 
 use crate::scripted::ScriptedStatuses;
 use crate::usenet::GOOD_NZB;
+
+const VERSION: &str = include_str!("../../tests/fixtures/nzbget/version.json");
+const CONFIG: &str = include_str!("../../tests/fixtures/nzbget/config.json");
+const LISTGROUPS: &str = include_str!("../../tests/fixtures/nzbget/listgroups.json");
+const HISTORY: &str = include_str!("../../tests/fixtures/nzbget/history.json");
+
+/// The `result` of a recorded answer.
+fn recorded(answer: &str) -> Value {
+    serde_json::from_str::<Value>(answer)
+        .ok()
+        .and_then(|answer| answer.get("result").cloned())
+        .unwrap_or_default()
+}
+
+/// The first recorded entry of a list answer, as a template for new ones.
+fn template(answer: &str) -> Value {
+    recorded(answer).get(0).cloned().unwrap_or_default()
+}
 
 /// One recorded JSON-RPC call.
 #[derive(Debug, Clone)]
@@ -52,16 +72,21 @@ pub struct NzbgetState {
 
 impl Default for NzbgetState {
     fn default() -> Self {
+        let config = recorded(CONFIG)
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|entry| {
+                        let text = |key: &str| entry[key].as_str().unwrap_or_default().to_owned();
+                        (text("Name"), text("Value"))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         NzbgetState {
-            version: "26.3".to_owned(),
-            config: vec![
-                ("MainDir".to_owned(), "/downloads".to_owned()),
-                ("DestDir".to_owned(), "${MainDir}/completed".to_owned()),
-                ("AppendCategoryDir".to_owned(), "yes".to_owned()),
-                ("Category1.Name".to_owned(), "Movies".to_owned()),
-                ("Category2.Name".to_owned(), "Music".to_owned()),
-                ("Category3.Name".to_owned(), String::new()),
-            ],
+            version: recorded(VERSION).as_str().unwrap_or_default().to_owned(),
+            config,
             groups: Vec::new(),
             history: Vec::new(),
             next_id: 1,
@@ -80,7 +105,7 @@ pub struct NzbgetMock {
 }
 
 impl NzbgetMock {
-    /// Fresh mock: NZBGet 26.3 defaults, no sign-in required.
+    /// Fresh mock: the recorded NZBGet 26.3 answers, no sign-in required.
     pub fn new() -> Self {
         NzbgetMock::default()
     }
@@ -125,13 +150,10 @@ impl NzbgetMock {
         dest_dir: &str,
         size: u32,
     ) -> &Self {
-        self.state().history.push(json!({
-            "NZBID": id, "Name": name, "NZBName": name, "DupeKey": name,
-            "Status": status, "DestDir": dest_dir, "FinalDir": "",
-            "ParStatus": "SUCCESS", "UnpackStatus": "SUCCESS",
-            "MoveStatus": "SUCCESS", "ScriptStatus": "NONE",
-            "FileSizeLo": size, "FileSizeHi": 0, "Category": "Music",
-        }));
+        let mut entry = template(HISTORY);
+        set_job(&mut entry, id, name, status, size);
+        entry["DestDir"] = json!(dest_dir);
+        self.state().history.push(entry);
         self
     }
 
@@ -154,14 +176,34 @@ impl NzbgetMock {
     }
 }
 
+/// A recorded job with its id, names, status and size replaced.
+fn set_job(entry: &mut Value, id: i64, name: &str, status: &str, size: u32) {
+    for (key, value) in [
+        ("NZBID", json!(id)),
+        ("ID", json!(id)),
+        ("Name", json!(name)),
+        ("NZBName", json!(name)),
+        ("NZBNicename", json!(name)),
+        ("NZBFilename", json!(format!("{name}.nzb"))),
+        ("DupeKey", json!(name)),
+        ("Status", json!(status)),
+        ("FileSizeLo", json!(size)),
+        (
+            "DestDir",
+            json!(format!("/downloads/intermediate/{name}.#{id}")),
+        ),
+    ] {
+        if entry.get(key).is_some() {
+            entry[key] = value;
+        }
+    }
+}
+
 fn group(id: i64, name: &str, status: &str, size: u32, left: u32) -> Value {
-    json!({
-        "NZBID": id, "NZBName": name, "DupeKey": name, "Status": status,
-        "FileSizeLo": size, "FileSizeHi": 0,
-        "RemainingSizeLo": left, "RemainingSizeHi": 0,
-        "DestDir": format!("/downloads/intermediate/{name}.#{id}"),
-        "Category": "Music",
-    })
+    let mut entry = template(LISTGROUPS);
+    set_job(&mut entry, id, name, status, size);
+    entry["RemainingSizeLo"] = json!(left);
+    entry
 }
 
 fn reply(result: Value) -> Response {
@@ -240,7 +282,14 @@ async fn rpc(State(mock): State<NzbgetMock>, headers: HeaderMap, body: Bytes) ->
     if let Some((username, password)) = state.credentials.clone()
         && auth.as_deref() != Some(basic(&username, &password).as_str())
     {
-        return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            [
+                (header::WWW_AUTHENTICATE, "Basic realm=\"NZBGet\""),
+                (header::CONTENT_TYPE, "text/plain"),
+            ],
+        )
+            .into_response();
     }
     if let Some(message) = state.rpc_error.clone() {
         return rpc_failure(&message);
@@ -276,9 +325,14 @@ async fn rpc(State(mock): State<NzbgetMock>, headers: HeaderMap, body: Bytes) ->
                 "GroupDelete" | "GroupFinalDelete" => {
                     let taken = take(&mut state.groups, &ids);
                     if command == "GroupDelete" {
-                        for mut entry in taken.clone() {
-                            entry["Status"] = json!("DELETED/MANUAL");
-                            entry["Name"] = entry["NZBName"].clone();
+                        for group in &taken {
+                            let mut entry = template(HISTORY);
+                            let text = |key: &str| group[key].as_str().unwrap_or_default();
+                            let id = group["NZBID"].as_i64().unwrap_or_default();
+                            let size = group["FileSizeLo"].as_u64().unwrap_or_default() as u32;
+                            set_job(&mut entry, id, text("NZBName"), "DELETED/MANUAL", size);
+                            entry["DupeKey"] = group["DupeKey"].clone();
+                            entry["Category"] = group["Category"].clone();
                             state.history.push(entry);
                         }
                     }

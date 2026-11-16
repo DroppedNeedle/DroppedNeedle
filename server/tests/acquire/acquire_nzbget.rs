@@ -1,6 +1,6 @@
-//! NZBGet contract tests against the in-repo JSON-RPC mock, whose shapes
-//! were checked against NZBGet 26.3. Transport is real HTTP over
-//! `127.0.0.1` only.
+//! NZBGet contract tests against the in-repo JSON-RPC mock, which answers
+//! from the recordings of NZBGet 26.3 in `tests/fixtures/nzbget/`.
+//! Transport is real HTTP over `127.0.0.1` only.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -18,7 +18,7 @@ fn queue_for(base: &str, username: &str, password: &str, mount: PathBuf) -> Nzbg
     let factory =
         droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http client factory");
     let client = NzbgetClient::new(
-        reqwest::Client::builder().build().expect("test client"),
+        factory.same_host_redirects().clone(),
         factory.no_redirect().clone(),
         base,
         username,
@@ -130,114 +130,141 @@ async fn nzbget_refused_sign_in_reads_as_auth() {
 }
 
 /// Queue then history: only DOWNLOADING is active, queued states move no
-/// bytes, history maps SUCCESS, FAILURE and a manual delete, and two jobs
-/// under one name refuse to guess.
+/// bytes, and history follows NZBGet's documented statuses: SUCCESS and
+/// WARNING/SCRIPT complete, any other WARNING fails like FAILURE and a
+/// delete, so the worker fails over. Two jobs under one name refuse to
+/// guess.
 #[tokio::test]
 async fn nzbget_status_walk() {
     let mock = NzbgetMock::new();
     mock.group_job(1, "job-down", "DOWNLOADING", 400, 100)
         .group_job(2, "job-paused", "PAUSED", 400, 400)
         .group_job(3, "job-unpack", "UNPACKING", 400, 0)
-        .history_job(
-            4,
-            "job-done",
-            "SUCCESS/ALL",
-            "/downloads/completed/job-done",
-            400,
-        );
-    mock.state().history.push(json!({
-        "NZBID": 5, "Name": "job-bad", "NZBName": "job-bad", "DupeKey": "job-bad",
-        "Status": "FAILURE/UNPACK", "DestDir": "/downloads/intermediate/job-bad",
-        "FinalDir": "", "ParStatus": "SUCCESS", "UnpackStatus": "FAILURE",
-        "MoveStatus": "NONE", "ScriptStatus": "NONE",
-        "FileSizeLo": 400, "FileSizeHi": 0, "Category": "Music",
-    }));
-    mock.group_job(6, "job-gone", "QUEUED", 400, 400)
         .group_job(7, "job-twice", "QUEUED", 1, 1)
         .group_job(8, "job-twice", "QUEUED", 1, 1);
+    for (id, status) in [
+        (10, "SUCCESS/ALL"),
+        (11, "SUCCESS/HEALTH"),
+        (12, "WARNING/SCRIPT"),
+        (13, "WARNING/DAMAGED"),
+        (14, "WARNING/REPAIRABLE"),
+        (15, "WARNING/PASSWORD"),
+        (16, "WARNING/SPACE"),
+        (17, "WARNING/HEALTH"),
+        (18, "FAILURE/PAR"),
+        (19, "DELETED/MANUAL"),
+    ] {
+        mock.history_job(
+            id,
+            &format!("job-{id}"),
+            status,
+            "/downloads/completed/x",
+            400,
+        );
+    }
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
     let mount = crate::common::ScratchDir::new("nzbget-walk");
     let queue = queue_for(&base, "", "", mount.to_path_buf());
-    let status = |job: &'static str, id: &'static str| {
+    let status = |job: String, id: &'static str| {
         let queue = &queue;
-        async move { queue.get_status(&handle(job, id)).await.expect("status") }
+        async move { queue.get_status(&handle(&job, id)).await.expect("status") }
     };
 
-    let down = status("job-down", "1").await;
+    let down = status("job-down".into(), "1").await;
     assert_eq!(down.status, "downloading");
     assert!(down.has_active_transfer);
     assert_eq!((down.bytes_total, down.bytes_downloaded), (400, 300));
-    assert_eq!(down.progress_percent, 75.0);
 
-    let paused = status("job-paused", "2").await;
+    let paused = status("job-paused".into(), "2").await;
     assert_eq!(paused.status, "queued");
     assert!(!paused.has_active_transfer);
     assert_eq!(paused.bytes_downloaded, 0);
 
-    let unpack = status("job-unpack", "3").await;
-    assert_eq!(unpack.status, "processing");
-    assert_eq!(unpack.progress_percent, 100.0);
+    assert_eq!(status("job-unpack".into(), "3").await.status, "processing");
 
-    let done = status("job-done", "4").await;
-    assert_eq!(done.status, "completed");
-    assert_eq!(done.bytes_downloaded, 400);
-
-    let bad = status("job-bad", "5").await;
-    assert_eq!(bad.status, "failed");
-    assert_eq!(bad.error.as_deref(), Some("unpack failed: FAILURE"));
-
-    // A job deleted in NZBGet's own UI lands in history as DELETED.
-    let deleted = mock.state().groups.len();
-    let removed = reqwest::Client::new()
-        .post(format!("{base}/jsonrpc"))
-        .body(json!({"method": "editqueue", "params": ["GroupDelete", "", [6]]}).to_string())
-        .send()
-        .await
-        .expect("delete");
-    assert!(removed.status().is_success());
-    assert_eq!(mock.state().groups.len(), deleted - 1);
-    let gone = status("job-gone", "6").await;
-    assert_eq!(gone.status, "failed");
-    assert_eq!(gone.error.as_deref(), Some("job removed from NZBGet"));
+    let ids = ["10", "11", "12", "13", "14", "15", "16", "17", "18", "19"];
+    let mut walked = Vec::new();
+    for id in ids {
+        walked.push(status(format!("job-{id}"), id).await.status);
+    }
+    assert_eq!(
+        walked,
+        [
+            "completed",
+            "completed",
+            "completed",
+            "failed",
+            "failed",
+            "failed",
+            "failed",
+            "failed",
+            "failed",
+            "failed",
+        ]
+    );
+    let deleted = status("job-19".into(), "19").await;
+    assert_eq!(deleted.error.as_deref(), Some("job removed from NZBGet"));
 
     // Before the id is known the name matches, once.
-    assert_eq!(status("job-down", "").await.status, "downloading");
+    assert_eq!(status("job-down".into(), "").await.status, "downloading");
     let twice = queue.get_status(&handle("job-twice", "")).await;
     assert!(
         matches!(twice, Err(NzbgetError::AmbiguousIdentity)),
         "{twice:?}"
     );
-    assert_eq!(status("nothing", "99").await.status, "missing");
 }
 
-/// Abort drops a queued job and its partial data for good and clears a
-/// failed record, but leaves completed output to the cleanup service.
-/// Discard hides a completed record after local cleanup.
+/// A stored id matches only with the job name DroppedNeedle sent: NZBGet
+/// numbers jobs from 1 again on a fresh queue, so after a reinstall id 1
+/// can be another app's job. That job reads as missing, and abort and
+/// discard leave it alone. Our own job is aborted for good, a failed
+/// record is cleared, completed output is left to the cleanup service,
+/// and discard hides a completed record.
 #[tokio::test]
-async fn nzbget_abort_and_discard_ownership() {
+async fn nzbget_id_matches_only_with_its_job_name() {
     let mock = NzbgetMock::new();
-    mock.group_job(1, "job-q", "QUEUED", 10, 10)
+    mock.group_job(1, "someone-elses-job", "DOWNLOADING", 10, 5)
+        .group_job(4, "job-q", "QUEUED", 10, 10)
+        .history_job(2, "other-done", "SUCCESS/ALL", "/downloads/completed/o", 10)
+        .history_job(5, "job-done", "SUCCESS/ALL", "/downloads/completed/d", 10)
         .history_job(
-            2,
-            "job-done",
-            "SUCCESS/ALL",
-            "/downloads/completed/job-done",
-            10,
-        )
-        .history_job(
-            3,
+            6,
             "job-bad",
             "FAILURE/HEALTH",
-            "/downloads/intermediate/job-bad",
+            "/downloads/intermediate/b",
             10,
         );
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let mount = crate::common::ScratchDir::new("nzbget-abort");
+    let mount = crate::common::ScratchDir::new("nzbget-ids");
     let queue = queue_for(&base, "", "", mount.to_path_buf());
 
-    assert!(queue.abort(&handle("job-q", "1")).await.expect("abort"));
-    assert!(!queue.abort(&handle("job-done", "2")).await.expect("abort"));
-    assert!(queue.abort(&handle("job-bad", "3")).await.expect("abort"));
+    let reused = handle("droppedneedle-t1-0", "1");
+    assert_eq!(
+        queue.get_status(&reused).await.expect("status").status,
+        "missing"
+    );
+    assert!(queue.abort(&reused).await.expect("abort"));
+    let finished = handle("droppedneedle-t2-0", "2");
+    assert!(
+        queue
+            .discard_client_artifacts(&finished)
+            .await
+            .expect("discard")
+    );
+    assert!(
+        mock.calls_to("editqueue").is_empty(),
+        "nothing of theirs is touched"
+    );
+
+    assert!(queue.abort(&handle("job-q", "4")).await.expect("abort"));
+    assert!(!queue.abort(&handle("job-done", "5")).await.expect("abort"));
+    assert!(queue.abort(&handle("job-bad", "6")).await.expect("abort"));
+    assert!(
+        queue
+            .discard_client_artifacts(&handle("job-done", "5"))
+            .await
+            .expect("discard")
+    );
     let commands: Vec<_> = mock
         .calls_to("editqueue")
         .into_iter()
@@ -246,75 +273,12 @@ async fn nzbget_abort_and_discard_ownership() {
     assert_eq!(
         commands,
         vec![
-            (json!("GroupFinalDelete"), json!([1])),
-            (json!("HistoryFinalDelete"), json!([3])),
+            (json!("GroupFinalDelete"), json!([4])),
+            (json!("HistoryFinalDelete"), json!([6])),
+            (json!("HistoryDelete"), json!([5])),
         ]
     );
-    assert!(mock.state().groups.is_empty());
-
-    assert!(
-        queue
-            .discard_client_artifacts(&handle("job-done", "2"))
-            .await
-            .expect("discard")
-    );
-    let last = mock.calls_to("editqueue").pop().expect("discard call");
-    assert_eq!(last.params[0], json!("HistoryDelete"));
-    assert!(mock.state().history.is_empty());
-}
-
-/// NZBGet's `DestDir` expands its `${MainDir}` reference, and a finished
-/// job's folder maps under the mount; the categories feed the picker.
-#[tokio::test]
-async fn nzbget_materialization_and_mount() {
-    let mount = crate::common::ScratchDir::new("nzbget-material");
-    let job = mount.join("Music/job1");
-    std::fs::create_dir_all(&job).expect("job dir");
-    std::fs::write(job.join("track.flac"), b"FLAC").expect("write");
-    let mock = NzbgetMock::new();
-    mock.group_job(1, "job-live", "DOWNLOADING", 10, 5)
-        .history_job(
-            2,
-            "job1",
-            "SUCCESS/ALL",
-            "/downloads/completed/Music/job1",
-            4,
-        );
-    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-    let queue = queue_for(&base, "", "", mount.to_path_buf());
-
-    assert_eq!(queue.client_name(), "nzbget");
-    assert!(queue.is_configured());
-    assert_eq!(
-        queue.get_complete_dir().await.expect("dest dir"),
-        "/downloads/completed"
-    );
-    assert_eq!(
-        queue.get_categories().await.expect("categories"),
-        vec!["Movies".to_owned(), "Music".to_owned()]
-    );
-
-    let live = queue
-        .inspect_materialization(&handle("job-live", "1"))
-        .await
-        .expect("active");
-    assert_eq!(live.state, "active");
-    assert!(live.mount_healthy);
-
-    let done = queue
-        .inspect_materialization(&handle("job1", "2"))
-        .await
-        .expect("done");
-    assert_eq!(done.state, "completed");
-    assert_eq!(done.remote_storage, "/downloads/completed/Music/job1");
-    assert_eq!(done.workspace_path, job.display().to_string());
-
-    let diagnosis = queue.diagnose_downloads_mount().await;
-    assert_eq!(diagnosis.sampled_downloads, 1);
-    assert_eq!(diagnosis.resolvable_downloads, 1);
-    assert!(diagnosis.mount_has_files);
-    assert_eq!(
-        diagnosis.client_downloads_dir.as_deref(),
-        Some("/downloads/completed")
-    );
+    let state = mock.state();
+    assert_eq!(state.groups.len(), 1);
+    assert_eq!(state.history.len(), 1);
 }

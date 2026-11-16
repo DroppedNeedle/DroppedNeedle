@@ -1,5 +1,6 @@
 //! Every download source through the one source trait: slskd and SABnzbd
-//! against their loopback mocks, and the example plugin client as a real
+//! against their loopback mocks, a Usenet job followed on the client that
+//! took it, and the example plugin client as a real
 //! subprocess (needs `python3` on PATH). Each is driven the way the worker
 //! drives it: enqueue, poll to the end, the landed files inside the
 //! client's own folder, discard, abort. Every Usenet indexer through the
@@ -41,6 +42,7 @@ use droppedneedle_plugins::process::ProcessLauncher;
 use droppedneedle_plugins::runtime::RuntimeState;
 use droppedneedle_providers::newznab::NewznabIndexers;
 use droppedneedle_providers::{ProviderEndpoints, Providers, RequestPriority};
+use droppedneedle_testkit::nzbget::NzbgetMock;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use droppedneedle_testkit::usenet::{
     NewznabMock, NewznabScenario, ProwlarrMock, ProwlarrScenario, SabnzbdMock, serve_loopback,
@@ -230,7 +232,7 @@ async fn sabnzbd_conforms() {
     );
     let journal = journal_with_task("t-sab", "Portishead", "Dummy").await;
     let source = Arc::new(UsenetSource::new(
-        UsenetQueue::Sabnzbd(Arc::new(queue)),
+        UsenetQueue::Sabnzbd(Arc::new(queue)).into(),
         vec![Arc::new(newznab)],
         policy,
         journal.clone(),
@@ -251,6 +253,293 @@ async fn sabnzbd_conforms() {
         );
     })
     .await;
+}
+
+/// The Usenet clients as the saved settings build them: NZBGet's
+/// mock, SABnzbd's mock, and an indexer whose one release links to an NZB
+/// on NZBGet's mock. Answers the client set and the scratch folder.
+struct UsenetRig {
+    settings: droppedneedle_kernel::runtime_config::ConfigStore,
+    dir: PathBuf,
+    nzbget: NzbgetMock,
+    nzbget_base: String,
+    sab: SabnzbdMock,
+    sab_base: String,
+    _servers: Vec<droppedneedle_testkit::usenet::ServerGuard>,
+}
+
+impl UsenetRig {
+    async fn new(dir: &Path) -> Self {
+        let nzbget = NzbgetMock::new();
+        let (nzbget_base, nzbget_server) = serve_loopback(nzbget.router())
+            .await
+            .expect("nzbget serves");
+        let sab = SabnzbdMock::new();
+        let (sab_base, sab_server) = serve_loopback(sab.router()).await.expect("sab serves");
+        let (indexer, indexer_server) = serve_loopback(feed(&format!("{nzbget_base}/nzb/good")))
+            .await
+            .expect("feed serves");
+        let settings = droppedneedle_acquire::test_support::scratch_settings(&dir.join("settings"))
+            .expect("settings open");
+        settings
+            .save_indexer_blocking(
+                droppedneedle_kernel::runtime_config::secret_sections::NewznabIndexer {
+                    name: "Dummy".to_owned(),
+                    url: format!("{indexer}/api"),
+                    api_key: "NZKEY".into(),
+                    categories: vec![3040],
+                    enabled: true,
+                    ..Default::default()
+                },
+            )
+            .expect("indexer saves");
+        for folder in ["sab", "nzbget"] {
+            std::fs::create_dir_all(dir.join(folder)).expect("downloads folder");
+        }
+        UsenetRig {
+            settings,
+            dir: dir.to_path_buf(),
+            nzbget,
+            nzbget_base,
+            sab,
+            sab_base,
+            _servers: vec![nzbget_server, sab_server, indexer_server],
+        }
+    }
+
+    /// Save the Usenet clients: NZBGet at its mock while `nzbget` is set
+    /// (turned on when true), and SABnzbd at `sab` while it is set.
+    fn save(&self, nzbget: Option<bool>, sab: Option<(&str, bool)>) {
+        use droppedneedle_kernel::runtime_config::secret_sections::{
+            DownloadClients, NzbgetConnection, SabnzbdConnection,
+        };
+        let mount = |folder: &str| self.dir.join(folder).display().to_string();
+        self.settings
+            .save_secret_blocking(DownloadClients {
+                sabnzbd: SabnzbdConnection {
+                    enabled: sab.is_some_and(|(_, on)| on),
+                    url: sab.map(|(url, _)| url.to_owned()).unwrap_or_default(),
+                    api_key: "SABKEY".into(),
+                    downloads_mount: mount("sab"),
+                    ..Default::default()
+                },
+                nzbget: NzbgetConnection {
+                    enabled: nzbget == Some(true),
+                    url: nzbget.map(|_| self.nzbget_base.clone()).unwrap_or_default(),
+                    username: String::new(),
+                    downloads_mount: mount("nzbget"),
+                    ..Default::default()
+                },
+            })
+            .expect("download clients save");
+    }
+
+    /// NZBGet finishes job 1 as `job_name`, one file in its folder.
+    fn finish(&self, job_name: &str) -> PathBuf {
+        let job = self.dir.join("nzbget").join(job_name);
+        std::fs::create_dir_all(&job).expect("job folder");
+        std::fs::write(job.join("track.flac"), b"FLAC").expect("track");
+        self.nzbget.state().groups.clear();
+        self.nzbget.history_job(
+            1,
+            job_name,
+            "SUCCESS/ALL",
+            &format!("/downloads/completed/{job_name}"),
+            4,
+        );
+        job
+    }
+}
+
+/// A job NZBGet took stays with NZBGet once SABnzbd is turned on too:
+/// new jobs go to SABnzbd, the NZBGet job is polled and lands from
+/// NZBGet's folder. Once NZBGet is no longer set up at all, its job moves
+/// on (to be fetched again) without counting against the release.
+#[tokio::test]
+async fn a_usenet_job_stays_with_the_client_that_took_it() {
+    use droppedneedle_acquire::clients::LiveClients;
+    use droppedneedle_acquire::downloads::SourceError;
+    use droppedneedle_acquire::reason::Reason;
+    use droppedneedle_acquire::wiring::ClientLives;
+
+    let journal = journal_with_task("t-switch", "Portishead", "Dummy").await;
+    let dir = journal
+        .db()
+        .path()
+        .parent()
+        .expect("scratch dir")
+        .to_path_buf();
+    let rig = UsenetRig::new(&dir).await;
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
+    let clients = LiveClients::new(
+        http.shared().clone(),
+        http.no_redirect().clone(),
+        http.same_host_redirects().clone(),
+        newznab_indexers(),
+        ClientLives::new(&rig.settings),
+        dir.join("slskd"),
+        journal.clone(),
+        no_targets(&journal),
+        crate::common::bundles::idle_host_over(journal.db()).await,
+    );
+    let usenet = || {
+        clients
+            .current()
+            .sources
+            .iter()
+            .find(|source| source.tag() == SourceTag::Usenet)
+            .cloned()
+            .expect("a Usenet source")
+    };
+
+    rig.save(Some(true), None);
+    let handle = usenet().enqueue("t-switch", 0).await.expect("enqueues");
+    assert_eq!(handle.nzo_id, "1", "NZBGet took it: {handle:?}");
+
+    rig.save(Some(true), Some((&rig.sab_base, true)));
+    let job = rig.finish(&handle.job_name);
+    let source = usenet();
+    let progress = source.poll(&handle).await.expect("polls");
+    assert!(
+        progress.all_terminal && progress.all_succeeded,
+        "{progress:?}"
+    );
+    let landed = source.landed(&handle).await.expect("lands");
+    let files: Vec<_> = landed.files.iter().map(|file| file.path.clone()).collect();
+    assert_eq!(files, [job]);
+    assert!(
+        landed
+            .mounts
+            .iter()
+            .all(|mount| mount.path() == dir.join("nzbget")),
+        "{:?}",
+        landed.mounts
+    );
+
+    journal
+        .run("test.seed", |store| {
+            store.insert_task(
+                &NewTask {
+                    id: "t-next".to_owned(),
+                    user_id: "u1".to_owned(),
+                    artist_name: "Portishead".to_owned(),
+                    album_title: "Dummy".to_owned(),
+                    release_group_mbid: "rg-1".to_owned(),
+                    origin: "user".to_owned(),
+                    retry_count: 0,
+                },
+                1_700_000_000.0,
+            )
+        })
+        .await
+        .expect("task inserts");
+    let next = source.enqueue("t-next", 0).await.expect("enqueues");
+    assert_eq!(next.nzo_id, "nzo-test-1", "SABnzbd took it: {next:?}");
+
+    rig.save(None, Some((&rig.sab_base, true)));
+    let source = usenet();
+    let gone = source.poll(&handle).await;
+    assert!(
+        matches!(
+            gone,
+            Err(SourceError::Rejected {
+                reason: Reason::MovedOn,
+                ..
+            })
+        ),
+        "{gone:?}"
+    );
+    assert!(source.discard(&handle).await.expect("nothing to discard"));
+}
+
+/// SABnzbd's job waits while SABnzbd, turned off with its URL still set,
+/// refuses its polls; NZBGet's jobs are still polled and land meanwhile.
+#[tokio::test]
+async fn a_usenet_client_that_is_down_holds_up_only_its_own_jobs() {
+    use droppedneedle_acquire::downloads::{AttemptState, TaskStatus};
+
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u1", "U", "user").await.expect("user seeds");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
+    let rig = UsenetRig::new(&dir).await;
+    // A refused key is not retried, and the poll reads it as a client
+    // that is not answering.
+    for _ in 0..4 {
+        rig.sab.statuses().answer_next(401, None);
+    }
+    rig.save(Some(true), Some((&rig.sab_base, false)));
+    rig.finish("droppedneedle-t-nzb-0");
+    // The SABnzbd task is the older row, so its poll comes first.
+    for (task_id, nzo_id) in [("t-sab", "SABnzbd_nzo_old"), ("t-nzb", "1")] {
+        let task = NewTask {
+            id: task_id.to_owned(),
+            user_id: "u1".to_owned(),
+            artist_name: "Portishead".to_owned(),
+            album_title: "Dummy".to_owned(),
+            release_group_mbid: "rg-1".to_owned(),
+            origin: "user".to_owned(),
+            retry_count: 0,
+        };
+        let handle = SourceHandle {
+            job_name: format!("droppedneedle-{task_id}-0"),
+            nzo_id: nzo_id.to_owned(),
+            ..SourceHandle::new(SourceTag::Usenet)
+        };
+        let handle = serde_json::to_string(&handle).expect("handle encodes");
+        journal
+            .run("test.seed", move |store| {
+                store.insert_task(&task, 1_700_000_000.0)?;
+                store.transition_task(&task.id, TaskStatus::Downloading, 1_700_000_000.0, None)?;
+                store.insert_attempt(
+                    &format!("{}-a0", task.id),
+                    &task.id,
+                    "usenet",
+                    0,
+                    &format!("droppedneedle-{}-0", task.id),
+                    &handle,
+                    AttemptState::InUse,
+                    1_700_000_000.0,
+                )
+            })
+            .await
+            .expect("download seeds");
+    }
+    let (worker, _) = crate::common::acquire::worker_over(
+        &db,
+        journal.clone(),
+        &rig.settings,
+        dir.join("slskd"),
+        Arc::new(crate::common::acquire::FixedAlbums::default()),
+        None,
+        droppedneedle_kernel::events::EventHub::new(),
+    )
+    .await;
+
+    worker.run_once(1).await;
+    worker.wait_for_landings().await;
+
+    let status = |task_id: &'static str| {
+        let journal = journal.clone();
+        async move {
+            journal
+                .read_task(task_id)
+                .await
+                .expect("task reads")
+                .expect("task exists")
+                .status
+        }
+    };
+    assert_eq!(status("t-sab").await, TaskStatus::Downloading, "it waits");
+    assert!(
+        !rig.nzbget.calls_to("history").is_empty(),
+        "NZBGet's job is polled"
+    );
+    assert_ne!(
+        status("t-nzb").await,
+        TaskStatus::Downloading,
+        "NZBGet's job moved on to its landing"
+    );
 }
 
 /// A native indexer's release is fetched through that indexer's client, so
@@ -302,7 +591,7 @@ async fn a_usenet_pick_grabs_through_its_indexer() {
     let client = newznab_indexers().client("dummy", "Dummy", &format!("{indexer}/api"), "NZKEY");
     let journal = journal_with_task("t-grab", "Portishead", "Dummy").await;
     let source = UsenetSource::new(
-        UsenetQueue::Sabnzbd(Arc::new(queue)),
+        UsenetQueue::Sabnzbd(Arc::new(queue)).into(),
         vec![Arc::new(NewznabIndexer::new(
             vec![NewznabIndexerEntry {
                 client: client.clone(),
@@ -439,7 +728,7 @@ async fn a_copy_turned_down_as_not_better_is_not_picked_again() {
         .expect("seeds");
     let client = newznab_indexers().client("dummy", "Dummy", &format!("{indexer}/api"), "NZKEY");
     let source = UsenetSource::new(
-        UsenetQueue::Sabnzbd(Arc::new(queue)),
+        UsenetQueue::Sabnzbd(Arc::new(queue)).into(),
         vec![Arc::new(NewznabIndexer::new(
             vec![NewznabIndexerEntry {
                 client,

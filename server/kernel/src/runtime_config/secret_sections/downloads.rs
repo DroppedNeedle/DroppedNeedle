@@ -95,8 +95,6 @@ pub struct NzbgetConnection {
     pub password: Secret,
     /// Category ("" lets NZBGet choose).
     pub category: String,
-    /// Job priority.
-    pub priority: i64,
     /// Where DroppedNeedle sees NZBGet's completed dir (`DestDir`).
     pub downloads_mount: String,
 }
@@ -109,14 +107,14 @@ impl Default for NzbgetConnection {
             username: "nzbget".to_owned(),
             password: Secret::default(),
             category: String::new(),
-            priority: 0,
             downloads_mount: "/nzbget-downloads".to_owned(),
         }
     }
 }
 
-/// The `download_clients` section: the Usenet download clients. One runs at
-/// a time; SABnzbd wins when both are turned on.
+/// The `download_clients` section: the Usenet download clients. New jobs go
+/// to one, SABnzbd when both are turned on; a job already sent stays with
+/// the client that took it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct DownloadClients {

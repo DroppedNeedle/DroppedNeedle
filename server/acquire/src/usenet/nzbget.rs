@@ -89,7 +89,8 @@ impl NzbgetError {
 /// Raw NZBGet JSON-RPC wrapper. The HTTP clients are injected; the password
 /// is never logged, and Debug leaves it out.
 pub struct NzbgetClient {
-    /// The shared client, for NZBGet's API.
+    /// The factory's client that follows a redirect only on the same host,
+    /// for NZBGet's API: the sign-in rides in a header.
     http: Client,
     /// The factory's client that follows no redirect, for an NZB fetched
     /// straight from its link.
@@ -114,8 +115,9 @@ impl std::fmt::Debug for NzbgetClient {
 }
 
 impl NzbgetClient {
-    /// Build over the injected clients: `http` for the API and `nzb_http`,
-    /// which follows no redirect, for NZB links. `base_url` is NZBGet's
+    /// Build over the injected clients: `http`, which follows a redirect
+    /// only on the same host, for the API and `nzb_http`, which follows no
+    /// redirect, for NZB links. `base_url` is NZBGet's
     /// origin (`/jsonrpc` is appended per call).
     pub fn new(
         http: Client,
@@ -270,7 +272,8 @@ impl NzbgetClient {
             .await
             .map_err(|err| ClientError::transport(Service::Nzbget, transport_error(err)))?;
         let status = response.status().as_u16();
-        // A 3xx here is a redirect the client did not follow, not an answer.
+        // A 3xx here is a redirect to another host or to plain http, which
+        // the client does not follow: not an answer.
         if status >= 300 {
             let wait = retry_after(response.headers());
             let snippet = response_snippet(response).await;
@@ -586,7 +589,7 @@ impl NzbgetQueue {
         let Some(item) = self.find_history(handle).await? else {
             return Ok(true);
         };
-        if item.outcome() == "FAILURE" {
+        if outcome(&item) == Outcome::Failed {
             return self
                 .client
                 .edit_queue(
@@ -631,13 +634,13 @@ impl NzbgetQueue {
             let complete_dir = self.complete_dir().await;
             exact_local_storage(&self.mount, &complete_dir, &storage)
         };
-        let outcome = item.outcome();
         Ok(Materialization {
-            state: if outcome == "FAILURE" || outcome == "DELETED" {
-                "failed".to_owned()
-            } else {
-                "completed".to_owned()
-            },
+            state: match outcome(&item) {
+                Outcome::Completed => "completed",
+                Outcome::Failed => "failed",
+                Outcome::Running => "active",
+            }
+            .to_owned(),
             nzo_id: item.nzb_id.to_string(),
             remote_storage: storage,
             mount_root: self.mount.display().to_string(),
@@ -657,7 +660,7 @@ impl NzbgetQueue {
             let still_queued = groups.iter().any(|group| group_matches(group, handle));
             return Ok(!still_queued);
         };
-        let command = if item.outcome() == "FAILURE" {
+        let command = if outcome(&item) == Outcome::Failed {
             "HistoryFinalDelete"
         } else {
             "HistoryDelete"
@@ -684,10 +687,7 @@ impl NzbgetQueue {
         };
         let completed: Vec<&HistoryItem> = history
             .iter()
-            .filter(|item| {
-                matches!(item.outcome().as_str(), "SUCCESS" | "WARNING")
-                    && !item.storage().is_empty()
-            })
+            .filter(|item| outcome(item) == Outcome::Completed && !item.storage().is_empty())
             .collect();
         if completed.is_empty() {
             return empty(client_dir);
@@ -767,13 +767,15 @@ fn unique<T>(mut matches: impl Iterator<Item = T>) -> Result<Option<T>, NzbgetEr
     Ok(first)
 }
 
-/// A known id matches only that job; before the id is stored, the job name
-/// matches NZBGet's job name or the dupe key DroppedNeedle set.
+/// The job name must match NZBGet's job name or the dupe key DroppedNeedle
+/// set, and a stored id must match too. An id never matches alone: NZBGet
+/// numbers jobs from 1 again on a fresh queue, so after a reinstall a
+/// stored id can name another app's job.
 fn job_matches(id: i64, names: &[&str], handle: &TaskHandle) -> bool {
-    if !handle.nzo_id.is_empty() {
-        return id.to_string() == handle.nzo_id;
+    if handle.job_name.is_empty() || !names.iter().any(|name| *name == handle.job_name) {
+        return false;
     }
-    !handle.job_name.is_empty() && names.iter().any(|name| *name == handle.job_name)
+    handle.nzo_id.is_empty() || id.to_string() == handle.nzo_id
 }
 
 fn group_matches(group: &Group, handle: &TaskHandle) -> bool {
@@ -820,18 +822,45 @@ fn group_status(group: &Group) -> TaskStatus {
     }
 }
 
-/// History mapping by the status category. `DELETED` is a terminal failure
-/// so the worker fails over instead of polling to the deadline.
+/// How a finished job ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    /// The files are there to land.
+    Completed,
+    /// Nothing usable came out, so the worker fails over.
+    Failed,
+    /// A status NZBGet does not document; polled again.
+    Running,
+}
+
+/// NZBGet's history `Status`, as its API documents it (`history`, checked
+/// 2026-11-16 at nzbget.com/documentation/api/history): every `SUCCESS/*`
+/// and `WARNING/SCRIPT` (only a post-processing script failed) complete.
+/// Every other `WARNING/*` (`DAMAGED`, `REPAIRABLE`, `PASSWORD`, `SPACE`,
+/// `HEALTH`, `SKIPPED`) left the files damaged, packed or absent, and
+/// fails like `FAILURE/*` and `DELETED/*`.
+fn outcome(item: &HistoryItem) -> Outcome {
+    let status = item.status.to_ascii_uppercase();
+    let (category, detail) = status.split_once('/').unwrap_or((&status, ""));
+    match (category, detail) {
+        ("SUCCESS", _) | ("WARNING", "SCRIPT") => Outcome::Completed,
+        ("WARNING" | "FAILURE" | "DELETED", _) => Outcome::Failed,
+        _ => Outcome::Running,
+    }
+}
+
+/// History mapping by [`outcome`]. A deleted job is a terminal failure so
+/// the worker fails over instead of polling to the deadline.
 fn history_status(item: &HistoryItem) -> TaskStatus {
     let bytes = item.size();
-    match item.outcome().as_str() {
-        "DELETED" => TaskStatus {
+    match outcome(item) {
+        Outcome::Failed if item.status_category() == "DELETED" => TaskStatus {
             status: "failed".to_owned(),
             error: Some("job removed from NZBGet".to_owned()),
             matched_transfers: 1,
             ..TaskStatus::default()
         },
-        "SUCCESS" | "WARNING" => TaskStatus {
+        Outcome::Completed => TaskStatus {
             status: "completed".to_owned(),
             files_total: 1,
             files_completed: 1,
@@ -841,14 +870,14 @@ fn history_status(item: &HistoryItem) -> TaskStatus {
             matched_transfers: 1,
             ..TaskStatus::default()
         },
-        "FAILURE" => TaskStatus {
+        Outcome::Failed => TaskStatus {
             status: "failed".to_owned(),
             error: Some(failure_reason(item)),
             bytes_total: bytes,
             matched_transfers: 1,
             ..TaskStatus::default()
         },
-        _ => TaskStatus {
+        Outcome::Running => TaskStatus {
             status: "processing".to_owned(),
             files_total: 1,
             bytes_total: bytes,

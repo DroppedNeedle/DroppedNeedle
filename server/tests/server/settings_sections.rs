@@ -999,10 +999,7 @@ async fn live_probes_answer_honest_verdicts() {
         .await;
     assert!(nzbget.valid, "{}", nzbget.message);
     assert_eq!(nzbget.version.as_deref(), Some("26.3"));
-    assert_eq!(
-        nzbget.categories,
-        vec!["Movies".to_owned(), "Music".to_owned()]
-    );
+    assert_eq!(nzbget.categories, ["Movies", "Series", "Music", "Software"]);
     assert_eq!(nzbget.complete_dir.as_deref(), Some("/downloads/completed"));
     let refused = probes
         .nzbget(&nzbget_base, "nzbget", "wrong", "/mnt/downloads")
