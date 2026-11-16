@@ -236,7 +236,7 @@ impl SearchService {
         };
         local_tracks
             .extend(Box::pin(self.library_copies(&folded, &local_tracks, &remote_tracks)).await?);
-        let mut artists = join(local_artists, remote_hits(remote_artists));
+        let mut artists = join(local_artists, first_hits(remote_artists, limits.artists));
         let mut albums = join(local_albums, remote_hits(remote_albums));
         let mut tracks = join(local_tracks, remote_tracks);
         self.apply_flags(&mut artists, &mut albums, &mut tracks)
@@ -425,7 +425,7 @@ impl SearchService {
             status_of(remote_artists.as_ref()),
             status_of(remote_albums.as_ref()),
         );
-        let mut artists = join(local_artists, remote_hits(remote_artists));
+        let mut artists = join(local_artists, first_hits(remote_artists, remote_limit));
         let mut albums = join(local_albums, first_hits(remote_albums, remote_limit));
         self.apply_flags(&mut artists, &mut albums, &mut []).await;
         let tracks = tracks.into_iter().map(Candidate::local).collect();

@@ -323,6 +323,16 @@ pub enum OnEmpty {
     Stop,
 }
 
+/// Which words a text search sends: as typed, or the [`forgiving_term`]
+/// a caller asks with once the words as typed matched nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchTerm {
+    /// The escaped text as a phrase and as words.
+    Typed,
+    /// The forgiving term in both places.
+    Forgiving,
+}
+
 /// Longest lone word whose two-word splits are tried: each split is a
 /// phrase as long as the word, so the term grows with the square of it.
 const MAX_SPLIT_LETTERS: usize = 24;

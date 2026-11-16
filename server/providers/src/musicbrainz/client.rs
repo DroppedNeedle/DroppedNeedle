@@ -25,8 +25,8 @@ use super::redirects::{
 };
 use super::{
     BRAINZMASH_MAX_COOLDOWN, Criticality, LiveSource, MAX_BODY_BYTES, MAX_PAGE_LIMIT,
-    MAX_REDIRECT_HOPS, MbSource, OnEmpty, SOURCE, build_release_search_query, escape_lucene_phrase,
-    forgiving_term, is_valid_mbid, lucene_words, normalize_mb_id,
+    MAX_REDIRECT_HOPS, MbSource, SOURCE, SearchTerm, build_release_search_query,
+    escape_lucene_phrase, forgiving_term, is_valid_mbid, lucene_words, normalize_mb_id,
 };
 use crate::RequestPriority;
 use crate::error::{PayloadKind, ProviderError};
@@ -222,7 +222,7 @@ impl MusicBrainzView {
         text: &str,
         limit: u32,
         offset: u32,
-        on_empty: OnEmpty,
+        term: SearchTerm,
         criticality: Criticality,
     ) -> Result<SearchPage<ArtistSearchHit>, ProviderError> {
         let query = |term: &str, words: &str| {
@@ -233,7 +233,7 @@ impl MusicBrainzView {
             array_key: "artists",
             limit,
             offset,
-            on_empty,
+            term,
             criticality,
         };
         self.search_text(text, query, page).await
@@ -246,7 +246,7 @@ impl MusicBrainzView {
         text: &str,
         limit: u32,
         offset: u32,
-        on_empty: OnEmpty,
+        term: SearchTerm,
         criticality: Criticality,
     ) -> Result<SearchPage<ReleaseGroupSearchHit>, ProviderError> {
         let query = |term: &str, words: &str| {
@@ -257,19 +257,19 @@ impl MusicBrainzView {
             array_key: "release-groups",
             limit,
             offset,
-            on_empty,
+            term,
             criticality,
         };
         self.search_text(text, query, page).await
     }
 
     /// One page of a text search. `query` builds the Lucene query from the
-    /// term its fields match and the free words its last clause takes: the
-    /// escaped text as a phrase and its words ([`lucene_words`]), and when
-    /// MusicBrainz has no match at all, the one [`forgiving_term`] (typos
-    /// fuzzed, a run-together word split) in both places, so a search
-    /// costs a second call only when the first found nothing. A later page
-    /// that comes back empty is the end of the list, never asked again.
+    /// term its fields match and the free words its last clause takes: for
+    /// [`SearchTerm::Typed`] the escaped text as a phrase and its words
+    /// ([`lucene_words`]), for [`SearchTerm::Forgiving`] the one
+    /// [`forgiving_term`] (typos fuzzed, a run-together word split) in both
+    /// places. Text with no forgiving term answers an empty page without a
+    /// call.
     async fn search_text<E>(
         &self,
         text: &str,
@@ -284,30 +284,28 @@ impl MusicBrainzView {
             array_key,
             limit,
             offset,
-            on_empty,
+            term,
             criticality,
         } = page;
         let text = text.trim();
-        let typed = query(
-            &format!("\"{}\"", escape_lucene_phrase(text)),
-            &lucene_words(text),
-        );
-        let found = self
-            .search_page(entity, &typed, limit, offset, array_key, criticality)
-            .await?;
-        let retry = on_empty == OnEmpty::AskAgain && found.count == 0;
-        let Some(term) = forgiving_term(text).filter(|_| retry) else {
-            return Ok(found);
+        let built = match term {
+            SearchTerm::Typed => query(
+                &format!("\"{}\"", escape_lucene_phrase(text)),
+                &lucene_words(text),
+            ),
+            SearchTerm::Forgiving => match forgiving_term(text) {
+                Some(term) => query(&term, &term),
+                None => {
+                    return Ok(SearchPage {
+                        count: 0,
+                        offset: u64::from(offset),
+                        items: Vec::new(),
+                    });
+                }
+            },
         };
-        self.search_page(
-            entity,
-            &query(&term, &term),
-            limit,
-            offset,
-            array_key,
-            criticality,
-        )
-        .await
+        self.search_page(entity, &built, limit, offset, array_key, criticality)
+            .await
     }
 
     /// One page of an artist's release groups (browse, not search: the
@@ -404,7 +402,7 @@ impl MusicBrainzView {
         text: &str,
         limit: u32,
         offset: u32,
-        on_empty: OnEmpty,
+        term: SearchTerm,
         criticality: Criticality,
     ) -> Result<SearchPage<RecordingSearchHit>, ProviderError> {
         let query = |term: &str, words: &str| format!(r#"recording:{term}^3 OR {words}"#);
@@ -413,7 +411,7 @@ impl MusicBrainzView {
             array_key: "recordings",
             limit,
             offset,
-            on_empty,
+            term,
             criticality,
         };
         self.search_text(text, query, page).await
@@ -925,13 +923,13 @@ fn sorted_includes(includes: &[&str]) -> String {
 }
 
 /// Where one text search page is asked and how: the entity and its array
-/// key, the page, and what an answer with no match does.
+/// key, the page, and which words it sends.
 #[derive(Debug, Clone, Copy)]
 struct TextPage<'a> {
     entity: &'a str,
     array_key: &'a str,
     limit: u32,
     offset: u32,
-    on_empty: OnEmpty,
+    term: SearchTerm,
     criticality: Criticality,
 }

@@ -13,7 +13,7 @@ use droppedneedle_providers::geocoding::DEFAULT_CITY_COUNT;
 use droppedneedle_providers::lastfm::{ArtistInfo, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
 use droppedneedle_providers::listenbrainz::models::ListenCountAnswer;
-use droppedneedle_providers::musicbrainz::{self, Criticality, MbSource, OnEmpty};
+use droppedneedle_providers::musicbrainz::{self, Criticality, MbSource, SearchTerm};
 use droppedneedle_providers::test_support::{Scripted, ScriptedWire};
 use droppedneedle_providers::youtube::{YouTubeClient, YouTubeSettings, YoutubeError};
 use droppedneedle_providers::{
@@ -1286,7 +1286,7 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
             let page = providers
                 .musicbrainz
                 .fixed(MbSource::official(), PRIORITY)
-                .search_artists_text(text, 5, 0, OnEmpty::Stop, Criticality::IdentityCritical)
+                .search_artists_text(text, 5, 0, SearchTerm::Typed, Criticality::IdentityCritical)
                 .await?;
             Ok(!page.items.is_empty())
         }
@@ -1299,7 +1299,7 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                     text,
                     5,
                     0,
-                    OnEmpty::Stop,
+                    SearchTerm::Typed,
                     Criticality::IdentityCritical,
                 )
                 .await?;

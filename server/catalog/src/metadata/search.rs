@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
 use droppedneedle_providers::musicbrainz::{
-    Criticality, OnEmpty, RecordingSearchRelease, ReleaseGroupRef, hit_score,
-    recording_release_group_rank,
+    Criticality, OnEmpty, RecordingSearchRelease, ReleaseGroupRef, SearchTerm, forgiving_term,
+    hit_score, recording_release_group_rank,
 };
 use droppedneedle_providers::{
     CacheKey, Fetched, IntegrationStatus, Policy, ProviderError, RequestPriority, Source,
@@ -119,8 +119,10 @@ fn found_hits(items: Vec<RemoteHit>) -> Fetched<RemoteHits> {
 }
 
 impl Catalog {
-    /// Search MusicBrainz artists: placeholder
-    /// artists filtered out, at most `limit` hits.
+    /// Search MusicBrainz artists for a page of `limit`, placeholder
+    /// artists filtered out, in MusicBrainz's order; the caller cuts. A
+    /// first page is one answer whatever the limit up to [`ARTIST_WIDTH`],
+    /// so typeahead, the All tab and "see all" share it.
     pub async fn search_artists_remote(
         &self,
         query: &str,
@@ -129,22 +131,45 @@ impl Catalog {
         deadline: Duration,
         on_empty: OnEmpty,
     ) -> RemoteBucket {
+        let started = tokio::time::Instant::now();
+        let width = page_width(ARTIST_WIDTH, offset, (limit * 2).clamp(25, 100));
+        let typed = self
+            .artists_page(query, width, offset, SearchTerm::Typed, deadline)
+            .await;
+        if !asks_again(query, offset, on_empty, &typed) {
+            return typed;
+        }
+        let left = deadline.saturating_sub(started.elapsed());
+        self.artists_page(query, width, offset, SearchTerm::Forgiving, left)
+            .await
+    }
+
+    /// One page of an artist search for `term`, cached under its own key.
+    async fn artists_page(
+        &self,
+        query: &str,
+        width: u32,
+        offset: u32,
+        term: SearchTerm,
+        deadline: Duration,
+    ) -> RemoteBucket {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        let parts = [
+        let width_part = width.to_string();
+        let offset_part = offset.to_string();
+        let mut parts = vec![
             namespace.as_str(),
             query.trim(),
-            &limit.to_string(),
-            &offset.to_string(),
-            on_empty_key(on_empty),
+            width_part.as_str(),
+            offset_part.as_str(),
         ];
+        parts.extend(term_key(term));
         let key = CacheKey::hashed(Source::MusicBrainz, "artist_search", &parts);
         let catalog = self.clone();
         let text = query.trim().to_owned();
         let fetch = move |priority| async move {
             let (client, _) = catalog.upstream().musicbrainz(priority);
-            let wide = (limit * 2).clamp(25, 100);
             let page = client
-                .search_artists_text(&text, wide, offset, on_empty, Criticality::IdentityCritical)
+                .search_artists_text(&text, width, offset, term, Criticality::IdentityCritical)
                 .await
                 .map_err(mb_search_error)?;
             let mut seen = HashSet::new();
@@ -173,7 +198,6 @@ impl Catalog {
                         mbid: hit.id,
                     })
                 })
-                .take(limit as usize)
                 .collect();
             Ok(found_hits(items))
         };
@@ -186,6 +210,7 @@ impl Catalog {
     /// discography and new-release feeds leave out. The page is asked wider
     /// than `limit` so the filter leaves enough, and every hit it keeps
     /// comes back: the caller cuts, after ranking or in MusicBrainz's order.
+    /// A first page is one answer whatever the limit up to [`GROUP_WIDTH`].
     pub async fn search_albums_remote(
         &self,
         query: &str,
@@ -193,6 +218,29 @@ impl Catalog {
         offset: u32,
         deadline: Duration,
         on_empty: OnEmpty,
+    ) -> RemoteBucket {
+        let started = tokio::time::Instant::now();
+        let width = page_width(GROUP_WIDTH, offset, (limit + limit / 2).clamp(25, 100));
+        let typed = self
+            .albums_page(query, width, offset, SearchTerm::Typed, deadline)
+            .await;
+        if !asks_again(query, offset, on_empty, &typed) {
+            return typed;
+        }
+        let left = deadline.saturating_sub(started.elapsed());
+        self.albums_page(query, width, offset, SearchTerm::Forgiving, left)
+            .await
+    }
+
+    /// One page of a release-group search for `term`, cached under its own
+    /// key.
+    async fn albums_page(
+        &self,
+        query: &str,
+        width: u32,
+        offset: u32,
+        term: SearchTerm,
+        deadline: Duration,
     ) -> RemoteBucket {
         let preferences = self.upstream().settings().preferences();
         let primary = mapping::type_set(&preferences.primary_types);
@@ -204,26 +252,27 @@ impl Catalog {
             .collect::<Vec<_>>()
             .join(",");
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        let parts = [
+        let width_part = width.to_string();
+        let offset_part = offset.to_string();
+        let mut parts = vec![
             namespace.as_str(),
             query.trim(),
-            &limit.to_string(),
-            &offset.to_string(),
-            on_empty_key(on_empty),
+            width_part.as_str(),
+            offset_part.as_str(),
             filter_key.as_str(),
         ];
+        parts.extend(term_key(term));
         let key = CacheKey::hashed(Source::MusicBrainz, "album_search", &parts);
         let catalog = self.clone();
         let text = query.trim().to_owned();
         let fetch = move |priority| async move {
             let (client, _) = catalog.upstream().musicbrainz(priority);
-            let wide = (limit + limit / 2).clamp(25, 100);
             let page = client
                 .search_release_groups_text(
                     &text,
-                    wide,
+                    width,
                     offset,
-                    on_empty,
+                    term,
                     Criticality::IdentityCritical,
                 )
                 .await
@@ -272,7 +321,8 @@ impl Catalog {
     /// Search MusicBrainz recordings for a page of `limit`: songs, not
     /// videos, each under the release a track request tries first
     /// ([`best_release`]). A recording on no release in a group is nothing
-    /// to request, so it is left out.
+    /// to request, so it is left out. A first page is one answer whatever
+    /// the limit up to [`GROUP_WIDTH`].
     pub async fn search_tracks_remote(
         &self,
         query: &str,
@@ -281,28 +331,45 @@ impl Catalog {
         deadline: Duration,
         on_empty: OnEmpty,
     ) -> RemoteBucket {
+        let started = tokio::time::Instant::now();
+        let width = page_width(GROUP_WIDTH, offset, (limit + limit / 2).clamp(25, 100));
+        let typed = self
+            .tracks_page(query, width, offset, SearchTerm::Typed, deadline)
+            .await;
+        if !asks_again(query, offset, on_empty, &typed) {
+            return typed;
+        }
+        let left = deadline.saturating_sub(started.elapsed());
+        self.tracks_page(query, width, offset, SearchTerm::Forgiving, left)
+            .await
+    }
+
+    /// One page of a recording search for `term`, cached under its own key.
+    async fn tracks_page(
+        &self,
+        query: &str,
+        width: u32,
+        offset: u32,
+        term: SearchTerm,
+        deadline: Duration,
+    ) -> RemoteBucket {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        let parts = [
+        let width_part = width.to_string();
+        let offset_part = offset.to_string();
+        let mut parts = vec![
             namespace.as_str(),
             query.trim(),
-            &limit.to_string(),
-            &offset.to_string(),
-            on_empty_key(on_empty),
+            width_part.as_str(),
+            offset_part.as_str(),
         ];
+        parts.extend(term_key(term));
         let key = CacheKey::hashed(Source::MusicBrainz, "track_search", &parts);
         let catalog = self.clone();
         let text = query.trim().to_owned();
         let fetch = move |priority| async move {
             let (client, _) = catalog.upstream().musicbrainz(priority);
-            let wide = (limit + limit / 2).clamp(25, 100);
             let page = client
-                .search_recordings_text(
-                    &text,
-                    wide,
-                    offset,
-                    on_empty,
-                    Criticality::IdentityCritical,
-                )
+                .search_recordings_text(&text, width, offset, term, Criticality::IdentityCritical)
                 .await
                 .map_err(mb_search_error)?;
             let mut seen = HashSet::new();
@@ -429,13 +496,41 @@ impl Catalog {
     }
 }
 
-/// The cache key part for what an empty answer does: a search that asked
-/// again forgivingly keeps another answer than one that did not.
-fn on_empty_key(on_empty: OnEmpty) -> &'static str {
-    match on_empty {
-        OnEmpty::AskAgain => "forgiving",
-        OnEmpty::Stop => "as-typed",
+/// How many artists a first search page asks MusicBrainz for, whatever
+/// the caller shows, so every view of a query's first page shares one
+/// answer.
+const ARTIST_WIDTH: u32 = 48;
+/// How many release groups or recordings a first search page asks for.
+const GROUP_WIDTH: u32 = 36;
+
+/// The page width to ask MusicBrainz for: a first page at least `first`,
+/// a later one what the caller's page needs.
+fn page_width(first: u32, offset: u32, needed: u32) -> u32 {
+    if offset == 0 {
+        needed.max(first)
+    } else {
+        needed
     }
+}
+
+/// The cache key part of a search term: none for the words as typed, so
+/// every caller shares that answer, and its own for the forgiving retry.
+fn term_key(term: SearchTerm) -> Option<&'static str> {
+    match term {
+        SearchTerm::Typed => None,
+        SearchTerm::Forgiving => Some("forgiving"),
+    }
+}
+
+/// Whether a first page whose words as typed matched nothing asks again
+/// with the forgiving term: only when the caller may, MusicBrainz answered,
+/// and there is a second guess to make.
+fn asks_again(query: &str, offset: u32, on_empty: OnEmpty, typed: &RemoteBucket) -> bool {
+    on_empty == OnEmpty::AskAgain
+        && offset == 0
+        && typed.state == RemoteState::Ok
+        && typed.hits.is_empty()
+        && forgiving_term(query.trim()).is_some()
 }
 
 /// The release a song search hit is shown and requested under, with its

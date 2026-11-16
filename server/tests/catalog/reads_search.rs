@@ -199,8 +199,11 @@ struct OfficialMusicBrainz {
 
 impl CatalogSettings for OfficialMusicBrainz {
     fn musicbrainz(&self) -> Option<MusicBrainzSettings> {
+        // A fixed source id, as stored settings have: the default mints a
+        // new one each time, which would give every search its own cache.
         Some(MusicBrainzSettings {
             source_mode: MbSourceMode::Official,
+            source_id: "official-test".to_owned(),
             ..MusicBrainzSettings::default()
         })
     }
@@ -1140,11 +1143,12 @@ async fn exact_title_albums_rank_by_their_releases() {
         .filter(|sent| sent.url.path().ends_with("/release-group"))
         .filter_map(|sent| sent.query("query"))
         .collect();
-    let expected = ["the beatles", "queen", "ok computer", "the beatles"];
+    // Suggest reads the full search's first page of "the beatles".
+    let expected = ["the beatles", "queen", "ok computer"];
     assert_eq!(
         asked.len(),
         expected.len(),
-        "one album search per call: {asked:?}"
+        "one album search per query: {asked:?}"
     );
     for (sent, query) in asked.iter().zip(expected) {
         assert!(
@@ -1580,9 +1584,9 @@ async fn a_typed_dash_matches_any_dash_in_a_title() {
 }
 
 /// The forgiving retry asks MusicBrainz again only when it matched nothing
-/// at all: a full search that finds nothing asks once more with the
-/// forgiving term, a later "see all" page that comes back empty is the end
-/// of the list, and typeahead never asks twice.
+/// at all: a later "see all" page that comes back empty is the end of the
+/// list, typeahead never asks twice, and a full search reuses typeahead's
+/// empty answer and asks once more, with the forgiving term.
 #[tokio::test]
 async fn the_forgiving_retry_runs_only_on_no_match_and_never_from_typeahead() {
     let wire = Arc::new(ScriptedWire::new());
@@ -1620,8 +1624,12 @@ async fn the_forgiving_retry_runs_only_on_no_match_and_never_from_typeahead() {
     let (status, _, _) = call(app, Method::GET, uri, Some(TEST_TOKEN), None).await;
     assert_eq!(status, StatusCode::OK);
     let asked = asked();
-    assert_eq!(asked.len(), 4, "the empty search asked twice: {asked:?}");
-    assert!(asked[3].contains("qwertyuiop~"), "{asked:?}");
+    assert_eq!(
+        asked.len(),
+        3,
+        "the empty first page is shared, then asked forgivingly: {asked:?}"
+    );
+    assert!(asked[2].contains("qwertyuiop~"), "{asked:?}");
 }
 
 /// One ListenBrainz popularity answer: each id under `key` with its
@@ -2100,5 +2108,76 @@ async fn a_new_search_asks_listenbrainz_once_per_kind() {
         listens_asked(&script).len(),
         asked.len(),
         "the hover and the repeat ask nothing"
+    );
+}
+
+/// One query's first pages share one MusicBrainz answer per endpoint:
+/// typing it, then the All tab, then the first page of Albums, Songs and
+/// Artists ask MusicBrainz three times in all.
+#[tokio::test]
+async fn a_query_asks_musicbrainz_once_per_endpoint() {
+    let wire = Arc::new(ScriptedWire::new());
+    let answer = |path: &str, key: &str, hits| {
+        wire.answer(
+            &format!("{MUSICBRAINZ}/{path}"),
+            200,
+            &[],
+            search_answer(key, hits),
+        );
+    };
+    answer("artist", "artists", vec![artist_hit("Night Drive", 100)]);
+    answer(
+        "release-group",
+        "release-groups",
+        vec![group_hit((
+            "rg-night",
+            "Night Drive",
+            "Night Drive",
+            "Album",
+            100,
+            1,
+        ))],
+    );
+    answer(
+        "recording",
+        "recordings",
+        vec![recording_hit(
+            "rec-night",
+            "Night Drive",
+            "Night Drive",
+            100,
+            &[("rel-night", "Night Drive", "Official", "rg-night")],
+        )],
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-one-answer");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+    for uri in [
+        "/api/v3/search/suggest?q=night%20drive",
+        "/api/v3/search?q=night%20drive",
+        "/api/v3/search/albums?q=night%20drive&limit=24",
+        "/api/v3/search/tracks?q=night%20drive&limit=24",
+        "/api/v3/search/artists?q=night%20drive&limit=24",
+    ] {
+        let (status, _, _) = call(app.clone(), Method::GET, uri, Some(TEST_TOKEN), None).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+    }
+    let mut paths: Vec<String> = wire
+        .sent()
+        .iter()
+        .map(|sent| sent.url.path().to_owned())
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        [
+            "/musicbrainz/ws/2/artist",
+            "/musicbrainz/ws/2/recording",
+            "/musicbrainz/ws/2/release-group"
+        ]
     );
 }
