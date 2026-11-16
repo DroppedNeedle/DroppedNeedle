@@ -11,7 +11,7 @@ use super::reasons::TrackReason;
 use crate::client_error::ClientError;
 use crate::reason::Reason;
 use crate::slskd::folders::{FolderPick, RankRequest, rank_folders, rank_listing};
-use crate::slskd::{SearchResult, SlskdHttp, SlskdRepository};
+use crate::slskd::{DownloadPolicy, SearchResult, SlskdHttp, SlskdRepository};
 
 /// The folder chosen, and why a lone-track share was used when it was.
 #[derive(Debug, Clone)]
@@ -33,16 +33,19 @@ pub enum SoulseekMiss {
 
 const NO_FOLDER: &str = "slskd has no untried folder for this album";
 
-/// Why no folder could be picked: folders were found but the settings refuse
-/// each of them, or else `reason`.
-fn miss<H: SlskdHttp>(
+/// Why no folder could be picked: the settings refused a folder that holds
+/// some of the release, or else `reason`.
+fn miss(
     hits: &[SearchResult],
     request: RankRequest<'_>,
-    repo: &SlskdRepository<H>,
+    policy: &DownloadPolicy,
     reason: Reason,
     detail: &str,
 ) -> SoulseekMiss {
-    if rank_listing(hits, request, repo.policy()).is_empty() {
+    if rank_listing(hits, request, policy)
+        .iter()
+        .all(FolderPick::holds_nothing)
+    {
         return SoulseekMiss::Nothing {
             reason,
             detail: detail.to_owned(),
@@ -85,7 +88,7 @@ pub async fn choose<H: SlskdHttp>(
                 });
             }
             (None, None) => {
-                return Err(miss(&hits, request, repo, Reason::NoSource, NO_FOLDER));
+                return Err(miss(&hits, request, policy, Reason::NoSource, NO_FOLDER));
             }
             (Some(_), Some(pick)) if !pick.lone_track => {
                 return Ok(SoulseekChoice {
@@ -97,7 +100,7 @@ pub async fn choose<H: SlskdHttp>(
         }
     }
     let Some(track) = target.track.as_ref() else {
-        return Err(miss(&hits, request, repo, Reason::NoSource, NO_FOLDER));
+        return Err(miss(&hits, request, policy, Reason::NoSource, NO_FOLDER));
     };
     // No album folder holds the track: search for the track itself. Its
     // results can still turn up an album folder, which wins as usual.
@@ -118,7 +121,7 @@ pub async fn choose<H: SlskdHttp>(
         return Err(miss(
             &hits,
             request,
-            repo,
+            policy,
             TrackReason::TrackNotFound.into(),
             &TrackReason::TrackNotFound.to_string(),
         ));
@@ -129,4 +132,53 @@ pub async fn choose<H: SlskdHttp>(
         None
     };
     Ok(SoulseekChoice { pick, lone_reason })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::downloads::plan::ExpectedTrack;
+
+    /// A folder that holds none of the release's tracks was not refused by
+    /// the settings, so a miss keeps its own reason.
+    #[test]
+    fn a_folder_holding_no_track_is_not_blamed_on_settings() {
+        let tracklist = [ExpectedTrack {
+            track_number: 1,
+            disc_number: 1,
+            duration_seconds: Some(200.0),
+            recording_mbid: None,
+            title: Some("Alpha".to_owned()),
+            release_track_mbid: None,
+        }];
+        let stranger = SearchResult {
+            username: "stranger".to_owned(),
+            filename: "M\\Other Album\\Unrelated Song.flac".to_owned(),
+            parent_directory: String::new(),
+            size: 1,
+            extension: "flac".to_owned(),
+            bitrate: None,
+            bit_depth: Some(16),
+            sample_rate: Some(44_100),
+            duration: Some(500.0),
+            has_free_slot: true,
+            upload_speed: 1,
+            queue_length: 0,
+        };
+        let request = RankRequest {
+            tracklist: &tracklist,
+            wanted: &[],
+            single_track: false,
+        };
+        let SoulseekMiss::Nothing { reason, .. } = miss(
+            &[stranger],
+            request,
+            &DownloadPolicy::default(),
+            Reason::NoSource,
+            NO_FOLDER,
+        ) else {
+            panic!("no folder was picked, so the result is a miss");
+        };
+        assert_eq!(reason, Reason::NoSource);
+    }
 }

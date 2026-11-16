@@ -13,10 +13,11 @@
 //!    worst file's place in the quality recipe;
 //! 4. speed: a free upload slot, a short queue, a fast uploader.
 //!
-//! A folder whose files the search shows outside the band or the recipe is
-//! left out of automatic picks ([`rank_folders`]), so it is never
-//! fetched only to be refused. A manual search lists it after every other
-//! folder ([`rank_listing`]), for a person to take on purpose.
+//! A folder whose files the search shows outside the band or the recipe, or
+//! that holds none of the release's tracks, is left out of automatic picks
+//! ([`rank_folders`]), so it is never fetched only to be refused or to be the
+//! wrong album. A manual search lists it for a person to take on purpose
+//! ([`rank_listing`]), with those outside the band after every other folder.
 //!
 //! This is soularr's folder check and Lidarr's import matching moved in
 //! front of the download, with these pairing rules (a hard length miss
@@ -89,6 +90,14 @@ pub struct FolderPick {
     upload_speed: i64,
 }
 
+impl FolderPick {
+    /// The release has a tracklist and none of its tracks is in this
+    /// folder: nothing here is the album, so no automatic pick takes it.
+    pub fn holds_nothing(&self) -> bool {
+        self.total > 0 && self.coverage == 0
+    }
+}
+
 /// Rank folders best first for an automatic pick. Folders that cannot
 /// serve the wanted positions, or whose known quality is outside the band or
 /// the recipe, are left out.
@@ -99,7 +108,7 @@ pub fn rank_folders(
 ) -> Vec<FolderPick> {
     ranked(hits, request, policy)
         .into_iter()
-        .filter(|pick| !pick.out_of_band)
+        .filter(|pick| !pick.out_of_band && !pick.holds_nothing())
         .collect()
 }
 
@@ -610,7 +619,8 @@ mod tests {
 
     /// How `rank_folders` picks: an unlisted format refuses a folder only
     /// when it is a track, an album folder beats a lone track and fetches
-    /// only the wanted file, and a peer's separate disc folders join.
+    /// only the wanted file, a peer's separate disc folders join, and a folder
+    /// holding none of the tracks is never picked.
     #[test]
     fn rank_folders_cases() {
         // A format the recipe does not list refuses a folder only when it is
@@ -666,6 +676,24 @@ mod tests {
         assert!(
             rank_folders(&unknown, request(&[]), &policy).is_empty(),
             "with no tracklist nothing says it is a stray"
+        );
+
+        // A folder that holds none of the tracks is listed for a person to
+        // pick, but an automatic pick never takes it.
+        let stranger = hit("stranger", "M\\Other\\Unrelated Song.flac", 500.0, true);
+        let mut hits = album.to_vec();
+        hits.push(stranger.clone());
+        let listing = rank_listing(&hits, request(&tracklist), &policy);
+        assert!(
+            listing[1].holds_nothing() && !listing[0].holds_nothing(),
+            "a folder with no track is listed last"
+        );
+        let picks = rank_folders(&hits, request(&tracklist), &policy);
+        assert_eq!(picks.len(), 1, "never taken automatically");
+        assert_eq!(picks[0].username, "p");
+        assert!(
+            rank_folders(&[stranger], request(&tracklist), &policy).is_empty(),
+            "nothing else to take"
         );
 
         // An album folder beats a lone track, and only the wanted file is

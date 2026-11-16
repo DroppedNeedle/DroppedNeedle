@@ -56,9 +56,13 @@ pub enum Verdict {
 /// source's good copy beats a later source's.
 /// Candidates outside the download settings count for nothing: when only
 /// those were found, the download searches as usual rather than waiting
-/// for a person.
+/// for a person. So do folders that hold none of the release's tracks: a
+/// pick between copies of other albums is no choice worth asking for.
 pub fn verdict(mode: ReviewMode, candidates: &[Candidate]) -> Verdict {
-    if candidates.iter().all(Candidate::is_refused) {
+    if candidates
+        .iter()
+        .all(|candidate| candidate.is_refused() || candidate.holds_nothing())
+    {
         return Verdict::Nothing;
     }
     if mode == ReviewMode::WhenUnsure
@@ -69,4 +73,64 @@ pub fn verdict(mode: ReviewMode, candidates: &[Candidate]) -> Verdict {
         return Verdict::Take(index);
     }
     Verdict::Park
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::downloads::plan::ExpectedTrack;
+    use crate::slskd::folders::{RankRequest, rank_listing};
+    use crate::slskd::{DownloadPolicy, SearchResult};
+
+    fn hit(user: &str, name: &str, seconds: f64) -> SearchResult {
+        SearchResult {
+            username: user.to_owned(),
+            filename: format!("Music\\Album\\{name}"),
+            parent_directory: String::new(),
+            size: 1,
+            extension: "flac".to_owned(),
+            bitrate: None,
+            bit_depth: Some(16),
+            sample_rate: Some(44_100),
+            duration: Some(seconds),
+            has_free_slot: true,
+            upload_speed: 1,
+            queue_length: 0,
+        }
+    }
+
+    fn track(number: i64, title: &str, seconds: f64) -> ExpectedTrack {
+        ExpectedTrack {
+            track_number: number,
+            disc_number: 1,
+            duration_seconds: Some(seconds),
+            recording_mbid: None,
+            title: Some(title.to_owned()),
+            release_track_mbid: None,
+        }
+    }
+
+    fn candidates(hits: &[SearchResult]) -> Vec<Candidate> {
+        let tracklist = vec![track(1, "Alpha", 200.0), track(2, "Beta", 210.0)];
+        let request = RankRequest {
+            tracklist: &tracklist,
+            wanted: &[],
+            single_track: false,
+        };
+        rank_listing(hits, request, &DownloadPolicy::default())
+            .into_iter()
+            .map(Candidate::from_folder)
+            .collect()
+    }
+
+    /// Folders that hold none of the release's tracks leave nothing to review,
+    /// whatever the review mode.
+    #[test]
+    fn folders_holding_no_track_do_not_wait_for_a_pick() {
+        let only_strangers = candidates(&[hit("stranger", "Unrelated Song.flac", 500.0)]);
+        assert!(only_strangers[0].holds_nothing());
+        for mode in [ReviewMode::WhenUnsure, ReviewMode::Always, ReviewMode::Off] {
+            assert_eq!(verdict(mode, &only_strangers), Verdict::Nothing, "{mode:?}");
+        }
+    }
 }

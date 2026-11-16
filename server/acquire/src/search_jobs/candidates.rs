@@ -254,6 +254,13 @@ impl Candidate {
         !self.view.refusal.is_empty()
     }
 
+    /// A folder that holds none of the release's tracks: it shows the
+    /// tracklist and matched none of it, so it is not a copy of the album.
+    /// Sources that do not count tracks never report this.
+    pub fn holds_nothing(&self) -> bool {
+        self.view.tracks_total.is_some_and(|total| total > 0) && self.view.tracks_matched == Some(0)
+    }
+
     /// The reason the page names first, when it is refused.
     pub fn first_refusal(&self) -> Option<CandidateRefusal> {
         self.view.refusal.first().copied()
