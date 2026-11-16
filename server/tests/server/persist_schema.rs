@@ -2764,9 +2764,10 @@ fn every_registered_statement_prepares() {
 /// of a live album, the continuation sweep's walk of every missing track
 /// when no album is named, and the remap sweep over every identified album's
 /// tracks.
-/// Discover's three: radio's two track reads, which filter on ids worked out
-/// per track over the whole library, and the check for any local file, which
-/// stops at the first row.
+/// Discover's four: radio's two track reads, which filter on ids worked out
+/// per track over the whole library, the check for any local file, which
+/// stops at the first row, and the owned groups with their album artist
+/// links, which read every tagged track for albums owned through their tags.
 /// The library policy settings' three: the save preview's totals, which count
 /// every track under the scopes asked about, the list of folders the catalog
 /// holds tracks for, and the check for any track, which stops at the first
@@ -2799,6 +2800,7 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle_catalog::discover::sql::RADIO_TRACKS_BY_ARTISTS",
     "droppedneedle_catalog::discover::sql::RADIO_TRACKS_OF_ALBUMS",
     "droppedneedle_catalog::discover::sql::HAS_LOCAL_FILES",
+    "droppedneedle_catalog::discover::sql::LIBRARY_ALBUMS",
     "droppedneedle::settings::sql::SCOPE_TOTALS",
     "droppedneedle::settings::sql::CATALOG_ROOTS",
     "droppedneedle::settings::sql::ANY_TRACK",

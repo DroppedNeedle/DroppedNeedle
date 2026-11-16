@@ -454,6 +454,7 @@ impl SearchService {
     }
 
     /// One MusicBrainz bucket, or `None` when the bucket is not wanted.
+    #[allow(clippy::too_many_arguments)]
     async fn remote_bucket(
         &self,
         bucket: Bucket,
