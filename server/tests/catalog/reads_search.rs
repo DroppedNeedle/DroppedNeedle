@@ -1418,8 +1418,10 @@ async fn a_slow_songs_leg_does_not_hold_the_page() {
 }
 
 /// Titles tagged with MusicBrainz's hyphen (U+2010) match a query typed
-/// with the keyboard hyphen, as an album's exact tier, as a substring and
-/// through the song index; the pattern's dash matches any dash.
+/// with the keyboard hyphen: an album whose title is the query scores and
+/// headlines as exact, and a song is found through the song index. A word
+/// with a dash keeps every piece: "t-pain" never finds a song that only
+/// says "pain".
 #[tokio::test]
 async fn a_typed_dash_matches_any_dash_in_a_title() {
     let (app, app_db, _held) = authed_app().await;
@@ -1439,24 +1441,82 @@ async fn a_typed_dash_matches_any_dash_in_a_title() {
         "Across the Spider\u{2010}Verse",
         "indexed",
     );
-    let body = {
-        let (status, _, bytes) = call(
-            app,
-            Method::GET,
-            "/api/v3/search?q=across%20the%20spider-verse&scope=library",
-            Some(TEST_TOKEN),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        json(&bytes)
-    };
-    assert_eq!(body["albums"][0]["id"], "album-verse", "{body}");
-    assert_eq!(
-        body["albums"][0]["score"], 70,
-        "a dash is any character, not exact"
+    seed_track(
+        &app_db,
+        "t-feat",
+        "album-verse",
+        "Sunday (feat. T\u{2010}Pain)",
+        "Across the Spider\u{2010}Verse",
+        "indexed",
     );
+    seed_track(
+        &app_db,
+        "t-pain",
+        "album-verse",
+        "Growing Pains",
+        "Across the Spider\u{2010}Verse",
+        "indexed",
+    );
+    let get = |query: &str| {
+        let (app, uri) = (
+            app.clone(),
+            format!("/api/v3/search?{}&scope=library", urlencode_query(query)),
+        );
+        async move {
+            let (status, _, bytes) = call(app, Method::GET, &uri, Some(TEST_TOKEN), None).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+            json(&bytes)
+        }
+    };
+    let body = get("across the spider-verse").await;
+    assert_eq!(body["albums"][0]["id"], "album-verse", "{body}");
+    assert_eq!(body["albums"][0]["score"], 100, "{body}");
+    assert_eq!(body["top_album"]["id"], "album-verse", "{body}");
+    let body = get("spider-verse theme").await;
     assert_eq!(body["tracks"][0]["id"], "t-verse", "{body}");
+    let body = get("t-pain").await;
+    let songs: Vec<&str> = body["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(songs, ["t-feat"], "{body}");
+}
+
+/// The forgiving retry asks MusicBrainz again only when it matched nothing
+/// at all: a later "see all" page that comes back empty is the end of the
+/// list, and typeahead never asks twice.
+#[tokio::test]
+async fn the_forgiving_retry_runs_only_on_no_match_and_never_from_typeahead() {
+    let wire = Arc::new(ScriptedWire::new());
+    let url = format!("{MUSICBRAINZ}/release-group");
+    let body = |count: u32| {
+        serde_json::to_vec(&serde_json::json!({"count": count, "offset": 0, "release-groups": []}))
+            .expect("answer encodes")
+    };
+    wire.answer(&url, 200, &[], body(30));
+    wire.answer(&url, 200, &[], body(0));
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-retry-bounds");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+    for uri in [
+        "/api/v3/search/albums?q=qwertyuiop&limit=24&offset=24",
+        "/api/v3/search/suggest?q=qwertyuiop",
+    ] {
+        let (status, _, _) = call(app.clone(), Method::GET, uri, Some(TEST_TOKEN), None).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+    }
+    let asked = wire
+        .sent()
+        .iter()
+        .filter(|sent| sent.url.path().ends_with("/release-group"))
+        .count();
+    assert_eq!(asked, 2, "one call each, no retry");
 }
 
 /// A text search MusicBrainz answers empty is asked once more with its
@@ -1520,7 +1580,7 @@ async fn an_empty_musicbrainz_answer_is_asked_again_forgivingly() {
     assert_eq!(body["artists"][0]["title"], "The Beatles", "{body}");
     assert!(body["albums"].as_array().unwrap().is_empty(), "{body}");
 
-    // The buckets run at once, so each path keeps its own order.
+    // Each path's calls are in order; the buckets run side by side.
     let asked = |path: &str| -> Vec<String> {
         wire.sent()
             .iter()

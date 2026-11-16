@@ -12,6 +12,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
+use super::sqlite::like_pattern;
 use droppedneedle_kernel::db::fold_text;
 use droppedneedle_kernel::db::statement::{ListLen, Statement};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
@@ -702,15 +703,6 @@ impl Agreement {
     fn agreed(&self, id: &str) -> Option<String> {
         self.0.get(id).cloned().flatten()
     }
-}
-
-/// Folded LIKE pattern for a substring filter.
-fn like_pattern(raw: &str) -> String {
-    let folded = fold_text(raw)
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    format!("%{folded}%")
 }
 
 /// A text value.

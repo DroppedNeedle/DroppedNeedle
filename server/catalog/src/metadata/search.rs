@@ -8,7 +8,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use droppedneedle_providers::musicbrainz::{
-    Criticality, RecordingSearchRelease, ReleaseGroupRef, hit_score, recording_release_group_rank,
+    Criticality, OnEmpty, RecordingSearchRelease, ReleaseGroupRef, hit_score,
+    recording_release_group_rank,
 };
 use droppedneedle_providers::{
     CacheKey, Fetched, IntegrationStatus, Policy, RequestPriority, Source, record_current, scoped,
@@ -122,6 +123,7 @@ impl Catalog {
         limit: u32,
         offset: u32,
         deadline: Duration,
+        on_empty: OnEmpty,
     ) -> RemoteBucket {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
         let parts = [
@@ -129,6 +131,7 @@ impl Catalog {
             query.trim(),
             &limit.to_string(),
             &offset.to_string(),
+            on_empty_key(on_empty),
         ];
         let key = CacheKey::hashed(Source::MusicBrainz, "artist_search", &parts);
         let catalog = self.clone();
@@ -137,7 +140,7 @@ impl Catalog {
             let (client, _) = catalog.upstream().musicbrainz(priority);
             let wide = (limit * 2).clamp(25, 100);
             let page = client
-                .search_artists_text(&text, wide, offset, Criticality::IdentityCritical)
+                .search_artists_text(&text, wide, offset, on_empty, Criticality::IdentityCritical)
                 .await
                 .map_err(mb_search_error)?;
             let mut seen = HashSet::new();
@@ -185,6 +188,7 @@ impl Catalog {
         limit: u32,
         offset: u32,
         deadline: Duration,
+        on_empty: OnEmpty,
     ) -> RemoteBucket {
         let preferences = self.upstream().settings().preferences();
         let primary = mapping::type_set(&preferences.primary_types);
@@ -201,6 +205,7 @@ impl Catalog {
             query.trim(),
             &limit.to_string(),
             &offset.to_string(),
+            on_empty_key(on_empty),
             filter_key.as_str(),
         ];
         let key = CacheKey::hashed(Source::MusicBrainz, "album_search", &parts);
@@ -210,7 +215,13 @@ impl Catalog {
             let (client, _) = catalog.upstream().musicbrainz(priority);
             let wide = (limit + limit / 2).clamp(25, 100);
             let page = client
-                .search_release_groups_text(&text, wide, offset, Criticality::IdentityCritical)
+                .search_release_groups_text(
+                    &text,
+                    wide,
+                    offset,
+                    on_empty,
+                    Criticality::IdentityCritical,
+                )
                 .await
                 .map_err(mb_search_error)?;
             let mut seen = HashSet::new();
@@ -264,6 +275,7 @@ impl Catalog {
         limit: u32,
         offset: u32,
         deadline: Duration,
+        on_empty: OnEmpty,
     ) -> RemoteBucket {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
         let parts = [
@@ -271,6 +283,7 @@ impl Catalog {
             query.trim(),
             &limit.to_string(),
             &offset.to_string(),
+            on_empty_key(on_empty),
         ];
         let key = CacheKey::hashed(Source::MusicBrainz, "track_search", &parts);
         let catalog = self.clone();
@@ -279,7 +292,13 @@ impl Catalog {
             let (client, _) = catalog.upstream().musicbrainz(priority);
             let wide = (limit + limit / 2).clamp(25, 100);
             let page = client
-                .search_recordings_text(&text, wide, offset, Criticality::IdentityCritical)
+                .search_recordings_text(
+                    &text,
+                    wide,
+                    offset,
+                    on_empty,
+                    Criticality::IdentityCritical,
+                )
                 .await
                 .map_err(mb_search_error)?;
             let mut seen = HashSet::new();
@@ -403,6 +422,15 @@ impl Catalog {
             albums,
             tracks,
         }
+    }
+}
+
+/// The cache key part for what an empty answer does: a search that asked
+/// again forgivingly keeps another answer than one that did not.
+fn on_empty_key(on_empty: OnEmpty) -> &'static str {
+    match on_empty {
+        OnEmpty::AskAgain => "forgiving",
+        OnEmpty::Stop => "as-typed",
     }
 }
 

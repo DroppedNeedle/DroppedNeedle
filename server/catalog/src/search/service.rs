@@ -32,13 +32,14 @@ use crate::metadata::Catalog;
 use crate::metadata::search::{
     RemoteBucket, RemoteHit, RemoteKind, RemoteState, SearchFlags, SearchIds,
 };
+use droppedneedle_providers::musicbrainz::OnEmpty;
 
 use super::models::{
     SearchBucketResponse, SearchKind, SearchRemoteStatus, SearchRemoteTrackDetail, SearchResponse,
     SearchResultItem, SearchScope, SearchTrackDetail, SuggestResponse, SuggestResult,
 };
 use super::sql;
-use crate::local::sqlite::any_dash;
+use crate::local::sqlite::{any_dash, dashes_as_spaces};
 
 /// Score for an exact folded-title match. Also the top-result bar.
 pub const SCORE_EXACT: i32 = 100;
@@ -182,6 +183,7 @@ impl SearchService {
             limits.artists,
             0,
             FULL_SEARCH_DEADLINE,
+            OnEmpty::AskAgain,
             remote_wants(Bucket::Artists, limits.artists),
         );
         let remote_albums = self.remote_bucket(
@@ -190,6 +192,7 @@ impl SearchService {
             limits.albums,
             0,
             FULL_SEARCH_DEADLINE,
+            OnEmpty::AskAgain,
             remote_wants(Bucket::Albums, limits.albums),
         );
         let remote_tracks = self.remote_bucket(
@@ -198,6 +201,7 @@ impl SearchService {
             limits.tracks,
             0,
             FULL_SEARCH_DEADLINE,
+            OnEmpty::AskAgain,
             remote_wants(Bucket::Tracks, limits.tracks),
         );
         // Songs alone have no other leg to wait behind.
@@ -286,7 +290,15 @@ impl SearchService {
         offset: u32,
     ) -> Result<(Vec<SearchResultItem>, SearchRemoteStatus), DbError> {
         let remote = self
-            .remote_bucket(bucket, query, limit, offset, FULL_SEARCH_DEADLINE, true)
+            .remote_bucket(
+                bucket,
+                query,
+                limit,
+                offset,
+                FULL_SEARCH_DEADLINE,
+                OnEmpty::AskAgain,
+                true,
+            )
             .await;
         let status = status_of(remote.as_ref());
         let answered = remote
@@ -377,6 +389,7 @@ impl SearchService {
                 remote_limit,
                 0,
                 SUGGEST_DEADLINE,
+                OnEmpty::Stop,
                 true
             ),
             self.remote_bucket(
@@ -385,6 +398,7 @@ impl SearchService {
                 remote_limit,
                 0,
                 SUGGEST_DEADLINE,
+                OnEmpty::Stop,
                 true
             ),
         );
@@ -429,6 +443,7 @@ impl SearchService {
         limit: u32,
         offset: u32,
         deadline: Duration,
+        on_empty: OnEmpty,
         wanted: bool,
     ) -> Option<RemoteBucket> {
         if !wanted || limit == 0 {
@@ -438,17 +453,17 @@ impl SearchService {
         match bucket {
             Bucket::Artists => Some(
                 catalog
-                    .search_artists_remote(query, limit, offset, deadline)
+                    .search_artists_remote(query, limit, offset, deadline, on_empty)
                     .await,
             ),
             Bucket::Albums => Some(
                 catalog
-                    .search_albums_remote(query, limit, offset, deadline)
+                    .search_albums_remote(query, limit, offset, deadline, on_empty)
                     .await,
             ),
             Bucket::Tracks => Some(
                 catalog
-                    .search_tracks_remote(query, limit, offset, deadline)
+                    .search_tracks_remote(query, limit, offset, deadline, on_empty)
                     .await,
             ),
         }
@@ -800,8 +815,13 @@ fn escape_like(value: &str) -> String {
 }
 
 /// Score one folded title against the folded query: exact is 100, prefix
-/// is 90, anything else that matched is a substring at 70.
+/// is 90, anything else that matched is a substring at 70. Any dash, or a
+/// space, in one stands for any dash in the other, as the patterns match.
 fn match_score(title_folded: &str, query_folded: &str) -> i32 {
+    let (title_folded, query_folded) = (
+        &dashes_as_spaces(title_folded),
+        &dashes_as_spaces(query_folded),
+    );
     if title_folded == query_folded {
         SCORE_EXACT
     } else if title_folded.starts_with(query_folded) {
@@ -814,7 +834,7 @@ fn match_score(title_folded: &str, query_folded: &str) -> i32 {
 /// Score one song's folded title against the folded query, matching the
 /// tiers [`song_query`] ranks by.
 fn song_score(title_folded: &str, query_folded: &str) -> i32 {
-    if title_folded.contains(query_folded) {
+    if dashes_as_spaces(title_folded).contains(&dashes_as_spaces(query_folded)) {
         match_score(title_folded, query_folded)
     } else {
         SCORE_OTHER_FIELD
@@ -851,10 +871,10 @@ fn detect_top_result(items: &[SearchResultItem], query_folded: &str) -> Option<S
     }
 }
 
-/// Tokenize for top-result overlap: folded text split on whitespace with
-/// non-alphanumeric runs dropped.
+/// Tokenize for top-result overlap: folded text split on whitespace and
+/// dashes, with non-alphanumeric runs dropped.
 fn search_tokens(folded: &str) -> Vec<String> {
-    folded
+    dashes_as_spaces(folded)
         .split_whitespace()
         .map(|token| token.chars().filter(|c| c.is_alphanumeric()).collect())
         .filter(|token: &String| !token.is_empty())
@@ -1038,7 +1058,7 @@ fn ranked(candidates: Vec<Candidate>, query_folded: &str) -> Vec<(Rank, SearchRe
         .into_iter()
         .map(|candidate| {
             let title = droppedneedle_kernel::db::fold::fold_text(&candidate.item.title);
-            let rank = candidate.rank(title == query_folded);
+            let rank = candidate.rank(dashes_as_spaces(&title) == dashes_as_spaces(query_folded));
             let score = candidate.score();
             let mut item = candidate.item;
             item.score = score;

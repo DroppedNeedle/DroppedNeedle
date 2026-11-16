@@ -174,7 +174,7 @@
 <div class="space-y-5">
 	<SettingsPaneHeader
 		title="Release Types"
-		description="Choose which release types appear on artist pages and in new releases. The same choices apply to automatic downloads for followed artists. Search keeps the primary types and shows every secondary type. Saving a different selection starts a new baseline, so releases already present are not queued."
+		description="Choose which release types appear on artist pages and in new releases. The same choices apply to automatic downloads for followed artists. Search shows every secondary type. Saving a different selection starts a new baseline, so releases already present are not queued."
 	/>
 	<Card>
 		<div class="mb-8">

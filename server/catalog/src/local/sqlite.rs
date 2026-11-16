@@ -47,8 +47,8 @@ use super::stores::{
 };
 
 /// Escape the LIKE metacharacters in a folded filter, then wrap for
-/// substring matching.
-fn like_pattern(raw: &str) -> String {
+/// substring matching; a dash matches any dash.
+pub(crate) fn like_pattern(raw: &str) -> String {
     let mut folded = droppedneedle_kernel::db::fold_text(raw);
     folded = folded
         .replace('\\', "\\\\")
@@ -74,20 +74,40 @@ pub(crate) fn any_dash(pattern: &str) -> String {
 /// a track search, or `None` when there is no such word or the query holds
 /// a NUL byte (which would truncate the bind). Each word becomes a quoted
 /// phrase and the phrases are AND-ed, so every word must appear, in any of
-/// the indexed columns. A trigram phrase is exact substring, but only for 3
-/// or more characters: shorter phrases silently match nothing, which is why
-/// [`TextSearch`] checks short words with LIKE instead.
+/// the indexed columns. A word with a dash is any of its spellings with
+/// every dash one of [`DASHES`] or a space, so "t-pain" finds "T‐Pain" and
+/// "T Pain" and still needs the "t". A trigram phrase is exact substring,
+/// but only for 3 or more characters: shorter phrases silently match
+/// nothing, which is why [`TextSearch`] checks short words with LIKE
+/// instead.
 pub(crate) fn fts_match_phrase(raw: &str) -> Option<String> {
     let folded = droppedneedle_kernel::db::fold_text(raw);
     if folded.contains('\0') {
         return None;
     }
+    let phrase = |word: &str| format!("\"{}\"", word.replace('"', "\"\""));
     let phrases = folded
-        .split(|character: char| character.is_whitespace() || DASHES.contains(&character))
+        .split_whitespace()
         .filter(|word| word.chars().count() >= 3)
-        .map(|word| format!("\"{}\"", word.replace('"', "\"\"")))
+        .map(|word| {
+            if !word.contains(DASHES) {
+                return phrase(word);
+            }
+            let spellings: Vec<String> = DASHES
+                .iter()
+                .chain(&[' '])
+                .map(|dash| phrase(&word.replace(DASHES, &dash.to_string())))
+                .collect();
+            format!("({})", spellings.join(" OR "))
+        })
         .collect::<Vec<_>>();
     (!phrases.is_empty()).then(|| phrases.join(" AND "))
+}
+
+/// Text with every dash a space, for comparing a title with a query the
+/// way the dash-forgiving patterns match them.
+pub(crate) fn dashes_as_spaces(text: &str) -> String {
+    text.replace(DASHES, " ")
 }
 
 /// A track text search on the FTS index. Every word must appear in the
