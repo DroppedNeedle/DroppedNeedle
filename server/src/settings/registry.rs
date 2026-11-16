@@ -303,7 +303,7 @@ mod tests {
         ("download_policy", "the policy routes send a view"),
         ("source_priority", "the source order routes"),
         ("usenet_search_backend", "the search backend routes"),
-        ("download_clients", "the SABnzbd routes"),
+        ("download_clients", "the SABnzbd and NZBGet routes"),
         ("musicbrainz_settings", "the MusicBrainz lifecycle routes"),
         ("library_management", "the Library Management routes"),
         ("spotify_settings", "the Spotify import routes"),

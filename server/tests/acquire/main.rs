@@ -12,6 +12,7 @@ mod acquire_import_folder;
 mod acquire_imports;
 mod acquire_journey;
 mod acquire_landing;
+mod acquire_nzbget;
 mod acquire_requests;
 mod acquire_search_jobs;
 mod acquire_slskd;

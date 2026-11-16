@@ -11,7 +11,7 @@
 	import { toastStore } from '$lib/stores/toast';
 	import type {
 		SabnzbdConnectionSettings,
-		SabnzbdTestResult
+		UsenetClientTestResult
 	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import Card from '$lib/ui/Card.svelte';
@@ -33,7 +33,7 @@
 	// SABnzbd only downloads what an indexer finds - a Usenet source with no indexer is inert.
 	const hasIndexer = $derived((indexersQuery.data?.length ?? 0) > 0);
 
-	let testResult = $state<SabnzbdTestResult | null>(null);
+	let testResult = $state<UsenetClientTestResult | null>(null);
 
 	const section = createSettingsSection(
 		getSabnzbdConfigQuery(),

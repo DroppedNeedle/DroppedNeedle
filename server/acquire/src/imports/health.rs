@@ -2,10 +2,10 @@
 //!
 //! The status reads are saved-config probes whose verdicts travel in the
 //! body, never as leaked 5xx. Every probe is a minimal local trait. The live
-//! implementations sit over the slskd and SABnzbd clients
+//! implementations sit over the slskd, SABnzbd and NZBGet clients
 //! (`crate::probes`).
 
-use super::models::{DownloadsMountView, SabnzbdStatusResponse, SlskdStatusResponse};
+use super::models::{DownloadsMountView, SlskdStatusResponse, UsenetStatusResponse};
 use super::mount::SlskdMountReport;
 
 /// Live verdict from one client probe.
@@ -33,9 +33,9 @@ pub trait SlskdProbe: Send + Sync {
     }
 }
 
-/// SABnzbd client probe.
-pub trait SabnzbdProbe: Send + Sync {
-    /// Probe the saved SABnzbd config.
+/// Usenet client probe (SABnzbd or NZBGet).
+pub trait UsenetProbe: Send + Sync {
+    /// Probe the saved client config.
     fn status(&self) -> ClientProbe;
     /// Category list, when the probe reached the client.
     fn categories(&self) -> Vec<String>;
@@ -60,7 +60,9 @@ pub struct HealthProbes {
     /// slskd client probe.
     pub slskd: std::sync::Arc<dyn SlskdProbe>,
     /// SABnzbd client probe.
-    pub sabnzbd: std::sync::Arc<dyn SabnzbdProbe>,
+    pub sabnzbd: std::sync::Arc<dyn UsenetProbe>,
+    /// NZBGet client probe.
+    pub nzbget: std::sync::Arc<dyn UsenetProbe>,
 }
 
 /// Render the live slskd client status (any authenticated user may read
@@ -85,11 +87,12 @@ pub fn slskd_status(probe: &dyn SlskdProbe) -> SlskdStatusResponse {
     }
 }
 
-/// Render the live SABnzbd status against the saved config (admin only).
-pub fn sabnzbd_status(probe: &dyn SabnzbdProbe) -> SabnzbdStatusResponse {
+/// Render a Usenet client's live status against the saved config (admin
+/// only).
+pub fn usenet_status(probe: &dyn UsenetProbe) -> UsenetStatusResponse {
     let status = probe.status();
     if !status.configured {
-        return SabnzbdStatusResponse {
+        return UsenetStatusResponse {
             valid: false,
             version: None,
             message: "Not configured".to_owned(),
@@ -98,7 +101,7 @@ pub fn sabnzbd_status(probe: &dyn SabnzbdProbe) -> SabnzbdStatusResponse {
         };
     }
     if !(status.enabled && status.reachable) {
-        return SabnzbdStatusResponse {
+        return UsenetStatusResponse {
             valid: false,
             version: status.version,
             message: status.message,
@@ -106,7 +109,7 @@ pub fn sabnzbd_status(probe: &dyn SabnzbdProbe) -> SabnzbdStatusResponse {
             complete_dir: None,
         };
     }
-    SabnzbdStatusResponse {
+    UsenetStatusResponse {
         valid: true,
         version: status.version,
         message: status.message,

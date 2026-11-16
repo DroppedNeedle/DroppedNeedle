@@ -178,6 +178,34 @@
         ]
       }
     },
+    "/api/v3/acquire/nzbget/status": {
+      "get": {
+        "tags": [
+          "imports"
+        ],
+        "summary": "Live NZBGet status against the saved config (admin only).",
+        "operationId": "get_nzbget_status",
+        "responses": {
+          "200": {
+            "description": "NZBGet status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsenetStatusResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/acquire/sabnzbd/status": {
       "get": {
         "tags": [
@@ -191,7 +219,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SabnzbdStatusResponse"
+                  "$ref": "#/components/schemas/UsenetStatusResponse"
                 }
               }
             }
@@ -29985,6 +30013,108 @@
         ]
       }
     },
+    "/api/v3/settings/download-clients/nzbget": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read the NZBGet connection (password masked unless unset).",
+        "operationId": "get_nzbget",
+        "responses": {
+          "200": {
+            "description": "NZBGet connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NzbgetConnection"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Save the NZBGet connection (a masked password keeps the stored one).",
+        "operationId": "put_nzbget",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NzbgetConnection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NzbgetConnection"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/settings/download-clients/nzbget/test": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Test the submitted NZBGet values (a masked password tests the stored\none). The submitted downloads mount is diagnosed, not the stored one.",
+        "operationId": "test_nzbget",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NzbgetConnection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Verify verdict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsenetClientTestResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/settings/download-clients/policy": {
       "get": {
         "tags": [
@@ -30136,7 +30266,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SabnzbdTestResponse"
+                  "$ref": "#/components/schemas/UsenetClientTestResponse"
                 }
               }
             }
@@ -53762,6 +53892,48 @@
           "offline"
         ]
       },
+      "NzbgetConnection": {
+        "type": "object",
+        "description": "NZBGet connection. NZBGet has no \"all categories\" wildcard, so an empty\ncategory lets NZBGet apply its own default. There is no post-processing\nfield: NZBGet decides unpack and repair per category, not per job.",
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Category (\"\" lets NZBGet choose).",
+            "default": ""
+          },
+          "downloads_mount": {
+            "type": "string",
+            "description": "Where DroppedNeedle sees NZBGet's completed dir (`DestDir`).",
+            "default": "/nzbget-downloads"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch.",
+            "default": false
+          },
+          "password": {
+            "type": "string",
+            "description": "Control password (encrypted at rest).",
+            "default": ""
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Job priority.",
+            "default": 0
+          },
+          "url": {
+            "type": "string",
+            "description": "NZBGet base URL.",
+            "default": ""
+          },
+          "username": {
+            "type": "string",
+            "description": "Control username (`ControlUsername` in nzbget.conf).",
+            "default": "nzbget"
+          }
+        }
+      },
       "OidcAuthorizeBody": {
         "type": "object",
         "description": "OIDC authorize answer: the browser URL for this login.",
@@ -62561,116 +62733,6 @@
           }
         }
       },
-      "SabnzbdStatusResponse": {
-        "type": "object",
-        "description": "Live SABnzbd status against the saved config.",
-        "required": [
-          "valid",
-          "message",
-          "categories"
-        ],
-        "properties": {
-          "categories": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Category list, when the probe reached it."
-          },
-          "complete_dir": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Completed dir (the mount hint), when the probe reached it."
-          },
-          "message": {
-            "type": "string",
-            "description": "User-safe summary."
-          },
-          "valid": {
-            "type": "boolean",
-            "description": "True when the saved config probes clean."
-          },
-          "version": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "SABnzbd version, when the probe reached it."
-          }
-        }
-      },
-      "SabnzbdTestResponse": {
-        "type": "object",
-        "description": "SABnzbd test verdict: version plus the category list (for the picker),\nthe SABnzbd-side completed dir (the mount hint), and the mount\ndiagnosis over the submitted mount.",
-        "required": [
-          "valid",
-          "message",
-          "categories"
-        ],
-        "properties": {
-          "categories": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Known categories."
-          },
-          "complete_dir": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "SABnzbd-side completed dir, when known."
-          },
-          "message": {
-            "type": "string",
-            "description": "Human summary."
-          },
-          "mount_has_files": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Whether the submitted mount holds files, when diagnosed."
-          },
-          "mount_message": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Actionable mount guidance, when the mount looks wrong."
-          },
-          "resolvable_downloads": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Sampled downloads resolving under the submitted mount."
-          },
-          "sampled_downloads": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Sampled downloads."
-          },
-          "valid": {
-            "type": "boolean",
-            "description": "Whether the submitted values checked out."
-          },
-          "version": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Server version, when known."
-          }
-        }
-      },
       "ScanControlBody": {
         "type": "object",
         "description": "A pause, resume or stop request.",
@@ -68081,6 +68143,76 @@
           "prowlarr"
         ]
       },
+      "UsenetClientTestResponse": {
+        "type": "object",
+        "description": "Usenet client test verdict (SABnzbd or NZBGet): version plus the\ncategory list (for the picker), the client-side completed dir (the mount hint), and the mount\ndiagnosis over the submitted mount.",
+        "required": [
+          "valid",
+          "message",
+          "categories"
+        ],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Known categories."
+          },
+          "complete_dir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Client-side completed dir, when known."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human summary."
+          },
+          "mount_has_files": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the submitted mount holds files, when diagnosed."
+          },
+          "mount_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Actionable mount guidance, when the mount looks wrong."
+          },
+          "resolvable_downloads": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Sampled downloads resolving under the submitted mount."
+          },
+          "sampled_downloads": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Sampled downloads."
+          },
+          "valid": {
+            "type": "boolean",
+            "description": "Whether the submitted values checked out."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Server version, when known."
+          }
+        }
+      },
       "UsenetSearchBackend": {
         "type": "object",
         "description": "The active Usenet search backend (either/or): `\"indexers\"` for the\nnative Newznab priority list, `\"prowlarr\"` for the single Prowlarr\nconnection. Unknown values are a 400, never a silent reset.",
@@ -68093,6 +68225,46 @@
             ],
             "description": "Active backend.",
             "default": "indexers"
+          }
+        }
+      },
+      "UsenetStatusResponse": {
+        "type": "object",
+        "description": "Live Usenet client (SABnzbd or NZBGet) status against the saved config.",
+        "required": [
+          "valid",
+          "message",
+          "categories"
+        ],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Category list, when the probe reached it."
+          },
+          "complete_dir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Completed dir (the mount hint), when the probe reached it."
+          },
+          "message": {
+            "type": "string",
+            "description": "User-safe summary."
+          },
+          "valid": {
+            "type": "boolean",
+            "description": "True when the saved config probes clean."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Client version, when the probe reached it."
           }
         }
       },

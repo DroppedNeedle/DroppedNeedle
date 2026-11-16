@@ -107,6 +107,7 @@ fn every_secret_section_masks_and_keeps() {
     }
     check!(SlskdConnection, api_key, SECRET_MASK, true, "");
     check!(DownloadClients, sabnzbd.api_key, SECRET_MASK, true, "");
+    check!(DownloadClients, nzbget.password, SECRET_MASK, false, "");
     check!(ProwlarrConnection, api_key, SECRET_MASK, true, "");
     check!(LidarrImportConnection, api_key, SECRET_MASK, true, "");
     check!(JellyfinConnection, api_key, SECRET_MASK, false, "");
@@ -344,6 +345,7 @@ fn secrets_never_appear_in_debug_output() {
     assert_redacted(lidarr, "redact-me");
     let mut clients = DownloadClients::default();
     *clients.sabnzbd.api_key.expose_mut() = "redact-me".to_owned();
+    *clients.nzbget.password.expose_mut() = "redact-me".to_owned();
     assert_redacted(clients, "redact-me");
     let mut indexer = NewznabIndexer::default();
     *indexer.api_key.expose_mut() = "redact-me".to_owned();

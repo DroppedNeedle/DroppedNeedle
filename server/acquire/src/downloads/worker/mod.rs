@@ -63,7 +63,7 @@ pub use landings::ReimportError;
 pub use recovery::{RecoveryReport, run_startup_recovery};
 pub use run::spawn_download_worker;
 pub use settings::WorkerSettings;
-pub(crate) use settings::sabnzbd_mount;
+pub(crate) use settings::usenet_mounts;
 
 use poll::{PollBackoff, PollMemory};
 

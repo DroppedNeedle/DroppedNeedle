@@ -257,7 +257,7 @@ impl SabnzbdMock {
     }
 }
 
-const GOOD_NZB: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+pub(crate) const GOOD_NZB: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <nzb xmlns="http://www.newznab.com/DTD/2010/nzb">
  <file poster="poster" date="1760000000" subject="test.part01.rar">
   <segments><segment bytes="100" number="1">seg1</segment></segments>

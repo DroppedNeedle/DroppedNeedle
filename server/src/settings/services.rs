@@ -20,15 +20,15 @@ use super::models::{
     DownloadPolicyView, IndexerSavedResponse, IndexerTestResponse, JellyfinUserInfo,
     JellyfinVerifyResponse, LibraryScanScheduleResponse, LibrarySettingsSaveRequest,
     PlexLibrarySectionInfo, PlexVerifyResponse, ProwlarrTestResponse, QualityRecipeStatus,
-    SabnzbdTestResponse, SourcePriorityOrder, TestConnectionResponse, UsenetSearchBackend,
+    SourcePriorityOrder, TestConnectionResponse, UsenetClientTestResponse, UsenetSearchBackend,
     VerifyConnectionResponse,
 };
-use super::verify::{VerifyProbes, check_hibp_file, require_service_url};
+use super::verify::{UsenetClientVerdict, VerifyProbes, check_hibp_file, require_service_url};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     DownloadClients, EventsSettings, JellyfinConnection, NavidromeConnection, NewznabIndexer,
-    OidcConnection, PlexConnection, ProwlarrConnection, SabnzbdConnection, SlskdConnection,
-    TypedLibrary, YouTubeConnection,
+    NzbgetConnection, OidcConnection, PlexConnection, ProwlarrConnection, SabnzbdConnection,
+    SlskdConnection, TypedLibrary, YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, LibraryScanSchedule, PlainSection, SecuritySettings, SourcePriority,
@@ -211,7 +211,7 @@ impl SettingsService {
         Ok(UsenetSearchBackend { backend: saved.0 })
     }
 
-    /// The SABnzbd connection (the one client in `download_clients`).
+    /// The SABnzbd connection in `download_clients`.
     pub fn get_sabnzbd(&self) -> Result<Masked<SabnzbdConnection>, SettingsError> {
         Ok(self
             .get_masked::<DownloadClients>()?
@@ -241,6 +241,39 @@ impl SettingsService {
             .await?;
         self.effects.saved(mark).await;
         Ok(saved.map(|clients| clients.sabnzbd))
+    }
+
+    /// The NZBGet connection in `download_clients`.
+    pub fn get_nzbget(&self) -> Result<Masked<NzbgetConnection>, SettingsError> {
+        Ok(self
+            .get_masked::<DownloadClients>()?
+            .map(|clients| clients.nzbget))
+    }
+
+    /// Save the NZBGet connection (a masked password keeps the stored
+    /// one).
+    pub async fn save_nzbget(
+        &self,
+        incoming: Masked<NzbgetConnection>,
+    ) -> Result<Masked<NzbgetConnection>, SettingsError> {
+        let incoming = incoming.into_inner();
+        let store = self.store.clone();
+        let mark = self.effects.mark(DownloadClients::KEY);
+        let saved = self
+            .write(move |_| {
+                store
+                    .update_secret_blocking::<DownloadClients, ConfigError, _>(|stored| {
+                        let mut clients = stored.into_inner();
+                        clients.nzbget = incoming;
+                        Ok(clients)
+                    })
+                    .map_err(|error| match error {
+                        UpdateError::Rejected(error) | UpdateError::Config(error) => error,
+                    })
+            })
+            .await?;
+        self.effects.saved(mark).await;
+        Ok(saved.map(|clients| clients.nzbget))
     }
 
     // --- library settings -----------------------------------------------------------
@@ -567,27 +600,44 @@ impl SettingsService {
     pub async fn verify_sabnzbd(
         &self,
         incoming: Masked<SabnzbdConnection>,
-    ) -> Result<SabnzbdTestResponse, SettingsError> {
+    ) -> Result<UsenetClientTestResponse, SettingsError> {
         let url = require_service_url(&incoming.url, "SABnzbd URL")?;
-        let clients = incoming.map(|sabnzbd| DownloadClients { sabnzbd });
+        let clients = incoming.map(|sabnzbd| DownloadClients {
+            sabnzbd,
+            ..DownloadClients::default()
+        });
         let unmasked = self.unmask(clients)?;
         let resolved = &unmasked.sabnzbd;
         let verdict = self
             .probes
             .sabnzbd(&url, resolved.api_key.expose(), &resolved.downloads_mount)
             .await;
-        let diagnosis = verdict.diagnosis;
-        Ok(SabnzbdTestResponse {
-            valid: verdict.valid,
-            version: verdict.version,
-            message: verdict.message,
-            categories: verdict.categories,
-            complete_dir: verdict.complete_dir,
-            mount_has_files: Some(diagnosis.as_ref().is_none_or(|d| d.mount_has_files)),
-            resolvable_downloads: Some(diagnosis.as_ref().map_or(0, |d| d.resolvable_downloads)),
-            sampled_downloads: Some(diagnosis.as_ref().map_or(0, |d| d.sampled_downloads)),
-            mount_message: diagnosis.and_then(|d| d.mount_message),
-        })
+        Ok(usenet_test_response(verdict))
+    }
+
+    /// Test the submitted NZBGet values. The submitted downloads mount
+    /// is diagnosed, not the stored one.
+    pub async fn verify_nzbget(
+        &self,
+        incoming: Masked<NzbgetConnection>,
+    ) -> Result<UsenetClientTestResponse, SettingsError> {
+        let url = require_service_url(&incoming.url, "NZBGet URL")?;
+        let clients = incoming.map(|nzbget| DownloadClients {
+            nzbget,
+            ..DownloadClients::default()
+        });
+        let unmasked = self.unmask(clients)?;
+        let resolved = &unmasked.nzbget;
+        let verdict = self
+            .probes
+            .nzbget(
+                &url,
+                &resolved.username,
+                resolved.password.expose(),
+                &resolved.downloads_mount,
+            )
+            .await;
+        Ok(usenet_test_response(verdict))
     }
 
     /// Test the submitted Prowlarr values.
@@ -674,6 +724,22 @@ pub fn server_timezone(configured: Option<&str>) -> String {
             (None, None) => "server time".to_owned(),
         },
         Err(_) => "UTC".to_owned(),
+    }
+}
+
+/// The test response over a Usenet client verdict.
+fn usenet_test_response(verdict: UsenetClientVerdict) -> UsenetClientTestResponse {
+    let diagnosis = verdict.diagnosis;
+    UsenetClientTestResponse {
+        valid: verdict.valid,
+        version: verdict.version,
+        message: verdict.message,
+        categories: verdict.categories,
+        complete_dir: verdict.complete_dir,
+        mount_has_files: Some(diagnosis.as_ref().is_none_or(|d| d.mount_has_files)),
+        resolvable_downloads: Some(diagnosis.as_ref().map_or(0, |d| d.resolvable_downloads)),
+        sampled_downloads: Some(diagnosis.as_ref().map_or(0, |d| d.sampled_downloads)),
+        mount_message: diagnosis.and_then(|d| d.mount_message),
     }
 }
 

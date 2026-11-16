@@ -216,6 +216,8 @@ pub fn routes() -> Routes<SettingsSetup> {
         .admin(routes!(h::test_slskd))
         .admin(routes!(h::get_sabnzbd, h::put_sabnzbd))
         .admin(routes!(h::test_sabnzbd))
+        .admin(routes!(h::get_nzbget, h::put_nzbget))
+        .admin(routes!(h::test_nzbget))
         .admin(routes!(h::get_source_priority, h::put_source_priority))
         .admin(routes!(h::get_policy, h::put_policy))
         .admin(routes!(h::list_indexers, h::create_indexer))

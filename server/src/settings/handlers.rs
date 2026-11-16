@@ -22,8 +22,9 @@ use super::models::{
     LibraryRestoreRootsRequest, LibraryScanScheduleResponse, LibrarySettingsSaveRequest,
     MusicBrainzBindingRequest, MusicBrainzSettingsUpdate, MusicBrainzSettingsView,
     MusicBrainzVerifyRequest, OperationResult, PlexLibrarySectionInfo, PlexVerifyResponse,
-    ProwlarrTestResponse, SabnzbdTestResponse, SectionPrefsResponse, SectionPrefsUpdate,
-    SourcePriorityOrder, TestConnectionResponse, UsenetSearchBackend, VerifyConnectionResponse,
+    ProwlarrTestResponse, SectionPrefsResponse, SectionPrefsUpdate, SourcePriorityOrder,
+    TestConnectionResponse, UsenetClientTestResponse, UsenetSearchBackend,
+    VerifyConnectionResponse,
 };
 use super::wiring::SettingsSetup;
 use droppedneedle_auth::{Admin, User};
@@ -32,8 +33,8 @@ use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::runtime_config::Masked;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     EventsSettings, JellyfinConnection, LastFmSettings, NavidromeConnection, NewznabIndexer,
-    OidcConnection, PlexConnection, ProwlarrConnection, SabnzbdConnection, SlskdConnection,
-    YouTubeConnection,
+    NzbgetConnection, OidcConnection, PlexConnection, ProwlarrConnection, SabnzbdConnection,
+    SlskdConnection, YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, LibraryScanSchedule, SecuritySettings, listenbrainz_reads_on,
@@ -637,16 +638,77 @@ pub async fn put_sabnzbd(
     tag = "settings",
     path = "/api/v3/settings/download-clients/sabnzbd/test",
     request_body = SabnzbdConnection,
-    responses((status = 200, description = "Verify verdict", body = SabnzbdTestResponse))
+    responses((status = 200, description = "Verify verdict", body = UsenetClientTestResponse))
 )]
 pub async fn test_sabnzbd(
     State(settings): State<SettingsSetup>,
     _caller: Admin,
     ValidJson(body): ValidJson<Masked<SabnzbdConnection>>,
-) -> JsonResult<SabnzbdTestResponse> {
+) -> JsonResult<UsenetClientTestResponse> {
     settings
         .service()
         .verify_sabnzbd(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Read the NZBGet connection (password masked unless unset).
+#[utoipa::path(
+    get,
+    tag = "settings",
+    path = "/api/v3/settings/download-clients/nzbget",
+    responses((status = 200, description = "NZBGet connection", body = NzbgetConnection))
+)]
+pub async fn get_nzbget(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+) -> JsonResult<Masked<NzbgetConnection>> {
+    settings
+        .service()
+        .get_nzbget()
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Save the NZBGet connection (a masked password keeps the stored one).
+#[utoipa::path(
+    put,
+    tag = "settings",
+    path = "/api/v3/settings/download-clients/nzbget",
+    request_body = NzbgetConnection,
+    responses((status = 200, description = "Saved connection", body = NzbgetConnection))
+)]
+pub async fn put_nzbget(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+    ValidJson(body): ValidJson<Masked<NzbgetConnection>>,
+) -> JsonResult<Masked<NzbgetConnection>> {
+    settings
+        .service()
+        .save_nzbget(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Test the submitted NZBGet values (a masked password tests the stored
+/// one). The submitted downloads mount is diagnosed, not the stored one.
+#[utoipa::path(
+    post,
+    tag = "settings",
+    path = "/api/v3/settings/download-clients/nzbget/test",
+    request_body = NzbgetConnection,
+    responses((status = 200, description = "Verify verdict", body = UsenetClientTestResponse))
+)]
+pub async fn test_nzbget(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+    ValidJson(body): ValidJson<Masked<NzbgetConnection>>,
+) -> JsonResult<UsenetClientTestResponse> {
+    settings
+        .service()
+        .verify_nzbget(body)
         .await
         .map(Json)
         .map_err(ApiError::from)

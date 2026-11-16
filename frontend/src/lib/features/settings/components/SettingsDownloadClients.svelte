@@ -10,6 +10,7 @@
 	import SettingsDownloadClient from './SettingsDownloadClient.svelte';
 	import SettingsDownloadPolicy from './SettingsDownloadPolicy.svelte';
 	import SettingsOnboardingChecklist from './SettingsOnboardingChecklist.svelte';
+	import SettingsNzbget from './SettingsNzbget.svelte';
 	import SettingsSabnzbd from './SettingsSabnzbd.svelte';
 	import SettingsSourcePriority from './SettingsSourcePriority.svelte';
 	import SettingsWanted from './SettingsWanted.svelte';
@@ -25,6 +26,7 @@
 	/>
 	<SettingsDownloadClient />
 	<SettingsSabnzbd />
+	<SettingsNzbget />
 	<Card variant="bordered">
 		<div class="space-y-3">
 			<div>

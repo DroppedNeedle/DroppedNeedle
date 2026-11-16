@@ -3007,6 +3007,7 @@ async fn sab_sweeper(
                 downloads_mount: complete.to_string_lossy().into_owned(),
                 ..SabnzbdConnection::default()
             },
+            ..DownloadClients::default()
         })
         .await
         .expect("sabnzbd connection saves");

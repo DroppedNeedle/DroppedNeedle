@@ -5,7 +5,10 @@
 		getDownloadClientConfigQuery,
 		getDownloadClientStatusQuery
 	} from '$lib/features/downloads/queries/DownloadClientQueries.svelte';
-	import { getSabnzbdConfigQuery } from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
+	import {
+		getNzbgetConfigQuery,
+		getSabnzbdConfigQuery
+	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
 	import {
 		getIndexersQuery,
 		getSearchBackendQuery
@@ -20,6 +23,7 @@
 	const dcQuery = getDownloadClientConfigQuery();
 	const statusQuery = getDownloadClientStatusQuery();
 	const sabQuery = getSabnzbdConfigQuery();
+	const nzbgetQuery = getNzbgetConfigQuery();
 	const indexersQuery = getIndexersQuery();
 	const backendQuery = getSearchBackendQuery();
 	const prowlarrQuery = getProwlarrConfigQuery();
@@ -27,6 +31,10 @@
 	const hasLibraryPath = $derived((libQuery.data?.library_roots.length ?? 0) > 0);
 	const slskdConfigured = $derived(Boolean(dcQuery.data?.url && dcQuery.data?.api_key));
 	const sabnzbdEnabled = $derived(sabQuery.data?.enabled === true && Boolean(sabQuery.data?.url));
+	const nzbgetEnabled = $derived(
+		nzbgetQuery.data?.enabled === true && Boolean(nzbgetQuery.data?.url)
+	);
+	const usenetClient = $derived(sabnzbdEnabled ? 'SABnzbd' : nzbgetEnabled ? 'NZBGet' : null);
 	// Either/or backends, backend-aware like is_usenet_ready: the SELECTED side is
 	// what counts, so a Prowlarr-only install with backend=indexers still shows the
 	// item (readiness is genuinely false there). Presence-loose like the pre-existing
@@ -58,7 +66,7 @@
 	// (or Soulseek-only) install isn't nagged about the other. The slskd mount item only
 	// appears once Soulseek is set up.
 	const aSourceConfigured = $derived(slskdConfigured || hasIndexer);
-	const aClientConfigured = $derived(slskdConfigured || sabnzbdEnabled);
+	const aClientConfigured = $derived(slskdConfigured || usenetClient !== null);
 
 	const items = $derived([
 		{ label: 'Add a library path', done: hasLibraryPath, required: true, optional: false },
@@ -69,7 +77,7 @@
 			optional: false
 		},
 		{
-			label: 'Configure a download client (slskd and/or SABnzbd)',
+			label: 'Configure a download client (slskd and/or a Usenet client)',
 			done: aClientConfigured,
 			required: true,
 			optional: false
@@ -84,8 +92,15 @@
 					}
 				]
 			: []),
-		...(sabnzbdEnabled
-			? [{ label: "Mount SABnzbd's downloads folder", done: true, required: false, optional: true }]
+		...(usenetClient
+			? [
+					{
+						label: `Mount ${usenetClient}'s downloads folder`,
+						done: true,
+						required: false,
+						optional: true
+					}
+				]
 			: []),
 		{ label: 'Run a library scan', done: hasTerminalScanRun, required: false, optional: true },
 		{ label: 'Set an AcoustID key', done: hasAcoustid, required: false, optional: true }

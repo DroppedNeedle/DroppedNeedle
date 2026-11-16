@@ -21,7 +21,7 @@ use droppedneedle::settings::musicbrainz::BRAINZMASH_DISCLOSURE_VERSION;
 use droppedneedle::settings::services::SettingsService;
 use droppedneedle::settings::verify::{
     JellyfinVerdict, LiveProbes, NewznabVerdict, PlexVerdict, ProbeVerdict, ProwlarrVerdict,
-    SabnzbdMountDiagnosis, SabnzbdVerdict, VerifyProbes, VersionVerdict,
+    UsenetClientVerdict, UsenetMountDiagnosis, VerifyProbes, VersionVerdict,
 };
 use droppedneedle::settings::wiring::SettingsSetup;
 use droppedneedle_auth::federated::settings::InstallIds;
@@ -202,16 +202,41 @@ impl VerifyProbes for FakeProbes {
         url: &'a str,
         key: &'a str,
         downloads_mount: &'a str,
-    ) -> BoxFuture<'a, SabnzbdVerdict> {
+    ) -> BoxFuture<'a, UsenetClientVerdict> {
         Box::pin(async move {
             self.recorded("sabnzbd", &[url, key, downloads_mount]);
-            SabnzbdVerdict {
+            UsenetClientVerdict {
                 valid: self.valid,
                 version: Some("9.9".to_owned()),
                 message: "fake sabnzbd".to_owned(),
                 categories: vec!["music".to_owned()],
                 complete_dir: Some("/complete".to_owned()),
-                diagnosis: Some(SabnzbdMountDiagnosis {
+                diagnosis: Some(UsenetMountDiagnosis {
+                    mount_has_files: true,
+                    resolvable_downloads: 1,
+                    sampled_downloads: 1,
+                    mount_message: None,
+                }),
+            }
+        })
+    }
+
+    fn nzbget<'a>(
+        &'a self,
+        url: &'a str,
+        username: &'a str,
+        password: &'a str,
+        downloads_mount: &'a str,
+    ) -> BoxFuture<'a, UsenetClientVerdict> {
+        Box::pin(async move {
+            self.recorded("nzbget", &[url, username, password, downloads_mount]);
+            UsenetClientVerdict {
+                valid: self.valid,
+                version: Some("25.4".to_owned()),
+                message: "fake nzbget".to_owned(),
+                categories: vec!["music".to_owned()],
+                complete_dir: Some("/dst".to_owned()),
+                diagnosis: Some(UsenetMountDiagnosis {
                     mount_has_files: true,
                     resolvable_downloads: 1,
                     sampled_downloads: 1,
@@ -962,6 +987,32 @@ async fn live_probes_answer_honest_verdicts() {
     );
     assert_eq!(sabnzbd.complete_dir.as_deref(), Some("/downloads/complete"));
     assert!(!probes.sabnzbd(dead, "key", "/mnt/downloads").await.valid);
+
+    let nzbget_mock = droppedneedle_testkit::nzbget::NzbgetMock::new();
+    nzbget_mock.state().credentials = Some(("nzbget".to_owned(), "pw".to_owned()));
+    let (nzbget_base, _nzbget) =
+        droppedneedle_testkit::usenet::serve_loopback(nzbget_mock.router())
+            .await
+            .expect("nzbget mock");
+    let nzbget = probes
+        .nzbget(&nzbget_base, "nzbget", "pw", "/mnt/downloads")
+        .await;
+    assert!(nzbget.valid, "{}", nzbget.message);
+    assert_eq!(nzbget.version.as_deref(), Some("26.3"));
+    assert_eq!(
+        nzbget.categories,
+        vec!["Movies".to_owned(), "Music".to_owned()]
+    );
+    assert_eq!(nzbget.complete_dir.as_deref(), Some("/downloads/completed"));
+    let refused = probes
+        .nzbget(&nzbget_base, "nzbget", "wrong", "/mnt/downloads")
+        .await;
+    assert!(!refused.valid);
+    assert!(
+        refused.message.contains("username or password"),
+        "{}",
+        refused.message
+    );
 
     let prowlarr = probes.prowlarr(&base, "key").await;
     assert!(prowlarr.valid, "{}", prowlarr.message);

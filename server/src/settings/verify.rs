@@ -15,8 +15,10 @@
 //! scripted fakes while the live probes prove themselves against
 //! loopback stubs with explicit base URLs.
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use droppedneedle_acquire::usenet::queue::UsenetQueue;
 use futures_util::future::BoxFuture;
 
 use droppedneedle_auth::federated::settings::InstallIds;
@@ -110,10 +112,11 @@ pub struct VersionVerdict {
     pub message: String,
 }
 
-/// SABnzbd verdict: version plus the category picker, the SABnzbd-side
+/// Usenet client verdict (SABnzbd or NZBGet): version plus the category
+/// picker, the client-side
 /// completed dir, and the mount diagnosis over the submitted mount.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SabnzbdVerdict {
+pub struct UsenetClientVerdict {
     /// Whether the submitted values checked out.
     pub valid: bool,
     /// Server version, when known.
@@ -122,15 +125,15 @@ pub struct SabnzbdVerdict {
     pub message: String,
     /// Known categories.
     pub categories: Vec<String>,
-    /// SABnzbd-side completed dir, when known.
+    /// Client-side completed dir, when known.
     pub complete_dir: Option<String>,
     /// Mount diagnosis over the submitted mount, when diagnosed.
-    pub diagnosis: Option<SabnzbdMountDiagnosis>,
+    pub diagnosis: Option<UsenetMountDiagnosis>,
 }
 
 /// Mount cross-check over the submitted downloads mount.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SabnzbdMountDiagnosis {
+pub struct UsenetMountDiagnosis {
     /// Whether the mount holds any file at all.
     pub mount_has_files: bool,
     /// Sampled completions locatable under the mount.
@@ -213,7 +216,16 @@ pub trait VerifyProbes: Send + Sync {
         url: &'a str,
         key: &'a str,
         downloads_mount: &'a str,
-    ) -> BoxFuture<'a, SabnzbdVerdict>;
+    ) -> BoxFuture<'a, UsenetClientVerdict>;
+    /// NZBGet version plus categories, destination dir, and the mount
+    /// diagnosis over the submitted mount.
+    fn nzbget<'a>(
+        &'a self,
+        url: &'a str,
+        username: &'a str,
+        password: &'a str,
+        downloads_mount: &'a str,
+    ) -> BoxFuture<'a, UsenetClientVerdict>;
     /// Prowlarr system status plus the member-indexer list.
     fn prowlarr<'a>(&'a self, url: &'a str, key: &'a str) -> BoxFuture<'a, ProwlarrVerdict>;
     /// Newznab `t=caps`.
@@ -679,14 +691,14 @@ impl VerifyProbes for LiveProbes {
         url: &'a str,
         key: &'a str,
         downloads_mount: &'a str,
-    ) -> BoxFuture<'a, SabnzbdVerdict> {
+    ) -> BoxFuture<'a, UsenetClientVerdict> {
         Box::pin(async move {
             use droppedneedle_acquire::usenet::{
                 policy::UsenetPolicy,
                 sabnzbd::{SabnzbdClient, SabnzbdQueue},
             };
             if url.trim().is_empty() || key.is_empty() {
-                return SabnzbdVerdict {
+                return UsenetClientVerdict {
                     valid: false,
                     version: None,
                     message: "SABnzbd URL or API key not configured.".to_owned(),
@@ -699,78 +711,67 @@ impl VerifyProbes for LiveProbes {
                 poll_timeout: PROBE_TIMEOUT,
                 ..UsenetPolicy::default()
             };
-            // Two clients over the same HTTP handles: the queue owns one
-            // for health + diagnosis, the spare serves the picker.
-            let client = || {
-                SabnzbdClient::new(
-                    self.http.clone(),
-                    self.no_redirect.clone(),
-                    url,
-                    key,
-                    1,
-                    Duration::from_secs(1),
-                )
-            };
-            let cats_client = client();
+            let client = SabnzbdClient::new(
+                self.http.clone(),
+                self.no_redirect.clone(),
+                url,
+                key,
+                1,
+                Duration::from_secs(1),
+            );
             let queue = SabnzbdQueue::new(
-                client(),
+                client,
                 url,
                 key,
                 std::path::PathBuf::from(downloads_mount),
                 policy,
             );
-            let health = queue.health_check().await;
-            if health.status != "ok" {
-                return SabnzbdVerdict {
+            usenet_verdict(UsenetQueue::Sabnzbd(Arc::new(queue)), downloads_mount).await
+        })
+    }
+
+    fn nzbget<'a>(
+        &'a self,
+        url: &'a str,
+        username: &'a str,
+        password: &'a str,
+        downloads_mount: &'a str,
+    ) -> BoxFuture<'a, UsenetClientVerdict> {
+        Box::pin(async move {
+            use droppedneedle_acquire::usenet::{
+                nzbget::{NzbgetClient, NzbgetQueue},
+                policy::UsenetPolicy,
+            };
+            if url.trim().is_empty() {
+                return UsenetClientVerdict {
                     valid: false,
-                    version: health.version,
-                    message: if health.message.is_empty() {
-                        "SABnzbd unreachable.".to_owned()
-                    } else {
-                        health.message
-                    },
+                    version: None,
+                    message: "NZBGet URL not configured.".to_owned(),
                     categories: Vec::new(),
                     complete_dir: None,
                     diagnosis: None,
                 };
             }
-            let categories = cats_client
-                .get_cats(PROBE_TIMEOUT)
-                .await
-                .unwrap_or_default();
-            let complete_dir = queue
-                .get_complete_dir()
-                .await
-                .ok()
-                .filter(|dir| !dir.is_empty());
-            // The submitted mount is diagnosed, not the stored one, so an
-            // unsaved correction already shows the fixed verdict.
-            let raw = queue.diagnose_downloads_mount().await;
-            let mount_message =
-                if raw.sampled_downloads > 0 && raw.resolvable_downloads < raw.sampled_downloads {
-                    Some(format!(
-                        "Only {}/{} sampled SABnzbd download(s) resolve under {} - the mount \
-                     likely points at the wrong folder (for example a category subfolder of \
-                     SABnzbd's completed dir shown above).",
-                        raw.resolvable_downloads, raw.sampled_downloads, downloads_mount
-                    ))
-                } else {
-                    None
-                };
-            let version = health.version.clone().unwrap_or_default();
-            SabnzbdVerdict {
-                valid: true,
-                version: health.version,
-                message: format!("SABnzbd {version}"),
-                categories,
-                complete_dir,
-                diagnosis: Some(SabnzbdMountDiagnosis {
-                    mount_has_files: raw.mount_has_files,
-                    resolvable_downloads: raw.resolvable_downloads as i64,
-                    sampled_downloads: raw.sampled_downloads as i64,
-                    mount_message,
-                }),
-            }
+            let policy = UsenetPolicy {
+                poll_timeout: PROBE_TIMEOUT,
+                ..UsenetPolicy::default()
+            };
+            let client = NzbgetClient::new(
+                self.http.clone(),
+                self.no_redirect.clone(),
+                url,
+                username,
+                password,
+                1,
+                Duration::from_secs(1),
+            );
+            let queue = NzbgetQueue::new(
+                client,
+                url,
+                std::path::PathBuf::from(downloads_mount),
+                policy,
+            );
+            usenet_verdict(UsenetQueue::Nzbget(Arc::new(queue)), downloads_mount).await
         })
     }
 
@@ -1093,4 +1094,63 @@ fn format_bytes(bytes: u64) -> String {
         size /= 1024.0;
     }
     format!("{size:.1} TB")
+}
+
+/// The verdict over a built Usenet queue: health, then the category
+/// picker, the client-side completed dir and the mount diagnosis over
+/// the submitted mount. Shared by SABnzbd and NZBGet.
+async fn usenet_verdict(queue: UsenetQueue, downloads_mount: &str) -> UsenetClientVerdict {
+    let name = match queue {
+        UsenetQueue::Sabnzbd(_) => "SABnzbd",
+        UsenetQueue::Nzbget(_) => "NZBGet",
+    };
+    let health = queue.health_check().await;
+    if health.status != "ok" {
+        return UsenetClientVerdict {
+            valid: false,
+            version: health.version,
+            message: if health.message.is_empty() {
+                format!("{name} unreachable.")
+            } else {
+                health.message
+            },
+            categories: Vec::new(),
+            complete_dir: None,
+            diagnosis: None,
+        };
+    }
+    let categories = queue.get_categories().await.unwrap_or_default();
+    let complete_dir = queue
+        .get_complete_dir()
+        .await
+        .ok()
+        .filter(|dir| !dir.is_empty());
+    // The submitted mount is diagnosed, not the stored one, so an unsaved
+    // correction already shows the fixed verdict.
+    let raw = queue.diagnose_downloads_mount().await;
+    let mount_message =
+        if raw.sampled_downloads > 0 && raw.resolvable_downloads < raw.sampled_downloads {
+            Some(format!(
+                "Only {}/{} sampled {name} download(s) resolve under {} - the mount likely \
+                 points at the wrong folder (for example a category subfolder of {name}'s \
+                 completed dir shown above).",
+                raw.resolvable_downloads, raw.sampled_downloads, downloads_mount
+            ))
+        } else {
+            None
+        };
+    let version = health.version.clone().unwrap_or_default();
+    UsenetClientVerdict {
+        valid: true,
+        version: health.version,
+        message: format!("{name} {version}").trim_end().to_owned(),
+        categories,
+        complete_dir,
+        diagnosis: Some(UsenetMountDiagnosis {
+            mount_has_files: raw.mount_has_files,
+            resolvable_downloads: raw.resolvable_downloads as i64,
+            sampled_downloads: raw.sampled_downloads as i64,
+            mount_message,
+        }),
+    }
 }

@@ -16,7 +16,8 @@ import {
 
 export type DownloadPolicySettings = components['schemas']['DownloadPolicyView'];
 export type SabnzbdConnectionSettings = components['schemas']['SabnzbdConnection'];
-export type SabnzbdTestResult = components['schemas']['SabnzbdTestResponse'];
+export type NzbgetConnectionSettings = components['schemas']['NzbgetConnection'];
+export type UsenetClientTestResult = components['schemas']['UsenetClientTestResponse'];
 export type WantedWatcherSettings = components['schemas']['WantedWatcher'];
 
 const sourcePriorityOptions = () =>
@@ -55,6 +56,25 @@ const sabnzbdStatusOptions = () =>
 
 export const getSabnzbdStatusQuery = () => createQuery(() => sabnzbdStatusOptions());
 
+const nzbgetOptions = () =>
+	queryOptions({
+		queryKey: DownloadQueryKeyFactory.nzbget(),
+		queryFn: ({ signal }) =>
+			api.v3.GET(v3('/api/v3/settings/download-clients/nzbget'), {
+				signal
+			})
+	});
+
+export const getNzbgetConfigQuery = () => createQuery(() => nzbgetOptions());
+
+const nzbgetStatusOptions = () =>
+	queryOptions({
+		queryKey: DownloadQueryKeyFactory.nzbgetStatus(),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/acquire/nzbget/status'), { signal })
+	});
+
+export const getNzbgetStatusQuery = () => createQuery(() => nzbgetStatusOptions());
+
 const policyOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.policy(),
@@ -79,6 +99,22 @@ export function createTestSabnzbdMutation() {
 		effects: () => [],
 		mutationFn: (config: SabnzbdConnectionSettings) =>
 			api.v3.POST(v3('/api/v3/settings/download-clients/sabnzbd/test'), config)
+	}));
+}
+
+export function createSaveNzbgetConfigMutation() {
+	return createAppMutation(() => ({
+		mutationFn: (config: NzbgetConnectionSettings) =>
+			api.v3.PUT(v3('/api/v3/settings/download-clients/nzbget'), config),
+		effects: () => [usenetSettingsChanged(), downloadReadinessChanged()]
+	}));
+}
+
+export function createTestNzbgetMutation() {
+	return createAppMutation(() => ({
+		effects: () => [],
+		mutationFn: (config: NzbgetConnectionSettings) =>
+			api.v3.POST(v3('/api/v3/settings/download-clients/nzbget/test'), config)
 	}));
 }
 

@@ -10,6 +10,7 @@
 
 pub mod imports;
 pub mod musicbrainz;
+pub mod nzbget;
 pub mod remotes;
 pub mod scripted;
 pub mod slskd;
