@@ -1246,6 +1246,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Password sign-in is turned off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3546,6 +3556,16 @@
               }
             }
           },
+          "403": {
+            "description": "Password sign-in is turned off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Too many attempts for this client or username",
             "content": {
@@ -3782,6 +3802,16 @@
         "responses": {
           "204": {
             "description": "Password reset"
+          },
+          "403": {
+            "description": "Password sign-in is turned off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -23088,6 +23118,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Password sign-in is turned off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -23139,6 +23179,16 @@
           },
           "401": {
             "description": "Missing or invalid session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Password sign-in is turned off",
             "content": {
               "application/json": {
                 "schema": {
@@ -39120,7 +39170,7 @@
           },
           "local": {
             "type": "boolean",
-            "description": "Username and password; always true."
+            "description": "Username and password; false when `ALLOW_PASSWORD_LOGIN` is off."
           },
           "oidc": {
             "type": "boolean",

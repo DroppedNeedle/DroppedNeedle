@@ -11397,7 +11397,7 @@ export interface components {
         AuthProvidersBody: {
             /** @description Jellyfin sign-in is switched on and the server is set up. */
             jellyfin: boolean;
-            /** @description Username and password; always true. */
+            /** @description Username and password; false when `ALLOW_PASSWORD_LOGIN` is off. */
             local: boolean;
             /** @description OIDC sign-in is switched on with an issuer and client id. */
             oidc: boolean;
@@ -26074,6 +26074,15 @@ export interface operations {
                     "application/json": components["schemas"]["RecoveryCodeResponse"];
                 };
             };
+            /** @description Password sign-in is turned off */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     admin_set_role: {
@@ -27596,6 +27605,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Password sign-in is turned off */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Too many attempts for this client or username */
             429: {
                 headers: {
@@ -27779,6 +27797,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Password sign-in is turned off */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
         };
     };
@@ -41251,6 +41278,15 @@ export interface operations {
                     "application/json": components["schemas"]["UserResponse"];
                 };
             };
+            /** @description Password sign-in is turned off */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     post_password: {
@@ -41286,6 +41322,15 @@ export interface operations {
             };
             /** @description Missing or invalid session */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Password sign-in is turned off */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

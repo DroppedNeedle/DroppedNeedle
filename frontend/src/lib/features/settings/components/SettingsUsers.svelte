@@ -39,6 +39,7 @@
 	import { toastStore } from '$lib/stores/toast';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { createPasswordRecoveryCodeMutation } from '$lib/features/auth/queries/AuthMutations.svelte';
+	import { getAuthProvidersQuery } from '$lib/features/auth/queries/AuthProvidersQuery.svelte';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -78,6 +79,10 @@
 
 	let userToDelete = $state<UserRecord | null>(null);
 	let deleteOpen = $state(false);
+
+	// With password sign-in off, recovery codes are refused and new accounts sign in by email.
+	const providersQuery = getAuthProvidersQuery();
+	const passwordLogin = $derived(providersQuery.data?.local ?? true);
 
 	const createRecoveryCode = createPasswordRecoveryCodeMutation();
 	let recoveryUser = $state<UserRecord | null>(null);
@@ -418,6 +423,12 @@
 							{/snippet}
 						</Field>
 						<SelectField label="Role" options={roleOptions} bind:value={newRole} />
+						{#if !passwordLogin}
+							<p class="sm:col-span-2 text-sm text-muted">
+								Password sign-in is off. This account signs in through SSO, Plex or Jellyfin with
+								the same email.
+							</p>
+						{/if}
 						{#if createError}
 							<div class="sm:col-span-2 alert alert-error py-2 text-sm">{createError}</div>
 						{/if}
@@ -536,17 +547,19 @@
 									aria-expanded={quotaOpen.has(user.id)}
 									onclick={() => toggleQuota(user.id)}
 								/>
-								<span
-									title={canRecover ? undefined : 'This account does not have a local password'}
-								>
-									<IconButton
-										size="sm"
-										icon={KeyRound}
-										label={`Create recovery code for ${user.display_name}`}
-										disabled={!canRecover}
-										onclick={() => openRecoveryDialog(user)}
-									/>
-								</span>
+								{#if passwordLogin}
+									<span
+										title={canRecover ? undefined : 'This account does not have a local password'}
+									>
+										<IconButton
+											size="sm"
+											icon={KeyRound}
+											label={`Create recovery code for ${user.display_name}`}
+											disabled={!canRecover}
+											onclick={() => openRecoveryDialog(user)}
+										/>
+									</span>
+								{/if}
 								<span title={isSelf ? 'Sign yourself out from your profile' : undefined}>
 									<IconButton
 										size="sm"

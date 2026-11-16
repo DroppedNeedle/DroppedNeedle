@@ -92,6 +92,11 @@ pub const DEPLOYMENT_VARS: &[DeploymentVar] = &[
         note: "Keeps each user's discover page and queue deck fresh in the background while they use them.",
     },
     DeploymentVar {
+        env_name: "ALLOW_PASSWORD_LOGIN",
+        default: "true",
+        note: "Username and password sign-in. Off, only Plex, Jellyfin and OIDC sign-in work.",
+    },
+    DeploymentVar {
         env_name: "SLSKD_DOWNLOADS_PATH",
         default: "/data/downloads/slskd",
         note: "slskd completed-downloads directory inside the container.",

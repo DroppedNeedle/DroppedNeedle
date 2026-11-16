@@ -117,6 +117,7 @@ impl NativeAuthState {
     responses(
         (status = 200, description = "Authenticated user; token only in Bearer mode", body = inline(AuthSessionBody)),
         (status = 401, description = "Invalid username or password"),
+        (status = 403, description = "Password sign-in is turned off"),
         (status = 429, description = "Too many attempts for this client or username")
     )
 )]
@@ -127,6 +128,7 @@ pub async fn login_handler(
     peer: PeerAddr,
     ValidJson(body): ValidJson<LoginBody>,
 ) -> Result<Response, ApiError> {
+    state.users.require_password_login()?;
     let secure = cookies::secure_for_sign_in(
         uri.scheme_str().unwrap_or("http"),
         &headers,

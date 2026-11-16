@@ -20,6 +20,7 @@
 	"auth": [
 		"components/ServerLogHint.svelte",
 		"queries/AuthMutations.svelte.ts",
+		"queries/AuthProvidersQuery.svelte.ts",
 		"queries/AuthQueryKeyFactory.ts",
 		"queries/types.ts"
 	],

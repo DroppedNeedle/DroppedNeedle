@@ -20,7 +20,7 @@ use droppedneedle_kernel::runtime_config::{ConfigError, ConfigStore, Live, Updat
 /// Which sign-in methods the login page offers (v2 `AuthProvidersResponse`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnabledProviders {
-    /// Username and password; always on.
+    /// Username and password; off when `ALLOW_PASSWORD_LOGIN` is.
     pub local: bool,
     /// Plex PIN login.
     pub plex: bool,
@@ -39,16 +39,28 @@ pub struct SignInSettings {
     plex: Live<PlexConnection>,
     jellyfin: Live<JellyfinConnection>,
     oidc: Live<OidcConnection>,
+    password_login: bool,
 }
 
 impl SignInSettings {
-    /// Handles on the Plex, Jellyfin and OIDC sections.
+    /// Handles on the Plex, Jellyfin and OIDC sections, with password
+    /// sign-in on.
     #[must_use]
     pub fn new(store: &ConfigStore) -> Self {
         Self {
             plex: store.live(),
             jellyfin: store.live(),
             oidc: store.live(),
+            password_login: true,
+        }
+    }
+
+    /// The same, with password sign-in on or off (`ALLOW_PASSWORD_LOGIN`).
+    #[must_use]
+    pub fn with_password_login(store: &ConfigStore, password_login: bool) -> Self {
+        Self {
+            password_login,
+            ..Self::new(store)
         }
     }
 
@@ -58,7 +70,7 @@ impl SignInSettings {
         let (oidc_config, auto_redirect) = self.oidc_settings();
         let oidc = oidc_config.is_usable();
         EnabledProviders {
-            local: true,
+            local: self.password_login,
             plex: self.plex_login_enabled(),
             jellyfin: self.jellyfin_login_server().is_some(),
             oidc,

@@ -195,7 +195,8 @@ can sign in to make one. Stop the server first, run it, start the server,
 then enter the username, the code and a new password on the Forgot
 password page within 15 minutes. An account that only signs in through
 single sign-on, Plex or Jellyfin gets its first password this way and
-keeps its other sign-in.
+keeps its other sign-in. If the server runs with ALLOW_PASSWORD_LOGIN=false,
+start it with ALLOW_PASSWORD_LOGIN=true, or the code cannot be used.
 
 <username> is the DroppedNeedle username; --list-admins prints the admin
 usernames. Put -- before a username that starts with a dash.

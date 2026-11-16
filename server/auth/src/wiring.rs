@@ -77,6 +77,24 @@ fn warn_on_public_http_oidc(sign_in: &SignInSettings) {
     }
 }
 
+/// Say at boot that password sign-in is off, and warn louder when no other
+/// sign-in is on yet, since then only sessions already open get in.
+fn warn_on_password_login_off(sign_in: &SignInSettings, password_login: bool) {
+    if password_login {
+        return;
+    }
+    let providers = sign_in.enabled_providers();
+    if providers.plex || providers.jellyfin || providers.oidc {
+        tracing::info!("password sign-in is off (ALLOW_PASSWORD_LOGIN=false)");
+    } else {
+        tracing::warn!(concat!(
+            "password sign-in is off (ALLOW_PASSWORD_LOGIN=false) and no Plex, Jellyfin or ",
+            "OIDC sign-in is set up, so nobody can sign in. Set ALLOW_PASSWORD_LOGIN=true and ",
+            "restart to get back in.",
+        ));
+    }
+}
+
 impl AuthSetup {
     /// Build the bundle over `platform`: the Jellyfin client uses its
     /// shared HTTP client, and every forwarded header is read through its
@@ -99,8 +117,10 @@ impl AuthSetup {
         let config_store = &platform.settings;
         let base_path = platform.config.base_path.as_str();
         let (clock, ids, crypto) = (&platform.clock, &platform.ids, &platform.crypto);
-        let sign_in = SignInSettings::new(config_store);
+        let password_login = platform.config.allow_password_login;
+        let sign_in = SignInSettings::with_password_login(config_store, password_login);
         warn_on_public_http_oidc(&sign_in);
+        warn_on_password_login_off(&sign_in, password_login);
         let http = platform.http.shared().clone();
         let plex_tv = PlexTv::new(providers.plextv.clone(), config_store.clone(), plex_server);
         let jellyfin_http = JellyfinHttp::new(http.clone(), config_store.clone());
@@ -124,6 +144,7 @@ impl AuthSetup {
             lastfm_pending: Arc::default(),
             jellyfin_directory: Arc::new(jellyfin_http.clone()),
             plex_directory: Arc::new(plex_tv.clone()),
+            password_login,
         };
         // Every forwarded header is read through the trusted proxies (the
         // session gate's origin check, the login `Secure` cookie flag, and

@@ -21,6 +21,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { logout } from '$lib/utils/logout';
 	import { getProfileQuery } from '$lib/features/profile/queries/profile.svelte';
+	import { getAuthProvidersQuery } from '$lib/features/auth/queries/AuthProvidersQuery.svelte';
 	import {
 		getRemoteConnectionQuery,
 		getRemoteFoldersQuery,
@@ -62,6 +63,9 @@
 
 	const userId = authStore.user?.id ?? '';
 	const profileQuery = getProfileQuery(() => authStore.user?.id ?? '');
+	// Password sign-in can be turned off for the server (ALLOW_PASSWORD_LOGIN).
+	const providersQuery = getAuthProvidersQuery();
+	const passwordLogin = $derived(providersQuery.data?.local ?? true);
 	const navidromeConnection = getRemoteConnectionQuery(() => 'navidrome');
 	const jellyfinConnection = getRemoteConnectionQuery(() => 'jellyfin');
 	const plexConnection = getRemoteConnectionQuery(() => 'plex');
@@ -318,7 +322,7 @@
 						</span>
 						{#if profile.email}<span class="normal-case tracking-normal">{profile.email}</span>{/if}
 					{/snippet}
-					<AccountCard {profile} {hasLocalPassword} />
+					<AccountCard {profile} {hasLocalPassword} {passwordLogin} />
 				</ProfileSection>
 
 				<ProfileSection

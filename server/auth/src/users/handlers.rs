@@ -174,6 +174,7 @@ pub async fn put_email(
         (status = 200, description = "Updated account", body = UserResponse),
         (status = 400, description = "Current password is incorrect, or the new one is refused"),
         (status = 401, description = "Missing or invalid session"),
+        (status = 403, description = "Password sign-in is turned off"),
         (status = 409, description = "The account has no local password")
     )
 )]
@@ -194,7 +195,10 @@ pub async fn post_password(
     tag = "users",
     path = "/api/v3/me/local-password",
     request_body = LocalPasswordSet,
-    responses((status = 200, description = "Updated account", body = UserResponse))
+    responses(
+        (status = 200, description = "Updated account", body = UserResponse),
+        (status = 403, description = "Password sign-in is turned off")
+    )
 )]
 pub async fn post_local_password(
     State(deps): State<UsersDeps>,
@@ -352,7 +356,10 @@ pub async fn logout_all(
     tag = "users",
     path = "/api/v3/auth/password-recovery/reset",
     request_body = PasswordReset,
-    responses((status = 204, description = "Password reset"))
+    responses(
+        (status = 204, description = "Password reset"),
+        (status = 403, description = "Password sign-in is turned off")
+    )
 )]
 pub async fn reset_password(
     State(deps): State<UsersDeps>,
@@ -643,7 +650,10 @@ pub async fn admin_revoke_sessions(
     tag = "users",
     path = "/api/v3/admin/users/{id}/recovery-code",
     params(("id" = String, Path, description = "User id")),
-    responses((status = 201, description = "Minted code (shown once)", body = RecoveryCodeResponse))
+    responses(
+        (status = 201, description = "Minted code (shown once)", body = RecoveryCodeResponse),
+        (status = 403, description = "Password sign-in is turned off")
+    )
 )]
 pub async fn admin_mint_recovery_code(
     State(deps): State<UsersDeps>,

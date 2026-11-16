@@ -19,7 +19,7 @@ Who can do what, the ways people sign in, and how to get back in when a password
 | Trusted | Requests start immediately, no approval | Library curation: editions, matches, the review queue, drop imports, removals, the Recycle Bin (not emptying it) and upgrades. No settings or users |
 | User | Requests wait for admin approval | Nothing admin side |
 
-The first account is always admin. Later accounts are created by an admin or automatically on first Jellyfin, Plex, or OIDC sign-in (all start as User). Every login method is switched on and off in the UI; no environment variables involved.
+The first account is always admin. Later accounts are created by an admin or automatically on first Jellyfin, Plex, or OIDC sign-in (all start as User). Plex, Jellyfin and OIDC sign-in are switched on and off in the UI. Username and password sign-in is on unless the server is started with `ALLOW_PASSWORD_LOGIN=false` (see [Configuration](configuration.md)); then the sign-in page offers only the other methods, and passwords cannot be set, changed or recovered. First-admin setup and app passwords still work.
 
 ## Sessions
 
@@ -59,6 +59,8 @@ Use the server's own values:
 The code works once, for 15 minutes: open "Forgot password?" on the sign-in page and enter the username, the code and a new password. `USERNAME` is the DroppedNeedle username, which can differ from the name the account has with an OIDC provider; `droppedneedle-tool recovery-code --list-admins` prints the admin usernames.
 
 An account that only signs in through OIDC, Plex or Jellyfin has no password yet. The command says so, and the code then gives the account its first password; its other sign-in stays linked. Only the host command can do that: a code made by an admin under Settings > Users is for accounts that already have a password. It is still simpler to keep one admin with a username and password.
+
+If the server runs with `ALLOW_PASSWORD_LOGIN=false`, the code cannot be used until you start it again with `ALLOW_PASSWORD_LOGIN=true` (or without the variable). Turn it back off once you are in.
 
 The command asks for no password of its own: anyone with access to the machine and its data folders can run it.
 

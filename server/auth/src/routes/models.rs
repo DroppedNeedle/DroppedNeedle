@@ -207,7 +207,7 @@ pub struct PlexLinkPollResult {
 /// Sign-in methods the login page offers (v2 `AuthProvidersResponse`).
 #[derive(Debug, Clone, Copy, Serialize, ToSchema)]
 pub struct AuthProvidersBody {
-    /// Username and password; always true.
+    /// Username and password; false when `ALLOW_PASSWORD_LOGIN` is off.
     pub local: bool,
     /// Plex sign-in is switched on.
     pub plex: bool,
