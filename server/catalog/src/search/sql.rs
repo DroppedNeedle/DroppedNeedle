@@ -40,10 +40,8 @@ droppedneedle_kernel::sql! {
         disambiguation: Option<String>,
         owned: bool,
     }
-    /// One page of album hits: owned albums whose folded title or album
-    /// artist contains the pattern, exact title first. Binds: the contains
-    /// pattern twice, the folded query, the prefix pattern, limit, offset.
-    pub(super) ALBUM_HITS = (concat!(
+    /// One album page's columns and the rows it reads.
+    fragment ALBUM_START = (concat!(
         "SELECT b.id AS id, b.title AS title, b.title_folded AS title_folded, \
          b.album_artist_name AS album_artist_name, b.year AS year, \
          e.release_group_mbid AS mbid, (w.local_album_id IS NOT NULL) AS own_art \
@@ -53,14 +51,22 @@ droppedneedle_kernel::sql! {
          LEFT JOIN local_album_external_identities e ON e.local_album_id = b.id AND ",
         musicbrainz!("e"),
         " WHERE ",
-        owned_album!("b"),
-        " AND (b.title_folded LIKE ? ESCAPE '\\' \
-         OR COALESCE(b.album_artist_name_folded, '') LIKE ? ESCAPE '\\') \
-         ORDER BY CASE WHEN b.title_folded = ? THEN 0 \
-         WHEN b.title_folded LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, \
-         b.title_folded ASC LIMIT ? OFFSET ?"
+        owned_album!("b")
     ));
-    pub(super) row AlbumHit for [ALBUM_HITS] {
+    /// One word of an album query: it appears in the folded title or the
+    /// folded album artist.
+    fragment ALBUM_WORD_LIKE = " AND (b.title_folded LIKE ? ESCAPE '\\' \
+        OR COALESCE(b.album_artist_name_folded, '') LIKE ? ESCAPE '\\')";
+    /// An album page's rank and cut: exact title first, then a title
+    /// prefix, then the rest.
+    fragment ALBUM_END = " ORDER BY CASE WHEN b.title_folded = ? THEN 0 \
+        WHEN b.title_folded LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, \
+        b.title_folded ASC LIMIT ? OFFSET ?";
+    /// One page of album hits: owned albums matching every word of the query
+    /// in their title or album artist. Binds: the contains pattern twice per
+    /// word, the folded query, the prefix pattern, limit, offset.
+    family ALBUM_HITS = album_hits;
+    pub(super) row AlbumHit for family [album_hits] {
         id: String,
         title: String,
         title_folded: String,
@@ -147,5 +153,13 @@ pub(super) fn song_hits_words(short: ListLen) -> String {
     format!(
         "{SONG_START}{TRACK_TEXT_MATCH}{}{SONG_END}",
         TRACK_WORD_LIKE.repeat(short.get())
+    )
+}
+
+/// `ALBUM_HITS` for a query of `words` words.
+pub(super) fn album_hits(words: ListLen) -> String {
+    format!(
+        "{ALBUM_START}{}{ALBUM_END}",
+        ALBUM_WORD_LIKE.repeat(words.get())
     )
 }

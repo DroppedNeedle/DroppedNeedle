@@ -498,29 +498,35 @@ impl SearchService {
         self.search_albums_page(folded, limit, 0).await
     }
 
-    /// One page of album hits: owned albums whose folded title or folded
-    /// album-artist name contains the query, exact title first. An album
-    /// without files is found in the MusicBrainz half, as not in library.
+    /// One page of album hits: owned albums matching every word of the query
+    /// in their folded title or album-artist name, exact title first. An
+    /// album without files is found in the MusicBrainz half, as not in
+    /// library.
     async fn search_albums_page(
         &self,
         folded: &str,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<SearchResultItem>, DbError> {
-        let (contains, exact, prefix) = (
-            like_contains(folded),
-            folded.to_owned(),
-            like_prefix(folded),
-        );
+        let words = album_words(folded);
+        let mut binds: Vec<Value> = words
+            .iter()
+            .flat_map(|word| [like_contains(word), like_contains(word)])
+            .map(Value::Text)
+            .collect();
+        binds.extend([
+            Value::Text(folded.to_owned()),
+            Value::Text(like_prefix(folded)),
+            Value::Integer(i64::from(limit)),
+            Value::Integer(i64::from(offset)),
+        ]);
+        let text = sql::album_hits(ListLen::new(words.len()));
         let rows = self
             .db
             .read("search.albums", move |conn| {
                 let rows = conn
-                    .prepare(sql::ALBUM_HITS.text())?
-                    .query_map(
-                        params![contains, contains, exact, prefix, limit, offset],
-                        sql::AlbumHit::read,
-                    )?
+                    .prepare(&text)?
+                    .query_map(rusqlite::params_from_iter(binds), sql::AlbumHit::read)?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok::<_, DbError>(rows)
             })
@@ -651,6 +657,16 @@ pub(crate) fn song_query(folded: &str, limit: u32, offset: u32) -> (String, Vec<
         Value::Integer(i64::from(offset)),
     ]);
     (text, binds)
+}
+
+/// The words an album query matches one by one: its folded text split on
+/// whitespace, or the whole text when it splits to none.
+fn album_words(folded: &str) -> Vec<&str> {
+    let mut words: Vec<&str> = folded.split_whitespace().collect();
+    if words.is_empty() {
+        words.push(folded);
+    }
+    words
 }
 
 /// LIKE pattern matching rows containing the folded query. Wildcards in
