@@ -89,6 +89,14 @@ pub struct FolderPick {
     upload_speed: i64,
 }
 
+impl FolderPick {
+    /// The release has a tracklist and none of its tracks is in this
+    /// folder: nothing here is the album, so no automatic pick takes it.
+    pub fn holds_nothing(&self) -> bool {
+        self.total > 0 && self.coverage == 0
+    }
+}
+
 /// Rank folders best first for an automatic pick. Folders that cannot
 /// serve the wanted positions, or whose known quality is outside the band or
 /// the recipe, are left out.
@@ -99,7 +107,7 @@ pub fn rank_folders(
 ) -> Vec<FolderPick> {
     ranked(hits, request, policy)
         .into_iter()
-        .filter(|pick| !pick.out_of_band)
+        .filter(|pick| !pick.out_of_band && !pick.holds_nothing())
         .collect()
 }
 
@@ -781,5 +789,42 @@ mod tests {
         );
         assert_eq!(folder_of("a\\Album CD 3\\01.flac").1, Some(3));
         assert_eq!(folder_of("a\\Abcd 2\\01.flac").1, None);
+    }
+
+    /// A folder that holds none of the release's tracks is listed for a
+    /// person to pick from, but an automatic pick never takes it.
+    #[test]
+    fn rank_folders_skips_a_folder_holding_no_track() {
+        let tracklist = vec![track(1, "Alpha", 200.0)];
+        let hits = [
+            hit(
+                "stranger",
+                "M\\Other Album\\Unrelated Song.flac",
+                500.0,
+                true,
+            ),
+            hit("owner", "M\\Album\\01 Alpha.flac", 200.0, true),
+        ];
+        let request = RankRequest {
+            tracklist: &tracklist,
+            wanted: &[],
+            single_track: false,
+        };
+        let policy = DownloadPolicy::default();
+
+        let listing = rank_listing(&hits, request, &policy);
+        let users: Vec<&str> = listing.iter().map(|pick| pick.username.as_str()).collect();
+        assert_eq!(users, ["owner", "stranger"], "listed for a hand pick");
+        assert!(listing[1].holds_nothing() && !listing[0].holds_nothing());
+
+        let auto = rank_folders(&hits, request, &policy);
+        let users: Vec<&str> = auto.iter().map(|pick| pick.username.as_str()).collect();
+        assert_eq!(users, ["owner"], "never taken automatically");
+
+        let only_stranger = &hits[..1];
+        assert!(
+            rank_folders(only_stranger, request, &policy).is_empty(),
+            "nothing else to take"
+        );
     }
 }
