@@ -18,10 +18,12 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use super::clients::LiveClients;
-use super::imports::health::{ClientProbe, HealthProbes, SabnzbdProbe, SlskdProbe};
+use super::imports::health::{ClientProbe, HealthProbes, SlskdProbe, UsenetProbe};
 use super::imports::mount::{self, SlskdMountReport};
 use super::landing::confine::FolderFault;
 use super::slskd::{ReqwestSlskdHttp, SlskdRepository};
+use super::usenet::nzbget::NzbgetQueue;
+use super::usenet::queue::UsenetQueue;
 use super::usenet::sabnzbd::SabnzbdQueue;
 use droppedneedle_kernel::jobs::{AlreadyRunning, FnTick, Next, Schedule, Supervisor, TickCtx};
 use droppedneedle_kernel::runtime_config::secret_sections::DownloadClients;
@@ -33,12 +35,21 @@ pub struct CachedProbes {
     pub slskd: ClientProbe,
     /// slskd downloads mount report.
     pub slskd_mount: Option<SlskdMountReport>,
-    /// SABnzbd client verdict.
-    pub sabnzbd: ClientProbe,
-    /// SABnzbd categories, when the probe reached the client.
-    pub sabnzbd_categories: Vec<String>,
-    /// SABnzbd complete dir, when the probe reached it.
-    pub sabnzbd_complete_dir: Option<String>,
+    /// SABnzbd verdict.
+    pub sabnzbd: UsenetVerdict,
+    /// NZBGet verdict.
+    pub nzbget: UsenetVerdict,
+}
+
+/// One Usenet client's cached verdict.
+#[derive(Debug, Clone, Default)]
+pub struct UsenetVerdict {
+    /// Client verdict.
+    pub status: ClientProbe,
+    /// Categories, when the probe reached the client.
+    pub categories: Vec<String>,
+    /// Complete dir, when the probe reached it.
+    pub complete_dir: Option<String>,
 }
 
 /// The last refresh and the client set it probed.
@@ -109,7 +120,14 @@ impl LiveProbes {
     pub fn bundle(probes: &Arc<LiveProbes>) -> HealthProbes {
         HealthProbes {
             slskd: probes.clone(),
-            sabnzbd: probes.clone(),
+            sabnzbd: Arc::new(LiveUsenetProbe {
+                cache: probes.cache.clone(),
+                read: |probes| probes.sabnzbd,
+            }),
+            nzbget: Arc::new(LiveUsenetProbe {
+                cache: probes.cache.clone(),
+                read: |probes| probes.nzbget,
+            }),
         }
     }
 }
@@ -124,17 +142,23 @@ impl SlskdProbe for LiveProbes {
     }
 }
 
-impl SabnzbdProbe for LiveProbes {
+/// One Usenet client's probe over the shared cache.
+struct LiveUsenetProbe {
+    cache: Arc<ProbeCache>,
+    read: fn(CachedProbes) -> UsenetVerdict,
+}
+
+impl UsenetProbe for LiveUsenetProbe {
     fn status(&self) -> ClientProbe {
-        self.cache.snapshot().sabnzbd
+        (self.read)(self.cache.snapshot()).status
     }
 
     fn categories(&self) -> Vec<String> {
-        self.cache.snapshot().sabnzbd_categories
+        (self.read)(self.cache.snapshot()).categories
     }
 
     fn complete_dir(&self) -> Option<String> {
-        self.cache.snapshot().sabnzbd_complete_dir
+        (self.read)(self.cache.snapshot()).complete_dir
     }
 }
 
@@ -152,7 +176,10 @@ pub struct ProbeInputs {
     pub library_roots: Vec<PathBuf>,
     /// SABnzbd queue, when the section configures one.
     pub sabnzbd: Option<Arc<SabnzbdQueue>>,
-    /// SABnzbd section, for the switch and mount-independent fields.
+    /// NZBGet queue, when the section configures one.
+    pub nzbget: Option<Arc<NzbgetQueue>>,
+    /// Usenet clients section, for the switches and mount-independent
+    /// fields.
     pub sabnzbd_section: DownloadClients,
 }
 
@@ -163,9 +190,20 @@ pub async fn refresh_probes(cache: &ProbeCache, inputs: &Arc<ProbeInputs>) {
     let probes = CachedProbes {
         slskd: refresh_slskd(inputs).await,
         slskd_mount: Some(refresh_slskd_mount(inputs).await),
-        sabnzbd: refresh_sabnzbd(inputs).await,
-        sabnzbd_categories: refresh_sabnzbd_categories(inputs).await,
-        sabnzbd_complete_dir: refresh_sabnzbd_complete_dir(inputs).await,
+        sabnzbd: match inputs.sabnzbd.clone() {
+            Some(queue) => {
+                let enabled = inputs.sabnzbd_section.sabnzbd.enabled;
+                refresh_usenet(enabled, UsenetQueue::Sabnzbd(queue)).await
+            }
+            None => unconfigured_usenet(inputs.sabnzbd_section.sabnzbd.enabled),
+        },
+        nzbget: match inputs.nzbget.clone() {
+            Some(queue) => {
+                let enabled = inputs.sabnzbd_section.nzbget.enabled;
+                refresh_usenet(enabled, UsenetQueue::Nzbget(queue)).await
+            }
+            None => unconfigured_usenet(inputs.sabnzbd_section.nzbget.enabled),
+        },
     };
     cache.update(inputs, probes);
 }
@@ -176,6 +214,7 @@ fn seed(inputs: &ProbeInputs) -> CachedProbes {
     let slskd_configured = inputs.slskd.is_some();
     let sab = &inputs.sabnzbd_section.sabnzbd;
     let sab_configured = !sab.url.is_empty() && !sab.api_key.expose().is_empty();
+    let nzbget = &inputs.sabnzbd_section.nzbget;
     CachedProbes {
         slskd: ClientProbe {
             enabled: inputs.slskd_enabled,
@@ -188,16 +227,13 @@ fn seed(inputs: &ProbeInputs) -> CachedProbes {
                 "Not configured".to_owned()
             },
         },
-        sabnzbd: ClientProbe {
-            enabled: sab.enabled,
-            configured: sab_configured,
-            reachable: false,
-            version: None,
-            message: if sab_configured {
-                "Probe pending".to_owned()
-            } else {
-                "Not configured".to_owned()
-            },
+        sabnzbd: UsenetVerdict {
+            status: pending(sab.enabled, sab_configured),
+            ..UsenetVerdict::default()
+        },
+        nzbget: UsenetVerdict {
+            status: pending(nzbget.enabled, !nzbget.url.is_empty()),
+            ..UsenetVerdict::default()
         },
         ..CachedProbes::default()
     }
@@ -292,45 +328,44 @@ async fn refresh_slskd_mount(inputs: &ProbeInputs) -> SlskdMountReport {
     }
 }
 
-async fn refresh_sabnzbd(inputs: &ProbeInputs) -> ClientProbe {
-    let enabled = inputs.sabnzbd_section.sabnzbd.enabled;
-    let configured = inputs
-        .sabnzbd
-        .as_ref()
-        .is_some_and(|queue| queue.is_configured());
-    if !configured {
-        return ClientProbe {
-            enabled,
-            configured: false,
-            reachable: false,
-            version: None,
-            message: "Not configured".to_owned(),
-        };
-    }
-    let Some(queue) = &inputs.sabnzbd else {
-        return ClientProbe::default();
-    };
-    let verdict = queue.health_check().await;
+/// A verdict from the settings alone, before the first probe.
+fn pending(enabled: bool, configured: bool) -> ClientProbe {
     ClientProbe {
         enabled,
-        configured: true,
-        reachable: verdict.status == "ok",
-        version: verdict.version,
-        message: verdict.message,
+        configured,
+        reachable: false,
+        version: None,
+        message: if configured {
+            "Probe pending".to_owned()
+        } else {
+            "Not configured".to_owned()
+        },
     }
 }
 
-async fn refresh_sabnzbd_categories(inputs: &ProbeInputs) -> Vec<String> {
-    match &inputs.sabnzbd {
-        Some(queue) if queue.is_configured() => queue.get_categories().await.unwrap_or_default(),
-        _ => Vec::new(),
+/// The verdict for a Usenet client the section does not set up.
+fn unconfigured_usenet(enabled: bool) -> UsenetVerdict {
+    UsenetVerdict {
+        status: pending(enabled, false),
+        ..UsenetVerdict::default()
     }
 }
 
-async fn refresh_sabnzbd_complete_dir(inputs: &ProbeInputs) -> Option<String> {
-    match &inputs.sabnzbd {
-        Some(queue) if queue.is_configured() => queue.get_complete_dir().await.ok(),
-        _ => None,
+async fn refresh_usenet(enabled: bool, queue: UsenetQueue) -> UsenetVerdict {
+    if !queue.is_configured() {
+        return unconfigured_usenet(enabled);
+    }
+    let verdict = queue.health_check().await;
+    UsenetVerdict {
+        status: ClientProbe {
+            enabled,
+            configured: true,
+            reachable: verdict.status == "ok",
+            version: verdict.version,
+            message: verdict.message,
+        },
+        categories: queue.get_categories().await.unwrap_or_default(),
+        complete_dir: queue.get_complete_dir().await.ok(),
     }
 }
 

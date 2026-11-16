@@ -199,6 +199,11 @@ const LATE_ALLOWED: &[(&str, &str, &str)] = &[
     ),
     (
         "acquire/src/probes.rs",
+        "nzbget",
+        "one health pass's NZBGet queue, there only while the section sets one up",
+    ),
+    (
+        "acquire/src/probes.rs",
         "slskd",
         "one health pass's slskd client, there only while the section sets one up",
     ),

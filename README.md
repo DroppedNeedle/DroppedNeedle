@@ -4,7 +4,7 @@
 
 **Request music. Own everything.**
 
-DroppedNeedle is a self-hosted music request and discovery app for you and the people you share a server with. Search MusicBrainz, request an album or a single track, and it fetches it through your own slskd or SABnzbd, checks every file and files it in your library. Then play it in the browser, or in Symfonium, Finamp, Feishin and other Subsonic or Jellyfin apps.
+DroppedNeedle is a self-hosted music request and discovery app for you and the people you share a server with. Search MusicBrainz, request an album or a single track, and it fetches it through your own slskd, SABnzbd or NZBGet, checks every file and files it in your library. Then play it in the browser, or in Symfonium, Finamp, Feishin and other Subsonic or Jellyfin apps.
 
 One container. No Lidarr.
 
@@ -40,7 +40,7 @@ One container. No Lidarr.
 ## What it does
 
 - **Requests** for whole albums or single tracks from the MusicBrainz catalog, with an approval queue for the User role.
-- **Downloads** through your slskd, your SABnzbd with Newznab indexers or Prowlarr, or a plugin. It scores the candidates, verifies every file and holds what it isn't sure of.
+- **Downloads** through your slskd, your SABnzbd or NZBGet with Newznab indexers or Prowlarr, or a plugin. It scores the candidates, verifies every file and holds what it isn't sure of.
 - **Wanted and upgrades**: failed and partial requests are searched again until a verified copy shows up, and a better copy replaces a worse one.
 - **Your library**, scanned and identified against MusicBrainz and AcoustID without renaming or retagging anything. Browse, search, rate and play it.
 - **Library Management**, off until you turn it on: Picard-style tags, artwork and file naming behind a preview, with undo.
@@ -70,7 +70,7 @@ The engine searches your client, ranks candidates, and accepts a confident match
 
 ## Quick start
 
-You need Docker, a music library, and a download client. The example below uses slskd; [SABnzbd](https://sabnzbd.org/) with Newznab indexers or Prowlarr works too. DroppedNeedle runs neither for you: see [Download clients](docs/download-clients.md).
+You need Docker, a music library, and a download client. The example below uses slskd; [SABnzbd](https://sabnzbd.org/) or [NZBGet](https://nzbget.com/) with Newznab indexers or Prowlarr works too. DroppedNeedle runs neither for you: see [Download clients](docs/download-clients.md).
 
 **1. Save this compose file.** Images are on [Docker Hub](https://hub.docker.com/r/droppedneedle/droppedneedle) as `droppedneedle/droppedneedle`.
 
@@ -137,7 +137,7 @@ Follow [Upgrading from v2](docs/upgrading-from-v2.md), and read [What changed in
 ## Docs
 
 - [Configuration](docs/configuration.md): environment variables, folders, permissions, where each setting lives, updating.
-- [Download clients](docs/download-clients.md): slskd, SABnzbd and drop imports.
+- [Download clients](docs/download-clients.md): slskd, SABnzbd, NZBGet and drop imports.
 - [Accounts and sign-in](docs/accounts-and-sign-in.md): roles, single sign-on, Plex and Jellyfin sign-in, recovery.
 - [Connect your music app](docs/connect-your-app.md): Subsonic and Jellyfin apps.
 - [Your library](docs/library.md) and [Library Management](docs/library-management.md).

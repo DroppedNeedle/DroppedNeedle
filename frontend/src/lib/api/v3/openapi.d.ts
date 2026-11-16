@@ -79,6 +79,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/acquire/nzbget/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Live NZBGet status against the saved config (admin only). */
+        get: operations["get_nzbget_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/acquire/sabnzbd/status": {
         parameters: {
             query?: never;
@@ -7936,6 +7953,44 @@ export interface paths {
         put?: never;
         /** Test the submitted slskd values (a masked key tests the stored one). */
         post: operations["test_slskd"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/download-clients/nzbget": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the NZBGet connection (password masked unless unset). */
+        get: operations["get_nzbget"];
+        /** Save the NZBGet connection (a masked password keeps the stored one). */
+        put: operations["put_nzbget"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/download-clients/nzbget/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test the submitted NZBGet values (a masked password tests the stored
+         *     one). The submitted downloads mount is diagnosed, not the stored one.
+         */
+        post: operations["test_nzbget"];
         delete?: never;
         options?: never;
         head?: never;
@@ -18220,6 +18275,49 @@ export interface components {
          * @enum {string}
          */
         NowPlayingVisibility: "full" | "track_hidden" | "offline";
+        /**
+         * @description NZBGet connection. NZBGet has no "all categories" wildcard, so an empty
+         *     category lets NZBGet apply its own default. There is no post-processing
+         *     field: NZBGet decides unpack and repair per category, not per job.
+         */
+        NzbgetConnection: {
+            /**
+             * @description Category ("" lets NZBGet choose).
+             * @default
+             */
+            category: string;
+            /**
+             * @description Where DroppedNeedle sees NZBGet's completed dir (`DestDir`).
+             * @default /nzbget-downloads
+             */
+            downloads_mount: string;
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * @description Control password (encrypted at rest).
+             * @default
+             */
+            password: string;
+            /**
+             * Format: int64
+             * @description Job priority.
+             * @default 0
+             */
+            priority: number;
+            /**
+             * @description NZBGet base URL.
+             * @default
+             */
+            url: string;
+            /**
+             * @description Control username (`ControlUsername` in nzbget.conf).
+             * @default nzbget
+             */
+            username: string;
+        };
         /** @description OIDC authorize answer: the browser URL for this login. */
         OidcAuthorizeBody: {
             /** @description IdP authorize URL (PKCE + state baked in). */
@@ -22120,50 +22218,6 @@ export interface components {
              */
             url: string;
         };
-        /** @description Live SABnzbd status against the saved config. */
-        SabnzbdStatusResponse: {
-            /** @description Category list, when the probe reached it. */
-            categories: string[];
-            /** @description Completed dir (the mount hint), when the probe reached it. */
-            complete_dir?: string | null;
-            /** @description User-safe summary. */
-            message: string;
-            /** @description True when the saved config probes clean. */
-            valid: boolean;
-            /** @description SABnzbd version, when the probe reached it. */
-            version?: string | null;
-        };
-        /**
-         * @description SABnzbd test verdict: version plus the category list (for the picker),
-         *     the SABnzbd-side completed dir (the mount hint), and the mount
-         *     diagnosis over the submitted mount.
-         */
-        SabnzbdTestResponse: {
-            /** @description Known categories. */
-            categories: string[];
-            /** @description SABnzbd-side completed dir, when known. */
-            complete_dir?: string | null;
-            /** @description Human summary. */
-            message: string;
-            /** @description Whether the submitted mount holds files, when diagnosed. */
-            mount_has_files?: boolean | null;
-            /** @description Actionable mount guidance, when the mount looks wrong. */
-            mount_message?: string | null;
-            /**
-             * Format: int64
-             * @description Sampled downloads resolving under the submitted mount.
-             */
-            resolvable_downloads?: number | null;
-            /**
-             * Format: int64
-             * @description Sampled downloads.
-             */
-            sampled_downloads?: number | null;
-            /** @description Whether the submitted values checked out. */
-            valid: boolean;
-            /** @description Server version, when known. */
-            version?: string | null;
-        };
         /** @description A pause, resume or stop request. */
         ScanControlBody: {
             /**
@@ -24435,6 +24489,37 @@ export interface components {
          */
         UsenetBackend: "indexers" | "prowlarr";
         /**
+         * @description Usenet client test verdict (SABnzbd or NZBGet): version plus the
+         *     category list (for the picker), the client-side completed dir (the mount hint), and the mount
+         *     diagnosis over the submitted mount.
+         */
+        UsenetClientTestResponse: {
+            /** @description Known categories. */
+            categories: string[];
+            /** @description Client-side completed dir, when known. */
+            complete_dir?: string | null;
+            /** @description Human summary. */
+            message: string;
+            /** @description Whether the submitted mount holds files, when diagnosed. */
+            mount_has_files?: boolean | null;
+            /** @description Actionable mount guidance, when the mount looks wrong. */
+            mount_message?: string | null;
+            /**
+             * Format: int64
+             * @description Sampled downloads resolving under the submitted mount.
+             */
+            resolvable_downloads?: number | null;
+            /**
+             * Format: int64
+             * @description Sampled downloads.
+             */
+            sampled_downloads?: number | null;
+            /** @description Whether the submitted values checked out. */
+            valid: boolean;
+            /** @description Server version, when known. */
+            version?: string | null;
+        };
+        /**
          * @description The active Usenet search backend (either/or): `"indexers"` for the
          *     native Newznab priority list, `"prowlarr"` for the single Prowlarr
          *     connection. Unknown values are a 400, never a silent reset.
@@ -24445,6 +24530,19 @@ export interface components {
              * @default indexers
              */
             backend: components["schemas"]["UsenetBackend"];
+        };
+        /** @description Live Usenet client (SABnzbd or NZBGet) status against the saved config. */
+        UsenetStatusResponse: {
+            /** @description Category list, when the probe reached it. */
+            categories: string[];
+            /** @description Completed dir (the mount hint), when the probe reached it. */
+            complete_dir?: string | null;
+            /** @description User-safe summary. */
+            message: string;
+            /** @description True when the saved config probes clean. */
+            valid: boolean;
+            /** @description Client version, when the probe reached it. */
+            version?: string | null;
         };
         /** @description Release-type filters for discovery and search. */
         UserPreferences: {
@@ -25365,6 +25463,26 @@ export interface operations {
             };
         };
     };
+    get_nzbget_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description NZBGet status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsenetStatusResponse"];
+                };
+            };
+        };
+    };
     get_sabnzbd_status: {
         parameters: {
             query?: never;
@@ -25380,7 +25498,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SabnzbdStatusResponse"];
+                    "application/json": components["schemas"]["UsenetStatusResponse"];
                 };
             };
         };
@@ -45696,6 +45814,74 @@ export interface operations {
             };
         };
     };
+    get_nzbget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description NZBGet connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NzbgetConnection"];
+                };
+            };
+        };
+    };
+    put_nzbget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NzbgetConnection"];
+            };
+        };
+        responses: {
+            /** @description Saved connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NzbgetConnection"];
+                };
+            };
+        };
+    };
+    test_nzbget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NzbgetConnection"];
+            };
+        };
+        responses: {
+            /** @description Verify verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsenetClientTestResponse"];
+                };
+            };
+        };
+    };
     get_policy: {
         parameters: {
             query?: never;
@@ -45803,7 +45989,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SabnzbdTestResponse"];
+                    "application/json": components["schemas"]["UsenetClientTestResponse"];
                 };
             };
         };

@@ -101,7 +101,7 @@ services:
 |-|-|
 | Library paths, import naming script, scan schedule, folder watching, AcoustID key, storage cap | Settings > Library |
 | Library Management profiles, previews, recovery, the recycle bin folder and retention | Library Management (admin), also reached from Organize files under Settings > Library |
-| Download clients (slskd, SABnzbd), source priority, quality tiers, picking a copy, wanted watcher, Usenet retention days | Settings > Download Client |
+| Download clients (slskd, SABnzbd, NZBGet), source priority, quality tiers, picking a copy, wanted watcher, Usenet retention days | Settings > Download Client |
 | Newznab indexers or Prowlarr | Settings > Indexers / Prowlarr |
 | Edition preferences, managing unconfirmed matches | Settings > Editions |
 | Lidarr import ([below](#lidarr-import)) | Settings > Lidarr Import |

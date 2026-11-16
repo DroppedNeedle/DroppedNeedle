@@ -1578,6 +1578,7 @@ async fn readiness_answers(setup: SourceSetup) -> Vec<bool> {
                         api_key: "sab-key".into(),
                         ..SabnzbdConnection::default()
                     },
+                    ..DownloadClients::default()
                 })
                 .await
                 .expect("sabnzbd connection saves");

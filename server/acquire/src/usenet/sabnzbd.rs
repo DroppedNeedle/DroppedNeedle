@@ -660,57 +660,14 @@ impl SabnzbdClient {
     /// followed here under the hop rules an indexer's grab follows; one
     /// they refuse ends the fetch, logged, as a definitive answer.
     pub async fn fetch_nzb(&self, url: &str, timeout: Duration) -> Result<Vec<u8>, NzbFetchError> {
-        let mut link = reqwest::Url::parse(url)
-            .map_err(|_| NzbFetchError::Transport("the NZB link is not an address".to_owned()))?;
-        let mut hops = 0;
-        let response = loop {
-            let response = self
-                .get_with_retry(&self.nzb_http, link.as_str(), &[], timeout)
-                .await
-                .map_err(|err| NzbFetchError::Transport(transport_error(err)))?;
-            let status = response.status();
-            if !status.is_redirection() {
-                break response;
-            }
-            let next = response
-                .headers()
-                .get(reqwest::header::LOCATION)
-                .and_then(|location| location.to_str().ok())
-                .and_then(|location| link.join(location).ok())
-                .filter(|_| hops < MAX_GRAB_HOPS)
-                .and_then(grab_hop);
-            let Some(next) = next else {
-                // The link carries a key, so neither address is logged.
-                tracing::warn!(
-                    status = status.as_u16(),
-                    hops,
-                    "an NZB link redirected where a grab does not go; not followed"
-                );
-                return Err(NzbFetchError::Definitive {
-                    status: status.as_u16(),
-                    snippet: String::new(),
-                });
-            };
-            link = next;
-            hops += 1;
-        };
-        let status = response.status().as_u16();
-        if status >= 400 {
-            let snippet = response_snippet(response).await;
-            return Err(NzbFetchError::Definitive { status, snippet });
-        }
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned);
-        let bytes = read_capped(response, MAX_NZB_BYTES)
-            .await
-            .map_err(|error| match error {
-                BodyError::TooLarge => NzbFetchError::TooLarge,
-                BodyError::Transport(detail) => NzbFetchError::Transport(detail),
-            })?;
-        checked_nzb(bytes, status, content_type)
+        fetch_nzb(
+            &self.nzb_http,
+            url,
+            timeout,
+            self.max_attempts,
+            self.retry_backoff,
+        )
+        .await
     }
 
     fn api_url(&self) -> String {
@@ -747,9 +704,6 @@ impl SabnzbdClient {
         serde_json::from_value(data).map_err(|err| non_json(decode_failure(&err)))
     }
 
-    /// Idempotent GETs only, through `http`: transient transport errors +
-    /// 5xx retry with exponential backoff. 4xx and logical errors return
-    /// for the caller.
     async fn get_with_retry(
         &self,
         http: &Client,
@@ -757,22 +711,12 @@ impl SabnzbdClient {
         query: &[(&str, &str)],
         timeout: Duration,
     ) -> Result<reqwest::Response, reqwest::Error> {
-        let mut attempt = 0;
-        loop {
-            let send = http.get(url).query(query).timeout(timeout).send().await;
-            match send {
-                Ok(response) if response.status().as_u16() < 500 => return Ok(response),
-                Ok(response) if attempt + 1 >= self.max_attempts => return Ok(response),
-                Ok(_) => {}
-                Err(err) if attempt + 1 >= self.max_attempts => return Err(err),
-                Err(_) => {}
-            }
-            attempt += 1;
-            let wait = self
-                .retry_backoff
-                .saturating_mul(2u32.saturating_pow(attempt - 1));
-            tokio::time::sleep(wait).await;
-        }
+        retrying(
+            || http.get(url).query(query).timeout(timeout).send(),
+            self.max_attempts,
+            self.retry_backoff,
+        )
+        .await
     }
 
     async fn parse_json(
@@ -807,6 +751,102 @@ impl SabnzbdClient {
         let data = self.parse_json(response).await?;
         serde_json::from_value(data).map_err(|err| non_json(decode_failure(&err)))
     }
+}
+
+/// Send an idempotent request again on a transport error or a 5xx, with
+/// exponential backoff. 4xx and logical errors return for the caller. Never
+/// used for an add: sending one again could add the job twice.
+pub(super) async fn retrying<F, Fut>(
+    send: F,
+    max_attempts: u32,
+    backoff: Duration,
+) -> Result<reqwest::Response, reqwest::Error>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<reqwest::Response, reqwest::Error>>,
+{
+    let max_attempts = max_attempts.max(1);
+    let mut attempt = 0;
+    loop {
+        match send().await {
+            Ok(response) if response.status().as_u16() < 500 => return Ok(response),
+            Ok(response) if attempt + 1 >= max_attempts => return Ok(response),
+            Ok(_) => {}
+            Err(err) if attempt + 1 >= max_attempts => return Err(err),
+            Err(_) => {}
+        }
+        attempt += 1;
+        let wait = backoff.saturating_mul(2u32.saturating_pow(attempt - 1));
+        tokio::time::sleep(wait).await;
+    }
+}
+
+/// GET a release's NZB straight from its link (the enclosure, its key
+/// already embedded) through `http`, which follows no redirect, and check
+/// the bytes are a real NZB, not an indexer's error page. Redirects are
+/// followed here under the hop rules an indexer's grab follows; one they
+/// refuse ends the fetch, logged, as a definitive answer.
+pub(super) async fn fetch_nzb(
+    http: &Client,
+    url: &str,
+    timeout: Duration,
+    max_attempts: u32,
+    backoff: Duration,
+) -> Result<Vec<u8>, NzbFetchError> {
+    let mut link = reqwest::Url::parse(url)
+        .map_err(|_| NzbFetchError::Transport("the NZB link is not an address".to_owned()))?;
+    let mut hops = 0;
+    let response = loop {
+        let response = retrying(
+            || http.get(link.as_str()).timeout(timeout).send(),
+            max_attempts,
+            backoff,
+        )
+        .await
+        .map_err(|err| NzbFetchError::Transport(transport_error(err)))?;
+        let status = response.status();
+        if !status.is_redirection() {
+            break response;
+        }
+        let next = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|location| location.to_str().ok())
+            .and_then(|location| link.join(location).ok())
+            .filter(|_| hops < MAX_GRAB_HOPS)
+            .and_then(grab_hop);
+        let Some(next) = next else {
+            // The link carries a key, so neither address is logged.
+            tracing::warn!(
+                status = status.as_u16(),
+                hops,
+                "an NZB link redirected where a grab does not go; not followed"
+            );
+            return Err(NzbFetchError::Definitive {
+                status: status.as_u16(),
+                snippet: String::new(),
+            });
+        };
+        link = next;
+        hops += 1;
+    };
+    let status = response.status().as_u16();
+    if status >= 400 {
+        let snippet = response_snippet(response).await;
+        return Err(NzbFetchError::Definitive { status, snippet });
+    }
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let bytes = read_capped(response, MAX_NZB_BYTES)
+        .await
+        .map_err(|error| match error {
+            BodyError::TooLarge => NzbFetchError::TooLarge,
+            BodyError::Transport(detail) => NzbFetchError::Transport(detail),
+        })?;
+    checked_nzb(bytes, status, content_type)
 }
 
 /// A SABnzbd answer that is not the documented JSON.
@@ -899,13 +939,13 @@ fn is_auth_error(message: &str) -> bool {
 
 /// The start of an error body, credentials scrubbed. One longer than a
 /// few kilobytes reads as empty.
-async fn response_snippet(response: reqwest::Response) -> String {
+pub(super) async fn response_snippet(response: reqwest::Response) -> String {
     let bytes = read_capped(response, 8 * 1024).await.unwrap_or_default();
     snippet_of(&bytes)
 }
 
 /// The first 200 characters of a body, scrubbed whole before the cut.
-fn snippet_of(bytes: &[u8]) -> String {
+pub(super) fn snippet_of(bytes: &[u8]) -> String {
     redact_query_secrets(&String::from_utf8_lossy(bytes))
         .chars()
         .take(200)
@@ -963,7 +1003,7 @@ const REMAP_WALK_BUDGET: usize = 10_000;
 /// Bound for the mount-has-files probe.
 const MOUNT_PROBE_BUDGET: usize = 5_000;
 /// History sample for mount diagnosis.
-const DIAGNOSIS_SAMPLE: usize = 3;
+pub(super) const DIAGNOSIS_SAMPLE: usize = 3;
 
 /// Client-agnostic task correlation, Usenet half.
 #[derive(Debug, Clone, Default)]
@@ -1080,7 +1120,7 @@ fn checked_nzb(
 
 /// Fetch a release's NZB through its indexer's client, so the grab is paced
 /// and counted on the indexer. The download worker asks, so it is background.
-async fn grab_nzb(grab: &NewznabClient, url: &str) -> Result<Vec<u8>, NzbFetchError> {
+pub(super) async fn grab_nzb(grab: &NewznabClient, url: &str) -> Result<Vec<u8>, NzbFetchError> {
     let bytes = grab
         .fetch_nzb(url, RequestPriority::BackgroundSync)
         .await
@@ -1625,16 +1665,7 @@ impl SabnzbdQueue {
     /// healthy mount whose per-job folder is merely empty is a release
     /// problem, not a mount fault.
     async fn downloads_mount_healthy(&self) -> bool {
-        let mount = self.mount.clone();
-        tokio::task::spawn_blocking(move || {
-            if !mount.is_dir() {
-                return false;
-            }
-            // Force a readdir; raises when unreadable.
-            std::fs::read_dir(&mount).is_ok()
-        })
-        .await
-        .unwrap_or(false)
+        mount_healthy(&self.mount).await
     }
 
     /// Cached `complete_dir`, but only non-empty values: a transient
@@ -1666,39 +1697,7 @@ impl SabnzbdQueue {
     /// downloads folder is never one job's output.
     async fn local_storage(&self, storage: &str) -> Option<PathBuf> {
         let complete_dir = self.complete_dir().await;
-        let remote = posix_parts(storage);
-        if !complete_dir.is_empty() {
-            let complete = posix_parts(&complete_dir);
-            if let Some(relative) = strip_prefix(&remote, &complete) {
-                if relative.is_empty() {
-                    return None;
-                }
-                let direct: PathBuf = self.mount.join(relative.join("/"));
-                if tokio::fs::metadata(&direct)
-                    .await
-                    .map(|meta| meta.is_dir())
-                    .unwrap_or(false)
-                {
-                    return Some(direct);
-                }
-                let mount = self.mount.clone();
-                let owned: Vec<String> = relative.to_vec();
-                let walked = tokio::task::spawn_blocking(move || suffix_walk(&mount, &owned))
-                    .await
-                    .unwrap_or(None);
-                if walked.is_some() {
-                    return walked;
-                }
-            }
-            tracing::warn!(
-                storage = storage,
-                complete_dir = complete_dir.as_str(),
-                mount = self.mount.display().to_string().as_str(),
-                fallback = remote.last().unwrap_or(&String::new()).as_str(),
-                "sabnzbd storage remap failed; falling back to basename"
-            );
-        }
-        remote.last().map(|name| self.mount.join(name))
+        local_storage(&self.mount, &complete_dir, storage, "sabnzbd").await
     }
 
     /// Cleanup-evidence mapping only when SAB's complete root is known
@@ -1706,17 +1705,95 @@ impl SabnzbdQueue {
     /// never one job's storage, so an empty remainder maps to nothing.
     async fn exact_local_storage(&self, storage: &str) -> Option<PathBuf> {
         let complete_dir = self.complete_dir().await;
-        if complete_dir.is_empty() {
-            return None;
-        }
-        let remote = posix_parts(storage);
-        let complete = posix_parts(&complete_dir);
-        let relative = strip_prefix(&remote, &complete).filter(|rest| !rest.is_empty())?;
-        Some(self.mount.join(relative.join("/")))
+        exact_local_storage(&self.mount, &complete_dir, storage)
     }
 }
 
-fn non_empty(value: String) -> Option<String> {
+/// Whether the downloads mount itself is usable. False only when the mount
+/// root is missing or unreadable (a real environment fault). A healthy mount
+/// whose per-job folder is merely empty is a release problem, not a mount
+/// fault.
+pub(super) async fn mount_healthy(mount: &Path) -> bool {
+    let mount = mount.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        if !mount.is_dir() {
+            return false;
+        }
+        // Force a readdir; raises when unreadable.
+        std::fs::read_dir(&mount).is_ok()
+    })
+    .await
+    .unwrap_or(false)
+}
+
+/// Remap a client's job folder (its namespace) onto the DroppedNeedle mount
+/// by stripping the client's `complete_dir` prefix, basename fallback when
+/// the prefix doesn't match. Repairs two deterministic breakages first
+/// (issue #245): backslash paths from a Windows-native client, and a mount
+/// pointed at a category subfolder via a bounded suffix walk. A storage that
+/// names no folder below `complete_dir` (the complete folder itself, or
+/// nothing at all) maps to nothing: the whole downloads folder is never one
+/// job's output.
+pub(super) async fn local_storage(
+    mount: &Path,
+    complete_dir: &str,
+    storage: &str,
+    client: &'static str,
+) -> Option<PathBuf> {
+    let remote = posix_parts(storage);
+    if !complete_dir.is_empty() {
+        let complete = posix_parts(complete_dir);
+        if let Some(relative) = strip_prefix(&remote, &complete) {
+            if relative.is_empty() {
+                return None;
+            }
+            let direct: PathBuf = mount.join(relative.join("/"));
+            if tokio::fs::metadata(&direct)
+                .await
+                .map(|meta| meta.is_dir())
+                .unwrap_or(false)
+            {
+                return Some(direct);
+            }
+            let walk_mount = mount.to_path_buf();
+            let owned: Vec<String> = relative.to_vec();
+            let walked = tokio::task::spawn_blocking(move || suffix_walk(&walk_mount, &owned))
+                .await
+                .unwrap_or(None);
+            if walked.is_some() {
+                return walked;
+            }
+        }
+        tracing::warn!(
+            client,
+            storage,
+            complete_dir,
+            mount = mount.display().to_string().as_str(),
+            fallback = remote.last().unwrap_or(&String::new()).as_str(),
+            "download client storage remap failed; falling back to basename"
+        );
+    }
+    remote.last().map(|name| mount.join(name))
+}
+
+/// Cleanup-evidence mapping only when the client's complete root is known
+/// exactly. The complete folder itself is never one job's storage, so an
+/// empty remainder maps to nothing.
+pub(super) fn exact_local_storage(
+    mount: &Path,
+    complete_dir: &str,
+    storage: &str,
+) -> Option<PathBuf> {
+    if complete_dir.is_empty() {
+        return None;
+    }
+    let remote = posix_parts(storage);
+    let complete = posix_parts(complete_dir);
+    let relative = strip_prefix(&remote, &complete).filter(|rest| !rest.is_empty())?;
+    Some(mount.join(relative.join("/")))
+}
+
+pub(super) fn non_empty(value: String) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
 
@@ -1841,7 +1918,7 @@ fn to_int(value: &str) -> i64 {
 /// Windows-native SAB reports backslash paths.
 /// `.` and `..` segments are dropped, so a storage path joined onto the
 /// mount can never climb out of it.
-fn posix_parts(value: &str) -> Vec<String> {
+pub(super) fn posix_parts(value: &str) -> Vec<String> {
     value
         .replace('\\', "/")
         .split('/')
@@ -1850,7 +1927,7 @@ fn posix_parts(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn strip_prefix<'a>(remote: &'a [String], complete: &[String]) -> Option<&'a [String]> {
+pub(super) fn strip_prefix<'a>(remote: &'a [String], complete: &[String]) -> Option<&'a [String]> {
     if remote.len() < complete.len() {
         return None;
     }
@@ -1866,7 +1943,7 @@ fn strip_prefix<'a>(remote: &'a [String], complete: &[String]) -> Option<&'a [St
 /// `complete_dir/<cat>`, so the stripped remainder still carries the
 /// category component). Longest suffix wins; failure-path only; sync I/O
 /// the caller offloads.
-fn suffix_walk(mount: &Path, relative: &[String]) -> Option<PathBuf> {
+pub(super) fn suffix_walk(mount: &Path, relative: &[String]) -> Option<PathBuf> {
     let mount = mount.canonicalize().unwrap_or_else(|_| mount.to_path_buf());
     let suffixes: Vec<String> = (0..relative.len())
         .map(|index| relative[index..].join("/"))
@@ -1914,7 +1991,7 @@ fn suffix_walk(mount: &Path, relative: &[String]) -> Option<PathBuf> {
 /// Whether the job folder holds a file directly. The folder is placed
 /// against the mount first, so a job folder that is (or sits under) a link
 /// is never read, and a link inside it never counts as a file. Blocking.
-fn dir_has_file(mount: &Path, folder: &Path) -> bool {
+pub(super) fn dir_has_file(mount: &Path, folder: &Path) -> bool {
     let Place::Inside(real) = place(folder, &[DownloadsFolder::new(mount.to_path_buf())]) else {
         return false;
     };
@@ -1929,7 +2006,7 @@ fn dir_has_file(mount: &Path, folder: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn mount_has_any_file(mount: &Path) -> bool {
+pub(super) fn mount_has_any_file(mount: &Path) -> bool {
     let mut stack = vec![mount.to_path_buf()];
     let mut seen = 0usize;
     while let Some(current) = stack.pop() {

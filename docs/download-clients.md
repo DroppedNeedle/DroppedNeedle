@@ -1,6 +1,6 @@
 # Download clients
 
-DroppedNeedle drives a download client you run yourself: slskd, SABnzbd with Newznab indexers or Prowlarr, or a plugin download client. It runs none of them for you. This page covers setting them up. What happens to a request after that is in [Requests and downloads](downloads.md).
+DroppedNeedle drives a download client you run yourself: slskd, SABnzbd or NZBGet with Newznab indexers or Prowlarr, or a plugin download client. It runs none of them for you. This page covers setting them up. What happens to a request after that is in [Requests and downloads](downloads.md).
 
 ## Contents
 
@@ -11,7 +11,7 @@ DroppedNeedle drives a download client you run yourself: slskd, SABnzbd with New
 
 ## Download sources
 
-A download source is slskd or SABnzbd once it is turned on with a URL and an API key, or an enabled plugin download client (see [PLUGINS.md](../PLUGINS.md)). It counts while it is down too: DroppedNeedle keeps retrying it, and the Download Client page shows it as not reachable. Requests, manual search, the health check and Discover's "set up a download client" prompt all go by this one answer.
+A download source is slskd, SABnzbd or NZBGet once it is turned on with a URL and its sign-in, or an enabled plugin download client (see [PLUGINS.md](../PLUGINS.md)). It counts while it is down too: DroppedNeedle keeps retrying it, and the Download Client page shows it as not reachable. Requests, manual search, the health check and Discover's "set up a download client" prompt all go by this one answer.
 
 Request buttons show whether or not a download source is turned on. A request made while none is on is accepted and held. The Requests and Downloads pages show it as "Waiting: no download source configured", and it starts by itself as soon as an admin turns a source on or enables a plugin download client. From then on its card shows what the download is doing: searching, awaiting review or downloading.
 
@@ -65,11 +65,13 @@ web:
 
 ## Usenet
 
-The second source is Usenet through SABnzbd. For searching, either add Newznab-compatible indexers one by one (NZBGeek, NZBPlanet, NZB.su, Slug, and others) or point at a Prowlarr that already has them. The engine searches your chosen side, enqueues NZBs in your SABnzbd, and imports finished files through the same scoring, verification, and quarantine pipeline as slskd.
+The second source is Usenet through SABnzbd or NZBGet. For searching, either add Newznab-compatible indexers one by one (NZBGeek, NZBPlanet, NZB.su, Slug, and others) or point at a Prowlarr that already has them. The engine searches your chosen side, enqueues NZBs in your Usenet client, and imports finished files through the same scoring, verification, and quarantine pipeline as slskd.
 
-1. Expose SABnzbd's completed-downloads directory read-write, ideally under the same shared parent mount as the library so the [mount rules](#slskd) hold. In SABnzbd, point its Downloads folder setting at the matching path (e.g. `/data/sabnzbd/complete`).
-2. Under Settings > Download Client, enable Usenet, enter your SABnzbd URL and API key, and set Downloads mount to that directory as mounted, not a folder below it (only what lies below the path you set is checked for links).
+1. Expose your client's completed-downloads directory read-write, ideally under the same shared parent mount as the library so the [mount rules](#slskd) hold. In SABnzbd, point its Downloads folder setting at the matching path (e.g. `/data/sabnzbd/complete`); in NZBGet, its `DestDir` (e.g. `/data/nzbget/completed`).
+2. Under Settings > Download Client, turn on SABnzbd or NZBGet and set Downloads mount to that directory as mounted, not a folder below it (only what lies below the path you set is checked for links). SABnzbd takes its URL and full API key (Config > General), not the NZB key. NZBGet takes its URL and the control username and password from Settings > Security, the same sign-in as its web UI.
 3. Under Settings > Indexers / Prowlarr, pick one search backend: add each indexer's URL plus API key, or enter your Prowlarr URL plus API key. Then Test and Save. A redirect from Prowlarr's API is followed only on the same host, never from https to http, so its key never goes anywhere else: use the address Prowlarr answers on. An NZB link may redirect at most five times, each time to a plain web address with no user name or password in it; a release whose link goes anywhere else is not downloaded, and the log says so.
+
+DroppedNeedle uses one Usenet client at a time. With both turned on it uses SABnzbd, and NZBGet's card says so; turn SABnzbd off to switch. Switch while no Usenet download is running: DroppedNeedle follows a download only in the client that is in use.
 
 Indexers added one by one are asked at most about once a second each. Many cap API calls and NZB grabs per day and report how much is used; DroppedNeedle keeps to those caps, skipping an indexer that has used up its day until its allowance comes back, and waits out any slow-down an indexer asks for. More in [Indexer limits](downloads.md#indexer-limits).
 

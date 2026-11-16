@@ -128,11 +128,11 @@ pub struct ProwlarrTestResponse {
     pub indexer_count: Option<i64>,
 }
 
-/// SABnzbd test verdict: version plus the category list (for the picker),
-/// the SABnzbd-side completed dir (the mount hint), and the mount
+/// Usenet client test verdict (SABnzbd or NZBGet): version plus the
+/// category list (for the picker), the client-side completed dir (the mount hint), and the mount
 /// diagnosis over the submitted mount.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct SabnzbdTestResponse {
+pub struct UsenetClientTestResponse {
     /// Whether the submitted values checked out.
     pub valid: bool,
     /// Server version, when known.
@@ -141,7 +141,7 @@ pub struct SabnzbdTestResponse {
     pub message: String,
     /// Known categories.
     pub categories: Vec<String>,
-    /// SABnzbd-side completed dir, when known.
+    /// Client-side completed dir, when known.
     pub complete_dir: Option<String>,
     /// Whether the submitted mount holds files, when diagnosed.
     pub mount_has_files: Option<bool>,

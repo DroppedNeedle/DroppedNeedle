@@ -299,6 +299,11 @@ const HTTP: Rule = Rule {
             why: USER_RUN,
         },
         Allow {
+            path: "acquire/src/usenet/nzbget.rs",
+            shapes: &["client"],
+            why: USER_RUN,
+        },
+        Allow {
             path: "acquire/src/usenet/prowlarr.rs",
             shapes: &["client", "send"],
             why: USER_RUN,

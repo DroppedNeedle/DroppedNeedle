@@ -21,7 +21,7 @@ pub struct WorkerSettings {
     clients: Arc<LiveClients>,
     policy: Live<DownloadPolicy>,
     source_priority: Live<SourcePriority>,
-    sabnzbd: Live<DownloadClients>,
+    usenet: Live<DownloadClients>,
     library: Live<TypedLibrary>,
     musicbrainz: Live<MusicBrainzSettings>,
 }
@@ -33,7 +33,7 @@ impl WorkerSettings {
             clients,
             policy: store.live(),
             source_priority: store.live(),
-            sabnzbd: store.live(),
+            usenet: store.live(),
             library: store.live(),
             musicbrainz: store.live(),
         }
@@ -79,7 +79,7 @@ impl WorkerSettings {
     }
 
     /// The worker tuning as saved right now, or `None` while a section it
-    /// needs does not read. An unreadable SABnzbd section is an
+    /// needs does not read. An unreadable Usenet client section is an
     /// unconfigured one, as in the client set, so slskd keeps working.
     pub(crate) fn config(&self) -> Option<WorkerConfig> {
         if !self.readable() {
@@ -87,19 +87,46 @@ impl WorkerSettings {
         }
         let policy = self.policy.read()?;
         let source_priority = self.source_priority.read()?;
-        let sab = self.sabnzbd.read().unwrap_or_default();
-        let sab_mount = sabnzbd_mount(&sab);
-        Some(worker_config(&policy, &source_priority, sab_mount))
+        let usenet = self.usenet.read().unwrap_or_default();
+        Some(worker_config(
+            &policy,
+            &source_priority,
+            usenet_mount(&usenet),
+        ))
     }
 }
 
-/// SABnzbd's completed-downloads folder, while SABnzbd is set up.
-pub(crate) fn sabnzbd_mount(section: &DownloadClients) -> Option<PathBuf> {
-    (!section.sabnzbd.url.is_empty()).then(|| PathBuf::from(&section.sabnzbd.downloads_mount))
+/// The completed-downloads folder of the Usenet client in use: SABnzbd's
+/// while it is enabled (it wins a tie), else NZBGet's while that is
+/// enabled, else SABnzbd's while it is set up, so a disabled SABnzbd's
+/// finished jobs still land.
+pub(crate) fn usenet_mount(section: &DownloadClients) -> Option<PathBuf> {
+    let sab = &section.sabnzbd;
+    let nzbget = &section.nzbget;
+    if sab.enabled && !sab.url.is_empty() {
+        return Some(PathBuf::from(&sab.downloads_mount));
+    }
+    if nzbget.enabled && !nzbget.url.is_empty() {
+        return Some(PathBuf::from(&nzbget.downloads_mount));
+    }
+    (!sab.url.is_empty()).then(|| PathBuf::from(&sab.downloads_mount))
+}
+
+/// Every Usenet client's completed-downloads folder while that client is
+/// set up, enabled or not: the folders no recycle bin may overlap.
+pub(crate) fn usenet_mounts(section: &DownloadClients) -> Vec<PathBuf> {
+    [
+        (&section.sabnzbd.url, &section.sabnzbd.downloads_mount),
+        (&section.nzbget.url, &section.nzbget.downloads_mount),
+    ]
+    .into_iter()
+    .filter(|(url, _)| !url.is_empty())
+    .map(|(_, mount)| PathBuf::from(mount))
+    .collect()
 }
 
 /// Worker tuning bound from the download-policy section. Only the
-/// SABnzbd complete dir is walked: slskd folders cannot prove client
+/// Usenet complete dir is walked: slskd folders cannot prove client
 /// inactivity from the folder name, so they always keep.
 fn worker_config(
     policy: &DownloadPolicy,

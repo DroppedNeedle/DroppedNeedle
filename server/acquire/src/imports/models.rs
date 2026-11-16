@@ -200,12 +200,12 @@ pub struct DownloadsMountView {
     pub path: String,
 }
 
-/// Live SABnzbd status against the saved config.
+/// Live Usenet client (SABnzbd or NZBGet) status against the saved config.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-pub struct SabnzbdStatusResponse {
+pub struct UsenetStatusResponse {
     /// True when the saved config probes clean.
     pub valid: bool,
-    /// SABnzbd version, when the probe reached it.
+    /// Client version, when the probe reached it.
     pub version: Option<String>,
     /// User-safe summary.
     pub message: String,

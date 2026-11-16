@@ -83,11 +83,13 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	downloadReadinessChanged: [
 		key('shared', 'downloads', 'client-status'),
 		key('admin', 'downloads', 'sabnzbd-status'),
+		key('admin', 'downloads', 'nzbget-status'),
 		every('home')
 	],
 	slskdSettingsChanged: [key('admin', 'downloads', 'client-config')],
 	usenetSettingsChanged: [
 		key('admin', 'downloads', 'sabnzbd'),
+		key('admin', 'downloads', 'nzbget'),
 		key('admin', 'downloads', 'prowlarr'),
 		key('admin', 'downloads', 'indexers')
 	],

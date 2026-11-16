@@ -25,12 +25,13 @@ use droppedneedle_acquire::plugin_source::{PluginDownloadSource, ReleasePolicy};
 use droppedneedle_acquire::slskd::{
     DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
 };
-use droppedneedle_acquire::sources::{SabnzbdSource, SlskdSource};
+use droppedneedle_acquire::sources::{SlskdSource, UsenetSource};
 use droppedneedle_acquire::target::SearchTarget;
 use droppedneedle_acquire::usenet::indexer::{Indexer, IndexerQuery, PluginIndexers};
 use droppedneedle_acquire::usenet::newznab::{NewznabIndexer, NewznabIndexerEntry};
 use droppedneedle_acquire::usenet::policy::UsenetPolicy;
 use droppedneedle_acquire::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
+use droppedneedle_acquire::usenet::queue::UsenetQueue;
 use droppedneedle_acquire::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
@@ -228,8 +229,8 @@ async fn sabnzbd_conforms() {
         WAIT,
     );
     let journal = journal_with_task("t-sab", "Portishead", "Dummy").await;
-    let source = Arc::new(SabnzbdSource::new(
-        Arc::new(queue),
+    let source = Arc::new(UsenetSource::new(
+        UsenetQueue::Sabnzbd(Arc::new(queue)),
         vec![Arc::new(newznab)],
         policy,
         journal.clone(),
@@ -300,8 +301,8 @@ async fn a_usenet_pick_grabs_through_its_indexer() {
     );
     let client = newznab_indexers().client("dummy", "Dummy", &format!("{indexer}/api"), "NZKEY");
     let journal = journal_with_task("t-grab", "Portishead", "Dummy").await;
-    let source = SabnzbdSource::new(
-        Arc::new(queue),
+    let source = UsenetSource::new(
+        UsenetQueue::Sabnzbd(Arc::new(queue)),
         vec![Arc::new(NewznabIndexer::new(
             vec![NewznabIndexerEntry {
                 client: client.clone(),
@@ -437,8 +438,8 @@ async fn a_copy_turned_down_as_not_better_is_not_picked_again() {
         .await
         .expect("seeds");
     let client = newznab_indexers().client("dummy", "Dummy", &format!("{indexer}/api"), "NZKEY");
-    let source = SabnzbdSource::new(
-        Arc::new(queue),
+    let source = UsenetSource::new(
+        UsenetQueue::Sabnzbd(Arc::new(queue)),
         vec![Arc::new(NewznabIndexer::new(
             vec![NewznabIndexerEntry {
                 client,

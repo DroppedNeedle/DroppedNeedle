@@ -1,5 +1,5 @@
 //! The one error every download client and indexer maps its HTTP failures
-//! into: slskd, SABnzbd, Newznab and Prowlarr.
+//! into: slskd, SABnzbd, NZBGet, Newznab and Prowlarr.
 //!
 //! Statuses map the same way for each: a 3xx is a redirect, which is never
 //! followed, 401 and 403 a refused key, 404 and 410 a missing item, 429 a
@@ -16,8 +16,19 @@ use std::time::Duration;
 pub enum Service {
     Slskd,
     Sabnzbd,
+    Nzbget,
     Newznab,
     Prowlarr,
+}
+
+impl Service {
+    /// What the service signs in with, for a refusal's wording.
+    fn credential(self) -> &'static str {
+        match self {
+            Self::Nzbget => "username or password",
+            _ => "API key",
+        }
+    }
 }
 
 impl fmt::Display for Service {
@@ -25,6 +36,7 @@ impl fmt::Display for Service {
         f.write_str(match self {
             Self::Slskd => "slskd",
             Self::Sabnzbd => "SABnzbd",
+            Self::Nzbget => "NZBGet",
             Self::Newznab => "Newznab indexer",
             Self::Prowlarr => "Prowlarr",
         })
@@ -36,7 +48,7 @@ impl fmt::Display for Service {
 pub enum ClientError {
     /// The service refused the API key: HTTP 401 or 403, or an answer
     /// that names the key as the problem. Never retried.
-    #[error("{service} rejected the API key{}", status_suffix(*status))]
+    #[error("{service} rejected the {}{}", service.credential(), status_suffix(*status))]
     Auth {
         service: Service,
         /// The HTTP status, when the refusal came as one.

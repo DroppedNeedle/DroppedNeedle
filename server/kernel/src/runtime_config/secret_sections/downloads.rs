@@ -1,4 +1,4 @@
-//! Download clients and indexers: slskd, SABnzbd, Newznab indexers,
+//! Download clients and indexers: slskd, SABnzbd, NZBGet, Newznab indexers,
 //! Prowlarr, and the Lidarr import connection.
 
 use super::*;
@@ -78,12 +78,52 @@ impl Default for SabnzbdConnection {
     }
 }
 
-/// The `download_clients` section (SABnzbd sub-object).
+/// NZBGet connection. NZBGet has no "all categories" wildcard, so an empty
+/// category lets NZBGet apply its own default. There is no post-processing
+/// field: NZBGet decides unpack and repair per category, not per job.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct NzbgetConnection {
+    /// Master switch.
+    pub enabled: bool,
+    /// NZBGet base URL.
+    pub url: String,
+    /// Control username (`ControlUsername` in nzbget.conf).
+    pub username: String,
+    /// Control password (encrypted at rest).
+    #[schema(value_type = String)]
+    pub password: Secret,
+    /// Category ("" lets NZBGet choose).
+    pub category: String,
+    /// Job priority.
+    pub priority: i64,
+    /// Where DroppedNeedle sees NZBGet's completed dir (`DestDir`).
+    pub downloads_mount: String,
+}
+
+impl Default for NzbgetConnection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: String::new(),
+            username: "nzbget".to_owned(),
+            password: Secret::default(),
+            category: String::new(),
+            priority: 0,
+            downloads_mount: "/nzbget-downloads".to_owned(),
+        }
+    }
+}
+
+/// The `download_clients` section: the Usenet download clients. One runs at
+/// a time; SABnzbd wins when both are turned on.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct DownloadClients {
     /// SABnzbd connection.
     pub sabnzbd: SabnzbdConnection,
+    /// NZBGet connection.
+    pub nzbget: NzbgetConnection,
 }
 
 impl Section for DownloadClients {
@@ -92,15 +132,24 @@ impl Section for DownloadClients {
 
     fn normalize(&mut self) {
         normalize_http_url(&mut self.sabnzbd.url, "https://");
+        normalize_http_url(&mut self.nzbget.url, "https://");
+        self.nzbget.username = self.nzbget.username.trim().to_owned();
+        self.nzbget.category = self.nzbget.category.trim().to_owned();
     }
 }
 
 impl SecretSection for DownloadClients {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
-        vec![SecretField {
-            value: &mut self.sabnzbd.api_key,
-            strip: true,
-        }]
+        vec![
+            SecretField {
+                value: &mut self.sabnzbd.api_key,
+                strip: true,
+            },
+            SecretField {
+                value: &mut self.nzbget.password,
+                strip: false,
+            },
+        ]
     }
 }
 

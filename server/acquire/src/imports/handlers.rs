@@ -41,9 +41,9 @@ use super::lidarr::{
 };
 use super::models::{
     LidarrArtistListResponse, LidarrConnectionSettings, LidarrImportRequest, LidarrImportResponse,
-    LidarrTestResponse, SabnzbdStatusResponse, SlskdStatusResponse, SpotifyAuthUrlResponse,
-    SpotifyImportRequest, SpotifyImportResponse, SpotifyPlaylistListResponse, SpotifyRedirectUri,
-    SpotifySettings,
+    LidarrTestResponse, SlskdStatusResponse, SpotifyAuthUrlResponse, SpotifyImportRequest,
+    SpotifyImportResponse, SpotifyPlaylistListResponse, SpotifyRedirectUri, SpotifySettings,
+    UsenetStatusResponse,
 };
 use super::spotify::{ImportFailure, SpotifyImportService};
 use super::spotify_albums::AlbumResolver;
@@ -127,6 +127,7 @@ pub fn routes() -> Routes<ImportsDeps> {
         .user(routes!(disconnect_spotify))
         .user(routes!(get_slskd_status))
         .admin(routes!(get_sabnzbd_status))
+        .admin(routes!(get_nzbget_status))
 }
 
 /// Map a Lidarr service failure to the wire. Upstream detail reaches the
@@ -573,12 +574,22 @@ pub async fn get_slskd_status(
 
 /// Live SABnzbd status against the saved config (admin only).
 #[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/sabnzbd/status",
-    responses((status = 200, description = "SABnzbd status", body = SabnzbdStatusResponse)))]
+    responses((status = 200, description = "SABnzbd status", body = UsenetStatusResponse)))]
 pub async fn get_sabnzbd_status(
     State(deps): State<ImportsDeps>,
     _admin: Admin,
-) -> Json<SabnzbdStatusResponse> {
-    Json(super::health::sabnzbd_status(deps.probes.sabnzbd.as_ref()))
+) -> Json<UsenetStatusResponse> {
+    Json(super::health::usenet_status(deps.probes.sabnzbd.as_ref()))
+}
+
+/// Live NZBGet status against the saved config (admin only).
+#[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/nzbget/status",
+    responses((status = 200, description = "NZBGet status", body = UsenetStatusResponse)))]
+pub async fn get_nzbget_status(
+    State(deps): State<ImportsDeps>,
+    _admin: Admin,
+) -> Json<UsenetStatusResponse> {
+    Json(super::health::usenet_status(deps.probes.nzbget.as_ref()))
 }
 
 /// Fresh OAuth state token: 32 random bytes, base64url, unpadded.
