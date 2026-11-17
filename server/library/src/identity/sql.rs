@@ -1041,8 +1041,9 @@ droppedneedle_kernel::sql! {
     pub(super) RETRY_REMAP = "UPDATE library_edition_remap_queue SET attempts = attempts + 1, \
              not_before_at = ?2, last_code = ?3 WHERE local_album_id = ?1";
     /// Hand the remap's own sealed row (`?1`, release `?4`, provider `?3`)
-    /// back to automatic choice at `?2`. Only a row this app sealed as a
-    /// person's (`manual`) goes back; a v2 choice is never handed back.
+    /// back to automatic choice at `?2`. Only a `manual` row on that release
+    /// goes back. Only a release-group pin's remap gives up; v2 pins land
+    /// as `manual` too, but are queued "place only", which never does.
     pub(super) GIVE_UP_ALBUM = "UPDATE local_album_external_identities \
              SET decision_source = 'automatic', selected_by_user_id = NULL, selected_at = ?2, \
              row_revision = row_revision + 1 WHERE local_album_id = ?1 AND provider = ?3 \

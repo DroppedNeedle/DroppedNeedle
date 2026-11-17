@@ -160,12 +160,11 @@ pub fn retry_remap(
     Ok(())
 }
 
-/// The carried choice cannot be honoured: MusicBrainz does not know the
-/// release, or a release-group pin's release fits none of this copy's
-/// files. So the album goes back to automatic best fit, its unplaced
-/// tracks with it, and identification is queued. Nothing a person changed
-/// since is touched: only the carried choice and its own unplaced track
-/// rows.
+/// A release-group pin's release cannot be honoured: MusicBrainz does not
+/// know it, or it fits none of this copy's files. So the album goes back
+/// to automatic best fit, its unplaced tracks with it, and identification
+/// is queued. Nothing a person changed since is touched: only the carried
+/// choice and its own unplaced track rows.
 pub fn give_up_remap(
     tx: &Transaction<'_>,
     pending: &PendingRemap,

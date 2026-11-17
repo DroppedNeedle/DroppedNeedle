@@ -309,15 +309,15 @@ impl Rig {
     /// Wait until the app is done with the edition a person chose for the
     /// album. Approving a candidate that names only a release queues the
     /// placing of the album's files for the operations loop. When it gets
-    /// there it places them, or hands the album back to automatic choice,
-    /// and either way moves the album's identity and the catalog revision:
-    /// a preview sealed before then is stale, and an Undo after it is
-    /// blocked. A tag write asked for before then is refused with the
-    /// message a person sees, so a journey waits here before it writes.
+    /// there it places them, or keeps the choice and says why they are not
+    /// on it, and either way moves the catalog revision: a preview sealed
+    /// before then is stale. A tag write asked for before then is refused
+    /// with the message a person sees, so a journey waits here before it
+    /// writes.
     async fn edition_settled(&self, album: &str) {
         let db = self.app.db();
         self.app
-            .until("the chosen edition is placed or handed back", || {
+            .until("the chosen edition is placed or kept unplaced", || {
                 let waiting: i64 = db
                     .query_row(
                         "SELECT COUNT(*) FROM library_edition_remap_queue \
@@ -19494,6 +19494,65 @@ async fn an_approved_release_is_placed_and_its_undo_survives() {
         files.iter().map(|row| (&row.0, &row.1)).collect::<Vec<_>>(),
         "the files are as before"
     );
+}
+
+/// A release a curator approved that MusicBrainz then does not list stays
+/// the curator's choice, and the album says why its files are not on it.
+#[tokio::test]
+async fn an_approved_release_that_is_not_listed_stays_chosen() {
+    use droppedneedle_library::identify::models::{
+        CandidateEvidence, EvidenceClass, TrackEvidence,
+    };
+
+    let (scratch, library, album, tracks) = chosen_album_at_rest("lib-approved-not-listed").await;
+    let db = scratch_db(&scratch);
+    let release = fitting_release(&library, &album).releases[0].clone();
+    droppedneedle_library::identify::review::file_review(
+        &library.identify_store,
+        "rev-not-listed",
+        &album,
+        "EDITION_UNCERTAIN",
+        vec![CandidateEvidence {
+            candidate_key: format!("rg-2:{REL_2}"),
+            release_group_mbid: "rg-2".to_owned(),
+            release_mbid: Some(REL_2.to_owned()),
+            album_title: "Album".to_owned(),
+            album_artist_name: String::new(),
+            track_evidence: tracks
+                .iter()
+                .zip(&release.tracks)
+                .map(|(track, on_release)| TrackEvidence {
+                    local_track_id: track.clone(),
+                    classification: EvidenceClass::Supported,
+                    evidence_kinds: Vec::new(),
+                    recording_mbid: Some(on_release.recording_id.clone()),
+                    release_track_mbid: Some(on_release.id.clone()),
+                })
+                .collect(),
+            score: 1.0,
+            reason_code: "EDITION_UNCERTAIN".to_owned(),
+            distance: 0.0,
+            penalties: Vec::new(),
+        }],
+    )
+    .unwrap();
+    approve(&library, "rev-not-listed", &format!("rg-2:{REL_2}"));
+    let approved = choice_row(&db, &album);
+
+    remap_once(&library, &scratch.identify, RecallResult::default()).await;
+    assert_eq!(remap_row(&db, &album), None);
+    assert_eq!(choice_row(&db, &album), approved, "the approval stands");
+    assert_eq!(
+        (approved.0.as_str(), approved.1.as_deref()),
+        ("manual", Some(REL_2))
+    );
+    assert_eq!(
+        match_state(&db, &album).as_deref(),
+        Some("CHOSEN_EDITION_NOT_LISTED")
+    );
+    crate::common::library::operations(&library)
+        .undo_edition_choice(&album, shown_revision(&library, &album), "curator")
+        .expect("the approval's undo still applies");
 }
 
 /// An album retagged by hand across two scans, whose edition a person

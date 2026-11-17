@@ -591,10 +591,20 @@ impl Operations {
                     {
                         choice::retry_remap(tx, &pending, reason.code, now)?
                     }
-                    // An edition the album already has is never given up: it
-                    // stays, and the album shows why its files are not on it.
+                    // An edition MusicBrainz does not list is never given
+                    // up, whether the album has it already or a person chose
+                    // or approved it: it stays, and the album shows why its
+                    // files are not on it. Only a release-group pin's
+                    // fanned-out release goes back.
                     Err(OperationError::NotFound(reason))
-                        if reason.code == reasons::EDITION_NOT_FOUND.code && place_only =>
+                        if reason.code == reasons::EDITION_NOT_FOUND.code
+                            && pending.origin == RemapOrigin::GroupPin =>
+                    {
+                        choice::give_up_remap(tx, &pending, reason.code, now)?;
+                        crate::catalog_revision::bump_catalog(tx)?;
+                    }
+                    Err(OperationError::NotFound(reason))
+                        if reason.code == reasons::EDITION_NOT_FOUND.code =>
                     {
                         choice::keep_unplaceable_choice(
                             tx,
@@ -603,12 +613,6 @@ impl Operations {
                             choice::CHOSEN_NOT_LISTED,
                             now,
                         )?;
-                        crate::catalog_revision::bump_catalog(tx)?;
-                    }
-                    Err(OperationError::NotFound(reason))
-                        if reason.code == reasons::EDITION_NOT_FOUND.code =>
-                    {
-                        choice::give_up_remap(tx, &pending, reason.code, now)?;
                         crate::catalog_revision::bump_catalog(tx)?;
                     }
                     Err(OperationError::Invalid(reason))
