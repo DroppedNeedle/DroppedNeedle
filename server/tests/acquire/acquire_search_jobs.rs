@@ -154,11 +154,8 @@ async fn look_finishes(updates: &mut Subscription, worker: &DownloadWorker) {
 #[tokio::test]
 async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
     let mock = MockSlskd::start().await.expect("mock starts");
-    let mut conflict = peer("conflict", "@@music\\Artist\\Album", &[0, 1, 2, 3]);
-    conflict["files"][0]["filename"] = "@@music\\Artist\\Album\\01 Paper Boats.flac".into();
     mock.script_responses(vec![
         peer("halfway", "@@music\\Massive Attack\\Blue Lines", &[0, 1]),
-        conflict,
         peer("complete", "@@music\\MA\\Blue Lines (1991)", &[0, 1, 2, 3]),
     ]);
 
@@ -214,20 +211,11 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
         ranked,
         [
             (0, Some("complete".to_owned()), CandidateTier::Recommended),
-            (1, Some("conflict".to_owned()), CandidateTier::Possible),
-            (2, Some("halfway".to_owned()), CandidateTier::Possible),
+            (1, Some("halfway".to_owned()), CandidateTier::Possible),
         ]
     );
     assert_eq!(
         payload.candidates[1].view.note.code,
-        CandidateNoteCode::TitleConflict
-    );
-    assert_eq!(
-        payload.candidates[1].view.note.text,
-        "1 numbered file names a different track than this edition."
-    );
-    assert_eq!(
-        payload.candidates[2].view.note.code,
         CandidateNoteCode::Incomplete
     );
     assert!(matches!(
@@ -235,7 +223,7 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
         Err(SearchJobError::Forbidden)
     ));
 
-    // The owner can pick the flagged folder without another search.
+    // Pick the second folder; the worker fetches it without searching.
     let searches_before = mock.search_texts().len();
     let task_id = jobs
         .pick(&owner, &job_id, 1, false)
@@ -256,8 +244,8 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
         .expect("handles read");
     assert_eq!(handles.len(), 1, "one enqueue: {handles:?}");
     let handle: SourceHandle = serde_json::from_str(&handles[0]).expect("handle decodes");
-    assert_eq!(handle.username, "conflict");
-    assert_eq!(handle.filenames.len(), 4);
+    assert_eq!(handle.username, "halfway");
+    assert_eq!(handle.filenames.len(), 2);
 
     let task = journal
         .read_task(&task_id)
@@ -1208,4 +1196,67 @@ async fn an_album_holds_one_unlisted_set_until_a_complete_copy_lands() {
 
 fn owned((reason, state): (&str, &str)) -> (String, String) {
     (reason.to_owned(), state.to_owned())
+}
+
+#[tokio::test]
+async fn a_conflicting_title_waits_for_the_owners_pick() {
+    let mock = MockSlskd::start().await.expect("mock starts");
+    let folder = "@@music\\Artist\\Album";
+    let mut conflict = peer("conflict", folder, &[0, 1, 2, 3]);
+    let filename = format!("{folder}\\01 Paper Boats.flac");
+    conflict["files"][0]["filename"] = filename.clone().into();
+    mock.script_responses(vec![conflict]);
+
+    let rig = rig(&mock, true).await;
+    let task_id = "0123456789abcdef0123456789abcdef";
+    seed_album_task(&rig.journal, task_id, "user").await;
+    let owner = principal("u1");
+    let mut updates = rig.events.subscribe(owner.user_id());
+    rig.worker.run_once(1).await;
+    look_finishes(&mut updates, &rig.worker).await;
+
+    let task = rig
+        .journal
+        .read_task(task_id)
+        .await
+        .expect("task reads")
+        .expect("task exists");
+    assert_eq!(task.candidate_index, None);
+    let job_id = task
+        .search_job_id
+        .expect("the conflicting folder waits for a pick");
+    let view = rig.jobs.get(&owner, &job_id).await.expect("job reads");
+    assert_eq!(view.row.status, JobStatus::Completed);
+    let payload = view.payload.expect("candidates decode");
+    let [candidate] = payload.candidates.as_slice() else {
+        panic!("expected one candidate, got {}", payload.candidates.len());
+    };
+    assert_eq!(candidate.view.tier, CandidateTier::Possible);
+    assert_eq!(candidate.view.note.code, CandidateNoteCode::TitleConflict);
+    assert_eq!(
+        candidate.view.note.text,
+        "1 numbered file names a different track than this edition."
+    );
+
+    let picked = rig
+        .jobs
+        .pick(&owner, &job_id, candidate.view.candidate_index, false)
+        .await
+        .expect("the owner can select the flagged folder");
+    assert_eq!(picked, task_id);
+    rig.worker.run_once(2).await;
+    let handles = rig
+        .journal
+        .read_source_handles(
+            task_id,
+            &droppedneedle_acquire::downloads::SourceTag::Soulseek,
+        )
+        .await
+        .expect("handles read");
+    let [handle] = handles.as_slice() else {
+        panic!("expected one enqueue, got {handles:?}");
+    };
+    let handle: SourceHandle = serde_json::from_str(handle).expect("handle decodes");
+    assert_eq!(handle.username, "conflict");
+    assert!(handle.filenames.contains(&filename));
 }

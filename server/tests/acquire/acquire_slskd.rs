@@ -965,46 +965,6 @@ fn album_peer(username: &str, extension: &str) -> serde_json::Value {
         "files": files, "lockedFiles": [], "token": 1})
 }
 
-#[tokio::test]
-async fn automatic_pick_skips_a_folder_with_a_conflicting_title() {
-    let mock = MockSlskd::start().await.expect("mock starts");
-    let mut conflict = album_peer("a-conflict", "flac");
-    conflict["files"][0]["filename"] = "@@music\\Artist\\Album\\01 Paper Boats.flac".into();
-    mock.script_responses(vec![conflict.clone(), album_peer("z-correct", "flac")]);
-    let target = SearchTarget {
-        artist: "Artist".to_owned(),
-        album_title: "Album".to_owned(),
-        year: None,
-        tracklist: [(1, "Alpha", 200.0), (2, "Beta", 201.0)]
-            .into_iter()
-            .map(|(track_number, title, duration)| ExpectedTrack {
-                track_number,
-                disc_number: 1,
-                duration_seconds: Some(duration),
-                title: Some(title.to_owned()),
-                recording_mbid: None,
-                release_track_mbid: None,
-            })
-            .collect(),
-        wanted: Vec::new(),
-        track: None,
-    };
-    let repo = repository(&mock);
-    let choice = soulseek::choose(&repo, &target, |_| true)
-        .await
-        .expect("there is a matching folder");
-    assert_eq!(choice.pick.username, "z-correct");
-
-    mock.script_responses(vec![conflict]);
-    assert!(matches!(
-        soulseek::choose(&repo, &target, |_| true).await,
-        Err(soulseek::SoulseekMiss::Nothing {
-            reason: Reason::NoSource,
-            ..
-        })
-    ));
-}
-
 /// A saved policy keeping one tier, with a one-entry recipe, each source
 /// grabbing its own best guess (no search review).
 fn one_tier_policy(tier: &str, format: RecipeFormat, quality: RecipeQuality) -> KernelPolicy {
@@ -1180,4 +1140,44 @@ async fn soulseek_counts_only_readable_files_as_audio() {
     mock.script_responses(vec![album_peer("monkeys", "ape")]);
     let offered = source.search(&target).await.expect("search runs");
     assert!(offered.is_empty(), "an APE-only folder is never offered");
+}
+
+#[tokio::test]
+async fn automatic_pick_skips_a_folder_with_a_conflicting_title() {
+    let mock = MockSlskd::start().await.expect("mock starts");
+    let mut conflict = album_peer("a-conflict", "flac");
+    conflict["files"][0]["filename"] = "@@music\\Artist\\Album\\01 Paper Boats.flac".into();
+    mock.script_responses(vec![conflict.clone(), album_peer("z-correct", "flac")]);
+    let target = SearchTarget {
+        artist: "Artist".to_owned(),
+        album_title: "Album".to_owned(),
+        year: None,
+        tracklist: [(1, "Alpha", 200.0), (2, "Beta", 201.0)]
+            .into_iter()
+            .map(|(track_number, title, duration)| ExpectedTrack {
+                track_number,
+                disc_number: 1,
+                duration_seconds: Some(duration),
+                title: Some(title.to_owned()),
+                recording_mbid: None,
+                release_track_mbid: None,
+            })
+            .collect(),
+        wanted: Vec::new(),
+        track: None,
+    };
+    let repo = repository(&mock);
+    let choice = soulseek::choose(&repo, &target, |_| true)
+        .await
+        .expect("there is a matching folder");
+    assert_eq!(choice.pick.username, "z-correct");
+
+    mock.script_responses(vec![conflict]);
+    assert!(matches!(
+        soulseek::choose(&repo, &target, |_| true).await,
+        Err(soulseek::SoulseekMiss::Nothing {
+            reason: Reason::NoSource,
+            ..
+        })
+    ));
 }
