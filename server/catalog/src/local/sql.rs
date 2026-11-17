@@ -679,15 +679,18 @@ droppedneedle_kernel::sql! {
     /// The live album a local id or alias names now: the album itself while
     /// it is live, else the album its alias points at (every merge points
     /// older aliases at the survivor), else the album it was retired into.
-    pub(crate) CURRENT_ALBUM = "SELECT id FROM ( \
-        SELECT id, 0 AS rank FROM local_albums WHERE id = ?1 AND retired_into_album_id IS NULL \
+    pub(crate) CURRENT_ALBUM = "SELECT id FROM (" + ALBUM_ITSELF + " \
         UNION ALL SELECT b.id, 1 FROM local_album_aliases x \
          JOIN local_albums b ON b.id = x.local_album_id \
          WHERE x.alias = lower(?1) AND b.retired_into_album_id IS NULL \
-        UNION ALL SELECT b.id, 2 FROM local_albums a \
-         JOIN local_albums b ON b.id = a.retired_into_album_id \
-         WHERE a.id = ?1 AND b.retired_into_album_id IS NULL) \
-        ORDER BY rank LIMIT 1";
+        UNION ALL " + ALBUM_RETIRED_INTO + ") ORDER BY rank LIMIT 1";
+    /// The album `?1` names while it is live, ranked first.
+    pub(crate) fragment ALBUM_ITSELF = "SELECT id, 0 AS rank FROM local_albums \
+        WHERE id = ?1 AND retired_into_album_id IS NULL";
+    /// The live album `?1` was retired into, ranked after its aliases.
+    pub(crate) fragment ALBUM_RETIRED_INTO = "SELECT b.id, 2 FROM local_albums a \
+        JOIN local_albums b ON b.id = a.retired_into_album_id \
+        WHERE a.id = ?1 AND b.retired_into_album_id IS NULL";
     /// [`CURRENT_ALBUM`] for a list of identifiers at once: each asked
     /// identifier with the album it names now, or NULL.
     family CURRENT_ALBUMS = current_albums;
@@ -835,12 +838,18 @@ droppedneedle_kernel::sql! {
     /// total counted at one revision holds until it moves.
     pub(crate) CATALOG_REVISION = "SELECT COALESCE((SELECT value \
         FROM library_catalog_revision WHERE singleton = 1), 0)";
-    /// The release group a library album, or the album it merged into, is
-    /// identified as.
-    pub(crate) GROUP_FOR_ALBUM = "SELECT e.release_group_mbid FROM local_albums b \
-        JOIN local_album_external_identities e \
-          ON e.local_album_id = COALESCE(b.retired_into_album_id, b.id) AND "
-        + (musicbrainz!("e")) + " WHERE b.id = ? LIMIT 1";
+    /// The release group the album a local id or alias names now is
+    /// identified as, in [`CURRENT_ALBUM`]'s order. A v2 release-group
+    /// alias is left out: it is a real MusicBrainz id, asked as one.
+    pub(crate) GROUP_FOR_ALBUM = "SELECT e.release_group_mbid \
+        FROM local_album_external_identities e WHERE e.local_album_id = ( \
+        SELECT id FROM (" + ALBUM_ITSELF + " \
+        UNION ALL SELECT b.id, 1 FROM local_album_aliases x \
+         JOIN local_albums b ON b.id = x.local_album_id \
+         WHERE x.alias = lower(?1) AND x.kind <> 'legacy_release_group' \
+         AND b.retired_into_album_id IS NULL \
+        UNION ALL " + ALBUM_RETIRED_INTO + ") ORDER BY rank LIMIT 1) AND "
+        + (musicbrainz!("e")) + " LIMIT 1";
 
     /// A player track's columns over [`PLAYER_TRACK_JOINS`]: every tag a
     /// player shows, all genres joined by the unit separator.

@@ -1171,6 +1171,64 @@ async fn musicbrainz_outage_falls_back_to_the_library() {
     );
 }
 
+/// A library album id is shaped like a MusicBrainz id. An old id of a
+/// merged album, an alias and a live copy's id each open the group the
+/// album holding them now is identified as, without asking MusicBrainz;
+/// an id the library does not hold is still asked there, and so is a
+/// release group a v2 album carried as an alias.
+#[tokio::test]
+async fn an_old_or_local_album_id_opens_its_album_without_asking_musicbrainz() {
+    const RETIRED: &str = "5e6f7081-9cad-4ebf-8a21-3c4d5e6f7081";
+    const ALIAS: &str = "6f708192-adbe-4fc0-9b32-4d5e6f708192";
+    const LIVE_COPY: &str = "708192a3-becf-40d1-8c43-5e6f708192a3";
+    let fixtures = Fixtures::start().await;
+    let extra = [
+        format!(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, year, \
+             grouping_source, created_at, updated_at, retired_into_album_id) VALUES \
+             ('{RETIRED}', 'root-1', 'g-old', 'OK Computer', 'ok computer', 'Radiohead', \
+             'radiohead', 'artist-radiohead', 1997, 'manual', 2, 2, 'album-okc'), \
+             ('{LIVE_COPY}', 'root-1', 'g-copy', 'OK Computer', 'ok computer', 'Radiohead', \
+             'radiohead', 'artist-radiohead', 1997, 'manual', 3, 3, NULL)"
+        ),
+        format!(
+            "INSERT INTO local_album_aliases (alias, local_album_id, kind, created_at) \
+             VALUES ('{ALIAS}', 'album-okc', 'merged_album', 2), \
+             ('{UNKNOWN_ALBUM}', 'album-okc', 'legacy_release_group', 2)"
+        ),
+        format!(
+            "INSERT INTO local_album_external_identities \
+             (local_album_id, provider, release_group_mbid, decision_source, selected_at) \
+             VALUES ('{LIVE_COPY}', 'musicbrainz', '{OK_COMPUTER}', 'automatic', 3)"
+        ),
+    ];
+    let (app, _auth) = app_seeded(&fixtures, format!("{}/mb/ws/2", fixtures.base), &extra).await;
+
+    for id in [RETIRED, ALIAS, LIVE_COPY] {
+        let album = get(&app, &format!("/api/v3/albums/{id}/basic")).await;
+        assert_eq!(album["musicbrainz_id"], OK_COMPUTER, "{id}: {album}");
+        assert_eq!(
+            fixtures.hits(&format!("/mb/ws/2/release-group/{id}")),
+            0,
+            "{id} is never asked of MusicBrainz"
+        );
+    }
+    let (status, _) = call(
+        &app,
+        Method::GET,
+        &format!("/api/v3/albums/{UNKNOWN_ALBUM}/basic"),
+        Some(TOKEN),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        fixtures.hits(&format!("/mb/ws/2/release-group/{UNKNOWN_ALBUM}")),
+        1,
+        "a release group the library does not hold, or holds only as a v2 alias, is asked once"
+    );
+}
+
 /// Search joins MusicBrainz with the library unless it is scoped to the
 /// library. The library scope goes first: it answers from the library
 /// alone, MusicBrainz is never asked, and only library rows come back.

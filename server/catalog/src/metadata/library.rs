@@ -328,8 +328,9 @@ impl LocalCatalog {
         Ok(Some(album))
     }
 
-    /// The release group a library album (or the album it was merged
-    /// into) is identified as.
+    /// The release group the album a local id or alias names now is
+    /// identified as. A v2 release-group alias names nothing here: it is a
+    /// real MusicBrainz id.
     pub async fn group_for_album(&self, album_id: &str) -> Result<Option<String>, StoreError> {
         let values = vec![Value::Text(album_id.to_owned())];
         self.read("catalog.library.group_for_album", move |conn| {

@@ -369,12 +369,11 @@ impl Catalog {
     }
 
     /// The release-group MBID a route's album id names. A library album
-    /// id resolves to the group it is identified as; anything
-    /// else that is not an MBID is rejected.
+    /// id, alias or merged-away id resolves to the group the album holding
+    /// it now is identified as; anything else that is not an MBID is
+    /// rejected. Library ids are shaped like MBIDs, so the library is asked
+    /// first: one keyed read, and MusicBrainz is never asked for them.
     async fn album_id(&self, raw_id: &str) -> Result<String, CatalogError> {
-        if let Ok(id) = checked_mbid(raw_id, "album") {
-            return Ok(id);
-        }
         let local = raw_id.trim();
         if !local.is_empty() && local.len() <= 128 {
             let found = self
