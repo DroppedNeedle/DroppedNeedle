@@ -13,8 +13,18 @@ use crate::local::sql::ImportTrack;
 pub(crate) const MAX_IMPORT_BYTES: usize = 2 * 1024 * 1024;
 /// Most entries one import takes; the rest are reported unmatched.
 pub(crate) const MAX_IMPORT_ENTRIES: usize = 10_000;
-/// The export's own column order, read when a CSV names no `path` column.
-const EXPORT_COLUMNS: (usize, usize, usize) = (0, 1, 5);
+/// The export's own column order, read when a CSV names no known column:
+/// title, artist, album, album artist, duration, path.
+const EXPORT_COLUMNS: (usize, usize, usize, usize) = (0, 1, 2, 5);
+/// Column names that mark the first row as a header.
+const KNOWN_COLUMNS: [&str; 6] = [
+    "path",
+    "title",
+    "artist",
+    "album",
+    "album artist",
+    "duration",
+];
 
 /// One entry read from a playlist file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +33,8 @@ pub(crate) struct ParsedEntry {
     pub title: String,
     /// Artist, empty when the file names none.
     pub artist: String,
+    /// Album, empty when the file names none.
+    pub album: String,
     /// The file the entry names, as the file spells it; empty when it
     /// names none.
     pub path: String,
@@ -74,6 +86,7 @@ fn parse_m3u(content: &str) -> Vec<ParsedEntry> {
         entries.push(ParsedEntry {
             title,
             artist,
+            album: String::new(),
             path: line.to_owned(),
         });
     }
@@ -90,7 +103,7 @@ fn extinf_names(rest: &str) -> (String, String) {
     }
 }
 
-/// CSV with a header row when the first row names a `path` column, else
+/// CSV with a header row when the first row names a known column, else
 /// the export's own column order. Columns are matched case-insensitively
 /// and may be reordered; other columns are ignored.
 fn parse_csv(content: &str) -> Vec<ParsedEntry> {
@@ -102,16 +115,24 @@ fn parse_csv(content: &str) -> Vec<ParsedEntry> {
         .iter()
         .map(|cell| cell.trim().to_lowercase())
         .collect();
-    if header.iter().any(|cell| cell == "path") {
+    if header
+        .iter()
+        .any(|cell| KNOWN_COLUMNS.contains(&cell.as_str()))
+    {
         let column = |name: &str| header.iter().position(|cell| cell == name);
-        let (path, title, artist) = (column("path"), column("title"), column("artist"));
-        rows.map(|row| csv_entry(&row, path, title, artist))
+        let (path, title, artist, album) = (
+            column("path"),
+            column("title"),
+            column("artist"),
+            column("album"),
+        );
+        rows.map(|row| csv_entry(&row, path, title, artist, album))
             .collect()
     } else {
-        let (title, artist, path) = EXPORT_COLUMNS;
+        let (title, artist, album, path) = EXPORT_COLUMNS;
         std::iter::once(first)
             .chain(rows)
-            .map(|row| csv_entry(&row, Some(path), Some(title), Some(artist)))
+            .map(|row| csv_entry(&row, Some(path), Some(title), Some(artist), Some(album)))
             .collect()
     }
 }
@@ -121,6 +142,7 @@ fn csv_entry(
     path: Option<usize>,
     title: Option<usize>,
     artist: Option<usize>,
+    album: Option<usize>,
 ) -> ParsedEntry {
     let cell = |at: Option<usize>| {
         at.and_then(|at| row.get(at))
@@ -130,6 +152,7 @@ fn csv_entry(
     ParsedEntry {
         title: cell(title),
         artist: cell(artist),
+        album: cell(album),
         path: cell(path),
     }
 }
@@ -180,7 +203,7 @@ fn csv_rows(content: &str) -> Vec<Vec<String>> {
 
 /// A file name read as a title, for an entry that names none.
 fn path_title(path: &str) -> String {
-    let name = path.rsplit('/').next().unwrap_or(path);
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
     match name.rsplit_once('.') {
         Some((stem, _)) if !stem.is_empty() => stem.to_owned(),
         _ => name.to_owned(),
@@ -192,6 +215,7 @@ fn path_title(path: &str) -> String {
 pub(crate) struct ImportIndex {
     by_path: HashMap<String, String>,
     by_names: HashMap<(String, String), String>,
+    by_names_album: HashMap<(String, String, String), String>,
 }
 
 impl ImportIndex {
@@ -201,26 +225,39 @@ impl ImportIndex {
         tracks.sort_by(|left, right| left.id.cmp(&right.id));
         let mut by_path = HashMap::with_capacity(tracks.len());
         let mut by_names = HashMap::with_capacity(tracks.len());
+        let mut by_names_album = HashMap::with_capacity(tracks.len());
         for track in tracks {
             if let Some(artist) = track.artist_name_folded {
+                by_names_album
+                    .entry((
+                        track.title_folded.clone(),
+                        artist.clone(),
+                        track.album_title_folded,
+                    ))
+                    .or_insert_with(|| track.id.clone());
                 by_names
                     .entry((track.title_folded, artist))
                     .or_insert_with(|| track.id.clone());
             }
             by_path.entry(track.relative_path).or_insert(track.id);
         }
-        Self { by_path, by_names }
+        Self {
+            by_path,
+            by_names,
+            by_names_album,
+        }
     }
 
     /// The id of the track `entry` names: the exact path, then the import
     /// path ending at a folder boundary with the stored one, then the
-    /// folded title and artist. Album is ignored.
+    /// folded title, artist and album, then the folded title and artist.
+    /// Windows separators read as folders too.
     pub(crate) fn find(&self, entry: &ParsedEntry) -> Option<&str> {
-        let path = entry.path.trim();
-        if let Some(id) = self.by_path.get(path) {
+        let path = entry.path.trim().replace('\\', "/");
+        if let Some(id) = self.by_path.get(&path) {
             return Some(id);
         }
-        let mut rest = path;
+        let mut rest = path.as_str();
         while let Some((_, tail)) = rest.split_once('/') {
             rest = tail;
             if let Some(id) = self.by_path.get(rest) {
@@ -231,6 +268,13 @@ impl ImportIndex {
         let artist = fold_text(entry.artist.trim());
         if title.is_empty() || artist.is_empty() {
             return None;
+        }
+        let album = fold_text(entry.album.trim());
+        if !album.is_empty() {
+            let key = (title.clone(), artist.clone(), album);
+            if let Some(id) = self.by_names_album.get(&key) {
+                return Some(id);
+            }
         }
         self.by_names.get(&(title, artist)).map(String::as_str)
     }

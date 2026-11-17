@@ -1,3 +1,4 @@
+import { albumArtworkPath } from '$lib/api/covers';
 import { ApiError } from '$lib/api/errors';
 import type { components } from '$lib/api/v3/openapi';
 import type {
@@ -53,7 +54,8 @@ export function toPageTrack(track: PlaylistTrackV3): PlaylistTrack {
 		album_id: track.album_id ?? null,
 		artist_id: track.artist_id ?? null,
 		track_source_id: track.track_source_id ?? null,
-		cover_url: track.cover_url ?? null,
+		cover_url:
+			track.cover_url ?? (track.album_id ? albumArtworkPath(track.album_id, undefined, 250) : null),
 		source_type: track.source_type,
 		available_sources: track.available_sources ?? null,
 		format: track.format ?? null,

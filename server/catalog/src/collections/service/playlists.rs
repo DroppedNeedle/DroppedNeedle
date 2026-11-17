@@ -564,7 +564,10 @@ impl CollectionsService<'_> {
         let mut seen = HashSet::new();
         let mut unmatched = Vec::new();
         for entry in &entries {
-            if entry.path.trim().is_empty() {
+            if entry.path.trim().is_empty()
+                && entry.title.trim().is_empty()
+                && entry.artist.trim().is_empty()
+            {
                 unmatched.push(import::unmatched(entry, "the entry names no file"));
                 continue;
             }
