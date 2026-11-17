@@ -6716,13 +6716,21 @@ async fn an_album_without_files_leaves_the_lists() {
 /// A heart and rating on a copy whose files are gone follow to the copy
 /// with files; that copy keeps its own rating; plays stay; a local-only
 /// album keeps its heart; the copy's history shows the move. A copy whose
-/// files Put back can still bring home keeps its heart.
+/// files Put back can still bring home keeps its heart. The marks wait a
+/// day after the files went missing, so a share that was briefly not
+/// mounted moves nothing.
 #[tokio::test]
 async fn marks_on_a_copy_without_files_follow_to_the_copy_with_files() {
+    use droppedneedle_kernel::clock::Clock as _;
+    use droppedneedle_kernel::test_support::ManualClock;
     use droppedneedle_library::http::history::album_history_view;
     use droppedneedle_library::removal::Mutations;
 
-    let (scratch, library, music) = bare_library("lib-marks-follow-copy").await;
+    let clock = Arc::new(ManualClock::at(
+        droppedneedle_kernel::clock::SystemClock.now_ms(),
+    ));
+    let (scratch, library, music) =
+        bare_library_at("lib-marks-follow-copy", None, clock.clone()).await;
     for folder in ["gone", "kept", "local", "binned"] {
         plant(&music, &format!("{folder}/01.flac"), "flac_full_01.flac");
     }
@@ -6777,11 +6785,26 @@ async fn marks_on_a_copy_without_files_follow_to_the_copy_with_files() {
     std::fs::remove_dir_all(music.join("local")).expect("the local album's folder is deleted");
     rescan(&library).await;
     let worker = crate::common::library::repair_worker(&library);
-    for _ in 0..20 {
-        if !droppedneedle_library::repairs::tick(&worker, "worker").await {
-            break;
+    let settle = || async {
+        for _ in 0..20 {
+            if !droppedneedle_library::repairs::tick(&worker, "worker").await {
+                break;
+            }
         }
-    }
+    };
+    clock.advance(3_600_000);
+    settle().await;
+    let mut waiting = vec![gone.clone(), local.clone(), binned.clone()];
+    waiting.sort();
+    assert_eq!(
+        read("SELECT item_id FROM catalog_user_favorites ORDER BY item_id"),
+        waiting,
+        "an hour after the files went missing the heart stays"
+    );
+
+    clock.advance(86_400_000);
+    rescan(&library).await;
+    settle().await;
 
     let mut hearts = vec![kept.clone(), local.clone(), binned.clone()];
     hearts.sort();

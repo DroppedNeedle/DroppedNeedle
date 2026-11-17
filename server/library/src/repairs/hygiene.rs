@@ -374,8 +374,10 @@ pub const MARKS_FOLLOWED_REASON: &str = "MARKS_FOLLOWED_TO_COPY";
 /// nothing of it can be put back, onto the copy with files its release
 /// group opens, when both are accepted on that group. A person who rated
 /// both keeps the copy's rating, and the audit row keeps the one dropped.
-/// Plays stay: a play names the track played. Nothing moves them back if
-/// the files return.
+/// Plays stay: a play names the track played. The move waits until the
+/// album's files have been missing for a day, the wait a scan gives a
+/// mostly missing album before it joins a retag. Nothing moves them back
+/// if the files return.
 fn marks_follow_copy(
     tx: &Transaction<'_>,
     album: &Album,
@@ -385,7 +387,7 @@ fn marks_follow_copy(
     let target: Option<String> = tx
         .query_row(
             crate::repairs::sql::MARKS_FOLLOW_TARGET.text(),
-            params![album.id],
+            params![album.id, crate::clock::ms(now) - crate::clock::DAY_MS],
             |row| row.get(0),
         )
         .optional()?

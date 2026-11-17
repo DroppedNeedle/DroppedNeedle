@@ -331,10 +331,13 @@ droppedneedle_kernel::sql! {
     /// Every live album whose marks can move to its copy with files.
     pub(super) MARKS_CANDIDATES = "SELECT a.id FROM local_albums a \
              WHERE a.retired_into_album_id IS NULL AND " + MARKS_CANDIDATE + " ORDER BY a.id";
-    /// The copy album `?1`'s marks move to, while it is a candidate; no
-    /// row otherwise.
+    /// The copy album `?1`'s marks move to, while it is a candidate and
+    /// none of its tracks went missing after `?2` (a day ago: a share that
+    /// was not mounted for a scan moves nothing); no row otherwise.
     pub(super) MARKS_FOLLOW_TARGET = "SELECT (" + MARKS_TARGET + ") FROM local_albums a \
-             WHERE a.id = ?1 AND a.retired_into_album_id IS NULL AND " + MARKS_CANDIDATE;
+             WHERE a.id = ?1 AND a.retired_into_album_id IS NULL AND " + MARKS_CANDIDATE + " \
+             AND NOT EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
+             AND t.availability = 'missing' AND t.missing_at > ?2)";
     /// The ratings of album `?1` that give way to the same person's rating
     /// of album `?2`.
     pub(super) SUPERSEDED_RATINGS = "SELECT x.user_id, x.rating, x.rated_at \
