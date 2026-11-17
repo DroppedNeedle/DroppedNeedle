@@ -899,11 +899,19 @@ droppedneedle_kernel::sql! {
            WHERE left_behind.local_album_id = ?2 AND " + (holds!("left_behind", "?1")) + ")";
     /// Whether a track row still holds album `?2` in run `?1`.
     pub(super) ALBUM_HELD_IN_RUN = "SELECT EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?2 AND " + (holds!("t", "?1")) + ")";
-    /// Albums a departure on record or a move of run `?1` names, not retired, that no track row holds.
+    /// Whether a track row not locked to album `?2` still holds it in run `?1`.
+    pub(super) ALBUM_HELD_UNLOCKED_IN_RUN = "SELECT EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?2 \
+             AND t.membership_locked = 0 AND " + (holds!("t", "?1")) + ")";
+    /// The track rows locked to album `?2` that hold it in run `?1`.
+    pub(super) LOCKED_HOLDERS_IN_RUN = "SELECT t.id FROM local_tracks t WHERE t.local_album_id = ?2 \
+             AND t.membership_locked = 1 AND " + (holds!("t", "?1")) + " ORDER BY t.id";
+    /// Albums a departure on record or a move of run `?1` names, not retired, that no track row holds
+    /// but rows locked to them.
     pub(super) ALBUMS_NO_ROW_HOLDS = "SELECT a.id FROM local_albums a WHERE a.retired_into_album_id IS NULL \
              AND a.id IN (SELECT previous_album_id FROM library_album_departures \
                UNION SELECT previous_album_id FROM library_scan_album_moves WHERE run_id = ?1) \
-             AND NOT EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id AND " + (holds!("t", "?1")) + ") \
+             AND NOT EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
+               AND t.membership_locked = 0 AND " + (holds!("t", "?1")) + ") \
              ORDER BY a.id";
     /// The (root, path) pairs a scan of run `?1` writes no row for: where a
     /// track lies that a write fencing it names (`fenced_by!`: still open, or

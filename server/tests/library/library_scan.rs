@@ -4750,6 +4750,129 @@ async fn files_that_may_be_away_still_hold_their_album() {
     }
 }
 
+/// A scanned album of `count` files, the ones numbered in `locked` locked
+/// to it as a join or a curator's move locks them. Returns the rig, the
+/// files and the album.
+async fn album_with_locked_files(
+    name: &str,
+    count: usize,
+    locked: &[usize],
+) -> (RegroupRig, Vec<String>, String) {
+    let mut rig = RegroupRig::new(name);
+    let files: Vec<String> = (0..count).map(|n| format!("a/t{n:03}.flac")).collect();
+    let before = rig.before.clone();
+    rig.tag(&files, &before);
+    rig.scan().await;
+    let album = rig.album_of("a/t000.flac");
+    let paths: Vec<String> = locked.iter().map(|n| format!("'{}'", files[*n])).collect();
+    rig.run(&format!(
+        "UPDATE local_tracks SET membership_source = 'manual', membership_locked = 1 \
+         WHERE relative_path IN ({})",
+        paths.join(", ")
+    ));
+    (rig, files, album)
+}
+
+impl RegroupRig {
+    /// Track rows locked to the album.
+    fn locked_on(&self, album: &str) -> i64 {
+        self.count(&format!(
+            "SELECT COUNT(*) FROM local_tracks WHERE local_album_id = '{album}' \
+             AND membership_locked = 1"
+        ))
+    }
+
+    fn title_of(&self, album: &str) -> Option<String> {
+        self.text(&format!(
+            "SELECT title FROM local_albums WHERE id = '{album}'"
+        ))
+    }
+}
+
+/// Files locked to an album (a downloaded or joined track, a curator's
+/// move) are retagged with the rest of it: the album follows the retag,
+/// keeping its id and taking the new name, and every file stays on it,
+/// still locked. Also when the locked files are read in a later window
+/// than the others. Retagging only the unlocked files still splits the
+/// album: the locked ones hold it.
+#[tokio::test]
+async fn a_locked_file_retagged_with_its_album_follows_it() {
+    for (name, count, locked) in [
+        ("scan-regroup-locked-together", 12, [10, 11]),
+        ("scan-regroup-locked-later-window", 258, [256, 257]),
+    ] {
+        let (mut rig, files, album) = album_with_locked_files(name, count, &locked).await;
+        let after = rig.after.clone();
+        rig.tag(&files, &after);
+        rig.scan().await;
+
+        for file in &files {
+            assert_eq!(rig.album_of(file), album, "{name}: {file} on the album");
+        }
+        assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1, "{name}");
+        assert_eq!(rig.title_of(&album), Some(after), "{name}: the new name");
+        assert_eq!(rig.locked_on(&album), 2, "{name}: still locked");
+    }
+
+    let name = "scan-regroup-locked-left-out";
+    let (mut rig, files, album) = album_with_locked_files(name, 12, &[10, 11]).await;
+    let (before, after) = (rig.before.clone(), rig.after.clone());
+    rig.tag(&files[..10], &after);
+    rig.scan().await;
+
+    let new_row = rig.album_of("a/t000.flac");
+    assert_ne!(new_row, album, "{name}: not followed");
+    assert_eq!(rig.rows_on(&new_row), 10, "{name}");
+    assert_eq!(rig.rows_on(&album), 2, "{name}: the locked files hold it");
+    assert_eq!(rig.title_of(&album), Some(before), "{name}: its name stays");
+
+    // A locked file that vanished in the scan that saw the retag may only
+    // be out of reach: it holds the album for that scan.
+    let name = "scan-regroup-locked-vanished";
+    let (mut rig, files, album) = album_with_locked_files(name, 12, &[10, 11]).await;
+    std::fs::remove_file(rig.root.join(&files[11])).expect("file removed");
+    let after = rig.after.clone();
+    rig.tag(&files[..11], &after);
+    rig.scan().await;
+
+    let new_row = rig.album_of("a/t000.flac");
+    assert_ne!(new_row, album, "{name}: not followed yet");
+    assert_eq!(rig.rows_on(&new_row), 10, "{name}");
+    assert_eq!(rig.rows_on(&album), 2, "{name}: the locked files hold it");
+    assert_eq!(retag_pairs(&rig), vec![], "{name}");
+}
+
+/// An album retagged in two sittings, its locked files in the second, is
+/// one album when the second scan ends: the old row is merged into the
+/// new one, its id kept as an alias, and the locked files go with it,
+/// still locked.
+#[tokio::test]
+async fn a_locked_file_retagged_over_two_sittings_follows_its_album() {
+    let (mut rig, files, album) =
+        album_with_locked_files("scan-regroup-locked-two-sittings", 12, &[10, 11]).await;
+    let after = rig.after.clone();
+    rig.tag(&files[..6], &after);
+    rig.scan().await;
+    rig.tag(&files[6..], &after);
+    rig.scan().await;
+
+    let joined = rig.album_of("a/t000.flac");
+    assert_ne!(joined, album, "the new row survives");
+    for file in &files {
+        assert_eq!(rig.album_of(file), joined, "{file} on the album");
+    }
+    assert_eq!(rig.retired_into(&album), Some(joined.clone()));
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM local_album_aliases WHERE alias = '{album}' \
+             AND kind = 'merged_album'"
+        )),
+        1,
+        "the old id resolves"
+    );
+    assert_eq!(rig.locked_on(&joined), 2, "still locked");
+}
+
 /// A file that comes back with the tags it had keeps its track row, and
 /// is filed by what those tags say: not on the album that was retagged
 /// while it was away.

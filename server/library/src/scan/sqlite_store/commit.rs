@@ -355,6 +355,11 @@ struct Written {
     /// The track whose record the scan forgot, when the file is a new
     /// copy of its recording.
     new_copy: Option<NewCopy>,
+    /// The row is locked to its album and its tags no longer give the
+    /// album's key: the album's other files may have been retagged with it,
+    /// so the album is tried as a follow even when none of them was read in
+    /// this window.
+    locked_off_key: bool,
 }
 
 /// Whether the file now at `row`'s path is other music, not the track the
@@ -1140,6 +1145,12 @@ fn write_item(
             legacy,
         )?,
     };
+    let locked_off_key = locked
+        && run_id.is_some()
+        && adopted.is_none()
+        && !tx
+            .prepare_cached(crate::scan::sql::ALBUM_HAS_GROUPING_KEY.text())?
+            .query_row(params![album_id, grouping_key], |row| row.get::<_, bool>(0))?;
     let (album_artist_ids, track_artist_ids) = artists::resolve(
         tx,
         &album_credits,
@@ -1384,6 +1395,7 @@ fn write_item(
         moved_from,
         other_music,
         new_copy,
+        locked_off_key,
     })
 }
 
@@ -1397,7 +1409,9 @@ const LONG_GONE_SECONDS: f64 = 86_400.0;
 /// An album a track left in this run. It is followed when its files were
 /// retagged together:
 ///
-/// - no track row holds it any more (`holds!`);
+/// - no track row holds it any more (`holds!`), but rows locked to it whose
+///   own tags were retagged with the rest ([`locked_rows_following`]):
+///   they stay on it, locked, and count as moved;
 /// - no track that left it in an earlier run sits on a piece of it
 ///   ([`has_counted_departure`]): an album retagged over two runs, or split
 ///   over two, is settled when the run ends ([`join_across_scans`]);
@@ -1446,7 +1460,7 @@ fn follow_regrouped(
     album_id: &str,
     now: f64,
 ) -> rusqlite::Result<Option<String>> {
-    if held(tx, run_id, album_id)? || has_counted_departure(tx, run_id, album_id, now)? {
+    if has_counted_departure(tx, run_id, album_id, now)? {
         return Ok(None);
     }
     let destinations: Vec<String> = tx
@@ -1459,6 +1473,9 @@ fn follow_regrouped(
     if target == album_id {
         return Ok(None);
     }
+    let Some(locked) = locked_rows_following(tx, run_id, album_id, target)? else {
+        return Ok(None);
+    };
     let pair = RetagPair {
         old: album_id,
         new: target,
@@ -1486,7 +1503,15 @@ fn follow_regrouped(
             let row = crate::scan::sql::RegroupedCounts::read(row)?;
             Ok((row.moved, row.stayed))
         })?;
-    if waits_for_the_rest(tx, album_id, moved, stayed, &[], now)? {
+    let following = locked.len() as i64;
+    if waits_for_the_rest(
+        tx,
+        album_id,
+        moved + following,
+        stayed - following,
+        &locked,
+        now,
+    )? {
         return Ok(None);
     }
     if chosen_matches_differ(tx, target, album_id)? {
@@ -2092,6 +2117,42 @@ fn held(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Result<bool>
         .query_row(params![run_id, album_id], |row| row.get(0))
 }
 
+/// The rows locked to `album_id` that hold it in the run, when they were
+/// all retagged with the album's other files: each one's own tags give
+/// `target`'s key. A locked row never leaves its album, so it counts as
+/// moved and the album follows. `None` while any other row holds the
+/// album, or a locked one whose tags give another key (it was not
+/// retagged, or not yet read in this run).
+fn locked_rows_following(
+    tx: &Connection,
+    run_id: &str,
+    album_id: &str,
+    target: &str,
+) -> rusqlite::Result<Option<Vec<String>>> {
+    let unlocked: bool = tx
+        .prepare_cached(crate::scan::sql::ALBUM_HELD_UNLOCKED_IN_RUN.text())?
+        .query_row(params![run_id, album_id], |row| row.get(0))?;
+    if unlocked {
+        return Ok(None);
+    }
+    let locked: Vec<String> = tx
+        .prepare_cached(crate::scan::sql::LOCKED_HOLDERS_IN_RUN.text())?
+        .query_map(params![run_id, album_id], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for track_id in &locked {
+        let Some(key) = stored_key(tx, track_id)? else {
+            return Ok(None);
+        };
+        let follows: bool = tx
+            .prepare_cached(crate::scan::sql::ALBUM_HAS_GROUPING_KEY.text())?
+            .query_row(params![target, key], |row| row.get(0))?;
+        if !follows {
+            return Ok(None);
+        }
+    }
+    Ok(Some(locked))
+}
+
 fn retired(tx: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     tx.prepare_cached(crate::scan::sql::RETIRED.text())?
         .query_row(params![album_id], |row| row.get(0))
@@ -2099,7 +2160,10 @@ fn retired(tx: &Connection, album_id: &str) -> rusqlite::Result<bool> {
 
 /// Albums retagged across scans, decided once when a run ends: every album
 /// a departure on record or a move of this run names, that is not retired
-/// and that no track row holds (`holds!`), read in one query.
+/// and that no track row holds (`holds!`) but rows locked to it, read in
+/// one query. An album held by locked rows goes on only to a merge into
+/// one piece whose key every locked row's own tags give
+/// ([`locked_rows_following`]); the locked rows go with it.
 ///
 /// - A pair already on record is left as it is, unless it is still open
 ///   and waiting to be tried again (a store error, live work, work on the
@@ -2141,14 +2205,27 @@ fn join_across_scans(
                 let Some((piece, tracks)) = pieces.iter().next() else {
                     continue;
                 };
+                let Some(locked) = locked_rows_following(tx, run_id, album_id, piece)? else {
+                    continue;
+                };
                 let stayed: i64 = tx
                     .prepare_cached(crate::scan::sql::JOIN_ACROSS_SCANS.text())?
                     .query_row(params![album_id], |row| row.get(0))?;
-                if waits_for_the_rest(tx, album_id, tracks.len() as i64, stayed, &[], now)? {
+                let following = locked.len() as i64;
+                if waits_for_the_rest(
+                    tx,
+                    album_id,
+                    tracks.len() as i64 + following,
+                    stayed - following,
+                    &locked,
+                    now,
+                )? {
                     continue;
                 }
                 (piece.clone(), true)
             }
+            // Rows locked to the album hold it unless it went whole to one piece.
+            _ if held(tx, run_id, album_id)? => continue,
             _ => {
                 let mut left_now = pieces
                     .iter()
@@ -2693,6 +2770,7 @@ fn write_window(
                 moved_from,
                 other_music: replaced,
                 new_copy,
+                locked_off_key,
             }) => {
                 let changed_on_record = item.verdict_counter == Counter::Changed.column()
                     && takeover::has_record(tx, &track_id)?;
@@ -2727,6 +2805,9 @@ fn write_window(
                     && !(item.verdict_counter == Counter::Changed.column()
                         && as_the_app_placed_it(tx, &track_id, item)?);
                 indexed.push((item.root_id.clone(), item.relative_path.clone(), track_id));
+                if locked_off_key {
+                    emptied.push(album_id.clone());
+                }
                 if offer {
                     offered.push(album_id);
                 }
@@ -3069,6 +3150,69 @@ pub(super) fn give_up_window(window: &IndexWindow) -> Option<IndexWindow> {
     Some(given_up)
 }
 
+/// The album names a track row carries. A scan keeps them current on
+/// every read, a locked row's included, so they give the key the file's
+/// tags give now.
+struct StoredAlbumTags {
+    album_id: String,
+    root_id: String,
+    relative_path: String,
+    release_mbid: Option<String>,
+    album_title: String,
+    album_artist: String,
+    from_tags: bool,
+    album_artist_sort: Option<String>,
+    year: Option<i64>,
+    genre: Option<String>,
+    is_compilation: i64,
+}
+
+impl StoredAlbumTags {
+    fn names<'a>(&'a self, directory: &'a str) -> AlbumNames<'a> {
+        AlbumNames {
+            release_mbid: self
+                .release_mbid
+                .as_deref()
+                .map(str::trim)
+                .filter(|mbid| !mbid.is_empty()),
+            from_tags: self.from_tags,
+            directory,
+            title_folded: fold_text(&self.album_title),
+            artist_folded: fold_text(&self.album_artist),
+        }
+    }
+}
+
+fn stored_album_tags(tx: &Connection, track_id: &str) -> rusqlite::Result<Option<StoredAlbumTags>> {
+    tx.prepare_cached(crate::scan::sql::TRACK_ALBUM_TAGS.text())?
+        .query_row(params![track_id, UNKNOWN_ARTIST], |row| {
+            let row = crate::scan::sql::TrackAlbumTags::read(row)?;
+            Ok(StoredAlbumTags {
+                album_id: row.local_album_id,
+                root_id: row.root_id,
+                relative_path: row.relative_path,
+                release_mbid: row.embedded_release_mbid,
+                album_title: row.album_title,
+                album_artist: row.album_artist,
+                from_tags: row.from_tags,
+                album_artist_sort: row.album_artist_sort,
+                year: row.year,
+                genre: row.genre,
+                is_compilation: row.is_compilation,
+            })
+        })
+        .optional()
+}
+
+/// The grouping key a stored track's names give ([`AlbumNames::key`]);
+/// `None` for an unknown track.
+fn stored_key(tx: &Connection, track_id: &str) -> rusqlite::Result<Option<String>> {
+    Ok(stored_album_tags(tx, track_id)?.map(|stored| {
+        let directory = grouping_directory(&stored.relative_path);
+        stored.names(&directory).key()
+    }))
+}
+
 /// Where a scan would file a stored track if no manual grouping held it,
 /// read from the names the catalog row already carries. Used to reset a
 /// manual grouping. Returns the album id and whether that album was
@@ -3084,56 +3228,11 @@ pub(crate) fn automatic_album_for(
     track_id: &str,
     now: f64,
 ) -> rusqlite::Result<Option<(String, bool)>> {
-    struct Stored {
-        album_id: String,
-        root_id: String,
-        relative_path: String,
-        release_mbid: Option<String>,
-        album_title: String,
-        album_artist: String,
-        from_tags: bool,
-        album_artist_sort: Option<String>,
-        year: Option<i64>,
-        genre: Option<String>,
-        is_compilation: i64,
-    }
-    let stored = tx
-        .query_row(
-            crate::scan::sql::TRACK_ALBUM_TAGS.text(),
-            params![track_id, UNKNOWN_ARTIST],
-            |row| {
-                let row = crate::scan::sql::TrackAlbumTags::read(row)?;
-                Ok(Stored {
-                    album_id: row.local_album_id,
-                    root_id: row.root_id,
-                    relative_path: row.relative_path,
-                    release_mbid: row.embedded_release_mbid,
-                    album_title: row.album_title,
-                    album_artist: row.album_artist,
-                    from_tags: row.from_tags,
-                    album_artist_sort: row.album_artist_sort,
-                    year: row.year,
-                    genre: row.genre,
-                    is_compilation: row.is_compilation,
-                })
-            },
-        )
-        .optional()?;
-    let Some(stored) = stored else {
+    let Some(stored) = stored_album_tags(tx, track_id)? else {
         return Ok(None);
     };
     let directory = grouping_directory(&stored.relative_path);
-    let names = AlbumNames {
-        release_mbid: stored
-            .release_mbid
-            .as_deref()
-            .map(str::trim)
-            .filter(|mbid| !mbid.is_empty()),
-        from_tags: stored.from_tags,
-        directory: &directory,
-        title_folded: fold_text(&stored.album_title),
-        artist_folded: fold_text(&stored.album_artist),
-    };
+    let names = stored.names(&directory);
     let place = Place {
         run_id: None,
         root_id: &stored.root_id,
