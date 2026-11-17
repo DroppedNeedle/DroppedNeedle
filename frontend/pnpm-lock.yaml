@@ -51,6 +51,9 @@ importers:
       dompurify:
         specifier: ^3.4.17
         version: 3.4.17
+      gridstack:
+        specifier: ^14.1.1
+        version: 14.1.1
       idb-keyval:
         specifier: ^6.3.0
         version: 6.3.0
@@ -1222,6 +1225,9 @@ packages:
 
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
+
+  gridstack@14.1.1:
+    resolution: {integrity: sha512-7oxosr/htheY2QCgONtyMt/lQAS0z/34aQpib7X/VEDTWsINIiJQ/aI7+yVAvoW1GI7BhRBlbo/gXlXhLM/LOg==}
 
   hashery@1.5.1:
     resolution: {integrity: sha512-iZyKG96/JwPz1N55vj2Ie2vXbhu440zfUfJvSwEqEbeLluk7NnapfGqa7LH0mOsnDxTF85Mx8/dyR6HfqcbmbQ==}
@@ -2859,6 +2865,8 @@ snapshots:
   globals@17.12.0: {}
 
   graceful-fs@4.2.11: {}
+
+  gridstack@14.1.1: {}
 
   hashery@1.5.1:
     dependencies:

@@ -26,9 +26,14 @@
 	import DiscoverTeaserBand from '$lib/features/discover/components/DiscoverTeaserBand.svelte';
 	import { getHomeQuery } from '$lib/features/home/queries/home.svelte';
 	import { useDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
+	import { nowPlayingMerged } from '$lib/features/player/state/nowPlayingMerged.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
+	import HomeGrid from '$lib/features/home/components/HomeGrid.svelte';
+	import HomeWidget from '$lib/features/home/components/HomeWidget.svelte';
+	import { defaultLayout } from '$lib/features/home/layout/defaultLayout';
+	import type { WidgetSpec } from '$lib/features/home/layout/contract';
 
 	useDiscoverActivity(() => ({ feature: 'home' }));
 
@@ -58,6 +63,19 @@
 		library_albums: { link: '/library/albums' }
 	};
 
+	// rows each shelf needs at the measured unit; artists sit shorter than albums,
+	// the track strip shorter still
+	const SHELF_ROWS: Partial<Record<SectionKey, number>> = {
+		trending_artists: 3,
+		library_artists: 3,
+		recently_played: 2
+	};
+
+	const SHELF_MIN_ROWS: Partial<Record<SectionKey, number>> = { recently_played: 2 };
+
+	// the first two shelves are above the fold and load their art eagerly
+	const EAGER_KEYS: SectionKey[] = ['popular_albums', 'trending_artists'];
+
 	function blocks(zone: SectionZone): Block[] {
 		return zoneSections(homeData?.sections, zone).flatMap((entry): Block[] => {
 			const { content, key } = entry;
@@ -86,6 +104,7 @@
 	let downloadClientPrompt = $derived(servicePrompts.find((p) => p.service === 'download-client'));
 	// the welcome card stands in for the other cards until a download source is set
 	let welcome = $derived(!downloadClientConfigured && !!downloadClientPrompt);
+	let nowPlayingSessions = $derived(nowPlayingMerged.sessions);
 
 	const getOtherPrompts = () => {
 		return servicePrompts.filter((p) => p.service !== 'download-client' && !isDismissed(p.service));
@@ -95,6 +114,38 @@
 	function handlePromptDismiss(_service: string) {
 		otherPrompts = getOtherPrompts();
 	}
+
+	function shelfSpec(block: Block): WidgetSpec {
+		return {
+			id: `shelf:${block.key}`,
+			kind: block.kind === 'weekly' ? 'weekly' : 'shelf',
+			height: SHELF_ROWS[block.key],
+			minH: SHELF_MIN_ROWS[block.key]
+		};
+	}
+
+	// page order, with empty blocks left out
+	const widgetSpecs = $derived.by((): WidgetSpec[] => {
+		const specs: WidgetSpec[] = [{ id: 'entry_cards', kind: 'entry_cards' }];
+		if (welcome || otherPrompts.length > 0) specs.push({ id: 'prompts', kind: 'prompts' });
+		if (nowPlayingSessions.length > 0) specs.push({ id: 'now_playing', kind: 'now_playing' });
+		for (const block of whatsHotBlocks) specs.push(shelfSpec(block));
+		specs.push({ id: 'discover_teaser', kind: 'discover_teaser' });
+		for (const block of forYouBlocks) specs.push(shelfSpec(block));
+		if (genreList) specs.push({ id: 'genre_grid', kind: 'genre_grid' });
+		for (const block of postGenreSections) specs.push(shelfSpec(block));
+		return specs;
+	});
+
+	const widgets = $derived(defaultLayout(widgetSpecs));
+
+	const blocksById = $derived.by(() => {
+		const byId: Record<string, Block> = {};
+		for (const block of [...whatsHotBlocks, ...forYouBlocks, ...postGenreSections]) {
+			byId[`shelf:${block.key}`] = block;
+		}
+		return byId;
+	});
 </script>
 
 <svelte:head>
@@ -131,168 +182,124 @@
 		</div>
 	</header>
 
-	<div class="mb-8 px-4 sm:mb-10 sm:px-6 lg:px-8">
-		<HomeEntryCards />
-	</div>
-
 	{#if homeQuery.error && !homeData}
 		<ServiceErrorState error={homeQuery.error} what="Home" onretry={() => homeQuery.refetch()} />
+	{:else if loading && !homeData}
+		<div class="space-y-6 px-4 sm:space-y-8 sm:px-6 lg:px-8">
+			<HomeEntryCards />
+			<section>
+				<div class="skeleton skeleton-shimmer mb-4 h-6 w-40"></div>
+				<CarouselSkeleton />
+			</section>
+			<section>
+				<div class="skeleton skeleton-shimmer mb-4 h-6 w-36"></div>
+				<div class="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-5">
+					{#each Array(10) as _, i (`genre-skeleton-${i}`)}
+						<div class="skeleton skeleton-shimmer h-20 rounded-lg sm:h-24"></div>
+					{/each}
+				</div>
+			</section>
+		</div>
 	{:else}
-		<!-- a render error in any section degrades to the failed card below instead
+		<!-- a render error in any widget degrades to the failed card below instead
 		     of crashing the whole SPA (the #147 freeze) -->
 		<svelte:boundary>
-			<div
-				class="space-y-6 px-4 sm:space-y-8 sm:px-6 lg:px-8"
-				class:is-refreshing={homeData?.refreshing}
-			>
-				{#if welcome && downloadClientPrompt}
-					<Card
-						class="relative overflow-hidden border-2 border-accent/40 bg-linear-to-br from-accent/20 via-accent/10 to-base-200 shadow-xl"
-					>
-						<div class="flex flex-col items-center gap-2 py-6 text-center stagger-fade-in">
-							<Music class="h-16 w-16 mb-4 animate-float text-accent" />
-							<CardTitle class="block text-2xl sm:text-4xl lg:text-5xl font-bold mb-2">
-								Welcome to <span class="text-primary">DroppedNeedle</span>!
-							</CardTitle>
-							<p class="text-muted max-w-lg mb-6">
-								Connect a download source to fetch your requests. Until then, requests wait.
-							</p>
-							<div class="flex flex-wrap justify-center gap-2 mb-6">
-								{#each downloadClientPrompt.features as feature (feature)}
-									<span class="badge badge-accent badge-lg">{feature}</span>
-								{/each}
-							</div>
-							<Button
-								variant="accent"
-								size="lg"
-								icon={Download}
-								href={withBasePath('/settings?tab=download-client')}
-							>
-								Configure Download Client
-							</Button>
-						</div>
-					</Card>
-				{/if}
-
-				{#if otherPrompts.length > 0 && !welcome}
-					<div class="space-y-3">
-						{#each otherPrompts as prompt, i (`prompt-${i}`)}
-							<ServicePromptCard {prompt} ondismiss={handlePromptDismiss} />
-						{/each}
-					</div>
-				{/if}
-
-				<HomeSectionNowPlaying />
-
-				{#if loading && !homeData}
-					<section>
-						<div class="skeleton skeleton-shimmer mb-4 h-6 w-40"></div>
-						<CarouselSkeleton />
-					</section>
-				{:else}
-					{#if whatsHotBlocks.length > 0}
-						<div class="discover-section-enter">
-							{#each whatsHotBlocks as block, i (block.key)}
-								{#if block.kind === 'section'}
+			<div class="px-4 sm:px-6 lg:px-8">
+				<HomeGrid {widgets}>
+					{#snippet children(widget)}
+						<HomeWidget id={widget.id}>
+							{#if widget.kind === 'entry_cards'}
+								<HomeEntryCards />
+							{:else if widget.kind === 'prompts'}
+								<div class="space-y-3">
+									{#if welcome && downloadClientPrompt}
+										<Card
+											class="relative overflow-hidden border-2 border-accent/40 bg-linear-to-br from-accent/20 via-accent/10 to-base-200 shadow-xl"
+										>
+											<div
+												class="flex flex-col items-center gap-2 py-6 text-center stagger-fade-in"
+											>
+												<Music class="h-16 w-16 mb-4 animate-float text-accent" />
+												<CardTitle class="block text-2xl sm:text-4xl lg:text-5xl font-bold mb-2">
+													Welcome to <span class="text-primary">DroppedNeedle</span>!
+												</CardTitle>
+												<p class="text-muted max-w-lg mb-6">
+													Connect a download source to fetch your requests. Until then, requests
+													wait.
+												</p>
+												<div class="flex flex-wrap justify-center gap-2 mb-6">
+													{#each downloadClientPrompt.features as feature (feature)}
+														<span class="badge badge-accent badge-lg">{feature}</span>
+													{/each}
+												</div>
+												<Button
+													variant="accent"
+													size="lg"
+													icon={Download}
+													href={withBasePath('/settings?tab=download-client')}
+												>
+													Configure Download Client
+												</Button>
+											</div>
+										</Card>
+									{/if}
+									{#if otherPrompts.length > 0 && !welcome}
+										{#each otherPrompts as prompt, i (`prompt-${i}`)}
+											<ServicePromptCard {prompt} ondismiss={handlePromptDismiss} />
+										{/each}
+									{/if}
+								</div>
+							{:else if widget.kind === 'now_playing'}
+								<HomeSectionNowPlaying />
+							{:else if widget.kind === 'discover_teaser'}
+								<div class="grid h-full items-center">
+									<DiscoverTeaserBand preview={homeData?.discover_preview ?? null} />
+								</div>
+							{:else if widget.kind === 'genre_grid' && genreList}
+								<GenreGrid title={genreList.title} genres={genreRows(genreList)} />
+							{:else}
+								{@const block = blocksById[widget.id]}
+								{#if block?.kind === 'section'}
 									<HomeSection
 										section={block.section}
 										headerLink={block.link}
 										showPreview={block.showPreview}
-										eager={i < 2}
+										eager={EAGER_KEYS.includes(block.key)}
 										madeFrom="home_shelf"
 									/>
-								{:else}
+								{:else if block?.kind === 'weekly'}
 									<WeeklyExploration section={block.section} madeFrom="home_shelf" />
 								{/if}
-							{/each}
-						</div>
-					{/if}
-
-					{#if !loading || homeData}
-						<div class="discover-section-enter">
-							<DiscoverTeaserBand preview={homeData?.discover_preview ?? null} />
-						</div>
-					{/if}
-
-					{#if forYouBlocks.length > 0}
-						<div class="discover-section-enter">
-							{#each forYouBlocks as block (block.key)}
-								{#if block.kind === 'section'}
-									<HomeSection
-										section={block.section}
-										headerLink={block.link}
-										showPreview={block.showPreview}
-										madeFrom="home_shelf"
-									/>
-								{:else}
-									<WeeklyExploration section={block.section} madeFrom="home_shelf" />
-								{/if}
-							{/each}
-						</div>
-					{/if}
-				{/if}
-
-				{#if loading && !homeData}
-					<section>
-						<div class="skeleton skeleton-shimmer mb-4 h-6 w-36"></div>
-						<div
-							class="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-5"
-						>
-							{#each Array(10) as _, i (`genre-skeleton-${i}`)}
-								<div class="skeleton skeleton-shimmer h-20 rounded-lg sm:h-24"></div>
-							{/each}
-						</div>
-					</section>
-				{:else if genreList}
-					<GenreGrid title={genreList.title} genres={genreRows(genreList)} />
-				{/if}
-
-				{#if loading && !homeData}
-					{#each Array(4) as _, i (`post-genre-skeleton-${i}`)}
-						<section>
-							<div class="skeleton skeleton-shimmer mb-4 h-6 w-32"></div>
-							<CarouselSkeleton showSubtitle={false} />
-						</section>
-					{/each}
-				{:else if postGenreSections.length > 0}
-					<div class="discover-section-enter">
-						{#each postGenreSections as block (block.key)}
-							{#if block.kind === 'section'}
-								<HomeSection
-									section={block.section}
-									headerLink={block.link}
-									madeFrom="home_shelf"
-								/>
 							{/if}
-						{/each}
-					</div>
-				{/if}
-
-				{#if !loading && !hasContent && servicePrompts.length === 0}
-					<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-						<Music class="h-12 w-12 sm:h-16 sm:w-16 mb-4 sm:mb-6" />
-						<h2 class="mb-2 text-center text-3xl font-bold sm:text-4xl lg:text-5xl">
-							Welcome to <span class="text-primary">DroppedNeedle</span>
-						</h2>
-						{#if authStore.isAdmin}
-							<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
-								Your library is empty. Add a library path and start a scan to fill it.
-							</p>
-							<div class="flex flex-wrap justify-center gap-2">
-								<Button variant="primary" href={withBasePath('/settings?tab=library')}>
-									Start scan
-								</Button>
-								<Button variant="ghost" href={withBasePath('/library')}>Go to Library</Button>
-							</div>
-						{:else}
-							<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
-								Your library is being prepared. An admin is setting things up - check back soon.
-							</p>
-							<Button variant="ghost" href={withBasePath('/library')}>Go to Library</Button>
-						{/if}
-					</div>
-				{/if}
+						</HomeWidget>
+					{/snippet}
+				</HomeGrid>
 			</div>
+
+			{#if !hasContent && servicePrompts.length === 0}
+				<div class="flex flex-col items-center justify-center py-12 sm:py-16">
+					<Music class="h-12 w-12 sm:h-16 sm:w-16 mb-4 sm:mb-6" />
+					<h2 class="mb-2 text-center text-3xl font-bold sm:text-4xl lg:text-5xl">
+						Welcome to <span class="text-primary">DroppedNeedle</span>
+					</h2>
+					{#if authStore.isAdmin}
+						<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
+							Your library is empty. Add a library path and start a scan to fill it.
+						</p>
+						<div class="flex flex-wrap justify-center gap-2">
+							<Button variant="primary" href={withBasePath('/settings?tab=library')}>
+								Start scan
+							</Button>
+							<Button variant="ghost" href={withBasePath('/library')}>Go to Library</Button>
+						</div>
+					{:else}
+						<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
+							Your library is being prepared. An admin is setting things up - check back soon.
+						</p>
+						<Button variant="ghost" href={withBasePath('/library')}>Go to Library</Button>
+					{/if}
+				</div>
+			{/if}
 
 			{#snippet failed(_error, reset)}
 				<div class="flex flex-col items-center justify-center py-12 sm:py-16">
