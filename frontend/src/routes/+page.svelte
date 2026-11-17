@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Download, Music, CircleAlert, Settings } from 'lucide-svelte';
+	import { Download, Music, CircleAlert, Settings, Lock, Pencil, Plus } from 'lucide-svelte';
 	import HomeSection from '$lib/features/discover/components/HomeSection.svelte';
 	import ServiceErrorState from '$lib/ui/ServiceErrorState.svelte';
 	import WeeklyExploration from '$lib/features/discover/components/WeeklyExploration.svelte';
@@ -33,7 +33,7 @@
 	import HomeGrid from '$lib/features/home/components/HomeGrid.svelte';
 	import HomeWidget from '$lib/features/home/components/HomeWidget.svelte';
 	import { defaultLayout } from '$lib/features/home/layout/defaultLayout';
-	import type { WidgetSpec } from '$lib/features/home/layout/contract';
+	import type { WidgetPlacement, WidgetSpec } from '$lib/features/home/layout/contract';
 
 	useDiscoverActivity(() => ({ feature: 'home' }));
 
@@ -137,7 +137,99 @@
 		return specs;
 	});
 
-	const widgets = $derived(defaultLayout(widgetSpecs));
+	const labels = $derived.by(() => {
+		const byId: Record<string, string> = {
+			entry_cards: 'Your music',
+			prompts: 'Setup',
+			now_playing: 'Now playing',
+			discover_teaser: 'Picked for you',
+			genre_grid: 'Genres'
+		};
+		for (const block of [...whatsHotBlocks, ...forYouBlocks, ...postGenreSections]) {
+			byId[`shelf:${block.key}`] = block.kind === 'section' ? block.section.title : 'Weekly';
+		}
+		return byId;
+	});
+
+	let layout = $state<WidgetPlacement[]>([]);
+	let hidden = $state<string[]>([]);
+	let editing = $state(false);
+	let confirming = $state<'revert' | 'reset' | null>(null);
+	// locking saves here; revert returns to it
+	let saved = $state<{ layout: WidgetPlacement[]; hidden: string[] }>({ layout: [], hidden: [] });
+
+	// svelte state is a proxy; copy through it, structuredClone rejects proxies
+	const copy = (places: WidgetPlacement[]) => places.map((place) => ({ ...place }));
+
+	// the default layout mirrors the page order, once the data lands
+	let seeded = false;
+	$effect(() => {
+		if (seeded || !homeData) return;
+		seeded = true;
+		layout = defaultLayout(widgetSpecs);
+		saved = { layout: copy(layout), hidden: [] };
+	});
+
+	// a section that appears or vanishes on a refetch joins or leaves the layout
+	$effect(() => {
+		if (!seeded) return;
+		const ids = new Set(widgetSpecs.map((spec) => spec.id));
+		const known = new Set(layout.map((place) => place.id));
+		const missing = widgetSpecs.filter((spec) => !known.has(spec.id));
+		const stale = [...known].some((id) => !ids.has(id));
+		if (missing.length === 0 && !stale) return;
+		const kept = layout.filter((place) => ids.has(place.id));
+		const bottom = kept.reduce((low, place) => Math.max(low, place.y + place.h), 0);
+		layout = [
+			...kept,
+			...defaultLayout(missing).map((place) => ({ ...place, y: place.y + bottom }))
+		];
+		if (stale) hidden = hidden.filter((id) => ids.has(id));
+	});
+
+	const visibleWidgets = $derived(layout.filter((place) => !hidden.includes(place.id)));
+	const hiddenSpecs = $derived(widgetSpecs.filter((spec) => hidden.includes(spec.id)));
+
+	function unlock() {
+		saved = { layout: copy(layout), hidden: [...hidden] };
+		confirming = null;
+		editing = true;
+	}
+
+	function lock() {
+		editing = false;
+		confirming = null;
+		saved = { layout: copy(layout), hidden: [...hidden] };
+	}
+
+	function revert() {
+		layout = copy(saved.layout);
+		hidden = [...saved.hidden];
+		confirming = null;
+	}
+
+	function reset() {
+		layout = defaultLayout(widgetSpecs);
+		hidden = [];
+		confirming = null;
+	}
+
+	function hideWidget(id: string) {
+		if (!hidden.includes(id)) hidden = [...hidden, id];
+	}
+
+	function showWidget(id: string) {
+		const bottom = layout.reduce((low, place) => Math.max(low, place.y + place.h), 0);
+		layout = layout.map((place) => (place.id === id ? { ...place, y: bottom } : place));
+		hidden = hidden.filter((each) => each !== id);
+	}
+
+	function handleLayoutChange(moved: { id: string; x: number; y: number; w: number; h: number }[]) {
+		layout = layout.map((place) => {
+			const next = moved.find((each) => each.id === place.id);
+			return next ? { ...place, ...next } : place;
+		});
+	}
 
 	const blocksById = $derived.by(() => {
 		const byId: Record<string, Block> = {};
@@ -171,14 +263,47 @@
 			{:else if lastUpdated && !loading}
 				<span class="header-meta text-muted">Updated {formatLastUpdated(lastUpdated)}</span>
 			{/if}
-			<a
-				href={withBasePath('/settings?tab=home')}
-				class="header-meta customise ml-auto md:ml-0"
-				title="Choose which sections appear here"
-			>
-				<Settings class="size-4" aria-hidden="true" />
-				Customise
-			</a>
+			<div class="edit-bar header-meta ml-auto md:ml-0">
+				{#if editing}
+					{#if confirming === 'revert'}
+						<span class="edit-question">Revert to the saved layout?</span>
+						<button type="button" class="edit-btn" onclick={revert}>Revert</button>
+						<button type="button" class="edit-btn" onclick={() => (confirming = null)}>
+							Cancel
+						</button>
+					{:else if confirming === 'reset'}
+						<span class="edit-question">Reset to the default layout?</span>
+						<button type="button" class="edit-btn" onclick={reset}>Reset</button>
+						<button type="button" class="edit-btn" onclick={() => (confirming = null)}>
+							Cancel
+						</button>
+					{:else}
+						<button type="button" class="edit-btn" onclick={() => (confirming = 'revert')}>
+							Revert
+						</button>
+						<button type="button" class="edit-btn" onclick={() => (confirming = 'reset')}>
+							Reset
+						</button>
+						<button type="button" class="edit-btn edit-btn--primary" onclick={lock}>
+							<Lock class="size-3.5" aria-hidden="true" /> Lock
+						</button>
+					{/if}
+				{:else}
+					<button type="button" class="edit-btn" onclick={unlock}>
+						<Pencil class="size-3.5" aria-hidden="true" /> Edit layout
+					</button>
+				{/if}
+			</div>
+			{#if !editing}
+				<a
+					href={withBasePath('/settings?tab=home')}
+					class="header-meta customise ml-auto md:ml-0"
+					title="Choose which sections appear here"
+				>
+					<Settings class="size-4" aria-hidden="true" />
+					Customise
+				</a>
+			{/if}
 		</div>
 	</header>
 
@@ -205,9 +330,19 @@
 		     of crashing the whole SPA (the #147 freeze) -->
 		<svelte:boundary>
 			<div class="px-4 sm:px-6 lg:px-8">
-				<HomeGrid {widgets}>
+				{#if editing}
+					<p class="edit-hint">
+						Drag a widget by its grip, resize from the corner, hide what you do not need.
+					</p>
+				{/if}
+				<HomeGrid widgets={visibleWidgets} {editing} onchange={handleLayoutChange}>
 					{#snippet children(widget)}
-						<HomeWidget id={widget.id}>
+						<HomeWidget
+							id={widget.id}
+							label={labels[widget.id] ?? widget.kind}
+							{editing}
+							onhide={hideWidget}
+						>
 							{#if widget.kind === 'entry_cards'}
 								<HomeEntryCards />
 							{:else if widget.kind === 'prompts'}
@@ -274,6 +409,18 @@
 						</HomeWidget>
 					{/snippet}
 				</HomeGrid>
+
+				{#if editing && hiddenSpecs.length > 0}
+					<div class="home-tray">
+						<span class="home-tray-label">Hidden</span>
+						{#each hiddenSpecs as spec (spec.id)}
+							<button type="button" class="home-tray-add" onclick={() => showWidget(spec.id)}>
+								<Plus class="size-3.5" aria-hidden="true" />
+								{labels[spec.id] ?? spec.kind}
+							</button>
+						{/each}
+					</div>
+				{/if}
 			</div>
 
 			{#if !hasContent && servicePrompts.length === 0}
@@ -353,5 +500,81 @@
 	.customise:hover {
 		text-decoration: underline;
 		text-underline-offset: 3px;
+	}
+
+	.edit-bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+	}
+	.edit-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		min-height: 2rem;
+		padding: 0 0.5rem;
+		border: 1px solid var(--dn-edge);
+		border-radius: 0.25rem;
+		font: inherit;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+	.edit-btn:hover {
+		background: var(--dn-action);
+		color: var(--dn-action-content);
+	}
+	.edit-btn--primary {
+		border-color: var(--dn-action);
+		background: var(--dn-action);
+		color: var(--dn-action-content);
+	}
+	.edit-question {
+		color: var(--color-base-content);
+	}
+	.edit-hint {
+		margin-bottom: 0.75rem;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		letter-spacing: 0.04em;
+		color: var(--color-base-content);
+		opacity: 0.72;
+	}
+
+	.home-tray {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 1.25rem;
+		padding: 0.75rem;
+		border: 1px dashed var(--dn-edge);
+		border-radius: 0.375rem;
+	}
+	.home-tray-label {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		opacity: 0.72;
+	}
+	.home-tray-add {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		min-height: 2rem;
+		padding: 0 0.625rem;
+		border: 1px solid var(--dn-edge);
+		border-radius: 0.25rem;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+	.home-tray-add:hover {
+		background: var(--dn-action);
+		color: var(--dn-action-content);
 	}
 </style>
