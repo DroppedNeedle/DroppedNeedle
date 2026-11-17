@@ -334,10 +334,12 @@ droppedneedle_kernel::sql! {
     /// The album one release group (`?1`, any case) opens.
     pub(crate) ALBUM_BY_GROUP = "SELECT " + ALBUM_COLUMNS + " " + ALBUM_JOINS
         + " WHERE a.id = (" + (copy_of_group!("= lower(?1)")) + ") GROUP BY a.id";
-    /// Other listed albums of an album's release group, oldest first.
+    /// Other listed albums of an album's release group, oldest first. The
+    /// provider term on `ae` drops the left join, so the lowered group index
+    /// is searched instead of every album.
     pub(crate) ALBUM_COPIES = "SELECT " + ALBUM_COLUMNS + " " + ALBUM_JOINS
-        + " WHERE ae.release_group_mbid = \
-        (SELECT i.release_group_mbid FROM local_album_external_identities i \
+        + " WHERE " + (musicbrainz!("ae")) + " AND lower(ae.release_group_mbid) = \
+        (SELECT lower(i.release_group_mbid) FROM local_album_external_identities i \
          WHERE i.local_album_id = ? AND " + (musicbrainz!("i")) + ") \
         AND a.id != ? AND " + (owned_album!("a"))
         + " GROUP BY a.id ORDER BY a.created_at ASC, a.id ASC";

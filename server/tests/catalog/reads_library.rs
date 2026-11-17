@@ -1629,6 +1629,29 @@ async fn needs_you_counts_and_lists_only_listed_albums() {
     );
 }
 
+/// Copies of an album share its release group whatever the case each
+/// match row spells it in.
+#[tokio::test]
+async fn copies_match_the_release_group_in_any_case() {
+    let fixture = sqlite_fixture().await;
+    seed(
+        &fixture,
+        "INSERT INTO local_album_external_identities \
+         (local_album_id, provider, release_group_mbid, decision_source, selected_at) \
+         VALUES ('al3', 'musicbrainz', 'RG1', 'manual', 1500)",
+    )
+    .await;
+    let copies: Vec<String> = fixture
+        .catalog
+        .album_copies("al1")
+        .await
+        .expect("copies")
+        .into_iter()
+        .map(|album| album.id)
+        .collect();
+    assert_eq!(copies, ["al3"]);
+}
+
 /// Two copies own one release group and the older has the higher id: the
 /// album status names the copy playback opens, never the lower id.
 #[tokio::test]
