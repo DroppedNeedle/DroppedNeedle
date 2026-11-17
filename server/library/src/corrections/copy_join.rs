@@ -20,7 +20,10 @@
 //! 6. both hands-off (left unmanaged, taken over, or stamped after a retag
 //!    by hand), or neither;
 //! 7. no live work, no retag waiting to be read to its end, and no open
-//!    retag pair on either.
+//!    retag pair on either;
+//! 8. no album-level edit from the tag editor on either: the join would
+//!    carry it onto the other copy's files, and its undo could not take
+//!    it back.
 //!
 //! A pair that fails waits, with nothing recorded, and is tried again at
 //! the next run end. The join is the retag merge's
@@ -91,7 +94,7 @@ fn pass(tx: &Transaction<'_>, now: f64, at: &mut Option<(String, String)>) -> ru
     Ok(())
 }
 
-/// Whether `copy` may join `survivor` on `release` now: rules 3 to 7.
+/// Whether `copy` may join `survivor` on `release` now: rules 3 to 8.
 /// Rules 1 and 2 are the read that paired them.
 fn joinable(
     conn: &Connection,
@@ -119,6 +122,7 @@ fn joinable(
             || live_work(conn, album, now)?
             || awaits_retag(conn, album)?
             || asks(crate::corrections::sql::IN_OPEN_RETAG_PAIR.text(), album)?
+            || asks(crate::corrections::sql::ALBUM_HAS_OVERRIDE.text(), album)?
         {
             return Ok(false);
         }

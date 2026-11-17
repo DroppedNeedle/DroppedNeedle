@@ -1301,6 +1301,19 @@ droppedneedle_kernel::sql! {
     pub(super) RESTORE_MEMBERSHIP = "UPDATE local_tracks SET local_album_id = ?1, \
              membership_source = ?3, membership_locked = ?4, row_revision = row_revision + 1 \
              WHERE id = ?2";
+    /// The aliases that open album `?1`.
+    pub(super) ALBUM_ALIASES = "SELECT alias FROM local_album_aliases \
+             WHERE local_album_id = ?1 ORDER BY alias";
+    /// The albums retired into album `?1`.
+    pub(super) RETIRED_INTO_ALBUM = "SELECT id FROM local_albums \
+             WHERE retired_into_album_id = ?1 ORDER BY id";
+    /// Point alias `?2` back at album `?1` while it opens album `?3`.
+    pub(super) RESTORE_ALIAS = "UPDATE local_album_aliases SET local_album_id = ?1 \
+             WHERE alias = ?2 AND local_album_id = ?3";
+    /// Retire album `?2` into album `?1` again while it is retired into
+    /// album `?3`.
+    pub(super) RESTORE_RETIREE = "UPDATE local_albums SET retired_into_album_id = ?1 \
+             WHERE id = ?2 AND retired_into_album_id = ?3";
     /// Album `?1`'s place in the automatic management queue: whether it is
     /// stamped as retagged by hand.
     pub(super) QUEUE_ROW = "SELECT retag_followed_at IS NOT NULL \

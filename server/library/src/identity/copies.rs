@@ -163,6 +163,14 @@ pub struct JoinedCopy {
     /// there as retagged by hand.
     pub queued: bool,
     pub retag_followed: bool,
+    /// The aliases that opened the copy, which its retirement pointed at
+    /// the album that kept the files.
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    /// The albums retired into the copy earlier, retired into that album
+    /// the same way.
+    #[serde(default)]
+    pub retirees: Vec<String>,
 }
 
 /// How a file was held to its album.
@@ -215,6 +223,11 @@ pub(crate) fn record_copy(
         .prepare_cached(sql::QUEUE_ROW.text())?
         .query_row(params![copy], |row| row.get(0))
         .optional()?;
+    let ids = |statement: &str| -> rusqlite::Result<Vec<String>> {
+        conn.prepare_cached(statement)?
+            .query_map(params![copy], |row| row.get(0))?
+            .collect()
+    };
     Ok(JoinedCopy {
         retired_album_id: copy.to_owned(),
         grouping_locked,
@@ -228,6 +241,8 @@ pub(crate) fn record_copy(
         survivor_exclusion: has(sql::HAS_EXCLUSION.text(), survivor)?,
         queued: queue_row.is_some(),
         retag_followed: queue_row.unwrap_or(false),
+        aliases: ids(sql::ALBUM_ALIASES.text())?,
+        retirees: ids(sql::RETIRED_INTO_ALBUM.text())?,
     })
 }
 
@@ -252,6 +267,8 @@ fn takeover_mark(conn: &Connection, album: &str) -> rusqlite::Result<Option<Take
 /// that kept the files leaves it (a copied takeover mark stays: the app may
 /// rely on it since), its place in the automatic management queue
 /// comes back with its "retagged by hand" stamp, the merged alias goes,
+/// the copy's own aliases and the albums retired into it earlier point at
+/// it again while they still point at the album that kept the files,
 /// and an audit row (`fold_undone`) on the copy keeps the scan's end from
 /// joining it again. The catalog revision moves once.
 ///
@@ -321,6 +338,14 @@ pub fn undo_copy_join(
     }
     tx.prepare_cached(sql::DROP_MERGED_ALIAS.text())?
         .execute(params![copy, survivor])?;
+    for alias in &joined.aliases {
+        tx.prepare_cached(sql::RESTORE_ALIAS.text())?
+            .execute(params![copy, alias, survivor])?;
+    }
+    for retiree in &joined.retirees {
+        tx.prepare_cached(sql::RESTORE_RETIREE.text())?
+            .execute(params![copy, retiree, survivor])?;
+    }
     tx.prepare_cached(sql::TOUCH_ALBUM.text())?
         .execute(params![survivor, crate::clock::ms(now)])?;
     record_action(

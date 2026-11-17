@@ -3767,6 +3767,59 @@ async fn a_copy_kept_apart_stays_apart_after_a_merge() {
     assert_eq!(rig.album_at(&copy_file), "renamed");
 }
 
+/// Copies of one edition wait while either holds an album-level edit from
+/// the tag editor, so the join never carries it onto the other copy's
+/// files. Once it is gone they join, and the Undo points the copy's own
+/// aliases back at it.
+#[tokio::test]
+async fn a_copy_join_waits_on_an_album_edit_and_its_undo_returns_aliases() {
+    let rig = CopyRig::new("copy-join-override").await;
+    let kept_file = rig.plant("a", 1, true);
+    let copy_file = rig.plant("b", 2, true);
+    scan(&rig.library).await;
+    let kept = rig.accept(&[(&kept_file, 1)], 1);
+    let copy = rig.accept(&[(&copy_file, 2)], 2);
+    rig.run(&format!(
+        "INSERT INTO library_management_overrides (id, subject_kind, local_album_id, \
+         field_name, value_json, mode, subject_revision, created_at, updated_at) \
+         VALUES ('edit', 'album', '{copy}', 'title', '\"Dummy (Bonus)\"', 'replace', 1, 1, 1); \
+         INSERT INTO local_album_aliases (alias, local_album_id, kind, created_at) \
+         VALUES ('player-id', '{copy}', 'compat_migration', 1); \
+         CREATE TEMP TABLE earlier AS SELECT * FROM local_albums WHERE id = '{copy}'; \
+         UPDATE earlier SET id = 'earlier', grouping_key = 'earlier', \
+         retired_into_album_id = '{copy}', has_indexed_track = 0; \
+         INSERT INTO local_albums SELECT * FROM earlier; \
+         DROP TABLE earlier; \
+         INSERT INTO local_album_aliases (alias, local_album_id, kind, created_at) \
+         VALUES ('earlier', '{copy}', 'merged_album', 1);"
+    ));
+    let edit_on =
+        || rig.text("SELECT local_album_id FROM library_management_overrides WHERE id = 'edit'");
+    scan(&rig.library).await;
+    assert_eq!(rig.retired(&copy), None, "the copies wait");
+    assert_eq!(edit_on(), Some(copy.clone()), "the edit stays on its copy");
+
+    rig.run("DELETE FROM library_management_overrides WHERE id = 'edit'");
+    scan(&rig.library).await;
+    assert_eq!(rig.retired(&copy), Some(kept.clone()), "the copies join");
+    rig.undo(&rig.join_of(&kept));
+    assert_eq!(
+        rig.text("SELECT local_album_id FROM local_album_aliases WHERE alias = 'player-id'"),
+        Some(copy.clone()),
+        "the copy's alias opens it again"
+    );
+    assert_eq!(
+        rig.retired("earlier"),
+        Some(copy.clone()),
+        "an album joined into the copy earlier is its again"
+    );
+    assert_eq!(
+        rig.text("SELECT local_album_id FROM local_album_aliases WHERE alias = 'earlier'"),
+        Some(copy),
+        "and its old id opens the copy"
+    );
+}
+
 /// The first file of the second window of a 300-file album.
 const SECOND_WINDOW: &str = "t256.flac";
 
