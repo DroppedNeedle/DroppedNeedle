@@ -32,8 +32,8 @@ use crate::common::bundles::quiet_ticks;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use slskd::{
     DownloadPolicy, EnqueueFile, HttpFault, HttpReply, Locator, ReqwestSlskdHttp, SlskdClient,
-    SlskdHttp, SlskdRepository, SlskdSearchResponse, SlskdUserSearchResponse, TaskHandle,
-    aggregate_status, album_query_ladder, match_transfers,
+    SlskdHttp, SlskdRepository, SlskdSearchResponse, SlskdTransfer, SlskdUserSearchResponse,
+    TaskHandle, aggregate_status, album_query_ladder, match_transfers,
 };
 
 fn test_policy() -> DownloadPolicy {
@@ -636,6 +636,63 @@ async fn status_matches_and_judges_each_transfer() {
             .await
             .expect("discard succeeds"),
         "discard"
+    );
+}
+
+/// Track counts exclude sidecars in any transfer state, while the batch
+/// still waits for them and accounts for their bytes and outcomes.
+#[test]
+fn status_counts_audio_tracks_and_accounts_for_sidecar_transfers() {
+    let track = SlskdTransfer {
+        filename: r"Album\01 Track.FLAC".to_owned(),
+        size: 100,
+        bytes_transferred: 100,
+        state: "Completed, Succeeded".to_owned(),
+        ..SlskdTransfer::default()
+    };
+    let cover = SlskdTransfer {
+        filename: r"Album\cover.jpg".to_owned(),
+        size: 25,
+        bytes_transferred: 25,
+        state: "Completed, Succeeded".to_owned(),
+        ..SlskdTransfer::default()
+    };
+    let mut cue = SlskdTransfer {
+        filename: "Album/album.cue".to_owned(),
+        size: 10,
+        bytes_transferred: 5,
+        state: "InProgress".to_owned(),
+        ..SlskdTransfer::default()
+    };
+    let handle = TaskHandle::new(
+        "peer",
+        vec![
+            track.filename.clone(),
+            cover.filename.clone(),
+            cue.filename.clone(),
+        ],
+    );
+
+    let moving = aggregate_status(&handle, &[&track, &cover, &cue]);
+    assert_eq!(moving.status, "downloading");
+    assert!(moving.has_active_transfer);
+    assert_eq!((moving.bytes_downloaded, moving.bytes_total), (130, 135));
+
+    cue.state = "Completed, Errored".to_owned();
+    let partial = aggregate_status(&handle, &[&track, &cover, &cue]);
+    assert_eq!(partial.status, "partial");
+    assert_eq!(
+        partial.succeeded_filenames,
+        [track.filename, cover.filename]
+    );
+    assert_eq!(
+        (
+            partial.files_total,
+            partial.files_completed,
+            partial.files_failed
+        ),
+        (1, 1, 0),
+        "total, completed and failed audio tracks"
     );
 }
 

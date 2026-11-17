@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use droppedneedle_library::tags::format_for_extension;
 use tokio::sync::Semaphore;
 use unicode_normalization::UnicodeNormalization;
 
@@ -78,6 +79,7 @@ pub struct SearchResult {
 pub struct TaskStatus {
     /// `completed` | `partial` | `failed` | `downloading` | `queued`.
     pub status: String,
+    /// Audio files in the batch. Sidecars still count towards bytes and batch status.
     pub files_total: usize,
     pub files_completed: usize,
     pub files_failed: usize,
@@ -775,7 +777,14 @@ fn parse_datetime(text: &str) -> Option<i64> {
 /// to the flag verdict.
 #[must_use]
 pub fn aggregate_status(handle: &TaskHandle, transfers: &[&SlskdTransfer]) -> TaskStatus {
-    let files_total = handle.filenames.len();
+    let is_audio =
+        |filename: &str| format_for_extension(&extension_from_filename(filename)).is_some();
+    let file_count = handle.filenames.len();
+    let files_total = handle
+        .filenames
+        .iter()
+        .filter(|name| is_audio(name))
+        .count();
     let bytes_total: i64 = transfers.iter().map(|transfer| transfer.size).sum();
     let bytes_downloaded: i64 = transfers
         .iter()
@@ -784,11 +793,15 @@ pub fn aggregate_status(handle: &TaskHandle, transfers: &[&SlskdTransfer]) -> Ta
 
     let mut completed = 0;
     let mut failed = 0;
+    let mut audio_completed = 0;
+    let mut audio_failed = 0;
     let mut succeeded_filenames = Vec::new();
     let mut has_active_transfer = false;
     let mut queue_positions: Vec<i64> = Vec::new();
 
-    for transfer in latest_transfer_per_file(transfers) {
+    let latest = latest_transfer_per_file(transfers);
+    for transfer in &latest {
+        let audio = usize::from(is_audio(&transfer.filename));
         let flags = state_flags(&transfer.state);
         if let Some(place) = transfer.place_in_queue
             && place >= 0
@@ -804,9 +817,11 @@ pub fn aggregate_status(handle: &TaskHandle, transfers: &[&SlskdTransfer]) -> Ta
                     has_active_transfer = true;
                 } else {
                     failed += 1;
+                    audio_failed += audio;
                 }
             } else {
                 completed += 1;
+                audio_completed += audio;
                 succeeded_filenames.push(transfer.filename.clone());
             }
         } else if flags.contains("errored")
@@ -821,6 +836,7 @@ pub fn aggregate_status(handle: &TaskHandle, transfers: &[&SlskdTransfer]) -> Ta
             // a terminal count and the task waits out the full queued timeout
             // instead of failing over on the next poll.
             failed += 1;
+            audio_failed += audio;
         } else if flags.contains("inprogress") || flags.contains("initializing") {
             has_active_transfer = true;
         }
@@ -835,12 +851,11 @@ pub fn aggregate_status(handle: &TaskHandle, transfers: &[&SlskdTransfer]) -> Ta
     // Terminal only once every enqueued file has a terminal matched
     // transfer, so a not-yet-materialised record can't trigger a premature
     // terminal state.
-    let latest_count = latest_transfer_per_file(transfers).len();
     let all_terminal = !transfers.is_empty()
-        && (completed + failed) == latest_count
-        && (completed + failed) >= files_total
-        && files_total > 0;
-    let status = if all_terminal && failed == 0 && completed == files_total {
+        && (completed + failed) == latest.len()
+        && (completed + failed) >= file_count
+        && file_count > 0;
+    let status = if all_terminal && failed == 0 && completed == file_count {
         "completed"
     } else if all_terminal && completed > 0 {
         "partial"
@@ -856,8 +871,8 @@ pub fn aggregate_status(handle: &TaskHandle, transfers: &[&SlskdTransfer]) -> Ta
     TaskStatus {
         status,
         files_total,
-        files_completed: completed,
-        files_failed: failed,
+        files_completed: audio_completed,
+        files_failed: audio_failed,
         bytes_total,
         bytes_downloaded,
         progress_percent: progress,

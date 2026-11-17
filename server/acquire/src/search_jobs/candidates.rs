@@ -16,6 +16,7 @@
 //! What cannot be fetched at all (blocklisted, password-protected, past
 //! retention, nothing importable) is never listed.
 
+use droppedneedle_library::tags::format_for_extension;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -561,29 +562,31 @@ fn folder_note(pick: &FolderPick) -> (CandidateTier, CandidateNote) {
     )
 }
 
-/// `FLAC 24-bit`, `MP3 320` and so on, from the folder's files: the lowest
-/// bitrate of lossy files, the highest bit depth of lossless ones.
+/// Use the lowest bitrate of lossy tracks or the highest bit depth of
+/// lossless tracks. When formats differ, list the formats.
 fn soulseek_format(files: &[SearchResult]) -> Option<String> {
-    let first = files.first()?;
-    let extension = first.extension.to_ascii_uppercase();
-    if extension.is_empty() {
-        return None;
+    let audio = files.iter().filter_map(|file| {
+        format_for_extension(&file.extension).map(|format| (format.as_str(), file))
+    });
+    let mut formats: Vec<_> = audio.clone().map(|(format, _)| format).collect();
+    formats.sort_unstable();
+    formats.dedup();
+    let format = *formats.first()?;
+    if formats.len() > 1 {
+        return Some(formats.join(" / ").to_ascii_uppercase());
     }
-    let lossless = matches!(
-        extension.as_str(),
-        "FLAC" | "ALAC" | "WAV" | "APE" | "WV" | "AIFF" | "AIF"
-    );
-    if lossless {
-        let depth = files.iter().filter_map(|file| file.bit_depth).max();
+    let label = format.to_ascii_uppercase();
+    if matches!(format, "flac" | "wav") {
+        let depth = audio.filter_map(|(_, file)| file.bit_depth).max();
         return Some(match depth {
-            Some(depth) if depth > 0 => format!("{extension} {depth}-bit"),
-            _ => extension,
+            Some(depth) if depth > 0 => format!("{label} {depth}-bit"),
+            _ => label,
         });
     }
-    let bitrate = files.iter().filter_map(|file| file.bitrate).min();
+    let bitrate = audio.filter_map(|(_, file)| file.bitrate).min();
     Some(match bitrate {
-        Some(bitrate) if bitrate > 0 => format!("{extension} {bitrate}"),
-        _ => extension,
+        Some(bitrate) if bitrate > 0 => format!("{label} {bitrate}"),
+        _ => label,
     })
 }
 
