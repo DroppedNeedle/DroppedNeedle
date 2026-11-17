@@ -711,6 +711,68 @@ async fn landing_name_and_tag_evidence_decides() {
         files_under(&music, "flac").is_empty(),
         "{case}: nothing imported"
     );
+    // The held file keeps the track matching paired it with, so its owner
+    // can import it, through the import's own checks.
+    let ada = &test_principal("u-ada", Role::User, "sess-ada", SessionKind::Standard);
+    let (status, body) = held_call(&acquire, "GET", "/api/v3/held", None, ada).await;
+    assert_eq!(status, 200, "{case}: {body}");
+    let entry = &body["entries"][0];
+    let file = &entry["files"][0];
+    assert_eq!(
+        file["actions"],
+        serde_json::json!(["import"]),
+        "{case}: {body}"
+    );
+    let import = format!("/api/v3/held/{}/import", entry["id"]);
+    let only = serde_json::json!({ "file_ids": [file["id"]] });
+    let (status, body) = held_call(&acquire, "POST", &import, Some(only), ada).await;
+    assert_eq!(status, 200, "{case}: {body}");
+    assert_eq!(body["imported"], 1, "{case}: {body}");
+    assert_eq!(files_under(&music, "flac").len(), 1, "{case}: imported");
+
+    // Files whose titles name other songs pair with the release's tracks
+    // only past the track gate: held as a whole, with no track to import to.
+    let case = "whole hold paired only past the track gate";
+    let (acquire, _music, _platform) = land_for(
+        new_task("t-far-pairs", GOOD_GROUP),
+        |downloads| {
+            let folder = downloads.join("Portishead - Dummy");
+            vec![
+                land_file(
+                    &folder,
+                    "01 - Mysterons.flac",
+                    "flac_full_01.flac",
+                    "Mysterons",
+                    1,
+                ),
+                land_file(
+                    &folder,
+                    "02 - Sour Times.flac",
+                    "flac_full_02.flac",
+                    "Sour Times",
+                    2,
+                ),
+            ]
+        },
+        |lengths| release(GOOD_RELEASE, GOOD_GROUP, &["Akka", "Jazz"], lengths),
+    )
+    .await;
+    let decided = decisions(&acquire, "t-far-pairs");
+    assert_eq!(decided.len(), 1, "{case}: {decided:?}");
+    assert_eq!(decided[0].0, "held", "{case}: {decided:?}");
+    let (status, body) = held_call(&acquire, "GET", "/api/v3/held", None, ada).await;
+    assert_eq!(status, 200, "{case}: {body}");
+    let files = body["entries"][0]["files"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(files.len(), 2, "{case}: {body}");
+    assert!(
+        files
+            .iter()
+            .all(|file| file["actions"] == serde_json::json!([])),
+        "{case}: {body}"
+    );
 
     // An untagged album in the usual "Artist - Album" folder: the folder
     // names the artist, so it imports.

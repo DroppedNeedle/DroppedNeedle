@@ -444,7 +444,7 @@ impl Reason {
                 "The files are a different kind of release than you asked for (a live album, box set or similar)."
             }
             Self::NotPinnedEdition => {
-                "The files are tagged as another edition than the one this download is for."
+                "The files' tags name a different release from the one this download is for."
             }
             Self::WrongAlbum => "The files belong to a different album by the same artist.",
             Self::QualityRejected => {
@@ -506,7 +506,7 @@ impl Reason {
     pub fn action(self) -> &'static str {
         match self {
             Self::WeakMatch => {
-                "Review the held files: import them if they are right, or discard them."
+                "Review the held files: import the right ones where Import is offered, discard the rest."
             }
             Self::NoArtistEvidence => {
                 "Listen to the held files and import the right ones. With an AcoustID key (Settings > Library), untagged files are checked by their sound."
@@ -526,9 +526,7 @@ impl Reason {
             Self::AlbumVersionOnly => {
                 "Choose Get it from the album on the request to take the album's track as this song."
             }
-            Self::NoRelease => {
-                "Review the held files and import them by hand, or check the album on MusicBrainz."
-            }
+            Self::NoRelease => "Discard them, or ask a curator to match them to the album.",
             Self::NoTracks => "Review the held files, or let DroppedNeedle try another source.",
             Self::VersionLowerQuality => {
                 "Discard it, or choose Use this version to make it your copy; yours goes to the recycle bin."
@@ -605,7 +603,7 @@ impl Reason {
                 "Nothing to do: DroppedNeedle skips this source. If you wanted that release, request it instead."
             }
             Self::NotPinnedEdition => {
-                "Nothing to do: DroppedNeedle skips this source. To accept this edition, change the album's edition first."
+                "Nothing to do: DroppedNeedle skips this source. If they are an edition you want, change the album's edition first."
             }
             Self::QualityRejected => {
                 "Nothing to do: DroppedNeedle tries another source. Widen the quality range in settings to accept files like these."

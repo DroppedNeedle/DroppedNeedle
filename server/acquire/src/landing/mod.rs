@@ -64,6 +64,7 @@ use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, ImportFolder, LibraryManagement,
 };
 use droppedneedle_library::identify::sources::AcoustIdUnavailable;
+use droppedneedle_library::matching::decide::ACCEPT_TRACK;
 use droppedneedle_library::matching::score::MERGE_LOOKUPS;
 use droppedneedle_providers::RequestPriority;
 
@@ -443,7 +444,9 @@ impl LandingService {
                     release_mbid: None,
                     distance: None,
                 };
-                let held = self.hold_decided(task, &target, &landing, &decision).await;
+                let held = self
+                    .hold_decided(task, &target, &landing, &decision, None)
+                    .await;
                 Acted::holding(decision, held)
             }
             None => {
@@ -469,7 +472,9 @@ impl LandingService {
                         .await
                     }
                     _ => {
-                        let held = self.hold_decided(task, &target, &landing, &decision).await;
+                        let held = self
+                            .hold_decided(task, &target, &landing, &decision, Some(&matched))
+                            .await;
                         Acted::holding(decision, held)
                     }
                 }
@@ -639,15 +644,19 @@ impl LandingService {
         .await
     }
 
-    /// Hold every audio file of a decision that holds. Answers how many
-    /// were held, and whether none were because the album already holds
-    /// its one set of files the recipe does not list.
+    /// Hold every audio file of a decision that holds, each with the track
+    /// of the closest release matching paired it with, when that pair is
+    /// within the track gate. A file paired further off stays unpaired, so
+    /// it offers no Import and claims no track in the held list.
+    /// Answers how many were held, and whether none were because the album
+    /// already holds its one set of files the recipe does not list.
     async fn hold_decided(
         &self,
         task: &TaskRow,
         target: &Target,
         landing: &Landing,
         decision: &Decision,
+        matched: Option<&MatchSummary>,
     ) -> (usize, bool) {
         let Outcome::Hold { code, detail } = &decision.outcome else {
             return (0, false);
@@ -655,17 +664,22 @@ impl LandingService {
         if *code == Reason::FormatNotListed && self.format_set_held(task, target).await {
             return (0, true);
         }
+        let found = matched.and_then(MatchSummary::best);
         let held: Vec<Held<'_>> = landing
             .audio
             .iter()
-            .map(|file| Held {
+            .enumerate()
+            .map(|(index, file)| Held {
                 file,
-                track: None,
+                track: found
+                    .and_then(|found| found.scored.pair_for(index))
+                    .filter(|pair| pair.distance <= ACCEPT_TRACK)
+                    .map(|pair| pair.track),
                 code: *code,
                 detail: detail.clone(),
             })
             .collect();
-        (self.hold(task, target, landing, None, held).await, false)
+        (self.hold(task, target, landing, found, held).await, false)
     }
 
     /// Whether this album's open entry already holds copies the recipe does
