@@ -108,7 +108,7 @@ Automatic downloads (a new request, a failover, the Wanted list, an upgrade) tak
 
 - A FLAC above every FLAC step in your list is left out: on Balanced or Efficient 192+, which hold CD quality, that means 24-bit. A custom FLAC step takes only that exact resolution.
 - An MP3 bitrate between your steps is left out.
-- A stray bonus file beside a complete album is left behind, and the album is still taken.
+- When Soulseek files match the requested edition, DroppedNeedle fetches the matching tracks and keeps artwork such as the cover. Extra audio is left behind even when it meets your quality settings.
 - A Soulseek folder with none of the edition's tracks is never taken automatically, even with "never wait"; it still shows under "Pick a source".
 
 A copy outside your list is still shown under "Pick a source", marked "Not in your quality settings". Picking it asks you to confirm, and only that one download skips the check. If only such copies exist, the album waits on the Wanted list and says so. With the Wanted watcher off, it retries up to the limit and then stays failed with that reason. Track requests are not watched.
