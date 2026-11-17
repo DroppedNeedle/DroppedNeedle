@@ -94,13 +94,27 @@ struct Rig {
 /// MusicBrainz tracklist. `review` leaves the look before an automatic
 /// grab on, as saved by default.
 async fn rig(mock: &MockSlskd, review: bool) -> Rig {
-    let db = AcquireDb::scratch().expect("scratch db");
+    let mut albums = FixedAlbums::default();
+    albums.releases.insert(RELEASE.to_owned(), album());
+    rig_with_albums(
+        mock,
+        review,
+        AcquireDb::scratch().expect("scratch db"),
+        Arc::new(albums),
+    )
+    .await
+}
+
+async fn rig_with_albums(
+    mock: &MockSlskd,
+    review: bool,
+    db: AcquireDb,
+    albums: Arc<FixedAlbums>,
+) -> Rig {
     db.add_user("u1", "U", "user").await.expect("user seeds");
     db.add_user("u2", "V", "user").await.expect("user seeds");
     let staging = crate::common::ScratchDir::new("search-jobs-staging");
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
-    let mut albums = FixedAlbums::default();
-    albums.releases.insert(RELEASE.to_owned(), album());
     let settings = droppedneedle_acquire::test_support::scratch_settings(&staging.join("settings"))
         .expect("settings open");
     save_slskd(&settings, &mock.base_url());
@@ -113,7 +127,7 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
         journal.clone(),
         &settings,
         staging.join("unused-mount"),
-        Arc::new(albums),
+        albums,
         None,
         events.clone(),
     )
@@ -153,19 +167,37 @@ async fn look_finishes(updates: &mut Subscription, worker: &DownloadWorker) {
 
 #[tokio::test]
 async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
+    manual_pick(false).await;
+}
+
+#[tokio::test]
+async fn an_exact_manual_pick_still_enqueues_during_a_tracklist_outage() {
+    manual_pick(true).await;
+}
+
+async fn manual_pick(metadata_outage: bool) {
     let mock = MockSlskd::start().await.expect("mock starts");
     mock.script_responses(vec![
         peer("halfway", "@@music\\Massive Attack\\Blue Lines", &[0, 1]),
         peer("complete", "@@music\\MA\\Blue Lines (1991)", &[0, 1, 2, 3]),
     ]);
 
+    let mut albums = FixedAlbums::default();
+    albums.releases.insert(RELEASE.to_owned(), album());
+    let albums = Arc::new(albums);
     let Rig {
         journal,
         staging: _staging,
         worker,
         jobs,
         events,
-    } = rig(&mock, false).await;
+    } = rig_with_albums(
+        &mock,
+        false,
+        AcquireDb::scratch().expect("scratch db"),
+        albums.clone(),
+    )
+    .await;
     let owner = principal("u1");
     let mut updates = events.subscribe(owner.user_id());
     let stranger = principal("u2");
@@ -233,6 +265,9 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
         jobs.pick(&owner, &job_id, 0, false).await,
         Err(SearchJobError::Conflict(_))
     ));
+    albums
+        .unavailable
+        .store(metadata_outage, std::sync::atomic::Ordering::SeqCst);
     worker.run_once(1).await;
     assert_eq!(mock.search_texts().len(), searches_before);
     let handles = journal
@@ -260,8 +295,12 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
         .read("test.plan", move |store| store.task_plan(&plan_task))
         .await
         .expect("plan reads");
-    assert_eq!(plan.release_mbid.as_deref(), Some(RELEASE));
-    assert_eq!(plan.expected_tracks.len(), 4);
+    if metadata_outage {
+        assert!(plan.expected_tracks.is_empty());
+    } else {
+        assert_eq!(plan.release_mbid.as_deref(), Some(RELEASE));
+        assert_eq!(plan.expected_tracks.len(), 4);
+    }
 
     let view = jobs.get(&owner, &job_id).await.expect("job reads");
     assert_eq!(view.row.status, JobStatus::Matched);
@@ -400,6 +439,133 @@ async fn seed_album_task(journal: &Journal, task_id: &'static str, origin: &'sta
         })
         .await
         .expect("task seeds");
+}
+
+/// An unavailable tracklist waits before searching, without asking the owner
+/// to choose blind. Recovery reruns the review and fetches the verified copy.
+#[tokio::test]
+async fn automatic_review_recovers_after_a_tracklist_outage() {
+    use droppedneedle_kernel::test_support::ManualClock;
+    use std::sync::atomic::Ordering;
+
+    let mock = MockSlskd::start().await.expect("mock starts");
+    mock.script_responses(vec![peer("complete", "Share\\Blue Lines", &[0, 1, 2, 3])]);
+    mock.queue_enqueued(true);
+    let scratch = AcquireDb::scratch().expect("scratch db");
+    let clock = Arc::new(ManualClock::at(1_800_000_000_000));
+    let db = AcquireDb::new(scratch.db().clone(), clock.clone());
+    let mut albums = FixedAlbums::default();
+    albums.releases.insert(RELEASE.to_owned(), album());
+    albums.unavailable.store(true, Ordering::SeqCst);
+    let albums = Arc::new(albums);
+    let rig = rig_with_albums(&mock, true, db, albums.clone()).await;
+    let task_id = "0123456789abcdef0123456789abcdef";
+    seed_album_task(&rig.journal, task_id, "user").await;
+
+    rig.worker.run_once(1).await;
+    tokio::time::timeout(crate::common::PATIENCE, async {
+        while rig.worker.reviews_running() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the failed look finishes");
+    let waiting = rig.journal.read_task(task_id).await.unwrap().unwrap();
+    assert_eq!(waiting.status.as_str(), "queued");
+    assert!(
+        waiting.search_job_id.is_none(),
+        "an outage is not a candidate review"
+    );
+    assert!(
+        mock.search_texts().is_empty(),
+        "no search without its tracklist"
+    );
+    assert_eq!(albums.release_calls.load(Ordering::SeqCst), 1);
+    rig.worker.run_once(2).await;
+    assert!(
+        !rig.worker.reviews_running(),
+        "the next pass respects backoff"
+    );
+    assert_eq!(albums.release_calls.load(Ordering::SeqCst), 1);
+
+    albums.unavailable.store(false, Ordering::SeqCst);
+    clock.advance(16 * 60 * 1000);
+    let mut updates = rig.events.subscribe("u1");
+    rig.worker.run_once(3).await;
+    look_finishes(&mut updates, &rig.worker).await;
+    let reviewed = rig.journal.read_task(task_id).await.unwrap().unwrap();
+    assert!(
+        reviewed.candidate_index.is_some(),
+        "the recovered look chooses a complete copy"
+    );
+    rig.worker.run_once(4).await;
+    let downloading = rig.journal.read_task(task_id).await.unwrap().unwrap();
+    assert_eq!(downloading.status.as_str(), "downloading");
+    assert_eq!(
+        albums.release_calls.load(Ordering::SeqCst),
+        2,
+        "the successful tracklist is reused"
+    );
+}
+
+/// A missing or refused tracklist reaches the normal failure path before
+/// either an automatic review or a direct search reaches the source.
+#[tokio::test]
+async fn a_refused_tracklist_fails_without_searching() {
+    use std::sync::atomic::Ordering;
+
+    for (review, answer) in [false, true].into_iter().flat_map(|review| {
+        ["refused", "missing", "empty", "no edition"].map(|answer| (review, answer))
+    }) {
+        let mock = MockSlskd::start().await.expect("mock starts");
+        let mut albums = FixedAlbums::default();
+        albums.refused.store(answer == "refused", Ordering::SeqCst);
+        if answer == "empty" {
+            albums.releases.insert(
+                RELEASE.to_owned(),
+                AlbumRelease {
+                    tracks: Vec::new(),
+                    ..album()
+                },
+            );
+        }
+        let rig = rig_with_albums(
+            &mock,
+            review,
+            AcquireDb::scratch().unwrap(),
+            Arc::new(albums),
+        )
+        .await;
+        let task_id = "0123456789abcdef0123456789abcdef";
+        seed_album_task(&rig.journal, task_id, "user").await;
+        if answer == "no edition" {
+            rig.journal
+                .run("test.no_edition", move |store| {
+                    store.set_task_details(task_id, &TaskDetails::default(), 1_000.0)
+                })
+                .await
+                .expect("release cleared");
+        }
+        rig.worker.run_once(1).await;
+        tokio::time::timeout(crate::common::PATIENCE, async {
+            while rig.worker.reviews_running() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the review finishes");
+        rig.worker.run_once(2).await;
+        let failed = rig.journal.read_task(task_id).await.unwrap().unwrap();
+        assert_eq!(
+            failed.status.as_str(),
+            "failed",
+            "review={review}, answer={answer}"
+        );
+        assert_eq!(failed.outcome_code, Some(Reason::AlbumLookupUnavailable));
+        assert!(failed.search_job_id.is_none());
+        assert!(mock.search_texts().is_empty(), "no blind search");
+        assert!(rig.journal.read_attempts(task_id).await.unwrap().is_empty());
+    }
 }
 
 /// Park `task_id` on a recorded search `job_id` with nothing picked.

@@ -18,6 +18,7 @@ use droppedneedle_acquire::dispatch::{
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::worker::{DownloadWorker, run_startup_recovery};
 use droppedneedle_acquire::downloads::{
+    ExpectedTrack, TaskPlan,
     state::{AttemptDisposition, AttemptState, TaskStatus},
     store::{NewTask, TaskOutcome},
 };
@@ -782,7 +783,23 @@ async fn queued_past_the_wait(
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
     journal
         .run("test.seed", |store| {
-            store.insert_task(&task("t-slow"), 1_800_000_000.0)
+            store.insert_task(&task("t-slow"), 1_800_000_000.0)?;
+            store.set_task_plan(
+                "t-slow",
+                &TaskPlan {
+                    release_mbid: Some("55555555-5555-4555-8555-555555555555".to_owned()),
+                    expected_tracks: vec![ExpectedTrack {
+                        track_number: 1,
+                        disc_number: 1,
+                        title: Some("Track".to_owned()),
+                        duration_seconds: Some(200.0),
+                        recording_mbid: None,
+                        release_track_mbid: None,
+                    }],
+                    ..TaskPlan::default()
+                },
+                1_800_000_000.0,
+            )
         })
         .await
         .unwrap();

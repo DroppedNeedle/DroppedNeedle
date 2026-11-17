@@ -465,7 +465,7 @@ impl Reason {
             Self::NoSource => "No download source had this release.",
             Self::DownloadFailed => "The download did not finish.",
             Self::AlbumLookupUnavailable => {
-                "MusicBrainz could not be reached to find the album this track is on."
+                "MusicBrainz could not provide the album or its tracklist."
             }
             Self::RecordingUnknown => "MusicBrainz does not know this recording any more.",
             Self::NoAlbumForRecording => "MusicBrainz lists no album or single with this track.",

@@ -178,7 +178,7 @@ impl TaskRow {
 /// Optional task detail columns, stamped after insert.
 #[derive(Debug, Clone, Default)]
 pub struct TaskDetails {
-    /// Pinned edition release MBID, when the ask pinned one.
+    /// The edition requested, chosen by the library, or resolved for this task.
     pub release_mbid: Option<String>,
     /// Artist MBID, when known.
     pub artist_mbid: Option<String>,

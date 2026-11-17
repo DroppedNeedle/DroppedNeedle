@@ -21,7 +21,9 @@ use axum::routing::get;
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::journal::Journal;
 use droppedneedle_acquire::downloads::store::NewTask;
-use droppedneedle_acquire::downloads::{DownloadSource, SourceHandle, SourceTag};
+use droppedneedle_acquire::downloads::{
+    DownloadSource, ExpectedTrack, SourceHandle, SourceTag, TaskPlan,
+};
 use droppedneedle_acquire::plugin_source::{PluginDownloadSource, ReleasePolicy};
 use droppedneedle_acquire::slskd::{
     DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
@@ -75,6 +77,34 @@ async fn journal_with_task(task_id: &str, artist: &str, album: &str) -> Arc<Jour
         .await
         .expect("task inserts");
     journal
+}
+
+async fn seed_dummy_tracklist(journal: &Journal, task_id: &'static str) {
+    journal
+        .run("test.seed_tracklist", move |store| {
+            store.set_task_plan(
+                task_id,
+                &TaskPlan {
+                    release_mbid: Some("44444444-4444-4444-8444-444444444444".to_owned()),
+                    expected_tracks: [("Mysterons", 300.0), ("Sour Times", 250.0)]
+                        .into_iter()
+                        .zip(1..)
+                        .map(|((title, duration), track_number)| ExpectedTrack {
+                            track_number,
+                            disc_number: 1,
+                            title: Some(title.to_owned()),
+                            duration_seconds: Some(duration),
+                            recording_mbid: None,
+                            release_track_mbid: None,
+                        })
+                        .collect(),
+                    ..TaskPlan::default()
+                },
+                1_700_000_000.0,
+            )
+        })
+        .await
+        .expect("tracklist seeds");
 }
 
 /// Drive one source the way the worker does and check what every source
@@ -152,6 +182,7 @@ async fn slskd_conforms() {
         },
     );
     let journal = journal_with_task("t-slskd", "Portishead", "Dummy").await;
+    seed_dummy_tracklist(&journal, "t-slskd").await;
     let source = Arc::new(SlskdSource::new(
         Arc::new(repo),
         journal.clone(),
@@ -231,6 +262,7 @@ async fn sabnzbd_conforms() {
         WAIT,
     );
     let journal = journal_with_task("t-sab", "Portishead", "Dummy").await;
+    seed_dummy_tracklist(&journal, "t-sab").await;
     let source = Arc::new(UsenetSource::new(
         UsenetQueue::Sabnzbd(Arc::new(queue)).into(),
         vec![Arc::new(newznab)],
@@ -393,6 +425,25 @@ async fn a_usenet_job_stays_with_the_client_that_took_it() {
     };
 
     rig.save(Some(true), None);
+    let rejected = usenet()
+        .enqueue("t-switch", 0)
+        .await
+        .expect_err("NZBGet cannot automatically fetch an album without a tracklist");
+    assert!(matches!(
+        rejected,
+        SourceError::Rejected {
+            reason: Reason::AlbumLookupUnavailable,
+            ..
+        }
+    ));
+    assert!(
+        rig.nzbget
+            .state()
+            .calls
+            .iter()
+            .all(|call| call.method != "append")
+    );
+    seed_dummy_tracklist(&journal, "t-switch").await;
     let handle = usenet().enqueue("t-switch", 0).await.expect("enqueues");
     assert_eq!(handle.nzo_id, "1", "NZBGet took it: {handle:?}");
 
@@ -433,6 +484,7 @@ async fn a_usenet_job_stays_with_the_client_that_took_it() {
         })
         .await
         .expect("task inserts");
+    seed_dummy_tracklist(&journal, "t-next").await;
     let next = source.enqueue("t-next", 0).await.expect("enqueues");
     assert_eq!(next.nzo_id, "nzo-test-1", "SABnzbd took it: {next:?}");
 
@@ -590,6 +642,7 @@ async fn a_usenet_pick_grabs_through_its_indexer() {
     );
     let client = newznab_indexers().client("dummy", "Dummy", &format!("{indexer}/api"), "NZKEY");
     let journal = journal_with_task("t-grab", "Portishead", "Dummy").await;
+    seed_dummy_tracklist(&journal, "t-grab").await;
     let source = UsenetSource::new(
         UsenetQueue::Sabnzbd(Arc::new(queue)).into(),
         vec![Arc::new(NewznabIndexer::new(
@@ -748,6 +801,7 @@ async fn a_copy_turned_down_as_not_better_is_not_picked_again() {
         no_targets(&journal),
     );
 
+    seed_dummy_tracklist(&journal, "t-next").await;
     let picked = source.enqueue("t-next", 0).await.expect("enqueues");
     assert_eq!(
         picked.release_identity, fresh,

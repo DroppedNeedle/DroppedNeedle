@@ -39,6 +39,12 @@ use serde_json::{Value, json};
 /// not know it", so the default answers nothing.
 #[derive(Debug, Default)]
 pub struct FixedAlbums {
+    /// Whether release lookups temporarily fail instead of returning an answer.
+    pub unavailable: AtomicBool,
+    /// Whether release lookups return a permanent refusal.
+    pub refused: AtomicBool,
+    /// Release lookups made, including failures.
+    pub release_calls: AtomicU64,
     /// Recording MBID to its releases.
     pub recordings: HashMap<String, Vec<ReleaseCandidate>>,
     /// Release MBID to the release.
@@ -60,7 +66,24 @@ impl AlbumLookup for FixedAlbums {
         &'a self,
         release_mbid: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<Option<AlbumRelease>, LookupError>> + Send + 'a>> {
-        Box::pin(async move { Ok(self.releases.get(release_mbid).cloned()) })
+        Box::pin(async move {
+            self.release_calls.fetch_add(1, Ordering::SeqCst);
+            if self.unavailable.load(Ordering::SeqCst) {
+                return Err(droppedneedle_providers::ProviderError::Unavailable {
+                    provider: "musicbrainz",
+                    retry_after: None,
+                }
+                .into());
+            }
+            if self.refused.load(Ordering::SeqCst) {
+                return Err(droppedneedle_providers::ProviderError::BadRequest {
+                    provider: "musicbrainz",
+                    status: 400,
+                }
+                .into());
+            }
+            Ok(self.releases.get(release_mbid).cloned())
+        })
     }
 
     fn first_release_date<'a>(

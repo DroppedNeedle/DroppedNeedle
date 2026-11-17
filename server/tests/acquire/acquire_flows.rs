@@ -59,6 +59,16 @@ const NOW: i64 = 1_700_000_000;
 
 /// One request row in `status`, owned by `user-1`.
 async fn seed_request(store: &RequestStore, key: &str, status: &str, task: Option<&str>) {
+    seed_request_with_release(store, key, status, task, None).await;
+}
+
+async fn seed_request_with_release(
+    store: &RequestStore,
+    key: &str,
+    status: &str,
+    task: Option<&str>,
+    release_mbid: Option<&str>,
+) {
     let record = RequestRecord {
         key: key.to_owned(),
         kind: RequestKind::Album,
@@ -67,7 +77,7 @@ async fn seed_request(store: &RequestStore, key: &str, status: &str, task: Optio
         album_title: "Blue Lines".to_owned(),
         artist_mbid: None,
         year: None,
-        release_mbid: None,
+        release_mbid: release_mbid.map(str::to_owned),
         track_title: None,
         duration_seconds: None,
         track_release_group_mbid: None,
@@ -277,7 +287,8 @@ async fn wanted_with_slskd(db: &AcquireDb, slskd_on: bool) -> Wanted {
 async fn wanted_watch_lifecycle() {
     let db = AcquireDb::scratch().unwrap();
     let rig = wanted(&db).await;
-    seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
+    const RELEASE: &str = "44444444-4444-4444-8444-444444444444";
+    seed_request_with_release(&rig.deps.ledger, "rg-blue", "failed", None, Some(RELEASE)).await;
 
     let first = wanted_tick(NOW, &rig.deps).await;
     assert_eq!(first.enrolled, 1);
@@ -303,6 +314,14 @@ async fn wanted_watch_lifecycle() {
         "a wanted find says so"
     );
     assert_eq!(queued[0].release_group_mbid, "rg-blue");
+    let queued_id = queued[0].id.clone();
+    let details = Journal::new(db.clone(), quiet_ticks())
+        .read("test.wanted_edition", move |store| {
+            store.task_details(&queued_id)
+        })
+        .await
+        .expect("details read");
+    assert_eq!(details.release_mbid.as_deref(), Some(RELEASE));
     let row = rig
         .deps
         .ledger

@@ -111,6 +111,8 @@ Automatic downloads (a new request, a failover, the Wanted list, an upgrade) tak
 - A stray bonus file beside a complete album is left behind, and the album is still taken.
 - A Soulseek folder with none of the edition's tracks is never taken automatically, even with "never wait"; it still shows under "Pick a source".
 
+A request made from an album list uses the saved edition preferences when it has no chosen edition. Automatic album downloads wait for an audio tracklist before searching Soulseek or Usenet. A temporary MusicBrainz outage leaves the download queued and it tries again later. If MusicBrainz refuses the lookup or has no usable tracklist, the download shows the reason and uses the normal retry limit. You can still pick an exact copy yourself. DroppedNeedle checks its files when they arrive.
+
 A copy outside your list is still shown under "Pick a source", marked "Not in your quality settings". Picking it asks you to confirm, and only that one download skips the check. If only such copies exist, the album waits on the Wanted list and says so. With the Wanted watcher off, it retries up to the limit and then stays failed with that reason. Track requests are not watched.
 
 A search doesn't always show a file's format or resolution. If a download turns out not to be on your list, it isn't added to the library: it goes to the held list for you to import or discard, and the next source is tried. An album keeps one held set of these. Once a complete allowed copy imports, the set is discarded, and that download's line on the Downloads page says so. A copy you import from the held list or upload yourself doesn't discard it.

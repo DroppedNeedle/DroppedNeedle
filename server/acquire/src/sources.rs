@@ -170,11 +170,26 @@ async fn task_row(journal: &Arc<Journal>, task_id: &str) -> Result<TaskRow, Sour
 pub(super) async fn resolve_target(
     targets: &Targets,
     task: &TaskRow,
+    allow_missing_album_tracks: bool,
 ) -> Result<SearchTarget, SourceError> {
-    targets.target(task).await.map_err(|error| match error {
+    let target = if allow_missing_album_tracks {
+        targets.target_without_required_tracklist(task).await
+    } else {
+        targets.target(task).await
+    };
+    target.map_err(|error| match error {
         TargetError::Unavailable(reason) => SourceError::Unavailable(reason.to_string()),
+        TargetError::Refused(reason) => SourceError::rejected(reason, reason.to_string()),
         TargetError::LocalFault(detail) => SourceError::LocalFault(detail),
     })
+}
+
+fn require_tracklist(target: &SearchTarget, exact_pin: bool) -> Result<(), SourceError> {
+    if target.track.is_none() && target.tracklist.is_empty() && !exact_pin {
+        let reason = TrackReason::AlbumLookupUnavailable;
+        return Err(SourceError::rejected(reason, reason.to_string()));
+    }
+    Ok(())
 }
 
 /// slskd behind the fetch seam.
@@ -280,7 +295,6 @@ impl SlskdSource {
             return Err(SourceError::Unavailable("slskd not configured".to_owned()));
         }
         let task = task_row(&self.journal, task_id).await?;
-        let target = resolve_target(&self.targets, &task).await?;
         // Blocklisted peer/file pairs never re-enqueue, and neither does a
         // peer this task already tried: a failover walks to the best
         // remaining folder, so the list shrinking under quarantine never
@@ -292,54 +306,6 @@ impl SlskdSource {
         } else {
             blocked.clone()
         };
-        let mut tried = Vec::new();
-        for json in self
-            .journal
-            .read_source_handles(task_id, &SourceTag::Soulseek)
-            .await
-            .map_err(|error| SourceError::LocalFault(error.to_string()))?
-        {
-            match serde_json::from_str::<SourceHandle>(&json) {
-                Ok(handle) => tried.push(handle.username),
-                Err(error) => {
-                    tracing::warn!(task_id, %error, "stored slskd handle does not decode");
-                }
-            }
-        }
-        // After a short landing, the next peer is asked only for the tracks
-        // still missing. With the edition's tracklist
-        // the folder ranker pairs files to those positions; without one,
-        // files are kept by the position their name gives, or kept when it
-        // gives none.
-        let missing = self
-            .journal
-            .read("downloads.missing_positions", {
-                let task_id = task_id.to_owned();
-                move |store| store.missing_positions(&task_id)
-            })
-            .await
-            .map_err(|error| SourceError::LocalFault(error.to_string()))?;
-        let mut target = target;
-        let refill = target.track.is_none() && !missing.is_empty();
-        let missing = if refill {
-            missing
-        } else if target.track.is_none() && target.tracklist.is_empty() {
-            // "Get missing tracks" while MusicBrainz is down: the wanted
-            // positions are matched by file name, as a refill does.
-            std::mem::take(&mut target.wanted)
-                .into_iter()
-                .map(|at| (at.disc, at.track))
-                .collect()
-        } else {
-            missing
-        };
-        let by_name = target.track.is_none() && target.tracklist.is_empty() && !missing.is_empty();
-        if refill && !by_name {
-            target.wanted = missing
-                .iter()
-                .map(|&(disc, track)| TrackPosition { disc, track })
-                .collect();
-        }
         // The folder a person picked from a manual search goes first,
         // minus any file blocklisted since.
         let picked = match pinned(&self.journal, &task, &SourceTag::Soulseek, candidate_index).await
@@ -358,6 +324,41 @@ impl SlskdSource {
             _ => Vec::new(),
         };
         let pinned_pick = !picked.is_empty();
+        let exact_pin = task.picked_by_person && pinned_pick;
+        let target = resolve_target(&self.targets, &task, exact_pin).await?;
+        require_tracklist(&target, exact_pin)?;
+        let mut tried = Vec::new();
+        for json in self
+            .journal
+            .read_source_handles(task_id, &SourceTag::Soulseek)
+            .await
+            .map_err(|error| SourceError::LocalFault(error.to_string()))?
+        {
+            match serde_json::from_str::<SourceHandle>(&json) {
+                Ok(handle) => tried.push(handle.username),
+                Err(error) => {
+                    tracing::warn!(task_id, %error, "stored slskd handle does not decode");
+                }
+            }
+        }
+        // After a short landing, the next peer is asked only for the tracks
+        // still missing. The folder ranker pairs files to those positions.
+        let missing = self
+            .journal
+            .read("downloads.missing_positions", {
+                let task_id = task_id.to_owned();
+                move |store| store.missing_positions(&task_id)
+            })
+            .await
+            .map_err(|error| SourceError::LocalFault(error.to_string()))?;
+        let mut target = target;
+        let refill = target.track.is_none() && !missing.is_empty();
+        if refill {
+            target.wanted = missing
+                .iter()
+                .map(|&(disc, track)| TrackPosition { disc, track })
+                .collect();
+        }
         let payload: Vec<EnqueueFile> = if picked.is_empty() {
             let keep = |hit: &super::slskd::SearchResult| {
                 !blocked.blocks_file(&hit.username, &hit.filename) && !tried.contains(&hit.username)
@@ -377,11 +378,6 @@ impl SlskdSource {
                 .pick
                 .files
                 .iter()
-                .filter(|hit| {
-                    !by_name
-                        || crate::landing::matching::position_in_name(&hit.filename)
-                            .is_none_or(|position| missing.contains(&position))
-                })
                 .map(|hit| EnqueueFile {
                     username: hit.username.clone(),
                     filename: hit.filename.clone(),
@@ -807,9 +803,11 @@ impl UsenetSource {
             }
             Err(error) => return Err(usenet_error(error)),
         }
-        let target = resolve_target(&self.targets, &task).await?;
-        let blocked = blocklist(&self.journal, &SourceTag::Usenet).await?;
         let pinned_pick = matches!(pin, Some(Pin::Release { .. }));
+        let exact_pin = task.picked_by_person && pinned_pick;
+        let target = resolve_target(&self.targets, &task, exact_pin).await?;
+        require_tracklist(&target, exact_pin)?;
+        let blocked = blocklist(&self.journal, &SourceTag::Usenet).await?;
         let pick = match pin {
             // The release a person picked, found again by its identity (even
             // outside the download settings: they judged it): the NZB link

@@ -24,11 +24,11 @@ pub mod soulseek;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use self::lookup::{AlbumLookup, AlbumRelease};
+use self::lookup::{AlbumLookup, AlbumRelease, LookupError};
 use self::reasons::TrackReason;
 use super::downloads::journal::Journal;
 use super::downloads::plan::{ExpectedTrack, TaskPlan, TrackAlbum, TrackPosition};
-use super::downloads::store::{TaskDetails, TaskRow, TrackAlbumColumns};
+use super::downloads::store::{StoreError, TaskDetails, TaskRow, TrackAlbumColumns};
 use super::edition::{EditionBasis, chosen_edition};
 
 /// Release lookups tried for one recording before giving up on an album.
@@ -76,8 +76,22 @@ impl SearchTarget {
 pub enum TargetError {
     /// Try later: MusicBrainz is down.
     Unavailable(TrackReason),
+    /// The provider answered but refused or could not prove the requested identity.
+    Refused(TrackReason),
     /// Our side failed: the journal, or a plan that does not read.
     LocalFault(String),
+}
+
+impl From<lookup::LookupError> for TargetError {
+    fn from(error: lookup::LookupError) -> Self {
+        match error {
+            LookupError::Provider(error) if error.is_retriable() => {
+                Self::Unavailable(TrackReason::AlbumLookupUnavailable)
+            }
+            LookupError::Provider(_) => Self::Refused(TrackReason::AlbumLookupUnavailable),
+            LookupError::Preferences => Self::LocalFault(error.to_string()),
+        }
+    }
 }
 
 /// Works out and remembers each task's target.
@@ -98,6 +112,23 @@ impl Targets {
     /// that does not read is a local fault: the task waits, never runs
     /// without it.
     pub async fn target(&self, task: &TaskRow) -> Result<SearchTarget, TargetError> {
+        self.resolve(task, false).await
+    }
+
+    /// Exact human picks and plugin sources can prepare a transfer
+    /// without a tracklist. The landing still checks the files.
+    pub(super) async fn target_without_required_tracklist(
+        &self,
+        task: &TaskRow,
+    ) -> Result<SearchTarget, TargetError> {
+        self.resolve(task, true).await
+    }
+
+    async fn resolve(
+        &self,
+        task: &TaskRow,
+        allow_missing_album_tracks: bool,
+    ) -> Result<SearchTarget, TargetError> {
         let (details, plan) = {
             let task_id = task.id.clone();
             self.journal
@@ -113,7 +144,16 @@ impl Targets {
         if task.download_type == "track" {
             self.track_target(task, &details, &plan).await
         } else {
-            Ok(self.album_target(task, &details, &plan).await)
+            let (details, plan) =
+                if !allow_missing_album_tracks && album_release_mbid(&details, &plan).is_none() {
+                    self.resolve_default_edition(task)
+                        .await?
+                        .unwrap_or((details, plan))
+                } else {
+                    (details, plan)
+                };
+            self.album_target(task, &details, &plan, allow_missing_album_tracks)
+                .await
         }
     }
 
@@ -160,18 +200,75 @@ impl Targets {
         );
     }
 
+    /// Resolve a group-only ask before searching, and use the edition that
+    /// actually won in the journal if another caller chose one meanwhile.
+    async fn resolve_default_edition(
+        &self,
+        task: &TaskRow,
+    ) -> Result<Option<(TaskDetails, TaskPlan)>, TargetError> {
+        let release_group_mbid = &task.release_group_mbid;
+        let found = match self.lookup.preferred_release(release_group_mbid).await {
+            Ok(Some(found))
+                if found
+                    .release_group_mbid
+                    .eq_ignore_ascii_case(release_group_mbid.trim())
+                    && !found.id.trim().is_empty()
+                    && !found.tracks.is_empty() =>
+            {
+                found
+            }
+            Ok(None) => return Ok(None),
+            Ok(Some(_)) => {
+                tracing::warn!(task_id = %task.id, release_group_mbid, "default edition did not match the requested album or had no audio tracks");
+                return Err(TargetError::Refused(TrackReason::AlbumLookupUnavailable));
+            }
+            Err(error) => {
+                tracing::warn!(task_id = %task.id, release_group_mbid, %error, "default edition lookup failed");
+                return Err(error.into());
+            }
+        };
+        let (task_id, group_mbid) = (task.id.clone(), release_group_mbid.clone());
+        let clock = self.journal.db().clock().clone();
+        self.journal
+            .run("downloads.target.default_edition", move |store| {
+                if !store.get_task(&task_id)?.is_some_and(|row| {
+                    !row.status.is_terminal()
+                        && row.download_type == "album"
+                        && row.release_group_mbid.eq_ignore_ascii_case(&group_mbid)
+                }) {
+                    return Err(StoreError::InvalidTransition(format!(
+                        "task {task_id} cannot take a default album edition"
+                    )));
+                }
+                let mut details = store.task_details(&task_id)?;
+                let mut plan = store.task_plan(&task_id)?;
+                if album_release_mbid(&details, &plan).is_none() {
+                    let release_mbid = found.id.trim().to_ascii_lowercase();
+                    details.release_mbid = Some(release_mbid.clone());
+                    details.year = details.year.or(found.year);
+                    plan.release_mbid = Some(release_mbid);
+                    plan.redirected_from = None;
+                    plan.expected_tracks = expected_tracks(&found);
+                    plan.album_wanted.clear();
+                    plan.planned_album = None;
+                    let now = crate::db::unix_secs_f64(clock.as_ref());
+                    store.set_task_details(&task_id, &details, now)?;
+                    store.set_task_plan(&task_id, &plan, now)?;
+                }
+                Ok(Some((details, plan)))
+            })
+            .await
+            .map_err(|error| TargetError::LocalFault(error.to_string()))
+    }
+
     async fn album_target(
         &self,
         task: &TaskRow,
         details: &TaskDetails,
         plan: &TaskPlan,
-    ) -> SearchTarget {
-        let release = details
-            .release_mbid
-            .clone()
-            .or_else(|| plan.release_mbid.clone())
-            .map(|mbid| mbid.trim().to_ascii_lowercase())
-            .filter(|mbid| !mbid.is_empty());
+        allow_missing_album_tracks: bool,
+    ) -> Result<SearchTarget, TargetError> {
+        let release = album_release_mbid(details, plan);
         let same_release = release
             .as_deref()
             .is_some_and(|release| plan.is_for(release));
@@ -189,35 +286,34 @@ impl Targets {
         if tracklist.is_empty()
             && let Some(release_mbid) = release.as_deref()
         {
-            // An album still downloads when MusicBrainz is down; it is only
-            // ranked on file counts until the tracklist can be read.
             match self.lookup.release(release_mbid).await {
-                Ok(Some(found)) => {
+                Ok(Some(found)) if !found.tracks.is_empty() => {
                     tracklist = expected_tracks(&found);
                     self.keep_tracklist(task, release_mbid, &found.id, &tracklist)
                         .await;
                 }
-                Ok(None) => tracing::warn!(
-                    task_id = %task.id,
-                    release_mbid,
-                    "MusicBrainz does not know the chosen edition; ranking on file counts"
-                ),
-                Err(error) => tracing::warn!(
-                    task_id = %task.id,
-                    %error,
-                    "edition tracklist unavailable; ranking on file counts"
-                ),
+                Ok(_) => {
+                    tracing::warn!(task_id = %task.id, release_mbid, "the chosen edition has no known audio tracklist");
+                    if !allow_missing_album_tracks {
+                        return Err(TargetError::Refused(TrackReason::AlbumLookupUnavailable));
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(task_id = %task.id, %error, "edition tracklist lookup failed");
+                    if !allow_missing_album_tracks {
+                        return Err(error.into());
+                    }
+                }
             }
         }
-        SearchTarget {
+        Ok(SearchTarget {
             artist: task.artist_name.clone(),
             album_title: task.album_title.clone(),
             year: details.year,
-            // Without the tracklist the source matches these by file name.
             wanted,
             tracklist,
             track: None,
-        }
+        })
     }
 
     /// Keep an album's tracklist in its plan, under the release MusicBrainz
@@ -319,14 +415,14 @@ impl Targets {
                 no_album: Some(reason),
             }),
         };
-        let unavailable = |error: lookup::LookupError| {
+        let lookup_failed = |error: LookupError| {
             tracing::warn!(task_id = %task.id, %error, "track album lookup failed");
             TargetError::Unavailable(TrackReason::AlbumLookupUnavailable)
         };
         let candidates = match lookup
             .recording_releases(&recording)
             .await
-            .map_err(unavailable)?
+            .map_err(lookup_failed)?
         {
             None => return Ok(lone(TrackReason::RecordingUnknown)),
             Some(candidates) => candidates,
@@ -347,7 +443,7 @@ impl Targets {
         }
         let order = choose::release_order(&candidates, &library, details.release_mbid.as_deref());
         for (release_mbid, basis) in order.into_iter().take(MAX_RELEASES_TRIED) {
-            let Some(release) = lookup.release(&release_mbid).await.map_err(unavailable)? else {
+            let Some(release) = lookup.release(&release_mbid).await.map_err(lookup_failed)? else {
                 continue;
             };
             let wanted: Vec<TrackPosition> = release
@@ -446,6 +542,18 @@ impl Targets {
             }),
         })
     }
+}
+
+fn album_release_mbid(details: &TaskDetails, plan: &TaskPlan) -> Option<String> {
+    [
+        details.release_mbid.as_deref(),
+        plan.release_mbid.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .find(|mbid| !mbid.is_empty())
+    .map(str::to_ascii_lowercase)
 }
 
 fn same_position(track: &ExpectedTrack, position: TrackPosition) -> bool {

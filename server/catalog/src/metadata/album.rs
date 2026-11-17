@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use droppedneedle_library::edition_prefs::{EditionFacts, Preferences};
 use droppedneedle_providers::degradation::scoped;
 use droppedneedle_providers::musicbrainz::{Criticality, MbRelease, MbReleaseGroup};
 use droppedneedle_providers::{
@@ -90,7 +91,8 @@ pub struct ReleaseSummary {
 }
 
 impl GroupDetail {
-    fn from_wire(group: MbReleaseGroup) -> Self {
+    /// Project the release group for display and default edition selection.
+    pub fn from_wire(group: MbReleaseGroup) -> Self {
         let ranked: Vec<String> = mapping::ranked_releases(&group.releases)
             .into_iter()
             .map(|release| release.id.clone())
@@ -151,6 +153,14 @@ impl GroupDetail {
         }
     }
 
+    /// Editions to try for a new album: the saved preference first, then
+    /// the same bounded tracklist fallbacks as the album page.
+    pub fn default_edition_candidates(&self, prefs: &Preferences) -> Vec<String> {
+        let ranked = self.ranked();
+        let selected = preferred(&ranked, prefs);
+        tracklist_candidates(selected.as_deref(), &ranked)
+    }
+
     /// Releases in rank order.
     fn ranked(&self) -> Vec<&ReleaseSummary> {
         let mut ranked: Vec<&ReleaseSummary> = self
@@ -161,6 +171,40 @@ impl GroupDetail {
         ranked.sort_by_key(|release| release.rank);
         ranked
     }
+}
+
+/// The saved preferences pick the edition, with the catalog rank breaking ties.
+fn preferred(ranked: &[&ReleaseSummary], prefs: &Preferences) -> Option<String> {
+    ranked
+        .iter()
+        .enumerate()
+        .min_by_key(|(rank, release)| {
+            let facts = EditionFacts {
+                status: release.status.as_deref(),
+                formats: release.formats.iter().map(String::as_str).collect(),
+                country: release.country.as_deref(),
+                date: release.date.as_deref(),
+                text: release
+                    .title
+                    .iter()
+                    .chain(release.disambiguation.iter())
+                    .map(String::as_str)
+                    .collect(),
+                types: Vec::new(),
+            };
+            (prefs.key(&facts), *rank)
+        })
+        .map(|(_, release)| release.id.clone())
+}
+
+fn tracklist_candidates(selected: Option<&str>, ranked: &[&ReleaseSummary]) -> Vec<String> {
+    let mut candidates: Vec<String> = selected.into_iter().map(str::to_owned).collect();
+    for release in ranked.iter().take(TRACKLIST_CANDIDATES) {
+        if !candidates.contains(&release.id) {
+            candidates.push(release.id.clone());
+        }
+    }
+    candidates
 }
 
 /// The cached projection of one release lookup. `None` is a miss.
@@ -495,7 +539,12 @@ impl Catalog {
                 .map(|(_, release)| release.id.clone())
         }) {
             (Some(closest), Some("file_count"))
-        } else if let Some(first) = self.preferred(&ranked) {
+        } else if let Some(first) = self
+            .upstream()
+            .settings()
+            .edition_preferences()
+            .and_then(|prefs| preferred(&ranked, &prefs))
+        {
             (Some(first), Some("preferred"))
         } else {
             (None, None)
@@ -508,47 +557,13 @@ impl Catalog {
         })
     }
 
-    /// The edition the saved edition preferences pick, MusicBrainz's rank
-    /// breaking ties: what the page shows, and what a request fetches, for
-    /// an album the library does not hold.
-    fn preferred(&self, ranked: &[&ReleaseSummary]) -> Option<String> {
-        // No pick while the preferences do not read: a default pick is
-        // not the admin's choice.
-        let prefs = self.upstream().settings().edition_preferences()?;
-        ranked
-            .iter()
-            .enumerate()
-            .min_by_key(|(rank, release)| {
-                let facts = droppedneedle_library::edition_prefs::EditionFacts {
-                    status: release.status.as_deref(),
-                    formats: release.formats.iter().map(String::as_str).collect(),
-                    country: release.country.as_deref(),
-                    date: release.date.as_deref(),
-                    text: release
-                        .title
-                        .iter()
-                        .chain(release.disambiguation.iter())
-                        .map(String::as_str)
-                        .collect(),
-                    types: Vec::new(),
-                };
-                (prefs.key(&facts), *rank)
-            })
-            .map(|(_, release)| release.id.clone())
-    }
-
     async fn tracks_for_group(
         &self,
         group: &GroupDetail,
         priority: RequestPriority,
     ) -> Result<AlbumTracksInfo, CatalogError> {
         let selection = self.select_edition(group).await?;
-        let mut candidates: Vec<String> = selection.selected.iter().cloned().collect();
-        for release in group.ranked().into_iter().take(TRACKLIST_CANDIDATES) {
-            if !candidates.contains(&release.id) {
-                candidates.push(release.id.clone());
-            }
-        }
+        let candidates = tracklist_candidates(selection.selected.as_deref(), &group.ranked());
         for candidate in candidates {
             let Some(release) = self.release_detail_at(&candidate, priority).await? else {
                 continue;

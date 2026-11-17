@@ -424,7 +424,7 @@ impl PluginDownloadSource {
             .ok_or_else(|| {
                 SourceError::rejected(Reason::NoSource, format!("unknown download task {task_id}"))
             })?;
-        let target = super::sources::resolve_target(&self.targets, &task).await?;
+        let target = super::sources::resolve_target(&self.targets, &task, true).await?;
         let blocked = super::sources::blocklist(&self.journal, &self.tag).await?;
         let skipped = super::sources::automatic_blocklist(&self.journal, &task, &self.tag).await?;
         let index = candidate_index.max(0) as usize;

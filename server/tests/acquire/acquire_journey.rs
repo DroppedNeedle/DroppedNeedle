@@ -221,7 +221,31 @@ async fn acquire_request_and_follow_approvals() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn acquire_held_request_starts_when_a_source_is_saved() {
-    let app = TestApp::start("held").await;
+    const GROUP: &str = "b1392450-e666-3926-a536-22c65f834433";
+    const RELEASE: &str = "6b1c7d8a-5f0e-4cd3-8e8f-0c1d3a7b9f65";
+    let group: Value =
+        serde_json::from_str(include_str!("../fixtures/catalog/mb_release_group.json"))
+            .expect("group fixture");
+    let mut release: Value =
+        serde_json::from_str(include_str!("../fixtures/catalog/mb_release_cd.json"))
+            .expect("release fixture");
+    release["release-group"] = json!({"id": GROUP});
+    let metadata = axum::Router::new()
+        .route(
+            &format!("/release-group/{GROUP}"),
+            axum::routing::get(move || async move { axum::Json(group) }),
+        )
+        .route(
+            &format!("/release/{RELEASE}"),
+            axum::routing::get(move || async move { axum::Json(release) }),
+        );
+    let (metadata, _server) = droppedneedle_testkit::usenet::serve_loopback(metadata)
+        .await
+        .expect("metadata mock starts");
+    let mut outbound = crate::common::closed_outbound();
+    outbound.musicbrainz = metadata.clone();
+    outbound.brainzmash = metadata;
+    let app = TestApp::start_with("held", outbound).await;
     let admin = app.login_admin().await;
     let molly = app.login_user("molly").await.authorization;
 
@@ -231,9 +255,9 @@ async fn acquire_held_request_starts_when_a_source_is_saved() {
             "/api/v3/requests/albums",
             &[("authorization", molly.as_str())],
             Some(json!({
-                "musicbrainz_id": RG_MBID,
-                "artist": "Massive Attack",
-                "album": "Blue Lines",
+                "musicbrainz_id": GROUP,
+                "artist": "Radiohead",
+                "album": "OK Computer",
             })),
         )
         .await;
@@ -241,7 +265,7 @@ async fn acquire_held_request_starts_when_a_source_is_saved() {
     let (status, body) = app
         .call(
             "POST",
-            &format!("/api/v3/requests/approvals/{RG_MBID}/approve"),
+            &format!("/api/v3/requests/approvals/{GROUP}/approve"),
             &[("authorization", admin.as_str())],
             Some(json!({})),
         )
@@ -287,6 +311,16 @@ async fn acquire_held_request_starts_when_a_source_is_saved() {
     tokio::time::timeout(Duration::from_secs(5), searched)
         .await
         .expect("saving a source starts the held request");
+    let (task_id, _) = journal_tasks(&app.config.library_db_path).remove(0);
+    let plan = app
+        .state()
+        .acquire
+        .journal
+        .read("test.group_plan", move |store| store.task_plan(&task_id))
+        .await
+        .expect("plan reads");
+    assert_eq!(plan.release_mbid.as_deref(), Some(RELEASE));
+    assert_eq!(plan.expected_tracks.len(), 2);
     let (status, body) = app
         .call(
             "GET",

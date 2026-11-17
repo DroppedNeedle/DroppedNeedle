@@ -179,6 +179,7 @@ pub fn acquire_hosted(
             album_lookup: Arc::new(droppedneedle_acquire::target::lookup::live_albums(
                 &providers,
                 mb_source.clone(),
+                &platform.settings,
             )),
             release_poll: Arc::new(droppedneedle_acquire::search::live_release_poll(
                 &providers, mb_source,

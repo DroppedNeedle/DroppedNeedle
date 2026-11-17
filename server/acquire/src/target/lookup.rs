@@ -4,10 +4,12 @@
 //! identity critical: an outage is an error, never an empty answer that
 //! would read as "no album".
 
+use droppedneedle_catalog::metadata::album::GroupDetail;
+use droppedneedle_library::edition_prefs::LivePreferences;
 use futures_util::future::BoxFuture;
 
 use droppedneedle_providers::musicbrainz::{
-    Criticality, LiveSource, MbRelease, MusicBrainzView, parse_year,
+    Criticality, LiveSource, MbRelease, MusicBrainzView, is_valid_mbid, parse_year,
 };
 
 /// Various Artists: a compilation credit that no Soulseek path carries.
@@ -84,9 +86,15 @@ pub struct AlbumRelease {
 }
 
 /// MusicBrainz could not answer.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("musicbrainz lookup failed: {0}")]
-pub struct LookupError(pub String);
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum LookupError {
+    /// MusicBrainz answered with an error or could not be reached.
+    #[error(transparent)]
+    Provider(#[from] droppedneedle_providers::ProviderError),
+    /// Edition preferences could not be read locally.
+    #[error("could not read edition preferences")]
+    Preferences,
+}
 
 /// The MusicBrainz reads acquisition needs.
 pub trait AlbumLookup: Send + Sync {
@@ -103,6 +111,14 @@ pub trait AlbumLookup: Send + Sync {
         release_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<AlbumRelease>, LookupError>>;
 
+    /// The group's preferred release with an audio tracklist.
+    fn preferred_release<'a>(
+        &'a self,
+        _release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<AlbumRelease>, LookupError>> {
+        Box::pin(async { Ok(None) })
+    }
+
     /// A release group's first release date as MusicBrainz gives it
     /// (`YYYY`, `YYYY-MM` or `YYYY-MM-DD`); `None` when the group is
     /// unknown or undated.
@@ -115,13 +131,7 @@ pub trait AlbumLookup: Send + Sync {
 /// [`AlbumLookup`] over the MusicBrainz client.
 pub struct MusicBrainzAlbums {
     client: MusicBrainzView,
-}
-
-impl MusicBrainzAlbums {
-    /// Lookups over one client.
-    pub fn new(client: MusicBrainzView) -> Self {
-        Self { client }
-    }
+    preferences: LivePreferences,
 }
 
 impl AlbumLookup for MusicBrainzAlbums {
@@ -137,8 +147,7 @@ impl AlbumLookup for MusicBrainzAlbums {
                     &["releases", "release-groups"],
                     Criticality::IdentityCritical,
                 )
-                .await
-                .map_err(|error| LookupError(error.to_string()))?;
+                .await?;
             Ok(found.map(|lookup| {
                 lookup
                     .entity
@@ -168,9 +177,48 @@ impl AlbumLookup for MusicBrainzAlbums {
             let found = self
                 .client
                 .lookup_exact_release(release_mbid, Criticality::IdentityCritical)
-                .await
-                .map_err(|error| LookupError(error.to_string()))?;
+                .await?;
             Ok(found.and_then(|lookup| album_release(lookup.entity)))
+        })
+    }
+
+    fn preferred_release<'a>(
+        &'a self,
+        group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<AlbumRelease>, LookupError>> {
+        Box::pin(async move {
+            if !is_valid_mbid(group_mbid) {
+                return Ok(None);
+            }
+            let preferences = self.preferences.current().ok_or(LookupError::Preferences)?;
+            let Some(found) = self
+                .client
+                .lookup_release_group(
+                    group_mbid,
+                    &["media", "releases"],
+                    Criticality::IdentityCritical,
+                )
+                .await?
+            else {
+                return Ok(None);
+            };
+            if !found.entity.id.eq_ignore_ascii_case(group_mbid) {
+                tracing::warn!(
+                    group_mbid,
+                    "MusicBrainz answered for a different release group"
+                );
+                return Ok(None);
+            }
+            let group = GroupDetail::from_wire(found.entity);
+            for candidate in group.default_edition_candidates(&preferences) {
+                if let Some(release) = self.release(&candidate).await?
+                    && release.release_group_mbid.eq_ignore_ascii_case(group_mbid)
+                    && !release.tracks.is_empty()
+                {
+                    return Ok(Some(release));
+                }
+            }
+            Ok(None)
         })
     }
 
@@ -182,8 +230,7 @@ impl AlbumLookup for MusicBrainzAlbums {
             let found = self
                 .client
                 .lookup_release_group(release_group_mbid, &[], Criticality::IdentityCritical)
-                .await
-                .map_err(|error| LookupError(error.to_string()))?;
+                .await?;
             Ok(found
                 .and_then(|lookup| lookup.entity.first_release_date)
                 .filter(|date| !date.trim().is_empty()))
@@ -197,11 +244,15 @@ impl AlbumLookup for MusicBrainzAlbums {
 pub fn live_albums(
     providers: &droppedneedle_providers::Providers,
     source: LiveSource,
+    config: &droppedneedle_kernel::runtime_config::ConfigStore,
 ) -> MusicBrainzAlbums {
-    MusicBrainzAlbums::new(providers.musicbrainz.live(
-        source,
-        droppedneedle_providers::RequestPriority::BackgroundSync,
-    ))
+    MusicBrainzAlbums {
+        client: providers.musicbrainz.live(
+            source,
+            droppedneedle_providers::RequestPriority::BackgroundSync,
+        ),
+        preferences: LivePreferences::new(config),
+    }
 }
 
 /// The wire release as acquisition reads it: audio media only, tracks

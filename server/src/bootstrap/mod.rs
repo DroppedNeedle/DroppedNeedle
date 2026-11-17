@@ -83,7 +83,7 @@ use droppedneedle_kernel::{
     http_client::HttpClientError,
     jobs::queue::Handlers,
     platform::Platform,
-    runtime_config::crypto::CryptoError,
+    runtime_config::{ConfigStore, crypto::CryptoError},
 };
 use droppedneedle_library::wiring::{LibraryServices, LibrarySetup};
 use droppedneedle_media::playback::listening::ListeningStore;
@@ -473,6 +473,7 @@ pub(crate) async fn build_on(
         acquire_ports(
             &library_services,
             &providers,
+            config_store,
             mb_source,
             &plugin_host,
             &collections,
@@ -766,6 +767,7 @@ fn library_ports(
 fn acquire_ports(
     library: &LibraryServices,
     providers: &Arc<Providers>,
+    config: &ConfigStore,
     mb_source: droppedneedle_providers::musicbrainz::LiveSource,
     plugin_host: &Arc<droppedneedle_plugins::host::PluginHost>,
     collections: &Stores,
@@ -782,6 +784,7 @@ fn acquire_ports(
         album_lookup: Arc::new(droppedneedle_acquire::target::lookup::live_albums(
             providers,
             mb_source.clone(),
+            config,
         )),
         release_poll: Arc::new(droppedneedle_acquire::search::live_release_poll(
             providers, mb_source,

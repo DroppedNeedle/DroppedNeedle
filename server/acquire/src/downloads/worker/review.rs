@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::{DownloadWorker, Pass, SourceSet, in_try_order};
 use crate::dispatch::DispatchOrigin;
+use crate::downloads::source_tag::SourceTag;
 use crate::downloads::store::TaskRow;
 use crate::search_jobs::candidates::Pin;
 use crate::search_jobs::review::{ReviewMode, Verdict, verdict};
@@ -46,6 +47,8 @@ fn lock(set: &Mutex<HashSet<String>>) -> MutexGuard<'_, HashSet<String>> {
 
 /// What one look decided.
 enum Reviewed {
+    /// Metadata or the journal could not be read; retry the look later.
+    Deferred,
     /// The task is linked to a candidate or parked; the next pass sees it.
     Recorded,
     /// No look applies or nothing was found: search the usual way.
@@ -88,8 +91,12 @@ impl DownloadWorker {
         let order = pass.config.source_order.clone();
         tokio::spawn(async move {
             let outcome = worker.review(mode, &sources, &order, &task).await;
-            if matches!(outcome, Reviewed::Search) {
-                lock(&worker.reviews.looked).insert(task.id.clone());
+            match outcome {
+                Reviewed::Search => {
+                    lock(&worker.reviews.looked).insert(task.id.clone());
+                }
+                Reviewed::Deferred => worker.backoff(&task.id, worker.now_unix_f64()),
+                Reviewed::Recorded => {}
             }
             lock(&worker.reviews.running).remove(&task.id);
             worker.wake();
@@ -106,15 +113,27 @@ impl DownloadWorker {
         &self,
         mode: ReviewMode,
         sources: &SourceSet,
-        order: &[crate::downloads::source_tag::SourceTag],
+        order: &[SourceTag],
         task: &TaskRow,
     ) -> Reviewed {
-        let target = match self.targets.target(task).await {
+        let uses_native_source = sources
+            .iter()
+            .any(|source| !matches!(source.tag(), SourceTag::Plugin(_)));
+        let target = if uses_native_source {
+            self.targets.target(task).await
+        } else {
+            self.targets.target_without_required_tracklist(task).await
+        };
+        let target = match target {
             Ok(target) if target.track.is_none() => target,
             Ok(_) => return Reviewed::Search,
-            Err(error) => {
-                tracing::warn!(task_id = %task.id, ?error, "search review: target unavailable; searching as usual");
+            Err(crate::target::TargetError::Refused(reason)) => {
+                tracing::warn!(task_id = %task.id, %reason, "search review: metadata refused; allowing the normal failure path");
                 return Reviewed::Search;
+            }
+            Err(error) => {
+                tracing::warn!(task_id = %task.id, ?error, "search review: target unavailable; waiting to retry");
+                return Reviewed::Deferred;
             }
         };
         let release_mbid = {
@@ -134,7 +153,13 @@ impl DownloadWorker {
             }
         };
         let job_id = uuid::Uuid::new_v4().simple().to_string();
-        let ordered: Vec<_> = in_try_order(sources, order).into_iter().cloned().collect();
+        let ordered: Vec<_> = in_try_order(sources, order)
+            .into_iter()
+            .filter(|source| {
+                !target.tracklist.is_empty() || matches!(source.tag(), SourceTag::Plugin(_))
+            })
+            .cloned()
+            .collect();
         let (candidates, _failed) = search_sources(&ordered, &target, &job_id).await;
         let upgrade = task.origin == DispatchOrigin::Upgrade;
         // "Always wait for my pick" covers requests and wanted albums: an

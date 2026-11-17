@@ -311,8 +311,8 @@ async fn check_watch(
                 return Ok(());
             }
             // A cancel between this read and the link fails the link.
-            let generation = row.map(|row| row.generation);
-            let dispatch = album_dispatch(
+            let generation = row.as_ref().map(|row| row.generation);
+            let mut dispatch = album_dispatch(
                 &watch.user_id,
                 &watch.key,
                 &watch.artist_name,
@@ -322,6 +322,7 @@ async fn check_watch(
                 // and the reschedule answers the same task next time.
                 Some(format!("wanted:{}:{}", watch.key, watch.check_count)),
             );
+            dispatch.release_mbid = row.and_then(|row| row.release_mbid);
             match deps.downloads.dispatch(&dispatch).await {
                 Ok(outcome) => {
                     let task_id = outcome.task_id().to_owned();

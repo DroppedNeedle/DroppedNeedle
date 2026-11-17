@@ -2,8 +2,8 @@
 //!
 //! The plan is `download_tasks.plan_json`, written in the transaction
 //! that creates the task (dispatch, a retry's successor) and in the one
-//! that records the track's album or the release MusicBrainz redirected
-//! to. Decoding is strict: an unknown field is an error, so a task whose
+//! that records a default edition, a track's album, or a release redirect.
+//! Decoding is strict: an unknown field is an error, so a task whose
 //! plan does not read waits instead of running as an empty plan. Every
 //! field has a default, so `{}` is the empty plan of a plain download.
 
