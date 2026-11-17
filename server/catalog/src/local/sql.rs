@@ -479,6 +479,16 @@ droppedneedle_kernel::sql! {
     pub(crate) TRACK_HAS_LYRICS = "SELECT EXISTS (SELECT 1 FROM local_tracks t \
         JOIN local_track_lyrics l ON l.local_track_id = t.id \
         WHERE t.id = (" + CURRENT_TRACK + ") AND " + LIVE_TRACK + ")";
+    /// The identity of every live track, for matching an imported
+    /// playlist: id, root-relative path, folded title and folded artist.
+    pub(crate) IMPORT_TRACKS = "SELECT t.id, t.relative_path, t.title_folded, \
+         t.artist_name_folded FROM local_tracks t WHERE " + LIVE_TRACK;
+    pub(crate) row ImportTrack for [IMPORT_TRACKS] {
+        id: String,
+        relative_path: String,
+        title_folded: String,
+        artist_name_folded: Option<String>,
+    }
     /// A page of an album's indexed tracks, disc and track order.
     pub(crate) ALBUM_TRACKS = "SELECT " + TRACK_COLUMNS + " " + TRACK_JOINS
         + " WHERE t.local_album_id = ? AND t.availability = 'indexed' \

@@ -8,23 +8,26 @@
 //! Admins hold one extra right: deleting a playlist with no owner. A private
 //! one is listed to admins only, as a stub; to anyone else it does not exist.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use droppedneedle_auth::users::roles::{Admin, Principal};
 
 use super::CollectionsService;
 use crate::collections::error::CollectionsError;
+use crate::collections::import;
 use crate::collections::models::{
     AddTracksBody, AddTracksResponse, CheckTracksBody, CheckTracksResponse, CoverUploadBody,
-    CreatePlaylistBody, ExportFormat, PlaylistDetail, PlaylistListItem, PlaylistListResponse,
-    PlaylistSummary, PlaylistTrack, RedactedPlaylist, ResolveSourcesResponse, TrackInput,
-    UpdatePlaylistBody, UpdateTrackBody,
+    CreatePlaylistBody, ExportFormat, ImportPlaylistBody, ImportPlaylistResponse, PlaylistDetail,
+    PlaylistListItem, PlaylistListResponse, PlaylistSummary, PlaylistTrack, RedactedPlaylist,
+    ResolveSourcesResponse, TrackInput, UpdatePlaylistBody, UpdateTrackBody,
 };
 use crate::collections::store::PlaylistStore;
 pub use crate::collections::store::playlists::SavedPlaylist;
 use crate::collections::store::playlists::{
     CoverImage, EntryNames, Listed, NewEntry, PlaylistExportRow, PlaylistRow, Written,
 };
+use crate::local::player::PlayerTrack;
+use crate::local::stores::StoreError as LibraryStoreError;
 use crate::metadata::clean_recording;
 use droppedneedle_kernel::playlist_files::{self, Entry};
 
@@ -223,6 +226,37 @@ fn to_entry(input: &TrackInput) -> Result<NewEntry, CollectionsError> {
         library_file_id,
         recording_mbid: input.recording_mbid.as_deref().and_then(clean_recording),
     })
+}
+
+/// A library store failure as the collections error.
+fn library_error(error: LibraryStoreError) -> CollectionsError {
+    match error {
+        LibraryStoreError::Busy(operation) => CollectionsError::Busy { operation },
+        LibraryStoreError::Internal(cause) => CollectionsError::internal(&cause),
+    }
+}
+
+/// The playlist entry for one matched library track, with the file's names
+/// and local id, as a compat client adds files.
+fn import_entry(track: &PlayerTrack) -> NewEntry {
+    NewEntry {
+        track_name: track.title.clone(),
+        artist_name: track.artist_name.clone(),
+        album_name: track.album_title.clone(),
+        album_id: Some(track.album_id.clone()),
+        artist_id: track.artist_id.clone(),
+        track_source_id: Some(track.id.clone()),
+        cover_url: None,
+        source_type: LOCAL_SOURCE.to_owned(),
+        available_sources: Some(vec![LOCAL_SOURCE.to_owned()]),
+        format: Some(track.format.clone()),
+        track_number: i32::try_from(track.track_number).ok(),
+        disc_number: i32::try_from(track.disc_number).ok(),
+        duration: track.duration_seconds,
+        plex_rating_key: None,
+        library_file_id: Some(track.id.clone()),
+        recording_mbid: None,
+    }
 }
 
 impl CollectionsService<'_> {
@@ -496,6 +530,86 @@ impl CollectionsService<'_> {
             is_public: false,
             created_at: at,
             updated_at: at,
+        })
+    }
+
+    /// Import a playlist file into a new private playlist of the caller's.
+    /// Matched tracks are inserted in file order; the first occurrence of
+    /// a track wins and later ones are reported.
+    pub async fn import_playlist_file(
+        &self,
+        user_id: &str,
+        body: &ImportPlaylistBody,
+    ) -> Result<ImportPlaylistResponse, CollectionsError> {
+        let name = clean_name(&body.name)?;
+        if body.content.len() > import::MAX_IMPORT_BYTES {
+            return Err(CollectionsError::invalid(
+                "Playlist file is larger than 2 MB",
+            ));
+        }
+        let mut entries = import::parse(body.format, &body.content);
+        let over_limit = if entries.len() > import::MAX_IMPORT_ENTRIES {
+            entries.split_off(import::MAX_IMPORT_ENTRIES)
+        } else {
+            Vec::new()
+        };
+        let identities = self
+            .state
+            .items
+            .track_identities()
+            .await
+            .map_err(library_error)?;
+        let index = import::ImportIndex::new(identities);
+        let mut matched: Vec<(&import::ParsedEntry, String)> = Vec::new();
+        let mut seen = HashSet::new();
+        let mut unmatched = Vec::new();
+        for entry in &entries {
+            if entry.path.trim().is_empty() {
+                unmatched.push(import::unmatched(entry, "the entry names no file"));
+                continue;
+            }
+            let Some(id) = index.find(entry) else {
+                unmatched.push(import::unmatched(entry, "no local file matches"));
+                continue;
+            };
+            if !seen.insert(id.to_owned()) {
+                unmatched.push(import::unmatched(entry, "already in the file"));
+                continue;
+            }
+            matched.push((entry, id.to_owned()));
+        }
+        for entry in &over_limit {
+            unmatched.push(import::unmatched(entry, "over the 10000 entry limit"));
+        }
+        let ids: Vec<String> = matched.iter().map(|(_, id)| id.clone()).collect();
+        let tracks = self
+            .state
+            .items
+            .tracks_by_ids(&ids)
+            .await
+            .map_err(library_error)?;
+        let by_id: HashMap<String, PlayerTrack> = tracks
+            .into_iter()
+            .map(|track| (track.id.clone(), track))
+            .collect();
+        let mut new_entries = Vec::with_capacity(matched.len());
+        for (entry, id) in &matched {
+            match by_id.get(id) {
+                Some(track) => new_entries.push(import_entry(track)),
+                None => unmatched.push(import::unmatched(entry, "no local file matches")),
+            }
+        }
+        let matched = new_entries.len();
+        let (playlist_id, _) = self
+            .playlists()
+            .owned_by(user_id)
+            .create_with(&name, new_entries)
+            .await?;
+        Ok(ImportPlaylistResponse {
+            playlist_id,
+            name,
+            matched,
+            unmatched,
         })
     }
 

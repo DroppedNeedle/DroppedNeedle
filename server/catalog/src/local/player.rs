@@ -1035,6 +1035,17 @@ impl LocalCatalog {
             .map(unsigned)
     }
 
+    /// The identity of every live track, for matching an imported
+    /// playlist.
+    pub(crate) async fn track_identities(&self) -> Result<Vec<sql::ImportTrack>, StoreError> {
+        self.read("player.track_identities", |conn| {
+            conn.prepare(sql::IMPORT_TRACKS.text())?
+                .query_map([], sql::ImportTrack::read)?
+                .collect::<rusqlite::Result<_>>()
+        })
+        .await
+    }
+
     /// Tracks by id, in no particular order; unknown or unstreamable ids
     /// are absent.
     pub async fn tracks_by_ids(&self, ids: &[String]) -> Result<Vec<PlayerTrack>, StoreError> {

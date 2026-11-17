@@ -15,6 +15,7 @@
 	import { Plus, Lock, TriangleAlert, RefreshCw } from 'lucide-svelte';
 	import SpotifyIcon from '$lib/media/icons/SpotifyIcon.svelte';
 	import PlaylistCard from '$lib/features/playlists/components/PlaylistCard.svelte';
+	import PlaylistImport from '$lib/features/playlists/components/PlaylistImport.svelte';
 	import RedactedPlaylistCard from '$lib/features/playlists/components/RedactedPlaylistCard.svelte';
 	import PlaylistCardSkeleton from '$lib/features/playlists/components/PlaylistCardSkeleton.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -95,6 +96,7 @@
 				<Button variant="primary" size="display" icon={Plus} onclick={() => (showNewInput = true)}>
 					New Playlist
 				</Button>
+				<PlaylistImport />
 				{#if spotifyLinked}
 					<Button variant="outline" size="display" href={withBasePath('/playlists/spotify')}>
 						<SpotifyIcon class="size-5 text-spotify" />

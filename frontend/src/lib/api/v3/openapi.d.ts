@@ -6137,6 +6137,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/playlists/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import a playlist from an M3U or CSV file. */
+        post: operations["import_playlist_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/playlists/{playlist_id}": {
         parameters: {
             query?: never;
@@ -15371,6 +15388,31 @@ export interface components {
              */
             waiting: number;
         };
+        /**
+         * @description File a playlist import is read from.
+         * @enum {string}
+         */
+        ImportFormat: "m3u8" | "csv";
+        /** @description Playlist import body. `content` is capped at 2 MB. */
+        ImportPlaylistBody: {
+            /** @description The file's text. */
+            content: string;
+            /** @description The file's format. */
+            format: components["schemas"]["ImportFormat"];
+            /** @description Name for the new playlist. Must not be blank. */
+            name: string;
+        };
+        /** @description Playlist import answer. */
+        ImportPlaylistResponse: {
+            /** @description Entries that became playlist tracks. */
+            matched: number;
+            /** @description Its name as stored. */
+            name: string;
+            /** @description The new playlist's id. */
+            playlist_id: string;
+            /** @description Entries that did not, in file order. */
+            unmatched: components["schemas"]["ImportUnmatched"][];
+        };
         /** @description Receipt for a playlist import into the local catalog. */
         ImportResult: {
             /** @description True when this exact playlist was already imported. */
@@ -15387,6 +15429,15 @@ export interface components {
              * @description Tracks imported.
              */
             tracks_imported: number;
+        };
+        /** @description One entry an import could not match. */
+        ImportUnmatched: {
+            /** @description Artist the file gave, empty when it gave none. */
+            artist: string;
+            /** @description Why the entry was left out. */
+            reason: string;
+            /** @description Title the file gave, or its file name when it gave none. */
+            title: string;
         };
         /** @description Import a batch of accounts from one provider. */
         ImportUsersRequest: {
@@ -41715,6 +41766,48 @@ export interface operations {
                 };
             };
             /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    import_playlist_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportPlaylistBody"];
+            };
+        };
+        responses: {
+            /** @description The new playlist and the match report */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportPlaylistResponse"];
+                };
+            };
+            /** @description Bad body, blank name, or a file over 2 MB */
             400: {
                 headers: {
                     [name: string]: unknown;

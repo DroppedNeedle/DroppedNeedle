@@ -21,12 +21,12 @@ use super::{
     models::{
         AddTracksBody, AddTracksResponse, CheckTracksBody, CheckTracksResponse, CoverUploadBody,
         CoverUploadResponse, CreatePlaylistBody, ExportFormat, ExportQuery, FavoriteStatusResponse,
-        FollowStatusResponse, FollowedArtistListResponse, NewReleaseListResponse, PlaylistDetail,
-        PlaylistListResponse, PlaylistSummary, PlaylistTrack, RatingLookupBody,
-        RatingLookupResponse, RatingStatusResponse, RecentReleasesQuery, RemoveTracksBody,
-        RemoveTracksResponse, ReorderBody, ReorderResponse, ResolveSourcesResponse,
-        SetFavoriteBody, SetRatingBody, StatusResponse, UnseenCountResponse, UpdatePlaylistBody,
-        UpdateTrackBody, VisibilityBody,
+        FollowStatusResponse, FollowedArtistListResponse, ImportPlaylistBody,
+        ImportPlaylistResponse, NewReleaseListResponse, PlaylistDetail, PlaylistListResponse,
+        PlaylistSummary, PlaylistTrack, RatingLookupBody, RatingLookupResponse,
+        RatingStatusResponse, RecentReleasesQuery, RemoveTracksBody, RemoveTracksResponse,
+        ReorderBody, ReorderResponse, ResolveSourcesResponse, SetFavoriteBody, SetRatingBody,
+        StatusResponse, UnseenCountResponse, UpdatePlaylistBody, UpdateTrackBody, VisibilityBody,
     },
     service::CollectionsService,
     state::CollectionsState,
@@ -82,6 +82,29 @@ pub async fn create_playlist_handler(
         .create_playlist(caller.user_id(), &body)
         .await?;
     Ok((StatusCode::CREATED, Json(detail)))
+}
+
+/// Import a playlist from an M3U or CSV file.
+#[utoipa::path(
+    post,
+    path = "/api/v3/playlists/import",
+    tag = "collections",
+    request_body = ImportPlaylistBody,
+    responses(
+        (status = 201, description = "The new playlist and the match report", body = ImportPlaylistResponse),
+        (status = 400, description = "Bad body, blank name, or a file over 2 MB"),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn import_playlist_handler(
+    State(state): State<CollectionsState>,
+    User(caller): User,
+    ValidJson(body): ValidJson<ImportPlaylistBody>,
+) -> HttpResult<(StatusCode, Json<ImportPlaylistResponse>)> {
+    let imported = CollectionsService::new(&state)
+        .import_playlist_file(caller.user_id(), &body)
+        .await?;
+    Ok((StatusCode::CREATED, Json(imported)))
 }
 
 /// Read one playlist.

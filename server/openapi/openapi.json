@@ -23825,6 +23825,64 @@
         ]
       }
     },
+    "/api/v3/playlists/import": {
+      "post": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Import a playlist from an M3U or CSV file.",
+        "operationId": "import_playlist_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportPlaylistBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new playlist and the match report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportPlaylistResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body, blank name, or a file over 2 MB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/playlists/{playlist_id}": {
       "get": {
         "tags": [
@@ -47923,6 +47981,69 @@
           }
         }
       },
+      "ImportFormat": {
+        "type": "string",
+        "description": "File a playlist import is read from.",
+        "enum": [
+          "m3u8",
+          "csv"
+        ]
+      },
+      "ImportPlaylistBody": {
+        "type": "object",
+        "description": "Playlist import body. `content` is capped at 2 MB.",
+        "required": [
+          "name",
+          "format",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The file's text."
+          },
+          "format": {
+            "$ref": "#/components/schemas/ImportFormat",
+            "description": "The file's format."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name for the new playlist. Must not be blank."
+          }
+        }
+      },
+      "ImportPlaylistResponse": {
+        "type": "object",
+        "description": "Playlist import answer.",
+        "required": [
+          "playlist_id",
+          "name",
+          "matched",
+          "unmatched"
+        ],
+        "properties": {
+          "matched": {
+            "type": "integer",
+            "description": "Entries that became playlist tracks.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name as stored."
+          },
+          "playlist_id": {
+            "type": "string",
+            "description": "The new playlist's id."
+          },
+          "unmatched": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportUnmatched"
+            },
+            "description": "Entries that did not, in file order."
+          }
+        }
+      },
       "ImportResult": {
         "type": "object",
         "description": "Receipt for a playlist import into the local catalog.",
@@ -47950,6 +48071,29 @@
             "type": "integer",
             "format": "int64",
             "description": "Tracks imported."
+          }
+        }
+      },
+      "ImportUnmatched": {
+        "type": "object",
+        "description": "One entry an import could not match.",
+        "required": [
+          "title",
+          "artist",
+          "reason"
+        ],
+        "properties": {
+          "artist": {
+            "type": "string",
+            "description": "Artist the file gave, empty when it gave none."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the entry was left out."
+          },
+          "title": {
+            "type": "string",
+            "description": "Title the file gave, or its file name when it gave none."
           }
         }
       },
