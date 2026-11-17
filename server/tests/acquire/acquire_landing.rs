@@ -952,6 +952,169 @@ async fn landing_name_and_tag_evidence_decides() {
     assert!(downloads.is_dir(), "{case}: the downloads folder stays");
 }
 
+/// Land two files by Fleetwood Mac for the album `wanted`, whose album tag
+/// says `album`, carrying `group` as their release-group id when given,
+/// matched against a release of `wanted` that fits their lengths.
+async fn land_album_tagged(
+    task_id: &str,
+    wanted: &str,
+    album: &str,
+    group: Option<&str>,
+) -> (droppedneedle_acquire::AcquireSetup, PathBuf, Grounds) {
+    let task = NewTask {
+        artist_name: "Fleetwood Mac".to_owned(),
+        album_title: wanted.to_owned(),
+        ..new_task(task_id, GOOD_GROUP)
+    };
+    land_for(
+        task,
+        |downloads| {
+            let folder = downloads.join("album");
+            let files = vec![
+                land_file(
+                    &folder,
+                    "01 - Mysterons.flac",
+                    "flac_full_01.flac",
+                    "Mysterons",
+                    1,
+                ),
+                land_file(
+                    &folder,
+                    "02 - Sour Times.flac",
+                    "flac_full_02.flac",
+                    "Sour Times",
+                    2,
+                ),
+            ];
+            for path in &files {
+                let mut edits = vec![
+                    TagEdit::new(TagField::Artist, vec!["Fleetwood Mac".to_owned()]),
+                    TagEdit::new(TagField::AlbumArtist, vec!["Fleetwood Mac".to_owned()]),
+                    TagEdit::new(TagField::Album, vec![album.to_owned()]),
+                ];
+                if let Some(group) = group {
+                    edits.push(TagEdit::new(
+                        TagField::MusicBrainzReleaseGroupId,
+                        vec![group.to_owned()],
+                    ));
+                }
+                save_tags(path, &edits).expect("tags save");
+            }
+            files
+        },
+        |lengths| {
+            let mut found = release(
+                GOOD_RELEASE,
+                GOOD_GROUP,
+                &["Mysterons", "Sour Times"],
+                lengths,
+            );
+            found.title = wanted.to_owned();
+            found.artists[0].name = "Fleetwood Mac".to_owned();
+            found
+        },
+    )
+    .await
+}
+
+/// Files whose album tag spells the requested title another way, or that
+/// carry the requested release group, are the requested album; another
+/// album by the artist, a numbered sequel, or the album's live album is
+/// still turned down.
+#[tokio::test]
+async fn an_album_tag_spelled_another_way_is_still_the_album() {
+    let case = "album tag spelled another way";
+    let (acquire, music, _platform) =
+        land_album_tagged("t-rumors", "Rumours", "Rumors", None).await;
+    assert_eq!(
+        decisions(&acquire, "t-rumors"),
+        vec![("imported".to_owned(), None)],
+        "{case}"
+    );
+    assert_eq!(files_under(&music, "flac").len(), 2, "{case}");
+    let quarantined: i64 = acquire
+        .db
+        .db()
+        .one("SELECT COUNT(*) FROM download_quarantine", []);
+    assert_eq!(quarantined, 0, "{case}");
+
+    let not_wrong_album = [
+        (
+            "files tagged with the requested group",
+            "t-rumoured",
+            "Rumours",
+            "Rumoured Hearts",
+            Some(GOOD_GROUP),
+        ),
+        (
+            "an apostrophe left out",
+            "t-whats",
+            "What's Going On",
+            "Whats Going On",
+            None,
+        ),
+        (
+            "volume spelled out",
+            "t-volume",
+            "Kill Bill Vol. 1",
+            "Kill Bill Volume 1",
+            None,
+        ),
+    ];
+    for (case, task_id, wanted, album, group) in not_wrong_album {
+        let (acquire, _music, _platform) = land_album_tagged(task_id, wanted, album, group).await;
+        let decided = decisions(&acquire, task_id);
+        assert!(
+            !decided
+                .iter()
+                .any(|(_, code)| code.as_deref() == Some("wrong_album")),
+            "{case}: {decided:?}"
+        );
+    }
+
+    let refused = [
+        (
+            "another album by the artist",
+            "t-tusk",
+            "Rumours",
+            "Tusk",
+            "wrong_album",
+        ),
+        (
+            "the next volume",
+            "t-illusion",
+            "Use Your Illusion I",
+            "Use Your Illusion II",
+            "wrong_album",
+        ),
+        (
+            "a numbered sequel",
+            "t-hits",
+            "Greatest Hits",
+            "Greatest Hits II",
+            "wrong_album",
+        ),
+        (
+            "the album's live album",
+            "t-live",
+            "Rumours",
+            "Rumours Live",
+            "wrong_edition",
+        ),
+    ];
+    let mut not_refused = Vec::new();
+    for (case, task_id, wanted, album, code) in refused {
+        let (acquire, music, _platform) = land_album_tagged(task_id, wanted, album, None).await;
+        let decided = decisions(&acquire, task_id);
+        if decided != vec![("rejected".to_owned(), Some(code.to_owned()))]
+            || !files_under(&music, "flac").is_empty()
+        {
+            not_refused.push((case, decided));
+        }
+    }
+    assert!(not_refused.is_empty(), "{not_refused:?}");
+}
+
 /// Remove a landed file's names and numbers, as a rip that was never
 /// tagged comes: only the file name and its folders say what it is.
 fn untag(path: &Path) {

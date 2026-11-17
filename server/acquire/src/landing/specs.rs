@@ -34,7 +34,7 @@ use droppedneedle_library::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK};
 use droppedneedle_library::matching::model::credit_text;
 use droppedneedle_library::matching::score::{NAME_GATE, SAME_MASTER_SECS, Support, TrackPair};
 use droppedneedle_library::matching::strings::{
-    artist_subset, fold, string_dist, strip_edition_words,
+    artist_subset, basic_dist, fold, string_dist, strip_edition_words,
 };
 
 /// What a rejection means for retry and failover.
@@ -560,12 +560,17 @@ const NOISE_WORDS: &[&str] = &[
     "res",
     "bit",
     "khz",
+    "vol",
+    "volume",
 ];
 
-/// Most tagged files name another album by the same artist: their
-/// album titles carry words the
-/// requested title does not. Untagged files never count, so an untagged
-/// rip falls through to matching.
+/// Most tagged files name another album by the same artist: their album
+/// titles carry a word the requested title does not. A word of five
+/// letters or more spelled close to one of the requested title's
+/// ("Rumors" for "Rumours") is not another word; shorter words and
+/// numerals must match exactly, so "II" is not "I". A file tagged with the
+/// requested release group is never a different album. Untagged files
+/// never count, so an untagged rip falls through to matching.
 struct WrongAlbum;
 
 impl ImportSpec for WrongAlbum {
@@ -592,6 +597,19 @@ impl ImportSpec for WrongAlbum {
         let wrong = tagged
             .iter()
             .filter(|file| {
+                let own_group = file
+                    .tag
+                    .musicbrainz_release_group_id
+                    .as_deref()
+                    .is_some_and(|group| {
+                        !target.release_group_mbid.is_empty()
+                            && group
+                                .trim()
+                                .eq_ignore_ascii_case(&target.release_group_mbid)
+                    });
+                if own_group {
+                    return false;
+                }
                 let artist = file
                     .tag
                     .album_artist
@@ -603,7 +621,7 @@ impl ImportSpec for WrongAlbum {
                 same_artist
                     && content_words(album_tag(file), &artist_words)
                         .iter()
-                        .any(|word| !wanted.contains(word))
+                        .any(|word| !wanted.iter().any(|want| same_word(word, want)))
             })
             .count();
         if wrong * 2 > tagged.len() {
@@ -1582,10 +1600,15 @@ fn has_phrase(text: &[String], phrase: &str) -> bool {
         .any(|window| window.iter().zip(&wanted).all(|(have, want)| have == want))
 }
 
-/// The words that make an album title itself: edition suffixes, artist
-/// words, numbers and noise removed, each word folded.
+/// The words that make an album title itself: apostrophes inside words
+/// dropped ("What's" is "whats"), edition suffixes, artist words, numbers
+/// and noise removed, each word folded.
 fn content_words(title: &str, artist_words: &[String]) -> Vec<String> {
-    words(&strip_edition_words(title))
+    let title: String = title
+        .chars()
+        .filter(|ch| !matches!(ch, '\'' | '\u{2019}'))
+        .collect();
+    words(&strip_edition_words(&title))
         .into_iter()
         .filter(|word| !artist_words.contains(word))
         .filter(|word| !NOISE_WORDS.contains(&word.as_str()))
@@ -1593,6 +1616,15 @@ fn content_words(title: &str, artist_words: &[String]) -> Vec<String> {
         .map(|word| fold(&word))
         .filter(|word| !word.is_empty())
         .collect()
+}
+
+/// Two content words are one word when equal, or when both have five
+/// letters or more and are spelled within matching's name gate.
+fn same_word(left: &str, right: &str) -> bool {
+    left == right
+        || (left.chars().count() >= 5
+            && right.chars().count() >= 5
+            && basic_dist(left, right) <= NAME_GATE)
 }
 
 #[cfg(test)]
