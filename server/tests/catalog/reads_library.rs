@@ -1560,3 +1560,34 @@ async fn zero_years_never_open_a_0s_shelf() {
     assert!(!decades.is_empty(), "the seeded decades are listed: {body}");
     assert!(!decades.contains(&0), "a zero year has no shelf: {body}");
 }
+
+/// Two copies own one release group and the older has the higher id: the
+/// album status names the copy playback opens, never the lower id.
+#[tokio::test]
+async fn the_album_status_names_the_copy_playback_opens() {
+    let fixture = sqlite_fixture().await;
+    seed(
+        &fixture,
+        "INSERT INTO local_album_external_identities \
+         (local_album_id, provider, release_group_mbid, decision_source, selected_at) \
+         VALUES ('al3', 'musicbrainz', 'rg1', 'manual', 1500); \
+         UPDATE local_albums SET created_at = 500 WHERE id = 'al3'",
+    )
+    .await;
+    let plays = fixture
+        .catalog
+        .get_album_by_release_group("rg1")
+        .await
+        .expect("album by group")
+        .map(|album| album.id);
+    assert_eq!(plays.as_deref(), Some("al3"), "the oldest copy plays");
+
+    let beside = AuthRig::new("reads-library-status-copy").await;
+    let (status, body) = get(
+        app(deps(&beside, fixture.runtime.db(), None), Some(ADA)),
+        "/api/v3/library/albums/rg1/status",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["album_id"], "al3", "{body}");
+}

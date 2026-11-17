@@ -175,13 +175,17 @@ impl LocalCatalog {
 
     /// Every live local album an identifier covers for the album status
     /// view: the album a local id or alias names, else every owned album
-    /// holding the MusicBrainz release group (or release), ordered by id,
-    /// else the group's live copy without files.
+    /// holding the MusicBrainz release group (or release), ordered by id
+    /// with the group's copy that playback opens first, else the group's
+    /// live copy without files.
     pub async fn status_albums(&self, identifier: &str) -> Result<Vec<String>, StoreError> {
         if let Some(album_id) = self.current_album(identifier).await? {
             return Ok(vec![album_id]);
         }
         let needle = lowered(&[identifier.to_owned()]);
+        let Some(group) = needle.first() else {
+            return Ok(Vec::new());
+        };
         for owners in [Owners::Group, Owners::Release] {
             let mut albums: Vec<String> = self
                 .owners(owners, &needle)
@@ -192,21 +196,29 @@ impl LocalCatalog {
             if !albums.is_empty() {
                 albums.sort();
                 albums.dedup();
+                if let Owners::Group = owners
+                    && let Some(copy) = self.copy_of_group(group).await?
+                    && let Some(at) = albums.iter().position(|album| *album == copy)
+                {
+                    let copy = albums.remove(at);
+                    albums.insert(0, copy);
+                }
                 return Ok(albums);
             }
         }
-        let Some(group) = needle.first() else {
-            return Ok(Vec::new());
-        };
-        let values = vec![Value::Text(group.clone())];
-        let copy: Option<String> = self
-            .read("library.lookups.live_copy", move |conn| {
-                first(conn, sql::LIVE_COPY_BY_GROUP.text(), &values, |row| {
-                    row.get(0)
-                })
+        Ok(self.copy_of_group(group).await?.into_iter().collect())
+    }
+
+    /// The album a lookup by one lowercase release group opens, with or
+    /// without files, by the ranking playback and downloads share.
+    async fn copy_of_group(&self, group: &str) -> Result<Option<String>, StoreError> {
+        let values = vec![Value::Text(group.to_owned())];
+        self.read("library.lookups.live_copy", move |conn| {
+            first(conn, sql::LIVE_COPY_BY_GROUP.text(), &values, |row| {
+                row.get(0)
             })
-            .await?;
-        Ok(copy.into_iter().collect())
+        })
+        .await
     }
 
     /// The live album a local id or alias names now: the album itself, the

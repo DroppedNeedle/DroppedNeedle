@@ -718,8 +718,7 @@ droppedneedle_kernel::sql! {
     /// Owned albums identified as one of the releases: album id and the
     /// lowercase release.
     family OWNERS_BY_RELEASE = owners_by_release;
-    /// The album one release group (`?1`, lowercase) opens when no copy is
-    /// owned.
+    /// The album one release group (`?1`, lowercase) opens, owned or not.
     pub(crate) LIVE_COPY_BY_GROUP = (copy_of_group!("= ?1"));
 
     /// Every identified artist credited on an owned album: lowercase MBID

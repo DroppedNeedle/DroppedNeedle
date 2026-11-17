@@ -553,8 +553,8 @@ pub async fn album_tracks(
 /// One page of an album's streamable tracks by release-group mbid or
 /// local album id, for browse cards that only carry the mbid. Unknown
 /// mbids and ids are 404. A local id or alias answers for the album it
-/// names now; a group answers with its oldest copy with files, else its
-/// oldest copy.
+/// names now; a group answers with the copy playback opens: one with
+/// files, then one a person chose, then the oldest.
 pub async fn album_match(
     deps: &LibraryDeps,
     user_id: &str,
@@ -1053,10 +1053,12 @@ pub async fn album_status(
     let favorites = favorites_for(deps, user_id, "track", &ids).await?;
     let missing = track_albums_missing_art(deps, &records).await?;
     let policy = UpgradePolicy::read(&deps.upgrade_policy);
-    let album_id = records
-        .first()
-        .map(|record| record.album_id.clone())
-        .or_else(|| album_ids.first().cloned())
+    // The first listed album with tracks: the copy playback opens.
+    let album_id = album_ids
+        .iter()
+        .find(|id| records.iter().any(|record| &record.album_id == *id))
+        .or_else(|| album_ids.first())
+        .cloned()
         .unwrap_or_else(|| identifier.to_owned());
     let tracks: Vec<LibraryStatusTrack> = records
         .into_iter()

@@ -475,8 +475,9 @@ impl LocalCatalog {
         .await
     }
 
-    /// The live album one release-group mbid names: the oldest copy with
-    /// files, else the oldest copy. None is absence, never failure.
+    /// The live album one release-group mbid names: a copy with files,
+    /// then one a person chose, then the oldest. None is absence, never
+    /// failure.
     pub async fn get_album_by_release_group(
         &self,
         release_group_mbid: &str,
