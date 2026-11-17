@@ -7,11 +7,13 @@
 //! number, the title words, and the advertised length. Folders are then
 //! ordered the same way for album and single-track downloads:
 //!
-//! 1. completeness: how many of the release's tracks the folder holds;
+//! 1. completeness: how many of the release's tracks the folder holds, then,
+//!    for a request that names tracks, how many of the named ones;
 //! 2. durations: how many paired files have a length off the release's;
 //! 3. quality: folders whose quality the search shows first, then the
 //!    worst file's place in the quality recipe;
-//! 4. speed: a free upload slot, a short queue, a fast uploader.
+//! 4. for a whole album with a tracklist, the fewest files to fetch;
+//! 5. speed: a free upload slot, a short queue, a fast uploader.
 //!
 //! A folder whose files the search shows outside the band or the recipe, or
 //! that holds none of the release's tracks, is left out of automatic picks
@@ -25,6 +27,7 @@
 //! length to agree). For a single track, a folder holding little of the
 //! album is a lone-track share: it only ranks after every album folder.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 
 use super::policy::{DownloadPolicy, search_tier};
@@ -150,14 +153,28 @@ fn ranked(
             judge(username, folder, &files, request, multi_disc, policy)
         })
         .collect();
+    // A request that names tracks ranks on how many of them a folder holds.
+    // A whole album with a tracklist ranks on the files it would fetch, fewest
+    // first, after quality and before the upload slot. With no tracklist, the
+    // audio file count still ranks first.
+    let names_tracks = !request.wanted.is_empty();
     picks.sort_by(|a, b| {
         a.lone_track
             .cmp(&b.lone_track)
             .then(b.coverage.cmp(&a.coverage))
-            .then(b.held.cmp(&a.held))
+            .then(if names_tracks {
+                b.held.cmp(&a.held)
+            } else {
+                Ordering::Equal
+            })
             .then(a.duration_misses.cmp(&b.duration_misses))
             .then(a.unknown_quality.cmp(&b.unknown_quality))
             .then(a.quality.cmp(&b.quality))
+            .then(if names_tracks {
+                Ordering::Equal
+            } else {
+                a.held.cmp(&b.held)
+            })
             .then(b.has_free_slot.cmp(&a.has_free_slot))
             .then(a.queue_length.cmp(&b.queue_length))
             .then(b.upload_speed.cmp(&a.upload_speed))
@@ -620,7 +637,10 @@ mod tests {
     /// How `rank_folders` picks: an unlisted format refuses a folder only
     /// when it is a track, an album folder beats a lone track and fetches
     /// only the wanted file, a peer's separate disc folders join, and a folder
-    /// holding none of the tracks is never picked.
+    /// holding none of the tracks is never picked. A whole album with a
+    /// tracklist ranks on the tracks a folder holds, then on the files it would
+    /// fetch; a request for named tracks ranks on how many of them a folder
+    /// holds.
     #[test]
     fn rank_folders_cases() {
         // A format the recipe does not list refuses a folder only when it is
@@ -786,6 +806,67 @@ mod tests {
             4,
             "disc folders: every disc is fetched"
         );
+
+        // A whole album ranks on the tracks a folder holds, then on the files
+        // it would fetch. The single's folder and the album folder both hold
+        // the one track, and both peers have the same upload slot.
+        let tracklist = vec![track(1, "One Love", 200.0)];
+        let mut hits = vec![hit("single", "M\\Single\\01 One Love.flac", 200.0, false)];
+        hits.push(hit("album", "M\\Album\\05 One Love.flac", 200.0, false));
+        for number in (1..=12).filter(|number| *number != 5) {
+            hits.push(hit(
+                "album",
+                &format!("M\\Album\\{number:02} Bonus.flac"),
+                45.0,
+                false,
+            ));
+        }
+        let picks = rank_folders(
+            &hits,
+            RankRequest {
+                tracklist: &tracklist,
+                wanted: &[],
+                single_track: false,
+            },
+            &DownloadPolicy::default(),
+        );
+        assert_eq!(picks.len(), 2, "whole album: both folders are candidates");
+        assert_eq!(
+            picks[0].username, "single",
+            "whole album: fewer files to fetch, at equal tracks"
+        );
+
+        // A request for named tracks still ranks on how many of them a folder
+        // holds, ahead of a free upload slot.
+        let tracklist = vec![
+            track(1, "One", 200.0),
+            track(2, "Two", 210.0),
+            track(3, "Three", 220.0),
+            track(4, "Four", 230.0),
+        ];
+        let wanted = [
+            TrackPosition { disc: 1, track: 2 },
+            TrackPosition { disc: 1, track: 3 },
+        ];
+        let hits = vec![
+            hit("more", "M\\More\\01 One.flac", 200.0, false),
+            hit("more", "M\\More\\02 Two.flac", 210.0, false),
+            hit("more", "M\\More\\03 Three.flac", 220.0, false),
+            hit("fewer", "M\\Fewer\\01 One.flac", 200.0, true),
+            hit("fewer", "M\\Fewer\\02 Two.flac", 210.0, true),
+            hit("fewer", "M\\Fewer\\04 Four.flac", 230.0, true),
+        ];
+        let picks = rank_folders(
+            &hits,
+            RankRequest {
+                tracklist: &tracklist,
+                wanted: &wanted,
+                single_track: false,
+            },
+            &DownloadPolicy::default(),
+        );
+        assert_eq!(picks[0].username, "more", "get missing tracks: more held");
+        assert_eq!(picks[0].held, 2, "get missing tracks: both wanted tracks");
     }
 
     #[test]
