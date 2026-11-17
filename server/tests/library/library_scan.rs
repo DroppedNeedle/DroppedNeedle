@@ -3733,6 +3733,40 @@ async fn an_undone_copy_join_holds_after_its_files_moved() {
     assert_eq!(rig.retired(&copy), None, "and the copy stays apart");
 }
 
+/// A copy an Undo brought back out of a copy join stays apart once it is
+/// merged into a new row, as a folder renamed over two scans merges it.
+#[tokio::test]
+async fn a_copy_kept_apart_stays_apart_after_a_merge() {
+    let rig = CopyRig::new("copy-join-merged").await;
+    let kept_file = rig.plant("a", 1, true);
+    let copy_file = rig.plant("b", 2, true);
+    scan(&rig.library).await;
+    let kept = rig.accept(&[(&kept_file, 1)], 1);
+    let copy = rig.accept(&[(&copy_file, 2)], 2);
+    scan(&rig.library).await;
+    assert_eq!(rig.retired(&copy), Some(kept.clone()), "the copy joins");
+    rig.undo(&rig.join_of(&kept));
+    assert_eq!(rig.retired(&copy), None, "the Undo brings it back");
+
+    // The copy is merged into a new row holding its file and its match.
+    rig.run(&format!(
+        "CREATE TEMP TABLE renamed AS SELECT * FROM local_albums WHERE id = '{copy}'; \
+         UPDATE renamed SET id = 'renamed', grouping_key = 'renamed', created_at = 3; \
+         INSERT INTO local_albums SELECT * FROM renamed; \
+         DROP TABLE renamed; \
+         UPDATE local_tracks SET local_album_id = 'renamed' WHERE local_album_id = '{copy}'; \
+         UPDATE local_album_external_identities SET local_album_id = 'renamed' \
+         WHERE local_album_id = '{copy}'; \
+         UPDATE local_albums SET retired_into_album_id = 'renamed' WHERE id = '{copy}'; \
+         INSERT INTO local_album_aliases (alias, local_album_id, kind, created_at) \
+         VALUES ('{copy}', 'renamed', 'merged_album', 3);"
+    ));
+    assert_eq!(rig.album_at(&copy_file), "renamed");
+    scan(&rig.library).await;
+    assert_eq!(rig.retired("renamed"), None, "the new row stays apart");
+    assert_eq!(rig.album_at(&copy_file), "renamed");
+}
+
 /// The first file of the second window of a 300-file album.
 const SECOND_WINDOW: &str = "t256.flac";
 

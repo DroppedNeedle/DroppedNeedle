@@ -1229,9 +1229,14 @@ droppedneedle_kernel::sql! {
     pub(super) PERSONS_TRACK = "SELECT EXISTS(SELECT 1 FROM local_track_external_identities \
              WHERE local_track_id = ?1 AND provider = ?2 AND decision_source IN " + PERSONS
              + ") OR EXISTS(SELECT 1 FROM library_track_hand_matches WHERE local_track_id = ?1)";
-    /// Whether a fold of album `?1` was undone (audit kind `?2`).
+    /// Whether a fold of album `?1`, or of an album merged into it since,
+    /// was undone (audit kind `?2`).
     pub(super) FOLD_UNDONE = "SELECT EXISTS(SELECT 1 FROM library_catalog_actions \
-             WHERE local_album_id = ?1 AND action_kind = ?2)";
+             WHERE action_kind = ?2 AND (local_album_id = ?1 \
+             OR local_album_id IN (SELECT alias FROM local_album_aliases \
+             WHERE local_album_id = ?1 AND kind = 'merged_album') \
+             OR local_album_id IN (SELECT id FROM local_albums \
+             WHERE retired_into_album_id = ?1)))";
     /// Forget that album `?1` was merged into `?2`.
     pub(super) DROP_MERGED_ALIAS = "DELETE FROM local_album_aliases \
              WHERE alias = ?1 AND local_album_id = ?2 AND kind = 'merged_album'";

@@ -55,7 +55,8 @@ pub struct Folded {
     pub takeover: Option<TakeoverMark>,
 }
 
-/// Whether a fold of the album was undone: the repair leaves it alone.
+/// Whether a fold or copy join of the album, or of an album merged into it
+/// since, was undone: the repair and the copy join leave it alone.
 pub fn fold_undone(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     conn.prepare_cached(sql::FOLD_UNDONE.text())?
         .query_row(params![album_id, ActionKind::FoldUndone], |row| row.get(0))
