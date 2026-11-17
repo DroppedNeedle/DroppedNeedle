@@ -40355,6 +40355,7 @@
         "enum": [
           "complete",
           "incomplete",
+          "title_conflict",
           "lengths",
           "quality",
           "no_tracklist",

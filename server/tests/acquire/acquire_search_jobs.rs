@@ -154,8 +154,11 @@ async fn look_finishes(updates: &mut Subscription, worker: &DownloadWorker) {
 #[tokio::test]
 async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
     let mock = MockSlskd::start().await.expect("mock starts");
+    let mut conflict = peer("conflict", "@@music\\Artist\\Album", &[0, 1, 2, 3]);
+    conflict["files"][0]["filename"] = "@@music\\Artist\\Album\\01 Paper Boats.flac".into();
     mock.script_responses(vec![
         peer("halfway", "@@music\\Massive Attack\\Blue Lines", &[0, 1]),
+        conflict,
         peer("complete", "@@music\\MA\\Blue Lines (1991)", &[0, 1, 2, 3]),
     ]);
 
@@ -211,11 +214,20 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
         ranked,
         [
             (0, Some("complete".to_owned()), CandidateTier::Recommended),
-            (1, Some("halfway".to_owned()), CandidateTier::Possible),
+            (1, Some("conflict".to_owned()), CandidateTier::Possible),
+            (2, Some("halfway".to_owned()), CandidateTier::Possible),
         ]
     );
     assert_eq!(
         payload.candidates[1].view.note.code,
+        CandidateNoteCode::TitleConflict
+    );
+    assert_eq!(
+        payload.candidates[1].view.note.text,
+        "1 numbered file names a different track than this edition."
+    );
+    assert_eq!(
+        payload.candidates[2].view.note.code,
         CandidateNoteCode::Incomplete
     );
     assert!(matches!(
@@ -223,7 +235,7 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
         Err(SearchJobError::Forbidden)
     ));
 
-    // Pick the second folder; the worker fetches it without searching.
+    // The owner can pick the flagged folder without another search.
     let searches_before = mock.search_texts().len();
     let task_id = jobs
         .pick(&owner, &job_id, 1, false)
@@ -244,8 +256,8 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
         .expect("handles read");
     assert_eq!(handles.len(), 1, "one enqueue: {handles:?}");
     let handle: SourceHandle = serde_json::from_str(&handles[0]).expect("handle decodes");
-    assert_eq!(handle.username, "halfway");
-    assert_eq!(handle.filenames.len(), 2);
+    assert_eq!(handle.username, "conflict");
+    assert_eq!(handle.filenames.len(), 4);
 
     let task = journal
         .read_task(&task_id)

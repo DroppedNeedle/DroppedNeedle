@@ -33,8 +33,8 @@ pub enum SoulseekMiss {
 
 const NO_FOLDER: &str = "slskd has no untried folder for this album";
 
-/// Why no folder could be picked: the settings refused a folder that holds
-/// some of the release, or else `reason`.
+/// Why no folder could be picked: the quality settings refused a match,
+/// or else there was no match for an automatic pick.
 fn miss(
     hits: &[SearchResult],
     request: RankRequest<'_>,
@@ -44,16 +44,16 @@ fn miss(
 ) -> SoulseekMiss {
     if rank_listing(hits, request, policy)
         .iter()
-        .all(FolderPick::holds_nothing)
+        .any(|pick| pick.out_of_band && !pick.holds_nothing() && pick.title_conflicts == 0)
     {
         return SoulseekMiss::Nothing {
-            reason,
-            detail: detail.to_owned(),
+            reason: Reason::NothingAllowed,
+            detail: "slskd has folders for this, but none in your quality settings".to_owned(),
         };
     }
     SoulseekMiss::Nothing {
-        reason: Reason::NothingAllowed,
-        detail: "slskd has folders for this, but none in your quality settings".to_owned(),
+        reason,
+        detail: detail.to_owned(),
     }
 }
 

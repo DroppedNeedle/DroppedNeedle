@@ -12006,7 +12006,7 @@ export interface components {
          * @description The stable code of a [`CandidateNote`].
          * @enum {string}
          */
-        CandidateNoteCode: "complete" | "incomplete" | "lengths" | "quality" | "no_tracklist" | "names_album" | "title_unclear" | "strong" | "weak" | "turned_down_before";
+        CandidateNoteCode: "complete" | "incomplete" | "title_conflict" | "lengths" | "quality" | "no_tracklist" | "names_album" | "title_unclear" | "strong" | "weak" | "turned_down_before";
         /**
          * @description Why a candidate is outside the download settings. Declared in the order
          *     the page names them: the first that applies is shown.

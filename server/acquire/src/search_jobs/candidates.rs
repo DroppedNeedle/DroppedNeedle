@@ -82,6 +82,8 @@ pub enum CandidateNoteCode {
     Complete,
     /// The folder misses some of the edition's tracks.
     Incomplete,
+    /// A numbered file names a different track than the edition.
+    TitleConflict,
     /// Some track lengths are off the edition's.
     Lengths,
     /// The search does not show the quality of some files.
@@ -525,6 +527,17 @@ fn folder_note(pick: &FolderPick) -> (CandidateTier, CandidateNote) {
                 pick.coverage
             ),
         );
+    }
+    if pick.title_conflicts > 0 {
+        let text = if pick.title_conflicts == 1 {
+            "1 numbered file names a different track than this edition.".to_owned()
+        } else {
+            format!(
+                "{} numbered files name different tracks than this edition.",
+                pick.title_conflicts
+            )
+        };
+        return possible(CandidateNoteCode::TitleConflict, text);
     }
     if pick.coverage < pick.total {
         return possible(
