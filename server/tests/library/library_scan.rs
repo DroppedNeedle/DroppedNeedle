@@ -3820,6 +3820,26 @@ async fn a_copy_join_waits_on_an_album_edit_and_its_undo_returns_aliases() {
     );
 }
 
+/// Copies the first copy cannot take are tried against each other: a
+/// whole copy beside two halves of another leaves two albums, the halves
+/// joined.
+#[tokio::test]
+async fn copies_the_first_refuses_join_each_other() {
+    let rig = CopyRig::new("copy-join-three").await;
+    let whole = [rig.plant("a", 1, true), rig.plant("a", 2, true)];
+    let first_half = rig.plant("b", 1, true);
+    let second_half = rig.plant("c", 2, true);
+    scan(&rig.library).await;
+    let kept = rig.accept(&[(&whole[0], 1), (&whole[1], 2)], 1);
+    let first = rig.accept(&[(&first_half, 1)], 2);
+    let second = rig.accept(&[(&second_half, 2)], 3);
+    scan(&rig.library).await;
+    assert_eq!(rig.retired(&kept), None, "the whole copy stays");
+    assert_eq!(rig.retired(&first), None, "the older half keeps the files");
+    assert_eq!(rig.retired(&second), Some(first.clone()), "the halves join");
+    assert_eq!(rig.album_at(&second_half), first);
+}
+
 /// The first file of the second window of a 300-file album.
 const SECOND_WINDOW: &str = "t256.flac";
 

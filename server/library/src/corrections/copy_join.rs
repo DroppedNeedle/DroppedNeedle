@@ -25,13 +25,15 @@
 //!    carry it onto the other copy's files, and its undo could not take
 //!    it back.
 //!
-//! A pair that fails waits, with nothing recorded, and is tried again at
-//! the next run end. The join is the retag merge's
-//! ([`merge_retagged`], [`JoinCause::SameEditionCopies`]): catalog rows only,
-//! with an undo in the album's history. The copy's files are locked to the
-//! survivor, so later scans keep them there. No file is read or written; the
-//! survivor is queued for automatic management, which moves files where
-//! the folder's management moves them.
+//! Copies the survivor cannot take are tried against each other the same
+//! way, the first of them as survivor. A pair that fails waits, with
+//! nothing recorded, and is tried again at the next run end. The join is
+//! the retag merge's ([`merge_retagged`],
+//! [`JoinCause::SameEditionCopies`]): catalog rows only, with an undo in
+//! the album's history. The copy's files are locked to the survivor, so
+//! later scans keep them there. No file is read or written; the survivor
+//! is queued for automatic management, which moves files where the
+//! folder's management moves them.
 
 use rusqlite::{Connection, Transaction, params};
 
@@ -62,33 +64,41 @@ pub(crate) fn join_copies(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<()
 
 fn pass(tx: &Transaction<'_>, now: f64, at: &mut Option<(String, String)>) -> rusqlite::Result<()> {
     for (release, copies) in crate::identity::split_copies(tx)? {
-        let Some((survivor, others)) = copies.split_first() else {
-            continue;
-        };
-        for copy in others {
-            *at = Some((copy.clone(), survivor.clone()));
-            if !joinable(tx, survivor, copy, &release, now)? {
-                continue;
-            }
-            match merge_retagged(tx, copy, survivor, None, now, JoinCause::SameEditionCopies)? {
-                MergeOutcome::Merged { .. } => {
-                    crate::management::automatic::queue(tx, survivor, now)?;
-                    tracing::info!(
-                        album_id = %copy,
-                        target = %survivor,
-                        "copy of one edition joined into the album that kept the edition"
-                    );
+        // Each round takes the first copy left as survivor; the copies it
+        // refused are tried against each other in the next, in the same
+        // order. A round removes its survivor, so a release with n copies
+        // takes at most n rounds.
+        let mut left = copies;
+        while let Some((survivor, others)) = left.split_first() {
+            let mut refused = Vec::new();
+            for copy in others {
+                *at = Some((copy.clone(), survivor.clone()));
+                if !joinable(tx, survivor, copy, &release, now)? {
+                    refused.push(copy.clone());
+                    continue;
                 }
-                MergeOutcome::Refused { reason, error } => {
-                    tracing::info!(
-                        album_id = %copy,
-                        target = %survivor,
-                        ?reason,
-                        error = error.map(|error| error.to_string()),
-                        "copy of one edition not joined; the next run end tries again"
-                    );
+                match merge_retagged(tx, copy, survivor, None, now, JoinCause::SameEditionCopies)? {
+                    MergeOutcome::Merged { .. } => {
+                        crate::management::automatic::queue(tx, survivor, now)?;
+                        tracing::info!(
+                            album_id = %copy,
+                            target = %survivor,
+                            "copy of one edition joined into the album that kept the edition"
+                        );
+                    }
+                    MergeOutcome::Refused { reason, error } => {
+                        tracing::info!(
+                            album_id = %copy,
+                            target = %survivor,
+                            ?reason,
+                            error = error.map(|error| error.to_string()),
+                            "copy of one edition not joined; the next run end tries again"
+                        );
+                        refused.push(copy.clone());
+                    }
                 }
             }
+            left = refused;
         }
     }
     Ok(())
