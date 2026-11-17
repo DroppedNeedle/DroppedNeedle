@@ -1020,6 +1020,50 @@ fn album_peer(username: &str, extension: &str) -> serde_json::Value {
         "files": files, "lockedFiles": [], "token": 1})
 }
 
+#[tokio::test]
+async fn album_search_finds_the_same_title_with_different_punctuation() {
+    use droppedneedle_acquire::downloads::plan::ExpectedTrack;
+    use droppedneedle_acquire::target::soulseek::choose;
+
+    let mock = MockSlskd::start().await.expect("mock starts");
+    mock.script_responses(Vec::new());
+    let neutral = "Artist Album 1959 1986";
+    mock.script_query(neutral, vec![album_peer("copy", "flac")]);
+    let target = SearchTarget {
+        artist: "Artist".to_owned(),
+        album_title: "Album 1959–1986".to_owned(),
+        year: Some(2024),
+        tracklist: ["Alpha", "Beta"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, title)| ExpectedTrack {
+                disc_number: 1,
+                track_number: index as i64 + 1,
+                duration_seconds: Some(200.0 + index as f64),
+                title: Some(title.to_owned()),
+                recording_mbid: None,
+                release_track_mbid: None,
+            })
+            .collect(),
+        wanted: vec![],
+        track: None,
+    };
+
+    let result = choose(&repository(&mock), &target, |_| true).await;
+    let queries = mock.search_texts();
+    let choice = result.unwrap_or_else(|reason| panic!("{reason:?}; queries: {queries:?}"));
+    assert_eq!(choice.pick.coverage, 2);
+    assert_eq!(
+        queries,
+        [
+            "Artist Album 1959–1986 2024",
+            "*rtist Album 1959–1986 2024",
+            "Artist Album 1959–1986",
+            neutral
+        ]
+    );
+}
+
 /// A saved policy keeping one tier, with a one-entry recipe, each source
 /// grabbing its own best guess (no search review).
 fn one_tier_policy(tier: &str, format: RecipeFormat, quality: RecipeQuality) -> KernelPolicy {

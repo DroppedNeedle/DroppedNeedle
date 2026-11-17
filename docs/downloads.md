@@ -104,6 +104,8 @@ To choose the copy yourself, press "Pick a source" on a failed, cancelled or par
 
 When a Soulseek folder has tracks in more than one audio format, the picker lists each format.
 
+When a Soulseek album search by the full title finds nothing, DroppedNeedle retries with spaces in place of the title's punctuation, such as the dash in a date range. The artist stays in the query, and the folders found are checked against the same edition.
+
 Before downloading an album on its own, DroppedNeedle looks at what every source has, the same way "Pick a source" does. If a copy looks like the whole edition in a quality you accept, it downloads that one. If none does, the album waits in the download queue as "Awaiting review" with the copies it found. A Soulseek folder with none of the edition's tracks doesn't count. You choose one, or press "None of these - keep watching". Nothing is downloaded until you do. You can change this under Settings > Download Client, "Picking a copy": wait only when no copy looks right (the default), always wait for your pick, or never wait and take the best copy found. Upgrades don't wait under either of the first two: they take a copy that looks right, or end without one and keep your copy (see [Upgrades](#upgrades)). Single tracks are not held this way; they are fetched from their album's folder as described above.
 
 ## What automatic downloads take
