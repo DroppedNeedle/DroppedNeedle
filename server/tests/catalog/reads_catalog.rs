@@ -1229,6 +1229,59 @@ async fn an_old_or_local_album_id_opens_its_album_without_asking_musicbrainz() {
     );
 }
 
+/// With MusicBrainz down, the artist's discography from the library lists
+/// each group the library owns once, however many copies hold it, and never
+/// the group of a guess its files contradict.
+#[tokio::test]
+async fn the_library_discography_lists_each_owned_group_once() {
+    let fixtures = Fixtures::start().await;
+    let extra = [
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, year, \
+         grouping_source, created_at, updated_at) VALUES \
+         ('album-okc-mp3', 'root-1', 'g-okc-mp3', 'OK Computer', 'ok computer', 'Radiohead', \
+         'radiohead', 'artist-radiohead', 1997, 'manual', 2, 2), \
+         ('album-guess', 'root-1', 'g-guess', 'Kid A?', 'kid a?', 'Radiohead', \
+         'radiohead', 'artist-radiohead', 2000, 'manual', 3, 3)"
+            .to_owned(),
+        format!(
+            "INSERT INTO local_album_external_identities \
+             (local_album_id, provider, release_group_mbid, decision_source, selected_at) VALUES \
+             ('album-okc-mp3', 'musicbrainz', '{OK_COMPUTER}', 'automatic', 2), \
+             ('album-guess', 'musicbrainz', '{KID_A}', 'automatic', 3)"
+        ),
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         candidates_json, updated_at) VALUES \
+         ('album-guess', 'unconfirmed', 'NAMED_GROUP_DIFFERS', '[]', 3)"
+            .to_owned(),
+        format!(
+            "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             artist_name, artist_name_folded, album_title, album_title_folded, disc_number, \
+             track_number, duration_seconds, file_format, ingest_source, imported_at, \
+             membership_source, embedded_release_group_mbid) VALUES \
+             ('track-okc-mp3', 'album-okc-mp3', 'root-1', '/music/airbag.mp3', 'airbag.mp3', \
+             'hash-mp3', 1000, 0, 'stat-mp3', 'Airbag', 'airbag', 'Radiohead', 'radiohead', \
+             'OK Computer', 'ok computer', 1, 1, 284.0, 'mp3', 'scan', 0, 'manual', NULL), \
+             ('track-guess', 'album-guess', 'root-1', '/music/guess.flac', 'guess.flac', \
+             'hash-guess', 1000, 0, 'stat-guess', 'Idioteque', 'idioteque', 'Radiohead', \
+             'radiohead', 'Kid A?', 'kid a?', 1, 1, 309.0, 'flac', 'scan', 0, 'manual', \
+             '{LIVE}')"
+        ),
+    ];
+    let (app, _auth) = app_seeded(&fixtures, "http://127.0.0.1:9/ws/2".to_owned(), &extra).await;
+
+    let releases = get(&app, &format!("/api/v3/artists/{ARTIST}/releases")).await;
+    assert_eq!(releases["source"], "library");
+    let ids: Vec<&str> = releases["albums"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|album| album["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, [OK_COMPUTER], "{releases}");
+}
+
 /// Search joins MusicBrainz with the library unless it is scoped to the
 /// library. The library scope goes first: it answers from the library
 /// alone, MusicBrainz is never asked, and only library rows come back.

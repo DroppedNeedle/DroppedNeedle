@@ -778,14 +778,22 @@ droppedneedle_kernel::sql! {
         JOIN local_artists a ON a.id = e.local_artist_id \
         WHERE e.provider = 'musicbrainz' AND a.retired_into_artist_id IS NULL \
         AND lower(e.provider_artist_id) = ? LIMIT 1";
-    /// The identified owned albums one artist MBID leads, newest first.
-    pub(crate) LOCAL_ARTIST_ALBUMS = "SELECT e.release_group_mbid, b.title, b.year \
+    /// The release groups one artist MBID leads that an album owns through
+    /// its match row ([`owns_group!`]), newest first: the lowercase group,
+    /// and the title and year of its oldest owning copy, one row per group.
+    /// The bare columns come from the row `MIN(b.created_at)` picks.
+    pub(crate) LOCAL_ARTIST_ALBUMS = "SELECT release_group_mbid, title, year FROM ( \
+        SELECT lower(e.release_group_mbid) AS release_group_mbid, b.title AS title, \
+        b.year AS year, b.title_folded AS title_folded, MIN(b.created_at) \
         FROM local_artist_external_identities ae \
         JOIN local_albums b ON b.album_artist_id = ae.local_artist_id \
         JOIN local_album_external_identities e ON e.local_album_id = b.id AND "
         + (musicbrainz!("e")) + " WHERE lower(ae.provider_artist_id) = ? AND "
         + (musicbrainz!("ae")) + " AND " + (owned_album!("b"))
-        + " ORDER BY b.year IS NULL, b.year DESC, b.title_folded";
+        + " AND EXISTS (SELECT 1 FROM (" + (owns_group!("= lower(e.release_group_mbid)"))
+        + ") owner WHERE owner.album_id = b.id) \
+        GROUP BY lower(e.release_group_mbid)) \
+        ORDER BY year IS NULL, year DESC, title_folded";
     /// The indexed tracks one artist MBID (lowercase) is credited on, on
     /// albums that own a release group by [`owns_group!`], so a lookup by
     /// that group opens the album: title, recording MBID, the lowercase group,
