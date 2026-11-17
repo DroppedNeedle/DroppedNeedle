@@ -286,6 +286,8 @@ struct AtPath {
     sample_rate: Option<i64>,
     bit_depth: Option<i64>,
     channels: Option<i64>,
+    tag_album_title: Option<String>,
+    tag_album_artist_name: Option<String>,
 }
 
 /// A file's length and stream properties, as stored or as read.
@@ -360,6 +362,10 @@ struct Written {
     /// so the album is tried as a follow even when none of them was read in
     /// this window.
     locked_off_key: bool,
+    /// The file changed and stayed on its album, its album title or album
+    /// artist tag no longer the one it had: a retag that kept the album's
+    /// key (its release id) renamed it, and no follow sees that.
+    renamed: bool,
 }
 
 /// Whether the file now at `row`'s path is other music, not the track the
@@ -1064,6 +1070,8 @@ fn write_item(
                 sample_rate: row.sample_rate,
                 bit_depth: row.bit_depth,
                 channels: row.channels,
+                tag_album_title: row.tag_album_title,
+                tag_album_artist_name: row.tag_album_artist_name,
             })
         })
         .optional()?;
@@ -1267,6 +1275,25 @@ fn write_item(
             let row = crate::scan::sql::TrackAndAlbum::read(row)?;
             Ok((row.id, row.local_album_id))
         })?;
+    let retagged = |read: &str, stored: &Option<String>| {
+        stored
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|stored| !stored.is_empty() && fold_text(stored) != fold_text(read))
+    };
+    // An album artist tag taken away, or a stored one carried from v2
+    // rather than read from the file, is no rename by itself.
+    let read_album_artist = tag.album_artist.as_deref().unwrap_or("").trim();
+    let retagged_tags = continued.as_ref().is_some_and(|row| {
+        run_id.is_some()
+            && adopted.is_none()
+            && !locked
+            && item.verdict_counter == Counter::Changed.column()
+            && row.album_id == stored_album
+            && (retagged(raw_album, &row.tag_album_title)
+                || (!read_album_artist.is_empty()
+                    && retagged(read_album_artist, &row.tag_album_artist_name)))
+    });
     // A new copy of the recording the row describes is a file the app
     // never wrote: its record goes, unless the app has stepped back from
     // the album, where only handing it back clears anything.
@@ -1294,6 +1321,8 @@ fn write_item(
         }
         _ => None,
     };
+    // A new copy of the recording is not a hand edit, whatever its tags say.
+    let renamed = retagged_tags && new_copy.is_none();
 
     let edition = &tag.edition;
     let blank = |value: &Option<String>| {
@@ -1396,6 +1425,7 @@ fn write_item(
         other_music,
         new_copy,
         locked_off_key,
+        renamed,
     })
 }
 
@@ -2747,6 +2777,8 @@ fn write_window(
     // management looks at them soon, to see who changed it.
     let mut changed: Vec<String> = Vec::new();
     let mut emptied: Vec<String> = Vec::new();
+    // Albums a retag renamed without moving a file.
+    let mut renamed: Vec<String> = Vec::new();
     let mut other_music: BTreeMap<String, Vec<OtherMusic>> = BTreeMap::new();
     let mut new_copies: BTreeMap<String, Vec<NewCopy>> = BTreeMap::new();
     for item in &window.items {
@@ -2771,6 +2803,7 @@ fn write_window(
                 other_music: replaced,
                 new_copy,
                 locked_off_key,
+                renamed: renamed_by_retag,
             }) => {
                 let changed_on_record = item.verdict_counter == Counter::Changed.column()
                     && takeover::has_record(tx, &track_id)?;
@@ -2807,6 +2840,9 @@ fn write_window(
                 indexed.push((item.root_id.clone(), item.relative_path.clone(), track_id));
                 if locked_off_key {
                     emptied.push(album_id.clone());
+                }
+                if renamed_by_retag {
+                    renamed.push(album_id.clone());
                 }
                 if offer {
                     offered.push(album_id);
@@ -2866,6 +2902,7 @@ fn write_window(
                 for offer in offered
                     .iter_mut()
                     .chain(changed.iter_mut())
+                    .chain(renamed.iter_mut())
                     .filter(|offer| **offer == gone)
                 {
                     offer.clone_from(&album_id);
@@ -2876,6 +2913,13 @@ fn write_window(
                 offered.extend(released_by(tx, &window.run_id, &album_id)?);
             }
         }
+    }
+    // Stamped on the first file renamed, as the first half of a retag
+    // that moved files is.
+    renamed.sort();
+    renamed.dedup();
+    for album_id in &renamed {
+        stamp_if_retagged_by_hand(tx, album_id, album_id, window.now)?;
     }
     offered.sort();
     offered.dedup();

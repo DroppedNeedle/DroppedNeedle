@@ -5029,6 +5029,132 @@ async fn a_followed_album_is_stamped_only_for_a_hand_retag() {
     }
 }
 
+/// A four-file album whose files carry its release id, `prepare` run on it
+/// (SQL, given the album id). Returns the rig, the files and the album.
+async fn album_known_by_release(
+    name: &str,
+    prepare: impl FnOnce(&str) -> String,
+) -> (RegroupRig, Vec<String>, String) {
+    let mut rig = RegroupRig::new(name);
+    let files: Vec<String> = (0..4).map(|n| format!("a/t{n:03}.flac")).collect();
+    for (n, file) in files.iter().enumerate() {
+        rig.reader
+            .ids
+            .lock()
+            .expect("ids")
+            .insert(file.clone(), ids("rel-1", "", "", 1, n as u32 + 1));
+    }
+    let before = rig.before.clone();
+    rig.tag(&files, &before);
+    rig.scan().await;
+    let album = rig.album_of("a/t000.flac");
+    rig.run(&prepare(&album));
+    rig.run("DELETE FROM library_identify_jobs");
+    (rig, files, album)
+}
+
+/// An album whose edition a person chose, renamed by a retag that keeps
+/// the release id in its files, stays one album and is stamped, so
+/// automatic management does not write the edition's title back over the
+/// hand retag. Not when the match is the app's own, not when the app has a
+/// record of a file (the check of those bytes decides), and not when a
+/// rescan reads tags that differ from a file that did not change.
+#[tokio::test]
+async fn a_chosen_edition_renamed_by_retag_is_stamped() {
+    let chosen = |album: &str| match_sql(&format!("'{album}'"), "manual", "rel-1");
+    let (mut rig, files, album) = album_known_by_release("scan-rename-stamp", chosen).await;
+    let after = rig.after.clone();
+    rig.tag(&files, &after);
+    rig.scan().await;
+    assert_eq!(rig.album_of("a/t000.flac"), album, "the album stays");
+    assert_eq!(rig.title_of(&album), Some(after), "renamed");
+    assert!(rig.stamped(&album), "chosen edition: stamped");
+
+    type Prepare = fn(&str) -> String;
+    let cases: [(&str, Prepare); 2] = [
+        ("scan-rename-stamp-automatic", |album| {
+            match_sql(&format!("'{album}'"), "automatic", "rel-1")
+        }),
+        ("scan-rename-stamp-written", |album| {
+            format!(
+                "{} INSERT INTO library_track_management_state (local_track_id, written_sha256) \
+                 SELECT id, 'abc' FROM local_tracks WHERE local_album_id = '{album}' \
+                 AND relative_path = 'a/t001.flac';",
+                match_sql(&format!("'{album}'"), "manual", "rel-1")
+            )
+        }),
+    ];
+    for (name, prepare) in cases {
+        let (mut rig, files, album) = album_known_by_release(name, prepare).await;
+        let after = rig.after.clone();
+        rig.tag(&files, &after);
+        rig.scan().await;
+        assert_eq!(
+            rig.album_of("a/t000.flac"),
+            album,
+            "{name}: the album stays"
+        );
+        assert!(!rig.stamped(&album), "{name}");
+    }
+
+    let name = "scan-rename-stamp-rescan";
+    let (rig, files, album) = album_known_by_release(name, chosen).await;
+    for file in &files {
+        rig.reader.retag(file, &rig.after);
+    }
+    rig.coordinator
+        .request_run(&ScanRequest {
+            kind: ScanKind::RescanFiles,
+            ..request(&rig.root)
+        })
+        .expect("requested");
+    let paths = HashMap::from([("music".to_owned(), rig.root.clone())]);
+    let run = rig.coordinator.run_once(&paths).await.expect("scan runs");
+    assert_eq!(run.state.scan_state(), ScanState::Completed, "{name}");
+    assert_eq!(
+        rig.album_of("a/t000.flac"),
+        album,
+        "{name}: the album stays"
+    );
+    assert!(!rig.stamped(&album), "{name}: the files did not change");
+
+    // A new copy of the recording the app wrote, under another album title,
+    // is not a hand edit.
+    let name = "scan-rename-stamp-new-copy";
+    let mut rig = RegroupRig::new(name);
+    let before = rig.before.clone();
+    let rip = Rip {
+        release: "rel-1",
+        ..RIP
+    };
+    rig.rip("a/t.flac", &before, rip);
+    rig.scan().await;
+    let album = rig.album_of("a/t.flac");
+    rig.run(&format!(
+        "{} INSERT INTO library_track_management_state (local_track_id, written_sha256) \
+         SELECT id, 'abc' FROM local_tracks WHERE local_album_id = '{album}';",
+        chosen(&album)
+    ));
+    let copy = Rip {
+        album: Some("scan-rename-stamp-new-copy after"),
+        ..Rip {
+            release: "rel-1",
+            ..HI_RES
+        }
+    };
+    rig.rip("a/t.flac", &before, copy);
+    rig.scan().await;
+    assert_eq!(rig.album_of("a/t.flac"), album, "{name}: the album stays");
+    assert_eq!(
+        rig.count(
+            "SELECT COUNT(*) FROM library_track_management_state WHERE written_sha256 = 'abc'"
+        ),
+        0,
+        "{name}: a new copy"
+    );
+    assert!(!rig.stamped(&album), "{name}");
+}
+
 /// Files retagged into another album are a person joining albums. Nothing
 /// is followed, joined or recorded, and the matches stay: files retagged
 /// into an album that was already there, two albums retagged into one new

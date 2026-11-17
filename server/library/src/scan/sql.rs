@@ -334,7 +334,8 @@ droppedneedle_kernel::sql! {
     pub(super) DROP_ALBUM_CREDITS_FROM = "DELETE FROM local_album_artists WHERE local_album_id = ?1 AND position >= ?2";
     pub(super) TRACK_AT_PATH_FACTS = "SELECT id, local_album_id, availability, duration_seconds, \
              embedded_recording_mbid, title_folded, title_provenance, disc_number, \
-             track_number, sample_rate, bit_depth, channels \
+             track_number, sample_rate, bit_depth, channels, tag_album_title, \
+             tag_album_artist_name \
              FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2";
     pub(super) MOVE_TRACK_PATH = "UPDATE local_tracks SET root_id = ?2, relative_path = ?3, path_hash = ?4, \
                  file_path = ?5, row_revision = row_revision + 1 WHERE id = ?1";
@@ -1204,6 +1205,8 @@ droppedneedle_kernel::sql! {
         sample_rate: Option<i64>,
         bit_depth: Option<i64>,
         channels: Option<i64>,
+        tag_album_title: Option<String>,
+        tag_album_artist_name: Option<String>,
     }
     pub(super) row TrackMembership for [TRACK_MEMBERSHIP] {
         membership_source: GroupingSource,
