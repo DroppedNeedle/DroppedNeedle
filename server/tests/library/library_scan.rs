@@ -3213,7 +3213,7 @@ async fn a_folded_v2_split_comes_back_on_undo() {
 /// recording, a guess, a curator's grouping, one copy hands-off, a custom
 /// edition and a person's "Keep them apart" keep the two apart; live work
 /// holds the join until the next run end. The Undo brings the copy, its
-/// files held as they were, their matches and its "retagged by hand" stamp
+/// files locked to it, their matches and its "retagged by hand" stamp
 /// back after a placement on the person's edition, unless a file was
 /// matched by hand since; the hearts and ratings stay, and later scans,
 /// a full rescan included, leave the two apart.
@@ -3545,6 +3545,192 @@ async fn split_copies_of_one_edition_join_at_a_scan_end() {
         "a rescan keeps the file on the copy"
     );
     assert_eq!(retired(&copy), None);
+}
+
+/// Copies of one release in folders of their own, each with an accepted
+/// automatic match, for the copy join's edge cases.
+struct CopyRig {
+    library: LibrarySetup,
+    music: PathBuf,
+    conn: rusqlite::Connection,
+    _dir: ScratchDir,
+}
+
+impl CopyRig {
+    async fn new(name: &str) -> Self {
+        let dir = ScratchDir::new(name);
+        let music = dir.join("music");
+        std::fs::create_dir_all(&music).expect("music folder");
+        let library = bundle(&dir).await;
+        let conn = droppedneedle_kernel::db::open_connection(&dir.join("app.db"))
+            .expect("connection opens");
+        conn.execute_batch(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('curator', 'Curator', 'admin', 0);",
+        )
+        .expect("curator");
+        Self {
+            library,
+            music,
+            conn,
+            _dir: dir,
+        }
+    }
+
+    /// The release's group (`kind` 1), release (2), recording (3) or
+    /// release track (4) number `n`.
+    fn mbid(kind: u16, n: u16) -> String {
+        format!("5c0b7a1e-00aa-4{kind:03x}-8000-{n:012x}")
+    }
+
+    /// Plant track `n` at `folder/0n.flac`, tagged with the release's ids
+    /// when `ids`, else with its title and artist only.
+    fn plant(&self, folder: &str, n: u16, ids: bool) -> String {
+        use droppedneedle_library::tags::TagField;
+        use droppedneedle_library::tags::save::{TagEdit, save_tags};
+        let rel = format!("{folder}/{n:02}.flac");
+        let path = plant(&self.music, &rel, &format!("flac_full_0{n}.flac"));
+        let tag = |field, value: String| TagEdit::new(field, vec![value]);
+        let mut tags = vec![
+            tag(TagField::Title, format!("Track {n}")),
+            tag(TagField::Artist, "Portishead".to_owned()),
+        ];
+        if ids {
+            tags.extend(Self::id_tags(n));
+        }
+        save_tags(&path, &tags).expect("tagged");
+        rel
+    }
+
+    fn id_tags(n: u16) -> Vec<droppedneedle_library::tags::save::TagEdit> {
+        use droppedneedle_library::tags::TagField;
+        use droppedneedle_library::tags::save::TagEdit;
+        let tag = |field, value: String| TagEdit::new(field, vec![value]);
+        vec![
+            tag(TagField::AlbumArtist, "Portishead".to_owned()),
+            tag(TagField::Album, "Dummy".to_owned()),
+            tag(TagField::TrackNumber, n.to_string()),
+            tag(TagField::DiscNumber, "1".to_owned()),
+            tag(TagField::MusicBrainzReleaseId, Self::mbid(2, 0)),
+            tag(TagField::MusicBrainzReleaseGroupId, Self::mbid(1, 0)),
+            tag(TagField::MusicBrainzRecordingId, Self::mbid(3, n)),
+            tag(TagField::MusicBrainzReleaseTrackId, Self::mbid(4, n)),
+        ]
+    }
+
+    fn text(&self, sql: &str) -> Option<String> {
+        self.conn
+            .query_row(sql, [], |row| row.get(0))
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    }
+
+    fn run(&self, sql: &str) {
+        self.conn.execute_batch(sql).expect("test sql runs");
+    }
+
+    fn album_at(&self, rel: &str) -> String {
+        self.text(&format!(
+            "SELECT local_album_id FROM local_tracks WHERE relative_path = '{rel}'"
+        ))
+        .expect("track filed")
+    }
+
+    fn track_at(&self, rel: &str) -> String {
+        self.text(&format!(
+            "SELECT id FROM local_tracks WHERE relative_path = '{rel}'"
+        ))
+        .expect("track indexed")
+    }
+
+    fn retired(&self, album: &str) -> Option<String> {
+        self.text(&format!(
+            "SELECT retired_into_album_id FROM local_albums WHERE id = '{album}'"
+        ))
+    }
+
+    /// Give the album of `files` (each a path and its track number) an
+    /// accepted automatic match on the release, created at `created`, with
+    /// each file placed on its release track. Returns the album.
+    fn accept(&self, files: &[(&str, u16)], created: i64) -> String {
+        let album = self.album_at(files[0].0);
+        self.run(&format!(
+            "DELETE FROM local_album_external_identities WHERE local_album_id = '{album}'; \
+             UPDATE local_albums SET created_at = {created} WHERE id = '{album}'; \
+             INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at) VALUES \
+             ('{album}', 'musicbrainz', '{}', '{}', 'automatic', 5);",
+            Self::mbid(1, 0),
+            Self::mbid(2, 0),
+        ));
+        for (rel, n) in files {
+            assert_eq!(self.album_at(rel), album, "{rel} is on the album");
+            self.run(&format!(
+                "DELETE FROM local_track_external_identities WHERE local_track_id = '{track}'; \
+                 INSERT INTO local_track_external_identities (local_track_id, provider, \
+                 recording_mbid, release_mbid, release_track_mbid, medium_position, \
+                 release_track_position, decision_source, selected_at) VALUES \
+                 ('{track}', 'musicbrainz', '{}', '{}', '{}', 1, {n}, 'automatic', 5);",
+                Self::mbid(3, *n),
+                Self::mbid(2, 0),
+                Self::mbid(4, *n),
+                track = self.track_at(rel),
+            ));
+        }
+        album
+    }
+
+    /// The audit row of the join that kept the files on `survivor`.
+    fn join_of(&self, survivor: &str) -> String {
+        self.text(&format!(
+            "SELECT id FROM library_catalog_actions WHERE reason_code = \
+             'SAME_EDITION_COPIES_JOINED' AND local_album_id = '{survivor}'"
+        ))
+        .expect("the join is recorded")
+    }
+
+    fn undo(&self, join: &str) {
+        crate::common::library::operations(&self.library)
+            .undo_fold(join, "curator")
+            .expect("the join is undone");
+    }
+}
+
+/// A copy brought back by the Undo of a copy join holds its files though
+/// automatic management moved them into the other copy's folder and wrote
+/// the edition's ids into them before the Undo: a rescan keeps them on the
+/// copy, and the copy is not joined again.
+#[tokio::test]
+async fn an_undone_copy_join_holds_after_its_files_moved() {
+    let rig = CopyRig::new("copy-join-moved").await;
+    let kept_file = rig.plant("a", 1, true);
+    let copy_file = rig.plant("b", 2, false);
+    scan(&rig.library).await;
+    let kept = rig.accept(&[(&kept_file, 1)], 1);
+    let copy = rig.accept(&[(&copy_file, 2)], 2);
+    assert_ne!(kept, copy, "the scan files two albums");
+    scan(&rig.library).await;
+    assert_eq!(rig.retired(&copy), Some(kept.clone()), "the copy joins");
+
+    // Management moves the joined file into the survivor's folder and
+    // writes the edition's ids into it.
+    let moved = "a/02.flac";
+    let from = rig.music.join(&copy_file);
+    let to = rig.music.join(moved);
+    std::fs::rename(&from, &to).expect("file moves");
+    droppedneedle_library::tags::save::save_tags(&to, &CopyRig::id_tags(2)).expect("tagged");
+    rig.run(&format!(
+        "UPDATE local_tracks SET relative_path = '{moved}', file_path = '{}', \
+         path_hash = '{:x}' WHERE id = '{}'",
+        to.display(),
+        Sha256::digest(moved.as_bytes()),
+        rig.track_at(&copy_file),
+    ));
+
+    rig.undo(&rig.join_of(&kept));
+    assert_eq!(rig.album_at(moved), copy, "the Undo brings the file back");
+    scan_as(&rig.library, ScanKind::RescanFiles).await;
+    assert_eq!(rig.album_at(moved), copy, "a rescan keeps it on the copy");
+    assert_eq!(rig.retired(&copy), None, "and the copy stays apart");
 }
 
 /// The first file of the second window of a 300-file album.

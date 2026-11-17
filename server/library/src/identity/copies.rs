@@ -246,7 +246,7 @@ fn takeover_mark(conn: &Connection, album: &str) -> rusqlite::Result<Option<Take
 
 /// Undo the join of two copies recorded as audit row `action_id`, for
 /// `actor` (`None` for the app): the copy comes back from retirement, its
-/// files go back to it held as they were, its match and its files' matches
+/// files go back to it locked there, its match and its files' matches
 /// are written again, its "leave unmanaged" and takeover mark come back
 /// when they are gone, the "leave unmanaged" the join copied onto the album
 /// that kept the files leaves it (a copied takeover mark stays: the app may
@@ -274,9 +274,17 @@ pub fn undo_copy_join(
     let copy = joined.retired_album_id.as_str();
     tx.prepare_cached(sql::UNRETIRE_ALBUM.text())?
         .execute(params![copy, joined.grouping_locked, crate::clock::ms(now)])?;
+    // Automatic management may have moved the files into the other copy's
+    // folder since, where a later scan would file them with it again: they
+    // are locked to the copy, as the join locked them to the other.
     for held in &joined.memberships {
+        let source = if held.locked {
+            held.source.as_str()
+        } else {
+            "manual"
+        };
         tx.prepare_cached(sql::RESTORE_MEMBERSHIP.text())?
-            .execute(params![copy, held.track_id, held.source, held.locked])?;
+            .execute(params![copy, held.track_id, source, true])?;
     }
     if joined.identity.release_group_mbid.is_some() {
         restore_album_row(tx, copy, &joined.identity, now)?;
