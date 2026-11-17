@@ -248,6 +248,10 @@ droppedneedle_kernel::sql! {
     /// Clear an album's (`?1`) blocklist.
     pub(super) DELETE_QUARANTINE_FOR_ALBUM = "DELETE FROM download_quarantine \
              WHERE release_group_mbid = ?1";
+    /// The album's (`?1`) sources blocklisted as another edition, which a
+    /// song may now be taken from.
+    pub(super) DELETE_EDITION_REFUSALS_FOR_ALBUM = "DELETE FROM download_quarantine \
+             WHERE lower(release_group_mbid) = lower(?1) AND reason_code = 'not_pinned_edition'";
     /// Retryable tasks: failed or partial, under the retry ceiling (`?1`),
     /// with no newer task for the same ask.
     pub(super) RETRYABLE = TASK_ROW + " t \

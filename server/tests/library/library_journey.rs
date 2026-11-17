@@ -5210,6 +5210,7 @@ async fn an_upgrade_held_for_one_file_keeps_that_files_old_copy() {
                     path: source,
                     track: index,
                     replaces,
+                    set_aside: false,
                 }
             })
             .collect();
@@ -5356,6 +5357,7 @@ async fn an_upgrade_plans_again_when_a_replaced_track_comes_back() {
                 path: source,
                 track: 0,
                 replaces,
+                set_aside: false,
             }],
             extras: Vec::new(),
             actor: None,
@@ -6173,6 +6175,7 @@ async fn a_switched_off_library_takes_no_file_changes() {
                 path: download.clone(),
                 track: 0,
                 replaces: Vec::new(),
+                set_aside: false,
             }],
             extras: Vec::new(),
             actor: None,
@@ -16550,6 +16553,7 @@ async fn an_import_in_place_of_a_missing_track_marks_nothing() {
                 path: source,
                 track: 1,
                 replaces: Vec::new(),
+                set_aside: false,
             }],
             extras: Vec::new(),
             actor: None,
@@ -16601,6 +16605,7 @@ async fn an_import_that_cannot_read_the_albums_match_leaves_it_alone() {
                     path: source,
                     track,
                     replaces: Vec::new(),
+                    set_aside: false,
                 }
             })
             .collect();
@@ -16809,6 +16814,7 @@ async fn import_and_management_name_a_file_alike() {
                     path: source,
                     track: 0,
                     replaces: Vec::new(),
+                    set_aside: false,
                 }],
                 extras: Vec::new(),
                 actor: None,
@@ -16931,6 +16937,7 @@ async fn a_file_staging_cannot_read_is_a_local_fault() {
                 path: source.clone(),
                 track: 0,
                 replaces: Vec::new(),
+                set_aside: false,
             }],
             extras: Vec::new(),
             actor: None,
@@ -16998,6 +17005,7 @@ async fn an_import_never_lands_under_an_excluded_path() {
                 path: source,
                 track: 0,
                 replaces: Vec::new(),
+                set_aside: false,
             }],
             extras: Vec::new(),
             actor: None,
@@ -17139,6 +17147,7 @@ fn join_second_track(
                 path: source,
                 track: 1,
                 replaces: Vec::new(),
+                set_aside: false,
             }],
             extras: Vec::new(),
             actor: None,
@@ -21734,6 +21743,7 @@ async fn an_import_during_a_scan_is_not_judged_gone() {
                 path: source,
                 track,
                 replaces: Vec::new(),
+                set_aside: false,
             }
         })
         .collect();
@@ -22331,6 +22341,7 @@ async fn an_imported_track_takes_the_history_of_the_one_it_replaces() {
                     path: source,
                     track,
                     replaces: Vec::new(),
+                    set_aside: false,
                 }
             })
             .collect();

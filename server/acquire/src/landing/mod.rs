@@ -793,9 +793,11 @@ impl LandingService {
             files: landing
                 .audio
                 .iter()
-                .map(|file| intake::IntakeFile {
+                .enumerate()
+                .map(|(index, file)| intake::IntakeFile {
                     file: file.clone(),
                     held_for: None,
+                    set_aside: matched.set_aside.contains_key(&index),
                 })
                 .collect(),
             target: intake::Target {

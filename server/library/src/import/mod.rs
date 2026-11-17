@@ -116,6 +116,10 @@ pub struct ImportSource {
     /// of its track). Their files go to the recycle bin in the bundle that
     /// places this one, and only when this one is placed.
     pub replaces: Vec<String>,
+    /// A song's file from another edition of the album, filed as this
+    /// release: it adds the song and never seals the album's identity or
+    /// clears its match flag, as a joined file does.
+    pub set_aside: bool,
 }
 
 /// A file that came with an album but is none of the release's tracks (a
@@ -285,6 +289,8 @@ struct Placement {
     /// The folder of the joined album's copy that the placement went by,
     /// which the commit checks again.
     copy_folder: Option<(String, String)>,
+    /// See [`ImportSource::set_aside`].
+    set_aside: bool,
 }
 
 /// Finished downloads brought into the library, and the MusicBrainz and
@@ -594,6 +600,7 @@ impl Imports {
                 track_id: String::new(),
                 replaces,
                 copy_folder: None,
+                set_aside: import.files.get(ordinal).is_some_and(|file| file.set_aside),
             });
         }
 
@@ -932,6 +939,7 @@ impl Imports {
             ingest_source: import.origin.as_str().to_owned(),
             join: join.clone(),
             track: None,
+            set_aside: false,
             copy_seal: None,
         };
         let result = (|| {
@@ -1007,6 +1015,7 @@ impl Imports {
                             disc: track.disc,
                             folder: placement.copy_folder.clone(),
                         }),
+                        set_aside: placement.set_aside,
                         ..dest_policy(placement.policy)
                     }),
                     replaces: None,
@@ -1436,6 +1445,9 @@ struct ProvenanceFile {
     track_id: String,
     #[serde(default)]
     track: Option<JoinedTrack>,
+    /// See [`ImportSource::set_aside`].
+    #[serde(default)]
+    set_aside: bool,
 }
 
 /// Record the task, the bundle and each staged copy's source, track id
@@ -1474,6 +1486,7 @@ fn write_provenance(
                     ProvenanceFile {
                         track_id: item.track_id.clone(),
                         track: item.adopt.as_ref()?.track.clone(),
+                        set_aside: item.adopt.as_ref()?.set_aside,
                     },
                 ))
             })
@@ -1497,6 +1510,8 @@ pub(crate) struct Recovered {
     /// The album the file was fetched for, and its place on its release.
     pub join: Option<AlbumJoin>,
     pub track: Option<JoinedTrack>,
+    /// See [`ImportSource::set_aside`].
+    pub set_aside: bool,
 }
 
 impl Default for Recovered {
@@ -1507,6 +1522,7 @@ impl Default for Recovered {
             ingest_source: ImportOrigin::Download.as_str().to_owned(),
             join: None,
             track: None,
+            set_aside: false,
         }
     }
 }
@@ -1545,5 +1561,6 @@ pub(crate) fn recovered_provenance(staged: &Path, bundle_id: &str, track_id: &st
         ingest_source: origin.as_str().to_owned(),
         join: file.and(provenance.join.clone()),
         track: file.and_then(|file| file.track.clone()),
+        set_aside: file.is_some_and(|file| file.set_aside),
     }
 }

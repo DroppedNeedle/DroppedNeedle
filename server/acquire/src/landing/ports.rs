@@ -35,6 +35,9 @@ pub struct ImportFile {
     /// Library tracks it replaces. Their files go to the recycle bin in
     /// the same publish, and only if this file is placed.
     pub replaces: Vec<String>,
+    /// A song's file from another edition of its album
+    /// ([`droppedneedle_library::import::ImportSource::set_aside`]).
+    pub set_aside: bool,
 }
 
 pub use droppedneedle_library::import::ImportOrigin;

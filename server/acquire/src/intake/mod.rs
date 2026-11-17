@@ -91,6 +91,10 @@ pub struct IntakeFile {
     /// The hold a person is importing the file from, under
     /// [`Gate::PersonChoseFile`].
     pub held_for: Option<Reason>,
+    /// A song's file from another edition of its album, matched without
+    /// its release ids: it adds the song and leaves the album's identity
+    /// alone.
+    pub set_aside: bool,
 }
 
 /// What the files are for.

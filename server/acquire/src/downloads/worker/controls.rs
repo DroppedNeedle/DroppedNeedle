@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use super::retry::successor_row;
 use super::{DownloadWorker, Pass, handled_count, live_attempt};
+use crate::dispatch::DispatchOrigin;
 use crate::downloads::queue_rows::{ProgressColumns, RetryStop};
 use crate::downloads::reasons::NEXT_SOURCE_NOTE;
 use crate::downloads::source_tag::SourceTag;
@@ -120,8 +121,9 @@ impl DownloadWorker {
     /// double click already spawned), point its request at it, and wake
     /// the loop so the search starts right away. An album retry clears the
     /// album's blocklist first: an explicit "try again" reconsiders the
-    /// releases the failed attempt quarantined (a track retry leaves the
-    /// album's blocklist alone, and auto-retry never clears it). Answers
+    /// releases the failed attempt quarantined (a track retry lifts only
+    /// the album's sources refused as another edition, which a song may
+    /// now come from, and auto-retry never clears it). Answers
     /// the successor's id, or, when another download already fetches the
     /// album, that download's: the task's retries stop and its requests
     /// follow that one, as a new ask for the album would.
@@ -157,8 +159,12 @@ impl DownloadWorker {
                     store.stop_retries(&source, &RetryStop::Downloading(live.clone()), now)?;
                     return Ok(Some(live));
                 }
-                if source.download_type == "album" && !source.release_group_mbid.is_empty() {
-                    store.delete_quarantine_for_album(&source.release_group_mbid)?;
+                if !source.release_group_mbid.is_empty() {
+                    if source.download_type == "album" {
+                        store.delete_quarantine_for_album(&source.release_group_mbid)?;
+                    } else if source.origin != DispatchOrigin::Upgrade {
+                        store.delete_edition_refusals_for_album(&source.release_group_mbid)?;
+                    }
                 }
                 store.spawn_successor(&source, &row, now)?;
                 Ok(Some(row.id))

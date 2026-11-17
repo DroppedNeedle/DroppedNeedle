@@ -211,6 +211,10 @@ pub struct Adoption {
     /// edition.
     #[serde(default)]
     pub track: Option<JoinedTrack>,
+    /// A song's file from another edition of the album: the seal leaves
+    /// the album's identity and match flag alone, as for a joined file.
+    #[serde(default)]
+    pub set_aside: bool,
     /// What the placement read of the joined copy's folder. The commit
     /// refuses the bundle when the copy has moved since; a resumed commit
     /// has none and finishes.
@@ -266,6 +270,7 @@ impl Adoption {
         ingest_source: String,
         join: Option<AlbumJoin>,
         track: Option<JoinedTrack>,
+        set_aside: bool,
     ) -> Self {
         Self {
             policy: journaled.map_or(crate::scan::models::EffectivePolicy::Automatic, |adopt| {
@@ -279,6 +284,7 @@ impl Adoption {
             ingest_source,
             join: journaled.and_then(|adopt| adopt.join.clone()).or(join),
             track: journaled.and_then(|adopt| adopt.track.clone()).or(track),
+            set_aside: journaled.is_some_and(|adopt| adopt.set_aside) || set_aside,
             copy_seal: None,
         }
     }

@@ -3754,6 +3754,7 @@ fn a_landing_keeps_a_detach_and_a_named_group_flag() {
                     track_id: track,
                     identity: &landed,
                     joined: false,
+                    set_aside: false,
                 }],
                 1.0,
             )

@@ -444,7 +444,7 @@ impl Reason {
                 "The files are a different kind of release than you asked for (a live album, box set or similar)."
             }
             Self::NotPinnedEdition => {
-                "The files are tagged as a different edition than the one you picked for this album."
+                "The files are tagged as another edition than the one this download is for."
             }
             Self::WrongAlbum => "The files belong to a different album by the same artist.",
             Self::QualityRejected => {

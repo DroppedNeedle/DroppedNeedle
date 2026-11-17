@@ -1183,6 +1183,7 @@ impl DropImports {
                 .map(|file| intake::IntakeFile {
                     file: file.clone(),
                     held_for: None,
+                    set_aside: false,
                 })
                 .collect(),
             target: intake::Target {

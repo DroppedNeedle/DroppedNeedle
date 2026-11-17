@@ -1133,9 +1133,16 @@ impl HeldService {
                         .to_owned(),
                 )
             })?;
+            // A song from another edition of the album adds the song and
+            // leaves the album's match alone, as at its landing.
+            let set_aside = target.as_ref().is_some_and(|target| {
+                crate::landing::matching::song_from_another_edition(target, &probed, &release)
+                    .is_some()
+            });
             batch_files.push(IntakeFile {
                 file: probed,
                 held_for: Some(file.reason),
+                set_aside,
             });
             // Every file is compared with the library's copies of its
             // track; with none there, it is placed as it is.
@@ -1467,6 +1474,7 @@ impl HeldService {
                     .map(|file| IntakeFile {
                         file: file.clone(),
                         held_for: None,
+                        set_aside: false,
                     })
                     .collect(),
                 target: intake::Target {

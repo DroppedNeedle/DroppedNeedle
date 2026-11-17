@@ -69,6 +69,9 @@ pub struct MatchSummary {
     /// as a track of another group's release, by file index, with the
     /// recording their tags name. Matched without their ids.
     pub album_copies: HashMap<usize, String>,
+    /// For a song request: files of another edition of the album, by file
+    /// index, with the release their tags name ([`set_aside_editions`]).
+    pub set_aside: HashMap<usize, String>,
 }
 
 impl MatchSummary {
@@ -221,10 +224,11 @@ pub async fn find(
     let recalled = async {
         let releases = recall(library, target, &local).await?;
         let album_copies = take_album_copies(library, target, &mut local, &releases).await?;
+        let set_aside = set_aside_editions(target, &landing.audio, &mut local, &releases);
         let aliases = merged_recordings(library, &local, &releases, PRIORITY).await?;
-        Ok::<_, String>((releases, aliases, album_copies))
+        Ok::<_, String>((releases, aliases, album_copies, set_aside))
     };
-    let (releases, aliases, album_copies) = match recalled.await {
+    let (releases, aliases, album_copies, set_aside) = match recalled.await {
         Ok(recalled) => recalled,
         Err(detail) => {
             return MatchSummary {
@@ -233,13 +237,73 @@ pub async fn find(
                 considered: Vec::new(),
                 owned,
                 album_copies: HashMap::new(),
+                set_aside: HashMap::new(),
             };
         }
     };
     let mut summary = choose(&local, releases, &aliases, target);
     summary.owned = owned;
     summary.album_copies = album_copies;
+    summary.set_aside = set_aside;
     summary
+}
+
+/// For a song request with a pinned edition: the files that are the song
+/// from another edition of its album ([`song_from_another_edition`]).
+/// Their release ids are set aside, so they pair with the pinned release
+/// like untagged files, and are filed and tagged as it. Answers each
+/// one's release id. Nothing is set aside while the pin did not load.
+fn set_aside_editions(
+    target: &Target,
+    files: &[LandedFile],
+    local: &mut LocalAlbum,
+    releases: &[Release],
+) -> HashMap<usize, String> {
+    let mut set_aside = HashMap::new();
+    let (Some(_), Some(pinned)) = (target.release_mbid.as_deref(), releases.first()) else {
+        return set_aside;
+    };
+    for (index, (file, track)) in files.iter().zip(local.tracks.iter_mut()).enumerate() {
+        if let Some(release) = song_from_another_edition(target, file, pinned) {
+            track.release_mbid = None;
+            track.release_track_mbid = None;
+            set_aside.insert(index, release);
+        }
+    }
+    set_aside
+}
+
+/// A song request's file from another edition of `release`'s album, as
+/// its own tags say: tagged with the album's group and another release,
+/// carrying its own recording id, in a format whose tags the import
+/// writes. An upgrade replaces a library file and keeps to the album's
+/// edition. Answers the release the file's tags name. The landing and a
+/// held file's import both read it, so the album's match is left alone
+/// either way.
+pub fn song_from_another_edition(
+    target: &Target,
+    file: &LandedFile,
+    release: &Release,
+) -> Option<String> {
+    if !target.is_track || target.origin == crate::dispatch::DispatchOrigin::Upgrade.as_str() {
+        return None;
+    }
+    let tag = &file.tag;
+    let same_group = tag
+        .musicbrainz_release_group_id
+        .as_deref()
+        .is_some_and(|tagged| {
+            tagged
+                .trim()
+                .eq_ignore_ascii_case(&release.release_group_id)
+        });
+    let has_recording = usable_mbid(tag.musicbrainz_recording_id.as_deref(), &mut 0).is_some();
+    let tagged = usable_mbid(tag.musicbrainz_release_id.as_deref(), &mut 0)?;
+    (same_group
+        && has_recording
+        && droppedneedle_library::tags::save::writable(file.format)
+        && !release.answers_to(&tagged))
+    .then_some(tagged)
 }
 
 /// For a single the person chose to take from its album: files tagged as
@@ -605,6 +669,7 @@ pub fn choose(
             considered: Vec::new(),
             owned: OwnedTracks::default(),
             album_copies: HashMap::new(),
+            set_aside: HashMap::new(),
         };
     }
     let scored: Vec<ReleaseMatch> = releases
@@ -630,6 +695,7 @@ pub fn choose(
             considered,
             owned: OwnedTracks::default(),
             album_copies: HashMap::new(),
+            set_aside: HashMap::new(),
         };
     };
     let tagged = local.tagged_release();
@@ -663,6 +729,7 @@ pub fn choose(
             considered,
             owned: OwnedTracks::default(),
             album_copies: HashMap::new(),
+            set_aside: HashMap::new(),
         };
     };
     let mut releases = releases;
@@ -676,6 +743,7 @@ pub fn choose(
         considered,
         owned: OwnedTracks::default(),
         album_copies: HashMap::new(),
+        set_aside: HashMap::new(),
     }
 }
 

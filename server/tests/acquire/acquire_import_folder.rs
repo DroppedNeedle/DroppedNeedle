@@ -286,6 +286,7 @@ impl Rig {
                         path: album_dir.join(file),
                         track,
                         replaces: Vec::new(),
+                        set_aside: false,
                     })
                     .collect(),
                 extras: Vec::new(),

@@ -653,6 +653,7 @@ async fn import(
                 path: batch.files[*file].file.path.clone(),
                 track: *track,
                 replaces: replaces.clone(),
+                set_aside: batch.files[*file].set_aside,
             })
             .collect(),
         extras: pairing

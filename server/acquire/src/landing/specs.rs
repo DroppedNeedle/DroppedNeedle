@@ -786,7 +786,9 @@ impl ImportSpec for ReleaseFound {
 
 /// With a pinned edition, files whose own tags name another release are
 /// another edition: rejected, so the next source is tried. Untagged files
-/// are judged by the pinned tracklist alone.
+/// are judged by the pinned tracklist alone, and so is a song's file from
+/// another edition of its album, which the accept notes
+/// ([`super::matching::MatchSummary::set_aside`]).
 struct PinnedEdition;
 
 impl ImportSpec for PinnedEdition {
@@ -809,9 +811,9 @@ impl ImportSpec for PinnedEdition {
         // The album copy of a single the person chose to take from its
         // album names the album's release, not another edition.
         let album_copy = |index: &usize| {
-            subject
-                .matched
-                .is_some_and(|matched| matched.album_copies.contains_key(index))
+            subject.matched.is_some_and(|matched| {
+                matched.album_copies.contains_key(index) || matched.set_aside.contains_key(index)
+            })
         };
         let tagged: Vec<&str> = subject
             .landing
@@ -835,7 +837,15 @@ impl ImportSpec for PinnedEdition {
                 ),
             );
         }
-        Verdict::accept()
+        let set_aside = subject
+            .matched
+            .and_then(|matched| matched.set_aside.values().min());
+        match set_aside {
+            Some(release) => Verdict::note(format!(
+                "the song is taken from release {release}, another edition of the album"
+            )),
+            None => Verdict::accept(),
+        }
     }
 }
 
@@ -849,8 +859,22 @@ impl ImportSpec for IdsAgree {
     }
 
     fn check(&self, subject: &Subject<'_>) -> Verdict {
-        match subject.matched.map(|matched| &matched.state) {
-            Some(MatchState::Contradictory) => Verdict::hold(
+        match subject.matched {
+            // Files of another edition taken for a song: what contradicts
+            // the pinned release is that edition, refused as one.
+            Some(matched)
+                if matched.state == MatchState::Contradictory
+                    && subject.target.is_track
+                    && !matched.set_aside.is_empty() =>
+            {
+                Verdict::reject(
+                    Reason::NotPinnedEdition,
+                    Disposition::Permanent,
+                    Some(QuarantineReason::VerifyFailed),
+                    "the files' MusicBrainz ids name recordings the pinned edition lacks",
+                )
+            }
+            Some(matched) if matched.state == MatchState::Contradictory => Verdict::hold(
                 Reason::TagMismatch,
                 "the files' MusicBrainz ids name a different release",
             ),

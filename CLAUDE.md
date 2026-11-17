@@ -638,6 +638,12 @@ Run from the repo root. `make help` lists every target.
   release outside it is only ever an unconfirmed guess, and stays one
   until a person confirms it or the files' tags name its group. An
   automatic match withdrawn on contradiction keeps an undo.
+- A song request takes the song from any edition of its album: a file
+  tagged with the album's group and carrying its own recording id, in a
+  format whose tags the import writes. It adds the song and never changes
+  the album's identity. An upgrade still needs the album's edition; in a
+  folder that keeps its own tags the song keeps its edition's tags and is
+  identified as that edition.
 - A release MusicBrainz will not give in a readable form is never
   evidence: identification waits and retries rather than marking an
   album unmatched, and an unreadable tagged release leaves only an

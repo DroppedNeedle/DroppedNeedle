@@ -1188,6 +1188,19 @@ impl<'conn> DownloadStore<'conn> {
         Ok(removed as i64)
     }
 
+    /// Lift the album's blocklist entries for another edition: a song may
+    /// be taken from any edition of its album.
+    pub fn delete_edition_refusals_for_album(
+        &self,
+        release_group_mbid: &str,
+    ) -> Result<i64, StoreError> {
+        let removed = self.conn.execute(
+            sql::DELETE_EDITION_REFUSALS_FOR_ALBUM.text(),
+            rusqlite::params![release_group_mbid],
+        )?;
+        Ok(removed as i64)
+    }
+
     /// Every distinct reason spelling the journal stores.
     pub fn stored_reason_spellings(&self) -> Result<Vec<String>, StoreError> {
         self.rows(sql::STORED_REASONS.text(), [], |row| row.get(0))

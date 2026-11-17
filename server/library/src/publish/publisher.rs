@@ -239,6 +239,7 @@ pub(super) fn commit_bundle(
                     track_id: &track.track_id,
                     identity,
                     joined: joined.is_some(),
+                    set_aside: adoption.set_aside,
                 });
             }
             if let (Some(joined), Some(join), Some(on)) = (joined, &adoption.join, &adoption.track)

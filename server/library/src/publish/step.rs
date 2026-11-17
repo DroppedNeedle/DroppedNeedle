@@ -1199,6 +1199,7 @@ impl Run<'_> {
                         provenance.ingest_source,
                         provenance.join,
                         provenance.track,
+                        provenance.set_aside,
                     ))
                 }
             };

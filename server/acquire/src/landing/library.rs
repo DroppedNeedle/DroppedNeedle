@@ -500,6 +500,7 @@ impl LandingLibrary for LibraryLanding {
                         path: file.path,
                         track: file.track,
                         replaces: file.replaces,
+                        set_aside: file.set_aside,
                     })
                     .collect(),
                 actor: request.actor,
