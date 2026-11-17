@@ -1561,6 +1561,74 @@ async fn zero_years_never_open_a_0s_shelf() {
     assert!(!decades.contains(&0), "a zero year has no shelf: {body}");
 }
 
+/// A pending review counts and lists only while its album is listed: an
+/// album whose files are all gone needs nobody until they come back. A
+/// closed review stays in the history, so an exclusion can still be
+/// reopened.
+#[tokio::test]
+async fn needs_you_counts_and_lists_only_listed_albums() {
+    use droppedneedle_library::identify::models::ReviewState;
+    use droppedneedle_library::reviews::{self, ReviewFilter};
+
+    let fixture = sqlite_fixture().await;
+    // al2 has an indexed file; al4's only file is missing.
+    seed(
+        &fixture,
+        "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+         candidates_json, state, created_at, updated_at) VALUES \
+         ('rv-listed', 'al2', 'r', '[]', 'pending', 1, 1), \
+         ('rv-gone', 'al4', 'r', '[]', 'pending', 2, 2), \
+         ('rv-excluded', 'al4', 'r', '[]', 'excluded', 3, 3)",
+    )
+    .await;
+    let extras = fixture.catalog.stats_extras().await.expect("stats extras");
+    assert_eq!(extras.review_count, 1, "Home's need-you count");
+
+    let listed = |states: Vec<ReviewState>| {
+        let db = fixture.runtime.db().clone();
+        async move {
+            let filter = ReviewFilter {
+                states,
+                limit: 50,
+                ..ReviewFilter::default()
+            };
+            let page = db
+                .read("test.reviews", move |conn| {
+                    reviews::list(conn, &filter).map_err(droppedneedle_kernel::db::DbError::from)
+                })
+                .await
+                .expect("reviews list");
+            let mut ids: Vec<String> = page.rows.into_iter().map(|row| row.review.id).collect();
+            ids.sort();
+            (ids, page.total)
+        }
+    };
+    assert_eq!(
+        listed(vec![ReviewState::Pending]).await,
+        (vec!["rv-listed".to_owned()], 1),
+        "Needs you"
+    );
+    assert_eq!(
+        listed(vec![ReviewState::Excluded]).await,
+        (vec!["rv-excluded".to_owned()], 1),
+        "the history keeps an exclusion"
+    );
+
+    // Its file is back: the review needs someone again.
+    seed(
+        &fixture,
+        "UPDATE local_tracks SET availability = 'indexed' WHERE id = 'tg4'",
+    )
+    .await;
+    let extras = fixture.catalog.stats_extras().await.expect("stats extras");
+    assert_eq!(extras.review_count, 2, "Home's need-you count");
+    assert_eq!(
+        listed(vec![ReviewState::Pending]).await,
+        (vec!["rv-gone".to_owned(), "rv-listed".to_owned()], 2),
+        "Needs you"
+    );
+}
+
 /// Two copies own one release group and the older has the higher id: the
 /// album status names the copy playback opens, never the lower id.
 #[tokio::test]

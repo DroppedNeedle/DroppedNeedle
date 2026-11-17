@@ -1,8 +1,12 @@
 //! The SQL of identification reviews.
 
+// `sql!` needs a macro call in parentheses to take it as one part.
+#![allow(unused_parens, clippy::double_parens)]
+
 use super::ReviewOrder;
 use crate::identify::models::ReviewState;
 use crate::identity::sql::PERSONS;
+use crate::owned_album;
 
 droppedneedle_kernel::sql! {
     pub(super) SETTLE_REVIEWS = "UPDATE library_identify_reviews SET state = ?2, resolved_by_user_id = (SELECT id FROM auth_users WHERE id = ?3), \
@@ -59,9 +63,12 @@ droppedneedle_kernel::sql! {
                  WHERE e.local_album_id = r.local_album_id AND e.decision_source IN " + PERSONS + ") AS manual_identity, \
          r.row_revision";
     /// `FROM ... WHERE ...` of a review listing, every filter a named parameter that may be NULL.
+    /// A pending review lists only while its album is listed; a closed one stays in the history,
+    /// where an exclusion that took the album's files out can still be reopened.
     pub(super) fragment REVIEW_LISTING = "FROM library_identify_reviews r \
          JOIN local_albums a ON a.id = r.local_album_id \
          WHERE a.retired_into_album_id IS NULL \
+         AND (r.state <> 'pending' OR " + (owned_album!("a")) + ") \
          AND (:states IS NULL OR r.state IN (SELECT value FROM json_each(:states))) \
          AND (:album IS NULL OR r.local_album_id = :album) \
          AND (:reason IS NULL OR r.reason_code = :reason) \

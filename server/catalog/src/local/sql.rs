@@ -649,7 +649,9 @@ droppedneedle_kernel::sql! {
     /// with that state, as the Check albums tabs list them; the last scan
     /// is the newest completed run.
     pub(crate) STATS_EXTRAS = "SELECT \
-        (SELECT COUNT(*) FROM library_identify_reviews WHERE state = 'pending') AS reviews, \
+        (SELECT COUNT(*) FROM library_identify_reviews r JOIN local_albums a \
+         ON a.id = r.local_album_id WHERE r.state = 'pending' AND " + (owned_album!("a")) + ") \
+         AS reviews, \
         (SELECT COUNT(*) FROM local_albums a WHERE " + (owned_album!("a")) + " \
          AND " + (match_flag_state!("a.id", "unconfirmed")) + ") AS guesses, \
         (SELECT COUNT(*) FROM local_albums a WHERE " + (owned_album!("a")) + " \
