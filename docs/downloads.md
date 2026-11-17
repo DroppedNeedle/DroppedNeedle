@@ -104,6 +104,8 @@ Before downloading an album on its own, DroppedNeedle looks at what every source
 
 ## What automatic downloads take
 
+If the first Soulseek album search finds nothing, DroppedNeedle can retry with spaces in place of title punctuation, such as the dash in a date range. The artist stays in the query and the results are checked against the same edition.
+
 Automatic downloads (a new request, a failover, the Wanted list, an upgrade) take only what your quality list under Settings > Download Client names. That list holds FLAC and MP3 steps, so OGG, Opus, AAC, M4A, ALAC and WAV are never fetched by themselves. The steps count too:
 
 - A FLAC above every FLAC step in your list is left out: on Balanced or Efficient 192+, which hold CD quality, that means 24-bit. A custom FLAC step takes only that exact resolution.

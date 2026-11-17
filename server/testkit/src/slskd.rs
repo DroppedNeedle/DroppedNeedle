@@ -106,6 +106,7 @@ struct MockState {
     max_in_flight: usize,
     /// Peer responses every search answers instead of the canned three.
     scripted_responses: Option<Vec<Value>>,
+    responses_by_query: HashMap<String, Vec<Value>>,
     /// Artificial delay (ms) applied inside search/enqueue handlers so the
     /// semaphore test can observe overlap if serialization breaks.
     handler_delay_ms: u64,
@@ -334,7 +335,9 @@ async fn start_search(
         // Specific-query silence: a year-carrying query answers zero peers
         // (v2 `search_album`: a specific query sometimes returns nothing
         // when a broader one returns thousands; verified live).
-        let responses = if carries_year(search_text) {
+        let responses = if let Some(responses) = guard.responses_by_query.get(search_text) {
+            responses.clone()
+        } else if carries_year(search_text) {
             Vec::new()
         } else {
             guard
@@ -670,6 +673,16 @@ impl MockSlskd {
             .scripted_responses = Some(responses);
     }
 
+    /// Answer one exact query with the given peers.
+    pub fn script_query(&self, text: &str, responses: Vec<Value>) {
+        self.state
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .responses_by_query
+            .insert(text.to_owned(), responses);
+    }
+
     /// Error statuses the next requests answer with, and the request count.
     #[must_use]
     pub fn statuses(&self) -> &ScriptedStatuses {
@@ -818,6 +831,7 @@ impl MockSlskd {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.searches.clear();
+        guard.responses_by_query.clear();
         guard.transfers.clear();
         guard.search_texts.clear();
         guard.search_timeouts.clear();

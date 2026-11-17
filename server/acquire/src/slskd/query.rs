@@ -149,23 +149,40 @@ fn build_track_query(artist: &str, track: &str, album: Option<&str>) -> String {
     sanitize_query(&parts.join(" - "))
 }
 
+/// Use spaces in place of title separators, keeping the words and numbers
+/// on both sides. Keep apostrophes inside words.
+fn punctuation_neutral_title(title: &str) -> Option<String> {
+    let exact = sanitize_query(title);
+    let words: String = exact
+        .chars()
+        .map(|ch| match ch {
+            '\u{2010}'..='\u{2015}' | '−' | '…' | '“' | '”' | '：' | '／' | '、' => ' ',
+            ch if ch.is_ascii_punctuation() && ch != '\'' => ' ',
+            ch => ch,
+        })
+        .collect();
+    let neutral = words.split_whitespace().collect::<Vec<_>>().join(" ");
+    (neutral != exact && neutral.contains(' ')).then_some(neutral)
+}
+
 /// Most-specific-first album queries:
 /// artist+album+year -> artist+album -> edition-stripped title rungs ->
-/// artist. Every rung queries the primary credited artist only. Each rung
-/// is followed by a blocked-artist variant with the artist's first letters
-/// wildcarded: exact goes first because wildcards degrade matching on some
-/// clients; the wildcard sibling comes before broadening so a blocked artist
-/// still gets the most specific query that can return anything.
+/// artist. When punctuation separates title words, retry the title as
+/// words with the primary artist after the first exact query. The other
+/// rungs still include a wildcard variant for clients that block the artist.
 #[must_use]
 pub fn album_query_ladder(artist: &str, album: &str, year: Option<i32>) -> Vec<String> {
     let primary = primary_artist(artist);
     let wildcard = wildcard_artist(&sanitize_query(primary));
-    let mut queries = vec![
-        build_album_query(primary, album, year),
+    let mut queries = vec![build_album_query(primary, album, year)];
+    if let Some(neutral) = punctuation_neutral_title(album) {
+        queries.push(build_album_query(primary, &neutral, None));
+    }
+    queries.extend([
         build_album_query(&wildcard, album, year),
         build_album_query(primary, album, None),
         build_album_query(&wildcard, album, None),
-    ];
+    ]);
     let stripped = stripped_album_title(album);
     if !stripped.is_empty() && stripped != album.split_whitespace().collect::<Vec<_>>().join(" ") {
         queries.extend([
