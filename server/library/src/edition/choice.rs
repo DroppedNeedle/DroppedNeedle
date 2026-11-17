@@ -340,18 +340,20 @@ pub fn accept_automatic(
 /// import's catalog transaction, from the import's own match: each file is
 /// upserted as a `manual` placement on its release track, as
 /// [`place_files`] writes one, naming the release as the album's identity
-/// row spells it (an old match by hand of the file ends). Only when the album's match is a person's (chosen by
-/// hand or carried from v2), names `release_mbid`, and no custom edition is
-/// active; otherwise nothing is placed. A release track another indexed
-/// file of the album already holds (naming the release or none) is never
-/// given away: that file stays on the album, unplaced. When a file was
-/// placed, a match state left by an earlier failed placement
-/// (`CHOSEN_EDITION_*`) goes. Missing tracks then continue into the new
-/// ones ([`continue_tracks`]), last in the transaction. A file that
-/// replaced a track of the album as another version takes what people
-/// made on it ([`continue_replaced`]), whatever the album's match source,
-/// unless another file holds its release track. No audit row is written.
-/// Returns the number of files placed and left unplaced.
+/// row spells it (an old match by hand of the file ends). Only when the
+/// album's match is a person's (chosen by hand or carried from v2), names
+/// `release_mbid`, and no custom edition is active; otherwise nothing is
+/// placed. A release track another indexed file of the album already holds
+/// (naming the release or none) is never given away: that file stays on
+/// the album, unplaced. When a file was placed, a match state left by an
+/// earlier failed placement (`CHOSEN_EDITION_*`) goes, and so does the
+/// album's edition choice undo, which knows nothing of the new files.
+/// Missing tracks then continue into the new ones ([`continue_tracks`]),
+/// last in the transaction. A file that replaced a track of the album as
+/// another version takes what people made on it ([`continue_replaced`]),
+/// whatever the album's match source, unless another file holds its
+/// release track. No audit row is written. Returns the number of files
+/// placed and left unplaced.
 pub(crate) fn place_imported(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -412,6 +414,7 @@ pub(crate) fn place_imported(
     }
     if placed > 0 {
         identity::clear_chosen_flag(tx, album_id)?;
+        identity::forget_choice_undo(tx, album_id)?;
     }
     if chosen.is_none() && replaced.is_empty() {
         return Ok((0, left));

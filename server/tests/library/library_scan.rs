@@ -3840,6 +3840,219 @@ async fn copies_the_first_refuses_join_each_other() {
     assert_eq!(rig.album_at(&second_half), first);
 }
 
+/// A copy joined at a scan's end onto an album DroppedNeedle matched by
+/// itself takes the automatic edition's Undo away: it knows nothing of the
+/// joined file and would take it off its track. The join keeps its Undo.
+#[tokio::test]
+async fn a_joined_copy_takes_the_automatic_edition_undo_away() {
+    use droppedneedle_library::identify::models::{AutomaticSeal, DecisionSource, TrackIdentity};
+
+    let rig = CopyRig::new("copy-join-automatic-undo").await;
+    let first = rig.plant("a", 1, true);
+    let second = rig.plant("b", 2, true);
+    scan(&rig.library).await;
+    let kept = rig.album_at(&first);
+    rig.run(&format!(
+        "DELETE FROM local_album_external_identities WHERE local_album_id = '{kept}'; \
+         DELETE FROM local_track_external_identities WHERE local_track_id = '{}'; \
+         UPDATE local_albums SET created_at = 1 WHERE id = '{kept}';",
+        rig.track_at(&first),
+    ));
+    let identify = SqliteIdentifyStore::new(
+        Db::open_for_tests(&rig._dir.join("app.db")).expect("identify store opens"),
+        Arc::new(SystemClock),
+    );
+    let sealed = identify.seal_automatic(&AutomaticSeal {
+        local_album_id: kept.clone(),
+        release_group_mbid: CopyRig::mbid(1, 0),
+        release_mbid: Some(CopyRig::mbid(2, 0)),
+        tracks: vec![TrackIdentity {
+            local_track_id: rig.track_at(&first),
+            provider: "musicbrainz".to_owned(),
+            recording_mbid: Some(CopyRig::mbid(3, 1)),
+            release_track_mbid: Some(CopyRig::mbid(4, 1)),
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+        }],
+        flag: None,
+    });
+    assert_eq!(sealed.ok(), Some(true));
+    let automatic_undo = || {
+        droppedneedle_library::identity::reads::live_automatic_edition_undo(&rig.conn, &kept)
+            .expect("reads")
+    };
+    assert!(
+        automatic_undo().is_some(),
+        "the automatic edition can be undone"
+    );
+    let copy = rig.accept(&[(&second, 2)], 2);
+
+    scan(&rig.library).await;
+    assert_eq!(rig.retired(&copy), Some(kept.clone()), "the copy joins");
+    assert_eq!(
+        automatic_undo(),
+        None,
+        "the automatic edition's Undo is gone"
+    );
+    assert!(
+        droppedneedle_library::identity::copy_join_undoable(&rig.conn, &rig.join_of(&kept))
+            .expect("reads"),
+        "the join keeps its Undo"
+    );
+}
+
+/// A copy joined at a scan's end onto an album whose edition a person just
+/// chose takes that choice's Undo away: the Undo's record knows nothing of
+/// the joined file and would take it off its track. The join keeps its own
+/// Undo.
+#[tokio::test]
+async fn a_joined_copy_takes_the_edition_choice_undo_away() {
+    use droppedneedle_library::identity::{Offer, Placed};
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    let dir = ScratchDir::new("copy-join-choice-undo");
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music folder");
+    let library = bundle(&dir).await;
+    let conn =
+        droppedneedle_kernel::db::open_connection(&dir.join("app.db")).expect("connection opens");
+    let mbid = |kind: u16, n: u16| format!("5c0b7a1e-0020-4{kind:03x}-8000-{n:012x}");
+    let group = mbid(1, 0);
+    let (first, second) = (mbid(2, 1), mbid(2, 2));
+    // File `n` in `folder`, on `release`'s track `track`.
+    let plant_track = |folder: &str, n: u16, release: &str, track: u16| -> String {
+        let rel = format!("{folder}/{n:02}.flac");
+        let path = plant(&music, &rel, &format!("flac_full_0{}.flac", 1 + n % 2));
+        let tag = |field, value: String| TagEdit::new(field, vec![value]);
+        save_tags(
+            &path,
+            &[
+                tag(TagField::Title, format!("Track {n}")),
+                tag(TagField::Artist, "Portishead".to_owned()),
+                tag(TagField::AlbumArtist, "Portishead".to_owned()),
+                tag(TagField::Album, "Dummy".to_owned()),
+                tag(TagField::TrackNumber, n.to_string()),
+                tag(TagField::DiscNumber, "1".to_owned()),
+                tag(TagField::MusicBrainzReleaseId, release.to_owned()),
+                tag(TagField::MusicBrainzReleaseGroupId, mbid(1, 0)),
+                tag(TagField::MusicBrainzRecordingId, mbid(3, n)),
+                tag(TagField::MusicBrainzReleaseTrackId, mbid(4, track)),
+            ],
+        )
+        .expect("tagged");
+        rel
+    };
+    let text = |sql: &str| -> Option<String> {
+        conn.query_row(sql, [], |row| row.get(0))
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    };
+    let at = |rel: &str, column: &str| {
+        text(&format!(
+            "SELECT {column} FROM local_tracks WHERE relative_path = '{rel}'"
+        ))
+        .expect("track indexed")
+    };
+    let run = |sql: &str| conn.execute_batch(sql).expect("test sql runs");
+
+    // The album S on the first edition, two files; the copy C, one file on
+    // a track only the second edition has.
+    let s1 = plant_track("s", 1, &first, 1);
+    let s2 = plant_track("s", 2, &first, 2);
+    let c3 = plant_track("c", 3, &second, 13);
+    scan(&library).await;
+    let (album, copy) = (at(&s1, "local_album_id"), at(&c3, "local_album_id"));
+    assert_ne!(album, copy, "the scan files two albums");
+    let (t1, t2, t3) = (at(&s1, "id"), at(&s2, "id"), at(&c3, "id"));
+    run(&format!(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('curator', 'Curator', 'admin', 0); \
+         DELETE FROM local_album_external_identities WHERE local_album_id IN ('{album}', '{copy}'); \
+         DELETE FROM local_track_external_identities WHERE local_track_id IN ('{t1}', '{t2}', '{t3}'); \
+         UPDATE local_albums SET created_at = 1 WHERE id = '{album}'; \
+         UPDATE local_albums SET created_at = 2 WHERE id = '{copy}'; \
+         INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at) VALUES \
+         ('{album}', 'musicbrainz', '{group}', '{first}', 'automatic', 5), \
+         ('{copy}', 'musicbrainz', '{group}', '{second}', 'automatic', 5); \
+         INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, medium_position, \
+         release_track_position, decision_source, selected_at) VALUES \
+         ('{t1}', 'musicbrainz', '{r1}', '{first}', '{rt1}', 1, 1, 'automatic', 5), \
+         ('{t2}', 'musicbrainz', '{r2}', '{first}', '{rt2}', 1, 2, 'automatic', 5), \
+         ('{t3}', 'musicbrainz', '{r3}', '{second}', '{rt13}', 1, 3, 'automatic', 5);",
+        r1 = mbid(3, 1),
+        r2 = mbid(3, 2),
+        r3 = mbid(3, 3),
+        rt1 = mbid(4, 1),
+        rt2 = mbid(4, 2),
+        rt13 = mbid(4, 13),
+    ));
+
+    // A person switches S to the second edition.
+    let mut writer =
+        droppedneedle_kernel::db::open_connection(&dir.join("app.db")).expect("connection opens");
+    let spot = |file: &str, n: u16| Placed {
+        local_track_id: file.to_owned(),
+        recording_mbid: mbid(3, n),
+        release_track_mbid: mbid(4, 10 + n),
+        disc: 1,
+        position: u32::from(n),
+    };
+    let tx = writer.transaction().expect("transaction");
+    droppedneedle_library::identity::choose(
+        &tx,
+        &album,
+        &Offer {
+            release_group_mbid: group.clone(),
+            release_mbid: second.clone(),
+            spots: vec![spot(&t1, 1), spot(&t2, 2)],
+            weighed: vec![t1.clone(), t2.clone()],
+            use_anyway: false,
+        },
+        &format!("{group}:{second}"),
+        Some("curator"),
+        &[mbid(4, 13)],
+        10.0,
+    )
+    .expect("edition chosen");
+    tx.commit().expect("commit");
+    let undo_available =
+        || droppedneedle_library::identity::reads::undo_available(&conn, &album).expect("reads");
+    assert!(undo_available(), "the choice can be undone");
+
+    scan(&library).await;
+    assert_eq!(
+        text(&format!(
+            "SELECT retired_into_album_id FROM local_albums WHERE id = '{copy}'"
+        )),
+        Some(album.clone()),
+        "the copy joins the album"
+    );
+    assert!(!undo_available(), "the choice's Undo is gone");
+    let tx = writer.transaction().expect("transaction");
+    let undone = droppedneedle_library::identity::undo(&tx, &album, "curator", 20.0);
+    drop(tx);
+    assert!(undone.is_err(), "the Undo is refused: {undone:?}");
+    let join = text(&format!(
+        "SELECT id FROM library_catalog_actions WHERE reason_code = \
+         'SAME_EDITION_COPIES_JOINED' AND local_album_id = '{album}'"
+    ))
+    .expect("the join is recorded");
+    assert!(
+        droppedneedle_library::identity::copy_join_undoable(&conn, &join).expect("reads"),
+        "the join keeps its Undo"
+    );
+    assert_eq!(
+        text(&format!(
+            "SELECT release_track_mbid FROM local_track_external_identities \
+             WHERE local_track_id = '{t3}'"
+        )),
+        Some(mbid(4, 13)),
+        "the joined file keeps its track"
+    );
+}
+
 /// The first file of the second window of a 300-file album.
 const SECOND_WINDOW: &str = "t256.flac";
 
@@ -7581,6 +7794,65 @@ async fn tell(name: &str, story: Story) -> (RegroupRig, String, String, String, 
         rig.scan().await;
     }
     (rig, old, new, old_rows[0].clone(), new_rows[0].clone())
+}
+
+/// A person choosing the edition of an album whose files replaced another
+/// album's on it joins the old album in at once, and the choice keeps its
+/// Undo: the old album brought only the rows of files that are gone.
+#[tokio::test]
+async fn a_choice_that_joins_a_replaced_album_keeps_its_undo() {
+    use droppedneedle_library::identity::{Offer, Placed};
+
+    let (mut rig, old, _) = mapped_album("join-choice-keeps-undo", 2).await;
+    let after = rig.after.clone();
+    let new_rows = rig.replace(&[0, 1], "b", &after).await;
+    let new = rig.album_of("b/t000.flac");
+    assert_ne!(new, old, "a new album row");
+    rig.run(
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('curator', 'Curator', 'admin', 0);",
+    );
+    let mut conn = droppedneedle_kernel::db::open_connection(&rig.db()).expect("db opens");
+    let tx = conn.transaction().expect("transaction");
+    droppedneedle_library::identity::choose(
+        &tx,
+        &new,
+        &Offer {
+            release_group_mbid: "rg-r".to_owned(),
+            release_mbid: REL_R.to_owned(),
+            spots: new_rows
+                .iter()
+                .zip(0u32..)
+                .map(|(row, n)| Placed {
+                    local_track_id: row.clone(),
+                    recording_mbid: "rec-x".to_owned(),
+                    release_track_mbid: format!("rt-{n}"),
+                    disc: 1,
+                    position: n + 1,
+                })
+                .collect(),
+            weighed: new_rows.clone(),
+            use_anyway: false,
+        },
+        &format!("rg-r:{REL_R}"),
+        Some("curator"),
+        &[],
+        10.0,
+    )
+    .expect("edition chosen");
+    tx.commit().expect("commit");
+    assert_eq!(
+        rig.retired_into(&old).as_deref(),
+        Some(new.as_str()),
+        "the old album joins"
+    );
+    assert!(
+        droppedneedle_library::identity::reads::undo_available(&conn, &new).expect("reads"),
+        "the choice keeps its Undo"
+    );
+    let tx = conn.transaction().expect("transaction");
+    droppedneedle_library::identity::undo(&tx, &new, "curator", 20.0).expect("the Undo works");
+    tx.commit().expect("commit");
 }
 
 /// An album retagged to a new name and renamed in one scan, whose new

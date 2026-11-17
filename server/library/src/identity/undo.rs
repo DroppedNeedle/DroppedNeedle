@@ -352,6 +352,23 @@ pub(crate) fn record_and_keep(
     Ok(action)
 }
 
+/// Forget the album's edition choice undo because files joined the album
+/// since: its record knows nothing of them, and putting it back would take
+/// them off their tracks. A person can still choose another edition.
+pub(crate) fn forget_choice_undo(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<()> {
+    tx.prepare_cached(sql::FORGET_CHOICE_UNDO.text())?
+        .execute(params![album_id])?;
+    Ok(())
+}
+
+/// Forget the album's automatic edition undo because files joined the
+/// album since, for the same reason as [`forget_choice_undo`].
+pub(crate) fn forget_automatic_undo(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<()> {
+    tx.prepare_cached(sql::FORGET_AUTOMATIC_UNDO.text())?
+        .execute(params![album_id])?;
+    Ok(())
+}
+
 /// Key a carried undo still at identity revision `from` to `to`, the
 /// revision an automatic seal or retraction left, and clear its mark.
 pub(crate) fn carry_undo(

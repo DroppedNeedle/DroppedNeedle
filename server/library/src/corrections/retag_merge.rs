@@ -79,6 +79,9 @@ pub(crate) enum MergeOutcome {
 ///   place in the automatic management queue;
 /// - the track rows left on the old row (missing or excluded files) move
 ///   to the new one; a joined copy's files, all of them, are locked to it;
+///   when an indexed file moves onto the new row, its edition undos (the
+///   person's choice and the automatic edition) go, as they know nothing
+///   of it;
 /// - the old row's "leave unmanaged" goes first when the new row holds a
 ///   person's match of its own; otherwise it is carried, like the rest
 ///   [`retire`] carries (the alias, favorites, plays, the taken-over mark,
@@ -149,10 +152,15 @@ pub(crate) fn merge_retagged(
                 params![old],
             )?;
         }
+        let joins_files = !crate::identity::reads::indexed_track_ids(tx, old)?.is_empty();
         tx.execute(
             crate::corrections::sql::MOVE_ALBUM_TRACKS.text(),
             params![old, new],
         )?;
+        if joins_files {
+            crate::identity::forget_choice_undo(tx, new)?;
+            crate::identity::forget_automatic_undo(tx, new)?;
+        }
         if new_chosen {
             tx.execute(crate::corrections::sql::DROP_EXCLUSION.text(), params![old])?;
         }

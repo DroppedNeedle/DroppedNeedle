@@ -74,6 +74,7 @@ pub(crate) use person::{TrackRow, drop_edition, upsert_track_identity};
 pub use release::ReleaseIdentity;
 pub use sql::asked_groups;
 pub use undo::{AutomaticUndo, AutomaticUndone, undo, undo_automatic};
+pub(crate) use undo::{forget_automatic_undo, forget_choice_undo};
 
 /// Why a person's identity command wrote nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -17380,6 +17380,65 @@ async fn a_join_lands_beside_its_copy() {
     );
 }
 
+/// "Get missing tracks" placing a file on the edition a person chose takes
+/// that choice's Undo away: its record knows nothing of the new file and
+/// would take it off its track. A scan that joins nothing leaves the Undo.
+#[tokio::test]
+async fn a_placed_download_takes_the_edition_choice_undo_away() {
+    let managed = ManagedLibrary::start("lib-import-join-choice-undo", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 2).await;
+    std::fs::remove_file(managed.path(&tracks[1])).expect("file removed");
+    rescan(&managed.library).await;
+    let current = managed
+        .library
+        .identify_store
+        .album_identity(&album)
+        .expect("identity reads")
+        .and_then(|identity| identity.release_mbid)
+        .expect("an edition");
+    let other = if current == REL_1 { REL_2 } else { REL_1 };
+    crate::common::library::operations(&managed.library)
+        .choose_edition(
+            &album,
+            other,
+            shown_revision(&managed.library, &album),
+            Some("admin"),
+            false,
+        )
+        .await
+        .expect("another edition chosen");
+    let undo_available = || {
+        droppedneedle_library::identity::reads::undo_available(&managed.db(), &album)
+            .expect("reads")
+    };
+    rescan(&managed.library).await;
+    assert!(undo_available(), "a scan that joins nothing keeps the Undo");
+
+    let imported = join_second_track(&managed, &album).expect("imported");
+    let relative = imported.paths[0]
+        .strip_prefix(&managed.music)
+        .expect("in the library")
+        .to_string_lossy()
+        .into_owned();
+    let track = managed
+        .library
+        .scan_store
+        .track_at("music", &relative)
+        .unwrap()
+        .expect("track indexed");
+    let placed: Option<String> = managed
+        .db()
+        .query_row(
+            "SELECT release_mbid FROM local_track_external_identities \
+             WHERE local_track_id = ?1",
+            [&track],
+            |row| row.get(0),
+        )
+        .expect("the file's match");
+    assert_eq!(placed.as_deref(), Some(other), "the file is on the edition");
+    assert!(!undo_available(), "the choice's Undo is gone");
+}
+
 /// A file v2 tagged, changed by hand since, then renamed in the app: the
 /// rename keeps v2's record, so the worker still leaves the album to the
 /// user.
