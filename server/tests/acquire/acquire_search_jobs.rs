@@ -154,10 +154,23 @@ async fn look_finishes(updates: &mut Subscription, worker: &DownloadWorker) {
 #[tokio::test]
 async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
     let mock = MockSlskd::start().await.expect("mock starts");
-    mock.script_responses(vec![
-        peer("halfway", "@@music\\Massive Attack\\Blue Lines", &[0, 1]),
-        peer("complete", "@@music\\MA\\Blue Lines (1991)", &[0, 1, 2, 3]),
-    ]);
+    let folder = r"@@music\Album";
+    let mut complete = peer("complete", folder, &[0, 1, 2, 3]);
+    complete["files"].as_array_mut().expect("files").insert(
+        0,
+        json!({
+            "filename": format!("{folder}\\cover.jpg"),
+            "size": 1024, "extension": "jpg",
+        }),
+    );
+    complete["fileCount"] = json!(5);
+    let mixed_folder = r"@@music\Artist\Album";
+    let mut halfway = peer("halfway", mixed_folder, &[0, 1]);
+    halfway["files"][1] = json!({
+        "filename": format!("{mixed_folder}\\02 {}.mp3", TITLES[1].0),
+        "size": 11_000_000, "extension": "mp3", "bitRate": 320, "length": TITLES[1].1,
+    });
+    mock.script_responses(vec![halfway, complete]);
 
     let Rig {
         journal,
@@ -202,6 +215,16 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
     assert_eq!(view.row.status, JobStatus::Completed);
     let payload = view.payload.expect("candidates decode");
     assert_eq!(payload.tracks_total, Some(4));
+    assert_eq!(
+        payload.candidates[0].view.format.as_deref(),
+        Some("FLAC 16-bit"),
+        "audio format with a cover first in the folder"
+    );
+    assert_eq!(
+        payload.candidates[1].view.format.as_deref(),
+        Some("FLAC / MP3"),
+        "mixed folder lists both audio formats"
+    );
     let ranked: Vec<_> = payload
         .candidates
         .iter()

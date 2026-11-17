@@ -93,7 +93,7 @@ pub struct TransferProgress {
     pub queue_position_end: Option<i64>,
     /// Total bytes of the batch, when the client knows it.
     pub total_bytes: Option<u64>,
-    /// Files in the batch (usenet jobs count as one).
+    /// Files in the batch (Soulseek counts audio tracks and Usenet counts jobs).
     pub files_total: u32,
     /// Files finished so far.
     pub files_completed: u32,
