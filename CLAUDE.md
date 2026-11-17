@@ -567,6 +567,13 @@ Run from the repo root. `make help` lists every target.
   check), or on an album with no match whose files' tags name different
   groups. The new file is held and the old stays. Only a person importing
   that held file passes the check; the quality comparison still runs.
+- Files that land for a release the library holds join its copy when
+  acquire names no copy and none of the files replaces a track, chosen
+  once in library import planning whichever way they came: a live copy on
+  that release whose match is accepted or a person's, holding none of
+  their tracks, first a person's choice and then the oldest. A copy on
+  another edition, a guess, a custom edition, or a copy with no files is
+  not joined.
 - The import folder (`acquire/src/import_folder/`) is one admin-set folder
   that is not, holds no and sits in no library, recycle bin, download or
   app folder; a pass that finds it overlapping one, not writable, or
@@ -642,8 +649,15 @@ Run from the repo root. `make help` lists every target.
   tagged with the album's group and carrying its own recording id, in a
   format whose tags the import writes. It adds the song and never changes
   the album's identity. An upgrade still needs the album's edition; in a
-  folder that keeps its own tags the song keeps its edition's tags and is
-  identified as that edition.
+  folder that keeps its own tags the song keeps its edition's tags and
+  joins the album's copy on the album's edition.
+- Two live copies whose accepted match names the same release, sharing no
+  release track or recording, every file of both placed on a release
+  track, neither grouped by hand, kept apart by a person or by an undo, or
+  hands-off unless both are, join at a scan's end, the joined files locked
+  to the album that keeps them. Catalog only, listed in the album's
+  history with an Undo that brings the copy, its files and its match back
+  and keeps it apart; hearts, ratings, plays and playlist entries stay.
 - A release MusicBrainz will not give in a readable form is never
   evidence: identification waits and retries rather than marking an
   album unmatched, and an unreadable tagged release leaves only an

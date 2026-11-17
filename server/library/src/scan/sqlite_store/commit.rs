@@ -43,6 +43,7 @@ use crate::catalog_actions::record_action;
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::artist_convergence::{converge_artists, record_move};
 use crate::corrections::continuation::{Pair, Scope, continue_tracks};
+use crate::corrections::copy_join::join_copies;
 use crate::corrections::placement::place_scanned;
 use crate::corrections::release_join::{Verdict, join_replaced, judge};
 use crate::corrections::retag_merge::{JoinCause, MergeOutcome, album_has_record, merge_retagged};
@@ -1782,7 +1783,8 @@ pub(super) fn albums_left(conn: &Connection, run_id: &str) -> rusqlite::Result<V
 ///    album's "leave unmanaged", its taken-over mark and the stamp
 ///    ([`carry_to_first_half`]);
 /// 3. albums whose files were replaced by another album's on the same
-///    edition are joined to it ([`join_replaced`]);
+///    edition are joined to it ([`join_replaced`]), and copies of one
+///    edition with no track in common join into one ([`join_copies`]);
 /// 4. the tracks that left an album are kept on record past the run
 ///    ([`keep_departures_of`], [`tidy_departures`]);
 /// 5. files filed onto an album with an edition are placed on its tracks
@@ -1810,7 +1812,10 @@ pub(super) const END_PASSES: [EndPass; 11] = [
     },
     EndPass {
         name: EndPassName::JoinReplaced,
-        work: EndWork::Whole(|tx, _, now| join_replaced(tx, Scope::Library, now).map(|()| 0)),
+        work: EndWork::Whole(|tx, _, now| {
+            join_replaced(tx, Scope::Library, now)?;
+            join_copies(tx, now).map(|()| 0)
+        }),
     },
     EndPass {
         name: EndPassName::KeepDepartures,

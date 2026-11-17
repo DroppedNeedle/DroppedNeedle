@@ -4190,9 +4190,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Undo the fold of a leftover album: the album, its files and its earlier
-         *     match come back. Plays, favorites and playlist entries moved to the
-         *     album that kept the files stay there.
+         * Undo the fold of a leftover album, or the join of a copy of the album's
+         *     edition: the album, its files and its earlier match come back. Plays,
+         *     favorites and playlist entries moved to the album that kept the files
+         *     stay there.
          */
         post: operations["undo_album_fold"];
         delete?: never;
@@ -10248,8 +10249,8 @@ export interface components {
             /** @description The first five of those tracks' titles, in album order. */
             track_titles: string[];
             /**
-             * @description For a `leftover_joined` or `artist_from_tracks` entry that can be
-             *     undone now, the id to undo it by; null otherwise.
+             * @description For a `leftover_joined`, `copies_joined` or `artist_from_tracks`
+             *     entry that can be undone now, the id to undo it by; null otherwise.
              */
             undo_id?: string | null;
         };
@@ -10257,7 +10258,7 @@ export interface components {
          * @description What one history entry tells.
          * @enum {string}
          */
-        AlbumHistoryKindView: "tracks_continued" | "tracks_replaced" | "retag_joined" | "retag_half_left_alone" | "retag_dismissal_ended" | "leftover_joined" | "marks_followed" | "tracks_other_music" | "tracks_new_copy" | "artist_from_tracks" | "edition_changed" | "edition_chosen" | "match_withdrawn" | "edition_change_undone" | "fold_undone" | "unfolded_from" | "hand_back_given_up";
+        AlbumHistoryKindView: "tracks_continued" | "tracks_replaced" | "retag_joined" | "retag_half_left_alone" | "retag_dismissal_ended" | "leftover_joined" | "copies_joined" | "marks_followed" | "tracks_other_music" | "tracks_new_copy" | "artist_from_tracks" | "edition_changed" | "edition_chosen" | "match_withdrawn" | "edition_change_undone" | "fold_undone" | "unfolded_from" | "hand_back_given_up";
         /**
          * @description An album's history, newest first: at most ten entries, none older than
          *     180 days.
@@ -35900,7 +35901,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description No fold that can be undone */
+            /** @description No fold or join that can be undone */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -35909,7 +35910,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The albums changed since the fold */
+            /** @description The albums changed since the fold or join */
             409: {
                 headers: {
                     [name: string]: unknown;

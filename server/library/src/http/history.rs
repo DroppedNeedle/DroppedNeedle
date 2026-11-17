@@ -5,7 +5,8 @@
 //!   changes, newest first. Open to
 //!   every signed-in user, as the album is catalog data.
 //! - `POST /library/folds/{fold_id}/undo`: undo the fold of a leftover
-//!   album, by the `undo_id` its history entry carries. For curators.
+//!   album, or the join of a copy of the album's edition, by the `undo_id`
+//!   its history entry carries. For curators.
 //! - `POST /library/artist-repairs/{repair_id}/undo`: undo the repair that
 //!   gave an album on "Unknown Artist" its tracks' artist, by its history
 //!   entry's `undo_id`. For curators.
@@ -55,6 +56,9 @@ pub enum AlbumHistoryKindView {
     RetagDismissalEnded,
     /// A leftover album of an earlier version was folded into this one.
     LeftoverJoined,
+    /// Another copy of this album's edition, sharing no track with it, was
+    /// joined into this one.
+    CopiesJoined,
     /// People's hearts and ratings moved here from a copy with no files.
     MarksFollowed,
     /// Other music took the paths of tracks, which came in as new tracks;
@@ -73,9 +77,11 @@ pub enum AlbumHistoryKindView {
     MatchWithdrawn,
     /// Someone undid the app's edition change.
     EditionChangeUndone,
-    /// The fold of a leftover album into this one was undone.
+    /// The fold of a leftover album, or the join of a copy, into this one
+    /// was undone.
     FoldUndone,
-    /// This album was folded into another and brought back out by an undo.
+    /// This album was folded or joined into another and brought back out
+    /// by an undo.
     UnfoldedFrom,
     /// Handing the album back to automatic management stopped: its files
     /// could not be read after every try.
@@ -108,8 +114,8 @@ pub struct AlbumHistoryEntryView {
     /// The other album's title, for a join, a fold or its undo; null when
     /// its row is gone.
     pub other_album_title: Option<String>,
-    /// For a `leftover_joined` or `artist_from_tracks` entry that can be
-    /// undone now, the id to undo it by; null otherwise.
+    /// For a `leftover_joined`, `copies_joined` or `artist_from_tracks`
+    /// entry that can be undone now, the id to undo it by; null otherwise.
     pub undo_id: Option<String>,
 }
 
@@ -130,6 +136,7 @@ impl From<HistoryEntry> for AlbumHistoryEntryView {
                 HistoryKind::RetagHalfLeftAlone => AlbumHistoryKindView::RetagHalfLeftAlone,
                 HistoryKind::RetagDismissalEnded => AlbumHistoryKindView::RetagDismissalEnded,
                 HistoryKind::LeftoverJoined => AlbumHistoryKindView::LeftoverJoined,
+                HistoryKind::CopiesJoined => AlbumHistoryKindView::CopiesJoined,
                 HistoryKind::MarksFollowed => AlbumHistoryKindView::MarksFollowed,
                 HistoryKind::TracksOtherMusic => AlbumHistoryKindView::TracksOtherMusic,
                 HistoryKind::TracksNewCopy => AlbumHistoryKindView::TracksNewCopy,
@@ -192,9 +199,10 @@ pub async fn get_album_history(
     Ok(Json(view))
 }
 
-/// Undo the fold of a leftover album: the album, its files and its earlier
-/// match come back. Plays, favorites and playlist entries moved to the
-/// album that kept the files stay there.
+/// Undo the fold of a leftover album, or the join of a copy of the album's
+/// edition: the album, its files and its earlier match come back. Plays,
+/// favorites and playlist entries moved to the album that kept the files
+/// stay there.
 #[utoipa::path(
     post,
     tag = "library management",
@@ -204,8 +212,8 @@ pub async fn get_album_history(
         (status = 204, description = "The album is back"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
-        (status = 404, description = "No fold that can be undone"),
-        (status = 409, description = "The albums changed since the fold"),
+        (status = 404, description = "No fold or join that can be undone"),
+        (status = 409, description = "The albums changed since the fold or join"),
     )
 )]
 pub async fn undo_album_fold(

@@ -4929,6 +4929,210 @@ async fn a_fetched_track_joins_the_copy_it_was_fetched_for() {
     }
 }
 
+/// Import "Sour Times" of `release` straight into the library, with no
+/// copy given: a file of `task_id`'s download laid out as on `release`.
+fn import_alone(
+    rig: &JoinRig,
+    task_id: &str,
+    release: &Release,
+) -> droppedneedle_library::import::ImportedAlbum {
+    use droppedneedle_library::import::{DownloadImport, ImportOrigin, ImportSource};
+    let track = release
+        .tracks
+        .iter()
+        .position(|track| track.title == TITLES[1])
+        .expect("track on release");
+    let path = rig.landed(task_id, release, 1, FIXTURES[1]);
+    rig.library
+        .imports
+        .import_download(&DownloadImport {
+            task_id: task_id.to_owned(),
+            origin: ImportOrigin::Download,
+            staging: None,
+            release: release.clone(),
+            files: vec![ImportSource {
+                path,
+                track,
+                replaces: Vec::new(),
+                set_aside: false,
+            }],
+            extras: Vec::new(),
+            actor: None,
+        })
+        .expect("imported")
+}
+
+// A track added to an edition the library holds joins that album and its
+// folder however it came, when nothing tells which copy it is for: a song
+// request here, with no copy planned. On a person's edition it is placed
+// there by hand, on an accepted automatic one by the import's own seal,
+// and the album's match is left as it was. A guess, another edition and a
+// copy that holds the track already are never joined, and a person's copy
+// comes before an older automatic one. A song from another edition into a
+// folder that keeps its own tags joins too, placed on the album's edition
+// with its tags as they came.
+#[tokio::test]
+async fn an_added_track_joins_the_copy_on_its_edition() {
+    use droppedneedle_kernel::runtime_config::secret_sections::{
+        IdentificationPolicy, LibraryPathRule, TypedLibrary,
+    };
+    let lengths = fixture_lengths();
+    let scenarios: Vec<Editions> = (20..=25).map(|s| editions(s, &lengths)).collect();
+    let releases: Vec<Release> = scenarios
+        .iter()
+        .flat_map(|e| [e.old.clone(), e.new.clone(), e.new2.clone()])
+        .collect();
+    let rig = join_rig(releases).await;
+    let ed = |s: u16| &scenarios[usize::from(s) - 20];
+    let song = |e: &Editions| e.new.tracks[1].recording_id.clone();
+    // A copy of scenario `s` holding "Mysterons" in `folder`, on `release`
+    // chosen by `source`, its file placed there the same way.
+    let copy = |s: u16, folder: &str, release: &Release, source: &str| {
+        let rel = format!("{folder}/{MYSTERONS}");
+        rig.plant(&rel, 0, release);
+        (rel, s, release.clone(), source.to_owned())
+    };
+    let settle = |(rel, s, release, source): &(String, u16, Release, String)| {
+        let album = rig.album_of(&rig.track_at(rel));
+        rig.set_edition(&album, &ed(*s).group, &release.id, source);
+        rig.place(&rig.track_at(rel), release, 0, source);
+        album
+    };
+    let new = |s: u16| ed(s).new.clone();
+    let planted = [
+        copy(20, "Copy 20", &new(20), "manual"),
+        copy(21, "Copy 21", &new(21), "automatic"),
+        copy(22, "Copy 22", &new(22), "automatic"),
+        copy(23, "Copy 23", &ed(23).new2, "manual"),
+        copy(24, "Copy 24", &new(24), "manual"),
+        copy(24, "Copy 24 second", &new(24), "automatic"),
+        copy(25, "Copy 25", &new(25), "manual"),
+    ];
+    rig.plant(&copy_rel(24, SOUR_TIMES), 1, &new(24));
+    rig.scan().await;
+    let albums: Vec<String> = planted.iter().map(settle).collect();
+    rig.place(
+        &rig.track_at(&copy_rel(24, SOUR_TIMES)),
+        &new(24),
+        1,
+        "manual",
+    );
+    rig.sql(&format!(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         release_mbid, updated_at) VALUES ('{}', 'unconfirmed', 'EDITION_UNCERTAIN', '{}', 5)",
+        albums[2],
+        new(22).id
+    ));
+    let user = "user";
+
+    // (a) A person's edition: the file joins the copy's folder, locked to
+    // it, placed by hand; no second album on the edition.
+    let before = rig.album_count();
+    let identity = rig.album_identity(&albums[0]);
+    let e = ed(20);
+    assert_eq!(
+        land_song(&rig, "t-a", e, (&e.new.id, &e.group), Some(&song(e)), user).await,
+        imported()
+    );
+    let (track, on, source, locked, availability) = rig.row_at(&copy_rel(20, SOUR_TIMES));
+    assert_eq!(
+        (on.as_str(), source.as_str(), locked, availability.as_str()),
+        (albums[0].as_str(), "manual", 1, "indexed"),
+        "(a) joins the copy"
+    );
+    assert_eq!(rig.identity(&track), Some(placed_on(&e.new, 1)), "(a)");
+    assert_eq!(rig.album_count(), before, "(a) no new album");
+    assert_eq!(rig.album_identity(&albums[0]), identity, "(a) match kept");
+
+    // (b) An accepted automatic edition: the import's seal places the file
+    // and leaves the album row alone.
+    let identity = rig.album_identity(&albums[1]);
+    let e = ed(21);
+    assert_eq!(
+        land_song(&rig, "t-b", e, (&e.new.id, &e.group), Some(&song(e)), user).await,
+        imported()
+    );
+    let (track, on, _, _, _) = rig.row_at(&copy_rel(21, SOUR_TIMES));
+    assert_eq!(on, albums[1], "(b) joins the copy");
+    let placed = rig.identity(&track).expect("(b) placed");
+    assert_eq!(
+        (placed.2, placed.5.as_str()),
+        (placed_on(&e.new, 1).2, "automatic"),
+        "(b)"
+    );
+    assert_eq!(rig.album_identity(&albums[1]), identity, "(b) match kept");
+    assert_eq!(rig.album_count(), before, "(b) no new album");
+
+    // (c) An unsure guess is not joined: the file is filed by the naming
+    // script, an album of its own.
+    let e = ed(22);
+    assert_eq!(
+        land_song(&rig, "t-c", e, (&e.new.id, &e.group), Some(&song(e)), user).await,
+        imported()
+    );
+    let (_, on, _, _, _) = rig.row_at(&copy_rel(4, SOUR_TIMES).replace("Dummy 4", "Dummy 22"));
+    assert_ne!(on, albums[2], "(c) a guess is not joined");
+    assert_eq!(rig.album_count(), before + 1, "(c)");
+
+    // (d) A copy on another edition only is not joined.
+    let filed = import_alone(&rig, "t-d", &new(23));
+    assert_ne!(
+        filed.album_id, albums[3],
+        "(d) another edition is not joined"
+    );
+    assert_eq!(rig.album_count(), before + 2, "(d)");
+
+    // (e) The person's copy holds the track already: the file joins the
+    // other copy on the edition instead.
+    let filed = import_alone(&rig, "t-e", &new(24));
+    assert_eq!(filed.album_id, albums[5], "(e) joins the copy without it");
+    assert_eq!(
+        rig.row_at(&format!("Copy 24 second/{SOUR_TIMES}")).1,
+        albums[5],
+        "(e) beside that copy's files"
+    );
+
+    // (f) A song from another edition into a folder that keeps its own
+    // tags joins the album's copy, placed on its edition, its tags as they
+    // came.
+    let e = ed(25);
+    rig.library
+        .settings
+        .store()
+        .update_secret_blocking::<TypedLibrary, String, _>(|stored| {
+            let mut library = stored.into_inner();
+            for root in &mut library.library_roots {
+                root.rules.push(LibraryPathRule {
+                    id: "own-rule".to_owned(),
+                    relative_path: "Copy 25".to_owned(),
+                    policy: IdentificationPolicy::LocalMetadata,
+                });
+            }
+            Ok(library)
+        })
+        .expect("path rule saved");
+    rig.library.core.refresh_registry();
+    let before = rig.album_count();
+    assert_eq!(
+        land_song(&rig, "t-f", e, (&e.new2.id, &e.group), Some(&song(e)), user).await,
+        imported()
+    );
+    let (track, on, _, _, _) = rig.row_at(&copy_rel(25, SOUR_TIMES));
+    assert_eq!(on, albums[6], "(f) joins the album's copy");
+    assert_eq!(rig.identity(&track), Some(placed_on(&e.new, 1)), "(f)");
+    assert_eq!(rig.album_count(), before, "(f) no one-song second copy");
+    let placed = rig.music.join(copy_rel(25, SOUR_TIMES));
+    let format = droppedneedle_library::tags::format_for_path(&placed).expect("format");
+    let (tag, _) =
+        droppedneedle_library::tags::read::read_scan_metadata(track_file(&placed), format)
+            .expect("tags read");
+    assert_eq!(
+        tag.musicbrainz_release_id.as_deref(),
+        Some(e.new2.id.as_str()),
+        "(f) its own tags are kept"
+    );
+}
+
 // An import's match and its automatic-management queueing are part of the
 // catalog commit that adds its files, so a stop around that commit never
 // leaves one without the other: stopped right after it, the file already
@@ -5751,6 +5955,47 @@ async fn a_copy_gone_at_commit_is_planned_again() {
         2,
         "the second plan filed the file by its tags"
     );
+}
+
+// A track that joins the copy on its own release, with no copy named by
+// the request, while that copy's edition changes as the file is written:
+// the commit refuses, the files are put back, and the landing is planned
+// again. The file never joins the copy on an edition it was not matched to.
+#[tokio::test]
+async fn a_copy_that_changes_edition_at_commit_is_planned_again() {
+    let e = editions(31, &fixture_lengths());
+    let rig = join_rig(vec![e.old.clone(), e.new.clone(), e.new2.clone()]).await;
+    rig.plant(&copy_rel(31, MYSTERONS), 0, &e.new);
+    rig.scan().await;
+    let track = rig.track_at(&copy_rel(31, MYSTERONS));
+    let album = rig.album_of(&track);
+    rig.set_edition(&album, &e.group, &e.new.id, "manual");
+    rig.place(&track, &e.new, 0, "manual");
+    rig.sql(&format!(
+        "CREATE TRIGGER edition_moved AFTER INSERT ON library_publish_journal BEGIN \
+         UPDATE local_album_external_identities SET release_mbid = '{}' \
+         WHERE local_album_id = '{album}'; END",
+        e.new2.id
+    ));
+    let song = e.new.tracks[1].recording_id.clone();
+    assert_eq!(
+        land_song(
+            &rig,
+            "t-moved",
+            &e,
+            (&e.new.id, &e.group),
+            Some(&song),
+            "user"
+        )
+        .await,
+        imported()
+    );
+    assert!(
+        !rig.music.join(copy_rel(31, SOUR_TIMES)).exists(),
+        "nothing joins the copy on its new edition"
+    );
+    let (_, on, _, _, _) = rig.row_at(&copy_rel(4, SOUR_TIMES).replace("Dummy 4", "Dummy 31"));
+    assert_ne!(on, album, "the second plan filed the file by its tags");
 }
 
 // "Replace tracks you have in another version": the edition's version of

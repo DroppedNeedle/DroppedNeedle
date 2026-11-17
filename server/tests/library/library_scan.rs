@@ -3203,6 +3203,350 @@ async fn a_folded_v2_split_comes_back_on_undo() {
     assert_eq!(undo(&action), "STALE_REVISION", "an undo runs once");
 }
 
+/// Copies of one edition the scan filed as two albums, each in its own
+/// folder, with no track in common, join into one at the end of a scan: the
+/// other copy is retired into the one a person chose (else the older), its
+/// id an alias, its files locked to the survivor and people's hearts,
+/// ratings and plays on it, a `copies_joined` history entry with an Undo,
+/// and no file read or written. A rescan of every file keeps the join, even
+/// when the survivor's grouping no longer names the joined files. A shared
+/// recording, a guess, a curator's grouping, one copy hands-off, a custom
+/// edition and a person's "Keep them apart" keep the two apart; live work
+/// holds the join until the next run end. The Undo brings the copy, its
+/// files held as they were, their matches and its "retagged by hand" stamp
+/// back after a placement on the person's edition, unless a file was
+/// matched by hand since; the hearts and ratings stay, and later scans,
+/// a full rescan included, leave the two apart.
+#[tokio::test]
+async fn split_copies_of_one_edition_join_at_a_scan_end() {
+    use droppedneedle_library::http::history::album_history_view;
+    use droppedneedle_library::jobs::models::OperationError;
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    let dir = ScratchDir::new("copy-join");
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music folder");
+    let library = bundle(&dir).await;
+    let ops = crate::common::library::operations(&library);
+    let conn =
+        droppedneedle_kernel::db::open_connection(&dir.join("app.db")).expect("connection opens");
+    let mbid =
+        |case: u16, kind: u16, n: u16| format!("5c0b7a1e-{case:04x}-4{kind:03x}-8000-{n:012x}");
+    // Track `n` of case `case`'s release in folder `c<case><side>`, with
+    // recording `rec`.
+    let plant_track = |case: u16, side: &str, n: u16, rec: u16| -> String {
+        let rel = format!("c{case}{side}/{n:02}.flac");
+        let path = plant(&music, &rel, &format!("flac_full_0{n}.flac"));
+        let tag = |field, value: String| TagEdit::new(field, vec![value]);
+        save_tags(
+            &path,
+            &[
+                tag(TagField::Title, format!("Track {n}")),
+                tag(TagField::Artist, "Portishead".to_owned()),
+                tag(TagField::AlbumArtist, "Portishead".to_owned()),
+                tag(TagField::Album, format!("Dummy {case}")),
+                tag(TagField::TrackNumber, n.to_string()),
+                tag(TagField::DiscNumber, "1".to_owned()),
+                tag(TagField::MusicBrainzReleaseId, mbid(case, 2, 0)),
+                tag(TagField::MusicBrainzReleaseGroupId, mbid(case, 1, 0)),
+                tag(TagField::MusicBrainzRecordingId, mbid(case, 3, rec)),
+                tag(TagField::MusicBrainzReleaseTrackId, mbid(case, 4, n)),
+            ],
+        )
+        .expect("tagged");
+        rel
+    };
+    let text = |sql: &str| -> Option<String> {
+        conn.query_row(sql, [], |row| row.get(0))
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    };
+    let album_at = |rel: &str| {
+        text(&format!(
+            "SELECT local_album_id FROM local_tracks WHERE relative_path = '{rel}'"
+        ))
+        .expect("track filed")
+    };
+    let track_at = |rel: &str| {
+        text(&format!(
+            "SELECT id FROM local_tracks WHERE relative_path = '{rel}'"
+        ))
+        .expect("track indexed")
+    };
+    let retired = |album: &str| {
+        text(&format!(
+            "SELECT retired_into_album_id FROM local_albums WHERE id = '{album}'"
+        ))
+    };
+    let run = |sql: &str| conn.execute_batch(sql).expect("test sql runs");
+
+    // Case 1 is joined and undone; the others stay two. Case 2's second
+    // copy holds the first copy's recording.
+    const MAIN: u16 = 1;
+    const SHARED: u16 = 2;
+    const GUESS: u16 = 3;
+    const GROUPED: u16 = 4;
+    const HANDS_OFF: u16 = 5;
+    const CUSTOM: u16 = 6;
+    const LIVE_WORK: u16 = 7;
+    const KEPT_APART: u16 = 8;
+    const ORDER: u16 = 9;
+    let cases = [
+        MAIN, SHARED, GUESS, GROUPED, HANDS_OFF, CUSTOM, LIVE_WORK, KEPT_APART, ORDER,
+    ];
+    for case in cases {
+        plant_track(case, "a", 1, 1);
+        plant_track(case, "b", 2, if case == SHARED { 1 } else { 2 });
+    }
+    scan(&library).await;
+    let pair = |case: u16| {
+        (
+            album_at(&format!("c{case}a/01.flac")),
+            album_at(&format!("c{case}b/02.flac")),
+        )
+    };
+    run(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('curator', 'Curator', 'admin', 0), ('listener', 'Listener', 'user', 0);",
+    );
+    for case in cases {
+        let (kept, copy) = pair(case);
+        assert_ne!(kept, copy, "case {case}: the scan files two albums");
+        let first = if case == MAIN { "manual" } else { "automatic" };
+        let second = if case == ORDER { "manual" } else { "automatic" };
+        run(&format!(
+            "DELETE FROM local_album_external_identities WHERE local_album_id IN ('{kept}', '{copy}'); \
+             UPDATE local_albums SET created_at = 1 WHERE id = '{kept}'; \
+             UPDATE local_albums SET created_at = 2 WHERE id = '{copy}'; \
+             INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at) VALUES \
+             ('{kept}', 'musicbrainz', '{group}', '{release}', '{first}', 5), \
+             ('{copy}', 'musicbrainz', '{group}', '{release}', '{second}', 5);",
+            group = mbid(case, 1, 0),
+            release = mbid(case, 2, 0),
+        ));
+        for (side, n) in [("a", 1), ("b", 2)] {
+            let rec = if case == SHARED { 1 } else { n };
+            run(&format!(
+                "DELETE FROM local_track_external_identities WHERE local_track_id = '{track}'; \
+                 INSERT INTO local_track_external_identities (local_track_id, provider, \
+                 recording_mbid, release_mbid, release_track_mbid, medium_position, \
+                 release_track_position, decision_source, selected_at) VALUES \
+                 ('{track}', 'musicbrainz', '{}', '{}', '{}', 1, {n}, 'automatic', 5);",
+                mbid(case, 3, rec),
+                mbid(case, 2, 0),
+                mbid(case, 4, n),
+                track = track_at(&format!("c{case}{side}/{n:02}.flac")),
+            ));
+        }
+    }
+    let (kept, copy) = pair(MAIN);
+    let moved = track_at("c1b/02.flac");
+    run(&format!(
+        "INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('listener', 'album', '{copy}', 1); \
+         INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
+         VALUES ('listener', 'album', '{copy}', 4, 1); \
+         INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         track_name, artist_name, played_at) \
+         VALUES ('play', 'listener', '{moved}', '{copy}', 'Track 2', 'Portishead', 1); \
+         INSERT INTO library_management_automatic_queue (local_album_id, queued_at, \
+         not_before_at, retag_followed_at) VALUES ('{kept}', 1, 0, 3), ('{copy}', 1, 0, 4); \
+         UPDATE local_albums SET grouping_key = 'mbid:other' WHERE id = '{kept}'; \
+         UPDATE local_tracks SET membership_locked = 1 WHERE local_album_id = '{kept}';"
+    ));
+    let copy_of = |case: u16| pair(case).1;
+    run(&format!(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         release_mbid, updated_at) VALUES ('{guess}', 'unconfirmed', 'EDITION_UNCERTAIN', \
+         '{release}', 5); \
+         UPDATE local_albums SET grouping_source = 'manual' WHERE id = '{grouped}'; \
+         INSERT INTO library_management_exclusions (local_album_id, reason, excluded_at) \
+         VALUES ('{hands_off}', 'administrator_choice', 5); \
+         INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
+         release_group_mbid, album_title, album_artist_name, source_album_revision, \
+         input_revision, content_hash, sealed_by_user_id, sealed_at) \
+         VALUES ('custom', '{custom}', 1, '{custom_group}', 'T', 'A', 1, 'i', 'h', 'curator', 0); \
+         INSERT INTO library_custom_edition_active (local_album_id, manifest_id, \
+         activated_at) VALUES ('{custom}', 'custom', 0); \
+         INSERT INTO library_contribution_drafts (id, local_album_id, state, \
+         album_row_revision, input_revision, local_snapshot_json, resolved_draft_json, \
+         source_selection_json, created_at, updated_at) \
+         VALUES ('draft', '{live}', 'draft', 1, 'i', '{{}}', '{{}}', '{{}}', 0, 0); \
+         INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
+         recorded_at, updated_at) VALUES ('{apart}', '{apart_kept}', 'tracks_elsewhere', \
+         'dismissed', 1, 1);",
+        guess = copy_of(GUESS),
+        release = mbid(GUESS, 2, 0),
+        grouped = copy_of(GROUPED),
+        hands_off = copy_of(HANDS_OFF),
+        custom = copy_of(CUSTOM),
+        custom_group = mbid(CUSTOM, 1, 0),
+        live = copy_of(LIVE_WORK),
+        apart = copy_of(KEPT_APART),
+        apart_kept = pair(KEPT_APART).0,
+    ));
+    let order = pair(ORDER);
+    // Read before the scan that may join them.
+    let apart: Vec<(u16, String)> = [
+        SHARED, GUESS, GROUPED, HANDS_OFF, CUSTOM, LIVE_WORK, KEPT_APART,
+    ]
+    .map(|case| (case, copy_of(case)))
+    .to_vec();
+    let live = pair(LIVE_WORK);
+    let files = snapshot(&music);
+
+    scan(&library).await;
+    assert_eq!(retired(&copy), Some(kept.clone()), "the copy joins");
+    assert_eq!(album_at("c1b/02.flac"), kept, "its file is on the survivor");
+    assert_eq!(
+        text(&format!(
+            "SELECT local_album_id FROM local_album_aliases WHERE alias = '{copy}'"
+        )),
+        Some(kept.clone()),
+        "its id opens the survivor"
+    );
+    let marks = |album: &str| {
+        query(
+            &library,
+            &format!(
+                "SELECT (SELECT COUNT(*) FROM catalog_user_favorites WHERE item_id = '{album}') \
+                 + (SELECT COUNT(*) FROM catalog_user_ratings WHERE item_id = '{album}') \
+                 + (SELECT COUNT(*) FROM library_play_history WHERE local_album_id = '{album}')"
+            ),
+        )
+    };
+    assert_eq!((marks(&kept), marks(&copy)), (3, 0), "marks follow");
+    for (case, copy) in &apart {
+        assert_eq!(retired(copy), None, "case {case} stays two");
+    }
+    assert_eq!(
+        retired(&order.0),
+        Some(order.1.clone()),
+        "the person's copy keeps the files, though it is the newer"
+    );
+    assert_eq!(snapshot(&music), files, "no file read or written");
+    let live_albums = || {
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_albums WHERE retired_into_album_id IS NULL \
+             AND has_indexed_track = 1",
+        )
+    };
+    let albums = live_albums();
+    scan_as(&library, ScanKind::RescanFiles).await;
+    assert_eq!(
+        album_at("c1b/02.flac"),
+        kept,
+        "a rescan keeps the joined file"
+    );
+    assert_eq!(live_albums(), albums, "and files nothing apart");
+    let history = |album: &str| {
+        album_history_view(&ops, album, "curator")
+            .expect("history reads")
+            .items
+            .into_iter()
+            .map(|entry| {
+                serde_json::to_value((entry.kind, entry.undo_id.is_some()))
+                    .expect("entry serializes")
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(history(&kept), [serde_json::json!(["copies_joined", true])]);
+
+    // Live work ended: the next run end joins. A copy already joined stays
+    // joined.
+    run("DELETE FROM library_contribution_drafts WHERE id = 'draft'");
+    scan(&library).await;
+    assert_eq!(retired(&live.1), Some(live.0), "joined once work ends");
+    assert_eq!(album_at("c1b/02.flac"), kept, "a later scan keeps the join");
+
+    // The person's edition places the moved file; a match by hand since
+    // refuses the undo.
+    run(&format!(
+        "UPDATE local_track_external_identities SET decision_source = 'manual' \
+         WHERE local_track_id = '{moved}'; \
+         INSERT INTO library_track_hand_matches (local_track_id, release_mbid, \
+         release_track_mbid, matched_at) VALUES ('{moved}', '{}', '{}', 6);",
+        mbid(MAIN, 2, 0),
+        mbid(MAIN, 4, 2),
+    ));
+    let undo_id = text(&format!(
+        "SELECT id FROM library_catalog_actions WHERE reason_code = \
+         'SAME_EDITION_COPIES_JOINED' AND local_album_id = '{kept}'"
+    ))
+    .expect("the join is recorded");
+    let undo = || match ops.undo_fold(&undo_id, "curator") {
+        Ok(()) => "restored".to_owned(),
+        Err(OperationError::NotFound(reason) | OperationError::Conflict(reason)) => {
+            reason.code.to_owned()
+        }
+        Err(other) => panic!("undo failed: {other}"),
+    };
+    assert_eq!(undo(), "STALE_REVISION", "a match by hand since stays");
+    assert_eq!(retired(&copy), Some(kept.clone()));
+    run(&format!(
+        "DELETE FROM library_track_hand_matches WHERE local_track_id = '{moved}'"
+    ));
+
+    assert_eq!(undo(), "restored");
+    assert_eq!(retired(&copy), None, "the copy is back");
+    assert_eq!(album_at("c1b/02.flac"), copy, "with its file");
+    assert_eq!(
+        text(&format!(
+            "SELECT release_mbid || ' ' || decision_source FROM local_album_external_identities \
+             WHERE local_album_id = '{copy}'"
+        )),
+        Some(format!("{} automatic", mbid(MAIN, 2, 0))),
+        "and its match"
+    );
+    assert_eq!(
+        text(&format!(
+            "SELECT decision_source FROM local_track_external_identities \
+             WHERE local_track_id = '{moved}'"
+        ))
+        .as_deref(),
+        Some("automatic"),
+        "and its file's match"
+    );
+    assert_eq!(
+        (marks(&kept), marks(&copy)),
+        (3, 0),
+        "hearts, ratings and plays stay"
+    );
+    assert_eq!(
+        history(&kept),
+        [
+            serde_json::json!(["fold_undone", false]),
+            serde_json::json!(["copies_joined", false]),
+        ]
+    );
+    assert_eq!(
+        history(&copy),
+        [serde_json::json!(["unfolded_from", false])]
+    );
+    assert_eq!(
+        query(
+            &library,
+            &format!(
+                "SELECT COUNT(*) FROM library_management_automatic_queue \
+                 WHERE local_album_id = '{copy}' AND retag_followed_at IS NOT NULL"
+            ),
+        ),
+        1,
+        "its \"retagged by hand\" stamp is back"
+    );
+    scan(&library).await;
+    assert_eq!(retired(&copy), None, "a later scan leaves the two apart");
+    scan_as(&library, ScanKind::RescanFiles).await;
+    assert_eq!(
+        album_at("c1b/02.flac"),
+        copy,
+        "a rescan keeps the file on the copy"
+    );
+    assert_eq!(retired(&copy), None);
+}
+
 /// The first file of the second window of a 300-file album.
 const SECOND_WINDOW: &str = "t256.flac";
 

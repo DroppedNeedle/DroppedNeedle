@@ -528,6 +528,8 @@ pub(crate) fn copy_folder(
 
 /// Refuse the bundle when a file's joined copy no longer sits where its
 /// placement read it: the file would be on that album in the wrong folder.
+/// A join import planning chose for the copy on the import's release is
+/// refused too once that copy no longer names the release.
 fn check_copy_seals(conn: &Connection, commit: &BundleCommit) -> Result<(), PublishError> {
     for track in &commit.tracks {
         let Some(adoption) = &track.adopt else {
@@ -536,11 +538,13 @@ fn check_copy_seals(conn: &Connection, commit: &BundleCommit) -> Result<(), Publ
         let (Some(join), Some(seal)) = (&adoption.join, &adoption.copy_seal) else {
             continue;
         };
-        let folder = match joined_album(conn, join)? {
+        let joined = joined_album(conn, join)?;
+        let left_release = join.exact && !joined.as_ref().is_some_and(|joined| joined.placed);
+        let folder = match joined {
             Some(joined) => copy_folder(conn, &joined.album_id, seal.disc)?,
             None => None,
         };
-        if folder != seal.folder {
+        if left_release || folder != seal.folder {
             return Err(PublishError::JoinChanged(
                 format!(
                     "the album of track {} moved while it was being written",

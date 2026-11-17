@@ -1069,7 +1069,7 @@ droppedneedle_kernel::sql! {
     pub(super) HAS_UNPLACED_FILE = "SELECT EXISTS(SELECT 1 FROM " + ALBUM_TRACKS + " \
              WHERE t.local_album_id = ?1 AND t.availability = 'indexed' AND NOT EXISTS \
              (SELECT 1 FROM local_track_external_identities i WHERE i.local_track_id = t.id \
-             AND i.provider = ?2 AND lower(i.release_mbid) = ?3 \
+             AND i.provider = ?2 AND lower(trim(i.release_mbid)) = lower(trim(?3)) \
              AND i.release_track_mbid IS NOT NULL))";
     pub(super) QUEUE_PLACEMENT = "INSERT INTO library_edition_remap_queue (local_album_id, \
              release_mbid, chosen_by_user_id, queued_at, origin) VALUES (?1, ?2, NULL, ?3, ?4) \
@@ -1222,6 +1222,84 @@ droppedneedle_kernel::sql! {
              WHERE alias = ?1 AND local_album_id = ?2 AND kind = 'merged_album'";
 
     // -----------------------------------------------------------------
+    // Copies of one edition: files that land join the copy, and copies
+    // split across folders join at a scan's end.
+    // -----------------------------------------------------------------
+
+    /// The live copies on release `?1` (lowered, provider `?2`) new files
+    /// may join: accepted, or a person's choice with no custom edition. A
+    /// person's choice first, then the oldest.
+    pub(super) COPIES_ON_RELEASE = "SELECT b.id AS local_album_id, e.release_mbid \
+             FROM local_album_external_identities e \
+             JOIN local_albums b ON b.id = e.local_album_id \
+             WHERE e.provider = ?2 AND lower(trim(e.release_mbid)) = ?1 AND "
+             + (owned_album!("b")) + " \
+             AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
+             WHERE c.local_album_id = b.id) \
+             AND (e.decision_source IN " + PERSONS + " OR NOT " + (match_flagged!("b.id")) + ") \
+             ORDER BY e.decision_source NOT IN " + PERSONS + ", b.created_at, b.id";
+    /// The release track and recording of each indexed file of the album
+    /// (`?1`, provider `?2`), lowered.
+    pub(super) COPY_HOLDS = "SELECT lower(trim(i.release_track_mbid)) AS release_track, \
+             lower(trim(" + (recording_mbid!("i", "t")) + ")) AS recording \
+             FROM " + ALBUM_TRACKS + " \
+             LEFT JOIN local_track_external_identities i \
+             ON i.local_track_id = t.id AND i.provider = ?2 \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed'";
+    /// Releases (lowered) at least two live copies with an accepted match
+    /// name (provider `?1`).
+    pub(super) SPLIT_RELEASES = "SELECT lower(trim(e.release_mbid)) \
+             FROM local_album_external_identities e \
+             JOIN local_albums b ON b.id = e.local_album_id \
+             WHERE e.provider = ?1 AND " + (owned_album!("b")) + " AND " + (accepted!("e")) + " \
+             GROUP BY lower(trim(e.release_mbid)) HAVING COUNT(*) > 1";
+    /// The live copies with an accepted match on release `?1` (lowered,
+    /// provider `?2`), in the order `copy_of_group!` reads them.
+    pub(super) SPLIT_COPIES = "SELECT b.id FROM local_album_external_identities e \
+             JOIN local_albums b ON b.id = e.local_album_id \
+             WHERE e.provider = ?2 AND lower(trim(e.release_mbid)) = ?1 AND "
+             + (owned_album!("b")) + " AND " + (accepted!("e")) + " \
+             ORDER BY e.decision_source NOT IN " + PERSONS + ", b.created_at, b.id";
+    /// Whether an indexed file of album `?1` and one of album `?2` share a
+    /// release track or a recording (provider `?3`).
+    pub(super) COPIES_SHARE = "SELECT EXISTS(SELECT 1 FROM local_tracks a \
+             JOIN local_tracks b ON b.local_album_id = ?2 AND b.availability = 'indexed' \
+             LEFT JOIN local_track_external_identities ia \
+             ON ia.local_track_id = a.id AND ia.provider = ?3 \
+             LEFT JOIN local_track_external_identities ib \
+             ON ib.local_track_id = b.id AND ib.provider = ?3 \
+             WHERE a.local_album_id = ?1 AND a.availability = 'indexed' \
+             AND (NULLIF(lower(trim(ia.release_track_mbid)), '') \
+             = NULLIF(lower(trim(ib.release_track_mbid)), '') \
+             OR NULLIF(lower(trim(" + (recording_mbid!("ia", "a")) + ")), '') \
+             = NULLIF(lower(trim(" + (recording_mbid!("ib", "b")) + ")), '')))";
+    /// Every file of album `?1`, whatever its availability.
+    pub(super) ALBUM_FILES = "SELECT id, membership_source, membership_locked FROM local_tracks \
+             WHERE local_album_id = ?1 ORDER BY id";
+    /// Put file `?2` back on album `?1` with its grouping (`?3`, locked
+    /// `?4`).
+    pub(super) RESTORE_MEMBERSHIP = "UPDATE local_tracks SET local_album_id = ?1, \
+             membership_source = ?3, membership_locked = ?4, row_revision = row_revision + 1 \
+             WHERE id = ?2";
+    /// Album `?1`'s place in the automatic management queue: whether it is
+    /// stamped as retagged by hand.
+    pub(super) QUEUE_ROW = "SELECT retag_followed_at IS NOT NULL \
+             FROM library_management_automatic_queue WHERE local_album_id = ?1";
+    /// The files of album `?1` matched by hand.
+    pub(super) HAND_MATCHED_ON = "SELECT h.local_track_id FROM library_track_hand_matches h \
+             JOIN local_tracks t ON t.id = h.local_track_id WHERE t.local_album_id = ?1 \
+             ORDER BY h.local_track_id";
+    /// Whether file `?1` was matched by hand.
+    pub(super) HAND_MATCHED = "SELECT EXISTS(SELECT 1 FROM library_track_hand_matches \
+             WHERE local_track_id = ?1)";
+    /// Whether file `?1` is on album `?2`.
+    pub(super) ON_ALBUM = "SELECT EXISTS(SELECT 1 FROM local_tracks \
+             WHERE id = ?1 AND local_album_id = ?2)";
+    /// Whether album `?1` has a "leave unmanaged" row.
+    pub(super) HAS_EXCLUSION = "SELECT EXISTS(SELECT 1 FROM library_management_exclusions \
+             WHERE local_album_id = ?1)";
+
+    // -----------------------------------------------------------------
     // The checks a repair made, read again inside its command.
     // -----------------------------------------------------------------
 
@@ -1302,6 +1380,19 @@ droppedneedle_kernel::sql! {
     pub(super) row LiveAutomaticUndo for [LIVE_AUTOMATIC_UNDO] {
         expected_post_album_revision: i64,
         expected_post_identity_revision: i64,
+    }
+    pub(super) row ReleaseCopy for [COPIES_ON_RELEASE] {
+        local_album_id: String,
+        release_mbid: String,
+    }
+    pub(super) row FileMembership for [ALBUM_FILES] {
+        id: String,
+        membership_source: String,
+        membership_locked: bool,
+    }
+    pub(super) row CopyHolds for [COPY_HOLDS] {
+        release_track: Option<String>,
+        recording: Option<String>,
     }
     pub(super) row CopyRow for [COPY_SHOWN] {
         local_album_id: String,

@@ -15191,7 +15191,7 @@
         "tags": [
           "library management"
         ],
-        "summary": "Undo the fold of a leftover album: the album, its files and its earlier\nmatch come back. Plays, favorites and playlist entries moved to the\nalbum that kept the files stay there.",
+        "summary": "Undo the fold of a leftover album, or the join of a copy of the album's\nedition: the album, its files and its earlier match come back. Plays,\nfavorites and playlist entries moved to the album that kept the files\nstay there.",
         "operationId": "undo_album_fold",
         "parameters": [
           {
@@ -15229,7 +15229,7 @@
             }
           },
           "404": {
-            "description": "No fold that can be undone",
+            "description": "No fold or join that can be undone",
             "content": {
               "application/json": {
                 "schema": {
@@ -15239,7 +15239,7 @@
             }
           },
           "409": {
-            "description": "The albums changed since the fold",
+            "description": "The albums changed since the fold or join",
             "content": {
               "application/json": {
                 "schema": {
@@ -36643,7 +36643,7 @@
               "string",
               "null"
             ],
-            "description": "For a `leftover_joined` or `artist_from_tracks` entry that can be\nundone now, the id to undo it by; null otherwise."
+            "description": "For a `leftover_joined`, `copies_joined` or `artist_from_tracks`\nentry that can be undone now, the id to undo it by; null otherwise."
           }
         }
       },
@@ -36657,6 +36657,7 @@
           "retag_half_left_alone",
           "retag_dismissal_ended",
           "leftover_joined",
+          "copies_joined",
           "marks_followed",
           "tracks_other_music",
           "tracks_new_copy",

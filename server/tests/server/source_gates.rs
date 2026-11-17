@@ -407,6 +407,10 @@ const IDENTITY_USES: &[(&str, &str)] = &[
         "queues the album for automatic management, one statement",
     ),
     (
+        "management::automatic::stamp_retag_followed",
+        "the undo of a join of copies puts back the copy's \"retagged by hand\" stamp",
+    ),
+    (
         "identify::queue",
         "offers the album to identification and reads its input revision",
     ),

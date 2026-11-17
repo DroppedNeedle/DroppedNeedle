@@ -46,7 +46,12 @@
 //!
 //! Files fetched for a library copy (an [`ImportJoin`]: "Get missing
 //! tracks", or an upgrade of that copy's files) join that copy instead of
-//! being filed by their tags, which may name another edition. Under the
+//! being filed by their tags, which may name another edition. Files that
+//! come with no such copy and replace no track join the copy the library
+//! holds on their own release, however they came
+//! ([`crate::identity::copy_on_release`]: accepted or a person's, holding
+//! none of their tracks); the commit refuses that join once the copy no
+//! longer names the release. Under the
 //! publish lock the copy is followed to the album it was merged into; the
 //! files join it while it names the release they were fetched for
 //! (placed on its edition) or another release of the same album (not
@@ -265,6 +270,14 @@ fn store_fault(error: PublishError) -> ImportError {
     }
 }
 
+/// The join an import's files make, the album it lands on, and the folder
+/// of each file's copy.
+type JoinState = (
+    Option<AlbumJoin>,
+    Option<JoinedAlbum>,
+    Vec<Option<(String, String)>>,
+);
+
 /// One planned file.
 struct Placement {
     /// Index in the request.
@@ -464,6 +477,67 @@ impl Imports {
                 .map(|root| ResolvedRoot::of(&root.id, &root.path))
                 .collect::<Vec<_>>(),
         );
+        // Files fetched for a library copy join it. Files with no such
+        // copy that replace no track join the copy on their own release,
+        // when the library holds one ([`crate::identity::copy_on_release`]).
+        let replaced = join
+            .as_ref()
+            .map(|join| join.replaced.clone())
+            .unwrap_or_default();
+        let given = join.map(|join| AlbumJoin {
+            album_id: join.album_id,
+            release_mbid: join.release_mbid,
+            release_group_mbid: import.release.release_group_id.clone(),
+            exact: false,
+        });
+        let keyed = given.is_none() && import.files.iter().all(|file| file.replaces.is_empty());
+        let wanted: Vec<(String, String)> = import
+            .files
+            .iter()
+            .filter_map(|file| import.release.tracks.get(file.track))
+            .map(|track| (track.id.clone(), track.recording_id.clone()))
+            .collect();
+        let discs: Vec<u32> = sources.iter().map(|(_, track, _)| track.disc).collect();
+        let join_state = |conn: &rusqlite::Connection| -> Result<JoinState, PublishError> {
+            // The join, the album it lands on and the folder of each file's
+            // copy must agree, so the statements share this closure.
+            let join = match &given {
+                Some(given) => Some(given.clone()),
+                None if keyed => {
+                    crate::identity::copy_on_release(conn, &import.release.id, &wanted)?.map(
+                        |copy| AlbumJoin {
+                            album_id: copy.album_id,
+                            release_mbid: copy.release_mbid,
+                            release_group_mbid: import.release.release_group_id.clone(),
+                            exact: true,
+                        },
+                    )
+                }
+                None => None,
+            };
+            let joined = match &join {
+                Some(join) => joined_album(conn, join)?,
+                None => None,
+            };
+            let mut folders = Vec::with_capacity(discs.len());
+            for disc in &discs {
+                folders.push(match &joined {
+                    Some(joined) => copy_folder(conn, &joined.album_id, *disc)?,
+                    None => None,
+                });
+            }
+            Ok((join, joined, folders))
+        };
+        let read_join = |name: &'static str| -> Result<JoinState, ImportError> {
+            if given.is_none() && !keyed {
+                return Ok((None, None, vec![None; discs.len()]));
+            }
+            self.db.read_blocking(name, join_state).map_err(store_fault)
+        };
+        // A join's folders are judged by where its files land, beside
+        // their copy; the publish lock reads the copy again and refuses a
+        // plan it no longer holds.
+        let (join, early_joined, early_folders) = read_join("import.join_folders")?;
         let plain = join.is_none()
             && matches!(import.origin, ImportOrigin::Download | ImportOrigin::Folder)
             && import.files.iter().all(|file| file.replaces.is_empty())
@@ -492,15 +566,6 @@ impl Imports {
                     })
             })
             .flatten();
-        let replaced = join
-            .as_ref()
-            .map(|join| join.replaced.clone())
-            .unwrap_or_default();
-        let join = join.map(|join| AlbumJoin {
-            album_id: join.album_id,
-            release_mbid: join.release_mbid,
-            release_group_mbid: import.release.release_group_id.clone(),
-        });
         // A joined file goes beside its copy's files, named as the script
         // names it.
         let beside = |root: &LibraryRoot, dest: &str, folder: &Option<(String, String)>| {
@@ -515,27 +580,6 @@ impl Imports {
                 .filter(|at| root.policy_for(&root.path.join(at)) != EffectivePolicy::Excluded)
                 .unwrap_or_else(|| dest.to_owned())
         };
-        // A join's folders are judged by where its files land, beside
-        // their copy; the publish lock reads the copy again and refuses a
-        // plan it no longer holds.
-        let (early_joined, early_folders): (Option<JoinedAlbum>, Vec<Option<(String, String)>>) =
-            match &join {
-                Some(join) => self
-                    .db
-                    .read_blocking("import.join_folders", |conn| {
-                        let joined = joined_album(conn, join)?;
-                        let mut folders = Vec::with_capacity(sources.len());
-                        for (_, track, _) in &sources {
-                            folders.push(match &joined {
-                                Some(joined) => copy_folder(conn, &joined.album_id, track.disc)?,
-                                None => None,
-                            });
-                        }
-                        Ok::<_, PublishError>((joined, folders))
-                    })
-                    .map_err(store_fault)?,
-                None => (None, vec![None; sources.len()]),
-            };
         let (root, dests) = match tagged {
             Some(chosen) => chosen,
             None => {
@@ -663,24 +707,8 @@ impl Imports {
         let open = cell.open().map_err(store_fault)?;
         // The album the files join and the folder of each joined file's
         // copy, in one read.
-        let (joined, folders) = self
-            .db
-            .read_blocking("import.join_state", |conn| {
-                let joined = match &join {
-                    Some(join) => joined_album(conn, join)?,
-                    None => None,
-                };
-                let mut folders = Vec::with_capacity(placements.len());
-                for placement in &placements {
-                    folders.push(match &joined {
-                        Some(joined) => copy_folder(conn, &joined.album_id, placement.track.disc)?,
-                        None => None,
-                    });
-                }
-                Ok::<_, PublishError>((joined, folders))
-            })
-            .map_err(store_fault)?;
-        if joined != early_joined || folders != early_folders {
+        let (lock_join, joined, folders) = read_join("import.join_state")?;
+        if lock_join != join || joined != early_joined || folders != early_folders {
             tracing::info!(
                 task_dir,
                 "a landing is planned again: the album it joins changed"

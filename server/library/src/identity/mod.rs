@@ -15,7 +15,9 @@
 //! away. A person's choice, and one carried over from v2, is never touched
 //! by automatic work, with one exception that can be undone: the catalog
 //! repair that folds the stray half of an album a v2 import split in two
-//! ([`fold_legacy`], [`undo_fold`]).
+//! ([`fold_legacy`], [`undo_fold`]). The join of two copies of one
+//! edition at a scan's end drops the joined copy's match the same way and
+//! keeps it for its undo ([`record_copy`], [`undo_copy_join`]).
 //!
 //! Only this module writes these tables; a source gate holds it.
 //!
@@ -27,6 +29,7 @@
 //! the edition undo brings it back with the row.
 
 mod automatic;
+mod copies;
 mod custom;
 mod fold;
 pub(crate) mod follow;
@@ -47,6 +50,11 @@ pub(crate) use automatic::write_match_flag;
 pub use automatic::{
     Accepted, AutomaticOutcome, Expected, Inputs, Placed, accept_automatic, retract, seal_automatic,
 };
+pub use copies::{
+    COPIES_JOIN_UNDONE_REASON, COPIES_JOINED_REASON, JoinedCopy, ReleaseCopy, copy_join_undoable,
+    copy_on_release, undo_copy_join,
+};
+pub(crate) use copies::{copies_overlap, record_copy, split_copies};
 pub use custom::{Custom, custom_edition};
 pub(crate) use fold::fold_legacy;
 pub use fold::{

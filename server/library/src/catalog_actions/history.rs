@@ -50,6 +50,9 @@ pub enum HistoryKind {
     RetagDismissalEnded,
     /// A leftover album of an earlier version was folded into this one.
     LeftoverJoined,
+    /// Another copy of this album's edition, sharing no track with it, was
+    /// joined into this one.
+    CopiesJoined,
     /// People's hearts and ratings moved here from a copy with no files.
     MarksFollowed,
     /// Other music took the paths of tracks, which stayed behind as missing.
@@ -67,10 +70,11 @@ pub enum HistoryKind {
     MatchWithdrawn,
     /// A person undid the app's edition change.
     EditionChangeUndone,
-    /// The fold of a leftover album into this one was undone: it is its
-    /// own album again.
+    /// The fold of a leftover album, or the join of a copy, into this one
+    /// was undone: it is its own album again.
     FoldUndone,
-    /// This album was folded into another and brought back out by an undo.
+    /// This album was folded or joined into another and brought back out
+    /// by an undo.
     UnfoldedFrom,
     /// Handing the album back to automatic management stopped: its files
     /// could not be read after every try.
@@ -100,8 +104,8 @@ pub struct HistoryEntry {
     pub track_titles: Vec<String>,
     /// The other album's title, when its row is still there.
     pub other_album_title: Option<String>,
-    /// For a fold or an artist repair that can be undone now: the id to
-    /// undo it by.
+    /// For a fold, a join of copies or an artist repair that can be undone
+    /// now: the id to undo it by.
     pub undo_id: Option<String>,
 }
 
@@ -331,6 +335,9 @@ pub fn album_history(
             (ActionKind::MergeAlbum, Some(hygiene::MARKS_FOLLOWED_REASON)) => {
                 HistoryKind::MarksFollowed
             }
+            (ActionKind::MergeAlbum, Some(identity::COPIES_JOINED_REASON)) => {
+                HistoryKind::CopiesJoined
+            }
             (ActionKind::AlbumArtist, Some(hygiene::ARTIST_REPAIR_REASON)) => {
                 let undo_id = hygiene::artist_repair_undoable(conn, &row.id)?.then_some(row.id);
                 entries.push(HistoryEntry {
@@ -366,7 +373,10 @@ pub fn album_history(
             _ => None,
         };
         let fold = row.reason.as_deref() == Some(identity::FOLD_REASON);
-        if fold && let Some(source) = other_id.as_deref() {
+        let copies = kind == HistoryKind::CopiesJoined;
+        if (fold || copies)
+            && let Some(source) = other_id.as_deref()
+        {
             entries.extend(fold_undone(
                 conn,
                 source,
@@ -376,7 +386,9 @@ pub fn album_history(
                 since,
             )?);
         }
-        let undo_id = (fold && identity::fold_undoable(conn, &row.id)?).then_some(row.id);
+        let undoable = (fold && identity::fold_undoable(conn, &row.id)?)
+            || (copies && identity::copy_join_undoable(conn, &row.id)?);
+        let undo_id = undoable.then_some(row.id);
         entries.push(HistoryEntry {
             kind,
             at,
@@ -443,8 +455,8 @@ fn album_title(conn: &Connection, album_id: Option<&str>) -> rusqlite::Result<Op
     .optional()
 }
 
-/// The undo of fold `fold_id`, recorded on the album it brought back
-/// (`source`), as an entry of the album that had kept its files.
+/// The undo of fold or join `fold_id`, recorded on the album it brought
+/// back (`source`), as an entry of the album that had kept its files.
 fn fold_undone(
     conn: &Connection,
     source: &str,
@@ -528,20 +540,25 @@ impl Operations {
         })
     }
 
-    /// Undo the fold of a leftover album recorded as `fold_id`, for
-    /// `actor`: the album and its v2 match come back. Blocking.
+    /// Undo the fold of a leftover album, or the join of a copy of the
+    /// album's edition, recorded as `fold_id`, for `actor`: the album, its
+    /// files and its earlier match come back. Blocking.
     pub fn undo_fold(&self, fold_id: &str, actor: &str) -> Result<(), OperationError> {
-        use crate::identity::{FoldUndo, undo_fold};
+        use crate::identity::{FoldUndo, undo_copy_join, undo_fold};
 
-        self.db.write_blocking(
-            Lane::Foreground,
-            "operations.undo_fold",
-            |tx| match undo_fold(tx, fold_id, Some(actor), self.clock.now_secs())? {
-                FoldUndo::Restored => Ok(()),
-                FoldUndo::Stale => Err(OperationError::Conflict(reasons::FOLD_STALE)),
-                FoldUndo::Unknown => Err(OperationError::NotFound(reasons::FOLD_NOT_FOUND)),
-            },
-        )
+        self.db
+            .write_blocking(Lane::Foreground, "operations.undo_fold", |tx| {
+                let now = self.clock.now_secs();
+                let undone = match undo_fold(tx, fold_id, Some(actor), now)? {
+                    FoldUndo::Unknown => undo_copy_join(tx, fold_id, Some(actor), now)?,
+                    undone => undone,
+                };
+                match undone {
+                    FoldUndo::Restored => Ok(()),
+                    FoldUndo::Stale => Err(OperationError::Conflict(reasons::FOLD_STALE)),
+                    FoldUndo::Unknown => Err(OperationError::NotFound(reasons::FOLD_NOT_FOUND)),
+                }
+            })
     }
 
     /// Undo the placeholder-artist repair recorded as `repair_id`, for

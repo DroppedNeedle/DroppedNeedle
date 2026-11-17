@@ -279,6 +279,26 @@ droppedneedle_kernel::sql! {
     pub(super) DROP_AUTOMATIC_QUEUE_ROW = "DELETE FROM library_management_automatic_queue WHERE local_album_id = ?1";
     pub(super) MOVE_ALBUM_TRACKS = "UPDATE local_tracks SET local_album_id = ?2 WHERE local_album_id = ?1";
     pub(super) MOVE_ALBUM_PLAYLIST_ROWS = "UPDATE catalog_playlist_tracks SET album_id = ?2 WHERE album_id = ?1";
+    /// Whether a curator grouped album `?1` by hand.
+    pub(super) GROUPED_BY_HAND = "SELECT EXISTS(SELECT 1 FROM local_albums \
+             WHERE id = ?1 AND grouping_source = 'manual')";
+    /// Whether the app leaves album `?1`'s files as they are: left
+    /// unmanaged, taken over, or stamped after a retag by hand.
+    pub(super) ALBUM_HANDS_OFF = "SELECT EXISTS(SELECT 1 FROM library_management_exclusions \
+             WHERE local_album_id = ?1) \
+             OR EXISTS(SELECT 1 FROM library_album_takeovers WHERE local_album_id = ?1) \
+             OR EXISTS(SELECT 1 FROM library_management_automatic_queue \
+             WHERE local_album_id = ?1 AND retag_followed_at IS NOT NULL)";
+    /// Lock every file of album `?1` to it, as a curator's move does.
+    pub(super) LOCK_ALBUM_FILES = "UPDATE local_tracks SET membership_source = 'manual', \
+             membership_locked = 1, row_revision = row_revision + 1 WHERE local_album_id = ?1";
+    /// Whether a person kept albums `?1` and `?2` apart, in either order.
+    pub(super) PAIR_KEPT_APART = "SELECT EXISTS(SELECT 1 FROM library_retag_pairs \
+             WHERE state = 'dismissed' AND ((old_album_id = ?1 AND new_album_id = ?2) \
+             OR (old_album_id = ?2 AND new_album_id = ?1)))";
+    /// Whether album `?1` is in an open retag pair, on either side.
+    pub(super) IN_OPEN_RETAG_PAIR = "SELECT EXISTS(SELECT 1 FROM library_retag_pairs \
+             WHERE state = 'open' AND (old_album_id = ?1 OR new_album_id = ?1))";
     pub(super) ALBUM_IS_AUTOMATIC = "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE local_album_id = ?1 \
              AND availability = 'indexed' AND applied_policy = 'automatic')";
     pub(super) SIDE = "SELECT title, COALESCE(album_artist_name, ''), (SELECT COUNT(*) FROM local_tracks t \

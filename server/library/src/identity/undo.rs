@@ -62,6 +62,16 @@ impl PartialEq for ExclusionRow {
     }
 }
 
+impl ExclusionRow {
+    /// The same choice, whatever revision the row is at: a copy of it on
+    /// another album starts its own count.
+    pub(crate) fn same_choice(&self, other: &Self) -> bool {
+        self.reason == other.reason
+            && self.excluded_by_user_id == other.excluded_by_user_id
+            && crate::clock::ms(self.excluded_at) == crate::clock::ms(other.excluded_at)
+    }
+}
+
 /// A queued placement of the album's files, as the undo keeps it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RemapRow {

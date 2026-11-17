@@ -1,7 +1,8 @@
 //! Joining an album retagged outside the app to the row its files sit on
 //! now: across two scans, or to the album that replaced it on the same
-//! edition. The old row is merged into the new one, which keeps its id,
-//! name and work. The old id stays as an alias. No file is touched.
+//! edition; and joining two copies of one edition split across folders.
+//! The old row is merged into the new one, which keeps its id, name and
+//! work. The old id stays as an alias. No file is touched.
 
 use rusqlite::{Connection, Transaction, params};
 
@@ -30,6 +31,11 @@ pub(crate) enum JoinCause {
     /// ([`join_replaced`](super::release_join::join_replaced)). The new row
     /// was identified for these files already and is not offered again.
     SameRelease,
+    /// Two copies on one accepted release with no track in common
+    /// ([`join_copies`](super::copy_join::join_copies)). The joined copy's
+    /// match and its files' matches are kept for its undo, and nothing is
+    /// offered for identification.
+    SameEditionCopies,
 }
 
 impl JoinCause {
@@ -38,6 +44,7 @@ impl JoinCause {
         match self {
             Self::AcrossScans => "RETAG_JOINED_ACROSS_SCANS",
             Self::SameRelease => "RETAG_JOINED_SAME_RELEASE",
+            Self::SameEditionCopies => crate::identity::COPIES_JOINED_REASON,
         }
     }
 }
@@ -71,18 +78,21 @@ pub(crate) enum MergeOutcome {
 /// - what was made for the old row's match is cleared from it, with its
 ///   place in the automatic management queue;
 /// - the track rows left on the old row (missing or excluded files) move
-///   to the new one;
+///   to the new one; a joined copy's files, all of them, are locked to it;
 /// - the old row's "leave unmanaged" goes first when the new row holds a
 ///   person's match of its own; otherwise it is carried, like the rest
 ///   [`retire`] carries (the alias, favorites, plays, the taken-over mark,
 ///   album overrides the new row has none of);
 /// - playlist entries naming the old row name the new one;
+/// - for a join of two copies, what the old row's undo needs is read
+///   first and kept in the audit action ([`crate::identity::record_copy`]);
 /// - when the old row's match was a release someone chose, the new row
 ///   holds no match a person chose and the app has no record of any file
 ///   now on it, the new row is stamped so automatic management leaves it
 ///   unmanaged ([`automatic::stamp_retag_followed`]): the old edition must
 ///   not be written over a retag done by hand. A match a person chose on
-///   the new row, equal or not, was chosen for the retagged files;
+///   the new row, equal or not, was chosen for the retagged files. Two
+///   copies joined are not a retag and are never stamped;
 /// - an audit action with the reason `cause` gives, the catalog revision,
 ///   and, for a join across scans, the offer for identification where the
 ///   files are managed automatically.
@@ -120,12 +130,25 @@ pub(crate) fn merge_retagged(
     let chosen_release = release_chosen(tx, old)?;
     let new_chosen = match_chosen(tx, new)?;
     let merged = savepoint(tx, "merge_album", || {
+        let kept = match cause {
+            JoinCause::SameEditionCopies => Some(crate::identity::record_copy(tx, old, new)?),
+            JoinCause::AcrossScans | JoinCause::SameRelease => None,
+        };
         settle_merged_match(tx, old, new, now)?;
         drop_edition(tx, old)?;
         tx.execute(
             crate::corrections::sql::DROP_AUTOMATIC_QUEUE_ROW.text(),
             params![old],
         )?;
+        // A joined copy's files sit in another folder than the album's
+        // own, which a later scan would file apart again: they are locked
+        // to it, as an import's joined files are.
+        if kept.is_some() {
+            tx.execute(
+                crate::corrections::sql::LOCK_ALBUM_FILES.text(),
+                params![old],
+            )?;
+        }
         tx.execute(
             crate::corrections::sql::MOVE_ALBUM_TRACKS.text(),
             params![old, new],
@@ -138,7 +161,8 @@ pub(crate) fn merge_retagged(
             crate::corrections::sql::MOVE_ALBUM_PLAYLIST_ROWS.text(),
             params![old, new],
         )?;
-        let stamped = chosen_release && !new_chosen && !album_has_record(tx, new)?;
+        let stamped =
+            kept.is_none() && chosen_release && !new_chosen && !album_has_record(tx, new)?;
         if stamped {
             automatic::stamp_retag_followed(tx, new, now)?;
         }
@@ -149,9 +173,18 @@ pub(crate) fn merge_retagged(
                 kind: ActionKind::MergeAlbum,
                 album_id: new,
                 job_id: None,
-                before: serde_json::json!({ "retired_album_id": old }),
+                before: match &kept {
+                    Some(kept) => serde_json::to_value(kept).map_err(|error| {
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+                    })?,
+                    None => serde_json::json!({ "retired_album_id": old }),
+                },
                 after: serde_json::json!({
-                    "kind": "join_retagged_album",
+                    "kind": if kept.is_some() {
+                        "join_same_edition_copies"
+                    } else {
+                        "join_retagged_album"
+                    },
                     "surviving_album_id": new,
                     "retired_album_ids": [old],
                     "stamped_unmanaged": stamped,
@@ -165,7 +198,7 @@ pub(crate) fn merge_retagged(
         // The join retires an album the identification queue or review
         // list may name, so open identification views read again.
         crate::identify::queue::bump_identification_stream(tx)?;
-        if cause == JoinCause::SameRelease {
+        if matches!(cause, JoinCause::SameRelease | JoinCause::SameEditionCopies) {
             return Ok(MergeOutcome::Merged { offered: false });
         }
         let automatic: bool = tx.query_row(
@@ -188,7 +221,7 @@ pub(crate) fn merge_retagged(
 /// Work a person or a job is doing on the album: an open draft, or a plan
 /// item of a job that is queued, running, paused, or ready and not past
 /// its expiry. An album field override is not.
-fn live_work(conn: &Connection, album_id: &str, now: f64) -> rusqlite::Result<bool> {
+pub(crate) fn live_work(conn: &Connection, album_id: &str, now: f64) -> rusqlite::Result<bool> {
     conn.query_row(
         crate::corrections::sql::LIVE_WORK_ON_ALBUM.text(),
         params![album_id, crate::clock::ms(now)],

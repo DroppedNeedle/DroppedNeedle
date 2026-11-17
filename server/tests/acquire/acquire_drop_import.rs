@@ -35,6 +35,7 @@ use droppedneedle_library::wiring::LibrarySetup;
 use futures_util::future::BoxFuture;
 
 use crate::common::auth::AuthRig;
+use crate::common::library::TestSql as _;
 use crate::common::library::{every_priority, library_at};
 
 const GROUP: &str = "7d0b7a1e-0000-4000-8000-000000000001";
@@ -1431,4 +1432,110 @@ async fn job_now(
         .into_iter()
         .find(|job| job.id == id)
         .expect("job")
+}
+
+/// Scan every library folder to its end.
+async fn scan_library(library: &LibrarySetup) {
+    use droppedneedle_library::scan::{ScanKind, ScanRequest, ScanTrigger};
+    let registry = library.core.live_registry();
+    library
+        .coordinator
+        .request_run(&ScanRequest {
+            kind: ScanKind::Incremental,
+            trigger: ScanTrigger::Manual,
+            scopes: registry.scheduled_root_scopes(),
+            requested_by_user_id: None,
+            policy_revision: registry.fingerprint().to_owned(),
+        })
+        .expect("scan requested");
+    for _ in 0..100 {
+        library.scans.supervisor_tick().await;
+        if library.coordinator.current().is_empty() {
+            break;
+        }
+    }
+    assert!(library.coordinator.current().is_empty());
+}
+
+/// An upload of the tracks an album in the library is missing joins that
+/// album and its folder, wherever the naming script would file them.
+#[tokio::test]
+async fn an_upload_of_the_missing_tracks_joins_the_album() {
+    let (_db, library, dir, auth) = bundles().await;
+    let music = dir.join("music");
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).expect("work dir");
+    let sour_times = tagged(&work, "flac_full_02.flac", "Dummy", "Sour Times", 2);
+    let lengths = [None, length_ms(&sour_times, &work)];
+    let dummy = release(&["Mysterons", "Sour Times"], &lengths);
+    let acquire = acquire_over(
+        &auth,
+        &library,
+        Arc::new(LibraryLanding::new(
+            &library,
+            every_priority(Arc::new(OneRelease(dummy.clone()))),
+        )),
+    );
+
+    // The library holds "Mysterons", in a folder of its own, on the
+    // edition a person chose.
+    let owned = music.join("My Dummy/01 Mysterons.flac");
+    std::fs::create_dir_all(owned.parent().expect("folder")).expect("copy folder");
+    std::fs::write(
+        &owned,
+        tagged(&work, "flac_full_01.flac", "Dummy", "Mysterons", 1),
+    )
+    .expect("copy planted");
+    scan_library(&library).await;
+    let db = acquire.db.db();
+    let album: String = db.one(
+        "SELECT local_album_id FROM local_tracks WHERE relative_path = 'My Dummy/01 Mysterons.flac'",
+        [],
+    );
+    let mysterons = &dummy.tracks[0];
+    db.run_sql(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_by_user_id, selected_at) \
+         VALUES ('{album}', 'musicbrainz', '{GROUP}', '{RELEASE}', 'manual', 'u-curator', 5); \
+         INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, medium_position, \
+         release_track_position, decision_source, selected_at) SELECT id, 'musicbrainz', \
+         '{}', '{RELEASE}', '{}', 1, 1, 'manual', 5 FROM local_tracks \
+         WHERE local_album_id = '{album}';",
+        mysterons.recording_id, mysterons.id
+    ))
+    .expect("edition chosen");
+
+    let curator = Viewer {
+        user_id: "u-curator".to_owned(),
+        admin: false,
+    };
+    let job = drop_zip(
+        &acquire,
+        &curator,
+        "upload-rest",
+        &[("Dummy/02 - Sour Times.flac", &sour_times)],
+    )
+    .await;
+    assert!(
+        job.items
+            .iter()
+            .all(|item| item.status == DropItemStatus::Imported),
+        "{:?}",
+        job.items
+    );
+    let joined: (String, String) = db.row(
+        "SELECT relative_path, local_album_id FROM local_tracks WHERE title = 'Sour Times'",
+        [],
+    );
+    assert_eq!(
+        joined,
+        ("My Dummy/0102 Sour Times.flac".to_owned(), album),
+        "the upload joins the album, beside its files"
+    );
+    let albums: i64 = db.one(
+        "SELECT COUNT(*) FROM local_albums WHERE retired_into_album_id IS NULL",
+        [],
+    );
+    assert_eq!(albums, 1, "no second album");
 }

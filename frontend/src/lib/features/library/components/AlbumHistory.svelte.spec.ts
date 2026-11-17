@@ -78,6 +78,7 @@ describe('AlbumHistory', () => {
 			entry({ kind: 'retag_half_left_alone', other_album_title: 'Old Name' }),
 			entry({ kind: 'retag_dismissal_ended', other_album_title: 'Old Name' }),
 			entry({ kind: 'leftover_joined', other_album_title: 'Old Name' }),
+			entry({ kind: 'copies_joined', other_album_title: 'Old Name' }),
 			entry({ kind: 'marks_followed', other_album_title: 'Old Name' }),
 			entry({ kind: 'artist_from_tracks' }),
 			entry({ kind: 'edition_changed' }),
@@ -105,7 +106,8 @@ describe('AlbumHistory', () => {
 			'An admin merged Another album into this album.',
 			'Left unmanaged like Old Name, whose files were being retagged as this album.',
 			'The tracks came back from Old Name, so "Keep them apart" no longer applies.',
-			'Old Name, left over from an earlier version as a separate album, was folded into this album.',
+			'Old Name, left over from an earlier version as a separate album, was joined into this album.',
+			'Another copy of this edition was joined into this album.',
 			'Hearts and ratings moved here from a copy with no files.',
 			'The artist was taken from the tracks, replacing "Unknown Artist".',
 			'DroppedNeedle moved this album to another edition.',
@@ -113,7 +115,7 @@ describe('AlbumHistory', () => {
 			'DroppedNeedle picked an edition for this album.',
 			"You undid DroppedNeedle's edition change.",
 			"An admin undid DroppedNeedle's edition change.",
-			'This album was brought back out of Kept Name, where it had been folded.',
+			'This album was brought back out of Kept Name, where it had been joined.',
 			'You brought this album back out of Kept Name.',
 			"Handing this album back stopped: its files couldn't be read."
 		];
@@ -136,12 +138,13 @@ describe('AlbumHistory', () => {
 	});
 });
 
-describe('undoing a fold or an artist change', () => {
+describe('undoing a fold, a join or an artist change', () => {
 	const folded = entry({
 		kind: 'leftover_joined',
 		other_album_title: 'Old Name',
 		undo_id: 'fold-1'
 	});
+	const joined = entry({ kind: 'copies_joined', undo_id: 'join-1' });
 	const repaired = entry({ kind: 'artist_from_tracks', undo_id: 'repair-1' });
 
 	it('undoes after a curator confirms, and says why a stale one cannot be undone', async () => {
@@ -152,6 +155,14 @@ describe('undoing a fold or an artist change', () => {
 				other: UNDO_ARTIST,
 				params: { fold_id: 'fold-1' },
 				confirm: ['Plays, favorites and playlist entries stay on this album.'],
+				stale: "The albums changed after the join, so it can't be undone."
+			},
+			{
+				item: joined,
+				route: UNDO,
+				other: UNDO_ARTIST,
+				params: { fold_id: 'join-1' },
+				confirm: ['Undo this join?', 'Plays, favorites and playlist entries stay on this album.'],
 				stale: "The albums changed after the join, so it can't be undone."
 			},
 			{
@@ -196,7 +207,7 @@ describe('undoing a fold or an artist change', () => {
 		}
 	});
 
-	it('lists an undone fold as its own entry, with no Undo left on the fold', async () => {
+	it('lists an undone join as its own entry, with no Undo left on the join', async () => {
 		signIn('admin');
 		await show(
 			entry({ kind: 'fold_undone', by: 'you', other_album_title: 'Old Name' }),
@@ -204,10 +215,10 @@ describe('undoing a fold or an artist change', () => {
 		);
 		await expect
 			.element(
-				page.getByText('You undid the fold: Old Name is its own album again.', { exact: true })
+				page.getByText('You undid the join: Old Name is its own album again.', { exact: true })
 			)
 			.toBeVisible();
-		await expect.element(page.getByText(/was folded into this album/)).toBeVisible();
+		await expect.element(page.getByText(/was joined into this album/)).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
 	});
 });

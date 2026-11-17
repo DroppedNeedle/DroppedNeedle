@@ -243,6 +243,10 @@ pub struct AlbumJoin {
     pub release_mbid: String,
     /// The release group of the release the files were matched to.
     pub release_group_mbid: String,
+    /// Chosen by import planning for the copy on the import's own release:
+    /// the commit refuses it once that copy no longer names the release.
+    #[serde(default)]
+    pub exact: bool,
 }
 
 /// Where an imported file sits on its release.

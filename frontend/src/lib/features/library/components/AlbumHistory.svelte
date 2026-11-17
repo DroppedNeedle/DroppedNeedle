@@ -1,12 +1,12 @@
 <!--
 	What DroppedNeedle did by itself to a library album: history moved to new
 	files, tracks whose paths other music took, tracks replaced by new copies
-	of the same recordings, albums joined into this one, hearts and ratings
-	moved here from a copy with no files, an artist taken from the tracks
-	instead of "Unknown Artist", edition changes and a hand-back that stopped,
-	and the undos of those changes. A curator can undo the fold of a leftover
-	album and that artist change. Nothing shows while it loads or when there
-	is nothing to tell.
+	of the same recordings, albums and copies of its edition joined into this
+	one, hearts and ratings moved here from a copy with no files, an artist
+	taken from the tracks instead of "Unknown Artist", edition changes and a
+	hand-back that stopped, and the undos of those changes. A curator can
+	undo the join of a leftover album or of a copy and that artist change.
+	Nothing shows while it loads or when there is nothing to tell.
 -->
 <script lang="ts">
 	import { History, Undo2 } from 'lucide-svelte';
@@ -103,7 +103,9 @@
 			case 'retag_dismissal_ended':
 				return `The tracks came back from ${old}, so "Keep them apart" no longer applies.`;
 			case 'leftover_joined':
-				return `${old}, left over from an earlier version as a separate album, was folded into this album.`;
+				return `${old}, left over from an earlier version as a separate album, was joined into this album.`;
+			case 'copies_joined':
+				return 'Another copy of this edition was joined into this album.';
 			case 'marks_followed':
 				return 'Hearts and ratings moved here from a copy with no files.';
 			case 'artist_from_tracks':
@@ -120,12 +122,12 @@
 				return "DroppedNeedle's edition change was undone.";
 			case 'fold_undone':
 				return entry.by === 'you'
-					? `You undid the fold: ${old} is its own album again.`
-					: `The fold was undone: ${old} is its own album again.`;
+					? `You undid the join: ${old} is its own album again.`
+					: `The join was undone: ${old} is its own album again.`;
 			case 'unfolded_from':
 				return entry.by === 'you'
 					? `You brought this album back out of ${old}.`
-					: `This album was brought back out of ${old}, where it had been folded.`;
+					: `This album was brought back out of ${old}, where it had been joined.`;
 			case 'hand_back_given_up':
 				return "Handing this album back stopped: its files couldn't be read.";
 		}
