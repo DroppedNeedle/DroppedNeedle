@@ -42054,6 +42054,11 @@ export interface operations {
             query?: {
                 /** @description `m3u8` (default) or `csv`. */
                 format?: components["schemas"]["ExportFormat"];
+                /**
+                 * @description Added before each entry's path, for a player that stores music under
+                 *     a folder of its own. At most 200 characters; no control characters.
+                 */
+                prefix?: string;
             };
             header?: never;
             path: {

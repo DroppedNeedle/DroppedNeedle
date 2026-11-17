@@ -175,6 +175,9 @@ pub enum ExportFormat {
 pub struct ExportQuery {
     /// `m3u8` (default) or `csv`.
     pub format: Option<ExportFormat>,
+    /// Added before each entry's path, for a player that stores music under
+    /// a folder of its own. At most 200 characters; no control characters.
+    pub prefix: Option<String>,
 }
 
 /// Create-playlist body.

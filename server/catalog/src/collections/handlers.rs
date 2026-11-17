@@ -201,7 +201,12 @@ pub async fn export_playlist_handler(
 ) -> HttpResult<Response> {
     let format = query.format.unwrap_or_default();
     let export = CollectionsService::new(&state)
-        .export_playlist(caller.user_id(), &playlist_id, format)
+        .export_playlist(
+            caller.user_id(),
+            &playlist_id,
+            format,
+            query.prefix.as_deref(),
+        )
         .await?;
     let (extension, content_type) = match format {
         ExportFormat::M3u8 => (".m3u8", "audio/x-mpegurl"),

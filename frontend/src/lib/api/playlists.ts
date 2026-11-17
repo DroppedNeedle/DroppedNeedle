@@ -76,17 +76,20 @@ export async function fetchPlaylist(
 export type PlaylistExportFormat = 'm3u8' | 'csv';
 
 /**
- * Download one playlist as M3U8 or CSV. The server names the file and
+ * Download one playlist as M3U8 or CSV. `prefix` goes before each path, for
+ * a player that stores music under a folder. The server names the file and
  * leaves out entries with no local file; returns how many it left out.
  */
 export async function downloadPlaylistExport(
 	id: string,
-	format: PlaylistExportFormat
+	format: PlaylistExportFormat,
+	prefix?: string
 ): Promise<number> {
+	const trimmed = prefix?.trim() ?? '';
 	const response = await downloadBlob(
 		v3('/api/v3/playlists/{playlist_id}/export', {
 			path: { playlist_id: id },
-			query: { format }
+			query: { format, ...(trimmed ? { prefix: trimmed } : {}) }
 		})
 	);
 	const skipped = Number.parseInt(response.headers.get('x-droppedneedle-skipped-tracks') ?? '', 10);

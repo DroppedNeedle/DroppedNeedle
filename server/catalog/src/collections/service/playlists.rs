@@ -51,6 +51,8 @@ const SOURCE_TYPES: [(&str, &str); 8] = [
 
 /// Most tracks one membership check accepts.
 const MAX_CHECK_TRACKS: usize = 1000;
+/// Longest accepted export path prefix, characters.
+const MAX_EXPORT_PREFIX_LEN: usize = 200;
 
 /// One playlist the caller may read.
 #[derive(Debug, Clone)]
@@ -97,6 +99,26 @@ fn clean_source(raw: &str) -> Result<String, CollectionsError> {
 
 fn clean_sources(raw: &[String]) -> Result<Vec<String>, CollectionsError> {
     raw.iter().map(|source| clean_source(source)).collect()
+}
+
+/// Trimmed export path prefix without its trailing slash; `None` when
+/// empty. Control characters are refused: a line-oriented format cannot
+/// carry them.
+fn clean_export_prefix(raw: Option<&str>) -> Result<Option<String>, CollectionsError> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let prefix = raw.trim();
+    if prefix.chars().any(char::is_control) {
+        return Err(CollectionsError::invalid(
+            "Path prefix must not contain control characters",
+        ));
+    }
+    if prefix.chars().count() > MAX_EXPORT_PREFIX_LEN {
+        return Err(CollectionsError::invalid("Path prefix is too long"));
+    }
+    let prefix = prefix.trim_end_matches('/');
+    Ok((!prefix.is_empty()).then(|| prefix.to_owned()))
 }
 
 /// Canonical cover URL for a playlist.
@@ -348,20 +370,23 @@ impl CollectionsService<'_> {
     }
 
     /// One playlist the caller may read, rendered as `format`. Entries
-    /// with no local file are left out; `skipped` counts them.
+    /// with no local file are left out; `skipped` counts them. `prefix`
+    /// goes before each path, for a player that stores music elsewhere.
     pub async fn export_playlist(
         &self,
         user_id: &str,
         playlist_id: &str,
         format: ExportFormat,
+        prefix: Option<&str>,
     ) -> Result<PlaylistExport, CollectionsError> {
+        let prefix = clean_export_prefix(prefix)?;
         let row = self.readable_playlist(user_id, playlist_id).await?;
         let entries: Vec<PlaylistExportRow> = self
             .playlists()
             .visible_to(user_id)
             .export_entries(playlist_id)
             .await?;
-        let mut rendered = Vec::new();
+        let mut kept: Vec<(&PlaylistExportRow, String)> = Vec::new();
         let mut skipped = 0;
         for entry in &entries {
             let Some(path) = entry
@@ -372,15 +397,23 @@ impl CollectionsService<'_> {
                 skipped += 1;
                 continue;
             };
-            rendered.push(Entry {
+            let path = match &prefix {
+                Some(prefix) => format!("{prefix}/{path}"),
+                None => path.to_owned(),
+            };
+            kept.push((entry, path));
+        }
+        let rendered: Vec<Entry<'_>> = kept
+            .iter()
+            .map(|(entry, path)| Entry {
                 title: &entry.track_name,
                 artist: &entry.artist_name,
                 album: &entry.album_name,
                 album_artist: entry.album_artist_name.as_deref().unwrap_or(""),
                 duration_seconds: entry.duration_ms.map(|ms| ms / 1000),
                 path,
-            });
-        }
+            })
+            .collect();
         let body = match format {
             ExportFormat::M3u8 => playlist_files::render_m3u(&row.name, &row.id, &rendered),
             ExportFormat::Csv => playlist_files::render_csv(&rendered),

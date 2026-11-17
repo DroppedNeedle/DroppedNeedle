@@ -24280,6 +24280,15 @@
             "schema": {
               "$ref": "#/components/schemas/ExportFormat"
             }
+          },
+          {
+            "name": "prefix",
+            "in": "query",
+            "description": "Added before each entry's path, for a player that stores music under\na folder of its own. At most 200 characters; no control characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {

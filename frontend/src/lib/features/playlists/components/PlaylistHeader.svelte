@@ -7,11 +7,7 @@
 	h1.
 -->
 <script lang="ts">
-	import {
-		downloadPlaylistExport,
-		type PlaylistDetail,
-		type PlaylistExportFormat
-	} from '$lib/api/playlists';
+	import type { PlaylistDetail } from '$lib/api/playlists';
 	import {
 		createDeletePlaylistCoverV3Mutation,
 		createUpdatePlaylistV3Mutation,
@@ -19,6 +15,7 @@
 	} from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
 	import { toPageDetail } from '$lib/features/playlists/queries/playlistV3Adapter';
 	import PlaylistDiscoveryModal from '$lib/features/discover/components/PlaylistDiscoveryModal.svelte';
+	import PlaylistExportModal from '$lib/features/playlists/components/PlaylistExportModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { formatTotalDurationSec, formatRelativeTime } from '$lib/utils/formatting';
 	import { getSourceColor, getSourceLabel } from '$lib/utils/sources';
@@ -213,28 +210,7 @@
 		}
 	}
 
-	let exporting = $state<PlaylistExportFormat | null>(null);
-
-	async function exportPlaylist(format: PlaylistExportFormat) {
-		if (exporting) return;
-		exporting = format;
-		try {
-			const skipped = await downloadPlaylistExport(playlist.id, format);
-			if (skipped > 0) {
-				const tracks = skipped === 1 ? 'track' : 'tracks';
-				toastStore.show({
-					message: `Playlist exported. ${skipped} ${tracks} with no local file ${skipped === 1 ? 'was' : 'were'} left out.`,
-					type: 'info'
-				});
-			} else {
-				toastStore.show({ message: 'Playlist exported', type: 'success' });
-			}
-		} catch {
-			toastStore.show({ message: "Couldn't export this playlist", type: 'error' });
-		} finally {
-			exporting = null;
-		}
-	}
+	let exportModal = $state<ReturnType<typeof PlaylistExportModal> | null>(null);
 
 	const menuItems = $derived.by(() => {
 		const items: MenuItem[] = [];
@@ -250,14 +226,12 @@
 		items.push({
 			label: 'Export as M3U',
 			icon: FileMusic,
-			disabled: exporting !== null,
-			onclick: () => void exportPlaylist('m3u8')
+			onclick: () => exportModal?.show('m3u8')
 		});
 		items.push({
 			label: 'Export as CSV',
 			icon: FileSpreadsheet,
-			disabled: exporting !== null,
-			onclick: () => void exportPlaylist('csv')
+			onclick: () => exportModal?.show('csv')
 		});
 		if (canDelete) {
 			items.push({
@@ -457,6 +431,8 @@
 		</div>
 	</div>
 </section>
+
+<PlaylistExportModal bind:this={exportModal} playlistId={playlist.id} />
 
 <PlaylistDiscoveryModal
 	bind:open={discoverModalOpen}
