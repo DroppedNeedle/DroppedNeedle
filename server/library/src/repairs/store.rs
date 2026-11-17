@@ -799,6 +799,8 @@ pub struct Subject {
     pub custom_current: Option<bool>,
     /// The library root the album lives in.
     pub root_id: String,
+    /// See [`IdentityState::person_declined`].
+    pub person_declined: bool,
 }
 
 /// The album as it is now; `None` once it is retired or has no files.
@@ -806,6 +808,11 @@ pub fn subject(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Sub
     let Some(revisions) = album_revisions(conn, album_id)? else {
         return Ok(None);
     };
+    let person_declined: bool = conn.query_row(
+        crate::repairs::sql::SUBJECT_PERSON_DECLINED.text(),
+        params![album_id],
+        |row| row.get(0),
+    )?;
     let identity: Option<(IdentityState, i64)> = conn
         .query_row(
             crate::repairs::sql::SUBJECT_ALBUM_IDENTITY.text(),
@@ -817,6 +824,7 @@ pub fn subject(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Sub
                         release_group_mbid: row.release_group_mbid,
                         release_mbid: row.release_mbid,
                         manual: row.decision_source.is_persons_choice(),
+                        person_declined,
                     },
                     row.row_revision,
                 ))
@@ -851,6 +859,7 @@ pub fn subject(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Sub
     )?;
     Ok(Some(Subject {
         root_id,
+        person_declined,
         identity_revision: identity.as_ref().map(|(_, revision)| *revision),
         identity: identity.map(|(state, _)| state),
         tracks,
@@ -989,7 +998,8 @@ pub fn save_finding(
 
 /// Apply a suggestion that passed the automatic acceptance gate, if the
 /// album still looks the way it was checked (the identity command checks
-/// that inside its write). The finding becomes
+/// that inside its write) and no person has turned it down since. The
+/// finding becomes
 /// `exact_release_auto_accepted`; otherwise it stays a suggestion.
 pub fn auto_accept(
     tx: &Transaction<'_>,
@@ -1005,6 +1015,16 @@ pub fn auto_accept(
         return Ok(false);
     };
     if !verdict.payload.auto_accept {
+        return Ok(false);
+    }
+    // A person may have turned the album down while it was looked up; the
+    // revisions the guard holds do not move for that.
+    let declined: bool = tx.query_row(
+        crate::repairs::sql::SUBJECT_PERSON_DECLINED.text(),
+        params![album_id],
+        |row| row.get(0),
+    )?;
+    if declined {
         return Ok(false);
     }
     let expected = crate::identity::Expected {

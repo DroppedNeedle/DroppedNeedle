@@ -179,7 +179,8 @@ pub struct EditionSummary {
     pub competing_count: u32,
     /// With automatic edition acceptance on: `AUTO_ACCEPT`, or why the
     /// suggestion waits for a person (`BELOW_MIN_SCORE`, `TIE`,
-    /// `MARGIN_TOO_NARROW`, `NON_QUALIFYING_REASON`).
+    /// `MARGIN_TOO_NARROW`, `NON_QUALIFYING_REASON`, or `PERSON_DECLINED`
+    /// when a person turned automatic matching down for the album).
     #[serde(default)]
     pub auto_gate: Option<String>,
 }

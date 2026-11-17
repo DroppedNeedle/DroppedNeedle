@@ -132,6 +132,21 @@ macro_rules! named_group_guess {
     };
 }
 
+/// The album, a column holding its id, carries the flag a person's
+/// decline left: they took its match off (`DETACHED_BY_PERSON`), or an
+/// admin undid its automatic edition and nothing was put back
+/// (`AUTOMATIC_EDITION_UNDONE`).
+#[macro_export]
+macro_rules! declined_flag {
+    ($album_id:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM library_album_match_state dcf WHERE dcf.local_album_id = ",
+            $album_id,
+            " AND dcf.reason_code IN ('DETACHED_BY_PERSON', 'AUTOMATIC_EDITION_UNDONE'))"
+        )
+    };
+}
+
 /// An album's match is accepted, over an album identity alias: it names a
 /// release, the album carries no match flag, and no custom edition is
 /// active on it. Any decision source counts. Proof, merges and retag joins

@@ -200,6 +200,20 @@ droppedneedle_kernel::sql! {
          AND ti.provider = ?2 WHERE t.local_album_id = ?1 AND +t.availability = 'indexed' \
          ORDER BY t.id";
     pub(super) SUBJECT_ALBUM_ROOT = "SELECT root_id FROM local_albums WHERE id = ?1";
+    /// Whether a person turned automatic matching down for album `?1`:
+    /// they took its match off, an admin undid its automatic edition (on
+    /// it, or on an album merged or retired into it), or they rejected,
+    /// dismissed or excluded its review.
+    pub(super) SUBJECT_PERSON_DECLINED = "SELECT " + (crate::declined_flag!("?1")) + " \
+             OR EXISTS (SELECT 1 FROM library_catalog_actions ca \
+             WHERE (ca.local_album_id = ?1 \
+                 OR ca.local_album_id IN (SELECT alias FROM local_album_aliases \
+                     WHERE local_album_id = ?1 AND kind = 'merged_album') \
+                 OR ca.local_album_id IN (SELECT id FROM local_albums \
+                     WHERE retired_into_album_id = ?1)) \
+             AND ca.action_kind = 'undo_automatic_edition') \
+             OR EXISTS (SELECT 1 FROM library_identify_reviews r WHERE r.local_album_id = ?1 \
+             AND r.state IN ('rejected', 'dismissed', 'excluded'))";
     pub(super) CLAIM_ALBUM = "SELECT local_album_id FROM library_operation_work WHERE job_id = ?1 AND ordinal = ?2";
     pub(super) WORK_SUBJECT_REVISION = "SELECT expected_subject_revision FROM library_operation_work \
          WHERE job_id = ?1 AND ordinal = ?2";

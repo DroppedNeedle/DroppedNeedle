@@ -1066,7 +1066,10 @@ impl RepairWorker {
             return Ok(Checked::Deferred);
         };
         let candidates = evaluation(&facts, &recall, &ranking, false).candidates;
-        let identity = identity.unwrap_or_default();
+        let identity = identity.unwrap_or(classify::IdentityState {
+            person_declined: subject.person_declined,
+            ..classify::IdentityState::default()
+        });
         let verdict = match release {
             Some(release) => {
                 let held = recall

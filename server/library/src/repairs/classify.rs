@@ -18,6 +18,10 @@ pub struct IdentityState {
     pub release_mbid: Option<String>,
     /// Someone chose it: a recheck reports, never removes.
     pub manual: bool,
+    /// A person took the match off, an admin undid the automatic edition,
+    /// or a person turned the review down: nothing is accepted for the
+    /// album automatically.
+    pub person_declined: bool,
 }
 
 /// One indexed file's current identity row.
@@ -247,8 +251,8 @@ pub fn auto_gate(ranked: &[(&ReidentificationCandidate, EditionSummary)]) -> &'s
 /// the best edition that places every file, inside the album's release
 /// group when it has one. `candidates` come best first. With
 /// `auto_accept_enabled` the suggestion goes through the automatic
-/// acceptance gate; an album someone chose is never accepted
-/// automatically.
+/// acceptance gate; an album someone chose, or one a person turned
+/// automatic matching down for, is never accepted automatically.
 pub fn readiness_suggest(
     identity: &IdentityState,
     candidates: &[ReidentificationCandidate],
@@ -270,7 +274,13 @@ pub fn readiness_suggest(
     };
     let mut summary = summary.clone();
     summary.competing_count = ranked.len() as u32;
-    let gate = (auto_accept_enabled && !identity.manual).then(|| auto_gate(&ranked));
+    let gate = (auto_accept_enabled && !identity.manual).then(|| {
+        if identity.person_declined {
+            "PERSON_DECLINED"
+        } else {
+            auto_gate(&ranked)
+        }
+    });
     summary.auto_gate = gate.map(str::to_owned);
     Verdict::new(
         FindingCode::ExactReleaseSuggested,
@@ -343,6 +353,7 @@ mod tests {
             release_group_mbid: Some("rg".to_owned()),
             release_mbid: Some("rel".to_owned()),
             manual: false,
+            person_declined: false,
         }
     }
 
@@ -421,6 +432,7 @@ mod tests {
             release_group_mbid: Some("other".to_owned()),
             release_mbid: None,
             manual: true,
+            person_declined: false,
         };
         let suggest = |id: &IdentityState| {
             readiness_suggest(id, std::slice::from_ref(&good), true, |_| {

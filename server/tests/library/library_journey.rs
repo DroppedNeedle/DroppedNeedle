@@ -11131,37 +11131,6 @@ async fn library_journey_identity_repair_and_preparation() {
         )
         .await;
     }
-    let (_, job) = app
-        .call(
-            "POST",
-            "/api/v3/library/management/identity-preparations",
-            &headers,
-            Some(json!({"idempotency_key": "prep-auto"})),
-        )
-        .await;
-    let auto_path = format!(
-        "/api/v3/library/management/identity-preparations/{}",
-        job["id"].as_str().expect("id")
-    );
-    let ready = settle_repair(app, &headers, &auto_path).await;
-    assert_eq!(ready["state"], json!("ready"), "{ready}");
-    let (_, findings) = app
-        .call("GET", &format!("{auto_path}/findings"), &headers, None)
-        .await;
-    let item = &findings["items"][0];
-    assert_eq!(
-        item["apply_result"],
-        json!("EDITION_AUTO_ACCEPTED"),
-        "{findings}"
-    );
-    assert_eq!(item["suggested_edition"]["auto_gate"], json!("AUTO_ACCEPT"));
-    let accepted = rig
-        .identify_store
-        .album_identity(&album)
-        .unwrap()
-        .expect("accepted");
-    assert_eq!(accepted.release_mbid.as_deref(), Some(release.id.as_str()));
-    // A confident acceptance is applied as confirmed: no flag remains.
     let match_state = || -> Option<String> {
         use rusqlite::OptionalExtension as _;
         droppedneedle_kernel::db::open_connection(&app.config.library_db_path)
@@ -11175,6 +11144,58 @@ async fn library_journey_identity_repair_and_preparation() {
             .optional()
             .expect("match state")
     };
+    // An album a person took the match off is left alone: the report
+    // still suggests the edition, held by the gate.
+    let held_by_person = |item: &Value, why: &str| {
+        assert_eq!(
+            item["finding_code"],
+            json!("exact_release_suggested"),
+            "{why}: {item}"
+        );
+        assert_eq!(
+            item["suggested_edition"]["auto_gate"],
+            json!("PERSON_DECLINED"),
+            "{why}"
+        );
+        assert!(
+            rig.identify_store.album_identity(&album).unwrap().is_none(),
+            "{why}: no edition is given"
+        );
+    };
+    app.seed_with(
+        "UPDATE library_album_match_state SET reason_code = 'DETACHED_BY_PERSON' \
+         WHERE local_album_id = ?1",
+        [&album],
+    )
+    .await;
+    let (detached_path, item) = prepare_identities(app, &headers, "prep-detached").await;
+    held_by_person(&item, "detached");
+    assert_eq!(
+        match_state().as_deref(),
+        Some("unmatched:DETACHED_BY_PERSON")
+    );
+    discard_preparation(app, &headers, &detached_path).await;
+    app.seed_with(
+        "UPDATE library_album_match_state SET reason_code = 'NO_CANDIDATE' \
+         WHERE local_album_id = ?1",
+        [&album],
+    )
+    .await;
+
+    let (auto_path, item) = prepare_identities(app, &headers, "prep-auto").await;
+    assert_eq!(
+        item["apply_result"],
+        json!("EDITION_AUTO_ACCEPTED"),
+        "{item}"
+    );
+    assert_eq!(item["suggested_edition"]["auto_gate"], json!("AUTO_ACCEPT"));
+    let accepted = rig
+        .identify_store
+        .album_identity(&album)
+        .unwrap()
+        .expect("accepted");
+    assert_eq!(accepted.release_mbid.as_deref(), Some(release.id.as_str()));
+    // A confident acceptance is applied as confirmed: no flag remains.
     assert_eq!(match_state(), None);
     let undo = &item["automatic_undo"];
     let (status, body) = app
@@ -11192,7 +11213,49 @@ async fn library_journey_identity_repair_and_preparation() {
     assert!(rig.identify_store.album_identity(&album).unwrap().is_none());
     // The undo puts back the match state the acceptance replaced.
     assert_eq!(match_state().as_deref(), Some("unmatched:NO_CANDIDATE"));
+
+    // The undo stays undone: the next preparation does not accept again.
+    discard_preparation(app, &headers, &auto_path).await;
+    let (_, item) = prepare_identities(app, &headers, "prep-after-undo").await;
+    held_by_person(&item, "undone");
+    assert_eq!(match_state().as_deref(), Some("unmatched:NO_CANDIDATE"));
     rig.stop().await;
+}
+
+/// Run a Prepare identities report to ready; its path and first finding.
+async fn prepare_identities(app: &TestApp, headers: &[(&str, &str)], key: &str) -> (String, Value) {
+    let (_, job) = app
+        .call(
+            "POST",
+            "/api/v3/library/management/identity-preparations",
+            headers,
+            Some(json!({"idempotency_key": key})),
+        )
+        .await;
+    let path = format!(
+        "/api/v3/library/management/identity-preparations/{}",
+        job["id"].as_str().expect("id")
+    );
+    let ready = settle_repair(app, headers, &path).await;
+    assert_eq!(ready["state"], json!("ready"), "{ready}");
+    let (_, findings) = app
+        .call("GET", &format!("{path}/findings"), headers, None)
+        .await;
+    (path, findings["items"][0].clone())
+}
+
+/// Dismiss a Prepare identities report, so another can start.
+async fn discard_preparation(app: &TestApp, headers: &[(&str, &str)], path: &str) {
+    let job = settle_repair(app, headers, path).await;
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("{path}/discard"),
+            headers,
+            Some(json!({"expected_row_revision": job["row_revision"]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
 }
 
 /// Apply a ready preview from its handle and run the worker once.
