@@ -1,0 +1,17 @@
+import { chromium } from 'playwright';
+import fs from 'node:fs';
+const cookie = fs.readFileSync('/tmp/dn-cookie','utf8').trim();
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+await ctx.addCookies([{ name:'droppedneedle_sid', value:cookie, domain:'192.168.0.95', path:'/api/v3', httpOnly:true, sameSite:'Lax' }]);
+const page = await ctx.newPage();
+await page.goto('http://192.168.0.95:8688/playlists/8a92caf2-bd77-49b7-a838-52c69e2e9f21', { waitUntil:'networkidle' });
+const play = page.getByRole('button', { name: 'Play', exact: true }).first();
+console.log('play button', await play.count());
+await play.click().catch(e=>console.log('click', e.message));
+await page.waitForTimeout(1200);
+await page.getByRole('button', { name: 'Toggle queue' }).click().catch(e=>console.log('q', e.message));
+await page.waitForTimeout(600);
+const items = await page.$$eval('.dn-queue-title', els => els.map(e=>e.textContent.trim()));
+console.log('queue', items.length); items.slice(0,8).forEach(t=>console.log(t));
+await browser.close();
