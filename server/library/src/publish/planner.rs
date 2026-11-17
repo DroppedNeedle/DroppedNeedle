@@ -213,7 +213,9 @@ pub struct Adoption {
     pub track: Option<JoinedTrack>,
     /// A song's file from another edition of the album: the seal leaves
     /// the album's identity and match flag alone, as for a joined file.
-    #[serde(default)]
+    /// Written only when true, so a bundle stored before the field writes
+    /// back unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub set_aside: bool,
     /// What the placement read of the joined copy's folder. The commit
     /// refuses the bundle when the copy has moved since; a resumed commit

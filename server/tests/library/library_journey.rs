@@ -16567,10 +16567,10 @@ async fn an_import_in_place_of_a_missing_track_marks_nothing() {
     assert_eq!(managed.count(STEPPED_BACK), 0);
 }
 
-/// An import onto an album whose match cannot be read writes none of the
-/// album's identity: the person's album row, the track rows and the flag
-/// stay as they were, the file still lands, and the album is offered to
-/// identification instead.
+/// An import onto an album whose match cannot be read leaves the album's
+/// identity alone: the person's album row and the flag stay as they were.
+/// The file still lands on its track as the person's, and the album is
+/// offered to identification instead.
 #[tokio::test]
 async fn an_import_that_cannot_read_the_albums_match_leaves_it_alone() {
     use droppedneedle_library::import::{DownloadImport, ImportOrigin, ImportSource};
@@ -16678,7 +16678,34 @@ async fn an_import_that_cannot_read_the_albums_match_leaves_it_alone() {
         "it takes the missing track's id"
     );
 
-    assert_eq!(identity(&db), before, "nothing of the match is written");
+    let placed = format!("track {missing} ");
+    let without_selected_at = |row: &str| {
+        row.rsplit_once(' ')
+            .map_or(row, |(rest, _)| rest)
+            .to_owned()
+    };
+    let expected: Vec<String> = before
+        .iter()
+        .map(|row| {
+            if row.starts_with(&placed) {
+                without_selected_at(&row.replacen(" automatic ", " manual ", 1))
+            } else {
+                row.clone()
+            }
+        })
+        .collect();
+    let after: Vec<String> = identity(&db)
+        .iter()
+        .map(|row| {
+            if row.starts_with(&placed) {
+                without_selected_at(row)
+            } else {
+                row.clone()
+            }
+        })
+        .collect();
+    // A joined file on a person's edition is placed as the person's, as Get missing tracks places it.
+    assert_eq!(after, expected, "only the placed track's row changes");
     let live_jobs: i64 = db
         .query_row(
             "SELECT COUNT(*) FROM library_identify_jobs WHERE local_album_id = ?1 \

@@ -454,33 +454,24 @@ pub(crate) fn joined_album(
     conn: &Connection,
     join: &AlbumJoin,
 ) -> rusqlite::Result<Option<JoinedAlbum>> {
-    let found: Option<(String, Option<String>, Option<String>)> = conn
+    let found = conn
         .query_row(
             crate::publish::sql::JOINED_ALBUM.text(),
-            rusqlite::params![join.album_id],
-            |row| {
-                let row = crate::publish::sql::JoinedAlbumRow::read(row)?;
-                Ok((row.id, row.release_mbid, row.release_group_mbid))
-            },
+            rusqlite::params![join.album_id, join.release_mbid, join.release_group_mbid],
+            crate::publish::sql::JoinedAlbumRow::read,
         )
         .optional()?;
-    let Some((album_id, release, group)) = found else {
+    let Some(row) = found else {
         return Ok(None);
     };
-    let names = |held: &Option<String>, wanted: &str| {
-        !wanted.trim().is_empty()
-            && held
-                .as_deref()
-                .is_some_and(|held| held.trim().eq_ignore_ascii_case(wanted.trim()))
-    };
-    Ok(if names(&release, &join.release_mbid) {
+    Ok(if row.release_named {
         Some(JoinedAlbum {
-            album_id,
+            album_id: row.id,
             placed: true,
         })
-    } else if names(&group, &join.release_group_mbid) {
+    } else if row.group_named {
         Some(JoinedAlbum {
-            album_id,
+            album_id: row.id,
             placed: false,
         })
     } else {

@@ -555,7 +555,14 @@ droppedneedle_kernel::sql! {
          AND root_id <> ?2 AND NOT EXISTS (SELECT 1 FROM local_tracks t \
          WHERE t.local_album_id = local_albums.id AND t.root_id <> ?2 \
          AND t.availability = 'indexed')";
-    pub(super) JOINED_ALBUM = "SELECT b.id, i.release_mbid, i.release_group_mbid FROM local_albums b \
+    // Compared in SQL rather than read: a stored id that does not decode
+    // must not fail an import that only asks whether it matches.
+    pub(super) JOINED_ALBUM = "SELECT b.id, \
+             COALESCE(trim(?2) <> '' AND lower(trim(i.release_mbid)) = lower(trim(?2)), 0) \
+             AS release_named, \
+             COALESCE(trim(?3) <> '' AND lower(trim(i.release_group_mbid)) = lower(trim(?3)), 0) \
+             AS group_named \
+             FROM local_albums b \
              LEFT JOIN local_album_external_identities i \
              ON i.local_album_id = b.id AND i.provider = 'musicbrainz' \
              WHERE b.id = (SELECT COALESCE(retired_into_album_id, id) FROM local_albums \
@@ -788,8 +795,8 @@ droppedneedle_kernel::sql! {
     }
     pub(super) row JoinedAlbumRow for [JOINED_ALBUM] {
         id: String,
-        release_mbid: Option<String>,
-        release_group_mbid: Option<String>,
+        release_named: bool,
+        group_named: bool,
     }
     pub(super) row CopyFolderRow for [COPY_FOLDER] {
         root_id: String,
