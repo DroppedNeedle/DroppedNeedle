@@ -92,4 +92,30 @@ describe('artist MusicBrainz link', () => {
 
 		await expect.element(page.getByRole('alert')).toHaveTextContent('(Beta)');
 	});
+
+	it('names the artists of its name a clear would join', async () => {
+		signIn('trusted');
+		fakeApi({
+			[`GET ${ROUTE}`]: { ...appLink, source: 'person', set_by: 'person' },
+			[`DELETE ${ROUTE}`]: apiError(
+				409,
+				'ARTIST_LINK_JOINS_NAMESAKES',
+				'Other artists of this name would then be joined.',
+				{
+					action: 'An admin can merge them in Duplicate artists.',
+					artists: [{ id: 'artist-b', name: 'NIRVANA' }]
+				}
+			)
+		});
+		await renderWithQuery(ArtistMusicBrainzLink, { artistId: 'artist-a' });
+
+		await page.getByRole('button', { name: 'Clear' }).click();
+		await page.getByRole('dialog').getByRole('button', { name: 'Clear' }).click();
+
+		await expect
+			.element(page.getByRole('alert'))
+			.toHaveTextContent(
+				'Other artists of this name would then be joined. (NIRVANA) An admin can merge them in Duplicate artists.'
+			);
+	});
 });

@@ -142,17 +142,22 @@ impl From<ArtistLinkError> for ApiError {
             LinkRefusal::NotPersons => {
                 refused(StatusCode::CONFLICT, reasons::ARTIST_LINK_NOT_CHOSEN)
             }
-            LinkRefusal::Shared(others) => {
-                let reason = reasons::ARTIST_LINK_SHARED;
-                let artists: Vec<_> = others
-                    .into_iter()
-                    .map(|(id, name)| json!({ "id": id, "name": name }))
-                    .collect();
-                ApiError::new(StatusCode::CONFLICT, reason.code, reason.message)
-                    .with_details(json!({ "action": reason.action, "artists": artists }))
+            LinkRefusal::Shared(others) => naming(reasons::ARTIST_LINK_SHARED, others),
+            LinkRefusal::JoinsNamesakes(others) => {
+                naming(reasons::ARTIST_LINK_JOINS_NAMESAKES, others)
             }
         }
     }
+}
+
+/// A 409 for `reason` that names the artists it is about.
+fn naming(reason: reasons::Reason, others: Vec<(String, String)>) -> ApiError {
+    let artists: Vec<_> = others
+        .into_iter()
+        .map(|(id, name)| json!({ "id": id, "name": name }))
+        .collect();
+    ApiError::new(StatusCode::CONFLICT, reason.code, reason.message)
+        .with_details(json!({ "action": reason.action, "artists": artists }))
 }
 
 /// An artist's MusicBrainz link: the id, who set it and when.
@@ -182,7 +187,8 @@ pub async fn get_artist_link(
 
 /// Link an artist to a MusicBrainz artist by hand. The app's own linking
 /// never changes it. Refused when another artist in the library is that
-/// MusicBrainz artist: an admin merges them instead.
+/// MusicBrainz artist, or when artists of its name would then be joined:
+/// an admin merges them instead.
 #[utoipa::path(
     put,
     tag = "library management",
@@ -195,7 +201,7 @@ pub async fn get_artist_link(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown artist"),
-        (status = 409, description = "The artist changed since it was read (STALE_REVISION), cannot be linked (ARTIST_NOT_LINKABLE), or other artists are that MusicBrainz artist (ARTIST_LINK_SHARED, listed in details.artists)"),
+        (status = 409, description = "The artist changed since it was read (STALE_REVISION), cannot be linked (ARTIST_NOT_LINKABLE), other artists are that MusicBrainz artist (ARTIST_LINK_SHARED), or artists of its name would then be joined (ARTIST_LINK_JOINS_NAMESAKES); either lists them in details.artists"),
     )
 )]
 pub async fn set_artist_link(
@@ -220,7 +226,8 @@ pub async fn set_artist_link(
 
 /// Clear an artist's hand-set link. The app then links the artist again
 /// where its albums and files prove one. Refused when that would make it
-/// the same MusicBrainz artist as another in the library.
+/// the same MusicBrainz artist as another in the library, or join artists
+/// of its name.
 #[utoipa::path(
     delete,
     tag = "library management",
@@ -232,7 +239,7 @@ pub async fn set_artist_link(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown artist"),
-        (status = 409, description = "The artist changed since it was read (STALE_REVISION), has no hand-set link (ARTIST_LINK_NOT_CHOSEN), or would be the same MusicBrainz artist as others (ARTIST_LINK_SHARED, listed in details.artists)"),
+        (status = 409, description = "The artist changed since it was read (STALE_REVISION), has no hand-set link (ARTIST_LINK_NOT_CHOSEN), would be the same MusicBrainz artist as others (ARTIST_LINK_SHARED), or artists of its name would then be joined (ARTIST_LINK_JOINS_NAMESAKES); either lists them in details.artists"),
     )
 )]
 pub async fn clear_artist_link(

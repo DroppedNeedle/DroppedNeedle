@@ -268,6 +268,11 @@ pub const ARTIST_LINK_SHARED: Reason = reason(
     "Other artists in the library are this MusicBrainz artist too.",
     "An admin can merge them in Duplicate artists.",
 );
+pub const ARTIST_LINK_JOINS_NAMESAKES: Reason = reason(
+    "ARTIST_LINK_JOINS_NAMESAKES",
+    "Other artists of this name would then be joined.",
+    "An admin can merge them in Duplicate artists.",
+);
 pub const ARTIST_LINK_NOT_CHOSEN: Reason = reason(
     "ARTIST_LINK_NOT_CHOSEN",
     "Only a link someone set by hand can be cleared.",

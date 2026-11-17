@@ -520,7 +520,13 @@ droppedneedle_kernel::sql! {
         id: Option<String>,
         selected_at: Millis,
     }
-    pub(super) row NamedArtist for [SHARING, FOLLOWS_OUT, FOLLOWS_IN] {
+    /// The live ordinary records (sentinels `?2`, `?3`) with record `?1`'s
+    /// folded name, `?1` among them while it is one.
+    pub(super) NAMESAKES = "SELECT n.id, n.display_name FROM local_artists a \
+         JOIN local_artists n ON n.folded_name = a.folded_name \
+         WHERE a.id = ?1 AND n.retired_into_artist_id IS NULL AND n.kind <> 'various_artists' \
+         AND n.id NOT IN (?2, ?3) ORDER BY n.created_at, n.id";
+    pub(super) row NamedArtist for [SHARING, FOLLOWS_OUT, FOLLOWS_IN, NAMESAKES] {
         id: String,
         display_name: String,
     }

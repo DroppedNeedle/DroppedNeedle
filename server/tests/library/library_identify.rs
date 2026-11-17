@@ -1977,6 +1977,92 @@ fn a_link_change_that_frees_a_waiting_merge_is_refused() {
     );
 }
 
+/// Records of one name that two MusicBrainz ids keep apart stay apart
+/// through a person's link change: clearing the link that kept them
+/// apart, or a link that makes one record sit out and leaves the others
+/// one id, is refused and writes nothing. A change after which the same
+/// records join as before is allowed, and so is a record alone under its
+/// name.
+#[test]
+fn a_link_change_that_lets_namesakes_join_is_refused() {
+    use droppedneedle_library::identify::artist_links::{ArtistLinkError, LinkRefusal};
+
+    const LINK_W: &str = "aaaaaaaa-0000-4000-8000-00000000000d";
+    let revision = |links: &Links, artist: &str| {
+        links
+            .store
+            .artist_link(artist)
+            .unwrap()
+            .expect("artist")
+            .artist_revision
+    };
+    let person_changes = |links: &Links| {
+        links.count(
+            "SELECT COUNT(*) FROM library_catalog_actions WHERE reason_code IN \
+             ('ARTIST_LINK_SET_BY_PERSON', 'ARTIST_LINK_CLEARED_BY_PERSON')",
+        )
+    };
+
+    let links = Links::new();
+    links.artist("ar-a", "Nirvana", 1.0);
+    links.artist("ar-b", "NIRVANA", 2.0);
+    links.link("ar-a", LINK_X, "manual");
+    links.unmatched_album("ab", &[("ar-b", "NIRVANA", Some(LINK_Y))]);
+    let cleared = links
+        .store
+        .clear_artist_link("ar-a", revision(&links, "ar-a"), "admin");
+    assert!(
+        matches!(&cleared, Err(ArtistLinkError::Refused(LinkRefusal::JoinsNamesakes(others)))
+            if *others == [("ar-b".to_owned(), "NIRVANA".to_owned())]),
+        "{cleared:?}"
+    );
+    assert_eq!(
+        links.link_of("ar-a"),
+        Some((LINK_X.to_owned(), "manual".to_owned()))
+    );
+    assert_eq!(person_changes(&links), 0);
+
+    let links = Links::new();
+    links.artist("ar-a", "Nirvana", 1.0);
+    links.artist("ar-b", "nirvana", 2.0);
+    links.artist("ar-c", "NIRVANA", 3.0);
+    links.unmatched_album("aa", &[("ar-a", "Nirvana", Some(LINK_Z))]);
+    links.unmatched_album("ac", &[("ar-c", "NIRVANA", Some(LINK_W))]);
+    let set = links
+        .store
+        .set_artist_link("ar-a", LINK_X, revision(&links, "ar-a"), "admin");
+    assert!(
+        matches!(&set, Err(ArtistLinkError::Refused(LinkRefusal::JoinsNamesakes(others)))
+            if *others == [("ar-b".to_owned(), "nirvana".to_owned()), ("ar-c".to_owned(), "NIRVANA".to_owned())]),
+        "{set:?}"
+    );
+    assert_eq!(links.link_of("ar-a"), None);
+    assert_eq!(person_changes(&links), 0);
+
+    let links = Links::new();
+    links.artist("ar-a", "Nirvana", 1.0);
+    links.artist("ar-b", "nirvana", 2.0);
+    links.link("ar-a", LINK_X, "manual");
+    links
+        .store
+        .clear_artist_link("ar-a", revision(&links, "ar-a"), "admin")
+        .unwrap();
+    assert_eq!(links.link_of("ar-a"), None);
+    assert_eq!(person_changes(&links), 1);
+
+    let links = Links::new();
+    links.artist("ar-a", "Nirvana", 1.0);
+    links.artist("ar-b", "Pixies", 2.0);
+    links.link("ar-a", LINK_X, "manual");
+    links.unmatched_album("ab", &[("ar-b", "Pixies", Some(LINK_Y))]);
+    links
+        .store
+        .clear_artist_link("ar-a", revision(&links, "ar-a"), "admin")
+        .unwrap();
+    assert_eq!(links.link_of("ar-a"), None);
+    assert_eq!(person_changes(&links), 1);
+}
+
 /// Every link the app sets, moves or removes writes one audit row with
 /// the ids before and after and no person as actor; a sweep with nothing
 /// new writes none.

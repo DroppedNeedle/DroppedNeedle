@@ -53,5 +53,6 @@ pub mod service;
 pub(crate) mod sql;
 
 pub use artist_convergence::{V2Fold, fold_v2_placeholder};
+pub(crate) use merge_basis::same_name_joins;
 pub use merge_basis::{V2PlaceholderFacts, V2PlaceholderKept};
 pub use service::Corrections;

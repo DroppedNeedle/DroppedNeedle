@@ -1169,6 +1169,43 @@ async fn brief_attach_leaves_an_id_another_record_holds_and_offers_a_merge() {
     }
 }
 
+/// A curator's link never lets records of one name join: when the link
+/// would make the album's artist sit out and leave its two namesakes one
+/// id between them, the contribution is saved without the artist link and
+/// the records are offered for an admin to merge.
+#[tokio::test]
+async fn brief_attach_leaves_a_link_that_would_join_namesakes() {
+    const LINK_Z: &str = "aaaaaaaa-0000-4000-8000-00000000000c";
+    const LINK_W: &str = "aaaaaaaa-0000-4000-8000-00000000000d";
+    let rig = Rig::new();
+    rig.seed_album("album-3", "artist-c", 1, ["t5", "t6"]);
+    rig.db
+        .execute_batch(&format!(
+            "DELETE FROM local_artist_external_identities; \
+             UPDATE local_artists SET display_name = 'Nirvana', folded_name = 'nirvana' \
+             WHERE id = '{ARTIST}'; \
+             UPDATE local_artists SET display_name = 'NIRVANA', folded_name = 'nirvana' \
+             WHERE id = 'artist-c'; \
+             INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('artist-b', 'nirvana', 'nirvana', 'person', 1, 1); \
+             INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, \
+             credited_name, join_phrase, artist_mbid) VALUES \
+             ('{ALBUM}', 0, '{ARTIST}', 'main', 'Nirvana', '', '{LINK_Z}'), \
+             ('album-3', 0, 'artist-c', 'main', 'NIRVANA', '', '{LINK_W}');"
+        ))
+        .unwrap();
+    let linked = attach_release(&rig).await.expect("not refused");
+    assert_eq!(linked.state, ContributionState::Linked);
+    assert_eq!(artist_links(&rig), Vec::new());
+    assert_eq!(
+        merge_offers(&rig),
+        vec![
+            format!("{ARTIST} artist-b SHARED_PROVIDER_IDENTITY"),
+            format!("{ARTIST} artist-c SHARED_PROVIDER_IDENTITY"),
+        ]
+    );
+}
+
 /// The recording and release-track ids MusicBrainz gives the release's
 /// two tracks in [`recorded_release`].
 const RECORDINGS: [(&str, &str); 2] = [

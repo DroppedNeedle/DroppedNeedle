@@ -3902,14 +3902,16 @@ export interface paths {
         /**
          * Link an artist to a MusicBrainz artist by hand. The app's own linking
          *     never changes it. Refused when another artist in the library is that
-         *     MusicBrainz artist: an admin merges them instead.
+         *     MusicBrainz artist, or when artists of its name would then be joined:
+         *     an admin merges them instead.
          */
         put: operations["set_artist_link"];
         post?: never;
         /**
          * Clear an artist's hand-set link. The app then links the artist again
          *     where its albums and files prove one. Refused when that would make it
-         *     the same MusicBrainz artist as another in the library.
+         *     the same MusicBrainz artist as another in the library, or join artists
+         *     of its name.
          */
         delete: operations["clear_artist_link"];
         options?: never;
@@ -34854,7 +34856,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The artist changed since it was read (STALE_REVISION), cannot be linked (ARTIST_NOT_LINKABLE), or other artists are that MusicBrainz artist (ARTIST_LINK_SHARED, listed in details.artists) */
+            /** @description The artist changed since it was read (STALE_REVISION), cannot be linked (ARTIST_NOT_LINKABLE), other artists are that MusicBrainz artist (ARTIST_LINK_SHARED), or artists of its name would then be joined (ARTIST_LINK_JOINS_NAMESAKES); either lists them in details.artists */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -34925,7 +34927,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The artist changed since it was read (STALE_REVISION), has no hand-set link (ARTIST_LINK_NOT_CHOSEN), or would be the same MusicBrainz artist as others (ARTIST_LINK_SHARED, listed in details.artists) */
+            /** @description The artist changed since it was read (STALE_REVISION), has no hand-set link (ARTIST_LINK_NOT_CHOSEN), would be the same MusicBrainz artist as others (ARTIST_LINK_SHARED), or artists of its name would then be joined (ARTIST_LINK_JOINS_NAMESAKES); either lists them in details.artists */
             409: {
                 headers: {
                     [name: string]: unknown;

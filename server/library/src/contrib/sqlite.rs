@@ -35,7 +35,9 @@ use super::transition::{
 use super::worker::{Completion, VERIFY};
 use crate::clock::at_secs;
 use crate::corrections::models::MergeCandidateState;
-use crate::identify::artist_links::{LINK_SET_BY_PERSON, audit_link, placeholder, would_group};
+use crate::identify::artist_links::{
+    LINK_SET_BY_PERSON, audit_link, placeholder, without_new_join, would_group,
+};
 use crate::identify::merged_ids;
 use crate::identify::models::ReviewState;
 use crate::identity;
@@ -441,9 +443,9 @@ fn commit_link(
             })?;
     }
     // A person's link never groups records: when the id is another
-    // record's, or would let a waiting merge run, the link is not written
-    // and the records are offered for an admin to merge. A person's or
-    // v2's link of the row stays.
+    // record's, would let a waiting merge run, or would let records of the
+    // row's name join, the link is not written and the records are offered
+    // for an admin to merge. A person's or v2's link of the row stays.
     if let Some(wanted) = link.artist_mbid {
         let mbid = merged_ids::current_id(conn, wanted)?;
         // MusicBrainz's special-purpose ids never key an artist row, and a
@@ -485,26 +487,33 @@ fn commit_link(
             && chosen_artist_identity(conn, link.artist_id)?.is_none()
         {
             let before = artist_identity(conn, link.artist_id)?;
-            conn.prepare_cached(crate::contrib::sql::BUMP_ARTIST_REVISION.text())?
-                .execute(params![link.artist_id, crate::clock::ms(now)])?;
-            conn.prepare_cached(crate::contrib::sql::WRITE_ARTIST_LINK.text())?
-                .execute(params![
+            let written = without_new_join(conn, link.artist_id, || {
+                conn.prepare_cached(crate::contrib::sql::BUMP_ARTIST_REVISION.text())?
+                    .execute(params![link.artist_id, crate::clock::ms(now)])?;
+                conn.prepare_cached(crate::contrib::sql::WRITE_ARTIST_LINK.text())?
+                    .execute(params![
+                        link.artist_id,
+                        PROVIDER,
+                        mbid,
+                        link.attempt.id,
+                        actor,
+                        crate::clock::ms(now)
+                    ])?;
+                audit_link(
+                    conn,
+                    &actor,
                     link.artist_id,
-                    PROVIDER,
-                    mbid,
-                    link.attempt.id,
-                    actor,
-                    crate::clock::ms(now)
-                ])?;
-            audit_link(
-                conn,
-                &actor,
-                link.artist_id,
-                before.as_deref(),
-                Some(&mbid),
-                LINK_SET_BY_PERSON,
-                now,
-            )?;
+                    before.as_deref(),
+                    Some(&mbid),
+                    LINK_SET_BY_PERSON,
+                    now,
+                )
+            })?;
+            if let Err(namesakes) = written {
+                for (other, _) in &namesakes {
+                    offer_merge(conn, link.artist_id, other, now)?;
+                }
+            }
         }
     }
     // The album's match when it had none, and each paired file's track

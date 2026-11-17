@@ -208,6 +208,22 @@ pub(crate) enum SameName<'tx> {
     Stays,
 }
 
+/// The records of `ids` that [`MergeBasis::same_name`] would join as they
+/// stand in `tx`, the survivor among them; none when nothing joins. Reads
+/// only: what a change made by hand checks before it is kept.
+pub(crate) fn same_name_joins(
+    tx: &Transaction<'_>,
+    ids: &[String],
+) -> rusqlite::Result<BTreeSet<String>> {
+    Ok(match MergeBasis::same_name(tx, ids)? {
+        SameName::Join { bases, .. } => bases
+            .into_iter()
+            .flat_map(|basis| [basis.survivor, basis.retiree])
+            .collect(),
+        SameName::Apart(_) | SameName::Stays => BTreeSet::new(),
+    })
+}
+
 /// One record of a same-name group, with the MusicBrainz ids it holds.
 struct Namesake {
     row: crate::corrections::sql::Namesake,

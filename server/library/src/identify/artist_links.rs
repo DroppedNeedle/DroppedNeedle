@@ -47,6 +47,7 @@ use crate::catalog_actions::{ActionKind, ArtistAction};
 use crate::catalog_revision::bump_catalog;
 use crate::corrections::artist_convergence::{CREDITS_MOVED, MOVED_BY_NAME, MOVED_WITH_ID};
 use crate::corrections::continuation::accepted_release;
+use crate::corrections::same_name_joins;
 use crate::identify::sql::ROW_IDS;
 use crate::identify::sql::STALE_ALBUMS;
 use crate::identify::sql::WAITS_FOR_DOCUMENT;
@@ -57,7 +58,8 @@ use crate::identify::sql::{
 use crate::identity::DecisionSource;
 use crate::identity::reads::release_input_hash;
 use crate::matching::model::{ArtistNames, CreditedArtist, Release, VARIOUS_ARTISTS_MBID};
-use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
+use crate::scan::naming::artist_name_key;
+use crate::scan::sqlite_store::artists::{SENTINEL_ARTIST_IDS, UNKEYED_NAMES};
 use droppedneedle_kernel::db::statement::Statement;
 use droppedneedle_kernel::db::{DbError, fold_text, savepoint};
 
@@ -1195,6 +1197,9 @@ pub enum LinkRefusal {
     /// name): another record holds the id, or would be proven it. Records
     /// are merged by an admin, never by a person's link.
     Shared(Vec<(String, String)>),
+    /// The change would let records of the record's name join, these
+    /// (id, name) among them ([`without_new_join`]).
+    JoinsNamesakes(Vec<(String, String)>),
     /// Only a person's or v2's link can be cleared.
     NotPersons,
 }
@@ -1340,11 +1345,102 @@ pub(crate) fn would_group(
     Ok(others.into_iter().take(10).collect())
 }
 
+/// The records of `artist`'s name, `artist` among them, that the
+/// same-name rule joins as things stand, as (id, name): the live ordinary
+/// records of its folded name whose names have its `artist_name_key`, as
+/// the run end's join groups them.
+fn joined_namesakes(
+    tx: &Transaction<'_>,
+    artist: &str,
+) -> rusqlite::Result<BTreeSet<(String, String)>> {
+    let namesakes: Vec<(String, String)> = tx
+        .prepare_cached(crate::identify::sql::NAMESAKES.text())?
+        .query_map(
+            params![artist, SENTINEL_ARTIST_IDS[0], SENTINEL_ARTIST_IDS[1]],
+            named_artist,
+        )?
+        .collect::<rusqlite::Result<_>>()?;
+    let Some((_, name)) = namesakes.iter().find(|(id, _)| id == artist) else {
+        return Ok(BTreeSet::new());
+    };
+    let key = artist_name_key(name);
+    if UNKEYED_NAMES.contains(&key.as_str()) {
+        return Ok(BTreeSet::new());
+    }
+    let group: Vec<(String, String)> = namesakes
+        .into_iter()
+        .filter(|(_, name)| artist_name_key(name) == key)
+        .collect();
+    if group.len() < 2 {
+        return Ok(BTreeSet::new());
+    }
+    let ids: Vec<String> = group.iter().map(|(id, _)| id.clone()).collect();
+    let joined = same_name_joins(tx, &ids)?;
+    Ok(group
+        .into_iter()
+        .filter(|(id, _)| joined.contains(id))
+        .collect())
+}
+
+/// Why [`without_new_join`] took a change back.
+enum TakenBack<E> {
+    /// It would let these records join.
+    Joins(Vec<(String, String)>),
+    /// It failed.
+    Failed(E),
+}
+
+/// Make a person's `change` to row `artist`'s link, and take it back with
+/// everything it wrote when it lets a record of the row's name join where
+/// none joined before: a link set or cleared by hand never starts a merge.
+/// A change taken back answers the records the join would take in besides
+/// `artist`, at most ten.
+pub(crate) fn without_new_join<T, E: From<rusqlite::Error>>(
+    tx: &Transaction<'_>,
+    artist: &str,
+    change: impl FnOnce() -> Result<T, E>,
+) -> Result<Result<T, Vec<(String, String)>>, E> {
+    let before = joined_namesakes(tx, artist)?;
+    let kept = savepoint(tx, "artist_link_by_person", || {
+        let changed = change().map_err(TakenBack::Failed)?;
+        let after =
+            joined_namesakes(tx, artist).map_err(|error| TakenBack::Failed(error.into()))?;
+        if after.iter().any(|member| !before.contains(member)) {
+            return Err(TakenBack::Joins(
+                after
+                    .into_iter()
+                    .filter(|(id, _)| id != artist)
+                    .take(10)
+                    .collect(),
+            ));
+        }
+        Ok(changed)
+    })?;
+    match kept {
+        Ok(changed) => Ok(Ok(changed)),
+        Err(TakenBack::Joins(others)) => Ok(Err(others)),
+        Err(TakenBack::Failed(error)) => Err(error),
+    }
+}
+
+/// [`without_new_join`] for a person's change through the routes, its
+/// refusal [`LinkRefusal::JoinsNamesakes`].
+fn refused_if_joining<T>(
+    tx: &Transaction<'_>,
+    artist: &str,
+    change: impl FnOnce() -> Result<T, ArtistLinkError>,
+) -> Result<T, ArtistLinkError> {
+    without_new_join(tx, artist, change)?
+        .map_err(|others| ArtistLinkError::Refused(LinkRefusal::JoinsNamesakes(others)))
+}
+
 /// A person links row `artist` to MusicBrainz artist `raw_mbid`. The id
 /// is read lowercased, an id MusicBrainz merged as the one it was merged
 /// into, and stored as the person's (`manual`), which the app's settling
 /// never moves. A link that would group the row with another record
-/// ([`would_group`]) is refused: merging records is an admin's. Returns the row's link after.
+/// ([`would_group`]), or let records of its name join
+/// ([`without_new_join`]), is refused: merging records is an admin's.
+/// Returns the row's link after.
 pub fn set_by_person(
     tx: &Transaction<'_>,
     artist: &str,
@@ -1375,29 +1471,32 @@ pub fn set_by_person(
         return refused(LinkRefusal::Shared(others));
     }
     let now = now_ms as f64 / 1000.0;
-    tx.prepare_cached(crate::identify::sql::SET_BY_PERSON.text())?
-        .execute(params![artist, mbid, user_id, crate::clock::ms(now)])?;
-    touch_artist(tx, artist, now)?;
-    audit_link(
-        tx,
-        user_id,
-        artist,
-        before.map(|link| link.mbid.as_str()),
-        Some(&mbid),
-        LINK_SET_BY_PERSON,
-        now,
-    )?;
-    bump_catalog(tx)?;
-    artist_link(tx, artist)?.ok_or(ArtistLinkError::Refused(LinkRefusal::NotFound))
+    refused_if_joining(tx, artist, || {
+        tx.prepare_cached(crate::identify::sql::SET_BY_PERSON.text())?
+            .execute(params![artist, mbid, user_id, crate::clock::ms(now)])?;
+        touch_artist(tx, artist, now)?;
+        audit_link(
+            tx,
+            user_id,
+            artist,
+            before.map(|link| link.mbid.as_str()),
+            Some(&mbid),
+            LINK_SET_BY_PERSON,
+            now,
+        )?;
+        bump_catalog(tx)?;
+        artist_link(tx, artist)?.ok_or(ArtistLinkError::Refused(LinkRefusal::NotFound))
+    })
 }
 
 /// A person clears row `artist`'s link, set by a person or carried from
 /// v2, and the row is settled again at once, so the app's own link comes
 /// back where the album matches and files prove one. A clear after which
 /// the row would be proven an id another record holds, or that its files
-/// or proofs name, or that would free a recorded move of credits to merge
-/// it into another record or another record into it, is refused: merging
-/// records is an admin's. Returns the row's link after.
+/// or proofs name, that would free a recorded move of credits to merge it
+/// into another record or another record into it, or that lets records of
+/// its name join ([`without_new_join`]), is refused: merging records is an
+/// admin's. Returns the row's link after.
 pub fn clear_by_person(
     tx: &Transaction<'_>,
     artist: &str,
@@ -1424,19 +1523,21 @@ pub fn clear_by_person(
         )));
     }
     let now = now_ms as f64 / 1000.0;
-    tx.prepare_cached(crate::identify::sql::CLEAR_BY_PERSON.text())?
-        .execute(params![artist])?;
-    touch_artist(tx, artist, now)?;
-    audit_link(
-        tx,
-        user_id,
-        artist,
-        Some(&link.mbid),
-        None,
-        LINK_CLEARED_BY_PERSON,
-        now,
-    )?;
-    bump_catalog(tx)?;
-    settle(tx, &[artist.to_owned()], now_ms)?;
-    artist_link(tx, artist)?.ok_or(ArtistLinkError::Refused(LinkRefusal::NotFound))
+    refused_if_joining(tx, artist, || {
+        tx.prepare_cached(crate::identify::sql::CLEAR_BY_PERSON.text())?
+            .execute(params![artist])?;
+        touch_artist(tx, artist, now)?;
+        audit_link(
+            tx,
+            user_id,
+            artist,
+            Some(&link.mbid),
+            None,
+            LINK_CLEARED_BY_PERSON,
+            now,
+        )?;
+        bump_catalog(tx)?;
+        settle(tx, &[artist.to_owned()], now_ms)?;
+        artist_link(tx, artist)?.ok_or(ArtistLinkError::Refused(LinkRefusal::NotFound))
+    })
 }
