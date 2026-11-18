@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 198);
+    assert_eq!(table_names(&connection).len(), 199);
     assert_eq!(
         scalar(
             &connection,
@@ -428,6 +428,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0164_discover_pool.sql",
         "001749c613ff6b85165b3889ad81875e607f1ff26c78b10aec992a80d45d20d8",
+    ),
+    (
+        "0165_home_layout.sql",
+        "9e5b5be11b0f8e9d7c493504da0ed460aa856dd8d1ba241e00399da24cff3414",
     ),
 ];
 
@@ -3442,6 +3446,7 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("acquire_held_entries", "user_id", "auth_users", "CASCADE"),
     ("acquire_held_files", "entry_id", "acquire_held_entries", "CASCADE"),
     ("app_custom_css_saves", "user_id", "auth_users", "CASCADE"),
+    ("app_home_layouts", "user_id", "auth_users", "CASCADE"),
     ("app_section_prefs", "user_id", "auth_users", "CASCADE"),
     ("app_user_appearances", "user_id", "auth_users", "CASCADE"),
     ("auth_app_passwords", "user_id", "auth_users", "CASCADE"),

@@ -57,7 +57,7 @@
 		"queries/AdminApprovalsQueries.svelte.ts"
 	],
 	"genre": ["components/GenreAlbumCard.svelte"],
-	"home": ["queries/home.svelte.ts"],
+	"home": ["queries/home.svelte.ts", "queries/layout.svelte.ts"],
 	"lastfm": ["components/LastFmAlbumEnrichment.svelte", "components/LastFmEnrichment.svelte"],
 	"library": [
 		"components/AlbumHistory.svelte",

@@ -19,6 +19,7 @@ use crate::appearance::store::AppearanceStore;
 use crate::appearance::wiring::AppearanceSetup;
 use crate::bootstrap::Outbound;
 use crate::settings::effects::Effects;
+use crate::settings::home_layout::store::HomeLayoutStore;
 use crate::settings::library_catalog::SqliteLibraryPolicyCatalog;
 use crate::settings::library_policy_service::LibraryPolicyService;
 use crate::settings::models::LibraryScanScheduleResponse;
@@ -45,6 +46,7 @@ pub struct SettingsSetup {
     lifecycle: Arc<MusicBrainzLifecycle>,
     management: Arc<LibraryManagementService>,
     prefs: Arc<SectionPrefs>,
+    layouts: Arc<HomeLayoutStore>,
     policy: Arc<LibraryPolicyService>,
     /// Checks the recycle bin path the Library Management settings show.
     bins: BinSource,
@@ -99,6 +101,10 @@ impl SettingsSetup {
                 platform.db.clone(),
                 platform.clock.clone(),
                 lastfm,
+            )),
+            layouts: Arc::new(HomeLayoutStore::new(
+                platform.db.clone(),
+                platform.clock.clone(),
             )),
             bins,
             scans: Arc::new(LocalCatalog::new(platform.db.clone())),
@@ -182,6 +188,11 @@ impl SettingsSetup {
         schedule
     }
 
+    /// The per-person home layouts.
+    pub fn layouts(&self) -> &HomeLayoutStore {
+        &self.layouts
+    }
+
     /// The per-user section prefs.
     pub fn prefs(&self) -> &SectionPrefs {
         &self.prefs
@@ -202,6 +213,7 @@ impl SettingsSetup {
 /// admin-only `/settings/*` routes, and the per-user section prefs.
 pub fn routes() -> Routes<SettingsSetup> {
     use super::handlers as h;
+    use crate::settings::home_layout::handlers as home;
     super::registry::routes()
         .admin(routes!(h::get_schedule, h::put_schedule))
         .admin(routes!(h::get_library, h::put_library))
@@ -256,4 +268,5 @@ pub fn routes() -> Routes<SettingsSetup> {
         .admin(routes!(h::preview_library_management_profile_import))
         .admin(routes!(h::import_library_management_profile))
         .user(routes!(h::get_section_prefs, h::put_section_prefs))
+        .user(routes!(home::get_home_layout, home::put_home_layout))
 }

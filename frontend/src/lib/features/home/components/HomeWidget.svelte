@@ -51,8 +51,18 @@
 		outline-offset: 2px;
 		border-radius: 0.25rem;
 	}
+	.home-widget:hover .home-widget-bar,
+	.home-widget:focus-within .home-widget-bar {
+		opacity: 1;
+		pointer-events: auto;
+	}
 
+	/* revealed on hover: the bar shares the top-right corner with a shelf's
+	   See all link and must not sit over it */
 	.home-widget-bar {
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 120ms ease;
 		position: absolute;
 		top: 0;
 		right: 0;

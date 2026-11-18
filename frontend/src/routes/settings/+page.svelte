@@ -17,7 +17,7 @@
 		ChartColumn,
 		Info,
 		Globe,
-		House,
+		SlidersHorizontal,
 		Compass,
 		Users,
 		ShieldCheck,
@@ -89,7 +89,12 @@
 		{ id: 'events', label: 'Live Events', tier: 'setup', icon: CalendarClock },
 		{ id: 'get-it', label: 'Get it', tier: 'setup', icon: ShoppingBag },
 		{ id: 'settings', label: 'Release Types', tier: 'personalize', icon: Settings2 },
-		{ id: 'home', label: 'Home', tier: 'personalize', icon: House },
+		{
+			id: 'personalization',
+			label: 'Personalization',
+			tier: 'personalize',
+			icon: SlidersHorizontal
+		},
 		{ id: 'discover', label: 'Discover', tier: 'personalize', icon: Compass },
 		{ id: 'sidebar', label: 'Sidebar', tier: 'personalize', icon: PanelLeft },
 		{ id: 'appearance', label: 'Appearance', tier: 'personalize', icon: Palette },

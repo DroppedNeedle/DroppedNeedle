@@ -24,8 +24,8 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 };
 use droppedneedle_kernel::runtime_config::sections::{
     AppConnect, ConnectApps, DeemixConnection, EditionPreferences, FilesystemWatcher, GetIt,
-    ImportFolder, ListenBrainzSettings, LyricsSettings, PlainSection, PublicAddress,
-    SecuritySettings, UserPreferences, WantedWatcher,
+    ImportFolder, ListenBrainzSettings, LyricsSettings, Personalization, PlainSection,
+    PublicAddress, SecuritySettings, UserPreferences, WantedWatcher,
 };
 use droppedneedle_kernel::runtime_config::{Masked, SecretSection, Section};
 
@@ -166,6 +166,12 @@ section_routes! {
             => "ListenBrainz reads switch";
         put put_listenbrainz: "Save the ListenBrainz reads switch."
             => "Saved switch";
+    }
+    plain Personalization at "/api/v3/settings/personalization", read admin, write admin {
+        get get_personalization: "Read whether home layouts are each person's or the admin's."
+            => "Personalization";
+        put put_personalization: "Save whether home layouts are each person's or the admin's."
+            => "Saved personalization";
     }
     plain LyricsSettings at "/api/v3/settings/lyrics", read admin, write admin {
         get get_lyrics_settings: "Read the online lyrics lookup switch."

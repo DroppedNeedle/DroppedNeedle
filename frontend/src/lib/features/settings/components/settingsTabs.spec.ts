@@ -57,7 +57,7 @@ it('hides MusicBrainz for non-admin route tabs while retaining admin visibility'
 });
 
 it('shows a member only the tabs they can use', () => {
-	for (const tab of ['home', 'discover']) expect(isSettingsTabVisible(tab, false)).toBe(true);
+	for (const tab of ['discover']) expect(isSettingsTabVisible(tab, false)).toBe(true);
 	for (const tab of ['library', 'connect-apps', 'sidebar', 'music-source', 'about']) {
 		expect(isSettingsTabVisible(tab, false)).toBe(false);
 	}

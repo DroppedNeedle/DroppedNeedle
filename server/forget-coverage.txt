@@ -74,6 +74,7 @@ user_connections kept: their ListenBrainz, Last.fm and media server links
 user_listening_prefs kept: their scrobbling and listening settings
 compat_user_settings kept: their music app settings
 media_navidrome_folder_preferences kept: the Navidrome folders they chose
+app_home_layouts kept: their saved home layout
 app_section_prefs kept: which Discover and Home sections they switched off
 app_user_appearances kept: their theme and look
 app_custom_css_saves kept: their saved custom CSS

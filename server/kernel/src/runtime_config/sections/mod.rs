@@ -24,6 +24,7 @@ mod library;
 mod listening;
 mod management;
 mod musicbrainz;
+mod personalization;
 mod plugins;
 
 pub use access::*;
@@ -33,6 +34,7 @@ pub use library::*;
 pub use listening::*;
 pub use management::*;
 pub use musicbrainz::*;
+pub use personalization::*;
 pub use plugins::*;
 
 /// One user-editable runtime section, stored as one settings row.

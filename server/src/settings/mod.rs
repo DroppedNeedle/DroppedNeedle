@@ -5,6 +5,7 @@
 
 pub mod effects;
 pub mod handlers;
+pub mod home_layout;
 pub mod library_catalog;
 pub mod library_policy_service;
 pub mod models;

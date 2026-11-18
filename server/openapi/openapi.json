@@ -23575,6 +23575,80 @@
         ]
       }
     },
+    "/api/v3/me/home-layout": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read the layout the caller should see: their own, or the admin's while\npersonalization is forced. `editable` says whether they may save now.",
+        "operationId": "get_home_layout",
+        "responses": {
+          "200": {
+            "description": "Home layout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeLayoutResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Replace the caller's own layout. Refused while personalization is forced,\nunless the caller is an admin: theirs is the row everyone is served.",
+        "operationId": "put_home_layout",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HomeLayoutUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved layout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeLayoutResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Personalization is forced",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/me/listening-history": {
       "get": {
         "tags": [
@@ -34572,6 +34646,70 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/VerifyConnectionResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/settings/personalization": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read whether home layouts are each person's or the admin's.",
+        "operationId": "get_personalization",
+        "responses": {
+          "200": {
+            "description": "Personalization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Personalization"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Save whether home layouts are each person's or the admin's.",
+        "operationId": "put_personalization",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Personalization"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved personalization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Personalization"
                 }
               }
             }
@@ -49644,6 +49782,132 @@
           }
         }
       },
+      "HomeLayoutResponse": {
+        "type": "object",
+        "description": "The caller's home layout and who decides it.",
+        "required": [
+          "version",
+          "widgets",
+          "hidden",
+          "posture",
+          "source",
+          "editable"
+        ],
+        "properties": {
+          "editable": {
+            "type": "boolean",
+            "description": "Whether this caller may save a layout now."
+          },
+          "hidden": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Widgets the person hid."
+          },
+          "posture": {
+            "$ref": "#/components/schemas/PersonalizationMode",
+            "description": "Whether layouts are each person's or the admin's."
+          },
+          "source": {
+            "$ref": "#/components/schemas/HomeLayoutSource",
+            "description": "Where the layout came from."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Layout schema version; `0` when nothing is saved."
+          },
+          "widgets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HomeLayoutWidget"
+            },
+            "description": "Widgets, empty when the built-in order applies."
+          }
+        }
+      },
+      "HomeLayoutSource": {
+        "type": "string",
+        "description": "Whose layout the response carries.",
+        "enum": [
+          "user",
+          "admin",
+          "default"
+        ]
+      },
+      "HomeLayoutUpdate": {
+        "type": "object",
+        "description": "A layout to save.",
+        "required": [
+          "version",
+          "widgets",
+          "hidden"
+        ],
+        "properties": {
+          "hidden": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Widgets the caller hides."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Layout schema version the client writes."
+          },
+          "widgets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HomeLayoutWidget"
+            },
+            "description": "Widgets in the caller's order."
+          }
+        }
+      },
+      "HomeLayoutWidget": {
+        "type": "object",
+        "description": "One widget's cell in the home grid.",
+        "required": [
+          "id",
+          "kind",
+          "x",
+          "y",
+          "w",
+          "h"
+        ],
+        "properties": {
+          "h": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Height in cells."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable widget id: a section key with a `shelf:` prefix, or the\nsingleton's name."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Widget kind, from the client's contract."
+          },
+          "w": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Width in cells."
+          },
+          "x": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Column of the top-left cell."
+          },
+          "y": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row of the top-left cell."
+          }
+        }
+      },
       "HomeResponse": {
         "type": "object",
         "description": "Home: its sections, in page order, plus the page-level fields. A\nsection with no rows is left out.",
@@ -58982,6 +59246,29 @@
             "minimum": 0
           }
         }
+      },
+      "Personalization": {
+        "type": "object",
+        "description": "Home layout personalization.",
+        "properties": {
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PersonalizationMode"
+              }
+            ],
+            "description": "Allow or force.",
+            "default": "allow"
+          }
+        }
+      },
+      "PersonalizationMode": {
+        "type": "string",
+        "description": "Who decides the home layout.",
+        "enum": [
+          "allow",
+          "force"
+        ]
       },
       "PhotoCredit": {
         "type": "object",

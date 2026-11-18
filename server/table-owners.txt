@@ -100,6 +100,7 @@ plugin_tick_state
 
 [app]
 app_custom_css_saves
+app_home_layouts
 app_section_prefs
 app_user_appearances
 

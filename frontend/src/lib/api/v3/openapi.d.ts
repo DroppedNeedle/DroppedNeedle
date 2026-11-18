@@ -6104,6 +6104,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/me/home-layout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the layout the caller should see: their own, or the admin's while
+         *     personalization is forced. `editable` says whether they may save now.
+         */
+        get: operations["get_home_layout"];
+        /**
+         * Replace the caller's own layout. Refused while personalization is forced,
+         *     unless the caller is an admin: theirs is the row everyone is served.
+         */
+        put: operations["put_home_layout"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/me/listening-history": {
         parameters: {
             query?: never;
@@ -9444,6 +9468,24 @@ export interface paths {
         put?: never;
         /** Test the submitted OIDC issuer (fetches its discovery document). */
         post: operations["verify_oidc"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/personalization": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read whether home layouts are each person's or the admin's. */
+        get: operations["get_personalization"];
+        /** Save whether home layouts are each person's or the admin's. */
+        put: operations["put_personalization"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -15985,6 +16027,71 @@ export interface components {
              */
             total_pages: number;
         };
+        /** @description The caller's home layout and who decides it. */
+        HomeLayoutResponse: {
+            /** @description Whether this caller may save a layout now. */
+            editable: boolean;
+            /** @description Widgets the person hid. */
+            hidden: string[];
+            /** @description Whether layouts are each person's or the admin's. */
+            posture: components["schemas"]["PersonalizationMode"];
+            /** @description Where the layout came from. */
+            source: components["schemas"]["HomeLayoutSource"];
+            /**
+             * Format: int64
+             * @description Layout schema version; `0` when nothing is saved.
+             */
+            version: number;
+            /** @description Widgets, empty when the built-in order applies. */
+            widgets: components["schemas"]["HomeLayoutWidget"][];
+        };
+        /**
+         * @description Whose layout the response carries.
+         * @enum {string}
+         */
+        HomeLayoutSource: "user" | "admin" | "default";
+        /** @description A layout to save. */
+        HomeLayoutUpdate: {
+            /** @description Widgets the caller hides. */
+            hidden: string[];
+            /**
+             * Format: int64
+             * @description Layout schema version the client writes.
+             */
+            version: number;
+            /** @description Widgets in the caller's order. */
+            widgets: components["schemas"]["HomeLayoutWidget"][];
+        };
+        /** @description One widget's cell in the home grid. */
+        HomeLayoutWidget: {
+            /**
+             * Format: int64
+             * @description Height in cells.
+             */
+            h: number;
+            /**
+             * @description Stable widget id: a section key with a `shelf:` prefix, or the
+             *     singleton's name.
+             */
+            id: string;
+            /** @description Widget kind, from the client's contract. */
+            kind: string;
+            /**
+             * Format: int64
+             * @description Width in cells.
+             */
+            w: number;
+            /**
+             * Format: int64
+             * @description Column of the top-left cell.
+             */
+            x: number;
+            /**
+             * Format: int64
+             * @description Row of the top-left cell.
+             */
+            y: number;
+        };
         /**
          * @description Home: its sections, in page order, plus the page-level fields. A
          *     section with no rows is left out.
@@ -20196,6 +20303,19 @@ export interface components {
              */
             track_count: number;
         };
+        /** @description Home layout personalization. */
+        Personalization: {
+            /**
+             * @description Allow or force.
+             * @default allow
+             */
+            mode: components["schemas"]["PersonalizationMode"];
+        };
+        /**
+         * @description Who decides the home layout.
+         * @enum {string}
+         */
+        PersonalizationMode: "allow" | "force";
         /** @description Who made an artist's picture and under which licence. Plain text. */
         PhotoCredit: {
             /** @description The author, when the source names one. */
@@ -42785,6 +42905,59 @@ export interface operations {
             };
         };
     };
+    get_home_layout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Home layout */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeLayoutResponse"];
+                };
+            };
+        };
+    };
+    put_home_layout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HomeLayoutUpdate"];
+            };
+        };
+        responses: {
+            /** @description Saved layout */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeLayoutResponse"];
+                };
+            };
+            /** @description Personalization is forced */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     get_listening_history: {
         parameters: {
             query?: never;
@@ -49982,6 +50155,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VerifyConnectionResponse"];
+                };
+            };
+        };
+    };
+    get_personalization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Personalization */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Personalization"];
+                };
+            };
+        };
+    };
+    put_personalization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Personalization"];
+            };
+        };
+        responses: {
+            /** @description Saved personalization */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Personalization"];
                 };
             };
         };

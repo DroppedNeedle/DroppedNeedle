@@ -13,6 +13,7 @@ pub fn statement_files() -> Vec<StatementFile> {
         crate::appearance::sql::registered(),
         crate::bootstrap::sql::registered(),
         crate::settings::sql::registered(),
+        crate::settings::home_layout::sql::registered(),
         crate::upgrade_mode::sql::registered(),
     ]
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Download, Music, CircleAlert, Settings, Lock, Pencil, Plus } from 'lucide-svelte';
+	import { Download, Music, CircleAlert, Lock, Pencil, Plus } from 'lucide-svelte';
 	import HomeSection from '$lib/features/discover/components/HomeSection.svelte';
 	import ServiceErrorState from '$lib/ui/ServiceErrorState.svelte';
 	import WeeklyExploration from '$lib/features/discover/components/WeeklyExploration.svelte';
@@ -33,6 +33,9 @@
 	import HomeGrid from '$lib/features/home/components/HomeGrid.svelte';
 	import HomeWidget from '$lib/features/home/components/HomeWidget.svelte';
 	import { defaultLayout } from '$lib/features/home/layout/defaultLayout';
+	import { LAYOUT_VERSION, applySavedLayout } from '$lib/features/home/layout/apply';
+	import { getHomeLayoutQuery, saveHomeLayout } from '$lib/features/home/queries/layout.svelte';
+	import { toastStore } from '$lib/stores/toast';
 	import type { WidgetPlacement, WidgetSpec } from '$lib/features/home/layout/contract';
 
 	useDiscoverActivity(() => ({ feature: 'home' }));
@@ -151,6 +154,10 @@
 		return byId;
 	});
 
+	const layoutQuery = getHomeLayoutQuery();
+	const serverLayout = $derived(layoutQuery.data);
+	const editable = $derived(serverLayout?.editable ?? true);
+
 	let layout = $state<WidgetPlacement[]>([]);
 	let hidden = $state<string[]>([]);
 	let editing = $state(false);
@@ -161,18 +168,25 @@
 	// svelte state is a proxy; copy through it, structuredClone rejects proxies
 	const copy = (places: WidgetPlacement[]) => places.map((place) => ({ ...place }));
 
-	// the default layout mirrors the page order, once the data lands
+	// the saved layout fills in once both the page data and the layout land;
+	// nothing saved, or an unreachable endpoint, means the built-in order
 	let seeded = false;
 	$effect(() => {
 		if (seeded || !homeData) return;
+		if (!layoutQuery.data && !layoutQuery.isError) return;
 		seeded = true;
-		layout = defaultLayout(widgetSpecs);
-		saved = { layout: copy(layout), hidden: [] };
+		const stored = layoutQuery.data;
+		layout =
+			stored && stored.widgets.length > 0
+				? applySavedLayout(stored.widgets, widgetSpecs, stored.source !== 'admin')
+				: defaultLayout(widgetSpecs);
+		hidden = (stored?.hidden ?? []).filter((id) => widgetSpecs.some((spec) => spec.id === id));
+		saved = { layout: copy(layout), hidden: [...hidden] };
 	});
 
 	// a section that appears or vanishes on a refetch joins or leaves the layout
 	$effect(() => {
-		if (!seeded) return;
+		if (!seeded || serverLayout?.source === 'admin') return;
 		const ids = new Set(widgetSpecs.map((spec) => spec.id));
 		const known = new Set(layout.map((place) => place.id));
 		const missing = widgetSpecs.filter((spec) => !known.has(spec.id));
@@ -191,15 +205,28 @@
 	const hiddenSpecs = $derived(widgetSpecs.filter((spec) => hidden.includes(spec.id)));
 
 	function unlock() {
+		if (!editable) {
+			toastStore.notify('The admin sets the home layout for everyone right now.', 'info');
+			return;
+		}
 		saved = { layout: copy(layout), hidden: [...hidden] };
 		confirming = null;
 		editing = true;
 	}
 
-	function lock() {
+	async function lock() {
 		editing = false;
 		confirming = null;
 		saved = { layout: copy(layout), hidden: [...hidden] };
+		try {
+			await saveHomeLayout({
+				version: LAYOUT_VERSION,
+				widgets: layout.map(({ id, kind, x, y, w, h }) => ({ id, kind, x, y, w, h })),
+				hidden: [...hidden]
+			});
+		} catch {
+			toastStore.notify('Could not save the home layout.', 'error');
+		}
 	}
 
 	function revert() {
@@ -294,16 +321,6 @@
 					</button>
 				{/if}
 			</div>
-			{#if !editing}
-				<a
-					href={withBasePath('/settings?tab=home')}
-					class="header-meta customise ml-auto md:ml-0"
-					title="Choose which sections appear here"
-				>
-					<Settings class="size-4" aria-hidden="true" />
-					Customise
-				</a>
-			{/if}
 		</div>
 	</header>
 
@@ -329,7 +346,7 @@
 		<!-- a render error in any widget degrades to the failed card below instead
 		     of crashing the whole SPA (the #147 freeze) -->
 		<svelte:boundary>
-			<div class="px-4 sm:px-6 lg:px-8">
+			<div class="relative px-4 sm:px-6 lg:px-8">
 				{#if editing}
 					<p class="edit-hint">
 						Drag a widget by its grip, resize from the corner, hide what you do not need.
@@ -492,16 +509,6 @@
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
 	}
-	.customise {
-		min-height: 2rem;
-		border-radius: 0.25rem;
-		color: var(--dn-title);
-	}
-	.customise:hover {
-		text-decoration: underline;
-		text-underline-offset: 3px;
-	}
-
 	.edit-bar {
 		display: flex;
 		flex-wrap: wrap;
@@ -532,13 +539,26 @@
 	.edit-question {
 		color: var(--color-base-content);
 	}
+	/* sits in the header's bottom padding, so unlocking moves nothing */
 	.edit-hint {
-		margin-bottom: 0.75rem;
+		position: absolute;
+		top: -1.45rem;
+		left: 1rem;
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
 		letter-spacing: 0.04em;
 		color: var(--color-base-content);
 		opacity: 0.72;
+	}
+	@media (min-width: 640px) {
+		.edit-hint {
+			left: 1.5rem;
+		}
+	}
+	@media (min-width: 1024px) {
+		.edit-hint {
+			left: 2rem;
+		}
 	}
 
 	.home-tray {
