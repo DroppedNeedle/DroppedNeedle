@@ -404,6 +404,36 @@ droppedneedle_kernel::sql! {
                                  AND NOT EXISTS (SELECT 1 FROM library_work_control \
                                      WHERE queue_kind = 'identification' AND state = 'paused') \
                                  ORDER BY priority, created_at, rowid LIMIT 1";
+    /// Job `j` ran out of deferrals on an outage and is due again: it is
+    /// in Attention with code `?1`, `?3` or `?5`, landed at or before that
+    /// code's cutoff (`?2`, `?4`, `?6`), and is its album's newest job with
+    /// no other job live on the album. A person's own job on an album
+    /// whose match they have since taken off waits for them.
+    pub(super) fragment WAITED_OUT = "j.state = 'attention' \
+     AND ((j.failure_code = ?1 AND j.updated_at <= ?2) OR (j.failure_code = ?3 AND j.updated_at <= ?4) \
+      OR (j.failure_code = ?5 AND j.updated_at <= ?6)) \
+     AND NOT EXISTS (SELECT 1 FROM library_identify_jobs o \
+      WHERE o.local_album_id = j.local_album_id AND o.id <> j.id \
+      AND (o.state IN ('queued','running','deferred') OR o.updated_at > j.updated_at \
+       OR (o.updated_at = j.updated_at AND o.rowid > j.rowid))) \
+     AND NOT (j.kind = 'manual' AND " + (crate::declined_flag!("j.local_album_id")) + ")";
+    /// The job to try first after an outage: the one waiting longest, while
+    /// no job on an outage code is live and none landed after `?7`.
+    pub(super) OUTAGE_PROBE = "SELECT j.id, j.failure_code FROM library_identify_jobs j \
+     WHERE " + WAITED_OUT + " \
+     AND NOT EXISTS (SELECT 1 FROM library_identify_jobs l \
+      WHERE l.failure_code IN (?1, ?3, ?5) \
+      AND (l.state IN ('queued','running','deferred') OR (l.state = 'attention' AND l.updated_at > ?7))) \
+     ORDER BY j.updated_at, j.rowid LIMIT 1";
+    /// Queue job `?1` again after an outage, for one attempt (`?2`
+    /// attempts spent) from `?3`.
+    pub(super) REQUEUE_PROBE = "UPDATE library_identify_jobs SET state = 'queued', attempts = ?2, \
+     not_before_at = ?3, lease_expires_at = NULL, updated_at = ?3 WHERE id = ?1";
+    /// Queue every job due after an outage again, for one attempt (`?7`
+    /// attempts spent) from `?8`.
+    pub(super) REQUEUE_WAITED_OUT = "UPDATE library_identify_jobs SET state = 'queued', attempts = ?7, \
+     not_before_at = ?8, lease_expires_at = NULL, updated_at = ?8 \
+     WHERE id IN (SELECT j.id FROM library_identify_jobs j WHERE " + WAITED_OUT + ")";
     pub(super) JOB = "SELECT " + JOB_COLUMNS + " FROM library_identify_jobs WHERE id = ?1";
     pub(super) JOBS_FOR_ALBUM = "SELECT " + JOB_COLUMNS + " FROM library_identify_jobs \
                  WHERE local_album_id = ?1 ORDER BY created_at, rowid";
@@ -556,6 +586,10 @@ droppedneedle_kernel::sql! {
         requested_by_user_id: Option<String>,
         failure_code: Option<String>,
         lease_expires_at: Option<Millis>,
+    }
+    pub(super) row OutageProbe for [OUTAGE_PROBE] {
+        id: String,
+        failure_code: String,
     }
     pub(super) row ReviewRow for [GET, PENDING_FOR_ALBUM] {
         id: String,

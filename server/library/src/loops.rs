@@ -12,6 +12,7 @@ use droppedneedle_kernel::jobs::{
 use tokio::runtime::Handle;
 
 use super::clock::LibraryClock as _;
+use super::identify::queue::Answering;
 use super::publish::PublishError;
 use super::publish::expiry::{self, ExpiryPass, ExpiryReport};
 use super::publish::paths::{Root, Sandbox};
@@ -99,6 +100,45 @@ struct Drain {
     attempted: usize,
     /// A store call failed: the loop backs off before the next drain.
     store_failed: bool,
+}
+
+/// What one drain did about the jobs an outage left in Attention: at most
+/// one probe, then, once the probe showed its service answering, one
+/// requeue of the jobs waiting on that service.
+#[derive(Default)]
+struct AfterOutage {
+    probed: bool,
+    /// The probe's job id and the code it waited out, until it lands.
+    probe: Option<(String, String)>,
+    answering: Option<Answering>,
+}
+
+impl AfterOutage {
+    /// Note what an attempt showed, when it was the probe. An attempt that
+    /// ended before asking any service shows nothing.
+    fn heard(&mut self, report: &super::identify::service::AttemptReport) {
+        use super::identify::service::{ALBUM_GONE, CHOSEN_EDITION_KEPT, PERSON_DECLINED};
+        if self
+            .probe
+            .as_ref()
+            .is_none_or(|(id, _)| *id != report.job.id)
+        {
+            return;
+        }
+        let Some((_, was)) = self.probe.take() else {
+            return;
+        };
+        if matches!(
+            report.reason_code.as_str(),
+            ALBUM_GONE | CHOSEN_EDITION_KEPT | PERSON_DECLINED
+        ) {
+            return;
+        }
+        let answering = Answering::after_probe(&was, report.job.failure_code.as_deref());
+        if answering.musicbrainz || answering.acoustid {
+            self.answering = Some(answering);
+        }
+    }
 }
 
 /// Artist ids asked about after each identification attempt, and when
@@ -297,6 +337,7 @@ impl Identification {
     /// also saying whether a store call failed, so the loop backs off.
     async fn identify_drain(&self, stop: &CancellationToken) -> Drain {
         let mut drain = Drain::default();
+        let mut outage = AfterOutage::default();
         loop {
             if stop.is_cancelled() {
                 break;
@@ -321,6 +362,9 @@ impl Identification {
             let job = match claimed {
                 Ok(Some(job)) => job,
                 Ok(None) => {
+                    if self.after_outage(&mut outage) {
+                        continue;
+                    }
                     self.resolve_merged_artist_ids(IDLE_ARTIST_LOOKUPS, stop)
                         .await;
                     self.fetch_waiting_documents(stop).await;
@@ -341,6 +385,7 @@ impl Identification {
                 report = attempt => match report {
                     Ok(Some(report)) => {
                         drain.attempted += 1;
+                        outage.heard(&report);
                         // What the match proves about the album's artists,
                         // before automatic management plans the album.
                         if let Err(error) = self
@@ -395,6 +440,52 @@ impl Identification {
             }
         }
         drain
+    }
+
+    /// On an empty queue, try again the jobs an outage left in Attention:
+    /// requeue those waiting on a service the drain's probe showed
+    /// answering, else queue one probe. `true` when a job was queued, so
+    /// the drain claims again.
+    fn after_outage(&self, outage: &mut AfterOutage) -> bool {
+        let now = self.clock.now_ms_u64();
+        if let Some(answering) = outage.answering.take() {
+            return match self.identify_store.requeue_after_outage(now, answering) {
+                Ok(0) => false,
+                Ok(count) => {
+                    tracing::info!(
+                        count,
+                        musicbrainz = answering.musicbrainz,
+                        acoustid = answering.acoustid,
+                        "identification that waited out an outage is tried again"
+                    );
+                    true
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "jobs that waited out an outage not queued; a later drain tries again");
+                    false
+                }
+            };
+        }
+        if outage.probed {
+            return false;
+        }
+        outage.probed = true;
+        match self.identify_store.probe_after_outage(now) {
+            Ok(Some((job_id, code))) => {
+                tracing::info!(
+                    job_id,
+                    code,
+                    "identification that waited out an outage is tried once"
+                );
+                outage.probe = Some((job_id, code));
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(%error, "no identification probed after an outage; a later drain tries again");
+                false
+            }
+        }
     }
 
     /// Settle a claimed job whose attempt hit a store error. Busy: the

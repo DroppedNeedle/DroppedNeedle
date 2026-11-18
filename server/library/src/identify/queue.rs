@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 use sha2::{Digest as _, Sha256};
 
 use super::models::IdentifyKind;
+use super::providers::{ACOUSTID_UNAVAILABLE, MUSICBRAINZ_UNAVAILABLE, RELEASES_UNREADABLE};
 pub(crate) use crate::identify::sql::INSERT_JOB;
 
 /// New or changed albums identify first.
@@ -41,6 +42,59 @@ pub fn backoff_secs(deferrals: u32) -> u64 {
 /// True once the job has used its whole bounded window.
 pub fn terminally_deferred(attempts: u32) -> bool {
     attempts >= MAX_DEFERRAL_ATTEMPTS
+}
+
+/// How long a job that ran out of deferrals on an outage waits in
+/// Attention before it is tried again, by its failure code. Any other code
+/// is a real failure and stays in Attention for a person. A release
+/// MusicBrainz refuses may be refused for good, so it waits a day.
+pub const OUTAGE_WAITS: [(&str, u64); 3] = [
+    (MUSICBRAINZ_UNAVAILABLE, MAX_BACKOFF_SECONDS),
+    (ACOUSTID_UNAVAILABLE, MAX_BACKOFF_SECONDS),
+    (RELEASES_UNREADABLE, 24 * 60 * 60),
+];
+
+/// The outside services an attempt showed answering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Answering {
+    pub musicbrainz: bool,
+    pub acoustid: bool,
+}
+
+impl Answering {
+    /// What a probe shows: the job waited out `was` and landed with
+    /// `landed`. AcoustID counts only for a probe that needed it.
+    pub fn after_probe(was: &str, landed: Option<&str>) -> Self {
+        let musicbrainz = landed != Some(MUSICBRAINZ_UNAVAILABLE);
+        Self {
+            musicbrainz,
+            acoustid: musicbrainz
+                && was == ACOUSTID_UNAVAILABLE
+                && landed != Some(ACOUSTID_UNAVAILABLE),
+        }
+    }
+
+    fn covers(self, code: &str) -> bool {
+        if code == ACOUSTID_UNAVAILABLE {
+            self.acoustid
+        } else {
+            self.musicbrainz
+        }
+    }
+}
+
+/// Each outage code with the latest landing time at which a job waiting
+/// it out is due again at `now_ms`. A code `answering` does not cover gets
+/// a cutoff no job meets.
+pub fn outage_cutoffs(now_ms: u64, answering: Answering) -> [(&'static str, i64); 3] {
+    OUTAGE_WAITS.map(|(code, wait_secs)| {
+        let cutoff = if answering.covers(code) {
+            now_ms as i64 - (wait_secs * 1000) as i64
+        } else {
+            -1
+        };
+        (code, cutoff)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -233,5 +287,26 @@ mod tests {
         assert_eq!(backoff_secs(0), 0);
         assert!(!terminally_deferred(9));
         assert!(terminally_deferred(10));
+    }
+
+    #[test]
+    fn a_probe_shows_only_the_services_it_reached() {
+        let still_down =
+            Answering::after_probe(MUSICBRAINZ_UNAVAILABLE, Some(MUSICBRAINZ_UNAVAILABLE));
+        assert!(!still_down.musicbrainz && !still_down.acoustid);
+        let musicbrainz = Answering::after_probe(MUSICBRAINZ_UNAVAILABLE, None);
+        assert!(musicbrainz.musicbrainz && !musicbrainz.acoustid);
+        let acoustid_down =
+            Answering::after_probe(ACOUSTID_UNAVAILABLE, Some(ACOUSTID_UNAVAILABLE));
+        assert!(acoustid_down.musicbrainz && !acoustid_down.acoustid);
+        let both = Answering::after_probe(ACOUSTID_UNAVAILABLE, None);
+        assert!(both.musicbrainz && both.acoustid);
+        let cutoffs = outage_cutoffs(100_000_000, musicbrainz);
+        assert_eq!(
+            cutoffs[0],
+            (MUSICBRAINZ_UNAVAILABLE, 100_000_000 - 7_680_000)
+        );
+        assert_eq!(cutoffs[1], (ACOUSTID_UNAVAILABLE, -1));
+        assert_eq!(cutoffs[2], (RELEASES_UNREADABLE, 100_000_000 - 86_400_000));
     }
 }

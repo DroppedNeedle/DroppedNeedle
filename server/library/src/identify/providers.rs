@@ -142,6 +142,8 @@ pub const RELEASE_UNREADABLE: &str = "release_unreadable";
 /// readable candidate left the recall defers; otherwise it goes on, and
 /// an attempt that would end matching nothing defers with this code.
 pub const RELEASES_UNREADABLE: &str = "releases_unreadable";
+/// MusicBrainz could not be reached: the job waits, as for any outage.
+pub const MUSICBRAINZ_UNAVAILABLE: &str = "musicbrainz_unavailable";
 /// The files want their audio heard and AcoustID could not be reached: the
 /// job waits, since deciding without audio would not be the same decision.
 pub const ACOUSTID_UNAVAILABLE: &str = "acoustid_unavailable";
@@ -859,7 +861,7 @@ impl<R: ReleaseSource, F: FingerprintSource> IdentifyProviders for LiveProviders
 fn deferred() -> RecallResult {
     RecallResult {
         provider_deferred: true,
-        failure_code: Some("musicbrainz_unavailable".to_owned()),
+        failure_code: Some(MUSICBRAINZ_UNAVAILABLE.to_owned()),
         ..RecallResult::default()
     }
 }

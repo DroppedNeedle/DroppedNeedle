@@ -5631,3 +5631,259 @@ async fn a_merged_recording_the_held_edition_resolves_keeps_the_album() {
         Some(RELEASE_A1)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Identification that waited out an outage is tried again by itself.
+// ---------------------------------------------------------------------------
+
+const OUTAGE_START: i64 = 1_800_000_000_000;
+const CAP_MS: i64 = identify::queue::MAX_BACKOFF_SECONDS as i64 * 1000;
+
+/// The identify loop as the app builds it, over a rig's database, on a
+/// clock the test moves.
+struct LoopRig {
+    rig: Rig,
+    library: droppedneedle_library::wiring::LibrarySetup,
+    clock: droppedneedle_kernel::test_support::ManualClock,
+}
+
+async fn loop_rig() -> LoopRig {
+    let dir = ScratchDir::new("lib-identify-outage");
+    let path = dir.join("app.db");
+    migrated_db(&path);
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&path).expect("database opens");
+    let clock = droppedneedle_kernel::test_support::ManualClock::at(OUTAGE_START);
+    let platform = crate::common::TestPlatform::on(&db, &dir)
+        .clock(Arc::new(clock.clone()))
+        .build()
+        .await;
+    let providers = Arc::new(FakeProviders::with_recall(musicbrainz_down()));
+    let library = crate::common::library::library_asking(&platform, providers.clone());
+    let rig = Rig {
+        service: IdentifyService::new(IdentifyDeps {
+            preferences: crate::common::library::default_preferences(&dir),
+            store: library.identify_store.clone(),
+            providers: providers.clone(),
+        }),
+        store: library.identify_store.clone(),
+        db: droppedneedle_kernel::db::open_connection(&path).expect("side connection opens"),
+        providers,
+        _dir: dir,
+    };
+    rig.seed_artist(ALBUM_ARTIST);
+    LoopRig {
+        rig,
+        library,
+        clock,
+    }
+}
+
+fn musicbrainz_down() -> RecallResult {
+    RecallResult {
+        provider_deferred: true,
+        failure_code: Some("musicbrainz_unavailable".to_owned()),
+        ..RecallResult::default()
+    }
+}
+
+impl LoopRig {
+    async fn tick(&self) -> usize {
+        self.library.identification.identify_tick().await
+    }
+
+    fn recalled(&self) -> Vec<String> {
+        self.rig
+            .providers
+            .recalled
+            .lock()
+            .expect("recalled")
+            .clone()
+    }
+
+    fn job(&self, job_id: &str) -> IdentifyJob {
+        self.rig.store.job(job_id).unwrap().expect("job")
+    }
+
+    /// An album whose job ran out of deferrals at the start of the outage,
+    /// landing in Attention with `code`.
+    fn seed_waited_out(&self, album: &str, code: &str) {
+        self.seed_waited_out_as(album, code, "automatic");
+    }
+
+    fn seed_waited_out_as(&self, album: &str, code: &str, kind: &str) {
+        let track = format!("{album}-t1");
+        self.rig
+            .seed_album(&album_facts(album, &[(track.as_str(), Some(RECORDING_1))]));
+        self.seed_job(
+            &format!("job-{album}"),
+            album,
+            kind,
+            "attention",
+            Some(code),
+            OUTAGE_START,
+        );
+    }
+
+    fn seed_job(
+        &self,
+        job: &str,
+        album: &str,
+        kind: &str,
+        state: &str,
+        code: Option<&str>,
+        at: i64,
+    ) {
+        self.rig
+            .db
+            .execute(
+                "INSERT INTO library_identify_jobs (id, local_album_id, kind, priority, state, \
+                 attempts, not_before_at, input_revision, idempotency_key, failure_code, \
+                 created_at, updated_at) VALUES (?1, ?2, ?3, 20, ?4, 10, ?6, ?1, ?2 || ':' || ?1, \
+                 ?5, ?6, ?6)",
+                params![job, album, kind, state, code, at],
+            )
+            .expect("job seeds");
+    }
+}
+
+/// An album added while MusicBrainz is down runs through its deferrals
+/// and waits in Attention. While MusicBrainz stays down it is tried once
+/// per step of the ladder's cap; once MusicBrainz answers it is
+/// identified with nobody acting.
+#[tokio::test]
+async fn identification_that_waited_out_an_outage_is_tried_again() {
+    use identify::queue::{MAX_DEFERRAL_ATTEMPTS, backoff_secs};
+
+    let lp = loop_rig().await;
+    lp.rig
+        .seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    lp.rig
+        .service
+        .enqueue_album(
+            "job-1",
+            "album-1",
+            IdentifyKind::Automatic,
+            "rev-1",
+            None,
+            OUTAGE_START as u64,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    for deferral in 1..=MAX_DEFERRAL_ATTEMPTS {
+        assert_eq!(lp.tick().await, 1);
+        if deferral < MAX_DEFERRAL_ATTEMPTS {
+            lp.clock.advance(backoff_secs(deferral) as i64 * 1000);
+        }
+    }
+    assert_eq!(lp.job("job-1").state, JobState::Attention);
+    assert_eq!(lp.recalled().len(), 10);
+
+    lp.clock.advance(CAP_MS - 1000);
+    assert_eq!(lp.tick().await, 0, "tried again before the cap");
+    lp.clock.advance(1000);
+    assert_eq!(lp.tick().await, 1, "tried once at the cap");
+    assert_eq!(lp.job("job-1").state, JobState::Attention);
+
+    lp.rig
+        .providers
+        .set_recall(recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_1])]));
+    assert_eq!(lp.tick().await, 0, "tried again before the cap");
+    lp.clock.advance(CAP_MS);
+    assert_eq!(lp.tick().await, 1);
+    assert_eq!(lp.job("job-1").state, JobState::Succeeded);
+    assert_eq!(
+        lp.rig
+            .store
+            .album_identity("album-1")
+            .unwrap()
+            .and_then(|row| row.release_mbid)
+            .as_deref(),
+        Some(RELEASE_A1)
+    );
+}
+
+/// While MusicBrainz stays down, the albums an outage left in Attention
+/// cost one try per step of the ladder's cap however many there are. A
+/// real failure is never tried again, and a release MusicBrainz refused
+/// waits a day. Once MusicBrainz answers, all of them are tried and found.
+#[tokio::test]
+async fn retries_after_an_outage_stay_bounded() {
+    let lp = loop_rig().await;
+    let down = ["album-1", "album-2", "album-3"];
+    for album in down {
+        lp.seed_waited_out(album, "musicbrainz_unavailable");
+    }
+    lp.seed_waited_out("album-refused", "releases_unreadable");
+    lp.seed_waited_out("album-broken", "matching_failed");
+    // A person's own retry on an album whose match they then took off.
+    lp.seed_waited_out_as("album-detached", "musicbrainz_unavailable", "manual");
+    lp.rig
+        .db
+        .execute(
+            "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+             updated_at) VALUES ('album-detached', 'unmatched', 'DETACHED_BY_PERSON', 0)",
+            [],
+        )
+        .expect("detach seeds");
+    // Albums identified since, and one with a job already waiting.
+    lp.seed_waited_out("album-done", "musicbrainz_unavailable");
+    lp.seed_job(
+        "job-done-later",
+        "album-done",
+        "automatic",
+        "succeeded",
+        None,
+        OUTAGE_START + 1,
+    );
+    lp.seed_waited_out("album-live", "musicbrainz_unavailable");
+    lp.seed_job(
+        "job-live",
+        "album-live",
+        "automatic",
+        "deferred",
+        None,
+        OUTAGE_START + 30 * 86_400_000,
+    );
+
+    let step = 600_000;
+    let mut last_try: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut seen = 0;
+    let mut now = OUTAGE_START;
+    while now + step < OUTAGE_START + 86_400_000 {
+        lp.clock.advance(step);
+        now += step;
+        lp.tick().await;
+        let recalled = lp.recalled();
+        for album in &recalled[seen..] {
+            assert!(
+                down.contains(&album.as_str()),
+                "{album} tried within the day"
+            );
+            if let Some(before) = last_try.insert(album.clone(), now) {
+                assert!(now - before >= CAP_MS, "{album} tried twice inside the cap");
+            }
+        }
+        seen = recalled.len();
+    }
+    // One try every 13 steps (the cap, 7,680 s, rounded up to the step).
+    assert_eq!(seen, 11, "tries in a day of outage");
+
+    lp.rig
+        .providers
+        .set_recall(recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_1])]));
+    lp.clock.advance(CAP_MS + step);
+    assert_eq!(lp.tick().await, 4);
+    for album in ["album-1", "album-2", "album-3", "album-refused"] {
+        assert_eq!(lp.job(&format!("job-{album}")).state, JobState::Succeeded);
+    }
+    let broken = lp.job("job-album-broken");
+    assert_eq!(broken.state, JobState::Attention);
+    assert_eq!(broken.failure_code.as_deref(), Some("matching_failed"));
+    for left in ["album-broken", "album-detached", "album-done", "album-live"] {
+        assert!(
+            !lp.recalled().iter().any(|album| album == left),
+            "{left} was tried"
+        );
+    }
+    assert_eq!(lp.job("job-album-detached").state, JobState::Attention);
+}

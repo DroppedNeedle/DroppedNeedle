@@ -33,7 +33,10 @@ use super::models::{
     ReviewState, TrackIdentity,
 };
 pub(crate) use super::queue::bump_identification_stream;
-use super::queue::{INSERT_JOB, idempotency_key, queue_retry};
+use super::queue::{
+    Answering, INSERT_JOB, MAX_BACKOFF_SECONDS, MAX_DEFERRAL_ATTEMPTS, idempotency_key,
+    outage_cutoffs, queue_retry,
+};
 pub use super::queue::{album_input_revision, offer_album};
 use super::sources::ArtistAnswer;
 use super::stores::{Approval, AttemptLanding, RELEASE_FRESH_SECS, StoreError, land_job};
@@ -43,8 +46,8 @@ use crate::corrections::artist_convergence::{
 };
 use crate::corrections::continuation::{DRAIN_BOUND, Scope, continue_tracks, drain_continuations};
 use crate::identify::sql::{
-    AlbumFactTrack, AlbumFactsRow, DocumentCopy, JobRow, LAND_JOB, MatchFlagRow, ReviewRow,
-    StoredDocument, StoredFingerprint,
+    AlbumFactTrack, AlbumFactsRow, DocumentCopy, JobRow, LAND_JOB, MatchFlagRow, OUTAGE_PROBE,
+    OutageProbe, REQUEUE_PROBE, REQUEUE_WAITED_OUT, ReviewRow, StoredDocument, StoredFingerprint,
 };
 pub(crate) use crate::identity::follow::{
     chosen_matches_differ, match_chosen, merge_moves_match, release_chosen, settle_followed_match,
@@ -1621,6 +1624,90 @@ impl SqliteIdentifyStore {
                 .query_row(crate::identify::sql::JOB.text(), params![job_id], map_job)
                 .optional()?)
         })
+    }
+
+    /// Queue one job that ran out of deferrals on an outage again, to see
+    /// whether the outside services answer: the one waiting longest, and
+    /// only while no job on an outage code is live and none landed in the
+    /// ladder's last step. Its id and the code it waited out, or `None`
+    /// when no probe is due.
+    pub fn probe_after_outage(&self, now_ms: u64) -> Result<Option<(String, String)>, StoreError> {
+        let [(c1, t1), (c2, t2), (c3, t3)] = outage_cutoffs(
+            now_ms,
+            Answering {
+                musicbrainz: true,
+                acoustid: true,
+            },
+        );
+        let quiet_since = now_ms as i64 - (MAX_BACKOFF_SECONDS * 1000) as i64;
+        let pick = |conn: &Connection| {
+            conn.query_row(
+                OUTAGE_PROBE.text(),
+                params![c1, t1, c2, t2, c3, t3, quiet_since],
+                OutageProbe::read,
+            )
+            .optional()
+        };
+        // The idle loop asks every few seconds and nearly always finds
+        // nothing, so it asks a reader first.
+        if self
+            .db
+            .read_blocking("identify.outage_probe", |conn| {
+                Ok::<_, StoreError>(pick(conn)?)
+            })?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        self.db
+            .write_blocking(Lane::Background, "identify.outage_probe", |tx| {
+                changing(tx, |tx| {
+                    let Some(probe) = pick(tx)? else {
+                        return Ok(None);
+                    };
+                    tx.execute(
+                        REQUEUE_PROBE.text(),
+                        params![probe.id, MAX_DEFERRAL_ATTEMPTS - 1, now_ms as i64],
+                    )?;
+                    bump_identification_stream(tx)?;
+                    Ok(Some((probe.id, probe.failure_code)))
+                })
+            })
+            .map(|written| self.landed(written))
+    }
+
+    /// Queue again, for one attempt each, the jobs that ran out of
+    /// deferrals on an outage of a service `answering` covers and are due.
+    /// How many were queued.
+    pub fn requeue_after_outage(
+        &self,
+        now_ms: u64,
+        answering: Answering,
+    ) -> Result<usize, StoreError> {
+        let [(c1, t1), (c2, t2), (c3, t3)] = outage_cutoffs(now_ms, answering);
+        self.db
+            .write_blocking(Lane::Background, "identify.requeue_after_outage", |tx| {
+                changing(tx, |tx| {
+                    let queued = tx.execute(
+                        REQUEUE_WAITED_OUT.text(),
+                        params![
+                            c1,
+                            t1,
+                            c2,
+                            t2,
+                            c3,
+                            t3,
+                            MAX_DEFERRAL_ATTEMPTS - 1,
+                            now_ms as i64
+                        ],
+                    )?;
+                    if queued > 0 {
+                        bump_identification_stream(tx)?;
+                    }
+                    Ok(queued)
+                })
+            })
+            .map(|written| self.landed(written))
     }
 
     pub fn jobs_for_album(&self, local_album_id: &str) -> Result<Vec<IdentifyJob>, StoreError> {

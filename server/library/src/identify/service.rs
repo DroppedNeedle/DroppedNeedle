@@ -197,8 +197,8 @@ impl IdentifyService {
     ) -> Result<Option<AttemptReport>, StoreError> {
         let Some(facts) = self.deps.store.album_facts(&job.local_album_id)? else {
             // The album left the catalog: nothing to identify.
-            land_job(&mut job, AttemptLanding::Failed, now_ms, Some("ALBUM_GONE"));
-            return self.land(job, IdentificationOutcome::Failed, "ALBUM_GONE");
+            land_job(&mut job, AttemptLanding::Failed, now_ms, Some(ALBUM_GONE));
+            return self.land(job, IdentificationOutcome::Failed, ALBUM_GONE);
         };
         let current = self.deps.store.album_identity(&facts.local_album_id)?;
         // A person's choice is final: automatic passes never look again.
@@ -217,11 +217,7 @@ impl IdentifyService {
                 .filter(|group| !tags_name_another_group(&facts, group));
             let Some(group) = open else {
                 land_job(&mut job, AttemptLanding::Done, now_ms, None);
-                return self.land(
-                    job,
-                    IdentificationOutcome::Identified,
-                    "CHOSEN_EDITION_KEPT",
-                );
+                return self.land(job, IdentificationOutcome::Identified, CHOSEN_EDITION_KEPT);
             };
             carried = Some(group);
         }
@@ -370,11 +366,7 @@ impl IdentifyService {
                 reason = decision.reason_code(),
                 "no edition of the carried release group surely fits the files; the match stays as v2 left it"
             );
-            return self.land(
-                job,
-                IdentificationOutcome::Identified,
-                "CHOSEN_EDITION_KEPT",
-            );
+            return self.land(job, IdentificationOutcome::Identified, CHOSEN_EDITION_KEPT);
         };
         let Some((written, job)) = self.deps.store.fill_carried_and_land(
             &facts.local_album_id,
@@ -389,7 +381,7 @@ impl IdentifyService {
         let (outcome, reason) = match written {
             AutomaticOutcome::InputMoved => (IdentificationOutcome::Failed, "INPUT_MOVED"),
             AutomaticOutcome::PersonsChoice => {
-                (IdentificationOutcome::Identified, "CHOSEN_EDITION_KEPT")
+                (IdentificationOutcome::Identified, CHOSEN_EDITION_KEPT)
             }
             AutomaticOutcome::Done => (IdentificationOutcome::Identified, CARRIED_EDITION_FOUND),
         };
@@ -1259,6 +1251,12 @@ pub const HELD_RELEASE_UNREADABLE: &str = "HELD_RELEASE_UNREADABLE";
 /// The reason an attempt no person asked for left an album alone: a person
 /// took its match off, or its automatic edition was undone.
 pub const PERSON_DECLINED: &str = "PERSON_DECLINED";
+
+/// The reason an attempt ended at once: the album left the catalog.
+pub const ALBUM_GONE: &str = "ALBUM_GONE";
+
+/// The reason an attempt left an album alone: a person chose its edition.
+pub const CHOSEN_EDITION_KEPT: &str = "CHOSEN_EDITION_KEPT";
 
 /// True when the new evidence rules `release` out: it was scored and a
 /// file's own id contradicts it, or its album title or artist do not
