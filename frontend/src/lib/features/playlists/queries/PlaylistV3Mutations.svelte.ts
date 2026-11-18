@@ -16,6 +16,9 @@ export type PlaylistSummaryV3 = components['schemas']['PlaylistSummary'];
 export type CheckTracksBodyV3 = components['schemas']['CheckTracksBody'];
 export type CheckTracksResponseV3 = components['schemas']['CheckTracksResponse'];
 export type TrackInputV3 = components['schemas']['TrackInput'];
+export type ImportPlaylistBodyV3 = components['schemas']['ImportPlaylistBody'];
+export type ImportPlaylistResponseV3 = components['schemas']['ImportPlaylistResponse'];
+export type ImportUnmatchedReasonV3 = components['schemas']['ImportUnmatchedReason'];
 const list = () => [playlistListChanged(authStore.user?.id)];
 const detail = (id: string) => [playlistChanged(authStore.user?.id, id)];
 const listAndDetail = (id: string) => [...list(), ...detail(id)];
@@ -30,6 +33,12 @@ export const forgetPlaylistSources = (id: string) =>
 export const createPlaylistV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (name: string) => api.v3.POST(v3('/api/v3/playlists'), { name }),
+		effects: list
+	}));
+
+export const createImportPlaylistV3Mutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (body: ImportPlaylistBodyV3) => api.v3.POST(v3('/api/v3/playlists/import'), body),
 		effects: list
 	}));
 

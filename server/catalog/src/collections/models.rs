@@ -180,6 +180,65 @@ pub struct ExportQuery {
     pub prefix: Option<String>,
 }
 
+/// File a playlist import is read from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ImportFormat {
+    /// Extended M3U (`.m3u` or `.m3u8`).
+    M3u8,
+    /// CSV with a header row.
+    Csv,
+}
+
+/// Playlist import body. `content` is capped at 2 MB.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct ImportPlaylistBody {
+    /// Name for the new playlist. Must not be blank.
+    pub name: String,
+    /// The file's format.
+    pub format: ImportFormat,
+    /// The file's text.
+    pub content: String,
+}
+
+/// One entry an import could not match.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ImportUnmatched {
+    /// Title the file gave, or its file name when it gave none.
+    pub title: String,
+    /// Artist the file gave, empty when it gave none.
+    pub artist: String,
+    /// Why the entry was left out.
+    pub reason: ImportUnmatchedReason,
+}
+
+/// Why an import left an entry out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportUnmatchedReason {
+    /// The entry names no path, title or artist.
+    NamesNothing,
+    /// No live local file matches it.
+    NoMatch,
+    /// An earlier entry in the file already added that track.
+    Duplicate,
+}
+
+/// Playlist import answer.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ImportPlaylistResponse {
+    /// The new playlist's id.
+    pub playlist_id: String,
+    /// Its name as stored.
+    pub name: String,
+    /// Entries that became playlist tracks.
+    pub matched: usize,
+    /// Entries that did not, in file order.
+    pub unmatched: Vec<ImportUnmatched>,
+    /// Entries past the 10,000 an import reads, counted but not read.
+    pub over_limit: usize,
+}
+
 /// Create-playlist body.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreatePlaylistBody {

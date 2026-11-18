@@ -8,15 +8,18 @@
 //! Admins hold one extra right: deleting a playlist with no owner. A private
 //! one is listed to admins only, as a stub; to anyone else it does not exist.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use droppedneedle_auth::users::roles::{Admin, Principal};
 
 use super::CollectionsService;
+use super::favorites::library_error;
 use crate::collections::error::CollectionsError;
+use crate::collections::import;
 use crate::collections::models::{
     AddTracksBody, AddTracksResponse, CheckTracksBody, CheckTracksResponse, CoverUploadBody,
-    CreatePlaylistBody, ExportFormat, PlaylistDetail, PlaylistListItem, PlaylistListResponse,
+    CreatePlaylistBody, ExportFormat, ImportPlaylistBody, ImportPlaylistResponse,
+    ImportUnmatchedReason as Reason, PlaylistDetail, PlaylistListItem, PlaylistListResponse,
     PlaylistSummary, PlaylistTrack, RedactedPlaylist, ResolveSourcesResponse, TrackInput,
     UpdatePlaylistBody, UpdateTrackBody,
 };
@@ -26,6 +29,7 @@ pub use crate::collections::store::playlists::SavedPlaylist;
 use crate::collections::store::playlists::{
     CoverImage, EntryNames, Listed, NewEntry, PlaylistRow, Written,
 };
+use crate::local::player::PlayerTrack;
 use crate::metadata::clean_recording;
 use droppedneedle_kernel::playlist_files::{self, Entry};
 
@@ -224,6 +228,40 @@ fn to_entry(input: &TrackInput) -> Result<NewEntry, CollectionsError> {
         library_file_id,
         recording_mbid: input.recording_mbid.as_deref().and_then(clean_recording),
     })
+}
+
+/// The playlist entry for one matched library track: the file's names, its
+/// album's artwork when the album has some, its local id and its recording
+/// id, as a local track the web UI adds.
+fn import_entry(track: &PlayerTrack) -> NewEntry {
+    let cover_url = track.cover_available.then(|| {
+        let version = track
+            .art_version
+            .map(|version| format!("&v={version}"))
+            .unwrap_or_default();
+        format!(
+            "/api/v3/library/albums/{}/artwork?size=250{version}",
+            track.album_id
+        )
+    });
+    NewEntry {
+        track_name: track.title.clone(),
+        artist_name: track.artist_name.clone(),
+        album_name: track.album_title.clone(),
+        album_id: Some(track.album_id.clone()),
+        artist_id: track.artist_id.clone(),
+        track_source_id: Some(track.id.clone()),
+        cover_url,
+        source_type: "local".to_owned(),
+        available_sources: Some(vec!["local".to_owned()]),
+        format: Some(track.format.clone()),
+        track_number: i32::try_from(track.track_number).ok(),
+        disc_number: i32::try_from(track.disc_number).ok(),
+        duration: track.duration_seconds,
+        plex_rating_key: None,
+        library_file_id: Some(track.id.clone()),
+        recording_mbid: track.recording_mbid.as_deref().and_then(clean_recording),
+    }
 }
 
 impl CollectionsService<'_> {
@@ -497,6 +535,85 @@ impl CollectionsService<'_> {
             is_public: false,
             created_at: at,
             updated_at: at,
+        })
+    }
+
+    /// Import a playlist file into a new private playlist of the caller's.
+    /// Matched tracks are inserted in file order; the first occurrence of
+    /// a track wins and later ones are reported.
+    pub async fn import_playlist_file(
+        &self,
+        user_id: &str,
+        body: &ImportPlaylistBody,
+    ) -> Result<ImportPlaylistResponse, CollectionsError> {
+        let name = clean_name(&body.name)?;
+        if body.content.len() > import::MAX_IMPORT_BYTES {
+            return Err(CollectionsError::invalid(
+                "Playlist file is larger than 2 MB",
+            ));
+        }
+        let import::Parsed {
+            entries,
+            over_limit,
+        } = import::parse(body.format, &body.content);
+        let identities = self
+            .state
+            .items
+            .track_identities()
+            .await
+            .map_err(library_error)?;
+        let index = import::ImportIndex::new(identities);
+        let mut matched: Vec<(&import::ParsedEntry, String)> = Vec::new();
+        let mut seen = HashSet::new();
+        let mut unmatched = Vec::new();
+        for entry in &entries {
+            if entry.path.trim().is_empty()
+                && entry.title.trim().is_empty()
+                && entry.artist.trim().is_empty()
+            {
+                unmatched.push(import::unmatched(entry, Reason::NamesNothing));
+                continue;
+            }
+            let Some(id) = index.find(entry) else {
+                unmatched.push(import::unmatched(entry, Reason::NoMatch));
+                continue;
+            };
+            if !seen.insert(id.to_owned()) {
+                unmatched.push(import::unmatched(entry, Reason::Duplicate));
+                continue;
+            }
+            matched.push((entry, id.to_owned()));
+        }
+        let ids: Vec<String> = matched.iter().map(|(_, id)| id.clone()).collect();
+        let tracks = self
+            .state
+            .items
+            .tracks_by_ids(&ids)
+            .await
+            .map_err(library_error)?;
+        let by_id: HashMap<String, PlayerTrack> = tracks
+            .into_iter()
+            .map(|track| (track.id.clone(), track))
+            .collect();
+        let mut new_entries = Vec::with_capacity(matched.len());
+        for (entry, id) in &matched {
+            match by_id.get(id) {
+                Some(track) => new_entries.push(import_entry(track)),
+                None => unmatched.push(import::unmatched(entry, Reason::NoMatch)),
+            }
+        }
+        let matched = new_entries.len();
+        let (playlist_id, _) = self
+            .playlists()
+            .owned_by(user_id)
+            .create_with(&name, new_entries)
+            .await?;
+        Ok(ImportPlaylistResponse {
+            playlist_id,
+            name,
+            matched,
+            unmatched,
+            over_limit,
         })
     }
 

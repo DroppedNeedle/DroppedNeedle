@@ -2825,6 +2825,8 @@ fn every_registered_statement_prepares() {
 /// row. An admin opens these by hand.
 /// The duplicates list, a curator's page that lists groups across the whole
 /// library: it reads every tagged file to find the groups' owners.
+/// The playlist import's one read: every live track once, to build the index
+/// it matches the file's entries against, on a request a person started.
 const TRACK_WALKS: &[&str] = &[
     "droppedneedle_library::scan::sql::ALBUM_TRACKS",
     "droppedneedle_library::corrections::sql::CANDIDATE_ALBUMS",
@@ -2841,6 +2843,7 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle_catalog::local::sql::GENRE_TRACKS",
     "droppedneedle_catalog::local::sql::GENRE_TRACK_COUNT",
     "droppedneedle_catalog::local::sql::PLAYABLE_COUNTS",
+    "droppedneedle_catalog::local::sql::IMPORT_TRACKS",
     "droppedneedle_catalog::local::sql::PLAYER_TRACK_PAGE",
     "droppedneedle_catalog::local::sql::PLAYER_TRACK_COUNT",
     "droppedneedle_catalog::local::sql::PLAYER_TRACKS_UNPLAYED",

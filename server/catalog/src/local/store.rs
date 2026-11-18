@@ -1,7 +1,8 @@
 //! [`LocalCatalog`]: the one store over the local catalog, the `local_*`
 //! tables with their artwork and identity rows, the caller's favorites and
 //! open requests. Reads only, through the database's request pool, one
-//! pooled read per statement.
+//! pooled read per statement; a read that walks the whole library uses the
+//! long pool.
 //!
 //! Its methods sit beside what they serve: the library pages and favorites
 //! in `sqlite.rs`, the identity lookups in `lookups.rs`, the catalog pages'
@@ -12,7 +13,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use droppedneedle_kernel::db::{Db, DbError};
+use droppedneedle_kernel::db::{CancelFlag, Db, DbError};
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension as _, Row};
 
@@ -151,6 +152,24 @@ impl LocalCatalog {
             .read(name, move |conn| op(conn).map_err(DbError::from))
             .await
             .map_err(|error| StoreError::db(name, error))
+    }
+
+    /// One read named `name` on the long pool, for a read that walks the
+    /// whole library. Errors as [`LocalCatalog::read`].
+    pub(crate) async fn read_long<R, F>(&self, name: &'static str, op: F) -> Result<R, StoreError>
+    where
+        F: FnOnce(&Connection) -> rusqlite::Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            db.read_long(name, &CancelFlag::never(), move |conn| {
+                op(conn).map_err(DbError::from)
+            })
+        })
+        .await
+        .map_err(|error| StoreError::Internal(format!("{name} task failed: {error}")))?
+        .map_err(|error| StoreError::db(name, error))
     }
 }
 

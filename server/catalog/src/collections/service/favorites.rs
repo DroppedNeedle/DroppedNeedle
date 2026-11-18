@@ -9,7 +9,8 @@ use crate::collections::models::FavoriteStatusResponse;
 use crate::collections::store::favorites::FavoriteKind;
 use crate::local::stores::StoreError as LibraryStoreError;
 
-fn library_error(error: LibraryStoreError) -> CollectionsError {
+/// A library store failure as the collections error.
+pub(super) fn library_error(error: LibraryStoreError) -> CollectionsError {
     match error {
         LibraryStoreError::Busy(operation) => CollectionsError::Busy { operation },
         LibraryStoreError::Internal(cause) => CollectionsError::internal(&cause),
