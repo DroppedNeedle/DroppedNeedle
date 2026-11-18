@@ -477,6 +477,7 @@ pub(crate) async fn build_on(
             &plugin_host,
             &collections,
             listening.clone(),
+            catalog.clone(),
         ),
         queues.queue().clone(),
     )
@@ -770,6 +771,7 @@ fn acquire_ports(
     plugin_host: &Arc<droppedneedle_plugins::host::PluginHost>,
     collections: &Stores,
     listening: ListeningStore,
+    catalog: Catalog,
 ) -> AcquirePorts {
     AcquirePorts {
         library: Arc::new(
@@ -786,6 +788,7 @@ fn acquire_ports(
         release_poll: Arc::new(droppedneedle_acquire::search::live_release_poll(
             providers, mb_source,
         )),
+        catalog,
         plugins: plugin_host.clone(),
         collections: collections.clone(),
         providers: providers.clone(),

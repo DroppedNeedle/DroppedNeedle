@@ -224,7 +224,11 @@ async fn sources_over(
         ClientLives::new(settings),
         dir.join("slskd"),
         journal.clone(),
-        Arc::new(Targets::new(journal, Arc::new(FixedAlbums::default()))),
+        Arc::new(Targets::new(
+            journal,
+            Arc::new(FixedAlbums::default()),
+            crate::common::bundles::closed_catalog(db.db()).await,
+        )),
         idle_host_over(db).await,
     ));
     let sources = Arc::new(WorkerSettings::new(settings, clients));
@@ -260,6 +264,7 @@ async fn wanted_with_slskd(db: &AcquireDb, slskd_on: bool) -> Wanted {
             targets: Arc::new(Targets::new(
                 Arc::new(Journal::new(db.clone(), quiet_ticks())),
                 Arc::new(FixedAlbums::default()),
+                crate::common::bundles::closed_catalog(db.db()).await,
             )),
             ticks: ticks(db, &events).await,
         },
@@ -369,6 +374,7 @@ async fn a_new_album_is_rechecked_in_two_days() {
     rig.deps.targets = Arc::new(Targets::new(
         Arc::new(Journal::new(db.clone(), quiet_ticks())),
         Arc::new(albums),
+        crate::common::bundles::closed_catalog(db.db()).await,
     ));
     seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
 

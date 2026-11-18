@@ -189,7 +189,11 @@ fn rig_with(
         ClientLives::new(&platform.settings),
         platform.config.slskd_downloads_path.clone(),
         journal.clone(),
-        Arc::new(Targets::new(journal, Arc::new(FixedAlbums::default()))),
+        Arc::new(Targets::new(
+            journal,
+            Arc::new(FixedAlbums::default()),
+            crate::common::bundles::offline_catalog(&platform.db, auth.deps.clone()),
+        )),
         plugins.clone(),
     ));
     let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
@@ -1607,6 +1611,7 @@ async fn readiness_answers(setup: SourceSetup) -> Vec<bool> {
     let targets = Arc::new(Targets::new(
         journal.clone(),
         Arc::new(FixedAlbums::default()),
+        crate::common::bundles::offline_catalog(&platform.db, auth.deps.clone()),
     ));
     let (library, _) = crate::common::library::library_at(platform);
     let landing = Arc::new(droppedneedle_acquire::landing::LandingService::new(

@@ -46,6 +46,7 @@ use super::target::{SearchTarget, Targets};
 use crate::downloads::worker::DownloadWorker;
 use droppedneedle_auth::Principal;
 use droppedneedle_kernel::events::{EventHub, SearchJobUpdated, UserNotice, new_event_id};
+use droppedneedle_providers::RequestPriority;
 
 /// How long one source may take to answer a manual search.
 const SOURCE_TIMEOUT: Duration = Duration::from_secs(150);
@@ -306,7 +307,24 @@ impl SearchJobs {
 
     /// Ask every source, store the ranked candidates, announce.
     async fn run(self: Arc<Self>, job: NewJob) {
-        let tracklist = match job.release_mbid.as_deref() {
+        // With no edition asked for, folders are ranked against the album
+        // page's edition, which a pick then only prefers.
+        let (release_mbid, release_preferred) = match job.release_mbid.clone() {
+            Some(release) => (Some(release), false),
+            None => match job.release_group_mbid.as_deref() {
+                Some(group) => {
+                    // A person is waiting on the search.
+                    let preferred = self
+                        .targets
+                        .preferred_edition(group, RequestPriority::UserInitiated)
+                        .await;
+                    let found = preferred.is_some();
+                    (preferred, found)
+                }
+                None => (None, false),
+            },
+        };
+        let tracklist = match release_mbid.as_deref() {
             Some(release) => self.targets.edition_tracklist(release).await,
             None => Vec::new(),
         };
@@ -327,7 +345,8 @@ impl SearchJobs {
             (JobStatus::Completed, None)
         };
         let payload = JobPayload {
-            release_mbid: job.release_mbid.clone(),
+            release_mbid,
+            release_preferred,
             tracks_total: (!target.tracklist.is_empty()).then_some(target.tracklist.len()),
             candidates,
         };
@@ -465,11 +484,20 @@ impl SearchJobs {
                 origin: "user".to_owned(),
                 retry_count: 0,
             },
+            // A preferred edition goes into the plan, so the download still
+            // takes another edition of the album; an asked one is a pin.
             details: TaskDetails {
-                release_mbid: payload.release_mbid.clone(),
+                release_mbid: payload
+                    .release_mbid
+                    .clone()
+                    .filter(|_| !payload.release_preferred),
                 year: row.year,
                 ..TaskDetails::default()
             },
+            preferred_release: payload
+                .release_mbid
+                .clone()
+                .filter(|_| payload.release_preferred),
             username: match &candidate.pin {
                 Pin::Soulseek { username, .. } => Some(username.clone()),
                 Pin::Release { .. } => None,

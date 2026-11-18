@@ -315,6 +315,9 @@ pub struct AcquirePorts {
     /// MusicBrainz reads: edition tracklists, and the album a single track
     /// is on.
     pub album_lookup: Arc<dyn AlbumLookup>,
+    /// The album pages: a download no person picked an edition for
+    /// prefers the edition its album page shows.
+    pub catalog: droppedneedle_catalog::metadata::Catalog,
     /// The follow poll's MusicBrainz reader.
     pub release_poll: Arc<dyn ReleasePoll>,
     /// Plugin download sources, plugin indexers that feed usenet, and
@@ -592,7 +595,11 @@ impl AcquireSetup {
             ClientLives::new(&config_store),
             config.slskd_downloads_path.clone(),
             stores.journal.clone(),
-            Arc::new(Targets::new(stores.journal.clone(), ports.album_lookup)),
+            Arc::new(Targets::new(
+                stores.journal.clone(),
+                ports.album_lookup,
+                ports.catalog,
+            )),
             ports.plugins.clone(),
         ));
         let events = platform.events.clone();

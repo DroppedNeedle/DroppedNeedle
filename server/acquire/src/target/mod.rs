@@ -29,7 +29,9 @@ use self::reasons::TrackReason;
 use super::downloads::journal::Journal;
 use super::downloads::plan::{ExpectedTrack, TaskPlan, TrackAlbum, TrackPosition};
 use super::downloads::store::{TaskDetails, TaskRow, TrackAlbumColumns};
-use super::edition::{EditionBasis, chosen_edition};
+use super::edition::{EditionBasis, chosen_edition, library_holds};
+use droppedneedle_catalog::metadata::Catalog;
+use droppedneedle_providers::RequestPriority;
 
 /// Release lookups tried for one recording before giving up on an album.
 const MAX_RELEASES_TRIED: usize = 4;
@@ -85,13 +87,52 @@ pub struct Targets {
     journal: Arc<Journal>,
     /// MusicBrainz reads.
     lookup: Arc<dyn AlbumLookup>,
+    /// The album page's edition, preferred for an album no person picked
+    /// an edition for.
+    catalog: Catalog,
 }
 
 impl Targets {
     /// Targets over the shared journal, reading MusicBrainz through
-    /// `lookup`.
-    pub fn new(journal: Arc<Journal>, lookup: Arc<dyn AlbumLookup>) -> Self {
-        Self { journal, lookup }
+    /// `lookup` and the album page's edition through `catalog`.
+    pub fn new(journal: Arc<Journal>, lookup: Arc<dyn AlbumLookup>, catalog: Catalog) -> Self {
+        Self {
+            journal,
+            lookup,
+            catalog,
+        }
+    }
+
+    /// The edition the album page shows for `group`, when only the
+    /// server's edition preferences chose it: what a download no person
+    /// picked an edition for prefers. `None` while the library holds the
+    /// group (its copy decides, even one that names no release), while the
+    /// preferences do not read, or when the lookup fails (logged; the next
+    /// search asks again). MusicBrainz is asked at `priority`.
+    pub async fn preferred_edition(
+        &self,
+        group: &str,
+        priority: RequestPriority,
+    ) -> Option<String> {
+        let group = group.trim().to_ascii_lowercase();
+        if group.is_empty() {
+            return None;
+        }
+        match library_holds(self.journal.db().db(), &group).await {
+            Ok(false) => {}
+            Ok(true) => return None,
+            Err(error) => {
+                tracing::warn!(release_group_mbid = %group, %error, "library holdings unreadable; no preferred edition");
+                return None;
+            }
+        }
+        match self.catalog.request_edition(&group, priority).await {
+            Ok(edition) => edition.map(|mbid| mbid.trim().to_ascii_lowercase()),
+            Err(error) => {
+                tracing::warn!(release_group_mbid = %group, %error, "album page edition unavailable; no preferred edition");
+                None
+            }
+        }
     }
 
     /// The task's target, resolved now or read back from its plan. A plan
@@ -166,12 +207,25 @@ impl Targets {
         details: &TaskDetails,
         plan: &TaskPlan,
     ) -> SearchTarget {
-        let release = details
+        let mut release = details
             .release_mbid
             .clone()
             .or_else(|| plan.release_mbid.clone())
             .map(|mbid| mbid.trim().to_ascii_lowercase())
             .filter(|mbid| !mbid.is_empty());
+        // With no edition asked for, the album page's edition is preferred
+        // (never for an upgrade or a copy's missing tracks).
+        let mut preferred = false;
+        if release.is_none()
+            && plan.planned_album.is_none()
+            && task.origin != crate::dispatch::DispatchOrigin::Upgrade
+            && let Some(edition) = self
+                .preferred_edition(&task.release_group_mbid, RequestPriority::BackgroundSync)
+                .await
+        {
+            release = Some(edition);
+            preferred = true;
+        }
         let same_release = release
             .as_deref()
             .is_some_and(|release| plan.is_for(release));
@@ -194,8 +248,13 @@ impl Targets {
             match self.lookup.release(release_mbid).await {
                 Ok(Some(found)) => {
                     tracklist = expected_tracks(&found);
-                    self.keep_tracklist(task, release_mbid, &found.id, &tracklist)
-                        .await;
+                    if preferred {
+                        self.keep_preference(task, release_mbid, &found.id, &tracklist)
+                            .await;
+                    } else {
+                        self.keep_tracklist(task, release_mbid, &found.id, &tracklist)
+                            .await;
+                    }
                 }
                 Ok(None) => tracing::warn!(
                     task_id = %task.id,
@@ -251,6 +310,56 @@ impl Targets {
             .await;
         if let Err(error) = kept {
             tracing::warn!(task_id = %task.id, %error, "album tracklist not kept in the task plan");
+        }
+    }
+
+    /// Keep the album page's edition as the task's preferred release, with
+    /// its tracklist under the release MusicBrainz answered for `asked`.
+    /// Only while the task still asks for no release: a release written
+    /// meanwhile (in its details or its plan) stands. A failed write is
+    /// logged: the next search fills it again.
+    async fn keep_preference(
+        &self,
+        task: &TaskRow,
+        asked: &str,
+        found: &str,
+        tracklist: &[ExpectedTrack],
+    ) {
+        let task_id = task.id.clone();
+        let (asked, found) = (asked.to_owned(), found.to_owned());
+        let release = found.clone();
+        let tracklist = tracklist.to_vec();
+        let clock = self.journal.db().clock().clone();
+        let kept = self
+            .journal
+            .run("downloads.target.preference", move |store| {
+                let mut plan = store.task_plan(&task_id)?;
+                let asked_meanwhile = store
+                    .task_details(&task_id)?
+                    .release_mbid
+                    .is_some_and(|release| !release.trim().is_empty());
+                if asked_meanwhile || plan.release_mbid.is_some() || plan.planned_album.is_some() {
+                    return Ok(false);
+                }
+                plan.redirected_from = (!asked.eq_ignore_ascii_case(&found)).then_some(asked);
+                plan.release_mbid = Some(found);
+                plan.expected_tracks = tracklist;
+                plan.release_preferred = true;
+                let now = crate::db::unix_secs_f64(clock.as_ref());
+                store.set_task_plan(&task_id, &plan, now)?;
+                Ok(true)
+            })
+            .await;
+        match kept {
+            Ok(true) => tracing::info!(
+                task_id = %task.id,
+                release_mbid = %release,
+                "album page edition preferred for the download"
+            ),
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(task_id = %task.id, %error, "preferred edition not kept in the task plan");
+            }
         }
     }
 

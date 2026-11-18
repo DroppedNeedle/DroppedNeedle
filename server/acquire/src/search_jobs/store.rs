@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::candidates::{Candidate, mark_turned_down};
 use super::sql;
 use crate::db::{AcquireDb, ms_from_secs_f64 as ms};
+use crate::downloads::TaskPlan;
 use crate::downloads::store::{DownloadStore, NewTask, StoreError, TaskDetails};
 use droppedneedle_kernel::db::{DbError, Lane};
 
@@ -39,6 +40,10 @@ droppedneedle_kernel::spelled!(JobStatus {
 pub struct JobPayload {
     /// The edition searched for, when known.
     pub release_mbid: Option<String>,
+    /// `release_mbid` is the album page's edition, not one asked for: a
+    /// pick only prefers it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub release_preferred: bool,
     /// Tracks on that edition, once read.
     pub tracks_total: Option<usize>,
     /// Ranked candidates, Soulseek first, then Usenet, then plugins.
@@ -111,6 +116,8 @@ pub struct NewJob {
 pub struct PickedTask {
     pub task: NewTask,
     pub details: TaskDetails,
+    /// The release the new task only prefers, kept in its plan.
+    pub preferred_release: Option<String>,
     pub source: String,
     pub username: Option<String>,
     pub candidate_index: i64,
@@ -523,6 +530,16 @@ impl JobStore {
                 store
                     .set_task_details(&picked.task.id, &picked.details, at)
                     .map_err(store_error)?;
+                if let Some(release) = picked.preferred_release.clone() {
+                    let plan = TaskPlan {
+                        release_mbid: Some(release),
+                        release_preferred: true,
+                        ..TaskPlan::default()
+                    };
+                    store
+                        .set_task_plan(&picked.task.id, &plan, at)
+                        .map_err(store_error)?;
+                }
                 store
                     .link_candidate(
                         &picked.task.id,

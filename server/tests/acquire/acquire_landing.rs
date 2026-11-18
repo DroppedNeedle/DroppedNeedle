@@ -3250,6 +3250,7 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
         Arc::new(droppedneedle_acquire::target::Targets::new(
             acquire.journal.clone(),
             Arc::new(FixedAlbums::default()),
+            crate::common::bundles::closed_catalog(acquire.journal.db().db()).await,
         )),
     );
     let handle = SourceHandle::new(SourceTag::plugin("toy"));
@@ -4197,6 +4198,7 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
     let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
         acquire.journal.clone(),
         Arc::new(Lookup(releases)),
+        crate::common::bundles::closed_catalog(acquire.journal.db().db()).await,
     ));
     JoinRig {
         acquire,
@@ -6744,6 +6746,7 @@ async fn a_failed_request_follows_its_retry_to_imported() {
         Arc::new(droppedneedle_acquire::target::Targets::new(
             journal.clone(),
             Arc::new(FixedAlbums::default()),
+            crate::common::bundles::closed_catalog(journal.db().db()).await,
         )),
         acquire.landing.clone(),
         Default::default(),
@@ -7324,7 +7327,11 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
     };
     mock.script_responses(vec![peer("collector"), peer("second"), peer("third")]);
     save_slskd(&platform.settings, &mock.base_url());
-    let targets = Arc::new(Targets::new(acquire.journal.clone(), Arc::new(albums)));
+    let targets = Arc::new(Targets::new(
+        acquire.journal.clone(),
+        Arc::new(albums),
+        crate::common::bundles::closed_catalog(acquire.journal.db().db()).await,
+    ));
     let worker = worker_with(
         &platform,
         crate::common::bundles::idle_host(&platform, library.core.clone()),
@@ -8038,6 +8045,7 @@ impl IntakeCase {
         let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
             acquire.journal.clone(),
             Arc::new(Lookup(releases)),
+            crate::common::bundles::closed_catalog(acquire.journal.db().db()).await,
         ));
         let rig = JoinRig {
             acquire,

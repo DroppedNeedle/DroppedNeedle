@@ -797,6 +797,7 @@ async fn queued_past_the_wait(
     };
     let payload = || JobPayload {
         release_mbid: None,
+        release_preferred: false,
         tracks_total: None,
         candidates: Vec::new(),
     };
@@ -822,6 +823,7 @@ async fn queued_past_the_wait(
             let picked = PickedTask {
                 task: task("t-unused"),
                 details: TaskDetails::default(),
+                preferred_release: None,
                 source: "soulseek".to_owned(),
                 username: peer,
                 candidate_index: 0,
@@ -1179,7 +1181,11 @@ async fn a_redirected_edition_keeps_its_plan_for_later_targets() {
         },
         calls: 0.into(),
     });
-    let targets = Targets::new(journal.clone(), lookup.clone());
+    let targets = Targets::new(
+        journal.clone(),
+        lookup.clone(),
+        crate::common::bundles::closed_catalog(journal.db().db()).await,
+    );
     let task = journal.read_task(&task_id).await.unwrap().unwrap();
     let wanted = [TrackPosition { disc: 1, track: 2 }];
 
@@ -1195,4 +1201,279 @@ async fn a_redirected_edition_keeps_its_plan_for_later_targets() {
         1,
         "MusicBrainz is asked once"
     );
+}
+
+const PAGE_GROUP: &str = "7a1f0c3e-2b4d-4e6f-8a9b-0c1d2e3f4a5b";
+const PAGE_RELEASE: &str = "8b2a1d4f-3c5e-4f70-9bac-1d2e3f4a5b6c";
+
+/// Catalog settings with MusicBrainz as a mirror on the scripted wire and
+/// the edition preferences reading only when `prefs`.
+struct PageSettings {
+    prefs: bool,
+}
+
+impl droppedneedle_catalog::metadata::upstream::CatalogSettings for PageSettings {
+    fn musicbrainz(
+        &self,
+    ) -> Option<droppedneedle_kernel::runtime_config::sections::MusicBrainzSettings> {
+        use droppedneedle_kernel::runtime_config::sections::{MbSourceMode, MusicBrainzSettings};
+        Some(MusicBrainzSettings {
+            source_mode: MbSourceMode::Mirror,
+            api_url: "http://127.0.0.1:9/mb/ws/2".to_owned(),
+            rate_limit: 0.0,
+            source_id: "test-source".to_owned(),
+            generation: 1,
+            ..MusicBrainzSettings::default()
+        })
+    }
+
+    fn preferences(&self) -> droppedneedle_kernel::runtime_config::sections::UserPreferences {
+        Default::default()
+    }
+
+    fn advanced(&self) -> droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings {
+        droppedneedle_catalog::metadata::upstream::audiodb_off()
+    }
+
+    fn listenbrainz_enabled(&self) -> bool {
+        false
+    }
+
+    fn store_region(&self) -> Option<String> {
+        None
+    }
+
+    fn edition_preferences(&self) -> Option<droppedneedle_library::edition_prefs::Preferences> {
+        self.prefs
+            .then(droppedneedle_library::edition_prefs::Preferences::default)
+    }
+}
+
+/// A catalog over `db` whose MusicBrainz answers one release group with one
+/// release, read through `settings`.
+fn page_catalog(
+    db: &droppedneedle_kernel::db::Db,
+    users: droppedneedle_auth::users::UsersDeps,
+    settings: PageSettings,
+) -> droppedneedle_catalog::metadata::Catalog {
+    use droppedneedle_catalog::metadata::{Catalog, library::LocalCatalog, upstream::Upstream};
+    let wire = Arc::new(droppedneedle_providers::test_support::ScriptedWire::new());
+    wire.answer(
+        &format!("http://127.0.0.1:9/mb/ws/2/release-group/{PAGE_GROUP}"),
+        200,
+        &[("content-type", "application/json")],
+        json!({
+            "id": PAGE_GROUP,
+            "title": "album",
+            "primary-type": "Album",
+            "secondary-types": [],
+            "first-release-date": "1994-08-22",
+            "artist-credit": [{"name": "artist", "joinphrase": "", "artist": {
+                "id": "9c3b2e1f-4d5a-4b6c-8d7e-2f3a4b5c6d7e",
+                "name": "artist", "sort-name": "artist"}}],
+            "releases": [{
+                "id": PAGE_RELEASE,
+                "title": "album",
+                "status": "Official",
+                "date": "1994-08-22",
+                "country": "GB",
+                "media": [{"position": 1, "format": "CD", "track-count": 3}]
+            }],
+            "relations": []
+        })
+        .to_string(),
+    );
+    let listening = droppedneedle_media::playback::listening::ListeningStore::new(
+        db.clone(),
+        users.crypto.clone(),
+        users.clock.clone(),
+    );
+    Catalog::new(
+        Upstream::new(
+            Arc::new(droppedneedle_providers::Providers::unpaced(wire)),
+            Arc::new(settings),
+            users,
+            listening,
+        ),
+        LocalCatalog::new(db.clone()),
+        crate::common::bundles::quiet_page_sources(crate::common::bundles::cover_warm_at(
+            db,
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        )),
+    )
+}
+
+/// The page edition's tracklist; asking for it first writes `meanwhile`
+/// (a task id) a release of its own, as a person's pick landing between
+/// the read and the write would.
+struct PageTracks {
+    meanwhile: Option<(Arc<Journal>, String)>,
+}
+
+impl droppedneedle_acquire::target::lookup::AlbumLookup for PageTracks {
+    fn recording_releases<'a>(
+        &'a self,
+        _recording_mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<
+            Option<Vec<droppedneedle_acquire::target::lookup::ReleaseCandidate>>,
+            droppedneedle_acquire::target::lookup::LookupError,
+        >,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn release<'a>(
+        &'a self,
+        release_mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<
+            Option<droppedneedle_acquire::target::lookup::AlbumRelease>,
+            droppedneedle_acquire::target::lookup::LookupError,
+        >,
+    > {
+        use droppedneedle_acquire::target::lookup::{AlbumRelease, AlbumTrack};
+        Box::pin(async move {
+            if let Some((journal, task_id)) = &self.meanwhile {
+                let task_id = task_id.clone();
+                journal
+                    .run("test.pick", move |store| {
+                        store.set_task_details(
+                            &task_id,
+                            &droppedneedle_acquire::downloads::store::TaskDetails {
+                                release_mbid: Some("rel-picked".to_owned()),
+                                ..Default::default()
+                            },
+                            2.0,
+                        )
+                    })
+                    .await
+                    .unwrap();
+            }
+            Ok((release_mbid == PAGE_RELEASE).then(|| AlbumRelease {
+                id: PAGE_RELEASE.to_owned(),
+                title: "album".to_owned(),
+                release_group_mbid: PAGE_GROUP.to_owned(),
+                artist: "artist".to_owned(),
+                various_artists: false,
+                year: Some(1994),
+                tracks: (1..=3)
+                    .map(|position| AlbumTrack {
+                        disc: 1,
+                        position,
+                        title: format!("track {position}"),
+                        duration_seconds: Some(200.0),
+                        recording_mbid: format!("rec-{position}"),
+                        release_track_mbid: format!("rt-{position}"),
+                    })
+                    .collect(),
+            }))
+        })
+    }
+
+    fn first_release_date<'a>(
+        &'a self,
+        _release_group_mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Option<String>, droppedneedle_acquire::target::lookup::LookupError>,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+/// An album download that asks for no edition prefers the one its album
+/// page shows, kept in its plan with the tracklist. It prefers none while
+/// the library holds the album or the edition preferences do not read, and
+/// a release the task was given meanwhile stands.
+#[tokio::test]
+async fn an_album_asked_without_an_edition_prefers_the_page_edition() {
+    use droppedneedle_acquire::target::Targets;
+
+    let auth = crate::common::auth::AuthRig::new("page-edition").await;
+    let db = AcquireDb::scratch().unwrap();
+    db.add_user("u-ada", "Ada", "user").await.unwrap();
+    let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
+    let seed = |id: &'static str| {
+        let journal = journal.clone();
+        async move {
+            journal
+                .run("test.seed", move |store| {
+                    store.insert_task(
+                        &NewTask {
+                            release_group_mbid: PAGE_GROUP.to_owned(),
+                            ..task(id)
+                        },
+                        1.0,
+                    )
+                })
+                .await
+                .unwrap();
+            journal.read_task(id).await.unwrap().unwrap()
+        }
+    };
+    let plan = |id: &'static str| {
+        let journal = journal.clone();
+        async move {
+            journal
+                .read("test.plan", move |store| store.task_plan(id))
+                .await
+                .unwrap()
+        }
+    };
+    let targets = |prefs: bool, meanwhile: Option<&'static str>| {
+        Targets::new(
+            journal.clone(),
+            Arc::new(PageTracks {
+                meanwhile: meanwhile.map(|id| (journal.clone(), id.to_owned())),
+            }),
+            page_catalog(db.db(), auth.deps.clone(), PageSettings { prefs }),
+        )
+    };
+
+    let row = seed("t-page").await;
+    let target = targets(true, None).target(&row).await.expect("target");
+    assert_eq!(target.tracklist.len(), 3);
+    let kept = plan("t-page").await;
+    assert_eq!(
+        (kept.release_mbid.as_deref(), kept.release_preferred),
+        (Some(PAGE_RELEASE), true)
+    );
+    assert_eq!(kept.expected_tracks.len(), 3);
+
+    let row = seed("t-unread").await;
+    let target = targets(false, None).target(&row).await.expect("target");
+    assert!(target.tracklist.is_empty());
+    assert_eq!(plan("t-unread").await, Default::default());
+
+    let row = seed("t-meanwhile").await;
+    targets(true, Some("t-meanwhile"))
+        .target(&row)
+        .await
+        .expect("target");
+    let kept = plan("t-meanwhile").await;
+    assert_eq!((kept.release_mbid, kept.release_preferred), (None, false));
+
+    db.write("test.seed_held", |tx| {
+        tx.execute_batch(&format!(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
+               VALUES ('ar1', 'A', 'a', 'person', 0, 0);
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+               album_artist_id, grouping_source, created_at, updated_at)
+               VALUES ('al1', 'r1', 'g', 'T', 't', 'ar1', 'automatic', 0, 0);
+             INSERT INTO local_album_external_identities (local_album_id, provider,
+               release_group_mbid, release_mbid, decision_source, selected_at, row_revision)
+               VALUES ('al1', 'musicbrainz', '{PAGE_GROUP}', NULL, 'automatic', 5, 1);
+             UPDATE local_albums SET has_indexed_track = 1 WHERE id = 'al1';"
+        ))?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let row = seed("t-held").await;
+    let target = targets(true, None).target(&row).await.expect("target");
+    assert!(target.tracklist.is_empty());
+    assert_eq!(plan("t-held").await, Default::default());
 }

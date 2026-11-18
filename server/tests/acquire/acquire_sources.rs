@@ -155,7 +155,7 @@ async fn slskd_conforms() {
     let source = Arc::new(SlskdSource::new(
         Arc::new(repo),
         journal.clone(),
-        no_targets(&journal),
+        no_targets(&journal).await,
     ));
     conforms(source, SourceTag::Soulseek, "t-slskd", |_| {}).await;
 }
@@ -237,7 +237,7 @@ async fn sabnzbd_conforms() {
         policy,
         journal.clone(),
         None,
-        no_targets(&journal),
+        no_targets(&journal).await,
     ));
     conforms(source, SourceTag::Usenet, "t-sab", |handle| {
         // SABnzbd finishes the job into its complete folder.
@@ -379,7 +379,7 @@ async fn a_usenet_job_stays_with_the_client_that_took_it() {
         ClientLives::new(&rig.settings),
         dir.join("slskd"),
         journal.clone(),
-        no_targets(&journal),
+        no_targets(&journal).await,
         crate::common::bundles::idle_host_over(journal.db()).await,
     );
     let usenet = || {
@@ -608,7 +608,7 @@ async fn a_usenet_pick_grabs_through_its_indexer() {
         policy,
         journal.clone(),
         None,
-        no_targets(&journal),
+        no_targets(&journal).await,
     );
     source.enqueue("t-grab", 0).await.expect("enqueues");
     assert_eq!(mock.state().add_file_requests.len(), 1);
@@ -745,7 +745,7 @@ async fn a_copy_turned_down_as_not_better_is_not_picked_again() {
         policy,
         journal.clone(),
         None,
-        no_targets(&journal),
+        no_targets(&journal).await,
     );
 
     let picked = source.enqueue("t-next", 0).await.expect("enqueues");
@@ -992,7 +992,7 @@ async fn a_redirect_takes_no_key_elsewhere() {
         ClientLives::new(&settings),
         dir.join("slskd"),
         journal.clone(),
-        no_targets(&journal),
+        no_targets(&journal).await,
         crate::common::bundles::idle_host_over(&db).await,
     );
     let repo = clients
@@ -1299,12 +1299,12 @@ async fn running(host: &PluginHost, name: &str) {
 }
 
 /// The example client as a download source over `journal`.
-fn plugin_source(rig: &PluginRig, journal: Arc<Journal>) -> PluginDownloadSource {
-    plugin_client(rig, "local-folder-client", journal)
+async fn plugin_source(rig: &PluginRig, journal: Arc<Journal>) -> PluginDownloadSource {
+    plugin_client(rig, "local-folder-client", journal).await
 }
 
 /// One running plugin client as a download source over `journal`.
-fn plugin_client(rig: &PluginRig, name: &str, journal: Arc<Journal>) -> PluginDownloadSource {
+async fn plugin_client(rig: &PluginRig, name: &str, journal: Arc<Journal>) -> PluginDownloadSource {
     PluginDownloadSource::new(
         rig.host.clone(),
         format!("plugin:{name}"),
@@ -1316,7 +1316,7 @@ fn plugin_client(rig: &PluginRig, name: &str, journal: Arc<Journal>) -> PluginDo
             auto_accept: 0.70,
             manual_min: 0.50,
         },
-        no_targets(&journal),
+        no_targets(&journal).await,
     )
 }
 
@@ -1333,7 +1333,7 @@ async fn plugins_conform() {
 
     let rig = plugin_rig().await;
     let journal = journal_with_task("t-plugin", "Test Artist", "Fixtures").await;
-    let source = Arc::new(plugin_source(&rig, journal));
+    let source = Arc::new(plugin_source(&rig, journal).await);
     conforms(
         source,
         SourceTag::plugin("local-folder-client"),

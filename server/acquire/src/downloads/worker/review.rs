@@ -173,6 +173,7 @@ impl DownloadWorker {
         };
         let payload = JobPayload {
             release_mbid,
+            release_preferred: false,
             tracks_total: (!target.tracklist.is_empty()).then_some(target.tracklist.len()),
             candidates,
         };

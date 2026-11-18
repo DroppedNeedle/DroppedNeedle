@@ -1671,7 +1671,7 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
         policy,
         journal.clone(),
         None,
-        no_targets(&journal),
+        no_targets(&journal).await,
     );
     let handle = source.enqueue(task_id, 0).await.expect("re-attaches");
     assert_eq!(handle.job_name, job_name);

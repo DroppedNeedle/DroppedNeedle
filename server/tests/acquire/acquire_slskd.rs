@@ -877,7 +877,7 @@ async fn failover_walks_every_peer() {
     let source = SlskdSource::new(
         std::sync::Arc::new(repository(&mock)),
         journal.clone(),
-        no_targets(&journal),
+        no_targets(&journal).await,
     );
 
     let mut peers: Vec<String> = Vec::new();
@@ -1111,7 +1111,7 @@ async fn soulseek_counts_only_readable_files_as_audio() {
     let source = SlskdSource::new(
         Arc::new(repository(&mock)),
         journal.clone(),
-        no_targets(&journal),
+        no_targets(&journal).await,
     );
     let target = SearchTarget {
         artist: "Artist".to_owned(),

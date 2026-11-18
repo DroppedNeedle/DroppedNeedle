@@ -272,6 +272,98 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
     ));
 }
 
+/// A pick from a search that ranked folders against an edition the
+/// album page only prefers starts a download that keeps it as a
+/// preference: in its plan, flagged, and not in its details. A search
+/// for an edition asked for keeps it in the details, a pin.
+#[tokio::test]
+async fn a_pick_keeps_a_preferred_edition_as_a_preference() {
+    const OTHER_GROUP: &str = "6d0b7a1e-0000-4000-8000-0000000000a1";
+    use crate::common::library::TestSql as _;
+    let mock = MockSlskd::start().await.expect("mock starts");
+    mock.script_responses(vec![peer(
+        "complete",
+        "@@music\\MA\\Blue Lines (1991)",
+        &[0, 1, 2, 3],
+    )]);
+    let Rig {
+        journal,
+        staging: _staging,
+        worker: _worker,
+        jobs,
+        events,
+    } = rig(&mock, false).await;
+    let owner = principal("u1");
+    let mut updates = events.subscribe(owner.user_id());
+    let mut picked = Vec::new();
+    // Two albums, so the second pick is not refused as already downloading.
+    for (preferred, group) in [(true, GROUP), (false, OTHER_GROUP)] {
+        let started = jobs
+            .start(
+                &owner,
+                AlbumSearch {
+                    artist_name: "Massive Attack".to_owned(),
+                    album_title: "Blue Lines".to_owned(),
+                    year: Some(1991),
+                    release_group_mbid: Some(group.to_owned()),
+                    release_mbid: Some(RELEASE.to_owned()),
+                },
+            )
+            .await
+            .expect("search starts");
+        let StartOutcome::Searching(job_id) = started else {
+            panic!("nothing was searched: {started:?}");
+        };
+        tokio::time::timeout(crate::common::PATIENCE, async {
+            while jobs
+                .get(&owner, &job_id)
+                .await
+                .expect("job reads")
+                .row
+                .status
+                == JobStatus::Searching
+            {
+                updates.next().await.expect("the hub stays open");
+            }
+        })
+        .await
+        .expect("the search settles");
+        if preferred {
+            journal
+                .db()
+                .db()
+                .run_sql(&format!(
+                    "UPDATE search_jobs SET candidates_blob = \
+                     json_set(candidates_blob, '$.release_preferred', json('true')) \
+                     WHERE id = '{job_id}'"
+                ))
+                .expect("payload marked preferred");
+        }
+        let task_id = jobs
+            .pick(&owner, &job_id, 0, false)
+            .await
+            .expect("pick starts a download");
+        let (details, plan) = journal
+            .read("test.task", move |store| {
+                Ok((store.task_details(&task_id)?, store.task_plan(&task_id)?))
+            })
+            .await
+            .expect("task reads");
+        picked.push((
+            details.release_mbid,
+            plan.release_mbid,
+            plan.release_preferred,
+        ));
+    }
+    assert_eq!(
+        picked,
+        [
+            (None, Some(RELEASE.to_owned()), true),
+            (Some(RELEASE.to_owned()), None, false),
+        ]
+    );
+}
+
 /// Search review: an automatic download with no recommended candidate
 /// waits on its search instead of grabbing, stays parked across passes,
 /// and the owner's pick resumes that same download.
@@ -417,6 +509,7 @@ async fn park_on_search(journal: &Journal, task_id: &'static str, job_id: &str) 
             },
             JobPayload {
                 release_mbid: Some(RELEASE.to_owned()),
+                release_preferred: false,
                 tracks_total: Some(4),
                 candidates: Vec::new(),
             },
@@ -569,6 +662,7 @@ async fn pick_is_refused_while_the_album_downloads() {
             PickedTask {
                 task: task("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
                 details: TaskDetails::default(),
+                preferred_release: None,
                 source: "soulseek".to_owned(),
                 username: Some("complete".to_owned()),
                 candidate_index: 0,
@@ -759,6 +853,7 @@ async fn kept_rig_with(copies: &[Copy], saved: Value) -> KeptRig {
     let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
         journal.clone(),
         Arc::new(albums),
+        crate::common::bundles::closed_catalog(journal.db().db()).await,
     ));
     save_slskd(&settings, &mock.base_url());
     // Each pick is the source's own, on the pass that asks for it.

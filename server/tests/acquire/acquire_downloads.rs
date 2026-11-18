@@ -899,6 +899,7 @@ async fn failing_cleanup_shows_on_service_health_until_it_clears() {
         Arc::new(droppedneedle_acquire::target::Targets::new(
             journal.clone(),
             Arc::new(crate::common::acquire::FixedAlbums::default()),
+            crate::common::bundles::closed_catalog(journal.db().db()).await,
         )),
         Arc::new(droppedneedle_acquire::landing::LandingService::new(
             journal,

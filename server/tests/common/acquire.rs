@@ -73,10 +73,11 @@ impl AlbumLookup for FixedAlbums {
 
 /// Targets MusicBrainz answers nothing for: an album is searched by its
 /// names.
-pub fn no_targets(journal: &Arc<Journal>) -> Arc<Targets> {
+pub async fn no_targets(journal: &Arc<Journal>) -> Arc<Targets> {
     Arc::new(Targets::new(
         journal.clone(),
         Arc::new(FixedAlbums::default()),
+        super::bundles::closed_catalog(journal.db().db()).await,
     ))
 }
 
@@ -196,7 +197,11 @@ pub async fn worker_over(
     let dir = db.path().parent().expect("scratch dir").to_path_buf();
     let platform = super::TestPlatform::on(db.db(), &dir).build().await;
     let (library, _) = super::library::library_at(&platform);
-    let targets = Arc::new(Targets::new(journal.clone(), lookup));
+    let targets = Arc::new(Targets::new(
+        journal.clone(),
+        lookup,
+        super::bundles::closed_catalog(db.db()).await,
+    ));
     let landing = Arc::new(LandingService::new(
         journal.clone(),
         Arc::new(LibraryLanding::new(

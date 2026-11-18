@@ -169,6 +169,7 @@ pub fn acquire_hosted(
     ));
     let mb_source = providers.musicbrainz.live_source(platform.settings.live());
     let ticks = Arc::new(FlowTicks::new(plugins.clone(), platform.events.clone()));
+    let catalog = offline_catalog(&platform.db, users.clone());
     AcquireSetup::build(
         platform,
         users,
@@ -183,6 +184,7 @@ pub fn acquire_hosted(
             release_poll: Arc::new(droppedneedle_acquire::search::live_release_poll(
                 &providers, mb_source,
             )),
+            catalog,
             plugins,
             collections: collections.clone(),
             providers,
@@ -284,6 +286,31 @@ pub fn offline_catalog(db: &Db, users: UsersDeps) -> Catalog {
             Arc::new(droppedneedle_kernel::clock::SystemClock),
         )),
     )
+}
+
+/// [`offline_catalog`] over `db`, with its users built the way the auth
+/// bundle builds them on a platform of their own: nothing is written to
+/// `db` or its settings, and no outside address is open.
+pub async fn closed_catalog(db: &Db) -> Catalog {
+    let own = Db::scratch("closed-catalog").expect("scratch database");
+    let dir = own.path().parent().expect("scratch folder").to_path_buf();
+    let platform = super::TestPlatform::on(&own, &dir).build().await;
+    let auth = droppedneedle_auth::prod::ProdAuth::new(&platform);
+    let setup = droppedneedle_auth::wiring::AuthSetup::build(
+        &platform,
+        auth,
+        &Providers::closed(),
+        Arc::new(
+            droppedneedle_media::remotes::plex::ConfiguredPlexServer::new(
+                platform.http.shared().clone(),
+                platform.settings.live(),
+                droppedneedle_auth::federated::settings::InstallIds::new(platform.settings.clone()),
+            ),
+        ),
+        droppedneedle::bootstrap::sign_in_links(&platform),
+        None,
+    );
+    offline_catalog(db, setup.users)
 }
 
 /// Catalog settings whose MusicBrainz section does not read, with the
