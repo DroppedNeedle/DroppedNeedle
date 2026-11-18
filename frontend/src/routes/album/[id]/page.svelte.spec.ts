@@ -4,9 +4,15 @@ import { toastStore } from '$lib/stores/toast';
 import { apiError, fakeApi, type FakeApi, type RouteData } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 
-const h = vi.hoisted(() => ({ goto: vi.fn() }));
+const h = vi.hoisted(() => ({ goto: vi.fn(), url: new URL('http://localhost/album/x') }));
 
-vi.mock('$app/state', () => ({ page: { url: new URL('http://localhost/album/x') } }));
+vi.mock('$app/state', () => ({
+	page: {
+		get url() {
+			return h.url;
+		}
+	}
+}));
 vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => h.goto(...args) }));
 vi.mock('$lib/features/player/state/player.svelte', () => ({
 	playerStore: {
@@ -21,6 +27,7 @@ vi.mock('$lib/features/player/state/player.svelte', () => ({
 	}
 }));
 
+import { editionSheet } from '$lib/features/library/components/edition/editionSheetState.svelte';
 import AlbumPage from '$lib/features/album/components/ProviderAlbumPage.svelte';
 import AlbumRoute from './+page.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
@@ -98,6 +105,7 @@ function localAlbum(): RouteData<'GET /api/v3/library/albums/{id}'> {
 		art_missing: false,
 		favorite: false,
 		identity_state: 'matched',
+		guess_contradicted: guessContradicted,
 		is_compilation: false,
 		total_duration_seconds: 736,
 		total_size_bytes: 4,
@@ -112,6 +120,7 @@ function removed(id: string): RouteData<'DELETE /api/v3/library/tracks/{id}'> {
 }
 
 let status: (id: string) => Status;
+let guessContradicted: boolean;
 let plan: Plan | null;
 let history: History;
 let editionFetch: Fetch;
@@ -247,6 +256,8 @@ beforeEach(async () => {
 	localStorage.clear();
 	h.goto.mockReset();
 	status = notHeld;
+	guessContradicted = false;
+	h.url = new URL('http://localhost/album/x');
 	plan = null;
 	history = { items: [] };
 	editionFetch = null;
@@ -720,5 +731,60 @@ describe('the page agrees with the edition', () => {
 		const localReads = api.calls('GET /api/v3/library/albums/{id}').map((call) => call.params.id);
 		expect(localReads).toContain(localAlbumId);
 		expect(localReads).not.toContain(albumId);
+	});
+});
+
+describe('a local album opened by its own id', () => {
+	const groupPage = () =>
+		h.goto.mock.calls.some(([to]) => String(to).includes(`/album/${albumId}`));
+
+	beforeEach(() => {
+		api.use({
+			'GET /api/v3/library/albums': { items: [], total: 0, next: null },
+			'GET /api/v3/library/albums/{id}/tracks': {
+				items: songs.map((_, i) => localTrack(i, localAlbumId)),
+				total: songs.length,
+				offset: 0,
+				limit: 500
+			},
+			'GET /api/v3/library/albums/{album_id}/reidentification/releases': {
+				items: [],
+				next_cursor: null,
+				total: 0,
+				artist_query: 'Lumen',
+				title_query: 'Daylight Hours'
+			}
+		});
+	});
+
+	async function renderLocal() {
+		await renderWithQuery(AlbumRoute, { data: { albumId: localAlbumId } });
+		await expect
+			.element(page.getByRole('heading', { name: 'Daylight Hours', level: 1 }))
+			.toBeVisible();
+	}
+
+	it('follows an ordinary match to its release group', async () => {
+		await renderWithQuery(AlbumRoute, { data: { albumId: localAlbumId } });
+		await vi.waitFor(() => expect(groupPage()).toBe(true));
+	});
+
+	it('stays on its own page when its files contradict its guess', async () => {
+		guessContradicted = true;
+		await renderLocal();
+
+		expect(groupPage()).toBe(false);
+	});
+
+	it('opens the edition sheet that Check albums asks for there', async () => {
+		guessContradicted = true;
+		h.url = new URL(`http://localhost/album/${localAlbumId}?edition=choose`);
+		await renderLocal();
+
+		await vi.waitFor(() => expect(editionSheet.open).toBe(true));
+		await expect
+			.element(page.getByRole('dialog', { name: 'Edition of Daylight Hours' }))
+			.toBeVisible();
+		expect(groupPage()).toBe(false);
 	});
 });

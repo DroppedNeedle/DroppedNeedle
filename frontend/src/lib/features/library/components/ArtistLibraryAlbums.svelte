@@ -18,7 +18,7 @@
 	import { getLibraryArtistAlbumsQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import { getArtistOwnedReleasesQuery } from '$lib/features/artist/queries/ArtistQueries.svelte';
 	import type { AlbumView } from '$lib/features/library/queries/types';
-	import { albumHref } from '$lib/utils/entityRoutes';
+	import { libraryAlbumHref } from '$lib/utils/entityRoutes';
 	import { trackCountLabel } from '$lib/utils/trackCount';
 	import { fileOwnedAlbums } from './artistLibrarySections';
 
@@ -107,11 +107,7 @@
 			{:else}
 				{@const album = featured.album}
 				<div class="dn-owned__feature">
-					<a
-						href={albumHref(album.release_group_mbid ?? album.id)}
-						class="dn-owned__cover"
-						aria-label="Open {album.title}"
-					>
+					<a href={libraryAlbumHref(album)} class="dn-owned__cover" aria-label="Open {album.title}">
 						<AlbumImage
 							albumId={album.id}
 							mbid={album.release_group_mbid ?? ''}
@@ -146,9 +142,7 @@
 									onclick={() => onplay?.(album, kind)}>Play album</Button
 								>
 							{/if}
-							<Button variant="outline" href={albumHref(album.release_group_mbid ?? album.id)}
-								>View tracks</Button
-							>
+							<Button variant="outline" href={libraryAlbumHref(album)}>View tracks</Button>
 							{#if canPlay && menu}
 								<ContextMenu
 									items={menu(album, kind)}

@@ -13,6 +13,7 @@ const album: AlbumDetailView = {
 	release_mbid: null,
 	artist_mbid: null,
 	identity_state: 'linked',
+	guess_contradicted: false,
 	track_count: 2,
 	total_duration_seconds: 300,
 	total_size_bytes: 1000,

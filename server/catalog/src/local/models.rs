@@ -36,6 +36,10 @@ pub struct AlbumView {
     pub artist_mbid: Option<String>,
     /// `local_only` or `linked`.
     pub identity_state: String,
+    /// True when the match is a guess its files' tags contradict
+    /// (`NAMED_GROUP_DIFFERS`). It owns no group through that guess, so the
+    /// album opens as its own page, not as `release_group_mbid`'s.
+    pub guess_contradicted: bool,
     /// Streamable tracks on this album.
     pub track_count: u64,
     /// Tracks the album's edition has: the matched MusicBrainz release's
@@ -85,6 +89,7 @@ impl From<(AlbumRecord, bool, bool)> for AlbumView {
             release_mbid: album.release_mbid,
             artist_mbid: album.artist_mbid,
             identity_state: identity_state(album.linked),
+            guess_contradicted: album.guess_contradicted,
             track_count: album.track_count,
             expected_track_count: None,
             total_duration_seconds: album.total_duration_seconds,

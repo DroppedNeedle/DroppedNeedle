@@ -233,7 +233,8 @@ droppedneedle_kernel::sql! {
         a.album_artist_id AS artist_id, \
         ae.release_group_mbid AS release_group_mbid, ae.release_mbid AS release_mbid, \
         rte.provider_artist_id AS artist_mbid, \
-        (ae.local_album_id IS NOT NULL) AS linked, \
+        (ae.local_album_id IS NOT NULL) AS linked, "
+        + (named_group_guess!("a.id")) + " AS guess_contradicted, \
         COUNT(t.id) AS track_count, \
         COALESCE(SUM(t.duration_seconds), 0.0) AS total_duration_seconds, \
         COALESCE(SUM(t.file_size_bytes), 0) AS total_size_bytes, "

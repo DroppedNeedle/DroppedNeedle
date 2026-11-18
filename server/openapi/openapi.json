@@ -37098,6 +37098,7 @@
           "artist_name",
           "artist_id",
           "identity_state",
+          "guess_contradicted",
           "track_count",
           "total_duration_seconds",
           "total_size_bytes",
@@ -37171,6 +37172,10 @@
               "null"
             ],
             "description": "Most common track format, when any track exists."
+          },
+          "guess_contradicted": {
+            "type": "boolean",
+            "description": "True when the match is a guess its files' tags contradict\n(`NAMED_GROUP_DIFFERS`). It owns no group through that guess, so the\nalbum opens as its own page, not as `release_group_mbid`'s."
           },
           "id": {
             "type": "string",

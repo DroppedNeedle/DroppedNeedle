@@ -22,6 +22,7 @@ const album: AlbumView = {
 	release_mbid: null,
 	artist_mbid: null,
 	identity_state: 'local_only',
+	guess_contradicted: false,
 	track_count: 12,
 	total_duration_seconds: 3200,
 	total_size_bytes: 1048576,

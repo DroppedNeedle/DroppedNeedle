@@ -581,6 +581,57 @@ async fn album_hits_say_when_art_is_known_missing() {
     );
 }
 
+/// A library album hit names its release group, except a guess its files'
+/// tags contradict: that one owns no group, so it opens as itself.
+#[tokio::test]
+async fn album_hits_give_no_group_for_a_guess_the_files_contradict() {
+    let (app, app_db, _held) = authed_app().await;
+    seed_track(
+        &app_db,
+        "t-gulag",
+        "album-gulag",
+        "Brandenburg",
+        "Gulag Orkestar",
+        "indexed",
+    );
+    let (matched, guessed) = (
+        "0a0b0c0d-0001-4000-8000-000000000001",
+        "0a0b0c0d-0001-4000-8000-000000000002",
+    );
+    app_db.exec(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, decision_source, selected_at) VALUES \
+         ('album-renaissance', 'musicbrainz', ?1, 'automatic', 0), \
+         ('album-gulag', 'musicbrainz', ?2, 'automatic', 0)",
+        rusqlite::params![matched, guessed],
+    );
+    app_db.exec(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         candidates_json, updated_at) VALUES \
+         ('album-gulag', 'unconfirmed', 'NAMED_GROUP_DIFFERS', '[]', 0)",
+        [],
+    );
+
+    let mut groups = Vec::new();
+    for query in ["renaissance", "gulag"] {
+        let uri = format!("/api/v3/search?q={query}&scope=library");
+        let (status, _, bytes) = call(app.clone(), Method::GET, &uri, Some(TEST_TOKEN), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let hit = json(&bytes)["albums"][0].clone();
+        groups.push((
+            hit["id"].as_str().unwrap().to_owned(),
+            hit["musicbrainz_id"].clone(),
+        ));
+    }
+    assert_eq!(
+        groups,
+        vec![
+            ("album-renaissance".to_owned(), serde_json::json!(matched)),
+            ("album-gulag".to_owned(), serde_json::Value::Null),
+        ]
+    );
+}
+
 /// Insert one track; `availability` other than `indexed` must never match.
 fn seed_track(
     app_db: &Path,

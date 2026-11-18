@@ -5,7 +5,7 @@
 	import LibraryFormatBadge from './LibraryFormatBadge.svelte';
 	import LocalIdentityBadge from './LocalIdentityBadge.svelte';
 	import type { AlbumView } from '$lib/features/library/queries/types';
-	import { albumHref } from '$lib/utils/entityRoutes';
+	import { libraryAlbumHref } from '$lib/utils/entityRoutes';
 	import { trackCountLabel } from '$lib/utils/trackCount';
 
 	interface Props {
@@ -15,7 +15,7 @@
 	}
 
 	let { album, kind }: Props = $props();
-	let href = $derived(albumHref(album.release_group_mbid ?? album.id));
+	let href = $derived(libraryAlbumHref(album));
 </script>
 
 <MediaTile

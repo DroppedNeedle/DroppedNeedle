@@ -10493,6 +10493,12 @@ export interface components {
             favorite: boolean;
             /** @description Most common track format, when any track exists. */
             format?: string | null;
+            /**
+             * @description True when the match is a guess its files' tags contradict
+             *     (`NAMED_GROUP_DIFFERS`). It owns no group through that guess, so the
+             *     album opens as its own page, not as `release_group_mbid`'s.
+             */
+            guess_contradicted: boolean;
             /** @description Local album id. */
             id: string;
             /** @description `local_only` or `linked`. */

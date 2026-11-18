@@ -226,6 +226,7 @@ pub(crate) fn album_row(row: &Row<'_>) -> rusqlite::Result<AlbumRecord> {
         release_mbid: row.get("release_mbid")?,
         artist_mbid: row.get("artist_mbid")?,
         linked: row.get("linked")?,
+        guess_contradicted: row.get("guess_contradicted")?,
         track_count: unsigned(row.get("track_count")?),
         total_duration_seconds: row.get("total_duration_seconds")?,
         total_size_bytes: row.get("total_size_bytes")?,

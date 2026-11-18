@@ -29,7 +29,10 @@
 		statusSettled && !heldByAnotherAlbum ? data.albumId : ''
 	);
 	const localAlbum = $derived(localQuery.data);
-	const providerAlbumId = $derived(localAlbum?.release_group_mbid ?? null);
+	// A guess its files contradict owns no group: the album is its own page.
+	const providerAlbumId = $derived(
+		localAlbum && !localAlbum.guess_contradicted ? (localAlbum.release_group_mbid ?? null) : null
+	);
 	const matchedElsewhere = $derived(providerAlbumId !== null && providerAlbumId !== data.albumId);
 	// An edition chosen in the sheet can match a local album to a release
 	// group; the page follows it there once the sheet is closed.

@@ -8,6 +8,7 @@
 	import { setQueueMutationToastsSuppressed } from '$lib/features/player/state/playerUtils';
 	import { deckFocus } from '$lib/features/player/state/deckFocus.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import { libraryAlbumHref } from '$lib/utils/entityRoutes';
 	import { formatBytes } from '$lib/utils/formatting';
 	import type { CrateTrack } from '$lib/features/library/queries/types';
 	import type { QueueItem } from '$lib/features/player/playback/types';
@@ -385,9 +386,7 @@
 			>
 				<MediaTile
 					title={album.title}
-					href={isMbid(album.release_group_mbid)
-						? withBasePath(`/album/${album.release_group_mbid}`)
-						: undefined}
+					href={isMbid(album.release_group_mbid) ? libraryAlbumHref(album) : undefined}
 					class="w-full"
 				>
 					{#snippet art()}

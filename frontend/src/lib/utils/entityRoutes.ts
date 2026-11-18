@@ -9,6 +9,20 @@ export function artistHref(id: string): string {
 	return withBasePath(`/artist/${encodeURIComponent(id)}`);
 }
 
+/**
+ * A library album's page: the release group it owns, else its own page. A
+ * guess its files contradict owns no group, so it opens as itself.
+ */
+export function libraryAlbumHref(album: {
+	id: string;
+	release_group_mbid?: string | null;
+	guess_contradicted: boolean;
+}): string {
+	return albumHref(
+		album.release_group_mbid && !album.guess_contradicted ? album.release_group_mbid : album.id
+	);
+}
+
 export function localAlbumHref(id: string): string {
 	return albumHref(id);
 }

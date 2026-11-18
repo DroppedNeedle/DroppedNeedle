@@ -7,7 +7,7 @@
 	import { buildDiscoveryQueueFromLocal } from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import type { TrackView } from '$lib/features/library/queries/types';
-	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
+	import { artistHref, libraryAlbumHref } from '$lib/utils/entityRoutes';
 	import { withBasePath } from '$lib/utils/basePath';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
@@ -221,7 +221,7 @@
 						</div>
 						{#each results.albums as album (album.id)}
 							<a
-								href={albumHref(album.release_group_mbid ?? album.id)}
+								href={libraryAlbumHref(album)}
 								class="flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-base-content/5"
 							>
 								<div class="h-10 w-10 shrink-0 overflow-hidden rounded-md">

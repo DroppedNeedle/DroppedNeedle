@@ -7,7 +7,7 @@
 	import ArtistAppearancesSectionSkeleton from './ArtistAppearancesSectionSkeleton.svelte';
 	import { getLibraryArtistAppearancesQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import { ApiError } from '$lib/api/errors';
-	import { albumHref } from '$lib/utils/entityRoutes';
+	import { libraryAlbumHref } from '$lib/utils/entityRoutes';
 
 	interface Props {
 		artistId: string;
@@ -81,7 +81,7 @@
 			{#each appearances as appearance (appearance.album.id)}
 				<article class="dn-appear__album">
 					<a
-						href={albumHref(appearance.album.release_group_mbid ?? appearance.album.id)}
+						href={libraryAlbumHref(appearance.album)}
 						class="dn-appear__cover"
 						aria-label={`Open ${appearance.album.title}`}
 					>
@@ -98,9 +98,8 @@
 					</a>
 
 					<div class="min-w-0">
-						<a
-							href={albumHref(appearance.album.release_group_mbid ?? appearance.album.id)}
-							class="dn-appear__album-title">{appearance.album.title}</a
+						<a href={libraryAlbumHref(appearance.album)} class="dn-appear__album-title"
+							>{appearance.album.title}</a
 						>
 						<p class="mt-0.5 truncate font-mono text-xs text-muted">
 							{appearance.album.artist_name || 'Unknown album artist'}

@@ -30,6 +30,7 @@ const album: RouteData<'GET /api/v3/library/albums/{id}'> = {
 	artist_id: 'artist-lead',
 	artist_name: 'Lead Band',
 	identity_state: 'local_only',
+	guess_contradicted: false,
 	is_compilation: false,
 	track_count: 2,
 	total_duration_seconds: 400,

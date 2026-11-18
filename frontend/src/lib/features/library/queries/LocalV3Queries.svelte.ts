@@ -26,6 +26,7 @@ export type AlbumCardV3 = Pick<
 	| 'artist_name'
 	| 'artist_mbid'
 	| 'release_group_mbid'
+	| 'guess_contradicted'
 	| 'year'
 	| 'track_count'
 	| 'total_size_bytes'
@@ -42,6 +43,7 @@ function toCard(album: AlbumView): AlbumCardV3 {
 		artist_name: album.artist_name,
 		artist_mbid: album.artist_mbid,
 		release_group_mbid: album.release_group_mbid,
+		guess_contradicted: album.guess_contradicted,
 		year: album.year,
 		track_count: album.track_count,
 		total_size_bytes: album.total_size_bytes,

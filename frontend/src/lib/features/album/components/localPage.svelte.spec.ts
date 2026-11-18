@@ -21,6 +21,7 @@ const album: RouteData<'GET /api/v3/library/albums/{id}'> = {
 	artist_id: 'local-artist-1',
 	artist_name: 'Local Artist',
 	identity_state: 'local_only',
+	guess_contradicted: false,
 	is_compilation: false,
 	track_count: 1,
 	total_duration_seconds: 181,

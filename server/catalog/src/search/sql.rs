@@ -9,7 +9,7 @@ use droppedneedle_kernel::db::statement::ListLen;
 use crate::local::sql::{
     TRACK_TEXT_MATCH, TRACK_WORD_LIKE, musicbrainz, owned_album, owned_artist, track_codec,
 };
-use droppedneedle_library::recording_mbid;
+use droppedneedle_library::{named_group_guess, recording_mbid};
 
 droppedneedle_kernel::sql! {
     /// One page of artist hits: live rows whose folded name contains the
@@ -40,11 +40,15 @@ droppedneedle_kernel::sql! {
         disambiguation: Option<String>,
         owned: bool,
     }
-    /// One album page's columns and the rows it reads.
+    /// One album page's columns and the rows it reads. A guess its files
+    /// contradict gives no group: the hit opens as the album itself.
     fragment ALBUM_START = (concat!(
         "SELECT b.id AS id, b.title AS title, b.title_folded AS title_folded, \
          b.album_artist_name AS album_artist_name, b.year AS year, \
-         e.release_group_mbid AS mbid, (w.local_album_id IS NOT NULL) AS own_art \
+         CASE WHEN ",
+        named_group_guess!("b.id"),
+        " THEN NULL ELSE e.release_group_mbid END AS mbid, \
+         (w.local_album_id IS NOT NULL) AS own_art \
          FROM local_albums b \
          LEFT JOIN local_album_artwork w ON w.local_album_id = b.id \
          AND w.source IN ('folder','embedded') \
