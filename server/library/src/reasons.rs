@@ -111,6 +111,12 @@ pub const OPERATION_CHANGED: Reason = reason(
     "The operation changed since you last loaded it.",
     "Reload the operation and try again.",
 );
+// Forbidden.
+pub const LEAVE_UNMANAGED_UNDO_NEEDS_ADMIN: Reason = reason(
+    "FORBIDDEN",
+    "Only an admin can undo \"Leave this album unmanaged\".",
+    "Ask an admin to undo it.",
+);
 pub const UNDO_STALE: Reason = reason(
     STALE,
     "The album's match changed after the automatic choice, so undoing it would bring back an outdated match.",

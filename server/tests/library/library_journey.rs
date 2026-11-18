@@ -8559,8 +8559,10 @@ async fn custom_edition_is_sealed_on_the_album_and_undone() {
 /// "Leave unmanaged" made directly on an automatically matched album: a
 /// stale revision changes nothing; otherwise the release goes, the group
 /// stays as the person's choice, the album is held as their choice and a
-/// queued placement is dropped. Undo brings the release and placements
-/// back and lifts the hold, or keeps a hold the person had set before.
+/// queued placement is dropped. Only an admin's Undo lifts it, as only an
+/// admin may "Manage it again"; a trusted user's is refused and changes
+/// nothing. Undo brings the release and placements back and lifts the
+/// hold, or keeps a hold the person had set before.
 /// "Manage it again" lifts it too.
 #[tokio::test]
 async fn leave_unmanaged_on_the_album_and_undo() {
@@ -8663,6 +8665,35 @@ async fn leave_unmanaged_on_the_album_and_undo() {
     );
     assert_eq!(catalog_actions(&db, &album, "leave_unmanaged"), 1);
 
+    // A trusted user may not lift it.
+    let trusted = app.login_user("tris").await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            &format!("/api/v3/admin/users/{}/role", trusted.user_id),
+            &headers,
+            Some(json!({"role": "trusted"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("{edition}/undo"),
+            &[("authorization", trusted.authorization.as_str())],
+            Some(json!({
+                "expected_identity_revision": edition_revision(app, &headers, &album).await,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"]["code"], json!("FORBIDDEN"));
+    assert_eq!(identity(), left);
+    assert_eq!(
+        management_hold(app, &headers, &album).await["kind"],
+        json!("your_choice")
+    );
+
     // Undo: the release and its placements are back, the hold is lifted.
     let (status, body) = app
         .call(
@@ -8680,8 +8711,9 @@ async fn leave_unmanaged_on_the_album_and_undo() {
     assert_eq!(match_state().as_deref(), Some("unconfirmed"));
     assert_eq!(management_hold(app, &headers, &album).await, Value::Null);
 
-    // A hold the person set before stays through the undo, and "Manage it
-    // again" lifts it.
+    // A hold the person set before stays through the undo, which a trusted
+    // user may then make since it lifts nothing, and "Manage it again"
+    // lifts it.
     app.seed_with(EXCLUDE_BY_HAND, [&album]).await;
     let (status, body) = app
         .call(
@@ -8696,7 +8728,7 @@ async fn leave_unmanaged_on_the_album_and_undo() {
         .call(
             "POST",
             &format!("{edition}/undo"),
-            &headers,
+            &[("authorization", trusted.authorization.as_str())],
             Some(json!({
                 "expected_identity_revision": edition_revision(app, &headers, &album).await,
             })),
@@ -19536,7 +19568,7 @@ async fn an_approved_release_is_placed_and_its_undo_survives() {
     }
 
     crate::common::library::operations(&library)
-        .undo_edition_choice(&album, shown_revision(&library, &album), "curator")
+        .undo_edition_choice(&album, shown_revision(&library, &album), "curator", None)
         .expect("the approval's undo still applies");
     let undone = choice_row(&db, &album);
     assert_eq!(
@@ -19610,7 +19642,7 @@ async fn an_approved_release_that_is_not_listed_stays_chosen() {
         Some("CHOSEN_EDITION_NOT_LISTED")
     );
     crate::common::library::operations(&library)
-        .undo_edition_choice(&album, shown_revision(&library, &album), "curator")
+        .undo_edition_choice(&album, shown_revision(&library, &album), "curator", None)
         .expect("the approval's undo still applies");
 }
 
@@ -24869,7 +24901,7 @@ async fn a_v2_carried_group_only_match_gets_the_edition_its_files_fit() {
 
     // Undo on the album page takes it back, and nothing fills it again.
     crate::common::library::operations(&library)
-        .undo_edition_choice(&c, shown_revision(&library, &c), "curator")
+        .undo_edition_choice(&c, shown_revision(&library, &c), "curator", None)
         .expect("the found edition can be undone");
     let group_only = Some((
         Some(editions[0].release_group_id.clone()),

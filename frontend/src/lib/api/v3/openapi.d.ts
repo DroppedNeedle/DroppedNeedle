@@ -32691,7 +32691,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Curator role required */
+            /** @description Curator role required, or admin role to undo "Leave this album unmanaged" (FORBIDDEN) */
             403: {
                 headers: {
                     [name: string]: unknown;

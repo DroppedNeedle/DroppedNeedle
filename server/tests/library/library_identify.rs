@@ -4349,7 +4349,7 @@ async fn a_new_guess_never_takes_an_earlier_guess_revision() {
 
     for refused in [
         operations.confirm_match("album-1", earlier, "curator-1"),
-        operations.undo_edition_choice("album-1", earlier, "curator-1"),
+        operations.undo_edition_choice("album-1", earlier, "curator-1", None),
     ] {
         assert!(
             matches!(

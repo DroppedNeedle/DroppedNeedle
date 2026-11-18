@@ -23,6 +23,7 @@ use crate::reasons;
 use crate::reidentify::candidates::evaluation;
 use crate::reidentify::models::ReidentificationCandidate;
 use crate::reidentify::store;
+use droppedneedle_auth::Admin;
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_providers::RequestPriority;
 
@@ -499,16 +500,23 @@ impl Operations {
     }
 
     /// Take back the album's last edition change, decided on the album's
-    /// `expected_identity_revision`. Blocking.
+    /// `expected_identity_revision`. Lifting a "leave unmanaged" that way
+    /// needs an admin, as "Manage it again" does. Blocking.
     pub fn undo_edition_choice(
         &self,
         album_id: &str,
         expected_identity_revision: i64,
         actor: &str,
+        admin: Option<&Admin>,
     ) -> Result<(), OperationError> {
         self.db
             .write_blocking(Lane::Foreground, "operations.undo_edition_choice", |tx| {
                 choice::guard_revision(tx, album_id, expected_identity_revision)?;
+                if admin.is_none() && choice::undo_lifts_exclusion(tx, album_id)? {
+                    return Err(OperationError::Forbidden(
+                        reasons::LEAVE_UNMANAGED_UNDO_NEEDS_ADMIN,
+                    ));
+                }
                 choice::undo(tx, album_id, actor, self.clock.now_secs())
             })
     }

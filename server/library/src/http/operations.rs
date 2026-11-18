@@ -62,6 +62,7 @@ impl From<OperationError> for ApiError {
             OperationError::NotFound(reason) => refused(StatusCode::NOT_FOUND, reason),
             OperationError::Invalid(reason) => refused(StatusCode::BAD_REQUEST, reason),
             OperationError::Conflict(reason) => refused(StatusCode::CONFLICT, reason),
+            OperationError::Forbidden(reason) => refused(StatusCode::FORBIDDEN, reason),
             OperationError::Unavailable(cause) => ApiError::unavailable(
                 Unavailable::Provider {
                     provider: "musicbrainz",

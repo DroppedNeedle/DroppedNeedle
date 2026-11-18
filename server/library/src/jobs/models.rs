@@ -54,6 +54,8 @@ pub enum OperationError {
     /// A valid request against the wrong state, or against a job or album
     /// that moved since the caller read it.
     Conflict(Reason),
+    /// The caller's role does not allow this change.
+    Forbidden(Reason),
     /// MusicBrainz could not answer; the cause is for the log.
     Unavailable(String),
     /// A store fault; the cause is for the log.
@@ -66,7 +68,10 @@ pub enum OperationError {
 impl std::fmt::Display for OperationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotFound(reason) | Self::Invalid(reason) | Self::Conflict(reason) => {
+            Self::NotFound(reason)
+            | Self::Invalid(reason)
+            | Self::Conflict(reason)
+            | Self::Forbidden(reason) => {
                 write!(f, "{}: {}", reason.code, reason.message)
             }
             Self::Unavailable(cause) | Self::Store(cause) | Self::Busy(cause) => {

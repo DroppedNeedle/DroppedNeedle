@@ -382,6 +382,35 @@ pub(crate) fn carry_undo(
     Ok(())
 }
 
+impl HoldChange {
+    /// The change altered the "leave unmanaged" row and it is still as the
+    /// change left it, so undo puts the earlier one back.
+    fn puts_back_exclusion(&self, current: &Hold) -> bool {
+        self.before.exclusion != self.after.exclusion && current.exclusion == self.after.exclusion
+    }
+}
+
+/// Whether taking back the album's last edition change would lift a
+/// "leave unmanaged", which only an admin may do. False for an undo
+/// [`undo`] refuses as stale.
+pub fn undo_lifts_exclusion(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
+    let kept = conn
+        .prepare_cached(sql::CHOICE_UNDO.text())?
+        .query_row(params![album_id], sql::ChoiceUndoRow::read)
+        .optional()?;
+    let Some(kept) = kept else {
+        return Ok(false);
+    };
+    if kept.expected_identity_revision != identity_revision(conn, album_id)? {
+        return Ok(false);
+    }
+    let Some(held) = kept.prior_hold_json else {
+        return Ok(false);
+    };
+    let change: HoldChange = from_json(&held)?;
+    Ok(change.before.exclusion.is_none() && change.puts_back_exclusion(&hold(conn, album_id)?))
+}
+
 /// Put back each part of the hold `change` altered, while that part is
 /// still as the change left it.
 fn restore_hold(
@@ -393,7 +422,7 @@ fn restore_hold(
 ) -> rusqlite::Result<()> {
     let current = hold(tx, album_id)?;
     let (before, after) = (&change.before, &change.after);
-    if before.exclusion != after.exclusion && current.exclusion == after.exclusion {
+    if change.puts_back_exclusion(&current) {
         match &before.exclusion {
             None => {
                 tx.prepare_cached(sql::DELETE_EXCLUSION.text())?

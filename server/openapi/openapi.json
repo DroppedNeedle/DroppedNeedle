@@ -10694,7 +10694,7 @@
             }
           },
           "403": {
-            "description": "Curator role required",
+            "description": "Curator role required, or admin role to undo \"Leave this album unmanaged\" (FORBIDDEN)",
             "content": {
               "application/json": {
                 "schema": {

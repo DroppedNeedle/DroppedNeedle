@@ -791,7 +791,7 @@ pub async fn confirm_edition(
     responses(
         (status = 200, description = "The album's edition", body = EditionStatusView),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Curator role required"),
+        (status = 403, description = "Curator role required, or admin role to undo \"Leave this album unmanaged\" (FORBIDDEN)"),
         (status = 404, description = "No change to take back"),
         (status = 409, description = "The edition changed since it was read, or again since the change (STALE_REVISION)"),
     )
@@ -805,7 +805,8 @@ pub async fn undo_edition(
     let ops = services.operations.clone();
     let (album, user) = (album_id.clone(), caller.user_id().to_owned());
     let expected = body.expected_identity_revision;
-    blocking(move || ops.undo_edition_choice(&album, expected, &user)).await?;
+    let admin = Admin::try_from(caller.principal().clone()).ok();
+    blocking(move || ops.undo_edition_choice(&album, expected, &user, admin.as_ref())).await?;
     Ok(Json(
         status_of(&services, &album_id, caller.user_id()).await?,
     ))

@@ -597,6 +597,10 @@ impl RequestsService {
                 return Ok(None);
             }
             Err(OperationError::Store(cause)) => return Err(RequestsError::internal(&cause)),
+            // Planning refuses no one by role.
+            Err(error @ OperationError::Forbidden(_)) => {
+                return Err(RequestsError::internal(&error));
+            }
             Err(OperationError::Busy(operation)) => {
                 return Err(RequestsError::Busy { operation });
             }

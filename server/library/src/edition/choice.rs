@@ -30,6 +30,7 @@ pub use crate::identity::remap::{
     RemapOrigin, drop_remap, give_up_remap, keep_unplaceable_choice, next_remap, queue_placement,
     queue_remap, remap_still_holds, remap_still_wanted, retry_remap,
 };
+pub(crate) use crate::identity::undo_lifts_exclusion;
 
 impl From<IdentityError> for OperationError {
     fn from(error: IdentityError) -> Self {
