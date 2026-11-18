@@ -108,6 +108,13 @@ describe('the edition plate', () => {
 			expect(plateCopy(status({ state: 'confirmed' }), null, 4).chip?.label).toBe(
 				'Picked by DroppedNeedle'
 			);
+			const carried = status({
+				reason: { code: 'CARRIED_EDITION_FOUND', message: 'Found.', action: '' }
+			});
+			expect(plateCopy(carried, null, 4).chip).toEqual({
+				label: 'Picked by DroppedNeedle',
+				kind: 'picked'
+			});
 			const guess = plateCopy(status({ state: 'unconfirmed' }), plan({ files: 4, kept: 4 }), 4);
 			expect(guess.chip?.label).toBe('Best guess');
 			expect(guess.disc.tone).toBe('warning');

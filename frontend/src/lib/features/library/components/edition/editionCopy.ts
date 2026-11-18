@@ -149,6 +149,10 @@ export interface PlateCopy {
 }
 
 function chipFor(status: EditionStatus): PlateCopy['chip'] {
+	// An edition the app found for an album v2 carried over without one.
+	if (status.reason.code === 'CARRIED_EDITION_FOUND') {
+		return { label: 'Picked by DroppedNeedle', kind: 'picked' };
+	}
 	if (status.state === 'chosen') return { label: 'Your choice', kind: 'yours' };
 	if (status.state === 'confirmed') return { label: 'Picked by DroppedNeedle', kind: 'picked' };
 	if (status.state === 'unconfirmed') return { label: 'Best guess', kind: 'guess' };
