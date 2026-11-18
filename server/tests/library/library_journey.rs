@@ -11234,14 +11234,20 @@ async fn library_journey_identity_repair_and_preparation() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(rig.identify_store.album_identity(&album).unwrap().is_none());
-    // The undo puts back the match state the acceptance replaced.
-    assert_eq!(match_state().as_deref(), Some("unmatched:NO_CANDIDATE"));
+    // The undo leaves no match, so the album is marked undone.
+    assert_eq!(
+        match_state().as_deref(),
+        Some("unmatched:AUTOMATIC_EDITION_UNDONE")
+    );
 
     // The undo stays undone: the next preparation does not accept again.
     discard_preparation(app, &headers, &auto_path).await;
     let (_, item) = prepare_identities(app, &headers, "prep-after-undo").await;
     held_by_person(&item, "undone");
-    assert_eq!(match_state().as_deref(), Some("unmatched:NO_CANDIDATE"));
+    assert_eq!(
+        match_state().as_deref(),
+        Some("unmatched:AUTOMATIC_EDITION_UNDONE")
+    );
     rig.stop().await;
 }
 

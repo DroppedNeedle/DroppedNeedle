@@ -974,11 +974,14 @@ droppedneedle_kernel::sql! {
              ON CONFLICT (local_album_id) DO UPDATE SET state = 'unmatched', \
              reason_code = excluded.reason_code, release_mbid = NULL, candidates_json = '[]', \
              updated_at = excluded.updated_at";
-    /// Mark the album (`?1`) unmatched with reason `?2`, at `?3`, unless it
-    /// carries a flag already.
-    pub(super) MARK_UNMATCHED_UNLESS_FLAGGED = "INSERT INTO library_album_match_state \
+    /// Mark the album (`?1`) unmatched with reason `?2`, at `?3`, keeping
+    /// the candidates of a flag it carries already.
+    pub(super) MARK_UNMATCHED_KEEPING_CANDIDATES = "INSERT INTO library_album_match_state \
              (local_album_id, state, reason_code, release_mbid, candidates_json, updated_at) \
-             VALUES (?1, 'unmatched', ?2, NULL, '[]', ?3) ON CONFLICT (local_album_id) DO NOTHING";
+             VALUES (?1, 'unmatched', ?2, NULL, '[]', ?3) \
+             ON CONFLICT (local_album_id) DO UPDATE SET state = 'unmatched', \
+             reason_code = excluded.reason_code, release_mbid = NULL, \
+             updated_at = excluded.updated_at";
     /// Clear the album's (`?1`) match flag when its reason is `?2`.
     pub(super) CLEAR_FLAG_WITH_REASON = "DELETE FROM library_album_match_state \
              WHERE local_album_id = ?1 AND reason_code = ?2";

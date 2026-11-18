@@ -726,11 +726,11 @@ pub fn undo_automatic(
         }
         None => {
             // The row is the automatic one (`fresh`); a carried undo stays,
-            // keyed to the album having no match. A flag says so (the one put
-            // back, else a new one), so the files' tags do not bring the
-            // match back.
+            // keyed to the album having no match. The album is marked undone
+            // whatever flag was put back (its candidates stay), so neither
+            // the files' tags nor identification bring the match back.
             delete_album_row(tx, album_id, Rows::Revisable)?;
-            tx.prepare_cached(sql::MARK_UNMATCHED_UNLESS_FLAGGED.text())?
+            tx.prepare_cached(sql::MARK_UNMATCHED_KEEPING_CANDIDATES.text())?
                 .execute(params![
                     album_id,
                     "AUTOMATIC_EDITION_UNDONE",

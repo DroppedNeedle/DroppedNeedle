@@ -4687,17 +4687,10 @@ async fn person_commands_leave_what_their_rule_says() {
     );
 
     // An automatic edition with nothing before it is undone: no undo row
-    // is left, an older choice undo included, and an acceptance's own undo
-    // gives its match state back. With none to give back, the album is
-    // flagged unmatched.
-    for (album, choice_undo, flag) in [
-        (
-            "c",
-            5,
-            vec!["flag unmatched AUTOMATIC_EDITION_UNDONE".to_owned()],
-        ),
-        ("d", 2, vec!["flag unconfirmed OLD".to_owned()]),
-    ] {
+    // is left, an older choice undo included, and the album is marked
+    // undone, even when an acceptance's own undo gave a flag back (its
+    // candidates stay).
+    for (album, choice_undo, candidates) in [("c", 5, "[]"), ("d", 2, "[1]")] {
         rig.seed_album(&album_facts(album, &[(format!("{album}1").as_str(), None)]));
         rig.run(&format!(
             "INSERT INTO local_album_external_identities (local_album_id, provider, \
@@ -4714,7 +4707,7 @@ async fn person_commands_leave_what_their_rule_says() {
              INSERT INTO library_edition_choice_undo (id, local_album_id, action_id, \
              prior_tracks_json, prior_match_state_json, expected_identity_revision, created_at) \
              VALUES ('choice-{album}', '{album}', 'accept-{album}', '[]', \
-             '{{\"state\":\"unconfirmed\",\"reason_code\":\"OLD\",\"candidates_json\":\"[]\"}}', \
+             '{{\"state\":\"unconfirmed\",\"reason_code\":\"OLD\",\"candidates_json\":\"[1]\"}}', \
              {choice_undo}, 0);"
         ));
         let undone = rig.change(|tx| {
@@ -4726,14 +4719,22 @@ async fn person_commands_leave_what_their_rule_says() {
             vec![format!("{undone:?}")]
                 .into_iter()
                 .chain(without_reviews(album))
+                .chain(rig.texts(
+                    "SELECT 'candidates ' || candidates_json FROM library_album_match_state \
+                     WHERE local_album_id = ?1",
+                    album,
+                ))
                 .collect(),
-            vec![format!(
-                "{:?}",
-                Ok::<_, String>(droppedneedle_library::identity::AutomaticUndone::ClearedToReview)
-            )]
-            .into_iter()
-            .chain(flag)
-            .collect(),
+            vec![
+                format!(
+                    "{:?}",
+                    Ok::<_, String>(
+                        droppedneedle_library::identity::AutomaticUndone::ClearedToReview
+                    )
+                ),
+                "flag unmatched AUTOMATIC_EDITION_UNDONE".to_owned(),
+                format!("candidates {candidates}"),
+            ],
         );
     }
 
