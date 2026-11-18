@@ -24412,6 +24412,96 @@
         ]
       }
     },
+    "/api/v3/playlists/{playlist_id}/export": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Export one playlist as extended M3U or CSV.",
+        "description": "Entries with no local file are left out of either format; the\n`X-DroppedNeedle-Skipped-Tracks` header counts them.",
+        "operationId": "export_playlist_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "`m3u8` (default) or `csv`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ExportFormat"
+            }
+          },
+          {
+            "name": "prefix",
+            "in": "query",
+            "description": "Added before each entry's path, for a player that stores music under\na folder of its own. At most 200 characters; no control characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The playlist as extended M3U (`audio/x-mpegurl`) or CSV (`text/csv; charset=utf-8`), named in Content-Disposition",
+            "headers": {
+              "x-droppedneedle-skipped-tracks": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "description": "Entries left out because they have no local file"
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown format",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown playlist id, or one the caller may not read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/playlists/{playlist_id}/resolve-sources": {
       "post": {
         "tags": [
@@ -46122,6 +46212,14 @@
           "one_disc",
           "two_discs",
           "name_shared"
+        ]
+      },
+      "ExportFormat": {
+        "type": "string",
+        "description": "File a playlist export is written as.",
+        "enum": [
+          "m3u8",
+          "csv"
         ]
       },
       "ExtensionCase": {

@@ -47,6 +47,7 @@ pub fn routes() -> Routes<CollectionsState> {
             update_playlist_handler,
             delete_playlist_handler
         ))
+        .user(routes!(export_playlist_handler))
         .user(routes!(set_visibility_handler))
         .user(routes!(add_tracks_handler))
         .user(routes!(remove_tracks_handler))

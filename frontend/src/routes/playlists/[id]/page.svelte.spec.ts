@@ -12,7 +12,8 @@ const mockForgetSources = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
 
 vi.mock('$lib/api/playlists', () => ({
 	isRedactedPlaylist: (p: { is_redacted?: boolean } | null | undefined) => p?.is_redacted === true,
-	requestMissingTracks: vi.fn()
+	requestMissingTracks: vi.fn(),
+	downloadPlaylistExport: vi.fn()
 }));
 
 // The detail page consumes the user-scoped TanStack detail query + V3 mutations;

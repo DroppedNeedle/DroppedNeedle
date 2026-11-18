@@ -5,10 +5,11 @@ import { ApiError } from '$lib/api/errors';
  * Download a file through the api client so failures surface as errors
  * (anchor-click downloads fail silently in the browser). The
  * server's Content-Disposition filename is used unless `filename` is given.
+ * Returns the response, so a caller can read a header after the save.
  * Throws ApiError on HTTP errors and TransportError on network failure -
  * callers turn these into toasts.
  */
-export async function downloadBlob(url: string, filename?: string): Promise<void> {
+export async function downloadBlob(url: string, filename?: string): Promise<Response> {
 	const response = await api.raw(url);
 	if (!response.ok) {
 		throw new ApiError(response.status, `Download failed with status ${response.status}`);
@@ -28,4 +29,5 @@ export async function downloadBlob(url: string, filename?: string): Promise<void
 	} finally {
 		URL.revokeObjectURL(objectUrl);
 	}
+	return response;
 }

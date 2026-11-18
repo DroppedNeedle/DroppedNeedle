@@ -23,6 +23,7 @@ pub mod mount;
 pub mod observability;
 pub mod page;
 pub mod platform;
+pub mod playlist_files;
 pub mod runtime_config;
 pub mod schema;
 #[cfg(any(test, feature = "test-support"))]

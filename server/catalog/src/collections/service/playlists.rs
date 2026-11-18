@@ -16,16 +16,18 @@ use super::CollectionsService;
 use crate::collections::error::CollectionsError;
 use crate::collections::models::{
     AddTracksBody, AddTracksResponse, CheckTracksBody, CheckTracksResponse, CoverUploadBody,
-    CreatePlaylistBody, PlaylistDetail, PlaylistListItem, PlaylistListResponse, PlaylistSummary,
-    PlaylistTrack, RedactedPlaylist, ResolveSourcesResponse, TrackInput, UpdatePlaylistBody,
-    UpdateTrackBody,
+    CreatePlaylistBody, ExportFormat, PlaylistDetail, PlaylistListItem, PlaylistListResponse,
+    PlaylistSummary, PlaylistTrack, RedactedPlaylist, ResolveSourcesResponse, TrackInput,
+    UpdatePlaylistBody, UpdateTrackBody,
 };
+use crate::collections::sql::PlaylistExportRow;
 use crate::collections::store::PlaylistStore;
 pub use crate::collections::store::playlists::SavedPlaylist;
 use crate::collections::store::playlists::{
     CoverImage, EntryNames, Listed, NewEntry, PlaylistRow, Written,
 };
 use crate::metadata::clean_recording;
+use droppedneedle_kernel::playlist_files::{self, Entry};
 
 /// Longest accepted playlist name.
 const MAX_NAME_LEN: usize = 200;
@@ -50,6 +52,8 @@ const SOURCE_TYPES: [(&str, &str); 8] = [
 
 /// Most tracks one membership check accepts.
 const MAX_CHECK_TRACKS: usize = 1000;
+/// Longest accepted export path prefix, characters.
+const MAX_EXPORT_PREFIX_LEN: usize = 200;
 
 /// One playlist the caller may read.
 #[derive(Debug, Clone)]
@@ -58,6 +62,17 @@ pub struct Visible {
     pub row: PlaylistRow,
     /// True when the caller owns it.
     pub is_owner: bool,
+}
+
+/// One playlist rendered for download.
+#[derive(Debug, Clone)]
+pub struct PlaylistExport {
+    /// The playlist's name, safe as a filename stem.
+    pub file_stem: String,
+    /// The rendered file.
+    pub body: String,
+    /// Entries left out because they have no local file.
+    pub skipped: usize,
 }
 
 /// Trimmed non-empty name or 400.
@@ -85,6 +100,26 @@ fn clean_source(raw: &str) -> Result<String, CollectionsError> {
 
 fn clean_sources(raw: &[String]) -> Result<Vec<String>, CollectionsError> {
     raw.iter().map(|source| clean_source(source)).collect()
+}
+
+/// Trimmed export path prefix without its trailing slash; `None` when
+/// empty. Control characters are refused: a line-oriented format cannot
+/// carry them.
+fn clean_export_prefix(raw: Option<&str>) -> Result<Option<String>, CollectionsError> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let prefix = raw.trim();
+    if prefix.chars().any(char::is_control) {
+        return Err(CollectionsError::invalid(
+            "Path prefix must not contain control characters",
+        ));
+    }
+    if prefix.chars().count() > MAX_EXPORT_PREFIX_LEN {
+        return Err(CollectionsError::invalid("Path prefix is too long"));
+    }
+    let prefix = prefix.trim_end_matches('/');
+    Ok((!prefix.is_empty()).then(|| prefix.to_owned()))
 }
 
 /// Canonical cover URL for a playlist.
@@ -333,6 +368,62 @@ impl CollectionsService<'_> {
             return Ok(None);
         }
         Ok(Some(playlists.owned_by(user_id).tracks(playlist_id).await?))
+    }
+
+    /// One playlist the caller may read, rendered as `format`. Entries
+    /// with no local file are left out; `skipped` counts them. `prefix`
+    /// goes before each path, for a player that stores music elsewhere.
+    pub async fn export_playlist(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+        format: ExportFormat,
+        prefix: Option<&str>,
+    ) -> Result<PlaylistExport, CollectionsError> {
+        let prefix = clean_export_prefix(prefix)?;
+        let row = self.readable_playlist(user_id, playlist_id).await?;
+        let entries: Vec<PlaylistExportRow> = self
+            .playlists()
+            .visible_to(user_id)
+            .export_entries(playlist_id)
+            .await?;
+        let mut kept: Vec<(&PlaylistExportRow, String)> = Vec::new();
+        let mut skipped = 0;
+        for entry in &entries {
+            let Some(path) = entry
+                .relative_path
+                .as_deref()
+                .and_then(playlist_files::writable_path)
+            else {
+                skipped += 1;
+                continue;
+            };
+            let path = match &prefix {
+                Some(prefix) => format!("{prefix}/{path}"),
+                None => path.to_owned(),
+            };
+            kept.push((entry, path));
+        }
+        let rendered: Vec<Entry<'_>> = kept
+            .iter()
+            .map(|(entry, path)| Entry {
+                title: &entry.track_name,
+                artist: &entry.artist_name,
+                album: &entry.album_name,
+                album_artist: entry.album_artist_name.as_deref().unwrap_or(""),
+                duration_seconds: entry.duration_ms.map(|ms| ms / 1000),
+                path,
+            })
+            .collect();
+        let body = match format {
+            ExportFormat::M3u8 => playlist_files::render_m3u(None, &row.name, &rendered),
+            ExportFormat::Csv => playlist_files::render_csv(&rendered),
+        };
+        Ok(PlaylistExport {
+            file_stem: playlist_files::safe_playlist_stem(&row.name),
+            body,
+            skipped,
+        })
     }
 
     /// One playlist detail. `admin` says the caller may delete it when it

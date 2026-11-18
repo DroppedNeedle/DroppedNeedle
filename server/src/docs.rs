@@ -41,6 +41,9 @@ use droppedneedle_kernel::{
         droppedneedle_catalog::local::models::FormatMode,
         droppedneedle_catalog::local::models::TracksMode,
         droppedneedle_catalog::local::models::RatingMode,
+        // The playlist export's format: a query parameter names it, but
+        // the path macro does not collect it.
+        droppedneedle_catalog::collections::models::ExportFormat,
         // The `details` of a refused custom CSS sheet.
         crate::appearance::models::CssRefusal,
         crate::appearance::check::CssProblem,

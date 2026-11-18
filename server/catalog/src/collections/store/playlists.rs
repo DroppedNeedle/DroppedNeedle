@@ -21,7 +21,7 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use super::super::db::{CollectionsDb, StoreError};
 use super::super::models::PlaylistTrack;
-use super::super::sql;
+use super::super::sql::{self, PlaylistExportRow};
 use droppedneedle_auth::users::roles::Admin;
 use droppedneedle_kernel::db::DbError;
 
@@ -558,6 +558,24 @@ impl VisiblePlaylists<'_> {
                 Ok(conn
                     .prepare(sql::TRACKS_READABLE.text())?
                     .query_map(params![user_id, playlist_id], track_from_row)?
+                    .collect::<rusqlite::Result<_>>()?)
+            })
+            .await
+    }
+
+    /// Entries of a playlist the caller may read, in position order, each
+    /// with its live local file's album artist and root-relative path.
+    pub(crate) async fn export_entries(
+        &self,
+        playlist_id: &str,
+    ) -> Result<Vec<PlaylistExportRow>, StoreError> {
+        let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
+        self.store
+            .db
+            .read("playlists.export_entries", move |conn| {
+                Ok(conn
+                    .prepare(sql::EXPORT_ENTRIES.text())?
+                    .query_map(params![user_id, playlist_id], PlaylistExportRow::read)?
                     .collect::<rusqlite::Result<_>>()?)
             })
             .await

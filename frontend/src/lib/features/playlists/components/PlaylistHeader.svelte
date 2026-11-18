@@ -15,6 +15,7 @@
 	} from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
 	import { toPageDetail } from '$lib/features/playlists/queries/playlistV3Adapter';
 	import PlaylistDiscoveryModal from '$lib/features/discover/components/PlaylistDiscoveryModal.svelte';
+	import PlaylistExportModal from '$lib/features/playlists/components/PlaylistExportModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { formatTotalDurationSec, formatRelativeTime } from '$lib/utils/formatting';
 	import { getSourceColor, getSourceLabel } from '$lib/utils/sources';
@@ -33,7 +34,9 @@
 		Sparkles,
 		Globe,
 		Lock,
-		Trash2
+		Trash2,
+		FileMusic,
+		FileSpreadsheet
 	} from 'lucide-svelte';
 	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';
@@ -207,6 +210,8 @@
 		}
 	}
 
+	let exportModal = $state<ReturnType<typeof PlaylistExportModal> | null>(null);
+
 	const menuItems = $derived.by(() => {
 		const items: MenuItem[] = [];
 		if (canEdit) {
@@ -218,6 +223,16 @@
 				onclick: () => onshare?.(!playlist.is_public)
 			});
 		}
+		items.push({
+			label: 'Export as M3U',
+			icon: FileMusic,
+			onclick: () => exportModal?.show('m3u8')
+		});
+		items.push({
+			label: 'Export as CSV',
+			icon: FileSpreadsheet,
+			onclick: () => exportModal?.show('csv')
+		});
 		if (canDelete) {
 			items.push({
 				label: 'Delete playlist',
@@ -255,9 +270,7 @@
 				label="Back to Playlists"
 				href={withBasePath('/playlists')}
 			/>
-			{#if menuItems.length > 0}
-				<ContextMenu items={menuItems} position="end" trigger="button" label="Playlist actions" />
-			{/if}
+			<ContextMenu items={menuItems} position="end" trigger="button" label="Playlist actions" />
 		</div>
 
 		<div class="pl-hero__grid">
@@ -418,6 +431,8 @@
 		</div>
 	</div>
 </section>
+
+<PlaylistExportModal bind:this={exportModal} playlistId={playlist.id} />
 
 <PlaylistDiscoveryModal
 	bind:open={discoverModalOpen}

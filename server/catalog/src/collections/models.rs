@@ -158,6 +158,28 @@ pub struct PlaylistListResponse {
     pub playlists: Vec<PlaylistListItem>,
 }
 
+/// File a playlist export is written as.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ExportFormat {
+    /// Extended M3U, the format Navidrome reads.
+    #[default]
+    M3u8,
+    /// CSV with a header row.
+    Csv,
+}
+
+/// Playlist export query.
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ExportQuery {
+    /// `m3u8` (default) or `csv`.
+    pub format: Option<ExportFormat>,
+    /// Added before each entry's path, for a player that stores music under
+    /// a folder of its own. At most 200 characters; no control characters.
+    pub prefix: Option<String>,
+}
+
 /// Create-playlist body.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreatePlaylistBody {

@@ -6,25 +6,27 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 
 use droppedneedle_auth::User;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_media::stream::download::attachment_headers;
 
 use super::{
     error::CollectionsError,
     http::{HttpResult, playlist_private},
     models::{
         AddTracksBody, AddTracksResponse, CheckTracksBody, CheckTracksResponse, CoverUploadBody,
-        CoverUploadResponse, CreatePlaylistBody, FavoriteStatusResponse, FollowStatusResponse,
-        FollowedArtistListResponse, NewReleaseListResponse, PlaylistDetail, PlaylistListResponse,
-        PlaylistSummary, PlaylistTrack, RatingLookupBody, RatingLookupResponse,
-        RatingStatusResponse, RecentReleasesQuery, RemoveTracksBody, RemoveTracksResponse,
-        ReorderBody, ReorderResponse, ResolveSourcesResponse, SetFavoriteBody, SetRatingBody,
-        StatusResponse, UnseenCountResponse, UpdatePlaylistBody, UpdateTrackBody, VisibilityBody,
+        CoverUploadResponse, CreatePlaylistBody, ExportFormat, ExportQuery, FavoriteStatusResponse,
+        FollowStatusResponse, FollowedArtistListResponse, NewReleaseListResponse, PlaylistDetail,
+        PlaylistListResponse, PlaylistSummary, PlaylistTrack, RatingLookupBody,
+        RatingLookupResponse, RatingStatusResponse, RecentReleasesQuery, RemoveTracksBody,
+        RemoveTracksResponse, ReorderBody, ReorderResponse, ResolveSourcesResponse,
+        SetFavoriteBody, SetRatingBody, StatusResponse, UnseenCountResponse, UpdatePlaylistBody,
+        UpdateTrackBody, VisibilityBody,
     },
     service::CollectionsService,
     state::CollectionsState,
@@ -166,6 +168,55 @@ pub async fn delete_playlist_handler(
         .delete_as_caller(&caller, &playlist_id)
         .await?;
     Ok(Json(ok("Playlist deleted")))
+}
+
+/// Entries an export leaves out, because they have no local file.
+const SKIPPED_TRACKS_HEADER: &str = "x-droppedneedle-skipped-tracks";
+
+/// Export one playlist as extended M3U or CSV.
+///
+/// Entries with no local file are left out of either format; the
+/// `X-DroppedNeedle-Skipped-Tracks` header counts them.
+#[utoipa::path(
+    get,
+    path = "/api/v3/playlists/{playlist_id}/export",
+    tag = "collections",
+    params(
+        ("playlist_id" = String, Path, description = "Playlist id"),
+        ExportQuery
+    ),
+    responses(
+        (status = 200, description = "The playlist as extended M3U (`audio/x-mpegurl`) or CSV (`text/csv; charset=utf-8`), named in Content-Disposition",
+            headers(("x-droppedneedle-skipped-tracks" = usize, description = "Entries left out because they have no local file"))),
+        (status = 400, description = "Unknown format"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Unknown playlist id, or one the caller may not read"),
+    )
+)]
+pub async fn export_playlist_handler(
+    State(state): State<CollectionsState>,
+    User(caller): User,
+    Path(playlist_id): Path<String>,
+    ValidQuery(query): ValidQuery<ExportQuery>,
+) -> HttpResult<Response> {
+    let format = query.format.unwrap_or_default();
+    let export = CollectionsService::new(&state)
+        .export_playlist(
+            caller.user_id(),
+            &playlist_id,
+            format,
+            query.prefix.as_deref(),
+        )
+        .await?;
+    let (extension, content_type) = match format {
+        ExportFormat::M3u8 => (".m3u8", "audio/x-mpegurl"),
+        ExportFormat::Csv => (".csv", "text/csv; charset=utf-8"),
+    };
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    attachment_headers(&mut headers, &format!("{}{extension}", export.file_stem));
+    headers.insert(SKIPPED_TRACKS_HEADER, HeaderValue::from(export.skipped));
+    Ok((headers, export.body).into_response())
 }
 
 /// Flip playlist visibility.
