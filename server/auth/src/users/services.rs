@@ -15,7 +15,8 @@ use super::models::{
     AppPasswordCreatedResponse, AppPasswordListResponse, AppPasswordRecord, AppPasswordView,
     DeviceSessionMint, DeviceSessionResponse, LastFmConnection, LastFmSessionResponse,
     LastFmTokenResponse, LocalCredential, PasswordReset, ProfileResponse, RecoveryCode,
-    RecoveryCodeResponse, SessionListResponse, SessionView, UserRecord, UserResponse,
+    RecoveryCodeResponse, SessionListResponse, SessionView, UserDirectoryEntry,
+    UserDirectoryResponse, UserRecord, UserResponse,
 };
 use super::roles::{Admin, Principal, Role};
 use super::stores::{LastFmError, LastFmKeys, RoleChange, StoreError, UserDeletion};
@@ -500,6 +501,28 @@ pub fn companion_label(user_agent: &str) -> &str {
     user_agent
         .strip_prefix(COMPANION_LABEL_PREFIX)
         .unwrap_or(user_agent)
+}
+
+/// Most users the directory lists.
+const DIRECTORY_LIMIT: u64 = 1000;
+
+/// GET /users/directory: every user's id and display name, by name, for
+/// picking whom to share with. Nothing else about them.
+pub async fn user_directory(deps: &UsersDeps) -> Result<UserDirectoryResponse, UsersError> {
+    let (users, _) = deps
+        .users
+        .list(DIRECTORY_LIMIT, 0)
+        .await
+        .map_err(store_internal)?;
+    let mut users: Vec<UserDirectoryEntry> = users
+        .into_iter()
+        .map(|user| UserDirectoryEntry {
+            id: user.id,
+            display_name: user.display_name,
+        })
+        .collect();
+    users.sort_by_cached_key(|user| user.display_name.to_lowercase());
+    Ok(UserDirectoryResponse { users })
 }
 
 /// GET /auth/sessions: own sessions, current first, then newest first.

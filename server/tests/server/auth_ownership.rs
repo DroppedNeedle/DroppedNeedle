@@ -187,6 +187,20 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
     ),
     (
         Owned::Playlist,
+        "GET",
+        "/api/v3/playlists/{playlist_id}/members",
+        404,
+        404,
+    ),
+    (
+        Owned::Playlist,
+        "PUT",
+        "/api/v3/playlists/{playlist_id}/members",
+        404,
+        404,
+    ),
+    (
+        Owned::Playlist,
         "DELETE",
         "/api/v3/playlists/{playlist_id}/tracks/{track_id}",
         404,
@@ -275,6 +289,20 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
         Owned::PublicPlaylist,
         "PATCH",
         "/api/v3/playlists/{playlist_id}/visibility",
+        403,
+        403,
+    ),
+    (
+        Owned::PublicPlaylist,
+        "GET",
+        "/api/v3/playlists/{playlist_id}/members",
+        403,
+        403,
+    ),
+    (
+        Owned::PublicPlaylist,
+        "PUT",
+        "/api/v3/playlists/{playlist_id}/members",
         403,
         403,
     ),
@@ -611,6 +639,11 @@ const PLUGIN_ROUTE: &str = "a plugin's own route: the plugin checks its caller";
 /// Writes under an exempt family that hold nothing one user owns.
 const EXACT_EXEMPTIONS: &[(&str, &str, &str)] = &[
     (
+        "DELETE",
+        "/api/v3/playlists/{playlist_id}/members/me",
+        "removes only the caller's own membership (reads_collections checks it)",
+    ),
+    (
         "POST",
         "/api/v3/albums/{album_id}/edition/acquire",
         "acquires a shared catalog album for the library",
@@ -926,6 +959,7 @@ fn body(method: &str, template: &str, ids: &Ids) -> Option<Value> {
         ("PATCH", "/api/v3/playlists/{playlist_id}/tracks/{track_id}") => {
             Some(json!({"source_type": "local"}))
         }
+        ("PUT", "/api/v3/playlists/{playlist_id}/members") => Some(json!({"user_ids": []})),
         ("PATCH", "/api/v3/playlists/{playlist_id}/visibility") => {
             Some(json!({"is_public": id("visibility") != "public"}))
         }

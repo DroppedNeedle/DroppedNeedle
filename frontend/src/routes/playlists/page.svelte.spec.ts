@@ -56,6 +56,7 @@ function makePlaylist(overrides: Record<string, unknown> = {}): PlaylistListItem
 		updated_at: 1767312000,
 		is_public: false,
 		is_owner: true,
+		is_shared: false,
 		can_delete: false,
 		owner_name: null,
 		is_redacted: false,
@@ -120,6 +121,7 @@ describe('Playlists list page', () => {
 					id: 'stray',
 					name: 'Old Mix',
 					is_owner: false,
+					is_shared: false,
 					is_public: true,
 					owner_name: null,
 					can_delete: true
@@ -139,6 +141,7 @@ describe('Playlists list page', () => {
 					id: 'theirs',
 					name: 'Ann Mix',
 					is_owner: false,
+					is_shared: false,
 					is_public: true,
 					owner_name: 'Ann'
 				})

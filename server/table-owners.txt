@@ -35,7 +35,8 @@
 #                                           the record split off
 #
 # Auth's user delete removes catalog_playlists rows by cascade, and their
-# entries and covers with them; it names none of those tables.
+# entries, covers and members with them, and the user's own
+# catalog_playlist_members rows; it names none of those tables.
 #
 # And when a missing track continues into the track that took its place
 # (the same release track of the same album):
@@ -164,6 +165,7 @@ catalog_mbid_resolutions
 catalog_new_release_seen_marks
 catalog_page_generations
 catalog_playlist_covers
+catalog_playlist_members
 catalog_playlist_tracks
 catalog_playlists
 catalog_track_format_stats

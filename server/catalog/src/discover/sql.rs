@@ -358,9 +358,11 @@ droppedneedle_kernel::sql! {
         album_artist_mbid: String,
         release_group_mbid: Option<String>,
     }
-    /// A playlist the caller may read: their own or a public one.
-    pub(super) VISIBLE_PLAYLIST = "SELECT id FROM catalog_playlists \
-         WHERE id = ?1 AND (user_id = ?2 OR is_public = 1)";
+    /// A playlist the caller may read: their own, a public one, or one
+    /// shared with them.
+    pub(super) VISIBLE_PLAYLIST = "SELECT id FROM catalog_playlists p \
+         WHERE id = ?1 AND (user_id = ?2 OR is_public = 1 OR EXISTS (SELECT 1 \
+         FROM catalog_playlist_members m WHERE m.playlist_id = p.id AND m.user_id = ?2))";
     /// A playlist's entries in playlist order: the stored artist id (a
     /// media server's own id for an imported playlist), the artist name,
     /// and the MusicBrainz id of the first credited artist of a library

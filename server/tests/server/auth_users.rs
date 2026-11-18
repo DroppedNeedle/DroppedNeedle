@@ -258,6 +258,36 @@ async fn avatar_upload_rejects_svg_and_oversize() {
     }
 }
 
+/// Any signed-in user may list who else uses the server, to share with
+/// them, and learns each person's id and display name and nothing more.
+#[tokio::test]
+async fn the_user_directory_names_people_and_nothing_else() {
+    let (rig, admin, user) = rig_with_admin().await;
+    let (status, body) = call(
+        test_app(&rig, Some(principal_for(&user, "sess-molly"))),
+        "GET",
+        "/api/v3/users/directory",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let users = body["users"].as_array().expect("users");
+    let ids: Vec<&str> = users
+        .iter()
+        .filter_map(|user| user["id"].as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        [admin.id.as_str(), user.id.as_str()],
+        "by display name"
+    );
+    for listed in users {
+        let mut keys: Vec<&String> = listed.as_object().expect("user").keys().collect();
+        keys.sort();
+        assert_eq!(keys, ["display_name", "id"]);
+    }
+}
+
 #[tokio::test]
 async fn recovery_failures_share_one_message() {
     let (rig, admin, user) = rig_with_admin().await;

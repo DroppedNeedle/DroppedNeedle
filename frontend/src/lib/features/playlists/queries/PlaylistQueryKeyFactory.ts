@@ -12,5 +12,8 @@ export const PlaylistQueryKeyFactory = {
 	detail: (userId: PlaylistV3UserId, id: string) =>
 		[...PlaylistQueryKeyFactory.root(userId), 'detail', id] as const,
 	sources: (userId: PlaylistV3UserId, id: string) =>
-		[...PlaylistQueryKeyFactory.root(userId), 'sources', id] as const
+		[...PlaylistQueryKeyFactory.root(userId), 'sources', id] as const,
+	members: (userId: PlaylistV3UserId, id: string) =>
+		[...PlaylistQueryKeyFactory.root(userId), 'members', id] as const,
+	people: (userId: PlaylistV3UserId) => [...PlaylistQueryKeyFactory.root(userId), 'people'] as const
 };

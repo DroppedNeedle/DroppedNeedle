@@ -2,7 +2,7 @@
 	The top of a playlist page: the mosaic as a sleeve with the record out of
 	its side, the name as large as it can wrap, mono lines for who can see
 	it, its counts and its owner, then Play All, Shuffle and Suggest Albums.
-	The "..." menu at the top right holds Edit name, the visibility switch
+	The "..." menu at the top right holds Edit name, Share, Leave playlist
 	and Delete playlist, each only where allowed. The name is the page's only
 	h1.
 -->
@@ -14,6 +14,7 @@
 		createUploadPlaylistCoverV3Mutation
 	} from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
 	import { toPageDetail } from '$lib/features/playlists/queries/playlistV3Adapter';
+	import { getPlaylistMembersV3Query } from '$lib/features/playlists/queries/PlaylistV3Queries.svelte';
 	import PlaylistDiscoveryModal from '$lib/features/discover/components/PlaylistDiscoveryModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { formatTotalDurationSec, formatRelativeTime } from '$lib/utils/formatting';
@@ -33,7 +34,9 @@
 		Sparkles,
 		Globe,
 		Lock,
-		Trash2
+		LogOut,
+		Trash2,
+		Users
 	} from 'lucide-svelte';
 	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';
@@ -47,25 +50,39 @@
 		playlist: PlaylistDetail;
 		canEdit?: boolean;
 		canDelete?: boolean;
-		sharePending?: boolean;
 		onplayall: () => void;
 		onshuffleall: () => void;
 		ondeleteclick: () => void;
 		onplaylistupdate: (updated: PlaylistDetail) => void;
-		onshare?: (isPublic: boolean) => void;
+		onshare?: () => void;
+		onleave?: () => void;
 	}
 
 	let {
 		playlist,
 		canEdit = false,
 		canDelete = false,
-		sharePending = false,
 		onplayall,
 		onshuffleall,
 		ondeleteclick,
 		onplaylistupdate,
-		onshare
+		onshare,
+		onleave
 	}: Props = $props();
+
+	// The owner sees whom a private playlist is shared with.
+	const members = getPlaylistMembersV3Query(
+		() => playlist.id,
+		() => playlist.is_shared && !playlist.is_public
+	);
+	let sharedWith = $derived.by(() => {
+		const names = playlist.is_shared
+			? (members.data ?? []).map((member) => member.display_name)
+			: [];
+		return names.length > 3
+			? `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`
+			: names.join(', ');
+	});
 
 	let ownerInitials = $derived(
 		(playlist.owner_name ?? '')
@@ -211,12 +228,11 @@
 		const items: MenuItem[] = [];
 		if (canEdit) {
 			items.push({ label: 'Edit name', icon: PencilLine, onclick: startEditName });
-			items.push({
-				label: playlist.is_public ? 'Make private' : 'Make public',
-				icon: playlist.is_public ? Lock : Globe,
-				disabled: sharePending,
-				onclick: () => onshare?.(!playlist.is_public)
-			});
+			items.push({ label: 'Share', icon: Users, onclick: () => onshare?.() });
+		}
+		// A playlist shared with the caller; leaving a public one hides nothing.
+		if (!playlist.is_owner && !playlist.is_public) {
+			items.push({ label: 'Leave playlist', icon: LogOut, onclick: () => onleave?.() });
 		}
 		if (canDelete) {
 			items.push({
@@ -343,13 +359,18 @@
 				{/if}
 
 				<div class="pl-hero__facts">
-					<p class="pl-hero__fact">
-						{#if playlist.is_public}
-							<Globe class="size-4" aria-hidden="true" /> Public playlist
-						{:else}
-							<Lock class="size-4" aria-hidden="true" /> Private playlist
-						{/if}
-					</p>
+					<!-- A member's playlist says so in its "Shared by" line. -->
+					{#if playlist.is_public || playlist.is_owner}
+						<p class="pl-hero__fact">
+							{#if playlist.is_public}
+								<Globe class="size-4" aria-hidden="true" /> Public playlist
+							{:else if sharedWith}
+								<Users class="size-4" aria-hidden="true" /> Shared with {sharedWith}
+							{:else}
+								<Lock class="size-4" aria-hidden="true" /> Private playlist
+							{/if}
+						</p>
+					{/if}
 					<p class="pl-hero__fact">
 						<span>{countText}</span>
 						{#if durationText}

@@ -138,6 +138,25 @@ export const createSetPlaylistVisibilityV3Mutation = () =>
 		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
 
+export const createSetPlaylistMembersV3Mutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (vars: { id: string; userIds: string[] }) =>
+			api.v3.PUT(
+				v3('/api/v3/playlists/{playlist_id}/members', { path: { playlist_id: vars.id } }),
+				{ user_ids: vars.userIds }
+			),
+		effects: (_data, vars) => detail(vars.id)
+	}));
+
+export const createLeavePlaylistV3Mutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (id: string) =>
+			api.v3.DELETE(
+				v3('/api/v3/playlists/{playlist_id}/members/me', { path: { playlist_id: id } })
+			),
+		effects: (_data, id) => listAndDetail(id)
+	}));
+
 async function fileToBase64(file: File): Promise<string> {
 	const bytes = new Uint8Array(await file.arrayBuffer());
 	let binary = '';

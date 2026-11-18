@@ -125,6 +125,7 @@ where
         .user(routes!(post_local_password))
         .user(routes!(post_avatar))
         .user(routes!(get_avatar))
+        .user(routes!(user_directory))
         .user(routes!(list_sessions))
         .user(routes!(revoke_session))
         .user(routes!(mint_device_session))

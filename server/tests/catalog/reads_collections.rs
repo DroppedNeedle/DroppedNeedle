@@ -269,6 +269,128 @@ async fn playlist_auth_matrix() {
     assert_eq!(body["error"]["code"], "FORBIDDEN");
 }
 
+/// Sharing opens a private playlist to the chosen people and no one else.
+/// A member reads it in full and changes nothing: its songs, name,
+/// visibility and members stay the owner's. Only other users of the
+/// server can be chosen, and a member may leave.
+#[tokio::test]
+async fn sharing_opens_a_playlist_to_chosen_people_only() {
+    let rig = Rig::open().await;
+    let app = rig.app();
+    let (_, created) = call(
+        &app,
+        Method::POST,
+        "/api/v3/playlists",
+        Some(ADA),
+        Some(json!({"name": "Road Trip"})),
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    let one = format!("/api/v3/playlists/{id}");
+    let members = format!("{one}/members");
+    call(
+        &app,
+        Method::POST,
+        &format!("{one}/tracks"),
+        Some(ADA),
+        Some(json!({"tracks": [track("One")]})),
+    )
+    .await;
+    let (status, stub) = call(&app, Method::GET, &one, Some(BOB), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "private until shared");
+    assert!(stub.get("tracks").is_none(), "{stub}");
+
+    let (status, shared) = call(
+        &app,
+        Method::PUT,
+        &members,
+        Some(ADA),
+        Some(json!({"user_ids": ["u-bob", "u-bob"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{shared}");
+    assert_eq!(
+        shared["members"],
+        json!([{"user_id": "u-bob", "display_name": "Bob"}])
+    );
+
+    let (status, full) = call(&app, Method::GET, &one, Some(BOB), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        (
+            full["is_owner"].as_bool(),
+            full["is_shared"].as_bool(),
+            full["tracks"].as_array().map(Vec::len)
+        ),
+        (Some(false), Some(false), Some(1)),
+        "a member reads it in full, and not whom else it is shared with"
+    );
+    let (_, owned) = call(&app, Method::GET, &one, Some(ADA), None).await;
+    assert_eq!(owned["is_shared"], true);
+    let (_, list) = call(&app, Method::GET, "/api/v3/playlists", Some(BOB), None).await;
+    assert_eq!(list["playlists"][0]["name"], "Road Trip", "listed in full");
+    let (status, _) = call(&app, Method::GET, &one, Some(TRUSTED), None).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "still private to everyone else"
+    );
+
+    for (method, uri, body) in [
+        (Method::GET, members.clone(), None),
+        (Method::PUT, members.clone(), Some(json!({"user_ids": []}))),
+        (Method::PUT, one.clone(), Some(json!({"name": "Mine now"}))),
+        (
+            Method::PATCH,
+            format!("{one}/visibility"),
+            Some(json!({"is_public": true})),
+        ),
+        (
+            Method::POST,
+            format!("{one}/tracks"),
+            Some(json!({"tracks": [track("Two")]})),
+        ),
+        (Method::DELETE, one.clone(), None),
+    ] {
+        let (status, _) = call(&app, method.clone(), &uri, Some(BOB), body).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
+    }
+    for user_ids in [json!(["u-ada"]), json!(["u-bob", "nobody"])] {
+        let (status, _) = call(
+            &app,
+            Method::PUT,
+            &members,
+            Some(ADA),
+            Some(json!({ "user_ids": user_ids })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{user_ids}");
+    }
+    let (_, kept) = call(&app, Method::GET, &members, Some(ADA), None).await;
+    assert_eq!(
+        kept["members"].as_array().map(Vec::len),
+        Some(1),
+        "unchanged"
+    );
+    let (_, unchanged) = call(&app, Method::GET, &one, Some(ADA), None).await;
+    assert_eq!(
+        (
+            unchanged["name"].as_str(),
+            unchanged["is_public"].as_bool(),
+            unchanged["tracks"].as_array().map(Vec::len)
+        ),
+        (Some("Road Trip"), Some(false), Some(1))
+    );
+
+    let leave = format!("{members}/me");
+    let (status, _) = call(&app, Method::DELETE, &leave, Some(BOB), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = call(&app, Method::GET, &one, Some(BOB), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "private again once left");
+    let (status, _) = call(&app, Method::DELETE, &leave, Some(BOB), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "not shared any more");
+}
+
 /// The store itself refuses a write to another user's playlist: Bob's
 /// handle renames, publishes, adds to, reorders, re-sources, covers,
 /// uncovers, empties and deletes Ada's playlist, and nothing changes.

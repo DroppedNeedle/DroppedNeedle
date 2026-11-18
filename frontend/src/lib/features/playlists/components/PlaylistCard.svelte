@@ -17,7 +17,7 @@
 	import { formatTotalDurationSec } from '$lib/utils/formatting';
 	import { getSourceColor, getSourceLabel } from '$lib/utils/sources';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { Play, Shuffle, Trash2, Lock, Globe } from 'lucide-svelte';
+	import { Play, Shuffle, Trash2, Lock, Globe, Users } from 'lucide-svelte';
 	import JellyfinIcon from '$lib/media/icons/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/media/icons/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/media/icons/PlexIcon.svelte';
@@ -57,6 +57,13 @@
 		playlist.total_duration ? formatTotalDurationSec(playlist.total_duration) : ''
 	);
 
+	let visibility = $derived(
+		playlist.is_public
+			? 'Public playlist'
+			: playlist.is_shared
+				? 'Shared playlist'
+				: 'Private playlist'
+	);
 	let subtitle = $derived(
 		`${playlist.track_count} track${playlist.track_count === 1 ? '' : 's'}${durationText ? ` · ${durationText}` : ''}${sourceLabel ? ` · from ${sourceLabel}` : ''}`
 	);
@@ -161,14 +168,11 @@
 			<h3 class="pl-card__name">{playlist.name}</h3>
 			<p class="pl-card__meta">
 				{#if playlist.is_owner}
-					<span
-						class="pl-card__mark"
-						title={playlist.is_public ? 'Public playlist' : 'Private playlist'}
-						aria-label={playlist.is_public ? 'Public playlist' : 'Private playlist'}
-						role="img"
-					>
+					<span class="pl-card__mark" title={visibility} aria-label={visibility} role="img">
 						{#if playlist.is_public}
 							<Globe class="size-3.5" aria-hidden="true" />
+						{:else if playlist.is_shared}
+							<Users class="size-3.5" aria-hidden="true" />
 						{:else}
 							<Lock class="size-3.5" aria-hidden="true" />
 						{/if}
@@ -176,7 +180,7 @@
 				{/if}
 				<span class="truncate">{subtitle}</span>
 			</p>
-			{#if !playlist.is_owner && playlist.is_public}
+			{#if !playlist.is_owner}
 				<p class="pl-card__owner">
 					<span class="pl-card__initials" aria-hidden="true">{ownerInitials}</span>
 					<span class="truncate">

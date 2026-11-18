@@ -1754,9 +1754,10 @@ async fn cover_type(rig: &CompatApp, id: &str, auth: &str) -> String {
     header_str(&headers, "content-type")
 }
 
-/// Apps list their own user's playlists. A switch on Profile adds other
-/// people's public ones to the lists. A public playlist opens by id, cover
-/// included, with the switch on or off, and a private one never does.
+/// Apps list their own user's playlists and those shared with them. A
+/// switch on Profile adds other people's public ones to the lists. A
+/// public playlist opens by id, cover included, with the switch on or off,
+/// and a private one not shared with the user never does.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apps_list_other_peoples_public_playlists_only_on_request() {
     let (rig, [_, _, song]) = covered_album("compat-public-playlists").await;
@@ -1893,6 +1894,46 @@ async fn apps_list_other_peoples_public_playlists_only_on_request() {
     assert_eq!(
         names(&subsonic_playlists(&rig, &ada_subsonic).await),
         ["AdaPrivate", "AdaPublic"]
+    );
+
+    // Shared with bob: his lists hold it whatever the switch says.
+    let (status, saved) = app
+        .call_through_busy(
+            "PUT",
+            "/api/v3/me/connect-apps",
+            &bob_headers,
+            Some(json!({"include_public_playlists": false})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (_, listed) = app
+        .call_through_busy("GET", "/api/v3/playlists", &ada_headers, None)
+        .await;
+    let private = listed["playlists"]
+        .as_array()
+        .expect("playlists")
+        .iter()
+        .find(|row| row["name"] == "AdaPrivate")
+        .and_then(|row| row["id"].as_str())
+        .expect("ada's private playlist")
+        .to_owned();
+    let (status, shared) = app
+        .call_through_busy(
+            "PUT",
+            &format!("/api/v3/playlists/{private}/members"),
+            &ada_headers,
+            Some(json!({"user_ids": [bob.user_id]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{shared}");
+    rig.jellyfin_ids_caught_up().await;
+    assert_eq!(
+        names(&subsonic_playlists(&rig, &bob_subsonic).await),
+        ["AdaPrivate", "BobOwn"]
+    );
+    assert_eq!(
+        names(&jellyfin_playlists(&rig, &bob_jellyfin).await),
+        ["AdaPrivate", "BobOwn"]
     );
     rig.stop().await;
 }

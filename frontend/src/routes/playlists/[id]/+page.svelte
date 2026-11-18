@@ -14,9 +14,9 @@
 	} from '$lib/features/playlists/queries/PlaylistV3Queries.svelte';
 	import {
 		createDeletePlaylistV3Mutation,
+		createLeavePlaylistV3Mutation,
 		forgetPlaylistSources,
-		refreshPlaylist,
-		createSetPlaylistVisibilityV3Mutation
+		refreshPlaylist
 	} from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
 	import {
 		privatePlaylistLine,
@@ -25,12 +25,14 @@
 	} from '$lib/features/playlists/queries/playlistV3Adapter';
 	import { queryClient } from '$lib/queries/QueryClient';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { Music, Download, Lock } from 'lucide-svelte';
+	import { Music, Download, Lock, LogOut } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import type { PageData } from './$types';
 	import PlaylistHeader from '$lib/features/playlists/components/PlaylistHeader.svelte';
 	import PlaylistTrackList from '$lib/features/playlists/components/PlaylistTrackList.svelte';
 	import DeletePlaylistModal from '$lib/features/playlists/components/DeletePlaylistModal.svelte';
+	import SharePlaylistModal from '$lib/features/playlists/components/SharePlaylistModal.svelte';
 	import PlaylistNotice from '$lib/features/playlists/components/PlaylistNotice.svelte';
 
 	let { data }: { data: PageData } = $props();
@@ -39,7 +41,7 @@
 		() => data.playlistId,
 		() => true
 	);
-	const shareMutation = createSetPlaylistVisibilityV3Mutation();
+	const leaveMutation = createLeavePlaylistV3Mutation();
 	const deleteMutation = createDeletePlaylistV3Mutation();
 
 	// A local mutable copy of the (full) playlist so child components can keep
@@ -48,6 +50,8 @@
 	let deleting = $state(false);
 
 	let deleteModal = $state<ReturnType<typeof DeletePlaylistModal> | null>(null);
+	let shareModal = $state<ReturnType<typeof SharePlaylistModal> | null>(null);
+	let leaveOpen = $state(false);
 	let trackList = $state<ReturnType<typeof PlaylistTrackList> | null>(null);
 	let header = $state<ReturnType<typeof PlaylistHeader> | null>(null);
 
@@ -217,18 +221,12 @@
 		playlist = updatedPlaylist;
 	}
 
-	async function handleShare(isPublic: boolean) {
-		if (!playlist || shareMutation.isPending) return;
-		try {
-			const updated = await shareMutation.mutateAsync({ id: playlist.id, isPublic });
-			playlist = { ...playlist, is_public: updated.is_public };
-			toastStore.show({
-				message: updated.is_public ? 'Playlist is now public' : 'Playlist is now private',
-				type: 'success'
-			});
-		} catch {
-			toastStore.show({ message: "Couldn't update sharing", type: 'error' });
-		}
+	// A failure throws, so the dialog stays open and shows it.
+	async function leave() {
+		if (!playlist) return;
+		await leaveMutation.mutateAsync(playlist.id);
+		toastStore.show({ message: 'You left the playlist', type: 'success' });
+		await goto(withBasePath('/playlists'));
 	}
 
 	async function confirmDelete() {
@@ -294,12 +292,12 @@
 			{playlist}
 			canEdit={isOwner}
 			{canDelete}
-			sharePending={shareMutation.isPending}
 			onplayall={playAll}
 			onshuffleall={shuffleAll}
 			ondeleteclick={() => deleteModal?.showModal()}
 			onplaylistupdate={handlePlaylistUpdate}
-			onshare={handleShare}
+			onshare={() => shareModal?.showModal()}
+			onleave={() => (leaveOpen = true)}
 		/>
 
 		<div class="mx-auto max-w-7xl space-y-6 px-4 pb-10 sm:px-6 lg:px-8">
@@ -333,6 +331,31 @@
 				onplaytrack={playFromTrack}
 			/>
 		</div>
+
+		{#if isOwner}
+			<SharePlaylistModal
+				bind:this={shareModal}
+				playlistId={playlist.id}
+				isPublic={playlist.is_public}
+				onsaved={(isPublic) => {
+					if (playlist) playlist = { ...playlist, is_public: isPublic };
+				}}
+			/>
+		{/if}
+
+		{#if !isOwner}
+			<ConfirmDialog
+				bind:open={leaveOpen}
+				title="Leave playlist"
+				icon={LogOut}
+				tone="warning"
+				confirmLabel="Leave"
+				pending={leaveMutation.isPending}
+				message="You'll stop seeing {playlist.name} until {playlist.owner_name ??
+					'its owner'} shares it with you again."
+				onconfirm={leave}
+			/>
+		{/if}
 
 		<DeletePlaylistModal
 			bind:this={deleteModal}

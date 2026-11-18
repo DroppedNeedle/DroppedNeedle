@@ -16,9 +16,9 @@ use super::CollectionsService;
 use crate::collections::error::CollectionsError;
 use crate::collections::models::{
     AddTracksBody, AddTracksResponse, CheckTracksBody, CheckTracksResponse, CoverUploadBody,
-    CreatePlaylistBody, PlaylistDetail, PlaylistListItem, PlaylistListResponse, PlaylistSummary,
-    PlaylistTrack, RedactedPlaylist, ResolveSourcesResponse, TrackInput, UpdatePlaylistBody,
-    UpdateTrackBody,
+    CreatePlaylistBody, MembersResponse, PlaylistDetail, PlaylistListItem, PlaylistListResponse,
+    PlaylistSummary, PlaylistTrack, RedactedPlaylist, ResolveSourcesResponse, TrackInput,
+    UpdatePlaylistBody, UpdateTrackBody,
 };
 use crate::collections::store::PlaylistStore;
 pub use crate::collections::store::playlists::SavedPlaylist;
@@ -110,6 +110,7 @@ fn summary(row: &PlaylistRow, user_id: &str, admin: bool) -> PlaylistSummary {
         updated_at: row.updated_at,
         is_public: row.is_public,
         is_owner: owns(row, user_id),
+        is_shared: owns(row, user_id) && row.has_members,
         can_delete: can_delete(row.owner_id.as_deref(), user_id, admin),
         owner_name: row.owner_name.clone(),
         is_redacted: false,
@@ -136,6 +137,7 @@ fn detail(
         updated_at: summary.updated_at,
         is_public: summary.is_public,
         is_owner: summary.is_owner,
+        is_shared: summary.is_shared,
         can_delete: summary.can_delete,
         owner_name: summary.owner_name,
         is_redacted: false,
@@ -535,6 +537,61 @@ impl CollectionsService<'_> {
             .set_public(playlist_id, public)
             .await?;
         self.found(user_id, playlist_id, written).await
+    }
+
+    /// The people the caller's playlist is shared with.
+    pub async fn members(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+    ) -> Result<MembersResponse, CollectionsError> {
+        self.require_owner(user_id, playlist_id).await?;
+        let members = self
+            .playlists()
+            .owned_by(user_id)
+            .members(playlist_id)
+            .await?;
+        Ok(MembersResponse { members })
+    }
+
+    /// Share the caller's playlist with exactly `user_ids`; empty unshares
+    /// it. Every id must name another user.
+    pub async fn set_members(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+        mut user_ids: Vec<String>,
+    ) -> Result<MembersResponse, CollectionsError> {
+        user_ids.sort();
+        user_ids.dedup();
+        let unknown = || CollectionsError::invalid("Share only with other users of this server");
+        if user_ids.iter().any(|id| id == user_id) {
+            return Err(unknown());
+        }
+        let written = self
+            .playlists()
+            .owned_by(user_id)
+            .set_members(playlist_id, user_ids)
+            .await?;
+        if !self.found(user_id, playlist_id, written).await? {
+            return Err(unknown());
+        }
+        self.members(user_id, playlist_id).await
+    }
+
+    /// Stop seeing a playlist shared with the caller; 404 when it is not
+    /// shared with them.
+    pub async fn leave(&self, user_id: &str, playlist_id: &str) -> Result<(), CollectionsError> {
+        if self
+            .playlists()
+            .visible_to(user_id)
+            .leave(playlist_id)
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(CollectionsError::NotFound)
+        }
     }
 
     /// Insert ready-made entries at a position (None appends); returns the

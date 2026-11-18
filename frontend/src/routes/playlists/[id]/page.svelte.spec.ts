@@ -36,6 +36,8 @@ vi.mock('$lib/features/playlists/queries/PlaylistV3Queries.svelte', () => ({
 		refetch: vi.fn()
 	}),
 	isRedactedPlaylistV3: () => false,
+	getPlaylistMembersV3Query: () => ({ data: [], isPending: false, isError: false }),
+	getUserDirectoryV3Query: () => ({ data: [], isPending: false, isError: false }),
 	getPlaylistSourcesV3QueryOptions: (userId: string | undefined, id: string) => ({
 		queryKey: PlaylistQueryKeyFactory.sources(userId, id),
 		queryFn: async () => (await mockResolveMutate(id)).sources
@@ -45,6 +47,8 @@ vi.mock('$lib/features/playlists/queries/PlaylistV3Queries.svelte', () => ({
 vi.mock('$lib/features/playlists/queries/PlaylistV3Mutations.svelte', () => ({
 	createSetPlaylistVisibilityV3Mutation: () => ({ mutateAsync: mockShareMutate, isPending: false }),
 	createDeletePlaylistV3Mutation: () => ({ mutateAsync: mockDeleteMutate, isPending: false }),
+	createLeavePlaylistV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createSetPlaylistMembersV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createUpdatePlaylistV3Mutation: () => ({ mutateAsync: mockRenameMutate, isPending: false }),
 	createUploadPlaylistCoverV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createDeletePlaylistCoverV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -146,6 +150,7 @@ function makePlaylist(overrides: Record<string, unknown> = {}): PlaylistDetailV3
 		updated_at: 1767312000,
 		is_public: false,
 		is_owner: true,
+		is_shared: false,
 		can_delete: true,
 		owner_name: null,
 		is_redacted: false,

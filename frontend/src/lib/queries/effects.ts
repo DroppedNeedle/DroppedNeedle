@@ -374,9 +374,10 @@ export const EFFECTS = {
 	homeChanged: (): Sweep[] => [{ everyScope: [HomeQueryKeyFactory.feature] }],
 	/** The caller's playlist list. */
 	playlistListChanged: (userId: UserId): Sweep[] => [{ key: PlaylistQueryKeyFactory.list(userId) }],
-	/** One playlist. */
+	/** One playlist, and whom it is shared with. */
 	playlistChanged: (userId: UserId, playlistId: string): Sweep[] => [
-		{ key: PlaylistQueryKeyFactory.detail(userId, playlistId) }
+		{ key: PlaylistQueryKeyFactory.detail(userId, playlistId) },
+		{ key: PlaylistQueryKeyFactory.members(userId, playlistId) }
 	],
 	/** Installed plugins, in every scope. */
 	pluginsChanged: (): Sweep[] => [{ everyScope: [PluginQueryKeyFactory.feature] }],

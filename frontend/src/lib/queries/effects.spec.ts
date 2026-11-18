@@ -131,7 +131,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	anyFollowChanged: [every('following')],
 	homeChanged: [every('home')],
 	playlistListChanged: [key(U, 'playlists', 'list')],
-	playlistChanged: [key(U, 'playlists', 'detail', 'job')],
+	playlistChanged: [key(U, 'playlists', 'detail', 'job'), key(U, 'playlists', 'members', 'job')],
 	pluginsChanged: [every('plugins')],
 	pluginFilesChanged: [key('admin', 'plugins', 'files', 'u')],
 	profileChanged: [key(U, 'profile')],
