@@ -23,7 +23,7 @@ use super::super::db::{CollectionsDb, StoreError};
 use super::super::models::PlaylistTrack;
 use super::super::sql;
 use droppedneedle_auth::users::roles::Admin;
-use droppedneedle_kernel::db::DbError;
+use droppedneedle_kernel::db::{DbError, fold_text};
 
 /// How many track covers a summary carries.
 const SUMMARY_COVER_COUNT: i64 = 4;
@@ -263,6 +263,39 @@ fn decode_sources(raw: &str) -> Option<Vec<String>> {
 
 fn encode_sources(sources: Option<&Vec<String>>) -> Option<String> {
     sources.map(|list| serde_json::Value::from(list.clone()).to_string())
+}
+
+/// A playlist entry and a library track on an album owning its release
+/// group: `(disc, track)` places, the entry's track number when known.
+struct LibraryCopy {
+    entry_id: String,
+    entry_title: String,
+    entry_place: (i64, Option<i64>),
+    track_id: String,
+    track_title: String,
+    track_place: (i64, i64),
+}
+
+/// A title as linking compares it: folded, typographic apostrophes read as
+/// plain ones, and dashes and brackets as spaces, so "Opener - Live" keys
+/// as "Opener (Live)" does.
+fn title_key(title: &str) -> String {
+    let spaced: String = fold_text(title)
+        .chars()
+        .map(|character| match character {
+            '\u{2018}' | '\u{2019}' | '\u{02bc}' => '\'',
+            '-' | '\u{2010}'..='\u{2015}' | '\u{2212}' | '(' | ')' | '[' | ']' => ' ',
+            other => other,
+        })
+        .collect();
+    spaced.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// An entry's title and a library track's name the same song: one key
+/// holds the other, so "Song" agrees with "Song - 2011 Remaster".
+fn titles_agree(entry: &str, track: &str) -> bool {
+    let (entry, track) = (title_key(entry), title_key(track));
+    !entry.is_empty() && !track.is_empty() && (entry.contains(&track) || track.contains(&entry))
 }
 
 /// One playlist row and its first entry covers, or None.
@@ -939,6 +972,60 @@ impl OwnedPlaylists<'_> {
             .await
     }
 
+    /// Point each entry with no source yet whose album the library owns at
+    /// the library's copy: the indexed track at its disc and track number
+    /// whose title agrees, else one titled the same elsewhere on the album,
+    /// as another edition orders it. The first such when the album is held
+    /// twice. Answers how many entries that linked; none when the playlist
+    /// is not the user's. Opening a playlist runs this, and so does an
+    /// import once its rows are written (an importer that stores rows
+    /// with no source should too), so music apps list the songs before
+    /// anyone opens the page.
+    pub async fn link_library_copies(&self, playlist_id: &str) -> Result<usize, StoreError> {
+        let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
+        let now = self.store.db.now_ms();
+        self.store
+            .db
+            .write("playlists.link_library_copies", move |tx| {
+                let candidates = tx
+                    .prepare(sql::LIBRARY_COPY_CANDIDATES.text())?
+                    .query_map(params![user_id, playlist_id], |row| {
+                        Ok(LibraryCopy {
+                            entry_id: row.get(0)?,
+                            entry_title: row.get(1)?,
+                            entry_place: (row.get(2)?, row.get(3)?),
+                            track_id: row.get(4)?,
+                            track_title: row.get(5)?,
+                            track_place: (row.get(6)?, row.get(7)?),
+                        })
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                let mut linked = 0;
+                for copies in candidates.chunk_by(|a, b| a.entry_id == b.entry_id) {
+                    let at_place = copies.iter().find(|copy| {
+                        copy.entry_place == (copy.track_place.0, Some(copy.track_place.1))
+                            && titles_agree(&copy.entry_title, &copy.track_title)
+                    });
+                    let same_title = || {
+                        copies.iter().find(|copy| {
+                            title_key(&copy.entry_title) == title_key(&copy.track_title)
+                        })
+                    };
+                    if let Some(copy) = at_place.or_else(same_title) {
+                        linked += tx.execute(
+                            sql::LINK_LIBRARY_COPY.text(),
+                            params![copy.entry_id, copy.track_id],
+                        )?;
+                    }
+                }
+                if linked > 0 {
+                    touch(tx, &playlist_id, &user_id, now)?;
+                }
+                Ok(linked)
+            })
+            .await
+    }
+
     /// Replace one entry's source fields.
     pub async fn update_sources(
         &self,
@@ -1028,5 +1115,31 @@ impl OwnedPlaylists<'_> {
                 Ok(Written::Done(()))
             })
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::titles_agree;
+
+    #[test]
+    fn titles_agree_across_typography_and_suffixes() {
+        for (entry, track) in [
+            ("Opener", "Opener"),
+            ("Don’t Stop", "Don't Stop"),
+            ("Re-Entry", "Re‐Entry"),
+            ("Song", "Song - 2011 Remaster"),
+            ("Opener - Live", "Opener (live)"),
+            ("CAFÉ", "cafe"),
+        ] {
+            assert!(titles_agree(entry, track), "{entry:?} / {track:?}");
+        }
+        for (entry, track) in [
+            ("Opener", "Second Song"),
+            ("", "Second Song"),
+            ("Intro", ""),
+        ] {
+            assert!(!titles_agree(entry, track), "{entry:?} / {track:?}");
+        }
     }
 }

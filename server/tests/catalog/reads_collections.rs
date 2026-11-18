@@ -744,6 +744,136 @@ async fn remote_playlist_import_lands_in_the_users_playlists() {
     assert_eq!(detail["tracks"][0]["plex_rating_key"], "1");
 }
 
+/// An imported entry with no source yet links to the library's copy once
+/// its album is in (#759): resolving sources points it at the indexed track
+/// at its disc and track number on an album owning its release group, when
+/// the titles agree, else at the track titled the same elsewhere on that
+/// album. Entries with a source, a disagreeing title or an album the
+/// library lacks stay as they are, and a reader of a public playlist links
+/// nothing.
+#[tokio::test]
+async fn resolving_sources_links_imported_entries_to_the_library() {
+    const GROUP: &str = "0a0b0c0d-0001-4000-8000-000000000001";
+    const MISSING: &str = "0a0b0c0d-0001-4000-8000-000000000002";
+    let rig = Rig::open().await;
+    rig.runtime
+        .db()
+        .write(
+            droppedneedle_kernel::db::Lane::Foreground,
+            "seed owned album",
+            |tx| {
+                let mut sql = "INSERT INTO local_artists (id, display_name, folded_name, kind, \
+                     created_at, updated_at) VALUES ('art-a', 'Aurora', 'aurora', 'group', 1, 1); \
+                     INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+                     album_artist_id, grouping_source, created_at, updated_at) VALUES \
+                     ('alb-a', 'r1', 'ga', 'First Light', 'first light', 'art-a', \
+                     'automatic', 1, 1); \
+                     INSERT INTO local_album_external_identities (local_album_id, provider, \
+                     release_group_mbid, decision_source, selected_at) VALUES \
+                     ('alb-a', 'musicbrainz', '"
+                    .to_owned()
+                    + GROUP
+                    + "', 'automatic', 1);";
+                for (n, title) in [(1, "Opener"), (2, "Second Song")] {
+                    sql.push_str(&format!(
+                        "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, \
+                         relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, \
+                         title, title_folded, album_title, album_title_folded, disc_number, \
+                         track_number, file_format, availability, ingest_source, imported_at, \
+                         membership_source) VALUES ('trk-a{n}', 'alb-a', 'r1', '/m/a{n}.flac', \
+                         'a{n}.flac', 'ha{n}', 1, 1, 'sa{n}', '{title}', '{title}', \
+                         'First Light', 'first light', 1, {n}, 'flac', 'indexed', \
+                         'scan', 1, 'automatic');"
+                    ));
+                }
+                tx.execute_batch(&sql)?;
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
+            },
+        )
+        .await
+        .unwrap();
+    let app = rig.app();
+    let (_, created) = call(
+        &app,
+        Method::POST,
+        "/api/v3/playlists",
+        Some(ADA),
+        Some(json!({"name": "Road Trip"})),
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    let entry = |name: &str, album_id: &str, track_number: i32| {
+        json!({"track_name": name, "artist_name": "Aurora", "album_name": "First Light",
+               "album_id": album_id, "source_type": "", "track_number": track_number})
+    };
+    let mut sourced = entry("Opener", GROUP, 1);
+    sourced["source_type"] = json!("youtube");
+    sourced["track_source_id"] = json!("yt-1");
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("/api/v3/playlists/{id}/tracks"),
+        Some(ADA),
+        Some(json!({"tracks": [
+            entry("Opener", GROUP, 1),
+            entry("Nightfall", GROUP, 2),
+            sourced,
+            entry("Opener", MISSING, 1),
+            entry("Second Song", GROUP, 7),
+        ]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let resolve = format!("/api/v3/playlists/{id}/resolve-sources");
+    let one = format!("/api/v3/playlists/{id}");
+    let linked = |detail: &Value| {
+        detail["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|track| {
+                (
+                    track["source_type"].as_str().unwrap().to_owned(),
+                    track["library_file_id"].as_str().map(str::to_owned),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    call(
+        &app,
+        Method::PATCH,
+        &format!("{one}/visibility"),
+        Some(ADA),
+        Some(json!({"is_public": true})),
+    )
+    .await;
+    let (status, _) = call(&app, Method::POST, &resolve, Some(BOB), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, detail) = call(&app, Method::GET, &one, Some(ADA), None).await;
+    assert!(
+        linked(&detail).iter().all(|(_, file)| file.is_none()),
+        "a reader links nothing"
+    );
+
+    let (status, answer) = call(&app, Method::POST, &resolve, Some(ADA), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, detail) = call(&app, Method::GET, &one, Some(ADA), None).await;
+    let first = detail["tracks"][0]["id"].as_str().unwrap();
+    assert_eq!(answer["sources"][first], json!(["local"]));
+    assert_eq!(detail["tracks"][0]["track_source_id"], "trk-a1");
+    assert_eq!(
+        linked(&detail),
+        [
+            ("local".to_owned(), Some("trk-a1".to_owned())),
+            (String::new(), None),
+            ("youtube".to_owned(), None),
+            (String::new(), None),
+            ("local".to_owned(), Some("trk-a2".to_owned())),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn store_faults_render_fixed_500_envelopes() {
     let rig = Rig::open().await;

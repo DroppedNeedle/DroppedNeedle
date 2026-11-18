@@ -137,6 +137,26 @@ droppedneedle_kernel::sql! {
     /// An entry's known sources, as a JSON list.
     pub(super) SET_AVAILABLE_SOURCES = "UPDATE catalog_playlist_tracks SET available_sources = ?1 \
          WHERE id = ?2 AND playlist_id = ?3";
+    /// The albums that own entry `e`'s release group.
+    fragment ENTRY_OWNERS = (owns_group!("= lower(e.album_id)"));
+    /// The caller's playlist `?2`'s entries with no source yet, each with
+    /// the indexed library tracks on the albums that own its release group:
+    /// entry id, title, disc (none reads as 1) and track number, then track
+    /// id, title, disc and track number, entry by entry in playlist order.
+    pub(super) LIBRARY_COPY_CANDIDATES = "SELECT e.id, e.track_name, \
+         COALESCE(e.disc_number, 1), e.track_number, \
+         t.id, t.title, t.disc_number, t.track_number \
+         FROM catalog_playlist_tracks e JOIN local_tracks t \
+         ON t.local_album_id IN (SELECT album_id FROM (" + ENTRY_OWNERS + ")) \
+         AND +t.availability = 'indexed' \
+         WHERE e.playlist_id = (SELECT p.id FROM catalog_playlists p WHERE p.id = ?2 AND "
+        + OWNED + ") AND e.source_type = '' AND e.library_file_id IS NULL \
+         AND e.album_id IS NOT NULL \
+         ORDER BY e.position, t.local_album_id, t.disc_number, t.track_number, t.id";
+    /// Point entry `?1`, still without a source, at library track `?2`.
+    pub(super) LINK_LIBRARY_COPY = "UPDATE catalog_playlist_tracks SET track_source_id = ?2, \
+         library_file_id = ?2, source_type = 'local', available_sources = '[\"local\"]' \
+         WHERE id = ?1 AND source_type = '' AND library_file_id IS NULL";
     /// Store or replace one playlist's uploaded cover.
     pub(super) UPSERT_COVER = "INSERT INTO catalog_playlist_covers (playlist_id, content_type, image, \
          updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (playlist_id) DO UPDATE SET \
