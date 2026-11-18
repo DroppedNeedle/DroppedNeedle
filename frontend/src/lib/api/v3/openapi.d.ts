@@ -17793,6 +17793,8 @@ export interface components {
          *     list; empty unshares it from everyone.
          */
         MembersBody: {
+            /** @description Those of them who may change its songs. */
+            editor_ids?: string[];
             /** @description User ids. */
             user_ids: string[];
         };
@@ -19536,6 +19538,11 @@ export interface components {
              *     has no owner.
              */
             can_delete: boolean;
+            /**
+             * @description True when the caller may change its songs: they own it, or it is
+             *     shared with them to edit.
+             */
+            can_edit: boolean;
             /** @description Up to four track covers for the header. */
             cover_urls: string[];
             /**
@@ -19595,6 +19602,8 @@ export interface components {
         };
         /** @description One person a playlist is shared with. */
         PlaylistMember: {
+            /** @description True when they may change its songs. */
+            can_edit: boolean;
             /** @description Display name. */
             display_name: string;
             /** @description User id. */
@@ -19642,6 +19651,11 @@ export interface components {
              *     has no owner.
              */
             can_delete: boolean;
+            /**
+             * @description True when the caller may change its songs: they own it, or it is
+             *     shared with them to edit.
+             */
+            can_edit: boolean;
             /** @description Up to four track covers for the list tile. */
             cover_urls: string[];
             /**

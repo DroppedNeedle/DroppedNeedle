@@ -1757,7 +1757,8 @@ async fn cover_type(rig: &CompatApp, id: &str, auth: &str) -> String {
 /// Apps list their own user's playlists and those shared with them. A
 /// switch on Profile adds other people's public ones to the lists. A
 /// public playlist opens by id, cover included, with the switch on or off,
-/// and a private one not shared with the user never does.
+/// and a private one not shared with the user never does. An editor
+/// changes a shared playlist's songs from an app, and nothing else.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apps_list_other_peoples_public_playlists_only_on_request() {
     let (rig, [_, _, song]) = covered_album("compat-public-playlists").await;
@@ -1934,6 +1935,42 @@ async fn apps_list_other_peoples_public_playlists_only_on_request() {
     assert_eq!(
         names(&jellyfin_playlists(&rig, &bob_jellyfin).await),
         ["AdaPrivate", "BobOwn"]
+    );
+
+    // Let edit, bob adds a song from his app, which sends the name back as
+    // it is; renaming it stays ada's.
+    let (status, shared) = app
+        .call_through_busy(
+            "PUT",
+            &format!("/api/v3/playlists/{private}/members"),
+            &ada_headers,
+            Some(json!({"user_ids": [bob.user_id], "editor_ids": [bob.user_id]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{shared}");
+    let bob_sub = subsonic_playlists(&rig, &bob_subsonic).await;
+    let shared_id = id_named(&bob_sub, "AdaPrivate");
+    let bob_call = async |query: String| {
+        let (status, body) = app
+            .call_through_busy("GET", &rest(&query, &bob_subsonic), &[], None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["subsonic-response"].clone()
+    };
+    let read = bob_call(format!("getPlaylist?id={shared_id}")).await;
+    assert_eq!(read["playlist"]["readonly"], false, "{read}");
+    let added = bob_call(format!(
+        "updatePlaylist?playlistId={shared_id}&name=AdaPrivate&songIdToAdd={song}"
+    ))
+    .await;
+    assert_eq!(added["status"], "ok", "{added}");
+    let read = bob_call(format!("getPlaylist?id={shared_id}")).await;
+    assert_eq!(read["playlist"]["songCount"], 2, "{read}");
+    let renamed = bob_call(format!("updatePlaylist?playlistId={shared_id}&name=Taken")).await;
+    assert_eq!(renamed["status"], "failed", "{renamed}");
+    assert_eq!(
+        names(&subsonic_playlists(&rig, &ada_subsonic).await),
+        ["AdaPrivate", "AdaPublic"]
     );
     rig.stop().await;
 }

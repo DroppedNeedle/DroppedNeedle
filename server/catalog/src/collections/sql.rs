@@ -18,6 +18,11 @@ droppedneedle_kernel::sql! {
          WHERE m.playlist_id = p.id AND m.user_id = ?1))";
     /// The playlist is the caller's.
     fragment OWNED = "p.user_id = ?1";
+    /// The caller may change the playlist's songs: it is theirs, or it is
+    /// shared with them to edit.
+    fragment EDITABLE = "(COALESCE(p.user_id = ?1, 0) OR EXISTS (SELECT 1 \
+         FROM catalog_playlist_members m WHERE m.playlist_id = p.id AND m.user_id = ?1 \
+         AND m.can_edit = 1))";
     /// One playlist with its aggregates, in `PlaylistRow`'s mapper order.
     fragment PLAYLIST_COLUMNS = "SELECT p.id, p.name, p.user_id, \
          COALESCE(u.display_name, u.username), p.is_public, p.source_ref, \
@@ -30,7 +35,7 @@ droppedneedle_kernel::sql! {
           WHERE t.playlist_id = p.id AND t.library_file_id IS NOT NULL), \
          (SELECT COALESCE(SUM(CAST(t.duration_ms AS REAL)), 0.0) / 1000.0 FROM catalog_playlist_tracks t \
           WHERE t.playlist_id = p.id AND t.library_file_id IS NOT NULL), \
-         EXISTS (SELECT 1 FROM catalog_playlist_members m \
+         (SELECT m.can_edit FROM catalog_playlist_members m \
           WHERE m.playlist_id = p.id AND m.user_id = ?1), \
          EXISTS (SELECT 1 FROM catalog_playlist_members m WHERE m.playlist_id = p.id)";
     /// The tables a playlist row is read from.
@@ -64,6 +69,10 @@ droppedneedle_kernel::sql! {
     pub(super) GET_OWNED = PLAYLIST_COLUMNS + PLAYLIST_FROM + " WHERE p.id = ?2 AND " + OWNED;
     /// Whether the caller owns playlist `?2`, which they may read.
     pub(super) READABLE_OWNER = "SELECT COALESCE(p.user_id = ?1, 0) FROM catalog_playlists p \
+         WHERE p.id = ?2 AND " + READABLE;
+    /// Whether the caller may change the songs of playlist `?2`, which
+    /// they may read.
+    pub(super) READABLE_EDITOR = "SELECT " + EDITABLE + " FROM catalog_playlists p \
          WHERE p.id = ?2 AND " + READABLE;
     /// The first `?2` entry covers of one playlist `?1`.
     pub(super) PLAYLIST_COVERS = "SELECT cover_url FROM catalog_playlist_tracks \
@@ -99,6 +108,10 @@ droppedneedle_kernel::sql! {
 
     /// Whether playlist `?1` is user `?2`'s.
     pub(super) OWNED_GUARD = "SELECT 1 FROM catalog_playlists WHERE id = ?1 AND user_id = ?2";
+    /// Whether user `?1` may change the songs of playlist `?2`.
+    pub(super) EDIT_GUARD = "SELECT 1 FROM catalog_playlists p WHERE p.id = ?2 AND " + EDITABLE;
+    /// Stamp playlist `?2` as changed at `?1`, milliseconds.
+    pub(super) STAMP = "UPDATE catalog_playlists SET updated_at = ?1 WHERE id = ?2";
     /// Stamp user `?3`'s playlist `?2` as changed at `?1`, milliseconds.
     pub(super) TOUCH = "UPDATE catalog_playlists SET updated_at = ?1 \
          WHERE id = ?2 AND user_id = ?3";
@@ -144,8 +157,8 @@ droppedneedle_kernel::sql! {
     pub(super) SET_AVAILABLE_SOURCES = "UPDATE catalog_playlist_tracks SET available_sources = ?1 \
          WHERE id = ?2 AND playlist_id = ?3";
     /// The people the caller's playlist `?2` is shared with, first shared
-    /// first: user id and display name.
-    pub(super) MEMBERS = "SELECT u.id, u.display_name FROM catalog_playlist_members m \
+    /// first: user id, display name and whether they may edit.
+    pub(super) MEMBERS = "SELECT u.id, u.display_name, m.can_edit FROM catalog_playlist_members m \
          JOIN auth_users u ON u.id = m.user_id WHERE m.playlist_id = ?2 \
          AND EXISTS (SELECT 1 FROM catalog_playlists p WHERE p.id = ?2 AND " + OWNED + ") \
          ORDER BY m.added_at, u.id";
@@ -155,10 +168,11 @@ droppedneedle_kernel::sql! {
     /// Unshare playlist `?1` from everyone not in the JSON array `?2`.
     pub(super) DROP_MEMBERS = "DELETE FROM catalog_playlist_members \
          WHERE playlist_id = ?1 AND user_id NOT IN (SELECT value FROM json_each(?2))";
-    /// Share playlist `?1` with user `?2` at `?3`, milliseconds, unless it
-    /// already is.
-    pub(super) ADD_MEMBER = "INSERT INTO catalog_playlist_members (playlist_id, user_id, added_at) \
-         VALUES (?1, ?2, ?3) ON CONFLICT DO NOTHING";
+    /// Share playlist `?1` with user `?2` at `?3`, milliseconds, who may
+    /// edit when `?4`; one already sharing it keeps when they were added.
+    pub(super) ADD_MEMBER = "INSERT INTO catalog_playlist_members (playlist_id, user_id, added_at, \
+         can_edit) VALUES (?1, ?2, ?3, ?4) \
+         ON CONFLICT DO UPDATE SET can_edit = excluded.can_edit";
     /// Take user `?2` off playlist `?1`.
     pub(super) LEAVE = "DELETE FROM catalog_playlist_members WHERE playlist_id = ?1 AND user_id = ?2";
     /// Store or replace one playlist's uploaded cover.

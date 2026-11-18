@@ -325,7 +325,7 @@ impl CollectionsPlaylistBridge {
         let entries = tracks.iter().map(entry_for).collect();
         match self
             .playlists
-            .owned_by(user_id)
+            .editable_by(user_id)
             .replace_entries(playlist_id, entries)
             .await
             .map_err(|error| match error {

@@ -325,7 +325,7 @@
 			<PlaylistTrackList
 				bind:this={trackList}
 				{playlist}
-				readonly={!isOwner}
+				readonly={!playlist.can_edit}
 				ontrackchange={() => {}}
 				onsourcechange={handleSourceChange}
 				onplaytrack={playFromTrack}

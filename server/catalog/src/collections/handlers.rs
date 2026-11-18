@@ -245,7 +245,12 @@ pub async fn set_members_handler(
 ) -> HttpResult<Json<MembersResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .set_members(caller.user_id(), &playlist_id, body.user_ids)
+            .set_members(
+                caller.user_id(),
+                &playlist_id,
+                body.user_ids,
+                &body.editor_ids,
+            )
             .await?,
     ))
 }

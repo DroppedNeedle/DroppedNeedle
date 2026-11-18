@@ -86,9 +86,9 @@
 
 	async function loadPlaylists() {
 		try {
-			// Only the user's own playlists are valid add targets.
+			// Offer only playlists the user may add songs to.
 			playlists = toPageList(await fetchPlaylistListV3()).filter(
-				(p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner
+				(p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.can_edit
 			);
 			if (pendingTracks.length > 0) {
 				const trackIdentifiers = pendingTracks.map((t) => ({

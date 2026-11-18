@@ -50,7 +50,7 @@ pub async fn playlist_detail(
         &detail.record,
         &tracks,
         owner,
-        detail.is_owner,
+        detail.can_edit,
     ))
 }
 
@@ -60,7 +60,7 @@ fn playlist_view(
     record: &PlaylistRecord,
     tracks: &[ViewTrack],
     owner: String,
-    is_owner: bool,
+    can_edit: bool,
 ) -> SPlaylist {
     let total = tracks
         .iter()
@@ -76,7 +76,7 @@ fn playlist_view(
         comment: None,
         owner: Some(owner),
         public: Some(record.is_public),
-        readonly: !is_owner,
+        readonly: !can_edit,
         songCount: songs.len() as i64,
         duration: Some(total),
         created: record.created_at.clone(),
@@ -109,7 +109,7 @@ pub async fn playlists(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             comment: None,
             owner: Some(owner),
             public: Some(record.is_public),
-            readonly: !view.is_owner,
+            readonly: !view.can_edit,
             songCount: song_count,
             duration: Some(duration),
             created: record.created_at.clone(),
@@ -210,7 +210,7 @@ pub async fn update_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         }
         None => None,
     };
-    // Indexes are read against the caller's own playlist. On anyone else's
+    // Indexes are read against a playlist the caller may edit. On any other
     // the remove is still sent, so it answers the usual refusal whatever
     // the index and never hints at the playlist's length.
     let (remove_ids, not_theirs) = if remove_indices.is_empty() {
