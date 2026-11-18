@@ -129,7 +129,7 @@ On Best available, a shown higher resolution beats a faster CD folder, because F
 
 ## The Wanted list
 
-The Wanted tab on the Requests page lists the albums DroppedNeedle keeps looking for. The bin on a row removes that watch and the copies it has seen, stopping it first if it is still active. "Clear finished" removes every stopped or found watch you can see; an admin's covers everyone's, and active watches stay. The request stays in your history either way. A removed watch comes back when you request the album again and that fails, when a retry of its download fails, or when you press "None of these - keep watching" on a search for it. Without a removal, stopped and found watches leave the list by themselves after the request history retention.
+The Wanted tab on the Requests page lists the albums DroppedNeedle keeps looking for. When a watch finds a copy, it downloads the edition chosen on the request, if there was one. The bin on a row removes that watch and the copies it has seen, stopping it first if it is still active. "Clear finished" removes every stopped or found watch you can see; an admin's covers everyone's, and active watches stay. The request stays in your history either way. A removed watch comes back when you request the album again and that fails, when a retry of its download fails, or when you press "None of these - keep watching" on a search for it. Without a removal, stopped and found watches leave the list by themselves after the request history retention.
 
 ## Blocked sources
 
