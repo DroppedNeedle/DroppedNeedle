@@ -1,12 +1,16 @@
-//! Scripted identification providers.
+//! Scripted identification providers and a review fixture.
 
 use std::future::Future;
 
 use droppedneedle_providers::RequestPriority;
 
-use crate::identify::models::{LocalAlbumFacts, RecallResult};
+use crate::identify::models::{
+    CandidateEvidence, LocalAlbumFacts, RecallResult, ReviewItem, ReviewState,
+};
 use crate::identify::providers::*;
 use crate::identify::sources::{EditionPage, EditionQuery, SourceError};
+use crate::identify::sqlite::SqliteIdentifyStore;
+use crate::identify::stores::StoreError;
 
 /// Scripted providers for tests: no network, fully deterministic.
 #[derive(Debug, Default)]
@@ -106,4 +110,25 @@ impl IdentifyProviders for FakeProviders {
             .unwrap_or_default();
         Box::pin(async move { Ok(page) })
     }
+}
+
+/// File one review for an ambiguous album. Returns the stored item.
+pub fn file_review(
+    store: &SqliteIdentifyStore,
+    id: &str,
+    local_album_id: &str,
+    reason_code: &str,
+    candidates: Vec<CandidateEvidence>,
+) -> Result<ReviewItem, StoreError> {
+    let review = ReviewItem {
+        id: id.to_owned(),
+        local_album_id: local_album_id.to_owned(),
+        reason_code: reason_code.to_owned(),
+        candidates,
+        state: ReviewState::Pending,
+        resolved_by_user_id: None,
+        selected_candidate_key: None,
+    };
+    store.file(review.clone())?;
+    Ok(review)
 }

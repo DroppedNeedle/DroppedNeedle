@@ -491,7 +491,7 @@ fn file_edition_review(store: &SqliteIdentifyStore, album_id: &str) -> String {
         penalties: Vec::new(),
     };
     let id = format!("rev-{album_id}");
-    droppedneedle_library::identify::review::file_review(
+    droppedneedle_library::test_support::file_review(
         store,
         &id,
         album_id,
@@ -19494,7 +19494,7 @@ async fn an_approved_release_is_placed_and_its_undo_survives() {
     recall.releases[0].id = REL_2.to_owned();
     recall.releases[0].release_group_id = "rg-2".to_owned();
     let release = recall.releases[0].clone();
-    droppedneedle_library::identify::review::file_review(
+    droppedneedle_library::test_support::file_review(
         &library.identify_store,
         "rev-approved",
         &album,
@@ -19598,7 +19598,7 @@ async fn an_approved_release_that_is_not_listed_stays_chosen() {
     let (scratch, library, album, tracks) = chosen_album_at_rest("lib-approved-not-listed").await;
     let db = scratch_db(&scratch);
     let release = fitting_release(&library, &album).releases[0].clone();
-    droppedneedle_library::identify::review::file_review(
+    droppedneedle_library::test_support::file_review(
         &library.identify_store,
         "rev-not-listed",
         &album,
@@ -20531,7 +20531,7 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
     assert_eq!(retired_into(&db, &album), None);
     exclude_by_hand(&db, &album);
     let key = format!("rg-1:{REL_1}");
-    droppedneedle_library::identify::review::file_review(
+    droppedneedle_library::test_support::file_review(
         &library.identify_store,
         "rev-join",
         &own_row,
@@ -22759,7 +22759,7 @@ async fn an_approval_continues_a_track_once_its_files_are_placed() {
     .expect("starred");
 
     let key = format!("rg-1:{REL_1}");
-    droppedneedle_library::identify::review::file_review(
+    droppedneedle_library::test_support::file_review(
         &library.identify_store,
         "rev-approve",
         &album,

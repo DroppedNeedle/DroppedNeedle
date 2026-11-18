@@ -545,7 +545,7 @@ fn file_edition_review(rig: &Rig, review_id: &str, album: &str) {
         distance: 0.0,
         penalties: Vec::new(),
     };
-    identify::review::file_review(
+    droppedneedle_library::test_support::file_review(
         rig.store.as_ref(),
         review_id,
         album,
@@ -5070,7 +5070,7 @@ async fn person_commands_leave_what_their_rule_says() {
          queued_at) VALUES ('g', '{RELEASE_A2}', 'place_only', 0);"
     ));
     for review in ["rev-g", "rev-h"] {
-        identify::review::file_review(
+        droppedneedle_library::test_support::file_review(
             rig.store.as_ref(),
             review,
             "g",
@@ -5149,7 +5149,7 @@ async fn person_commands_leave_what_their_rule_says() {
          INSERT INTO library_management_exclusions (local_album_id, reason, \
          excluded_by_user_id, excluded_at) VALUES ('j', 'administrator_choice', 'curator-1', 0);"
     ));
-    identify::review::file_review(
+    droppedneedle_library::test_support::file_review(
         rig.store.as_ref(),
         "rev-j",
         "j",

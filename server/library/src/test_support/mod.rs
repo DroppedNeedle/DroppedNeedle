@@ -12,7 +12,7 @@ mod identify;
 
 pub use contrib::*;
 pub use enrichment::{ScriptedAcoustId, ScriptedEnrichment};
-pub use identify::FakeProviders;
+pub use identify::{FakeProviders, file_review};
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
