@@ -48,7 +48,8 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) use automatic::write_match_flag;
 pub use automatic::{
-    Accepted, AutomaticOutcome, Expected, Inputs, Placed, accept_automatic, retract, seal_automatic,
+    Accepted, AutomaticOutcome, CARRIED_EDITION_FOUND, Expected, Inputs, Placed, accept_automatic,
+    fill_carried_edition, retract, seal_automatic,
 };
 pub use copies::{
     COPIES_JOIN_UNDONE_REASON, COPIES_JOINED_REASON, JoinedCopy, ReleaseCopy, copy_join_undoable,

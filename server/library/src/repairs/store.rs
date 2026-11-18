@@ -538,6 +538,19 @@ pub fn group_only_backfill_albums(conn: &Connection) -> rusqlite::Result<Vec<Str
         .collect()
 }
 
+/// Marks the one-time identification of matches v2 carried over from
+/// its older catalog with a release group and no edition.
+pub const CARRIED_GROUP_ONLY_BACKFILL_KEY: &str = "carried-group-only-edition:v1:backfill";
+
+/// Albums whose match v2 carried over names a release group but no
+/// edition and may still be given one (`CARRIED_EDITION_OPEN`), with
+/// every indexed file in a folder identified automatically.
+pub fn carried_group_only_backfill_albums(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(crate::repairs::sql::CARRIED_GROUP_ONLY_BACKFILL_ALBUMS.text())?;
+    stmt.query_map(params![PROVIDER], |row| row.get(0))?
+        .collect()
+}
+
 /// Marks the one-time identification of automatic matches confirmed
 /// before matching read the release group the files' tags name.
 pub const OLDER_CONFIRMATIONS_BACKFILL_KEY: &str = "older-confirmations:v1:backfill";

@@ -8,6 +8,7 @@ use droppedneedle_kernel::db::time::Millis;
 use super::artist_links::ProofSubject;
 use super::models::{IdentifyKind, JobState, MatchFlagState, ReviewState};
 use crate::identity::DecisionSource;
+use crate::identity::sql::CARRIED_EDITION_OPEN;
 use crate::identity::sql::PERSONS;
 use crate::identity::sql::REVISABLE;
 use crate::identity::sql::accepted;
@@ -184,6 +185,12 @@ droppedneedle_kernel::sql! {
                  AND json_extract(after_json, '$.outcome') = 'restored' \
                  AND lower(json_extract(before_json, '$.identity.release_group_mbid')) \
                      = lower(?2))";
+    /// The lowered release group of the album's (`?1`, provider `?2`)
+    /// carried match with no edition, while it may be given one.
+    pub(super) CARRIED_EDITION_GROUP = "SELECT lower(i.release_group_mbid) FROM local_albums a \
+                 JOIN local_album_external_identities i \
+                     ON i.local_album_id = a.id AND i.provider = ?2 \
+                 WHERE a.id = ?1 AND " + CARRIED_EDITION_OPEN;
     pub(super) MATCH_FLAG = "SELECT state, reason_code, release_mbid, candidates_json \
                      FROM library_album_match_state WHERE local_album_id = ?1";
     pub(super) ALBUM_FACTS = "SELECT title, COALESCE(album_artist_name, '') AS album_artist_name, is_compilation, year \

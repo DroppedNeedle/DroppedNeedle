@@ -323,6 +323,48 @@ impl SqliteIdentifyStore {
         })
     }
 
+    /// Give the album's carried match of `group` the edition `release` and
+    /// land the job, in one transaction ([`identity::fill_carried_edition`]);
+    /// as [`seal_and_land`](Self::seal_and_land) for moved files and a lost
+    /// lease.
+    pub fn fill_carried_and_land(
+        &self,
+        local_album_id: &str,
+        group: &str,
+        release: &str,
+        input_revision: &str,
+        job: &IdentifyJob,
+    ) -> Result<Option<(AutomaticOutcome, IdentifyJob)>, StoreError> {
+        self.land_with("identify.fill_carried_edition", job, |tx| {
+            identity::fill_carried_edition(
+                tx,
+                local_album_id,
+                group,
+                release,
+                Inputs {
+                    input_revision,
+                    now: self.clock.now_secs(),
+                },
+            )
+        })
+    }
+
+    /// The lowered release group of the album's match carried over from
+    /// v2 with no edition, while identification may still give it one;
+    /// `None` otherwise.
+    pub fn carried_edition_open(&self, local_album_id: &str) -> Result<Option<String>, StoreError> {
+        self.db
+            .read_blocking("identify.carried_edition_open", |conn| {
+                Ok(conn
+                    .query_row(
+                        crate::identify::sql::CARRIED_EDITION_GROUP.text(),
+                        params![local_album_id, PROVIDER],
+                        |row| row.get(0),
+                    )
+                    .optional()?)
+            })
+    }
+
     /// Run `work` and land `job` after it on one transaction. Files that
     /// moved end the job as `INPUT_MOVED`: the job the move queued takes
     /// over, and the activity feed does not count it as a failure. A lost

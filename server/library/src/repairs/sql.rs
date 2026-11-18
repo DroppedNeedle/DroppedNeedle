@@ -8,7 +8,7 @@ use droppedneedle_kernel::db::time::Millis;
 
 use super::models::{ApplyResult, Confidence, FindingCode, FindingState};
 use crate::identity::DecisionSource;
-use crate::identity::sql::{REVISABLE, accepted};
+use crate::identity::sql::{CARRIED_EDITION_OPEN, REVISABLE, accepted};
 use crate::jobs::sql::live_job;
 use crate::scan::models::GroupingSource;
 
@@ -396,6 +396,16 @@ droppedneedle_kernel::sql! {
              WHERE c.local_album_id = a.id) \
          AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
              WHERE r.local_album_id = a.id AND r.state IN ('rejected','dismissed','excluded')) \
+         AND EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
+         AND NOT EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
+             AND t.applied_policy != 'automatic') \
+         ORDER BY a.id";
+    pub(super) CARRIED_GROUP_ONLY_BACKFILL_ALBUMS = "SELECT a.id FROM local_albums a \
+         JOIN local_album_external_identities i \
+             ON i.local_album_id = a.id AND i.provider = ?1 \
+         WHERE " + CARRIED_EDITION_OPEN + " \
          AND EXISTS (SELECT 1 FROM local_tracks t \
              WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
          AND NOT EXISTS (SELECT 1 FROM local_tracks t \

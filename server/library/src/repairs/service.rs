@@ -428,7 +428,9 @@ impl RepairWorker {
     /// file's track id named another edition (see
     /// [`store::track_id_backfill_albums`]), and every album whose
     /// automatic match names a release group but no release (see
-    /// [`store::group_only_backfill_albums`]), and every confirmed
+    /// [`store::group_only_backfill_albums`]), and every album whose match
+    /// v2 carried over names a release group but no edition (see
+    /// [`store::carried_group_only_backfill_albums`]), and every confirmed
     /// automatic match outside the release group its files name (see
     /// [`store::older_confirmation_albums`]), and every confirmed
     /// automatic match on an edition other than the one its files'
@@ -475,6 +477,16 @@ impl RepairWorker {
                     store::GROUP_ONLY_BACKFILL_KEY,
                     |conn| store::group_only_backfill_albums(conn).map(store::Backfill::found),
                     "queued albums matched to a release group only, to find their edition",
+                ),
+            ),
+            (
+                store::CARRIED_GROUP_ONLY_BACKFILL_KEY,
+                self.queue_backfill(
+                    store::CARRIED_GROUP_ONLY_BACKFILL_KEY,
+                    |conn| {
+                        store::carried_group_only_backfill_albums(conn).map(store::Backfill::found)
+                    },
+                    "queued albums v2 carried over with a release group only, to find their edition",
                 ),
             ),
             (

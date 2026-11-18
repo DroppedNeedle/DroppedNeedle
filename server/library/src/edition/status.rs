@@ -116,6 +116,28 @@ fn disputed_ids(guess: Option<&CandidateEvidence>) -> Vec<String> {
 /// Release group, release, decision source, chooser, chosen at, revision.
 type IdentityRow = (String, Option<String>, String, Option<String>, f64, i64);
 
+/// Whether the album's match is one v2 carried over without an edition
+/// that the app then gave the edition it holds now.
+fn carried_edition_found(
+    conn: &Connection,
+    album_id: &str,
+    identity: Option<&IdentityRow>,
+) -> rusqlite::Result<bool> {
+    let Some((_, Some(release), source, _, _, _)) = identity else {
+        return Ok(false);
+    };
+    if crate::identity::DecisionSource::parse(source)
+        != Some(crate::identity::DecisionSource::LegacyImport)
+    {
+        return Ok(false);
+    }
+    conn.query_row(
+        crate::edition::sql::CARRIED_EDITION_FOUND.text(),
+        params![album_id, release, crate::identity::CARRIED_EDITION_FOUND],
+        |row| row.get(0),
+    )
+}
+
 /// One album's edition, or `None` for an album the library does not hold.
 pub fn edition_status(
     conn: &Connection,
@@ -171,6 +193,10 @@ pub fn edition_status(
         // A chosen edition stays chosen; a flag on it explains a problem
         // with the choice (it fits none of the files).
         (_, Some((_, code, _))) if protected => (EditionState::Chosen, reasons::match_reason(code)),
+        _ if protected && carried_edition_found(conn, album_id, identity.as_ref())? => (
+            EditionState::Chosen,
+            reasons::match_reason(crate::identity::CARRIED_EDITION_FOUND),
+        ),
         _ if protected => (EditionState::Chosen, reasons::match_reason("CHOSEN")),
         (_, Some((state, code, _))) if state == "unmatched" => {
             (EditionState::Unmatched, reasons::match_reason(code))

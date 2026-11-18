@@ -10,8 +10,9 @@
 use rusqlite::{OptionalExtension as _, Transaction, params};
 
 use super::reads::{album_identity_row, identity_hash, identity_revision, track_identity_rows};
+use super::remap::queue_placement;
 use super::sql;
-use super::undo::{Snapshot, carry_undo, keep_choice_undo, snapshot};
+use super::undo::{Snapshot, carry_undo, keep_choice_undo, record_and_keep, snapshot};
 use super::{DecisionSource, PROVIDER, Rows, delete_album_row};
 use crate::catalog_actions::ActionKind;
 use crate::catalog_actions::CatalogAction;
@@ -205,6 +206,54 @@ pub fn retract(
     bump_if_changed(tx, before)?;
     Ok(AutomaticOutcome::Done)
 }
+
+/// Give a match v2 carried over with release group `group` and no edition
+/// the edition `release` identification confirmed in that group. The row
+/// keeps its source, its group and who chose it; the change is in the
+/// audit as the app's, kept as the album page's edition undo, and the
+/// files are queued to be placed on the release. Only while the match
+/// still qualifies (`CARRIED_EDITION_OPEN`): otherwise nothing is written
+/// and the outcome is `PersonsChoice`.
+pub fn fill_carried_edition(
+    tx: &Transaction<'_>,
+    album: &str,
+    group: &str,
+    release: &str,
+    inputs: Inputs<'_>,
+) -> rusqlite::Result<AutomaticOutcome> {
+    if input_moved(tx, album, inputs)? {
+        return Ok(AutomaticOutcome::InputMoved);
+    }
+    let open: bool = tx
+        .prepare_cached(sql::CARRIED_EDITION_STILL_OPEN.text())?
+        .query_row(params![album, PROVIDER, group], |row| row.get(0))?;
+    if !open {
+        return Ok(AutomaticOutcome::PersonsChoice);
+    }
+    let before = snapshot(tx, album)?;
+    let written = tx
+        .prepare_cached(sql::FILL_CARRIED_RELEASE.text())?
+        .execute(params![album, PROVIDER, release, group])?;
+    if written != 1 {
+        return Ok(AutomaticOutcome::PersonsChoice);
+    }
+    queue_placement(tx, album, inputs.now)?;
+    record_and_keep(
+        tx,
+        album,
+        &before,
+        "system",
+        ActionKind::AutomaticExactEdition,
+        CARRIED_EDITION_FOUND,
+        false,
+        inputs.now,
+    )?;
+    bump_catalog(tx)?;
+    Ok(AutomaticOutcome::Done)
+}
+
+/// The reason a carried match's found edition is recorded and shown with.
+pub const CARRIED_EDITION_FOUND: &str = "CARRIED_EDITION_FOUND";
 
 /// What a retraction does to the album's track rows on the release it
 /// withdrew: automatic rows go, and rows the tags carried leave the

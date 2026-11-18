@@ -14,13 +14,18 @@ pub struct FakeProviders {
     pub recall: std::sync::Mutex<Option<RecallResult>>,
     /// Scripted edition search page.
     pub editions: std::sync::Mutex<Option<EditionPage>>,
+    /// The albums candidates were recalled for, in order.
+    pub recalled: std::sync::Mutex<Vec<String>>,
+    /// A group recall reports in place of the lowered one it was asked
+    /// about, as the real recall does for a tagged release that moved.
+    pub moved_groups: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
 impl FakeProviders {
     pub fn with_recall(result: RecallResult) -> Self {
         Self {
             recall: std::sync::Mutex::new(Some(result)),
-            editions: std::sync::Mutex::new(None),
+            ..Self::default()
         }
     }
 
@@ -41,17 +46,27 @@ impl FakeProviders {
 }
 
 impl IdentifyProviders for FakeProviders {
-    /// The scripted recall, naming `named_group` unless the script names
-    /// one.
+    /// The scripted recall, naming `named_group` (or the group it moved
+    /// to) unless the script names one.
     fn recall_candidates(
         &self,
-        _facts: &LocalAlbumFacts,
+        facts: &LocalAlbumFacts,
         named_group: Option<&str>,
         _priority: RequestPriority,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
+        if let Ok(mut recalled) = self.recalled.lock() {
+            recalled.push(facts.local_album_id.clone());
+        }
         let mut result = self.scripted();
         if result.named_group.is_none() {
-            result.named_group = named_group.map(str::to_ascii_lowercase);
+            let asked = named_group.map(str::to_ascii_lowercase);
+            let moved = asked.as_ref().and_then(|group| {
+                self.moved_groups
+                    .lock()
+                    .ok()
+                    .and_then(|moved| moved.get(group).cloned())
+            });
+            result.named_group = moved.or(asked);
         }
         Box::pin(async move {
             RecallOutcome {

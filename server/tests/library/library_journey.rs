@@ -24383,8 +24383,7 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
 /// has one, the album's status says the edition is not chosen yet. After
 /// the upgrade such a match the app made (A) is identified once more, by
 /// itself, and lands on the edition its files fit, which can be undone. A
-/// group a person chose, now (B) or in v2 (C), is left alone. It happens
-/// once per database.
+/// group a person chose (B) is left alone. It happens once per database.
 #[tokio::test]
 async fn albums_matched_to_a_group_only_get_an_edition_once() {
     use droppedneedle_library::edition::status::edition_status;
@@ -24393,7 +24392,7 @@ async fn albums_matched_to_a_group_only_get_an_edition_once() {
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
     let (scratch, library, music) = bare_library("lib-group-only-relook").await;
-    let editions: Vec<Release> = (1..=3)
+    let editions: Vec<Release> = (1..=2)
         .map(|n| sibling_editions(n, &format!("Group Only {n}")).0)
         .collect();
     // Files tagged with their release group and recordings, no release.
@@ -24440,12 +24439,12 @@ async fn albums_matched_to_a_group_only_get_an_edition_once() {
             .unwrap()
             .expect("album")
     };
-    let (a, b, c) = (album(0), album(1), album(2));
+    let (a, b) = (album(0), album(1));
     scratch.identify.set_recall(RecallResult {
         releases: editions.clone(),
         ..RecallResult::default()
     });
-    assert_eq!(library.identification.identify_tick().await, 3);
+    assert_eq!(library.identification.identify_tick().await, 2);
 
     // What v2 carried: the group only, with no track matches.
     let db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
@@ -24466,7 +24465,6 @@ async fn albums_matched_to_a_group_only_get_an_edition_once() {
     };
     group_only(&a, "embedded");
     group_only(&b, "manual");
-    group_only(&c, "legacy_import");
     let reason = |album: &str| {
         let status = edition_status(&db, album)
             .expect("status reads")
@@ -24477,7 +24475,6 @@ async fn albums_matched_to_a_group_only_get_an_edition_once() {
     assert_eq!(code, "EDITION_NOT_CHOSEN");
     assert!(message.starts_with("Edition not chosen yet"), "{message}");
     assert_eq!(reason(&b).0, "CHOSEN");
-    assert_eq!(reason(&c).0, "CHOSEN");
     let queued = || -> Vec<String> {
         let mut stmt = db
             .prepare(
@@ -24531,7 +24528,6 @@ async fn albums_matched_to_a_group_only_get_an_edition_once() {
         Some((Some(editions[0].id.clone()), "automatic".to_owned()))
     );
     assert_eq!(release_of(&b), Some((None, "manual".to_owned())));
-    assert_eq!(release_of(&c), Some((None, "legacy_import".to_owned())));
     assert_eq!(reason(&a).0, "SUPPORTED");
     let undo: i64 = db
         .query_row(
@@ -24548,6 +24544,303 @@ async fn albums_matched_to_a_group_only_get_an_edition_once() {
     let restarted = crate::common::library::repair_worker(&library);
     droppedneedle_library::repairs::tick(&restarted, "worker").await;
     assert!(queued().is_empty());
+}
+
+/// v2 carried some matches from its older catalog as a release group with
+/// no edition, stamped as imported though no person chose them. After the
+/// upgrade such a match (C) is identified once more and, when its files
+/// surely fit one edition of that same group, gets that edition: it keeps
+/// its source and group, the album page says DroppedNeedle found it, and
+/// its Undo holds for good. One whose files fit its group but whose tags
+/// name another, on every file (E) or on one (H), is not even looked up.
+/// One whose files fit an edition recall puts in another group (G), and
+/// one that names an edition already (F), stay exactly as they were.
+#[tokio::test]
+async fn a_v2_carried_group_only_match_gets_the_edition_its_files_fit() {
+    use droppedneedle_library::edition::status::edition_status;
+    use droppedneedle_library::identify::models::IdentifyKind;
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    let (scratch, library, music) = bare_library("lib-carried-group-only").await;
+    const ANOTHER_GROUP: &str = "5e1a0000-0009-4000-8000-0000000000ff";
+    const MOVED_GROUP: &str = "5e1a0000-0008-4000-8000-0000000000ff";
+    let editions: Vec<Release> = (1..=5)
+        .map(|n| sibling_editions(n, &format!("Carried {n}")).0)
+        .collect();
+    // Files tagged with their recordings and no release. E's name another
+    // group, G's none, and only H's first file names another group.
+    for (index, release) in editions.iter().enumerate() {
+        for (number, track) in release.tracks.iter().enumerate() {
+            let group = match (index, number) {
+                (1, _) | (4, 0) => vec![ANOTHER_GROUP.to_owned()],
+                (2, _) | (4, _) => Vec::new(),
+                _ => vec![release.release_group_id.clone()],
+            };
+            let file = plant(
+                &music,
+                &format!("album-{index}/{:02}.flac", number + 1),
+                "flac_full_01.flac",
+            );
+            save_tags(
+                &file,
+                &[
+                    TagEdit::verbatim(TagField::Title, vec![track.title.clone()]),
+                    TagEdit::verbatim(TagField::Album, vec![release.title.clone()]),
+                    TagEdit::verbatim(TagField::Artist, vec!["Radiohead".to_owned()]),
+                    TagEdit::verbatim(TagField::AlbumArtist, vec!["Radiohead".to_owned()]),
+                    TagEdit::verbatim(TagField::TrackNumber, vec![(number + 1).to_string()]),
+                    TagEdit::verbatim(TagField::MusicBrainzReleaseId, Vec::new()),
+                    TagEdit::verbatim(TagField::MusicBrainzReleaseGroupId, group),
+                    TagEdit::verbatim(
+                        TagField::MusicBrainzRecordingId,
+                        vec![track.recording_id.clone()],
+                    ),
+                    TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+                ],
+            )
+            .expect("file tagged");
+        }
+    }
+    add_music_root(&library, &music).await;
+    let album = |index: usize| {
+        let track = library
+            .scan_store
+            .track_at("music", &format!("album-{index}/01.flac"))
+            .unwrap()
+            .expect("track indexed");
+        library
+            .scan_store
+            .album_for_track(&track)
+            .unwrap()
+            .expect("album")
+    };
+    let (c, e, g, f, h) = (album(0), album(1), album(2), album(3), album(4));
+    scratch.identify.set_recall(RecallResult {
+        releases: editions.clone(),
+        ..RecallResult::default()
+    });
+    assert_eq!(library.identification.identify_tick().await, 5);
+
+    // What v2 carried. C: its group, with its files' recordings carried as
+    // imported too. E and H: the group their files fit. G: a group recall
+    // answers for with the one its files fit. F: an edition.
+    let db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db opens");
+    let carried = |album: &str, group: &str| {
+        db.execute(
+            "UPDATE local_album_external_identities SET release_mbid = NULL, \
+             release_group_mbid = ?2, decision_source = 'legacy_import' \
+             WHERE local_album_id = ?1",
+            rusqlite::params![album, group],
+        )
+        .expect("identity carried");
+    };
+    carried(&c, &editions[0].release_group_id);
+    db.execute(
+        "UPDATE local_track_external_identities SET release_mbid = NULL, \
+         release_track_mbid = NULL, medium_position = NULL, release_track_position = NULL, \
+         decision_source = 'legacy_import' WHERE local_track_id IN \
+         (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
+        [&c],
+    )
+    .expect("tracks carried");
+    carried(&e, &editions[1].release_group_id);
+    carried(&g, MOVED_GROUP);
+    carried(&h, &editions[4].release_group_id);
+    for album in [&e, &g, &h] {
+        db.execute(
+            "DELETE FROM local_track_external_identities WHERE local_track_id IN \
+             (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
+            [album],
+        )
+        .expect("tracks carried");
+    }
+    for album in [&c, &e, &g, &h, &f] {
+        db.execute(
+            "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
+            [album],
+        )
+        .expect("no flag carried");
+    }
+    scratch
+        .identify
+        .moved_groups
+        .lock()
+        .expect("script")
+        .insert(MOVED_GROUP.to_owned(), editions[2].release_group_id.clone());
+    db.execute(
+        "UPDATE local_album_external_identities SET decision_source = 'legacy_import' \
+         WHERE local_album_id = ?1",
+        [&f],
+    )
+    .expect("identity carried");
+    let row = |album: &str| -> Vec<rusqlite::types::Value> {
+        db.query_row(
+            "SELECT * FROM local_album_external_identities WHERE local_album_id = ?1",
+            [album],
+            |row| {
+                (0..row.as_ref().column_count())
+                    .map(|column| row.get(column))
+                    .collect()
+            },
+        )
+        .expect("identity reads")
+    };
+    let kept: Vec<_> = [&e, &g, &h, &f]
+        .into_iter()
+        .map(|album| row(album))
+        .collect();
+    let revision = |album: &str| -> i64 {
+        db.query_row(
+            "SELECT row_revision FROM local_album_external_identities WHERE local_album_id = ?1",
+            [album],
+            |row| row.get(0),
+        )
+        .expect("revision reads")
+    };
+    let before = revision(&c);
+    let queued = || -> Vec<String> {
+        let mut stmt = db
+            .prepare(
+                "SELECT local_album_id FROM library_identify_jobs \
+                 WHERE state = 'queued' ORDER BY local_album_id",
+            )
+            .expect("queue reads");
+        stmt.query_map([], |row| row.get(0))
+            .expect("queue reads")
+            .collect::<Result<_, _>>()
+            .expect("queue reads")
+    };
+    assert!(queued().is_empty());
+
+    carried_from_v2(&db);
+    droppedneedle_library::repairs::tick(
+        &crate::common::library::repair_worker(&library),
+        "worker",
+    )
+    .await;
+    let mut expected = vec![c.clone(), e.clone(), g.clone(), h.clone()];
+    expected.sort();
+    assert_eq!(queued(), expected);
+    scratch.identify.recalled.lock().expect("recalled").clear();
+    assert_eq!(library.identification.identify_tick().await, 4);
+    let mut recalled = scratch.identify.recalled.lock().expect("recalled").clone();
+    recalled.sort();
+    let mut looked_up = vec![c.clone(), g.clone()];
+    looked_up.sort();
+    assert_eq!(
+        recalled, looked_up,
+        "files naming another group are not looked up"
+    );
+
+    let release_of = |album: &str| {
+        library
+            .identify_store
+            .album_identity(album)
+            .unwrap()
+            .map(|identity| {
+                (
+                    identity.release_group_mbid,
+                    identity.release_mbid,
+                    identity.decision_source.as_str().to_owned(),
+                )
+            })
+    };
+    assert_eq!(
+        release_of(&c),
+        Some((
+            Some(editions[0].release_group_id.clone()),
+            Some(editions[0].id.clone()),
+            "legacy_import".to_owned()
+        ))
+    );
+    assert_eq!(revision(&c), before + 1);
+    let now: Vec<_> = [&e, &g, &h, &f]
+        .into_iter()
+        .map(|album| row(album))
+        .collect();
+    assert_eq!(now, kept, "the other carried matches are untouched");
+    let status = edition_status(&db, &c)
+        .expect("status reads")
+        .expect("album known");
+    assert_eq!(status.reason.code, "CARRIED_EDITION_FOUND");
+    let actions: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_catalog_actions WHERE local_album_id = ?1 \
+             AND action_kind = 'automatic_exact_edition' AND reason_code = 'CARRIED_EDITION_FOUND'",
+            [&c],
+            |row| row.get(0),
+        )
+        .expect("actions read");
+    assert_eq!(actions, 1);
+    let undo_at: i64 = db
+        .query_row(
+            "SELECT expected_identity_revision FROM library_edition_choice_undo \
+             WHERE local_album_id = ?1",
+            [&c],
+            |row| row.get(0),
+        )
+        .expect("the album page can undo it");
+    assert_eq!(undo_at, before + 1);
+    assert_eq!(
+        remap_row(&db, &c).map(|row| row.0),
+        Some("place_only".to_owned())
+    );
+
+    // The files are placed on the edition in the background.
+    assert!(
+        crate::common::library::operations(&library)
+            .remap_next()
+            .await
+            .expect("remap step"),
+        "the placement was handled"
+    );
+    let unplaced: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = ?1 \
+             AND t.availability = 'indexed' AND NOT EXISTS (SELECT 1 \
+             FROM local_track_external_identities i WHERE i.local_track_id = t.id \
+             AND i.release_mbid = ?2 AND i.release_track_mbid IS NOT NULL)",
+            rusqlite::params![c, editions[0].id],
+            |row| row.get(0),
+        )
+        .expect("placements read");
+    assert_eq!(unplaced, 0, "every file is on a track of the edition");
+
+    // Undo on the album page takes it back, and nothing fills it again.
+    crate::common::library::operations(&library)
+        .undo_edition_choice(&c, shown_revision(&library, &c), "curator")
+        .expect("the found edition can be undone");
+    let group_only = Some((
+        Some(editions[0].release_group_id.clone()),
+        None,
+        "legacy_import".to_owned(),
+    ));
+    assert_eq!(release_of(&c), group_only);
+    library
+        .identification
+        .enqueue_identify(&c, IdentifyKind::Manual, "admin")
+        .expect("identification queued");
+    assert_eq!(library.identification.identify_tick().await, 1);
+    assert_eq!(release_of(&c), group_only);
+
+    // The next start looks no more.
+    droppedneedle_library::repairs::tick(
+        &crate::common::library::repair_worker(&library),
+        "worker",
+    )
+    .await;
+    assert!(queued().is_empty());
+    let marked: bool = db
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM library_operation_jobs \
+             WHERE idempotency_key = 'carried-group-only-edition:v1:backfill')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("marker reads");
+    assert!(marked);
 }
 
 /// Before matching read the release group the files' tags name, an album

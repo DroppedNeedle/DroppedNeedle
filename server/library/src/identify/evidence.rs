@@ -34,6 +34,15 @@ pub fn named_group(facts: &LocalAlbumFacts, current: Option<&AlbumIdentity>) -> 
         .and_then(|row| valid_group(row.release_group_mbid.as_deref()))
 }
 
+/// Whether any indexed file's tag names a well-formed release group other
+/// than `group`. Files naming no group, or a malformed one, name nothing.
+pub fn tags_name_another_group(facts: &LocalAlbumFacts, group: &str) -> bool {
+    facts.tracks.iter().any(|track| {
+        valid_group(track.release_group_mbid.as_deref())
+            .is_some_and(|tagged| !tagged.eq_ignore_ascii_case(group))
+    })
+}
+
 fn valid_group(value: Option<&str>) -> Option<String> {
     let group = value?.trim().to_ascii_lowercase();
     is_valid_mbid(&group).then_some(group)
@@ -366,6 +375,32 @@ mod tests {
                 let got = named_group(&facts, current.as_ref());
                 (got.as_deref() != expected).then(|| format!("{name}: got {got:?}"))
             })
+            .collect();
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    #[test]
+    fn a_file_naming_another_group() {
+        let upper = G.to_ascii_uppercase();
+        let cases: Vec<(&str, LocalAlbumFacts, bool)> = vec![
+            ("every file names G", facts(&[Some(G), Some(&upper)]), false),
+            ("no file names a group", facts(&[None, None]), false),
+            (
+                "one file names H, one nothing",
+                facts(&[Some(H), None]),
+                true,
+            ),
+            ("files name G and H", facts(&[Some(G), Some(H)]), true),
+            (
+                "a malformed group names nothing",
+                facts(&[Some("H"), None]),
+                false,
+            ),
+        ];
+        let wrong: Vec<&str> = cases
+            .into_iter()
+            .filter(|(_, facts, expected)| tags_name_another_group(facts, G) != *expected)
+            .map(|(name, _, _)| name)
             .collect();
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }

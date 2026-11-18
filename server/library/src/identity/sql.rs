@@ -365,6 +365,47 @@ droppedneedle_kernel::sql! {
     /// `availability` looks as good, and would walk every indexed track.
     pub(super) fragment ALBUM_TRACKS = "local_tracks t \
              INDEXED BY idx_local_tracks_album_availability";
+    /// A match v2 carried over from its older catalog that names a
+    /// well-formed release group but no edition, which identification may
+    /// give an edition of that group, once. Over album `a` and its match
+    /// row `i` (the caller binds the provider): the album is live, has no
+    /// custom edition, no match flag of any kind (a detach, an undone
+    /// edition), no review waiting or settled, and no edition found this
+    /// way before, on it or an album merged or retired into it, so a
+    /// person's Undo stays undone.
+    pub(crate) fragment CARRIED_EDITION_OPEN = "i.decision_source = 'legacy_import' \
+             AND trim(COALESCE(i.release_mbid, '')) = '' \
+             AND lower(i.release_group_mbid) GLOB '" + (mbid_shape!()) + "' \
+             AND a.retired_into_album_id IS NULL \
+             AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active cea \
+                 WHERE cea.local_album_id = a.id) \
+             AND NOT " + (match_flagged!("a.id")) + " \
+             AND NOT EXISTS (SELECT 1 FROM library_identify_reviews cer \
+                 WHERE cer.local_album_id = a.id \
+                 AND cer.state IN ('pending','rejected','dismissed','excluded')) \
+             AND NOT EXISTS (SELECT 1 FROM library_catalog_actions cef \
+                 WHERE (cef.local_album_id = a.id \
+                     OR cef.local_album_id IN (SELECT alias FROM local_album_aliases \
+                         WHERE local_album_id = a.id AND kind = 'merged_album') \
+                     OR cef.local_album_id IN (SELECT id FROM local_albums \
+                         WHERE retired_into_album_id = a.id)) \
+                 AND cef.action_kind = 'automatic_exact_edition' \
+                 AND cef.reason_code = 'CARRIED_EDITION_FOUND')";
+
+    /// Whether the album (`?1`, provider `?2`) still holds a carried match
+    /// of group `?3` with no edition that may be given one.
+    pub(super) CARRIED_EDITION_STILL_OPEN = "SELECT EXISTS (SELECT 1 FROM local_albums a \
+             JOIN local_album_external_identities i \
+                 ON i.local_album_id = a.id AND i.provider = ?2 \
+             WHERE a.id = ?1 AND lower(i.release_group_mbid) = lower(?3) AND "
+             + CARRIED_EDITION_OPEN + ")";
+    /// Give the album's (`?1`, provider `?2`) carried match of group `?4`
+    /// release `?3`, keeping its source, its group and who chose it.
+    pub(super) FILL_CARRIED_RELEASE = "UPDATE local_album_external_identities \
+             SET release_mbid = ?3, row_revision = row_revision + 1 \
+             WHERE local_album_id = ?1 AND provider = ?2 AND decision_source = 'legacy_import' \
+             AND trim(COALESCE(release_mbid, '')) = '' \
+             AND lower(release_group_mbid) = lower(?4)";
 
     /// Who decided the album's match (`?1`, provider `?2`).
     pub(super) ALBUM_SOURCE = "SELECT decision_source FROM local_album_external_identities \

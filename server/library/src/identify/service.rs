@@ -15,7 +15,9 @@ use droppedneedle_providers::RequestPriority;
 use tokio::time::Instant;
 
 use super::artist_links::{ArtistLink, ArtistLinkError};
-use super::evidence::{candidate_evidence, edition_ids, local_album, named_group};
+use super::evidence::{
+    candidate_evidence, edition_ids, local_album, named_group, tags_name_another_group,
+};
 use super::models::{
     AlbumIdentity, AutomaticSeal, CandidateEvidence, DecisionSource, EvidenceClass,
     IdentificationOutcome, IdentifyJob, IdentifyKind, IdentityBrief, JobState, LocalAlbumFacts,
@@ -32,7 +34,7 @@ use super::sources::{EditionPage, EditionQuery, ReleaseAnswer, SourceError};
 use super::sqlite::SqliteIdentifyStore;
 use super::stores::{Approval, AttemptLanding, StoreError, keep_releases, land_job};
 use crate::edition_prefs::{LivePreferences, Preferences};
-use crate::identity::AutomaticOutcome;
+use crate::identity::{AutomaticOutcome, CARRIED_EDITION_FOUND};
 use crate::matching::decide::{
     EDITION_COHORT, IdStance, candidate_order, eligible, hint_misses, id_stance, named_in_tie,
 };
@@ -200,16 +202,28 @@ impl IdentifyService {
         };
         let current = self.deps.store.album_identity(&facts.local_album_id)?;
         // A person's choice is final: automatic passes never look again.
+        // The one exception is a match v2 carried over with a release
+        // group and no edition, which may be given an edition of that
+        // group, once, unless any file's tags name another group.
+        let mut carried = None;
         if current
             .as_ref()
             .is_some_and(|row| row.decision_source.is_persons_choice())
         {
-            land_job(&mut job, AttemptLanding::Done, now_ms, None);
-            return self.land(
-                job,
-                IdentificationOutcome::Identified,
-                "CHOSEN_EDITION_KEPT",
-            );
+            let open = self
+                .deps
+                .store
+                .carried_edition_open(&facts.local_album_id)?
+                .filter(|group| !tags_name_another_group(&facts, group));
+            let Some(group) = open else {
+                land_job(&mut job, AttemptLanding::Done, now_ms, None);
+                return self.land(
+                    job,
+                    IdentificationOutcome::Identified,
+                    "CHOSEN_EDITION_KEPT",
+                );
+            };
+            carried = Some(group);
         }
         // Preferences that do not read put the job back as it was, with no
         // attempt spent; the loop claims nothing until they read again.
@@ -218,7 +232,10 @@ impl IdentifyService {
             self.deps.store.land(&job)?;
             return Ok(None);
         };
-        let named = named_group(&facts, current.as_ref());
+        let named = match &carried {
+            Some(group) => Some(group.clone()),
+            None => named_group(&facts, current.as_ref()),
+        };
         let RecallOutcome {
             result: mut recall,
             scored,
@@ -228,10 +245,10 @@ impl IdentifyService {
             .recall_candidates(&facts, named.as_deref(), RequestPriority::BackgroundSync)
             .await;
         // The edition the album already has is always weighed, so a recall
-        // that missed it cannot flip it.
+        // that missed it cannot flip it. A carried match has none.
         let held = self.held(
             &facts.local_album_id,
-            current.as_ref(),
+            current.as_ref().filter(|_| carried.is_none()),
             recall.provider_deferred,
         )?;
         if let Some(held) = held.release.as_deref()
@@ -309,7 +326,69 @@ impl IdentifyService {
                 "PROVIDER_DEFERRED",
             );
         }
+        if let Some(group) = carried {
+            return self.fill_carried(job, &facts, &ranking, &decision, &group, now_ms);
+        }
         self.apply_decision(job, &facts, &ranking, decision, now_ms)
+    }
+
+    /// Land a carried match's attempt: give it the edition only when the
+    /// decision is a confident match in the carried `group` itself.
+    /// Anything else (a guess, a best fit in another group, nothing that
+    /// fits) leaves the match as v2 carried it, with no flag and no review.
+    fn fill_carried(
+        &self,
+        mut job: IdentifyJob,
+        facts: &LocalAlbumFacts,
+        ranking: &Ranking,
+        decision: &Decision,
+        group: &str,
+        now_ms: u64,
+    ) -> Result<Option<AttemptReport>, StoreError> {
+        land_job(&mut job, AttemptLanding::Done, now_ms, None);
+        let found = match decision {
+            Decision::Identified(index) => ranking
+                .candidates
+                .get(*index)
+                .filter(|winner| winner.release_group_mbid.eq_ignore_ascii_case(group))
+                .and_then(|winner| winner.release_mbid.as_deref()),
+            _ => None,
+        };
+        let Some(release) = found else {
+            tracing::info!(
+                album = facts.local_album_id,
+                reason = decision.reason_code(),
+                "no edition of the carried release group surely fits the files; the match stays as v2 left it"
+            );
+            return self.land(
+                job,
+                IdentificationOutcome::Identified,
+                "CHOSEN_EDITION_KEPT",
+            );
+        };
+        let Some((written, job)) = self.deps.store.fill_carried_and_land(
+            &facts.local_album_id,
+            group,
+            release,
+            &facts.input_revision,
+            &job,
+        )?
+        else {
+            return Ok(None);
+        };
+        let (outcome, reason) = match written {
+            AutomaticOutcome::InputMoved => (IdentificationOutcome::Failed, "INPUT_MOVED"),
+            AutomaticOutcome::PersonsChoice => {
+                (IdentificationOutcome::Identified, "CHOSEN_EDITION_KEPT")
+            }
+            AutomaticOutcome::Done => (IdentificationOutcome::Identified, CARRIED_EDITION_FOUND),
+        };
+        Ok(Some(AttemptReport {
+            job,
+            outcome,
+            reason_code: reason.to_owned(),
+            review_id: None,
+        }))
     }
 
     /// Land `job` with nothing else written, and report it. `None` when

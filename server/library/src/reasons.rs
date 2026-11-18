@@ -602,6 +602,11 @@ pub fn match_reason(code: &str) -> Reason {
             "Someone chose this edition, so automatic matching leaves it alone.",
             "Pick another edition, or let DroppedNeedle choose again.",
         ),
+        "CARRIED_EDITION_FOUND" => reason(
+            "CARRIED_EDITION_FOUND",
+            "This album came over from v2 without an edition; DroppedNeedle found the one your files fit.",
+            "Pick another edition if it is wrong, or undo it from the album page.",
+        ),
         "CHOSEN_EDITION_FITS_NO_FILE" => reason(
             "CHOSEN_EDITION_FITS_NO_FILE",
             "The edition you chose doesn't match these files.",

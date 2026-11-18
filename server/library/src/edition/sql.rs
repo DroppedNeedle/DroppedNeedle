@@ -21,6 +21,12 @@ droppedneedle_kernel::sql! {
                  VALUES (?1, ?2, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', ?3, ?3)";
     pub(crate) ALBUM_LIVE = "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 \
          AND retired_into_album_id IS NULL)";
+    /// Whether the app found the album's (`?1`) edition, release `?2`, for
+    /// a match v2 carried over without one (reason `?3`).
+    pub(super) CARRIED_EDITION_FOUND = "SELECT EXISTS(SELECT 1 FROM library_catalog_actions \
+             WHERE local_album_id = ?1 AND action_kind = 'automatic_exact_edition' \
+             AND reason_code = ?3 \
+             AND lower(json_extract(after_json, '$.release_mbid')) = lower(?2))";
     pub(super) CUSTOM_ACTIVE = "SELECT EXISTS(SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1)";
     pub(super) INDEXED_ON = "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE id = ?1 AND local_album_id = ?2 \
          AND availability = 'indexed')";
