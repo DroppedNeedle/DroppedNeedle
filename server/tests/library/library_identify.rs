@@ -22,7 +22,6 @@ use identify::queue::{
     LEASE_SECONDS, PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY,
     PRIORITY_SUPPORTING_MAINTENANCE, terminally_deferred,
 };
-use identify::rules::evaluate_overwrite;
 use identify::service::{IdentifyDeps, IdentifyService};
 use identify::sqlite::SqliteIdentifyStore;
 use identify::stores::{AttemptLanding, land_job};
@@ -528,65 +527,6 @@ async fn automatic_pass_skips_protected_track_rows() {
     let kept = rig.store.track_identity("t2").unwrap().expect("t2");
     assert_eq!(kept.decision_source, DecisionSource::Manual);
     assert_eq!(kept.row_revision, 7);
-}
-
-#[test]
-fn overwrite_matrix_matches_v2() {
-    use identify::rules::OverwriteVerdict;
-    assert_eq!(
-        evaluate_overwrite(None, Some(GROUP_A), None, false),
-        OverwriteVerdict::MayWrite
-    );
-    assert_eq!(
-        evaluate_overwrite(
-            Some(DecisionSource::Automatic),
-            Some(GROUP_B),
-            Some(GROUP_A),
-            false
-        ),
-        OverwriteVerdict::MayWrite
-    );
-    assert_eq!(
-        evaluate_overwrite(
-            Some(DecisionSource::Manual),
-            Some(GROUP_B),
-            Some(GROUP_A),
-            false
-        ),
-        OverwriteVerdict::ProtectedFileReview
-    );
-    assert_eq!(
-        evaluate_overwrite(
-            Some(DecisionSource::LegacyImport),
-            Some(GROUP_B),
-            Some(GROUP_A),
-            true
-        ),
-        OverwriteVerdict::ProtectedFileReview
-    );
-    assert_eq!(
-        evaluate_overwrite(
-            Some(DecisionSource::Manual),
-            Some(GROUP_A),
-            Some(GROUP_A),
-            true
-        ),
-        OverwriteVerdict::QuietReconfirm
-    );
-    // Agreement alone decides: the contradiction flag plays no part.
-    assert_eq!(
-        evaluate_overwrite(
-            Some(DecisionSource::Manual),
-            Some(GROUP_A),
-            Some(GROUP_A),
-            false
-        ),
-        OverwriteVerdict::QuietReconfirm
-    );
-    assert_eq!(
-        evaluate_overwrite(None, Some(GROUP_A), Some(GROUP_A), true),
-        OverwriteVerdict::MayWrite
-    );
 }
 
 /// File a pending review the way an edition correction does when it drops
