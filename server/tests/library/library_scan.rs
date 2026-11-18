@@ -12386,3 +12386,215 @@ async fn the_folder_watcher_scans_the_changed_folder_across_a_restart() {
         [("music".to_owned(), "A".to_owned())]
     );
 }
+
+impl ArtistRig {
+    /// Plant (or retag) `relative` as track `number` of `album` by
+    /// `artist`, with no release id, the given album artist tag (none when
+    /// empty) and the compilation flag, dated later than before.
+    fn put_untagged(
+        &self,
+        relative: &str,
+        number: u32,
+        album: &str,
+        artist: &str,
+        album_artist: &str,
+        compilation: bool,
+    ) {
+        use droppedneedle_library::tags::TagField;
+        use droppedneedle_library::tags::save::{TagEdit, save_tags};
+        let path = self.root.join(relative);
+        if !path.exists() {
+            plant(&self.root, relative, "flac_full_02.flac");
+        }
+        let one = |value: &str| {
+            if value.is_empty() {
+                Vec::new()
+            } else {
+                vec![value.to_owned()]
+            }
+        };
+        let edits = vec![
+            TagEdit::verbatim(TagField::Title, vec![relative.to_owned()]),
+            TagEdit::verbatim(TagField::Album, vec![album.to_owned()]),
+            TagEdit::verbatim(TagField::TrackNumber, vec![number.to_string()]),
+            TagEdit::verbatim(TagField::Artist, vec![artist.to_owned()]),
+            TagEdit::verbatim(TagField::Artists, Vec::new()),
+            TagEdit::verbatim(TagField::AlbumArtist, one(album_artist)),
+            TagEdit::verbatim(TagField::AlbumArtists, Vec::new()),
+            TagEdit::verbatim(
+                TagField::Compilation,
+                one(if compilation { "1" } else { "" }),
+            ),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseGroupId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzRecordingId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzArtistId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzAlbumArtistId, Vec::new()),
+        ];
+        save_tags(&path, &edits).expect("file tagged");
+        let write = self.writes.fetch_add(1, Ordering::SeqCst) + 1;
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("file opens")
+            .set_modified(
+                std::time::SystemTime::UNIX_EPOCH
+                    + std::time::Duration::from_secs(1_700_000_000 + write),
+            )
+            .expect("mtime set");
+    }
+
+    /// The album artist of each live album with present tracks under
+    /// `folder`, one entry per album.
+    fn albums_in(&self, folder: &str) -> Vec<String> {
+        let db = self.db();
+        let mut stmt = db
+            .prepare(
+                "SELECT DISTINCT a.id, a.album_artist_name FROM local_albums a \
+                 JOIN local_tracks t ON t.local_album_id = a.id \
+                 WHERE t.availability = 'indexed' AND t.relative_path LIKE ?1 \
+                 AND a.retired_into_album_id IS NULL ORDER BY 2, 1",
+            )
+            .expect("prepares");
+        stmt.query_map([format!("{folder}/%")], |row| row.get(1))
+            .expect("query runs")
+            .collect::<rusqlite::Result<_>>()
+            .expect("rows read")
+    }
+
+    /// The album of the indexed file at `relative`.
+    fn album_of(&self, relative: &str) -> String {
+        self.text(&format!(
+            "SELECT local_album_id FROM local_tracks WHERE relative_path = '{relative}' \
+             AND availability = 'indexed'"
+        ))
+        .expect("track row")
+    }
+
+    /// Every track's id and album, and every album's key and name, in a
+    /// fixed order.
+    fn filing(&self) -> (Vec<(String, String)>, Vec<(String, String, String)>) {
+        let db = self.db();
+        let tracks = db
+            .prepare(
+                "SELECT id, local_album_id FROM local_tracks \
+                 WHERE availability = 'indexed' ORDER BY id",
+            )
+            .expect("prepares")
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query runs")
+            .collect::<rusqlite::Result<_>>()
+            .expect("rows read");
+        let albums = db
+            .prepare("SELECT id, grouping_key, album_artist_name FROM local_albums ORDER BY id")
+            .expect("prepares")
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("query runs")
+            .collect::<rusqlite::Result<_>>()
+            .expect("rows read");
+        (tracks, albums)
+    }
+}
+
+/// Files with no album artist tag make one album per folder and title: a
+/// flagged compilation files under "Various Artists", and tracks with a
+/// featured artist under their main artist. A duo stays whole.
+#[tokio::test]
+async fn files_with_no_album_artist_group_by_main_artist_or_as_various_artists() {
+    let rig = ArtistRig::new("untagged-album-artist");
+    for (number, artist) in [(1, "A"), (2, "A feat. C"), (3, "A ft. D")] {
+        rig.put_untagged(
+            &format!("Feat/0{number}.flac"),
+            number,
+            "Shared",
+            artist,
+            "",
+            false,
+        );
+    }
+    for (number, artist) in [(1, "A"), (2, "B"), (3, "C")] {
+        rig.put_untagged(
+            &format!("Comp/0{number}.flac"),
+            number,
+            "Hits",
+            artist,
+            "",
+            true,
+        );
+    }
+    for number in [1, 2] {
+        rig.put_untagged(
+            &format!("Duo/0{number}.flac"),
+            number,
+            "Pair",
+            "A & B",
+            "",
+            false,
+        );
+    }
+    rig.scan().await;
+
+    assert_eq!(rig.albums_in("Feat"), ["A"]);
+    assert_eq!(rig.albums_in("Comp"), ["Various Artists"]);
+    assert_eq!(rig.albums_in("Duo"), ["A & B"]);
+    let (album_credit, album_artist_id) = rig.album_artist("Feat/02.flac");
+    assert_eq!(album_credit, rig.track_artist("Feat/01.flac", 0));
+    assert_eq!(album_artist_id, album_credit);
+}
+
+/// Albums an earlier version filed under each track's own artist keep
+/// their files when the files are read again, take a new file of the same
+/// artist, and follow their folder when it is renamed.
+#[tokio::test]
+async fn albums_filed_under_the_track_artist_keep_their_files() {
+    let rig = ArtistRig::new("untagged-album-artist-kept");
+    let files: [(&str, u32, &str, &str, bool); 7] = [
+        ("Feat/01.flac", 1, "Shared", "A", false),
+        ("Feat/02.flac", 2, "Shared", "A feat. C", false),
+        ("Feat/03.flac", 3, "Shared", "A ft. D", false),
+        ("Comp/01.flac", 1, "Hits", "A", true),
+        ("Comp/02.flac", 2, "Hits", "B", true),
+        ("Comp/03.flac", 3, "Hits", "C", true),
+        ("Single/01.flac", 1, "Alone", "A feat. C", false),
+    ];
+    for (relative, number, album, artist, compilation) in files {
+        rig.put_untagged(relative, number, album, artist, artist, compilation);
+    }
+    rig.scan().await;
+    // What the earlier rule left: names and keys from each track's artist,
+    // with no album artist tag read.
+    rig.run("UPDATE local_tracks SET tag_album_artist_name = ''");
+    rig.run("UPDATE local_albums SET tag_album_artist_name = ''");
+    let before = rig.filing();
+    assert_eq!(before.1.len(), 7);
+
+    for (relative, number, album, artist, compilation) in files {
+        rig.put_untagged(relative, number, album, artist, "", compilation);
+    }
+    rig.scan().await;
+    assert_eq!(rig.filing(), before);
+    assert_eq!(rig.count("SELECT COUNT(*) FROM library_retag_pairs"), 0);
+
+    rig.put_untagged("Single/02.flac", 2, "Alone", "A feat. C", "", false);
+    rig.scan().await;
+    assert_eq!(
+        rig.album_of("Single/02.flac"),
+        rig.album_of("Single/01.flac")
+    );
+
+    let ids: Vec<(String, String)> = ["01", "02", "03"]
+        .iter()
+        .map(|n| {
+            let relative = format!("Feat/{n}.flac");
+            (rig.track_of(&relative), rig.album_of(&relative))
+        })
+        .collect();
+    std::fs::rename(rig.root.join("Feat"), rig.root.join("Feat moved")).expect("renamed");
+    rig.scan().await;
+    for (n, (track, album)) in ["01", "02", "03"].iter().zip(ids) {
+        let relative = format!("Feat moved/{n}.flac");
+        assert_eq!(rig.track_of(&relative), track, "{relative}");
+        assert_eq!(rig.album_of(&relative), album, "{relative}");
+    }
+}

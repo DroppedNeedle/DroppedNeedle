@@ -14,6 +14,51 @@ pub const VARIOUS_ARTISTS_ID: &str = "00000000-0000-4000-8000-000000000001";
 pub const UNKNOWN_ARTIST_ID: &str = "00000000-0000-4000-8000-000000000002";
 /// The name a credit with no artist gets, keyed to the sentinel.
 pub const UNKNOWN_ARTIST: &str = "Unknown Artist";
+/// The album artist of a compilation whose files name none.
+pub const VARIOUS_ARTISTS: &str = "Various Artists";
+
+/// The album artist of a file with no album artist tag: "Various Artists"
+/// when it is flagged as a compilation, else its artist without a featured
+/// part. Empty when the file names no artist either, so path naming applies.
+#[must_use]
+pub fn untagged_album_artist(compilation: bool, artist: &str) -> &str {
+    let artist = artist.trim();
+    if artist.is_empty() {
+        ""
+    } else if compilation {
+        VARIOUS_ARTISTS
+    } else {
+        without_featured(artist)
+    }
+}
+
+/// A credit without its featured part: "A feat. B", "A ft. B",
+/// "A featuring B", "A (feat. B)" and "A [ft. B]" are "A", whatever the case.
+/// "&", ",", " x ", "with", "vs" and a bare "feat" never cut.
+#[must_use]
+pub fn without_featured(credit: &str) -> &str {
+    const MARKERS: [&str; 9] = [
+        " feat. ",
+        " ft. ",
+        " featuring ",
+        "(feat. ",
+        "[feat. ",
+        "(ft. ",
+        "[ft. ",
+        "(featuring ",
+        "[featuring ",
+    ];
+    let lowered = credit.to_ascii_lowercase();
+    let cut = MARKERS
+        .iter()
+        .filter_map(|marker| lowered.find(marker))
+        .min();
+    let main = match cut {
+        Some(at) => credit[..at].trim(),
+        None => credit.trim(),
+    };
+    if main.is_empty() { credit.trim() } else { main }
+}
 
 /// A stable UUID-shaped id from a namespaced key.
 pub(crate) fn stable_id(key: &str) -> String {
@@ -604,6 +649,44 @@ pub fn parse_names_from_path(relative_path: &str) -> ParsedNames {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file with no album artist tag files under "Various Artists" when
+    /// flagged as a compilation, else under its artist with only a spelled
+    /// out featured part cut.
+    #[test]
+    fn untagged_album_artist_cases() {
+        assert_eq!(untagged_album_artist(true, "A feat. C"), VARIOUS_ARTISTS);
+        assert_eq!(untagged_album_artist(true, "  "), "");
+        assert_eq!(untagged_album_artist(false, ""), "");
+        for (artist, album_artist) in [
+            ("A feat. C", "A"),
+            ("A ft. D", "A"),
+            ("A featuring C", "A"),
+            ("A (feat. C)", "A"),
+            ("A [feat. C]", "A"),
+            ("A (ft. C)", "A"),
+            ("A FEAT. C", "A"),
+            ("A Ft. D", "A"),
+            ("A feat. C feat. D", "A"),
+            ("  A feat. C  ", "A"),
+            ("A & B", "A & B"),
+            ("A, B", "A, B"),
+            ("A x B", "A x B"),
+            ("A with B", "A with B"),
+            ("A vs. B", "A vs. B"),
+            ("Little Feat", "Little Feat"),
+            ("Little Feat feat. C", "Little Feat"),
+            ("A feat C", "A feat C"),
+            ("A feat.", "A feat."),
+            ("Feat. C", "Feat. C"),
+        ] {
+            assert_eq!(
+                untagged_album_artist(false, artist),
+                album_artist,
+                "{artist}"
+            );
+        }
+    }
 
     /// Disc folders fold into their album's folder, and a file with no
     /// tags falls back to the common Artist/Artist - Album (Year) layout.

@@ -172,15 +172,19 @@ pub(crate) use walked_past;
 
 /// The place a moved file must keep for the gone track `t` to continue
 /// into it: the same folded album title and album artist, disc and track
-/// number, each given as the new file's SQL value.
+/// number, each given as the new file's SQL value. `$alt` is the album
+/// artist the file had under the earlier rule for files with no album
+/// artist tag (its own artist), so a track filed that way still continues.
 macro_rules! same_place {
-    ($title:literal, $artist:literal, $disc:literal, $track:literal) => {
+    ($title:literal, $artist:literal, $alt:literal, $disc:literal, $track:literal) => {
         concat!(
             "(t.album_title_folded = ",
             $title,
-            " AND COALESCE(t.album_artist_name_folded, '') = ",
+            " AND COALESCE(t.album_artist_name_folded, '') IN (",
             $artist,
-            " AND t.disc_number = ",
+            ", ",
+            $alt,
+            ") AND t.disc_number = ",
             $disc,
             " AND t.track_number = ",
             $track,
@@ -237,6 +241,8 @@ droppedneedle_kernel::sql! {
     pub(crate) fragment MOVED_MATCH = (same_place!(
         "n.album_title_folded",
         "COALESCE(n.album_artist_name_folded, '')",
+        "COALESCE(CASE WHEN trim(COALESCE(n.tag_album_artist_name, '')) = '' \
+         THEN n.artist_name_folded END, COALESCE(n.album_artist_name_folded, ''))",
         "n.disc_number",
         "n.track_number"
     )) + " AND CASE WHEN trim(COALESCE(n.embedded_recording_mbid, '')) <> '' \
@@ -249,5 +255,5 @@ droppedneedle_kernel::sql! {
     n.local_album_id AS new_album_id, \
     trim(COALESCE(n.embedded_recording_mbid, '')) <> '' AS recording, \
     t.duration_seconds AS old_seconds, n.duration_seconds AS new_seconds";
-    pub(crate) fragment SAME_PLACE = (same_place!("?3", "?4", "?5", "?6"));
+    pub(crate) fragment SAME_PLACE = (same_place!("?3", "?4", "COALESCE(?7, ?4)", "?5", "?6"));
 }

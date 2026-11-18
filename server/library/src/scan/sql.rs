@@ -339,7 +339,8 @@ droppedneedle_kernel::sql! {
              FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2";
     pub(super) MOVE_TRACK_PATH = "UPDATE local_tracks SET root_id = ?2, relative_path = ?3, path_hash = ?4, \
                  file_path = ?5, row_revision = row_revision + 1 WHERE id = ?1";
-    pub(super) TRACK_MEMBERSHIP = "SELECT membership_source, membership_locked = 1 AS locked FROM local_tracks WHERE id = ?1";
+    pub(super) TRACK_MEMBERSHIP = "SELECT membership_source, membership_locked = 1 AS locked, \
+         COALESCE(album_artist_name_folded, '') AS album_artist_folded FROM local_tracks WHERE id = ?1";
     pub(super) TRACK_EXISTS = "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE id = ?1)";
     pub(super) WRITE_TRACK_ROW = "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
          path_hash, file_size_bytes, file_mtime_ns, stat_revision, stat_revision_kind, \
@@ -1211,6 +1212,7 @@ droppedneedle_kernel::sql! {
     pub(super) row TrackMembership for [TRACK_MEMBERSHIP] {
         membership_source: GroupingSource,
         locked: bool,
+        album_artist_folded: String,
     }
     pub(super) row TrackAndAlbum for [TRACK_AND_ALBUM_AT_PATH] {
         id: String,
