@@ -60,7 +60,8 @@ use crate::scan::models::{
     Availability, EndPassName, GenreSource, GroupingSource, InventoryState, Phase, TagProvenance,
 };
 use crate::scan::naming::{
-    album_grouping_key, album_name_key, artist_name_key, grouping_directory, parse_names_for_row,
+    album_folder, album_grouping_key, album_name_key, artist_name_key, grouping_directory,
+    parse_names_for_row,
 };
 use crate::scan::store::{EditionFill, IndexWindow, LengthFill, WindowOutcome};
 use crate::tags::{AudioArtistCredit, AudioTag};
@@ -111,6 +112,37 @@ struct Place<'a> {
     run_id: Option<&'a str>,
     root_id: &'a str,
     directory: &'a str,
+    /// For a file named by its tags or release id, the [`album_folder`]
+    /// an album's tracks are compared against, so a disc folder with a
+    /// subtitle sits in its album's folder; `None` compares grouping
+    /// directories.
+    folder: Option<&'a str>,
+}
+
+impl<'a> Place<'a> {
+    fn new(
+        run_id: Option<&'a str>,
+        root_id: &'a str,
+        directory: &'a str,
+        names: &AlbumNames<'_>,
+        folder: &'a str,
+    ) -> Self {
+        let by_tags = names.from_tags || names.release_mbid.is_some();
+        Self {
+            run_id,
+            root_id,
+            directory,
+            folder: by_tags.then_some(folder),
+        }
+    }
+
+    /// Whether a track at `relative_path` in this root sits in this place.
+    fn holds(&self, relative_path: &str) -> bool {
+        match self.folder {
+            Some(folder) => album_folder(relative_path) == folder,
+            None => grouping_directory(relative_path) == self.directory,
+        }
+    }
 }
 
 /// Where an album's tracks are, seen from one folder.
@@ -118,6 +150,9 @@ struct Place<'a> {
 struct Presence {
     /// Some present tracks are in this folder.
     here: bool,
+    /// Some present tracks are in this grouping directory itself, not only
+    /// in a disc folder the place's folder takes in.
+    strict: bool,
     /// Some present tracks are anywhere else.
     elsewhere: bool,
     /// Some tracks this run found gone (not ones missing since earlier).
@@ -139,6 +174,9 @@ fn album_presence(
         } else if row.root_id == place.root_id
             && grouping_directory(&row.relative_path) == place.directory
         {
+            presence.here = true;
+            presence.strict = true;
+        } else if row.root_id == place.root_id && place.holds(&row.relative_path) {
             presence.here = true;
         } else {
             presence.elsewhere = true;
@@ -220,11 +258,18 @@ fn resolve_album(
         )?
         .collect::<rusqlite::Result<_>>()?
     };
+    // An album with tracks in this very directory wins over one that is
+    // here only through a disc folder, so a split made earlier stays split.
+    let mut folded: Option<String> = None;
     let mut takeover: Option<String> = None;
     for (id, exact) in candidates {
         let presence = album_presence(tx, place, &id)?;
-        if presence.here {
+        if presence.strict {
             return Ok(id);
+        }
+        if presence.here {
+            folded.get_or_insert(id);
+            continue;
         }
         // An album missing since an earlier run may be a different
         // release that happens to share the names; only one this run
@@ -233,7 +278,7 @@ fn resolve_album(
             takeover = Some(id);
         }
     }
-    if let Some(id) = takeover {
+    if let Some(id) = folded.or(takeover) {
         return Ok(id);
     }
     for seed in [
@@ -1144,11 +1189,13 @@ fn write_item(
         _ => resolve_album(
             tx,
             &names,
-            &Place {
+            &Place::new(
                 run_id,
-                root_id: &item.root_id,
-                directory: &directory,
-            },
+                &item.root_id,
+                &directory,
+                &names,
+                &album_folder(&item.relative_path),
+            ),
             previous.as_ref().map(|(_, album)| album.as_str()),
             legacy,
         )?,
@@ -3277,11 +3324,8 @@ pub(crate) fn automatic_album_for(
     };
     let directory = grouping_directory(&stored.relative_path);
     let names = stored.names(&directory);
-    let place = Place {
-        run_id: None,
-        root_id: &stored.root_id,
-        directory: &directory,
-    };
+    let folder = album_folder(&stored.relative_path);
+    let place = Place::new(None, &stored.root_id, &directory, &names, &folder);
     let album_id = resolve_album(tx, &names, &place, Some(&stored.album_id), false)?;
     let exists: bool = tx
         .prepare_cached(crate::scan::sql::ALBUM_EXISTS.text())?

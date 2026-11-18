@@ -219,6 +219,111 @@ async fn scan_catalogs_tags_without_touching_files() {
     assert_eq!(snapshot(&music), before, "scans never write music files");
 }
 
+/// Tagged files in disc folders that carry a subtitle (`Disc 1 - The
+/// Early Years`) are one album, as they are in `CD1` and `CD2`.
+#[tokio::test]
+async fn disc_folders_with_a_subtitle_hold_one_album() {
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    let scratch = ScratchDir::new("scan-disc-titles");
+    let music = scratch.join("music");
+    for (disc, folder) in [(1, "Disc 1 - The Early Years"), (2, "Disc 2 - Later")] {
+        let path = plant(
+            &music,
+            &format!("Album/{folder}/01.flac"),
+            &format!("flac_full_0{disc}.flac"),
+        );
+        let tag = |field, values: Vec<String>| TagEdit::new(field, values);
+        save_tags(
+            &path,
+            &[
+                tag(TagField::Title, vec![format!("Song {disc}")]),
+                tag(TagField::Artist, vec!["Band".to_owned()]),
+                tag(TagField::AlbumArtist, vec!["Band".to_owned()]),
+                tag(TagField::Album, vec!["Anthology".to_owned()]),
+                tag(TagField::TrackNumber, vec!["1".to_owned()]),
+                tag(TagField::DiscNumber, vec![disc.to_string()]),
+                tag(TagField::MusicBrainzReleaseId, Vec::new()),
+                tag(TagField::MusicBrainzReleaseGroupId, Vec::new()),
+            ],
+        )
+        .expect("tagged");
+    }
+    let library = bundle(&scratch).await;
+
+    let run = scan(&library).await;
+    assert_eq!(run.state.scan_state(), ScanState::Completed);
+    assert_eq!(count(&run, Counter::Indexed), 2);
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(DISTINCT local_album_id) FROM local_tracks",
+        ),
+        1,
+        "both discs file under one album"
+    );
+}
+
+/// Discs that are already two albums stay two, and a new file in a disc
+/// folder joins the album its folder siblings are on.
+#[tokio::test]
+async fn a_new_file_in_a_split_disc_folder_joins_its_siblings() {
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    let scratch = ScratchDir::new("scan-disc-split");
+    let music = scratch.join("music");
+    let plant_tagged = |relative: &str, fixture: u16, n: u16| {
+        let path = plant(&music, relative, &format!("flac_full_0{fixture}.flac"));
+        let tag = |field, values: Vec<String>| TagEdit::new(field, values);
+        save_tags(
+            &path,
+            &[
+                tag(TagField::Title, vec![format!("Song {n}")]),
+                tag(TagField::Artist, vec!["Band".to_owned()]),
+                tag(TagField::AlbumArtist, vec!["Band".to_owned()]),
+                tag(TagField::Album, vec!["Anthology".to_owned()]),
+                tag(TagField::TrackNumber, vec![n.to_string()]),
+                tag(TagField::MusicBrainzReleaseId, Vec::new()),
+                tag(TagField::MusicBrainzReleaseGroupId, Vec::new()),
+            ],
+        )
+        .expect("tagged");
+    };
+    // Disc 2 first lands in another folder, so it becomes a second, newer
+    // album, then moves beside disc 1 and keeps that album.
+    plant_tagged("Album/Disc 1 - X/01.flac", 1, 1);
+    let library = bundle(&scratch).await;
+    scan(&library).await;
+    plant_tagged("Elsewhere/Disc 2 - Y/01.flac", 2, 2);
+    scan(&library).await;
+    std::fs::rename(
+        music.join("Elsewhere/Disc 2 - Y"),
+        music.join("Album/Disc 2 - Y"),
+    )
+    .expect("disc 2 moves");
+    scan(&library).await;
+    let albums = "SELECT COUNT(DISTINCT local_album_id) FROM local_tracks \
+                  WHERE availability = 'indexed'";
+    assert_eq!(query(&library, albums), 2, "the split stays as it was");
+
+    plant_tagged("Album/Disc 2 - Y/02.flac", 1, 3);
+    scan(&library).await;
+    assert_eq!(query(&library, albums), 2, "no album is added or joined");
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks n JOIN local_tracks o \
+             ON o.local_album_id = n.local_album_id \
+             WHERE n.relative_path = 'Album/Disc 2 - Y/02.flac' \
+             AND o.relative_path = 'Album/Disc 2 - Y/01.flac'",
+        ),
+        1,
+        "the new file joins disc 2's album"
+    );
+}
+
 /// A daily scan runs at the set time in the server's time zone (`TZ`), on
 /// both sides of a daylight-saving change, and not a minute before.
 #[tokio::test]
