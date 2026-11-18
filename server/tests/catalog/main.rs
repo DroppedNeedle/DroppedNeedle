@@ -9,6 +9,7 @@ mod discover_queue;
 mod home_page;
 mod listenbrainz_load;
 mod listenbrainz_reads;
+mod playlist_files;
 mod reads_artwork;
 mod reads_catalog;
 mod reads_collections;

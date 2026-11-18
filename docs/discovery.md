@@ -16,6 +16,7 @@ Home, Discover, radio and mixes, where covers and artist pictures come from, and
 - [Last.fm and ListenBrainz](#lastfm-and-listenbrainz)
 - [Music apps](#music-apps)
 - [Spotify playlist import](#spotify-playlist-import)
+- [Playlist files](#playlist-files)
 
 ## Home
 
@@ -84,3 +85,18 @@ Music apps (Subsonic and Jellyfin) sign in with an app password you make under P
 Spotify playlist import needs an app from the Spotify developer dashboard. Add the redirect URI that Settings > Spotify shows (it ends in `/api/v3/acquire/spotify/auth/callback`) to the app, then save the app's client ID and secret there. With "Redirect Origin" left empty, that address is the one DroppedNeedle works out for itself, which is right when you reach it directly or through a reverse proxy listed in `TRUSTED_PROXY_IPS` that sends `X-Forwarded-Proto`; if it is not the address in your browser's address bar, fill in Redirect Origin. Each user then clicks Connect on the Spotify card in their profile, and Disconnect there unlinks it again. An app set up for v2 lists v2's address, which v3 does not answer: add the v3 one in the dashboard (see [Upgrading from v2](upgrading-from-v2.md#before-you-upgrade)).
 
 An import runs in the background, one at a time across all users, and picks up again after a restart. Each album on the playlist is matched to its MusicBrainz release group only when MusicBrainz lists one of the album's track ISRCs; an album that can't be proved that way is left unmatched rather than guessed by name.
+
+## Playlist files
+
+A playlist's menu exports it as M3U (extended M3U8) or CSV, and "Import playlist" on the Playlists page reads one of those files back into a new private playlist of yours, named after the file.
+
+An export lists each entry's file by its path inside its library folder, such as `Portishead/Dummy/01 Mysterons.flac`. If your player keeps music under a folder of its own, add a path prefix (`Music/`, say) and it goes before every path; the export window remembers it in this browser. Entries with no file in your library (a Spotify or YouTube entry, a removed track) are left out, and the export says how many. A CSV has a header row and the columns `title`, `artist`, `album`, `album artist`, `duration` (whole seconds) and `path`. A cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return gets a `'` in front, so a spreadsheet shows it as text; the import takes that `'` off again.
+
+An import takes `.m3u`, `.m3u8` and `.csv` files of up to 2 MB. A CSV may have its columns in any order and other columns besides, as long as its header names at least one of the columns above; without such a header the export's column order is assumed. Each entry is matched to a track in your library, in this order:
+
+1. its path, exactly as the library holds it;
+2. the end of its path, from a folder boundary, so a prefix such as `Music/` or `D:\Music\` doesn't matter;
+3. its title, artist and album, ignoring capitals, accents and spacing;
+4. its title and artist the same way.
+
+Only tracks in your library are added, each once, in the file's order. The import reports how many tracks it added and each entry it left out, with its title, artist and why (the page lists the first 200; the API answer holds them all): it names no file, nothing in your library matches it, or the same track came earlier in the file. It reads the first 10,000 entries; any past that are only counted, and the report says how many.
