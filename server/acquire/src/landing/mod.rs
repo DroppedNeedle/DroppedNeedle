@@ -356,8 +356,10 @@ impl LandingService {
         // the pinned-edition check all use it. A download fetched for one
         // copy is matched against that copy's release instead. An edition
         // that does not read is never taken as none: the landing waits.
+        // Either way the release is no longer only a preference.
         if let Some(planned) = &target.planned_album {
             target.release_mbid = Some(planned.release_mbid.trim().to_ascii_lowercase());
+            target.release_preferred = false;
         } else if !target.release_group_mbid.is_empty() {
             let pin = match library.chosen_edition(&target.release_group_mbid).await {
                 Ok(pin) => pin,
@@ -379,6 +381,7 @@ impl LandingService {
                     tracing::info!(task_id = %task.id, %pin, "landing follows the album's chosen edition");
                 }
                 target.release_mbid = Some(pin);
+                target.release_preferred = false;
             }
         }
         // Sizes key on the exact reported file, never on a bare name: two
@@ -1222,16 +1225,24 @@ impl LandingService {
 
 /// What the task asked for, from its row, details, and plan.
 pub fn target_for(task: &TaskRow, details: &TaskDetails, plan: &TaskPlan) -> Target {
+    let release_mbid = details
+        .release_mbid
+        .clone()
+        .or_else(|| plan.release_mbid.clone())
+        .map(|mbid| mbid.trim().to_ascii_lowercase())
+        .filter(|mbid| !mbid.is_empty());
+    // A release in the details that the plan is not for is a pin.
+    let release_preferred = task.download_type == "album"
+        && plan.release_preferred
+        && release_mbid
+            .as_deref()
+            .is_some_and(|release| plan.is_for(release));
     Target {
         artist_name: task.artist_name.clone(),
         album_title: task.album_title.clone(),
         release_group_mbid: task.release_group_mbid.trim().to_ascii_lowercase(),
-        release_mbid: details
-            .release_mbid
-            .clone()
-            .or_else(|| plan.release_mbid.clone())
-            .map(|mbid| mbid.trim().to_ascii_lowercase())
-            .filter(|mbid| !mbid.is_empty()),
+        release_mbid,
+        release_preferred,
         year: details.year,
         is_track: task.download_type == "track",
         recording_mbid: task

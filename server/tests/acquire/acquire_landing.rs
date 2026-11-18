@@ -4117,8 +4117,48 @@ struct JoinRig {
     targets: Arc<droppedneedle_acquire::target::Targets>,
     music: PathBuf,
     downloads: PathBuf,
+    /// Searches and group listings the landing asked MusicBrainz for.
+    listed: Arc<std::sync::atomic::AtomicUsize>,
     _auth: AuthRig,
     _grounds: Grounds,
+}
+
+/// [`Releases`], counting the searches and group listings asked of it.
+struct CountedReleases {
+    inner: Releases,
+    listed: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl ReleaseSource for CountedReleases {
+    fn search<'a>(
+        &'a self,
+        title: &'a str,
+        artist: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        self.listed
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.search(title, artist)
+    }
+
+    fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>> {
+        self.inner.release(mbid)
+    }
+
+    fn canonical_recording<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
+        self.inner.canonical_recording(mbid)
+    }
+
+    fn search_editions<'a>(
+        &'a self,
+        query: &'a EditionQuery,
+    ) -> BoxFuture<'a, Result<EditionPage, SourceError>> {
+        self.listed
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.search_editions(query)
+    }
 }
 
 async fn join_rig(releases: Vec<Release>) -> JoinRig {
@@ -4142,12 +4182,16 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
             EffectivePolicy::Automatic,
         )
         .expect("root adds");
+    let listed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let (acquire, fixed) = acquire_serving(
         &platform,
         &library,
         Arc::new(LibraryLanding::new(
             &library,
-            every_priority(Arc::new(Releases(releases.clone()))),
+            every_priority(Arc::new(CountedReleases {
+                inner: Releases(releases.clone()),
+                listed: listed.clone(),
+            })),
         )),
     );
     let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
@@ -4161,6 +4205,7 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
         targets,
         music,
         downloads: dir.join("downloads"),
+        listed,
         _auth: auth,
         _grounds: (platform, db),
     }
@@ -8001,6 +8046,7 @@ impl IntakeCase {
             targets,
             music,
             downloads: dir.join("downloads"),
+            listed: Arc::default(),
             _auth: auth,
             _grounds: (platform, db),
         };
@@ -8950,4 +8996,313 @@ async fn task_now(
         .into_iter()
         .find(|task| task.row.task.id == id)
         .expect("task")
+}
+
+/// An album download of scenario `e`'s group asking for `release`, as a
+/// pin in its details or, when `preferred`, as a preference in its plan
+/// only. Its files are both tracks laid out on `on` and carry `on`'s
+/// MusicBrainz ids. Landed directly; answers the landing's decisions.
+async fn land_album(
+    rig: &JoinRig,
+    task_id: &str,
+    e: &Editions,
+    release: &str,
+    preferred: bool,
+    on: &Release,
+) -> Vec<(String, Option<String>)> {
+    land_album_as(rig, task_id, e, &e.group, release, preferred, on, true).await
+}
+
+/// [`land_album`] for a task of `group`, its files carrying `on`'s
+/// MusicBrainz ids only when `tagged`.
+#[allow(clippy::too_many_arguments)]
+async fn land_album_as(
+    rig: &JoinRig,
+    task_id: &str,
+    e: &Editions,
+    group: &str,
+    release: &str,
+    preferred: bool,
+    on: &Release,
+    tagged: bool,
+) -> Vec<(String, Option<String>)> {
+    let files: Vec<PathBuf> = (0..TITLES.len())
+        .map(|index| {
+            let path = rig.landed(task_id, on, index, FIXTURES[index]);
+            if !tagged {
+                return path;
+            }
+            let track = on
+                .tracks
+                .iter()
+                .find(|track| track.title == TITLES[index])
+                .expect("track on release");
+            let tag = |field, value: &str| TagEdit::new(field, vec![value.to_owned()]);
+            save_tags(
+                &path,
+                &[
+                    tag(TagField::MusicBrainzReleaseId, &on.id),
+                    tag(TagField::MusicBrainzReleaseGroupId, &on.release_group_id),
+                    tag(TagField::MusicBrainzRecordingId, &track.recording_id),
+                    tag(TagField::MusicBrainzReleaseTrackId, &track.id),
+                ],
+            )
+            .expect("tags save");
+            path
+        })
+        .collect();
+    let task = NewTask {
+        album_title: e.new.title.clone(),
+        origin: "user".to_owned(),
+        ..new_task(task_id, group)
+    };
+    let details = droppedneedle_acquire::downloads::store::TaskDetails {
+        release_mbid: (!preferred).then(|| release.to_owned()),
+        ..Default::default()
+    };
+    let plan = TaskPlan {
+        release_mbid: preferred.then(|| release.to_owned()),
+        release_preferred: preferred,
+        ..TaskPlan::default()
+    };
+    let id = task_id.to_owned();
+    rig.acquire
+        .journal
+        .run("test.seed", move |store| {
+            store.insert_task(&task, 1.0)?;
+            store.set_task_details(&id, &details, 1.0)?;
+            store.set_task_plan(&id, &plan, 1.0)
+        })
+        .await
+        .expect("task");
+    let row = rig.task(task_id).await;
+    let landed = Landed {
+        mounts: vec![rig.downloads.clone().into()],
+        files: files.into_iter().map(Reported::path).collect(),
+    };
+    rig.acquire.landing.land(&row, None, landed, false).await;
+    decisions(&rig.acquire, task_id)
+}
+
+// An edition no person chose is only a preference: files of another
+// edition of the album import on their own edition as an automatic
+// match, and files of the preferred one on it. A pin still takes only its
+// edition, files tagged as another album's release are refused, and an
+// edition the library holds for the album is a pin again.
+#[tokio::test]
+async fn a_shown_edition_is_only_a_preference() {
+    let lengths = fixture_lengths();
+    let scenarios: Vec<Editions> = (50..=54).map(|s| editions(s, &lengths)).collect();
+    let releases: Vec<Release> = scenarios
+        .iter()
+        .flat_map(|e| {
+            [
+                e.old.clone(),
+                e.new.clone(),
+                e.new2.clone(),
+                e.other.clone(),
+            ]
+        })
+        .collect();
+    let rig = join_rig(releases).await;
+    let identity = |group: &str| -> (Option<String>, String) {
+        rig.acquire.db.db().row(
+            "SELECT release_mbid, decision_source FROM local_album_external_identities \
+             WHERE release_group_mbid = ?1",
+            rusqlite::params![group],
+        )
+    };
+
+    let e = &scenarios[0];
+    assert_eq!(
+        land_album(&rig, "t-another", e, &e.new.id, true, &e.new2).await,
+        imported()
+    );
+    assert_eq!(
+        identity(&e.group),
+        (Some(e.new2.id.clone()), "automatic".to_owned())
+    );
+
+    let e = &scenarios[1];
+    assert_eq!(
+        land_album(&rig, "t-pin", e, &e.new.id, false, &e.new2).await,
+        refused_as("not_pinned_edition")
+    );
+
+    let e = &scenarios[2];
+    assert_eq!(
+        land_album(&rig, "t-other", e, &e.new.id, true, &e.other).await,
+        refused_as("wrong_album")
+    );
+
+    let e = &scenarios[3];
+    rig.plant(&copy_rel(53, MYSTERONS), 0, &e.old);
+    rig.scan().await;
+    let album = rig.album_of(&rig.track_at(&copy_rel(53, MYSTERONS)));
+    rig.set_edition(&album, &e.group, &e.old.id, "manual");
+    assert_eq!(
+        land_album(&rig, "t-held", e, &e.new.id, true, &e.new2).await,
+        refused_as("not_pinned_edition")
+    );
+
+    let e = &scenarios[4];
+    assert_eq!(
+        land_album(&rig, "t-same", e, &e.new.id, true, &e.new).await,
+        imported()
+    );
+    assert_eq!(
+        identity(&e.group),
+        (Some(e.new.id.clone()), "automatic".to_owned())
+    );
+}
+
+// A preferred edition gives way to an edition untagged files make up
+// whole, and wins when the files fit both the same.
+#[test]
+fn a_preference_gives_way_to_the_edition_the_files_complete() {
+    use droppedneedle_acquire::landing::matching::choose;
+    use droppedneedle_acquire::landing::specs::Target;
+    use droppedneedle_library::matching::{LocalAlbum, LocalTrack};
+    let titles = ["Alpha", "Bravo", "Charlie"];
+    let release = |number: u16, count: usize| Release {
+        id: mb(60, 2, number),
+        release_group_id: mb(60, 1, 0),
+        title: "Dummy".to_owned(),
+        artists: vec![CreditedArtist {
+            id: "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11".to_owned(),
+            name: "Portishead".to_owned(),
+            sort_name: Some("Portishead".to_owned()),
+            join: String::new(),
+            disambiguation: None,
+        }],
+        status: Some("Official".to_owned()),
+        media: vec![ReleaseMedium {
+            position: 1,
+            format: Some("CD".to_owned()),
+            title: None,
+            track_count: count as u32,
+        }],
+        tracks: (0..count)
+            .map(|index| ReleaseTrack {
+                isrcs: Vec::new(),
+                genres: Vec::new(),
+                id: mb(60, 4, number * 16 + index as u16),
+                recording_id: mb(60, 3, index as u16),
+                title: titles[index].to_owned(),
+                artists: Vec::new(),
+                disc: 1,
+                position: index as u32 + 1,
+                absolute_position: index as u32 + 1,
+                length_ms: Some(200_000 + 20_000 * index as u64),
+            })
+            .collect(),
+        ..Release::default()
+    };
+    let files = |count: usize| LocalAlbum {
+        title: "Dummy".to_owned(),
+        artist: "Portishead".to_owned(),
+        tracks: (0..count)
+            .map(|index| LocalTrack {
+                id: index.to_string(),
+                title: titles[index].to_owned(),
+                artist: "Portishead".to_owned(),
+                track_number: index as u32 + 1,
+                disc_number: 1,
+                duration_secs: Some(200.0 + 20.0 * index as f64),
+                duration_measured: true,
+                ..LocalTrack::default()
+            })
+            .collect(),
+        ..LocalAlbum::default()
+    };
+    let (long, short, twin) = (release(1, 3), release(2, 2), release(3, 2));
+    let chosen = |local: LocalAlbum, releases: Vec<Release>, preferred: &Release| {
+        let target = Target {
+            artist_name: "Portishead".to_owned(),
+            album_title: "Dummy".to_owned(),
+            release_group_mbid: mb(60, 1, 0),
+            release_mbid: Some(preferred.id.clone()),
+            release_preferred: true,
+            ..Target::default()
+        };
+        choose(&local, releases, &HashMap::new(), &target)
+            .found
+            .map(|found| found.release.id)
+    };
+    let both = vec![long.clone(), short.clone()];
+    assert_eq!(
+        chosen(files(2), both.clone(), &long),
+        Some(short.id.clone())
+    );
+    assert_eq!(chosen(files(3), both, &long), Some(long.id.clone()));
+    let twins = vec![short.clone(), twin.clone()];
+    assert_eq!(
+        chosen(files(2), twins.clone(), &twin),
+        Some(twin.id.clone())
+    );
+    assert_eq!(chosen(files(2), twins, &short), Some(short.id.clone()));
+}
+
+// A preferred edition MusicBrainz now keeps under another release group
+// than the one the download asked for (the group was merged): files
+// tagged as another edition of that group are the album.
+#[tokio::test]
+async fn a_preference_follows_its_edition_into_a_merged_group() {
+    let lengths = fixture_lengths();
+    let e = editions(56, &lengths);
+    let rig = join_rig(vec![
+        e.old.clone(),
+        e.new.clone(),
+        e.new2.clone(),
+        e.other.clone(),
+    ])
+    .await;
+    let merged_away = mb(56, 1, 7);
+    assert_eq!(
+        land_album_as(
+            &rig,
+            "t-merged",
+            &e,
+            &merged_away,
+            &e.new.id,
+            true,
+            &e.new2,
+            true
+        )
+        .await,
+        imported()
+    );
+}
+
+// Untagged files that make up the preferred edition whole go in on it,
+// and the album's other editions are not listed.
+#[tokio::test]
+async fn untagged_files_that_make_up_the_preferred_edition_read_no_listing() {
+    let lengths = fixture_lengths();
+    let e = editions(57, &lengths);
+    let rig = join_rig(vec![
+        e.old.clone(),
+        e.new.clone(),
+        e.new2.clone(),
+        e.other.clone(),
+    ])
+    .await;
+    assert_eq!(
+        land_album_as(
+            &rig, "t-whole", &e, &e.group, &e.new2.id, true, &e.new2, false
+        )
+        .await,
+        imported()
+    );
+    let identity: (Option<String>, String) = rig.acquire.db.db().row(
+        "SELECT release_mbid, decision_source FROM local_album_external_identities \
+         WHERE release_group_mbid = ?1",
+        rusqlite::params![e.group],
+    );
+    assert_eq!(identity, (Some(e.new2.id.clone()), "automatic".to_owned()));
+    assert_eq!(
+        rig.listed.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no listing or search is read"
+    );
 }

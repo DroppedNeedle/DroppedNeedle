@@ -49,6 +49,11 @@ pub struct TaskPlan {
     /// attempt that fetched that candidate only (its handle is `pinned`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub quality_waived: bool,
+    /// For an album download: no person chose `release_mbid`, so it is
+    /// tried first and another release of the same release group is
+    /// accepted. Never set with `planned_album`; absent means a pin.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub release_preferred: bool,
 }
 
 impl TaskPlan {
@@ -62,9 +67,10 @@ impl TaskPlan {
         serde_json::to_string(self)
     }
 
-    /// What a retry carries over: the release, the positions it asks for,
-    /// the copy it is for and "Get it from the album". The tracklist and a
-    /// track's album are worked out again. A quality waiver is never
+    /// What a retry carries over: the release and whether it is only a
+    /// preference, the positions it asks for, the copy it is for and "Get
+    /// it from the album". The tracklist and a track's album are worked
+    /// out again. A quality waiver is never
     /// carried over: it belongs to the pick a person confirmed.
     pub fn for_successor(&self) -> Self {
         Self {
@@ -73,6 +79,7 @@ impl TaskPlan {
             album_wanted: self.album_wanted.clone(),
             planned_album: self.planned_album.clone(),
             album_version: self.album_version,
+            release_preferred: self.release_preferred,
             ..Self::default()
         }
     }
@@ -159,4 +166,23 @@ pub struct PlannedAlbum {
 pub struct ReplaceVersion {
     pub release_track_mbid: String,
     pub local_track_id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TaskPlan;
+
+    #[test]
+    fn a_successor_keeps_the_preference_but_not_the_waiver() {
+        let plan = TaskPlan {
+            release_mbid: Some("rel".to_owned()),
+            release_preferred: true,
+            quality_waived: true,
+            ..TaskPlan::default()
+        };
+        let next = plan.for_successor();
+        assert!(next.release_preferred);
+        assert!(!next.quality_waived);
+        assert_eq!(next.release_mbid.as_deref(), Some("rel"));
+    }
 }

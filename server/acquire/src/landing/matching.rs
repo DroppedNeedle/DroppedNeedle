@@ -72,6 +72,9 @@ pub struct MatchSummary {
     /// For a song request: files of another edition of the album, by file
     /// index, with the release their tags name ([`set_aside_editions`]).
     pub set_aside: HashMap<usize, String>,
+    /// For a preferred edition: the release the files' tags name, when
+    /// MusicBrainz places it in another release group.
+    pub other_album: Option<String>,
 }
 
 impl MatchSummary {
@@ -222,13 +225,16 @@ pub async fn find(
             .await
     };
     let recalled = async {
-        let releases = recall(library, target, &local).await?;
+        let Recalled {
+            releases,
+            other_album,
+        } = recall(library, target, &local).await?;
         let album_copies = take_album_copies(library, target, &mut local, &releases).await?;
         let set_aside = set_aside_editions(target, &landing.audio, &mut local, &releases);
         let aliases = merged_recordings(library, &local, &releases, PRIORITY).await?;
-        Ok::<_, String>((releases, aliases, album_copies, set_aside))
+        Ok::<_, String>((releases, aliases, album_copies, set_aside, other_album))
     };
-    let (releases, aliases, album_copies, set_aside) = match recalled.await {
+    let (releases, aliases, album_copies, set_aside, other_album) = match recalled.await {
         Ok(recalled) => recalled,
         Err(detail) => {
             return MatchSummary {
@@ -238,6 +244,7 @@ pub async fn find(
                 owned,
                 album_copies: HashMap::new(),
                 set_aside: HashMap::new(),
+                other_album: None,
             };
         }
     };
@@ -245,6 +252,7 @@ pub async fn find(
     summary.owned = owned;
     summary.album_copies = album_copies;
     summary.set_aside = set_aside;
+    summary.other_album = other_album;
     summary
 }
 
@@ -539,40 +547,93 @@ pub async fn merged_recordings(
     Ok(aliases)
 }
 
+/// What [`recall`] found: the candidates, and for a preferred edition the
+/// tagged release MusicBrainz places in another group.
+struct Recalled {
+    releases: Vec<Release>,
+    other_album: Option<String>,
+}
+
 /// Candidate releases of the requested group. A pinned edition is the
 /// only candidate: the files are judged against its tracklist and nothing
-/// else (owner rule, the pin is honoured end to end). Without a pin: the
-/// tagged release, then the group's editions from its listing (closest
-/// track count first), else from a title search.
+/// else. A preferred edition comes first, and its own group counts as the
+/// requested one (MusicBrainz may have merged the group asked for). Then
+/// the release the files' tags name: when MusicBrainz places it in the
+/// group the two are the candidates, and when it places it in another
+/// group only the preferred one is, with that release recorded. Files
+/// the tags do not settle that make up the preferred edition whole have
+/// it as their only candidate. Otherwise: the tagged release, then the
+/// group's editions from its listing (closest track count first), else
+/// from a title search.
 async fn recall(
     library: &dyn LandingLibrary,
     target: &Target,
     local: &LocalAlbum,
-) -> Result<Vec<Release>, String> {
+) -> Result<Recalled, String> {
     let mut releases: Vec<Release> = Vec::new();
     let error = |error: droppedneedle_library::identify::sources::SourceError| error.0;
+    let mut preferred_group: Option<String> = None;
+    let in_group = |release: &Release, preferred_group: &Option<String>| {
+        target.release_group_mbid.is_empty()
+            || release
+                .release_group_id
+                .eq_ignore_ascii_case(&target.release_group_mbid)
+            || preferred_group
+                .as_deref()
+                .is_some_and(|group| release.release_group_id.eq_ignore_ascii_case(group))
+    };
     if let Some(pinned) = target.release_mbid.as_deref() {
         fetch(
             library.release(pinned, PRIORITY).await.map_err(error)?,
             &mut releases,
         );
-        return Ok(releases);
-    }
-    if let Some(tagged) = local.tagged_release()
-        && !releases.iter().any(|known| known.answers_to(&tagged))
-    {
+        if !target.release_preferred {
+            return Ok(Recalled {
+                releases,
+                other_album: None,
+            });
+        }
+        preferred_group = releases
+            .first()
+            .map(|preferred| preferred.release_group_id.clone());
+        let only =
+            |releases: Vec<Release>, other_album: Option<String>| -> Result<Recalled, String> {
+                Ok(Recalled {
+                    releases,
+                    other_album,
+                })
+            };
+        if let Some(tagged) = local.tagged_release() {
+            if releases.iter().any(|known| known.answers_to(&tagged)) {
+                return only(releases, None);
+            }
+            // A preferred release MusicBrainz did not know is not asked
+            // for twice.
+            if !tagged.eq_ignore_ascii_case(pinned) {
+                match library.release(&tagged, PRIORITY).await.map_err(error)? {
+                    Some(found) if in_group(&found, &preferred_group) => {
+                        fetch(Some(found), &mut releases);
+                        return only(releases, None);
+                    }
+                    Some(_) => return only(releases, Some(tagged)),
+                    // A release MusicBrainz does not know is no evidence.
+                    None => {}
+                }
+            }
+        }
+        if releases
+            .first()
+            .is_some_and(|preferred| makes_up_whole(local, preferred))
+        {
+            return only(releases, None);
+        }
+    } else if let Some(tagged) = local.tagged_release() {
         fetch(
             library.release(&tagged, PRIORITY).await.map_err(error)?,
             &mut releases,
         );
     }
-    let in_group = |release: &Release| {
-        target.release_group_mbid.is_empty()
-            || release
-                .release_group_id
-                .eq_ignore_ascii_case(&target.release_group_mbid)
-    };
-    releases.retain(in_group);
+    releases.retain(|release| in_group(release, &preferred_group));
     let mut hits = Vec::new();
     if !target.release_group_mbid.is_empty() {
         hits = library
@@ -598,8 +659,19 @@ async fn recall(
             &mut releases,
         );
     }
-    releases.retain(in_group);
-    Ok(releases)
+    releases.retain(|release| in_group(release, &preferred_group));
+    Ok(Recalled {
+        releases,
+        other_album: None,
+    })
+}
+
+/// Whether the files make up `release` whole: every file pairs with one
+/// of its tracks, none of its tracks is left over and no file's ids
+/// contradict it.
+fn makes_up_whole(local: &LocalAlbum, release: &Release) -> bool {
+    let scored = match_release(local, release, &HashMap::new());
+    scored.unmatched.is_empty() && scored.missing.is_empty() && scored.conflicts.is_empty()
 }
 
 /// Keep a fetched release unless it is already in the list.
@@ -654,6 +726,8 @@ fn pick_hits(
 /// release by library distance, and among editions within
 /// [`EDITION_COHORT`] of it the pinned one, then the one the tags name,
 /// then the closest full tracklist (the matching engine's edition rule).
+/// A preferred edition gives way to the one the tags name and to one the
+/// files make up whole.
 /// `aliases` maps retired recording MBIDs to the ones they were merged
 /// into.
 pub fn choose(
@@ -670,6 +744,7 @@ pub fn choose(
             owned: OwnedTracks::default(),
             album_copies: HashMap::new(),
             set_aside: HashMap::new(),
+            other_album: None,
         };
     }
     let scored: Vec<ReleaseMatch> = releases
@@ -696,6 +771,7 @@ pub fn choose(
             owned: OwnedTracks::default(),
             album_copies: HashMap::new(),
             set_aside: HashMap::new(),
+            other_album: None,
         };
     };
     let tagged = local.tagged_release();
@@ -706,7 +782,14 @@ pub fn choose(
             .as_deref()
             .is_some_and(|pin| release.answers_to(pin));
         let named = tagged.as_deref().is_some_and(|id| release.answers_to(id));
-        (!pinned, !named)
+        if target.release_preferred {
+            // The tags' release first, then an edition the files make up
+            // whole, then the preferred one.
+            let complete = scored[index].missing.is_empty();
+            (!named, !complete, !pinned)
+        } else {
+            (!pinned, !named, false)
+        }
     };
     let Some(chosen) = eligible
         .iter()
@@ -730,6 +813,7 @@ pub fn choose(
             owned: OwnedTracks::default(),
             album_copies: HashMap::new(),
             set_aside: HashMap::new(),
+            other_album: None,
         };
     };
     let mut releases = releases;
@@ -744,6 +828,7 @@ pub fn choose(
         owned: OwnedTracks::default(),
         album_copies: HashMap::new(),
         set_aside: HashMap::new(),
+        other_album: None,
     }
 }
 

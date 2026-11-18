@@ -122,6 +122,9 @@ pub struct Target {
     pub release_group_mbid: String,
     /// The pinned edition, when the ask pinned one.
     pub release_mbid: Option<String>,
+    /// `release_mbid` is only a preference: no person chose it, so another
+    /// release of the same group is accepted.
+    pub release_preferred: bool,
     pub year: Option<i32>,
     /// A single-track download.
     pub is_track: bool,
@@ -806,7 +809,9 @@ impl ImportSpec for ReleaseFound {
 /// another edition: rejected, so the next source is tried. Untagged files
 /// are judged by the pinned tracklist alone, and so is a song's file from
 /// another edition of its album, which the accept notes
-/// ([`super::matching::MatchSummary::set_aside`]).
+/// ([`super::matching::MatchSummary::set_aside`]). A preferred edition
+/// takes any release of its group; files tagged as another group's
+/// release are another album.
 struct PinnedEdition;
 
 impl ImportSpec for PinnedEdition {
@@ -818,6 +823,22 @@ impl ImportSpec for PinnedEdition {
         let Some(pin) = subject.target.release_mbid.as_deref() else {
             return Verdict::accept();
         };
+        if subject.target.release_preferred {
+            return match subject
+                .matched
+                .and_then(|matched| matched.other_album.as_deref())
+            {
+                Some(other) => Verdict::reject(
+                    Reason::WrongAlbum,
+                    Disposition::Permanent,
+                    Some(QuarantineReason::VerifyFailed),
+                    format!(
+                        "the files are tagged as release {other}, which belongs to another album"
+                    ),
+                ),
+                None => Verdict::accept(),
+            };
+        }
         let pinned = subject
             .matched
             .and_then(|matched| matched.best())
