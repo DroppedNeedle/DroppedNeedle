@@ -362,6 +362,16 @@ struct AtPath {
     channels: Option<i64>,
     tag_album_title: Option<String>,
     tag_album_artist_name: Option<String>,
+    release_mbid: Option<String>,
+    release_group_mbid: Option<String>,
+    release_track_mbid: Option<String>,
+    /// The row has an edition hints row; the hints below are its values.
+    has_edition_tags: bool,
+    media: Option<String>,
+    barcode: Option<String>,
+    catalog_number: Option<String>,
+    release_country: Option<String>,
+    total_discs: Option<i64>,
 }
 
 /// A file's length and stream properties, as stored or as read.
@@ -440,6 +450,13 @@ struct Written {
     /// artist tag no longer the one it had: a retag that kept the album's
     /// key (its release id) renamed it, and no follow sees that.
     renamed: bool,
+    /// The file's tags no longer say what the row it continues said about
+    /// the fields identification reads, or it continues no row.
+    reread_changed: bool,
+    /// The unsettled album to look up again because this read stored the
+    /// first edition hints of a file unchanged on disk, as the scan's
+    /// fill of those hints does.
+    relook: Option<String>,
 }
 
 /// Whether the file now at `row`'s path is other music, not the track the
@@ -1147,6 +1164,15 @@ fn write_item(
                 channels: row.channels,
                 tag_album_title: row.tag_album_title,
                 tag_album_artist_name: row.tag_album_artist_name,
+                release_mbid: row.embedded_release_mbid,
+                release_group_mbid: row.embedded_release_group_mbid,
+                release_track_mbid: row.embedded_release_track_mbid,
+                has_edition_tags: row.has_edition_tags,
+                media: row.media,
+                barcode: row.barcode,
+                catalog_number: row.catalog_number,
+                release_country: row.release_country,
+                total_discs: row.total_discs,
             })
         })
         .optional()?;
@@ -1404,6 +1430,51 @@ fn write_item(
                 || (!read_album_artist.is_empty()
                     && retagged(read_album_artist, &row.tag_album_artist_name)))
     });
+    // What identification reads, against the row the file continues. The
+    // track artist is left out: carried rows hold v2's MusicBrainz credits,
+    // not the tag's. Lengths and the tag revision move without a retag.
+    let id = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+    };
+    let edition = &tag.edition;
+    let hints_differ = |row: &AtPath| {
+        row.has_edition_tags
+            && (id(&row.media) != id(&edition.media)
+                || id(&row.barcode) != id(&edition.barcode)
+                || id(&row.catalog_number) != id(&edition.catalog_number)
+                || id(&row.release_country) != id(&edition.release_country)
+                || row.total_discs != edition.total_discs.map(i64::from))
+    };
+    let first_hints = continued.as_ref().is_some_and(|row| !row.has_edition_tags)
+        && run_id.is_some()
+        && item.verdict_counter == Counter::Unchanged.column()
+        && item.effective_policy == EffectivePolicy::Automatic
+        && !EditionHints::of_file(
+            edition.media.as_deref(),
+            edition.barcode.as_deref(),
+            edition.catalog_number.as_deref(),
+            edition.release_country.as_deref(),
+            edition.total_discs,
+            tag.disc_number,
+        )
+        .is_empty();
+    let reread_changed = continued.as_ref().is_none_or(|row| {
+        id(&row.recording_mbid) != id(&tag.musicbrainz_recording_id)
+            || id(&row.release_mbid) != id(&tag.musicbrainz_release_id)
+            || id(&row.release_group_mbid) != id(&tag.musicbrainz_release_group_id)
+            || id(&row.release_track_mbid) != id(&tag.musicbrainz_release_track_id)
+            || row.title_folded != title_folded
+            || row.disc_number != disc_number
+            || row.track_number != i64::from(track_number)
+            || retagged(raw_album, &row.tag_album_title)
+            || (!read_album_artist.is_empty()
+                && retagged(read_album_artist, &row.tag_album_artist_name))
+            || hints_differ(row)
+    });
     // A new copy of the recording the row describes is a file the app
     // never wrote: its record goes, unless the app has stepped back from
     // the album, where only handing it back clears anything.
@@ -1434,7 +1505,6 @@ fn write_item(
     // A new copy of the recording is not a hand edit, whatever its tags say.
     let renamed = retagged_tags && new_copy.is_none();
 
-    let edition = &tag.edition;
     let blank = |value: &Option<String>| {
         value
             .as_deref()
@@ -1453,6 +1523,13 @@ fn write_item(
             edition.release_date,
             track_total(edition),
         ])?;
+    let relook = if first_hints {
+        tx.prepare_cached(crate::scan::sql::UNSETTLED_ALBUM_OF_TRACK.text())?
+            .query_row(params![track_id], |row| row.get::<_, String>(0))
+            .optional()?
+    } else {
+        None
+    };
     let rows_before = credit_rows(tx, CreditSide::Track, &track_id)?;
     tx.prepare_cached(crate::scan::sql::DROP_TRACK_CREDITS.text())?
         .execute(params![track_id])?;
@@ -1536,6 +1613,8 @@ fn write_item(
         new_copy,
         locked_off_key,
         renamed,
+        reread_changed,
+        relook,
     })
 }
 
@@ -2883,6 +2962,7 @@ fn write_window(
         .collect();
     let mut adjust: Vec<(Counter, i64)> = Vec::new();
     let mut offered: Vec<String> = Vec::new();
+    let mut relooked: Vec<String> = Vec::new();
     // Albums with a changed file the app has a record of: automatic
     // management looks at them soon, to see who changed it.
     let mut changed: Vec<String> = Vec::new();
@@ -2914,6 +2994,8 @@ fn write_window(
                 new_copy,
                 locked_off_key,
                 renamed: renamed_by_retag,
+                reread_changed,
+                relook: first_hints,
             }) => {
                 let changed_on_record = item.verdict_counter == Counter::Changed.column()
                     && takeover::has_record(tx, &track_id)?;
@@ -2943,8 +3025,12 @@ fn write_window(
                 // A file as the app placed it is not offered, even when its
                 // new tags moved it to another album: an album that took it
                 // is offered at the run's end, unless the album it left
-                // follows it back.
+                // follows it back. A file read again unchanged on disk (a
+                // rescan) is offered only when what its tags say changed.
                 let offer = item.effective_policy == EffectivePolicy::Automatic
+                    && (item.verdict_counter != Counter::Unchanged.column()
+                        || reread_changed
+                        || moved_from.is_some())
                     && !(item.verdict_counter == Counter::Changed.column()
                         && as_the_app_placed_it(tx, &track_id, item)?);
                 indexed.push((item.root_id.clone(), item.relative_path.clone(), track_id));
@@ -2957,6 +3043,7 @@ fn write_window(
                 if offer {
                     offered.push(album_id);
                 }
+                relooked.extend(first_hints);
                 emptied.extend(moved_from);
                 outcome.committed += 1;
             }
@@ -3051,7 +3138,10 @@ fn write_window(
         .filter(|fill| !is_fenced(&fill.root_id, &fill.relative_path))
         .cloned()
         .collect();
-    let (filled, relook) = fill_edition_tags(tx, &edition_fills)?;
+    let (filled, mut relook) = fill_edition_tags(tx, &edition_fills)?;
+    relook.append(&mut relooked);
+    relook.sort();
+    relook.dedup();
     let measured = fill_length_measured(tx, &length_fills)?;
     for album_id in &relook {
         if !held_back(tx, &window.run_id, album_id)? && offer_again(tx, album_id, now_ms)? {

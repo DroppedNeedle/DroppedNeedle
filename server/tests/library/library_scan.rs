@@ -219,6 +219,129 @@ async fn scan_catalogs_tags_without_touching_files() {
     assert_eq!(snapshot(&music), before, "scans never write music files");
 }
 
+/// Rescan files reads every file again, but an album whose files say what
+/// they said before is not offered to identification, even one with no job
+/// behind it, as an album carried over from v2 has none.
+#[tokio::test]
+async fn a_rescan_of_unchanged_files_offers_nothing() {
+    let scratch = ScratchDir::new("scan-rescan-unchanged");
+    let music = scratch.join("music");
+    plant(&music, "Album/01.flac", "management_full.flac");
+    plant(&music, "Album/02.mp3", "mp3_full_01.mp3");
+    let library = bundle(&scratch).await;
+    scan(&library).await;
+    library
+        .scan_store
+        .db()
+        .run_sql("DELETE FROM library_identify_jobs")
+        .expect("jobs cleared");
+
+    let run = scan_as(&library, ScanKind::RescanFiles).await;
+    assert_eq!(count(&run, Counter::Unchanged), 2);
+    assert_eq!(count(&run, Counter::IdentificationEnqueued), 0);
+    assert_eq!(
+        query(&library, "SELECT COUNT(*) FROM library_identify_jobs"),
+        0,
+        "nothing is queued"
+    );
+}
+
+/// A carried file's first full read after the upgrade may be a Rescan
+/// files: an unsettled album whose files carry edition hints is still
+/// looked up again, as the scan's fill of those hints would.
+#[tokio::test]
+async fn a_rescan_storing_first_edition_hints_looks_the_album_up_again() {
+    let (_scratch, library) = carried_file("scan-rescan-hints", "management_full.flac").await;
+
+    let run = scan_as(&library, ScanKind::RescanFiles).await;
+    assert_eq!(count(&run, Counter::Unchanged), 1);
+    assert_eq!(count(&run, Counter::IdentificationEnqueued), 1);
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_track_edition_tags WHERE barcode = '1234567890123'"
+        ),
+        1,
+        "the hints are stored"
+    );
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM library_identify_jobs WHERE kind = 'historical'"
+        ),
+        1,
+        "the unmatched album is looked up again"
+    );
+}
+
+/// Tags a test changes between reads of a file whose size and mtime stay.
+#[derive(Default)]
+struct RetaggedInPlace {
+    recording: std::sync::Mutex<&'static str>,
+    release_group: std::sync::Mutex<&'static str>,
+}
+
+impl TagReader for RetaggedInPlace {
+    fn read_tags(&self, _file: TrackFile<'_>) -> Result<ScannedTags, TagReadError> {
+        let mut read = ScannedTags::default();
+        read.tag.title = "Song".to_owned();
+        read.tag.artist = "Artist".to_owned();
+        read.tag.album_artist = Some("Artist".to_owned());
+        read.tag.album = "Album".to_owned();
+        read.tag.track_number = 1;
+        let id = |value: &std::sync::Mutex<&'static str>| {
+            Some((*value.lock().expect("tags")).to_owned()).filter(|id| !id.is_empty())
+        };
+        read.tag.musicbrainz_recording_id = id(&self.recording);
+        read.tag.musicbrainz_release_group_id = id(&self.release_group);
+        Ok(read)
+    }
+}
+
+/// A retag that keeps the file's size and mtime is only seen by Rescan
+/// files; a change to what identification reads still offers the album.
+#[tokio::test]
+async fn a_rescan_offers_an_album_retagged_in_place() {
+    let scratch = ScratchDir::new("scan-rescan-retagged");
+    let music = scratch.join("music");
+    plant(&music, "Album/01.flac", "flac_full_01.flac");
+    let tags = Arc::new(RetaggedInPlace::default());
+    let (coordinator, paths) = coordinator(&music, tags.clone());
+    let rescan = || async {
+        coordinator
+            .request_run(&ScanRequest {
+                kind: ScanKind::RescanFiles,
+                ..request(&music)
+            })
+            .expect("requested");
+        coordinator.run_once(&paths).await.expect("scan runs")
+    };
+    coordinator
+        .request_run(&request(&music))
+        .expect("requested");
+    coordinator.run_once(&paths).await.expect("scan runs");
+    let db = coordinator.store().db();
+    let clear = || {
+        db.run_sql("DELETE FROM library_identify_jobs")
+            .expect("jobs cleared")
+    };
+
+    clear();
+    let run = rescan().await;
+    assert_eq!(count(&run, Counter::IdentificationEnqueued), 0, "unchanged");
+
+    *tags.recording.lock().expect("tags") = "5b11f4ce-a62d-471e-81fc-a69a8278c7da";
+    clear();
+    let run = rescan().await;
+    assert_eq!(count(&run, Counter::Unchanged), 1, "recording");
+    assert_eq!(count(&run, Counter::IdentificationEnqueued), 1, "recording");
+
+    *tags.release_group.lock().expect("tags") = "1b022e01-4da6-387b-8658-8678046e4cef";
+    clear();
+    let run = rescan().await;
+    assert_eq!(count(&run, Counter::IdentificationEnqueued), 1, "group");
+}
+
 /// Tagged files in disc folders that carry a subtitle (`Disc 1 - The
 /// Early Years`) are one album, as they are in `CD1` and `CD2`.
 #[tokio::test]

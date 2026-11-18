@@ -332,11 +332,15 @@ droppedneedle_kernel::sql! {
          local_artist_id = excluded.local_artist_id, credited_name = excluded.credited_name, \
          join_phrase = excluded.join_phrase, artist_mbid = excluded.artist_mbid";
     pub(super) DROP_ALBUM_CREDITS_FROM = "DELETE FROM local_album_artists WHERE local_album_id = ?1 AND position >= ?2";
-    pub(super) TRACK_AT_PATH_FACTS = "SELECT id, local_album_id, availability, duration_seconds, \
-             embedded_recording_mbid, title_folded, title_provenance, disc_number, \
-             track_number, sample_rate, bit_depth, channels, tag_album_title, \
-             tag_album_artist_name \
-             FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2";
+    pub(super) TRACK_AT_PATH_FACTS = "SELECT t.id, t.local_album_id, t.availability, \
+             t.duration_seconds, t.embedded_recording_mbid, t.title_folded, t.title_provenance, \
+             t.disc_number, t.track_number, t.sample_rate, t.bit_depth, t.channels, \
+             t.tag_album_title, t.tag_album_artist_name, t.embedded_release_mbid, \
+             t.embedded_release_group_mbid, t.embedded_release_track_mbid, \
+             h.local_track_id IS NOT NULL AS has_edition_tags, h.media, h.barcode, \
+             h.catalog_number, h.release_country, h.total_discs \
+             FROM local_tracks t LEFT JOIN local_track_edition_tags h ON h.local_track_id = t.id \
+             WHERE t.root_id = ?1 AND t.relative_path = ?2";
     pub(super) MOVE_TRACK_PATH = "UPDATE local_tracks SET root_id = ?2, relative_path = ?3, path_hash = ?4, \
                  file_path = ?5, row_revision = row_revision + 1 WHERE id = ?1";
     pub(super) TRACK_MEMBERSHIP = "SELECT membership_source, membership_locked = 1 AS locked, \
@@ -1208,6 +1212,15 @@ droppedneedle_kernel::sql! {
         channels: Option<i64>,
         tag_album_title: Option<String>,
         tag_album_artist_name: Option<String>,
+        embedded_release_mbid: Option<String>,
+        embedded_release_group_mbid: Option<String>,
+        embedded_release_track_mbid: Option<String>,
+        has_edition_tags: bool,
+        media: Option<String>,
+        barcode: Option<String>,
+        catalog_number: Option<String>,
+        release_country: Option<String>,
+        total_discs: Option<i64>,
     }
     pub(super) row TrackMembership for [TRACK_MEMBERSHIP] {
         membership_source: GroupingSource,
