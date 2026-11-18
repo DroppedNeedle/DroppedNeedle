@@ -1440,7 +1440,7 @@ async fn an_editions_tags_are_written_as_the_folders_profile_says() {
         .expect("files")
         .iter()
         .find(|file| file["path"] == json!("album-e/01.flac"))
-        .expect("the first file is planned")
+        .unwrap_or_else(|| panic!("the first file is planned: {planned}"))
         .clone();
     let change = |field: &str| {
         first["changes"]

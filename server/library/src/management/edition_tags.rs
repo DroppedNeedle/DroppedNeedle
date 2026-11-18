@@ -297,10 +297,13 @@ impl Management {
         job_id: &str,
         caller: &Principal,
     ) -> Result<EditionTagsJob, EditionTagsError> {
-        let snapshot = self.edition_tags_snapshot(album_id, job_id, caller)?;
+        self.edition_tags_snapshot(album_id, job_id, caller)?;
+        // One read gives the step the answer shows, the job's mode and
+        // whether its files are listed: a plan that finishes between two
+        // reads must not answer "ready" with no files.
         let detail = self.detail(job_id)?;
         let mut items = Vec::new();
-        if snapshot.phase != crate::jobs::ManagementPhase::Planning {
+        if detail.phase != crate::jobs::ManagementPhase::Planning {
             let mut after = -1;
             loop {
                 let page = self.items(job_id, after, PAGE_MAX, &ItemFilter::default())?;
@@ -311,10 +314,11 @@ impl Management {
                 }
             }
         }
+        let mode = JobMode::parse(&detail.mode);
         Ok(EditionTagsJob {
-            undo: snapshot.job_mode() == Some(JobMode::Undo),
-            undo_available: snapshot.job_mode() == Some(JobMode::Apply)
-                && snapshot.phase == crate::jobs::ManagementPhase::Complete
+            undo: mode == Some(JobMode::Undo),
+            undo_available: mode == Some(JobMode::Apply)
+                && detail.phase == crate::jobs::ManagementPhase::Complete
                 && detail.undo_available_count > 0,
             detail,
             items,
