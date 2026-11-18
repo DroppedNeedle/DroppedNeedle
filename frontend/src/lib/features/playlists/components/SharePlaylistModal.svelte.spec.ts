@@ -22,13 +22,17 @@ const summary = (isPublic: boolean) => ({
 	is_public: isPublic,
 	is_owner: true,
 	is_shared: false,
+	can_edit: true,
 	can_delete: true,
 	owner_name: 'Ada',
 	is_redacted: false
 });
 
 /** Ada's playlist, shared with `members`, among Ada, Bob and Cara. */
-function serve(members: { user_id: string; display_name: string }[], routes: FakeRoutes = {}) {
+function serve(
+	members: { user_id: string; display_name: string; can_edit: boolean }[],
+	routes: FakeRoutes = {}
+) {
 	return fakeApi({
 		'GET /api/v3/users/directory': {
 			users: [
@@ -38,12 +42,16 @@ function serve(members: { user_id: string; display_name: string }[], routes: Fak
 			]
 		},
 		[MEMBERS]: { members },
-		[SET_MEMBERS]: ({ body }) => ({
-			members: (body as { user_ids: string[] }).user_ids.map((user_id) => ({
-				user_id,
-				display_name: user_id
-			}))
-		}),
+		[SET_MEMBERS]: ({ body }) => {
+			const { user_ids, editor_ids } = body as { user_ids: string[]; editor_ids: string[] };
+			return {
+				members: user_ids.map((user_id) => ({
+					user_id,
+					display_name: user_id,
+					can_edit: editor_ids.includes(user_id)
+				}))
+			};
+		},
 		[VISIBILITY]: ({ body }) => summary((body as { is_public: boolean }).is_public),
 		...routes
 	});
@@ -88,12 +96,14 @@ describe('SharePlaylistModal.svelte', () => {
 		await page.getByRole('button', { name: 'Save' }).click();
 
 		await expect.poll(() => saved).toEqual([false]);
-		expect(api.calls(SET_MEMBERS).map((call) => call.body)).toEqual([{ user_ids: ['u-cara'] }]);
+		expect(api.calls(SET_MEMBERS).map((call) => call.body)).toEqual([
+			{ user_ids: ['u-cara'], editor_ids: [] }
+		]);
 		expect(api.calls(VISIBILITY)).toHaveLength(0);
 	});
 
 	it('opens on whom it is shared with, and Only me unshares a public one', async () => {
-		const api = serve([{ user_id: 'u-bob', display_name: 'Bob' }]);
+		const api = serve([{ user_id: 'u-bob', display_name: 'Bob', can_edit: false }]);
 		const saved = await open(true);
 		await expect.element(page.getByRole('radio', { name: /Everyone/ })).toBeChecked();
 		await page.getByText('Only me').click();
@@ -101,6 +111,24 @@ describe('SharePlaylistModal.svelte', () => {
 
 		await expect.poll(() => saved).toEqual([false]);
 		expect(api.calls(VISIBILITY).map((call) => call.body)).toEqual([{ is_public: false }]);
-		expect(api.calls(SET_MEMBERS).map((call) => call.body)).toEqual([{ user_ids: [] }]);
+		expect(api.calls(SET_MEMBERS).map((call) => call.body)).toEqual([
+			{ user_ids: [], editor_ids: [] }
+		]);
+	});
+
+	it('lets the owner say who may edit, and keeps who already may', async () => {
+		const api = serve([
+			{ user_id: 'u-bob', display_name: 'Bob', can_edit: true },
+			{ user_id: 'u-cara', display_name: 'Cara', can_edit: false }
+		]);
+		const saved = await open(false);
+		await expect.element(page.getByRole('checkbox', { name: 'Bob can edit' })).toBeChecked();
+		await page.getByRole('checkbox', { name: 'Cara can edit' }).click();
+		await page.getByRole('button', { name: 'Save' }).click();
+
+		await expect.poll(() => saved).toEqual([false]);
+		expect(api.calls(SET_MEMBERS).map((call) => call.body)).toEqual([
+			{ user_ids: ['u-bob', 'u-cara'], editor_ids: ['u-bob', 'u-cara'] }
+		]);
 	});
 });

@@ -326,6 +326,7 @@ impl CollectionsPlaylistBridge {
         match self
             .playlists
             .owned_by(user_id)
+            .songs()
             .replace_entries(playlist_id, entries)
             .await
             .map_err(|error| match error {

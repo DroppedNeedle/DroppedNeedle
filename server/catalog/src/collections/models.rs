@@ -82,6 +82,9 @@ pub struct PlaylistSummary {
     /// True when the caller owns the playlist and shares it with chosen
     /// people.
     pub is_shared: bool,
+    /// True when the caller may change its songs: they own it, or it is
+    /// shared with them to edit.
+    pub can_edit: bool,
     /// True when the caller may delete it: its owner, or an admin when it
     /// has no owner.
     pub can_delete: bool,
@@ -121,6 +124,9 @@ pub struct PlaylistDetail {
     /// True when the caller owns the playlist and shares it with chosen
     /// people.
     pub is_shared: bool,
+    /// True when the caller may change its songs: they own it, or it is
+    /// shared with them to edit.
+    pub can_edit: bool,
     /// True when the caller may delete it: its owner, or an admin when it
     /// has no owner.
     pub can_delete: bool,
@@ -275,6 +281,8 @@ pub struct PlaylistMember {
     pub user_id: String,
     /// Display name.
     pub display_name: String,
+    /// True when they may change its songs.
+    pub can_edit: bool,
 }
 
 /// The people a playlist is shared with, first shared first.
@@ -290,6 +298,9 @@ pub struct MembersResponse {
 pub struct MembersBody {
     /// User ids.
     pub user_ids: Vec<String>,
+    /// Those of them who may change its songs.
+    #[serde(default)]
+    pub editor_ids: Vec<String>,
 }
 
 /// One track to add.

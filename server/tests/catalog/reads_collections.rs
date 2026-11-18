@@ -311,7 +311,7 @@ async fn sharing_opens_a_playlist_to_chosen_people_only() {
     assert_eq!(status, StatusCode::OK, "{shared}");
     assert_eq!(
         shared["members"],
-        json!([{"user_id": "u-bob", "display_name": "Bob"}])
+        json!([{"user_id": "u-bob", "display_name": "Bob", "can_edit": false}])
     );
 
     let (status, full) = call(&app, Method::GET, &one, Some(BOB), None).await;
@@ -391,6 +391,148 @@ async fn sharing_opens_a_playlist_to_chosen_people_only() {
     assert_eq!(status, StatusCode::NOT_FOUND, "not shared any more");
 }
 
+/// A member the owner lets edit adds, reorders, re-sources and removes
+/// songs; a member who may not edit changes nothing. Name, visibility,
+/// cover, members and delete stay the owner's, though a name sent back as
+/// it is (as apps do with every save) is no change. Taking the right away
+/// takes the edits with it.
+#[tokio::test]
+async fn editors_change_songs_and_only_songs() {
+    let rig = Rig::open().await;
+    let app = rig.app();
+    let (_, created) = call(
+        &app,
+        Method::POST,
+        "/api/v3/playlists",
+        Some(ADA),
+        Some(json!({"name": "Road Trip"})),
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    let one = format!("/api/v3/playlists/{id}");
+    let members = format!("{one}/members");
+    let tracks = format!("{one}/tracks");
+    call(
+        &app,
+        Method::POST,
+        &tracks,
+        Some(ADA),
+        Some(json!({"tracks": [track("One")]})),
+    )
+    .await;
+    let (status, shared) = call(
+        &app,
+        Method::PUT,
+        &members,
+        Some(ADA),
+        Some(json!({"user_ids": ["u-bob", "u-tris"], "editor_ids": ["u-bob"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{shared}");
+    assert_eq!(
+        shared["members"],
+        json!([
+            {"user_id": "u-bob", "display_name": "Bob", "can_edit": true},
+            {"user_id": "u-tris", "display_name": "Tris", "can_edit": false}
+        ])
+    );
+    for (who, can_edit) in [(BOB, true), (TRUSTED, false)] {
+        let (_, read) = call(&app, Method::GET, &one, Some(who), None).await;
+        assert_eq!(read["can_edit"], can_edit, "{}", who.0);
+    }
+
+    let (status, added) = call(
+        &app,
+        Method::POST,
+        &tracks,
+        Some(BOB),
+        Some(json!({"tracks": [track("Two")]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{added}");
+    let two = added["tracks"][0]["id"].as_str().unwrap().to_owned();
+    for (method, uri, body) in [
+        (
+            Method::PATCH,
+            format!("{tracks}/reorder"),
+            Some(json!({"track_id": two, "new_position": 0})),
+        ),
+        (
+            Method::PATCH,
+            format!("{tracks}/{two}"),
+            Some(json!({"source_type": "local"})),
+        ),
+        (Method::PUT, one.clone(), Some(json!({"name": "Road Trip"}))),
+        (Method::DELETE, format!("{tracks}/{two}"), None),
+    ] {
+        let (status, body) = call(&app, method.clone(), &uri, Some(BOB), body).await;
+        assert_eq!(status, StatusCode::OK, "{method} {uri}: {body}");
+    }
+    for (method, uri, body) in [
+        (Method::PUT, one.clone(), Some(json!({"name": "Bob's now"}))),
+        (
+            Method::PATCH,
+            format!("{one}/visibility"),
+            Some(json!({"is_public": true})),
+        ),
+        (Method::PUT, members.clone(), Some(json!({"user_ids": []}))),
+        (
+            Method::POST,
+            format!("{one}/cover"),
+            Some(json!({"content_type": "image/png", "image_base64": PIXEL_PNG})),
+        ),
+        (Method::DELETE, one.clone(), None),
+    ] {
+        let (status, _) = call(&app, method.clone(), &uri, Some(BOB), body).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
+    }
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &tracks,
+        Some(TRUSTED),
+        Some(json!({"tracks": [track("Three")]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "a member who may not edit");
+
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        &members,
+        Some(ADA),
+        Some(json!({"user_ids": ["u-bob"], "editor_ids": ["u-tris"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "editors are members");
+    call(
+        &app,
+        Method::PUT,
+        &members,
+        Some(ADA),
+        Some(json!({"user_ids": ["u-bob"]})),
+    )
+    .await;
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &tracks,
+        Some(BOB),
+        Some(json!({"tracks": [track("Four")]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "the right went with it");
+    let (_, after) = call(&app, Method::GET, &one, Some(ADA), None).await;
+    assert_eq!(
+        (
+            after["name"].as_str(),
+            after["is_public"].as_bool(),
+            after["tracks"].as_array().map(Vec::len)
+        ),
+        (Some("Road Trip"), Some(false), Some(1))
+    );
+}
+
 /// The store itself refuses a write to another user's playlist: Bob's
 /// handle renames, publishes, adds to, reorders, re-sources, covers,
 /// uncovers, empties and deletes Ada's playlist, and nothing changes.
@@ -445,20 +587,23 @@ async fn cross_user_writes_are_refused_by_the_store() {
     let first = before.1[0].0.clone();
 
     let bob = store.owned_by(BOB.0);
+    let bob_songs = store.editable_by(BOB.0);
     assert_eq!(bob.rename(&id, "Taken").await.unwrap(), Written::Missing);
     assert_eq!(bob.set_public(&id, true).await.unwrap(), Written::Missing);
     assert_eq!(
-        bob.insert(&id, Some(0), vec![entry("Three")])
+        bob_songs
+            .insert(&id, Some(0), vec![entry("Three")])
             .await
             .unwrap(),
         Written::Missing
     );
     assert_eq!(
-        bob.move_entry(&id, &first, 1).await.unwrap(),
+        bob_songs.move_entry(&id, &first, 1).await.unwrap(),
         Written::Missing
     );
     assert_eq!(
-        bob.update_sources(&id, &first, Some("plex".to_owned()), None)
+        bob_songs
+            .update_sources(&id, &first, Some("plex".to_owned()), None)
             .await
             .unwrap(),
         Written::Missing
@@ -466,11 +611,17 @@ async fn cross_user_writes_are_refused_by_the_store() {
     assert_eq!(bob.set_cover(&id, cover()).await.unwrap(), Written::Missing);
     assert_eq!(bob.remove_cover(&id).await.unwrap(), Written::Missing);
     assert_eq!(
-        bob.remove(&id, std::slice::from_ref(&first)).await.unwrap(),
+        bob_songs
+            .remove(&id, std::slice::from_ref(&first))
+            .await
+            .unwrap(),
         Written::Missing
     );
     assert!(matches!(
-        bob.replace_entries(&id, vec![entry("Four")]).await.unwrap(),
+        bob_songs
+            .replace_entries(&id, vec![entry("Four")])
+            .await
+            .unwrap(),
         Written::Missing
     ));
     assert_eq!(bob.delete(&id).await.unwrap(), Written::Missing);

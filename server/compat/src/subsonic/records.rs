@@ -77,6 +77,8 @@ pub struct PlaylistSummary {
     pub record: PlaylistRecord,
     /// True when the caller owns it.
     pub is_owner: bool,
+    /// True when the caller may change its songs.
+    pub can_edit: bool,
     /// Owner display name.
     pub owner_name: String,
     /// Entries pointing at a library file (#181).
@@ -94,6 +96,8 @@ pub struct PlaylistDetail {
     pub tracks: Vec<PlaylistEntry>,
     /// True when the caller owns it.
     pub is_owner: bool,
+    /// True when the caller may change its songs.
+    pub can_edit: bool,
     /// Owner display name.
     pub owner_name: String,
 }

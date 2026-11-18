@@ -150,6 +150,7 @@ fn summary(row: &PlaylistRow, user_id: &str, admin: bool) -> PlaylistSummary {
         is_public: row.is_public,
         is_owner: owns(row, user_id),
         is_shared: owns(row, user_id) && row.has_members,
+        can_edit: owns(row, user_id) || row.shared_to_edit,
         can_delete: can_delete(row.owner_id.as_deref(), user_id, admin),
         owner_name: row.owner_name.clone(),
         is_redacted: false,
@@ -177,6 +178,7 @@ fn detail(
         is_public: summary.is_public,
         is_owner: summary.is_owner,
         is_shared: summary.is_shared,
+        can_edit: summary.can_edit,
         can_delete: summary.can_delete,
         owner_name: summary.owner_name,
         is_redacted: false,
@@ -310,6 +312,49 @@ impl CollectionsService<'_> {
         }
     }
 
+    /// The outcome of a song write. A write that found nothing is 403 for
+    /// a reader who may not edit, and 404 otherwise: the playlist or entry
+    /// is gone, or the caller may not read it.
+    async fn found_edit<T>(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+        written: Written<T>,
+    ) -> Result<T, CollectionsError> {
+        match written {
+            Written::Done(value) => Ok(value),
+            Written::Missing => match self
+                .playlists()
+                .visible_to(user_id)
+                .may_edit(playlist_id)
+                .await?
+            {
+                Some(false) => Err(CollectionsError::Forbidden {
+                    message: "You can't change this playlist's songs".to_owned(),
+                }),
+                _ => Err(CollectionsError::NotFound),
+            },
+        }
+    }
+
+    /// The playlist as the caller reads it, when they may change its songs
+    /// but do not own it. Apps send a playlist's name and visibility back
+    /// with every song save, so when the owner's write refuses such a
+    /// caller, a value already as asked is no change; any other change
+    /// stays the owner's.
+    async fn editor_row(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+    ) -> Result<Option<PlaylistRow>, CollectionsError> {
+        Ok(self
+            .playlists()
+            .visible_to(user_id)
+            .get(playlist_id)
+            .await?
+            .filter(|row| row.shared_to_edit && !owns(row, user_id)))
+    }
+
     /// The playlists the caller may read, name order.
     pub async fn visible_playlists(&self, user_id: &str) -> Result<Vec<Visible>, CollectionsError> {
         let rows = self.playlists().visible_to(user_id).readable().await?;
@@ -396,18 +441,18 @@ impl CollectionsService<'_> {
             .await?)
     }
 
-    /// Entries of one of the caller's own playlists, in order; None when it
-    /// is not theirs or is gone.
-    pub async fn owned_entries(
+    /// Entries of a playlist the caller may change the songs of, in order;
+    /// None when they may not or it is gone.
+    pub async fn editable_entries(
         &self,
         user_id: &str,
         playlist_id: &str,
     ) -> Result<Option<Vec<PlaylistTrack>>, CollectionsError> {
-        let playlists = self.playlists();
-        if playlists.visible_to(user_id).is_owner(playlist_id).await? != Some(true) {
+        let visible = self.playlists().visible_to(user_id);
+        if visible.may_edit(playlist_id).await? != Some(true) {
             return Ok(None);
         }
-        Ok(Some(playlists.owned_by(user_id).tracks(playlist_id).await?))
+        Ok(Some(visible.tracks(playlist_id).await?))
     }
 
     /// One playlist the caller may read, rendered as `format`. Entries
@@ -632,8 +677,27 @@ impl CollectionsService<'_> {
         let written = self
             .playlists()
             .owned_by(user_id)
-            .replace_named(playlist_id, name.as_deref(), entries)
+            .replace_named(playlist_id, name.as_deref(), entries.clone())
             .await?;
+        if let Written::Missing = written
+            && let Some(row) = self.editor_row(user_id, playlist_id).await?
+            && name.as_ref().is_none_or(|name| *name == row.name)
+        {
+            let written = self
+                .playlists()
+                .editable_by(user_id)
+                .replace_entries(playlist_id, entries)
+                .await?;
+            self.found_edit(user_id, playlist_id, written).await?;
+            let row = self.readable_playlist(user_id, playlist_id).await?;
+            return Ok(SavedPlaylist {
+                id: row.id,
+                name: row.name,
+                is_public: row.is_public,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+            });
+        }
         self.found(user_id, playlist_id, written).await
     }
 
@@ -676,6 +740,12 @@ impl CollectionsService<'_> {
             .owned_by(user_id)
             .rename(playlist_id, &name)
             .await?;
+        if let Written::Missing = written
+            && let Some(row) = self.editor_row(user_id, playlist_id).await?
+            && row.name == name
+        {
+            return Ok(());
+        }
         self.found(user_id, playlist_id, written).await
     }
 
@@ -744,6 +814,12 @@ impl CollectionsService<'_> {
             .owned_by(user_id)
             .set_public(playlist_id, public)
             .await?;
+        if let Written::Missing = written
+            && let Some(row) = self.editor_row(user_id, playlist_id).await?
+            && row.is_public == public
+        {
+            return Ok(());
+        }
         self.found(user_id, playlist_id, written).await
     }
 
@@ -762,13 +838,15 @@ impl CollectionsService<'_> {
         Ok(MembersResponse { members })
     }
 
-    /// Share the caller's playlist with exactly `user_ids`; empty unshares
-    /// it. Every id must name another user.
+    /// Share the caller's playlist with exactly `user_ids`, of whom
+    /// `editor_ids` may change its songs; empty unshares it. Every id must
+    /// name another user, and every editor must be one of them.
     pub async fn set_members(
         &self,
         user_id: &str,
         playlist_id: &str,
         mut user_ids: Vec<String>,
+        editor_ids: &[String],
     ) -> Result<MembersResponse, CollectionsError> {
         user_ids.sort();
         user_ids.dedup();
@@ -776,10 +854,23 @@ impl CollectionsService<'_> {
         if user_ids.iter().any(|id| id == user_id) {
             return Err(unknown());
         }
+        if editor_ids
+            .iter()
+            .any(|id| user_ids.binary_search(id).is_err())
+        {
+            return Err(CollectionsError::invalid(
+                "Only people it is shared with can edit it",
+            ));
+        }
+        let editors: HashSet<&String> = editor_ids.iter().collect();
+        let members = user_ids
+            .iter()
+            .map(|id| (id.clone(), editors.contains(id)))
+            .collect();
         let written = self
             .playlists()
             .owned_by(user_id)
-            .set_members(playlist_id, user_ids)
+            .set_members(playlist_id, members)
             .await?;
         if !self.found(user_id, playlist_id, written).await? {
             return Err(unknown());
@@ -813,10 +904,10 @@ impl CollectionsService<'_> {
     ) -> Result<Vec<String>, CollectionsError> {
         let written = self
             .playlists()
-            .owned_by(user_id)
+            .editable_by(user_id)
             .insert(playlist_id, position, entries)
             .await?;
-        self.found(user_id, playlist_id, written).await
+        self.found_edit(user_id, playlist_id, written).await
     }
 
     /// Add native tracks at a position, or append.
@@ -836,7 +927,7 @@ impl CollectionsService<'_> {
             .await?;
         let tracks = self
             .playlists()
-            .owned_by(user_id)
+            .visible_to(user_id)
             .tracks(playlist_id)
             .await?
             .into_iter()
@@ -854,10 +945,10 @@ impl CollectionsService<'_> {
     ) -> Result<usize, CollectionsError> {
         let written = self
             .playlists()
-            .owned_by(user_id)
+            .editable_by(user_id)
             .remove(playlist_id, entry_ids)
             .await?;
-        self.found(user_id, playlist_id, written).await
+        self.found_edit(user_id, playlist_id, written).await
     }
 
     /// Remove one entry; an unknown entry is 404.
@@ -886,10 +977,10 @@ impl CollectionsService<'_> {
     ) -> Result<usize, CollectionsError> {
         let written = self
             .playlists()
-            .owned_by(user_id)
+            .editable_by(user_id)
             .move_entry(playlist_id, entry_id, position)
             .await?;
-        self.found(user_id, playlist_id, written).await
+        self.found_edit(user_id, playlist_id, written).await
     }
 
     /// Update one entry's source fields.
@@ -906,12 +997,14 @@ impl CollectionsService<'_> {
             .as_deref()
             .map(clean_sources)
             .transpose()?;
-        let owned = self.playlists().owned_by(user_id);
-        let written = owned
+        let written = self
+            .playlists()
+            .editable_by(user_id)
             .update_sources(playlist_id, entry_id, source_type, sources)
             .await?;
-        self.found(user_id, playlist_id, written).await?;
-        owned
+        self.found_edit(user_id, playlist_id, written).await?;
+        self.playlists()
+            .visible_to(user_id)
             .tracks(playlist_id)
             .await?
             .into_iter()
@@ -1064,7 +1157,7 @@ impl CollectionsService<'_> {
             return Ok((existing, true));
         };
         if !entries.is_empty() {
-            let written = playlists.insert(&id, None, entries).await?;
+            let written = playlists.songs().insert(&id, None, entries).await?;
             self.found(owner_id, &id, written).await?;
         }
         Ok((id, false))

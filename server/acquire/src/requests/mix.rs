@@ -691,7 +691,11 @@ impl PersonalMixBuilder {
                     .map(|track| track.id)
                     .collect();
                 if !entries.is_empty() {
-                    playlists.remove(&id, &entries).await.map_err(store_fault)?;
+                    playlists
+                        .songs()
+                        .remove(&id, &entries)
+                        .await
+                        .map_err(store_fault)?;
                 }
                 id
             }
@@ -710,6 +714,7 @@ impl PersonalMixBuilder {
         };
         let entries = mix.iter().map(entry_for).collect();
         match playlists
+            .songs()
             .insert(&playlist_id, None, entries)
             .await
             .map_err(store_fault)?

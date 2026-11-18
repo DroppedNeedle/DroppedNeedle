@@ -50,7 +50,7 @@ pub async fn playlist_detail(
         &detail.record,
         &tracks,
         owner,
-        detail.is_owner,
+        detail.can_edit,
     ))
 }
 
@@ -60,7 +60,7 @@ fn playlist_view(
     record: &PlaylistRecord,
     tracks: &[ViewTrack],
     owner: String,
-    is_owner: bool,
+    can_edit: bool,
 ) -> SPlaylist {
     let total = tracks
         .iter()
@@ -76,7 +76,7 @@ fn playlist_view(
         comment: None,
         owner: Some(owner),
         public: Some(record.is_public),
-        readonly: !is_owner,
+        readonly: !can_edit,
         songCount: songs.len() as i64,
         duration: Some(total),
         created: record.created_at.clone(),
@@ -109,7 +109,7 @@ pub async fn playlists(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             comment: None,
             owner: Some(owner),
             public: Some(record.is_public),
-            readonly: !view.is_owner,
+            readonly: !view.can_edit,
             songCount: song_count,
             duration: Some(duration),
             created: record.created_at.clone(),
@@ -152,10 +152,16 @@ pub async fn create_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
             tracks.push(track);
         }
     }
+    let mut other_owner = None;
     let record = match ctx.p("playlistId")? {
         Some(playlist_id) => {
             let pid = decode_expect(&playlist_id, IdKind::Playlist)?;
             let name = ctx.p("name")?;
+            other_owner = ctx
+                .store
+                .other_owner_name(&pid, &user_id)
+                .await
+                .map_err(Ctx::store_err)?;
             ctx.store
                 .replace_playlist(&pid, &user_id, name.as_deref(), &song_file_ids)
                 .await
@@ -172,7 +178,10 @@ pub async fn create_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
                 .map_err(Ctx::store_err)?
         }
     };
-    let owner = ctx.user()?.username().to_owned();
+    let owner = match other_owner {
+        Some(name) => name,
+        None => ctx.user()?.username().to_owned(),
+    };
     Outcome::keyed(
         "playlist",
         playlist_view(ctx, &record, &tracks, owner, true),
@@ -210,7 +219,7 @@ pub async fn update_playlist(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
         }
         None => None,
     };
-    // Indexes are read against the caller's own playlist. On anyone else's
+    // Indexes are read against a playlist the caller may edit. On any other
     // the remove is still sent, so it answers the usual refusal whatever
     // the index and never hints at the playlist's length.
     let (remove_ids, not_theirs) = if remove_indices.is_empty() {

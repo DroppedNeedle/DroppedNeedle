@@ -625,16 +625,16 @@ impl CompatLibrary {
             .collect())
     }
 
-    /// Entries of one of the user's own playlists as `(entry id, library
-    /// file id)`, in order; None when it is not theirs.
-    pub async fn owned_entries(
+    /// Entries of a playlist the user may change the songs of as `(entry
+    /// id, library file id)`, in order; None when they may not.
+    pub async fn editable_entries(
         &self,
         user_id: &str,
         playlist_id: &str,
     ) -> Result<Option<Vec<(String, Option<String>)>>, CompatError> {
         Ok(self
             .service()
-            .owned_entries(user_id, playlist_id)
+            .editable_entries(user_id, playlist_id)
             .await?
             .map(|tracks| {
                 tracks

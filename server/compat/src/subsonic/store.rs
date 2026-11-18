@@ -868,11 +868,27 @@ impl SubsonicStore {
             .map(|visible| PlaylistSummary {
                 record: record(visible),
                 is_owner: visible.is_owner,
+                can_edit: visible.is_owner || visible.row.shared_to_edit,
                 owner_name: visible.row.owner_name.clone().unwrap_or_default(),
                 song_count: visible.row.streamable_count as i64,
                 duration: visible.row.streamable_duration.round() as i64,
             })
             .collect())
+    }
+
+    /// The display name of a playlist's owner when it is someone else's
+    /// the user may read; None when it is theirs or they may not read it.
+    pub async fn other_owner_name(
+        &self,
+        playlist_id: &str,
+        user_id: &str,
+    ) -> Result<Option<String>, CompatError> {
+        Ok(self
+            .library
+            .playlist(user_id, playlist_id)
+            .await?
+            .filter(|visible| !visible.is_owner)
+            .map(|visible| visible.row.owner_name.unwrap_or_default()))
     }
 
     /// Playlist detail, or None.
@@ -895,12 +911,13 @@ impl SubsonicStore {
             record: record(&visible),
             tracks,
             is_owner: visible.is_owner,
+            can_edit: visible.is_owner || visible.row.shared_to_edit,
             owner_name: visible.row.owner_name.clone().unwrap_or_default(),
         }))
     }
 
-    /// Entries of one of the user's own playlists in order; None when it
-    /// is not theirs.
+    /// Entries of a playlist the user may change the songs of, in order;
+    /// None when they may not.
     pub async fn get_playlist_tracks(
         &self,
         playlist_id: &str,
@@ -908,7 +925,7 @@ impl SubsonicStore {
     ) -> Result<Option<Vec<PlaylistEntry>>, CompatError> {
         Ok(self
             .library
-            .owned_entries(user_id, playlist_id)
+            .editable_entries(user_id, playlist_id)
             .await?
             .map(|entries| entries.into_iter().map(entry).collect()))
     }

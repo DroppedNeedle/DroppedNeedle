@@ -1,9 +1,9 @@
 <!--
 	Who a playlist is for: only its owner, people chosen from the server's
-	users, or everyone. The chosen people are listed, and more are found by
-	name, so it reads the same with three users or three hundred. Saving
-	sets the visibility and the people together. Choosing Everyone leaves
-	the chosen people as they were.
+	users, or everyone. The chosen people are listed, each with whether they
+	may edit its songs, and more are found by name, so it reads the same
+	with three users or three hundred. Saving sets the visibility and the
+	people together. Choosing Everyone leaves the chosen people as they were.
 -->
 <script lang="ts">
 	import { Plus, Search, Users, X } from 'lucide-svelte';
@@ -13,6 +13,7 @@
 	import Modal from '$lib/ui/Modal.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import RadioCards from '$lib/ui/RadioCards.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import {
@@ -34,6 +35,7 @@
 
 	type Audience = 'private' | 'people' | 'everyone';
 	type Person = { id: string; display_name: string };
+	type Member = Person & { can_edit: boolean };
 	const audiences: { value: Audience; label: string; description: string }[] = [
 		{ value: 'private', label: 'Only me', description: 'No one else sees it.' },
 		{ value: 'people', label: 'Specific people', description: 'Only the people you add.' },
@@ -44,7 +46,7 @@
 
 	let open = $state(false);
 	let audience = $state<Audience>('private');
-	let chosen = $state<Person[]>([]);
+	let chosen = $state<Member[]>([]);
 	let query = $state('');
 	let seeded = $state(false);
 
@@ -69,7 +71,11 @@
 		const current = members.data;
 		if (!open || seeded || !current) return;
 		seeded = true;
-		chosen = current.map((member) => ({ id: member.user_id, display_name: member.display_name }));
+		chosen = current.map((member) => ({
+			id: member.user_id,
+			display_name: member.display_name,
+			can_edit: member.can_edit
+		}));
 		audience = isPublic ? 'everyone' : current.length > 0 ? 'people' : 'private';
 	});
 
@@ -87,7 +93,7 @@
 	}
 
 	function add(user: Person) {
-		chosen = [...chosen, user];
+		chosen = [...chosen, { ...user, can_edit: false }];
 		query = '';
 	}
 
@@ -98,9 +104,11 @@
 				await setVisibility.mutateAsync({ id: playlistId, isPublic: nowPublic });
 			}
 			if (!nowPublic) {
+				const sharedWith = audience === 'people' ? chosen : [];
 				await setMembers.mutateAsync({
 					id: playlistId,
-					userIds: audience === 'people' ? chosen.map((person) => person.id) : []
+					userIds: sharedWith.map((person) => person.id),
+					editorIds: sharedWith.filter((person) => person.can_edit).map((person) => person.id)
 				});
 			}
 			onsaved(nowPublic);
@@ -121,8 +129,16 @@
 					Shared with
 				</legend>
 				{#each chosen as person (person.id)}
-					<div class="flex items-center justify-between gap-3 text-sm font-medium">
-						<span class="truncate">{person.display_name}</span>
+					<div class="flex items-center gap-3 text-sm font-medium">
+						<span class="min-w-0 flex-1 truncate">{person.display_name}</span>
+						<label class="flex shrink-0 items-center gap-2 text-xs font-normal text-muted">
+							Can edit
+							<ToggleRow
+								bare
+								label="{person.display_name} can edit"
+								bind:checked={person.can_edit}
+							/>
+						</label>
 						<IconButton
 							size="xs"
 							icon={X}

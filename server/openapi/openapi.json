@@ -53639,6 +53639,13 @@
           "user_ids"
         ],
         "properties": {
+          "editor_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Those of them who may change its songs."
+          },
           "user_ids": {
             "type": "array",
             "items": {
@@ -57514,6 +57521,7 @@
           "is_public",
           "is_owner",
           "is_shared",
+          "can_edit",
           "can_delete",
           "is_redacted"
         ],
@@ -57521,6 +57529,10 @@
           "can_delete": {
             "type": "boolean",
             "description": "True when the caller may delete it: its owner, or an admin when it\nhas no owner."
+          },
+          "can_edit": {
+            "type": "boolean",
+            "description": "True when the caller may change its songs: they own it, or it is\nshared with them to edit."
           },
           "cover_urls": {
             "type": "array",
@@ -57660,9 +57672,14 @@
         "description": "One person a playlist is shared with.",
         "required": [
           "user_id",
-          "display_name"
+          "display_name",
+          "can_edit"
         ],
         "properties": {
+          "can_edit": {
+            "type": "boolean",
+            "description": "True when they may change its songs."
+          },
           "display_name": {
             "type": "string",
             "description": "Display name."
@@ -57769,6 +57786,7 @@
           "is_public",
           "is_owner",
           "is_shared",
+          "can_edit",
           "can_delete",
           "is_redacted"
         ],
@@ -57776,6 +57794,10 @@
           "can_delete": {
             "type": "boolean",
             "description": "True when the caller may delete it: its owner, or an admin when it\nhas no owner."
+          },
+          "can_edit": {
+            "type": "boolean",
+            "description": "True when the caller may change its songs: they own it, or it is\nshared with them to edit."
           },
           "cover_urls": {
             "type": "array",

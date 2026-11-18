@@ -149,10 +149,10 @@ export const createSetPlaylistVisibilityV3Mutation = () =>
 
 export const createSetPlaylistMembersV3Mutation = () =>
 	createAppMutation(() => ({
-		mutationFn: (vars: { id: string; userIds: string[] }) =>
+		mutationFn: (vars: { id: string; userIds: string[]; editorIds: string[] }) =>
 			api.v3.PUT(
 				v3('/api/v3/playlists/{playlist_id}/members', { path: { playlist_id: vars.id } }),
-				{ user_ids: vars.userIds }
+				{ user_ids: vars.userIds, editor_ids: vars.editorIds }
 			),
 		effects: (_data, vars) => listAndDetail(vars.id)
 	}));
