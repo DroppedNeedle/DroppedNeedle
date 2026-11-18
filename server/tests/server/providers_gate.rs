@@ -463,10 +463,61 @@ fn kernel_musicbrainz_rates_match_the_table() {
         fixed("brainzmash"),
         Some(Rate::Fixed(BRAINZMASH_RATE_LIMIT))
     );
+    // Fixed at one request a second, not only equal to the kernel constant.
+    assert_eq!(fixed("brainzmash"), Some(Rate::Fixed(1.0)));
+    let brainzmash = row("brainzmash").expect("brainzmash row");
+    assert_eq!(brainzmash.burst, 1);
+    assert_eq!(brainzmash.max_in_flight, Some(1));
     assert_eq!(
         fixed("musicbrainz"),
         Some(Rate::Fixed(OFFICIAL_MB_RATE_LIMIT))
     );
+}
+
+/// A fresh install and a built-in binding saved at the old 10 per second
+/// both read back at one per second. A custom mirror keeps the rate it
+/// was given, and Official stays at its cap.
+#[test]
+fn brainzmash_load_paces_at_one_request_a_second() {
+    use droppedneedle_kernel::runtime_config::Section;
+    use droppedneedle_kernel::runtime_config::crypto::Crypto;
+    use droppedneedle_kernel::runtime_config::sections::{
+        MbSourceMode, MusicBrainzSettings, OFFICIAL_MB_RATE_LIMIT,
+    };
+    use droppedneedle_kernel::runtime_config::store::ConfigStore;
+
+    let _dir = crate::common::ScratchDir::new("brainzmash-rate");
+    let store = ConfigStore::scratch(&_dir, Crypto::from_key_bytes(&[7u8; 32]).unwrap()).unwrap();
+
+    let fresh = store.get::<MusicBrainzSettings>().unwrap();
+    assert_eq!(fresh.source_mode, MbSourceMode::Brainzmash);
+    assert_eq!(fresh.rate_limit, 1.0);
+
+    let load = |text: &str| {
+        store
+            .replace_stored_for_test(MusicBrainzSettings::KEY, text)
+            .unwrap();
+        store.get::<MusicBrainzSettings>().unwrap()
+    };
+
+    let saved = load(
+        r#"{"source_mode":"brainzmash","api_url":"https://api.brainzmash.cc/ws/2","rate_limit":10,"source_id":"built-in","generation":3,"active_brainzmash":{"endpoint":"https://api.brainzmash.cc/ws/2","access_revision":"rev","source_id":"built-in","generation":3,"disclosure_version":"brainzmash-v1","consented":true,"verified":true}}"#,
+    );
+    assert_eq!(saved.source_mode, MbSourceMode::Brainzmash);
+    assert_eq!(saved.rate_limit, 1.0);
+    assert!(saved.brainzmash_binding_valid());
+
+    let mirror = load(
+        r#"{"source_mode":"mirror","api_url":"http://mirror.example/ws/2","rate_limit":12.5,"source_id":"mirror","generation":1}"#,
+    );
+    assert_eq!(mirror.source_mode, MbSourceMode::Mirror);
+    assert_eq!(mirror.rate_limit, 12.5);
+
+    let official = load(
+        r#"{"source_mode":"official","api_url":"https://musicbrainz.org/ws/2","rate_limit":10,"source_id":"official","generation":1}"#,
+    );
+    assert_eq!(official.source_mode, MbSourceMode::Official);
+    assert_eq!(official.rate_limit, OFFICIAL_MB_RATE_LIMIT);
 }
 
 /// `CLAUDE.md` lists every rate row with the day it was last read, and only

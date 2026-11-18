@@ -15,8 +15,30 @@ export const BRAINZMASH_SUPPORTED_ROUTE_FAMILIES = [
 
 /** Public sources use explicit provider-specific wire policies. */
 export const OFFICIAL_RATE_MAX = 1;
-export const BRAINZMASH_RATE_MAX = 10;
+export const BRAINZMASH_RATE_MAX = 1;
 export const NON_OFFICIAL_RATE_MAX = 500;
+
+/**
+ * Rate the form shows after the admin picks `next`, coming from `previous`
+ * at `currentRate`. A fixed source ignores a saved rate. Leaving one for a
+ * mirror or community server, or leaving a built-in endpoint, starts at 1.
+ */
+export function rateAfterSourceSwitch(
+	next: MusicBrainzSourceMode,
+	previous: MusicBrainzSourceMode,
+	currentRate: number,
+	usingBuiltInEndpoint = false
+): number {
+	if (next === 'brainzmash') return BRAINZMASH_RATE_MAX;
+	if (next === 'official') return OFFICIAL_RATE_MAX;
+	if (
+		(next === 'mirror' || next === 'community') &&
+		(previous === 'brainzmash' || previous === 'official' || usingBuiltInEndpoint)
+	) {
+		return OFFICIAL_RATE_MAX;
+	}
+	return currentRate;
+}
 
 export interface SourceBounds {
 	rateMax: number;
@@ -95,7 +117,9 @@ export const BRAINZMASH_PRIVACY_DISCLOSURE =
 export const BRAINZMASH_TRANSPORT_DISABLED_COPY =
 	'BrainzMash is the built-in source. This optional disclosure proposal remains transport-disabled until it is reviewed.';
 export const BRAINZMASH_LOCAL_POLICY_COPY =
-	'DroppedNeedle local wire policy: 10 requests/second with token capacity 1. This is a local safety limit, not a provider quota or SLA.';
+	'DroppedNeedle local wire policy: 1 request/second with token capacity 1. This is a local safety limit, not a provider quota or SLA.';
+export const BRAINZMASH_ACTIVE_SOURCE_COPY =
+	'BrainzMash is the active runtime source. Traffic uses the local 1 request/second policy.';
 export const BRAINZMASH_ACTIVE_BINDING_COPY =
 	'BrainzMash is the active runtime source. Optional disclosure metadata may be reviewed without interrupting traffic.';
 export const BRAINZMASH_PENDING_TRANSPORT_COPY =

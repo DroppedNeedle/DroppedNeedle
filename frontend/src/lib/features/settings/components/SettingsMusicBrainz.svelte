@@ -36,6 +36,7 @@
 
 	import {
 		BRAINZMASH_ACTIVE_BINDING_COPY,
+		BRAINZMASH_ACTIVE_SOURCE_COPY,
 		BRAINZMASH_ENDPOINT_URL,
 		BRAINZMASH_LOCAL_POLICY_COPY,
 		BRAINZMASH_NO_ALTERNATE_PROBE_COPY,
@@ -55,6 +56,7 @@
 		MUSICBRAINZ_SOURCE_CARDS,
 		OFFICIAL_ENDPOINT_URL,
 		CLAMPED_WARNING,
+		rateAfterSourceSwitch,
 		sourceBounds,
 		UNLIMITED_RATE_LABEL
 	} from './musicBrainzSourceCopy';
@@ -373,24 +375,26 @@
 		actionNotice = '';
 		if (mode === 'brainzmash') {
 			form.api_url = pendingBrainzMash?.endpoint ?? BRAINZMASH_ENDPOINT_URL;
-			form.rate_limit = BRAINZMASH_RATE_MAX;
+			form.rate_limit = rateAfterSourceSwitch(mode, previousMode, form.rate_limit);
 			return;
 		}
 		if (mode === 'official') {
 			form.api_url = OFFICIAL_ENDPOINT_URL;
-			form.rate_limit = 1;
+			form.rate_limit = rateAfterSourceSwitch(mode, previousMode, form.rate_limit);
 		}
 		if (mode === 'mirror' || mode === 'community') {
 			const normalizedApiUrl = form.api_url.trim().replace(/\/+$/, '');
-			const leavingFixedSource = previousMode === 'brainzmash' || previousMode === 'official';
 			const usingBuiltInEndpoint =
 				normalizedApiUrl === BRAINZMASH_ENDPOINT_URL || normalizedApiUrl === OFFICIAL_ENDPOINT_URL;
 			if (usingBuiltInEndpoint) {
 				form.api_url = '';
 			}
-			if (leavingFixedSource || usingBuiltInEndpoint) {
-				form.rate_limit = 1;
-			}
+			form.rate_limit = rateAfterSourceSwitch(
+				mode,
+				previousMode,
+				form.rate_limit,
+				usingBuiltInEndpoint
+			);
 		}
 	}
 
@@ -661,8 +665,7 @@
 									</div>
 								{:else if activeMode === 'brainzmash'}
 									<p class="text-sm text-success">
-										BrainzMash is the active runtime source. Traffic uses the local 10
-										requests/second policy.
+										{BRAINZMASH_ACTIVE_SOURCE_COPY}
 									</p>
 								{/if}
 								<Button

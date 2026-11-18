@@ -368,7 +368,7 @@ Run from the repo root. `make help` lists every target.
   | Source | Keep to | Basis | Last read |
   |---|---|---|---|
   | `musicbrainz` | 1 a second, no burst | theirs: about 1 a second per address, 503 past it | 2026-10-18 |
-  | `brainzmash` | 10 a second, one in flight | ours: no published number, cools down on 429 | 2026-10-18 |
+  | `brainzmash` | 1 a second, one in flight | ours: no published number, cools down on 429 | 2026-10-18 |
   | `musicbrainz-mirror` | set by the admin; a public host uses the `musicbrainz` row | ours | 2026-10-18 |
   | `listenbrainz` | 1 a second, no burst | theirs: at most 1 a second, 429 past it | 2026-10-18 |
   | `lastfm` | 5 a second, burst 10 | ours: no published number | 2026-10-18 |

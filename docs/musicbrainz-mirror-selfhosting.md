@@ -57,7 +57,7 @@ BrainzMash publishes no numeric quota, burst or concurrency allowance, `Retry-Af
 
 DroppedNeedle applies its own limits before every BrainzMash request and retry:
 
-- 10 requests a second;
+- 1 request a second;
 - a token capacity of 1 and one request in flight at a time, so its own queues cannot send a burst;
 - after a 429, a pause for the `Retry-After` it names, up to a minute, or one that doubles from 1 second to a minute while 429s name no wait;
 - the Official source gets 1 request a second with the same capacity of 1; and
@@ -91,7 +91,7 @@ The server makes these values itself and keeps them in memory. They are not host
 
 1. **Stage the built-in endpoint.** An admin sends `POST /api/v3/settings/musicbrainz/brainzmash/stage` with no provider payload. The server records a fresh pending endpoint, access revision, source ID and generation, then applies the built-in BrainzMash source. Staging is local work only and sends no request to BrainzMash. If another source was active, staging switches lookups to BrainzMash; if BrainzMash was already active, it carries on serving.
 2. **Accept the notice.** An admin sends `POST /api/v3/settings/musicbrainz/brainzmash/consent` with the exact current `access_revision`, `source_id`, `generation` and `disclosure_version`. This is local too and sends nothing. It records consent for that exact proposal and turns on Test Connection for it. The proposal and its consent live in memory, so a restart drops them and staging starts again.
-3. **Test Connection.** DroppedNeedle sends `POST /api/v3/settings/musicbrainz/verify` with the same values. The test goes through the BrainzMash client, under the same 10 requests a second and capacity of 1 as every other BrainzMash request. A test that passes records the check for that endpoint and those values. A failed, stale or mismatched test cannot activate the proposal.
+3. **Test Connection.** DroppedNeedle sends `POST /api/v3/settings/musicbrainz/verify` with the same values. The test goes through the BrainzMash client, under the same 1 request a second and capacity of 1 as every other BrainzMash request. A test that passes records the check for that endpoint and those values. A failed, stale or mismatched test cannot activate the proposal.
 4. **Activate.** An admin sends `POST /api/v3/settings/musicbrainz/activate` with the same values. Only a matching consent and a passed test promote the pending proposal, in one step, to the active BrainzMash source.
 
 Staging again, saving another source or restarting the server drops the pending proposal with its consent and test. A consent, test or activation that names other values is refused as stale. Reset drops the old pending values, stages the built-in endpoint with fresh ones, preselects BrainzMash and sends nothing to the provider. Staging can replace another active source; consent and testing never change the active source.
@@ -275,7 +275,7 @@ The details on this page come from four places: public documentation, statements
 
 - **Pinned public documentation:** the BrainzMash project README and integration guides at commit `c25bd6e8816592af33cac65c42dff6a35b9e0566` (2026-08-29) describe the public pool, its read-only `ws/2` boundary and contributor setup.
 - **Operator statement:** `https://api.brainzmash.cc/ws/2` is the public BrainzMash frontdoor approved for DroppedNeedle's reads. Those requests are expected to carry no credentials. The `X-BrainzMash-Key` shown in the Nginx guide is for private contributor backends, not for DroppedNeedle.
-- **DroppedNeedle policy:** DroppedNeedle ships BrainzMash built in, labels it Recommended, and preselects it for a fresh or reset configuration. It paces BrainzMash at 10 requests a second and Official at 1 request a second, each with a capacity of 1. The app does not promise that any provider is available, and never falls back to another source by itself.
+- **DroppedNeedle policy:** DroppedNeedle ships BrainzMash built in, labels it Recommended, and preselects it for a fresh or reset configuration. It paces BrainzMash at 1 request a second and Official at 1 request a second, each with a capacity of 1. The app does not promise that any provider is available, and never falls back to another source by itself.
 - **Live observation:** the dashboard, read on 2026-08-24, showed recent search terms and partial network or location information. This is something seen once, not a promise that the dashboard always shows the same fields.
 
 Public documentation describes what its authors publish. Operator statements describe that one frontdoor and its handover expectations. DroppedNeedle's own policy sets the local limits. The dashboard note is a dated observation. None of them is a service level, a full privacy guarantee, or permission for a hidden fallback.

@@ -53561,7 +53561,7 @@
             "type": "number",
             "format": "double",
             "description": "Requests per second (0 = Unlimited, off-official only).",
-            "default": 10.0
+            "default": 1.0
           },
           "selected_source_mode": {
             "oneOf": [

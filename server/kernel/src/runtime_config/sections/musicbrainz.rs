@@ -16,10 +16,11 @@ use crate::runtime_config::error::ConfigError;
 pub const OFFICIAL_MB_API_BASE: &str = "https://musicbrainz.org/ws/2";
 /// Server-owned BrainzMash endpoint. Never accepted from a client.
 pub const BRAINZMASH_ENDPOINT: &str = "https://api.brainzmash.cc/ws/2";
-/// Forced BrainzMash throughput (v2 `_BRAINZMASH_RATE_LIMIT`). The kernel
-/// cannot read the providers' rate table; a gate test holds this and
-/// [`OFFICIAL_MB_RATE_LIMIT`] equal to its rows.
-pub const BRAINZMASH_RATE_LIMIT: f64 = 10.0;
+/// Forced BrainzMash throughput: one request a second. BrainzMash
+/// publishes no numeric quota. The kernel cannot read the providers'
+/// rate table; a gate test holds this and [`OFFICIAL_MB_RATE_LIMIT`]
+/// equal to its rows.
+pub const BRAINZMASH_RATE_LIMIT: f64 = 1.0;
 /// Official-host ceilings (never raised).
 pub const OFFICIAL_MB_RATE_LIMIT: f64 = 1.0;
 /// Widest allowed off-official throughput (0 = Unlimited sentinel).

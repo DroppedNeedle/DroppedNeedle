@@ -54,12 +54,12 @@ pub const RATES: &[RateRow] = &[
     },
     RateRow {
         source: "brainzmash",
-        per_second: Rate::Fixed(10.0),
+        per_second: Rate::Fixed(1.0),
         burst: 1,
         max_in_flight: Some(1),
         verified_on: "2026-10-18",
         basis: "No documented limit: the page asks for clean, responsible use and \
-                approves apps case by case. Kept at the forced 10 per second, one in \
+                approves apps case by case. Kept at 1 per second, one in \
                 flight; its 429 cooldown is the real governor.",
         url: "https://brainzmash.cc",
     },

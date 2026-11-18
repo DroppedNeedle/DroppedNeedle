@@ -17948,7 +17948,7 @@ export interface components {
             /**
              * Format: double
              * @description Requests per second (0 = Unlimited, off-official only).
-             * @default 10
+             * @default 1
              */
             rate_limit: number;
             /**
