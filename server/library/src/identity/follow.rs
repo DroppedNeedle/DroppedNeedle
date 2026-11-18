@@ -11,6 +11,7 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use super::remap::{RemapOrigin, queue_placement, queue_remap};
 use super::sql;
 use super::{DecisionSource, PROVIDER, Rows, delete_album_row};
+use crate::catalog_revision::raise_catalog;
 use crate::identify::queue::bump_identification_stream;
 
 /// An album's match, as far as settling two rows of one album reads it.
@@ -184,7 +185,7 @@ pub(crate) fn settle_followed_match(
 }
 
 /// Put the match of `from` on `to`, with its source, its chooser and its
-/// "unsure" flag, at a revision neither row has had. The match on `to` and
+/// "unsure" flag, at a revision neither album has had. The match on `to` and
 /// what was made for it go. A person's match (`chosen`) keeps the remap
 /// still waiting to place it on the files. What is left on `from` is the
 /// caller's.
@@ -203,8 +204,9 @@ fn carry_match(
         .optional()?
         .filter(|_| chosen);
     let revision: i64 = tx
-        .prepare_cached(sql::NEXT_SHARED_REVISION.text())?
+        .prepare_cached(sql::SHARED_REVISION.text())?
         .query_row(params![from, to], |row| row.get(0))?;
+    raise_catalog(tx, revision)?;
     for statement in [
         sql::DELETE_ALBUM_ROWS,
         sql::CLEAR_FLAG,
@@ -215,7 +217,7 @@ fn carry_match(
         tx.prepare_cached(statement.text())?.execute(params![to])?;
     }
     tx.prepare_cached(sql::CARRY_ALBUM_ROW.text())?
-        .execute(params![from, to, revision])?;
+        .execute(params![from, to])?;
     tx.prepare_cached(sql::MOVE_MATCH_STATE.text())?
         .execute(params![from, to])?;
     if let Some((release, chosen_by, origin)) = remap {

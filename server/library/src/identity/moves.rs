@@ -11,8 +11,10 @@
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::person::forget_hand_match;
+use super::reads::identity_revision;
 use super::sql;
 use super::{DecisionSource, PROVIDER, Rows, delete_album_row};
+use crate::catalog_revision::raise_catalog;
 
 /// Move `from`'s edition, with its match state and pending remap, onto
 /// `to`. What `to` held goes first: its edition and both its undo rows
@@ -20,6 +22,7 @@ use super::{DecisionSource, PROVIDER, Rows, delete_album_row};
 /// or queued placement where `from` has one to take its place.
 pub(crate) fn move_edition(tx: &Transaction<'_>, from: &str, to: &str) -> rusqlite::Result<()> {
     delete_album_row(tx, to, Rows::Any)?;
+    raise_catalog(tx, identity_revision(tx, from)?)?;
     tx.prepare_cached(sql::MOVE_EDITION_ROW.text())?
         .execute(params![from, to, PROVIDER])?;
     for (room, moved) in [

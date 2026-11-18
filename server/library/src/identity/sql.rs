@@ -424,13 +424,22 @@ droppedneedle_kernel::sql! {
     pub(super) FORGET_CHOICE_UNDO =
         "DELETE FROM library_edition_choice_undo WHERE local_album_id = ?1";
 
+    /// The revision a new or moved album match row starts at: one past the
+    /// catalog revision, which is raised to a match's revision before the
+    /// match leaves its album
+    /// ([`raise_catalog`](crate::catalog_revision::raise_catalog)). An
+    /// album's match never takes a revision it had before, so a page that
+    /// read an earlier match cannot pass for the new one.
+    pub(super) fragment NEXT_REVISION = "(SELECT COALESCE(MAX(value), 0) + 1 \
+             FROM library_catalog_revision)";
+
     /// Seal an automatic album match (`?1`, provider `?2`, group `?3`,
     /// release `?4`, at `?5`), never over a person's. An automatic row that
     /// already names that group and release is left as it is: its matcher
     /// stamp and attempt are bookkeeping, not a change of match.
     pub(super) SEAL_ALBUM = "INSERT INTO local_album_external_identities (local_album_id, \
              provider, release_group_mbid, release_mbid, decision_source, selected_at, \
-             row_revision) VALUES (?1, ?2, ?3, ?4, 'automatic', ?5, 1) \
+             row_revision) VALUES (?1, ?2, ?3, ?4, 'automatic', ?5, " + NEXT_REVISION + ") \
              ON CONFLICT (local_album_id, provider) DO UPDATE SET \
              release_group_mbid = excluded.release_group_mbid, \
              release_mbid = excluded.release_mbid, decision_source = 'automatic', \
@@ -469,12 +478,12 @@ droppedneedle_kernel::sql! {
     /// automatic or embedded row over a person's.
     pub(super) SAVE_ALBUM_IDENTITY = "INSERT INTO local_album_external_identities \
              (local_album_id, provider, release_group_mbid, release_mbid, decision_source, \
-             selected_at, row_revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+             selected_at, row_revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, " + NEXT_REVISION + ") \
              ON CONFLICT (local_album_id, provider) DO UPDATE SET \
              release_group_mbid = excluded.release_group_mbid, \
              release_mbid = excluded.release_mbid, \
-             decision_source = excluded.decision_source, \
-             selected_at = excluded.selected_at, row_revision = excluded.row_revision \
+             decision_source = excluded.decision_source, selected_at = excluded.selected_at, \
+             row_revision = local_album_external_identities.row_revision + 1 \
              WHERE excluded.decision_source NOT IN " + REVISABLE + " \
              OR local_album_external_identities.decision_source IN " + REVISABLE;
     /// Save a track's match, guarded like the album's.
@@ -496,7 +505,7 @@ droppedneedle_kernel::sql! {
     /// group and release is left as it is.
     pub(super) ACCEPT_ALBUM = "INSERT INTO local_album_external_identities (local_album_id, \
              provider, release_group_mbid, release_mbid, decision_source, selected_at, \
-             row_revision) VALUES (?1, ?2, ?3, ?4, 'automatic', ?5, 1) \
+             row_revision) VALUES (?1, ?2, ?3, ?4, 'automatic', ?5, " + NEXT_REVISION + ") \
              ON CONFLICT (local_album_id, provider) DO UPDATE SET \
              release_group_mbid = excluded.release_group_mbid, \
              release_mbid = excluded.release_mbid, decision_source = 'automatic', \
@@ -846,7 +855,7 @@ droppedneedle_kernel::sql! {
              matcher_version, attempt_id, selected_by_user_id, selected_at, row_revision) \
              VALUES (?1, ?9, ?2, ?3, ?4, ?5, \
              (SELECT id FROM library_identification_attempts WHERE id = ?6), \
-             (SELECT id FROM auth_users WHERE id = ?7), ?8, 1) \
+             (SELECT id FROM auth_users WHERE id = ?7), ?8, " + NEXT_REVISION + ") \
              ON CONFLICT (local_album_id, provider) DO UPDATE SET \
              release_group_mbid = excluded.release_group_mbid, \
              release_mbid = excluded.release_mbid, \
@@ -884,7 +893,7 @@ droppedneedle_kernel::sql! {
     pub(super) SEAL_PERSONS_ALBUM = "INSERT INTO local_album_external_identities \
              (local_album_id, provider, release_group_mbid, release_mbid, decision_source, \
              selected_by_user_id, selected_at, row_revision) VALUES (?1, ?2, ?3, ?4, 'manual', \
-             (SELECT id FROM auth_users WHERE id = ?5), ?6, 1) \
+             (SELECT id FROM auth_users WHERE id = ?5), ?6, " + NEXT_REVISION + ") \
              ON CONFLICT (local_album_id, provider) DO UPDATE SET \
              release_group_mbid = excluded.release_group_mbid, \
              release_mbid = excluded.release_mbid, decision_source = 'manual', \
@@ -1168,15 +1177,16 @@ droppedneedle_kernel::sql! {
              WHERE local_album_id = ?1 AND state = 'pending'";
     pub(super) REMAP_TO_CARRY = "SELECT release_mbid, chosen_by_user_id, origin \
              FROM library_edition_remap_queue WHERE local_album_id = ?1";
-    /// A match revision neither album (`?1`, `?2`) has had.
-    pub(super) NEXT_SHARED_REVISION = "SELECT MAX(row_revision) + 1 \
+    /// The highest match revision either album (`?1`, `?2`) holds.
+    pub(super) SHARED_REVISION = "SELECT COALESCE(MAX(row_revision), 0) \
              FROM local_album_external_identities WHERE local_album_id IN (?1, ?2)";
     /// Delete the album's (`?1`) match rows of every provider.
     pub(super) DELETE_ALBUM_ROWS = "DELETE FROM local_album_external_identities \
              WHERE local_album_id = ?1";
-    /// Put the match of `?1` on `?2` at revision `?3`.
+    /// Put the match of `?1` on `?2` at the next revision.
     pub(super) CARRY_ALBUM_ROW = "UPDATE local_album_external_identities \
-             SET local_album_id = ?2, row_revision = ?3 WHERE local_album_id = ?1";
+             SET local_album_id = ?2, row_revision = " + NEXT_REVISION + " \
+             WHERE local_album_id = ?1";
     pub(super) MOVE_MATCH_STATE = "UPDATE library_album_match_state SET local_album_id = ?2 \
              WHERE local_album_id = ?1";
     pub(super) SET_REMAP_ORIGIN = "UPDATE library_edition_remap_queue SET origin = ?2 \
@@ -1186,10 +1196,10 @@ droppedneedle_kernel::sql! {
     // Corrections, repairs and imports.
     // -----------------------------------------------------------------
 
-    /// Move the edition of `?1` (provider `?3`) onto `?2`, at its next
+    /// Move the edition of `?1` (provider `?3`) onto `?2`, at the next
     /// revision.
     pub(super) MOVE_EDITION_ROW = "UPDATE local_album_external_identities \
-             SET local_album_id = ?2, row_revision = row_revision + 1 \
+             SET local_album_id = ?2, row_revision = " + NEXT_REVISION + " \
              WHERE local_album_id = ?1 AND provider = ?3";
     /// Drop the match state of `?2` when `?1` has one to move onto it.
     pub(super) MAKE_ROOM_FOR_MATCH_STATE = "DELETE FROM library_album_match_state \
@@ -1215,8 +1225,8 @@ droppedneedle_kernel::sql! {
     /// release `?4`, matcher `?5`, attempt `?6`, by `?7`, at `?8`).
     pub(super) LINK_ALBUM = "INSERT INTO local_album_external_identities (local_album_id, \
              provider, release_group_mbid, release_mbid, decision_source, matcher_version, \
-             attempt_id, selected_by_user_id, selected_at) \
-             VALUES (?1, ?2, ?3, ?4, 'manual', ?5, ?6, ?7, ?8)";
+             attempt_id, selected_by_user_id, selected_at, row_revision) \
+             VALUES (?1, ?2, ?3, ?4, 'manual', ?5, ?6, ?7, ?8, " + NEXT_REVISION + ")";
     /// A person's link of file `?1` of album `?10` on its release track
     /// (provider `?2`, recording `?3`, release `?4`, release track `?5`,
     /// disc `?6`, position `?7`, attempt `?8`, at `?9`).

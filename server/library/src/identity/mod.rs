@@ -46,6 +46,8 @@ use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, 
 use rusqlite::{Transaction, params};
 use serde::{Deserialize, Serialize};
 
+use crate::catalog_revision::raise_catalog;
+
 pub(crate) use automatic::write_match_flag;
 pub use automatic::{
     Accepted, AutomaticOutcome, CARRIED_EDITION_FOUND, Expected, Inputs, Placed, accept_automatic,
@@ -215,9 +217,10 @@ pub(crate) enum Rows {
     Revisable,
 }
 
-/// Delete the album's match row and both of its undo rows. A row
-/// inserted again starts at revision 1, so an undo kept for an earlier row
-/// could otherwise match the next one and put back what it replaced.
+/// Delete the album's match row and both of its undo rows. The catalog
+/// revision is raised to the row's revision, so a row inserted again starts
+/// above every revision the album had; the undo rows still go, since they
+/// name a match that is no longer there.
 /// `Rows::Any` clears the undo rows whenever the album is left with no
 /// match, so it also runs before another album's row is moved onto this
 /// one. `Rows::Revisable` clears them only when it deleted a row: an album
@@ -231,6 +234,7 @@ pub(crate) fn delete_album_row(
 ) -> rusqlite::Result<bool> {
     match rows {
         Rows::Any => {
+            raise_catalog(tx, reads::identity_revision(tx, album_id)?)?;
             let deleted = tx
                 .prepare_cached(sql::DELETE_ALBUM_ROW.text())?
                 .execute(params![album_id, PROVIDER])?;
@@ -251,6 +255,7 @@ pub(crate) fn delete_album_row(
                 .prepare_cached(sql::DELETE_REVISABLE_ALBUM_ROW.text())?
                 .execute(params![album_id, PROVIDER])?;
             if deleted > 0 {
+                raise_catalog(tx, revision)?;
                 tx.prepare_cached(sql::FORGET_AUTOMATIC_UNDO.text())?
                     .execute(params![album_id])?;
                 tx.prepare_cached(sql::FORGET_UNCARRIED_CHOICE_UNDO.text())?

@@ -90,9 +90,7 @@ pub(super) fn identity(conn: &Connection, album_id: &str) -> rusqlite::Result<Op
 }
 
 /// The edition as a card shows it and as a preview token covers it: its
-/// revision with what it names and how it was chosen. A dropped edition
-/// chosen again starts at revision 1, so the revision alone could match one
-/// seen before the drop.
+/// revision with what it names and how it was chosen.
 pub(super) fn identity_token(identity: Option<&Identity>) -> String {
     identity.map_or_else(
         || "0".to_owned(),

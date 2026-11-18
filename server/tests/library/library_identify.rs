@@ -350,6 +350,7 @@ async fn a_persons_match_survives_rescan() {
                 row_revision,
             })
             .unwrap();
+        let saved = rig.edition_revision("album-1");
         // A rescan re-reads the files, then a fresh automatic pass disagrees.
         rig.rescan("album-1");
         rig.service
@@ -383,7 +384,7 @@ async fn a_persons_match_survives_rescan() {
         assert_eq!(identity.decision_source, source, "{source:?}");
         if source == DecisionSource::Manual {
             assert_eq!(report.reason_code, "CHOSEN_EDITION_KEPT");
-            assert_eq!(identity.row_revision, 3);
+            assert_eq!(identity.row_revision, saved as u64);
             assert_eq!(report.review_id, None);
             let brief: IdentityBrief = rig.service.identity_brief("album-1").unwrap();
             assert!(!brief.revisable);
@@ -408,6 +409,7 @@ fn automatic_writes_never_replace_a_curators_row() {
         row_revision: 3,
     };
     rig.store.save_album_identity(chosen.clone()).unwrap();
+    let saved = rig.store.album_identity("album-1").unwrap();
 
     let sealed = rig
         .store
@@ -430,7 +432,7 @@ fn automatic_writes_never_replace_a_curators_row() {
         })
         .unwrap();
 
-    assert_eq!(rig.store.album_identity("album-1").unwrap(), Some(chosen));
+    assert_eq!(rig.store.album_identity("album-1").unwrap(), saved);
 }
 
 /// A retraction that lands after a person's match did leaves that match
@@ -2531,6 +2533,19 @@ impl Rig {
         self.db.execute_batch(sql).expect("seed lands");
     }
 
+    /// The album's edition revision, 0 for none. A new edition row takes
+    /// one past the catalog revision, so tests read it rather than count.
+    fn edition_revision(&self, album: &str) -> i64 {
+        self.db
+            .query_row(
+                "SELECT COALESCE((SELECT row_revision FROM local_album_external_identities \
+                 WHERE local_album_id = ?1), 0)",
+                [album],
+                |row| row.get(0),
+            )
+            .expect("edition revision reads")
+    }
+
     fn catalog_revision(&self) -> i64 {
         self.db
             .query_row(
@@ -2842,9 +2857,16 @@ async fn a_withdrawn_match_keeps_one_undo() {
     assert_eq!(
         rig.identity_tables("album-1")[..2],
         [
-            format!("album {GROUP_A} {RELEASE_A1} embedded 1"),
+            format!(
+                "album {GROUP_A} {RELEASE_A1} embedded {}",
+                rig.edition_revision("album-1")
+            ),
             format!("track t1 {RECORDING_1} {RELEASE_A1} - -/- embedded 3"),
         ]
+    );
+    assert!(
+        rig.edition_revision("album-1") > 2,
+        "the match comes back above the revision it was withdrawn at"
     );
 }
 
@@ -2887,7 +2909,10 @@ async fn a_group_only_match_wins_its_tie() {
     );
     assert_eq!(
         rig.identity_tables("album-1")[0],
-        format!("album {GROUP_A} {RELEASE_A1} automatic 2")
+        format!(
+            "album {GROUP_A} {RELEASE_A1} automatic {}",
+            rig.edition_revision("album-1")
+        )
     );
 }
 
@@ -3326,12 +3351,13 @@ fn resealing_an_unchanged_match_writes_nothing() {
     rig.run(
         "INSERT INTO library_edition_choice_undo (id, local_album_id, action_id, \
          prior_tracks_json, prior_hold_json, expected_identity_revision, created_at) \
-         VALUES ('choice-album-1', 'album-1', 'action-old', '[]', '{\"carried\":true}', 1, 0);",
+         SELECT 'choice-album-1', 'album-1', 'action-old', '[]', '{\"carried\":true}', \
+         row_revision, 0 FROM local_album_external_identities WHERE local_album_id = 'album-1';",
     );
     assert!(rig.store.seal_automatic(&seal).expect("seal lands"));
     assert!(
         rig.identity_tables("album-1")
-            .contains(&"choice undo 1".to_owned()),
+            .contains(&format!("choice undo {}", rig.edition_revision("album-1"))),
         "the carried mark clears: {:?}",
         rig.identity_tables("album-1")
     );
@@ -3633,7 +3659,10 @@ fn an_admin_undo_keeps_the_persons_undo() {
     assert_eq!(
         rig.identity_tables("album-2")[..2],
         [
-            format!("album {GROUP_A} {RELEASE_A1} automatic 1"),
+            format!(
+                "album {GROUP_A} {RELEASE_A1} automatic {}",
+                rig.edition_revision("album-2")
+            ),
             format!("track t2 {RECORDING_1} {RELEASE_A1} rt-t2 -/- automatic 1"),
         ]
     );
@@ -4256,10 +4285,130 @@ fn a_moved_edition_drops_the_targets_undo_rows() {
     );
 }
 
+/// An edition action from a page that showed an earlier guess is refused
+/// once that guess was taken off and another sealed: the new guess never
+/// takes a revision the album had before. The page's current revision
+/// still works.
+#[tokio::test]
+async fn a_new_guess_never_takes_an_earlier_guess_revision() {
+    use droppedneedle_library::edition::choice;
+    use droppedneedle_library::identify::models::{MatchFlag, MatchFlagState};
+    use droppedneedle_library::jobs::models::OperationError;
+    use droppedneedle_library::reasons;
+
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    let guess = |group: &str, release: &str| AutomaticSeal {
+        local_album_id: "album-1".to_owned(),
+        release_group_mbid: group.to_owned(),
+        release_mbid: Some(release.to_owned()),
+        tracks: Vec::new(),
+        flag: Some(MatchFlag {
+            state: MatchFlagState::Unconfirmed,
+            reason_code: "BEST_GUESS".to_owned(),
+            release_mbid: Some(release.to_owned()),
+            candidates: Vec::new(),
+        }),
+    };
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&rig.path()).expect("db opens");
+    let platform = crate::common::TestPlatform::on(&db, &rig._dir)
+        .settings(crate::common::config_store(&rig._dir.join("settings")))
+        .build()
+        .await;
+    let library = crate::common::library::library_asking(&platform, rig.providers.clone());
+    let operations = crate::common::library::operations(&library);
+    let shown = || {
+        operations
+            .edition_status("album-1")
+            .expect("edition status reads")
+            .map_or(0, |status| status.identity_revision)
+    };
+
+    assert!(
+        rig.store
+            .seal_automatic(&guess(GROUP_A, RELEASE_A1))
+            .expect("first guess lands")
+    );
+    let earlier = shown();
+    rig.change(|tx| {
+        Ok(choice::detach(
+            tx,
+            "album-1",
+            "RECHECK_FAILED",
+            None,
+            None,
+            2.0,
+        )?)
+    })
+    .expect("guess taken off");
+    assert!(
+        rig.store
+            .seal_automatic(&guess(GROUP_B, RELEASE_B1))
+            .expect("second guess lands")
+    );
+
+    for refused in [
+        operations.confirm_match("album-1", earlier, "curator-1"),
+        operations.undo_edition_choice("album-1", earlier, "curator-1"),
+    ] {
+        assert!(
+            matches!(
+                refused,
+                Err(OperationError::Conflict(reason)) if reason == reasons::EDITION_CHANGED
+            ),
+            "{refused:?}"
+        );
+    }
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
+    assert_eq!(identity.decision_source, DecisionSource::Automatic);
+    assert_eq!(identity.release_mbid.as_deref(), Some(RELEASE_B1));
+
+    operations
+        .confirm_match("album-1", shown(), "curator-1")
+        .expect("the current guess confirms");
+
+    // A match carried from v2 can sit far above the catalog revision: the
+    // guess after it still starts above it.
+    rig.seed_album(&album_facts("album-2", &[("t2", Some(RECORDING_1))]));
+    rig.carried("album-2", RELEASE_A1, "automatic", 1000);
+    rig.change(|tx| {
+        Ok(choice::detach(
+            tx,
+            "album-2",
+            "RECHECK_FAILED",
+            None,
+            None,
+            3.0,
+        )?)
+    })
+    .expect("carried match taken off");
+    assert!(
+        rig.store
+            .seal_automatic(&AutomaticSeal {
+                local_album_id: "album-2".to_owned(),
+                ..guess(GROUP_B, RELEASE_B1)
+            })
+            .expect("guess lands")
+    );
+    assert!(rig.edition_revision("album-2") > 1000);
+    let refused = operations.confirm_match("album-2", 1000, "curator-1");
+    assert!(
+        matches!(
+            refused,
+            Err(OperationError::Conflict(reason)) if reason == reasons::EDITION_CHANGED
+        ),
+        "{refused:?}"
+    );
+}
+
 /// A merge previewed while the album it joins held an automatic edition is
 /// refused once that edition is dropped and the same release is chosen by
-/// hand: the edition is back at revision 1 on the same release, so only its
-/// source tells the two apart.
+/// hand: the edition is on the same release, so only its source and
+/// revision tell the two apart.
 #[test]
 fn a_rechosen_edition_makes_a_merge_preview_stale() {
     use droppedneedle_library::corrections::Corrections;
@@ -4321,9 +4470,11 @@ fn a_rechosen_edition_makes_a_merge_preview_stale() {
     });
     assert_eq!(chosen, Ok(()));
     assert!(
-        rig.identity_tables("album-2")
-            .contains(&format!("album {GROUP_A} {RELEASE_A1} manual 1")),
-        "the edition is chosen by hand at revision 1"
+        rig.identity_tables("album-2").contains(&format!(
+            "album {GROUP_A} {RELEASE_A1} manual {}",
+            rig.edition_revision("album-2")
+        )),
+        "the edition is chosen by hand"
     );
 
     let refused = corrections.apply_membership(
@@ -4804,7 +4955,10 @@ async fn person_commands_leave_what_their_rule_says() {
             .collect(),
         vec![
             "Ok(())".to_owned(),
-            format!("album {GROUP_A} {RELEASE_A1} automatic 2"),
+            format!(
+                "album {GROUP_A} {RELEASE_A1} automatic {}",
+                rig.edition_revision("a")
+            ),
             format!("track a1 {RECORDING_1} {RELEASE_A1} rt-a1 -/- automatic 1"),
         ],
     );
@@ -4841,7 +4995,7 @@ async fn person_commands_leave_what_their_rule_says() {
             .collect(),
         vec![
             "Ok(())".to_owned(),
-            format!("album {GROUP_A} - manual 1"),
+            format!("album {GROUP_A} - manual {}", rig.edition_revision("b")),
             format!("track b1 {RECORDING_1} - - -/- manual 1"),
             format!("remap place_only {RELEASE_A1} -"),
             "custom m-b".to_owned(),

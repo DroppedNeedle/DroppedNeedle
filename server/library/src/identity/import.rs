@@ -198,7 +198,7 @@ fn seal(
                 release_group_mbid: Some(release.release_group_mbid.clone()),
                 release_mbid: Some(release.release_mbid.clone()),
                 decision_source: DecisionSource::Automatic,
-                row_revision: current.as_ref().map_or(1, |row| row.row_revision + 1),
+                row_revision: 0,
             },
             now,
         )? > 0;
@@ -242,7 +242,8 @@ fn seal(
 
 /// Save an album's match at `now`, never an automatic or embedded row
 /// over a person's (the statement's own guard). Rows written: 0 when a
-/// person's row holds the album.
+/// person's row holds the album. The stored revision is the row's own:
+/// `identity.row_revision` is not read.
 pub(crate) fn save_album(
     tx: &Transaction<'_>,
     identity: &AlbumIdentity,
@@ -264,7 +265,6 @@ pub(crate) fn save_album(
             identity.release_mbid,
             identity.decision_source.as_str(),
             crate::clock::ms(now),
-            identity.row_revision.max(1) as i64,
         ])?;
     if written == 0 {
         tracing::warn!(
