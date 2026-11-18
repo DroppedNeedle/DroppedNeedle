@@ -1369,7 +1369,8 @@ async fn spotify_link_refreshes_and_disconnects() {
 
 /// The SQLite stores keep single-use, expiring states with their redirect
 /// URI; sealed links that a late token refresh cannot bring back; imported
-/// playlists as real playlist rows, replaced wholesale on re-import.
+/// playlists as real playlist rows, replaced wholesale on re-import and
+/// linked to the library's copy of an album it owns.
 #[tokio::test]
 async fn spotify_sqlite_stores_persist_and_expire() {
     let db = droppedneedle_acquire::db::AcquireDb::scratch().expect("scratch db");
@@ -1457,13 +1458,35 @@ async fn spotify_sqlite_stores_persist_and_expire() {
         track_name: "Midnight Drive".to_owned(),
         artist_name: "Aurora Current".to_owned(),
         album_name: "Neon Meridian".to_owned(),
-        album_id: String::new(),
+        album_id: NEON_MERIDIAN_GROUP.to_owned(),
         source_type: String::new(),
         track_number: Some(1),
         disc_number: Some(1),
         duration: Some(183),
         cover_url: None,
     };
+    db.write("test.owned_album", |tx| {
+        tx.execute_batch(&format!(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('art-n', 'Aurora Current', 'aurora current', 'group', 1, 1); \
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) VALUES ('alb-n', 'r1', \
+             'gn', 'Neon Meridian', 'neon meridian', 'art-n', 'automatic', 1, 1); \
+             INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, decision_source, selected_at) VALUES ('alb-n', 'musicbrainz', \
+             '{NEON_MERIDIAN_GROUP}', 'automatic', 1); \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, disc_number, track_number, file_format, \
+             availability, ingest_source, imported_at, membership_source) VALUES ('trk-n1', \
+             'alb-n', 'r1', '/m/n1.flac', 'n1.flac', 'hn1', 1, 1, 'sn1', 'Midnight Drive', \
+             'midnight drive', 'Neon Meridian', 'neon meridian', 1, 1, 'flac', 'indexed', \
+             'scan', 1, 'automatic');"
+        ))?;
+        Ok(())
+    })
+    .await
+    .expect("seed writes");
     for _ in 0..2 {
         bridge
             .replace_tracks("u1", &id, &[track.clone(), track.clone()])
@@ -1475,6 +1498,12 @@ async fn spotify_sqlite_stores_persist_and_expire() {
         rusqlite::params![&id],
     );
     assert_eq!(rows, 2);
+    let linked: i64 = db.db().one(
+        "SELECT COUNT(*) FROM catalog_playlist_tracks WHERE playlist_id = ?1 \
+         AND library_file_id = 'trk-n1' AND source_type = 'local'",
+        rusqlite::params![&id],
+    );
+    assert_eq!(linked, 2, "the import links rows on an owned album");
     assert_eq!(
         bridge.source_refs_for("u1").await.expect("reads"),
         vec![("spotify:p1".to_owned(), id)]

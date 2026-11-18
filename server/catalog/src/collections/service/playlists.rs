@@ -893,12 +893,24 @@ impl CollectionsService<'_> {
         Ok(CheckTracksResponse { membership })
     }
 
-    /// Each entry's known sources.
+    /// Each entry's known sources. First, on the caller's own playlist, an
+    /// entry with no source yet whose album the library owns is pointed at
+    /// the library's copy, so an imported song plays once its album is in.
     pub async fn resolve_sources(
         &self,
         user_id: &str,
         playlist_id: &str,
     ) -> Result<ResolveSourcesResponse, CollectionsError> {
+        // Best effort: the sources read below answer either way, and the
+        // next visit links again.
+        if let Err(error) = self
+            .playlists()
+            .owned_by(user_id)
+            .link_library_copies(playlist_id)
+            .await
+        {
+            tracing::warn!(%error, "playlist entries not linked to the library");
+        }
         let sources = self
             .playlist_entries(user_id, playlist_id)
             .await?

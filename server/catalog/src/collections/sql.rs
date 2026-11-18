@@ -8,7 +8,7 @@
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
 
-use droppedneedle_library::owns_group;
+use droppedneedle_library::{copy_of_group, owns_group};
 
 droppedneedle_kernel::sql! {
     /// The caller may read the playlist: it is theirs, or it is public.
@@ -137,6 +137,43 @@ droppedneedle_kernel::sql! {
     /// An entry's known sources, as a JSON list.
     pub(super) SET_AVAILABLE_SOURCES = "UPDATE catalog_playlist_tracks SET available_sources = ?1 \
          WHERE id = ?2 AND playlist_id = ?3";
+    /// The albums that own entry `e`'s release group.
+    fragment ENTRY_OWNERS = (owns_group!("= lower(e.album_id)"));
+    /// The caller's playlist `?2`'s entries with no source yet, each with
+    /// the indexed library tracks on the albums that own its release group,
+    /// entry by entry in playlist order. An entry's tracks come first from
+    /// the copy a lookup by its group opens, then album by album.
+    pub(super) LIBRARY_COPY_CANDIDATES = "SELECT e.id AS entry_id, e.track_name AS entry_title, \
+         COALESCE(e.disc_number, 1) AS entry_disc, e.track_number AS entry_track, \
+         t.id AS track_id, t.title AS track_title, t.disc_number AS track_disc, \
+         t.track_number AS track_number \
+         FROM catalog_playlist_tracks e JOIN local_tracks t \
+         ON t.local_album_id IN (SELECT album_id FROM (" + ENTRY_OWNERS + ")) \
+         AND +t.availability = 'indexed' \
+         WHERE e.playlist_id = (SELECT p.id FROM catalog_playlists p WHERE p.id = ?2 AND "
+        + OWNED + ") AND e.source_type = '' AND e.library_file_id IS NULL \
+         AND e.album_id IS NOT NULL \
+         ORDER BY e.position, t.local_album_id IS NOT ("
+        + (copy_of_group!("= lower(e.album_id)"))
+        + "), t.local_album_id, t.disc_number, t.track_number, t.id";
+    /// An entry with no source yet and a library track that may be its copy.
+    pub(super) row LibraryCopyCandidate for [LIBRARY_COPY_CANDIDATES] {
+        entry_id: String,
+        entry_title: String,
+        entry_disc: i64,
+        entry_track: Option<i64>,
+        track_id: String,
+        track_title: String,
+        track_disc: i64,
+        track_number: i64,
+    }
+    /// Point entry `?3` of the caller's playlist `?2`, still without a
+    /// source, at library track `?4` while that track is indexed.
+    pub(super) LINK_LIBRARY_COPY = "UPDATE catalog_playlist_tracks SET track_source_id = ?4, \
+         library_file_id = ?4, source_type = 'local', available_sources = '[\"local\"]' \
+         WHERE id = ?3 AND playlist_id = (SELECT p.id FROM catalog_playlists p \
+         WHERE p.id = ?2 AND " + OWNED + ") AND source_type = '' AND library_file_id IS NULL \
+         AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.id = ?4 AND +t.availability = 'indexed')";
     /// Store or replace one playlist's uploaded cover.
     pub(super) UPSERT_COVER = "INSERT INTO catalog_playlist_covers (playlist_id, content_type, image, \
          updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (playlist_id) DO UPDATE SET \

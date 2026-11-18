@@ -315,7 +315,7 @@ impl CollectionsPlaylistBridge {
 
     /// Replace every row on one of the user's playlists with `tracks`, in
     /// order, in one transaction: a failed write keeps the rows the
-    /// playlist had.
+    /// playlist had. Then link the rows whose album the library owns.
     pub async fn replace_tracks(
         &self,
         user_id: &str,
@@ -332,7 +332,18 @@ impl CollectionsPlaylistBridge {
                 StoreError::Busy(_) => SpotifyError::Busy,
                 other => SpotifyError::Store(other.to_string()),
             })? {
-            Written::Done(()) => Ok(()),
+            Written::Done(()) => {
+                // Best effort: the rows are in, and opening the playlist links again.
+                if let Err(error) = self
+                    .playlists
+                    .owned_by(user_id)
+                    .link_library_copies(playlist_id)
+                    .await
+                {
+                    tracing::warn!(%error, "imported playlist not linked to the library");
+                }
+                Ok(())
+            }
             Written::Missing => Err(SpotifyError::Store(format!(
                 "playlist {playlist_id} is gone"
             ))),
