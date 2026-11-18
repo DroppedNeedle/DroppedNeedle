@@ -110,7 +110,7 @@ services:
 | Navidrome | Settings > Navidrome |
 | Plex | Settings > Plex |
 | Local files (the built-in library) | Settings > Library |
-| Last.fm app key (admin, once per instance) | Settings > Last.fm |
+| Last.fm app key (admin, once per instance; the account that owns it needs Last.fm Pro from 1 December 2026) | Settings > Last.fm |
 | YouTube API key | Settings > YouTube |
 | Spotify client ID and secret | Settings > Spotify |
 | Ticketmaster and Skiddle keys, sweep scope | Settings > Live Events |
