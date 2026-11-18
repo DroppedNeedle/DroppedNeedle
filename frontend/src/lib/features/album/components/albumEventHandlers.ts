@@ -12,7 +12,7 @@ import { createRequestAlbumMutation } from '$lib/features/downloads/queries/Down
 export interface EventHandlerDeps {
 	getAlbum: () => AlbumBasicInfo | null;
 	setAlbum: (a: AlbumBasicInfo) => void;
-	/** The edition the page shows, which a request fetches. */
+	/** The edition a curator picked, the only one a request sends. */
 	getSelectedRelease?: () => string | null;
 	setTrackLinks: (tl: YouTubeTrackLink[]) => void;
 	getTrackLinks: () => YouTubeTrackLink[];

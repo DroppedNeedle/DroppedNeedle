@@ -482,6 +482,37 @@ describe('choosing the edition to request', () => {
 		});
 	});
 
+	it('requests the shown edition only as a preference', async () => {
+		editions();
+		await renderPage();
+
+		await expect.element(page.getByRole('button', { name: /^To get: Remaster\./ })).toBeVisible();
+		await page.getByRole('button', { name: 'Add to Library' }).click();
+
+		await vi.waitFor(() => expect(api.calls(requestRoute)).toHaveLength(1));
+		expect(api.calls(requestRoute)[0].body).toMatchObject({ musicbrainz_id: albumId });
+		expect(api.calls(requestRoute)[0].body).not.toHaveProperty('release_mbid', expect.anything());
+	});
+
+	it('a curator can choose the edition the page shows', async () => {
+		editions();
+		await renderPage();
+
+		await page.getByRole('button', { name: /^To get: Remaster\./ }).click();
+		const sheet = page.getByRole('dialog');
+		await sheet.getByRole('button', { name: /Remaster/ }).click();
+		await expect.element(sheet.getByText('Circumambient')).toBeVisible();
+		await sheet.getByRole('button', { name: 'Choose this edition' }).first().click();
+		await expect.element(sheet).not.toBeInTheDocument();
+		await page.getByRole('button', { name: 'Add to Library' }).click();
+
+		await vi.waitFor(() => expect(api.calls(requestRoute)).toHaveLength(1));
+		expect(api.calls(requestRoute)[0].body).toMatchObject({
+			musicbrainz_id: albumId,
+			release_mbid: 'release-remaster'
+		});
+	});
+
 	it('names the edition on its way once the download has started', async () => {
 		editions();
 		api.use({
@@ -523,6 +554,10 @@ describe('choosing the edition to request', () => {
 
 		await expect.element(page.getByRole('button', { name: 'Add to Library' })).toBeVisible();
 		await expect.element(page.getByRole('button', { name: /^To get:/ })).not.toBeInTheDocument();
+		await page.getByRole('button', { name: 'Add to Library' }).click();
+
+		await vi.waitFor(() => expect(api.calls(requestRoute)).toHaveLength(1));
+		expect(api.calls(requestRoute)[0].body).not.toHaveProperty('release_mbid', expect.anything());
 	});
 });
 

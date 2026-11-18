@@ -7,6 +7,8 @@ export const editionSheet = $state({ open: false });
 export interface EditionRequestPick {
 	/** The edition the request gets: the person's pick, the live request's, else the catalog's. */
 	release: string | null;
+	/** A person chose `release`; otherwise it is only the edition the page shows. */
+	picked: boolean;
 	/** A request for the album is live. */
 	requested: boolean;
 	/** Its download has started, so the edition can no longer change. */

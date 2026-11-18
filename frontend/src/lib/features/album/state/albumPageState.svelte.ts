@@ -465,7 +465,8 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 
 	// The edition a request gets on an album the library does not hold
 	// (curators): their pick, else the catalog's; once requested, the live
-	// request's, which a pick switches until its download starts.
+	// request's, which a pick switches until its download starts. Only a
+	// pick holds the request to its edition.
 	let pickedRelease = $state<string | null>(null);
 	const activeRequestsQuery = getActiveRequestsQuery(() => isRequested && authStore.isTrusted);
 	const liveRequest = $derived(
@@ -481,8 +482,9 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		const current = album;
 		return {
 			release: liveRequest
-				? (liveRequest.release_mbid ?? null)
+				? (liveRequest.release_mbid ?? tracksInfo?.selected_release_mbid ?? null)
 				: (pickedRelease ?? tracksInfo?.selected_release_mbid ?? null),
+			picked: liveRequest ? liveRequest.release_mbid != null : pickedRelease != null,
 			requested: isRequested,
 			locked: Boolean(liveRequest?.task_id),
 			albumTitle: current.title,
@@ -508,7 +510,9 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	const eventHandlers = createEventHandlers({
 		getAlbum: () => album,
 		setAlbum,
-		getSelectedRelease: () => pickedRelease ?? tracksInfo?.selected_release_mbid ?? null,
+		// Only a pick is sent: the edition the page shows is the server's
+		// preference, which it fills in itself.
+		getSelectedRelease: () => pickedRelease,
 		setTrackLinks: (tl) =>
 			void setQueryDataWithPersister<YouTubeTrackLink[]>(
 				AlbumQueryKeyFactory.youtubeTrackLinks(albumIdGetter()),

@@ -752,7 +752,9 @@
 		() => open && Boolean(request)
 	);
 	const canPick = $derived(
-		Boolean(request && !request.locked && selected && selected !== request.release)
+		Boolean(
+			request && !request.locked && selected && (selected !== request.release || !request.picked)
+		)
 	);
 
 	async function pickEdition(): Promise<void> {
