@@ -164,7 +164,7 @@ droppedneedle_kernel::sql! {
     fragment ACTIVE_MANIFEST_GROUP = "(SELECT m.\"release_group_mbid\" FROM main.library_custom_edition_active a \
              JOIN main.library_custom_edition_manifests m ON m.id = a.manifest_id \
              WHERE a.local_album_id = e.local_album_id)";
-    /// Move a pinned album's revisable identity to its pin.
+    /// Move a pinned album's revisable or v2-imported identity to its pin.
     family PIN_IDENTITY_UPDATES = pin_identity_update;
     /// Give a pinned album with no identity one from its pin.
     family PIN_IDENTITY_INSERTS = pin_identity_insert;
@@ -762,8 +762,10 @@ fn pins_table(has_setter: bool) -> String {
 }
 
 /// Move a pinned album's revisable identity to its pin, chosen by the
-/// person who pinned it. Track mappings stay as they are until the files
-/// are placed on the pinned release; nothing is wiped up front.
+/// person who pinned it. A match v2's own importer made (`legacy_import`)
+/// moves too, since v2's pin never changed it, unless the album has an
+/// active custom edition, which wins. Track mappings stay as they are until
+/// the files are placed on the pinned release; nothing is wiped up front.
 pub(super) fn pin_identity_update(has_setter: bool) -> String {
     let pins = pins_table(has_setter);
     let pin = |column: &str| {
@@ -778,7 +780,9 @@ pub(super) fn pin_identity_update(has_setter: bool) -> String {
          decision_source = 'manual', selected_by_user_id = (SELECT u.id FROM \
          main.auth_users u WHERE u.id = {user}), row_revision = e.row_revision + 1 \
          WHERE e.local_album_id {CARRIED_ALBUM} AND e.provider = 'musicbrainz' \
-         AND e.decision_source IN {REVISABLE} \
+         AND (e.decision_source IN {REVISABLE} \
+         OR (e.decision_source = 'legacy_import' AND NOT EXISTS (SELECT 1 FROM \
+         main.library_custom_edition_active c WHERE c.local_album_id = e.local_album_id))) \
          AND EXISTS (SELECT 1 FROM {pins} p \
          WHERE p.local_album_id = e.local_album_id)",
         group = pin("release_group_mbid"),

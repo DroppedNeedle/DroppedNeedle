@@ -286,3 +286,185 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
         .expect("exclusion reads");
     assert_eq!(excluded, 1, "still left unmanaged");
 }
+
+/// Export the v2 data under `root/v2` and import it into a fresh v3
+/// database under `root/v3`. Returns the report and the database path.
+async fn export_and_import(
+    root: &std::path::Path,
+) -> (
+    droppedneedle_tool::r#import::ImportReport,
+    std::path::PathBuf,
+) {
+    use droppedneedle_kernel::runtime_config::{Crypto, Secret};
+
+    const PASSPHRASE: &str = "operator-passphrase";
+    let export_path = root.join("export.json");
+    droppedneedle_tool::export::export_v2_to_file(
+        &droppedneedle_tool::export::ExportRequest {
+            v2: droppedneedle_tool::export::v2dir::V2Dirs::under_root(&root.join("v2")),
+            db_path: None,
+            passphrase: Secret::new(PASSPHRASE.to_owned()),
+            exported_at: None,
+            v2_commit: None,
+        },
+        &export_path,
+    )
+    .expect("export writes");
+    let v3 = root.join("v3");
+    let config_dir = v3.join("config");
+    std::fs::create_dir_all(&config_dir).expect("v3 config dir");
+    std::fs::create_dir_all(v3.join("cache")).expect("v3 cache dir");
+    let db_path = v3.join("cache").join("library.db");
+    droppedneedle_kernel::db::migrate_file(&db_path, &CHAIN).expect("schema migrates");
+    let report =
+        droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {
+            export_bytes: std::fs::read(&export_path).expect("export reads"),
+            passphrase: PASSPHRASE.to_owned(),
+            db_path: db_path.clone(),
+            legacy: droppedneedle_kernel::runtime_config::LegacyConfig::at(&config_dir, false),
+            crypto: Crypto::load_or_generate(&config_dir).expect("v3 key").0,
+            v2_config_path: None,
+            attachments_dir: Some(root.to_path_buf()),
+            cache_dir: Some(v3.join("cache")),
+            dry_run: false,
+            fault_before_commit: false,
+            fault_after_commit: false,
+            fault_after_sections: None,
+        })
+        .await;
+    assert!(
+        matches!(
+            report.exit.code,
+            droppedneedle_tool::r#import::ExitCode::Ok
+                | droppedneedle_tool::r#import::ExitCode::OkWithDrops
+        ),
+        "{:?}",
+        report.exit
+    );
+    (report, db_path)
+}
+
+/// v2's own catalog importer stamped its matches `legacy_import`, and a
+/// pin never changed that. A curator's pin on such an album, with or
+/// without a release, still becomes the album's chosen edition, queued for
+/// its files to be placed. An album with an active custom edition keeps it
+/// and its row.
+#[tokio::test]
+async fn pin_on_an_album_v2_imported_becomes_its_chosen_edition() {
+    use droppedneedle_tool::test_support::fixture::{
+        MUSIC_ROOT_ID, build_v2_fixture, delete_orphan_rows,
+    };
+
+    const PINNED: &str = "rel-giant-jp";
+    const WITH_RELEASE: &str = "v2-album-imported";
+    const GROUP_ONLY: &str = "v2-album-imported-group";
+    const CUSTOM: &str = "v2-album-imported-custom";
+    let scratch = crate::common::ScratchDir::new("import-pin-legacy");
+    let root = scratch.to_path_buf();
+    let v2_root = root.join("v2");
+    let fixture = build_v2_fixture(&v2_root).expect("fixture builds");
+    let v2_db = v2_root.join("cache").join("library.db");
+    delete_orphan_rows(&v2_db).expect("repair runs");
+    let alice = fixture.alice_id;
+    let mut rows = String::new();
+    for (album, release) in [
+        (WITH_RELEASE, "'rel-giant-us'"),
+        (GROUP_ONLY, "NULL"),
+        (CUSTOM, "NULL"),
+    ] {
+        rows.push_str(&format!(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+             created_at, updated_at) VALUES ('{album}', '{MUSIC_ROOT_ID}', 'k-{album}', \
+             'Giant Steps', 'giant steps', 'John Coltrane', 'john coltrane', 'v2-artist-1', \
+             'automatic', 1700000000.0, 1700000000.0); \
+             INSERT INTO local_album_external_identities (local_album_id, release_group_mbid, \
+             release_mbid, decision_source, selected_at) \
+             VALUES ('{album}', 'rg-giant', {release}, 'legacy_import', 1700000500.0); \
+             INSERT INTO library_album_release_pins (local_album_id, release_group_mbid, \
+             release_mbid, set_by_user_id, set_at) \
+             VALUES ('{album}', 'rg-giant', '{PINNED}', '{alice}', '2025-06-01T00:00:00Z'); "
+        ));
+    }
+    rows.push_str(&format!(
+        "CREATE TABLE IF NOT EXISTS library_custom_edition_manifests ( \
+         id TEXT PRIMARY KEY, local_album_id TEXT NOT NULL, version INTEGER NOT NULL, \
+         release_group_mbid TEXT NOT NULL, album_title TEXT NOT NULL, \
+         album_artist_name TEXT NOT NULL, artist_mbid TEXT, \
+         album_metadata_json TEXT NOT NULL DEFAULT '{{}}', \
+         source_album_revision INTEGER NOT NULL, source_identity_revision INTEGER, \
+         input_revision TEXT NOT NULL, content_hash TEXT NOT NULL, \
+         selected_candidate_key TEXT, sealed_by_user_id TEXT NOT NULL, \
+         sealed_at REAL NOT NULL); \
+         INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
+         release_group_mbid, album_title, album_artist_name, source_album_revision, \
+         input_revision, content_hash, sealed_by_user_id, sealed_at) VALUES \
+         ('custom-1', '{CUSTOM}', 1, 'rg-giant', 'Giant Steps', 'John Coltrane', 1, \
+         'in-1', 'hash-1', '{alice}', 1700000700.0); \
+         CREATE TABLE IF NOT EXISTS library_custom_edition_active ( \
+         local_album_id TEXT PRIMARY KEY, manifest_id TEXT NOT NULL, \
+         activated_at REAL NOT NULL, row_revision INTEGER NOT NULL DEFAULT 1); \
+         INSERT INTO library_custom_edition_active (local_album_id, manifest_id, \
+         activated_at) VALUES ('{CUSTOM}', 'custom-1', 1700000700.0);"
+    ));
+    rusqlite::Connection::open(&v2_db)
+        .expect("v2 db")
+        .execute_batch(&rows)
+        .expect("v2 imported albums, pins and custom edition");
+
+    let (report, db_path) = export_and_import(&root).await;
+    let db = droppedneedle_kernel::db::open_connection(&db_path).expect("v3 db opens");
+    let carried = |album: &str| -> (String, Option<String>, Option<String>, f64, i64) {
+        db.query_row(
+            "SELECT decision_source, release_mbid, selected_by_user_id, selected_at, \
+             (SELECT COUNT(*) FROM library_edition_remap_queue q \
+             WHERE q.local_album_id = e.local_album_id AND q.origin = 'place_only') \
+             FROM local_album_external_identities e WHERE local_album_id = ?1",
+            [album],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .expect("identity row")
+    };
+    let chosen = (
+        "manual".to_owned(),
+        Some(PINNED.to_owned()),
+        Some(alice.clone()),
+        1700000500000.0,
+        1,
+    );
+    assert_eq!(carried(WITH_RELEASE), chosen, "pinned over a release");
+    assert_eq!(carried(GROUP_ONLY), chosen, "pinned over a group only");
+    assert_eq!(
+        carried(CUSTOM),
+        ("legacy_import".to_owned(), None, None, 1700000500000.0, 0),
+        "the custom edition keeps its row"
+    );
+
+    let edition_items: Vec<(&str, &str)> = report
+        .items
+        .iter()
+        .filter(|item| item.entity == "sticky_edition")
+        .map(|item| (item.outcome.as_str(), item.detail.as_str()))
+        .collect();
+    assert!(
+        edition_items
+            .iter()
+            .any(|(outcome, detail)| *outcome == "pinned"
+                && detail.starts_with("2 album identity row(s)")),
+        "{edition_items:?}"
+    );
+    assert!(
+        edition_items
+            .iter()
+            .all(|(outcome, _)| *outcome == "pinned"),
+        "nothing kept or dropped: {edition_items:?}"
+    );
+}

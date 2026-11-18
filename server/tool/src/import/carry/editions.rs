@@ -8,8 +8,11 @@
 //! two ways v2 recorded a choice, for carried albums only:
 //!
 //! - an edition pin: the album's identity becomes the pinned release
-//!   group and release, chosen by the person who pinned it (`manual`). A
-//!   manual identity is the curator's own later word and is left alone.
+//!   group and release, chosen by the person who pinned it (`manual`),
+//!   whether v2 matched the album itself or its catalog importer did. A
+//!   manual identity is the curator's own later word and is left alone,
+//!   and so is an importer-made one on an album with an active custom
+//!   edition, which wins.
 //!   The album is queued so the library places its files on the pinned
 //!   release once MusicBrainz is reachable; until then its track mappings
 //!   stay as they were. The pins stay in the bundle: the identity row is

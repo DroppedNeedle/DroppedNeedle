@@ -710,8 +710,8 @@ const DECISION_SOURCE_READS: IdentityRead = IdentityRead {
         ),
         (
             "tool/src/import/carry/sql.rs",
-            2,
-            "the offline import reads the pin rows it has just written as a person's",
+            3,
+            "the offline import reads the pin rows it has just written as a person's, and moves a pin over a match v2's own importer made",
         ),
     ],
 };
