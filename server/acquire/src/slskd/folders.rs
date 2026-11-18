@@ -9,11 +9,12 @@
 //!
 //! 1. completeness: how many of the release's tracks the folder holds, then,
 //!    for a request that names tracks, how many of the named ones;
-//! 2. durations: how many paired files have a length off the release's;
-//! 3. quality: folders whose quality the search shows first, then the
+//! 2. title conflicts: how few paired files are named for another track;
+//! 3. durations: how many paired files have a length off the release's;
+//! 4. quality: folders whose quality the search shows first, then the
 //!    worst file's place in the quality recipe;
-//! 4. for a whole album with a tracklist, the fewest files to fetch;
-//! 5. speed: a free upload slot, a short queue, a fast uploader.
+//! 5. for a whole album with a tracklist, the fewest files to fetch;
+//! 6. speed: a free upload slot, a short queue, a fast uploader.
 //!
 //! A folder whose files the search shows outside the band or the recipe, or
 //! that holds none of the release's tracks, is left out of automatic picks
@@ -22,10 +23,12 @@
 //! ([`rank_listing`]), with those outside the band after every other folder.
 //!
 //! This is soularr's folder check and Lidarr's import matching moved in
-//! front of the download, with these pairing rules (a hard length miss
-//! never pairs, a title the name contradicts needs the number and the
-//! length to agree). For a single track, a folder holding little of the
-//! album is a lone-track share: it only ranks after every album folder.
+//! front of the download. A hard length miss never pairs. A numbered file
+//! whose name gives another title is the weakest pairing: it needs the
+//! number and the length to agree, and a file the title names, even at a
+//! shifted number, pairs first. For a single track, a folder holding little
+//! of the album is a lone-track share: it only ranks after every album
+//! folder.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
@@ -74,6 +77,9 @@ pub struct FolderPick {
     pub total: usize,
     /// Paired files whose length is unknown or off the release's.
     pub duration_misses: usize,
+    /// Paired files to fetch whose names give another title than their
+    /// track's, in tracklist order.
+    pub title_conflicts: Vec<TitleConflict>,
     /// Worst recipe rank of the files to fetch (`usize::MAX` when one
     /// is outside the recipe).
     pub quality: usize,
@@ -91,6 +97,15 @@ pub struct FolderPick {
     has_free_slot: bool,
     queue_length: i64,
     upload_speed: i64,
+}
+
+/// A paired file whose name gives another title than its track's.
+#[derive(Debug, Clone)]
+pub struct TitleConflict {
+    /// The file's name, without its folder.
+    pub file: String,
+    /// The title of the release track it fills.
+    pub title: String,
 }
 
 impl FolderPick {
@@ -167,6 +182,7 @@ fn ranked(
             } else {
                 Ordering::Equal
             })
+            .then(a.title_conflicts.len().cmp(&b.title_conflicts.len()))
             .then(a.duration_misses.cmp(&b.duration_misses))
             .then(a.unknown_quality.cmp(&b.unknown_quality))
             .then(a.quality.cmp(&b.quality))
@@ -273,6 +289,33 @@ fn judge(
             .count();
         (assigned.len(), request.tracklist.len(), misses, assigned)
     };
+    let mut conflicted: Vec<(usize, usize)> = assigned
+        .iter()
+        .map(|(track, file)| (*track, *file))
+        .filter(|(track, file)| {
+            let expected = &request.tracklist[*track];
+            let wanted = request.wanted.is_empty()
+                || request.wanted.iter().any(|position| {
+                    expected.disc_number == i64::from(position.disc)
+                        && expected.track_number == i64::from(position.track)
+                });
+            wanted && title_fit(&audio[*file], expected.title.as_deref()) == TitleFit::Conflict
+        })
+        .collect();
+    conflicted.sort_unstable();
+    let title_conflicts = conflicted
+        .into_iter()
+        .map(|(track, file)| TitleConflict {
+            file: audio[file]
+                .hit
+                .filename
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or_default()
+                .to_owned(),
+            title: request.tracklist[track].title.clone().unwrap_or_default(),
+        })
+        .collect();
     let wanted_files = request.wanted.iter().map(|position| {
         let track = request.tracklist.iter().position(|track| {
             track.disc_number == i64::from(position.disc)
@@ -346,6 +389,7 @@ fn judge(
         coverage,
         total,
         duration_misses,
+        title_conflicts,
         quality,
         unknown_quality,
         lone_track,
@@ -566,12 +610,12 @@ fn pair_strength(
             || (multi_disc && file.disc.is_none() && usize::try_from(number) == Ok(absolute))
     });
     match (number, title_fit(file, track.title.as_deref())) {
-        (Some(true), TitleFit::Strong | TitleFit::Loose) => 4,
-        (Some(true), TitleFit::Unknown) | (None, TitleFit::Strong) => 3,
-        (None, TitleFit::Loose) => 2,
-        (Some(true), TitleFit::Conflict) if length == Some(true) => 2,
-        (Some(false), TitleFit::Strong) => 1,
-        (Some(false), TitleFit::Loose) if length == Some(true) => 1,
+        (Some(true), TitleFit::Strong | TitleFit::Loose) => 5,
+        (Some(true), TitleFit::Unknown) | (None, TitleFit::Strong) => 4,
+        (None, TitleFit::Loose) => 3,
+        (Some(false), TitleFit::Strong) => 2,
+        (Some(false), TitleFit::Loose) if length == Some(true) => 2,
+        (Some(true), TitleFit::Conflict) if length == Some(true) => 1,
         _ => 0,
     }
 }
@@ -867,6 +911,61 @@ mod tests {
         );
         assert_eq!(picks[0].username, "more", "get missing tracks: more held");
         assert_eq!(picks[0].held, 2, "get missing tracks: both wanted tracks");
+    }
+
+    /// A file named for another song pairs only when nothing better does:
+    /// a title at a shifted number wins over number and length alone. A
+    /// folder whose names fill tracks under other titles still ranks and can
+    /// be picked, but after every folder holding as much whose names agree.
+    #[test]
+    fn title_conflicts_pair_last_and_rank_after_clean_folders() {
+        let tracklist = [
+            track(1, "Northern Lights", 210.0),
+            track(2, "Blue Sky", 213.0),
+        ];
+        let hits = [
+            hit(
+                "a-conflict",
+                "Music\\Album\\01 Paper Boats.flac",
+                210.0,
+                true,
+            ),
+            hit("a-conflict", "Music\\Album\\02 Blue Sky.flac", 213.0, true),
+            hit("generic", "Music\\Album\\01 Track 1.flac", 210.0, true),
+            hit("generic", "Music\\Album\\02.flac", 213.0, true),
+            hit(
+                "shifted",
+                "Music\\Album\\02 Northern Lights.flac",
+                210.0,
+                true,
+            ),
+            hit("shifted", "Music\\Album\\03 Blue Sky.flac", 213.0, true),
+        ];
+        let request = RankRequest {
+            tracklist: &tracklist,
+            wanted: &[],
+            single_track: false,
+        };
+        let picks = rank_folders(&hits, request, &DownloadPolicy::default());
+        let order: Vec<_> = picks
+            .iter()
+            .map(|pick| {
+                (
+                    pick.username.as_str(),
+                    pick.coverage,
+                    pick.title_conflicts.len(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            order,
+            [("generic", 2, 0), ("shifted", 2, 0), ("a-conflict", 2, 1)]
+        );
+        let conflict = &picks[2].title_conflicts[0];
+        assert_eq!(
+            (conflict.file.as_str(), conflict.title.as_str()),
+            ("01 Paper Boats.flac", "Northern Lights")
+        );
     }
 
     #[test]

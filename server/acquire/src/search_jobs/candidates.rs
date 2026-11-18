@@ -83,6 +83,9 @@ pub enum CandidateNoteCode {
     Complete,
     /// The folder misses some of the edition's tracks.
     Incomplete,
+    /// The folder holds the whole edition, but a file's name gives another
+    /// title than the track it fills.
+    TitleConflict,
     /// Some track lengths are off the edition's.
     Lengths,
     /// The search does not show the quality of some files.
@@ -553,13 +556,32 @@ fn folder_note(pick: &FolderPick) -> (CandidateTier, CandidateNote) {
             "The search does not show the quality of some files.".to_owned(),
         );
     }
-    (
-        CandidateTier::Recommended,
-        CandidateNote::new(
+    // A title conflict only says what the folder looks like: the ranking
+    // already puts it after a folder whose names agree.
+    let note = match pick.title_conflicts.as_slice() {
+        [] => CandidateNote::new(
             CandidateNoteCode::Complete,
             format!("Holds all {} tracks of this edition.", pick.total),
         ),
-    )
+        [one] => CandidateNote::new(
+            CandidateNoteCode::TitleConflict,
+            format!(
+                "Holds all {} tracks of this edition, but \"{}\" fills \"{}\" under another title.",
+                pick.total, one.file, one.title
+            ),
+        ),
+        [first, ..] => CandidateNote::new(
+            CandidateNoteCode::TitleConflict,
+            format!(
+                "Holds all {} tracks of this edition, but {} files fill tracks under other titles, such as \"{}\" for \"{}\".",
+                pick.total,
+                pick.title_conflicts.len(),
+                first.file,
+                first.title
+            ),
+        ),
+    };
+    (CandidateTier::Recommended, note)
 }
 
 /// Use the lowest bitrate of lossy tracks or the highest bit depth of
