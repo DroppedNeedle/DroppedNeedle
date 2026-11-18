@@ -218,10 +218,16 @@ export function buildQueueItemsFromYouTube(
 	return tracks.map((t) => buildQueueItemFromYouTube(t, meta));
 }
 
+// Compat-created playlists name the local source after the library provider.
+function playlistPlaybackSource(source: string): SourceType {
+	return (source === 'droppedneedle-local' ? 'local' : source) as SourceType;
+}
+
 export function playlistTrackToQueueItem(track: PlaylistTrack): QueueItem | null {
-	const availableSources: SourceType[] = track.available_sources
-		? (track.available_sources as SourceType[])
-		: [track.source_type as SourceType];
+	const importedSource = playlistPlaybackSource(track.source_type);
+	const availableSources = (track.available_sources ?? [track.source_type]).map(
+		playlistPlaybackSource
+	);
 
 	// Local-first, mirroring selectBestSource: a resolved local file plays from
 	// the library while sourceIds keeps the imported source for manual switch.
@@ -229,11 +235,11 @@ export function playlistTrackToQueueItem(track: PlaylistTrack): QueueItem | null
 	// library_file_id + available_sources ['local']; fall back to local there.
 	const prefersLocal = Boolean(track.library_file_id) && availableSources.includes('local');
 	if (!track.track_source_id && !(prefersLocal && track.library_file_id)) return null;
-	const sourceType = (prefersLocal ? 'local' : track.source_type) as SourceType;
+	const sourceType = prefersLocal ? 'local' : importedSource;
 	const trackSourceId = prefersLocal ? track.library_file_id! : track.track_source_id!;
 
 	const sourceIds: Partial<Record<SourceType, string>> = {};
-	if (track.track_source_id) sourceIds[track.source_type as SourceType] = track.track_source_id;
+	if (track.track_source_id) sourceIds[importedSource] = track.track_source_id;
 	if (track.library_file_id) sourceIds.local = track.library_file_id;
 
 	return {
@@ -250,7 +256,7 @@ export function playlistTrackToQueueItem(track: PlaylistTrack): QueueItem | null
 		format: track.format ?? undefined,
 		availableSources,
 		sourceIds,
-		recordingIds: recordingFor(track.source_type as SourceType, track.recording_mbid),
+		recordingIds: recordingFor(importedSource, track.recording_mbid),
 		duration: track.duration ?? undefined,
 		playlistTrackId: track.id,
 		plexRatingKey: track.source_type === 'plex' ? (track.plex_rating_key ?? undefined) : undefined

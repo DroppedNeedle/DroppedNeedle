@@ -242,6 +242,40 @@ describe('playlistTrackToQueueItem', () => {
 		recording_mbid: null
 	};
 
+	it.each([
+		{
+			source_type: 'droppedneedle-local',
+			available_sources: ['droppedneedle-local'],
+			track_source_id: '42'
+		},
+		{
+			source_type: 'droppedneedle-local',
+			available_sources: null,
+			track_source_id: '42'
+		},
+		{
+			source_type: 'droppedneedle-local',
+			available_sources: ['droppedneedle-local'],
+			track_source_id: null
+		},
+		{
+			source_type: 'jellyfin',
+			available_sources: ['jellyfin', 'droppedneedle-local'],
+			track_source_id: 'jf-123'
+		}
+	])('plays imported $source_type entries from their linked library file', (source) => {
+		const item = playlistTrackToQueueItem({
+			...basePlaylistTrack,
+			...source,
+			library_file_id: '42'
+		})!;
+		expect(item.sourceType).toBe('local');
+		expect(item.availableSources).toContain('local');
+		expect(item.availableSources).not.toContain('droppedneedle-local');
+		expect(item.sourceIds?.local).toBe('42');
+		expect(streamUrlFor(item)).toBe('/api/v3/stream/local/42');
+	});
+
 	it('maps playlist rows to queue items, preferring a local copy, and skips rows with nothing to play', () => {
 		{
 			// Maps local track to QueueItem with its stream address.
