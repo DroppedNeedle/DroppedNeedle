@@ -258,6 +258,53 @@ async fn avatar_upload_rejects_svg_and_oversize() {
     }
 }
 
+/// Any signed-in user may list who else uses the server, to share with
+/// them, and learns each person's id and display name and nothing more.
+/// Only people who set a display name of their own are listed: one whose
+/// display name is their login name, in any case, is left out, so the
+/// list never names a login.
+#[tokio::test]
+async fn the_user_directory_names_people_and_nothing_else() {
+    let (rig, _admin, user) = rig_with_admin().await;
+    let named = |id: &str, username: &str, display_name: &str| models::UserRecord {
+        id: id.to_owned(),
+        username: Some(username.to_owned()),
+        username_display: Some(username.to_owned()),
+        display_name: display_name.to_owned(),
+        email: None,
+        avatar_url: None,
+        role: Role::User,
+        created_at: TEST_NOW,
+        last_login_at: None,
+    };
+    for row in [
+        named("user-cara", "cara", "Cara Ng"),
+        named("user-bruno", "bruno", "BRUNO"),
+        named("user-ana", "ana", "Ana Lima"),
+    ] {
+        rig.deps.users.insert(row).await.unwrap();
+    }
+    let (status, body) = call(
+        test_app(&rig, Some(principal_for(&user, "sess-molly"))),
+        "GET",
+        "/api/v3/users/directory",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let users = body["users"].as_array().expect("users");
+    let ids: Vec<&str> = users
+        .iter()
+        .filter_map(|user| user["id"].as_str())
+        .collect();
+    assert_eq!(ids, ["user-ana", "user-cara"], "by display name");
+    for listed in users {
+        let mut keys: Vec<&String> = listed.as_object().expect("user").keys().collect();
+        keys.sort();
+        assert_eq!(keys, ["display_name", "id"]);
+    }
+}
+
 #[tokio::test]
 async fn recovery_failures_share_one_message() {
     let (rig, admin, user) = rig_with_admin().await;

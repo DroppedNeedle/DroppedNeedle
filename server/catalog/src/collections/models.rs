@@ -79,6 +79,9 @@ pub struct PlaylistSummary {
     pub is_public: bool,
     /// True when the caller owns the playlist.
     pub is_owner: bool,
+    /// True when the caller owns the playlist and shares it with chosen
+    /// people.
+    pub is_shared: bool,
     /// True when the caller may delete it: its owner, or an admin when it
     /// has no owner.
     pub can_delete: bool,
@@ -115,6 +118,9 @@ pub struct PlaylistDetail {
     pub is_public: bool,
     /// True when the caller owns the playlist.
     pub is_owner: bool,
+    /// True when the caller owns the playlist and shares it with chosen
+    /// people.
+    pub is_shared: bool,
     /// True when the caller may delete it: its owner, or an admin when it
     /// has no owner.
     pub can_delete: bool,
@@ -260,6 +266,30 @@ pub struct UpdatePlaylistBody {
 pub struct VisibilityBody {
     /// True makes the playlist public; false makes it private.
     pub is_public: bool,
+}
+
+/// One person a playlist is shared with.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PlaylistMember {
+    /// User id.
+    pub user_id: String,
+    /// Display name.
+    pub display_name: String,
+}
+
+/// The people a playlist is shared with, first shared first.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct MembersResponse {
+    /// Members.
+    pub members: Vec<PlaylistMember>,
+}
+
+/// Share-with body: everyone the playlist is shared with, replacing the
+/// list; empty unshares it from everyone.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct MembersBody {
+    /// User ids.
+    pub user_ids: Vec<String>,
 }
 
 /// One track to add.

@@ -46,6 +46,33 @@ export const getPlaylistDetailV3Query = (getId: Getter<string>, getEnabled: Gett
 
 export type { PlaylistV3UserId };
 
+export type PlaylistMemberV3 = components['schemas']['PlaylistMember'];
+
+/** The people the caller's playlist is shared with. */
+export const getPlaylistMembersV3Query = (getId: Getter<string>, getEnabled: Getter<boolean>) =>
+	createQuery(() => ({
+		enabled: getEnabled() && Boolean(authStore.user?.id),
+		staleTime: STALE_LIVE,
+		queryKey: PlaylistQueryKeyFactory.members(authStore.user?.id, getId()),
+		queryFn: async ({ signal }: { signal?: AbortSignal } = {}) =>
+			(
+				await api.v3.GET(
+					v3('/api/v3/playlists/{playlist_id}/members', { path: { playlist_id: getId() } }),
+					{ signal }
+				)
+			).members
+	}));
+
+/** Everyone a playlist can be shared with, by display name. */
+export const getUserDirectoryV3Query = (getEnabled: Getter<boolean>) =>
+	createQuery(() => ({
+		enabled: getEnabled() && Boolean(authStore.user?.id),
+		staleTime: STALE_SLOW,
+		queryKey: PlaylistQueryKeyFactory.people(authStore.user?.id),
+		queryFn: async ({ signal }: { signal?: AbortSignal } = {}) =>
+			(await api.v3.GET(v3('/api/v3/users/directory'), { signal })).users
+	}));
+
 // Resolving looks up where each track can play and stores what it heals on the
 // server, so one answer serves repeat visits for the slow tier.
 export const getPlaylistSourcesV3QueryOptions = (userId: PlaylistV3UserId, playlistId: string) =>

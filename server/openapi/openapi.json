@@ -24560,6 +24560,221 @@
         ]
       }
     },
+    "/api/v3/playlists/{playlist_id}/members": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "The people a playlist is shared with.",
+        "operationId": "list_members_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Members",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembersResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown playlist id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Share a playlist with exactly these people.",
+        "operationId": "set_members_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembersBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Members now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body, or an id that names no other user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown playlist id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/playlists/{playlist_id}/members/me": {
+      "delete": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Leave a playlist shared with the caller.",
+        "operationId": "leave_playlist_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Left",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not shared with the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/playlists/{playlist_id}/resolve-sources": {
       "post": {
         "tags": [
@@ -34814,6 +35029,34 @@
         "security": [
           {
             "upgrade_session": []
+          }
+        ]
+      }
+    },
+    "/api/v3/users/directory": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "The id and display name of every user who set a display name, for\npicking whom to share with.",
+        "operationId": "user_directory",
+        "responses": {
+          "200": {
+            "description": "Users by display name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDirectoryResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
           }
         ]
       }
@@ -53389,6 +53632,38 @@
           "brainzmash"
         ]
       },
+      "MembersBody": {
+        "type": "object",
+        "description": "Share-with body: everyone the playlist is shared with, replacing the\nlist; empty unshares it from everyone.",
+        "required": [
+          "user_ids"
+        ],
+        "properties": {
+          "user_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "User ids."
+          }
+        }
+      },
+      "MembersResponse": {
+        "type": "object",
+        "description": "The people a playlist is shared with, first shared first.",
+        "required": [
+          "members"
+        ],
+        "properties": {
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlaylistMember"
+            },
+            "description": "Members."
+          }
+        }
+      },
       "MembershipApplyBody": {
         "allOf": [
           {
@@ -57238,6 +57513,7 @@
           "updated_at",
           "is_public",
           "is_owner",
+          "is_shared",
           "can_delete",
           "is_redacted"
         ],
@@ -57281,6 +57557,10 @@
           "is_redacted": {
             "type": "boolean",
             "description": "Always false on a full detail; true on redacted rows."
+          },
+          "is_shared": {
+            "type": "boolean",
+            "description": "True when the caller owns the playlist and shares it with chosen\npeople."
           },
           "name": {
             "type": "string",
@@ -57372,6 +57652,24 @@
               "$ref": "#/components/schemas/PlaylistListItem"
             },
             "description": "Playlists visible to the caller."
+          }
+        }
+      },
+      "PlaylistMember": {
+        "type": "object",
+        "description": "One person a playlist is shared with.",
+        "required": [
+          "user_id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "description": "Display name."
+          },
+          "user_id": {
+            "type": "string",
+            "description": "User id."
           }
         }
       },
@@ -57470,6 +57768,7 @@
           "updated_at",
           "is_public",
           "is_owner",
+          "is_shared",
           "can_delete",
           "is_redacted"
         ],
@@ -57513,6 +57812,10 @@
           "is_redacted": {
             "type": "boolean",
             "description": "Always false on a full summary; true on redacted rows."
+          },
+          "is_shared": {
+            "type": "boolean",
+            "description": "True when the caller owns the playlist and shares it with chosen\npeople."
           },
           "name": {
             "type": "string",
@@ -68921,6 +69224,40 @@
               "null"
             ],
             "description": "Client version, when the probe reached it."
+          }
+        }
+      },
+      "UserDirectoryEntry": {
+        "type": "object",
+        "description": "One user as everyone signed in may see them: enough to pick them\nwhen sharing.",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "description": "Display name."
+          },
+          "id": {
+            "type": "string",
+            "description": "User id."
+          }
+        }
+      },
+      "UserDirectoryResponse": {
+        "type": "object",
+        "description": "Every user who set a display name, by that name.",
+        "required": [
+          "users"
+        ],
+        "properties": {
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserDirectoryEntry"
+            },
+            "description": "Users."
           }
         }
       },

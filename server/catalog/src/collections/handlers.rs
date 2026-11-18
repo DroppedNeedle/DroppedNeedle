@@ -22,11 +22,12 @@ use super::{
         AddTracksBody, AddTracksResponse, CheckTracksBody, CheckTracksResponse, CoverUploadBody,
         CoverUploadResponse, CreatePlaylistBody, ExportFormat, ExportQuery, FavoriteStatusResponse,
         FollowStatusResponse, FollowedArtistListResponse, ImportPlaylistBody,
-        ImportPlaylistResponse, NewReleaseListResponse, PlaylistDetail, PlaylistListResponse,
-        PlaylistSummary, PlaylistTrack, RatingLookupBody, RatingLookupResponse,
-        RatingStatusResponse, RecentReleasesQuery, RemoveTracksBody, RemoveTracksResponse,
-        ReorderBody, ReorderResponse, ResolveSourcesResponse, SetFavoriteBody, SetRatingBody,
-        StatusResponse, UnseenCountResponse, UpdatePlaylistBody, UpdateTrackBody, VisibilityBody,
+        ImportPlaylistResponse, MembersBody, MembersResponse, NewReleaseListResponse,
+        PlaylistDetail, PlaylistListResponse, PlaylistSummary, PlaylistTrack, RatingLookupBody,
+        RatingLookupResponse, RatingStatusResponse, RecentReleasesQuery, RemoveTracksBody,
+        RemoveTracksResponse, ReorderBody, ReorderResponse, ResolveSourcesResponse,
+        SetFavoriteBody, SetRatingBody, StatusResponse, UnseenCountResponse, UpdatePlaylistBody,
+        UpdateTrackBody, VisibilityBody,
     },
     service::CollectionsService,
     state::CollectionsState,
@@ -268,6 +269,82 @@ pub async fn set_visibility_handler(
             .set_visibility(caller.user_id(), &playlist_id, body.is_public)
             .await?,
     ))
+}
+
+/// The people a playlist is shared with.
+#[utoipa::path(
+    get,
+    path = "/api/v3/playlists/{playlist_id}/members",
+    tag = "collections",
+    params(("playlist_id" = String, Path, description = "Playlist id")),
+    responses(
+        (status = 200, description = "Members", body = MembersResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Owner only"),
+        (status = 404, description = "Unknown playlist id"),
+    )
+)]
+pub async fn list_members_handler(
+    State(state): State<CollectionsState>,
+    User(caller): User,
+    Path(playlist_id): Path<String>,
+) -> HttpResult<Json<MembersResponse>> {
+    Ok(Json(
+        CollectionsService::new(&state)
+            .members(caller.user_id(), &playlist_id)
+            .await?,
+    ))
+}
+
+/// Share a playlist with exactly these people.
+#[utoipa::path(
+    put,
+    path = "/api/v3/playlists/{playlist_id}/members",
+    tag = "collections",
+    params(("playlist_id" = String, Path, description = "Playlist id")),
+    request_body = MembersBody,
+    responses(
+        (status = 200, description = "Members now", body = MembersResponse),
+        (status = 400, description = "Bad request body, or an id that names no other user"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Owner only"),
+        (status = 404, description = "Unknown playlist id"),
+    )
+)]
+pub async fn set_members_handler(
+    State(state): State<CollectionsState>,
+    User(caller): User,
+    Path(playlist_id): Path<String>,
+    ValidJson(body): ValidJson<MembersBody>,
+) -> HttpResult<Json<MembersResponse>> {
+    Ok(Json(
+        CollectionsService::new(&state)
+            .set_members(caller.user_id(), &playlist_id, body.user_ids)
+            .await?,
+    ))
+}
+
+/// Leave a playlist shared with the caller.
+#[utoipa::path(
+    delete,
+    path = "/api/v3/playlists/{playlist_id}/members/me",
+    tag = "collections",
+    params(("playlist_id" = String, Path, description = "Playlist id")),
+    responses(
+        (status = 200, description = "Left", body = StatusResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Not shared with the caller"),
+    )
+)]
+pub async fn leave_playlist_handler(
+    State(state): State<CollectionsState>,
+    User(caller): User,
+    Path(playlist_id): Path<String>,
+) -> HttpResult<Json<StatusResponse>> {
+    CollectionsService::new(&state)
+        .leave(caller.user_id(), &playlist_id)
+        .await?;
+    Ok(Json(ok("Left the playlist")))
 }
 
 /// Add tracks to a playlist.

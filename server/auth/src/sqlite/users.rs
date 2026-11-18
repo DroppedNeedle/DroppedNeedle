@@ -11,7 +11,7 @@ use crate::federated::users::ProviderBinding;
 use crate::session::login::{LocalCredential as LoginCredential, LoginError};
 use crate::session::store::SessionRecord;
 use crate::times::{ms_to_secs, secs_to_ms};
-use crate::users::models::{LocalCredential, UserRecord};
+use crate::users::models::{LocalCredential, UserDirectoryEntry, UserRecord};
 use crate::users::roles::Role;
 use crate::users::stores::{RoleChange, StoreError, UserDeletion};
 use droppedneedle_kernel::db::statement::{ListLen, Statement};
@@ -359,6 +359,25 @@ impl Users {
             })
             .await?;
         Ok((rows, total.max(0) as u64))
+    }
+
+    /// Every account that set a display name of its own, by that name.
+    /// One whose display name is its login name is left out, so no login
+    /// name is listed.
+    pub async fn directory(&self) -> Result<Vec<UserDirectoryEntry>, StoreError> {
+        self.db
+            .read("auth.users.directory", |conn| {
+                conn.prepare_cached(sql::USER_DIRECTORY.text())?
+                    .query_map([], |row| {
+                        let row = sql::DirectoryRow::read(row)?;
+                        Ok(UserDirectoryEntry {
+                            id: row.id,
+                            display_name: row.display_name,
+                        })
+                    })?
+                    .collect()
+            })
+            .await
     }
 
     /// Bound provider names for one user, e.g. `["local"]`.

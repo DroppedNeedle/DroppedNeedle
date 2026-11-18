@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 179);
+    assert_eq!(table_names(&connection).len(), 180);
     assert_eq!(
         scalar(
             &connection,
@@ -363,6 +363,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0148_download_quarantine_reason.sql",
         "6dd9190f517b20a1ab8f3f6ac546ed1d70e9e29385f4f6e7c02f6967b610473e",
+    ),
+    (
+        "0149_playlist_members.sql",
+        "c6aaabe169099a26500fccae2ca5dc27ba14466a9cdbc75e50080b04fe0d1f73",
     ),
 ];
 
@@ -1378,6 +1382,33 @@ fn recycle_bin_marks_upgrade_adds_an_empty_table() {
     );
 }
 
+/// 0149 adds the table of playlist members, empty, and changes nothing
+/// else: every playlist stays as shared as it was.
+#[test]
+fn playlist_members_upgrade_adds_an_empty_table() {
+    let dir = ScratchDir::new("playlist-members");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..14], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 148);
+    let before_schema = schema_rows(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..15], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 149);
+    let mut after = schema_rows(&connection);
+    after.retain(|(_, _, table, _)| table != "catalog_playlist_members");
+    assert_eq!(after, before_schema, "nothing else changes");
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM catalog_playlist_members"),
+        0
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -1686,6 +1717,8 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("catalog_ignored_releases", "user_id", "auth_users", "CASCADE"),
     ("catalog_new_release_seen_marks", "user_id", "auth_users", "CASCADE"),
     ("catalog_playlist_covers", "playlist_id", "catalog_playlists", "CASCADE"),
+    ("catalog_playlist_members", "playlist_id", "catalog_playlists", "CASCADE"),
+    ("catalog_playlist_members", "user_id", "auth_users", "CASCADE"),
     ("catalog_playlist_tracks", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlists", "user_id", "auth_users", "CASCADE"),
     ("catalog_user_favorite_names", "user_id, item_kind, item_id", "catalog_user_favorites", "CASCADE"),

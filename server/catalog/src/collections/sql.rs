@@ -11,8 +11,11 @@ use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_library::{copy_of_group, owns_group};
 
 droppedneedle_kernel::sql! {
-    /// The caller may read the playlist: it is theirs, or it is public.
-    fragment READABLE = "(COALESCE(p.user_id = ?1, 0) OR p.is_public != 0)";
+    /// The caller may read the playlist: it is theirs, it is public, or it
+    /// is shared with them.
+    fragment READABLE = "(COALESCE(p.user_id = ?1, 0) OR p.is_public != 0 \
+         OR EXISTS (SELECT 1 FROM catalog_playlist_members m \
+         WHERE m.playlist_id = p.id AND m.user_id = ?1))";
     /// The playlist is the caller's.
     fragment OWNED = "p.user_id = ?1";
     /// One playlist with its aggregates, in `PlaylistRow`'s mapper order.
@@ -26,7 +29,10 @@ droppedneedle_kernel::sql! {
          (SELECT COUNT(*) FROM catalog_playlist_tracks t \
           WHERE t.playlist_id = p.id AND t.library_file_id IS NOT NULL), \
          (SELECT COALESCE(SUM(CAST(t.duration_ms AS REAL)), 0.0) / 1000.0 FROM catalog_playlist_tracks t \
-          WHERE t.playlist_id = p.id AND t.library_file_id IS NOT NULL)";
+          WHERE t.playlist_id = p.id AND t.library_file_id IS NOT NULL), \
+         EXISTS (SELECT 1 FROM catalog_playlist_members m \
+          WHERE m.playlist_id = p.id AND m.user_id = ?1), \
+         EXISTS (SELECT 1 FROM catalog_playlist_members m WHERE m.playlist_id = p.id)";
     /// The tables a playlist row is read from.
     fragment PLAYLIST_FROM = " FROM catalog_playlists p \
          LEFT JOIN auth_users u ON u.id = p.user_id \
@@ -174,6 +180,30 @@ droppedneedle_kernel::sql! {
          WHERE id = ?3 AND playlist_id = (SELECT p.id FROM catalog_playlists p \
          WHERE p.id = ?2 AND " + OWNED + ") AND source_type = '' AND library_file_id IS NULL \
          AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.id = ?4 AND +t.availability = 'indexed')";
+    /// The people the caller's playlist `?2` is shared with, first shared
+    /// first: user id and display name.
+    pub(super) MEMBERS = "SELECT u.id AS user_id, u.display_name AS display_name \
+         FROM catalog_playlist_members m \
+         JOIN auth_users u ON u.id = m.user_id WHERE m.playlist_id = ?2 \
+         AND EXISTS (SELECT 1 FROM catalog_playlists p WHERE p.id = ?2 AND " + OWNED + ") \
+         ORDER BY m.added_at, u.id";
+    /// One person a playlist is shared with.
+    pub(super) row MemberColumns for [MEMBERS] {
+        user_id: String,
+        display_name: String,
+    }
+    /// How many of the user ids in the JSON array `?1` name a user.
+    pub(super) KNOWN_USERS = "SELECT COUNT(*) FROM auth_users \
+         WHERE id IN (SELECT value FROM json_each(?1))";
+    /// Unshare playlist `?1` from everyone not in the JSON array `?2`.
+    pub(super) DROP_MEMBERS = "DELETE FROM catalog_playlist_members \
+         WHERE playlist_id = ?1 AND user_id NOT IN (SELECT value FROM json_each(?2))";
+    /// Share playlist `?1` with user `?2` at `?3`, milliseconds, unless it
+    /// already is.
+    pub(super) ADD_MEMBER = "INSERT INTO catalog_playlist_members (playlist_id, user_id, added_at) \
+         VALUES (?1, ?2, ?3) ON CONFLICT DO NOTHING";
+    /// Take user `?2` off playlist `?1`.
+    pub(super) LEAVE = "DELETE FROM catalog_playlist_members WHERE playlist_id = ?1 AND user_id = ?2";
     /// Store or replace one playlist's uploaded cover.
     pub(super) UPSERT_COVER = "INSERT INTO catalog_playlist_covers (playlist_id, content_type, image, \
          updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (playlist_id) DO UPDATE SET \

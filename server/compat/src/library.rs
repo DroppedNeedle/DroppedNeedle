@@ -580,13 +580,16 @@ impl CompatLibrary {
         Ok(self.catalog.playable_counts().await?)
     }
 
-    /// The playlists the user's apps list: their own, and other people's
-    /// public ones when they asked for those. Opening one by id does not
-    /// pass through here, so an app keeps a public playlist it already holds.
+    /// The playlists the user's apps list: their own, those shared with
+    /// them, and other people's public ones when they asked for those.
+    /// Opening one by id does not pass through here, so an app keeps a
+    /// public playlist it already holds.
     pub async fn playlists(&self, user_id: &str) -> Result<Vec<Visible>, CompatError> {
         let include_public = self.user_settings.include_public_playlists(user_id).await?;
         let mut playlists = self.service().visible_playlists(user_id).await?;
-        playlists.retain(|playlist| playlist.is_owner || include_public);
+        playlists.retain(|playlist| {
+            playlist.is_owner || playlist.row.shared_with_caller || include_public
+        });
         Ok(playlists)
     }
 

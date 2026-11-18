@@ -9,8 +9,9 @@
 //! writes one user's own playlists: each write checks the owner in its own
 //! statement or transaction, so a write to another user's playlist changes
 //! nothing and answers [`Written::Missing`]. [`PlaylistStore::visible_to`]
-//! reads what one user may see: their own playlists and public ones, with
-//! the line drawn in SQL. [`PlaylistStore::strays`] lets an admin delete a
+//! reads what one user may see: their own playlists, public ones and those
+//! shared with them, with the line drawn in SQL, and lets them leave one
+//! shared with them. [`PlaylistStore::strays`] lets an admin delete a
 //! playlist with no owner, and nothing else.
 //!
 //! Positions are dense and zero based. `UNIQUE(playlist_id, position)`
@@ -20,7 +21,7 @@
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use super::super::db::{CollectionsDb, StoreError};
-use super::super::models::PlaylistTrack;
+use super::super::models::{PlaylistMember, PlaylistTrack};
 use super::super::sql::{self, PlaylistExportRow};
 use droppedneedle_auth::users::roles::Admin;
 use droppedneedle_kernel::db::{DbError, fold_text};
@@ -57,6 +58,10 @@ pub struct PlaylistRow {
     pub streamable_count: usize,
     /// Summed durations of those entries, seconds.
     pub streamable_duration: f64,
+    /// True when the playlist is shared with the user reading it.
+    pub shared_with_caller: bool,
+    /// True when the playlist is shared with anyone.
+    pub has_members: bool,
     /// Up to four entry covers in position order.
     pub cover_urls: Vec<String>,
 }
@@ -213,6 +218,8 @@ fn playlist_from_row(row: &Row<'_>) -> rusqlite::Result<PlaylistRow> {
         total_duration: row.get(10)?,
         streamable_count: count(row.get(11)?),
         streamable_duration: row.get(12)?,
+        shared_with_caller: row.get::<_, i64>(13)? != 0,
+        has_members: row.get::<_, i64>(14)? != 0,
         cover_urls: Vec::new(),
     })
 }
@@ -536,6 +543,18 @@ impl StrayPlaylists<'_> {
 }
 
 impl VisiblePlaylists<'_> {
+    /// Stop sharing playlist `playlist_id` with the user; false when it
+    /// was not shared with them.
+    pub async fn leave(&self, playlist_id: &str) -> Result<bool, StoreError> {
+        let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
+        self.store
+            .db
+            .write("playlists.leave", move |tx| {
+                Ok(tx.execute(sql::LEAVE.text(), params![playlist_id, user_id])? > 0)
+            })
+            .await
+    }
+
     /// Every playlist in name order: the readable ones with aggregates and
     /// cover tiles, other users' private ones as existence only. A private
     /// playlist with no owner is listed only when `with_private_strays`.
@@ -547,7 +566,7 @@ impl VisiblePlaylists<'_> {
                 let mut stmt = conn.prepare(sql::LIST_ALL.text())?;
                 let mut listed = stmt
                     .query_map(params![user_id, with_private_strays], |row| {
-                        if row.get::<_, i64>(13)? != 0 {
+                        if row.get::<_, i64>(15)? != 0 {
                             Ok(Listed::Readable(playlist_from_row(row)?))
                         } else {
                             Ok(Listed::Hidden {
@@ -878,6 +897,58 @@ impl OwnedPlaylists<'_> {
                 } else {
                     Written::Done(())
                 })
+            })
+            .await
+    }
+
+    /// The people one of the user's playlists is shared with, first
+    /// shared first; none when it is not theirs.
+    pub async fn members(&self, playlist_id: &str) -> Result<Vec<PlaylistMember>, StoreError> {
+        let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
+        self.store
+            .db
+            .read("playlists.members", move |conn| {
+                Ok(conn
+                    .prepare(sql::MEMBERS.text())?
+                    .query_map(params![user_id, playlist_id], |row| {
+                        let member = sql::MemberColumns::read(row)?;
+                        Ok(PlaylistMember {
+                            user_id: member.user_id,
+                            display_name: member.display_name,
+                        })
+                    })?
+                    .collect::<rusqlite::Result<_>>()?)
+            })
+            .await
+    }
+
+    /// Share the playlist with exactly `user_ids`, keeping when each
+    /// person was first shared it. False, and nothing changes, when an id
+    /// names no user.
+    pub async fn set_members(
+        &self,
+        playlist_id: &str,
+        user_ids: Vec<String>,
+    ) -> Result<Written<bool>, StoreError> {
+        let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
+        let now = self.store.db.now_ms();
+        self.store
+            .db
+            .write("playlists.set_members", move |tx| {
+                if !owns(tx, &playlist_id, &user_id)? {
+                    return Ok(Written::Missing);
+                }
+                let listed = serde_json::Value::from(user_ids.clone()).to_string();
+                let known: usize =
+                    tx.query_row(sql::KNOWN_USERS.text(), params![listed], |row| row.get(0))?;
+                if known != user_ids.len() {
+                    return Ok(Written::Done(false));
+                }
+                tx.execute(sql::DROP_MEMBERS.text(), params![playlist_id, listed])?;
+                for member in &user_ids {
+                    tx.execute(sql::ADD_MEMBER.text(), params![playlist_id, member, now])?;
+                }
+                Ok(Written::Done(true))
             })
             .await
     }

@@ -24,7 +24,7 @@ use super::models::{
     ImportCandidateListResponse, ImportUsersRequest, ImportUsersResponse, LastFmConfiguredResponse,
     LastFmCredentialsSet, LastFmSessionExchange, LastFmSessionResponse, LastFmTokenResponse,
     LocalPasswordSet, PasswordChange, PasswordReset, ProfileResponse, RecoveryCodeResponse,
-    RoleUpdate, SessionListResponse, UserResponse, UsernameUpdate,
+    RoleUpdate, SessionListResponse, UserDirectoryResponse, UserResponse, UsernameUpdate,
 };
 use super::roles::{Admin, Role, User};
 use super::services::{self, LastFmLinkError};
@@ -275,6 +275,24 @@ pub async fn get_avatar(
         bytes,
     )
         .into_response())
+}
+
+/// The id and display name of every user who set a display name, for
+/// picking whom to share with.
+#[utoipa::path(
+    get,
+    tag = "users",
+    path = "/api/v3/users/directory",
+    responses((status = 200, description = "Users by display name", body = UserDirectoryResponse))
+)]
+pub async fn user_directory(
+    State(deps): State<UsersDeps>,
+    User(_caller): User,
+) -> Result<Json<UserDirectoryResponse>, ApiError> {
+    services::user_directory(&deps)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// List the caller's sessions for the session-list UI.

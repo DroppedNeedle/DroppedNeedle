@@ -47,4 +47,4 @@ An app that supports it can sign you in through the browser instead of asking fo
 
 ## What apps get
 
-Apps list your own playlists only, unless you turn on the switch for other people's public playlists under Profile > Connect Apps. Plays in an app count like plays in the web player, and ratings are shared with Subsonic apps. A track is transcoded only when the app asks for another format or a lower bitrate. The details, including sign-in limits, pictures and ids, are in [Music apps](discovery.md#music-apps).
+Apps list your own playlists and those shared with you, plus other people's public playlists if you turn on the switch under Profile > Connect Apps. Plays in an app count like plays in the web player, and ratings are shared with Subsonic apps. A track is transcoded only when the app asks for another format or a lower bitrate. The details, including sign-in limits, pictures and ids, are in [Music apps](discovery.md#music-apps).

@@ -6250,6 +6250,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/playlists/{playlist_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The people a playlist is shared with. */
+        get: operations["list_members_handler"];
+        /** Share a playlist with exactly these people. */
+        put: operations["set_members_handler"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/playlists/{playlist_id}/members/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Leave a playlist shared with the caller. */
+        delete: operations["leave_playlist_handler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/playlists/{playlist_id}/resolve-sources": {
         parameters: {
             query?: never;
@@ -9515,6 +9550,26 @@ export interface paths {
          *     backup. Also finishes going back from an interrupted upgrade.
          */
         post: operations["upgrade_undo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/users/directory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The id and display name of every user who set a display name, for
+         *     picking whom to share with.
+         */
+        get: operations["user_directory"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -17827,6 +17882,19 @@ export interface components {
          */
         MbSourceMode: "official" | "mirror" | "community" | "brainzmash";
         /**
+         * @description Share-with body: everyone the playlist is shared with, replacing the
+         *     list; empty unshares it from everyone.
+         */
+        MembersBody: {
+            /** @description User ids. */
+            user_ids: string[];
+        };
+        /** @description The people a playlist is shared with, first shared first. */
+        MembersResponse: {
+            /** @description Members. */
+            members: components["schemas"]["PlaylistMember"][];
+        };
+        /**
          * @description A previewed membership change to apply: the previewed change and its
          *     token.
          */
@@ -19578,6 +19646,11 @@ export interface components {
             is_public: boolean;
             /** @description Always false on a full detail; true on redacted rows. */
             is_redacted: boolean;
+            /**
+             * @description True when the caller owns the playlist and shares it with chosen
+             *     people.
+             */
+            is_shared: boolean;
             /** @description Display name. */
             name: string;
             /** @description Owner display name. */
@@ -19612,6 +19685,13 @@ export interface components {
         PlaylistListResponse: {
             /** @description Playlists visible to the caller. */
             playlists: components["schemas"]["PlaylistListItem"][];
+        };
+        /** @description One person a playlist is shared with. */
+        PlaylistMember: {
+            /** @description Display name. */
+            display_name: string;
+            /** @description User id. */
+            user_id: string;
         };
         /** @description Taste profile behind playlist suggestions. */
         PlaylistProfile: {
@@ -19672,6 +19752,11 @@ export interface components {
             is_public: boolean;
             /** @description Always false on a full summary; true on redacted rows. */
             is_redacted: boolean;
+            /**
+             * @description True when the caller owns the playlist and shares it with chosen
+             *     people.
+             */
+            is_shared: boolean;
             /** @description Display name. */
             name: string;
             /** @description Owner display name. */
@@ -24637,6 +24722,21 @@ export interface components {
             valid: boolean;
             /** @description Client version, when the probe reached it. */
             version?: string | null;
+        };
+        /**
+         * @description One user as everyone signed in may see them: enough to pick them
+         *     when sharing.
+         */
+        UserDirectoryEntry: {
+            /** @description Display name. */
+            display_name: string;
+            /** @description User id. */
+            id: string;
+        };
+        /** @description Every user who set a display name, by that name. */
+        UserDirectoryResponse: {
+            /** @description Users. */
+            users: components["schemas"]["UserDirectoryEntry"][];
         };
         /** @description Release-type filters for discovery and search. */
         UserPreferences: {
@@ -42527,6 +42627,160 @@ export interface operations {
             };
         };
     };
+    list_members_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Members */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembersResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Owner only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    set_members_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembersBody"];
+            };
+        };
+        responses: {
+            /** @description Members now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembersResponse"];
+                };
+            };
+            /** @description Bad request body, or an id that names no other user */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Owner only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown playlist id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    leave_playlist_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Left */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not shared with the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     resolve_sources_handler: {
         parameters: {
             query?: never;
@@ -49164,6 +49418,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    user_directory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Users by display name */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserDirectoryResponse"];
                 };
             };
         };

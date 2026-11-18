@@ -58,6 +58,8 @@ pub fn routes() -> Routes<CollectionsState> {
         ))
         .user(routes!(export_playlist_handler))
         .user(routes!(set_visibility_handler))
+        .user(routes!(list_members_handler, set_members_handler))
+        .user(routes!(leave_playlist_handler))
         .user(routes!(add_tracks_handler))
         .user(routes!(remove_tracks_handler))
         .user(routes!(reorder_track_handler))

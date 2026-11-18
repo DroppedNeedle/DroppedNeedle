@@ -21,6 +21,8 @@ Who can do what, the ways people sign in, and how to get back in when a password
 
 The first account is always admin. Later accounts are created by an admin or automatically on first Jellyfin, Plex, or OIDC sign-in (all start as User). Plex, Jellyfin and OIDC sign-in are switched on and off in the UI. Username and password sign-in is on unless the server is started with `ALLOW_PASSWORD_LOGIN=false` (see [Configuration](configuration.md)); then the sign-in page offers only the other methods, and passwords cannot be set, changed or recovered. First-admin setup and app passwords still work.
 
+Any signed-in user can see other users' display names, and nothing else about them, when sharing a playlist. Someone whose display name is still their username isn't listed there until they set one under Profile.
+
 ## Sessions
 
 Sessions last 30 days and end with the account if an admin deletes it. "Sign out everywhere" on Profile > Sessions signs every browser and device out of your account; an admin can do it for anyone from Settings > Users. App passwords are separate and keep working. More in [Signing out everywhere](reverse-proxy-and-security.md#signing-out-everywhere).

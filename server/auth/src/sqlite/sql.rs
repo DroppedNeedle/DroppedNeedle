@@ -19,6 +19,17 @@ droppedneedle_kernel::sql! {
     /// One page of users: creation order, id tiebreak.
     pub(super) USER_PAGE = "SELECT " + USER_COLUMNS + " FROM auth_users \
         ORDER BY created_at ASC, id ASC LIMIT ?1 OFFSET ?2";
+    /// Every account whose display name is not its login name, by display
+    /// name: what anyone signed in may see of other accounts.
+    pub(super) USER_DIRECTORY = "SELECT id, display_name FROM auth_users \
+        WHERE trim(display_name) <> '' \
+        AND lower(trim(display_name)) IS NOT lower(username) \
+        AND lower(trim(display_name)) IS NOT lower(username_display) \
+        ORDER BY display_name COLLATE NOCASE, id";
+    pub(super) row DirectoryRow for [USER_DIRECTORY] {
+        id: String,
+        display_name: String,
+    }
     /// Every account.
     pub(super) USER_COUNT = "SELECT COUNT(*) FROM auth_users";
     /// Whether any account exists.

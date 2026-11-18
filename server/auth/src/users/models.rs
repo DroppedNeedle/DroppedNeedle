@@ -229,6 +229,23 @@ pub struct SessionView {
     pub current: bool,
 }
 
+/// One user as everyone signed in may see them: enough to pick them
+/// when sharing.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
+pub struct UserDirectoryEntry {
+    /// User id.
+    pub id: String,
+    /// Display name.
+    pub display_name: String,
+}
+
+/// Every user who set a display name, by that name.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
+pub struct UserDirectoryResponse {
+    /// Users.
+    pub users: Vec<UserDirectoryEntry>,
+}
+
 /// Own sessions.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub struct SessionListResponse {

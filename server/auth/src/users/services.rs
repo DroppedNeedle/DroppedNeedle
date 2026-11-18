@@ -15,7 +15,8 @@ use super::models::{
     AppPasswordCreatedResponse, AppPasswordListResponse, AppPasswordRecord, AppPasswordView,
     DeviceSessionMint, DeviceSessionResponse, LastFmConnection, LastFmSessionResponse,
     LastFmTokenResponse, LocalCredential, PasswordReset, ProfileResponse, RecoveryCode,
-    RecoveryCodeResponse, SessionListResponse, SessionView, UserRecord, UserResponse,
+    RecoveryCodeResponse, SessionListResponse, SessionView, UserDirectoryResponse, UserRecord,
+    UserResponse,
 };
 use super::roles::{Admin, Principal, Role};
 use super::stores::{LastFmError, LastFmKeys, RoleChange, StoreError, UserDeletion};
@@ -500,6 +501,14 @@ pub fn companion_label(user_agent: &str) -> &str {
     user_agent
         .strip_prefix(COMPANION_LABEL_PREFIX)
         .unwrap_or(user_agent)
+}
+
+/// GET /users/directory: the id and display name of every user who set a
+/// display name, by name, for picking whom to share with. Nothing else
+/// about them, and never a login name.
+pub async fn user_directory(deps: &UsersDeps) -> Result<UserDirectoryResponse, UsersError> {
+    let users = deps.users.directory().await.map_err(store_internal)?;
+    Ok(UserDirectoryResponse { users })
 }
 
 /// GET /auth/sessions: own sessions, current first, then newest first.
