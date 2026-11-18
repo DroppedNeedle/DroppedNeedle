@@ -153,10 +153,11 @@ pub(crate) fn offer_again(
 }
 
 /// Queue identification of one album because a person asked for it again.
-/// A job already waiting for the album takes the album's current files
-/// and runs now, even when it was waiting out a backoff; a live job on
-/// those files does the work; otherwise a manual job is queued. Runs
-/// inside the caller's transaction, so it lands with the write that asked.
+/// A job already waiting for the album takes the album's current files,
+/// becomes the person's own and runs now, even when it was waiting out a
+/// backoff; a live job on those files does the work; otherwise a manual
+/// job is queued. Runs inside the caller's transaction, so it lands with
+/// the write that asked.
 pub(crate) fn queue_retry(
     conn: &Connection,
     local_album_id: &str,
@@ -175,7 +176,14 @@ pub(crate) fn queue_retry(
     if let Some(job_id) = waiting {
         let woken = conn.execute(
             crate::identify::sql::BRING_RETRY_FORWARD.text(),
-            params![revision, key, now_ms, job_id, PRIORITY_REVIEW_RETRY as i64],
+            params![
+                revision,
+                key,
+                now_ms,
+                job_id,
+                PRIORITY_REVIEW_RETRY as i64,
+                requested_by
+            ],
         )?;
         if woken == 1 {
             return bump_identification_stream(conn);

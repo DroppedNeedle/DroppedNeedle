@@ -29,11 +29,11 @@ use super::artist_links::{self, ArtistLink, ArtistLinkError};
 use super::merged_ids;
 use super::models::{
     AlbumIdentity, Alias, AliasKind, AutomaticSeal, CandidateEvidence, FingerprintState,
-    IdentifyJob, JobState, LocalAlbumFacts, LocalTrackFacts, MatchFlag, ReviewItem, ReviewState,
-    TrackIdentity,
+    IdentifyJob, IdentifyKind, JobState, LocalAlbumFacts, LocalTrackFacts, MatchFlag, ReviewItem,
+    ReviewState, TrackIdentity,
 };
 pub(crate) use super::queue::bump_identification_stream;
-use super::queue::{INSERT_JOB, idempotency_key};
+use super::queue::{INSERT_JOB, idempotency_key, queue_retry};
 pub use super::queue::{album_input_revision, offer_album};
 use super::sources::ArtistAnswer;
 use super::stores::{Approval, AttemptLanding, RELEASE_FRESH_SECS, StoreError, land_job};
@@ -286,6 +286,9 @@ impl SqliteIdentifyStore {
         job: &IdentifyJob,
     ) -> Result<Option<(AutomaticOutcome, IdentifyJob)>, StoreError> {
         self.land_with("identify.seal_automatic", job, |tx| {
+            if declined_for(tx, job, &seal.local_album_id)? {
+                return Ok(AutomaticOutcome::PersonsChoice);
+            }
             identity::seal_automatic(
                 tx,
                 seal,
@@ -310,6 +313,9 @@ impl SqliteIdentifyStore {
         job: &IdentifyJob,
     ) -> Result<Option<(AutomaticOutcome, IdentifyJob)>, StoreError> {
         self.land_with("identify.retract", job, |tx| {
+            if declined_for(tx, job, local_album_id)? {
+                return Ok(AutomaticOutcome::PersonsChoice);
+            }
             identity::retract(
                 tx,
                 local_album_id,
@@ -380,10 +386,20 @@ impl SqliteIdentifyStore {
             let outcome = work(tx)?;
             let mut landed = job.clone();
             if outcome == AutomaticOutcome::InputMoved {
+                let now_ms = self.clock.now_ms().max(0);
+                // A person's attempt hands over to a job that is theirs too.
+                if job.kind == IdentifyKind::Manual {
+                    queue_retry(
+                        tx,
+                        &job.local_album_id,
+                        job.requested_by_user_id.as_deref(),
+                        now_ms,
+                    )?;
+                }
                 land_job(
                     &mut landed,
                     AttemptLanding::Failed,
-                    self.clock.now_ms().max(0) as u64,
+                    now_ms as u64,
                     Some("INPUT_MOVED"),
                 );
             }
@@ -416,6 +432,16 @@ impl SqliteIdentifyStore {
             })
     }
 
+    /// True when the album carries the flag a person's decline left: they
+    /// took its match off, or an admin undid its automatic edition and
+    /// nothing was put back. Identification leaves such an album alone
+    /// until a person asks it to look again.
+    pub fn declined(&self, local_album_id: &str) -> Result<bool, StoreError> {
+        self.db.read_blocking("identify.declined", |conn| {
+            Ok(album_declined(conn, local_album_id)?)
+        })
+    }
+
     /// The album's match flag, if identification is unsure of it.
     pub fn match_flag(&self, local_album_id: &str) -> Result<Option<MatchFlag>, StoreError> {
         self.db.read_blocking("identify.match_flag", |conn| {
@@ -444,6 +470,21 @@ impl SqliteIdentifyStore {
                 .optional()?)
         })
     }
+}
+
+fn album_declined(conn: &Connection, local_album_id: &str) -> rusqlite::Result<bool> {
+    conn.prepare_cached(crate::identify::sql::ALBUM_DECLINED.text())?
+        .query_row(params![local_album_id], |row| row.get(0))
+}
+
+/// A job no person asked for, on an album a person declined: the seal or
+/// retraction it would land writes nothing.
+fn declined_for(
+    tx: &Transaction<'_>,
+    job: &IdentifyJob,
+    local_album_id: &str,
+) -> rusqlite::Result<bool> {
+    Ok(job.kind != IdentifyKind::Manual && album_declined(tx, local_album_id)?)
 }
 
 /// Why a landing wrote nothing.

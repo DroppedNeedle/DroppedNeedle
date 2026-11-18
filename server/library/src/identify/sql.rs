@@ -168,9 +168,16 @@ droppedneedle_kernel::sql! {
     pub(super) WAITING_JOB_FOR_RETRY = "SELECT id FROM library_identify_jobs \
              WHERE local_album_id = ?1 AND state IN ('queued','deferred') \
              ORDER BY input_revision <> ?2, created_at LIMIT 1";
+    /// Wake waiting job `?4` for a person's retry: it takes revision `?1`
+    /// and key `?2`, runs from `?3` at priority `?5` or better, and becomes
+    /// a manual job asked for by `?6` (an unknown user keeps the requester).
     pub(super) BRING_RETRY_FORWARD = "UPDATE OR IGNORE library_identify_jobs SET input_revision = ?1, \
              idempotency_key = ?2, not_before_at = MIN(not_before_at, ?3), \
-             priority = MIN(priority, ?5), updated_at = ?3 WHERE id = ?4";
+             priority = MIN(priority, ?5), kind = 'manual', \
+             requested_by_user_id = COALESCE((SELECT id FROM auth_users WHERE id = ?6), \
+             requested_by_user_id), updated_at = ?3 WHERE id = ?4";
+    /// The album (`?1`) carries the flag a person's decline left.
+    pub(super) ALBUM_DECLINED = "SELECT " + (crate::declined_flag!("?1"));
     pub(super) BUMP_IDENTIFICATION_STREAM = "INSERT INTO library_event_stream_revisions (stream_kind, value) \
          VALUES ('identification', 1) \
          ON CONFLICT (stream_kind) DO UPDATE SET value = value + 1";

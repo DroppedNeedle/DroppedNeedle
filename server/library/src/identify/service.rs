@@ -225,6 +225,16 @@ impl IdentifyService {
             };
             carried = Some(group);
         }
+        // An album whose match a person took off, or whose automatic
+        // edition was undone with nothing put back, waits for a person:
+        // only a job they asked for looks at it again.
+        if carried.is_none()
+            && job.kind != IdentifyKind::Manual
+            && self.deps.store.declined(&facts.local_album_id)?
+        {
+            land_job(&mut job, AttemptLanding::Done, now_ms, None);
+            return self.land(job, IdentificationOutcome::KeptTagged, PERSON_DECLINED);
+        }
         // Preferences that do not read put the job back as it was, with no
         // attempt spent; the loop claims nothing until they read again.
         let Some(preferences) = self.preferences() else {
@@ -852,22 +862,32 @@ impl IdentifyService {
         let reason_code = decision.reason_code();
         let closest: Vec<CandidateEvidence> = scored.iter().take(CLOSEST).cloned().collect();
         land_job(&mut job, AttemptLanding::Done, now_ms, None);
+        // A person declined the album during the attempt: it lands as the
+        // start gate would have. The attempt has committed, so a re-read
+        // that fails is logged and the landing reported as it is.
+        let declined_meanwhile = |job: &IdentifyJob| {
+            job.kind != IdentifyKind::Manual
+                && self.deps.store.declined(album).unwrap_or_else(|error| {
+                    tracing::warn!(%error, album, "the album's decline could not be read");
+                    false
+                })
+        };
         let report = |landed: Option<(AutomaticOutcome, IdentifyJob)>, reason: &str| {
             landed.map(|(written, job)| {
-                if written == AutomaticOutcome::InputMoved {
-                    return AttemptReport {
-                        job,
-                        outcome: IdentificationOutcome::Failed,
-                        reason_code: "INPUT_MOVED".to_owned(),
-                        review_id: None,
-                    };
-                }
-                if written == AutomaticOutcome::PersonsChoice {
-                    tracing::info!(
-                        album,
-                        "a curator decided this album meanwhile; automatic seal skipped"
-                    );
-                }
+                let (outcome, reason) = match written {
+                    AutomaticOutcome::InputMoved => (IdentificationOutcome::Failed, "INPUT_MOVED"),
+                    AutomaticOutcome::PersonsChoice if declined_meanwhile(&job) => {
+                        (IdentificationOutcome::KeptTagged, PERSON_DECLINED)
+                    }
+                    AutomaticOutcome::PersonsChoice => {
+                        tracing::info!(
+                            album,
+                            "a curator decided this album meanwhile; automatic seal skipped"
+                        );
+                        (outcome, reason)
+                    }
+                    AutomaticOutcome::Done => (outcome, reason),
+                };
                 AttemptReport {
                     job,
                     outcome,
@@ -1235,6 +1255,10 @@ pub const AUDIO_DISAGREES: &str = "AUDIO_DISAGREES";
 /// edition: MusicBrainz answers for that edition in a form that does not
 /// read.
 pub const HELD_RELEASE_UNREADABLE: &str = "HELD_RELEASE_UNREADABLE";
+
+/// The reason an attempt no person asked for left an album alone: a person
+/// took its match off, or its automatic edition was undone.
+pub const PERSON_DECLINED: &str = "PERSON_DECLINED";
 
 /// True when the new evidence rules `release` out: it was scored and a
 /// file's own id contradicts it, or its album title or artist do not

@@ -4000,6 +4000,59 @@ async fn library_journey_undo_automatic_edition() {
     let (status, _) = app.call("POST", &undo, &headers, Some(fresh)).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "an undo is used once");
 
+    // A change to the files does not bring the undone match back:
+    // identification leaves the album alone and asks MusicBrainz nothing.
+    let recalls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    {
+        let recalls = recalls.clone();
+        let release = release.clone();
+        scripted.recall_from(move |_| {
+            recalls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            RecallResult {
+                releases: vec![release.clone()],
+                ..RecallResult::default()
+            }
+        });
+    }
+    let flag_and_reviews = || -> (String, i64, i64) {
+        app.db()
+            .query_row(
+                "SELECT state || ':' || reason_code, updated_at, \
+                 (SELECT COUNT(*) FROM library_identify_reviews WHERE local_album_id = ?1) \
+                 FROM library_album_match_state WHERE local_album_id = ?1",
+                [&album],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("the album is flagged")
+    };
+    let before = flag_and_reviews();
+    assert_eq!(before.0, "unmatched:AUTOMATIC_EDITION_UNDONE");
+    {
+        use droppedneedle_library::tags::TagField;
+        use droppedneedle_library::tags::save::{TagEdit, save_tags};
+        save_tags(
+            &music.join("album-r/01.flac"),
+            &[TagEdit::verbatim(
+                TagField::Genre,
+                vec!["Edited".to_owned()],
+            )],
+        )
+        .expect("retagged outside the app");
+    }
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/albums/{album}/rescan"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    rig.identified(&album, 1).await;
+    assert!(rig.identify_store.album_identity(&album).unwrap().is_none());
+    assert_eq!(flag_and_reviews(), before, "flag and reviews as they were");
+    assert_eq!(recalls.load(std::sync::atomic::Ordering::SeqCst), 0);
+
     // Retrying the review identifies the album again, as a scan would,
     // and the job that asked for it finishes. The same request sent again
     // answers the job the first one started.

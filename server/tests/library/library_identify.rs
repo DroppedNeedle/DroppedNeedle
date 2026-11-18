@@ -4470,6 +4470,168 @@ async fn an_attempt_whose_lease_was_taken_over_lands_nothing() {
     );
 }
 
+/// After a person takes an album's match off, or its automatic edition is
+/// undone with nothing put back, identification no person asked for
+/// leaves the album alone: it asks MusicBrainz nothing, writes no match
+/// and keeps the flag, even when the decline lands during the attempt. A
+/// person asking to look again still identifies it, also when their ask
+/// folds into a job that was already waiting.
+#[tokio::test]
+async fn a_declined_album_waits_for_a_person() {
+    let rig = rig_with_recall(recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_1])]));
+    let flag = |album: &str| {
+        rig.texts(
+            "SELECT state || ' ' || reason_code || ' ' || updated_at \
+             FROM library_album_match_state WHERE local_album_id = ?1",
+            album,
+        )
+    };
+
+    // (i) Declined before the attempt: nothing is recalled or written.
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.run(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         candidates_json, updated_at) VALUES ('album-1', 'unmatched', 'DETACHED_BY_PERSON', \
+         '[]', 7)",
+    );
+    let report = rig
+        .attempt(&rig.service, "job-1", "album-1")
+        .await
+        .expect("report");
+    assert_eq!(
+        (
+            report.outcome,
+            report.reason_code.as_str(),
+            report.job.state
+        ),
+        (
+            IdentificationOutcome::KeptTagged,
+            "PERSON_DECLINED",
+            JobState::Succeeded
+        )
+    );
+    assert!(rig.providers.recalled.lock().unwrap().is_empty());
+    assert_eq!(
+        rig.identity_tables("album-1"),
+        vec!["flag unmatched DETACHED_BY_PERSON".to_owned()]
+    );
+    assert_eq!(flag("album-1"), vec!["unmatched DETACHED_BY_PERSON 7"]);
+
+    // (ii) Declined while the attempt recalls: the seal writes nothing.
+    rig.seed_album(&album_facts("album-2", &[("t2", Some(RECORDING_1))]));
+    let service = service_during_recall(
+        &rig,
+        recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_1])]),
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         candidates_json, updated_at) VALUES ('album-2', 'unmatched', \
+         'AUTOMATIC_EDITION_UNDONE', '[]', 7)",
+    );
+    let report = rig
+        .attempt(&service, "job-2", "album-2")
+        .await
+        .expect("report");
+    assert_eq!(
+        (report.outcome, report.reason_code.as_str()),
+        (IdentificationOutcome::KeptTagged, "PERSON_DECLINED")
+    );
+    assert_eq!(
+        rig.identity_tables("album-2"),
+        vec!["flag unmatched AUTOMATIC_EDITION_UNDONE".to_owned()]
+    );
+    assert_eq!(
+        flag("album-2"),
+        vec!["unmatched AUTOMATIC_EDITION_UNDONE 7"]
+    );
+
+    // (iii) A person's "look again" takes over the waiting automatic job,
+    // which then runs as theirs and identifies the album.
+    rig.seed_album(&album_facts("album-3", &[("t3", Some(RECORDING_1))]));
+    rig.run(
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('curator-1', 'Curator', 'admin', 0); \
+         INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         candidates_json, updated_at) VALUES ('album-3', 'unmatched', 'DETACHED_BY_PERSON', \
+         '[]', 7)",
+    );
+    rig.service
+        .enqueue_album(
+            "job-3",
+            "album-3",
+            IdentifyKind::Automatic,
+            "rev-1",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    let handed = rig.change(|tx| {
+        droppedneedle_library::edition::choice::hand_back(tx, "album-3", "curator-1", 1.0)
+    });
+    assert_eq!(handed, Ok(()));
+    assert_eq!(
+        rig.texts(
+            "SELECT id || ' ' || kind || ' ' || COALESCE(requested_by_user_id, '-') \
+             FROM library_identify_jobs WHERE local_album_id = ?1",
+            "album-3",
+        ),
+        vec!["job-3 manual curator-1"]
+    );
+    rig.store.claim(0, 60_000).unwrap();
+    let report = rig
+        .service
+        .run_claimed_job("job-3", 0)
+        .await
+        .unwrap()
+        .expect("report");
+    assert_eq!(report.outcome, IdentificationOutcome::Identified);
+    let tables = rig.identity_tables("album-3");
+    assert!(
+        tables[0].starts_with(&format!("album {GROUP_A} {RELEASE_A1} automatic")),
+        "{tables:?}"
+    );
+    assert!(flag("album-3").is_empty());
+
+    // (iv) The files move while a person's attempt recalls: the job queued
+    // for the new files is theirs too.
+    rig.seed_album(&album_facts("album-4", &[("t4", Some(RECORDING_1))]));
+    rig.run(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         candidates_json, updated_at) VALUES ('album-4', 'unmatched', 'DETACHED_BY_PERSON', \
+         '[]', 7)",
+    );
+    let service = service_during_recall(
+        &rig,
+        recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_1])]),
+        "UPDATE local_tracks SET stat_revision = 'stat-2' WHERE local_album_id = 'album-4'",
+    );
+    service
+        .enqueue_album(
+            "job-4",
+            "album-4",
+            IdentifyKind::Manual,
+            "rev-1",
+            Some("curator-1"),
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    rig.store.claim(0, 60_000).unwrap();
+    let report = service
+        .run_claimed_job("job-4", 0)
+        .await
+        .unwrap()
+        .expect("report");
+    assert_eq!(report.reason_code, "INPUT_MOVED");
+    assert_eq!(
+        rig.texts(
+            "SELECT kind || ' ' || COALESCE(requested_by_user_id, '-') \
+             FROM library_identify_jobs WHERE local_album_id = ?1 AND state = 'queued'",
+            "album-4",
+        ),
+        vec!["manual curator-1"]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // A person's identity commands: what each leaves behind, and so what an
 // undo can still bring back.

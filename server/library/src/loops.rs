@@ -364,7 +364,6 @@ impl Identification {
                             report.outcome,
                             super::identify::models::IdentificationOutcome::Identified
                                 | super::identify::models::IdentificationOutcome::EditionUncertain
-                                | super::identify::models::IdentificationOutcome::KeptTagged
                         ) {
                             let identification = self.clone();
                             let album = report.job.local_album_id.clone();
