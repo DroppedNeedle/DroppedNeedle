@@ -335,6 +335,7 @@ impl SearchJobs {
             tracklist,
             wanted: Vec::new(),
             track: None,
+            release_preferred,
         };
         let sources = self.worker.sources_now();
         let (candidates, failed) = search_sources(&sources, &target, &job.id).await;

@@ -261,6 +261,7 @@ impl SlskdSource {
             tracklist: &target.tracklist,
             wanted: &[],
             single_track: false,
+            release_preferred: target.release_preferred,
         };
         Ok(rank_listing(&hits, request, self.repo.policy())
             .into_iter()

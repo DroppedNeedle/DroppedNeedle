@@ -68,6 +68,7 @@ pub async fn choose<H: SlskdHttp>(
         tracklist: &target.tracklist,
         wanted: &target.wanted,
         single_track: target.track.is_some(),
+        release_preferred: target.release_preferred,
     };
     let policy = repo.policy();
     let mut hits: Vec<SearchResult> = Vec::new();
@@ -169,6 +170,7 @@ mod tests {
             tracklist: &tracklist,
             wanted: &[],
             single_track: false,
+            release_preferred: false,
         };
         let SoulseekMiss::Nothing { reason, .. } = miss(
             &[stranger],

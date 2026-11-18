@@ -116,6 +116,7 @@ mod tests {
             tracklist: &tracklist,
             wanted: &[],
             single_track: false,
+            release_preferred: false,
         };
         rank_listing(hits, request, &DownloadPolicy::default())
             .into_iter()

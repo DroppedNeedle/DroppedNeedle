@@ -64,6 +64,9 @@ pub struct SearchTarget {
     pub wanted: Vec<TrackPosition>,
     /// Set for a single-track task.
     pub track: Option<TrackWant>,
+    /// For an album: no person chose the release, so the landing may take
+    /// another edition of the album. False for a pin and for a track.
+    pub release_preferred: bool,
 }
 
 impl SearchTarget {
@@ -229,6 +232,8 @@ impl Targets {
         let same_release = release
             .as_deref()
             .is_some_and(|release| plan.is_for(release));
+        // As the landing reads it: a release the plan is not for is a pin.
+        let release_preferred = preferred || (plan.release_preferred && same_release);
         let mut tracklist = if same_release {
             plan.expected_tracks.clone()
         } else {
@@ -276,6 +281,7 @@ impl Targets {
             wanted,
             tracklist,
             track: None,
+            release_preferred,
         }
     }
 
@@ -394,6 +400,7 @@ impl Targets {
                 year: details.year,
                 tracklist: plan.expected_tracks.clone(),
                 wanted: album.wanted.clone(),
+                release_preferred: false,
                 track: Some(TrackWant {
                     artist: task.artist_name.clone(),
                     title,
@@ -421,6 +428,7 @@ impl Targets {
                 release_track_mbid: None,
             }],
             wanted: vec![TrackPosition { disc: 1, track: 0 }],
+            release_preferred: false,
             track: Some(TrackWant {
                 artist: task.artist_name.clone(),
                 title: title.clone(),
@@ -547,6 +555,7 @@ impl Targets {
             year: release.year,
             tracklist,
             wanted,
+            release_preferred: false,
             track: Some(TrackWant {
                 artist: task.artist_name.clone(),
                 title,

@@ -816,6 +816,7 @@ fn album(artist: &str, title: &str) -> SearchTarget {
         tracklist: Vec::new(),
         wanted: Vec::new(),
         track: None,
+        release_preferred: false,
     }
 }
 
