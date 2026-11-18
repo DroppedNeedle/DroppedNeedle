@@ -472,8 +472,12 @@ Run from the repo root. `make help` lists every target.
   The catalog revision is a change counter, bumped by every commit that
   changes catalog rows and never compared (a plugin's added file or its
   take-back changes none, so it skips the bump). A write that changes catalog rows bumps it inside its own
-  transaction through `catalog_revision::bump_catalog`. Event loops wait on
-  the lane's commit counter (`Db::commits`), never a timer.
+  transaction through `catalog_revision::bump_catalog`. It is also the
+  high-water mark album match revisions start above: a new or moved match
+  row takes one past it, and a removal first raises it to the row's
+  revision (`raise_catalog`, never lowered), so an album never sees one of
+  its revisions twice. Event loops wait on the lane's commit counter
+  (`Db::commits`), never a timer.
 - The web UI lists an album only while it is live and has files: one
   definition, `owned_album!` in `library/src/identity/sql.rs`, which every
   list, count, Check albums and Copies read. A removed album leaves the
@@ -561,12 +565,25 @@ Run from the repo root. `make help` lists every target.
   before included.
 - An empty Vorbis comment (`NAME=`) is not kept: it reads as absent and a
   write drops it. It is the one exception to "unrelated tags survive".
+- A file with no album artist tag is filed under "Various Artists" when it
+  is flagged as a compilation, else under its artist without a
+  "feat."/"ft."/"featuring" part (`untagged_album_artist` in
+  `library/src/scan/naming.rs`). A file whose stored row already holds its
+  plain artist tag as the album artist (filed by the earlier rule, v2's
+  rows included) keeps that rule, so no album splits or rekeys when its
+  files are read again.
 - Publisher phases keep their crash-injection tests. Archive extraction
   rejects traversal and links, and enforces size limits.
 - Acquire replaces no file on an album tagging would refuse (the same
   check), or on an album with no match whose files' tags name different
   groups. The new file is held and the old stays. Only a person importing
   that held file passes the check; the quality comparison still runs.
+- A download's edition is a pin only when a person picked it, the library
+  holds the album in it, or the download fetches for a copy ("Get missing
+  tracks", upgrades): only that release is accepted. Any other release on
+  a task is a preference (`TaskPlan::release_preferred`): tried first,
+  another release of the same release group accepted, a release of
+  another group refused. A missing flag means a pin.
 - Files that land for a release the library holds join its copy when
   acquire names no copy and none of the files replaces a track, chosen
   once in library import planning whichever way they came: a live copy on
@@ -601,8 +618,19 @@ Run from the repo root. `make help` lists every target.
   `NAMED_GROUP_DIFFERS` flag. The accepted tier, the match flags and a
   track's recording id (its row's, else its tags') are named once in
   `library/src/identity/sql.rs`. `source_gates.rs` holds these reads.
-- Manual and imported identities survive rescans and moves. Automatic ones
-  stay revisable and retract on contradiction.
+- Manual and imported identities survive rescans and moves. An imported
+  match that names a release group but no edition may gain one edition of
+  that group, at most once, when identification confirms the files fit
+  it; it keeps its source and its group, never takes a guess, and is
+  listed in the album's history with an Undo. Automatic ones stay
+  revisable and retract on contradiction.
+- A match a person took off, or an automatic edition an admin undid with
+  nothing to go back to, stays off: the album keeps its
+  `DETACHED_BY_PERSON` or `AUTOMATIC_EDITION_UNDONE` flag
+  (`declined_flag!`), and identification leaves it alone, whatever its
+  files do, until a person picks an edition or asks it to look again (a
+  `manual` job). An undo that leaves no match marks the album
+  `AUTOMATIC_EDITION_UNDONE`, whatever flag it puts back.
 - Automatic artist reconciliation needs provider proof, never name
   similarity alone, with one rule for the same name. Two live records whose
   names have the same `artist_name_key` (`library/src/scan/naming.rs`:
@@ -658,6 +686,9 @@ Run from the repo root. `make help` lists every target.
   to the album that keeps them. Catalog only, listed in the album's
   history with an Undo that brings the copy, its files and its match back
   and keeps it apart; hearts, ratings, plays and playlist entries stay.
+  A locked file whose tags now give the key its album's other files were
+  retagged to counts as retagged with them: it stays on its album, and
+  the album follows the retag.
 - A release MusicBrainz will not give in a readable form is never
   evidence: identification waits and retries rather than marking an
   album unmatched, and an unreadable tagged release leaves only an
