@@ -12510,6 +12510,9 @@ async fn the_folder_watcher_scans_the_changed_folder_across_a_restart() {
     );
 }
 
+/// Each track's id and album, and each album's id, key and name.
+type Filing = (Vec<(String, String)>, Vec<(String, String, String)>);
+
 impl ArtistRig {
     /// Plant (or retag) `relative` as track `number` of `album` by
     /// `artist`, with no release id, the given album artist tag (none when
@@ -12597,7 +12600,7 @@ impl ArtistRig {
 
     /// Every track's id and album, and every album's key and name, in a
     /// fixed order.
-    fn filing(&self) -> (Vec<(String, String)>, Vec<(String, String, String)>) {
+    fn filing(&self) -> Filing {
         let db = self.db();
         let tracks = db
             .prepare(

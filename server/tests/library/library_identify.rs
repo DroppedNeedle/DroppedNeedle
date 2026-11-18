@@ -4270,17 +4270,8 @@ async fn a_new_guess_never_takes_an_earlier_guess_revision() {
             .expect("first guess lands")
     );
     let earlier = shown();
-    rig.change(|tx| {
-        Ok(choice::detach(
-            tx,
-            "album-1",
-            "RECHECK_FAILED",
-            None,
-            None,
-            2.0,
-        )?)
-    })
-    .expect("guess taken off");
+    rig.change(|tx| choice::detach(tx, "album-1", "RECHECK_FAILED", None, None, 2.0))
+        .expect("guess taken off");
     assert!(
         rig.store
             .seal_automatic(&guess(GROUP_B, RELEASE_B1))
@@ -4315,17 +4306,8 @@ async fn a_new_guess_never_takes_an_earlier_guess_revision() {
     // guess after it still starts above it.
     rig.seed_album(&album_facts("album-2", &[("t2", Some(RECORDING_1))]));
     rig.carried("album-2", RELEASE_A1, "automatic", 1000);
-    rig.change(|tx| {
-        Ok(choice::detach(
-            tx,
-            "album-2",
-            "RECHECK_FAILED",
-            None,
-            None,
-            3.0,
-        )?)
-    })
-    .expect("carried match taken off");
+    rig.change(|tx| choice::detach(tx, "album-2", "RECHECK_FAILED", None, None, 3.0))
+        .expect("carried match taken off");
     assert!(
         rig.store
             .seal_automatic(&AutomaticSeal {

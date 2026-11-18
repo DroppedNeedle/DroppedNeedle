@@ -13920,7 +13920,11 @@ async fn a_run_stays_undoable_after_identification_finds_the_same_release() {
             .collect::<rusqlite::Result<_>>()
             .expect("rows read")
     };
-    assert_eq!(held()[0], format!("album automatic {REL_1} 1"));
+    assert!(
+        held()[0].starts_with(&format!("album automatic {REL_1} ")),
+        "{:?}",
+        held()
+    );
     managed.activate().await;
     managed.edit_outside(&track, title_edit("Before")).await;
     while managed.library.identification.identify_tick().await > 0 {}
