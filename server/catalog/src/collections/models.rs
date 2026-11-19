@@ -29,7 +29,9 @@ pub struct PlaylistTrack {
     pub artist_id: Option<String>,
     /// Library track source id, when resolved.
     pub track_source_id: Option<String>,
-    /// Cover art URL, when known.
+    /// Cover art address, when known: one of DroppedNeedle's own cover
+    /// routes, root-relative, or an https image on Spotify, Deezer, Last.fm,
+    /// TheAudioDB or YouTube. Any other stored address reads as null.
     pub cover_url: Option<String>,
     /// Preferred source type, empty when unresolved.
     pub source_type: String,
@@ -318,7 +320,10 @@ pub struct TrackInput {
     pub artist_id: Option<String>,
     /// Library track source id, when known.
     pub track_source_id: Option<String>,
-    /// Cover art URL, when known.
+    /// Cover art address, when known. Kept only when it is one of
+    /// DroppedNeedle's own cover routes (a base path before `/api/v3/` is
+    /// cut off) or an https image on Spotify, Deezer, Last.fm, TheAudioDB or
+    /// YouTube; any other address is dropped and the track is still added.
     pub cover_url: Option<String>,
     /// Preferred source type.
     #[serde(default)]

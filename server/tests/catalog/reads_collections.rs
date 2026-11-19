@@ -827,6 +827,92 @@ async fn playlist_input_validation() {
     assert_eq!(body["error"]["code"], "PAYLOAD_TOO_LARGE");
 }
 
+/// Readers of a public playlist load only covers from DroppedNeedle's own
+/// routes or known art hosts: any other address is dropped as the entry is
+/// added, and a stored one reads as none.
+#[tokio::test]
+async fn playlist_entry_covers_only_from_known_addresses() {
+    const TRACKER: &str = "https://tracker.example/pixel.png?viewer=1";
+    let mbid = "8a7b6c5d-1234-4abc-9def-0123456789ab";
+    let rig = Rig::open().await;
+    let app = rig.app();
+    let (_, created) = call(
+        &app,
+        Method::POST,
+        "/api/v3/playlists",
+        Some(ADA),
+        Some(json!({"name": "Covers"})),
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    let one = format!("/api/v3/playlists/{id}");
+    let (status, _) = call(
+        &app,
+        Method::PATCH,
+        &format!("{one}/visibility"),
+        Some(ADA),
+        Some(json!({"is_public": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let seeded = id.clone();
+    rig.runtime
+        .db()
+        .write(
+            droppedneedle_kernel::db::Lane::Foreground,
+            "seed old entry",
+            move |tx| {
+                tx.execute(
+                    "INSERT INTO catalog_playlist_tracks (id, playlist_id, position, \
+                     track_name, artist_name, album_name, cover_url, source_type, created_at) \
+                     VALUES ('old-entry', ?1, 0, 'Old', 'A', 'B', ?2, 'local', 0)",
+                    rusqlite::params![seeded, TRACKER],
+                )?;
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
+            },
+        )
+        .await
+        .unwrap();
+
+    let tracks: Vec<Value> = [
+        TRACKER.to_owned(),
+        format!("/music/api/v3/covers/release-group/{mbid}?size=250"),
+        "https://i.scdn.co/image/ab".to_owned(),
+    ]
+    .into_iter()
+    .map(|cover| json!({"track_name": "T", "artist_name": "A", "album_name": "B", "cover_url": cover}))
+    .collect();
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("{one}/tracks"),
+        Some(ADA),
+        Some(json!({"tracks": tracks})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let kept = [
+        format!("/api/v3/covers/release-group/{mbid}?size=250"),
+        "https://i.scdn.co/image/ab".to_owned(),
+    ];
+    let (status, detail) = call(&app, Method::GET, &one, Some(BOB), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let covers: Vec<Value> = detail["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|track| track["cover_url"].clone())
+        .collect();
+    assert_eq!(
+        covers,
+        vec![Value::Null, Value::Null, json!(kept[0]), json!(kept[1])]
+    );
+    assert_eq!(detail["cover_urls"], json!(kept));
+    let (_, list) = call(&app, Method::GET, "/api/v3/playlists", Some(BOB), None).await;
+    assert_eq!(list["playlists"][0]["cover_urls"], json!(kept));
+}
+
 #[tokio::test]
 async fn favorites_stay_per_user() {
     let rig = Rig::open().await;

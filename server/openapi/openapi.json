@@ -58002,7 +58002,7 @@
               "string",
               "null"
             ],
-            "description": "Cover art URL, when known."
+            "description": "Cover art address, when known: one of DroppedNeedle's own cover\nroutes, root-relative, or an https image on Spotify, Deezer, Last.fm,\nTheAudioDB or YouTube. Any other stored address reads as null."
           },
           "created_at": {
             "type": "integer",
@@ -67761,7 +67761,7 @@
               "string",
               "null"
             ],
-            "description": "Cover art URL, when known."
+            "description": "Cover art address, when known. Kept only when it is one of\nDroppedNeedle's own cover routes (a base path before `/api/v3/` is\ncut off) or an https image on Spotify, Deezer, Last.fm, TheAudioDB or\nYouTube; any other address is dropped and the track is still added."
           },
           "disc_number": {
             "type": [

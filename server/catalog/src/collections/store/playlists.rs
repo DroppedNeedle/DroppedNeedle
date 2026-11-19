@@ -23,6 +23,7 @@
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use super::super::db::{CollectionsDb, StoreError};
+use super::super::entry_cover::entry_cover;
 use super::super::models::{PlaylistMember, PlaylistTrack};
 use super::super::sql::{self, PlaylistExportRow};
 use droppedneedle_auth::users::roles::Admin;
@@ -104,7 +105,7 @@ pub struct NewEntry {
     pub artist_id: Option<String>,
     /// Source-specific track id.
     pub track_source_id: Option<String>,
-    /// Cover URL.
+    /// Cover URL; stored only when `entry_cover` keeps it.
     pub cover_url: Option<String>,
     /// Preferred source type.
     pub source_type: String,
@@ -253,7 +254,10 @@ fn track_from_row(row: &Row<'_>) -> rusqlite::Result<PlaylistTrack> {
         album_id: row.get(5)?,
         artist_id: row.get(6)?,
         track_source_id: row.get(7)?,
-        cover_url: row.get(8)?,
+        cover_url: row
+            .get::<_, Option<String>>(8)?
+            .as_deref()
+            .and_then(entry_cover),
         source_type: row.get(9)?,
         available_sources: sources.as_deref().and_then(decode_sources),
         format: row.get(11)?,
@@ -379,7 +383,10 @@ fn one_playlist(
     };
     row.cover_urls = conn
         .prepare(sql::PLAYLIST_COVERS.text())?
-        .query_map(params![playlist_id, SUMMARY_COVER_COUNT], |row| row.get(0))?
+        .query_map(params![playlist_id, SUMMARY_COVER_COUNT], |row| {
+            row.get::<_, String>(0)
+        })?
+        .filter_map(|url| url.map(|url| entry_cover(&url)).transpose())
         .collect::<rusqlite::Result<_>>()?;
     Ok(Some(row))
 }
@@ -399,7 +406,9 @@ fn fill_covers<'a>(
     })?;
     for cover in covers {
         let (id, url) = cover?;
-        by_playlist.entry(id).or_default().push(url);
+        if let Some(url) = entry_cover(&url) {
+            by_playlist.entry(id).or_default().push(url);
+        }
     }
     for row in rows {
         if let Some(urls) = by_playlist.remove(&row.id) {
@@ -528,7 +537,7 @@ fn insert_entries(
             entry.album_id,
             entry.artist_id,
             entry.track_source_id,
-            entry.cover_url,
+            entry.cover_url.as_deref().and_then(entry_cover),
             entry.source_type,
             encode_sources(entry.available_sources.as_ref()),
             entry.format,
