@@ -194,6 +194,31 @@ droppedneedle_kernel::sql! {
          WHERE id = ?3 AND playlist_id = (SELECT p.id FROM catalog_playlists p \
          WHERE p.id = ?2 AND " + OWNED + ") AND source_type = '' AND library_file_id IS NULL \
          AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.id = ?4 AND +t.availability = 'indexed')";
+    /// Every playlist, with its owner, holding an entry with no source yet
+    /// whose release group an album with an indexed track owns: the ones a
+    /// link pass opens.
+    pub(super) PLAYLISTS_TO_LINK = "SELECT DISTINCT p.user_id AS user_id, p.id AS playlist_id \
+         FROM catalog_playlist_tracks e JOIN catalog_playlists p ON p.id = e.playlist_id \
+         WHERE e.source_type = '' AND e.library_file_id IS NULL AND e.album_id IS NOT NULL \
+         AND p.user_id IS NOT NULL AND EXISTS (SELECT 1 FROM local_tracks t \
+         WHERE t.local_album_id IN (SELECT album_id FROM (" + ENTRY_OWNERS + ")) \
+         AND +t.availability = 'indexed') ORDER BY p.user_id, p.id";
+    /// A playlist a link pass opens, and its owner.
+    pub(super) row PlaylistToLink for [PLAYLISTS_TO_LINK] {
+        user_id: String,
+        playlist_id: String,
+    }
+    /// What a link pass follows: the library's catalog revision, which
+    /// every change to its albums and tracks moves, and the latest change
+    /// to any playlist, which adding entries moves.
+    pub(super) LINK_MARK = "SELECT COALESCE((SELECT value FROM library_catalog_revision \
+         WHERE singleton = 1), 0) AS catalog_revision, \
+         COALESCE((SELECT MAX(updated_at) FROM catalog_playlists), 0) AS playlists_changed";
+    /// Where the library and the playlists stood at a link pass.
+    pub(super) row LinkMark for [LINK_MARK] {
+        catalog_revision: i64,
+        playlists_changed: i64,
+    }
     /// The people the caller's playlist `?2` is shared with, first shared
     /// first: user id, display name and whether they may edit.
     /// A member whose person did not choose their display name shows as

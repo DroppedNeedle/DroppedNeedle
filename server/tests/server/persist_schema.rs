@@ -376,6 +376,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0151_auth_display_name_chosen.sql",
         "f3726ab1956bc587398b9b40fda101bf52d1c454386a9c7161d503008fb31409",
     ),
+    (
+        "0152_playlist_unlinked_entries.sql",
+        "637f4833cb49e7c5678f31df2c463a0ed6ff4f8c6064df1d8327dd661d3c3ee5",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -1538,6 +1542,54 @@ fn display_name_chosen_upgrade_marks_only_typed_names() {
             .execute_batch("UPDATE auth_users SET display_name_chosen = 2 WHERE id = 'tim'")
             .is_err(),
         "the flag is 0 or 1"
+    );
+}
+
+/// 0152 adds only an index over the playlist entries with no source yet,
+/// and a read of those entries goes through it rather than every entry.
+#[test]
+fn playlist_unlinked_entries_upgrade_adds_one_index() {
+    let dir = ScratchDir::new("playlist-unlinked-entries");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..17], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 151);
+    let before = schema_rows(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..18], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 152);
+    let mut after = schema_rows(&connection);
+    after.retain(|row| !before.contains(row));
+    assert_eq!(
+        after
+            .iter()
+            .map(|(kind, name, table, _)| (kind.as_str(), name.as_str(), table.as_str()))
+            .collect::<Vec<_>>(),
+        [(
+            "index",
+            "idx_catalog_playlist_tracks_unlinked",
+            "catalog_playlist_tracks"
+        )]
+    );
+    let plan = connection
+        .prepare(
+            "EXPLAIN QUERY PLAN SELECT id FROM catalog_playlist_tracks \
+             WHERE source_type = '' AND library_file_id IS NULL AND album_id IS NOT NULL",
+        )
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(3))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .join(" ");
+    assert!(
+        plan.contains("idx_catalog_playlist_tracks_unlinked"),
+        "{plan}"
     );
 }
 

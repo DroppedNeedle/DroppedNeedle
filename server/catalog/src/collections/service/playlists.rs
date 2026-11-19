@@ -14,6 +14,7 @@ use droppedneedle_auth::users::roles::{Admin, Principal};
 
 use super::CollectionsService;
 use super::favorites::library_error;
+use crate::collections::db::StoreError;
 use crate::collections::error::CollectionsError;
 use crate::collections::import;
 use crate::collections::models::{
@@ -1047,6 +1048,32 @@ impl CollectionsService<'_> {
             }
         }
         Ok(CheckTracksResponse { membership })
+    }
+
+    /// Link every playlist's entries to the library copies it now holds,
+    /// as opening the playlist does; how many entries were linked.
+    pub async fn link_library_everywhere(&self) -> Result<usize, CollectionsError> {
+        let mut linked = 0;
+        for (owner, playlist_id) in self.playlists().to_link().await? {
+            match self
+                .playlists()
+                .owned_by(&owner)
+                .link_library_copies(&playlist_id)
+                .await
+            {
+                Ok(count) => linked += count,
+                Err(StoreError::Busy(operation)) => {
+                    return Err(CollectionsError::Busy { operation });
+                }
+                // One playlist failing holds back none of the others.
+                Err(error) => tracing::warn!(
+                    playlist_id,
+                    %error,
+                    "could not link a playlist's entries to the library"
+                ),
+            }
+        }
+        Ok(linked)
     }
 
     /// Each entry's known sources. First, on the caller's own playlist, an

@@ -152,6 +152,47 @@ impl Rig {
             .merge(follows::routes().with_state(follows).into_router())
     }
 
+    /// Album `alb-a`, owning release group `group`, with two indexed tracks:
+    /// Opener (`trk-a1`) and Second Song (`trk-a2`), as a landing leaves it.
+    async fn seed_owned_album(&self, group: &str) {
+        let group = group.to_owned();
+        self.runtime
+            .db()
+            .write(
+                droppedneedle_kernel::db::Lane::Foreground,
+                "seed owned album",
+                move |tx| {
+                    let mut sql = "INSERT INTO local_artists (id, display_name, folded_name, kind, \
+                     created_at, updated_at) VALUES ('art-a', 'Aurora', 'aurora', 'group', 1, 1); \
+                     INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+                     album_artist_id, grouping_source, created_at, updated_at) VALUES \
+                     ('alb-a', 'r1', 'ga', 'First Light', 'first light', 'art-a', \
+                     'automatic', 1, 1); \
+                     INSERT INTO local_album_external_identities (local_album_id, provider, \
+                     release_group_mbid, decision_source, selected_at) VALUES \
+                     ('alb-a', 'musicbrainz', '"
+                        .to_owned()
+                        + &group + "', 'automatic', 1);";
+                    for (n, title) in [(1, "Opener"), (2, "Second Song")] {
+                        sql.push_str(&format!(
+                            "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, \
+                         relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, \
+                         title, title_folded, album_title, album_title_folded, disc_number, \
+                         track_number, file_format, availability, ingest_source, imported_at, \
+                         membership_source) VALUES ('trk-a{n}', 'alb-a', 'r1', '/m/a{n}.flac', \
+                         'a{n}.flac', 'ha{n}', 1, 1, 'sa{n}', '{title}', '{title}', \
+                         'First Light', 'first light', 1, {n}, 'flac', 'indexed', \
+                         'scan', 1, 'automatic');"
+                        ));
+                    }
+                    tx.execute_batch(&sql)?;
+                    Ok::<_, droppedneedle_kernel::db::DbError>(())
+                },
+            )
+            .await
+            .unwrap();
+    }
+
     /// Close the database and open it again, as a server restart does.
     async fn restart(self) -> Self {
         let Self { dir, runtime } = self;
@@ -1163,6 +1204,73 @@ async fn remote_playlist_import_lands_in_the_users_playlists() {
     assert_eq!(detail["tracks"][0]["plex_rating_key"], "1");
 }
 
+/// An album landing links the entries every playlist has for it, whoever
+/// owns the playlist, with no one opening it first: what apps read, as
+/// they never resolve sources themselves (#788).
+#[tokio::test]
+async fn a_landing_links_every_playlist_without_a_visit() {
+    use droppedneedle_catalog::collections::service::CollectionsService;
+    const GROUP: &str = "0a0b0c0d-0001-4000-8000-000000000001";
+    const MISSING: &str = "0a0b0c0d-0001-4000-8000-000000000002";
+    let rig = Rig::open().await;
+    let app = rig.app();
+    let entry = |name: &str, album_id: &str, track_number: i32| {
+        json!({"track_name": name, "artist_name": "Aurora", "album_name": "First Light",
+               "album_id": album_id, "source_type": "", "track_number": track_number})
+    };
+    let mut playlists = Vec::new();
+    for (user, tracks) in [
+        (
+            ADA,
+            json!([entry("Opener", GROUP, 1), entry("Opener", MISSING, 1)]),
+        ),
+        (BOB, json!([entry("Second Song", GROUP, 2)])),
+    ] {
+        let (_, created) = call(
+            &app,
+            Method::POST,
+            "/api/v3/playlists",
+            Some(user),
+            Some(json!({"name": "Road Trip"})),
+        )
+        .await;
+        let one = format!("/api/v3/playlists/{}", created["id"].as_str().unwrap());
+        call(
+            &app,
+            Method::POST,
+            &format!("{one}/tracks"),
+            Some(user),
+            Some(json!({ "tracks": tracks })),
+        )
+        .await;
+        playlists.push((user, one));
+    }
+    let state = rig.state();
+    let pass = || async {
+        CollectionsService::new(&state)
+            .link_library_everywhere()
+            .await
+            .unwrap()
+    };
+    assert_eq!(pass().await, 0, "nothing to link before the album lands");
+
+    rig.seed_owned_album(GROUP).await;
+    assert_eq!(pass().await, 2);
+    let mut files = Vec::new();
+    for (user, one) in &playlists {
+        let (_, detail) = call(&app, Method::GET, one, Some(*user), None).await;
+        for track in detail["tracks"].as_array().unwrap() {
+            files.push(track["library_file_id"].as_str().map(str::to_owned));
+        }
+    }
+    assert_eq!(
+        files,
+        [Some("trk-a1".to_owned()), None, Some("trk-a2".to_owned())],
+        "both owners' entries for the album, and only those"
+    );
+    assert_eq!(pass().await, 0, "a second pass finds nothing left to link");
+}
+
 /// An imported entry with no source yet links to the library's copy once
 /// its album is in (#759): resolving sources points it at the indexed track
 /// at its disc and track number on an album owning its release group, when
@@ -1175,42 +1283,7 @@ async fn resolving_sources_links_imported_entries_to_the_library() {
     const GROUP: &str = "0a0b0c0d-0001-4000-8000-000000000001";
     const MISSING: &str = "0a0b0c0d-0001-4000-8000-000000000002";
     let rig = Rig::open().await;
-    rig.runtime
-        .db()
-        .write(
-            droppedneedle_kernel::db::Lane::Foreground,
-            "seed owned album",
-            |tx| {
-                let mut sql = "INSERT INTO local_artists (id, display_name, folded_name, kind, \
-                     created_at, updated_at) VALUES ('art-a', 'Aurora', 'aurora', 'group', 1, 1); \
-                     INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
-                     album_artist_id, grouping_source, created_at, updated_at) VALUES \
-                     ('alb-a', 'r1', 'ga', 'First Light', 'first light', 'art-a', \
-                     'automatic', 1, 1); \
-                     INSERT INTO local_album_external_identities (local_album_id, provider, \
-                     release_group_mbid, decision_source, selected_at) VALUES \
-                     ('alb-a', 'musicbrainz', '"
-                    .to_owned()
-                    + GROUP
-                    + "', 'automatic', 1);";
-                for (n, title) in [(1, "Opener"), (2, "Second Song")] {
-                    sql.push_str(&format!(
-                        "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, \
-                         relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, \
-                         title, title_folded, album_title, album_title_folded, disc_number, \
-                         track_number, file_format, availability, ingest_source, imported_at, \
-                         membership_source) VALUES ('trk-a{n}', 'alb-a', 'r1', '/m/a{n}.flac', \
-                         'a{n}.flac', 'ha{n}', 1, 1, 'sa{n}', '{title}', '{title}', \
-                         'First Light', 'first light', 1, {n}, 'flac', 'indexed', \
-                         'scan', 1, 'automatic');"
-                    ));
-                }
-                tx.execute_batch(&sql)?;
-                Ok::<_, droppedneedle_kernel::db::DbError>(())
-            },
-        )
-        .await
-        .unwrap();
+    rig.seed_owned_album(GROUP).await;
     let app = rig.app();
     let (_, created) = call(
         &app,

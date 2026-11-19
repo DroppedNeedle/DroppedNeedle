@@ -565,6 +565,32 @@ impl PlaylistStore {
         Self { db }
     }
 
+    /// Every playlist, as (owner, playlist), holding an entry with no source
+    /// that an album now in the library owns.
+    pub async fn to_link(&self) -> Result<Vec<(String, String)>, StoreError> {
+        self.db
+            .read("playlists.to_link", |conn| {
+                let rows = conn
+                    .prepare(sql::PLAYLISTS_TO_LINK.text())?
+                    .query_map([], sql::PlaylistToLink::read)?
+                    .map(|row| row.map(|row| (row.user_id, row.playlist_id)))
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+    }
+
+    /// Where the library's catalog and the playlists stand: a link pass
+    /// has nothing new to do while neither moved.
+    pub async fn link_mark(&self) -> Result<(i64, i64), StoreError> {
+        self.db
+            .read("playlists.link_mark", |conn| {
+                let mark = conn.query_row(sql::LINK_MARK.text(), [], sql::LinkMark::read)?;
+                Ok((mark.catalog_revision, mark.playlists_changed))
+            })
+            .await
+    }
+
     /// One user's own playlists, to read and change.
     pub fn owned_by<'a>(&'a self, user_id: &'a str) -> OwnedPlaylists<'a> {
         OwnedPlaylists {
