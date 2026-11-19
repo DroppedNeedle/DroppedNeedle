@@ -98,9 +98,10 @@ async fn track_names(app: &TestApp, who: &Login, id: &str) -> Vec<(String, Strin
 /// file and one whose file is gone, then import each file back with an
 /// entry the library lacks: the tracks come back in order while the
 /// missing entry is reported. A CSV cell a spreadsheet would run is
-/// guarded on the way out and read plainly on the way in. A file over 2 MB
-/// is refused, a very long path is passed over quickly, and entries past
-/// 10,000 are only counted.
+/// guarded on the way out and read plainly on the way in. A Spotify
+/// exporter's CSV, with a byte-order mark and a credit of two artists, reads
+/// back to the same tracks. A file over 2 MB is refused, a very long path is
+/// passed over quickly, and entries past 10,000 are only counted.
 #[tokio::test]
 async fn playlists_export_and_import_back() {
     let app = TestApp::start("playlist-files").await;
@@ -175,6 +176,23 @@ async fn playlists_export_and_import_back() {
     // With no path to go by, the guarded title still names its track.
     let (status, report) =
         import(&app, &ada, "csv", "title,artist\n'=Sour Times,Portishead\n").await;
+    assert_eq!(status, StatusCode::CREATED, "{report}");
+    assert_eq!(report["matched"], 1, "{report}");
+
+    // A byte-order mark, a column this import does not read first, and two
+    // artists in one credit.
+    let spotify = "\u{feff}Track URI,Track Name,Artist Name(s),Album Name\n\
+        spotify:track:1,Mysterons,\"Portishead, Someone Else\",Dummy\n\
+        spotify:track:2,=Sour Times,Portishead,Dummy\n";
+    let (status, report) = import(&app, &ada, "csv", spotify).await;
+    assert_eq!(status, StatusCode::CREATED, "{report}");
+    assert_eq!(report["matched"], 2, "{report}");
+    let copy = report["playlist_id"].as_str().unwrap();
+    assert_eq!(track_names(&app, &ada, copy).await, expected);
+
+    // A track-number column before the title is not read as the title.
+    let numbered = "Track,Title,Artist,Album\n1,Mysterons,Portishead,Dummy\n";
+    let (status, report) = import(&app, &ada, "csv", numbered).await;
     assert_eq!(status, StatusCode::CREATED, "{report}");
     assert_eq!(report["matched"], 1, "{report}");
 

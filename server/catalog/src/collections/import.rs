@@ -22,15 +22,15 @@ const EXPORT_COLUMNS: Columns = Columns {
     album: Some(2),
     path: Some(5),
 };
-/// Column names that mark the first row as a header.
-const KNOWN_COLUMNS: [&str; 6] = [
-    "path",
-    "title",
-    "artist",
-    "album",
-    "album artist",
-    "duration",
-];
+/// Header names each column is read from, lowercased. The header test and
+/// the column lookup both read these, so they cannot drift apart.
+const TITLE_NAMES: &[&str] = &["title", "track name", "track", "name", "song"];
+const ARTIST_NAMES: &[&str] = &["artist", "artist name", "artist name(s)", "artists"];
+const ALBUM_NAMES: &[&str] = &["album", "album name"];
+const PATH_NAMES: &[&str] = &["path"];
+/// Other columns the common exports write. They mark a header row but are
+/// not read.
+const OTHER_NAMES: &[&str] = &["album artist", "duration"];
 
 /// One entry read from a playlist file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,8 +67,10 @@ impl Parsed {
     }
 }
 
-/// The entries a file holds, up to the limit.
+/// The entries a file holds, up to the limit. A byte-order mark that starts
+/// the file is not content.
 pub(crate) fn parse(format: ImportFormat, content: &str) -> Parsed {
+    let content = content.strip_prefix('\u{feff}').unwrap_or(content);
     match format {
         ImportFormat::M3u8 => parse_m3u(content),
         ImportFormat::Csv => parse_csv(content),
@@ -147,18 +149,31 @@ impl Columns {
     /// known column and so is not a header.
     fn of_header(row: &[String]) -> Option<Self> {
         let header: Vec<String> = row.iter().map(|cell| cell.trim().to_lowercase()).collect();
-        if !header
+        // The first listed name that some cell holds wins, so a track-number
+        // column ahead of the title is not taken for the title.
+        let column = |aliases: &[&str]| {
+            aliases
+                .iter()
+                .find_map(|alias| header.iter().position(|cell| cell == alias))
+        };
+        let names = [
+            TITLE_NAMES,
+            ARTIST_NAMES,
+            ALBUM_NAMES,
+            PATH_NAMES,
+            OTHER_NAMES,
+        ];
+        let is_header = header
             .iter()
-            .any(|cell| KNOWN_COLUMNS.contains(&cell.as_str()))
-        {
+            .any(|cell| names.iter().any(|aliases| aliases.contains(&cell.as_str())));
+        if !is_header {
             return None;
         }
-        let column = |name: &str| header.iter().position(|cell| cell == name);
         Some(Self {
-            title: column("title"),
-            artist: column("artist"),
-            album: column("album"),
-            path: column("path"),
+            title: column(TITLE_NAMES),
+            artist: column(ARTIST_NAMES),
+            album: column(ALBUM_NAMES),
+            path: column(PATH_NAMES),
         })
     }
 }
@@ -309,9 +324,11 @@ impl ImportIndex {
     /// The id of the track `entry` names: the exact path, then the import
     /// path ending at a folder boundary with the stored one, then the
     /// folded title, artist and album, then the folded title and artist.
-    /// Windows separators read as folders too. Only a path or tail no
-    /// longer than the longest stored path is looked up, so a long path
-    /// costs one pass over it rather than a hash of every tail.
+    /// A credit that names several artists is tried once more under its
+    /// first one, with its album. Windows separators read as folders too.
+    /// Only a path or tail no longer than the longest stored path is
+    /// looked up, so a long path costs one pass over it rather than a hash
+    /// of every tail.
     pub(crate) fn find(&self, entry: &ParsedEntry) -> Option<&str> {
         let path = entry.path.trim().replace('\\', "/");
         let mut rest = path.as_str();
@@ -332,12 +349,31 @@ impl ImportIndex {
             return None;
         }
         let album = fold_text(entry.album.trim());
+        if let Some(id) = self.by_names(&title, &artist, &album) {
+            return Some(id);
+        }
+        // The album must match too, so a same-title song by another artist
+        // is not taken for this one.
+        let first_credit = entry.artist.split([',', ';']).next().unwrap_or_default();
+        let first = fold_text(first_credit.trim());
+        if album.is_empty() || first.is_empty() || first == artist {
+            return None;
+        }
+        self.by_names_album
+            .get(&(title, first, album))
+            .map(String::as_str)
+    }
+
+    /// The track with this folded title and artist, preferring one on the
+    /// folded album when an album is given.
+    fn by_names(&self, title: &str, artist: &str, album: &str) -> Option<&str> {
         if !album.is_empty() {
-            let key = (title.clone(), artist.clone(), album);
+            let key = (title.to_owned(), artist.to_owned(), album.to_owned());
             if let Some(id) = self.by_names_album.get(&key) {
-                return Some(id);
+                return Some(id.as_str());
             }
         }
-        self.by_names.get(&(title, artist)).map(String::as_str)
+        let key = (title.to_owned(), artist.to_owned());
+        self.by_names.get(&key).map(String::as_str)
     }
 }
