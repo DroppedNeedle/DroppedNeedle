@@ -3,22 +3,22 @@ resolver = "2"
 members = [".", "acquire", "auth", "catalog", "compat", "kernel", "library", "media", "plugins", "providers", "testkit", "tool"]
 
 [workspace.package]
-version = "3.0.0"
+version = "3.1.0"
 edition = "2024"
 rust-version = "1.89"
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
-droppedneedle-acquire = { path = "acquire", version = "3.0.0" }
-droppedneedle-auth = { path = "auth", version = "3.0.0" }
-droppedneedle-catalog = { path = "catalog", version = "3.0.0" }
-droppedneedle-compat = { path = "compat", version = "3.0.0" }
-droppedneedle-kernel = { path = "kernel", version = "3.0.0" }
-droppedneedle-library = { path = "library", version = "3.0.0" }
-droppedneedle-media = { path = "media", version = "3.0.0" }
-droppedneedle-plugins = { path = "plugins", version = "3.0.0" }
-droppedneedle-providers = { path = "providers", version = "3.0.0" }
-droppedneedle-tool = { path = "tool", version = "3.0.0" }
+droppedneedle-acquire = { path = "acquire", version = "3.1.0" }
+droppedneedle-auth = { path = "auth", version = "3.1.0" }
+droppedneedle-catalog = { path = "catalog", version = "3.1.0" }
+droppedneedle-compat = { path = "compat", version = "3.1.0" }
+droppedneedle-kernel = { path = "kernel", version = "3.1.0" }
+droppedneedle-library = { path = "library", version = "3.1.0" }
+droppedneedle-media = { path = "media", version = "3.1.0" }
+droppedneedle-plugins = { path = "plugins", version = "3.1.0" }
+droppedneedle-providers = { path = "providers", version = "3.1.0" }
+droppedneedle-tool = { path = "tool", version = "3.1.0" }
 argon2 = { version = "0.5", features = ["alloc"] }
 axum = { version = "0.8", features = ["json", "query", "http1", "matched-path", "multipart"] }
 base64 = "0.22"

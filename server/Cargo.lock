@@ -528,7 +528,7 @@ dependencies = [
 
 [[package]]
 name = "droppedneedle"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -577,7 +577,7 @@ dependencies = [
 
 [[package]]
 name = "droppedneedle-acquire"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -608,7 +608,7 @@ dependencies = [
 
 [[package]]
 name = "droppedneedle-auth"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "argon2",
  "axum",
@@ -642,7 +642,7 @@ dependencies = [
 
 [[package]]
 name = "droppedneedle-catalog"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -672,7 +672,7 @@ dependencies = [
 
 [[package]]
 name = "droppedneedle-compat"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -699,7 +699,7 @@ dependencies = [
 
 [[package]]
 name = "droppedneedle-kernel"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -730,7 +730,7 @@ dependencies = [
 
 [[package]]
 name = "droppedneedle-library"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -766,7 +766,7 @@ dependencies = [
 
 [[package]]
 name = "droppedneedle-media"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "axum",
  "caseless",
@@ -795,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "droppedneedle-plugins"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -821,7 +821,7 @@ dependencies = [
 
 [[package]]
 name = "droppedneedle-providers"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "base64 0.22.1",
  "caseless",
@@ -855,7 +855,7 @@ dependencies = [
 
 [[package]]
 name = "droppedneedle-tool"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "aes",
  "argon2",
