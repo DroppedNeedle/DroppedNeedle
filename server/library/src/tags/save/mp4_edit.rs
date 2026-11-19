@@ -3,7 +3,7 @@
 
 use lofty::config::WriteOptions;
 use lofty::file::{TaggedFile, TaggedFileExt as _};
-use lofty::mp4::{Atom, AtomData, AtomIdent, Ilst};
+use lofty::mp4::{Atom, AtomData, AtomIdent, DataType, Ilst};
 use lofty::tag::{Accessor as _, TagExt as _, TagType};
 
 use super::edit::{foreign, supersede};
@@ -217,6 +217,12 @@ pub(super) fn apply(
         .unwrap_or_default();
     if let Some(atoms) = atoms {
         repair_mp4_text(&mut native, atoms);
+        let genre_edited = edits
+            .iter()
+            .any(|edit| matches!(edit, Mp4Edit::Text { code, .. } if code == b"\xa9gen"));
+        if !genre_edited {
+            keep_legacy_genre(&mut native, atoms);
+        }
     }
     for edit in edits {
         match edit {
@@ -347,6 +353,33 @@ fn repair_mp4_text(native: &mut Ilst, atoms: &[Mp4AtomTruth]) {
     for (ident, values) in texts {
         replace_mp4(native, ident, &values);
     }
+}
+
+/// Put back a legacy numeric `gnre` atom, as iTunes writes a genre, that
+/// lofty's read turned into a `©gen`, so a save that leaves the genre
+/// alone leaves the file's genre as it was.
+fn keep_legacy_genre(native: &mut Ilst, atoms: &[Mp4AtomTruth]) {
+    if atoms.iter().any(|atom| atom.kind == *b"\xa9gen") {
+        return;
+    }
+    let Some(number) = atoms
+        .iter()
+        .find(|atom| atom.kind == *b"gnre")
+        .and_then(|atom| match atom.items.as_slice() {
+            [Mp4Item::Integer(number)] => u16::try_from(*number).ok(),
+            _ => None,
+        })
+    else {
+        return;
+    };
+    let _ = native.remove(&AtomIdent::Fourcc(*b"\xa9gen")).count();
+    native.insert(Atom::new(
+        AtomIdent::Fourcc(*b"gnre"),
+        AtomData::Unknown {
+            code: DataType::Reserved,
+            data: number.to_be_bytes().to_vec(),
+        },
+    ));
 }
 
 /// Put the `ilst` items back in the file's order: lofty's remove swaps

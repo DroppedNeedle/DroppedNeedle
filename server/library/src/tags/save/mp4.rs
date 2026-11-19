@@ -538,6 +538,11 @@ fn verify_mp4(
     pictures_edited: bool,
 ) -> Result<(), Refusal> {
     let mut edited_codes: Vec<[u8; 4]> = edits.iter().filter_map(Mp4Edit::code).collect();
+    // A genre is written as `©gen`, which takes the place of a legacy
+    // numeric `gnre` (iTunes files carry one), so the edit covers both.
+    if edited_codes.contains(b"\xa9gen") {
+        edited_codes.push(*b"gnre");
+    }
     // Picture bytes are checked on their own.
     if pictures_edited {
         edited_codes.push(*b"covr");
