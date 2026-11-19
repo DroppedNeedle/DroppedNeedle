@@ -118,6 +118,11 @@ fn mp4_listing(
             None => {}
         }
     }
+    // A legacy `gnre` is the genre's too: it reads as one, and a genre
+    // edit writes `©gen` in its place.
+    if !owned_too {
+        owned_codes.push(*b"gnre");
+    }
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // A freeform holding any value that is not text (or is empty) is not
     // listed: an edit replaces the whole item, and that value could not
@@ -466,7 +471,24 @@ pub(super) fn mp4_pair(atoms: &[Mp4AtomTruth], code: [u8; 4]) -> Option<(u32, u3
         })
 }
 
-/// A field's values as the file's MP4 atoms hold them.
+/// The genre a legacy numeric `gnre` atom names, read as lofty (and so
+/// the scan) reads it: a 2-byte number whose low byte is an ID3v1
+/// genre's plus one. `None` for any other width, number or shape.
+fn legacy_genre(atoms: &[Mp4AtomTruth]) -> Option<&'static str> {
+    let [Mp4Item::Integer(number)] = atoms
+        .iter()
+        .find(|atom| atom.kind == *b"gnre")?
+        .items
+        .as_slice()
+    else {
+        return None;
+    };
+    let index = usize::from(number.to_be_bytes()[7]).checked_sub(1)?;
+    lofty::id3::v1::GENRES.get(index).copied()
+}
+
+/// A field's values as the file's MP4 atoms hold them. A genre with no
+/// `©gen` reads from a legacy `gnre` atom.
 pub(super) fn mp4_read(atoms: &[Mp4AtomTruth], field: TagField) -> FieldRead {
     let items_of = |code: [u8; 4]| -> Vec<&Mp4Item> {
         atoms
@@ -486,6 +508,12 @@ pub(super) fn mp4_read(atoms: &[Mp4AtomTruth], field: TagField) -> FieldRead {
                     Mp4Item::Text(text) => values.push(text.clone()),
                     _ => return FieldRead::Opaque,
                 }
+            }
+            if values.is_empty()
+                && code == *b"\xa9gen"
+                && let Some(genre) = legacy_genre(atoms)
+            {
+                values.push(genre.to_owned());
             }
             values_or_absent(values)
         }

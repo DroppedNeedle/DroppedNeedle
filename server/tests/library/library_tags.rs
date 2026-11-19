@@ -4135,9 +4135,10 @@ fn mp4_integer_atoms_keep_their_type_and_order() {
     assert_eq!(view(&m4a), before);
 }
 
-/// An m4a from iTunes carries its genre as a legacy numeric `gnre` atom.
-/// Other edits leave it alone; a genre edit writes `©gen` in its place,
-/// and the save checks both as the one genre field (#692).
+/// An m4a from iTunes carries its genre as a legacy numeric `gnre` atom,
+/// which reads as the genre it numbers. Other edits leave it alone; a
+/// genre edit writes `©gen` in its place, and the save checks both as the
+/// one genre field (#692).
 #[test]
 fn m4a_genre_edit_replaces_a_legacy_numeric_genre() {
     use lofty::config::{ParseOptions, WriteOptions};
@@ -4166,10 +4167,19 @@ fn m4a_genre_edit_replaces_a_legacy_numeric_genre() {
             .collect::<Vec<_>>()
     };
     assert_eq!(gnre(&m4a), [vec![0, 18]]);
+    let genre =
+        |path: &Path| tags::read_fields(track_file(path)).unwrap()[&TagField::Genre].clone();
+    assert_eq!(genre(&m4a), texts(&["Rock"]), "it reads as its name");
+    let kept = tags::save::tags_kept(track_file(&m4a), PicturesPlan::Untouched).unwrap();
+    assert!(
+        kept.left_alone.iter().all(|(key, _)| key != "mp4:gnre"),
+        "{kept:?}"
+    );
 
     tags::save_tags(&m4a, &[TagEdit::set_title("Later")]).expect("saves");
     assert_eq!(gnre(&m4a), [vec![0, 18]], "another edit leaves it alone");
     assert!(mp4_text(&m4a, b"\xa9gen").is_empty());
+    assert_eq!(genre(&m4a), texts(&["Rock"]));
     tags::save_tags(
         &m4a,
         &[TagEdit::new(TagField::Genre, vec!["Indie".to_owned()])],
