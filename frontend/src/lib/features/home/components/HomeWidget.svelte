@@ -47,18 +47,19 @@
 		min-height: 0;
 	}
 	.home-widget.is-editing {
-		outline: 1px dashed color-mix(in srgb, var(--color-base-content) 22%, transparent);
+		outline: 1px solid color-mix(in srgb, var(--color-base-content) 34%, transparent);
 		outline-offset: 2px;
 		border-radius: 0.25rem;
 	}
-	.home-widget:hover .home-widget-bar,
-	.home-widget:focus-within .home-widget-bar {
+
+	/* the bar is the only grab and hide surface, so while editing it stays
+	   visible instead of waiting for the pointer; it shares the top-right
+	   corner with a shelf's See all link and must not sit over it */
+	.home-widget.is-editing .home-widget-bar {
 		opacity: 1;
 		pointer-events: auto;
 	}
 
-	/* revealed on hover: the bar shares the top-right corner with a shelf's
-	   See all link and must not sit over it */
 	.home-widget-bar {
 		opacity: 0;
 		pointer-events: none;
@@ -84,6 +85,9 @@
 	.home-drag {
 		display: inline-flex;
 		align-items: center;
+		padding: 0 0.125rem;
+		border-radius: 0.25rem;
+		background: color-mix(in srgb, var(--color-base-content) 12%, transparent);
 		cursor: grab;
 		touch-action: none;
 		color: var(--color-base-content);

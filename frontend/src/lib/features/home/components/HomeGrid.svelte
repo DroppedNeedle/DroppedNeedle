@@ -1,6 +1,6 @@
 <script lang="ts">
 	import 'gridstack/dist/gridstack.min.css';
-	import { GridStack, type GridStackNode } from 'gridstack';
+	import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack';
 	import type { Snippet } from 'svelte';
 	import { REFERENCE_COLUMNS, UNIT, type WidgetPlacement } from '../layout/contract';
 
@@ -56,7 +56,9 @@
 	}
 
 	function report(nodes: GridStackNode[]) {
-		if (!onchange || !grid) return;
+		// gridstack also emits change when it re-columns the grid or a layout is
+		// replaced; a save is taken only from a drag or a resize by the editor
+		if (!onchange || !grid || !editing) return;
 		const scale = REFERENCE_COLUMNS / grid.getColumn();
 		const moved = nodes.flatMap((node) => {
 			if (node.id == null || node.x == null || node.y == null || node.w == null) return [];
@@ -96,11 +98,20 @@
 		if (!instance) return;
 		grid = instance;
 		if (columns !== REFERENCE_COLUMNS) instance.column(columns, 'moveScale');
-		instance.on('change', (_event, nodes) => report(nodes));
+		// a gesture is the only thing that may write back: the drag and resize
+		// stops carry the element that moved, a column change carries none
+		const save = (el: GridItemHTMLElement) => {
+			const node = el.gridstackNode;
+			if (node) report([node]);
+		};
 		instance.on('drag', (_event, el) => {
 			dragFrom = el.getBoundingClientRect();
 		});
-		instance.on('dragstop', (_event, el) => flip(el));
+		instance.on('dragstop', (_event, el) => {
+			flip(el);
+			save(el);
+		});
+		instance.on('resizestop', (_event, el) => save(el));
 		return () => {
 			instance.destroy(false);
 			grid = null;
