@@ -79,6 +79,7 @@ pub fn document_from_captured(
             let truth = VorbisTruth {
                 vendor: String::new(),
                 pairs: pairs.clone(),
+                earlier_block_lost: false,
             };
             document.spellings = vorbis_spellings(&truth);
             TagField::ALL

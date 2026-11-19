@@ -4864,3 +4864,95 @@ fn scan_and_editor_agree_on_writable_fields() {
         differences.join("\n")
     );
 }
+
+/// The FLAC metadata blocks of `bytes` as `(type, body)`, and the audio
+/// after them.
+fn flac_blocks(bytes: &[u8]) -> (Vec<(u8, Vec<u8>)>, Vec<u8>) {
+    let mut blocks = Vec::new();
+    let mut offset = 4;
+    loop {
+        let header = bytes[offset];
+        let len = u32::from_be_bytes([0, bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]])
+            as usize;
+        blocks.push((header & 0x7F, bytes[offset + 4..offset + 4 + len].to_vec()));
+        offset += 4 + len;
+        if header & 0x80 != 0 {
+            return (blocks, bytes[offset..].to_vec());
+        }
+    }
+}
+
+/// A FLAC stream holding `blocks` then `audio`.
+fn flac_from_blocks(blocks: &[(u8, Vec<u8>)], audio: &[u8]) -> Vec<u8> {
+    let mut out = b"fLaC".to_vec();
+    for (index, (kind, body)) in blocks.iter().enumerate() {
+        let last = if index + 1 == blocks.len() { 0x80 } else { 0 };
+        out.push(kind | last);
+        out.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..]);
+        out.extend_from_slice(body);
+    }
+    out.extend_from_slice(audio);
+    out
+}
+
+/// A Vorbis comment block body holding `vendor` and `pairs`.
+fn comment_block(vendor: &str, pairs: &[&str]) -> Vec<u8> {
+    let mut out = (vendor.len() as u32).to_le_bytes().to_vec();
+    out.extend_from_slice(vendor.as_bytes());
+    out.extend_from_slice(&(pairs.len() as u32).to_le_bytes());
+    for pair in pairs {
+        out.extend_from_slice(&(pair.len() as u32).to_le_bytes());
+        out.extend_from_slice(pair.as_bytes());
+    }
+    out
+}
+
+/// A FLAC file carrying a second Vorbis comment block, against the spec
+/// but written by some taggers, saves when the last block, the one every
+/// tag read takes, holds every tag of the first: the save keeps it as one
+/// block and changes nothing else. When the first holds a tag the last
+/// lacks, the save would lose it, so it is refused and the file left as
+/// it was (#714).
+#[test]
+fn flac_with_two_comment_blocks_keeps_the_last() {
+    let (_scratch, path) = temp_copy("flac_full_01.flac", "flac-two-comment-blocks");
+    let (mut blocks, audio) = flac_blocks(&std::fs::read(&path).unwrap());
+    let first = blocks
+        .iter()
+        .position(|(kind, _)| *kind == 4)
+        .expect("a comment block");
+    blocks[first].1 = comment_block("first encoder", &["title=Second", "COMMENT="]);
+    blocks.push((
+        4,
+        comment_block("second encoder", &["TITLE=Second", "MOOD=Calm"]),
+    ));
+    std::fs::write(&path, flac_from_blocks(&blocks, &audio)).unwrap();
+
+    tags::save_tags(&path, &[TagEdit::set_title("Edited")]).expect("saves");
+
+    let (after, after_audio) = flac_blocks(&std::fs::read(&path).unwrap());
+    assert_eq!(
+        after.iter().filter(|(kind, _)| *kind == 4).count(),
+        1,
+        "one comment block"
+    );
+    assert_eq!(vorbis_values(&path, "TITLE"), ["Edited"]);
+    assert_eq!(vorbis_values(&path, "MOOD"), ["Calm"]);
+    assert_eq!(vorbis_vendor(&path), "second encoder");
+    assert_eq!(after_audio, audio, "audio unchanged");
+
+    blocks[first].1 = comment_block("first encoder", &["TITLE=Second", "GENRE=Jazz"]);
+    std::fs::write(&path, flac_from_blocks(&blocks, &audio)).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let message = tags::save::tags_kept(track_file(&path), PicturesPlan::Untouched)
+        .unwrap()
+        .refusal
+        .expect("refused");
+    assert!(message.contains("more than one tag block"), "{message}");
+    let result = tags::save_tags(&path, &[TagEdit::set_title("Edited")]);
+    assert!(
+        matches!(result, Err(TagsError::SaveRefused { .. })),
+        "{result:?}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before, "file unchanged");
+}

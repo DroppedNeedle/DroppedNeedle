@@ -20,6 +20,11 @@ use crate::tags::fields::TagField;
 /// The Vorbis comment of a FLAC, Ogg or Opus file.
 pub(super) struct Vorbis;
 
+/// Why a FLAC file whose earlier comment block holds a tag the last one
+/// lacks is not saved: the save writes the last block alone.
+const TWO_BLOCKS_REFUSAL: &str = "This file has more than one tag block, and saving it would \
+     lose tags only an earlier one holds.";
+
 /// One edit at its home in a Vorbis comment: every value of one key (no
 /// values removes it). Keys match without case.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +61,11 @@ impl TagFormat for Vorbis {
                 detail: format!("comment key '{upper}' has mixed spellings {variants:?}"),
             });
         }
+        if truth.earlier_block_lost {
+            return Err(Refusal::NoByteInventory {
+                detail: TWO_BLOCKS_REFUSAL.to_owned(),
+            });
+        }
         Ok(truth)
     }
 
@@ -67,6 +77,9 @@ impl TagFormat for Vorbis {
                 "The file spells its {upper} tag more than one way ({}), so saving its tags would merge them.",
                 variants.join(", ")
             )));
+        }
+        if truth.earlier_block_lost {
+            return Ok(TagsKept::refused(TWO_BLOCKS_REFUSAL.to_owned()));
         }
         Ok(TagsKept::default())
     }
@@ -275,6 +288,9 @@ fn vorbis_native(truth: &VorbisTruth) -> BTreeMap<String, Vec<String>> {
 pub(super) struct VorbisTruth {
     pub(super) vendor: String,
     pub(super) pairs: Vec<(String, String)>,
+    /// A FLAC stream holds an earlier comment block with a tag this one
+    /// lacks (or one that does not read), which a save would drop.
+    pub(super) earlier_block_lost: bool,
 }
 
 /// Vorbis field rule, mirroring lofty's own check: ASCII 0x20-0x7D
@@ -294,11 +310,15 @@ fn is_picture_field(key: &str) -> bool {
 
 fn parse_vorbis_truth(format: AudioFormat, bytes: &[u8]) -> Result<Option<VorbisTruth>, Refusal> {
     let no_inventory = |detail: String| Refusal::NoByteInventory { detail };
-    let payload = match format {
-        AudioFormat::Flac => flac_comment_block(bytes).map_err(no_inventory)?,
-        AudioFormat::Ogg | AudioFormat::Opus => {
-            ogg_comment_packet(format, bytes).map_err(no_inventory)?
+    let (payload, earlier) = match format {
+        AudioFormat::Flac => {
+            let mut blocks = flac_comment_blocks(bytes).map_err(no_inventory)?;
+            (blocks.pop(), blocks)
         }
+        AudioFormat::Ogg | AudioFormat::Opus => (
+            ogg_comment_packet(format, bytes).map_err(no_inventory)?,
+            Vec::new(),
+        ),
         _ => {
             return Err(no_inventory("not a Vorbis container".to_owned()));
         }
@@ -306,19 +326,41 @@ fn parse_vorbis_truth(format: AudioFormat, bytes: &[u8]) -> Result<Option<Vorbis
     let Some(payload) = payload else {
         return Ok(None);
     };
-    parse_vorbis_payload(&payload)
-        .map(Some)
-        .map_err(no_inventory)
+    let mut truth = parse_vorbis_payload(&payload).map_err(no_inventory)?;
+    truth.earlier_block_lost = earlier
+        .iter()
+        .any(|block| !block_kept_in(block, &truth.pairs));
+    Ok(Some(truth))
 }
 
-fn flac_comment_block(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
-    let mut comment = None;
+/// Whether every non-empty pair of an earlier comment block is also in
+/// the last block's `pairs`, its key matched without case. A block that
+/// does not read is not.
+fn block_kept_in(block: &[u8], pairs: &[(String, String)]) -> bool {
+    parse_vorbis_payload(block).is_ok_and(|earlier| {
+        earlier
+            .pairs
+            .iter()
+            .filter(|(_, value)| !value.is_empty())
+            .all(|(key, value)| {
+                pairs
+                    .iter()
+                    .any(|(held, held_value)| held.eq_ignore_ascii_case(key) && held_value == value)
+            })
+    })
+}
+
+/// The FLAC stream's Vorbis comment blocks, in file order. A stream may
+/// carry only one; one with more is read as lofty reads and writes it:
+/// the last block is the tag, and a save writes it back as the only one.
+fn flac_comment_blocks(bytes: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    let mut comments = Vec::new();
     flac_metadata(bytes, |kind, block| {
-        if kind == 4 && comment.is_none() {
-            comment = Some(block.to_vec());
+        if kind == 4 {
+            comments.push(block.to_vec());
         }
     })?;
-    Ok(comment)
+    Ok(comments)
 }
 
 /// Where a FLAC stream's audio starts: right after its last metadata
@@ -518,7 +560,11 @@ fn parse_vorbis_payload(payload: &[u8]) -> Result<VorbisTruth, String> {
     if !rest.iter().all(|byte| *byte == 0) {
         return Err("trailing bytes after comments".to_owned());
     }
-    Ok(VorbisTruth { vendor, pairs })
+    Ok(VorbisTruth {
+        vendor,
+        pairs,
+        earlier_block_lost: false,
+    })
 }
 
 fn vorbis_present(truth: Option<&VorbisTruth>, key: &str) -> bool {
