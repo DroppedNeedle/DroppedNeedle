@@ -1979,6 +1979,23 @@ async fn apps_list_other_peoples_public_playlists_only_on_request() {
         saved["playlist"]["owner"], read["playlist"]["owner"],
         "{saved}"
     );
+    // A song saved from an app is stored under the web player's source
+    // name, so it plays on the web too (#763).
+    let (status, detail) = app
+        .call_through_busy(
+            "GET",
+            &format!("/api/v3/playlists/{private}"),
+            &ada_headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    assert_eq!(detail["tracks"][0]["source_type"], "local", "{detail}");
+    assert_eq!(
+        detail["tracks"][0]["available_sources"],
+        json!(["local"]),
+        "{detail}"
+    );
     assert_eq!(
         names(&subsonic_playlists(&rig, &ada_subsonic).await),
         ["AdaPrivate", "AdaPublic"]

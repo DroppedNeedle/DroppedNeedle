@@ -14,9 +14,7 @@ use std::sync::Arc;
 
 use droppedneedle_catalog::artwork::ArtworkService;
 use droppedneedle_catalog::artwork::covers::{CoverArt, CoverLookup};
-use droppedneedle_catalog::collections::service::{
-    CollectionsService, LOCAL_SOURCE, SavedPlaylist, Visible,
-};
+use droppedneedle_catalog::collections::service::{CollectionsService, SavedPlaylist, Visible};
 use droppedneedle_catalog::collections::store::play_marks::MarkScope;
 use droppedneedle_catalog::collections::store::playlists::NewEntry;
 use droppedneedle_catalog::collections::store::ratings::{ItemRating, RatedKind};
@@ -772,8 +770,8 @@ impl CompatLibrary {
                 artist_id: track.artist_id,
                 track_source_id: Some(track.id.clone()),
                 cover_url: None,
-                source_type: LOCAL_SOURCE.to_owned(),
-                available_sources: Some(vec![LOCAL_SOURCE.to_owned()]),
+                source_type: "local".to_owned(),
+                available_sources: Some(vec!["local".to_owned()]),
                 format: Some(track.format),
                 track_number: i32::try_from(track.track_number).ok(),
                 disc_number: i32::try_from(track.disc_number).ok(),

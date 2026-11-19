@@ -368,6 +368,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0149_playlist_members.sql",
         "c6aaabe169099a26500fccae2ca5dc27ba14466a9cdbc75e50080b04fe0d1f73",
     ),
+    (
+        "0150_playlist_local_source.sql",
+        "f55b5fe55aebab155d8114f61d0ef3e68bc9ee643651a7786b45676a4a798706",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -1406,6 +1410,74 @@ fn playlist_members_upgrade_adds_an_empty_table() {
     assert_eq!(
         scalar(&connection, "SELECT COUNT(*) FROM catalog_playlist_members"),
         0
+    );
+}
+
+/// 0150 stores library entries under the web player's source name: the
+/// names Subsonic and Jellyfin apps and v2 wrote become `local`, in the
+/// source and in the list of sources, each name kept once in its first
+/// place. Other entries and the schema stay as they were.
+#[test]
+fn playlist_local_source_upgrade_renames_old_local_names() {
+    let dir = ScratchDir::new("playlist-local-source");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..15], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 149);
+    let entries = [
+        (
+            "a",
+            "droppedneedle-local",
+            Some(r#"["droppedneedle-local"]"#),
+        ),
+        ("b", "howler", Some(r#"["howler","local","youtube"]"#)),
+        (
+            "c",
+            "youtube",
+            Some(r#"["youtube","droppedneedle-local","howler"]"#),
+        ),
+        ("d", "local", None),
+        ("e", "plex", Some(r#"["plex"]"#)),
+    ];
+    for (key, source, sources) in entries {
+        connection
+            .execute_batch(&format!(
+                "PRAGMA foreign_keys = OFF;
+                 INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name,
+                     artist_name, album_name, source_type, available_sources, created_at)
+                 VALUES ('{key}', 'p1', unicode('{key}'), 'T', 'A', 'L', '{source}', {sources}, 1);",
+                sources = sources.map_or("NULL".to_owned(), |list| format!("'{list}'")),
+            ))
+            .unwrap();
+    }
+    let before_schema = schema_rows(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..16], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 150);
+    assert_eq!(
+        schema_rows(&connection),
+        before_schema,
+        "nothing else changes"
+    );
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT id || ' ' || source_type || ' ' || COALESCE(available_sources, '-') \
+             FROM catalog_playlist_tracks ORDER BY id",
+            [],
+        ),
+        [
+            r#"a local ["local"]"#,
+            r#"b local ["local","youtube"]"#,
+            r#"c youtube ["youtube","local"]"#,
+            "d local -",
+            r#"e plex ["plex"]"#,
+        ]
     );
 }
 

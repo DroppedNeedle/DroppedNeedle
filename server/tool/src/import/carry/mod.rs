@@ -41,6 +41,7 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 use thiserror::Error;
 
 use crate::export::envelope::ExportDoc;
+use crate::export::sections::collections::PLAYLIST_TRACKS;
 use crate::export::sections::contributions::CALLBACK_TOKENS;
 use crate::export::sections::{ALL, Column, TableSection, Target};
 use crate::import::report::{EntityCounts, ReportBuilder, now_ms};
@@ -330,6 +331,10 @@ fn apply(conn: &Connection, run: &CarryRun<'_>, unit: Work) -> Result<SectionRes
             let mut result = apply_table(conn, section, table, &present, run.dry_run)?;
             if section.name == CALLBACK_TOKENS.name {
                 expire_return_links(conn, &mut result, run.dry_run)?;
+            }
+            if section.name == PLAYLIST_TRACKS.name && !run.dry_run {
+                conn.execute(sql::RENAME_CARRIED_LOCAL_SOURCES.text(), [])?;
+                conn.execute(sql::RENAME_CARRIED_LOCAL_SOURCE_LISTS.text(), [])?;
             }
             Ok(result)
         }

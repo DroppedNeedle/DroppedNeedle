@@ -34,6 +34,24 @@ const ON_PLAYLIST: &[Parent] = &[Parent::required(
 /// Source types whose `track_source_id` is a v2 library id.
 const LOCAL_ENTRY: &str = "b.\"source_type\" IN ('local', 'droppedneedle-local', 'howler')";
 
+/// An entry's source under v3's name: v2's older names of the local
+/// library source, `howler` and `droppedneedle-local`, become `local`, as
+/// migration 0150 renames them in v3.
+const V3_SOURCE: &str = "CASE WHEN s.source_type IN ('droppedneedle-local', 'howler') \
+     THEN 'local' ELSE s.source_type END";
+
+/// An entry's list of sources with those names renamed the same way, each
+/// name kept once in its first place.
+const V3_SOURCES: &str = "CASE WHEN json_valid(s.available_sources) \
+     AND json_type(s.available_sources) = 'array' \
+     AND EXISTS (SELECT 1 FROM json_each(s.available_sources) \
+     WHERE value IN ('droppedneedle-local', 'howler')) \
+     THEN (SELECT json_group_array(source) FROM (SELECT CASE WHEN value IN \
+     ('droppedneedle-local', 'howler') THEN 'local' ELSE value END AS source, \
+     MIN(key) AS first FROM json_each(s.available_sources) \
+     GROUP BY source ORDER BY first)) \
+     ELSE s.available_sources END";
+
 /// Playlists. The v2 cover path stays behind: v3 keeps the cover bytes in
 /// `catalog_playlist_covers` instead. A user holds one playlist per imported
 /// source; a second v2 playlist with the same source counts as a conflict.
@@ -84,8 +102,8 @@ pub const PLAYLIST_TRACKS: TableSection = TableSection {
         col("artist_id"),
         col("track_source_id").link_when(LinkKind::Track, LinkMode::AsWritten, LOCAL_ENTRY),
         Column::new("cover_url").from_sql_of("cover_url", V3_COVER),
-        col("source_type"),
-        col("available_sources"),
+        Column::new("source_type").from_sql_of("source_type", V3_SOURCE),
+        Column::new("available_sources").from_sql_of("available_sources", V3_SOURCES),
         col("format"),
         Column::new("track_number").from_sql_of("track_number", whole!("track_number")),
         Column::new("disc_number").from_sql_of("disc_number", whole!("disc_number")),

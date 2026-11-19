@@ -69,6 +69,24 @@ droppedneedle_kernel::sql! {
              SET expires_at = min(expires_at, \
              CAST(round((julianday('now') - 2440587.5) * 86400000.0) AS INTEGER)) \
              WHERE token_hash IN (SELECT token_hash FROM bundle.\"contribution_callback_token\")";
+    /// Carried entries under v3's name of the local library source, as
+    /// migration 0150 renames them: a bundle from an older exporter may
+    /// still hold v2's `howler` or `droppedneedle-local`.
+    pub(super) RENAME_CARRIED_LOCAL_SOURCES = "UPDATE main.catalog_playlist_tracks \
+             SET source_type = 'local' WHERE source_type IN ('droppedneedle-local', 'howler') \
+             AND id IN (SELECT id FROM bundle.\"playlist_track\")";
+    /// The same rename in carried entries' lists of sources, each name kept
+    /// once in its first place.
+    pub(super) RENAME_CARRIED_LOCAL_SOURCE_LISTS = "UPDATE main.catalog_playlist_tracks \
+             SET available_sources = (SELECT json_group_array(source) FROM ( \
+             SELECT CASE WHEN value IN ('droppedneedle-local', 'howler') THEN 'local' \
+             ELSE value END AS source, MIN(key) AS first \
+             FROM json_each(main.catalog_playlist_tracks.available_sources) \
+             GROUP BY source ORDER BY first)) \
+             WHERE json_valid(available_sources) AND json_type(available_sources) = 'array' \
+             AND EXISTS (SELECT 1 FROM json_each(available_sources) \
+             WHERE value IN ('droppedneedle-local', 'howler')) \
+             AND id IN (SELECT id FROM bundle.\"playlist_track\")";
     /// Whether the bundle has table ?1.
     pub(super) BUNDLE_HAS_TABLE = "SELECT EXISTS(SELECT 1 FROM bundle.sqlite_master \
              WHERE type = 'table' AND name = ?1)";

@@ -613,6 +613,14 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
             None
         ]
     );
+    // v2's older names of the local library source land as `local`, in
+    // the source and in the list of sources, each name once.
+    let entry_sources: Vec<String> = target_db.column(
+        "SELECT source_type || ' ' || COALESCE(available_sources, '-') \
+         FROM catalog_playlist_tracks WHERE playlist_id = ? ORDER BY position",
+        rusqlite::params![PLAYLIST_ID],
+    );
+    assert_eq!(entry_sources, [r#"local ["local","youtube"]"#, "youtube -"]);
     let request_cover: Option<String> = target_db.one(
         "SELECT cover_url FROM request_history WHERE musicbrainz_id_lower = ?",
         rusqlite::params![droppedneedle_tool::test_support::fixture::FINISHED_REQUEST_MBID],

@@ -39,19 +39,17 @@ const MAX_NAME_LEN: usize = 200;
 pub(crate) const MAX_COVER_BYTES: usize = 5 * 1024 * 1024;
 /// Cover mime allowlist.
 const COVER_TYPES: [&str; 3] = ["image/png", "image/jpeg", "image/webp"];
-/// Source type of an entry added from the local library by a compat client.
-pub const LOCAL_SOURCE: &str = "droppedneedle-local";
-/// Accepted source types and what they normalize to. `howler` is the old name
-/// of the local source.
+/// Accepted source types and what they normalize to. `howler` and
+/// `droppedneedle-local` are older names of the local library source.
 const SOURCE_TYPES: [(&str, &str); 8] = [
     ("", ""),
     ("local", "local"),
     ("howler", "local"),
+    ("droppedneedle-local", "local"),
     ("jellyfin", "jellyfin"),
     ("navidrome", "navidrome"),
     ("plex", "plex"),
     ("youtube", "youtube"),
-    (LOCAL_SOURCE, LOCAL_SOURCE),
 ];
 
 /// Most tracks one membership check accepts.
@@ -102,8 +100,16 @@ fn clean_source(raw: &str) -> Result<String, CollectionsError> {
         })
 }
 
+/// Normalized source types, each once, in their first order, or 400.
 fn clean_sources(raw: &[String]) -> Result<Vec<String>, CollectionsError> {
-    raw.iter().map(|source| clean_source(source)).collect()
+    let mut sources = Vec::with_capacity(raw.len());
+    for source in raw {
+        let source = clean_source(source)?;
+        if !sources.contains(&source) {
+            sources.push(source);
+        }
+    }
+    Ok(sources)
 }
 
 /// Trimmed export path prefix without its trailing slash; `None` when
@@ -211,7 +217,7 @@ fn to_entry(input: &TrackInput) -> Result<NewEntry, CollectionsError> {
         .map(clean_sources)
         .transpose()?;
     let library_file_id = match (&input.track_source_id, source_type.as_str()) {
-        (Some(id), "local" | LOCAL_SOURCE) if !id.is_empty() => Some(id.clone()),
+        (Some(id), "local") if !id.is_empty() => Some(id.clone()),
         _ => None,
     };
     Ok(NewEntry {
