@@ -74,12 +74,14 @@
 		void overviewQuery.refetch();
 	}
 
+	// Last.fm gives no MusicBrainz id; an owned row opens its own page.
 	function getItemHref(item: ChartItem): string | null {
-		if (!item.musicbrainz_id) return null;
+		const id = item.musicbrainz_id ?? (item.in_library ? item.local_id : null);
+		if (!id) return null;
 		if (itemType === 'album') {
-			return albumHref(item.musicbrainz_id);
+			return albumHref(id);
 		}
-		return artistHref(item.musicbrainz_id);
+		return artistHref(id);
 	}
 
 	function handleItemClick(item: ChartItem) {
