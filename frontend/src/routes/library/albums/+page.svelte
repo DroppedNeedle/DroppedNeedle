@@ -147,13 +147,19 @@
 		setParams({ favorites: params.favorites ? null : '1', sort: null });
 	}
 
+	// Sorting from the picker is the default for All Albums; the A-Z jump sorts
+	// the same list without rewriting what the person chose as their default.
 	function setSort(value: string) {
-		setParams({ sort: value });
+		applySort(value);
 		// Only the All Albums order is the default; the favourites view has its own.
 		if (!params.favorites && isSort(value)) {
 			defaultSort = value;
 			keepFilter('album-sort', 'sort', value);
 		}
+	}
+
+	function applySort(value: string) {
+		setParams({ sort: value });
 	}
 
 	// The A-Z jump. The grid is flat and read a page at a time, so a letter is
@@ -267,7 +273,7 @@
 		const sort: Sort = params.sort === 'artist' ? 'artist' : 'title';
 		const from = params.sort;
 		jump = { letter, sort, from, list: listKey, stop: new AbortController(), started: false };
-		if (from !== sort) setSort(sort);
+		if (from !== sort) applySort(sort);
 	}
 
 	// Runs the jump once the list is loaded in its order, and ends it when the search,
