@@ -1,0 +1,45 @@
+{
+  "created": "2026-11-19T00:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "recordings": [
+    {
+      "id": "5907a1b0-0000-4000-8000-000000000f22",
+      "score": 100,
+      "title": "Glass Bloom",
+      "length": 198000,
+      "video": null,
+      "artist-credit": [
+        {"name": "Aurora Current", "artist": {"id": "5907a1b0-0000-4000-8000-000000000f31", "name": "Aurora Current", "sort-name": "Aurora Current"}}
+      ],
+      "releases": [
+        {
+          "id": "5907a1b0-0000-4000-8000-000000000f13",
+          "title": "Glass Bloom",
+          "status": "Official",
+          "release-group": {
+            "id": "5907a1b0-0000-4000-8000-000000000f03",
+            "title": "Glass Bloom",
+            "primary-type": "Album",
+            "secondary-types": []
+          },
+          "track-count": 10,
+          "date": "2025"
+        },
+        {
+          "id": "5907a1b0-0000-4000-8000-000000000f14",
+          "title": "Glass Bloom",
+          "status": "Official",
+          "release-group": {
+            "id": "5907a1b0-0000-4000-8000-000000000f04",
+            "title": "Glass Bloom",
+            "primary-type": "Single",
+            "secondary-types": []
+          },
+          "track-count": 1,
+          "date": "2025"
+        }
+      ]
+    }
+  ]
+}

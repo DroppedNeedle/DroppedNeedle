@@ -206,6 +206,18 @@ pub struct AlbumRef {
     /// Cover images.
     #[serde(default)]
     pub images: Option<Vec<Image>>,
+    /// The album's own artists: "Various Artists" for a compilation.
+    /// It, `album_type` and `total_tracks` come with each track's album
+    /// (verified with a development-mode app's token on `/v1/search`
+    /// tracks, 2026-11-19).
+    #[serde(default)]
+    pub artists: Vec<ArtistRef>,
+    /// `album`, `single` or `compilation`.
+    #[serde(default)]
+    pub album_type: Option<String>,
+    /// Tracks on the album.
+    #[serde(default)]
+    pub total_tracks: Option<u32>,
 }
 
 /// A track's outside ids.

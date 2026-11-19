@@ -1,0 +1,45 @@
+{
+  "created": "2026-11-19T00:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "recordings": [
+    {
+      "id": "5907a1b0-0000-4000-8000-000000000f21",
+      "score": 100,
+      "title": "Signal Fire",
+      "length": 214000,
+      "video": null,
+      "artist-credit": [
+        {"name": "Aurora Current", "artist": {"id": "5907a1b0-0000-4000-8000-000000000f31", "name": "Aurora Current", "sort-name": "Aurora Current"}}
+      ],
+      "releases": [
+        {
+          "id": "5907a1b0-0000-4000-8000-000000000f11",
+          "title": "Night Signals: Music From the Film",
+          "status": "Official",
+          "release-group": {
+            "id": "5907a1b0-0000-4000-8000-000000000f01",
+            "title": "Night Signals: Music From the Film",
+            "primary-type": "Album",
+            "secondary-types": ["Compilation", "Soundtrack"]
+          },
+          "track-count": 12,
+          "date": "2024"
+        },
+        {
+          "id": "5907a1b0-0000-4000-8000-000000000f12",
+          "title": "Signal Fire",
+          "status": "Official",
+          "release-group": {
+            "id": "5907a1b0-0000-4000-8000-000000000f02",
+            "title": "Signal Fire",
+            "primary-type": "Single",
+            "secondary-types": []
+          },
+          "track-count": 1,
+          "date": "2024"
+        }
+      ]
+    }
+  ]
+}

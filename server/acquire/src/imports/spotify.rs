@@ -313,7 +313,14 @@ impl SpotifyImportService {
                         album_id.to_owned(),
                         SpotifyAlbum {
                             title: album.name.clone().unwrap_or_default(),
-                            artist: first_artist(track),
+                            artist: album
+                                .artists
+                                .iter()
+                                .filter_map(|artist| artist.name.as_deref())
+                                .find(|name| !name.is_empty())
+                                .map_or_else(|| first_artist(track), str::to_owned),
+                            kind: album.album_type.clone(),
+                            total_tracks: album.total_tracks,
                             isrcs: BTreeSet::new(),
                         },
                     ));
