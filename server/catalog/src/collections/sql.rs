@@ -212,9 +212,12 @@ droppedneedle_kernel::sql! {
         can_edit: bool,
     }
     /// How many of the user ids in the JSON array `?1` name a user the
-    /// user directory lists.
+    /// user directory lists, or one already sharing playlist `?2`, who
+    /// stays whether or not they chose a display name.
     pub(super) KNOWN_USERS = "SELECT COUNT(*) FROM auth_users u \
-         WHERE u.id IN (SELECT value FROM json_each(?1)) AND " + (listed_user!("u"));
+         WHERE u.id IN (SELECT value FROM json_each(?1)) AND (" + (listed_user!("u"))
+        + " OR EXISTS (SELECT 1 FROM catalog_playlist_members m \
+         WHERE m.playlist_id = ?2 AND m.user_id = u.id))";
     /// Unshare playlist `?1` from everyone not in the JSON array `?2`.
     pub(super) DROP_MEMBERS = "DELETE FROM catalog_playlist_members \
          WHERE playlist_id = ?1 AND user_id NOT IN (SELECT value FROM json_each(?2))";

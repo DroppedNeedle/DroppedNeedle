@@ -403,6 +403,59 @@ async fn sharing_opens_a_playlist_to_chosen_people_only() {
 /// cover, members and delete stay the owner's, though a name sent back as
 /// it is (as apps do with every save) is no change. Taking the right away
 /// takes the edits with it.
+/// Someone a playlist is already shared with stays on it, and their edit
+/// right can change, even though they never chose a display name and so
+/// can't be newly added.
+#[tokio::test]
+async fn a_member_with_no_chosen_name_stays_editable() {
+    let rig = Rig::open().await;
+    let app = rig.app();
+    let (_, created) = call(
+        &app,
+        Method::POST,
+        "/api/v3/playlists",
+        Some(ADA),
+        Some(json!({"name": "Road Trip"})),
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    let members = format!("/api/v3/playlists/{id}/members");
+    let playlist = id.clone();
+    rig.runtime
+        .db()
+        .write(
+            droppedneedle_kernel::db::Lane::Foreground,
+            "seed a member",
+            move |tx| {
+                tx.execute(
+                    "INSERT INTO catalog_playlist_members (playlist_id, user_id, added_at, \
+                     can_edit) VALUES (?1, 'u-quiet', 0, 0)",
+                    rusqlite::params![playlist],
+                )?;
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
+            },
+        )
+        .await
+        .unwrap();
+
+    let save = |body: Value| call(&app, Method::PUT, &members, Some(ADA), Some(body));
+    let (status, _) = save(json!({"user_ids": ["u-quiet"], "editor_ids": ["u-quiet"]})).await;
+    assert_eq!(status, StatusCode::OK, "kept, and may now edit");
+    let (_, kept) = call(&app, Method::GET, &members, Some(ADA), None).await;
+    assert_eq!(kept["members"][0]["can_edit"], true);
+    let (status, _) = save(json!({"user_ids": ["u-quiet", "u-bob"]})).await;
+    assert_eq!(status, StatusCode::OK, "and someone listed can join them");
+
+    let (status, _) = save(json!({"user_ids": []})).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = save(json!({"user_ids": ["u-quiet"]})).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "once gone, not listed to add again"
+    );
+}
+
 #[tokio::test]
 async fn editors_change_songs_and_only_songs() {
     let rig = Rig::open().await;
