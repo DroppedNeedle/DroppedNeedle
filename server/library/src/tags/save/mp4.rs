@@ -348,6 +348,14 @@ fn mp4_data_item(kind: [u8; 4], data_type: Option<u32>, payload: &[u8]) -> Mp4It
             _ => {}
         }
     }
+    // A legacy genre is a number only in its 2-byte iTunes form; any
+    // other width stays bytes, so a save puts it back as it was.
+    if kind == *b"gnre" {
+        return match payload {
+            [high, low] => Mp4Item::Integer(u64::from(u16::from_be_bytes([*high, *low]))),
+            _ => Mp4Item::Bytes(payload.to_vec()),
+        };
+    }
     if kind == *b"cpil" && payload.len() == 1 {
         return Mp4Item::Bool(payload[0] != 0);
     }
@@ -538,6 +546,11 @@ fn verify_mp4(
     pictures_edited: bool,
 ) -> Result<(), Refusal> {
     let mut edited_codes: Vec<[u8; 4]> = edits.iter().filter_map(Mp4Edit::code).collect();
+    // A genre is written as `©gen`, which takes the place of a legacy
+    // numeric `gnre` (iTunes files carry one), so the edit covers both.
+    if edited_codes.contains(b"\xa9gen") {
+        edited_codes.push(*b"gnre");
+    }
     // Picture bytes are checked on their own.
     if pictures_edited {
         edited_codes.push(*b"covr");

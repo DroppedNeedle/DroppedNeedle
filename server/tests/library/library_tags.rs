@@ -4135,6 +4135,67 @@ fn mp4_integer_atoms_keep_their_type_and_order() {
     assert_eq!(view(&m4a), before);
 }
 
+/// An m4a from iTunes carries its genre as a legacy numeric `gnre` atom.
+/// Other edits leave it alone; a genre edit writes `©gen` in its place,
+/// and the save checks both as the one genre field (#692).
+#[test]
+fn m4a_genre_edit_replaces_a_legacy_numeric_genre() {
+    use lofty::config::{ParseOptions, WriteOptions};
+    use lofty::file::AudioFile as _;
+    use lofty::mp4::{Atom, AtomData, AtomIdent, DataType, Mp4File};
+    use lofty::tag::TagExt as _;
+    let (_scratch, m4a) = temp_copy("management_full.m4a", "legacy-genre");
+    let mut file =
+        Mp4File::read_from(&mut std::fs::File::open(&m4a).unwrap(), ParseOptions::new()).unwrap();
+    let mut ilst = file.ilst_mut().unwrap().clone();
+    ilst.remove(&AtomIdent::Fourcc(*b"\xa9gen")).for_each(drop);
+    // iTunes stores the ID3v1 genre number plus one: 18 is Rock.
+    ilst.insert(Atom::new(
+        AtomIdent::Fourcc(*b"gnre"),
+        AtomData::Unknown {
+            code: DataType::Reserved,
+            data: vec![0, 18],
+        },
+    ));
+    ilst.save_to_path(&m4a, WriteOptions::new()).unwrap();
+    let gnre = |path: &Path| {
+        mp4_atoms(path)
+            .into_iter()
+            .filter(|atom| &atom.kind == b"gnre")
+            .flat_map(|atom| atom.data)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(gnre(&m4a), [vec![0, 18]]);
+
+    tags::save_tags(&m4a, &[TagEdit::set_title("Later")]).expect("saves");
+    assert_eq!(gnre(&m4a), [vec![0, 18]], "another edit leaves it alone");
+    assert!(mp4_text(&m4a, b"\xa9gen").is_empty());
+    tags::save_tags(
+        &m4a,
+        &[TagEdit::new(TagField::Genre, vec!["Indie".to_owned()])],
+    )
+    .expect("saves");
+    assert_eq!(mp4_text(&m4a, b"\xa9gen"), ["Indie"]);
+    assert!(gnre(&m4a).is_empty());
+
+    // A `gnre` beside a `©gen`, which lofty drops on read, stays too.
+    let mut file =
+        Mp4File::read_from(&mut std::fs::File::open(&m4a).unwrap(), ParseOptions::new()).unwrap();
+    let mut ilst = file.ilst_mut().unwrap().clone();
+    ilst.insert(Atom::new(
+        AtomIdent::Fourcc(*b"gnre"),
+        AtomData::Unknown {
+            code: DataType::Reserved,
+            data: vec![0, 18],
+        },
+    ));
+    ilst.save_to_path(&m4a, WriteOptions::new()).unwrap();
+    assert_eq!(gnre(&m4a), [vec![0, 18]]);
+    tags::save_tags(&m4a, &[TagEdit::set_title("Both")]).expect("saves");
+    assert_eq!(gnre(&m4a), [vec![0, 18]], "both atoms stay");
+    assert_eq!(mp4_text(&m4a, b"\xa9gen"), ["Indie"]);
+}
+
 // ---------------------------------------------------------------------------
 // Save wrapper: frames lofty would re-encode go back byte for byte
 // ---------------------------------------------------------------------------
