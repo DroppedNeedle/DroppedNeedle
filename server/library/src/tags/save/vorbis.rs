@@ -311,10 +311,13 @@ fn parse_vorbis_truth(format: AudioFormat, bytes: &[u8]) -> Result<Option<Vorbis
         .map_err(no_inventory)
 }
 
+/// The FLAC stream's Vorbis comment block. A stream may carry only one;
+/// one with more is read as lofty reads and writes it: the last block is
+/// the tag, and a save writes it back as the only one.
 fn flac_comment_block(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
     let mut comment = None;
     flac_metadata(bytes, |kind, block| {
-        if kind == 4 && comment.is_none() {
+        if kind == 4 {
             comment = Some(block.to_vec());
         }
     })?;

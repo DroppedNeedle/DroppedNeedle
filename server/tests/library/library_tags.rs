@@ -4829,3 +4829,67 @@ fn scan_and_editor_agree_on_writable_fields() {
         differences.join("\n")
     );
 }
+
+/// The FLAC metadata blocks of `bytes` as `(type, body)`, and the audio
+/// after them.
+fn flac_blocks(bytes: &[u8]) -> (Vec<(u8, Vec<u8>)>, Vec<u8>) {
+    let mut blocks = Vec::new();
+    let mut offset = 4;
+    loop {
+        let header = bytes[offset];
+        let len = u32::from_be_bytes([0, bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]])
+            as usize;
+        blocks.push((header & 0x7F, bytes[offset + 4..offset + 4 + len].to_vec()));
+        offset += 4 + len;
+        if header & 0x80 != 0 {
+            return (blocks, bytes[offset..].to_vec());
+        }
+    }
+}
+
+/// A FLAC stream holding `blocks` then `audio`.
+fn flac_from_blocks(blocks: &[(u8, Vec<u8>)], audio: &[u8]) -> Vec<u8> {
+    let mut out = b"fLaC".to_vec();
+    for (index, (kind, body)) in blocks.iter().enumerate() {
+        let last = if index + 1 == blocks.len() { 0x80 } else { 0 };
+        out.push(kind | last);
+        out.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..]);
+        out.extend_from_slice(body);
+    }
+    out.extend_from_slice(audio);
+    out
+}
+
+/// A FLAC file carrying a second Vorbis comment block, against the spec
+/// but written by some taggers, saves: the save keeps the last block, the
+/// one every tag read takes, as one block, and changes nothing else (#714).
+#[test]
+fn flac_with_two_comment_blocks_keeps_the_last() {
+    let (_scratch, path) = temp_copy("flac_full_01.flac", "flac-two-comment-blocks");
+    let (mut blocks, audio) = flac_blocks(&std::fs::read(&path).unwrap());
+    let mut second = Vec::new();
+    let vendor = b"second encoder";
+    second.extend_from_slice(&(vendor.len() as u32).to_le_bytes());
+    second.extend_from_slice(vendor);
+    let pairs: [&[u8]; 2] = [b"TITLE=Second", b"MOOD=Calm"];
+    second.extend_from_slice(&(pairs.len() as u32).to_le_bytes());
+    for pair in pairs {
+        second.extend_from_slice(&(pair.len() as u32).to_le_bytes());
+        second.extend_from_slice(pair);
+    }
+    blocks.push((4, second));
+    std::fs::write(&path, flac_from_blocks(&blocks, &audio)).unwrap();
+
+    tags::save_tags(&path, &[TagEdit::set_title("Edited")]).expect("saves");
+
+    let (after, after_audio) = flac_blocks(&std::fs::read(&path).unwrap());
+    assert_eq!(
+        after.iter().filter(|(kind, _)| *kind == 4).count(),
+        1,
+        "one comment block"
+    );
+    assert_eq!(vorbis_values(&path, "TITLE"), ["Edited"]);
+    assert_eq!(vorbis_values(&path, "MOOD"), ["Calm"]);
+    assert_eq!(vorbis_vendor(&path), "second encoder");
+    assert_eq!(after_audio, audio, "audio unchanged");
+}
