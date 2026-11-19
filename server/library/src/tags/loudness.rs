@@ -346,4 +346,36 @@ mod tests {
             assert_eq!(peak_text(measured.peak), "0.000000", "{name}");
         }
     }
+
+    /// Bytes after a FLAC file's last frame, an ID3v1 tag or a stale copy
+    /// of an earlier frame a tagger left behind, cost the reader only that
+    /// frame, so the file is still measured. A file cut off before its last
+    /// frame is not.
+    #[test]
+    fn bytes_after_the_last_frame_are_not_audio_cut_short() {
+        let fixtures =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/library");
+        let plain = std::fs::read(fixtures.join("management_full.flac")).unwrap();
+        let scratch = droppedneedle_kernel::test_support::ScratchDir::new("loudness-tail")
+            .expect("scratch dir");
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let measure = |bytes: &[u8]| {
+            let path = scratch.path().join("track.flac");
+            std::fs::write(&path, bytes).unwrap();
+            analyse(TrackFile::new(scratch.path(), &path), deadline)
+        };
+        let frame_starts: Vec<usize> = (0..plain.len() - 1)
+            .filter(|&at| plain[at] == 0xFF && plain[at + 1] == 0xF8)
+            .collect();
+        let [.., before_last, last] = frame_starts[..] else {
+            panic!("the fixture has two frames or more");
+        };
+
+        let mut id3v1 = b"TAG".to_vec();
+        id3v1.resize(128, b' ');
+        assert!(measure(&[&plain[..], &id3v1].concat()).is_ok());
+        let stale = &plain[before_last..before_last + (last - before_last) / 2];
+        assert!(measure(&[&plain[..], stale].concat()).is_ok());
+        assert_eq!(measure(&plain[..before_last]), Err(Unanalysed::Undecodable));
+    }
 }
