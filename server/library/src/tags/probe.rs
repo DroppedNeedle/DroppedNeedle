@@ -104,6 +104,8 @@ struct OpenStream {
     params: AudioCodecParameters,
     sample_rate: u32,
     channels: u32,
+    /// The samples per channel the stream says it holds, when it says.
+    frames: Option<u64>,
 }
 
 /// Packet-count duration over an opened ADTS stream. Shared by the path
@@ -189,6 +191,7 @@ fn open_stream(
         });
     }
     let track_id = track.id;
+    let frames = track.num_frames;
     Ok(OpenStream {
         size,
         reader,
@@ -196,6 +199,7 @@ fn open_stream(
         params,
         sample_rate,
         channels,
+        frames,
     })
 }
 
@@ -288,14 +292,20 @@ pub(crate) fn decode_stream(
     let mut block: Vec<f32> = Vec::new();
     let mut partial = false;
     let mut any = false;
+    let mut heard = 0u64;
+    let mut largest = 0u64;
     loop {
         let packet = match reader.next_packet() {
             Ok(Some(packet)) => packet,
             // The readers end a stream with `Ok(None)`; a read error is a
-            // file that stopped early, not its end.
+            // file that stopped early, not its end. Unless only the last
+            // frame is missing: bytes after it (an ID3v1 tag, stale data)
+            // fail its check, and the FLAC reader drops it.
             Ok(None) => break,
             Err(_) => {
-                partial = true;
+                partial = opened
+                    .frames
+                    .is_none_or(|frames| frames.saturating_sub(heard) > largest);
                 break;
             }
         };
@@ -307,6 +317,8 @@ pub(crate) fn decode_stream(
                 // Straight to f32: peaks and 24-bit sources keep their
                 // precision (an i16 detour would clip and round them).
                 let channels = decoded.spec().channels().count() as u32;
+                heard += decoded.frames() as u64;
+                largest = largest.max(decoded.frames() as u64);
                 block.clear();
                 block.resize(decoded.frames() * channels as usize, 0.0);
                 decoded.copy_to_slice_interleaved(&mut block);
