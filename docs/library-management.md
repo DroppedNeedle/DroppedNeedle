@@ -215,7 +215,7 @@ A Lidarr format such as `{Artist Name}/{Album Title} ({Release Year})/{Artist Na
 
 A retag under Library Management writes the full set of MusicBrainz tags from the release the album was identified as, with the tag names Picard uses, so other players and taggers recognize the files. That includes each track's ISRC codes when MusicBrainz has them. WAV and AAC files are read-only and keep their tags.
 
-An MP3 keeps its ID3 version, with one exception: an ID3v2.3 tag that also holds newer ID3v2.4 tags (Picard and iTunes write sort names that way, some taggers full dates or credits) is saved as ID3v2.4, so every tag keeps its own frame. The old format's year and day, original year, sort name and involved-people tags move to their ID3v2.4 places; where an old and a new tag hold different values, both stay and the new one is read. The preview of a management run says so for each such file. A few old players read only ID3v2.3. Undo and "Restore original state" put the values back; the tag stays ID3v2.4.
+An MP3 keeps its ID3 version, with one exception: an ID3v2.3 tag that also holds newer ID3v2.4 tags (Picard and iTunes write sort names that way, some taggers full dates or credits) is saved as ID3v2.4, so every tag keeps its own frame. So is an ID3v2.3 genre tag that holds several genres, which only ID3v2.4 can keep; a single genre stays ID3v2.3. The old format's year and day, original year, sort name and involved-people tags move to their ID3v2.4 places; where an old and a new tag hold different values, both stay and the new one is read. The preview of a management run says so for each such file. A few old players read only ID3v2.3. Undo and "Restore original state" put the values back; the tag stays ID3v2.4.
 
 ### Credits and works
 

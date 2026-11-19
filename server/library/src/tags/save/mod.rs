@@ -38,7 +38,8 @@
 //! audio included (see [`audio`]).
 //!
 //! An MP3 keeps its ID3 version, except an ID3v2.3 tag that also holds
-//! ID3v2.4 frames: lofty's v2.3 writer would drop those, so such a tag is
+//! ID3v2.4 frames or several genres in one `TCON`: lofty's v2.3 writer
+//! would drop the frames and fold the genres into one, so such a tag is
 //! read and saved whole as ID3v2.4 (see [`id3_upgrade`]).
 //!
 //! `WAV` and `AAC` are read-only (the ID3-chunk fork and the never-persist

@@ -1600,6 +1600,41 @@ fn mixed_v23_edits_write_v24_homes() {
     }
 }
 
+/// A v2.3 tag whose genre frame holds several values, as taggers write
+/// them, is saved as ID3v2.4: lofty's v2.3 writer would rewrite them as
+/// `(Pop)Rock`, which reads back as one other value (#692).
+#[test]
+fn v23_multi_valued_genre_is_saved_as_v24() {
+    let (_scratch, path) = v23_file(
+        "tags-v23-genres",
+        &[
+            ("TIT2", &latin1(&["Opener"])),
+            ("TCON", &latin1(&["Pop", "Rock"])),
+        ],
+    );
+    let audio = mp3_audio_tail(&std::fs::read(&path).unwrap()).to_vec();
+    assert!(!tags::save::id3_lands_as_v23(track_file(&path)).unwrap());
+    let notes = tags::save::tags_kept(track_file(&path), PicturesPlan::Untouched)
+        .unwrap()
+        .upgrade_notes;
+    assert_eq!(
+        notes,
+        vec![
+            "Its ID3v2.3 genre tag holds several genres, which only ID3v2.4 can keep, so it is \
+             saved as ID3v2.4."
+                .to_owned()
+        ]
+    );
+
+    let report = tags::save_tags(&path, &[TagEdit::set_title("Second Song")]).unwrap();
+    assert_eq!(report.id3_version.as_deref(), Some("2.4"));
+    assert_eq!(id3_text_values(&path, "TCON"), texts(&["Pop", "Rock"]));
+    let fields = tags::read_fields(track_file(&path)).unwrap();
+    assert_eq!(fields[&TagField::Genre], texts(&["Pop", "Rock"]));
+    assert_eq!(fields[&TagField::Title], texts(&["Second Song"]));
+    assert_eq!(mp3_audio_tail(&std::fs::read(&path).unwrap()), audio);
+}
+
 #[test]
 fn save_pure_v23_stays_v23() {
     // A genuinely pure v2.3 tag (synthetic header over real MP3 audio):

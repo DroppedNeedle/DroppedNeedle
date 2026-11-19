@@ -174,9 +174,10 @@ and the callback addresses and settings to change first are under
   wrote in that form. Like every managed change, the run can be undone.
 - **MP3 tags that mix ID3v2.3 and v2.4.** An MP3 keeps its ID3 version,
   except an ID3v2.3 tag that also holds ID3v2.4 frames. Picard and iTunes
-  write sort names that way, so most MP3s they tagged count as mixed. The
-  first time v3 writes such a file it saves the whole tag as ID3v2.4, so
-  every tag keeps its own frame; the preview says so for each file. There
+  write sort names that way, so most MP3s they tagged count as mixed. So
+  does an ID3v2.3 genre tag that holds several genres. The first time v3
+  writes such a file it saves the whole tag as ID3v2.4, so every tag
+  keeps its own frame; the preview says so for each file. There
   is no switch to keep ID3v2.3, and a few old players read only ID3v2.3.
   Undo and "Restore original state" put the values back; the tag stays
   ID3v2.4.

@@ -1,4 +1,5 @@
-//! A v2.3 tag holding v2.4 frames, saved whole as ID3v2.4.
+//! A v2.3 tag holding v2.4 frames, or several genres in one `TCON`,
+//! saved whole as ID3v2.4.
 
 use super::Refusal;
 use super::document::FieldRead;
@@ -30,6 +31,10 @@ pub(super) const V24_ONLY_IDS: &[&str] = &[
 const UPGRADE_NOTE: &str =
     "Its ID3v2.3 tag also holds newer ID3v2.4 tags, so it is saved as ID3v2.4.";
 
+/// The first note on a v2.3 tag that is mixed only by its genres.
+const GENRES_NOTE: &str = "Its ID3v2.3 genre tag holds several genres, which only ID3v2.4 can \
+     keep, so it is saved as ID3v2.4.";
+
 /// The fields held as text whose v2.3 home differs from their v2.4 one,
 /// with the words a conflict note uses for two of their values.
 const MOVED_FIELDS: &[(TagField, &str)] = &[
@@ -51,12 +56,28 @@ const PEOPLE_FIELDS: &[TagField] = &[
     TagField::DjMixer,
 ];
 
+/// A v2.3 tag that holds v2.4 frames, or several genres in one `TCON`:
+/// lofty's v2.3 writer drops the frames and turns the genres into
+/// `(Pop)Rock`, which reads back as other values, and its v2.4 writer
+/// keeps both.
 pub(super) fn is_mixed_v23(tag: &DeepId3) -> bool {
-    tag.major == 3
-        && tag
-            .frames
-            .iter()
-            .any(|frame| V24_ONLY_IDS.contains(&frame.id.as_str()))
+    tag.major == 3 && (holds_v24_frames(tag) || holds_several_genres(tag))
+}
+
+fn holds_v24_frames(tag: &DeepId3) -> bool {
+    tag.frames
+        .iter()
+        .any(|frame| V24_ONLY_IDS.contains(&frame.id.as_str()))
+}
+
+fn holds_several_genres(tag: &DeepId3) -> bool {
+    tag.frames.iter().any(|frame| {
+        frame.id == "TCON"
+            && frame
+                .text
+                .as_ref()
+                .is_some_and(|text| text.values.len() > 1)
+    })
 }
 
 /// The tag as a save writes it: a mixed v2.3 tag as its ID3v2.4 form,
@@ -70,15 +91,20 @@ pub(super) fn as_saved(tag: DeepId3) -> Result<DeepId3, Refusal> {
 }
 
 /// What a save does to the file's ID3 version: nothing unless its v2.3
-/// tag also holds v2.4 frames. Then the first note says it is saved as
-/// ID3v2.4, and one more names each value the tag holds twice, in a
-/// v2.3 and a v2.4 frame, differently.
+/// tag is mixed. Then the first note says it is saved as ID3v2.4 and
+/// why, and one more names each value the tag holds twice, in a v2.3
+/// and a v2.4 frame, differently.
 pub(super) fn upgrade_notes(tag: &DeepId3) -> Result<Vec<String>, Refusal> {
     if !is_mixed_v23(tag) {
         return Ok(Vec::new());
     }
     let upgrade = upgrade_to_v24(tag)?;
-    let mut notes = vec![UPGRADE_NOTE.to_owned()];
+    let first = if holds_v24_frames(tag) {
+        UPGRADE_NOTE
+    } else {
+        GENRES_NOTE
+    };
+    let mut notes = vec![first.to_owned()];
     notes.extend(upgrade.conflicts);
     Ok(notes)
 }
@@ -138,7 +164,7 @@ pub(super) fn frames_kept_once(tag: &DeepId3, pictures: PicturesPlan) -> Option<
 }
 
 /// Whether a save of this file writes ID3v2.3: an MP3 whose tag is v2.3
-/// and holds no v2.4 frames (a mixed tag is saved as v2.4). Such a save
+/// and not mixed (a mixed tag is saved as v2.4). Such a save
 /// joins several values of one text frame with "/", and a read gives
 /// them back as one value.
 pub fn id3_lands_as_v23(at: TrackFile<'_>) -> Result<bool, TagsError> {
