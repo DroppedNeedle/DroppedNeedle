@@ -5963,3 +5963,106 @@ async fn retries_after_an_outage_stay_bounded() {
     }
     assert_eq!(lp.job("job-album-detached").state, JobState::Attention);
 }
+
+/// An album identification found nothing for is looked at again by itself
+/// a day after its last look, as backlog work, and matches once
+/// MusicBrainz knows its release. An album whose match a person took off
+/// is never looked at again.
+#[tokio::test]
+async fn an_unmatched_album_is_looked_at_again_by_itself() {
+    use droppedneedle_kernel::clock::Clock as _;
+    use identify::relook::look_again;
+
+    const DAY_MS: i64 = 86_400_000;
+    let lp = loop_rig().await;
+    lp.rig.providers.set_recall(recall(Vec::new()));
+    lp.rig
+        .seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    lp.rig
+        .seed_album(&album_facts("album-declined", &[("d1", Some(RECORDING_1))]));
+    lp.rig
+        .db
+        .execute(
+            "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+             updated_at) VALUES ('album-declined', 'unmatched', 'DETACHED_BY_PERSON', 0)",
+            [],
+        )
+        .expect("declined");
+    lp.rig
+        .service
+        .enqueue_album(
+            "job-1",
+            "album-1",
+            IdentifyKind::Automatic,
+            "rev-1",
+            None,
+            OUTAGE_START as u64,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    assert_eq!(lp.tick().await, 1);
+    assert_eq!(lp.job("job-1").state, JobState::Succeeded);
+    assert!(
+        lp.rig.store.match_flag("album-1").unwrap().is_some(),
+        "nothing was found"
+    );
+    let look = || look_again(&lp.library.db, lp.clock.now_ms()).expect("look again");
+
+    lp.clock.advance(DAY_MS - 60_000);
+    assert_eq!(look(), 0, "looked at again within a day");
+    lp.clock.advance(120_000);
+    assert_eq!(look(), 1, "due a day after its last look");
+    let queued: (String, i64) = lp
+        .rig
+        .db
+        .query_row(
+            "SELECT kind, priority FROM library_identify_jobs \
+             WHERE local_album_id = 'album-1' AND state = 'queued'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("queued as backlog");
+    assert_eq!(
+        queued,
+        ("historical".to_owned(), PRIORITY_HISTORICAL_BACKLOG as i64)
+    );
+
+    lp.rig
+        .providers
+        .set_recall(recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_1])]));
+    assert_eq!(lp.tick().await, 1);
+    let matched = lp
+        .rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("matched");
+    assert_eq!(matched.release_mbid.as_deref(), Some(RELEASE_A1));
+    assert!(lp.rig.store.match_flag("album-1").unwrap().is_none());
+
+    lp.clock.advance(400 * DAY_MS);
+    assert_eq!(
+        look(),
+        0,
+        "a matched album and a declined one stay as they are"
+    );
+
+    // Twenty-one albums found nothing long ago: a pass takes twenty, and
+    // another pass the same day (a restart) takes none.
+    for index in 0..21 {
+        let (album, track) = (format!("old-{index}"), format!("old-{index}-t1"));
+        lp.rig
+            .seed_album(&album_facts(&album, &[(track.as_str(), Some(RECORDING_1))]));
+        lp.rig
+            .db
+            .execute(
+                "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+                 updated_at) VALUES (?1, 'unmatched', 'NO_CANDIDATES', 0)",
+                params![album],
+            )
+            .expect("unmatched");
+    }
+    assert_eq!(look(), 20, "at most twenty a day");
+    lp.clock.advance(3_600_000);
+    assert_eq!(look(), 0, "a second pass the same day offers nothing more");
+}

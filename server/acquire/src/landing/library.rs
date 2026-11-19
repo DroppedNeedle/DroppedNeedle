@@ -10,7 +10,8 @@ use futures_util::future::BoxFuture;
 use rusqlite::{Connection, OptionalExtension, Params, params};
 
 use super::ports::{
-    ImportFailure, ImportReceipt, ImportRequest, LandingLibrary, OwnedCopy, OwnedTracks, VersionRow,
+    ImportFailure, ImportReceipt, ImportRequest, LandingLibrary, LocalOnlyAlbum, OwnedCopy,
+    OwnedTracks, VersionRow,
 };
 use super::sql;
 use crate::downloads::plan::PlannedAlbum;
@@ -181,6 +182,71 @@ impl LibraryLanding {
             Err(error) => {
                 tracing::warn!(%error, "library holdings unreadable; landing treats the group as empty");
                 Vec::new()
+            }
+        }
+    }
+}
+
+impl LibraryLanding {
+    /// One import, of matched files or, with `local`, of a local-only album.
+    async fn publish(
+        &self,
+        request: ImportRequest,
+        local: Option<LocalOnlyAlbum>,
+    ) -> Result<ImportReceipt, ImportFailure> {
+        let library = self.library.clone();
+        let import = DownloadImport {
+            task_id: request.task_id,
+            origin: request.origin,
+            extras: request.extras,
+            staging: request.staging,
+            release: request.release,
+            files: request
+                .files
+                .into_iter()
+                .map(|file| ImportSource {
+                    path: file.path,
+                    track: file.track,
+                    replaces: file.replaces,
+                    set_aside: file.set_aside,
+                })
+                .collect(),
+            actor: request.actor,
+        };
+        let join = request.join;
+        let beneath = request.read_beneath;
+        let sidecars = request.sidecars;
+        let done = tokio::task::spawn_blocking(move || {
+            let open = |path: &std::path::Path| match &beneath {
+                Some(folders) => super::confine::open_beneath(folders, path),
+                None => std::fs::File::open(path),
+            };
+            match (&local, &beneath) {
+                (Some(local), _) => library.import_local(&import, local, &open, &sidecars),
+                (None, Some(_)) => library.import_with_sidecars(&import, join, &open, &sidecars),
+                (None, None) => library.import_download_joined(&import, join),
+            }
+        })
+        .await
+        .map_err(|error| ImportFailure::LocalFault(format!("import did not run: {error}")))?;
+        match done {
+            Ok(album) => Ok(ImportReceipt {
+                bundle_id: album.bundle_id,
+                album_id: album.album_id,
+                paths: album.paths,
+                skipped: album.skipped,
+                blocked: album.blocked,
+                tags_kept: album.tags_kept,
+            }),
+            Err(ImportError::LocalFault(detail)) => Err(ImportFailure::LocalFault(detail)),
+            Err(ImportError::Occupied(detail)) => Err(ImportFailure::Occupied(detail)),
+            Err(ImportError::LibraryChanged(detail)) => Err(ImportFailure::LibraryChanged(detail)),
+            Err(ImportError::NamingScript(detail)) => Err(ImportFailure::NamingScript(detail)),
+            Err(ImportError::FolderMissing(folder)) => Err(ImportFailure::FolderMissing(folder)),
+            Err(ImportError::LibraryOff) => Err(ImportFailure::LibraryOff),
+            Err(ImportError::Busy(cause)) => Err(ImportFailure::Busy(cause)),
+            Err(ImportError::AlreadyInLibrary(detail)) => {
+                Err(ImportFailure::AlreadyInLibrary(detail))
             }
         }
     }
@@ -485,62 +551,15 @@ impl LandingLibrary for LibraryLanding {
         &self,
         request: ImportRequest,
     ) -> BoxFuture<'_, Result<ImportReceipt, ImportFailure>> {
-        Box::pin(async move {
-            let library = self.library.clone();
-            let import = DownloadImport {
-                task_id: request.task_id,
-                origin: request.origin,
-                extras: request.extras,
-                staging: request.staging,
-                release: request.release,
-                files: request
-                    .files
-                    .into_iter()
-                    .map(|file| ImportSource {
-                        path: file.path,
-                        track: file.track,
-                        replaces: file.replaces,
-                        set_aside: file.set_aside,
-                    })
-                    .collect(),
-                actor: request.actor,
-            };
-            let join = request.join;
-            let beneath = request.read_beneath;
-            let sidecars = request.sidecars;
-            let done = tokio::task::spawn_blocking(move || match beneath {
-                Some(folders) => library.import_with_sidecars(
-                    &import,
-                    join,
-                    &|path| super::confine::open_beneath(&folders, path),
-                    &sidecars,
-                ),
-                None => library.import_download_joined(&import, join),
-            })
-            .await
-            .map_err(|error| ImportFailure::LocalFault(format!("import did not run: {error}")))?;
-            match done {
-                Ok(album) => Ok(ImportReceipt {
-                    bundle_id: album.bundle_id,
-                    album_id: album.album_id,
-                    paths: album.paths,
-                    skipped: album.skipped,
-                    blocked: album.blocked,
-                    tags_kept: album.tags_kept,
-                }),
-                Err(ImportError::LocalFault(detail)) => Err(ImportFailure::LocalFault(detail)),
-                Err(ImportError::Occupied(detail)) => Err(ImportFailure::Occupied(detail)),
-                Err(ImportError::LibraryChanged(detail)) => {
-                    Err(ImportFailure::LibraryChanged(detail))
-                }
-                Err(ImportError::NamingScript(detail)) => Err(ImportFailure::NamingScript(detail)),
-                Err(ImportError::FolderMissing(folder)) => {
-                    Err(ImportFailure::FolderMissing(folder))
-                }
-                Err(ImportError::LibraryOff) => Err(ImportFailure::LibraryOff),
-                Err(ImportError::Busy(cause)) => Err(ImportFailure::Busy(cause)),
-            }
-        })
+        Box::pin(self.publish(request, None))
+    }
+
+    fn import_local(
+        &self,
+        request: ImportRequest,
+        local: LocalOnlyAlbum,
+    ) -> BoxFuture<'_, Result<ImportReceipt, ImportFailure>> {
+        Box::pin(self.publish(request, Some(local)))
     }
 
     fn publish_settled<'a>(&'a self, task_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {

@@ -175,6 +175,24 @@ impl Fate {
     }
 }
 
+/// A held entry's item claimed for an action, with its job and its files
+/// as read now.
+struct ClaimedEntry {
+    item: ItemRecord,
+    job: JobRecord,
+    landing: Landing,
+}
+
+impl ClaimedEntry {
+    /// The item as the action works on it.
+    fn working(&self) -> ItemRecord {
+        ItemRecord {
+            status: DropItemStatus::Processing,
+            ..self.item.clone()
+        }
+    }
+}
+
 /// What a hand match of an upload's held files did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Matched {
@@ -207,6 +225,8 @@ struct Counts {
     /// Release tracks now in the library, out of the edition's tracks.
     covered: usize,
     expected: usize,
+    /// The files went in as a local-only album, with no release.
+    local: bool,
 }
 
 /// One item organised: its settled row and each file's fate, written
@@ -339,6 +359,96 @@ impl DropImports {
         files: &[HeldFile],
         release_group_mbid: &str,
     ) -> Result<Matched, DropError> {
+        let group = release_group_mbid.trim();
+        if group.is_empty() {
+            return Err(DropError::Invalid("Pick an album to match.".into()));
+        }
+        let claimed = self.claim_entry(entry, files, "matched").await?;
+        let library = self.library.clone();
+        let summary = match identify::assigned(library.as_ref(), &claimed.landing, group).await {
+            Outcome::Matched(summary) => summary,
+            Outcome::Busy | Outcome::Closed => {
+                self.give_back(&claimed.item).await?;
+                return Err(DropError::Busy("drop match edition read".to_owned()));
+            }
+            other => {
+                let reason = match other {
+                    Outcome::Unavailable(detail) => {
+                        tracing::warn!(item_id = claimed.item.id, %detail, "drop match: MusicBrainz unavailable");
+                        Reason::MusicbrainzUnavailable
+                    }
+                    Outcome::AcoustidUnavailable => Reason::AcoustidUnavailable,
+                    Outcome::Review { reason, .. } => reason,
+                    Outcome::Matched(_) | Outcome::Busy | Outcome::Closed => Reason::ImportFailed,
+                };
+                self.give_back(&claimed.item).await?;
+                return Err(DropError::Invalid(format!(
+                    "{} {}",
+                    reason.message(),
+                    reason.action()
+                )));
+            }
+        };
+        let organised = self
+            .organise(
+                &claimed.job,
+                claimed.working(),
+                library.as_ref(),
+                &claimed.landing,
+                &summary,
+                true,
+            )
+            .await;
+        // The library put the import off: the files stay held as they
+        // were, with their reason and pairing, so nothing retried later
+        // goes onto the album this Match replaced.
+        self.settle_claimed(&claimed, organised, entry, "drop match import")
+            .await
+    }
+
+    /// The held list retries, by itself, an upload's or import-folder
+    /// album's files the library could not take when no track was paired
+    /// to them (a local-only album put off). They are placed as a
+    /// local-only album straight from their tags, with no identification
+    /// (the look-again sweep matches the album later), or left held with
+    /// the reason they now wait for. The caller holds the entry's claim.
+    /// Nothing changes while the library still cannot take them.
+    pub(crate) async fn retry_entry(
+        &self,
+        entry: &Entry,
+        files: &[HeldFile],
+    ) -> Result<Matched, DropError> {
+        let claimed = self.claim_entry(entry, files, "retried").await?;
+        let folder = match claimed.job.source {
+            DropJobSource::Upload => claimed.item.folder_name.clone(),
+            DropJobSource::ImportFolder => match claimed.item.folder_name.rsplit('/').next() {
+                Some(name) if !name.is_empty() => name.to_owned(),
+                _ => extract::LOOSE_UNIT_NAME.to_owned(),
+            },
+        };
+        let library = self.library.clone();
+        let organised = self
+            .place_local(
+                &claimed.job,
+                claimed.working(),
+                library.as_ref(),
+                &claimed.landing,
+                &folder,
+            )
+            .await;
+        self.settle_claimed(&claimed, organised, entry, "drop retry import")
+            .await
+    }
+
+    /// The item, job and readable files of a held entry a person or the
+    /// held loop acts on, the item claimed for it. `verb` says what is
+    /// being done, for the refusal of an item not waiting for review.
+    async fn claim_entry(
+        &self,
+        entry: &Entry,
+        files: &[HeldFile],
+        verb: &str,
+    ) -> Result<ClaimedEntry, DropError> {
         let item_id = entry.drop_item_id.ok_or(DropError::NotFound)?;
         let item = self
             .store
@@ -351,15 +461,10 @@ impl DropImports {
             .await?
             .ok_or(DropError::NotFound)?;
         if item.status != DropItemStatus::NeedsReview {
-            return Err(DropError::Conflict(
-                "Only files awaiting review can be matched.".into(),
-            ));
+            return Err(DropError::Conflict(format!(
+                "Only files awaiting review can be {verb}."
+            )));
         }
-        let group = release_group_mbid.trim();
-        if group.is_empty() {
-            return Err(DropError::Invalid("Pick an album to match.".into()));
-        }
-        let library = self.library.clone();
         let beneath = self.folder_of(&job).await?;
         let mut paths: Vec<PathBuf> = Vec::with_capacity(files.len());
         for file in files {
@@ -375,7 +480,7 @@ impl DropImports {
                 continue;
             }
             // A file of the import folder that changed since it was listed
-            // is not the one the person matched.
+            // is not the one that was held.
             if beneath.is_some() && !crate::held::as_listed(file, &meta) {
                 return Err(DropError::Conflict(
                     "A file in the import folder changed since it was listed. \
@@ -401,56 +506,34 @@ impl DropImports {
             ));
         }
         let landing = self
-            .probe(library.as_ref(), paths, beneath.as_deref())
+            .probe(self.library.as_ref(), paths, beneath.as_deref())
             .await;
-        let summary = match identify::assigned(library.as_ref(), &landing, group).await {
-            Outcome::Matched(summary) => summary,
-            Outcome::Busy | Outcome::Closed => {
-                let mut back = item.clone();
-                back.status = DropItemStatus::NeedsReview;
-                self.store
-                    .save_item(&back, DropItemStatus::Processing)
-                    .await?;
-                return Err(DropError::Busy("drop match edition read".to_owned()));
-            }
-            other => {
-                let reason = match other {
-                    Outcome::Unavailable(detail) => {
-                        tracing::warn!(item_id, %detail, "drop match: MusicBrainz unavailable");
-                        Reason::MusicbrainzUnavailable
-                    }
-                    Outcome::AcoustidUnavailable => Reason::AcoustidUnavailable,
-                    Outcome::Review { reason, .. } => reason,
-                    Outcome::Matched(_) | Outcome::Busy | Outcome::Closed => Reason::ImportFailed,
-                };
-                let mut back = item.clone();
-                back.status = DropItemStatus::NeedsReview;
-                self.store
-                    .save_item(&back, DropItemStatus::Processing)
-                    .await?;
-                return Err(DropError::Invalid(format!(
-                    "{} {}",
-                    reason.message(),
-                    reason.action()
-                )));
-            }
-        };
-        let mut working = item.clone();
-        working.status = DropItemStatus::Processing;
-        let organised = self
-            .organise(&job, working, library.as_ref(), &landing, &summary, true)
-            .await;
-        // The library put the import off: the files stay held as they
-        // were, with their reason and pairing, so nothing retried later
-        // goes onto the album this Match replaced.
+        Ok(ClaimedEntry { item, job, landing })
+    }
+
+    /// A claimed item goes back to waiting for review, as it was.
+    async fn give_back(&self, item: &ItemRecord) -> Result<bool, DropError> {
+        let mut back = item.clone();
+        back.status = DropItemStatus::NeedsReview;
+        Ok(self
+            .store
+            .save_item(&back, DropItemStatus::Processing)
+            .await?)
+    }
+
+    /// Record what acting on a claimed entry did. A library that put the
+    /// import off leaves the item and its files as they were.
+    async fn settle_claimed(
+        &self,
+        claimed: &ClaimedEntry,
+        organised: Organised,
+        entry: &Entry,
+        busy: &str,
+    ) -> Result<Matched, DropError> {
         if let Some(reason) = organised.deferred {
-            let mut back = item.clone();
-            back.status = DropItemStatus::NeedsReview;
-            self.store
-                .save_item(&back, DropItemStatus::Processing)
-                .await?;
+            self.give_back(&claimed.item).await?;
             if reason == Reason::JournalUnreadable {
-                return Err(DropError::Busy("drop match import".to_owned()));
+                return Err(DropError::Busy(busy.to_owned()));
             }
             return Err(DropError::Conflict(format!(
                 "{} {}",
@@ -466,7 +549,7 @@ impl DropImports {
                 FileFate::Held(..) => matched.held += 1,
             }
         }
-        self.finish(&job, organised, Some(entry)).await;
+        self.finish(&claimed.job, organised, Some(entry)).await;
         Ok(matched)
     }
 
@@ -767,6 +850,14 @@ impl DropImports {
                     .await;
                 self.finish(job, organised, None).await;
             }
+            Outcome::Review { reason, .. }
+                if identify::places_local(library.as_ref(), &landing, reason).await =>
+            {
+                let organised = self
+                    .place_local(job, item, library.as_ref(), &landing, folder)
+                    .await;
+                self.finish(job, organised, None).await;
+            }
             Outcome::Review { reason, detail } => {
                 let detail = with_unreadable(detail, unreadable);
                 self.wait_whole(job, named(item, &landing, folder), reason, detail)
@@ -910,42 +1001,18 @@ impl DropImports {
         }
         match identify::identify(library.as_ref(), &landing, &name).await {
             Outcome::Matched(summary) => {
-                let mut organised = self
+                let organised = self
                     .organise(&job, item, library.as_ref(), &landing, &summary, false)
                     .await;
-                // A wait every album shares leaves this one queued; one of
-                // its own (a naming script, a fault of this import) holds it
-                // as a leftover, which the held list retries by itself.
-                if let Some(
-                    reason @ (Reason::LibraryOff
-                    | Reason::LibraryFolderMissing
-                    | Reason::JournalUnreadable
-                    | Reason::AcoustidUnavailable),
-                ) = organised.deferred
-                {
-                    tracing::info!(
-                        item_id = organised.item.id,
-                        code = reason.code(),
-                        "import folder: the library put the album off; it waits"
-                    );
-                    return FolderRun::Waits;
-                }
-                // Sidecars an earlier publish placed leave with its files.
-                if !already.is_empty() {
-                    let (root, album) = (folder.to_path_buf(), organised.item.folder_name.clone());
-                    let sidecars = tokio::task::spawn_blocking(move || {
-                        crate::import_folder::walk::sidecars(&root, &album)
-                    })
-                    .await
-                    .unwrap_or_default();
-                    for (below, _) in sidecars {
-                        if !organised.item.staging_paths.contains(&below) {
-                            organised.item.staging_paths.push(below);
-                        }
-                    }
-                }
-                organised.item.staging_paths.extend(already);
-                self.finish(&job, organised, None).await;
+                return self.settle_folder(&job, folder, organised, already).await;
+            }
+            Outcome::Review { reason, .. }
+                if identify::places_local(library.as_ref(), &landing, reason).await =>
+            {
+                let organised = self
+                    .place_local(&job, item, library.as_ref(), &landing, &name)
+                    .await;
+                return self.settle_folder(&job, folder, organised, already).await;
             }
             Outcome::Review { reason, detail } => {
                 self.folder_wait(
@@ -1120,35 +1187,8 @@ impl DropImports {
         manual: bool,
     ) -> Organised {
         let from_folder = job.source == DropJobSource::ImportFolder;
-        // An upload ignores files that do not read; in the import folder
-        // they are the person's own and wait for them.
-        let unreadable_fates = || -> Vec<Fate> {
-            if !from_folder {
-                return Vec::new();
-            }
-            landing
-                .unreadable
-                .iter()
-                .map(|path| Fate::held(path.clone(), Reason::Corrupt, ""))
-                .collect()
-        };
         let all_wait = |item: ItemRecord, reason: Reason, specifics: Option<String>| {
-            let detail = specifics.clone().unwrap_or_default();
-            let fates: Vec<Fate> = landing
-                .audio
-                .iter()
-                .map(|file| Fate::held(file.path.clone(), reason, &detail))
-                .chain(
-                    landing
-                        .samples
-                        .iter()
-                        .map(|path| Fate::held(path.clone(), Reason::Samples, "")),
-                )
-                .chain(unreadable_fates())
-                .collect();
-            let mut review = settled(item, DropItemStatus::NeedsReview, reason, specifics);
-            review.staging_paths = Vec::new();
-            (review, fates)
+            all_waiting(landing, from_folder, item, reason, specifics)
         };
         let Some(found) = summary.best() else {
             let (item, fates) = all_wait(item, Reason::NoAlbumMatch, None);
@@ -1178,34 +1218,7 @@ impl DropImports {
             };
         };
         let folder = PathBuf::from(&job.staging_dir);
-        let (origin, sidecars) = if from_folder {
-            let (root, album) = (folder.clone(), item.folder_name.clone());
-            let found = tokio::task::spawn_blocking(move || {
-                crate::import_folder::walk::sidecars(&root, &album)
-            })
-            .await
-            .unwrap_or_default();
-            (
-                intake::Origin::Folder {
-                    drop_item_id: item.id,
-                    folders: vec![folder.clone()],
-                },
-                found
-                    .into_iter()
-                    .map(|(below, rel)| intake::SidecarFile {
-                        path: folder.join(below),
-                        rel,
-                    })
-                    .collect(),
-            )
-        } else {
-            (
-                intake::Origin::Upload {
-                    drop_item_id: item.id,
-                },
-                Vec::new(),
-            )
-        };
+        let (origin, sidecars) = batch_origin(job, &item).await;
         let batch = intake::IntakeBatch {
             files: landing
                 .audio
@@ -1247,26 +1260,11 @@ impl DropImports {
             Ok(placed) => placed,
             Err(deferred) => {
                 tracing::warn!(item_id = item.id, detail = %deferred.detail, "library could not take a drop import");
-                // Nothing ran: every file waits with the item. A library that
-                // changed under the import twice keeps the publisher's words.
-                let (reason, specifics) = match deferred.reason {
-                    Reason::LibraryChanged => (Reason::LibraryChanged, Some(deferred.detail)),
-                    Reason::NamingScriptFailed => (Reason::NamingScriptFailed, None),
-                    Reason::LibraryFolderMissing => {
-                        (Reason::LibraryFolderMissing, Some(deferred.detail))
-                    }
-                    Reason::LibraryOff => (Reason::LibraryOff, None),
-                    Reason::AcoustidUnavailable => (Reason::AcoustidUnavailable, None),
-                    _ => (Reason::LibraryUnavailable, None),
-                };
                 // An automatic upload is held paired, so the held list retries
                 // it by itself, a wait for AcoustID included (checked as an
                 // automatic import is); a person's Match answers busy and
                 // changes nothing.
-                let put_off = match deferred.reason {
-                    Reason::JournalUnreadable => Reason::JournalUnreadable,
-                    _ => reason,
-                };
+                let (reason, specifics, put_off) = put_off(deferred);
                 let (item, mut fates) = all_wait(item, reason, specifics);
                 for (file, fate) in fates.iter_mut().take(landing.audio.len()).enumerate() {
                     fate.pairing = pairing_of(file, None);
@@ -1366,7 +1364,7 @@ impl DropImports {
                 .iter()
                 .map(|path| Fate::held(path.clone(), Reason::Samples, "")),
         );
-        fates.extend(unreadable_fates());
+        fates.extend(unreadable_fates(landing, from_folder));
         done.waiting = fates
             .iter()
             .filter(|fate| matches!(fate.outcome, FileFate::Held(..)))
@@ -1422,44 +1420,7 @@ impl DropImports {
         } else {
             Vec::new()
         };
-        let summary_text = describe(&done, unreadable, fulfills);
-        // Files still waiting keep the item waiting, with why the first one
-        // was held; a file nothing paired waits as an album not worked out.
-        let item = if done.waiting > 0 {
-            let reason = fates
-                .iter()
-                .filter_map(|fate| match fate.outcome {
-                    FileFate::Held(reason, _) if reason != Reason::Samples => Some(reason),
-                    _ => None,
-                })
-                .next()
-                .or(first_held)
-                .unwrap_or(Reason::NoAlbumMatch);
-            ItemRecord {
-                status: DropItemStatus::NeedsReview,
-                detail: Some(if placed > 0 || done.owned > 0 {
-                    summary_text
-                } else {
-                    reason.message().to_owned()
-                }),
-                reason_code: Some(reason),
-                ..item
-            }
-        } else if placed > 0 {
-            ItemRecord {
-                status: DropItemStatus::Imported,
-                detail: Some(summary_text),
-                reason_code: None,
-                ..item
-            }
-        } else {
-            ItemRecord {
-                status: DropItemStatus::Skipped,
-                detail: Some(format!("{} {summary_text}", Reason::AlreadyOwned.message())),
-                reason_code: Some(Reason::AlreadyOwned),
-                ..item
-            }
-        };
+        let item = item_outcome(item, &fates, first_held, &done, unreadable, fulfills);
         Organised {
             item,
             fates,
@@ -1469,6 +1430,214 @@ impl DropImports {
             fulfills,
             deferred: None,
         }
+    }
+
+    /// Put an item nothing identified in the library as a local-only album
+    /// (see [`identify::local_only`] for when it may), and work out what
+    /// became of each file. Files whose names would split, that name
+    /// nothing, or that the library already has wait as an album not
+    /// worked out. Nothing is written here: [`Self::finish`] records it.
+    async fn place_local(
+        &self,
+        job: &JobRecord,
+        item: ItemRecord,
+        library: &dyn LandingLibrary,
+        landing: &Landing,
+        folder: &str,
+    ) -> Organised {
+        let from_folder = job.source == DropJobSource::ImportFolder;
+        let hold = |item: ItemRecord, reason, specifics, deferred| {
+            let (item, fates) = all_waiting(landing, from_folder, item, reason, specifics);
+            Organised {
+                item,
+                fates,
+                consumed: Vec::new(),
+                release: droppedneedle_library::matching::Release::default(),
+                placed: 0,
+                fulfills: false,
+                deferred,
+            }
+        };
+        let local = match identify::local_only(landing, folder) {
+            Ok(local) => local,
+            Err(specifics) => {
+                return hold(
+                    named(item, landing, folder),
+                    Reason::NoAlbumMatch,
+                    specifics,
+                    None,
+                );
+            }
+        };
+        let mut item = ItemRecord {
+            album_title: Some(local.title.clone()),
+            artist_name: Some(local.album_artist.clone()),
+            release_group_mbid: None,
+            ..item
+        };
+        let (origin, sidecars) = batch_origin(job, &item).await;
+        let batch = intake::IntakeBatch {
+            files: landing
+                .audio
+                .iter()
+                .map(|file| intake::IntakeFile {
+                    file: file.clone(),
+                    held_for: None,
+                    set_aside: false,
+                })
+                .collect(),
+            target: intake::Target {
+                release: droppedneedle_library::matching::Release::default(),
+                join: None,
+                asked: Vec::new(),
+            },
+            origin,
+            gate: intake::Gate::Automatic,
+            owner: job.user_id.clone(),
+            sidecars,
+        };
+        let placed = match intake::place_local(library, &batch, &local).await {
+            Ok(placed) => placed,
+            // The library already has it: the files wait, told which album.
+            Err(deferred) if deferred.reason == Reason::NoAlbumMatch => {
+                return hold(item, Reason::NoAlbumMatch, Some(deferred.detail), None);
+            }
+            Err(deferred) => {
+                tracing::warn!(item_id = item.id, detail = %deferred.detail, "library could not take a local-only album");
+                let (reason, specifics, told) = put_off(deferred);
+                return hold(item, reason, specifics, Some(told));
+            }
+        };
+        let mut done = Counts {
+            local: true,
+            ..Counts::default()
+        };
+        let mut consumed: Vec<PathBuf> = Vec::new();
+        let mut fates: Vec<Fate> = Vec::new();
+        let mut first_held: Option<Reason> = None;
+        for (file, outcome) in placed.outcomes.iter().enumerate() {
+            let path = landing.audio[file].path.clone();
+            let outcome = match outcome {
+                intake::Outcome::Imported { .. } => {
+                    done.imported += 1;
+                    consumed.push(path.clone());
+                    FileFate::Imported
+                }
+                intake::Outcome::Held { reason, detail, .. } => {
+                    if *reason == Reason::TargetOccupied {
+                        done.occupied += 1;
+                    }
+                    first_held.get_or_insert(*reason);
+                    FileFate::Held(*reason, detail.clone())
+                }
+                intake::Outcome::AlreadyOwned { .. } | intake::Outcome::Untouched => {
+                    FileFate::Held(Reason::NoAlbumMatch, String::new())
+                }
+            };
+            fates.push(Fate {
+                path,
+                pairing: None,
+                outcome,
+            });
+        }
+        fates.extend(
+            landing
+                .samples
+                .iter()
+                .map(|path| Fate::held(path.clone(), Reason::Samples, "")),
+        );
+        fates.extend(unreadable_fates(landing, from_folder));
+        done.waiting = fates
+            .iter()
+            .filter(|fate| matches!(fate.outcome, FileFate::Held(..)))
+            .count();
+        let placed = done.imported;
+        item.files_imported = item
+            .files_imported
+            .saturating_add(i64::try_from(placed).unwrap_or(i64::MAX));
+        // What went in leaves the import folder once the library holds its
+        // bytes, its sidecars with it.
+        item.staging_paths = if from_folder {
+            let folder = PathBuf::from(&job.staging_dir);
+            let mut leaving: Vec<String> = consumed
+                .iter()
+                .map(|path| rel_below(&folder, path))
+                .collect();
+            if placed > 0 {
+                leaving.extend(
+                    batch
+                        .sidecars
+                        .iter()
+                        .map(|sidecar| rel_below(&folder, &sidecar.path)),
+                );
+            }
+            leaving
+        } else {
+            Vec::new()
+        };
+        let item = item_outcome(
+            item,
+            &fates,
+            first_held,
+            &done,
+            landing.unreadable.len(),
+            false,
+        );
+        Organised {
+            item,
+            fates,
+            consumed,
+            release: droppedneedle_library::matching::Release::default(),
+            placed,
+            fulfills: false,
+            deferred: None,
+        }
+    }
+
+    /// An import-folder album organised: a wait every album shares leaves it
+    /// queued; otherwise it is recorded, files a publish of it already
+    /// placed (`already`) and their sidecars leaving with the rest.
+    async fn settle_folder(
+        &self,
+        job: &JobRecord,
+        folder: &Path,
+        mut organised: Organised,
+        already: Vec<String>,
+    ) -> FolderRun {
+        // A wait every album shares leaves this one queued; one of its own
+        // (a naming script, a fault of this import) holds it as a leftover,
+        // which the held list retries by itself.
+        if let Some(
+            reason @ (Reason::LibraryOff
+            | Reason::LibraryFolderMissing
+            | Reason::JournalUnreadable
+            | Reason::AcoustidUnavailable),
+        ) = organised.deferred
+        {
+            tracing::info!(
+                item_id = organised.item.id,
+                code = reason.code(),
+                "import folder: the library put the album off; it waits"
+            );
+            return FolderRun::Waits;
+        }
+        // Sidecars an earlier publish placed leave with its files.
+        if !already.is_empty() {
+            let (root, album) = (folder.to_path_buf(), organised.item.folder_name.clone());
+            let sidecars = tokio::task::spawn_blocking(move || {
+                crate::import_folder::walk::sidecars(&root, &album)
+            })
+            .await
+            .unwrap_or_default();
+            for (below, _) in sidecars {
+                if !organised.item.staging_paths.contains(&below) {
+                    organised.item.staging_paths.push(below);
+                }
+            }
+        }
+        organised.item.staging_paths.extend(already);
+        self.finish(job, organised, None).await;
+        FolderRun::Done
     }
 
     /// Write what organising an item did, then remove the files it
@@ -1491,7 +1660,8 @@ impl DropImports {
             intake::dispose::remove_sources(consumed, vec![PathBuf::from(&job.staging_dir)]).await;
         }
         self.tidy(job).await;
-        if placed > 0 {
+        // A local-only album names no release to tell anyone about.
+        if placed > 0 && !release.id.is_empty() {
             self.after_import(job, &release, placed, fulfills).await;
         }
         self.publish(job.user_id.as_deref(), &job.id);
@@ -1925,6 +2095,152 @@ fn with_unreadable(detail: Option<String>, unreadable: usize) -> Option<String> 
     })
 }
 
+/// Every file of an item waiting for `reason`: its audio, its samples as
+/// samples, and in the import folder its unreadable files as unreadable (an
+/// upload ignores files that do not read; in the import folder they are the
+/// person's own and wait for them). The item waits with them.
+fn all_waiting(
+    landing: &Landing,
+    from_folder: bool,
+    item: ItemRecord,
+    reason: Reason,
+    specifics: Option<String>,
+) -> (ItemRecord, Vec<Fate>) {
+    let detail = specifics.clone().unwrap_or_default();
+    let fates: Vec<Fate> = landing
+        .audio
+        .iter()
+        .map(|file| Fate::held(file.path.clone(), reason, &detail))
+        .chain(
+            landing
+                .samples
+                .iter()
+                .map(|path| Fate::held(path.clone(), Reason::Samples, "")),
+        )
+        .chain(unreadable_fates(landing, from_folder))
+        .collect();
+    let mut review = settled(item, DropItemStatus::NeedsReview, reason, specifics);
+    review.staging_paths = Vec::new();
+    (review, fates)
+}
+
+/// The import folder's unreadable files, which wait for the person.
+fn unreadable_fates(landing: &Landing, from_folder: bool) -> Vec<Fate> {
+    if !from_folder {
+        return Vec::new();
+    }
+    landing
+        .unreadable
+        .iter()
+        .map(|path| Fate::held(path.clone(), Reason::Corrupt, ""))
+        .collect()
+}
+
+/// Where an item's files come from for the intake, with the import
+/// folder's sidecars beside them.
+async fn batch_origin(
+    job: &JobRecord,
+    item: &ItemRecord,
+) -> (intake::Origin, Vec<intake::SidecarFile>) {
+    if job.source != DropJobSource::ImportFolder {
+        return (
+            intake::Origin::Upload {
+                drop_item_id: item.id,
+            },
+            Vec::new(),
+        );
+    }
+    let folder = PathBuf::from(&job.staging_dir);
+    let (root, album) = (folder.clone(), item.folder_name.clone());
+    let found =
+        tokio::task::spawn_blocking(move || crate::import_folder::walk::sidecars(&root, &album))
+            .await
+            .unwrap_or_default();
+    (
+        intake::Origin::Folder {
+            drop_item_id: item.id,
+            folders: vec![folder.clone()],
+        },
+        found
+            .into_iter()
+            .map(|(below, rel)| intake::SidecarFile {
+                path: folder.join(below),
+                rel,
+            })
+            .collect(),
+    )
+}
+
+/// Why an item waits when the library put its whole import off: the
+/// reason its files are held for, the specifics, and what the caller is
+/// told. A library that changed under the import twice keeps the
+/// publisher's words.
+fn put_off(deferred: intake::Deferred) -> (Reason, Option<String>, Reason) {
+    let (reason, specifics) = match deferred.reason {
+        Reason::LibraryChanged => (Reason::LibraryChanged, Some(deferred.detail)),
+        Reason::NamingScriptFailed => (Reason::NamingScriptFailed, None),
+        Reason::LibraryFolderMissing => (Reason::LibraryFolderMissing, Some(deferred.detail)),
+        Reason::LibraryOff => (Reason::LibraryOff, None),
+        Reason::AcoustidUnavailable => (Reason::AcoustidUnavailable, None),
+        _ => (Reason::LibraryUnavailable, None),
+    };
+    let told = match deferred.reason {
+        Reason::JournalUnreadable => Reason::JournalUnreadable,
+        _ => reason,
+    };
+    (reason, specifics, told)
+}
+
+/// The settled item once its files' fates are known. Files still waiting
+/// keep it waiting, with why the first one was held; a file nothing paired
+/// waits as an album not worked out.
+fn item_outcome(
+    item: ItemRecord,
+    fates: &[Fate],
+    first_held: Option<Reason>,
+    done: &Counts,
+    unreadable: usize,
+    fulfills: bool,
+) -> ItemRecord {
+    let placed = done.imported + done.bonus;
+    let summary_text = describe(done, unreadable, fulfills);
+    if done.waiting > 0 {
+        let reason = fates
+            .iter()
+            .filter_map(|fate| match fate.outcome {
+                FileFate::Held(reason, _) if reason != Reason::Samples => Some(reason),
+                _ => None,
+            })
+            .next()
+            .or(first_held)
+            .unwrap_or(Reason::NoAlbumMatch);
+        ItemRecord {
+            status: DropItemStatus::NeedsReview,
+            detail: Some(if placed > 0 || done.owned > 0 {
+                summary_text
+            } else {
+                reason.message().to_owned()
+            }),
+            reason_code: Some(reason),
+            ..item
+        }
+    } else if placed > 0 {
+        ItemRecord {
+            status: DropItemStatus::Imported,
+            detail: Some(summary_text),
+            reason_code: None,
+            ..item
+        }
+    } else {
+        ItemRecord {
+            status: DropItemStatus::Skipped,
+            detail: Some(format!("{} {summary_text}", Reason::AlreadyOwned.message())),
+            reason_code: Some(Reason::AlreadyOwned),
+            ..item
+        }
+    }
+}
+
 /// The settled item's summary.
 fn describe(done: &Counts, unreadable: usize, complete: bool) -> String {
     let plural = |count: usize, one: &str, many: &str| {
@@ -1935,7 +2251,12 @@ fn describe(done: &Counts, unreadable: usize, complete: bool) -> String {
         }
     };
     let mut parts = Vec::new();
-    if done.imported + done.bonus > 0 {
+    if done.local && done.imported > 0 {
+        parts.push(format!(
+            "Imported {} as a local album, not matched yet",
+            plural(done.imported, "file", "files")
+        ));
+    } else if done.imported + done.bonus > 0 {
         parts.push(format!(
             "Imported {}",
             plural(done.imported, "file", "files")

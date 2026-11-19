@@ -83,6 +83,8 @@ While MusicBrainz or AcoustID can't be reached, an album being identified tries 
 
 An edition someone chose is never changed by identification, a rescan or a move. Editions carried over from v2 count as chosen: the custom editions and the pinned editions v2 had. A match v2 carried over from its older catalog with a release group but no edition counts as chosen too, and may still be given an edition of that group (see below). The one exception is the cleanup's fold of an album v2 split in two (below), which drops the v2 match of the half it folds and can be undone from the album's history. Matches identification made, and those v2 took from the files' tags, stay open: a later pass may replace them, and new evidence that contradicts one takes it off, which "Album history" on the album page lists. Undo on the album page puts a match taken off this way back; it may be taken off again if the files change. If an album's files change while it is being identified, nothing is applied and the album is identified again on its new files. A rescan does not identify an album again for files a Library Management run wrote from its match; a tag edit, an Undo, a restore or a change outside the app still does. An album whose match someone took off, or whose automatic edition was undone with no earlier match to go back to, is the exception: identification leaves it alone, whatever changes in its files, until someone picks an edition, chooses "Let DroppedNeedle look again", or looks again from its review.
 
+An album marked "no match", or matched only as a best guess, is looked at again by itself: 1, 3, 7 and 14 days after its last look, then every 30 days. So an album MusicBrainz adds later, such as a local-only upload, is matched without anyone asking. At most 20 albums a day are looked at this way, so in a large library some wait longer. An edition someone chose, a custom edition, an album whose match someone took off and one waiting in attention on the Scanning tab are left alone.
+
 Identification has its own Pause button on the Scanning tab of Library Management. The album being identified finishes, nothing new starts until you press Resume, and new scans keep queueing albums in the meantime.
 
 ## Check albums
@@ -137,7 +139,7 @@ Duplicates (in the menu for curators) lists every album your library holds more 
 
 ## Albums from the import folder
 
-Albums taken from the [import folder](downloads.md#import-folder) go where downloads go: the first library folder whose policy is Automatic at the path the import naming script gives them, else the first library folder where no file is Excluded. Their covers, cue sheets and logs go beside them. They count as dropped albums for Library Management, so "after dropped folders are imported" on its Automation tab covers them too.
+Albums taken from the [import folder](downloads.md#import-folder) go where downloads go: the first library folder whose policy is Automatic at the path the import naming script gives them, else the first library folder where no file is Excluded. Their covers, cue sheets and logs go beside them. One nothing identifies goes in as a local-only album, its tags left as they came. They count as dropped albums for Library Management, so "after dropped folders are imported" on its Automation tab covers them too.
 
 ## Removing albums and tracks
 

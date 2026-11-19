@@ -23,7 +23,7 @@ use super::extract::LOOSE_UNIT_NAME;
 use crate::landing::matching::{
     FoundRelease, MatchState, MatchSummary, album_tag, choose, find, local_album, merged_recordings,
 };
-use crate::landing::ports::LandingLibrary;
+use crate::landing::ports::{LandingLibrary, LocalOnlyAlbum};
 use crate::landing::probe::Landing;
 use crate::landing::specs::Target;
 use crate::reason::Reason;
@@ -173,6 +173,130 @@ pub(super) fn names(landing: &Landing, folder: &str) -> (String, String) {
         album.unwrap_or(folder_album),
         artist.unwrap_or(folder_artist),
     )
+}
+
+/// The release id every file's tags name, when they all name the same one
+/// (or none names any).
+fn tagged_release(landing: &Landing) -> Result<Option<String>, ()> {
+    let mut releases = landing.audio.iter().map(|file| {
+        file.tag
+            .musicbrainz_release_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_ascii_lowercase)
+    });
+    let first = releases.next().flatten();
+    if releases.all(|release| release == first) {
+        Ok(first)
+    } else {
+        Err(())
+    }
+}
+
+/// Whether files identification held for `reason` go in as a local-only
+/// album: nothing found, or tags naming an album the files do not fit
+/// while the library does not hold that album.
+pub(super) async fn places_local(
+    library: &dyn LandingLibrary,
+    landing: &Landing,
+    reason: Reason,
+) -> bool {
+    match reason {
+        Reason::NoAlbumMatch => true,
+        Reason::TagsDisagree => match tagged_group(landing) {
+            Some(group) => {
+                let owned = library.owned(&group, None).await;
+                owned.release_tracks.is_empty() && owned.recordings.is_empty()
+            }
+            None => false,
+        },
+        _ => false,
+    }
+}
+
+/// The local-only album a folder's files make, named the way the scan will
+/// name them once placed: every file's album tag and album artist (else
+/// its artist, as [`untagged_album_artist`] reads it) agree when folded,
+/// or, when no file has an album tag, the folder is named
+/// `Artist - Album`. The files must also agree on their release id, which
+/// the scan groups by first. `Err` holds the files instead, with what
+/// the person is told (`None` when nothing names the album).
+pub(super) fn local_only(
+    landing: &Landing,
+    folder: &str,
+) -> Result<LocalOnlyAlbum, Option<String>> {
+    use droppedneedle_kernel::db::fold_text;
+    use droppedneedle_library::scan::naming::untagged_album_artist;
+
+    let names: Vec<(&str, &str)> = landing
+        .audio
+        .iter()
+        .map(|file| {
+            let artist = file
+                .tag
+                .album_artist
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| untagged_album_artist(file.tag.compilation, &file.tag.artist));
+            (file.tag.album.trim(), artist)
+        })
+        .collect();
+    let Some(&(first_album, first_artist)) = names.first() else {
+        return Err(None);
+    };
+    let tagged = names.iter().filter(|(album, _)| !album.is_empty()).count();
+    let (title, album_artist) = if tagged == 0 {
+        match folder.split_once(" - ") {
+            // The scan reads a tagged artist over the folder's.
+            Some((artist, album))
+                if folder != LOOSE_UNIT_NAME
+                    && !artist.trim().is_empty()
+                    && !album.trim().is_empty()
+                    && names.iter().all(|(_, named)| {
+                        named.is_empty() || fold_text(named) == fold_text(artist)
+                    }) =>
+            {
+                (album.trim().to_owned(), artist.trim().to_owned())
+            }
+            _ => return Err(None),
+        }
+    } else {
+        let agree = tagged == names.len()
+            && names.iter().all(|(album, artist)| {
+                fold_text(album) == fold_text(first_album)
+                    && fold_text(artist) == fold_text(first_artist)
+            });
+        if !agree {
+            let mut named: Vec<&str> = names
+                .iter()
+                .map(|(album, _)| *album)
+                .filter(|album| !album.is_empty())
+                .collect();
+            named.sort_unstable();
+            named.dedup();
+            return Err((named.len() > 1).then(|| format!("The tags name {}.", named.join(", "))));
+        }
+        // A placeholder album tag names nothing, though the scan would
+        // take it as the album's name.
+        if first_artist.is_empty() || album_tag(&landing.audio[0]).is_empty() {
+            return Err(None);
+        }
+        (first_album.to_owned(), first_artist.to_owned())
+    };
+    let tagged_release = tagged_release(landing).map_err(|()| None)?;
+    Ok(LocalOnlyAlbum {
+        title,
+        album_artist,
+        date: landing
+            .audio
+            .iter()
+            .find_map(|file| file.tag.year)
+            .map(|year| year.to_string()),
+        tagged_group: tagged_group(landing),
+        tagged_release,
+    })
 }
 
 /// Identify one folder's files.

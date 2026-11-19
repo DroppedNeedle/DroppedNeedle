@@ -17,6 +17,7 @@ pub mod merged_ids;
 pub mod models;
 pub mod providers;
 pub mod queue;
+pub mod relook;
 pub mod review;
 pub mod rules;
 pub mod service;

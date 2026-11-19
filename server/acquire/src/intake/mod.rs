@@ -16,7 +16,7 @@ mod place;
 
 use std::path::PathBuf;
 
-pub use self::place::place;
+pub use self::place::{place, place_local};
 use crate::downloads::plan::PlannedAlbum;
 use crate::landing::probe::LandedFile;
 use crate::landing::specs::Check;
@@ -97,7 +97,8 @@ pub struct IntakeFile {
     pub set_aside: bool,
 }
 
-/// What the files are for.
+/// What the files are for. Files nothing identified go in through
+/// [`place_local`] instead, as a local-only album.
 #[derive(Debug, Clone)]
 pub struct Target {
     /// The release the files were paired to; they are tagged from it.
@@ -204,7 +205,8 @@ impl Placement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Deferred {
     /// `library_changed` (the library changed under the import twice),
-    /// `naming_script_failed` or `local_fault`.
+    /// `naming_script_failed`, `local_fault`, or `no_album_match` for a
+    /// local-only album the library already has.
     pub reason: Reason,
     pub detail: String,
     /// An outage that ends by itself, so the wait has no limit.

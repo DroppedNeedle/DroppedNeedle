@@ -58,6 +58,8 @@ pub fn import_album(conn: &Connection, track_ids: &[&str]) -> rusqlite::Result<O
 ///   person decided it. A file on another album keeps only its recording,
 ///   and that album is offered to identification.
 /// - Every album that took a file is queued for automatic management.
+/// - Files that name no release (a local-only album) seal nothing: their
+///   album is offered to identification.
 ///
 /// The seal runs under a savepoint. A row it reads that does not decode
 /// rolls back only the seal: the files stay, the failure is logged and the
@@ -87,6 +89,15 @@ pub fn adopt_import(
         if *other != album {
             offer_album(tx, other, now_ms)?;
         }
+    }
+    // A local-only album names no release: nothing is sealed, and it is
+    // offered to identification like a scanned album.
+    if files
+        .iter()
+        .all(|file| file.identity.release_mbid.is_empty())
+    {
+        offer_album(tx, &album, now_ms)?;
+        return Ok(());
     }
     let on_album: Vec<bool> = albums
         .iter()

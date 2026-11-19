@@ -1713,16 +1713,33 @@ impl HeldService {
         };
         for (entry_id, owner) in due {
             // Work of no user is retried as an admin's view of it.
-            let files = match self
+            let (files, again) = match self
                 .read("held.retry_files", move |rows| rows.entry(entry_id))
                 .await
             {
-                Ok(Some(entry)) => entry
-                    .files
-                    .iter()
-                    .filter(|file| retries_by_itself(file))
-                    .map(|file| file.id)
-                    .collect::<Vec<_>>(),
+                Ok(Some(entry)) => {
+                    // An upload or import-folder album put off with no file
+                    // on a track goes through drop import's steps again.
+                    // The entry lists only held files, and DUE_RETRIES
+                    // lists one with none paired only while none went in.
+                    let again = matches!(
+                        entry.origin,
+                        EntryOrigin::Upload | EntryOrigin::ImportFolder
+                    ) && entry.files.iter().all(|file| !file.is_paired());
+                    let files = entry
+                        .files
+                        .iter()
+                        .filter(|file| {
+                            if again {
+                                is_retry(file.reason)
+                            } else {
+                                retries_by_itself(file)
+                            }
+                        })
+                        .map(|file| file.id)
+                        .collect::<Vec<_>>();
+                    (files, again)
+                }
                 Ok(None) => continue,
                 Err(error) => {
                     tracing::warn!(entry_id, %error, "held entry to retry unreadable");
@@ -1736,8 +1753,10 @@ impl HeldService {
                 user_id: owner.clone().unwrap_or_default(),
                 admin: owner.is_none(),
             };
-            match self
-                .import_for(
+            let retried = if again {
+                self.again_for(&viewer, entry_id, files).await
+            } else {
+                self.import_for(
                     &viewer,
                     entry_id,
                     Some(files),
@@ -1745,7 +1764,8 @@ impl HeldService {
                     Asker::Loop,
                 )
                 .await
-            {
+            };
+            match retried {
                 Ok(acted) => {
                     tracing::info!(entry_id, imported = acted.imported, "held files retried");
                 }
@@ -1771,6 +1791,34 @@ impl HeldService {
                 tracing::warn!(entry_id, %error, "held retry not rescheduled; the next pass tries again");
             }
         }
+    }
+
+    /// Retry an upload's or import-folder album's unpaired files through
+    /// drop import's steps ([`DropImports::retry_entry`]), under the entry's
+    /// claim.
+    async fn again_for(
+        &self,
+        viewer: &Viewer,
+        entry_id: i64,
+        file_ids: Vec<i64>,
+    ) -> Result<Acted, HeldError> {
+        let entry = self.claim(viewer, entry_id).await?;
+        let result = match Self::chosen(&entry, Some(&file_ids)) {
+            Ok(files) if files.is_empty() => Ok(Acted::default()),
+            Ok(files) => self
+                .drops
+                .retry_entry(&entry, &files)
+                .await
+                .map(|matched| Acted {
+                    imported: matched.imported,
+                    owned: matched.owned,
+                    ..Acted::default()
+                })
+                .map_err(HeldError::from),
+            Err(error) => Err(error),
+        };
+        self.release(entry_id).await;
+        result
     }
 
     /// An action a restart cut off: once every library write from its

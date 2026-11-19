@@ -189,6 +189,35 @@ pub struct DownloadImport {
     pub actor: Option<String>,
 }
 
+/// An album placed with no release: the names its files' tags give (or
+/// their `Artist - Album` folder), and the MusicBrainz ids every file's
+/// tags agree on, which a duplicate is looked for by.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LocalOnlyAlbum {
+    pub title: String,
+    pub album_artist: String,
+    /// The year the tags give, as the naming script reads a date.
+    pub date: Option<String>,
+    pub tagged_group: Option<String>,
+    pub tagged_release: Option<String>,
+}
+
+impl LocalOnlyAlbum {
+    /// The naming-only release its files are filed by: a title, one
+    /// credited artist with no id and the date, nothing else.
+    fn release(&self) -> Release {
+        Release {
+            title: self.title.clone(),
+            artists: vec![super::matching::CreditedArtist {
+                name: self.album_artist.clone(),
+                ..super::matching::CreditedArtist::default()
+            }],
+            date: self.date.clone(),
+            ..Release::default()
+        }
+    }
+}
+
 /// The library album a download was fetched for, and its release as that
 /// album's identity row named it when the fetch was planned.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -240,6 +269,9 @@ pub enum ImportError {
     /// The database was busy or shutting down, so no import finished. The
     /// files wait and the import runs again.
     Busy(String),
+    /// A local-only album the library already has a live album of: its
+    /// name, its release or its release group. The sentence says which.
+    AlreadyInLibrary(String),
 }
 
 /// What a source's stream headers say, read through the opener its copy uses.
@@ -357,6 +389,29 @@ impl Imports {
         self.import_with_sidecars(import, join, open_source, &[])
     }
 
+    /// Place files no release was found for as a local-only album named
+    /// `local`: every file goes in as an extra under its own title and
+    /// numbers, its tags as they came, filed by the import naming script.
+    /// It replaces and joins nothing, saves no release and seals no
+    /// identity; the commit offers the album to identification. Under the
+    /// publish lock a live album of the same name, release or release
+    /// group refuses it ([`ImportError::AlreadyInLibrary`]). `import`
+    /// carries no release and no matched files.
+    pub fn import_local(
+        &self,
+        import: &DownloadImport,
+        local: &LocalOnlyAlbum,
+        open_source: &dyn Fn(&Path) -> std::io::Result<std::fs::File>,
+        sidecars: &[SidecarSource],
+    ) -> Result<ImportedAlbum, ImportError> {
+        if !import.release.id.is_empty() || !import.files.is_empty() {
+            return Err(ImportError::LocalFault(
+                "a local-only import carries no release".to_owned(),
+            ));
+        }
+        self.import_any(import, None, open_source, sidecars, Some(local))
+    }
+
     /// [`Self::import_download_from`], with the files that came with the
     /// album: each one the destination folder's sidecar patterns name goes
     /// beside the files placed from its folder, in the same bundle. One
@@ -367,6 +422,19 @@ impl Imports {
         join: Option<ImportJoin>,
         open_source: &dyn Fn(&Path) -> std::io::Result<std::fs::File>,
         sidecars: &[SidecarSource],
+    ) -> Result<ImportedAlbum, ImportError> {
+        self.import_any(import, join, open_source, sidecars, None)
+    }
+
+    /// One import: matched files filed by `import.release`, or with
+    /// `local`, a local-only album (see [`Self::import_local`]).
+    fn import_any(
+        &self,
+        import: &DownloadImport,
+        join: Option<ImportJoin>,
+        open_source: &dyn Fn(&Path) -> std::io::Result<std::fs::File>,
+        sidecars: &[SidecarSource],
+        local: Option<&LocalOnlyAlbum>,
     ) -> Result<ImportedAlbum, ImportError> {
         let fault = |message: String| ImportError::LocalFault(message);
         if import.files.is_empty() && import.extras.is_empty() {
@@ -382,9 +450,11 @@ impl Imports {
             .naming_script
             .clone();
         let task_dir = staging_rel(import.staging.as_deref().unwrap_or(&import.task_id));
+        let named_only = local.map(LocalOnlyAlbum::release);
+        let release = named_only.as_ref().unwrap_or(&import.release);
         let mut sources = Vec::with_capacity(import.files.len() + import.extras.len());
         for file in &import.files {
-            let track = import.release.tracks.get(file.track).ok_or_else(|| {
+            let track = release.tracks.get(file.track).ok_or_else(|| {
                 fault("a file names a track the release does not have".to_owned())
             })?;
             sources.push((&file.path, track.clone(), file.replaces.as_slice()));
@@ -432,7 +502,7 @@ impl Imports {
             };
             naming::render(
                 &script,
-                &naming::variables(&import.release, &named, format.as_str(), header),
+                &naming::variables(release, &named, format.as_str(), header),
                 &root.path.to_string_lossy(),
             )
             .map_err(|error| ImportError::NamingScript(error.to_string()))
@@ -487,34 +557,35 @@ impl Imports {
         let given = join.map(|join| AlbumJoin {
             album_id: join.album_id,
             release_mbid: join.release_mbid,
-            release_group_mbid: import.release.release_group_id.clone(),
+            release_group_mbid: release.release_group_id.clone(),
             exact: false,
         });
-        let keyed = given.is_none() && import.files.iter().all(|file| file.replaces.is_empty());
+        // A local-only album joins nothing.
+        let keyed = given.is_none()
+            && local.is_none()
+            && import.files.iter().all(|file| file.replaces.is_empty());
         let wanted: Vec<(String, String)> = import
             .files
             .iter()
-            .filter_map(|file| import.release.tracks.get(file.track))
+            .filter_map(|file| release.tracks.get(file.track))
             .map(|track| (track.id.clone(), track.recording_id.clone()))
             .collect();
         let discs: Vec<u32> = sources.iter().map(|(_, track, _)| track.disc).collect();
         let join_state = |conn: &rusqlite::Connection| -> Result<JoinState, PublishError> {
             // The join, the album it lands on and the folder of each file's
             // copy must agree, so the statements share this closure.
-            let join = match &given {
-                Some(given) => Some(given.clone()),
-                None if keyed => {
-                    crate::identity::copy_on_release(conn, &import.release.id, &wanted)?.map(
-                        |copy| AlbumJoin {
+            let join =
+                match &given {
+                    Some(given) => Some(given.clone()),
+                    None if keyed => crate::identity::copy_on_release(conn, &release.id, &wanted)?
+                        .map(|copy| AlbumJoin {
                             album_id: copy.album_id,
                             release_mbid: copy.release_mbid,
-                            release_group_mbid: import.release.release_group_id.clone(),
+                            release_group_mbid: release.release_group_id.clone(),
                             exact: true,
-                        },
-                    )
-                }
-                None => None,
-            };
+                        }),
+                    None => None,
+                };
             let joined = match &join {
                 Some(join) => joined_album(conn, join)?,
                 None => None,
@@ -546,7 +617,7 @@ impl Imports {
                 .read_blocking("import.group_held", |conn| {
                     Ok::<_, PublishError>(crate::identity::reads::group_owned(
                         conn,
-                        &import.release.release_group_id,
+                        &release.release_group_id,
                     )?)
                 })
                 .map_err(store_fault)?;
@@ -620,13 +691,14 @@ impl Imports {
             .enumerate()
         {
             let track = &track;
-            let mut tags = super::tags::picard::release_tags(&import.release, track);
+            let mut tags = super::tags::picard::release_tags(release, track);
             tags.retain(|name, values| {
                 super::tags::TagField::from_name(name).is_some_and(|field| {
                     super::tags::save::accepts(&super::tags::TagEdit::new(field, values.clone()))
                 })
             });
-            if !super::tags::save::writable(format) {
+            // A local-only album keeps its tags as they came.
+            if local.is_some() || !super::tags::save::writable(format) {
                 tags.clear();
             }
             let tags = TagUpdates::from_fields(tags)
@@ -649,16 +721,18 @@ impl Imports {
         }
 
         // The commit seals the match against this document and makes no
-        // outside call, so it is kept first.
-        self.identify_store
-            .save_release(&import.release, Lane::Background)
-            .map_err(|error| match error {
-                StoreError::Busy(cause) => ImportError::Busy(cause),
-                StoreError::Closed => ImportError::Busy(error.to_string()),
-                StoreError::Failed(_) => {
-                    fault(format!("the release document was not kept: {error}"))
-                }
-            })?;
+        // outside call, so it is kept first. A local-only album has none.
+        if local.is_none() {
+            self.identify_store
+                .save_release(release, Lane::Background)
+                .map_err(|error| match error {
+                    StoreError::Busy(cause) => ImportError::Busy(cause),
+                    StoreError::Closed => ImportError::Busy(error.to_string()),
+                    StoreError::Failed(_) => {
+                        fault(format!("the release document was not kept: {error}"))
+                    }
+                })?;
+        }
 
         let mut cell = self
             .core
@@ -716,6 +790,30 @@ impl Imports {
             return Err(ImportError::LibraryChanged(
                 "the album these files join changed".to_owned(),
             ));
+        }
+        // Read under the lock, so two uploads of one album never both go
+        // in as local-only albums.
+        if let Some(local) = local {
+            let twin = self
+                .db
+                .read_blocking("import.local_twin", |conn| {
+                    Ok::<_, PublishError>(crate::identity::reads::local_twin(
+                        conn,
+                        &droppedneedle_kernel::db::fold_text(&local.title),
+                        &droppedneedle_kernel::db::fold_text(&local.album_artist),
+                        local.tagged_group.as_deref(),
+                        local.tagged_release.as_deref(),
+                    )?)
+                })
+                .map_err(store_fault)?;
+            if let Some((title, artist)) = twin {
+                tracing::info!(task_dir, "a local-only album is held: the library has it");
+                return Err(ImportError::AlreadyInLibrary(if artist.is_empty() {
+                    format!("Your library already has {title}.")
+                } else {
+                    format!("Your library already has {title} by {artist}.")
+                }));
+            }
         }
         for (placement, folder) in placements.iter_mut().zip(&folders) {
             placement.copy_folder.clone_from(folder);
@@ -944,9 +1042,7 @@ impl Imports {
         // that release (an extra file has no place).
         let joined_track = |track: &super::matching::ReleaseTrack| {
             join.as_ref()
-                .filter(|join| {
-                    !track.id.is_empty() && import.release.answers_to(&join.release_mbid)
-                })
+                .filter(|join| !track.id.is_empty() && release.answers_to(&join.release_mbid))
                 .map(|_| JoinedTrack {
                     recording_mbid: track.recording_id.clone(),
                     release_track_mbid: track.id.clone(),
@@ -1020,8 +1116,8 @@ impl Imports {
                     staged_bytes_estimate: fingerprint.size + 65_536,
                     fingerprint,
                     identity: ReleaseIdentity {
-                        release_mbid: import.release.id.clone(),
-                        release_group_mbid: import.release.release_group_id.clone(),
+                        release_mbid: release.id.clone(),
+                        release_group_mbid: release.release_group_id.clone(),
                         recording_mbid: track.recording_id.clone(),
                         release_track_mbid: track.id.clone(),
                         album_identity_revision: 0,
@@ -1149,7 +1245,9 @@ impl Imports {
             .ok_or_else(|| fault("imported track is not in the catalog".to_owned()))?;
         // The commit sealed the match; its artist proofs and links follow
         // in their own write, so they can never fail the publish.
-        self.identify_store.link_after_command(&album_id);
+        if local.is_none() {
+            self.identify_store.link_after_command(&album_id);
+        }
         let paths = bundle
             .items
             .iter()

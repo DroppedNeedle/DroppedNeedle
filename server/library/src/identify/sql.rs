@@ -176,6 +176,32 @@ droppedneedle_kernel::sql! {
              priority = MIN(priority, ?5), kind = 'manual', \
              requested_by_user_id = COALESCE((SELECT id FROM auth_users WHERE id = ?6), \
              requested_by_user_id), updated_at = ?3 WHERE id = ?4";
+    /// How many backlog identify jobs were queued after `?1`.
+    pub(super) BACKLOG_QUEUED_SINCE = "SELECT COUNT(*) FROM library_identify_jobs \
+             WHERE kind = 'historical' AND created_at > ?1";
+    /// Albums due another look at `?1`, longest waiting first, at most
+    /// `?2`: listed, unmatched or guessed, not declined, with no custom
+    /// edition, no person's match and no job waiting, running or in
+    /// Attention. One is due once its last job is older than `?3`, `?4`,
+    /// `?5` or `?6` after its first to fourth finished look, then `?7`.
+    pub(super) RELOOK_DUE = "SELECT b.id FROM local_albums b \
+         WHERE " + (crate::owned_album!("b")) + " AND " + (crate::match_flagged!("b.id")) + " \
+         AND NOT " + (crate::declined_flag!("b.id")) + " \
+         AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
+             WHERE c.local_album_id = b.id) \
+         AND NOT EXISTS (SELECT 1 FROM local_album_external_identities e \
+             WHERE e.local_album_id = b.id AND e.provider = 'musicbrainz' \
+             AND e.decision_source IN " + PERSONS + ") \
+         AND NOT EXISTS (SELECT 1 FROM library_identify_jobs w WHERE w.local_album_id = b.id \
+             AND w.state IN ('queued','running','deferred','attention')) \
+         AND COALESCE((SELECT max(l.updated_at) FROM library_identify_jobs l \
+             WHERE l.local_album_id = b.id), 0) \
+           + CASE (SELECT COUNT(*) FROM library_identify_jobs s \
+             WHERE s.local_album_id = b.id AND s.state = 'succeeded') \
+             WHEN 0 THEN ?3 WHEN 1 THEN ?3 WHEN 2 THEN ?4 WHEN 3 THEN ?5 WHEN 4 THEN ?6 \
+             ELSE ?7 END <= ?1 \
+         ORDER BY COALESCE((SELECT max(l.updated_at) FROM library_identify_jobs l \
+             WHERE l.local_album_id = b.id), 0), b.id LIMIT ?2";
     /// The album (`?1`) carries the flag a person's decline left.
     pub(super) ALBUM_DECLINED = "SELECT " + (crate::declined_flag!("?1"));
     pub(super) BUMP_IDENTIFICATION_STREAM = "INSERT INTO library_event_stream_revisions (stream_kind, value) \

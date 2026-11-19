@@ -644,6 +644,16 @@ droppedneedle_kernel::sql! {
              WHERE b.id = (" + (copy_of_group!("= ?1")) + ")";
     /// Whether any album owns release group `?1` (lowered).
     pub(super) GROUP_OWNED = "SELECT EXISTS (" + (owns_group!("= ?1")) + ")";
+    /// The live album a local-only album would repeat: one titled `?1` by
+    /// `?2` (both folded), one that owns release group `?3` (lowered), or
+    /// one the scan keyed on its release, `?4` (`mbid:` and the lowered
+    /// id). A NULL `?3` or `?4` matches nothing.
+    pub(super) LOCAL_TWIN = "SELECT b.title, COALESCE(b.album_artist_name, '') AS album_artist_name \
+             FROM local_albums b WHERE " + (owned_album!("b")) + " \
+             AND ((b.title_folded = ?1 AND b.album_artist_name_folded = ?2) \
+             OR b.grouping_key = ?4 \
+             OR b.id IN (SELECT album_id FROM (" + (owns_group!("= ?3")) + "))) \
+             ORDER BY b.created_at, b.id LIMIT 1";
     /// Whether the album (`?1`) carries a flag a landing must keep: a
     /// person's detach, an undone automatic edition, or a guess the files
     /// contradict.
@@ -1481,6 +1491,10 @@ droppedneedle_kernel::sql! {
     pub(super) row CopyHolds for [COPY_HOLDS] {
         release_track: Option<String>,
         recording: Option<String>,
+    }
+    pub(super) row LocalTwinRow for [LOCAL_TWIN] {
+        title: String,
+        album_artist_name: String,
     }
     pub(super) row CopyRow for [COPY_SHOWN] {
         local_album_id: String,

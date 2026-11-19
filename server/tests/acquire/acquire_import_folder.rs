@@ -1,5 +1,6 @@
 //! The import folder: an album copied in goes into the library with its
-//! cover and leaves the folder; one it cannot place stays there, listed for
+//! cover and leaves the folder, as a local-only album when nothing
+//! identifies it; one whose files name two albums stays there, listed for
 //! admins only and never pruned; a folder still changing waits; a link is
 //! never followed and a folder overlapping the library imports nothing.
 //! Real landing port, publisher and catalog over one scratch database on a
@@ -115,8 +116,8 @@ fn release() -> Release {
     }
 }
 
-/// A fixture copy at `path`, tagged as one track of `album`, without
-/// MusicBrainz ids.
+/// A fixture copy at `path`, tagged as one track of `album` (none when
+/// empty), without MusicBrainz ids.
 fn tagged(path: &Path, fixture: &str, album: &str, title: &str, track: u32) {
     std::fs::create_dir_all(path.parent().expect("folder")).expect("album folder");
     std::fs::copy(
@@ -130,7 +131,13 @@ fn tagged(path: &Path, fixture: &str, album: &str, title: &str, track: u32) {
         TagEdit::new(TagField::Title, vec![title.to_owned()]),
         TagEdit::new(TagField::Artist, vec!["Portishead".to_owned()]),
         TagEdit::new(TagField::AlbumArtist, vec!["Portishead".to_owned()]),
-        TagEdit::new(TagField::Album, vec![album.to_owned()]),
+        TagEdit::new(
+            TagField::Album,
+            (!album.is_empty())
+                .then(|| album.to_owned())
+                .into_iter()
+                .collect(),
+        ),
         TagEdit::new(TagField::TrackNumber, vec![track.to_string()]),
         TagEdit::new(TagField::DiscNumber, vec!["1".to_owned()]),
     ];
@@ -317,6 +324,21 @@ impl Rig {
     }
 }
 
+/// An album folder the import folder cannot place, `Odds`: its two files'
+/// tags name two albums. Answers the first file's path.
+fn leftover(folder: &Path) -> PathBuf {
+    let odd = folder.join("Odds/09 Glory Box.flac");
+    tagged(&odd, "flac_full_01.flac", "Nothing Alike", "Glory Box", 9);
+    tagged(
+        &folder.join("Odds/10 Roads.flac"),
+        "flac_full_02.flac",
+        "Something Else",
+        "Roads",
+        10,
+    );
+    odd
+}
+
 fn admin() -> Viewer {
     Viewer {
         user_id: "u-admin".to_owned(),
@@ -332,8 +354,8 @@ fn user() -> Viewer {
 }
 
 /// The matched album goes in with its cover and leaves the folder; a file
-/// the patterns do not name stays. The album nothing identifies stays where
-/// it is, listed for the admin with no expiry and hidden from a user, and a
+/// the patterns do not name stays. The album whose files name two albums
+/// stays where it is, listed for the admin with no expiry and hidden from a user, and a
 /// held prune 91 days later leaves it in place; Discard deletes it.
 #[tokio::test]
 async fn an_album_goes_in_and_leaves_the_folder() {
@@ -355,8 +377,7 @@ async fn an_album_goes_in_and_leaves_the_folder() {
     );
     std::fs::write(album.join("cover.jpg"), b"a front cover").expect("cover");
     std::fs::write(album.join("notes.txt"), b"ripped in 1998").expect("notes");
-    let odd = rig.import.join("Odds/09 Glory Box.flac");
-    tagged(&odd, "flac_full_01.flac", "Nothing Alike", "Glory Box", 9);
+    let odd = leftover(&rig.import);
 
     rig.pass_after_quiet().await;
 
@@ -393,9 +414,14 @@ async fn an_album_goes_in_and_leaves_the_folder() {
         .expect("the leftover is listed for the admin");
     assert_eq!(entry.user_id, None);
     assert_eq!(entry.expires_at, None, "a person's own copy never expires");
-    assert_eq!(entry.files.len(), 1);
-    assert_eq!(entry.files[0].root, HeldRoot::Import);
-    assert_eq!(entry.files[0].path, "Odds/09 Glory Box.flac");
+    assert_eq!(entry.files.len(), 2);
+    assert!(entry.files.iter().all(|file| file.root == HeldRoot::Import));
+    assert!(
+        entry
+            .files
+            .iter()
+            .any(|file| file.path == "Odds/09 Glory Box.flac")
+    );
     let mine = rig
         .acquire
         .held
@@ -431,6 +457,38 @@ async fn an_album_goes_in_and_leaves_the_folder() {
         "the folder it leaves empty goes"
     );
     assert!(rig.import.is_dir(), "the import folder itself stays");
+}
+
+/// An album MusicBrainz cannot place goes in as a local-only album, filed
+/// by its tags, and leaves the folder. It belongs to no one: nothing waits
+/// in the held list.
+#[tokio::test]
+async fn an_album_nothing_identifies_goes_in_local_only() {
+    let rig = Rig::new().await;
+    let odd = rig.import.join("Odds/09 Glory Box.flac");
+    tagged(&odd, "flac_full_01.flac", "Nothing Alike", "Glory Box", 9);
+
+    rig.pass_after_quiet().await;
+
+    assert!(
+        rig.music
+            .join("Portishead/Nothing Alike (1997)/0109 Glory Box.flac")
+            .is_file()
+    );
+    assert_eq!(rig.drop_tracks("drop_folder"), 1);
+    assert!(!odd.exists(), "it left the import folder");
+    let owners: Vec<Option<String>> = rig.acquire.db.db().column(
+        "SELECT j.user_id FROM drop_import_items i JOIN drop_import_jobs j ON j.id = i.job_id",
+        [],
+    );
+    assert_eq!(owners, vec![None], "the work belongs to no one");
+    let listed = rig
+        .acquire
+        .held
+        .list(&admin(), None, None, false)
+        .await
+        .expect("held list");
+    assert!(listed.is_empty(), "nothing waits: {listed:?}");
 }
 
 /// An album folder whose files keep changing is not taken until they have
@@ -716,8 +774,10 @@ async fn a_ready_album_waits_out_a_scan() {
 #[tokio::test]
 async fn a_leftover_that_changed_is_looked_at_again() {
     let rig = Rig::new().await;
+    // A file with no album tag in a folder that names no album: nothing
+    // places it.
     let odd = rig.import.join("Odds/09 Glory Box.flac");
-    tagged(&odd, "flac_full_01.flac", "Nothing Alike", "Glory Box", 9);
+    tagged(&odd, "flac_full_01.flac", "", "Glory Box", 9);
     rig.pass_after_quiet().await;
     let listed = |entries: Vec<droppedneedle_acquire::held::store::Entry>| {
         entries
@@ -771,8 +831,7 @@ async fn a_leftover_that_changed_is_looked_at_again() {
 #[tokio::test]
 async fn a_new_folder_neither_blocks_nor_drops_the_old_ones_leftovers() {
     let rig = Rig::new().await;
-    let odd = rig.import.join("Odds/09 Glory Box.flac");
-    tagged(&odd, "flac_full_01.flac", "Nothing Alike", "Glory Box", 9);
+    let odd = leftover(&rig.import);
     rig.pass_after_quiet().await;
     let leftovers = || async {
         rig.acquire
@@ -787,19 +846,25 @@ async fn a_new_folder_neither_blocks_nor_drops_the_old_ones_leftovers() {
     let old = leftovers().await;
     assert_eq!(old.len(), 1, "the old folder's leftover");
 
-    // The same file, same size and time, at the same path in a new folder.
+    // The same files, same size and time, at the same paths in a new folder.
     let other = ScratchDir::new("import-folder-b");
     let copy = other.join("Odds/09 Glory Box.flac");
     std::fs::create_dir_all(copy.parent().expect("folder")).expect("folder");
-    std::fs::copy(&odd, &copy).expect("copy");
-    let modified = std::fs::metadata(&odd)
-        .and_then(|meta| meta.modified())
-        .expect("time");
-    std::fs::File::options()
-        .write(true)
-        .open(&copy)
-        .and_then(|file| file.set_modified(modified))
-        .expect("same time");
+    for name in ["09 Glory Box.flac", "10 Roads.flac"] {
+        let (from, to) = (
+            rig.import.join("Odds").join(name),
+            other.join("Odds").join(name),
+        );
+        std::fs::copy(&from, &to).expect("copy");
+        let modified = std::fs::metadata(&from)
+            .and_then(|meta| meta.modified())
+            .expect("time");
+        std::fs::File::options()
+            .write(true)
+            .open(&to)
+            .and_then(|file| file.set_modified(modified))
+            .expect("same time");
+    }
     rig.set_folder(&other);
     rig.pass_after_quiet().await;
 
@@ -839,8 +904,7 @@ async fn a_new_folder_neither_blocks_nor_drops_the_old_ones_leftovers() {
 #[tokio::test]
 async fn play_never_streams_through_a_folder_swapped_for_a_link() {
     let rig = Rig::new().await;
-    let odd = rig.import.join("Odds/09 Glory Box.flac");
-    tagged(&odd, "flac_full_01.flac", "Nothing Alike", "Glory Box", 9);
+    let odd = leftover(&rig.import);
     rig.pass_after_quiet().await;
     let entry = rig
         .acquire
@@ -851,7 +915,13 @@ async fn play_never_streams_through_a_folder_swapped_for_a_link() {
         .into_iter()
         .find(|entry| entry.origin == EntryOrigin::ImportFolder)
         .expect("the leftover is listed");
-    let file_id = entry.files[0].id.to_string();
+    let file_id = entry
+        .files
+        .iter()
+        .find(|file| file.path == "Odds/09 Glory Box.flac")
+        .expect("held")
+        .id
+        .to_string();
     let play = || {
         audio_handler(
             State(rig.acquire.held.clone()),

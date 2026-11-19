@@ -298,6 +298,32 @@ pub fn group_owned(conn: &Connection, release_group_mbid: &str) -> rusqlite::Res
         })
 }
 
+/// The title and album artist of a live album a local-only album titled
+/// `title_folded` by `artist_folded` would repeat: one of that name, one
+/// owning `tagged_group`, or one the scan keyed on `tagged_release`.
+/// `None` when the library has none.
+pub fn local_twin(
+    conn: &Connection,
+    title_folded: &str,
+    artist_folded: &str,
+    tagged_group: Option<&str>,
+    tagged_release: Option<&str>,
+) -> rusqlite::Result<Option<(String, String)>> {
+    let group = tagged_group
+        .filter(|group| !group.is_empty())
+        .map(str::to_ascii_lowercase);
+    let key = tagged_release
+        .filter(|release| !release.is_empty())
+        .map(|release| format!("mbid:{}", release.to_lowercase()));
+    conn.prepare_cached(sql::LOCAL_TWIN.text())?
+        .query_row(
+            params![title_folded, artist_folded, group, key],
+            sql::LocalTwinRow::read,
+        )
+        .map(|twin| (twin.title, twin.album_artist_name))
+        .optional()
+}
+
 /// The copy of `release_group_mbid` the library shows, the album
 /// `copy_of_group!` opens, so a download joins the copy a person sees. The
 /// group matches ignoring ASCII case. `None` when no live album is a copy of

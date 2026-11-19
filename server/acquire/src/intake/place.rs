@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use super::{Deferred, Gate, IntakeBatch, Origin, Outcome, Pairing, Placement};
 use crate::landing::ports::{
     ExtraFile, ImportFailure, ImportFile, ImportOrigin, ImportRequest, LandingLibrary,
+    LocalOnlyAlbum,
 };
 use crate::landing::probe::LandedFile;
 use crate::landing::quality;
@@ -33,11 +34,38 @@ pub async fn place(
     pairing: Pairing,
     heard: Option<HashMap<String, Vec<String>>>,
 ) -> Result<Placement, Deferred> {
+    run(library, batch, &pairing, heard, None).await
+}
+
+/// Place a batch nothing identified as the local-only album `local`: every
+/// file goes in as an extra under its own title and numbers, its tags as
+/// they came, joining and replacing nothing. A live album the library
+/// already has of that name, release or release group defers the whole
+/// batch as [`Reason::NoAlbumMatch`], the sentence naming that album.
+pub async fn place_local(
+    library: &dyn LandingLibrary,
+    batch: &IntakeBatch,
+    local: &LocalOnlyAlbum,
+) -> Result<Placement, Deferred> {
+    let pairing = Pairing {
+        extras: (0..batch.files.len()).collect(),
+        ..Pairing::default()
+    };
+    run(library, batch, &pairing, None, Some(local)).await
+}
+
+async fn run(
+    library: &dyn LandingLibrary,
+    batch: &IntakeBatch,
+    pairing: &Pairing,
+    heard: Option<HashMap<String, Vec<String>>>,
+    local: Option<&LocalOnlyAlbum>,
+) -> Result<Placement, Deferred> {
     let mut answers = Answers::new(heard);
     let mut retried = false;
     loop {
-        let planned = plan(library, batch, &pairing, &mut answers).await?;
-        let failure = match import(library, batch, &pairing, planned).await {
+        let planned = plan(library, batch, pairing, &mut answers).await?;
+        let failure = match import(library, batch, pairing, planned, local).await {
             Ok(placement) => return Ok(placement),
             Err(failure) => failure,
         };
@@ -70,6 +98,9 @@ pub async fn place(
             // tries again later without spending a try.
             ImportFailure::Busy(cause) => {
                 return deferred(Reason::JournalUnreadable, format!("database busy: {cause}"));
+            }
+            ImportFailure::AlreadyInLibrary(detail) => {
+                return deferred(Reason::NoAlbumMatch, detail);
             }
         }
     }
@@ -598,6 +629,7 @@ async fn import(
     batch: &IntakeBatch,
     pairing: &Pairing,
     mut planned: Planned,
+    local: Option<&LocalOnlyAlbum>,
 ) -> Result<Placement, ImportFailure> {
     let mut placement = Placement {
         outcomes: Vec::new(),
@@ -664,7 +696,10 @@ async fn import(
         actor: batch.owner.clone(),
         sidecars: batch.sidecars.clone(),
     };
-    let receipt = library.import(request).await?;
+    let receipt = match local {
+        Some(local) => library.import_local(request, local.clone()).await?,
+        None => library.import(request).await?,
+    };
     let skipped: HashMap<usize, String> = receipt.skipped.into_iter().collect();
     let blocked: HashMap<usize, String> = receipt.blocked.into_iter().collect();
     let imported = std::mem::take(&mut planned.import);

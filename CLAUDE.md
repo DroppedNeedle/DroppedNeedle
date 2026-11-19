@@ -585,6 +585,16 @@ Run from the repo root. `make help` lists every target.
   check), or on an album with no match whose files' tags name different
   groups. The new file is held and the old stays. Only a person importing
   that held file passes the check; the quality comparison still runs.
+- An upload or an import-folder album that identification cannot place on
+  a release (no album found, or tags naming an album the files don't fit)
+  goes in as a local-only album. It goes in only when every file names
+  one album and album artist by the scan's rules, from the tags or else an
+  `Artist - Album` folder, and the library has no live album of that
+  name, release or release group (the tags'); otherwise it is held. It is
+  filed by the import naming script from those names, keeps its tags as
+  they came, replaces and joins nothing, and has no match and no flag;
+  the commit that adds it offers it to identification. A download that
+  does not fit its request is never placed this way.
 - A download's edition is a pin only when a person picked it, the library
   holds the album in it, or the download fetches for a copy ("Get missing
   tracks", upgrades): only that release is accepted. Any other release on
@@ -604,11 +614,12 @@ Run from the repo root. `make help` lists every target.
   cannot tell, does nothing. It takes an album folder only once nothing in
   it has changed for 3 minutes (names starting with `.` are never taken),
   one album at a time, never while a scan runs, through drop import's
-  steps. A file (music or sidecar) leaves the folder only once the publish
-  journal holds its exact bytes for its item, hashed beneath the folder
-  and unchanged up to the unlink. Its work belongs to no user: its jobs
-  and held entries have no owner, only admins see and act on them, and
-  only while that folder is still the import folder.
+  steps; an album identification cannot place goes in local-only. A file
+  (music or sidecar) leaves the folder only once the publish journal
+  holds its exact bytes for its item, hashed beneath the folder and
+  unchanged up to the unlink. Its work belongs to no user: its jobs and
+  held entries have no owner, only admins see and act on them, and only
+  while that folder is still the import folder.
 
 **Identity** (product rules, not up for debate)
 - An edition a person chose is the album's identity; a v2 pin carries as
@@ -638,6 +649,12 @@ Run from the repo root. `make help` lists every target.
   files do, until a person picks an edition or asks it to look again (a
   `manual` job). An undo that leaves no match marks the album
   `AUTOMATIC_EDITION_UNDONE`, whatever flag it puts back.
+- An album whose last identification found nothing, or only guessed, is
+  looked at again by itself: 1, 3, 7 and 14 days after its last look, then
+  every 30 days, as backlog work. At most 20 backlog looks are queued in
+  any 24 hours, restarts included, so a large library waits at that
+  ceiling. A person's choice, a declined album, a custom edition and an
+  album with a job in Attention are left alone.
 - Automatic artist reconciliation needs provider proof, never name
   similarity alone, with one rule for the same name. Two live records whose
   names have the same `artist_name_key` (`library/src/scan/naming.rs`:
@@ -755,12 +772,14 @@ Run from the repo root. `make help` lists every target.
   discards it or once the library holds its exact bytes. An entry a
   person is acting on is never removed under them, and a held file is
   only judged gone when the filesystem says it is absent, never on a read
-  error. A held file the library could not take is retried by
-  itself (`Gate::HeldRetry`), and that retry never places a file on an
-  album a person moved it away from and never adds a second copy. It
-  replaces a library copy only to finish an upgrade already decided
-  (`UpgradeBlocked`: held because the old copy could not be taken away,
-  such as while the recycle bin is down). The rest wait for a person.
+  error. A held file the library could not take is retried by itself
+  (`Gate::HeldRetry`); an upload or import-folder entry held with no file
+  on a track is placed local-only again instead, from its tags and with
+  no identification. That retry never places a file on an album a person
+  moved it away from and never adds a second copy. It replaces a library
+  copy only to finish an upgrade already decided (`UpgradeBlocked`: held
+  because the old copy could not be taken away, such as while the
+  recycle bin is down). The rest wait for a person.
 - A source outside the download settings, or a format or step the quality
   recipe doesn't list, is never taken by automatic work (picks, failover,
   the search review, the wanted watcher); such a landing is held, one set

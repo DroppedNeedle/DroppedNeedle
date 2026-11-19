@@ -48,6 +48,8 @@ const UNDO_MOVE_BUSY_RETRY: Duration = Duration::from_secs(5);
 const UNDO_MOVE_BUSY_CAP: Duration = Duration::from_secs(300);
 /// Recycle-bin expiry.
 pub const RECYCLE_EXPIRY_JOB: &str = "library-recycle-expiry";
+/// The daily look again at unmatched and guessed albums.
+pub const RELOOK_JOB: &str = "library-identify-relook";
 
 /// Every always-on library loop, by name.
 pub const LOOPS: &[&str] = &[
@@ -61,6 +63,7 @@ pub const LOOPS: &[&str] = &[
     PUBLISH_JOB,
     RECYCLE_EXPIRY_JOB,
     LEFTOVERS_JOB,
+    RELOOK_JOB,
 ];
 
 /// Scan idle ceiling: how often the scan loop looks for scheduled work
@@ -167,6 +170,14 @@ const LEFTOVERS_EVERY: Duration = Duration::from_secs(600);
 const LEFTOVERS_JITTER: Duration = Duration::from_secs(60);
 /// Row code of a leftover check that failed.
 const LEFTOVERS_FAILED: &str = "LEFTOVER_CHECK_FAILED";
+
+/// The look-again sweep runs once a day, its first pass an hour after
+/// start, with a spread added to each.
+const RELOOK_EVERY: Duration = Duration::from_secs(86_400);
+const RELOOK_FIRST: Duration = Duration::from_secs(3600);
+const RELOOK_JITTER: Duration = Duration::from_secs(600);
+/// Row code of a look-again pass that did not run.
+const RELOOK_FAILED: &str = "IDENTIFY_RELOOK_FAILED";
 
 impl Scans {
     /// Supervisor inputs, rebuilt per call so settings-swap rebuilds
@@ -833,6 +844,25 @@ pub(crate) fn start_loops(
                 ),
                 Ok(_) => {}
                 Err(error) => return Err(TickError::new(LEFTOVERS_FAILED, error)),
+            }
+            Ok(Next::Continue)
+        },
+    )?;
+    let (db, clock) = (setup.db.clone(), setup.core.clock.clone());
+    supervisor.periodic_blocking(
+        RELOOK_JOB,
+        Schedule::new(RELOOK_EVERY)
+            .with_initial_delay(RELOOK_FIRST)
+            .with_jitter(RELOOK_JITTER)
+            .with_backoff(Duration::from_secs(60), RELOOK_EVERY),
+        move |_ctx| {
+            match caught("look again", || {
+                super::identify::relook::look_again(&db, clock.now_ms())
+            })? {
+                Ok(0) => {}
+                Ok(offered) => tracing::info!(offered, "albums offered to identification again"),
+                // A busy database backs the loop off; the albums stay due.
+                Err(error) => return Err(TickError::new(RELOOK_FAILED, error)),
             }
             Ok(Next::Continue)
         },

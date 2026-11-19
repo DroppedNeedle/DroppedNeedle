@@ -25,6 +25,7 @@ pub struct OwnedTracks {
 }
 
 pub use droppedneedle_library::import::ExtraSource as ExtraFile;
+pub use droppedneedle_library::import::LocalOnlyAlbum;
 
 /// One landed file to publish, and the release track it is.
 #[derive(Debug, Clone)]
@@ -155,6 +156,9 @@ pub enum ImportFailure {
     /// The database was busy, so no import finished. The import runs again
     /// later and spends no try.
     Busy(String),
+    /// A local-only album the library already has: the sentence says which
+    /// album. Nothing landed.
+    AlreadyInLibrary(String),
 }
 
 /// The library as the landing sees it. MusicBrainz is asked at the
@@ -295,6 +299,22 @@ pub trait LandingLibrary: Send + Sync {
     /// Publish verified files into the library.
     fn import(&self, request: ImportRequest)
     -> BoxFuture<'_, Result<ImportReceipt, ImportFailure>>;
+
+    /// Publish files no release was found for as the local-only album
+    /// `local` ([`droppedneedle_library::import::Imports::import_local`]):
+    /// every file is one of `request.extras`, and the request carries no
+    /// release, files or join.
+    fn import_local(
+        &self,
+        _request: ImportRequest,
+        _local: LocalOnlyAlbum,
+    ) -> BoxFuture<'_, Result<ImportReceipt, ImportFailure>> {
+        Box::pin(async {
+            Err(ImportFailure::LocalFault(
+                "this library places no local-only albums".to_owned(),
+            ))
+        })
+    }
 
     /// Whether every write putting this download task's files into the
     /// library is over. An error means the publish journal could not be

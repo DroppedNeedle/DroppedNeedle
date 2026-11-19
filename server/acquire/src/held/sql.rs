@@ -134,11 +134,18 @@ droppedneedle_kernel::sql! {
              'library_off', 'local_fault')";
     /// Held file `f` is retried by itself: held for a library reason, or
     /// an upload or import-folder file waiting for AcoustID, and paired
-    /// with a track.
-    pub(super) fragment RETRIES = "(f.state = 'held' AND (f.reason IN " + LIBRARY_REASONS + " \
+    /// with a track; or an upload or import-folder file held for a library
+    /// reason in an entry where nothing is paired and nothing went in yet
+    /// (a local-only album put off), which goes through drop import again.
+    pub(super) fragment RETRIES = "(f.state = 'held' AND (((f.reason IN " + LIBRARY_REASONS + " \
              OR (f.reason = 'acoustid_unavailable' AND f.root IN ('drop', 'import'))) \
              AND (COALESCE(f.release_track_mbid, '') != '' \
-                  OR COALESCE(f.recording_mbid, '') != ''))";
+                  OR COALESCE(f.recording_mbid, '') != '')) \
+             OR (f.reason IN " + LIBRARY_REASONS + " AND f.root IN ('drop', 'import') \
+                 AND NOT EXISTS (SELECT 1 FROM acquire_held_files o \
+                     WHERE o.entry_id = f.entry_id AND (o.state != 'held' \
+                     OR COALESCE(o.release_track_mbid, '') != '' \
+                     OR COALESCE(o.recording_mbid, '') != '')))))";
     /// Entries waiting for a person with a file retried by itself, due at
     /// `?1`, longest waiting first, at most `?2`: id and owner.
     pub(super) DUE_RETRIES = "SELECT e.id, e.user_id FROM acquire_held_entries e \
