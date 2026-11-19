@@ -1201,8 +1201,11 @@ impl OwnedPlaylists<'_> {
                 let ids: Vec<&String> = members.iter().map(|(id, _)| id).collect();
                 let listed = serde_json::to_string(&ids)
                     .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-                let known: usize =
-                    tx.query_row(sql::KNOWN_USERS.text(), params![listed], |row| row.get(0))?;
+                let known: usize = tx.query_row(
+                    sql::KNOWN_USERS.text(),
+                    params![listed, playlist_id],
+                    |row| row.get(0),
+                )?;
                 if known != members.len() {
                     return Ok(Written::Done(false));
                 }
