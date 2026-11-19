@@ -37518,6 +37518,14 @@
             "type": "string",
             "description": "Album artist display name."
           },
+          "bit_rate": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Most common indexed-track bitrate, kbps, when any track has one."
+          },
           "contribution_id": {
             "type": [
               "string",

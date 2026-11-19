@@ -316,7 +316,11 @@
 						{#if libMeta || reserveFormat}
 							<div class="shrink-0 sm:order-1 sm:w-11">
 								{#if libMeta}
-									<LibraryFormatBadge format={libMeta.format} size="badge-xs" />
+									<LibraryFormatBadge
+										format={libMeta.format}
+										bitrate={libMeta.bit_rate}
+										size="badge-xs"
+									/>
 								{/if}
 							</div>
 						{/if}

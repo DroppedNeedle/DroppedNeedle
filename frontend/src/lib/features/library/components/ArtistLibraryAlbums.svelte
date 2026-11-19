@@ -129,7 +129,7 @@
 							<span>{trackCountLabel(album.track_count, album.expected_track_count)}</span>
 						</p>
 						<div class="mt-3 flex flex-wrap items-center gap-2">
-							<LibraryFormatBadge format={album.format} />
+							<LibraryFormatBadge format={album.format} bitrate={album.bit_rate} />
 							<StatusChip tone="action">In library</StatusChip>
 						</div>
 						<div class="mt-4 flex flex-wrap items-center gap-2">

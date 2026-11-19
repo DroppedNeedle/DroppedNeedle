@@ -53,6 +53,8 @@ pub struct AlbumView {
     pub total_size_bytes: i64,
     /// Most common track format, when any track exists.
     pub format: Option<String>,
+    /// Most common indexed-track bitrate, kbps, when any track has one.
+    pub bit_rate: Option<i64>,
     /// Release year, when known.
     pub year: Option<i64>,
     /// True for compilations and various-artists sets.
@@ -95,6 +97,7 @@ impl From<(AlbumRecord, bool, bool)> for AlbumView {
             total_duration_seconds: album.total_duration_seconds,
             total_size_bytes: album.total_size_bytes,
             format: album.format,
+            bit_rate: album.bit_rate,
             year: album.year,
             is_compilation: album.is_compilation,
             cover_available: album.cover_available,

@@ -300,25 +300,25 @@ const ALBUM_RECORDS: [&str; 4] = [
     "AlbumRecord { id: \"al5\", title: \"100% \\\"Live\\\" _Unplugged_ 'Encore'\", \
      artist_name: \"Boreal\", artist_id: \"a2\", release_group_mbid: None, release_mbid: None, \
      artist_mbid: None, linked: false, guess_contradicted: false, track_count: 2, total_duration_seconds: 385.0, \
-     total_size_bytes: 4000000, format: Some(\"opus\"), year: Some(1987), \
+     total_size_bytes: 4000000, format: Some(\"opus\"), bit_rate: None, year: Some(1987), \
      is_compilation: false, cover_available: false, art_version: None, date_added: Some(1800.0), \
      contribution_id: None, contribution_state: None }",
     "AlbumRecord { id: \"al1\", title: \"First Light\", artist_name: \"Aurora\", \
      artist_id: \"a1\", release_group_mbid: Some(\"rg1\"), release_mbid: Some(\"r1\"), \
      artist_mbid: Some(\"m1\"), linked: true, guess_contradicted: false, track_count: 2, total_duration_seconds: 400.0, \
-     total_size_bytes: 8000000, format: Some(\"flac\"), year: Some(1994), \
+     total_size_bytes: 8000000, format: Some(\"flac\"), bit_rate: None, year: Some(1994), \
      is_compilation: false, cover_available: true, art_version: Some(1), date_added: Some(1000.0), \
      contribution_id: None, contribution_state: None }",
     "AlbumRecord { id: \"al3\", title: \"Lone Peak\", artist_name: \"Boreal\", \
      artist_id: \"a2\", release_group_mbid: None, release_mbid: None, artist_mbid: None, \
      linked: false, guess_contradicted: false, track_count: 2, total_duration_seconds: 430.0, \
-     total_size_bytes: 6000000, format: Some(\"flac\"), year: Some(1994), \
+     total_size_bytes: 6000000, format: Some(\"flac\"), bit_rate: None, year: Some(1994), \
      is_compilation: false, cover_available: false, art_version: None, date_added: Some(1500.0), \
      contribution_id: None, contribution_state: None }",
     "AlbumRecord { id: \"al2\", title: \"Second Dawn\", artist_name: \"Aurora\", \
      artist_id: \"a1\", release_group_mbid: None, release_mbid: None, \
      artist_mbid: Some(\"m1\"), linked: false, guess_contradicted: false, track_count: 1, total_duration_seconds: 180.0, \
-     total_size_bytes: 3000000, format: Some(\"mp3\"), year: Some(2001), \
+     total_size_bytes: 3000000, format: Some(\"mp3\"), bit_rate: None, year: Some(2001), \
      is_compilation: false, cover_available: false, art_version: None, date_added: Some(2000.0), \
      contribution_id: None, contribution_state: None }",
 ];

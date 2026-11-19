@@ -157,6 +157,19 @@ macro_rules! album_primary_format {
     };
 }
 
+/// Album `$album`'s primary bitrate: its most common indexed track bitrate
+/// in kbps, NULL for an album without indexed tracks or probed bitrates.
+macro_rules! album_primary_bitrate {
+    ($album:literal) => {
+        concat!(
+            "(SELECT t2.bit_rate FROM local_tracks t2 WHERE ",
+            $crate::local::sql::album_track!("t2", concat!($album, ".id")),
+            " AND t2.bit_rate IS NOT NULL GROUP BY t2.bit_rate \
+             ORDER BY COUNT(*) DESC, t2.bit_rate DESC LIMIT 1)"
+        )
+    };
+}
+
 /// The album list's track-count filter over an album alias: at least the
 /// bound number of [`album_track!`]s, or with the direction 0 fewer, or no
 /// bound (NULL). It asks for the track at the bound's place, so it reads
@@ -222,8 +235,8 @@ macro_rules! rated_within {
 }
 
 pub(crate) use {
-    album_min_tracks, album_primary_format, album_track, artist_min_appearances,
-    artist_min_led_tracks, rated_within,
+    album_min_tracks, album_primary_bitrate, album_primary_format, album_track,
+    artist_min_appearances, artist_min_led_tracks, rated_within,
 };
 
 droppedneedle_kernel::sql! {
@@ -238,7 +251,8 @@ droppedneedle_kernel::sql! {
         COUNT(t.id) AS track_count, \
         COALESCE(SUM(t.duration_seconds), 0.0) AS total_duration_seconds, \
         COALESCE(SUM(t.file_size_bytes), 0) AS total_size_bytes, "
-        + (album_primary_format!("a")) + " AS format, \
+        + (album_primary_format!("a")) + " AS format, "
+        + (album_primary_bitrate!("a")) + " AS bit_rate, \
         a.year AS year, a.is_compilation AS is_compilation, \
         COALESCE(w.source IN ('folder','embedded'), 0) AS cover_available, \
         CASE WHEN w.source IN ('folder','embedded') THEN w.version END AS art_version, \

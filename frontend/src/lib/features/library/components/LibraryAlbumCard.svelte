@@ -58,7 +58,7 @@
 	{/snippet}
 	{#snippet overlay()}
 		<div class="absolute top-2 right-2 z-10">
-			<LibraryFormatBadge format={album.format} />
+			<LibraryFormatBadge format={album.format} bitrate={album.bit_rate} />
 		</div>
 		{#if album.identity_state === 'local_only'}
 			<LocalIdentityBadge

@@ -421,7 +421,11 @@
 					<div class="flex shrink-0 items-center gap-2">
 						{#if track.format}
 							<span class="hidden sm:inline-flex">
-								<LibraryFormatBadge format={track.format} size="badge-xs" />
+								<LibraryFormatBadge
+									format={track.format}
+									bitrate={track.bit_rate}
+									size="badge-xs"
+								/>
 							</span>
 						{/if}
 						{#if track.duration_seconds != null}

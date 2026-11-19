@@ -250,6 +250,7 @@ pub(crate) fn album_row(row: &Row<'_>) -> rusqlite::Result<AlbumRecord> {
         total_duration_seconds: row.get("total_duration_seconds")?,
         total_size_bytes: row.get("total_size_bytes")?,
         format: row.get("format")?,
+        bit_rate: row.get("bit_rate")?,
         year: row.get("year")?,
         is_compilation: row.get("is_compilation")?,
         cover_available: row.get("cover_available")?,

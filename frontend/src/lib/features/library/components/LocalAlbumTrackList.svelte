@@ -83,7 +83,7 @@
 				>
 				<div class="order-last flex basis-full items-center gap-2 pb-1 pl-10 sm:contents">
 					<div class="shrink-0 sm:order-1 sm:w-11">
-						<LibraryFormatBadge format={track.format} size="badge-xs" />
+						<LibraryFormatBadge format={track.format} bitrate={track.bit_rate} size="badge-xs" />
 					</div>
 					<span
 						class="shrink-0 text-xs text-muted tabular-nums sm:order-5 sm:w-10 sm:text-right sm:text-sm sm:text-base-content"

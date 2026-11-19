@@ -223,6 +223,8 @@ pub struct AlbumRecord {
     pub total_size_bytes: i64,
     /// Most common track format, when any track exists.
     pub format: Option<String>,
+    /// Most common indexed-track bitrate, kbps, when any track has one.
+    pub bit_rate: Option<i64>,
     /// Release year, when known.
     pub year: Option<i64>,
     /// True for compilations.
