@@ -172,7 +172,10 @@
 							</div>
 						{:else}
 							{#if query.trim()}
-								<p class="px-1 text-sm text-muted">No one else by that name.</p>
+								<p class="px-1 text-sm text-muted">
+									No one else by that name. People show up here once they save a display name under
+									Profile.
+								</p>
 							{/if}
 						{/each}
 					</div>
