@@ -51,12 +51,19 @@ const PEOPLE_FIELDS: &[TagField] = &[
     TagField::DjMixer,
 ];
 
+/// A v2.3 tag that holds v2.4 frames, or several genres in one `TCON`:
+/// lofty's v2.3 writer turns those into `(Pop)Rock`, which reads back as
+/// other values, and its v2.4 writer keeps them.
 pub(super) fn is_mixed_v23(tag: &DeepId3) -> bool {
     tag.major == 3
-        && tag
-            .frames
-            .iter()
-            .any(|frame| V24_ONLY_IDS.contains(&frame.id.as_str()))
+        && tag.frames.iter().any(|frame| {
+            V24_ONLY_IDS.contains(&frame.id.as_str())
+                || frame.id == "TCON"
+                    && frame
+                        .text
+                        .as_ref()
+                        .is_some_and(|text| text.values.len() > 1)
+        })
 }
 
 /// The tag as a save writes it: a mixed v2.3 tag as its ID3v2.4 form,
