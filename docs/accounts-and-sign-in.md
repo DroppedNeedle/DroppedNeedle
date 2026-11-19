@@ -100,6 +100,26 @@ Either way the user's own media account is linked for playback, so plays count f
 
 The OpenAPI document is served at `/openapi.json` on your instance. Apart from sign-in, setup and the OAuth callbacks, every `/api/v3/*` route takes a Bearer token or the session cookie; the Wrapped API takes its own key. Everything under `/api/v3/settings/*` needs Admin, except reading the Connect Apps settings, and `/health` stays public for the container check.
 
+### Tokens for scripts
+
+A script or command-line tool should keep a token, not the account's password. It sends the token in an `Authorization: Bearer <token>` header. There are two ways to get one:
+
+- Sign in with `POST /api/v3/auth/login`, sending `"transport": "bearer"` with the username and password. The answer's `token` field holds the token. Leave the transport out and the server sets a cookie and returns no token. With `ALLOW_PASSWORD_LOGIN=false` the login route answers 403. An account that signs in only through Jellyfin sends its Jellyfin username and password to `POST /api/v3/auth/jellyfin/login` instead, with the same `transport` field, while Jellyfin sign-in is switched on.
+- From a signed-in session, `POST /api/v3/auth/device-sessions` with a `label` of 1 to 80 characters that names the script mints a token for it. The answer's `token` field holds the token. Minting a label that is already in use replaces the old token, which stops working at once. A device token cannot mint another one. The web UI has no screen for this yet.
+
+Sign in once from a shell (this needs `jq`). The password is read from a prompt, not written into the script:
+
+```bash
+printf "Password: "; read -rs DN_PASSWORD; echo; export DN_PASSWORD
+TOKEN=$(jq -nc '{username: "alice", password: $ENV.DN_PASSWORD, transport: "bearer"}' \
+  | curl -fsS https://music.example.com/api/v3/auth/login \
+      -H "Content-Type: application/json" -d @- \
+  | jq -r .token)
+unset DN_PASSWORD
+```
+
+A token lasts 30 days from when it was issued, and there is no refresh. After that the script signs in again, or a new device token is minted. The server keeps only a hash of each token, so a lost token cannot be shown again. Every token shows in Profile > Sessions, and "Sign out everywhere" ends them all. App passwords and app-connect tokens work only on the Subsonic and Jellyfin APIs, never on `/api/v3`.
+
 ### Wrapped API
 
 The Wrapped API lets an outside service, such as a newsletterr instance, read your users' year in review. An admin sets it up under Settings > Wrapped API: press "Generate new key", save, and paste the same key into the other service. While no key is saved, every Wrapped request is refused.

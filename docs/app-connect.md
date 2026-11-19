@@ -67,3 +67,5 @@ Trades are rate limited per address (`429` with `Retry-After`).
 **3. Use the access token as an app-password.** It does not expire. In Subsonic apps send it as `apiKey`, or as the password next to `username` (`u` with `p`, or with `t` and `s`). In Jellyfin apps sign in with `username` and it as the password. It works only on those APIs, never on `/api/v3`: `token_type` says `Bearer` only because app libraries expect it. An account with no login name gets its user id as `username`; for those, send the token as `apiKey`.
 
 For AppAuth, set the authorization endpoint to `https://<server>/connect` and the token endpoint to `https://<server>/api/v3/auth/app-connect/token`. There is no discovery document.
+
+A client that calls `/api/v3` gets its token in another way: see [Tokens for scripts](accounts-and-sign-in.md#tokens-for-scripts).
