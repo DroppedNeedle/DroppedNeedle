@@ -267,7 +267,8 @@
 		const sort: Sort = params.sort === 'artist' ? 'artist' : 'title';
 		const from = params.sort;
 		jump = { letter, sort, from, list: listKey, stop: new AbortController(), started: false };
-		if (from !== sort) setSort(sort);
+		// Not kept as the default: the jump only puts the list in the order it needs.
+		if (from !== sort) setParams({ sort });
 	}
 
 	// Runs the jump once the list is loaded in its order, and ends it when the search,
