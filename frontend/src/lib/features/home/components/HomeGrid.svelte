@@ -1,6 +1,6 @@
 <script lang="ts">
 	import 'gridstack/dist/gridstack.min.css';
-	import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack';
+	import { GridStack, type GridStackNode } from 'gridstack';
 	import type { Snippet } from 'svelte';
 	import { REFERENCE_COLUMNS, UNIT, type WidgetPlacement } from '../layout/contract';
 
@@ -98,20 +98,17 @@
 		if (!instance) return;
 		grid = instance;
 		if (columns !== REFERENCE_COLUMNS) instance.column(columns, 'moveScale');
-		// a gesture is the only thing that may write back: the drag and resize
-		// stops carry the element that moved, a column change carries none
-		const save = (el: GridItemHTMLElement) => {
-			const node = el.gridstackNode;
-			if (node) report([node]);
-		};
+		// a gesture is the only thing that may write back, and it writes the whole
+		// board: dragging one widget in top mode moves its neighbours too
+		const save = () => report(grid?.engine.nodes ?? []);
 		instance.on('drag', (_event, el) => {
 			dragFrom = el.getBoundingClientRect();
 		});
 		instance.on('dragstop', (_event, el) => {
 			flip(el);
-			save(el);
+			save();
 		});
-		instance.on('resizestop', (_event, el) => save(el));
+		instance.on('resizestop', () => save());
 		return () => {
 			instance.destroy(false);
 			grid = null;
