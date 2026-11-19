@@ -300,25 +300,25 @@ const ALBUM_RECORDS: [&str; 4] = [
     "AlbumRecord { id: \"al5\", title: \"100% \\\"Live\\\" _Unplugged_ 'Encore'\", \
      artist_name: \"Boreal\", artist_id: \"a2\", release_group_mbid: None, release_mbid: None, \
      artist_mbid: None, linked: false, guess_contradicted: false, track_count: 2, total_duration_seconds: 385.0, \
-     total_size_bytes: 4000000, format: Some(\"opus\"), year: Some(1987), \
+     total_size_bytes: 4000000, format: Some(\"opus\"), bit_rate: None, year: Some(1987), \
      is_compilation: false, cover_available: false, art_version: None, date_added: Some(1800.0), \
      contribution_id: None, contribution_state: None }",
     "AlbumRecord { id: \"al1\", title: \"First Light\", artist_name: \"Aurora\", \
      artist_id: \"a1\", release_group_mbid: Some(\"rg1\"), release_mbid: Some(\"r1\"), \
      artist_mbid: Some(\"m1\"), linked: true, guess_contradicted: false, track_count: 2, total_duration_seconds: 400.0, \
-     total_size_bytes: 8000000, format: Some(\"flac\"), year: Some(1994), \
+     total_size_bytes: 8000000, format: Some(\"flac\"), bit_rate: None, year: Some(1994), \
      is_compilation: false, cover_available: true, art_version: Some(1), date_added: Some(1000.0), \
      contribution_id: None, contribution_state: None }",
     "AlbumRecord { id: \"al3\", title: \"Lone Peak\", artist_name: \"Boreal\", \
      artist_id: \"a2\", release_group_mbid: None, release_mbid: None, artist_mbid: None, \
      linked: false, guess_contradicted: false, track_count: 2, total_duration_seconds: 430.0, \
-     total_size_bytes: 6000000, format: Some(\"flac\"), year: Some(1994), \
+     total_size_bytes: 6000000, format: Some(\"flac\"), bit_rate: None, year: Some(1994), \
      is_compilation: false, cover_available: false, art_version: None, date_added: Some(1500.0), \
      contribution_id: None, contribution_state: None }",
     "AlbumRecord { id: \"al2\", title: \"Second Dawn\", artist_name: \"Aurora\", \
      artist_id: \"a1\", release_group_mbid: None, release_mbid: None, \
      artist_mbid: Some(\"m1\"), linked: false, guess_contradicted: false, track_count: 1, total_duration_seconds: 180.0, \
-     total_size_bytes: 3000000, format: Some(\"mp3\"), year: Some(2001), \
+     total_size_bytes: 3000000, format: Some(\"mp3\"), bit_rate: None, year: Some(2001), \
      is_compilation: false, cover_available: false, art_version: None, date_added: Some(2000.0), \
      contribution_id: None, contribution_state: None }",
 ];
@@ -424,6 +424,126 @@ async fn album_pages_match_the_fixture() {
         .map(|album| format!("{album:?}"))
         .collect();
     assert_eq!(records, ALBUM_RECORDS);
+}
+
+/// An album's primary bitrate is the rounded average of indexed tracks in
+/// its primary format with a positive bitrate: CBR stays exact, VBR
+/// rounds, other codecs never leak across a mixed album, and NULL, 0 and
+/// non-indexed tracks are ignored.
+#[tokio::test]
+async fn album_primary_bitrate_averages_primary_format_positive_bitrates() {
+    let fixture = seed_small().await;
+    let mut batch = String::from(
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, year, \
+         grouping_source, created_at, updated_at) VALUES ",
+    );
+    let albums = [
+        ("br-cbr", "CBR Album"),
+        ("br-vbr-up", "VBR Up"),
+        ("br-vbr-down", "VBR Down"),
+        ("br-mixed", "Mixed Primary"),
+        ("br-mixed-null", "Mixed No Bitrate"),
+        ("br-zero-null", "Zero And Null"),
+        ("br-ignore-zero", "Ignore Zero"),
+        ("br-m4a-alac", "AAC And ALAC"),
+    ];
+    for (idx, (id, title)) in albums.iter().enumerate() {
+        if idx > 0 {
+            batch.push_str(", ");
+        }
+        let folded = fold_text(title);
+        batch.push_str(&format!(
+            "('{id}', 'r1', 'g-{id}', '{title}', '{folded}', 'Aurora', 'aurora', 'a1', \
+             2020, 'automatic', 3000000, 3000000)"
+        ));
+    }
+    batch.push_str(
+        ";\nINSERT INTO local_tracks (\
+        id, local_album_id, root_id, file_path, relative_path, path_hash, \
+        file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+        artist_name, artist_name_folded, album_title, album_title_folded, \
+        album_artist_name, album_artist_name_folded, disc_number, track_number, \
+        year, duration_seconds, file_format, bit_rate, bit_depth, availability, \
+        ingest_source, imported_at, membership_source) VALUES ",
+    );
+    let tracks: &[(&str, &str, Option<i64>, Option<i64>, &str)] = &[
+        // CBR: all 320 -> 320
+        ("br-cbr", "mp3", Some(320), None, "indexed"),
+        ("br-cbr", "mp3", Some(320), None, "indexed"),
+        ("br-cbr", "mp3", Some(320), None, "indexed"),
+        // VBR rounding up: (192 + 256 + 256) / 3 = 234.67 -> 235
+        ("br-vbr-up", "mp3", Some(192), None, "indexed"),
+        ("br-vbr-up", "mp3", Some(256), None, "indexed"),
+        ("br-vbr-up", "mp3", Some(256), None, "indexed"),
+        // VBR rounding down: (192 + 192 + 256) / 3 = 213.33 -> 213
+        ("br-vbr-down", "mp3", Some(192), None, "indexed"),
+        ("br-vbr-down", "mp3", Some(192), None, "indexed"),
+        ("br-vbr-down", "mp3", Some(256), None, "indexed"),
+        // Mixed: 3 MP3 (192, 256, 320 -> 256) + 2 FLAC (980) -> MP3 / 256
+        ("br-mixed", "mp3", Some(192), None, "indexed"),
+        ("br-mixed", "mp3", Some(256), None, "indexed"),
+        ("br-mixed", "mp3", Some(320), None, "indexed"),
+        ("br-mixed", "flac", Some(980), Some(16), "indexed"),
+        ("br-mixed", "flac", Some(980), Some(16), "indexed"),
+        // Mixed where primary format has no positive bitrates -> MP3 / None
+        ("br-mixed-null", "mp3", None, None, "indexed"),
+        ("br-mixed-null", "mp3", Some(0), None, "indexed"),
+        ("br-mixed-null", "mp3", None, None, "indexed"),
+        ("br-mixed-null", "flac", Some(980), Some(16), "indexed"),
+        ("br-mixed-null", "flac", Some(980), Some(16), "indexed"),
+        // Only NULL and 0 -> None
+        ("br-zero-null", "mp3", None, None, "indexed"),
+        ("br-zero-null", "mp3", Some(0), None, "indexed"),
+        // NULL, 0 and missing ignored alongside positive values: (256 + 320) / 2 = 288
+        ("br-ignore-zero", "mp3", None, None, "indexed"),
+        ("br-ignore-zero", "mp3", Some(0), None, "indexed"),
+        ("br-ignore-zero", "mp3", Some(256), None, "indexed"),
+        ("br-ignore-zero", "mp3", Some(320), None, "indexed"),
+        ("br-ignore-zero", "mp3", Some(64), None, "missing"),
+        // AAC (m4a, no bit_depth) kept apart from ALAC (m4a, bit_depth set)
+        ("br-m4a-alac", "m4a", Some(256), None, "indexed"),
+        ("br-m4a-alac", "m4a", Some(256), None, "indexed"),
+        ("br-m4a-alac", "m4a", Some(950), Some(16), "indexed"),
+    ];
+    for (idx, (album_id, format, bit_rate, bit_depth, availability)) in tracks.iter().enumerate() {
+        if idx > 0 {
+            batch.push_str(", ");
+        }
+        let br = bit_rate.map_or_else(|| "NULL".to_owned(), |v| v.to_string());
+        let bd = bit_depth.map_or_else(|| "NULL".to_owned(), |v| v.to_string());
+        batch.push_str(&format!(
+            "('br-t{idx}', '{album_id}', 'r1', '/m/br-{idx}.{format}', 'br-{idx}.{format}', \
+             'h-br-{idx}', 1000000, 1, 's-br-{idx}', 'Track {idx}', 'track {idx}', \
+             'Aurora', 'aurora', '{album_id}', '{album_id}', 'Aurora', 'aurora', \
+             1, {}, 2020, 180.0, '{format}', {br}, {bd}, '{availability}', \
+             'scan', 3000000, 'automatic')",
+            idx + 1
+        ));
+    }
+    batch.push(';');
+    write_batch(&fixture, "seed bitrate albums", batch).await;
+
+    let expected: &[(&str, &str, Option<i64>)] = &[
+        ("br-cbr", "mp3", Some(320)),
+        ("br-vbr-up", "mp3", Some(235)),
+        ("br-vbr-down", "mp3", Some(213)),
+        ("br-mixed", "mp3", Some(256)),
+        ("br-mixed-null", "mp3", None),
+        ("br-zero-null", "mp3", None),
+        ("br-ignore-zero", "mp3", Some(288)),
+        ("br-m4a-alac", "m4a", Some(256)),
+    ];
+    for &(id, format, bit_rate) in expected {
+        let album = fixture
+            .catalog
+            .get_album(id)
+            .await
+            .expect("reads album")
+            .expect("album exists");
+        assert_eq!(album.format.as_deref(), Some(format), "album {id} format");
+        assert_eq!(album.bit_rate, bit_rate, "album {id} bit_rate");
+    }
 }
 
 /// A filtered player total runs its count once per catalog revision: a
@@ -1376,8 +1496,9 @@ async fn assert_hot_plans(db: &Db) {
         "album id page never table-scans: {plan:?}"
     );
 
-    // The page aggregate probes each album's tracks for the modal format;
-    // the probe must stay on the album index, never an availability scan.
+    // The page aggregate probes each album's tracks for the primary format
+    // and primary-format average bitrate; both probes must stay on the album
+    // index, never an availability scan.
     let plan = explain(
         db,
         &sql::album_rows(ListLen::new(2)),
@@ -1387,10 +1508,17 @@ async fn assert_hot_plans(db: &Db) {
         ],
     )
     .await;
+    let indexed_probes = plan
+        .iter()
+        .filter(|line| line.contains("SEARCH t2 USING INDEX idx_local_tracks_album_availability"))
+        .count();
+    assert_eq!(
+        indexed_probes, 2,
+        "format and bitrate probes stay on the album index: {plan:?}"
+    );
     assert!(
-        plan.iter()
-            .any(|line| line.contains("SEARCH t2 USING INDEX idx_local_tracks_album_availability")),
-        "format probe stays on the album index: {plan:?}"
+        !plan.iter().any(|line| line.contains("SCAN t2")),
+        "format and bitrate probes never scan tracks: {plan:?}"
     );
 
     let plan = explain_unbound(

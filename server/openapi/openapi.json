@@ -37799,6 +37799,14 @@
             "type": "string",
             "description": "Album artist display name."
           },
+          "bit_rate": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rounded average bitrate, kbps, of indexed tracks in the album's primary\nformat, when any track has a positive bitrate."
+          },
           "contribution_id": {
             "type": [
               "string",

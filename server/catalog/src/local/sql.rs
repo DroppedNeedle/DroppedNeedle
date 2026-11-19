@@ -157,6 +157,24 @@ macro_rules! album_primary_format {
     };
 }
 
+/// Album `$album`'s primary bitrate: the rounded average bitrate in kbps of
+/// indexed tracks in the album's primary format ([`album_primary_format!`])
+/// with a positive bitrate, NULL when none exists.
+macro_rules! album_primary_bitrate {
+    ($album:literal) => {
+        concat!(
+            "(SELECT CAST(ROUND(AVG(CASE WHEN t2.bit_rate > 0 THEN t2.bit_rate END)) AS INTEGER) \
+             FROM local_tracks t2 WHERE ",
+            $crate::local::sql::album_track!("t2", concat!($album, ".id")),
+            " GROUP BY ",
+            $crate::local::sql::track_codec!("t2"),
+            " ORDER BY COUNT(*) DESC, ",
+            $crate::local::sql::track_codec!("t2"),
+            " LIMIT 1)"
+        )
+    };
+}
+
 /// The album list's track-count filter over an album alias: at least the
 /// bound number of [`album_track!`]s, or with the direction 0 fewer, or no
 /// bound (NULL). It asks for the track at the bound's place, so it reads
@@ -222,8 +240,8 @@ macro_rules! rated_within {
 }
 
 pub(crate) use {
-    album_min_tracks, album_primary_format, album_track, artist_min_appearances,
-    artist_min_led_tracks, rated_within,
+    album_min_tracks, album_primary_bitrate, album_primary_format, album_track,
+    artist_min_appearances, artist_min_led_tracks, rated_within,
 };
 
 droppedneedle_kernel::sql! {
@@ -238,7 +256,8 @@ droppedneedle_kernel::sql! {
         COUNT(t.id) AS track_count, \
         COALESCE(SUM(t.duration_seconds), 0.0) AS total_duration_seconds, \
         COALESCE(SUM(t.file_size_bytes), 0) AS total_size_bytes, "
-        + (album_primary_format!("a")) + " AS format, \
+        + (album_primary_format!("a")) + " AS format, "
+        + (album_primary_bitrate!("a")) + " AS bit_rate, \
         a.year AS year, a.is_compilation AS is_compilation, \
         COALESCE(w.source IN ('folder','embedded'), 0) AS cover_available, \
         CASE WHEN w.source IN ('folder','embedded') THEN w.version END AS art_version, \

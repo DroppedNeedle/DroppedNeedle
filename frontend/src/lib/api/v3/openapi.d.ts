@@ -10654,6 +10654,12 @@ export interface components {
             artist_mbid?: string | null;
             /** @description Album artist display name. */
             artist_name: string;
+            /**
+             * Format: int64
+             * @description Rounded average bitrate, kbps, of indexed tracks in the album's primary
+             *     format, when any track has a positive bitrate.
+             */
+            bit_rate?: number | null;
             /** @description The album's open MusicBrainz contribution, if any. */
             contribution_id?: string | null;
             /**

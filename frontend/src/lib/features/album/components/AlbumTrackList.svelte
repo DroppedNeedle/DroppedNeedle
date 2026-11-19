@@ -314,9 +314,13 @@
 						class="order-last flex basis-full items-center gap-2 pb-1 pl-8 empty:hidden sm:contents"
 					>
 						{#if libMeta || reserveFormat}
-							<div class="shrink-0 sm:order-1 sm:w-11">
+							<div class="shrink-0 sm:order-1 sm:w-[5.5rem]">
 								{#if libMeta}
-									<LibraryFormatBadge format={libMeta.format} size="badge-xs" />
+									<LibraryFormatBadge
+										format={libMeta.format}
+										bitrate={libMeta.bit_rate}
+										size="badge-xs"
+									/>
 								{/if}
 							</div>
 						{/if}
@@ -526,7 +530,7 @@
 					<!-- Under the title, on a line of its own so a phone keeps it readable. -->
 					<div
 						class="flex flex-col items-start pb-1 pl-8 text-xs {reserveFormat
-							? 'sm:pl-[5.75rem]'
+							? 'sm:pl-[8.5rem]'
 							: 'sm:pl-9'}"
 					>
 						{#if editionRow?.yourVersionMs}

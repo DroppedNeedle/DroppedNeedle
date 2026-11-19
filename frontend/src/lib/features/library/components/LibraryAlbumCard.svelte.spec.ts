@@ -63,4 +63,38 @@ describe('LibraryAlbumCard.svelte', () => {
 			view.unmount();
 		}
 	});
+
+	it('shows lossy bitrate on the format badge without overlapping Local-only on narrow cards', async () => {
+		const lossyLocal: AlbumView = {
+			...album,
+			format: 'mp3',
+			bit_rate: 320,
+			identity_state: 'local_only'
+		};
+		const wrapper = document.createElement('div');
+		wrapper.style.width = '128px';
+		document.body.appendChild(wrapper);
+		const view = await render(LibraryAlbumCard, {
+			target: wrapper,
+			props: { album: lossyLocal }
+		});
+		try {
+			const formatBadge = page.getByText('MP3 320', { exact: true });
+			const localBadge = page.getByText('Local-only', { exact: true });
+			await expect.element(formatBadge).toBeVisible();
+			await expect.element(localBadge).toBeVisible();
+
+			const formatRect = formatBadge.element().getBoundingClientRect();
+			const localRect = localBadge.element().getBoundingClientRect();
+			const overlaps =
+				formatRect.left < localRect.right &&
+				formatRect.right > localRect.left &&
+				formatRect.top < localRect.bottom &&
+				formatRect.bottom > localRect.top;
+			expect(overlaps).toBe(false);
+		} finally {
+			view.unmount();
+			wrapper.remove();
+		}
+	});
 });
