@@ -58,7 +58,7 @@ use imports::jobs::{SPEC, SpotifyImportJobs, SpotifyImports};
 use imports::lidarr::LidarrClient;
 use imports::models::{LidarrConnectionSettings, SpotifySettings};
 use imports::spotify::{ImportedTrack, SpotifyImportService};
-use imports::spotify_albums::AlbumResolver;
+use imports::spotify_albums::{AlbumResolver, SpotifyAlbum};
 use imports::spotify_client::SpotifyClient;
 use imports::spotify_oauth::{PendingAuth, SPOTIFY_CALLBACK_PATH, SpotifyConnection};
 use imports::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates};
@@ -950,6 +950,61 @@ async fn spotify_callback_rejects_error_and_replayed_state() {
         location.ends_with("/profile?spotify=error&reason=state"),
         "saw {location}"
     );
+}
+
+/// An album MusicBrainz knows is proven by a recording search for its
+/// ISRCs, with no title search: a soundtrack credited to Various Artists
+/// is found. A same-named album and single go to the kind Spotify names,
+/// then its track count, and stay unresolved when it names neither (#779).
+#[tokio::test]
+async fn spotify_albums_are_proven_by_their_isrcs() {
+    const SOUNDTRACK: &str = "5907a1b0-0000-4000-8000-000000000f01";
+    const ALBUM: &str = "5907a1b0-0000-4000-8000-000000000f03";
+    const SINGLE: &str = "5907a1b0-0000-4000-8000-000000000f04";
+    let auth = AuthRig::new("imports-isrc").await;
+    let _musicbrainz = serve_musicbrainz(&auth).await;
+    let closed = "http://127.0.0.1:9";
+    let providers = providers_at(&auth.platform, closed, closed, None);
+    let resolver = AlbumResolver::new(&providers, auth.platform.settings.live());
+    let resolve =
+        |title: &str, artist: &str, isrc: &str, kind: Option<&str>, tracks: Option<u32>| {
+            let mut album = SpotifyAlbum {
+                title: title.to_owned(),
+                artist: artist.to_owned(),
+                kind: kind.map(str::to_owned),
+                total_tracks: tracks,
+                isrcs: std::collections::BTreeSet::new(),
+            };
+            album.add_isrc(isrc);
+            let resolver = resolver.clone();
+            async move { resolver.resolve(&album).await.expect("musicbrainz answers") }
+        };
+
+    let soundtrack = resolve(
+        "Night Signals: Music From the Film (Original Soundtrack)",
+        "Various Artists",
+        "QZAAA2600001",
+        Some("compilation"),
+        Some(12),
+    )
+    .await;
+    assert_eq!(soundtrack.as_deref(), Some(SOUNDTRACK));
+    for (kind, tracks, group) in [
+        (Some("single"), Some(1), Some(SINGLE)),
+        (Some("album"), Some(10), Some(ALBUM)),
+        (None, Some(1), Some(SINGLE)),
+        (None, None, None),
+    ] {
+        let found = resolve(
+            "Glass Bloom",
+            "Aurora Current",
+            "QZAAA2600002",
+            kind,
+            tracks,
+        )
+        .await;
+        assert_eq!(found.as_deref(), group, "{kind:?} with {tracks:?} tracks");
+    }
 }
 
 /// An import answers at once, then fills the playlist from the `/items`

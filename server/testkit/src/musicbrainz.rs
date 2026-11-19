@@ -20,7 +20,8 @@
 //!   each request.
 //! - `tests/fixtures/musicbrainz/spotify_*` are written by hand in the
 //!   shapes of the recorded release search and lookup, for the albums of
-//!   the Spotify mock's playlist.
+//!   the Spotify mock's playlist, and of a recorded recording search by
+//!   ISRC, for the resolver's ISRC proof.
 
 use std::collections::{BTreeSet, HashMap};
 use std::net::SocketAddr;
@@ -194,6 +195,22 @@ const RECORDINGS: &[Recording] = &[
         inc: &["isrcs", "recordings", "release-groups"],
         param: None,
         body: include_str!("../../tests/fixtures/musicbrainz/spotify_release_glass.json"),
+    },
+    // musicbrainz/spotify_isrc_*.json (hand-written in the shape of a
+    // recording search by `isrc:`, recorded from musicbrainz.org on
+    // 2026-11-19): a soundtrack and a single beside it, and a same-named
+    // album and single, each carrying the searched recording.
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some(("query", Some("isrc:QZAAA2600001"))),
+        body: include_str!("../../tests/fixtures/musicbrainz/spotify_isrc_soundtrack.json"),
+    },
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some(("query", Some("isrc:QZAAA2600002"))),
+        body: include_str!("../../tests/fixtures/musicbrainz/spotify_isrc_single.json"),
     },
 ];
 
