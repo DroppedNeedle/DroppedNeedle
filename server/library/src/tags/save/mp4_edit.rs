@@ -223,6 +223,7 @@ pub(super) fn apply(
         if !genre_edited {
             keep_legacy_genre(&mut native, atoms);
         }
+        keep_dropped_atoms(&mut native, atoms);
     }
     for edit in edits {
         match edit {
@@ -387,6 +388,46 @@ fn keep_legacy_genre(native: &mut Ilst, atoms: &[Mp4AtomTruth]) {
             data,
         },
     ));
+}
+
+/// Put back atoms lofty's read dropped, with their own bytes: an integer
+/// of 8 bytes (lofty reads integer types at 1 to 4, so an iTunes `cnID`
+/// of 8 is lost) or an empty payload (`pgap`). An edit to the same atom
+/// replaces it after.
+fn keep_dropped_atoms(native: &mut Ilst, atoms: &[Mp4AtomTruth]) {
+    for atom in atoms {
+        // `gnre` is `keep_legacy_genre`'s, and pictures are saved apart.
+        if matches!(&atom.kind, b"----" | b"gnre" | b"covr")
+            || native.get(&AtomIdent::Fourcc(atom.kind)).is_some()
+        {
+            continue;
+        }
+        let data = atom
+            .items
+            .iter()
+            .zip(&atom.types)
+            .filter_map(|(item, code)| {
+                let data = match item {
+                    // lofty reads 1 to 4 bytes, so a single integer it dropped
+                    // is 8. An atom of several boxes stays refused.
+                    Mp4Item::Integer(number)
+                        if atom.items.len() == 1 && matches!(code, Some(21 | 22)) =>
+                    {
+                        number.to_be_bytes().to_vec()
+                    }
+                    Mp4Item::Bytes(bytes) => bytes.clone(),
+                    _ => return None,
+                };
+                Some(AtomData::Unknown {
+                    code: DataType::from((*code)?),
+                    data,
+                })
+            })
+            .collect();
+        if let Some(restored) = Atom::from_collection(AtomIdent::Fourcc(atom.kind), data) {
+            native.insert(restored);
+        }
+    }
 }
 
 /// Put the `ilst` items back in the file's order: lofty's remove swaps

@@ -4206,6 +4206,47 @@ fn m4a_genre_edit_replaces_a_legacy_numeric_genre() {
     assert_eq!(mp4_text(&m4a, b"\xa9gen"), ["Indie"]);
 }
 
+/// Atoms lofty's read drops survive a save as the file held them: an
+/// 8-byte integer (lofty reads 1 to 4 bytes) and an empty integer payload,
+/// as iTunes and some taggers write `cnID` and `pgap` (#692).
+#[test]
+fn m4a_atoms_lofty_cannot_read_survive_a_save() {
+    use lofty::config::{ParseOptions, WriteOptions};
+    use lofty::file::AudioFile as _;
+    use lofty::mp4::{Atom, AtomData, AtomIdent, DataType, Mp4File};
+    use lofty::tag::TagExt as _;
+    let (_scratch, m4a) = temp_copy("management_full.m4a", "dropped-atoms");
+    let mut file =
+        Mp4File::read_from(&mut std::fs::File::open(&m4a).unwrap(), ParseOptions::new()).unwrap();
+    let mut ilst = file.ilst_mut().unwrap().clone();
+    for (code, kind, data) in [
+        (
+            *b"cnID",
+            DataType::BeSignedInteger,
+            0x1_2345_6789u64.to_be_bytes().to_vec(),
+        ),
+        (*b"pgap", DataType::BeSignedInteger, Vec::new()),
+    ] {
+        ilst.insert(Atom::new(
+            AtomIdent::Fourcc(code),
+            AtomData::Unknown { code: kind, data },
+        ));
+    }
+    ilst.save_to_path(&m4a, WriteOptions::new()).unwrap();
+    let held = |path: &Path| {
+        mp4_atoms(path)
+            .into_iter()
+            .filter(|atom| matches!(&atom.kind, b"cnID" | b"pgap"))
+            .map(|atom| (atom.kind, atom.types, atom.data))
+            .collect::<Vec<_>>()
+    };
+    let planted = held(&m4a);
+    assert_eq!(planted.len(), 2);
+
+    tags::save_tags(&m4a, &[TagEdit::set_title("Later")]).expect("saves");
+    assert_eq!(held(&m4a), planted);
+}
+
 // ---------------------------------------------------------------------------
 // Save wrapper: frames lofty would re-encode go back byte for byte
 // ---------------------------------------------------------------------------
