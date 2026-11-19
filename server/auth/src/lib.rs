@@ -3,6 +3,16 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+/// An account other users may see by its display name, over an
+/// `auth_users` alias: the person chose that name. The user directory and
+/// whom a playlist can be shared with both read it.
+#[macro_export]
+macro_rules! listed_user {
+    ($user:literal) => {
+        concat!($user, ".display_name_chosen = 1")
+    };
+}
+
 pub mod app_connect;
 pub mod compat_auth;
 pub mod federated;

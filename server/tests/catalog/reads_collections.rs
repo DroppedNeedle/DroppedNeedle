@@ -45,11 +45,14 @@ impl Rig {
         let dir = ScratchDir::new("collections");
         crate::common::migrated_db(&dir.join("app.db"));
         let runtime = Self::boot(&dir).await;
+        // Everyone chose their display name but Quiet, whom the user
+        // directory does not list.
         let rows = [
-            ("u-ada", "Ada", "user"),
-            ("u-bob", "Bob", "user"),
-            ("u-tris", "Tris", "trusted"),
-            ("u-root", "Root", "admin"),
+            ("u-ada", "Ada", "user", 1),
+            ("u-bob", "Bob", "user", 1),
+            ("u-tris", "Tris", "trusted", 1),
+            ("u-root", "Root", "admin", 1),
+            ("u-quiet", "quiet", "user", 0),
         ];
         runtime
             .db()
@@ -57,11 +60,11 @@ impl Rig {
                 droppedneedle_kernel::db::Lane::Foreground,
                 "seed users",
                 move |tx| {
-                    for (id, name, role) in rows {
+                    for (id, name, role, chosen) in rows {
                         tx.execute(
-                            "INSERT INTO auth_users (id, display_name, role, created_at) \
-                         VALUES (?1, ?2, ?3, 0)",
-                            rusqlite::params![id, name, role],
+                            "INSERT INTO auth_users (id, display_name, role, created_at, \
+                             display_name_chosen) VALUES (?1, ?2, ?3, 0, ?4)",
+                            rusqlite::params![id, name, role, chosen],
                         )?;
                     }
                     Ok::<_, droppedneedle_kernel::db::DbError>(())
@@ -271,8 +274,8 @@ async fn playlist_auth_matrix() {
 
 /// Sharing opens a private playlist to the chosen people and no one else.
 /// A member reads it in full and changes nothing: its songs, name,
-/// visibility and members stay the owner's. Only other users of the
-/// server can be chosen, and a member may leave.
+/// visibility and members stay the owner's. Only other users the user
+/// directory lists can be chosen, and a member may leave.
 #[tokio::test]
 async fn sharing_opens_a_playlist_to_chosen_people_only() {
     let rig = Rig::open().await;
@@ -355,7 +358,11 @@ async fn sharing_opens_a_playlist_to_chosen_people_only() {
         let (status, _) = call(&app, method.clone(), &uri, Some(BOB), body).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
     }
-    for user_ids in [json!(["u-ada"]), json!(["u-bob", "nobody"])] {
+    for user_ids in [
+        json!(["u-ada"]),
+        json!(["u-bob", "nobody"]),
+        json!(["u-bob", "u-quiet"]),
+    ] {
         let (status, _) = call(
             &app,
             Method::PUT,

@@ -1919,6 +1919,16 @@ async fn apps_list_other_peoples_public_playlists_only_on_request() {
         .and_then(|row| row["id"].as_str())
         .expect("ada's private playlist")
         .to_owned();
+    // Bob names himself under Profile, so the Share dialog lists him.
+    let (status, named) = app
+        .call_through_busy(
+            "PATCH",
+            "/api/v3/me",
+            &bob_headers,
+            Some(json!({"display_name": "Bob"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{named}");
     let (status, shared) = app
         .call_through_busy(
             "PUT",

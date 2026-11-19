@@ -635,6 +635,13 @@ impl Plan {
                 Planned::SetEventSeen { user_id, seen_at } => set_seen_in(tx, user_id, *seen_at)?,
             }
         }
+        // A carried account's display name counts as chosen by the rule a
+        // new one follows, once its sign-ins are in.
+        for write in &self.writes {
+            if let Planned::InsertUser(user) = write {
+                Users::mark_chosen_local_name_in(tx, &user.id)?;
+            }
+        }
         Ok(())
     }
 }

@@ -1,8 +1,14 @@
 //! The statements of every auth repository: accounts, credentials,
 //! sessions, OIDC states, app passwords, recovery codes and user links.
 
+// `sql!` joins one token per part, so a part built by a definition macro
+// is written in parentheses.
+#![allow(unused_parens, clippy::double_parens)]
+
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
+
+use crate::listed_user;
 
 droppedneedle_kernel::sql! {
     /// Columns read for every user row, in [`super::users`]' mapping order.
@@ -19,13 +25,10 @@ droppedneedle_kernel::sql! {
     /// One page of users: creation order, id tiebreak.
     pub(super) USER_PAGE = "SELECT " + USER_COLUMNS + " FROM auth_users \
         ORDER BY created_at ASC, id ASC LIMIT ?1 OFFSET ?2";
-    /// Every account whose display name is not its login name, by display
-    /// name: what anyone signed in may see of other accounts.
-    pub(super) USER_DIRECTORY = "SELECT id, display_name FROM auth_users \
-        WHERE trim(display_name) <> '' \
-        AND lower(trim(display_name)) IS NOT lower(username) \
-        AND lower(trim(display_name)) IS NOT lower(username_display) \
-        ORDER BY display_name COLLATE NOCASE, id";
+    /// Every account whose person chose its display name, by that name:
+    /// what anyone signed in may see of other accounts.
+    pub(super) USER_DIRECTORY = "SELECT u.id, u.display_name FROM auth_users u WHERE "
+        + (listed_user!("u")) + " ORDER BY u.display_name COLLATE NOCASE, u.id";
     pub(super) row DirectoryRow for [USER_DIRECTORY] {
         id: String,
         display_name: String,
@@ -47,8 +50,19 @@ droppedneedle_kernel::sql! {
         created_at, last_login_at, username, username_display) \
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
     /// Set the display name and avatar address; a NULL keeps the stored one.
+    /// A display name saved here is the person's choice.
     pub(super) UPDATE_PROFILE = "UPDATE auth_users SET display_name = COALESCE(?1, display_name), \
+        display_name_chosen = CASE WHEN ?1 IS NULL THEN display_name_chosen ELSE 1 END, \
         avatar_url = COALESCE(?2, avatar_url) WHERE id = ?3";
+    /// Mark account `?1`'s display name chosen when it signs in only with its
+    /// password and the name is not its login name: whoever made the
+    /// account typed it. Migration 0151 applies the same rule.
+    pub(super) MARK_CHOSEN_LOCAL_NAME = "UPDATE auth_users SET display_name_chosen = 1 \
+        WHERE id = ?1 AND username IS NOT NULL AND trim(display_name) <> '' \
+        AND lower(trim(display_name)) IS NOT lower(username) \
+        AND lower(trim(display_name)) IS NOT lower(username_display) \
+        AND NOT EXISTS (SELECT 1 FROM auth_providers p \
+        WHERE p.user_id = auth_users.id AND p.provider <> 'local')";
     /// Rename an account.
     pub(super) UPDATE_USERNAME = "UPDATE auth_users SET username = ?1, username_display = ?2 \
         WHERE id = ?3";

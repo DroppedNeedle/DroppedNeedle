@@ -8,6 +8,7 @@
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
 
+use droppedneedle_auth::listed_user;
 use droppedneedle_library::{copy_of_group, owns_group};
 
 droppedneedle_kernel::sql! {
@@ -195,7 +196,11 @@ droppedneedle_kernel::sql! {
          AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.id = ?4 AND +t.availability = 'indexed')";
     /// The people the caller's playlist `?2` is shared with, first shared
     /// first: user id, display name and whether they may edit.
-    pub(super) MEMBERS = "SELECT u.id AS user_id, u.display_name AS display_name, \
+    /// A member whose person did not choose their display name shows as
+    /// "No display name".
+    pub(super) MEMBERS = "SELECT u.id AS user_id, CASE WHEN "
+        + (listed_user!("u"))
+        + " THEN u.display_name ELSE 'No display name' END AS display_name, \
          m.can_edit AS can_edit FROM catalog_playlist_members m \
          JOIN auth_users u ON u.id = m.user_id WHERE m.playlist_id = ?2 \
          AND EXISTS (SELECT 1 FROM catalog_playlists p WHERE p.id = ?2 AND " + OWNED + ") \
@@ -206,9 +211,10 @@ droppedneedle_kernel::sql! {
         display_name: String,
         can_edit: bool,
     }
-    /// How many of the user ids in the JSON array `?1` name a user.
-    pub(super) KNOWN_USERS = "SELECT COUNT(*) FROM auth_users \
-         WHERE id IN (SELECT value FROM json_each(?1))";
+    /// How many of the user ids in the JSON array `?1` name a user the
+    /// user directory lists.
+    pub(super) KNOWN_USERS = "SELECT COUNT(*) FROM auth_users u \
+         WHERE u.id IN (SELECT value FROM json_each(?1)) AND " + (listed_user!("u"));
     /// Unshare playlist `?1` from everyone not in the JSON array `?2`.
     pub(super) DROP_MEMBERS = "DELETE FROM catalog_playlist_members \
          WHERE playlist_id = ?1 AND user_id NOT IN (SELECT value FROM json_each(?2))";

@@ -372,6 +372,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0150_playlist_local_source.sql",
         "f55b5fe55aebab155d8114f61d0ef3e68bc9ee643651a7786b45676a4a798706",
     ),
+    (
+        "0151_auth_display_name_chosen.sql",
+        "f3726ab1956bc587398b9b40fda101bf52d1c454386a9c7161d503008fb31409",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -1478,6 +1482,62 @@ fn playlist_local_source_upgrade_renames_old_local_names() {
             "d local -",
             r#"e plex ["plex"]"#,
         ]
+    );
+}
+
+/// 0151 records whose display name its person chose. Only an account that
+/// signs in with its password alone, whose display name is not its login
+/// name in any case, counts as having chosen it; a name a sign-in service
+/// gave, or a login name, does not. Nothing else changes, and the flag is
+/// 0 or 1.
+#[test]
+fn display_name_chosen_upgrade_marks_only_typed_names() {
+    let dir = ScratchDir::new("display-name-chosen");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..16], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 150);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, role, created_at, username, \
+                 username_display) VALUES \
+                 ('ana', 'Ana Lima', 'user', 1, 'ana', 'ana'), \
+                 ('tim', 'Tim', 'user', 1, 'tim', 'tim'), \
+                 ('mum', 'Mum Smith', 'user', 1, 'mum-smith', 'mum-smith'), \
+                 ('jo', 'Jo Bloggs', 'user', 1, 'jo', 'jo'), \
+                 ('sso', 'Single Sign', 'user', 1, NULL, NULL); \
+             INSERT INTO auth_providers (id, user_id, provider, provider_uid, created_at) VALUES \
+                 ('p1', 'ana', 'local', 'ana', 1), ('p2', 'tim', 'local', 'tim', 1), \
+                 ('p3', 'mum', 'jellyfin', 'jf-1', 1), ('p4', 'jo', 'local', 'jo', 1), \
+                 ('p5', 'jo', 'plex', 'plex-1', 1), ('p6', 'sso', 'oidc', 'sub-1', 1);",
+        )
+        .unwrap();
+    let mut before_schema = schema_rows(&connection);
+    before_schema.retain(|(_, name, _, _)| name != "auth_users");
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..17], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 151);
+    let mut after = schema_rows(&connection);
+    after.retain(|(_, name, _, _)| name != "auth_users");
+    assert_eq!(after, before_schema, "nothing else changes");
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT id FROM auth_users WHERE display_name_chosen = 1 ORDER BY id",
+            [],
+        ),
+        ["ana"]
+    );
+    assert!(
+        connection
+            .execute_batch("UPDATE auth_users SET display_name_chosen = 2 WHERE id = 'tim'")
+            .is_err(),
+        "the flag is 0 or 1"
     );
 }
 

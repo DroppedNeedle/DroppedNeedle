@@ -156,7 +156,8 @@ impl Users {
             .lane()
             .write(Lane::Foreground, "auth.users.create", move |tx| {
                 Self::insert_user_in(tx, &user)?;
-                Self::insert_local_credential_in(tx, &credential, created_at)
+                Self::insert_local_credential_in(tx, &credential, created_at)?;
+                Self::mark_chosen_local_name_in(tx, &user.id)
             })
             .await;
         conflict_or_store(outcome)
@@ -189,6 +190,7 @@ impl Users {
                 }
                 Self::insert_user_in(tx, &user)?;
                 Self::insert_local_credential_in(tx, &credential, created_at)?;
+                Self::mark_chosen_local_name_in(tx, &user.id)?;
                 insert_token_row(tx, &session)?;
                 Ok(true)
             })
@@ -361,9 +363,9 @@ impl Users {
         Ok((rows, total.max(0) as u64))
     }
 
-    /// Every account that set a display name of its own, by that name.
-    /// One whose display name is its login name is left out, so no login
-    /// name is listed.
+    /// Every account whose person chose its display name, by that name.
+    /// A name a sign-in service gave, or the login name an account was made
+    /// with, is never listed.
     pub async fn directory(&self) -> Result<Vec<UserDirectoryEntry>, StoreError> {
         self.db
             .read("auth.users.directory", |conn| {
@@ -661,6 +663,16 @@ impl Users {
             ],
         )
         .map_err(op_error)?;
+        Ok(())
+    }
+
+    /// Mark the display name of a password-only account the person chose
+    /// when it is not their login name (see [`sql::MARK_CHOSEN_LOCAL_NAME`]).
+    /// A new local account and a v2 account carried by the upgrade go
+    /// through this once their sign-ins are written.
+    pub fn mark_chosen_local_name_in(tx: &Transaction<'_>, id: &str) -> Result<(), WriteError> {
+        tx.execute(sql::MARK_CHOSEN_LOCAL_NAME.text(), rusqlite::params![id])
+            .map_err(op_error)?;
         Ok(())
     }
 
