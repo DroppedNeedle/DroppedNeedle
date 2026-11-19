@@ -175,6 +175,15 @@ impl CatalogSetup {
             youtube,
         }
     }
+
+    /// Start catalog's loops on `supervisor`: linking playlist entries to
+    /// the library as albums land.
+    pub fn start_loops(
+        &self,
+        supervisor: &droppedneedle_kernel::jobs::Supervisor,
+    ) -> Result<(), droppedneedle_kernel::jobs::AlreadyRunning> {
+        collections::library_links::start(&self.collections, supervisor)
+    }
 }
 
 /// The library reads: the one local catalog, and tags and lyrics read

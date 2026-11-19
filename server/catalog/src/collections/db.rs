@@ -71,6 +71,11 @@ impl CollectionsDb {
         self.clock.now_ms().max(0) as f64 / 1000.0
     }
 
+    /// Wakes after every commit that changed a row.
+    pub fn commits(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.db.commits()
+    }
+
     /// One request-path read on a pooled connection.
     pub async fn read<F, R>(&self, name: &'static str, op: F) -> Result<R, StoreError>
     where

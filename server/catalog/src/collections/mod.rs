@@ -12,6 +12,7 @@ pub mod error;
 pub mod handlers;
 pub mod http;
 mod import;
+pub mod library_links;
 pub mod models;
 pub mod remote_import;
 pub mod service;

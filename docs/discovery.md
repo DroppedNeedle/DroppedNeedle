@@ -88,7 +88,7 @@ Spotify playlist import needs an app from the Spotify developer dashboard. Add t
 
 An import runs in the background, one at a time across all users, and picks up again after a restart. Each album on the playlist is matched to its MusicBrainz release group only when MusicBrainz lists one of the album's track ISRCs; an album that can't be proved that way is left unmatched rather than guessed by name.
 
-Once an import finishes, each song whose matched album is in your library plays from the library's copy: the track at the same disc and track number when its title agrees, or the track with the same title elsewhere on that album. Songs on an album you request from the playlist link the same way when you open the playlist after the album lands. Those songs then also show in Subsonic and Jellyfin apps, which list only songs with a library file.
+Once an import finishes, each song whose matched album is in your library plays from the library's copy: the track at the same disc and track number when its title agrees, or the track with the same title elsewhere on that album. Songs on an album that comes in later link the same way a few seconds after it lands, however it arrives (a download, the import folder, a scan, or an identification that names the album later), with no need to open the playlist. Those songs then also show in Subsonic and Jellyfin apps, which list only songs with a library file.
 
 ## Playlist files
 

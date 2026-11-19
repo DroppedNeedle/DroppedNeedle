@@ -767,6 +767,66 @@ async fn playlists_and_stars_are_shared_with_the_native_routes() {
     rig.stop().await;
 }
 
+/// A playlist song whose album the library didn't hold reaches Subsonic
+/// apps once the album is in, with no one opening the playlist in the web
+/// UI: here the album already on disk is identified as the one it names
+/// (#788).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_playlist_song_reaches_apps_once_its_album_is_in() {
+    const GROUP: &str = "0a0b0c0d-0002-4000-8000-000000000001";
+    let rig = app("compat-catalog-landing").await;
+    let web = player(&rig).await;
+    let web = [("authorization", web.as_str())];
+    let (status, made) = rig
+        .app
+        .call(
+            "POST",
+            "/api/v3/playlists",
+            &web,
+            Some(json!({"name": "Wanted"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let made = made["id"].as_str().expect("playlist id").to_owned();
+    let (status, added) = rig
+        .app
+        .call(
+            "POST",
+            &format!("/api/v3/playlists/{made}/tracks"),
+            &web,
+            Some(json!({"tracks": [{
+                "track_name": "Mysterons",
+                "artist_name": "Portishead",
+                "album_name": "Dummy",
+                "album_id": GROUP,
+                "source_type": "",
+                "track_number": 1,
+            }]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{added}");
+    let playlist = format!("pl-{made}");
+    let listed = subsonic(&rig, "getPlaylist", &[("id", &playlist)]).await;
+    assert!(listed.contains("\"songCount\":0"), "{listed}");
+
+    write(
+        &rig,
+        format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, decision_source, selected_at) \
+             VALUES ('alb-1', 'musicbrainz', '{GROUP}', 'automatic', 1);"
+        ),
+    )
+    .await;
+    rig.app
+        .until("the song in the playlist", || async {
+            let listed = subsonic(&rig, "getPlaylist", &[("id", &playlist)]).await;
+            listed.contains("tr-trk-1").then_some(())
+        })
+        .await;
+    rig.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn playlist_refusals_keep_their_codes_and_repeats_stay() {
     let rig = app("compat-catalog-refusals").await;

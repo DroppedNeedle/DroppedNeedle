@@ -699,6 +699,10 @@ pub(crate) async fn build_on(
         .compat
         .start_loops(supervisor)
         .map_err(|error| stage("compat loops")(error.to_string()))?;
+    state
+        .catalog
+        .start_loops(supervisor)
+        .map_err(|error| stage("catalog loops")(error.to_string()))?;
     // `activity.changed` and `downloads.changed` for every open stream.
     droppedneedle_kernel::events::revisions::start(supervisor, events.clone(), db.clone())
         .map_err(|error| stage("event loops")(error.to_string()))?;
