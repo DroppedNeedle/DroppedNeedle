@@ -18,6 +18,7 @@ use std::time::Duration;
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::queue_rows::Viewer as HeldViewer;
 use droppedneedle_acquire::drop_import::Viewer;
+use droppedneedle_acquire::drop_import::extract::LOOSE_UNIT_NAME;
 use droppedneedle_acquire::drop_import::store::{DropItemStatus, DropJobStatus, JobRecord};
 use droppedneedle_acquire::held::store::Entry;
 use droppedneedle_acquire::landing::library::LibraryLanding;
@@ -448,6 +449,48 @@ async fn same_named_files_on_two_discs_both_wait() {
         staged.iter().all(|path| path.is_file()),
         "a waiting file was swept"
     );
+}
+
+/// Files dropped without a folder match no album. The held entry keeps the
+/// album and artist their tags name, so its card and Match search start
+/// from those rather than from the loose-files unit's name.
+#[tokio::test]
+async fn an_unmatched_loose_upload_keeps_the_names_its_tags_give() {
+    let (_db, library, dir, auth) = bundles().await;
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).expect("work dir");
+    let glory = tagged(&work, "flac_full_01.flac", "Nothing Alike", "Glory Box", 1);
+    let acquire = acquire_over(
+        &auth,
+        &library,
+        Arc::new(LibraryLanding::new(
+            &library,
+            every_priority(Arc::new(OneRelease(release(&["Mysterons"], &[None])))),
+        )),
+    );
+    let curator = Viewer {
+        user_id: "u-curator".to_owned(),
+        admin: false,
+    };
+    // A bare file, not an archive or a folder: it forms the loose-files unit.
+    let incoming = acquire.drops.incoming_dir();
+    std::fs::create_dir_all(&incoming).expect("incoming");
+    let upload = incoming.join("upload-loose");
+    std::fs::write(&upload, &glory).expect("upload");
+    let job = upload_and_settle(&acquire, &curator, "01 Glory Box.flac", upload).await;
+    assert_eq!(job.status, DropJobStatus::Completed, "{:?}", job.error);
+    let item = &job.items[0];
+    assert_eq!(item.folder_name, LOOSE_UNIT_NAME);
+    assert_eq!(
+        item.status,
+        DropItemStatus::NeedsReview,
+        "{:?}",
+        item.detail
+    );
+    assert_eq!(item.reason_code, Some(Reason::NoAlbumMatch));
+    let (entry, _) = entry_of(&acquire, &curator.user_id, item.id).await;
+    assert_eq!(entry.album_title.as_deref(), Some("Nothing Alike"));
+    assert_eq!(entry.artist_name.as_deref(), Some("Portishead"));
 }
 
 /// A better copy whose library copy can't go to the recycle bin (the
@@ -1033,27 +1076,25 @@ async fn drop_zip(
         }
         zip.finish().expect("zip finish");
     }
-    let job = upload_and_settle(acquire, curator, upload).await;
+    let job = upload_and_settle(acquire, curator, "Purchase.zip", upload).await;
     assert_eq!(job.status, DropJobStatus::Completed, "{:?}", job.error);
     job
 }
 
-/// Start a drop job on the zip at `upload` and wait for the
-/// `drop_import_updated` event that announces it settled: a job that
-/// settles without one leaves the person's open tabs waiting on the poll.
+/// Start a drop job on `upload`, the file the person named `name`, and wait
+/// for the `drop_import_updated` event that announces it settled: a job
+/// that settles without one leaves the person's open tabs waiting on the
+/// poll.
 async fn upload_and_settle(
     acquire: &droppedneedle_acquire::AcquireSetup,
     curator: &Viewer,
+    name: &str,
     upload: PathBuf,
 ) -> JobRecord {
     let mut events = acquire.events.subscribe(&curator.user_id);
     let job = acquire
         .drops
-        .create_job(
-            &curator.user_id,
-            "Cora",
-            vec![("Purchase.zip".to_owned(), upload)],
-        )
+        .create_job(&curator.user_id, "Cora", vec![(name.to_owned(), upload)])
         .await
         .expect("job starts");
     loop {
@@ -1136,7 +1177,7 @@ async fn a_damaged_entry_discards_the_whole_archive() {
     let upload = incoming.join("upload-liar");
     std::fs::write(&upload, &bytes).expect("upload");
 
-    let job = upload_and_settle(&acquire, &curator, upload).await;
+    let job = upload_and_settle(&acquire, &curator, "Purchase.zip", upload).await;
     let indexed: i64 = acquire.db.db().one("SELECT COUNT(*) FROM local_tracks", []);
     assert_eq!(indexed, 0, "files of the damaged archive were imported");
     assert_eq!(job.status, DropJobStatus::Failed, "{:?}", job.items);

@@ -30,6 +30,9 @@
 		upload: 'Upload',
 		import_folder: 'Import folder'
 	};
+	// The unit the server names files dropped without a folder (`extract::LOOSE_UNIT_NAME`).
+	// It names no album.
+	const LOOSE_UNIT = 'Loose tracks';
 
 	interface Props {
 		entry: HeldEntry;
@@ -65,9 +68,23 @@
 	);
 	const single = $derived(files.length === 1);
 
+	// The first file's path: `Album/01.flac`, or a bare name for a loose file.
+	const firstPath = $derived(files[0]?.original_name ?? '');
 	// An upload's files keep the folder they came in; its first part names it.
-	const folder = $derived(files[0]?.original_name.split('/')[0] ?? null);
-	const title = $derived(entry.album_title ?? name ?? folder ?? 'Held files');
+	const folder = $derived(firstPath.includes('/') ? firstPath.split('/')[0] : null);
+	const fileName = $derived(
+		(firstPath.split('/').pop() ?? '')
+			// An upload is staged as `000_name`; the number is ours, not the file's.
+			.replace(/^\d{3}_/, '')
+			.replace(/\.[^.]*$/, '')
+			.trim()
+	);
+	// What the card and its Match search start from: the album the entry names,
+	// else the folder (never the loose unit), else the first file's name.
+	const guess = $derived(
+		entry.album_title || (name && name !== LOOSE_UNIT ? name : folder) || fileName || ''
+	);
+	const title = $derived(guess || 'Held files');
 	const subtitle = $derived(
 		[
 			entry.artist_name,
@@ -335,8 +352,8 @@
 {#if matching}
 	<DropImportMatchModal
 		entryId={entry.id}
-		{name}
-		search={entry.album_title ?? name ?? folder ?? ''}
+		name={title}
+		search={guess}
 		fileCount={files.length}
 		releaseGroupMbid={entry.release_group_mbid}
 		onclose={() => (matching = false)}

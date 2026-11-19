@@ -136,8 +136,9 @@ fn tagged_group(landing: &Landing) -> Option<String> {
 }
 
 /// Album and artist to search with: the tags, else `Artist - Album` from
-/// the folder name, else the folder name as the album.
-fn names(landing: &Landing, folder: &str) -> (String, String) {
+/// the folder name, else the folder name as the album. Empty when neither
+/// names one.
+pub(super) fn names(landing: &Landing, folder: &str) -> (String, String) {
     let common = |values: Vec<&str>| {
         let mut counts: HashMap<&str, usize> = HashMap::new();
         for value in values.into_iter().filter(|value| !value.is_empty()) {

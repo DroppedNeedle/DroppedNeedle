@@ -751,8 +751,13 @@ impl DropImports {
         }
         if landing.audio.len() > MAX_FILES_PER_UNIT {
             let specifics = format!("It has {} audio files.", landing.audio.len());
-            self.wait_whole(job, item, Reason::TooManyFiles, Some(specifics))
-                .await;
+            self.wait_whole(
+                job,
+                named(item, &landing, folder),
+                Reason::TooManyFiles,
+                Some(specifics),
+            )
+            .await;
             return Ok(Ran::Done);
         }
         match identify::identify(library.as_ref(), &landing, folder).await {
@@ -764,17 +769,28 @@ impl DropImports {
             }
             Outcome::Review { reason, detail } => {
                 let detail = with_unreadable(detail, unreadable);
-                self.wait_whole(job, item, reason, detail).await;
+                self.wait_whole(job, named(item, &landing, folder), reason, detail)
+                    .await;
             }
             Outcome::Unavailable(cause) => {
                 tracing::warn!(item_id, %cause, "drop import: MusicBrainz unavailable");
-                self.wait_whole(job, item, Reason::MusicbrainzUnavailable, None)
-                    .await;
+                self.wait_whole(
+                    job,
+                    named(item, &landing, folder),
+                    Reason::MusicbrainzUnavailable,
+                    None,
+                )
+                .await;
             }
             Outcome::AcoustidUnavailable => {
                 tracing::info!(item_id, "drop import: AcoustID unavailable");
-                self.wait_whole(job, item, Reason::AcoustidUnavailable, None)
-                    .await;
+                self.wait_whole(
+                    job,
+                    named(item, &landing, folder),
+                    Reason::AcoustidUnavailable,
+                    None,
+                )
+                .await;
             }
             // Background identification reads a busy edition until it
             // answers, so busy should never reach here.
@@ -868,15 +884,22 @@ impl DropImports {
             return self.settle_placed(&job, item, folder, already, &name).await;
         }
         if landing.audio.is_empty() {
-            self.folder_wait(&job, item, &landing, Reason::Corrupt, None, already)
-                .await;
+            self.folder_wait(
+                &job,
+                named(item, &landing, &name),
+                &landing,
+                Reason::Corrupt,
+                None,
+                already,
+            )
+            .await;
             return FolderRun::Done;
         }
         if landing.audio.len() > MAX_FILES_PER_UNIT {
             let specifics = format!("It has {} audio files.", landing.audio.len());
             self.folder_wait(
                 &job,
-                item,
+                named(item, &landing, &name),
                 &landing,
                 Reason::TooManyFiles,
                 Some(specifics),
@@ -925,8 +948,15 @@ impl DropImports {
                 self.finish(&job, organised, None).await;
             }
             Outcome::Review { reason, detail } => {
-                self.folder_wait(&job, item, &landing, reason, detail, already)
-                    .await;
+                self.folder_wait(
+                    &job,
+                    named(item, &landing, &name),
+                    &landing,
+                    reason,
+                    detail,
+                    already,
+                )
+                .await;
             }
             Outcome::Unavailable(cause) => {
                 tracing::warn!(item_id = item.id, %cause, "import folder: MusicBrainz unavailable; the album waits");
@@ -1844,6 +1874,18 @@ fn rel_below(folder: &Path, path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .into_owned()
+}
+
+/// An item waiting for a person, named the way identification named the
+/// files: the album and artist their tags give, else the folder's. Its held
+/// entry and its Match search start from those names.
+fn named(item: ItemRecord, landing: &Landing, folder: &str) -> ItemRecord {
+    let (album, artist) = identify::names(landing, folder);
+    ItemRecord {
+        album_title: (!album.is_empty()).then_some(album),
+        artist_name: (!artist.is_empty()).then_some(artist),
+        ..item
+    }
 }
 
 /// An item settled with one reason: the sentence (plus specifics) as the
