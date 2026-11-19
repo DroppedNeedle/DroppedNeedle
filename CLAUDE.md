@@ -415,6 +415,13 @@ Run from the repo root. `make help` lists every target.
   response, and `Cache-Control: no-store` on any `/api/v3` JSON answer that
   sets no cache rule of its own. A route sets its own policy only to be
   stricter. Compat responses are left alone.
+- A playlist entry's cover address is loaded by everyone who reads the
+  playlist, so it is kept only through `entry_cover`
+  (`catalog/src/collections/entry_cover.rs`): one of DroppedNeedle's own
+  image routes, cut to start at `/api/v3/`, or https on its short list of
+  art hosts. The playlist store applies it where an entry is written and
+  where its cover is read; anything else reads as no cover. A host goes on
+  that list only as an exact name or a suffix only that service owns.
 
 **Config and dependencies**
 - Deployment values come from the environment only through `AppConfig::load`,
