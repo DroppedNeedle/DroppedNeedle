@@ -22,7 +22,8 @@ use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_cla
 
 pub(crate) mod models;
 
-use self::models::{AlbumHit, AlbumSearch};
+pub use self::models::SongHit;
+use self::models::{AlbumHit, AlbumSearch, SongSearch};
 
 /// The Search API endpoint the client sends to.
 pub const SEARCH_URL: &str = "https://itunes.apple.com/search";
@@ -239,16 +240,19 @@ pub fn select_album(
 pub struct ITunesClient {
     executor: Executor,
     search_url: Option<Url>,
+    lookup_url: Option<Url>,
 }
 
 impl ITunesClient {
     /// The client sending through `executor` to the search endpoint at
-    /// `search_url`.
+    /// `search_url`, and to the lookup endpoint beside it.
     #[must_use]
     pub fn new(executor: Executor, search_url: &str) -> Self {
+        let search_url = parse_base(search_url, SOURCE);
         Self {
             executor,
-            search_url: parse_base(search_url, SOURCE),
+            lookup_url: search_url.as_ref().and_then(|url| url.join("lookup").ok()),
+            search_url,
         }
     }
 
@@ -298,10 +302,42 @@ impl ITunesClient {
         query: &[(&str, &str)],
         priority: RequestPriority,
     ) -> Result<Option<Reply>, ProviderError> {
-        let base = self
-            .search_url
-            .as_ref()
-            .ok_or_else(|| unusable_base(SOURCE))?;
+        self.get(self.search_url.as_ref(), query, priority).await
+    }
+
+    /// The song with store id `track_id` in the `country` store, `None`
+    /// when the store does not hold it.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer; an id that names
+    /// an album or an artist does not decode.
+    pub async fn lookup_song(
+        &self,
+        track_id: u64,
+        country: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<SongHit>, ProviderError> {
+        let id = track_id.to_string();
+        let query = [("id", id.as_str()), ("country", country)];
+        let Some(reply) = self.get(self.lookup_url.as_ref(), &query, priority).await? else {
+            return Ok(None);
+        };
+        let page: SongSearch = decode(&reply)?;
+        Ok(page
+            .results
+            .into_iter()
+            .find(|hit| u64::try_from(hit.track_id).ok() == Some(track_id)))
+    }
+
+    /// One GET of `url` with `query`, or `None` on a 404.
+    async fn get(
+        &self,
+        url: Option<&Url>,
+        query: &[(&str, &str)],
+        priority: RequestPriority,
+    ) -> Result<Option<Reply>, ProviderError> {
+        let base = url.ok_or_else(|| unusable_base(SOURCE))?;
         let request = Request::get(base, &[], query).map_err(|_| unusable_base(SOURCE))?;
         match self.executor.send(request, priority).await {
             Ok(reply) => Ok(Some(reply)),

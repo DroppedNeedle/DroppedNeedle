@@ -31,11 +31,13 @@ enum Provider {
     DeezerAlbumSearch,
     DeezerAlbumTracks,
     DeezerArtist,
+    DeezerSong,
     WikidataSearch,
     WikidataPictureClaims,
     ItunesAlbum,
     ItunesTrack,
     ItunesAlbumTracks,
+    ItunesSong,
     WikidataEntity,
     WikidataClaims,
     WikipediaExtract,
@@ -233,6 +235,13 @@ const ROWS: &[Row] = &[
         identity: "/id",
     },
     Row {
+        name: "deezer /track/{id}, track id",
+        provider: Provider::DeezerSong,
+        body: include_str!("../fixtures/deezer/track.json"),
+        kind: PayloadKind::Decode,
+        identity: "/id",
+    },
+    Row {
         name: "wikidata list=search, item id",
         provider: Provider::WikidataSearch,
         body: include_str!("../fixtures/wikidata/search_p434.json"),
@@ -264,6 +273,13 @@ const ROWS: &[Row] = &[
         name: "itunes /search song, album tracks, track id",
         provider: Provider::ItunesAlbumTracks,
         body: include_str!("../fixtures/itunes/search_album_tracks.json"),
+        kind: PayloadKind::Decode,
+        identity: "/results/0/trackId",
+    },
+    Row {
+        name: "itunes /lookup song, track id",
+        provider: Provider::ItunesSong,
+        body: include_str!("../fixtures/itunes/lookup_song.json"),
         kind: PayloadKind::Decode,
         identity: "/results/0/trackId",
     },
@@ -1036,6 +1052,20 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                 .await?;
             Ok(found.is_some())
         }
+        Provider::DeezerSong => {
+            let track = deezer(&[("/track/13791930", body)])
+                .previews
+                .deezer_track(13_791_930, PRIORITY)
+                .await?;
+            Ok(track.is_some())
+        }
+        Provider::ItunesSong => {
+            let song = itunes(body)
+                .itunes
+                .lookup_song(1_440_783_625, "us", PRIORITY)
+                .await?;
+            Ok(song.is_some())
+        }
         Provider::DeezerArtist => {
             let picture = deezer(&[("/artist/415", body)])
                 .previews
@@ -1683,16 +1713,13 @@ fn deezer(answers: &[(&str, &str)]) -> Providers {
     )
 }
 
-/// Serves `body` from the iTunes search address and returns the providers that
-/// read it.
+/// Serves `body` from the iTunes search and lookup addresses and returns the
+/// providers that read it.
 fn itunes(body: &str) -> Providers {
     let wire = Arc::new(ScriptedWire::new());
-    wire.answer(
-        "http://fake/itunes/search",
-        200,
-        &[],
-        body.as_bytes().to_vec(),
-    );
+    for url in ["http://fake/itunes/search", "http://fake/itunes/lookup"] {
+        wire.answer(url, 200, &[], body.as_bytes().to_vec());
+    }
     Providers::unpaced_at(
         wire,
         ProviderEndpoints {

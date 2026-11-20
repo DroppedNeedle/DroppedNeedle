@@ -49,10 +49,12 @@ pub struct AlbumHit {
 }
 
 /// A song search, `GET /search?entity=song`, for a track preview or an album's
-/// tracks.
+/// tracks, and a song lookup, `GET /lookup?id=`, which a song link is read
+/// through.
 ///
 /// Verified against itunes.apple.com/search on 2026-10-20: tests/fixtures/itunes/search_track.json.
 /// Verified against itunes.apple.com/search on 2026-10-20: tests/fixtures/itunes/search_album_tracks.json.
+/// Verified against itunes.apple.com/lookup on 2026-11-19: tests/fixtures/itunes/lookup_song.json.
 #[derive(Debug, Deserialize)]
 pub struct SongSearch {
     /// The hits, best first. An empty list is a search with no hits.
@@ -62,8 +64,7 @@ pub struct SongSearch {
 /// One song hit.
 #[derive(Debug, Deserialize)]
 pub struct SongHit {
-    /// Store track id. The client does not read it; decoding still requires it.
-    #[allow(dead_code)]
+    /// Store track id, which a lookup compares with the id asked for.
     #[serde(rename = "trackId")]
     pub track_id: i64,
     /// Song artist.
@@ -86,4 +87,7 @@ pub struct SongHit {
     /// Position within the album.
     #[serde(default, rename = "trackNumber")]
     pub track_number: Option<i64>,
+    /// Length in milliseconds.
+    #[serde(default, rename = "trackTimeMillis")]
+    pub track_time_millis: Option<i64>,
 }

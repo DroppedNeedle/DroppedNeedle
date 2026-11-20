@@ -30,6 +30,7 @@ pub mod plugin_sources;
 pub mod ports;
 pub mod precache;
 pub mod search;
+pub mod song_links;
 pub mod upstream;
 
 use std::collections::HashSet;

@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { Search } from 'lucide-svelte';
+	import { ClipboardPaste, Search } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import type { SearchRemoteStatus, SuggestResult } from '$lib/features/search/queries/types';
 	import { getSearchSuggestionsV3Query } from '$lib/features/search/queries/SearchV3Queries.svelte';
@@ -111,6 +112,23 @@
 		onSearch();
 	}
 
+	// A song link shared from another app searches as that song.
+	const canPaste = typeof navigator !== 'undefined' && !!navigator.clipboard?.readText;
+
+	async function pasteAndSearch() {
+		let text: string;
+		try {
+			text = (await navigator.clipboard.readText()).trim();
+		} catch {
+			// The browser refused to read the clipboard: there is nothing to paste.
+			return;
+		}
+		if (!text) return;
+		query = text;
+		closeDropdown();
+		onSearch();
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
 			if (showDropdown) {
@@ -211,6 +229,14 @@
 					class="loading loading-spinner loading-sm pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"
 					aria-hidden="true"
 				></span>
+			{:else if canPaste && !query}
+				<IconButton
+					label="Paste a song link and search"
+					icon={ClipboardPaste}
+					size="sm"
+					class="absolute right-1 top-1/2 -translate-y-1/2"
+					onclick={pasteAndSearch}
+				/>
 			{/if}
 		</div>
 	</form>

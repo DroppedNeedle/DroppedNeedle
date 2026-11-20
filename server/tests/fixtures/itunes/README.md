@@ -2,7 +2,7 @@
 
 Recorded answers from `https://itunes.apple.com/search`, fetched on 2026-10-20
 with the app's User-Agent (`DroppedNeedle/3.0.0 ( contact@droppedneedle.com ; +https://github.com/DroppedNeedle/DroppedNeedle )`).
-The Search API needs no key. The four requests were sent at least nine seconds
+The Search API needs no key. The requests were sent at least nine seconds
 apart, slower than the 0.3-a-second row in the rate table.
 
 The client sends three searches, and each has a fixture:
@@ -17,6 +17,14 @@ The client sends three searches, and each has a fixture:
   the album track list. 25 song hits.
 - `search_no_results.json`: HTTP 200 for `GET /search?term=zqxjvwkp+nonexistent+release+qqz&entity=album&country=US&limit=10`,
   a search with no hits: `{"resultCount": 0, "results": []}`.
+
+Two lookups, fetched on 2026-11-19 from `https://itunes.apple.com/lookup`, are the
+song-link read:
+
+- `lookup_song.json`: HTTP 200 for `GET /lookup?id=1440783625&country=us`, the
+  song in `search_track.json`. One `track` result with `trackTimeMillis`.
+- `lookup_no_results.json`: HTTP 200 for `GET /lookup?id=99999999999&country=us`,
+  an id the store does not hold: `{"resultCount": 0, "results": []}`.
 
 Each answer is sent as `content-type: text/javascript; charset=utf-8`, but the
 body is plain JSON.

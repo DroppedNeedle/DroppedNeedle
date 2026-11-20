@@ -22,7 +22,7 @@ use crate::executor::{Backoff, Executor, Request, Spec, Url, standard_classify};
 
 pub mod models;
 
-use models::{EntryPage, PlaylistInfo, PlaylistPage, Profile, TokenAnswer};
+use models::{EntryPage, EntryTrack, PlaylistInfo, PlaylistPage, Profile, TokenAnswer};
 
 /// The provider name errors carry, and its rate row.
 pub const SOURCE: &str = "spotify";
@@ -194,6 +194,27 @@ impl SpotifyClient {
         .await
     }
 
+    /// A token for the app itself (the client credentials grant), for
+    /// reads that need no user. It carries no refresh token.
+    ///
+    /// # Errors
+    ///
+    /// As [`SpotifyClient::exchange_code`].
+    pub async fn app_token(
+        &self,
+        client_id: &str,
+        client_secret: &str,
+        priority: RequestPriority,
+    ) -> Result<TokenGrant, ProviderError> {
+        self.token(
+            client_id,
+            client_secret,
+            &[("grant_type", "client_credentials")],
+            priority,
+        )
+        .await
+    }
+
     /// One Basic-auth grant on the accounts host.
     async fn token(
         &self,
@@ -274,6 +295,22 @@ impl SpotifyClient {
             priority,
         )
         .await
+    }
+
+    /// One track (`GET /tracks/{id}`), readable with an app token.
+    ///
+    /// # Errors
+    ///
+    /// As [`SpotifyClient::me`]; an id Spotify does not hold is
+    /// [`ProviderError::NotFound`].
+    pub async fn track(
+        &self,
+        access_token: &str,
+        track_id: &str,
+        priority: RequestPriority,
+    ) -> Result<EntryTrack, ProviderError> {
+        self.get(access_token, &["tracks", track_id], &[], priority)
+            .await
     }
 
     /// One page of a playlist's entries (`GET /playlists/{id}/items`), from

@@ -65070,6 +65070,15 @@
           "track"
         ]
       },
+      "SearchLinkStatus": {
+        "type": "string",
+        "description": "How a song link searched for went. A link's songs are the track bucket;\nthe other buckets stay empty.",
+        "enum": [
+          "read",
+          "no_match",
+          "unreadable"
+        ]
+      },
       "SearchRemoteStatus": {
         "type": "string",
         "description": "Per-bucket MusicBrainz health for one search call. The values match what\nthe web UI's notice and stale-time logic expects. Library hits show\nwhatever the status says.",
@@ -65154,6 +65163,17 @@
               "$ref": "#/components/schemas/SearchResultItem"
             },
             "description": "Matching artists, best first."
+          },
+          "link": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SearchLinkStatus"
+              }
+            ],
+            "description": "How a query that is a song link went; null for any other query."
           },
           "top_album": {
             "oneOf": [

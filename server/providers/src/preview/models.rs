@@ -45,6 +45,31 @@ pub struct Track {
     pub artist: Option<Artist>,
 }
 
+/// One track by id, `GET /track/{id}`, which a song link is read through.
+///
+/// Verified against api.deezer.com/track/13791930 on 2026-11-19: tests/fixtures/deezer/track.json.
+/// An id Deezer does not hold is the error object, code 800: tests/fixtures/deezer/track_not_found.json.
+#[derive(Debug, Deserialize)]
+pub struct SongLookup {
+    /// Deezer track id, compared with the id asked for.
+    pub id: i64,
+    /// Full title.
+    #[serde(default)]
+    pub title: String,
+    /// Short title, without the version in brackets.
+    #[serde(default)]
+    pub title_short: String,
+    /// International Standard Recording Code.
+    #[serde(default)]
+    pub isrc: Option<String>,
+    /// Length in seconds.
+    #[serde(default)]
+    pub duration: Option<i64>,
+    /// The track's artist.
+    #[serde(default)]
+    pub artist: Option<Artist>,
+}
+
 /// An artist stub on a track or an album.
 #[derive(Debug, Deserialize)]
 pub struct Artist {

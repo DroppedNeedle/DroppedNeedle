@@ -152,6 +152,23 @@ pub struct SearchResponse {
     /// Provider health for the track bucket; `partial` while MusicBrainz's
     /// songs are still on their way.
     pub track_status: SearchRemoteStatus,
+    /// How a query that is a song link went; null for any other query.
+    pub link: Option<SearchLinkStatus>,
+}
+
+/// How a song link searched for went. A link's songs are the track bucket;
+/// the other buckets stay empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchLinkStatus {
+    /// The link was read: its songs are the tracks, and `track_status`
+    /// says how MusicBrainz answered.
+    Read,
+    /// The link was read, and MusicBrainz has no song that matches it.
+    NoMatch,
+    /// The link's service does not hold the song or did not answer, or a
+    /// Spotify link was given and Spotify is not set up.
+    Unreadable,
 }
 
 /// One bucket drill-down page.

@@ -36,12 +36,14 @@ use crate::metadata::Catalog;
 use crate::metadata::search::{
     RemoteBucket, RemoteHit, RemoteKind, RemoteState, SearchFlags, SearchIds,
 };
+use crate::metadata::song_links::{self, SongLink};
 use droppedneedle_kernel::runtime_config::sections::ListenSource;
 use droppedneedle_providers::musicbrainz::OnEmpty;
 
 use super::models::{
-    SearchBucketResponse, SearchKind, SearchRemoteStatus, SearchRemoteTrackDetail, SearchResponse,
-    SearchResultItem, SearchScope, SearchTrackDetail, SuggestResponse, SuggestResult,
+    SearchBucketResponse, SearchKind, SearchLinkStatus, SearchRemoteStatus,
+    SearchRemoteTrackDetail, SearchResponse, SearchResultItem, SearchScope, SearchTrackDetail,
+    SuggestResponse, SuggestResult,
 };
 use super::sql;
 use crate::local::sqlite::{any_dash, dashes_as_spaces};
@@ -153,17 +155,12 @@ impl SearchService {
     ) -> Result<SearchResponse, DbError> {
         let folded = droppedneedle_kernel::db::fold::fold_text(query);
         if folded.is_empty() {
-            return Ok(SearchResponse {
-                artists: Vec::new(),
-                albums: Vec::new(),
-                tracks: Vec::new(),
-                top_artist: None,
-                top_album: None,
-                top_track: None,
-                artist_status: SearchRemoteStatus::Ok,
-                album_status: SearchRemoteStatus::Ok,
-                track_status: SearchRemoteStatus::Ok,
-            });
+            return Ok(empty_response(None));
+        }
+        if scope == SearchScope::All
+            && let Some(link) = song_links::parse(query)
+        {
+            return self.search_link(&link, limits.tracks, user_id).await;
         }
         let wants = |bucket: Bucket, limit: u32| buckets.contains(&bucket) && limit > 0;
         let remote_wants =
@@ -260,6 +257,51 @@ impl SearchService {
             artist_status,
             album_status,
             track_status,
+            link: None,
+        })
+    }
+
+    /// The songs a song link names, the library's copies standing in for
+    /// the ones it holds, up to `limit`. No other bucket is searched.
+    async fn search_link(
+        &self,
+        link: &SongLink,
+        limit: u32,
+        user_id: &str,
+    ) -> Result<SearchResponse, DbError> {
+        let Some(bucket) = self
+            .remote
+            .search_song_link(link, FULL_SEARCH_DEADLINE)
+            .await
+        else {
+            return Ok(empty_response(Some(SearchLinkStatus::Unreadable)));
+        };
+        let answered = matches!(bucket.state, RemoteState::Ok | RemoteState::Stale);
+        let track_status = status_of(Some(&bucket));
+        let remote = bucket.hits;
+        let link = if remote.is_empty() && answered {
+            SearchLinkStatus::NoMatch
+        } else {
+            SearchLinkStatus::Read
+        };
+        // Ranked against the song's own title, so the library's copies and
+        // exact titles lead.
+        let folded = remote
+            .first()
+            .map(|hit| droppedneedle_kernel::db::fold::fold_text(&hit.title))
+            .unwrap_or_default();
+        let local = Box::pin(self.library_copies(&folded, &[], &remote)).await?;
+        let mut tracks = join(local, remote);
+        self.apply_flags(&mut [], &mut [], &mut tracks).await;
+        self.apply_listens(user_id, &mut [], &mut tracks, true)
+            .await;
+        let tracks = best(tracks, limit, &folded);
+        Ok(SearchResponse {
+            top_track: tracks.first().cloned(),
+            tracks,
+            track_status,
+            link: Some(link),
+            ..empty_response(None)
         })
     }
 
@@ -385,7 +427,8 @@ impl SearchService {
     /// deadline. Short queries return empty; handlers enforce that first.
     pub async fn suggest(&self, query: &str, limit: u32) -> Result<SuggestResponse, DbError> {
         let folded = droppedneedle_kernel::db::fold::fold_text(query);
-        if folded.trim().len() < 2 {
+        // A link opens on the search page, never in the dropdown.
+        if folded.trim().len() < 2 || song_links::parse(query).is_some() {
             return Ok(SuggestResponse {
                 results: Vec::new(),
                 status: SearchRemoteStatus::Ok,
@@ -1390,6 +1433,22 @@ async fn with_grace<A, B>(
         }
     };
     tokio::join!(main, side)
+}
+
+/// A response with no hits, every status ok, and `link`.
+fn empty_response(link: Option<SearchLinkStatus>) -> SearchResponse {
+    SearchResponse {
+        artists: Vec::new(),
+        albums: Vec::new(),
+        tracks: Vec::new(),
+        top_artist: None,
+        top_album: None,
+        top_track: None,
+        artist_status: SearchRemoteStatus::Ok,
+        album_status: SearchRemoteStatus::Ok,
+        track_status: SearchRemoteStatus::Ok,
+        link,
+    }
 }
 
 /// The wire status of one MusicBrainz bucket. No bucket (not wanted)
