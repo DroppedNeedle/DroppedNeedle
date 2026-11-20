@@ -20624,7 +20624,7 @@ export interface components {
          * @description Where a cached answer came from. Every key starts with one.
          * @enum {string}
          */
-        ProviderDataSource: "musicbrainz" | "listenbrainz" | "lastfm" | "audiodb" | "wikidata" | "purchase" | "plugins" | "youtube" | "lrclib" | "previews";
+        ProviderDataSource: "musicbrainz" | "listenbrainz" | "lastfm" | "audiodb" | "wikidata" | "purchase" | "plugins" | "youtube" | "lrclib" | "previews" | "song_links";
         /** @description One provider's limiter posture. */
         ProviderLimiterView: {
             /**
@@ -23162,6 +23162,12 @@ export interface components {
          */
         SearchKind: "artist" | "album" | "track";
         /**
+         * @description How a song link searched for went. A link's songs are the track bucket;
+         *     the other buckets stay empty.
+         * @enum {string}
+         */
+        SearchLinkStatus: "read" | "no_match" | "unreadable" | "needs_spotify";
+        /**
          * @description Per-bucket MusicBrainz health for one search call. The values match what
          *     the web UI's notice and stale-time logic expects. Library hits show
          *     whatever the status says.
@@ -23201,6 +23207,8 @@ export interface components {
             artist_status: components["schemas"]["SearchRemoteStatus"];
             /** @description Matching artists, best first. */
             artists: components["schemas"]["SearchResultItem"][];
+            /** @description How a query that is a song link went; null for any other query. */
+            link?: null | components["schemas"]["SearchLinkStatus"];
             /** @description Standout album hit, if one scored high enough to headline. */
             top_album?: null | components["schemas"]["SearchResultItem"];
             /** @description Standout artist hit, if one scored high enough to headline. */

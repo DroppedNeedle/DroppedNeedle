@@ -22,7 +22,8 @@ use droppedneedle_auth::users::roles::Role;
 use droppedneedle_catalog::metadata::Catalog;
 use droppedneedle_catalog::metadata::library::LocalCatalog;
 use droppedneedle_catalog::metadata::upstream::{CatalogSettings, Upstream};
-use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_kernel::runtime_config::Secret;
+use droppedneedle_kernel::runtime_config::secret_sections::{AdvancedSettings, SpotifySettings};
 use droppedneedle_kernel::runtime_config::sections::{
     MbSourceMode, MusicBrainzSettings, UserPreferences,
 };
@@ -191,8 +192,8 @@ const MUSICBRAINZ: &str = "http://127.0.0.1:9/musicbrainz/ws/2";
 /// Where ListenBrainz answers in [`scripted_catalog`].
 const LISTENBRAINZ: &str = "http://127.0.0.1:9/listenbrainz/1";
 
-/// Catalog settings on the official MusicBrainz, everything else at its
-/// default, with ListenBrainz reads on or off.
+/// Catalog settings on the official MusicBrainz and a Spotify app,
+/// everything else at its default, with ListenBrainz reads on or off.
 struct OfficialMusicBrainz {
     listenbrainz: bool,
 }
@@ -222,6 +223,15 @@ impl CatalogSettings for OfficialMusicBrainz {
 
     fn store_region(&self) -> Option<String> {
         None
+    }
+
+    fn spotify_app(&self) -> Option<SpotifySettings> {
+        Some(SpotifySettings {
+            client_id: "test-client".to_owned(),
+            client_secret: Secret::new("test-secret"),
+            enabled: true,
+            spotify_redirect_origin: String::new(),
+        })
     }
 }
 
@@ -2262,4 +2272,422 @@ async fn a_query_asks_musicbrainz_once_per_endpoint() {
             "/musicbrainz/ws/2/release-group"
         ]
     );
+}
+
+/// Where Deezer, iTunes and Spotify answer in [`scripted_catalog`].
+const DEEZER: &str = "http://127.0.0.1:9/deezer";
+const ITUNES_LOOKUP: &str = "http://127.0.0.1:9/itunes/lookup";
+const SPOTIFY_TOKEN: &str = "http://127.0.0.1:9/spotify-accounts/api/token";
+const SPOTIFY_API: &str = "http://127.0.0.1:9/spotify";
+
+/// A full search for `query` on `app`, with the answer's body.
+async fn search_for(app: axum::Router, query: &str) -> serde_json::Value {
+    let query: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    let (status, _, bytes) = call(
+        app,
+        Method::GET,
+        &format!("/api/v3/search?q={query}"),
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    json(&bytes)
+}
+
+/// The MusicBrainz queries `wire` was sent, in order.
+fn musicbrainz_queries(wire: &ScriptedWire) -> Vec<String> {
+    wire.sent()
+        .iter()
+        .filter(|sent| sent.url.as_str().starts_with(MUSICBRAINZ))
+        .filter_map(|sent| sent.query("query"))
+        .collect()
+}
+
+/// A Deezer song link is read for its ISRC, and the search shows the
+/// songs MusicBrainz files under it: the library's copy where it holds
+/// one, the others to request. Nothing else is searched, and the
+/// dropdown stays quiet.
+#[tokio::test]
+async fn a_deezer_link_shows_the_songs_its_isrc_names() {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!("{DEEZER}/track/13791930"),
+        200,
+        &[],
+        include_str!("../fixtures/deezer/track.json"),
+    );
+    wire.answer(
+        &format!("{MUSICBRAINZ}/recording"),
+        200,
+        &[],
+        search_answer(
+            "recordings",
+            vec![
+                recording_hit(
+                    "rec-single",
+                    "Opener",
+                    "Aurora",
+                    100,
+                    &[("rel-single", "Opener", "Official", "rg-single")],
+                ),
+                recording_hit(
+                    "rec-owned",
+                    "Opener",
+                    "Aurora",
+                    100,
+                    &[("rel-owned", "Renaissance", "Official", "rg-owned")],
+                ),
+            ],
+        ),
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-deezer-link");
+    seed_catalog(&app_db);
+    seed_track(
+        &app_db,
+        "t-owned",
+        "album-renaissance",
+        "Opener",
+        "Renaissance",
+        "indexed",
+    );
+    app_db.exec(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, recording_mbid, \
+         decision_source, selected_at) VALUES ('t-owned', 'musicbrainz', 'rec-owned', 'manual', 0)",
+        [],
+    );
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+
+    let body = search_for(
+        app.clone(),
+        "https://www.deezer.com/en/track/13791930?utm_source=deezer",
+    )
+    .await;
+    assert_eq!(body["link"], "read", "{body}");
+    let rows: Vec<(&str, Option<&str>)> = body["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hit| (hit["musicbrainz_id"].as_str().unwrap(), hit["id"].as_str()))
+        .collect();
+    assert_eq!(
+        rows,
+        vec![("rec-owned", Some("t-owned")), ("rec-single", None)],
+        "{body}"
+    );
+    assert_eq!(body["top_track"]["id"], "t-owned");
+    assert!(body["artists"].as_array().unwrap().is_empty());
+    assert!(body["albums"].as_array().unwrap().is_empty());
+    assert_eq!(musicbrainz_queries(&wire), vec!["isrc:USGF19942501"]);
+
+    let (status, _, bytes) = call(
+        app,
+        Method::GET,
+        "/api/v3/search/suggest?q=https%3A%2F%2Fwww.deezer.com%2Ftrack%2F13791930",
+        Some(TEST_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(json(&bytes)["results"].as_array().unwrap().is_empty());
+    assert_eq!(wire.sent().len(), 2, "the dropdown sends nothing");
+}
+
+/// An Apple Music link carries no ISRC, so its song is found by title and
+/// artist, and only a close match shows: a high score and a length within
+/// three seconds of the store's.
+#[tokio::test]
+async fn an_apple_music_link_shows_only_close_matches() {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        ITUNES_LOOKUP,
+        200,
+        &[],
+        include_str!("../fixtures/itunes/lookup_song.json"),
+    );
+    let hit = |id: &str, score: u32, length: u32| {
+        let mut hit = recording_hit(
+            id,
+            "Smells Like Teen Spirit",
+            "Nirvana",
+            score,
+            &[("rel-1", "Nevermind", "Official", "rg-1")],
+        );
+        hit["length"] = serde_json::json!(length);
+        hit
+    };
+    wire.answer(
+        &format!("{MUSICBRAINZ}/recording"),
+        200,
+        &[],
+        search_answer(
+            "recordings",
+            vec![
+                hit("rec-close", 100, 302_000),
+                hit("rec-live", 100, 312_000),
+                hit("rec-weak", 80, 301_000),
+            ],
+        ),
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-apple-link");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+
+    let body = search_for(
+        app,
+        "https://music.apple.com/us/album/nevermind/1440783617?i=1440783625",
+    )
+    .await;
+    assert_eq!(body["link"], "read", "{body}");
+    let ids: Vec<&str> = body["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hit| hit["musicbrainz_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["rec-close"], "{body}");
+    assert_eq!(
+        musicbrainz_queries(&wire),
+        vec![r#"recording:"Smells Like Teen Spirit" AND artist:"Nirvana""#]
+    );
+    let lookup = wire
+        .sent()
+        .into_iter()
+        .find(|sent| sent.url.as_str().starts_with(ITUNES_LOOKUP))
+        .expect("the store was asked");
+    assert_eq!(lookup.query("id").as_deref(), Some("1440783625"));
+    assert_eq!(lookup.query("country").as_deref(), Some("us"));
+}
+
+/// A Spotify link is read with the server's Spotify app, no one's sign-in:
+/// an app token, then the track's ISRC.
+#[tokio::test]
+async fn a_spotify_link_is_read_with_the_servers_app() {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(
+        droppedneedle_providers::executor::Method::Post,
+        SPOTIFY_TOKEN,
+        Scripted::Answer {
+            status: 200,
+            headers: Vec::new(),
+            body: br#"{"access_token":"app-token","token_type":"Bearer","expires_in":3600}"#
+                .to_vec(),
+        },
+    );
+    wire.answer(
+        &format!("{SPOTIFY_API}/tracks/1a2B3c4D5e6F7g8H9i0JkL"),
+        200,
+        &[],
+        serde_json::to_vec(&serde_json::json!({
+            "id": "1a2B3c4D5e6F7g8H9i0JkL",
+            "name": "Opener",
+            "artists": [{"name": "Aurora"}],
+            "duration_ms": 248_000,
+            "external_ids": {"isrc": "QZAAA2600001"},
+        }))
+        .unwrap(),
+    );
+    wire.answer(
+        &format!("{MUSICBRAINZ}/recording"),
+        200,
+        &[],
+        search_answer(
+            "recordings",
+            vec![recording_hit(
+                "rec-opener",
+                "Opener",
+                "Aurora",
+                100,
+                &[("rel-1", "First Light", "Official", "rg-1")],
+            )],
+        ),
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-spotify-link");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+
+    let body = search_for(
+        app,
+        "https://open.spotify.com/track/1a2B3c4D5e6F7g8H9i0JkL?si=x",
+    )
+    .await;
+    assert_eq!(body["link"], "read", "{body}");
+    assert_eq!(body["tracks"][0]["musicbrainz_id"], "rec-opener");
+    assert_eq!(musicbrainz_queries(&wire), vec!["isrc:QZAAA2600001"]);
+    let sent = wire.sent();
+    let token = sent
+        .iter()
+        .find(|sent| sent.url.as_str() == SPOTIFY_TOKEN)
+        .expect("an app token was asked for");
+    assert!(
+        token
+            .headers
+            .iter()
+            .any(|(name, value)| name == "authorization" && value.starts_with("Basic "))
+    );
+    let track = sent
+        .iter()
+        .find(|sent| sent.url.path().ends_with("/tracks/1a2B3c4D5e6F7g8H9i0JkL"))
+        .expect("the track was read");
+    assert!(
+        track
+            .headers
+            .iter()
+            .any(|(name, value)| name == "authorization" && value == "Bearer app-token")
+    );
+}
+
+/// A link whose service does not hold the song is unreadable, and one
+/// MusicBrainz has nothing for is no match. Neither falls back to a text
+/// search.
+#[tokio::test]
+async fn a_link_that_finds_nothing_says_why() {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!("{DEEZER}/track/99999999999"),
+        200,
+        &[],
+        include_str!("../fixtures/deezer/track_not_found.json"),
+    );
+    wire.answer(
+        &format!("{DEEZER}/track/13791930"),
+        200,
+        &[],
+        include_str!("../fixtures/deezer/track.json"),
+    );
+    wire.answer(
+        &format!("{MUSICBRAINZ}/recording"),
+        200,
+        &[],
+        search_answer("recordings", Vec::new()),
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-link-nothing");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+
+    let body = search_for(app.clone(), "https://www.deezer.com/track/99999999999").await;
+    assert_eq!(body["link"], "unreadable", "{body}");
+    assert!(body["tracks"].as_array().unwrap().is_empty());
+    assert!(musicbrainz_queries(&wire).is_empty());
+
+    let body = search_for(app, "https://www.deezer.com/track/13791930").await;
+    assert_eq!(body["link"], "no_match", "{body}");
+    assert!(body["tracks"].as_array().unwrap().is_empty());
+    assert_eq!(musicbrainz_queries(&wire), vec!["isrc:USGF19942501"]);
+}
+
+/// What a link's service said is kept a day, so the same link again asks
+/// it nothing, and the Spotify app's token serves every link until it
+/// expires.
+#[tokio::test]
+async fn a_link_is_read_once_and_the_spotify_token_reused() {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(
+        droppedneedle_providers::executor::Method::Post,
+        SPOTIFY_TOKEN,
+        Scripted::Answer {
+            status: 200,
+            headers: Vec::new(),
+            body: br#"{"access_token":"app-token","token_type":"Bearer","expires_in":3600}"#
+                .to_vec(),
+        },
+    );
+    for (id, isrc) in [
+        ("1a2B3c4D5e6F7g8H9i0JkL", "QZAAA2600001"),
+        ("2a2B3c4D5e6F7g8H9i0JkL", "QZAAA2600002"),
+    ] {
+        wire.answer(
+            &format!("{SPOTIFY_API}/tracks/{id}"),
+            200,
+            &[],
+            serde_json::to_vec(&serde_json::json!({
+                "id": id,
+                "name": "Opener",
+                "artists": [{"name": "Aurora"}],
+                "duration_ms": 248_000,
+                "external_ids": {"isrc": isrc},
+            }))
+            .unwrap(),
+        );
+    }
+    wire.answer(
+        &format!("{MUSICBRAINZ}/recording"),
+        200,
+        &[],
+        search_answer(
+            "recordings",
+            vec![recording_hit(
+                "rec-opener",
+                "Opener",
+                "Aurora",
+                100,
+                &[("rel-1", "First Light", "Official", "rg-1")],
+            )],
+        ),
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-link-kept");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+
+    for link in [
+        "https://open.spotify.com/track/1a2B3c4D5e6F7g8H9i0JkL",
+        "https://open.spotify.com/track/1a2B3c4D5e6F7g8H9i0JkL?si=again",
+        "https://open.spotify.com/track/2a2B3c4D5e6F7g8H9i0JkL",
+    ] {
+        let body = search_for(app.clone(), link).await;
+        assert_eq!(body["link"], "read", "{body}");
+    }
+    let sent = wire.sent();
+    let count = |wanted: &str| sent.iter().filter(|s| s.url.path() == wanted).count();
+    assert_eq!(count("/spotify-accounts/api/token"), 1, "one token");
+    assert_eq!(count("/spotify/tracks/1a2B3c4D5e6F7g8H9i0JkL"), 1);
+    assert_eq!(count("/spotify/tracks/2a2B3c4D5e6F7g8H9i0JkL"), 1);
+}
+
+/// A search that asks for no songs reads no link: nothing is sent.
+#[tokio::test]
+async fn a_link_search_without_songs_sends_nothing() {
+    let wire = Arc::new(ScriptedWire::new());
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-link-no-songs");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+
+    for filter in ["buckets=artists,albums", "limit_tracks=0"] {
+        let (status, _, bytes) = call(
+            app.clone(),
+            Method::GET,
+            &format!("/api/v3/search?q=https%3A%2F%2Fwww.deezer.com%2Ftrack%2F13791930&{filter}"),
+            Some(TEST_TOKEN),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(json(&bytes)["tracks"].as_array().unwrap().is_empty());
+    }
+    assert!(wire.sent().is_empty(), "{:?}", wire.sent().len());
 }

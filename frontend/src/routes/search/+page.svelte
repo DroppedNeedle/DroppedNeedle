@@ -18,7 +18,10 @@
 		applyArtistEnrichment,
 		applyAlbumEnrichment
 	} from '$lib/features/search/queries/enrichment';
-	import { getCombinedSearchNotice } from '$lib/features/search/components/searchStatus';
+	import {
+		getCombinedSearchNotice,
+		isLinkQuery
+	} from '$lib/features/search/components/searchStatus';
 	import {
 		COMBINED_SEARCH_LIMITS,
 		getSearchEnrichBatchV3Query,
@@ -31,7 +34,7 @@
 		toV1Album,
 		toV1Artist
 	} from '$lib/features/search/queries/SearchV3Adapters';
-	import { Disc3, Mic } from 'lucide-svelte';
+	import { Disc3, Link2, Mic } from 'lucide-svelte';
 
 	interface Props {
 		data: { query: string };
@@ -69,6 +72,12 @@
 	let baseArtists = $derived(remoteArtists.map(toV1Artist));
 	let baseAlbums = $derived((searchQuery.data?.albums ?? []).map(toV1Album));
 	let songs = $derived(toSearchSongs(searchQuery.data?.tracks ?? []));
+	// A song link searches only for its songs.
+	let link = $derived(searchQuery.data?.link ?? null);
+	// While a link is read: a song placeholder, and no artist, album or top
+	// result skeletons.
+	let linkQuery = $derived(isLinkQuery(normalizedQuery));
+	let linkPending = $derived(searchQuery.isPending && linkQuery);
 	let artists = $derived(enrichment ? applyArtistEnrichment(baseArtists, enrichment) : baseArtists);
 	let albums = $derived(enrichment ? applyAlbumEnrichment(baseAlbums, enrichment) : baseAlbums);
 	let topArtist = $derived.by(() => {
@@ -174,7 +183,7 @@
 				<SearchNotice {notice} onretry={() => searchQuery.refetch()} />
 			{/if}
 
-			{#if isSearching}
+			{#if isSearching && !linkQuery}
 				<div class="grid gap-5 sm:grid-cols-2" aria-label="Loading top search results">
 					<div class="skeleton skeleton-shimmer min-h-48 rounded-box"></div>
 					<div class="skeleton skeleton-shimmer hidden min-h-48 rounded-box sm:block"></div>
@@ -191,72 +200,107 @@
 				</section>
 			{/if}
 
-			{#if songs.length > 0}
+			{#if linkPending}
+				<section aria-label="Loading songs">
+					<SectionHead title="Songs" />
+					<div class="overflow-hidden rounded-box border border-line bg-base-200">
+						<div class="flex min-h-16 items-center gap-3.5 px-3.5 py-2">
+							<div class="skeleton size-12 shrink-0 rounded-md"></div>
+							<div class="flex-1 space-y-2">
+								<div class="skeleton h-3.5 w-48"></div>
+								<div class="skeleton h-3 w-32"></div>
+							</div>
+						</div>
+					</div>
+				</section>
+			{:else if songs.length > 0}
 				<section>
-					<SectionHead title="Songs" href={bucketHref('tracks')} moreLabel="View more" />
+					<SectionHead
+						title="Songs"
+						href={link ? null : bucketHref('tracks')}
+						moreLabel="View more"
+					/>
 					<SearchSongList {songs} />
 				</section>
 			{/if}
 
-			<section>
-				<SectionHead
-					title="Artists"
-					href={displayedArtists.length > 0 ? bucketHref('artists') : null}
-					moreLabel="View more"
+			{#if link === 'no_match'}
+				<SearchEmpty
+					icon={Link2}
+					title="No MusicBrainz song matches this link"
+					text="Try searching for the song's title and artist instead."
 				/>
-				{#if loadingArtists}
-					<SearchShelf label="Loading artists" swipe busy>
-						{#each Array(7) as _, i (`artist-skeleton-${i}`)}
-							<MediaTileSkeleton kind="artist" />
-						{/each}
-					</SearchShelf>
-				{:else if displayedArtists.length > 0}
-					<SearchShelf label="Artist search results" swipe busy={isSearching}>
-						{#each artistCards as artist (artist.musicbrainz_id)}
-							<SearchArtistCard
-								{artist}
-								{enrichmentSource}
-								onenrichmentrequest={() => enrichCollector.requestArtist(artist)}
-							/>
-						{/each}
-						{#each Array(artistPlaceholderCount) as _, i (`artist-pending-${i}`)}
-							<MediaTileSkeleton kind="artist" />
-						{/each}
-						<ViewMoreTile kind="artist" href={bucketHref('artists')} what="View more artists" />
-					</SearchShelf>
-				{:else}
-					<SearchEmpty icon={Mic} title="No artists found" compact />
-				{/if}
-			</section>
+			{:else if link === 'unreadable'}
+				<SearchEmpty icon={Link2} title="Couldn't read this link" />
+			{:else if link === 'needs_spotify'}
+				<SearchEmpty
+					icon={Link2}
+					title="Couldn't read this link"
+					text="Spotify links need Spotify set up by an admin."
+				/>
+			{/if}
 
-			<section>
-				<SectionHead
-					title="Albums"
-					href={displayedAlbums.length > 0 ? bucketHref('albums') : null}
-					moreLabel="View more"
-				/>
-				{#if loadingAlbums}
-					<SearchShelf label="Loading albums" swipe busy>
-						{#each Array(7) as _, i (`album-skeleton-${i}`)}
-							<MediaTileSkeleton />
-						{/each}
-					</SearchShelf>
-				{:else if displayedAlbums.length > 0}
-					<SearchShelf label="Album search results" swipe>
-						{#each displayedAlbums as album, index (album.musicbrainz_id)}
-							<SearchAlbumCard
-								{album}
-								lazy={index >= 14}
-								{enrichmentSource}
-								onenrichmentrequest={() => enrichCollector.requestAlbum(album)}
-							/>
-						{/each}
-						<ViewMoreTile kind="album" href={bucketHref('albums')} what="View more albums" />
-					</SearchShelf>
-				{:else}
-					<SearchEmpty icon={Disc3} title="No albums found" compact />
-				{/if}
-			</section>
+			{#if !link && !linkPending}
+				<section>
+					<SectionHead
+						title="Artists"
+						href={displayedArtists.length > 0 ? bucketHref('artists') : null}
+						moreLabel="View more"
+					/>
+					{#if loadingArtists}
+						<SearchShelf label="Loading artists" swipe busy>
+							{#each Array(7) as _, i (`artist-skeleton-${i}`)}
+								<MediaTileSkeleton kind="artist" />
+							{/each}
+						</SearchShelf>
+					{:else if displayedArtists.length > 0}
+						<SearchShelf label="Artist search results" swipe busy={isSearching}>
+							{#each artistCards as artist (artist.musicbrainz_id)}
+								<SearchArtistCard
+									{artist}
+									{enrichmentSource}
+									onenrichmentrequest={() => enrichCollector.requestArtist(artist)}
+								/>
+							{/each}
+							{#each Array(artistPlaceholderCount) as _, i (`artist-pending-${i}`)}
+								<MediaTileSkeleton kind="artist" />
+							{/each}
+							<ViewMoreTile kind="artist" href={bucketHref('artists')} what="View more artists" />
+						</SearchShelf>
+					{:else}
+						<SearchEmpty icon={Mic} title="No artists found" compact />
+					{/if}
+				</section>
+
+				<section>
+					<SectionHead
+						title="Albums"
+						href={displayedAlbums.length > 0 ? bucketHref('albums') : null}
+						moreLabel="View more"
+					/>
+					{#if loadingAlbums}
+						<SearchShelf label="Loading albums" swipe busy>
+							{#each Array(7) as _, i (`album-skeleton-${i}`)}
+								<MediaTileSkeleton />
+							{/each}
+						</SearchShelf>
+					{:else if displayedAlbums.length > 0}
+						<SearchShelf label="Album search results" swipe>
+							{#each displayedAlbums as album, index (album.musicbrainz_id)}
+								<SearchAlbumCard
+									{album}
+									lazy={index >= 14}
+									{enrichmentSource}
+									onenrichmentrequest={() => enrichCollector.requestAlbum(album)}
+								/>
+							{/each}
+							<ViewMoreTile kind="album" href={bucketHref('albums')} what="View more albums" />
+						</SearchShelf>
+					{:else}
+						<SearchEmpty icon={Disc3} title="No albums found" compact />
+					{/if}
+				</section>
+			{/if}
 		</div>
 	{:else}
 		<p class="mt-12 text-center text-lg text-muted">Enter a search query to get started.</p>

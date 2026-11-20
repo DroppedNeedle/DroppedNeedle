@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
 use droppedneedle_providers::musicbrainz::{
-    Criticality, OnEmpty, RecordingSearchRelease, ReleaseGroupRef, SearchTerm, forgiving_term,
-    hit_score, recording_release_group_rank,
+    Criticality, OnEmpty, RecordingSearchHit, RecordingSearchRelease, ReleaseGroupRef, SearchTerm,
+    forgiving_term, hit_score, recording_release_group_rank,
 };
 use droppedneedle_providers::{
     CacheKey, Fetched, IntegrationStatus, Policy, ProviderError, RequestPriority, Source,
@@ -108,9 +108,53 @@ pub struct RemoteBucket {
     pub state: RemoteState,
 }
 
+/// Recording search hits as songs to show: one per recording, not videos,
+/// each under the release a track request tries first ([`best_release`]).
+/// A recording on no release in a group is nothing to request, so it is
+/// left out.
+pub(super) fn song_hits(hits: Vec<RecordingSearchHit>) -> Vec<RemoteHit> {
+    let mut seen = HashSet::new();
+    hits.into_iter()
+        .filter(|hit| seen.insert(hit.id.to_ascii_lowercase()))
+        .filter(|hit| hit.video != Some(true))
+        .filter_map(|hit| {
+            let (release, group) = best_release(&hit.releases)?;
+            Some(RemoteHit {
+                kind: RemoteKind::Track,
+                title: hit
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| "Unknown Track".to_owned()),
+                artist: droppedneedle_providers::musicbrainz::credit_display_name(
+                    &hit.artist_credit,
+                )
+                .map(str::to_owned),
+                year: mapping::year_of(release.date.as_deref()),
+                disambiguation: None,
+                type_info: None,
+                score: i32::try_from(hit_score(hit.score, hit.ext_score)).unwrap_or(0),
+                releases: None,
+                track: Some(RemoteTrack {
+                    release_group_mbid: group.id.clone(),
+                    release_mbid: release.id.clone(),
+                    album_title: release.title.clone(),
+                    duration_seconds: hit
+                        .length
+                        .and_then(|length| i64::try_from(length / 1000).ok()),
+                    artist_mbid: hit
+                        .artist_credit
+                        .first()
+                        .map(|credit| credit.artist.id.clone()),
+                }),
+                mbid: hit.id,
+            })
+        })
+        .collect()
+}
+
 /// A bucket's hits as the cache keeps them: none is "nothing there", which
 /// is asked again sooner.
-fn found_hits(items: Vec<RemoteHit>) -> Fetched<RemoteHits> {
+pub(super) fn found_hits(items: Vec<RemoteHit>) -> Fetched<RemoteHits> {
     if items.is_empty() {
         Fetched::Missing
     } else {
@@ -372,53 +416,14 @@ impl Catalog {
                 .search_recordings_text(&text, width, offset, term, Criticality::IdentityCritical)
                 .await
                 .map_err(mb_search_error)?;
-            let mut seen = HashSet::new();
-            let items: Vec<RemoteHit> = page
-                .items
-                .into_iter()
-                .filter(|hit| seen.insert(hit.id.to_ascii_lowercase()))
-                .filter(|hit| hit.video != Some(true))
-                .filter_map(|hit| {
-                    let (release, group) = best_release(&hit.releases)?;
-                    Some(RemoteHit {
-                        kind: RemoteKind::Track,
-                        title: hit
-                            .title
-                            .clone()
-                            .unwrap_or_else(|| "Unknown Track".to_owned()),
-                        artist: droppedneedle_providers::musicbrainz::credit_display_name(
-                            &hit.artist_credit,
-                        )
-                        .map(str::to_owned),
-                        year: mapping::year_of(release.date.as_deref()),
-                        disambiguation: None,
-                        type_info: None,
-                        score: i32::try_from(hit_score(hit.score, hit.ext_score)).unwrap_or(0),
-                        releases: None,
-                        track: Some(RemoteTrack {
-                            release_group_mbid: group.id.clone(),
-                            release_mbid: release.id.clone(),
-                            album_title: release.title.clone(),
-                            duration_seconds: hit
-                                .length
-                                .and_then(|length| i64::try_from(length / 1000).ok()),
-                            artist_mbid: hit
-                                .artist_credit
-                                .first()
-                                .map(|credit| credit.artist.id.clone()),
-                        }),
-                        mbid: hit.id,
-                    })
-                })
-                .collect();
-            Ok(found_hits(items))
+            Ok(found_hits(song_hits(page.items)))
         };
         self.remote_bucket(key, deadline, fetch).await
     }
 
     /// Run one bucket under its deadline. A failed search falls back to
     /// the kept answer, as does a missed deadline; either reads as stale.
-    async fn remote_bucket<F, Fut>(
+    pub(super) async fn remote_bucket<F, Fut>(
         &self,
         key: CacheKey,
         deadline: Duration,

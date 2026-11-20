@@ -1,12 +1,14 @@
 <!--
 	The search pages' header: "Search results for" over the query in the list
 	header's giant title, and the four tabs under it. With no query it is
-	the plain "Search" title.
+	the plain "Search" title. A link has no tabs: only the All page reads it
+	as a link.
 -->
 <script lang="ts">
 	import ListPageHeader from '$lib/ui/ListPageHeader.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import { isLinkQuery } from './searchStatus';
 
 	type Tab = 'all' | 'artists' | 'albums' | 'tracks';
 
@@ -25,6 +27,7 @@
 	];
 
 	const hasQuery = $derived(query.length > 0);
+	const showTabs = $derived(hasQuery && !isLinkQuery(query));
 </script>
 
 <svelte:head><title>{hasQuery ? `Search: ${query}` : 'Search'} - DroppedNeedle</title></svelte:head>
@@ -48,7 +51,7 @@
 	eyebrow={hasQuery ? 'Search results for' : undefined}
 	fitTitle={hasQuery}
 	ticket="DN / CC 3.2 - SRCH"
-	below={hasQuery ? tabsRow : undefined}
+	below={showTabs ? tabsRow : undefined}
 />
 
 <style>

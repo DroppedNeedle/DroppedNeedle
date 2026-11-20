@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_kernel::runtime_config::secret_sections::{AdvancedSettings, SpotifySettings};
 use droppedneedle_kernel::runtime_config::sections::{
     ListenBrainzSettings, ListenSource, MusicBrainzSettings, UserPreferences, listenbrainz_reads_on,
 };
@@ -24,6 +24,7 @@ use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzView};
 use droppedneedle_providers::preview::PreviewClient;
+use droppedneedle_providers::spotify::SpotifyClient;
 use droppedneedle_providers::wikidata::WikidataClient;
 use droppedneedle_providers::{ProviderCacheStore, ProviderError, Providers, RequestPriority};
 
@@ -52,6 +53,11 @@ pub trait CatalogSettings: Send + Sync {
     /// `None` while the preferences do not read.
     fn edition_preferences(&self) -> Option<droppedneedle_library::edition_prefs::Preferences> {
         Some(droppedneedle_library::edition_prefs::Preferences::default())
+    }
+    /// The Spotify app song links are read with: `None` while Spotify is
+    /// switched off, has no client id or secret, or does not read.
+    fn spotify_app(&self) -> Option<SpotifySettings> {
+        None
     }
 }
 
@@ -86,6 +92,7 @@ pub struct LiveCatalogSettings {
     advanced: Live<AdvancedSettings>,
     listenbrainz: Live<ListenBrainzSettings>,
     editions: LivePreferences,
+    spotify: Live<SpotifySettings>,
 }
 
 impl LiveCatalogSettings {
@@ -97,6 +104,7 @@ impl LiveCatalogSettings {
             advanced: config.live(),
             listenbrainz: config.live(),
             editions: LivePreferences::new(config),
+            spotify: config.live(),
         }
     }
 }
@@ -134,6 +142,15 @@ impl CatalogSettings for LiveCatalogSettings {
 
     fn edition_preferences(&self) -> Option<droppedneedle_library::edition_prefs::Preferences> {
         self.editions.current()
+    }
+
+    fn spotify_app(&self) -> Option<SpotifySettings> {
+        self.spotify
+            .read()
+            .map(|settings| (**settings).clone())
+            .filter(|app| {
+                app.enabled && !app.client_id.is_empty() && !app.client_secret.expose().is_empty()
+            })
     }
 }
 
@@ -384,6 +401,11 @@ impl Upstream {
     /// The iTunes Search client behind purchase links.
     pub fn itunes(&self) -> &ITunesClient {
         &self.providers.itunes
+    }
+
+    /// The Spotify client behind song links.
+    pub fn spotify(&self) -> &SpotifyClient {
+        &self.providers.spotify
     }
 
     /// The users store (roles, Last.fm links).

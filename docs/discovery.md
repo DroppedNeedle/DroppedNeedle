@@ -17,6 +17,7 @@ Home, Discover, radio and mixes, where covers and artist pictures come from, and
 - [Music apps](#music-apps)
 - [Spotify playlist import](#spotify-playlist-import)
 - [Playlist files](#playlist-files)
+- [Song links](#song-links)
 
 ## Home
 
@@ -105,3 +106,13 @@ An import takes `.m3u`, `.m3u8` and `.csv` files of up to 2 MB. A CSV may have i
 5. if none of those finds it and its artist cell names several artists, such as `A, B` or `A; B`, its title, the first of them and its album, the same way.
 
 Only tracks in your library are added, each once, in the file's order. The import reports how many tracks it added and each entry it left out, with its title, artist and why (the page lists the first 200; the API answer holds them all): it names no file, nothing in your library matches it, or the same track came earlier in the file. It reads the first 10,000 entries; any past that are only counted, and the report says how many.
+
+## Song links
+
+Paste a song link from Deezer, Apple Music or Spotify into search, or a song.link address made from a Deezer, Apple Music or Spotify link, and search shows that song: it plays when your library has it, and you can request it when it doesn't. The clipboard button at the end of the search box pastes and searches in one tap, and on Android, once DroppedNeedle is installed as an app, Share > DroppedNeedle in another app opens the search with the link.
+
+Deezer and Spotify links are matched exactly, by the song's ISRC, and every MusicBrainz recording filed under that ISRC is shown. Apple Music links give no ISRC, so the song is matched by title and artist, and only a close match is shown: a high MusicBrainz score and a length within three seconds of the store's. When nothing matches, search says so rather than guess. Spotify links need Spotify set up by an admin under Settings > Spotify: they are read with that app, without anyone's sign-in. While Spotify is not set up or is switched off, search says so.
+
+Each new link pasted costs one call to its service and one MusicBrainz search. Spotify also hands out a token, which is reused until it expires, about an hour. Both answers are kept for a day, so pasting the same link again asks nothing.
+
+On an iPhone, a shortcut puts DroppedNeedle in the share sheet. In the Shortcuts app, make a shortcut, turn on Show in Share Sheet and let it receive URLs and text. Add three actions: URL Encode with the Shortcut Input, a Text action holding your server's address, then `/search?q=`, then the encoded text, and Open URLs with that text.

@@ -33,6 +33,7 @@ use crate::web_address::{self, WebAddress};
 
 mod models;
 
+pub use self::models::SongLookup;
 use self::models::{AlbumSearch, AlbumTracks, DeezerArtist, DeezerFault, Track, TrackSearch};
 
 /// Live Deezer API origin.
@@ -230,6 +231,28 @@ impl PreviewClient {
             return Ok(None);
         }
         Ok(artist.picture_xl.filter(|url| has_picture(url)))
+    }
+
+    /// Deezer track `track_id`, `None` when Deezer does not hold it or
+    /// answers another id.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
+    pub async fn deezer_track(
+        &self,
+        track_id: u64,
+        priority: RequestPriority,
+    ) -> Result<Option<SongLookup>, ProviderError> {
+        let id = track_id.to_string();
+        let Some(reply) = self
+            .deezer_get(&["track", id.as_str()], &[], priority)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let track: SongLookup = decode(&reply)?;
+        Ok((u64::try_from(track.id).ok() == Some(track_id)).then_some(track))
     }
 
     /// One track preview via Deezer's field-scoped search.

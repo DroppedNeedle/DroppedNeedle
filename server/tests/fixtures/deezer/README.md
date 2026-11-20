@@ -27,14 +27,21 @@ than the five-a-second row in the rate table.
 - `artist_not_found.json`: HTTP 200 for `GET /artist/99999999999`, an artist id
   Deezer does not hold: the same error object, code 800.
 
+- `track.json`: HTTP 200 for `GET /track/13791930` (Nirvana, "Smells Like Teen
+  Spirit"), the song-link lookup, fetched on 2026-11-19. It carries the track's
+  `isrc`, `duration` in seconds, its artist and its album.
+- `track_not_found.json`: HTTP 200 for `GET /track/99999999999`, fetched on
+  2026-11-19: the error object, code 800.
+
 The preview URLs in `search_artist.json` and `album_tracks.json` are signed (an
 `hdnea` token) and expire, so the token in each of the 22 URLs is replaced by
 `REDACTED`. The client resolves a preview URL just in time (see `preview.rs`).
 
-The tracking value in `artist.json`'s `share` link (`utm_term`) is replaced by
-`REDACTED` too. The two artist answers were fetched on 2026-10-20 as well.
+The tracking value in `artist.json`'s and `track.json`'s `share` links (`utm_term`)
+is replaced by `REDACTED` too, and so are `track.json`'s preview token and
+`track_token`. The two artist answers were fetched on 2026-10-20 as well.
 
-All seven bodies are unchanged except re-indented (two spaces) and those values.
+All nine bodies are unchanged except re-indented (two spaces) and those values.
 No field was replaced for copyright: the answers hold titles, names, ids, flags
 and links, and no lyric or biography text. None of them holds a key, a token or
 personal data.

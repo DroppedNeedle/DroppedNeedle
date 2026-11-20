@@ -10,19 +10,21 @@
 //! `spotify/models.rs`; the playlist covers come through
 //! [`ImageClient::spotify_cover`](crate::images::ImageClient::spotify_cover).
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine as _;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 use crate::RequestPriority;
+use crate::cache::CacheKey;
 use crate::client::{decode, parse_base, unusable_base};
 use crate::error::ProviderError;
 use crate::executor::{Backoff, Executor, Request, Spec, Url, standard_classify};
 
 pub mod models;
 
-use models::{EntryPage, PlaylistInfo, PlaylistPage, Profile, TokenAnswer};
+use models::{EntryPage, EntryTrack, PlaylistInfo, PlaylistPage, Profile, TokenAnswer};
 
 /// The provider name errors carry, and its rate row.
 pub const SOURCE: &str = "spotify";
@@ -99,12 +101,33 @@ impl From<TokenAnswer> for TokenGrant {
     }
 }
 
+/// How long before its expiry an app token is replaced.
+const APP_TOKEN_MARGIN: Duration = Duration::from_secs(60);
+
+/// The app token reads reuse until it nears its expiry, for one app.
+struct AppToken {
+    /// The client id and a tag of the secret it was granted for.
+    app: String,
+    access_token: String,
+    replace_at: tokio::time::Instant,
+}
+
 /// The Spotify client. Built once with the providers; cheap to clone.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SpotifyClient {
     executor: Executor,
     api_base: Option<Url>,
     accounts_base: Option<Url>,
+    app_token: Arc<Mutex<Option<AppToken>>>,
+}
+
+impl std::fmt::Debug for SpotifyClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpotifyClient")
+            .field("api_base", &self.api_base)
+            .field("accounts_base", &self.accounts_base)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SpotifyClient {
@@ -116,6 +139,7 @@ impl SpotifyClient {
             executor,
             api_base: parse_base(api_base, SOURCE),
             accounts_base: parse_base(accounts_base, SOURCE),
+            app_token: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -192,6 +216,74 @@ impl SpotifyClient {
             priority,
         )
         .await
+    }
+
+    /// An access token for the app itself (the client credentials grant),
+    /// for reads that need no user. One is reused until a minute before it
+    /// expires, or until the app's id or secret changes.
+    ///
+    /// # Errors
+    ///
+    /// As [`SpotifyClient::exchange_code`].
+    pub async fn app_token(
+        &self,
+        client_id: &str,
+        client_secret: &str,
+        priority: RequestPriority,
+    ) -> Result<String, ProviderError> {
+        let app = format!("{client_id}:{}", CacheKey::secret_tag(client_secret));
+        if let Some(token) = self.held_app_token().as_ref()
+            && token.app == app
+            && token.replace_at > tokio::time::Instant::now()
+        {
+            return Ok(token.access_token.clone());
+        }
+        let grant = self
+            .token(
+                client_id,
+                client_secret,
+                &[("grant_type", "client_credentials")],
+                priority,
+            )
+            .await?;
+        let lifetime = Duration::from_secs(u64::try_from(grant.expires_in_secs).unwrap_or(0));
+        *self.held_app_token() = Some(AppToken {
+            app,
+            access_token: grant.access_token.clone(),
+            replace_at: tokio::time::Instant::now() + lifetime.saturating_sub(APP_TOKEN_MARGIN),
+        });
+        Ok(grant.access_token)
+    }
+
+    /// One track (`GET /tracks/{id}`) read with the app's own token
+    /// ([`SpotifyClient::app_token`]). A token Spotify refuses is dropped,
+    /// so the next read asks for a new one.
+    ///
+    /// # Errors
+    ///
+    /// As [`SpotifyClient::track`].
+    pub async fn app_track(
+        &self,
+        client_id: &str,
+        client_secret: &str,
+        track_id: &str,
+        priority: RequestPriority,
+    ) -> Result<EntryTrack, ProviderError> {
+        let token = self.app_token(client_id, client_secret, priority).await?;
+        let read = self.track(&token, track_id, priority).await;
+        if matches!(read, Err(ProviderError::Unauthorized { .. })) {
+            let mut held = self.held_app_token();
+            if held.as_ref().is_some_and(|held| held.access_token == token) {
+                *held = None;
+            }
+        }
+        read
+    }
+
+    fn held_app_token(&self) -> std::sync::MutexGuard<'_, Option<AppToken>> {
+        self.app_token
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// One Basic-auth grant on the accounts host.
@@ -276,6 +368,22 @@ impl SpotifyClient {
         .await
     }
 
+    /// One track (`GET /tracks/{id}`), readable with an app token.
+    ///
+    /// # Errors
+    ///
+    /// As [`SpotifyClient::me`]; an id Spotify does not hold is
+    /// [`ProviderError::NotFound`].
+    pub async fn track(
+        &self,
+        access_token: &str,
+        track_id: &str,
+        priority: RequestPriority,
+    ) -> Result<EntryTrack, ProviderError> {
+        self.get(access_token, &["tracks", track_id], &[], priority)
+            .await
+    }
+
     /// One page of a playlist's entries (`GET /playlists/{id}/items`), from
     /// `offset`, [`ITEMS_PAGE`] at a time. The older `/tracks` endpoint is
     /// deprecated and 403s for development-mode apps after the March 2026
@@ -319,5 +427,74 @@ impl SpotifyClient {
             .header("authorization", format!("Bearer {access_token}"));
         let reply = self.executor.send(request, priority).await?;
         decode(&reply)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::executor::Method;
+    use crate::test_support::{Scripted, ScriptedWire};
+    use crate::{ProviderEndpoints, ProviderError, Providers, RequestPriority};
+
+    /// A token Spotify refuses (a rotated secret, a revoked app) is not
+    /// used again: the next read asks for a new one.
+    #[tokio::test]
+    async fn a_refused_app_token_is_not_used_again() {
+        let wire = Arc::new(ScriptedWire::new());
+        for token in ["first", "second"] {
+            wire.on(
+                Method::Post,
+                "http://fake/accounts/api/token",
+                Scripted::Answer {
+                    status: 200,
+                    headers: Vec::new(),
+                    body: format!(r#"{{"access_token":"{token}","expires_in":3600}}"#).into_bytes(),
+                },
+            );
+        }
+        let track = "http://fake/api/tracks/1a2B3c4D5e6F7g8H9i0JkL";
+        wire.answer(track, 401, &[], r#"{"error":{"status":401}}"#);
+        wire.answer(
+            track,
+            200,
+            &[],
+            r#"{"id":"1a2B3c4D5e6F7g8H9i0JkL","name":"Opener"}"#,
+        );
+        let providers = Providers::unpaced_at(
+            wire.clone(),
+            ProviderEndpoints {
+                spotify_api: "http://fake/api".to_owned(),
+                spotify_accounts: "http://fake/accounts".to_owned(),
+                ..ProviderEndpoints::closed()
+            },
+        );
+        let read = || {
+            providers.spotify.app_track(
+                "client",
+                "secret",
+                "1a2B3c4D5e6F7g8H9i0JkL",
+                RequestPriority::UserInitiated,
+            )
+        };
+
+        assert!(matches!(
+            read().await,
+            Err(ProviderError::Unauthorized { .. })
+        ));
+        assert_eq!(read().await.expect("read with a new token").name, "Opener");
+        let bearers: Vec<String> = wire
+            .sent()
+            .into_iter()
+            .filter(|sent| sent.url.as_str() == track)
+            .filter_map(|sent| {
+                sent.headers
+                    .into_iter()
+                    .find(|(name, _)| name == "authorization")
+                    .map(|(_, value)| value)
+            })
+            .collect();
+        assert_eq!(bearers, ["Bearer first", "Bearer second"]);
     }
 }

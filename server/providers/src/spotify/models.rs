@@ -154,7 +154,10 @@ pub struct PlaylistEntry {
     pub item: Option<EntryTrack>,
 }
 
-/// The track (or episode) of one entry.
+/// The track (or episode) of one entry, and one track by id
+/// (`GET /tracks/{id}`). The single-track read was checked live with an app
+/// token on 2026-11-19: name, artists, `duration_ms` and
+/// `external_ids.isrc` came back.
 #[derive(Debug, Deserialize)]
 pub struct EntryTrack {
     /// Spotify track id. The key is required; a local file sends null.

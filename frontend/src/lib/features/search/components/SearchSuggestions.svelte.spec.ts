@@ -172,4 +172,20 @@ describe('SearchSuggestions.svelte', () => {
 		const fresh = page.getByText('FreshResult');
 		await expect.element(fresh).toBeInTheDocument();
 	});
+
+	it('pastes a link from the clipboard and searches it', async () => {
+		globalThis.fetch = mockFetchSuccess();
+		const link = 'https://www.deezer.com/track/13791930';
+		vi.spyOn(navigator.clipboard, 'readText').mockResolvedValue(`  ${link}\n`);
+		const onSearch = vi.fn();
+		await renderComponent({ onSearch });
+
+		await page.getByRole('button', { name: 'Paste a song link and search' }).click();
+
+		await vi.waitFor(() => expect(onSearch).toHaveBeenCalledTimes(1));
+		await expect.element(page.getByRole('searchbox')).toHaveValue(link);
+		await expect
+			.element(page.getByRole('button', { name: 'Paste a song link and search' }))
+			.not.toBeInTheDocument();
+	});
 });

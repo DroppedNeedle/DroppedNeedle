@@ -6,6 +6,11 @@
   "scope": "/__DROPPEDNEEDLE_BASE__/",
   "display": "standalone",
   "display_override": ["standalone", "fullscreen"],
+  "share_target": {
+    "action": "/__DROPPEDNEEDLE_BASE__/search",
+    "method": "GET",
+    "params": { "text": "q", "url": "link" }
+  },
   "icons": [
     {
       "src": "/__DROPPEDNEEDLE_BASE__/android-chrome-192x192.png",

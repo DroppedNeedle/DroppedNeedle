@@ -1,5 +1,10 @@
 import type { SearchRemoteStatus } from '$lib/features/search/queries/types';
 
+/** Whether `query` holds a link, which search reads as a song link, never as text. */
+export function isLinkQuery(query: string): boolean {
+	return /(?:^|\s)(?:https?:\/\/|spotify:track:)/i.test(query);
+}
+
 export type SearchStatusNotice = {
 	message: string;
 	className: 'alert-info' | 'alert-warning';

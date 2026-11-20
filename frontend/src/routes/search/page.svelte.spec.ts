@@ -25,7 +25,8 @@ const empty: SearchResponse = {
 	top_track: null,
 	artist_status: 'ok',
 	album_status: 'ok',
-	track_status: 'ok'
+	track_status: 'ok',
+	link: null
 };
 
 beforeEach(() => {
@@ -109,5 +110,43 @@ describe('search page album covers', () => {
 			.poll(() => asked)
 			.toContainEqual(expect.stringContaining('/library/albums/album-art/artwork'));
 		expect(asked).not.toContainEqual(expect.stringContaining('/library/albums/album-bare/'));
+	});
+});
+
+describe('search page song links', () => {
+	it('says why a link found nothing, and searches no artists or albums', async () => {
+		fakeApi({ 'GET /api/v3/search': { ...empty, link: 'unreadable' } });
+		await renderWithQuery(SearchPage, {
+			data: { query: 'https://www.deezer.com/track/1' }
+		});
+
+		await expect.element(page.getByText("Couldn't read this link")).toBeInTheDocument();
+		await expect.element(page.getByRole('heading', { name: 'Artists' })).not.toBeInTheDocument();
+		await expect.element(page.getByText('No albums found')).not.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('navigation', { name: 'Search results' }))
+			.not.toBeInTheDocument();
+	});
+
+	it('says a Spotify link needs Spotify set up', async () => {
+		fakeApi({ 'GET /api/v3/search': { ...empty, link: 'needs_spotify' } });
+		await renderWithQuery(SearchPage, {
+			data: { query: 'https://open.spotify.com/track/1a2B3c4D5e6F7g8H9i0JkL' }
+		});
+
+		await expect
+			.element(page.getByText('Spotify links need Spotify set up by an admin.'))
+			.toBeInTheDocument();
+	});
+
+	it('says when MusicBrainz has no song for a link', async () => {
+		fakeApi({ 'GET /api/v3/search': { ...empty, link: 'no_match' } });
+		await renderWithQuery(SearchPage, {
+			data: { query: 'https://www.deezer.com/track/1' }
+		});
+
+		await expect
+			.element(page.getByText('No MusicBrainz song matches this link'))
+			.toBeInTheDocument();
 	});
 });
