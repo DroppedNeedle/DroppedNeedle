@@ -115,6 +115,9 @@ pub struct ProviderEndpoints {
     pub itunes: String,
     /// Deezer API origin.
     pub deezer: String,
+    /// Deezer's short-link origin (`link.deezer.com`), which song links
+    /// follow one hop.
+    pub deezer_links: String,
     /// LRCLIB origin.
     pub lrclib: String,
     /// Wikidata origin.
@@ -131,6 +134,9 @@ pub struct ProviderEndpoints {
     pub geocoding: String,
     /// YouTube Data API host.
     pub youtube: String,
+    /// YouTube's oEmbed endpoint, which song links read a video's title
+    /// from.
+    pub youtube_oembed: String,
     /// The releases list behind the version check.
     pub github_releases: String,
     /// GitHub API origin, which plugin installs read.
@@ -300,6 +306,7 @@ impl Providers {
         let previews = preview::PreviewClient::new(
             executor(&preview::DEEZER_SPEC, preview::DEEZER),
             &endpoints.deezer,
+            &endpoints.deezer_links,
             itunes.clone(),
         );
         let lrclib =
@@ -325,6 +332,7 @@ impl Providers {
         let youtube = youtube::YouTubeApi::new(
             executor(&youtube::SPEC, youtube::SOURCE),
             &endpoints.youtube,
+            &endpoints.youtube_oembed,
         );
         let github_api = executor(&github::SPEC, github::SOURCE);
         let github = github::GitHubClient::new(github_api.clone(), &endpoints.github_releases);

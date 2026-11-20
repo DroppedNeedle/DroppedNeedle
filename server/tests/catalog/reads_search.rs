@@ -132,17 +132,17 @@ fn seed_catalog(app_db: &Path) {
 /// The search deps over `app_db`. With no wire, MusicBrainz search fails
 /// at once without a request and the tests read the library's own hits;
 /// with one, the official MusicBrainz answers on it, and ListenBrainz
-/// too when `listenbrainz` is on.
+/// too when `settings` turn it on.
 fn search_deps(
     app_db: PathBuf,
     enrichment: Arc<dyn EnrichmentPort>,
     users: droppedneedle_auth::users::UsersDeps,
     wire: Option<Arc<dyn Wire>>,
-    listenbrainz: bool,
+    settings: OfficialMusicBrainz,
 ) -> SearchDeps {
     let db = droppedneedle_kernel::db::Db::open_for_tests(&app_db).expect("search database opens");
     let remote = match wire {
-        Some(wire) => scripted_catalog(&db, users, wire, listenbrainz),
+        Some(wire) => scripted_catalog(&db, users, wire, settings),
         None => crate::common::bundles::offline_catalog(&db, users),
     };
     SearchDeps::new(SearchService::new(db, remote), enrichment)
@@ -150,14 +150,14 @@ fn search_deps(
 
 /// A metadata catalog over `db` reading the official MusicBrainz, which
 /// the closed provider endpoints put at [`MUSICBRAINZ`] on `wire`, and
-/// ListenBrainz at [`LISTENBRAINZ`] when `listenbrainz` is on.
+/// ListenBrainz at [`LISTENBRAINZ`] when `settings` turn it on.
 fn scripted_catalog(
     db: &droppedneedle_kernel::db::Db,
     users: droppedneedle_auth::users::UsersDeps,
     wire: Arc<dyn Wire>,
-    listenbrainz: bool,
+    settings: OfficialMusicBrainz,
 ) -> Catalog {
-    scripted_catalog_over(db, users, Arc::new(Providers::unpaced(wire)), listenbrainz)
+    scripted_catalog_over(db, users, Arc::new(Providers::unpaced(wire)), settings)
 }
 
 /// [`scripted_catalog`] over `providers`, which the caller may share.
@@ -165,12 +165,12 @@ fn scripted_catalog_over(
     db: &droppedneedle_kernel::db::Db,
     users: droppedneedle_auth::users::UsersDeps,
     providers: Arc<Providers>,
-    listenbrainz: bool,
+    settings: OfficialMusicBrainz,
 ) -> Catalog {
     Catalog::new(
         Upstream::new(
             providers,
-            Arc::new(OfficialMusicBrainz { listenbrainz }),
+            Arc::new(settings),
             users.clone(),
             droppedneedle_media::playback::listening::ListeningStore::new(
                 db.clone(),
@@ -192,10 +192,12 @@ const MUSICBRAINZ: &str = "http://127.0.0.1:9/musicbrainz/ws/2";
 /// Where ListenBrainz answers in [`scripted_catalog`].
 const LISTENBRAINZ: &str = "http://127.0.0.1:9/listenbrainz/1";
 
-/// Catalog settings on the official MusicBrainz and a Spotify app,
-/// everything else at its default, with ListenBrainz reads on or off.
+/// Catalog settings on the official MusicBrainz, everything else at its
+/// default, with ListenBrainz reads on or off, and a Spotify app and
+/// YouTube on or off (`links`).
 struct OfficialMusicBrainz {
     listenbrainz: bool,
+    links: bool,
 }
 
 impl CatalogSettings for OfficialMusicBrainz {
@@ -226,12 +228,16 @@ impl CatalogSettings for OfficialMusicBrainz {
     }
 
     fn spotify_app(&self) -> Option<SpotifySettings> {
-        Some(SpotifySettings {
+        self.links.then(|| SpotifySettings {
             client_id: "test-client".to_owned(),
             client_secret: Secret::new("test-secret"),
             enabled: true,
             spotify_redirect_origin: String::new(),
         })
+    }
+
+    fn youtube_on(&self) -> bool {
+        self.links
     }
 }
 
@@ -264,6 +270,20 @@ async fn app_listening(
     wire: Option<Arc<dyn Wire>>,
     listenbrainz: bool,
 ) -> (axum::Router, Held) {
+    let settings = OfficialMusicBrainz {
+        listenbrainz,
+        links: true,
+    };
+    app_with(app_db, enrichment, wire, settings).await
+}
+
+/// [`app_on`] with these catalog settings.
+async fn app_with(
+    app_db: PathBuf,
+    enrichment: Arc<dyn EnrichmentPort>,
+    wire: Option<Arc<dyn Wire>>,
+    settings: OfficialMusicBrainz,
+) -> (axum::Router, Held) {
     let rig = AuthRig::new("reads-search").await;
     let user = rig.seed_user("ada", Role::User).await;
     rig.sign_in(&user.id, TEST_TOKEN).await;
@@ -276,7 +296,7 @@ async fn app_listening(
                     enrichment,
                     rig.deps.clone(),
                     wire,
-                    listenbrainz,
+                    settings,
                 ))
                 .into_router()
                 .layer(middleware::from_fn_with_state(
@@ -309,7 +329,11 @@ async fn app_counting(app_db: PathBuf, wire: Arc<dyn Wire>) -> (axum::Router, He
         ),
         rig.deps.clone(),
     );
-    let catalog = scripted_catalog_over(&db, rig.deps.clone(), providers, true);
+    let settings = OfficialMusicBrainz {
+        listenbrainz: true,
+        links: true,
+    };
+    let catalog = scripted_catalog_over(&db, rig.deps.clone(), providers, settings);
     let scope = TestApp::start("reads-search").await;
     let app = scope
         .request_scope(
@@ -2279,6 +2303,8 @@ const DEEZER: &str = "http://127.0.0.1:9/deezer";
 const ITUNES_LOOKUP: &str = "http://127.0.0.1:9/itunes/lookup";
 const SPOTIFY_TOKEN: &str = "http://127.0.0.1:9/spotify-accounts/api/token";
 const SPOTIFY_API: &str = "http://127.0.0.1:9/spotify";
+const DEEZER_LINKS: &str = "http://127.0.0.1:9/deezer-links";
+const YOUTUBE_OEMBED: &str = "http://127.0.0.1:9/youtube-oembed";
 
 /// A full search for `query` on `app`, with the answer's body.
 async fn search_for(app: axum::Router, query: &str) -> serde_json::Value {
@@ -2689,5 +2715,146 @@ async fn a_link_search_without_songs_sends_nothing() {
         assert_eq!(status, StatusCode::OK);
         assert!(json(&bytes)["tracks"].as_array().unwrap().is_empty());
     }
+    assert!(wire.sent().is_empty(), "{:?}", wire.sent().len());
+}
+
+/// One MusicBrainz answer naming "Smells Like Teen Spirit" by Nirvana, at
+/// the length the stores give it.
+fn teen_spirit_answer() -> Vec<u8> {
+    let mut hit = recording_hit(
+        "rec-teen-spirit",
+        "Smells Like Teen Spirit",
+        "Nirvana",
+        100,
+        &[("rel-1", "Nevermind", "Official", "rg-1")],
+    );
+    hit["length"] = serde_json::json!(301_000);
+    search_answer("recordings", vec![hit])
+}
+
+/// A YouTube link is read through oEmbed: "Artist - Title (Official
+/// Video)" becomes a search by name, with the video's tags dropped.
+#[tokio::test]
+async fn a_youtube_link_is_searched_by_its_video_title() {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        YOUTUBE_OEMBED,
+        200,
+        &[],
+        include_str!("../fixtures/youtube/oembed_video.json"),
+    );
+    wire.answer(
+        &format!("{MUSICBRAINZ}/recording"),
+        200,
+        &[],
+        teen_spirit_answer(),
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-youtube-link");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+
+    let body = search_for(app, "https://youtu.be/hTWKbfoikeg?si=x").await;
+    assert_eq!(body["link"], "read", "{body}");
+    assert_eq!(body["tracks"][0]["musicbrainz_id"], "rec-teen-spirit");
+    assert_eq!(
+        musicbrainz_queries(&wire),
+        vec![r#"recording:"Smells Like Teen Spirit" AND artist:"Nirvana""#]
+    );
+    let oembed = wire
+        .sent()
+        .into_iter()
+        .find(|sent| sent.url.as_str().starts_with(YOUTUBE_OEMBED))
+        .expect("oEmbed was asked");
+    assert_eq!(
+        oembed.query("url").as_deref(),
+        Some("https://www.youtube.com/watch?v=hTWKbfoikeg")
+    );
+}
+
+/// A Deezer short link is followed one hop, read from its redirect, never
+/// fetched further; it counts only when it lands on a Deezer track.
+#[tokio::test]
+async fn a_deezer_short_link_is_read_from_its_redirect() {
+    let wire = Arc::new(ScriptedWire::new());
+    let dest = "https://link.deezer.com/?dest=https%3A%2F%2Fwww.deezer.com%2Ftrack%2F13791930%3Fhost%3D1&gwf=x";
+    wire.answer(
+        &format!("{DEEZER_LINKS}/s/TrackCode1"),
+        301,
+        &[("location", dest)],
+        Vec::new(),
+    );
+    let artist = "https://link.deezer.com/?dest=https%3A%2F%2Fwww.deezer.com%2Fartist%2F415";
+    wire.answer(
+        &format!("{DEEZER_LINKS}/s/ArtistCode1"),
+        301,
+        &[("location", artist)],
+        Vec::new(),
+    );
+    wire.answer(
+        &format!("{DEEZER}/track/13791930"),
+        200,
+        &[],
+        include_str!("../fixtures/deezer/track.json"),
+    );
+    wire.answer(
+        &format!("{MUSICBRAINZ}/recording"),
+        200,
+        &[],
+        teen_spirit_answer(),
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-deezer-short-link");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+
+    let body = search_for(app.clone(), "https://link.deezer.com/s/TrackCode1").await;
+    assert_eq!(body["link"], "read", "{body}");
+    assert_eq!(musicbrainz_queries(&wire), vec!["isrc:USGF19942501"]);
+
+    let body = search_for(app, "https://link.deezer.com/s/ArtistCode1").await;
+    assert_eq!(body["link"], "unreadable", "{body}");
+    assert!(
+        wire.sent()
+            .iter()
+            .all(|sent| !sent.url.as_str().contains("link.deezer.com")
+                && !sent.url.path().contains("/artist/")),
+        "nothing past the redirect is fetched"
+    );
+}
+
+/// With Spotify and YouTube switched off, their links are not read: a
+/// Spotify link says Spotify needs setting up, a YouTube link can't be
+/// read, and nothing is sent.
+#[tokio::test]
+async fn links_to_services_switched_off_send_nothing() {
+    let wire = Arc::new(ScriptedWire::new());
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-links-off");
+    let settings = OfficialMusicBrainz {
+        listenbrainz: false,
+        links: false,
+    };
+    let (app, _held) = app_with(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone() as Arc<dyn Wire>),
+        settings,
+    )
+    .await;
+
+    let body = search_for(
+        app.clone(),
+        "https://open.spotify.com/track/1a2B3c4D5e6F7g8H9i0JkL",
+    )
+    .await;
+    assert_eq!(body["link"], "needs_spotify", "{body}");
+    let body = search_for(app, "https://youtu.be/hTWKbfoikeg").await;
+    assert_eq!(body["link"], "unreadable", "{body}");
     assert!(wire.sent().is_empty(), "{:?}", wire.sent().len());
 }

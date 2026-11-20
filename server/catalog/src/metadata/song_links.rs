@@ -2,13 +2,16 @@
 //! song.link one carrying such an id, read into the MusicBrainz songs it
 //! names.
 //!
-//! The link's service gives the song's ISRC (Deezer, Spotify) or its title,
-//! artist and length (Apple Music). An ISRC finds every recording
-//! MusicBrainz files it under. A name finds the recordings that score at
-//! least [`NAME_SCORE`] and run within [`LENGTH_SLACK_SECS`] of it, so a
-//! weak match shows nothing rather than a guess. Spotify is read with the
-//! server's Spotify app, without anyone's sign-in. Ids must match each
-//! service's pattern, and logs carry `service:id`, never the link.
+//! The link's service gives the song's ISRC (Deezer, Spotify), its title,
+//! artist and length (Apple Music), or a video's title and channel
+//! (YouTube). An ISRC finds every recording MusicBrainz files it under. A
+//! name finds the recordings that score at least [`NAME_SCORE`] and run
+//! within [`LENGTH_SLACK_SECS`] of it, so a weak match shows nothing rather
+//! than a guess. Spotify is read with the server's Spotify app, without
+//! anyone's sign-in, and YouTube only while it is switched on. A Deezer
+//! short link is followed one hop and counts only when it lands on a
+//! Deezer track. Ids must match each service's pattern, and logs carry
+//! `service:id`, never the link.
 
 use std::fmt;
 use std::time::Duration;
@@ -43,6 +46,10 @@ pub enum SongLink {
     },
     /// A Spotify track.
     Spotify(String),
+    /// A YouTube video.
+    YouTube(String),
+    /// A Deezer short link's code (`link.deezer.com/s/{code}`).
+    DeezerShort(String),
 }
 
 impl fmt::Display for SongLink {
@@ -51,6 +58,8 @@ impl fmt::Display for SongLink {
             Self::Deezer(id) => write!(f, "deezer:{id}"),
             Self::AppleMusic { id, country } => write!(f, "apple:{country}:{id}"),
             Self::Spotify(id) => write!(f, "spotify:{id}"),
+            Self::YouTube(id) => write!(f, "youtube:{id}"),
+            Self::DeezerShort(code) => write!(f, "deezer-short:{code}"),
         }
     }
 }
@@ -85,6 +94,18 @@ fn parse_word(word: &str) -> Option<SongLink> {
         ("music.apple.com" | "geo.music.apple.com", [country, "song", .., id]) => {
             apple(country, id)
         }
+        ("www.youtube.com" | "youtube.com" | "m.youtube.com" | "music.youtube.com", ["watch"]) => {
+            let id = url.query_pairs().find(|(key, _)| key == "v")?.1;
+            youtube_id(&id).map(SongLink::YouTube)
+        }
+        ("www.youtube.com" | "youtube.com" | "m.youtube.com", ["shorts", id])
+        | ("youtu.be", [id]) => youtube_id(id).map(SongLink::YouTube),
+        ("link.deezer.com", ["s", code]) => {
+            let ok = !code.is_empty()
+                && code.len() <= 40
+                && code.bytes().all(|b| b.is_ascii_alphanumeric());
+            ok.then(|| SongLink::DeezerShort((*code).to_owned()))
+        }
         ("song.link", ["s", id]) => spotify_id(id).map(SongLink::Spotify),
         ("song.link", ["d", id]) => store_id(id).map(SongLink::Deezer),
         // shortcut: song.link's Apple ids carry no store, so the US one is
@@ -112,6 +133,15 @@ fn store_id(id: &str) -> Option<u64> {
 /// A Spotify id: 22 base-62 characters.
 fn spotify_id(id: &str) -> Option<String> {
     (id.len() == 22 && id.bytes().all(|b| b.is_ascii_alphanumeric())).then(|| id.to_owned())
+}
+
+/// A YouTube video id: 11 letters, digits, `-` or `_`.
+fn youtube_id(id: &str) -> Option<String> {
+    (id.len() == 11
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+    .then(|| id.to_owned())
 }
 
 /// Why a song link shows no songs.
@@ -162,6 +192,82 @@ fn bare_title(title: &str) -> &str {
     title[..cut].trim()
 }
 
+/// The song a music video's title and channel name: an auto-generated
+/// "Artist - Topic" channel's video by the channel, "Artist - Title
+/// (Official Video)" by its dash or en dash, else the channel as the
+/// artist.
+fn video_clue(title: &str, channel: &str) -> SongClue {
+    let title = without_video_tags(title);
+    let (artist, song) = match (channel.strip_suffix(" - Topic"), split_dash(title)) {
+        (Some(artist), _) => (artist, title),
+        (None, Some((artist, song))) => (artist, song),
+        (None, None) => (channel.strip_suffix("VEVO").unwrap_or(channel), title),
+    };
+    SongClue {
+        isrc: None,
+        title: song.trim().to_owned(),
+        artist: lead_artist(artist).to_owned(),
+        duration_secs: None,
+    }
+}
+
+/// `title` split at its first spaced dash or en dash.
+fn split_dash(title: &str) -> Option<(&str, &str)> {
+    [" - ", " \u{2013} "]
+        .iter()
+        .filter_map(|dash| title.find(dash).map(|at| (at, dash.len())))
+        .min()
+        .map(|(at, len)| (&title[..at], &title[at + len..]))
+}
+
+/// `title` without the bracketed tags a video adds at its end:
+/// "(Official Video)", "[Lyrics]", "(HD)" and the like.
+fn without_video_tags(title: &str) -> &str {
+    const TAGS: [&str; 11] = [
+        "official",
+        "video",
+        "audio",
+        "lyric",
+        "lyrics",
+        "visualizer",
+        "visualiser",
+        "hd",
+        "hq",
+        "4k",
+        "mv",
+    ];
+    let mut rest = title.trim();
+    loop {
+        let open = match rest.chars().last() {
+            Some(')') => rest.rfind('('),
+            Some(']') => rest.rfind('['),
+            _ => None,
+        };
+        let Some(open) = open else {
+            return rest;
+        };
+        let tag = rest[open + 1..rest.len() - 1].to_ascii_lowercase();
+        if !tag
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|word| TAGS.contains(&word))
+        {
+            return rest;
+        }
+        rest = rest[..open].trim_end();
+    }
+}
+
+/// `artist` without a "feat." part, which MusicBrainz credits apart.
+fn lead_artist(artist: &str) -> &str {
+    let lower = artist.to_ascii_lowercase();
+    let cut = [" feat. ", " feat ", " ft. ", " featuring "]
+        .iter()
+        .filter_map(|mark| lower.find(mark))
+        .min()
+        .unwrap_or(artist.len());
+    artist[..cut].trim()
+}
+
 /// Whether a song found by name runs close enough to the link's length;
 /// either length unknown passes.
 fn length_fits(hit: &RemoteHit, duration_secs: Option<i64>) -> bool {
@@ -182,20 +288,18 @@ impl Catalog {
     ///
     /// [`LinkUnread::NeedsSpotify`] for a Spotify link while Spotify is not
     /// set up or is switched off, and [`LinkUnread::Unreadable`] when the
-    /// service does not hold the song or did not answer.
+    /// service does not hold the song, did not answer, or (YouTube) is
+    /// switched off.
     pub async fn search_song_link(
         &self,
         link: &SongLink,
         deadline: Duration,
     ) -> Result<RemoteBucket, LinkUnread> {
         let started = tokio::time::Instant::now();
+        let settings = self.upstream().settings();
         let spotify = match link {
-            SongLink::Spotify(_) => Some(
-                self.upstream()
-                    .settings()
-                    .spotify_app()
-                    .ok_or(LinkUnread::NeedsSpotify)?,
-            ),
+            SongLink::Spotify(_) => Some(settings.spotify_app().ok_or(LinkUnread::NeedsSpotify)?),
+            SongLink::YouTube(_) if !settings.youtube_on() => return Err(LinkUnread::Unreadable),
             _ => None,
         };
         let clue = match tokio::time::timeout(deadline, self.song_clue(link, spotify)).await {
@@ -274,22 +378,19 @@ impl Catalog {
     ) -> Result<Option<SongClue>, ProviderError> {
         let upstream = self.upstream();
         Ok(match link {
-            SongLink::Deezer(id) => {
-                upstream
-                    .deezer()
-                    .deezer_track(*id, priority)
-                    .await?
-                    .map(|track| SongClue {
-                        isrc: track.isrc,
-                        title: if track.title_short.is_empty() {
-                            track.title
-                        } else {
-                            track.title_short
-                        },
-                        artist: track.artist.map(|artist| artist.name).unwrap_or_default(),
-                        duration_secs: track.duration,
-                    })
+            SongLink::Deezer(id) => self.read_deezer(*id, priority).await?,
+            SongLink::DeezerShort(code) => {
+                let dest = upstream.deezer().deezer_short_link(code, priority).await?;
+                match dest.as_deref().and_then(parse_word) {
+                    Some(SongLink::Deezer(id)) => self.read_deezer(id, priority).await?,
+                    _ => None,
+                }
             }
+            SongLink::YouTube(id) => upstream
+                .youtube()
+                .oembed(id, priority)
+                .await?
+                .map(|video| video_clue(&video.title, &video.author_name)),
             SongLink::AppleMusic { id, country } => upstream
                 .itunes()
                 .lookup_song(*id, country, priority)
@@ -327,11 +428,30 @@ impl Catalog {
             }
         })
     }
+
+    /// Deezer track `id`'s ISRC, title, artist and length.
+    async fn read_deezer(
+        &self,
+        id: u64,
+        priority: RequestPriority,
+    ) -> Result<Option<SongClue>, ProviderError> {
+        let track = self.upstream().deezer().deezer_track(id, priority).await?;
+        Ok(track.map(|track| SongClue {
+            isrc: track.isrc,
+            title: if track.title_short.is_empty() {
+                track.title
+            } else {
+                track.title_short
+            },
+            artist: track.artist.map(|artist| artist.name).unwrap_or_default(),
+            duration_secs: track.duration,
+        }))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SongClue, SongLink, bare_title, link_query, parse};
+    use super::{SongClue, SongLink, bare_title, link_query, parse, video_clue};
 
     #[test]
     fn links_read_as_their_service_and_id() {
@@ -382,7 +502,30 @@ mod tests {
                 apple("us"),
             ),
             ("https://song.link/i/1440783625", apple("us")),
+            (
+                "https://www.youtube.com/watch?v=hTWKbfoikeg&list=x",
+                Some(SongLink::YouTube("hTWKbfoikeg".to_owned())),
+            ),
+            (
+                "https://music.youtube.com/watch?v=hTWKbfoikeg",
+                Some(SongLink::YouTube("hTWKbfoikeg".to_owned())),
+            ),
+            (
+                "https://youtu.be/hTWKbfoikeg?si=x",
+                Some(SongLink::YouTube("hTWKbfoikeg".to_owned())),
+            ),
+            (
+                "https://www.youtube.com/shorts/hTWKbfoikeg",
+                Some(SongLink::YouTube("hTWKbfoikeg".to_owned())),
+            ),
+            (
+                "https://link.deezer.com/s/31Wq4dKe1ARDAb5TeNIGh",
+                Some(SongLink::DeezerShort("31Wq4dKe1ARDAb5TeNIGh".to_owned())),
+            ),
             // Not songs, not these services, or not well formed.
+            ("https://www.youtube.com/watch?v=short", None),
+            ("https://www.youtube.com/channel/hTWKbfoikeg", None),
+            ("https://link.deezer.com/s/../track", None),
             (
                 "https://music.apple.com/us/album/nevermind/1440783617",
                 None,
@@ -403,6 +546,38 @@ mod tests {
         ] {
             assert_eq!(parse(query), link, "{query}");
         }
+    }
+
+    #[test]
+    fn a_video_reads_as_artist_and_title() {
+        let read = |title: &str, channel: &str| {
+            let clue = video_clue(title, channel);
+            (clue.artist, clue.title)
+        };
+        let pair = |artist: &str, title: &str| (artist.to_owned(), title.to_owned());
+        assert_eq!(
+            read("Aurora - Opener (Official Music Video)", "AuroraVEVO"),
+            pair("Aurora", "Opener")
+        );
+        assert_eq!(
+            read("Aurora \u{2013} Opener (Official Video)", "Some Channel"),
+            pair("Aurora", "Opener")
+        );
+        assert_eq!(
+            read(
+                "Aurora ft. Nightfall - Opener [Lyrics] (HD)",
+                "Some Channel"
+            ),
+            pair("Aurora", "Opener")
+        );
+        assert_eq!(
+            read("Opener - Live", "Aurora - Topic"),
+            pair("Aurora", "Opener - Live")
+        );
+        assert_eq!(
+            read("Opener (Acoustic)", "AuroraVEVO"),
+            pair("Aurora", "Opener (Acoustic)")
+        );
     }
 
     #[test]

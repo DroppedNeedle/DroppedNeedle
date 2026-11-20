@@ -28,6 +28,13 @@ is a paging cursor, neither a credential, so they are kept as answered.
   The file-details part is for a video's owner only. The error's reason is
   `forbidden` in domain `youtube.video`. Body unchanged.
 
+`oembed_video.json` is from YouTube's oEmbed endpoint, not the Data API:
+HTTP 200 for `GET https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=hTWKbfoikeg&format=json`,
+fetched on 2026-11-20 with the app's User-Agent. It needs no key and spends no
+quota. It is unchanged except re-indented (two spaces). The same request for a
+video id YouTube does not show (`AAAAAAAAAAA`) answered 404 that day; that
+answer is not kept.
+
 Not recorded:
 
 - The 403 a spent daily quota gets, with reason `quotaExceeded`. Reaching it

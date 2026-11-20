@@ -26,7 +26,9 @@ use serde::{Deserialize, Serialize};
 use crate::RequestPriority;
 use crate::client::{decode, parse_base, unusable_base};
 use crate::error::{MAX_RETRY_AFTER, ProviderError};
-use crate::executor::{Answer, Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
+use crate::executor::{
+    Answer, Backoff, Executor, Redirects, Reply, Request, Spec, Url, standard_classify,
+};
 use crate::itunes::ITunesClient;
 use crate::itunes::models::SongSearch;
 use crate::web_address::{self, WebAddress};
@@ -38,6 +40,8 @@ use self::models::{AlbumSearch, AlbumTracks, DeezerArtist, DeezerFault, Track, T
 
 /// Live Deezer API origin.
 pub const DEEZER_API_BASE: &str = "https://api.deezer.com";
+/// Live Deezer short-link origin.
+pub const DEEZER_LINKS_BASE: &str = "https://link.deezer.com";
 /// The provider name Deezer errors carry, and its rate row.
 pub const DEEZER: &str = "deezer";
 /// Preview length v2 stamps on every result.
@@ -145,6 +149,7 @@ pub fn names_match(wanted: &str, got: &str) -> bool {
 pub struct PreviewClient {
     deezer: Executor,
     deezer_base: Option<Url>,
+    deezer_links: Option<Url>,
     itunes: ITunesClient,
 }
 
@@ -178,12 +183,19 @@ fn deezer_preview(hit: &Track) -> Option<&str> {
 
 impl PreviewClient {
     /// The client sending Deezer requests through `deezer` to the origin
-    /// at `deezer_base`, and iTunes requests through `itunes`.
+    /// at `deezer_base` and the short links at `deezer_links`, and iTunes
+    /// requests through `itunes`.
     #[must_use]
-    pub fn new(deezer: Executor, deezer_base: &str, itunes: ITunesClient) -> Self {
+    pub fn new(
+        deezer: Executor,
+        deezer_base: &str,
+        deezer_links: &str,
+        itunes: ITunesClient,
+    ) -> Self {
         Self {
             deezer,
             deezer_base: parse_base(deezer_base, DEEZER),
+            deezer_links: parse_base(deezer_links, DEEZER),
             itunes,
         }
     }
@@ -253,6 +265,47 @@ impl PreviewClient {
         };
         let track: SongLookup = decode(&reply)?;
         Ok((u64::try_from(track.id).ok() == Some(track_id)).then_some(track))
+    }
+
+    /// Where Deezer short link `code` (`link.deezer.com/s/{code}`) leads:
+    /// the address in its redirect's `dest`, else the redirect itself;
+    /// `None` when it does not redirect. The redirect is read, never
+    /// followed.
+    ///
+    /// Checked on 2026-11-20: a short link answers a 301 to
+    /// `link.deezer.com/?dest=<the deezer.com address>&...`.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
+    pub async fn deezer_short_link(
+        &self,
+        code: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<String>, ProviderError> {
+        let base = self
+            .deezer_links
+            .as_ref()
+            .ok_or_else(|| unusable_base(DEEZER))?;
+        let request = Request::get(base, &["s", code], &[])
+            .map_err(|_| unusable_base(DEEZER))?
+            .redirects(Redirects::Return);
+        let reply = match self.deezer.send(request, priority).await {
+            Ok(reply) => reply,
+            Err(ProviderError::NotFound { .. }) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        if !(300..400).contains(&reply.status()) {
+            return Ok(None);
+        }
+        let Some(location) = reply.header("location").and_then(|at| base.join(at).ok()) else {
+            return Ok(None);
+        };
+        let dest = location
+            .query_pairs()
+            .find(|(key, _)| key == "dest")
+            .map(|(_, value)| value.into_owned());
+        Ok(Some(dest.unwrap_or_else(|| location.to_string())))
     }
 
     /// One track preview via Deezer's field-scoped search.

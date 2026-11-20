@@ -74,6 +74,8 @@ pub struct Outbound {
     pub deezer: String,
     /// The origin Deezer serves artist pictures from.
     pub deezer_images: String,
+    /// Deezer's short-link origin, which song links follow one hop.
+    pub deezer_links: String,
     /// Cover Art Archive origin.
     pub cover_art_archive: String,
     /// Discogs API origin.
@@ -88,6 +90,8 @@ pub struct Outbound {
     pub github_codeload: String,
     /// YouTube Data API host: search and the key check.
     pub youtube: String,
+    /// YouTube's oEmbed endpoint: a song link's video title.
+    pub youtube_oembed: String,
     /// AcoustID API origin.
     pub acoustid: String,
     /// The Pwned Passwords range API behind the password screen, up to
@@ -135,6 +139,7 @@ impl Outbound {
             itunes: itunes::SEARCH_URL.to_owned(),
             deezer: preview::DEEZER_API_BASE.to_owned(),
             deezer_images: images::DEEZER_CDN.to_owned(),
+            deezer_links: preview::DEEZER_LINKS_BASE.to_owned(),
             cover_art_archive: coverart::COVER_ART_ARCHIVE_BASE.to_owned(),
             discogs: discogs::API_BASE.to_owned(),
             lrclib: lrclib::API_BASE.to_owned(),
@@ -142,6 +147,7 @@ impl Outbound {
             github_api: github::API_BASE.to_owned(),
             github_codeload: github::CODELOAD_BASE.to_owned(),
             youtube: youtube::YOUTUBE_API_HOST.to_owned(),
+            youtube_oembed: youtube::OEMBED_URL.to_owned(),
             acoustid: acoustid::DEFAULT_BASE_URL.to_owned(),
             pwned_passwords: hibp::RANGE_BASE.to_owned(),
             plex_tv: PLEX_TV_BASE.to_owned(),
@@ -172,6 +178,7 @@ impl Outbound {
             discogs: self.discogs.clone(),
             itunes: self.itunes.clone(),
             deezer: self.deezer.clone(),
+            deezer_links: self.deezer_links.clone(),
             lrclib: self.lrclib.clone(),
             wikidata: self.wikidata.clone(),
             wikipedia: self.wikipedia.clone(),
@@ -180,6 +187,7 @@ impl Outbound {
             skiddle: self.skiddle.clone(),
             geocoding: self.geocoding.clone(),
             youtube: self.youtube.clone(),
+            youtube_oembed: self.youtube_oembed.clone(),
             github_releases: self.github_releases.clone(),
             github_api: self.github_api.clone(),
             github_codeload: self.github_codeload.clone(),

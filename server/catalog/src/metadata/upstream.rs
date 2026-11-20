@@ -11,7 +11,9 @@
 use std::sync::Arc;
 
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_kernel::runtime_config::secret_sections::{AdvancedSettings, SpotifySettings};
+use droppedneedle_kernel::runtime_config::secret_sections::{
+    AdvancedSettings, SpotifySettings, YouTubeConnection,
+};
 use droppedneedle_kernel::runtime_config::sections::{
     ListenBrainzSettings, ListenSource, MusicBrainzSettings, UserPreferences, listenbrainz_reads_on,
 };
@@ -26,6 +28,7 @@ use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzView};
 use droppedneedle_providers::preview::PreviewClient;
 use droppedneedle_providers::spotify::SpotifyClient;
 use droppedneedle_providers::wikidata::WikidataClient;
+use droppedneedle_providers::youtube::YouTubeApi;
 use droppedneedle_providers::{ProviderCacheStore, ProviderError, Providers, RequestPriority};
 
 use crate::discover::listening::shared::Lender;
@@ -58,6 +61,11 @@ pub trait CatalogSettings: Send + Sync {
     /// switched off, has no client id or secret, or does not read.
     fn spotify_app(&self) -> Option<SpotifySettings> {
         None
+    }
+    /// Whether YouTube is switched on, so song links may read a video's
+    /// title; off while its settings do not read.
+    fn youtube_on(&self) -> bool {
+        false
     }
 }
 
@@ -93,6 +101,7 @@ pub struct LiveCatalogSettings {
     listenbrainz: Live<ListenBrainzSettings>,
     editions: LivePreferences,
     spotify: Live<SpotifySettings>,
+    youtube: Live<YouTubeConnection>,
 }
 
 impl LiveCatalogSettings {
@@ -105,6 +114,7 @@ impl LiveCatalogSettings {
             listenbrainz: config.live(),
             editions: LivePreferences::new(config),
             spotify: config.live(),
+            youtube: config.live(),
         }
     }
 }
@@ -151,6 +161,10 @@ impl CatalogSettings for LiveCatalogSettings {
             .filter(|app| {
                 app.enabled && !app.client_id.is_empty() && !app.client_secret.expose().is_empty()
             })
+    }
+
+    fn youtube_on(&self) -> bool {
+        self.youtube.read().is_some_and(|youtube| youtube.enabled)
     }
 }
 
@@ -406,6 +420,11 @@ impl Upstream {
     /// The Spotify client behind song links.
     pub fn spotify(&self) -> &SpotifyClient {
         &self.providers.spotify
+    }
+
+    /// The YouTube client behind song links' video titles.
+    pub fn youtube(&self) -> &YouTubeApi {
+        &self.providers.youtube
     }
 
     /// The users store (roles, Last.fm links).
