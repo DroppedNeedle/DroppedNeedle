@@ -974,6 +974,7 @@ async fn spotify_albums_are_proven_by_their_isrcs() {
                 kind: kind.map(str::to_owned),
                 total_tracks: tracks,
                 isrcs: std::collections::BTreeSet::new(),
+                songs: std::collections::BTreeSet::new(),
             };
             album.add_isrc(isrc);
             let resolver = resolver.clone();
@@ -1004,6 +1005,54 @@ async fn spotify_albums_are_proven_by_their_isrcs() {
         )
         .await;
         assert_eq!(found.as_deref(), group, "{kind:?} with {tracks:?} tracks");
+    }
+}
+
+/// An album whose ISRCs MusicBrainz doesn't know is proven by its listing
+/// when its release lists no ISRCs at all: the album's title and artist,
+/// Spotify's track count and type, and every song on the playlist on it.
+/// A release listing other ISRCs, a different count or a missing song
+/// leaves it unresolved (#779).
+#[tokio::test]
+async fn spotify_albums_without_isrcs_in_musicbrainz_are_proven_by_their_listing() {
+    const HARBOR: &str = "5907a1b0-0000-4000-8000-000000000f05";
+    let auth = AuthRig::new("imports-listing").await;
+    let _musicbrainz = serve_musicbrainz(&auth).await;
+    let closed = "http://127.0.0.1:9";
+    let providers = providers_at(&auth.platform, closed, closed, None);
+    let resolver = AlbumResolver::new(&providers, auth.platform.settings.live());
+    let resolve = |title: &str, tracks: u32, songs: &[&str]| {
+        let mut album = SpotifyAlbum {
+            title: title.to_owned(),
+            artist: "Aurora Current".to_owned(),
+            kind: Some("album".to_owned()),
+            total_tracks: Some(tracks),
+            isrcs: std::collections::BTreeSet::new(),
+            songs: songs.iter().map(|song| (*song).to_owned()).collect(),
+        };
+        album.add_isrc("QZAAA2600003");
+        let resolver = resolver.clone();
+        async move { resolver.resolve(&album).await.expect("musicbrainz answers") }
+    };
+
+    let found = resolve("Quiet Harbor", 3, &["Low Tide", "Lantern Light - Acoustic"]).await;
+    assert_eq!(found.as_deref(), Some(HARBOR));
+    for (title, tracks, songs, why) in [
+        ("Quiet Harbor", 4, &["Low Tide"][..], "another track count"),
+        (
+            "Quiet Harbor",
+            3,
+            &["Low Tide", "Second Wind"][..],
+            "a song not on it",
+        ),
+        (
+            "Ember Line",
+            2,
+            &["Cinders"][..],
+            "a release listing other ISRCs",
+        ),
+    ] {
+        assert_eq!(resolve(title, tracks, songs).await, None, "{why}");
     }
 }
 

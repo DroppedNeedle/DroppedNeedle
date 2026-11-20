@@ -6,7 +6,12 @@
 //! releases come first from a recording search by those ISRCs, which
 //! finds every edition whatever a title search would rank first, then,
 //! when MusicBrainz knows none of them, from a release search by title
-//! and the album's own artist, read with `inc=recordings+isrcs`. Two
+//! and the album's own artist, read with `inc=recordings+isrcs`. A
+//! release MusicBrainz lists no ISRCs for at all can't be proven that way,
+//! so it counts by its listing instead: the album's title, an artist of
+//! it, Spotify's track count and type, and every song of the album on the
+//! playlist on it. A release listing any ISRC must prove itself by one,
+//! and an ISRC proof wins over a listing. Two
 //! proven groups (an album and a same-named single carrying the same
 //! recording) are told apart by Spotify's album type, then its track
 //! count. No ISRC, no proven release, or a tie left after that leave the
@@ -19,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use droppedneedle_kernel::db::fold_text;
 use droppedneedle_kernel::runtime_config::{Live, sections::MusicBrainzSettings};
 use droppedneedle_providers::cache::{CacheKey, Fetched, Policy, ProviderCacheStore, Source};
-use droppedneedle_providers::musicbrainz::models::ReleaseGroupRef;
+use droppedneedle_providers::musicbrainz::models::{ReleaseGroupRef, ReleaseSearchHit, Track};
 use droppedneedle_providers::musicbrainz::{
     Criticality, MusicBrainzClient, MusicBrainzView, SOURCE, is_valid_mbid, normalize_mb_id,
 };
@@ -48,6 +53,8 @@ pub struct SpotifyAlbum {
     pub kind: Option<String>,
     /// Tracks on the album, as Spotify counts them.
     pub total_tracks: Option<u32>,
+    /// The titles of its tracks on the playlist.
+    pub songs: BTreeSet<String>,
     /// The ISRCs of its tracks on the playlist, uppercased and well formed.
     pub isrcs: BTreeSet<String>,
 }
@@ -88,7 +95,7 @@ impl AlbumResolver {
     /// A MusicBrainz failure, so the caller can stop asking while the
     /// service is down. Nothing is cached for it.
     pub async fn resolve(&self, album: &SpotifyAlbum) -> Result<Option<String>, ProviderError> {
-        if album.isrcs.is_empty() || album.title.trim().is_empty() {
+        if album.title.trim().is_empty() || (album.isrcs.is_empty() && album.songs.is_empty()) {
             return Ok(None);
         }
         let Some(settings) = self.settings.read() else {
@@ -108,6 +115,8 @@ impl AlbumResolver {
             .total_tracks
             .map(|n| n.to_string())
             .unwrap_or_default();
+        let songs: Vec<&str> = album.songs.iter().map(String::as_str).collect();
+        let songs = songs.join("\n");
         let key = CacheKey::hashed(
             Source::MusicBrainz,
             "spotify_album",
@@ -118,6 +127,7 @@ impl AlbumResolver {
                 album.kind.as_deref().unwrap_or_default(),
                 &tracks,
                 &joined,
+                &songs,
             ],
         );
         let album = album.clone();
@@ -238,14 +248,15 @@ async fn by_search(
             )
             .await?;
         let mut proven: BTreeMap<String, Proven> = BTreeMap::new();
-        for hit in page.items {
+        let mut by_listing: BTreeMap<String, Proven> = BTreeMap::new();
+        for hit in &page.items {
             let listed = hit
                 .release_group
                 .as_ref()
                 .map(|group| normalize_mb_id(&group.id));
             if listed
                 .as_ref()
-                .is_some_and(|group| proven.contains_key(group))
+                .is_some_and(|group| proven.contains_key(group) || by_listing.contains_key(group))
             {
                 continue;
             }
@@ -270,21 +281,30 @@ async fn by_search(
                 .filter_map(|track| track.recording.as_ref())
                 .flat_map(|recording| &recording.isrcs)
                 .any(|isrc| album.isrcs.contains(&isrc.trim().to_ascii_uppercase()));
-            if carries {
-                let tracks = release
-                    .media
-                    .iter()
-                    .map(|medium| medium.tracks.len())
-                    .sum::<usize>();
-                proven
-                    .entry(id)
-                    .or_insert_with(|| Proven::new(group))
-                    .track_counts
-                    .extend(u32::try_from(tracks).ok());
-            }
+            let tracks: Vec<&Track> = release
+                .media
+                .iter()
+                .flat_map(|medium| &medium.tracks)
+                .collect();
+            let candidate = Proven::new(group);
+            let found = if carries {
+                &mut proven
+            } else if lists_the_album(album, hit, &tracks, &candidate) {
+                &mut by_listing
+            } else {
+                continue;
+            };
+            found
+                .entry(id)
+                .or_insert(candidate)
+                .track_counts
+                .extend(u32::try_from(tracks.len()).ok());
         }
         if !proven.is_empty() {
             return Ok(proven);
+        }
+        if !by_listing.is_empty() {
+            return Ok(by_listing);
         }
     }
     Ok(BTreeMap::new())
@@ -324,6 +344,51 @@ fn pick(album: &SpotifyAlbum, proven: BTreeMap<String, Proven>) -> Option<String
             None
         }
     }
+}
+
+/// Whether a release MusicBrainz lists no ISRCs for is the album by its
+/// listing: its title is one of the album's title forms, the album's
+/// artist is among its credited artists, it has as many tracks as Spotify
+/// counts, its group is the kind Spotify gives, and every song of the
+/// album on the playlist is on it.
+fn lists_the_album(
+    album: &SpotifyAlbum,
+    hit: &ReleaseSearchHit,
+    tracks: &[&Track],
+    group: &Proven,
+) -> bool {
+    let forms = |title: &str| -> BTreeSet<String> {
+        title_forms(title)
+            .iter()
+            .map(|form| title_key(form))
+            .collect()
+    };
+    let on_release: BTreeSet<String> = tracks
+        .iter()
+        .filter_map(|track| track.title.as_deref())
+        .flat_map(forms)
+        .collect();
+    let artist = title_key(&album.artist);
+    album.total_tracks == u32::try_from(tracks.len()).ok()
+        && !album.songs.is_empty()
+        && tracks.iter().all(|track| {
+            track
+                .recording
+                .as_ref()
+                .is_none_or(|recording| recording.isrcs.is_empty())
+        })
+        && hit
+            .title
+            .as_deref()
+            .is_some_and(|title| !forms(title).is_disjoint(&forms(&album.title)))
+        && hit.artist_credit.iter().any(|credit| {
+            title_key(&credit.name) == artist || title_key(&credit.artist.name) == artist
+        })
+        && group.fits(album.kind.as_deref())
+        && album
+            .songs
+            .iter()
+            .all(|song| !forms(song).is_disjoint(&on_release))
 }
 
 /// A title as the proof compares it: folded, with punctuation as spaces,

@@ -322,6 +322,7 @@ impl SpotifyImportService {
                             kind: album.album_type.clone(),
                             total_tracks: album.total_tracks,
                             isrcs: BTreeSet::new(),
+                            songs: BTreeSet::new(),
                         },
                     ));
                     albums.len() - 1
@@ -333,6 +334,9 @@ impl SpotifyImportService {
                 .and_then(|ids| ids.isrc.as_deref())
             {
                 albums[at].1.add_isrc(isrc);
+            }
+            if !track.name.trim().is_empty() {
+                albums[at].1.songs.insert(track.name.clone());
             }
         }
         let mut resolved = HashMap::new();
