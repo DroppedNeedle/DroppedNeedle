@@ -13,7 +13,8 @@
 //! A source counts only when it parses to at least one non-empty line. A
 //! `.lrc` must be a regular file (a link is never followed), at most
 //! [`MAX_LYRICS_BYTES`], and UTF-8 (a leading byte order mark is dropped).
-//! Text with LRC timestamps counts as synced, wherever it came from.
+//! Text with LRC line or word stamps counts as synced, wherever it came
+//! from.
 //!
 //! Every source becomes the same [`Lyrics`]: a main track and any
 //! translation or pronunciation tracks, each a list of lines, and a line
@@ -263,6 +264,16 @@ impl Cue {
     pub fn byte_end(&self) -> usize {
         self.byte_end
     }
+}
+
+/// A language tag as a source gives it, when it looks like one: 2 to 35
+/// ASCII letters, digits and hyphens.
+fn valid_lang(value: &str) -> Option<String> {
+    ((2..=35).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'))
+    .then(|| value.to_owned())
 }
 
 /// Where a file's lyrics were found.

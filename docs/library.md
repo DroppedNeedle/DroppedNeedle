@@ -161,6 +161,8 @@ You can download a single track or a whole album from the library. A track comes
 
 The web player and player apps show lyrics for a track. Lyrics your files carry come first: a `.lrc` file next to the track with the same name, else the file's lyrics tag. Jellyfin apps such as Finamp only offer lyrics for those tracks. When a file has none, the server asks LRCLIB ([lrclib.net](https://lrclib.net)), a free lyrics database, at the moment lyrics are opened, sending the track's title, artist, album and length. LRCLIB's answer is remembered for a while (a week when it has lyrics, six hours when it has none), so opening the same track again does not ask again. Nothing is written to your files. This is on unless an admin turns it off under Settings > Library > Lyrics; while it is off, the web player and player apps never ask LRCLIB. Library Management fetching lyrics into files has its own setting.
 
+A `.lrc` file or lyrics tag may time each word as well as each line (enhanced LRC: `<mm:ss.xx>` stamps between the words). DroppedNeedle reads those times, and the stamps themselves never show as text, in the web player or in any app. A line with no line stamp that starts with a word stamp is timed, and sorted, by its first word. `[offset:+n]` moves every time by n milliseconds (a positive offset shows lines sooner), and `[lang:xx]` names the language, which Subsonic apps are told instead of "und".
+
 ## Ratings
 
 You can give an album 1 to 5 stars on its page, and each of its tracks that has a file in your library. An artist in your library can be rated on the artist's page. Clicking the star you gave clears the rating.
