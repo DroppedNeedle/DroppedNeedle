@@ -147,6 +147,20 @@ macro_rules! declined_flag {
     };
 }
 
+/// The album's last identification found its files' own ids ruling out
+/// every release MusicBrainz offered (`CONFLICTING_TRACK_EVIDENCE`): the
+/// albums whose files' ISRCs the scan reads again.
+#[macro_export]
+macro_rules! stuck_on_ids {
+    ($album_id:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM library_album_match_state sid WHERE sid.local_album_id = ",
+            $album_id,
+            " AND sid.reason_code = 'CONFLICTING_TRACK_EVIDENCE')"
+        )
+    };
+}
+
 /// An album's match is accepted, over an album identity alias: it names a
 /// release, the album carries no match flag, and no custom edition is
 /// active on it. Any decision source counts. Proof, merges and retag joins

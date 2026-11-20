@@ -171,9 +171,7 @@ droppedneedle_kernel::sql! {
              WHERE local_track_id = ?1 AND isrcs IS NULL \
              AND EXISTS (SELECT 1 FROM local_tracks WHERE id = ?1 AND stat_revision = ?2)";
     /// The album of track `t`: its files' ids ruled every candidate out.
-    fragment STUCK_ON_IDS = "EXISTS (SELECT 1 FROM library_album_match_state sid \
-             WHERE sid.local_album_id = t.local_album_id \
-             AND sid.reason_code = 'CONFLICTING_TRACK_EVIDENCE')";
+    fragment STUCK_ON_IDS = (crate::stuck_on_ids!("t.local_album_id"));
     /// The album of track `?1` when its files' ids ruled every candidate
     /// out and it is open to another look by itself.
     pub(super) STUCK_ALBUM_OF_TRACK = "SELECT b.id FROM local_tracks t \
