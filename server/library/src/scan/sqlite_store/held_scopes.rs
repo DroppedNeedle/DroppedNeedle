@@ -63,10 +63,13 @@ pub(super) fn settle(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::
     } else {
         0
     };
-    tx.execute(
+    let settled = tx.execute(
         crate::scan::sql::SETTLE.text(),
         params![run_id, crate::clock::ms(now)],
     )?;
+    if lifted > 0 || settled > 0 {
+        super::bump_scan_stream(tx)?;
+    }
     if lifted > 0 {
         automatic::wake(tx, Some(automatic::SCAN_HELD_BACK), now)?;
         tracing::info!(

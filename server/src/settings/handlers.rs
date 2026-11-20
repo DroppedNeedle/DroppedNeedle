@@ -13,18 +13,18 @@ use axum::{
 };
 
 use super::models::{
-    DownloadPolicyView, IndexerReorderRequest, IndexerSavedResponse, IndexerTestResponse,
-    JellyfinVerifyResponse, LibraryManagementProfileCopyRequest,
-    LibraryManagementProfileDeleteRequest, LibraryManagementProfileExportRequest,
-    LibraryManagementProfileImportPreviewRequest, LibraryManagementProfileImportRequest,
-    LibraryManagementSaveRequest, LibraryManagementSettingsImpactRequest,
-    LibraryPolicyApplyRequest, LibraryPolicyImpactRequest, LibraryRestorableRootsResponse,
-    LibraryRestoreRootsRequest, LibraryScanScheduleResponse, LibrarySettingsSaveRequest,
-    MusicBrainzBindingRequest, MusicBrainzSettingsUpdate, MusicBrainzSettingsView,
-    MusicBrainzVerifyRequest, OperationResult, PlexLibrarySectionInfo, PlexVerifyResponse,
-    ProwlarrTestResponse, SectionPrefsResponse, SectionPrefsUpdate, SourcePriorityOrder,
-    TestConnectionResponse, UsenetClientTestResponse, UsenetSearchBackend,
-    VerifyConnectionResponse,
+    DownloadPolicyView, DropRemovedRootTracksRequest, DropRemovedRootTracksResponse,
+    IndexerReorderRequest, IndexerSavedResponse, IndexerTestResponse, JellyfinVerifyResponse,
+    LibraryManagementProfileCopyRequest, LibraryManagementProfileDeleteRequest,
+    LibraryManagementProfileExportRequest, LibraryManagementProfileImportPreviewRequest,
+    LibraryManagementProfileImportRequest, LibraryManagementSaveRequest,
+    LibraryManagementSettingsImpactRequest, LibraryPolicyApplyRequest, LibraryPolicyImpactRequest,
+    LibraryRemovedRootsResponse, LibraryRestorableRootsResponse, LibraryRestoreRootsRequest,
+    LibraryScanScheduleResponse, LibrarySettingsSaveRequest, MusicBrainzBindingRequest,
+    MusicBrainzSettingsUpdate, MusicBrainzSettingsView, MusicBrainzVerifyRequest, OperationResult,
+    PlexLibrarySectionInfo, PlexVerifyResponse, ProwlarrTestResponse, SectionPrefsResponse,
+    SectionPrefsUpdate, SourcePriorityOrder, TestConnectionResponse, UsenetClientTestResponse,
+    UsenetSearchBackend, VerifyConnectionResponse,
 };
 use super::wiring::SettingsSetup;
 use droppedneedle_auth::{Admin, User};
@@ -369,6 +369,53 @@ pub async fn restore_library_roots(
     settings
         .library_policy()
         .restore_roots(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Removed library roots that still hold indexed tracks in the catalog.
+#[utoipa::path(
+    get,
+    tag = "settings",
+    path = "/api/v3/settings/library/removed-roots",
+    responses(
+        (status = 200, description = "Removed roots with indexed tracks", body = LibraryRemovedRootsResponse)
+    )
+)]
+pub async fn get_removed_library_roots(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+) -> JsonResult<LibraryRemovedRootsResponse> {
+    settings
+        .library_policy()
+        .removed_roots()
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Mark every indexed catalog track under one removed library root as missing,
+/// keeping play history, favorites, and ratings intact without touching disk.
+#[utoipa::path(
+    post,
+    tag = "settings",
+    path = "/api/v3/settings/library/removed-roots/drop-tracks",
+    request_body = DropRemovedRootTracksRequest,
+    responses(
+        (status = 200, description = "Tracks marked missing", body = DropRemovedRootTracksResponse),
+        (status = 400, description = "Root id is empty or currently configured"),
+        (status = 409, description = "Expected revision is stale, or a library scan is active")
+    )
+)]
+pub async fn drop_removed_library_root_tracks(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+    ValidJson(body): ValidJson<DropRemovedRootTracksRequest>,
+) -> JsonResult<DropRemovedRootTracksResponse> {
+    settings
+        .library_policy()
+        .drop_removed_root_tracks(body)
         .await
         .map(Json)
         .map_err(ApiError::from)

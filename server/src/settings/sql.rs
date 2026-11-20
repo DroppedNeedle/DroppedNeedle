@@ -47,6 +47,7 @@ droppedneedle_kernel::sql! {
     /// path. SQLite fills the bare `relative_path` from the row that holds
     /// `MIN(file_path)`, so both sample paths come from one row.
     pub(super) CATALOG_ROOTS = "SELECT root_id, COUNT(*) AS track_count, \
+        COALESCE(SUM(availability = 'indexed'), 0) AS indexed_track_count, \
         MIN(file_path) AS sample_file_path, relative_path AS sample_relative_path, \
         SUM(availability IN ('indexed', 'excluded')) > 0 AS any_on_disk \
         FROM local_tracks GROUP BY root_id ORDER BY root_id";
@@ -68,6 +69,7 @@ droppedneedle_kernel::sql! {
     pub(super) row CatalogRootRow for [CATALOG_ROOTS] {
         root_id: String,
         track_count: i64,
+        indexed_track_count: i64,
         sample_file_path: String,
         sample_relative_path: String,
         any_on_disk: bool,

@@ -7,12 +7,17 @@
 //! in the library settings; if the settings moved since, the request is
 //! refused rather than scanning scopes the caller never looked at.
 
+use std::collections::BTreeSet;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
+
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::scan::coordinator::ScanRequestError;
 use super::scan::models::{
     EffectivePolicy, Event, RunState, ScanFailureRecord, ScanInventoryItem, ScanKind, ScanRequest,
-    ScanRequestResult, ScanRun, ScanScope, ScanTrigger,
+    ScanRequestResult, ScanRun, ScanScope, ScanTrigger, scope_covers_path,
 };
 use super::scan::pool::BlockingPool;
 use super::scan::roots::{LibraryRoot, RootRegistry};
@@ -48,6 +53,30 @@ pub enum RunControl {
 pub struct ControlledRun {
     pub run: ScanRun,
     pub stream_revision: u64,
+}
+
+/// What kind of folder a mass-missing hold covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HeldScopeKind {
+    Root,
+    Mount,
+    Folder,
+}
+
+/// One held-back folder resolved against live library settings.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeldScopeSummary {
+    pub root_id: String,
+    pub root_label: String,
+    pub root_path: String,
+    pub relative_path: String,
+    pub folder_path: String,
+    pub kind: HeldScopeKind,
+    pub held_at: f64,
+    pub missing_count: Option<u64>,
+    pub guard_total_count: Option<u64>,
+    pub indexed_count: u64,
 }
 
 pub(crate) fn store_error(error: ScanStoreError) -> ServiceError {
@@ -300,5 +329,187 @@ impl Scans {
             .inventory_for_run(run_id, RUN_DETAIL_FILES)
             .map_err(store_error)?;
         Ok((run, scopes, files))
+    }
+
+    /// Configured library folders currently held back by the mass-missing guard,
+    /// together with the current policy revision. Blocking.
+    pub fn held_scopes(&self) -> Result<(String, Vec<HeldScopeSummary>), ServiceError> {
+        let settings = self
+            .settings
+            .library
+            .get()
+            .map_err(|error| ServiceError::internal(&error))?;
+        let policy_revision = crate::policy::stored_revision(&settings);
+        let rows = self.scan_store.list_held_scopes().map_err(store_error)?;
+        let summaries = rows
+            .into_iter()
+            .filter_map(|row| {
+                let root = settings
+                    .library_roots
+                    .iter()
+                    .find(|root| root.id == row.root_id)?;
+                let folder_path = if row.relative_path == "." {
+                    root.path.clone()
+                } else {
+                    Path::new(&root.path)
+                        .join(&row.relative_path)
+                        .to_string_lossy()
+                        .into_owned()
+                };
+                let kind = if row.relative_path == "." {
+                    HeldScopeKind::Root
+                } else if row.is_mount {
+                    HeldScopeKind::Mount
+                } else {
+                    HeldScopeKind::Folder
+                };
+                Some(HeldScopeSummary {
+                    root_id: row.root_id,
+                    root_label: root.label.clone(),
+                    root_path: root.path.clone(),
+                    relative_path: row.relative_path,
+                    folder_path,
+                    kind,
+                    held_at: row.held_at,
+                    missing_count: row.missing_count,
+                    guard_total_count: row.guard_total_count,
+                    indexed_count: row.indexed_count,
+                })
+            })
+            .collect();
+        Ok((policy_revision, summaries))
+    }
+
+    /// Confirm one or more held-back folders as intentionally deleted and
+    /// schedule a scan to mark their vanished files missing. Blocking.
+    pub fn confirm_held_scopes(
+        &self,
+        targets: &[(String, String)],
+        expected_policy_revision: &str,
+        user_id: &str,
+    ) -> Result<ScanRequestResult, ServiceError> {
+        let deduped: BTreeSet<(String, String)> = targets.iter().cloned().collect();
+        if deduped.is_empty() {
+            return Err(ServiceError::InvalidInput {
+                message: "Select at least one held folder to confirm.".to_owned(),
+            });
+        }
+        for (_, relative_path) in &deduped {
+            if !is_plain_relative(relative_path) {
+                return Err(ServiceError::InvalidInput {
+                    message: "Invalid held folder path.".to_owned(),
+                });
+            }
+        }
+        let (_settings, registry) = self.guarded_registry(Some(expected_policy_revision))?;
+        if !registry.enabled() {
+            return Err(request_error(ScanRequestError::Disabled));
+        }
+
+        let mut candidates: Vec<ScanScope> = Vec::with_capacity(deduped.len());
+        let confirmed_targets: Vec<(String, String)> = deduped.into_iter().collect();
+        for (root_id, relative_path) in &confirmed_targets {
+            let root = registry
+                .resolve(root_id)
+                .ok_or_else(|| ServiceError::InvalidInput {
+                    message: "One or more selected library folders no longer exist.".to_owned(),
+                })?;
+            // Deleted sub-mount / sub-folder fallback: when a sub-folder no longer
+            // exists on disk (without following links) while its root is still a
+            // real directory, walk the root so the walk succeeds cleanly, while
+            // confirming only the requested sub-folder.
+            let schedule_rel = if relative_path != "." {
+                let target_path = root.path.join(relative_path);
+                let target_not_found = std::fs::symlink_metadata(&target_path)
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
+                let root_is_dir = std::fs::metadata(&root.path).is_ok_and(|meta| meta.is_dir());
+                if target_not_found && root_is_dir {
+                    ".".to_owned()
+                } else {
+                    relative_path.clone()
+                }
+            } else {
+                ".".to_owned()
+            };
+            let effective_policy = if schedule_rel == "." {
+                root.policy
+            } else {
+                root.policy_for(&root.path.join(&schedule_rel))
+            };
+            candidates.push(ScanScope {
+                root_id: root.id.clone(),
+                scope_id: (schedule_rel == ".").then(|| root.id.clone()),
+                relative_path: schedule_rel,
+                root_path: Some(root.path.to_string_lossy().into_owned()),
+                effective_policy,
+                policy_revision: registry.fingerprint().to_owned(),
+                estimated_count: None,
+            });
+        }
+        // Collapse scheduled scopes per root so parent scopes absorb duplicates
+        // or descendants (e.g. two deleted sub-mounts both falling back to `.`).
+        candidates.sort_by(|left, right| {
+            (
+                left.root_id.as_str(),
+                scope_depth(&left.relative_path),
+                left.relative_path.as_str(),
+            )
+                .cmp(&(
+                    right.root_id.as_str(),
+                    scope_depth(&right.relative_path),
+                    right.relative_path.as_str(),
+                ))
+        });
+        let mut scopes: Vec<ScanScope> = Vec::new();
+        for candidate in candidates {
+            let covered = scopes.iter().any(|kept| {
+                kept.root_id == candidate.root_id
+                    && scope_covers_path(&kept.relative_path, &candidate.relative_path)
+            });
+            if !covered {
+                scopes.push(candidate);
+            }
+        }
+
+        self.coordinator
+            .request_confirmed_run(
+                &ScanRequest {
+                    kind: ScanKind::Incremental,
+                    trigger: ScanTrigger::Manual,
+                    scopes,
+                    requested_by_user_id: Some(user_id.to_owned()),
+                    policy_revision: registry.fingerprint().to_owned(),
+                },
+                &confirmed_targets,
+            )
+            .map_err(request_error)
+    }
+}
+
+fn is_plain_relative(path: &str) -> bool {
+    if path == "." {
+        return true;
+    }
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.ends_with('/')
+        || path.contains('\\')
+        || path.contains("//")
+        || path.contains('\0')
+    {
+        return false;
+    }
+    path.split('/')
+        .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+}
+
+fn scope_depth(relative_path: &str) -> usize {
+    if relative_path == "." {
+        0
+    } else {
+        relative_path
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .count()
     }
 }

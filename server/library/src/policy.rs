@@ -26,7 +26,8 @@ use sha2::{Digest, Sha256};
 
 use crate::settings_models::{
     LibraryPolicyApplyPreviewResponse, LibraryPolicyImpactResponse, LibraryPolicyTreeNode,
-    LibraryPolicyTreeResponse, LibraryRestorableRoot, LibrarySettingsResponse, PolicyNodeKind,
+    LibraryPolicyTreeResponse, LibraryRemovedRoot, LibraryRestorableRoot, LibrarySettingsResponse,
+    PolicyNodeKind,
 };
 use droppedneedle_kernel::runtime_config::Masked;
 use droppedneedle_kernel::runtime_config::secret_sections::{
@@ -692,6 +693,8 @@ pub struct CatalogRoot {
     pub sample_relative_path: String,
     /// Rows under the root.
     pub track_count: i64,
+    /// Indexed rows under the root.
+    pub indexed_track_count: i64,
     /// Whether any row is still on disk (indexed or excluded).
     pub any_on_disk: bool,
 }
@@ -915,8 +918,12 @@ pub fn apply_preview(
 /// the file's directory, which the restore dialog lets the user correct.
 /// None when the stored file path is not absolute.
 pub fn recovered_root_path(root: &CatalogRoot) -> Option<PathBuf> {
-    let file = Path::new(&root.sample_file_path);
-    let relative = Path::new(&root.sample_relative_path);
+    recovered_root_path_from(&root.sample_file_path, &root.sample_relative_path)
+}
+
+fn recovered_root_path_from(sample_file_path: &str, sample_relative_path: &str) -> Option<PathBuf> {
+    let file = Path::new(sample_file_path);
+    let relative = Path::new(sample_relative_path);
     let plain = relative.components().next().is_some()
         && relative
             .components()
@@ -930,6 +937,49 @@ pub fn recovered_root_path(root: &CatalogRoot) -> Option<PathBuf> {
         path.pop();
     }
     clean_absolute(&path.to_string_lossy())
+}
+
+/// Every removed root that still holds indexed tracks in the catalog, sorted
+/// by id, including roots whose path overlaps a configured root.
+pub fn removed_roots(
+    settings: &TypedLibrary,
+    catalog: &[CatalogRoot],
+    restorable_ids: &BTreeSet<&str>,
+) -> Vec<LibraryRemovedRoot> {
+    let configured_ids: BTreeSet<&str> = settings
+        .library_roots
+        .iter()
+        .map(|root| root.id.as_str())
+        .collect();
+    let configured_paths: Vec<(&str, PathBuf)> = settings
+        .library_roots
+        .iter()
+        .filter_map(|root| Some((root.label.as_str(), clean_absolute(&root.path)?)))
+        .collect();
+    let mut rows: Vec<LibraryRemovedRoot> = catalog
+        .iter()
+        .filter(|root| {
+            root.indexed_track_count > 0 && !configured_ids.contains(root.root_id.as_str())
+        })
+        .map(|root| {
+            let recovered = recovered_root_path(root);
+            let overlapping_root_label = recovered.as_ref().and_then(|path| {
+                configured_paths
+                    .iter()
+                    .find(|(_, configured)| paths_overlap(path, configured))
+                    .map(|(label, _)| (*label).to_owned())
+            });
+            LibraryRemovedRoot {
+                root_id: root.root_id.clone(),
+                path: recovered.map(|path| path.to_string_lossy().into_owned()),
+                indexed_track_count: root.indexed_track_count,
+                restorable: restorable_ids.contains(root.root_id.as_str()),
+                overlapping_root_label,
+            }
+        })
+        .collect();
+    rows.sort_by(|left, right| left.root_id.cmp(&right.root_id));
+    rows
 }
 
 /// Roots the catalog holds rows for that the saved settings no longer
@@ -1073,6 +1123,7 @@ mod tests {
             sample_file_path: file.to_owned(),
             sample_relative_path: relative.to_owned(),
             track_count,
+            indexed_track_count: track_count,
             any_on_disk: true,
         }
     }

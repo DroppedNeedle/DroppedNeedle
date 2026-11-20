@@ -337,6 +337,37 @@ impl SqliteScanStore {
         })
     }
 
+    /// Contribution of confirmed sub-scope `sub_relative_path` (strictly
+    /// inside walked scope `parent_scope_relative_path`) to [`Self::vanish_counts`].
+    pub fn sub_scope_vanish_counts(
+        &self,
+        stop: &RunStop,
+        run_id: &str,
+        root_id: &str,
+        sub_relative_path: &str,
+        parent_scope_relative_path: &str,
+    ) -> Result<(usize, usize), ScanStoreError> {
+        self.read_long(stop, "scan_sub_scope_vanish_counts", |conn| {
+            Ok(conn
+                .query_row(
+                    crate::scan::sql::SUB_SCOPE_VANISH_COUNTS.text(),
+                    params![
+                        root_id,
+                        sub_relative_path,
+                        run_id,
+                        parent_scope_relative_path
+                    ],
+                    crate::scan::sql::VanishCounts::read,
+                )
+                .map(|row| {
+                    (
+                        row.walked_past_count.max(0) as usize,
+                        row.total.max(0) as usize,
+                    )
+                })?)
+        })
+    }
+
     /// True when the run held missing detection back for this scope (the
     /// mass-missing guard). Such a scope counts as not walked: nothing in
     /// it is missing, moved, or taken over.

@@ -4,6 +4,7 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { LibraryQueryKeyFactory } from '$lib/features/library/queries/LibraryQueryKeyFactory';
 import type {
+	HeldScopesResponse,
 	ScanEstimateResponse,
 	ScanRunFailuresResponse,
 	ScanRunHistoryResponse
@@ -25,6 +26,15 @@ const getCurrentLibraryRunsQueryOptions = () =>
 
 export const getCurrentLibraryRunsQuery = (enabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({ ...getCurrentLibraryRunsQueryOptions(), enabled: enabled() }));
+
+export const getHeldScopesQuery = (enabled: Getter<boolean> = () => true) =>
+	createQuery(() => ({
+		enabled: enabled(),
+		queryKey: LibraryQueryKeyFactory.heldScopes(),
+		queryFn: async ({ signal }): Promise<HeldScopesResponse> =>
+			await api.v3.GET(v3('/api/v3/library/scan/held-scopes'), { signal }),
+		staleTime: STALE_LIVE
+	}));
 
 export const getLibraryRunQuery = (getRunId: Getter<string | null>) =>
 	createQuery(() => {

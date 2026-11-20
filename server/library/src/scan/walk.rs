@@ -396,6 +396,8 @@ impl InventoryScanner {
                 recorded_at: self.clock.now_secs(),
                 failure_detail,
                 phase: Phase::Discovering,
+                missing_count: None,
+                indexed_count: None,
             }],
         )
     }

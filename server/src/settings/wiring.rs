@@ -33,6 +33,7 @@ use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::management::settings::service::LibraryManagementService;
 use droppedneedle_library::publish::bin::BinSource;
+use droppedneedle_library::removed_roots::RemovedRootCleanup;
 use droppedneedle_library::settings_models::LibraryManagementSettingsResponse;
 use droppedneedle_providers::Providers;
 
@@ -83,6 +84,7 @@ impl SettingsSetup {
             policy: Arc::new(LibraryPolicyService::new(
                 service.clone(),
                 Arc::new(SqliteLibraryPolicyCatalog::new(platform.db.clone())),
+                RemovedRootCleanup::new(platform.db.clone(), platform.clock.clone(), store.live()),
             )),
             appearance: AppearanceSetup::build(platform, appearance, service.clone()),
             service,
@@ -198,6 +200,8 @@ pub fn routes() -> Routes<SettingsSetup> {
         .admin(routes!(h::preview_library_policy_apply))
         .admin(routes!(h::get_restorable_library_roots))
         .admin(routes!(h::restore_library_roots))
+        .admin(routes!(h::get_removed_library_roots))
+        .admin(routes!(h::drop_removed_library_root_tracks))
         .admin(routes!(h::verify_jellyfin))
         .admin(routes!(h::verify_navidrome))
         .admin(routes!(h::verify_plex))

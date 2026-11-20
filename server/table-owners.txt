@@ -239,6 +239,7 @@ library_repair_watermarks
 library_retag_pairs
 library_review_exclusions
 library_scan_album_moves
+library_scan_confirmed_scopes
 library_scan_failures
 library_scan_fences
 library_scan_held_scopes

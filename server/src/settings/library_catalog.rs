@@ -137,6 +137,7 @@ impl LibraryPolicyCatalog for SqliteLibraryPolicyCatalog {
                                 sample_file_path: row.sample_file_path,
                                 sample_relative_path: row.sample_relative_path,
                                 track_count: row.track_count,
+                                indexed_track_count: row.indexed_track_count,
                                 any_on_disk: row.any_on_disk,
                             })
                         })?

@@ -23,7 +23,7 @@ use droppedneedle_kernel::page::TimeKey;
 use super::models::{
     Counter, Counters, Disposition, Event, FailureCode, InventoryState, Outcome, Phase, RunState,
     ScanFailureRecord, ScanInventoryItem, ScanKind, ScanRequest, ScanRequestResult, ScanRun,
-    ScanScope, ScanState, ScopeDiscoveryState, Verdict,
+    ScanScope, ScanState, ScopeDiscoveryState, Verdict, scope_covers_path,
 };
 use super::pool::BlockingPool;
 use super::roots::{PolicyResolver, RootRegistry, scope_covers, yielded_by, yielded_home};
@@ -422,6 +422,64 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 Ok((run, _, _)) => self.publish(&run, "scan.requested", false),
                 Err(error) => tracing::warn!(%error, "scan request event not published"),
             }
+        }
+        Ok(result)
+    }
+
+    /// Request a scan run that confirms one or more held-back scopes as
+    /// intentionally missing. Verifies policy, roots, and held-scope state
+    /// atomically with the run enqueue.
+    pub fn request_confirmed_run(
+        &self,
+        request: &ScanRequest,
+        confirmed_scopes: &[(String, String)],
+    ) -> Result<ScanRequestResult, ScanRequestError> {
+        if !self.resolvers.resolver().enabled() {
+            return Err(ScanRequestError::Disabled);
+        }
+        if request.scopes.is_empty() || confirmed_scopes.is_empty() {
+            return Err(ScanRequestError::EmptyScopes);
+        }
+        if request
+            .scopes
+            .iter()
+            .any(|scope| scope.policy_revision != request.policy_revision)
+        {
+            return Err(ScanRequestError::StalePolicy);
+        }
+        let configured: HashSet<String> = self
+            .resolvers
+            .resolver()
+            .registry()
+            .roots()
+            .iter()
+            .map(|root| root.id.clone())
+            .collect();
+        if request
+            .scopes
+            .iter()
+            .any(|scope| !configured.contains(&scope.root_id))
+            || confirmed_scopes
+                .iter()
+                .any(|(root_id, _)| !configured.contains(root_id))
+        {
+            return Err(ScanRequestError::UnknownRoots);
+        }
+        let run_id = (self.idgen)();
+        let result = self
+            .store
+            .request_confirmed_run(
+                request,
+                confirmed_scopes,
+                request.requested_by_user_id.as_deref(),
+                &run_id,
+                self.now(),
+            )
+            .map_err(ScanRequestError::Store)?;
+        self.wakeups.notify("scan");
+        match self.store.get_run(&result.run_id) {
+            Ok((run, _, _)) => self.publish(&run, "scan.requested", false),
+            Err(error) => tracing::warn!(%error, "scan request event not published"),
         }
         Ok(result)
     }
@@ -1425,6 +1483,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     ) -> Result<usize, Halt> {
         let mut missing = 0usize;
         let roots = self.registry().roots().to_vec();
+        let confirmed = self.store.confirmed_scopes(stop, run_id)?;
         for scope in scopes {
             if !self.check(run_id, frozen_policy_revision) {
                 return Ok(missing);
@@ -1435,10 +1494,76 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 &scope.root_id,
                 &scope.relative_path,
             )? != ScopeDiscoveryState::Completed
-                || self
-                    .store
-                    .scope_guarded(stop, run_id, &scope.root_id, &scope.relative_path)?
             {
+                continue;
+            }
+            let scope_guarded =
+                self.store
+                    .scope_guarded(stop, run_id, &scope.root_id, &scope.relative_path)?;
+            let confirmed_sub =
+                confirmed_sub_scopes(&confirmed, &scope.root_id, &scope.relative_path);
+            if scope_guarded {
+                if confirmed_sub.is_empty() {
+                    continue;
+                }
+                let (id, root, rel) = (
+                    run_id.to_owned(),
+                    scope.root_id.clone(),
+                    scope.relative_path.clone(),
+                );
+                let all_roots = roots.clone();
+                let (paths, yielded, inner_guards) = self
+                    .on_store(stop, move |store, stop| {
+                        let paths = store.missing_catalog_paths(stop, &id, &root, &rel)?;
+                        let yielded = if paths.is_empty() {
+                            Vec::new()
+                        } else {
+                            yielded_by(&all_roots, &root)
+                        };
+                        let inner_guards: Vec<String> = store
+                            .failures(&id)?
+                            .into_iter()
+                            .filter(|failure| {
+                                failure.root_id == root
+                                    && failure.failure_code == FailureCode::MassMissingGuard
+                                    && failure.relative_path != rel
+                            })
+                            .map(|failure| failure.relative_path)
+                            .collect();
+                        Ok((paths, yielded, inner_guards))
+                    })
+                    .await?;
+                let confirmed_mark: Vec<String> = paths
+                    .into_iter()
+                    .filter_map(|(path, _)| {
+                        if yielded_home(&yielded, &path).is_some() {
+                            return None;
+                        }
+                        let allowed = confirmed_sub.iter().any(|sub| {
+                            scope_covers_path(sub, &path)
+                                && !inner_guards.iter().any(|guard| {
+                                    scope_covers_path(sub, guard) && scope_covers_path(guard, &path)
+                                })
+                        });
+                        allowed.then_some(path)
+                    })
+                    .collect();
+                for chunk in confirmed_mark.chunks(RECONCILE_CHUNK) {
+                    if !self.check(run_id, frozen_policy_revision) {
+                        return Ok(missing);
+                    }
+                    let (id, root, chunk, now) = (
+                        run_id.to_owned(),
+                        scope.root_id.clone(),
+                        chunk.to_vec(),
+                        self.now(),
+                    );
+                    missing += self
+                        .on_store(stop, move |store, stop| {
+                            store.mark_missing(stop, &id, &root, &chunk, now)
+                        })
+                        .await?;
+                }
                 continue;
             }
             let (id, root, rel) = (
@@ -1478,16 +1603,63 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             let renamed =
                 self.store
                     .scope_renamed(stop, run_id, &scope.root_id, &scope.relative_path)?;
-            if !renamed && !paths.is_empty() && mass_missing(paths.len(), indexed) {
-                self.hold_back_scope(
-                    run_id,
-                    scope,
-                    paths.len(),
-                    indexed,
-                    Phase::Reconciling,
-                    stop,
-                )?;
-                continue;
+            let scope_confirmed =
+                confirmed.contains(&(scope.root_id.clone(), scope.relative_path.clone()));
+            if !scope_confirmed && !renamed && !paths.is_empty() {
+                let (confirmed_paths, unconfirmed_paths): (Vec<_>, Vec<_>) =
+                    if confirmed_sub.is_empty() {
+                        (Vec::new(), paths.clone())
+                    } else {
+                        paths.iter().cloned().partition(|(path, _, _)| {
+                            confirmed_sub.iter().any(|sub| scope_covers_path(sub, path))
+                        })
+                    };
+                let mut confirmed_indexed = 0usize;
+                for sub in &confirmed_sub {
+                    let sub_moves = moves
+                        .iter()
+                        .filter(|(path, _, _)| scope_covers_path(sub, path))
+                        .count();
+                    let sub_indexed = self
+                        .store
+                        .indexed_count(stop, run_id, &scope.root_id, sub)?
+                        .saturating_sub(sub_moves);
+                    confirmed_indexed += sub_indexed;
+                }
+                let unconfirmed_indexed = indexed.saturating_sub(confirmed_indexed);
+                if !unconfirmed_paths.is_empty()
+                    && mass_missing(unconfirmed_paths.len(), unconfirmed_indexed)
+                {
+                    self.hold_back_scope(
+                        run_id,
+                        scope,
+                        unconfirmed_paths.len(),
+                        unconfirmed_indexed,
+                        Phase::Reconciling,
+                        stop,
+                    )?;
+                    let confirmed_mark: Vec<String> = confirmed_paths
+                        .into_iter()
+                        .filter_map(|(path, held, _)| (!held).then_some(path))
+                        .collect();
+                    for chunk in confirmed_mark.chunks(RECONCILE_CHUNK) {
+                        if !self.check(run_id, frozen_policy_revision) {
+                            return Ok(missing);
+                        }
+                        let (id, root, chunk, now) = (
+                            run_id.to_owned(),
+                            scope.root_id.clone(),
+                            chunk.to_vec(),
+                            self.now(),
+                        );
+                        missing += self
+                            .on_store(stop, move |store, stop| {
+                                store.mark_missing(stop, &id, &root, &chunk, now)
+                            })
+                            .await?;
+                    }
+                    continue;
+                }
             }
             // Nothing under a folder this run held back is marked.
             let moves: Vec<(String, String, String)> = moves
@@ -1544,6 +1716,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     async fn guard_vanished_scopes(&self, run_id: &str, stop: &RunStop) -> Result<(), Halt> {
         let scopes = self.store.reread_run(stop, run_id)?.1;
         let roots = self.registry().roots().to_vec();
+        let confirmed = self.store.confirmed_scopes(stop, run_id)?;
         for scope in &scopes {
             if self.store.scope_discovery_state(
                 stop,
@@ -1554,41 +1727,64 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             {
                 continue;
             }
-            let (id, root, rel) = (
-                run_id.to_owned(),
-                scope.root_id.clone(),
-                scope.relative_path.clone(),
-            );
-            let all_roots = roots.clone();
-            let (missing, total) = self
-                .on_store(stop, move |store, stop| {
-                    let (missing, total) = store.vanish_counts(stop, &id, &root, &rel)?;
-                    // Rows whose files another library folder indexes were
-                    // skipped by the walk, not lost.
-                    let yielded = if missing == 0 {
-                        Vec::new()
-                    } else {
-                        yielded_by(&all_roots, &root)
-                    };
-                    if yielded.is_empty() {
-                        return Ok((missing, total));
+            let scope_confirmed =
+                confirmed.contains(&(scope.root_id.clone(), scope.relative_path.clone()));
+            let confirmed_sub =
+                confirmed_sub_scopes(&confirmed, &scope.root_id, &scope.relative_path);
+            let mut scope_guarded_now = false;
+            if !scope_confirmed {
+                let confirmed_sub_for_counts = confirmed_sub.clone();
+                let (id, root, rel) = (
+                    run_id.to_owned(),
+                    scope.root_id.clone(),
+                    scope.relative_path.clone(),
+                );
+                let all_roots = roots.clone();
+                let (missing, total) = self
+                    .on_store(stop, move |store, stop| {
+                        let (mut missing, mut total) =
+                            store.vanish_counts(stop, &id, &root, &rel)?;
+                        for sub in &confirmed_sub_for_counts {
+                            let (sub_missing, sub_total) =
+                                store.sub_scope_vanish_counts(stop, &id, &root, sub, &rel)?;
+                            missing = missing.saturating_sub(sub_missing);
+                            total = total.saturating_sub(sub_total);
+                        }
+                        // Rows whose files another library folder indexes were
+                        // skipped by the walk, not lost.
+                        let yielded = if missing == 0 {
+                            Vec::new()
+                        } else {
+                            yielded_by(&all_roots, &root)
+                        };
+                        if yielded.is_empty() {
+                            return Ok((missing, total));
+                        }
+                        let skipped = store
+                            .missing_catalog_paths(stop, &id, &root, &rel)?
+                            .iter()
+                            .filter(|(path, _)| {
+                                yielded_home(&yielded, path).is_some()
+                                    && !confirmed_sub_for_counts
+                                        .iter()
+                                        .any(|sub| scope_covers_path(sub, path))
+                            })
+                            .count();
+                        Ok((
+                            missing.saturating_sub(skipped),
+                            total.saturating_sub(skipped),
+                        ))
+                    })
+                    .await?;
+                let missing =
+                    missing.saturating_sub(self.found_at_a_twin(run_id, scope, &scopes, stop)?);
+                if mass_missing(missing, total) {
+                    self.hold_back_scope(run_id, scope, missing, total, Phase::Discovering, stop)?;
+                    scope_guarded_now = true;
+                    if confirmed_sub.is_empty() {
+                        continue;
                     }
-                    let skipped = store
-                        .missing_catalog_paths(stop, &id, &root, &rel)?
-                        .iter()
-                        .filter(|(path, _)| yielded_home(&yielded, path).is_some())
-                        .count();
-                    Ok((
-                        missing.saturating_sub(skipped),
-                        total.saturating_sub(skipped),
-                    ))
-                })
-                .await?;
-            let missing =
-                missing.saturating_sub(self.found_at_a_twin(run_id, scope, &scopes, stop)?);
-            if mass_missing(missing, total) {
-                self.hold_back_scope(run_id, scope, missing, total, Phase::Discovering, stop)?;
-                continue;
+                }
             }
             let (id, root, rel) = (
                 run_id.to_owned(),
@@ -1630,6 +1826,16 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 })
                 .await?;
             for (folder, indexed) in mounts {
+                if confirmed.contains(&(scope.root_id.clone(), folder.clone())) {
+                    continue;
+                }
+                if scope_guarded_now
+                    && !confirmed_sub
+                        .iter()
+                        .any(|sub| sub != &folder && scope_covers_path(sub, &folder))
+                {
+                    continue;
+                }
                 tracing::warn!(
                     root_id = scope.root_id,
                     folder,
@@ -1647,6 +1853,8 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                          mounted at this folder were found. Check that it is mounted; \
                          nothing under it was marked missing."
                     ),
+                    Some(indexed as i64),
+                    Some(indexed as i64),
                     stop,
                 )?;
             }
@@ -1710,12 +1918,15 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 "{missing} of {indexed} indexed files under this scope were not found. \
                  Check that the library is mounted; nothing was marked missing."
             ),
+            Some(missing as i64),
+            Some(indexed as i64),
             stop,
         )
     }
 
     /// Record that missing detection is held back for one folder: a scope,
     /// or a mount inside one.
+    #[allow(clippy::too_many_arguments)]
     fn hold_back(
         &self,
         run_id: &str,
@@ -1723,6 +1934,8 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         folder: &str,
         phase: Phase,
         failure_detail: String,
+        missing_count: Option<i64>,
+        indexed_count: Option<i64>,
         stop: &RunStop,
     ) -> Result<(), ScanStoreError> {
         self.store.record_failures(
@@ -1735,9 +1948,35 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 recorded_at: self.now(),
                 failure_detail,
                 phase,
+                missing_count,
+                indexed_count,
             }],
         )
     }
+}
+
+/// Maximal disjoint confirmed sub-paths strictly inside `scope_relative_path`
+/// for `root_id`, so deducting their counts never double-counts nested paths.
+fn confirmed_sub_scopes(
+    confirmed: &std::collections::BTreeSet<(String, String)>,
+    root_id: &str,
+    scope_relative_path: &str,
+) -> Vec<String> {
+    let mut candidates: Vec<&str> = confirmed
+        .iter()
+        .filter(|(r, p)| {
+            r == root_id && p != scope_relative_path && scope_covers_path(scope_relative_path, p)
+        })
+        .map(|(_, p)| p.as_str())
+        .collect();
+    candidates.sort_by_key(|path| (path.split('/').count(), *path));
+    let mut maximal: Vec<String> = Vec::new();
+    for path in candidates {
+        if !maximal.iter().any(|kept| scope_covers_path(kept, path)) {
+            maximal.push(path.to_owned());
+        }
+    }
+    maximal
 }
 
 /// Missing rows marked per transaction during reconcile.
@@ -1780,6 +2019,8 @@ fn window_failures(window: &IndexWindow, now: f64) -> Vec<ScanFailureRecord> {
                 recorded_at: now,
                 failure_detail: detail.to_owned(),
                 phase: Phase::Indexing,
+                missing_count: None,
+                indexed_count: None,
             }
         })
         .collect()

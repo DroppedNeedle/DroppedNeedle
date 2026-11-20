@@ -28,9 +28,10 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_f
 use sha2::{Digest as _, Sha256};
 
 use super::models::{
-    Counter, Counters, Disposition, EffectivePolicy, Event, FailureCode, PhaseTimings, RunState,
-    ScanFailureRecord, ScanInventoryItem, ScanKind, ScanPhase, ScanRequest, ScanRequestResult,
-    ScanRun, ScanScope, ScanState, ScopeDiscoveryState, Verdict, scope_covers_path,
+    Counter, Counters, Disposition, EffectivePolicy, Event, FailureCode, HeldScopeRecord,
+    PhaseTimings, RunState, ScanFailureRecord, ScanInventoryItem, ScanKind, ScanPhase, ScanRequest,
+    ScanRequestResult, ScanRun, ScanScope, ScanState, ScopeDiscoveryState, Verdict,
+    scope_covers_path,
 };
 use super::revision::{exact_stat_revision, legacy_mtime_eps_seconds};
 use super::stop::{Backoff, RunStop, retry_busy};
@@ -337,6 +338,8 @@ fn map_failure(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanFailureRecord> {
         recorded_at: crate::clock::at_secs(row.recorded_at),
         failure_detail: row.failure_detail,
         phase: row.phase,
+        missing_count: row.missing_count,
+        indexed_count: row.indexed_count,
     })
 }
 

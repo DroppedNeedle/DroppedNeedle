@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 180);
+    assert_eq!(table_names(&connection).len(), 181);
     assert_eq!(
         scalar(
             &connection,
@@ -383,6 +383,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0153_local_track_isrcs.sql",
         "cd4ddee023119ba0a705bee354c3d7234d978b8584de72949398354a2c863e8b",
+    ),
+    (
+        "0154_library_scan_confirmed_scopes.sql",
+        "41aee22cc7a19f69fefee51e79499455b480475502e0dff08c9ce5d41eb8e150",
     ),
 ];
 
@@ -1638,6 +1642,113 @@ fn local_track_isrcs_upgrade_adds_one_unread_column() {
     );
 }
 
+/// 0154 adds `library_scan_confirmed_scopes` and nullable missing/indexed
+/// counts on `library_scan_failures` and `library_scan_held_scopes`. Existing
+/// failure and held-scope rows survive with NULL counts, and the new table's
+/// foreign keys cascade on run delete and set null on user delete.
+#[test]
+fn confirmed_scopes_upgrade_preserves_existing_holds_and_failures() {
+    let dir = ScratchDir::new("scan-confirmed-scopes");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..19], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 153);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'Admin', 1);
+             INSERT INTO library_scan_runs (id, kind, trigger, state, phase, aggregate_scope,
+                 queued_at, updated_at)
+             VALUES ('r1', 'incremental', 'manual', 'completed', 'reconciling', 'all', 10, 20);
+             INSERT INTO library_scan_failures (run_id, root_id, relative_path, failure_code,
+                 failure_detail, phase, recorded_at)
+             VALUES ('r1', 'root-1', '.', 'MASS_MISSING_GUARD', 'gone', 'discovering', 15);
+             INSERT INTO library_scan_held_scopes (root_id, relative_path, held_at)
+             VALUES ('root-1', '.', 10);",
+        )
+        .unwrap();
+    let mut before = schema_rows(&connection);
+    before.retain(|(_, name, _, _)| {
+        !matches!(
+            name.as_str(),
+            "library_scan_failures" | "library_scan_held_scopes"
+        )
+    });
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..20], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 154);
+    let mut after = schema_rows(&connection);
+    after.retain(|(_, name, table, _)| {
+        !matches!(
+            name.as_str(),
+            "library_scan_failures"
+                | "library_scan_held_scopes"
+                | "library_scan_confirmed_scopes"
+                | "idx_scan_confirmed_scopes_user"
+        ) && table != "library_scan_confirmed_scopes"
+    });
+    assert_eq!(after, before, "nothing else changes");
+
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT root_id || ':' || relative_path || ':' \
+             || COALESCE(CAST(missing_count AS TEXT), 'null') || ':' \
+             || COALESCE(CAST(indexed_count AS TEXT), 'null') \
+             FROM library_scan_held_scopes",
+            [],
+        ),
+        ["root-1:.:null:null"]
+    );
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT run_id || ':' || root_id || ':' || relative_path || ':' \
+             || COALESCE(CAST(missing_count AS TEXT), 'null') || ':' \
+             || COALESCE(CAST(indexed_count AS TEXT), 'null') \
+             FROM library_scan_failures",
+            [],
+        ),
+        ["r1:root-1:.:null:null"]
+    );
+
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO library_scan_confirmed_scopes
+                 (run_id, root_id, relative_path, confirmed_by_user_id, confirmed_at)
+             VALUES ('r1', 'root-1', '.', 'u1', 30);
+             DELETE FROM auth_users WHERE id = 'u1';",
+        )
+        .unwrap();
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT COALESCE(confirmed_by_user_id, 'null') FROM library_scan_confirmed_scopes",
+            [],
+        ),
+        ["null"],
+        "deleting the confirming user sets confirmed_by_user_id to NULL"
+    );
+    connection
+        .execute("DELETE FROM library_scan_runs WHERE id = 'r1'", [])
+        .unwrap();
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM library_scan_confirmed_scopes"
+        ),
+        0,
+        "deleting the run cascades its confirmed scopes"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -2050,6 +2161,8 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("library_review_exclusions", "local_track_id", "local_tracks", "CASCADE"),
     ("library_review_exclusions", "review_id", "library_identify_reviews", "CASCADE"),
     ("library_scan_album_moves", "run_id", "library_scan_runs", "CASCADE"),
+    ("library_scan_confirmed_scopes", "confirmed_by_user_id", "auth_users", "SET NULL"),
+    ("library_scan_confirmed_scopes", "run_id", "library_scan_runs", "CASCADE"),
     ("library_scan_failures", "run_id", "library_scan_runs", "CASCADE"),
     ("library_scan_inventory", "local_track_id", "local_tracks", "RESTRICT"),
     ("library_scan_inventory", "run_id", "library_scan_runs", "CASCADE"),

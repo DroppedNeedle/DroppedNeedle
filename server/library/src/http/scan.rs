@@ -26,7 +26,7 @@ use super::models::ScanRunView;
 use crate::activity::feed::LibraryActivity;
 use crate::scan::models::{Disposition, FailureCode, ScanKind, ScanPhase, ScanState};
 use crate::scan::reasons::scan_reason;
-use crate::scans::{MAX_FAILURE_PAGE, MAX_PAGE, RunControl};
+use crate::scans::{HeldScopeKind, MAX_FAILURE_PAGE, MAX_PAGE, RunControl};
 use crate::wiring::LibraryServices;
 use droppedneedle_auth::{Admin, User};
 
@@ -41,6 +41,8 @@ pub fn routes() -> Routes<LibraryServices> {
         .admin(routes!(pause_scan_run))
         .admin(routes!(resume_scan_run))
         .admin(routes!(stop_scan_run))
+        .admin(routes!(held_scopes))
+        .admin(routes!(confirm_held_scopes))
         .user(routes!(library_activity))
         .admin(routes!(pause_identification))
         .admin(routes!(resume_identification))
@@ -204,6 +206,48 @@ pub enum IdentificationState {
 pub struct IdentificationControlResponse {
     pub state: IdentificationState,
     pub row_revision: u64,
+}
+
+/// One folder currently held back by the mass-missing guard.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct HeldScopeView {
+    pub root_id: String,
+    pub root_label: String,
+    pub root_path: String,
+    pub relative_path: String,
+    pub folder_path: String,
+    pub kind: HeldScopeKind,
+    /// Unix seconds when the folder was first held back.
+    pub held_at: f64,
+    /// Files not found when the guard last tripped, when recorded.
+    #[schema(required = true)]
+    pub missing_count: Option<u64>,
+    /// Total indexed files in the folder when the guard last tripped, when recorded.
+    #[schema(required = true)]
+    pub guard_total_count: Option<u64>,
+    /// Live indexed file count currently in the catalog under this folder.
+    pub indexed_count: u64,
+}
+
+/// Configured folders currently held back by the mass-missing guard.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct HeldScopesResponse {
+    pub policy_revision: String,
+    pub held_scopes: Vec<HeldScopeView>,
+}
+
+/// One held folder selected for mass-missing confirmation.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct HeldScopeTarget {
+    pub root_id: String,
+    pub relative_path: String,
+}
+
+/// Request to confirm intentionally deleted files in one or more held folders.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct ConfirmHeldScopesBody {
+    pub scopes: Vec<HeldScopeTarget>,
+    pub expected_policy_revision: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -470,6 +514,85 @@ pub async fn stop_scan_run(
     ValidJson(body): ValidJson<ScanControlBody>,
 ) -> Result<Json<ScanControlResponse>, ApiError> {
     control(state, id, RunControl::Stop, body).await
+}
+
+/// Configured folders currently held back by the mass-missing guard.
+#[utoipa::path(
+    get,
+    tag = "library management",
+    path = "/api/v3/library/scan/held-scopes",
+    responses(
+        (status = 200, description = "Held-back folders", body = HeldScopesResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+    )
+)]
+pub async fn held_scopes(
+    State(state): State<Scans>,
+    _caller: Admin,
+) -> Result<Json<HeldScopesResponse>, ApiError> {
+    let (policy_revision, scopes) = blocking(move || state.held_scopes()).await?;
+    Ok(Json(HeldScopesResponse {
+        policy_revision,
+        held_scopes: scopes
+            .into_iter()
+            .map(|scope| HeldScopeView {
+                root_id: scope.root_id,
+                root_label: scope.root_label,
+                root_path: scope.root_path,
+                relative_path: scope.relative_path,
+                folder_path: scope.folder_path,
+                kind: scope.kind,
+                held_at: scope.held_at,
+                missing_count: scope.missing_count,
+                guard_total_count: scope.guard_total_count,
+                indexed_count: scope.indexed_count,
+            })
+            .collect(),
+    }))
+}
+
+/// Confirm intentionally missing files in one or more held-back folders and
+/// start a scan to mark them missing in the catalog.
+#[utoipa::path(
+    post,
+    tag = "library management",
+    path = "/api/v3/library/scan/held-scopes/confirm",
+    request_body = ConfirmHeldScopesBody,
+    responses(
+        (status = 202, description = "Confirmation scan taken", body = ScanRunRequestedResponse),
+        (status = 400, description = "Empty scope list or unknown folder"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+        (status = 409, description = "Library disabled, policy changed, hold already lifted, or incompatible scan queued"),
+    )
+)]
+pub async fn confirm_held_scopes(
+    State(state): State<Scans>,
+    caller: Admin,
+    ValidJson(body): ValidJson<ConfirmHeldScopesBody>,
+) -> Result<(StatusCode, Json<ScanRunRequestedResponse>), ApiError> {
+    let user_id = caller.user_id().to_owned();
+    let targets: Vec<(String, String)> = body
+        .scopes
+        .into_iter()
+        .map(|target| (target.root_id, target.relative_path))
+        .collect();
+    let result = blocking(move || {
+        state.confirm_held_scopes(&targets, &body.expected_policy_revision, &user_id)
+    })
+    .await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ScanRunRequestedResponse {
+            run_id: result.run_id,
+            disposition: result.disposition,
+            state: result.state,
+            row_revision: result.row_revision,
+            queued_reason: result.queued_reason,
+            conflicting_kind: result.conflicting_kind,
+        }),
+    ))
 }
 
 // ---------------------------------------------------------------------------

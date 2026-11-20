@@ -24,6 +24,98 @@ impl SqliteScanStore {
         })
     }
 
+    /// Atomically verify every target is still held back, enqueue or coalesce
+    /// the scan run, and record the confirmed scopes against that run.
+    pub fn request_confirmed_run(
+        &self,
+        request: &ScanRequest,
+        confirmed_scopes: &[(String, String)],
+        confirmed_by_user_id: Option<&str>,
+        run_id: &str,
+        requested_at: f64,
+    ) -> Result<ScanRequestResult, ScanStoreError> {
+        self.write_once(Lane::Foreground, "scan_request_confirmed_run", |tx| {
+            {
+                let mut exists = tx.prepare_cached(sql::HELD_SCOPE_EXISTS.text())?;
+                for (root_id, relative_path) in confirmed_scopes {
+                    let still_held: bool =
+                        exists.query_row(params![root_id, relative_path], |row| row.get(0))?;
+                    if !still_held {
+                        return Err(ScanStoreError::StaleRevision {
+                            message: "One or more selected folders are no longer held back. \
+                                      Refresh the page."
+                                .to_owned(),
+                        });
+                    }
+                }
+            }
+            let result = request_run_inner(tx, request, run_id, requested_at)?;
+            if result.disposition == Disposition::Conflict {
+                return Err(ScanStoreError::InvalidControl {
+                    message: result.queued_reason.unwrap_or_else(|| {
+                        "Another scan of a different kind is already queued. \
+                         Wait for it to finish and try again."
+                            .to_owned()
+                    }),
+                });
+            }
+            {
+                let mut insert = tx.prepare_cached(sql::ADD_CONFIRMED_SCOPE.text())?;
+                let now_ms = crate::clock::ms(requested_at);
+                for (root_id, relative_path) in confirmed_scopes {
+                    insert.execute(params![
+                        result.run_id,
+                        root_id,
+                        relative_path,
+                        confirmed_by_user_id,
+                        now_ms,
+                    ])?;
+                }
+            }
+            Ok(result)
+        })
+    }
+
+    /// Every folder currently held back by the mass-missing guard.
+    pub fn list_held_scopes(&self) -> Result<Vec<HeldScopeRecord>, ScanStoreError> {
+        self.read("scan_held_scopes", |conn| {
+            let mut stmt = conn.prepare(sql::LIST_HELD_SCOPES.text())?;
+            let rows = stmt
+                .query_map([], |row| {
+                    let row = sql::HeldScopeRow::read(row)?;
+                    Ok(HeldScopeRecord {
+                        root_id: row.root_id,
+                        relative_path: row.relative_path,
+                        held_at: crate::clock::at_secs(row.held_at),
+                        missing_count: row.missing_count.map(|count| count.max(0) as u64),
+                        guard_total_count: row.guard_total_count.map(|count| count.max(0) as u64),
+                        is_mount: row.is_mount,
+                        indexed_count: row.indexed_count.max(0) as u64,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+    }
+
+    /// Scopes explicitly confirmed as intentionally missing for `run_id`.
+    pub fn confirmed_scopes(
+        &self,
+        stop: &RunStop,
+        run_id: &str,
+    ) -> Result<std::collections::BTreeSet<(String, String)>, ScanStoreError> {
+        self.read_long(stop, "scan_confirmed_scopes", |conn| {
+            let mut stmt = conn.prepare(sql::CONFIRMED_SCOPES.text())?;
+            let rows = stmt
+                .query_map(params![run_id], |row| {
+                    let row = sql::ConfirmedScopeRow::read(row)?;
+                    Ok((row.root_id, row.relative_path))
+                })?
+                .collect::<rusqlite::Result<std::collections::BTreeSet<_>>>()?;
+            Ok(rows)
+        })
+    }
+
     /// One run with its scopes, for the request path.
     pub fn get_run(
         &self,
@@ -185,6 +277,8 @@ impl SqliteScanStore {
                     failure.failure_detail,
                     failure.phase.as_str(),
                     crate::clock::ms(failure.recorded_at),
+                    failure.missing_count,
+                    failure.indexed_count,
                 ])?;
             }
             Ok(())
@@ -225,6 +319,8 @@ impl SqliteScanStore {
                             recorded_at: crate::clock::at_secs(row.recorded_at),
                             failure_detail: row.failure_detail,
                             phase: row.phase,
+                            missing_count: row.missing_count,
+                            indexed_count: row.indexed_count,
                         },
                     ))
                 })?

@@ -1,10 +1,17 @@
 import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
 import { ApiError } from '$lib/api/errors';
+import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
-import type { LibraryRestoreRootsRequest, TypedLibrarySettings } from './LibraryOperationsTypes';
+import type {
+	DropRemovedRootTracksRequest,
+	DropRemovedRootTracksResponse,
+	LibraryRestoreRootsRequest,
+	TypedLibrarySettings
+} from './LibraryOperationsTypes';
 import {
 	anyLibraryActivityChanged,
+	catalogChanged,
 	createAppMutation,
 	libraryOperationsChanged,
 	libraryPoliciesChanged
@@ -70,5 +77,30 @@ export function createPreviewLibraryPolicyApplyMutation() {
 		effects: () => [],
 		mutationFn: (input: { scope_ids: string[]; expected_policy_revision: string }) =>
 			api.v3.POST(v3('/api/v3/settings/library/policy-apply-preview'), input)
+	}));
+}
+
+export function createDropRemovedRootTracksMutation() {
+	return createAppMutation(() => ({
+		mutationFn: async (
+			input: DropRemovedRootTracksRequest
+		): Promise<DropRemovedRootTracksResponse> =>
+			await api.v3.POST(v3('/api/v3/settings/library/removed-roots/drop-tracks'), input),
+		effects: () => [...policies(), catalogChanged(authStore.user?.id)],
+		onSuccess: (result) => {
+			const count = result.marked_missing_count;
+			toastStore.show({
+				message:
+					count === 0
+						? 'No indexed tracks remained for that removed folder'
+						: `Marked ${count.toLocaleString()} ${count === 1 ? 'track' : 'tracks'} missing`,
+				type: 'success'
+			});
+		},
+		onError: (error) =>
+			toastStore.show({
+				message: serverErrorMessage(error, 'Could not drop tracks for that removed folder'),
+				type: 'error'
+			})
 	}));
 }

@@ -9,11 +9,12 @@
 //! saves under the config store's write lock and runs the post-save
 //! fan-out.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::models::{
-    LibraryPolicyApplyRequest, LibraryPolicyImpactRequest, LibraryRestorableRootsResponse,
+    DropRemovedRootTracksRequest, DropRemovedRootTracksResponse, LibraryPolicyApplyRequest,
+    LibraryPolicyImpactRequest, LibraryRemovedRootsResponse, LibraryRestorableRootsResponse,
     LibraryRestoreRootsRequest, LibrarySettingsSaveRequest,
 };
 use super::services::SettingsService;
@@ -23,6 +24,7 @@ use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::policy::{
     self as library_policy, CatalogRoot, LibraryPolicyCatalog, ResolvedLibraryPolicy,
 };
+use droppedneedle_library::removed_roots::RemovedRootCleanup;
 use droppedneedle_library::settings_models::{
     LibraryPolicyApplyPreviewResponse, LibraryPolicyImpactResponse, LibraryPolicyTreeResponse,
     LibrarySettingsResponse,
@@ -32,12 +34,22 @@ use droppedneedle_library::settings_models::{
 pub struct LibraryPolicyService {
     settings: Arc<SettingsService>,
     catalog: Arc<dyn LibraryPolicyCatalog>,
+    cleanup: RemovedRootCleanup,
 }
 
 impl LibraryPolicyService {
-    /// Build over the settings service and the catalog.
-    pub fn new(settings: Arc<SettingsService>, catalog: Arc<dyn LibraryPolicyCatalog>) -> Self {
-        Self { settings, catalog }
+    /// Build over the settings service, the catalog read port, and the
+    /// removed-root cleanup writer.
+    pub fn new(
+        settings: Arc<SettingsService>,
+        catalog: Arc<dyn LibraryPolicyCatalog>,
+        cleanup: RemovedRootCleanup,
+    ) -> Self {
+        Self {
+            settings,
+            catalog,
+            cleanup,
+        }
     }
 
     fn catalog_error(&self, cause: String) -> SettingsError {
@@ -143,6 +155,55 @@ impl LibraryPolicyService {
             })
         })
         .await
+    }
+
+    /// Every removed root that still has indexed tracks in the catalog,
+    /// including removed roots whose path overlaps a configured root.
+    pub async fn removed_roots(&self) -> Result<LibraryRemovedRootsResponse, SettingsError> {
+        let catalog = self
+            .catalog
+            .catalog_roots()
+            .await
+            .map_err(|cause| self.catalog_error(cause))?;
+        let mut offerable = Vec::with_capacity(catalog.len());
+        for root in &catalog {
+            if root.any_on_disk || !folder_is_gone(root).await {
+                offerable.push(root.clone());
+            }
+        }
+        self.with_saved(move |saved| {
+            let restorable = library_policy::restorable_roots(&saved.settings, &offerable);
+            let restorable_ids: BTreeSet<&str> = restorable
+                .iter()
+                .map(|root| root.root_id.as_str())
+                .collect();
+            Ok(LibraryRemovedRootsResponse {
+                policy_revision: saved.policy_revision.clone(),
+                removed_roots: library_policy::removed_roots(
+                    &saved.settings,
+                    &catalog,
+                    &restorable_ids,
+                ),
+            })
+        })
+        .await
+    }
+
+    /// Mark every indexed catalog track under one removed root as missing,
+    /// without touching files on disk or any configured root.
+    pub async fn drop_removed_root_tracks(
+        &self,
+        request: DropRemovedRootTracksRequest,
+    ) -> Result<DropRemovedRootTracksResponse, SettingsError> {
+        let result = self
+            .cleanup
+            .drop_removed_root_tracks(&request.root_id, &request.expected_policy_revision)
+            .await?;
+        Ok(DropRemovedRootTracksResponse {
+            root_id: request.root_id,
+            marked_missing_count: result.marked_missing_count,
+            policy_revision: result.policy_revision,
+        })
     }
 
     /// Put every removed root back (automatic, no rules), at its

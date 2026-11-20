@@ -630,6 +630,27 @@ pub struct ScanFailureRecord {
     pub recorded_at: f64,
     pub failure_detail: String,
     pub phase: Phase,
+    /// Missing file count when the mass-missing guard tripped, if recorded.
+    pub missing_count: Option<i64>,
+    /// Indexed file count when the mass-missing guard tripped, if recorded.
+    pub indexed_count: Option<i64>,
+}
+
+/// One folder currently held back by the mass-missing guard.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeldScopeRecord {
+    pub root_id: String,
+    pub relative_path: String,
+    /// Unix seconds when the folder was first held back.
+    pub held_at: f64,
+    /// Missing file count when the guard last tripped, if recorded.
+    pub missing_count: Option<u64>,
+    /// Total indexed file count when the guard last tripped, if recorded.
+    pub guard_total_count: Option<u64>,
+    /// True when the path is a remembered sub-mount inside its root.
+    pub is_mount: bool,
+    /// Live indexed file count currently in the catalog under this folder.
+    pub indexed_count: u64,
 }
 
 /// Where a track's title, album title or album artist came from: its tags,

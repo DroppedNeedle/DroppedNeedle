@@ -12815,3 +12815,665 @@ async fn albums_filed_under_the_track_artist_keep_their_files() {
         assert_eq!(rig.album_of(&relative), album, "{relative}");
     }
 }
+
+/// Drive the library scan supervisor until no active, queued, or finishing run remains.
+async fn drive_scans(library: &LibrarySetup) {
+    for _ in 0..80 {
+        library.scans.supervisor_tick().await;
+        if library.coordinator.current().is_empty() {
+            break;
+        }
+    }
+}
+
+/// Mass-deleting >=20 files trips the guard, exposes structured counts via
+/// `held_scopes`, and confirming marks the vanished tracks missing, updates
+/// `has_indexed_track`, preserves play history, and lifts the hold on the same run.
+#[tokio::test]
+async fn confirm_held_scope_marks_vanished_tracks_missing_and_lifts_hold() {
+    use droppedneedle_library::scans::HeldScopeKind;
+
+    let scratch = ScratchDir::new("scan-confirm-mass-missing");
+    let music = scratch.join("music");
+    for n in 0..30 {
+        plant(&music, &format!("Album/{n:02}.flac"), "flac_full_01.flac");
+    }
+    let library = bundle(&scratch).await;
+    assert_eq!(count(&scan(&library).await, Counter::Indexed), 30);
+
+    // Record a play on one of the soon-to-be-deleted tracks and an admin user.
+    let db = library.scan_store.db();
+    db.run_sql(
+        "INSERT INTO auth_users (id, display_name, created_at) VALUES ('admin-1', 'Admin', 1);
+         INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id,
+             artist_name, track_name, played_at)
+         SELECT 'play-1', 'admin-1', id, local_album_id, 'Artist', 'Track', 100
+         FROM local_tracks WHERE relative_path = 'Album/00.flac';",
+    )
+    .expect("seed play history");
+
+    // Delete 25 of 30 files (>50% on >=20 tracks -> trips mass-missing guard).
+    for n in 0..25 {
+        std::fs::remove_file(music.join(format!("Album/{n:02}.flac"))).expect("remove");
+    }
+    let guarded = scan(&library).await;
+    assert_eq!(count(&guarded, Counter::Missing), 0);
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE availability = 'indexed'"
+        ),
+        30
+    );
+
+    let (policy_rev, held) = library.scans.held_scopes().expect("held scopes read");
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].root_id, "music");
+    assert_eq!(held[0].relative_path, ".");
+    assert_eq!(held[0].kind, HeldScopeKind::Root);
+    assert_eq!(held[0].missing_count, Some(25));
+    assert_eq!(held[0].guard_total_count, Some(30));
+    assert_eq!(held[0].indexed_count, 30);
+
+    let requested = library
+        .scans
+        .confirm_held_scopes(
+            &[("music".to_owned(), ".".to_owned())],
+            &policy_rev,
+            "admin-1",
+        )
+        .expect("confirm accepted");
+    drive_scans(&library).await;
+
+    let (confirmed_run, _, _) = library
+        .coordinator
+        .snapshot(&requested.run_id)
+        .expect("run exists");
+    assert_eq!(confirmed_run.state.scan_state(), ScanState::Completed);
+    assert_eq!(count(&confirmed_run, Counter::Missing), 25);
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE availability = 'missing'"
+        ),
+        25
+    );
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE availability = 'indexed'"
+        ),
+        5
+    );
+    // Hold clears on that same run without needing an extra scan.
+    let (_, after_held) = library.scans.held_scopes().expect("held scopes after");
+    assert!(after_held.is_empty(), "hold lifted: {after_held:?}");
+    // Play history and surviving files on disk are intact.
+    assert_eq!(
+        query(&library, "SELECT COUNT(*) FROM library_play_history"),
+        1
+    );
+    assert_eq!(snapshot(&music).len(), 5);
+
+    // Delete the remaining 5 files and confirm so the album's has_indexed_track flips to 0.
+    for n in 25..30 {
+        std::fs::remove_file(music.join(format!("Album/{n:02}.flac"))).expect("remove rest");
+    }
+    let _ = scan(&library).await;
+    let (policy_rev, held) = library.scans.held_scopes().expect("held scopes 2");
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].missing_count, Some(5));
+    assert_eq!(held[0].guard_total_count, Some(5));
+    library
+        .scans
+        .confirm_held_scopes(
+            &[("music".to_owned(), ".".to_owned())],
+            &policy_rev,
+            "admin-1",
+        )
+        .expect("confirm remaining");
+    drive_scans(&library).await;
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_albums WHERE has_indexed_track = 1"
+        ),
+        0,
+        "has_indexed_track trigger updates to 0 once all tracks are missing"
+    );
+    assert!(library.scans.held_scopes().expect("empty").1.is_empty());
+}
+
+/// Selective confirmation with two held sub-mounts (even when coalesced onto
+/// a queued full-root `.` scan) marks only the confirmed mount missing while
+/// keeping the unconfirmed sibling indexed and held back.
+#[tokio::test]
+async fn selective_confirm_with_coalesced_full_root_scan_keeps_unconfirmed_sibling_held() {
+    use droppedneedle_library::scans::HeldScopeKind;
+
+    let scratch = ScratchDir::new("scan-confirm-selective");
+    let music = scratch.join("music");
+    // 60 tracks in Keep + 15 in MountA + 15 in MountB (90 total): emptying
+    // both mounts removes 30/90 (33% < 50%), so root `.` stays clear and the
+    // empty-mount guard holds back MountA and MountB individually.
+    for n in 0..60 {
+        plant(&music, &format!("Keep/{n:02}.flac"), "flac_full_01.flac");
+    }
+    for n in 0..15 {
+        plant(&music, &format!("MountA/{n:02}.flac"), "flac_full_02.flac");
+        plant(&music, &format!("MountB/{n:02}.flac"), "flac_no_tags.flac");
+    }
+    let library = bundle(&scratch).await;
+    assert_eq!(count(&scan(&library).await, Counter::Indexed), 90);
+
+    let db = library.scan_store.db();
+    db.run_sql(
+        "INSERT INTO auth_users (id, display_name, created_at) VALUES ('admin-1', 'Admin', 1);
+         INSERT INTO library_scan_mounts (root_id, relative_path) VALUES
+           ('music', 'MountA'), ('music', 'MountB');",
+    )
+    .expect("seed mounts");
+
+    // Empty both mount directories (simulating unmounted/deleted shares).
+    for n in 0..15 {
+        std::fs::remove_file(music.join(format!("MountA/{n:02}.flac"))).expect("rm A");
+        std::fs::remove_file(music.join(format!("MountB/{n:02}.flac"))).expect("rm B");
+    }
+    let guarded = scan(&library).await;
+    assert_eq!(count(&guarded, Counter::Missing), 0);
+
+    let (policy_rev, held) = library.scans.held_scopes().expect("held mounts");
+    assert_eq!(held.len(), 2);
+    assert!(held.iter().all(|item| item.kind == HeldScopeKind::Mount));
+    assert_eq!(held[0].relative_path, "MountA");
+    assert_eq!(held[0].missing_count, Some(15));
+    assert_eq!(held[1].relative_path, "MountB");
+    assert_eq!(held[1].missing_count, Some(15));
+
+    // Queue a full-root incremental scan first, then confirm ONLY MountA so
+    // the confirmation coalesces onto that full-root queued run.
+    let queued_full = library
+        .scans
+        .request_scan_run(ScanKind::Incremental, &[], &policy_rev, "admin-1")
+        .expect("queue full root");
+    let confirmed = library
+        .scans
+        .confirm_held_scopes(
+            &[("music".to_owned(), "MountA".to_owned())],
+            &policy_rev,
+            "admin-1",
+        )
+        .expect("confirm MountA coalesces");
+    assert_eq!(confirmed.run_id, queued_full.run_id);
+    assert_eq!(
+        confirmed.disposition,
+        droppedneedle_library::scan::Disposition::Coalesced
+    );
+
+    drive_scans(&library).await;
+
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE relative_path LIKE 'MountA/%' \
+             AND availability = 'missing'"
+        ),
+        15,
+        "confirmed MountA tracks are marked missing"
+    );
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE relative_path LIKE 'MountB/%' \
+             AND availability = 'indexed'"
+        ),
+        15,
+        "unconfirmed sibling MountB stays indexed"
+    );
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE relative_path LIKE 'Keep/%' \
+             AND availability = 'indexed'"
+        ),
+        60
+    );
+    let (_, remaining_held) = library.scans.held_scopes().expect("remaining holds");
+    assert_eq!(remaining_held.len(), 1);
+    assert_eq!(remaining_held[0].relative_path, "MountB");
+}
+
+/// Confirming a sub-mount whose directory was deleted from disk falls back to
+/// walking the parent root `.` without raising `ROOT_UNAVAILABLE`, while
+/// confirming only that sub-mount.
+#[tokio::test]
+async fn confirm_deleted_sub_mount_directory_uses_root_fallback_without_root_unavailable() {
+    let scratch = ScratchDir::new("scan-confirm-deleted-submount");
+    let music = scratch.join("music");
+    // 40 tracks in Keep + 15 in GoneShare (55 total): deleting GoneShare
+    // removes 15/55 (27% < 50%), so the empty-mount guard holds back GoneShare
+    // specifically.
+    for n in 0..40 {
+        plant(&music, &format!("Keep/{n:02}.flac"), "flac_full_01.flac");
+    }
+    for n in 0..15 {
+        plant(
+            &music,
+            &format!("GoneShare/{n:02}.flac"),
+            "flac_full_02.flac",
+        );
+    }
+    let library = bundle(&scratch).await;
+    assert_eq!(count(&scan(&library).await, Counter::Indexed), 55);
+
+    let db = library.scan_store.db();
+    db.run_sql(
+        "INSERT INTO auth_users (id, display_name, created_at) VALUES ('admin-1', 'Admin', 1);
+         INSERT INTO library_scan_mounts (root_id, relative_path) VALUES ('music', 'GoneShare');",
+    )
+    .expect("seed mount");
+
+    std::fs::remove_dir_all(music.join("GoneShare")).expect("delete sub-mount dir");
+    let _ = scan(&library).await;
+    let (policy_rev, held) = library.scans.held_scopes().expect("held");
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].relative_path, "GoneShare");
+
+    let confirmed = library
+        .scans
+        .confirm_held_scopes(
+            &[("music".to_owned(), "GoneShare".to_owned())],
+            &policy_rev,
+            "admin-1",
+        )
+        .expect("confirm deleted sub-mount");
+    drive_scans(&library).await;
+
+    let failures = library
+        .scan_store
+        .failures(&confirmed.run_id)
+        .expect("failures");
+    assert!(
+        failures
+            .iter()
+            .all(|failure| failure.failure_code != FailureCode::RootUnavailable),
+        "no false RootUnavailable: {failures:?}"
+    );
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE relative_path LIKE 'GoneShare/%' \
+             AND availability = 'missing'"
+        ),
+        15
+    );
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE relative_path LIKE 'Keep/%' \
+             AND availability = 'indexed'"
+        ),
+        40
+    );
+    assert!(library.scans.held_scopes().expect("lifted").1.is_empty());
+}
+
+/// Confirmation never bypasses `ROOT_UNAVAILABLE` on an unmounted root,
+/// `SCOPE_THROUGH_LINK` on a symlinked folder, or `walked_past!` fencing for
+/// tracks with an open publish journal row.
+#[tokio::test]
+async fn confirm_never_bypasses_unmounted_root_symlink_or_publish_fence() {
+    let scratch = ScratchDir::new("scan-confirm-invariants");
+    let music = scratch.join("music");
+    for n in 0..25 {
+        plant(&music, &format!("Album/{n:02}.flac"), "flac_full_01.flac");
+    }
+    let library = bundle(&scratch).await;
+    assert_eq!(count(&scan(&library).await, Counter::Indexed), 25);
+
+    let db = library.scan_store.db();
+    db.run_sql(
+        "INSERT INTO auth_users (id, display_name, created_at) VALUES ('admin-1', 'Admin', 1);
+         INSERT INTO library_scan_held_scopes (root_id, relative_path, held_at, missing_count, indexed_count)
+         VALUES ('music', '.', 1000, 25, 25);",
+    )
+    .expect("seed hold");
+
+    // 1. Unmounted / absent root directory -> ROOT_UNAVAILABLE, nothing marked missing, hold stays.
+    let parked = scratch.join("parked-music");
+    std::fs::rename(&music, &parked).expect("unmount root");
+    let (policy_rev, _) = library.scans.held_scopes().expect("held");
+    let unmounted = library
+        .scans
+        .confirm_held_scopes(
+            &[("music".to_owned(), ".".to_owned())],
+            &policy_rev,
+            "admin-1",
+        )
+        .expect("confirm queues");
+    drive_scans(&library).await;
+    assert!(
+        library
+            .scan_store
+            .failures(&unmounted.run_id)
+            .expect("failures")
+            .iter()
+            .any(|failure| failure.failure_code == FailureCode::RootUnavailable),
+        "unmounted root must still fail with ROOT_UNAVAILABLE"
+    );
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE availability = 'indexed'"
+        ),
+        25
+    );
+    assert_eq!(library.scans.held_scopes().expect("still held").1.len(), 1);
+    std::fs::rename(&parked, &music).expect("remount root");
+
+    // 2. Folder replaced by symlink -> SCOPE_THROUGH_LINK, tracks stay indexed, hold stays.
+    let outside = scratch.join("elsewhere");
+    std::fs::create_dir_all(&outside).expect("outside dir");
+    std::fs::remove_dir_all(music.join("Album")).expect("remove Album");
+    std::os::unix::fs::symlink(&outside, music.join("Album")).expect("symlink Album");
+    let linked = library
+        .scans
+        .confirm_held_scopes(
+            &[("music".to_owned(), ".".to_owned())],
+            &policy_rev,
+            "admin-1",
+        )
+        .expect("confirm symlinked");
+    drive_scans(&library).await;
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE availability = 'indexed'"
+        ),
+        25,
+        "tracks under symlinked folder must stay indexed"
+    );
+    assert_eq!(
+        library
+            .scans
+            .held_scopes()
+            .expect("hold stays on link")
+            .1
+            .len(),
+        1
+    );
+    // Clean up the symlink and leave Album deleted.
+    std::fs::remove_file(music.join("Album")).expect("remove symlink");
+    let _ = linked;
+
+    // 3. Open publish journal row fences Album/00.flac -> unfenced 24 tracks go missing, fenced stays indexed.
+    db.run_sql(
+        "INSERT INTO library_publish_journal (id, bundle_id, kind, state, track_id,
+             source_root, source_rel, dest_root, dest_rel, staged, staged_sha256, fence_revision)
+         SELECT 'j-1', 'b-1', 'audio', 'staged', id, 'music', relative_path, 'music', relative_path,
+                '/tmp/staged.flac', 'deadbeef', 1
+         FROM local_tracks WHERE relative_path = 'Album/00.flac';",
+    )
+    .expect("seed open publish journal");
+    let _fenced = library
+        .scans
+        .confirm_held_scopes(
+            &[("music".to_owned(), ".".to_owned())],
+            &policy_rev,
+            "admin-1",
+        )
+        .expect("confirm with fence");
+    drive_scans(&library).await;
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE relative_path = 'Album/00.flac' \
+             AND availability = 'indexed'"
+        ),
+        1,
+        "publish-fenced track must never be marked missing"
+    );
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE availability = 'missing'"
+        ),
+        24,
+        "unfenced deleted tracks are marked missing"
+    );
+}
+
+/// Confirmation rejects a conflicting queued `RescanFiles` run with 409 and
+/// writes no confirmed row; survives a server restart (fresh coordinator on
+/// the same SQLite DB); and if files return before confirmation runs, marks 0
+/// tracks missing and still lifts the hold.
+#[tokio::test]
+async fn confirm_survives_restart_rejects_conflicting_queued_scan_and_lifts_if_files_return() {
+    let scratch = ScratchDir::new("scan-confirm-restart-conflict");
+    let music = scratch.join("music");
+    for n in 0..25 {
+        plant(&music, &format!("Album/{n:02}.flac"), "flac_full_01.flac");
+    }
+    let db_path = scratch.join("app.db");
+    let library = bundle(&scratch).await;
+    assert_eq!(count(&scan(&library).await, Counter::Indexed), 25);
+
+    let db = library.scan_store.db();
+    db.run_sql(
+        "INSERT INTO auth_users (id, display_name, created_at) VALUES ('admin-1', 'Admin', 1);",
+    )
+    .expect("seed admin");
+
+    // Delete all 25 files -> guard trips.
+    let backup = scratch.join("backup-album");
+    std::fs::rename(music.join("Album"), &backup).expect("move album away");
+    let _ = scan(&library).await;
+    let (policy_rev, held) = library.scans.held_scopes().expect("held");
+    assert_eq!(held.len(), 1);
+
+    // 1. Conflicting queued `RescanFiles` run -> 409 Conflict and 0 confirmed rows inserted.
+    let _queued_rescan = library
+        .scans
+        .request_scan_run(ScanKind::RescanFiles, &[], &policy_rev, "admin-1")
+        .expect("queue rescan");
+    let conflict = library
+        .scans
+        .confirm_held_scopes(
+            &[("music".to_owned(), ".".to_owned())],
+            &policy_rev,
+            "admin-1",
+        )
+        .expect_err("conflicting queued rescan must refuse confirm");
+    assert!(
+        matches!(
+            conflict,
+            droppedneedle_library::service::ServiceError::Conflict { .. }
+        ),
+        "expected Conflict, got {conflict:?}"
+    );
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM library_scan_confirmed_scopes"
+        ),
+        0,
+        "conflict must not insert confirmed scopes"
+    );
+
+    // Cancel the queued rescan so the slot is free.
+    let (_, queued) = library.scans.current_scan_runs().expect("current");
+    let queued = queued.expect("queued rescan");
+    library
+        .scans
+        .control_scan_run(
+            &queued.id,
+            droppedneedle_library::scans::RunControl::Stop,
+            queued.row_revision,
+        )
+        .expect("stop queued rescan");
+    drive_scans(&library).await;
+
+    // 2. Restart durability: enqueue confirmed scan, drop the bundle, open a fresh
+    // bundle on the same DB/settings, and drive it to completion.
+    let confirmed = library
+        .scans
+        .confirm_held_scopes(
+            &[("music".to_owned(), ".".to_owned())],
+            &policy_rev,
+            "admin-1",
+        )
+        .expect("enqueue confirm");
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM library_scan_confirmed_scopes"
+        ),
+        1
+    );
+    drop(library);
+
+    let db2 = droppedneedle_kernel::db::Db::open_for_tests(&db_path).expect("reopen db");
+    let platform2 = TestPlatform::on(&db2, &scratch)
+        .settings(config_store(&scratch))
+        .build()
+        .await;
+    let (library2, _) = library_at(&platform2);
+    drive_scans(&library2).await;
+    let (run_after, _, _) = library2
+        .coordinator
+        .snapshot(&confirmed.run_id)
+        .expect("run after restart");
+    assert_eq!(run_after.state.scan_state(), ScanState::Completed);
+    assert_eq!(count(&run_after, Counter::Missing), 25);
+    assert!(
+        library2
+            .scans
+            .held_scopes()
+            .expect("lifted after restart")
+            .1
+            .is_empty()
+    );
+
+    // 3. Files restored on disk before confirmation runs -> 0 missing and hold lifts cleanly.
+    std::fs::rename(&backup, music.join("Album")).expect("restore files");
+    assert_eq!(count(&scan(&library2).await, Counter::Indexed), 25);
+    // Simulate a held scope while files are back on disk.
+    library2
+        .scan_store
+        .db()
+        .run_sql(
+            "INSERT INTO library_scan_held_scopes (root_id, relative_path, held_at, missing_count, indexed_count)
+             VALUES ('music', '.', 2000, 25, 25);",
+        )
+        .expect("re-seed hold");
+    let (policy_rev2, held2) = library2.scans.held_scopes().expect("held 2");
+    assert_eq!(held2.len(), 1);
+    let restored_run = library2
+        .scans
+        .confirm_held_scopes(
+            &[("music".to_owned(), ".".to_owned())],
+            &policy_rev2,
+            "admin-1",
+        )
+        .expect("confirm restored");
+    drive_scans(&library2).await;
+    let (run3, _, _) = library2
+        .coordinator
+        .snapshot(&restored_run.run_id)
+        .expect("run3");
+    assert_eq!(count(&run3, Counter::Missing), 0);
+    assert_eq!(
+        query(
+            &library2,
+            "SELECT COUNT(*) FROM local_tracks WHERE availability = 'indexed'"
+        ),
+        25
+    );
+    assert!(
+        library2
+            .scans
+            .held_scopes()
+            .expect("lifted cleanly")
+            .1
+            .is_empty()
+    );
+}
+
+/// Confirming a deleted sub-mount succeeds and lifts its hold even when the
+/// parent root (`.`) simultaneously trips the mass-missing guard for unrelated
+/// unconfirmed losses, while keeping those unconfirmed parent tracks protected.
+#[tokio::test]
+async fn confirm_deleted_sub_mount_succeeds_while_parent_root_trips_mass_missing() {
+    let scratch = ScratchDir::new("scan-confirm-submount-parent-guarded");
+    let music = scratch.join("music");
+    for n in 0..40 {
+        plant(&music, &format!("Keep/{n:02}.flac"), "flac_full_01.flac");
+    }
+    for n in 0..15 {
+        plant(
+            &music,
+            &format!("GoneShare/{n:02}.flac"),
+            "flac_full_02.flac",
+        );
+    }
+    let library = bundle(&scratch).await;
+    assert_eq!(count(&scan(&library).await, Counter::Indexed), 55);
+
+    let db = library.scan_store.db();
+    db.run_sql(
+        "INSERT INTO auth_users (id, display_name, created_at) VALUES ('admin-1', 'Admin', 1);
+         INSERT INTO library_scan_mounts (root_id, relative_path) VALUES ('music', 'GoneShare');",
+    )
+    .expect("seed mount");
+
+    // Step 1: Delete GoneShare (15/55 = 27% < 50%) so GoneShare is held back individually.
+    std::fs::remove_dir_all(music.join("GoneShare")).expect("delete sub-mount");
+    let _ = scan(&library).await;
+    let (policy_rev, held) = library.scans.held_scopes().expect("held before confirm");
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].relative_path, "GoneShare");
+
+    // Step 2: Before confirming GoneShare, 35 of 40 unconfirmed tracks in Keep vanish,
+    // so the walked parent root `.` trips mass_missing(35, 40) on the confirmation run.
+    for n in 0..35 {
+        std::fs::remove_file(music.join(format!("Keep/{n:02}.flac"))).expect("rm Keep");
+    }
+
+    let _confirmed = library
+        .scans
+        .confirm_held_scopes(
+            &[("music".to_owned(), "GoneShare".to_owned())],
+            &policy_rev,
+            "admin-1",
+        )
+        .expect("confirm GoneShare");
+    drive_scans(&library).await;
+
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE relative_path LIKE 'GoneShare/%' \
+             AND availability = 'missing'"
+        ),
+        15,
+        "confirmed GoneShare tracks must be marked missing even when parent `.` trips guard"
+    );
+    assert_eq!(
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_tracks WHERE relative_path LIKE 'Keep/%' \
+             AND availability = 'indexed'"
+        ),
+        40,
+        "unconfirmed Keep tracks must remain protected and indexed"
+    );
+    let (_, remaining) = library.scans.held_scopes().expect("remaining holds");
+    assert_eq!(
+        remaining.len(),
+        1,
+        "GoneShare lifted, parent `.` held: {remaining:?}"
+    );
+    assert_eq!(remaining[0].relative_path, ".");
+    assert_eq!(remaining[0].missing_count, Some(35));
+    assert_eq!(remaining[0].guard_total_count, Some(40));
+}

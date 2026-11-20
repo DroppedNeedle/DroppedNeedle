@@ -5391,6 +5391,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/scan/held-scopes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Configured folders currently held back by the mass-missing guard. */
+        get: operations["held_scopes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/scan/held-scopes/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm intentionally missing files in one or more held-back folders and
+         *     start a scan to mark them missing in the catalog.
+         */
+        post: operations["confirm_held_scopes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/scan/runs": {
         parameters: {
             query?: never;
@@ -8838,6 +8875,43 @@ export interface paths {
         get: operations["get_library_policy_tree"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library/removed-roots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Removed library roots that still hold indexed tracks in the catalog. */
+        get: operations["get_removed_library_roots"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library/removed-roots/drop-tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark every indexed catalog track under one removed library root as missing,
+         *     keeping play history, favorites, and ratings intact without touching disk.
+         */
+        post: operations["drop_removed_library_root_tracks"];
         delete?: never;
         options?: never;
         head?: never;
@@ -12470,6 +12544,11 @@ export interface components {
          * @enum {string}
          */
         Confidence: "complete" | "bounded";
+        /** @description Request to confirm intentionally deleted files in one or more held folders. */
+        ConfirmHeldScopesBody: {
+            expected_policy_revision: string;
+            scopes: components["schemas"]["HeldScopeTarget"][];
+        };
         /** @description Inbound Connect Apps config. Both protocols default off. */
         ConnectApps: {
             /**
@@ -13801,6 +13880,25 @@ export interface components {
          * @enum {string}
          */
         DropJobStatus: "processing" | "completed" | "failed";
+        /** @description Request to drop lingering indexed catalog tracks for one removed root. */
+        DropRemovedRootTracksRequest: {
+            /** @description Revision the page loaded; a mismatch is a 409. */
+            expected_policy_revision: string;
+            /** @description Root id of the removed library folder. */
+            root_id: string;
+        };
+        /** @description Outcome of dropping lingering catalog tracks for one removed root. */
+        DropRemovedRootTracksResponse: {
+            /**
+             * Format: int64
+             * @description Number of indexed tracks marked missing.
+             */
+            marked_missing_count: number;
+            /** @description Policy revision against which the drop ran. */
+            policy_revision: string;
+            /** @description Root id whose tracks were marked missing. */
+            root_id: string;
+        };
         /** @description The upload form: one or more `files` parts (audio or `.zip`). */
         DropUploadForm: {
             files: string[];
@@ -15325,6 +15423,50 @@ export interface components {
          */
         HeldRecheckStatus: "imported" | "still_held" | "error";
         /**
+         * @description What kind of folder a mass-missing hold covers.
+         * @enum {string}
+         */
+        HeldScopeKind: "root" | "mount" | "folder";
+        /** @description One held folder selected for mass-missing confirmation. */
+        HeldScopeTarget: {
+            relative_path: string;
+            root_id: string;
+        };
+        /** @description One folder currently held back by the mass-missing guard. */
+        HeldScopeView: {
+            folder_path: string;
+            /**
+             * Format: int64
+             * @description Total indexed files in the folder when the guard last tripped, when recorded.
+             */
+            guard_total_count: number | null;
+            /**
+             * Format: double
+             * @description Unix seconds when the folder was first held back.
+             */
+            held_at: number;
+            /**
+             * Format: int64
+             * @description Live indexed file count currently in the catalog under this folder.
+             */
+            indexed_count: number;
+            kind: components["schemas"]["HeldScopeKind"];
+            /**
+             * Format: int64
+             * @description Files not found when the guard last tripped, when recorded.
+             */
+            missing_count: number | null;
+            relative_path: string;
+            root_id: string;
+            root_label: string;
+            root_path: string;
+        };
+        /** @description Configured folders currently held back by the mass-missing guard. */
+        HeldScopesResponse: {
+            held_scopes: components["schemas"]["HeldScopeView"][];
+            policy_revision: string;
+        };
+        /**
          * @description How much of one release group the library holds, over every album that
          *     owns it: their tracks add up, to the edition's count at most.
          */
@@ -16775,6 +16917,29 @@ export interface components {
             roots: components["schemas"]["LibraryPolicyTreeNode"][];
             /** @description Non-blocking warnings. */
             warnings: string[];
+        };
+        /** @description A removed library root that still has indexed tracks in the catalog. */
+        LibraryRemovedRoot: {
+            /**
+             * Format: int64
+             * @description Indexed catalog tracks still held under this removed root.
+             */
+            indexed_track_count: number;
+            /** @description Label of the configured root whose path overlaps this removed root, if any. */
+            overlapping_root_label: string | null;
+            /** @description Root path recovered from the catalog rows, when it can be determined. */
+            path: string | null;
+            /** @description Whether this root is also eligible for restore. */
+            restorable: boolean;
+            /** @description Root id the catalog rows carry. */
+            root_id: string;
+        };
+        /** @description Removed library roots that still hold indexed tracks in the catalog. */
+        LibraryRemovedRootsResponse: {
+            /** @description Saved revision (the token a drop request must send). */
+            policy_revision: string;
+            /** @description Removed roots with indexed tracks, sorted by id. */
+            removed_roots: components["schemas"]["LibraryRemovedRoot"][];
         };
         /**
          * @description A root the catalog still holds tracks for but the settings no
@@ -40079,6 +40244,104 @@ export interface operations {
             };
         };
     };
+    held_scopes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Held-back folders */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeldScopesResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    confirm_held_scopes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmHeldScopesBody"];
+            };
+        };
+        responses: {
+            /** @description Confirmation scan taken */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanRunRequestedResponse"];
+                };
+            };
+            /** @description Empty scope list or unknown folder */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Library disabled, policy changed, hold already lifted, or incompatible scan queued */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     request_scan_run: {
         parameters: {
             query?: never;
@@ -47938,6 +48201,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryPolicyTreeResponse"];
+                };
+            };
+        };
+    };
+    get_removed_library_roots: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed roots with indexed tracks */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryRemovedRootsResponse"];
+                };
+            };
+        };
+    };
+    drop_removed_library_root_tracks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DropRemovedRootTracksRequest"];
+            };
+        };
+        responses: {
+            /** @description Tracks marked missing */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DropRemovedRootTracksResponse"];
+                };
+            };
+            /** @description Root id is empty or currently configured */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Expected revision is stale, or a library scan is active */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

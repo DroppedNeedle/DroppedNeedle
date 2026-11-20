@@ -15,6 +15,11 @@ const h = vi.hoisted(() => ({
 		string,
 		unknown
 	>,
+	heldScopes: {
+		data: { policy_revision: 'policy-1', held_scopes: [] },
+		isLoading: false,
+		isError: false
+	} as Record<string, unknown>,
 	schedule: {
 		data: { scan_frequency: 'daily', daily_scan_time: '09:00', server_timezone: 'Etc/UTC' }
 	} as Record<string, unknown>,
@@ -63,6 +68,7 @@ const h = vi.hoisted(() => ({
 	stopRun: vi.fn(),
 	pauseIdentification: vi.fn(),
 	requestRun: vi.fn(),
+	confirmHeldScopes: vi.fn(),
 	bulkApply: vi.fn(),
 	bulkApplyReset: vi.fn(),
 	controlOperationMutate: vi.fn(),
@@ -79,6 +85,7 @@ vi.mock('$lib/features/library-management/queries/LibraryActivityQueries.svelte'
 }));
 vi.mock('$lib/features/library-management/queries/LibraryOperationQueries.svelte', () => ({
 	getCurrentLibraryRunsQuery: () => h.runs,
+	getHeldScopesQuery: () => h.heldScopes,
 	getLibraryRunQuery: () => h.detail,
 	getLibraryRunHistoryQuery: () => h.history,
 	getLibraryRunFailuresQuery: () => h.failures,
@@ -86,6 +93,10 @@ vi.mock('$lib/features/library-management/queries/LibraryOperationQueries.svelte
 }));
 vi.mock('$lib/features/library-management/queries/LibraryOperationMutations.svelte', () => ({
 	createRequestLibraryRunMutation: () => ({ mutateAsync: h.requestRun, isPending: false }),
+	createConfirmHeldScopesMutation: () => ({
+		mutateAsync: h.confirmHeldScopes,
+		isPending: false
+	}),
 	createScanDiagnosticsExportMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createControlLibraryRunMutation: (action: string) => ({
 		mutateAsync: action === 'pause' ? h.pauseRun : action === 'resume' ? h.resumeRun : h.stopRun,
@@ -244,6 +255,11 @@ beforeEach(() => {
 		isLoading: false
 	};
 	h.runs = { data: { active: null, queued: null }, isLoading: false, isError: false };
+	h.heldScopes = {
+		data: { policy_revision: 'policy-1', held_scopes: [] },
+		isLoading: false,
+		isError: false
+	};
 	h.schedule = {
 		data: { scan_frequency: 'daily', daily_scan_time: '09:00', server_timezone: 'Etc/UTC' }
 	};
@@ -254,6 +270,7 @@ beforeEach(() => {
 	h.stopRun.mockResolvedValue({});
 	h.pauseIdentification.mockResolvedValue({});
 	h.requestRun.mockResolvedValue({});
+	h.confirmHeldScopes.mockResolvedValue({ run_id: 'run-confirm', disposition: 'started' });
 });
 
 describe('LibraryScanningPanel', () => {
@@ -305,6 +322,87 @@ describe('LibraryScanningPanel', () => {
 			confirmLocalMetadata: true,
 			scopeIds: ['rule-local'],
 			preview: true
+		});
+	});
+
+	it('hides the held-back warning when no scopes are held', async () => {
+		await render(LibraryScanningPanel);
+		await expect
+			.element(page.getByText('Missing files held back (safety guard)'))
+			.not.toBeInTheDocument();
+	});
+
+	it('shows held-back scopes and confirms single or all folders after explicit confirmation', async () => {
+		const nowSecs = Math.floor(Date.now() / 1000) - 180;
+		h.heldScopes = {
+			data: {
+				policy_revision: 'policy-42',
+				held_scopes: [
+					{
+						root_id: 'root-1',
+						root_label: 'Main library',
+						root_path: '/music',
+						relative_path: 'Singles',
+						folder_path: '/music/Singles',
+						kind: 'mount',
+						held_at: nowSecs,
+						missing_count: 14,
+						guard_total_count: 14,
+						indexed_count: 14
+					},
+					{
+						root_id: 'root-2',
+						root_label: 'Archive',
+						root_path: '/archive',
+						relative_path: '.',
+						folder_path: '/archive',
+						kind: 'root',
+						held_at: nowSecs,
+						missing_count: 90,
+						guard_total_count: 100,
+						indexed_count: 100
+					}
+				]
+			},
+			isLoading: false,
+			isError: false
+		};
+
+		await render(LibraryScanningPanel);
+		await expect.element(page.getByText('Missing files held back (safety guard)')).toBeVisible();
+		await expect.element(page.getByText('/music/Singles')).toBeVisible();
+		await expect.element(page.getByText('Mounted share', { exact: true })).toBeVisible();
+		await expect.element(page.getByText(/14 of 14 indexed files not found/)).toBeVisible();
+		await expect.element(page.getByText('/archive')).toBeVisible();
+		await expect.element(page.getByText('Root', { exact: true })).toBeVisible();
+		await expect.element(page.getByText(/90 of 100 indexed files not found/)).toBeVisible();
+
+		// Confirm a single held scope.
+		await page.getByRole('button', { name: 'Confirm deleted...' }).first().click();
+		await expect
+			.element(
+				page.getByRole('heading', { name: 'Mark missing files gone in Main library / Singles?' })
+			)
+			.toBeVisible();
+		await page.getByRole('button', { name: 'Scan and mark missing' }).click();
+		expect(h.confirmHeldScopes).toHaveBeenCalledWith({
+			scopes: [{ root_id: 'root-1', relative_path: 'Singles' }],
+			expected_policy_revision: 'policy-42'
+		});
+
+		// Confirm all held scopes at once.
+		h.confirmHeldScopes.mockClear();
+		await page.getByRole('button', { name: 'Confirm all...' }).click();
+		await expect
+			.element(page.getByRole('heading', { name: 'Mark missing files gone in 2 folders?' }))
+			.toBeVisible();
+		await page.getByRole('button', { name: 'Scan and mark missing' }).click();
+		expect(h.confirmHeldScopes).toHaveBeenCalledWith({
+			scopes: [
+				{ root_id: 'root-1', relative_path: 'Singles' },
+				{ root_id: 'root-2', relative_path: '.' }
+			],
+			expected_policy_revision: 'policy-42'
 		});
 	});
 });

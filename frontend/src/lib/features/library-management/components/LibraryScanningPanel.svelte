@@ -7,7 +7,8 @@
 		RefreshCw,
 		ScanLine,
 		Settings2,
-		ShieldAlert
+		ShieldAlert,
+		TriangleAlert
 	} from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -16,13 +17,19 @@
 	import { getLibraryActivityQuery } from '$lib/features/library-management/queries/LibraryActivityQueries.svelte';
 	import {
 		getCurrentLibraryRunsQuery,
+		getHeldScopesQuery,
 		getLibraryRunQuery
 	} from '$lib/features/library-management/queries/LibraryOperationQueries.svelte';
 	import {
+		createConfirmHeldScopesMutation,
 		createControlIdentificationMutation,
 		createControlLibraryRunMutation,
 		createRequestLibraryRunMutation
 	} from '$lib/features/library-management/queries/LibraryOperationMutations.svelte';
+	import type {
+		HeldScopeKind,
+		HeldScopeView
+	} from '$lib/features/library-management/queries/LibraryOperationsTypes';
 	import { getTargetLibrarySettingsQuery } from '$lib/features/library-management/queries/LibraryPolicyQueries.svelte';
 	import { getPendingReviewCountQuery } from '$lib/features/library/queries/LibraryReviewQueries.svelte';
 	import { getArtistReconciliationProgressQuery } from '$lib/features/library/queries/artist-reconciliation.svelte';
@@ -35,12 +42,14 @@
 
 	const activityQuery = getLibraryActivityQuery(() => authStore.user?.id);
 	const runsQuery = getCurrentLibraryRunsQuery(() => authStore.isAdmin);
+	const heldScopesQuery = getHeldScopesQuery(() => authStore.isAdmin);
 	const settingsQuery = getTargetLibrarySettingsQuery(() => authStore.isAdmin);
 	const scheduleQuery = getLibraryScanScheduleQuery(() => authStore.isAdmin);
 	const reviewsQuery = getPendingReviewCountQuery();
 	const artistReconciliationQuery = getArtistReconciliationProgressQuery(() => authStore.isAdmin);
 	const runDetailQuery = getLibraryRunQuery(() => runsQuery.data?.active?.id ?? null);
 	const requestRun = createRequestLibraryRunMutation();
+	const confirmHeldScopes = createConfirmHeldScopesMutation();
 	const pauseRun = createControlLibraryRunMutation('pause');
 	const resumeRun = createControlLibraryRunMutation('resume');
 	const stopRun = createControlLibraryRunMutation('stop');
@@ -56,6 +65,8 @@
 	const counters = $derived(runDetailQuery.data?.run.counters);
 	const scopes = $derived(runDetailQuery.data?.scopes ?? []);
 	const policyRevision = $derived(settingsQuery.data?.policy_revision ?? '');
+	const heldScopes = $derived(heldScopesQuery.data?.held_scopes ?? []);
+	const heldScopesRevision = $derived(heldScopesQuery.data?.policy_revision || policyRevision);
 	const libraryEnabled = $derived(settingsQuery.data?.enabled ?? true);
 	const reviewCount = $derived(reviewsQuery.data ?? 0);
 	const roots = $derived(settingsQuery.data?.library_roots ?? []);
@@ -80,6 +91,8 @@
 			: null
 	);
 	let stopOpen = $state(false);
+	let confirmHeldOpen = $state(false);
+	let confirmHeldTargets = $state<HeldScopeView[]>([]);
 	let workDialogOpen = $state(false);
 	let workKind = $state<'rescan_files' | 'policy_reconcile' | 'retry_identification'>(
 		'rescan_files'
@@ -151,6 +164,41 @@
 	function openWork(kind: 'rescan_files' | 'policy_reconcile' | 'retry_identification'): void {
 		workKind = kind;
 		workDialogOpen = true;
+	}
+
+	function heldScopeKindLabel(kind: HeldScopeKind): string {
+		if (kind === 'root') return 'Root';
+		if (kind === 'mount') return 'Mounted share';
+		return 'Folder';
+	}
+
+	function heldScopeTitle(scope: HeldScopeView): string {
+		return scope.relative_path === '.'
+			? scope.root_label
+			: `${scope.root_label} / ${scope.relative_path}`;
+	}
+
+	function heldScopeCounts(scope: HeldScopeView): string {
+		if (scope.missing_count !== null && scope.guard_total_count !== null) {
+			return `${scope.missing_count.toLocaleString()} of ${scope.guard_total_count.toLocaleString()} indexed files not found`;
+		}
+		return `${scope.indexed_count.toLocaleString()} indexed ${scope.indexed_count === 1 ? 'file' : 'files'}`;
+	}
+
+	function openConfirmHeld(targets: HeldScopeView[]): void {
+		confirmHeldTargets = targets;
+		confirmHeldOpen = true;
+	}
+
+	async function submitConfirmHeld(): Promise<void> {
+		if (confirmHeldTargets.length === 0 || !heldScopesRevision) return;
+		await confirmHeldScopes.mutateAsync({
+			scopes: confirmHeldTargets.map((scope) => ({
+				root_id: scope.root_id,
+				relative_path: scope.relative_path
+			})),
+			expected_policy_revision: heldScopesRevision
+		});
 	}
 </script>
 
@@ -235,6 +283,56 @@
 			</div>
 		{/if}
 	</div>
+
+	{#if heldScopes.length > 0}
+		<section class="sp-held-banner" aria-label="Missing files held back">
+			<div class="flex flex-wrap items-start justify-between gap-3">
+				<div class="min-w-0 flex-1">
+					<div class="flex items-center gap-2 text-sm font-semibold text-warning">
+						<TriangleAlert class="h-4 w-4 shrink-0" />
+						<span>Missing files held back (safety guard)</span>
+					</div>
+					<p class="mt-1 text-sm text-muted">
+						Most files in {heldScopes.length === 1 ? 'this folder' : 'these folders'} vanished at once,
+						so nothing was marked missing. If a drive unmounted, reconnect it and scan again. If you deleted
+						them on purpose, confirm below.
+					</p>
+				</div>
+				{#if heldScopes.length > 1}
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={!heldScopesRevision || !libraryEnabled || confirmHeldScopes.isPending}
+						onclick={() => openConfirmHeld(heldScopes)}>Confirm all...</Button
+					>
+				{/if}
+			</div>
+			<div class="mt-3 space-y-2">
+				{#each heldScopes as scope (`${scope.root_id}:${scope.relative_path}`)}
+					<div class="sp-held-row">
+						<div class="min-w-0 flex-1 space-y-0.5">
+							<div class="flex flex-wrap items-center gap-2">
+								<strong class="text-sm">{heldScopeTitle(scope)}</strong>
+								<span class="sp-held-tag" class:sp-held-tag-root={scope.kind === 'root'}
+									>{heldScopeKindLabel(scope.kind)}</span
+								>
+								<span class="break-all font-mono text-xs text-muted">{scope.folder_path}</span>
+							</div>
+							<p class="text-xs text-muted">
+								{heldScopeCounts(scope)} · held {formatAge(scope.held_at)} ago
+							</p>
+						</div>
+						<Button
+							variant="warning"
+							size="sm"
+							disabled={!heldScopesRevision || !libraryEnabled || confirmHeldScopes.isPending}
+							onclick={() => openConfirmHeld([scope])}>Confirm deleted...</Button
+						>
+					</div>
+				{/each}
+			</div>
+		</section>
+	{/if}
 
 	{#if activityQuery.isLoading || runsQuery.isLoading}
 		<div class="space-y-3">
@@ -547,6 +645,44 @@
 />
 
 <ConfirmDialog
+	bind:open={confirmHeldOpen}
+	title={confirmHeldTargets.length === 1
+		? `Mark missing files gone in ${heldScopeTitle(confirmHeldTargets[0])}?`
+		: `Mark missing files gone in ${confirmHeldTargets.length} folders?`}
+	confirmLabel="Scan and mark missing"
+	cancelLabel="Cancel"
+	tone="warning"
+	focusTitle
+	pending={confirmHeldScopes.isPending}
+	canConfirm={confirmHeldTargets.length > 0 && Boolean(heldScopesRevision) && libraryEnabled}
+	onconfirm={submitConfirmHeld}
+>
+	{#if confirmHeldTargets.length === 1}
+		<p class="text-sm text-muted">
+			Folder: <span class="break-all font-mono text-base-content"
+				>{confirmHeldTargets[0].folder_path}</span
+			>
+			- <strong class="text-base-content">{heldScopeCounts(confirmHeldTargets[0])}</strong>.
+		</p>
+	{:else if confirmHeldTargets.length > 1}
+		<ul class="space-y-1.5 text-sm">
+			{#each confirmHeldTargets as scope (`${scope.root_id}:${scope.relative_path}`)}
+				<li class="text-muted">
+					<strong class="text-base-content">{heldScopeTitle(scope)}</strong>
+					(<span class="break-all font-mono text-xs">{scope.folder_path}</span>) -
+					{heldScopeCounts(scope)}
+				</li>
+			{/each}
+		</ul>
+	{/if}
+	<p class="mt-2 text-xs text-muted">
+		No files on disk are touched. DroppedNeedle will scan and mark missing tracks as gone in the
+		catalog. Play history and favorites are kept, and files come back automatically if a drive
+		returns.
+	</p>
+</ConfirmDialog>
+
+<ConfirmDialog
 	bind:open={stopOpen}
 	title="Stop this scan?"
 	message="Files already indexed will stay available. Unfinished work is discarded; the next scan compares the library again."
@@ -569,6 +705,40 @@
 	.sp-head {
 		padding: 1.5rem;
 		background-color: var(--color-base-200);
+	}
+	.sp-held-banner {
+		padding: 1rem 1.25rem;
+		border: 1.5px solid color-mix(in oklab, var(--color-warning) 45%, transparent);
+		border-radius: var(--radius-box);
+		background-color: color-mix(in oklab, var(--color-warning) 10%, var(--color-base-200));
+	}
+	.sp-held-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		padding: 0.75rem 0.875rem;
+		border: 1px solid color-mix(in oklab, var(--color-warning) 28%, transparent);
+		border-radius: var(--radius-field);
+		background-color: color-mix(in oklab, var(--color-base-100) 75%, transparent);
+	}
+	.sp-held-tag {
+		display: inline-block;
+		padding: 0.125rem 0.45rem;
+		border: 1px solid var(--dn-edge);
+		border-radius: 0.25rem;
+		background-color: var(--color-base-300);
+		color: var(--dn-muted);
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+	.sp-held-tag-root {
+		border-color: color-mix(in oklab, var(--color-warning) 35%, transparent);
+		background-color: color-mix(in oklab, var(--color-warning) 15%, transparent);
+		color: var(--color-warning);
 	}
 	.sp-title {
 		font-size: clamp(2.25rem, 4vw, 3rem);

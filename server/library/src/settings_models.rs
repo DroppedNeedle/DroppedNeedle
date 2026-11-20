@@ -209,6 +209,23 @@ pub struct LibraryRestorableRoot {
     pub indexed_file_count: i64,
 }
 
+/// A removed library root that still has indexed tracks in the catalog.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LibraryRemovedRoot {
+    /// Root id the catalog rows carry.
+    pub root_id: String,
+    /// Root path recovered from the catalog rows, when it can be determined.
+    #[schema(required = true)]
+    pub path: Option<String>,
+    /// Indexed catalog tracks still held under this removed root.
+    pub indexed_track_count: i64,
+    /// Whether this root is also eligible for restore.
+    pub restorable: bool,
+    /// Label of the configured root whose path overlaps this removed root, if any.
+    #[schema(required = true)]
+    pub overlapping_root_label: Option<String>,
+}
+
 /// Profile-mutation acknowledgement: the saved profile plus the fresh
 /// revision (a second read, so concurrent saves surface as staleness on
 /// the next write instead of silently winning).

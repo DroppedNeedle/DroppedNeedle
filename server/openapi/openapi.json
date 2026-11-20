@@ -20871,6 +20871,132 @@
         ]
       }
     },
+    "/api/v3/library/scan/held-scopes": {
+      "get": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Configured folders currently held back by the mass-missing guard.",
+        "operationId": "held_scopes",
+        "responses": {
+          "200": {
+            "description": "Held-back folders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeldScopesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/library/scan/held-scopes/confirm": {
+      "post": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Confirm intentionally missing files in one or more held-back folders and\nstart a scan to mark them missing in the catalog.",
+        "operationId": "confirm_held_scopes",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmHeldScopesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Confirmation scan taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanRunRequestedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty scope list or unknown folder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Library disabled, policy changed, hold already lifted, or incompatible scan queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/scan/runs": {
       "post": {
         "tags": [
@@ -32878,6 +33004,92 @@
         ]
       }
     },
+    "/api/v3/settings/library/removed-roots": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Removed library roots that still hold indexed tracks in the catalog.",
+        "operationId": "get_removed_library_roots",
+        "responses": {
+          "200": {
+            "description": "Removed roots with indexed tracks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryRemovedRootsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/settings/library/removed-roots/drop-tracks": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Mark every indexed catalog track under one removed library root as missing,\nkeeping play history, favorites, and ratings intact without touching disk.",
+        "operationId": "drop_removed_library_root_tracks",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DropRemovedRootTracksRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Tracks marked missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DropRemovedRootTracksResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Root id is empty or currently configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Expected revision is stale, or a library scan is active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/settings/library/restorable-roots": {
       "get": {
         "tags": [
@@ -41644,6 +41856,25 @@
           "bounded"
         ]
       },
+      "ConfirmHeldScopesBody": {
+        "type": "object",
+        "description": "Request to confirm intentionally deleted files in one or more held folders.",
+        "required": [
+          "scopes",
+          "expected_policy_revision"
+        ],
+        "properties": {
+          "expected_policy_revision": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HeldScopeTarget"
+            }
+          }
+        }
+      },
       "ConnectApps": {
         "type": "object",
         "description": "Inbound Connect Apps config. Both protocols default off.",
@@ -44673,6 +44904,49 @@
           "completed",
           "failed"
         ]
+      },
+      "DropRemovedRootTracksRequest": {
+        "type": "object",
+        "description": "Request to drop lingering indexed catalog tracks for one removed root.",
+        "required": [
+          "root_id",
+          "expected_policy_revision"
+        ],
+        "properties": {
+          "expected_policy_revision": {
+            "type": "string",
+            "description": "Revision the page loaded; a mismatch is a 409."
+          },
+          "root_id": {
+            "type": "string",
+            "description": "Root id of the removed library folder."
+          }
+        }
+      },
+      "DropRemovedRootTracksResponse": {
+        "type": "object",
+        "description": "Outcome of dropping lingering catalog tracks for one removed root.",
+        "required": [
+          "root_id",
+          "marked_missing_count",
+          "policy_revision"
+        ],
+        "properties": {
+          "marked_missing_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of indexed tracks marked missing.",
+            "minimum": 0
+          },
+          "policy_revision": {
+            "type": "string",
+            "description": "Policy revision against which the drop ran."
+          },
+          "root_id": {
+            "type": "string",
+            "description": "Root id whose tracks were marked missing."
+          }
+        }
       },
       "DropUploadForm": {
         "type": "object",
@@ -48055,6 +48329,115 @@
           "error"
         ]
       },
+      "HeldScopeKind": {
+        "type": "string",
+        "description": "What kind of folder a mass-missing hold covers.",
+        "enum": [
+          "root",
+          "mount",
+          "folder"
+        ]
+      },
+      "HeldScopeTarget": {
+        "type": "object",
+        "description": "One held folder selected for mass-missing confirmation.",
+        "required": [
+          "root_id",
+          "relative_path"
+        ],
+        "properties": {
+          "relative_path": {
+            "type": "string"
+          },
+          "root_id": {
+            "type": "string"
+          }
+        }
+      },
+      "HeldScopeView": {
+        "type": "object",
+        "description": "One folder currently held back by the mass-missing guard.",
+        "required": [
+          "root_id",
+          "root_label",
+          "root_path",
+          "relative_path",
+          "folder_path",
+          "kind",
+          "held_at",
+          "missing_count",
+          "guard_total_count",
+          "indexed_count"
+        ],
+        "properties": {
+          "folder_path": {
+            "type": "string"
+          },
+          "guard_total_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Total indexed files in the folder when the guard last tripped, when recorded.",
+            "minimum": 0
+          },
+          "held_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Unix seconds when the folder was first held back."
+          },
+          "indexed_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Live indexed file count currently in the catalog under this folder.",
+            "minimum": 0
+          },
+          "kind": {
+            "$ref": "#/components/schemas/HeldScopeKind"
+          },
+          "missing_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Files not found when the guard last tripped, when recorded.",
+            "minimum": 0
+          },
+          "relative_path": {
+            "type": "string"
+          },
+          "root_id": {
+            "type": "string"
+          },
+          "root_label": {
+            "type": "string"
+          },
+          "root_path": {
+            "type": "string"
+          }
+        }
+      },
+      "HeldScopesResponse": {
+        "type": "object",
+        "description": "Configured folders currently held back by the mass-missing guard.",
+        "required": [
+          "policy_revision",
+          "held_scopes"
+        ],
+        "properties": {
+          "held_scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HeldScopeView"
+            }
+          },
+          "policy_revision": {
+            "type": "string"
+          }
+        }
+      },
       "HeldTracks": {
         "type": "object",
         "description": "How much of one release group the library holds, over every album that\nowns it: their tracks add up, to the edition's count at most.",
@@ -50940,6 +51323,67 @@
               "type": "string"
             },
             "description": "Non-blocking warnings."
+          }
+        }
+      },
+      "LibraryRemovedRoot": {
+        "type": "object",
+        "description": "A removed library root that still has indexed tracks in the catalog.",
+        "required": [
+          "root_id",
+          "path",
+          "indexed_track_count",
+          "restorable",
+          "overlapping_root_label"
+        ],
+        "properties": {
+          "indexed_track_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Indexed catalog tracks still held under this removed root."
+          },
+          "overlapping_root_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Label of the configured root whose path overlaps this removed root, if any."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Root path recovered from the catalog rows, when it can be determined."
+          },
+          "restorable": {
+            "type": "boolean",
+            "description": "Whether this root is also eligible for restore."
+          },
+          "root_id": {
+            "type": "string",
+            "description": "Root id the catalog rows carry."
+          }
+        }
+      },
+      "LibraryRemovedRootsResponse": {
+        "type": "object",
+        "description": "Removed library roots that still hold indexed tracks in the catalog.",
+        "required": [
+          "policy_revision",
+          "removed_roots"
+        ],
+        "properties": {
+          "policy_revision": {
+            "type": "string",
+            "description": "Saved revision (the token a drop request must send)."
+          },
+          "removed_roots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryRemovedRoot"
+            },
+            "description": "Removed roots with indexed tracks, sorted by id."
           }
         }
       },

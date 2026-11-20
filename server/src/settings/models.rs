@@ -18,7 +18,7 @@ use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, LibraryManagement, LibraryScanSchedule, MbSourceMode, MusicBrainzSettings,
     UsenetBackend,
 };
-use droppedneedle_library::settings_models::LibraryRestorableRoot;
+use droppedneedle_library::settings_models::{LibraryRemovedRoot, LibraryRestorableRoot};
 
 // --- views over one section ----------------------------------------------------
 
@@ -373,6 +373,35 @@ pub struct LibraryRestoreRootsRequest {
     /// Path overrides by root id, for roots whose files moved.
     #[serde(default)]
     pub paths: Option<BTreeMap<String, String>>,
+}
+
+/// Removed library roots that still hold indexed tracks in the catalog.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LibraryRemovedRootsResponse {
+    /// Saved revision (the token a drop request must send).
+    pub policy_revision: String,
+    /// Removed roots with indexed tracks, sorted by id.
+    pub removed_roots: Vec<LibraryRemovedRoot>,
+}
+
+/// Request to drop lingering indexed catalog tracks for one removed root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct DropRemovedRootTracksRequest {
+    /// Root id of the removed library folder.
+    pub root_id: String,
+    /// Revision the page loaded; a mismatch is a 409.
+    pub expected_policy_revision: String,
+}
+
+/// Outcome of dropping lingering catalog tracks for one removed root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct DropRemovedRootTracksResponse {
+    /// Root id whose tracks were marked missing.
+    pub root_id: String,
+    /// Number of indexed tracks marked missing.
+    pub marked_missing_count: u64,
+    /// Policy revision against which the drop ran.
+    pub policy_revision: String,
 }
 
 // --- library management -----------------------------------------------------------

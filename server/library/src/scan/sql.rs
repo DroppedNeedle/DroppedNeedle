@@ -71,8 +71,9 @@ droppedneedle_kernel::sql_choice! {
 droppedneedle_kernel::sql! {
     /// Record one failure row of a run; a repeat of the same row is kept once.
     pub(super) RECORD_FAILURE = "INSERT OR IGNORE INTO library_scan_failures \
-             (run_id, root_id, relative_path, failure_code, failure_detail, phase, recorded_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+             (run_id, root_id, relative_path, failure_code, failure_detail, phase, recorded_at, \
+              missing_count, indexed_count) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
     /// Note that run `?1` owes its end passes, from pass `?2`.
     pub(super) OWE_END_PASSES = "UPDATE library_scan_runs SET next_end_pass = ?2, \
              end_pass_waits_used = 0, end_pass_retry_at = NULL WHERE id = ?1";
@@ -98,11 +99,12 @@ droppedneedle_kernel::sql! {
              WHERE terminal_at IS NOT NULL AND inventory_cleanup_pending = 1 \
              AND next_end_pass IS NULL ORDER BY terminal_at, id LIMIT 1";
     /// A run's failure rows, oldest first.
-    pub(super) RUN_FAILURES = "SELECT root_id, relative_path, failure_code, recorded_at, failure_detail, phase \
+    pub(super) RUN_FAILURES = "SELECT root_id, relative_path, failure_code, recorded_at, failure_detail, \
+             phase, missing_count, indexed_count \
              FROM library_scan_failures WHERE run_id = ?1 ORDER BY rowid";
     /// One keyset page of a run's failure rows.
     pub(super) RUN_FAILURES_PAGE = "SELECT rowid, root_id, relative_path, failure_code, recorded_at, \
-             failure_detail, phase FROM library_scan_failures \
+             failure_detail, phase, missing_count, indexed_count FROM library_scan_failures \
              WHERE run_id = ?1 AND (?2 IS NULL OR rowid > ?2) \
              ORDER BY rowid LIMIT ?3";
     /// The rowids of one finished run's album moves.
@@ -649,12 +651,39 @@ droppedneedle_kernel::sql! {
                  WHERE local_album_id = ?1 AND availability = 'missing'";
     pub(super) ALBUM_HAS_INDEXED_TRACK = "SELECT EXISTS (SELECT 1 FROM local_tracks \
                  WHERE local_album_id = ?1 AND availability = 'indexed')";
-    pub(super) SETTLE = "INSERT INTO library_scan_held_scopes (root_id, relative_path, held_at) \
-         SELECT DISTINCT f.root_id, f.relative_path, \
-           COALESCE(r.started_at, ?2) \
+    pub(super) SETTLE = "INSERT INTO library_scan_held_scopes \
+         (root_id, relative_path, held_at, missing_count, indexed_count) \
+         SELECT f.root_id, f.relative_path, \
+           MIN(COALESCE(r.started_at, ?2)), \
+           MAX(f.missing_count), MAX(f.indexed_count) \
          FROM library_scan_failures f JOIN library_scan_runs r ON r.id = f.run_id \
          WHERE f.run_id = ?1 AND f.failure_code = 'MASS_MISSING_GUARD' \
-         ON CONFLICT (root_id, relative_path) DO NOTHING";
+         GROUP BY f.root_id, f.relative_path \
+         ON CONFLICT (root_id, relative_path) DO UPDATE SET \
+           missing_count = excluded.missing_count, \
+           indexed_count = excluded.indexed_count";
+    /// All currently held-back folders with recorded guard counts, mount flag,
+    /// and live indexed track count.
+    pub(super) LIST_HELD_SCOPES = "SELECT h.root_id, h.relative_path, h.held_at, \
+         h.missing_count, h.indexed_count AS guard_total_count, \
+         EXISTS (SELECT 1 FROM library_scan_mounts m \
+           WHERE m.root_id = h.root_id AND m.relative_path = h.relative_path) AS is_mount, \
+         (SELECT COUNT(*) FROM local_tracks t \
+           WHERE t.root_id = h.root_id AND +t.availability = 'indexed' \
+           AND " + (covers!("h.relative_path", "t.relative_path")) + ") AS indexed_count \
+         FROM library_scan_held_scopes h \
+         ORDER BY h.root_id, h.relative_path";
+    /// Whether `(root_id, relative_path)` is currently held back.
+    pub(super) HELD_SCOPE_EXISTS = "SELECT EXISTS(SELECT 1 FROM library_scan_held_scopes \
+         WHERE root_id = ?1 AND relative_path = ?2)";
+    /// Record an admin's confirmation for one held scope on a scan run.
+    pub(super) ADD_CONFIRMED_SCOPE = "INSERT OR IGNORE INTO library_scan_confirmed_scopes \
+         (run_id, root_id, relative_path, confirmed_by_user_id, confirmed_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5)";
+    /// The scopes confirmed as intentionally missing for run `?1`.
+    pub(super) CONFIRMED_SCOPES = "SELECT root_id, relative_path \
+         FROM library_scan_confirmed_scopes WHERE run_id = ?1 \
+         ORDER BY root_id, relative_path";
     pub(super) ALBUM_IS_TAKEN_OVER = "SELECT EXISTS (SELECT 1 FROM library_album_takeovers \
              WHERE local_album_id = ?1 AND handed_back_at IS NULL)";
     pub(super) ALBUM_IS_EXCLUDED = "SELECT EXISTS (SELECT 1 FROM library_management_exclusions \
@@ -1039,6 +1068,17 @@ droppedneedle_kernel::sql! {
                          + (SELECT COUNT(*) FROM library_scan_inventory i WHERE i.run_id = ?3 \
                           AND i.root_id = ?1 AND i.scope_relative_path = ?2 \
                           AND i.comparison_result = 'new') AS total";
+    /// Contribution of confirmed sub-scope `?2` (under walked scope `?4`) to [`VANISH_COUNTS`].
+    pub(super) SUB_SCOPE_VANISH_COUNTS = "SELECT \
+                         (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
+                          AND +t.availability = 'indexed' AND " + IN_SCOPE_T + " AND " + (walked_past!("?3")) + ") AS walked_past_count, \
+                         (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
+                          AND +t.availability = 'indexed' AND " + IN_SCOPE_T + " AND NOT " + (refused_scope!("?3", "t")) + ") \
+                         + (SELECT COUNT(*) FROM library_scan_inventory i WHERE i.run_id = ?3 \
+                          AND i.root_id = ?1 AND i.scope_relative_path = ?4 \
+                          AND (?2 = '.' OR i.relative_path = ?2 \
+                            OR (i.relative_path > ?2 || '/' AND i.relative_path < ?2 || '0')) \
+                          AND i.comparison_result = 'new') AS total";
     /// Rows walked past under the scope whose file the run's inventory holds at the same place below a twin in `?4`.
     pub(super) ROWS_FOUND_AT_TWINS = "SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
              AND +t.availability = 'indexed' AND " + IN_SCOPE_T + " AND " + (walked_past!("?3")) + " \
@@ -1070,23 +1110,28 @@ droppedneedle_kernel::sql! {
     /// Mark one listed path (`?2` under root `?1`) missing at `?3`, only while run `?4` still walked past it.
     pub(super) MARK_WALKED_PAST_MISSING = "UPDATE local_tracks AS t SET availability = 'missing', missing_at = ?3 \
      WHERE t.root_id = ?1 AND t.relative_path = ?2 AND t.availability = 'indexed' AND " + (walked_past!("?4"));
-    /// Whether run `?1` lifts the hold aliased `h`: the run completed and walked a folder covering it to the end, held back or refused no folder covering it or inside it, and no file under it went missing in the run from an album that holds no indexed file and is not merged into another. `?2` is now, for a run with no start.
+    /// Whether run `?1` lifts the hold aliased `h`: the run completed and walked a folder covering it to the end, refused no folder covering it or inside it, held back no folder equal to or inside it (nor any ancestor unless `h` itself was confirmed for this run), and either the admin confirmed `h` for this run or no file under it went missing in the run from an album that holds no indexed file and is not merged into another. `?2` is now, for a run with no start.
     pub(super) fragment HOLD_LIFTS = "EXISTS (SELECT 1 FROM library_scan_runs r \
        JOIN library_scan_run_scopes s ON s.run_id = r.id \
        WHERE r.id = ?1 AND r.state = 'completed' AND s.root_id = h.root_id \
        AND s.discovery_state = 'completed' AND " + (covers!("s.relative_path", "h.relative_path")) + ") \
-     AND NOT " + (held_back!("?1", "h")) + " AND NOT " + (refused_scope!("?1", "h")) + " AND NOT EXISTS (SELECT 1 FROM library_scan_failures g WHERE g.run_id = ?1 \
+     AND (EXISTS (SELECT 1 FROM library_scan_confirmed_scopes c \
+         WHERE c.run_id = ?1 AND c.root_id = h.root_id AND c.relative_path = h.relative_path) \
+       OR NOT " + (held_back!("?1", "h")) + ") \
+     AND NOT " + (refused_scope!("?1", "h")) + " AND NOT EXISTS (SELECT 1 FROM library_scan_failures g WHERE g.run_id = ?1 \
        AND g.root_id = h.root_id \
        AND g.failure_code IN ('MASS_MISSING_GUARD', 'SCOPE_THROUGH_LINK') \
        AND " + (covers!("h.relative_path", "g.relative_path")) + ") \
-     AND NOT EXISTS (SELECT 1 FROM local_tracks t \
-       JOIN local_albums a ON a.id = t.local_album_id \
-       WHERE t.availability = 'missing' AND t.root_id = h.root_id \
-       AND t.missing_at >= (SELECT COALESCE(started_at, ?2) \
-         FROM library_scan_runs WHERE id = ?1) \
-       AND " + (covers!("h.relative_path", "t.relative_path")) + " AND a.retired_into_album_id IS NULL \
-       AND NOT EXISTS (SELECT 1 FROM local_tracks k \
-         WHERE k.local_album_id = a.id AND k.availability = 'indexed'))";
+     AND (EXISTS (SELECT 1 FROM library_scan_confirmed_scopes c \
+       WHERE c.run_id = ?1 AND c.root_id = h.root_id AND c.relative_path = h.relative_path) \
+       OR NOT EXISTS (SELECT 1 FROM local_tracks t \
+         JOIN local_albums a ON a.id = t.local_album_id \
+         WHERE t.availability = 'missing' AND t.root_id = h.root_id \
+         AND t.missing_at >= (SELECT COALESCE(started_at, ?2) \
+           FROM library_scan_runs WHERE id = ?1) \
+         AND " + (covers!("h.relative_path", "t.relative_path")) + " AND a.retired_into_album_id IS NULL \
+         AND NOT EXISTS (SELECT 1 FROM local_tracks k \
+           WHERE k.local_album_id = a.id AND k.availability = 'indexed')))";
      fragment WALKED_PAST_INDEXED = " OR (t.availability = 'indexed' AND " + WALKED_PAST + ")";
     family REPLACEMENT_ROWS = replacements_sql;
 
@@ -1166,6 +1211,8 @@ droppedneedle_kernel::sql! {
         recorded_at: Millis,
         failure_detail: String,
         phase: Phase,
+        missing_count: Option<i64>,
+        indexed_count: Option<i64>,
     }
     pub(super) row FailurePageRow for [RUN_FAILURES_PAGE] {
         rowid: i64,
@@ -1175,6 +1222,21 @@ droppedneedle_kernel::sql! {
         recorded_at: Millis,
         failure_detail: String,
         phase: Phase,
+        missing_count: Option<i64>,
+        indexed_count: Option<i64>,
+    }
+    pub(super) row HeldScopeRow for [LIST_HELD_SCOPES] {
+        root_id: String,
+        relative_path: String,
+        held_at: Millis,
+        missing_count: Option<i64>,
+        guard_total_count: Option<i64>,
+        is_mount: bool,
+        indexed_count: i64,
+    }
+    pub(super) row ConfirmedScopeRow for [CONFIRMED_SCOPES] {
+        root_id: String,
+        relative_path: String,
     }
     pub(super) row ArtistNames for [ARTIST_NAMES] {
         display_name: String,
@@ -1363,7 +1425,7 @@ droppedneedle_kernel::sql! {
         id: String,
         chosen: bool,
     }
-    pub(super) row VanishCounts for [VANISH_COUNTS] {
+    pub(super) row VanishCounts for [VANISH_COUNTS, SUB_SCOPE_VANISH_COUNTS] {
         walked_past_count: i64,
         total: i64,
     }

@@ -1,7 +1,10 @@
 import { v3 } from '$lib/api/v3/endpoint';
 import { api } from '$lib/api/client';
+import { ApiError } from '$lib/api/errors';
+import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
 import type {
+	ConfirmHeldScopesBody,
 	IdentificationControlResponse,
 	OperationResponse,
 	ScanControlResponse,
@@ -10,11 +13,17 @@ import type {
 } from './LibraryOperationsTypes';
 import {
 	anyLibraryActivityChanged,
+	catalogChanged,
 	createAppMutation,
 	libraryOperationsChanged
 } from '$lib/queries/effects';
 
 const work = () => [anyLibraryActivityChanged(), libraryOperationsChanged()];
+
+function serverErrorMessage(error: unknown, fallback: string): string {
+	if (error instanceof ApiError && error.message) return error.message;
+	return fallback;
+}
 
 export function createRequestLibraryRunMutation() {
 	return createAppMutation(() => ({
@@ -28,6 +37,25 @@ export function createRequestLibraryRunMutation() {
 			toastStore.show({ message: 'Library work queued', type: 'success' });
 		},
 		onError: () => toastStore.show({ message: 'Could not queue library work', type: 'error' })
+	}));
+}
+
+export function createConfirmHeldScopesMutation() {
+	return createAppMutation(() => ({
+		mutationFn: (input: ConfirmHeldScopesBody): Promise<ScanRunRequestedResponse> =>
+			api.v3.POST(v3('/api/v3/library/scan/held-scopes/confirm'), input),
+		effects: () => [...work(), catalogChanged(authStore.user?.id)],
+		onSuccess: () => {
+			toastStore.show({
+				message: 'Scan queued to mark confirmed missing files',
+				type: 'success'
+			});
+		},
+		onError: (error) =>
+			toastStore.show({
+				message: serverErrorMessage(error, 'Could not confirm missing files'),
+				type: 'error'
+			})
 	}));
 }
 

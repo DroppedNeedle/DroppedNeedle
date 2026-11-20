@@ -197,6 +197,7 @@ export const LibraryQueryKeyFactory = {
 	membership: (userId: LibraryV3UserId, albumIds: string[]) =>
 		key(userScope(userId), 'library', 'membership', [...albumIds].sort()),
 	currentRuns: () => [...operations(), 'current-runs'] as const,
+	heldScopes: () => [...operations(), 'held-scopes'] as const,
 	runHistory: (cursor: string | undefined) =>
 		[...operations(), 'run-history', cursor ?? 'first'] as const,
 	run: (runId: string) => [...operations(), 'run', runId] as const,
@@ -211,6 +212,7 @@ export const LibraryQueryKeyFactory = {
 	targetSettings: () => [...policy(), 'settings'] as const,
 	policyTree: () => [...policy(), 'tree'] as const,
 	restorableRoots: () => [...policy(), 'restorable-roots'] as const,
+	removedRoots: () => [...policy(), 'removed-roots'] as const,
 	repairsPrefix: () => [...operations(), 'repairs'] as const,
 	repairs: (cursor: string | undefined) =>
 		[...LibraryQueryKeyFactory.repairsPrefix(), 'history', cursor ?? 'first'] as const,

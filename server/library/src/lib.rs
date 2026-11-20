@@ -56,6 +56,7 @@ pub mod reasons;
 pub mod reconcile;
 pub mod reidentify;
 pub mod removal;
+pub mod removed_roots;
 pub mod repairs;
 pub mod reviews;
 pub mod scan;

@@ -6,9 +6,11 @@
 	import { ApiError } from '$lib/api/errors';
 	import {
 		getLibraryRestorableRootsQuery,
+		getRemovedLibraryRootsQuery,
 		getTargetLibrarySettingsQuery
 	} from '$lib/features/library-management/queries/LibraryPolicyQueries.svelte';
 	import {
+		createDropRemovedRootTracksMutation,
 		createPreviewLibraryPolicyApplyMutation,
 		createPreviewLibraryPolicyImpactMutation,
 		createRestoreLibraryRootsMutation,
@@ -50,9 +52,11 @@
 
 	const settingsQuery = getTargetLibrarySettingsQuery(() => authStore.isAdmin);
 	const restorableQuery = getLibraryRestorableRootsQuery(() => authStore.isAdmin);
+	const removedRootsQuery = getRemovedLibraryRootsQuery(() => authStore.isAdmin);
 	const impact = createPreviewLibraryPolicyImpactMutation();
 	const save = createSaveTargetLibrarySettingsMutation();
 	const restore = createRestoreLibraryRootsMutation();
+	const dropRemovedTracks = createDropRemovedRootTracksMutation();
 	const applyPreview = createPreviewLibraryPolicyApplyMutation();
 	const requestRun = createRequestLibraryRunMutation();
 	const policyQuery = getDownloadPolicyQuery(() => authStore.isAdmin);
@@ -72,6 +76,16 @@
 	let applyOpen = $state(false);
 	let restoreOpen = $state(false);
 	let restorePaths = $state<Record<string, string>>({});
+	let dropOpen = $state(false);
+	let dropTarget = $state<UnifiedRemovedRoot | null>(null);
+
+	interface UnifiedRemovedRoot {
+		root_id: string;
+		path: string | null;
+		indexed_track_count: number;
+		restorable: boolean;
+		overlapping_root_label: string | null;
+	}
 
 	function toForm(data: TargetLibrarySettingsResponse): TypedLibrarySettings {
 		return {
@@ -154,7 +168,39 @@
 	);
 
 	const restorableRoots = $derived(restorableQuery.data?.restorable_roots ?? []);
+	const removedRoots = $derived(removedRootsQuery.data?.removed_roots ?? []);
 	const currentSettings = $derived(savedSettings ?? settingsQuery.data);
+	const removedRootsRevision = $derived(
+		removedRootsQuery.data?.policy_revision || currentSettings?.policy_revision || ''
+	);
+	const unifiedRemovedRoots = $derived.by((): UnifiedRemovedRoot[] => {
+		const byId: Record<string, UnifiedRemovedRoot> = Object.create(null);
+		for (const root of removedRoots) {
+			byId[root.root_id] = {
+				root_id: root.root_id,
+				path: root.path,
+				indexed_track_count: root.indexed_track_count,
+				restorable: root.restorable,
+				overlapping_root_label: root.overlapping_root_label
+			};
+		}
+		for (const root of restorableRoots) {
+			const existing = byId[root.root_id];
+			if (existing) {
+				existing.restorable = true;
+				if (!existing.path && root.path) existing.path = root.path;
+			} else {
+				byId[root.root_id] = {
+					root_id: root.root_id,
+					path: root.path,
+					indexed_track_count: 0,
+					restorable: true,
+					overlapping_root_label: null
+				};
+			}
+		}
+		return Object.values(byId).sort((a, b) => a.root_id.localeCompare(b.root_id));
+	});
 	const roots = $derived(section.draft?.library_roots ?? []);
 	const libraryEnabled = $derived(section.draft?.enabled ?? true);
 	const usedGb = $derived((statsQuery.data?.total_size_bytes ?? 0) / 1024 ** 3);
@@ -201,6 +247,33 @@
 	function openRestore(): void {
 		restorePaths = Object.fromEntries(restorableRoots.map((entry) => [entry.root_id, entry.path]));
 		restoreOpen = true;
+	}
+
+	function openDropRemoved(entry: UnifiedRemovedRoot): void {
+		dropTarget = entry;
+		dropOpen = true;
+	}
+
+	async function confirmDropRemoved(): Promise<void> {
+		if (!dropTarget || !removedRootsRevision) return;
+		await dropRemovedTracks.mutateAsync({
+			root_id: dropTarget.root_id,
+			expected_policy_revision: removedRootsRevision
+		});
+	}
+
+	function removedRootStatus(entry: UnifiedRemovedRoot): string {
+		const countText =
+			entry.indexed_track_count > 0
+				? `${entry.indexed_track_count.toLocaleString()} indexed ${entry.indexed_track_count === 1 ? 'track' : 'tracks'}`
+				: 'No indexed tracks';
+		if (entry.overlapping_root_label) {
+			return `${countText} · cannot restore (path overlaps configured root)`;
+		}
+		if (entry.restorable) {
+			return `${countText} · can be restored without rescanning`;
+		}
+		return countText;
 	}
 
 	async function confirmRestore(): Promise<void> {
@@ -316,21 +389,55 @@
 		</div>
 	{/if}
 
-	{#if restorableRoots.length > 0}
-		<div class="alert alert-warning items-start">
-			<TriangleAlert class="mt-0.5 h-5 w-5" />
-			<div class="min-w-0 flex-1">
-				<strong>Library roots were removed</strong>
-				<p class="text-sm">
-					This page is missing {restorableRoots.length} library
-					{restorableRoots.length === 1 ? 'root' : 'roots'} that the catalog still uses. Restore
-					{restorableRoots.length === 1 ? 'it' : 'them'} to keep your library working without a rescan.
-				</p>
+	{#if unifiedRemovedRoots.length > 0}
+		<section class="removed-roots-banner" aria-label="Removed library folders still in catalog">
+			<div class="flex flex-wrap items-start justify-between gap-3">
+				<div class="min-w-0 flex-1">
+					<div class="flex items-center gap-2 text-sm font-semibold text-warning">
+						<TriangleAlert class="h-4 w-4 shrink-0" />
+						<span>Removed library folders still in catalog</span>
+					</div>
+					<p class="mt-1 text-sm text-muted">
+						These folders are no longer configured in Settings, but the catalog still holds tracks
+						for them. Restore a folder to keep using it, or drop its tracks from the catalog.
+					</p>
+				</div>
+				{#if restorableRoots.length > 0}
+					<Button variant="outline" size="sm" loading={restore.isPending} onclick={openRestore}
+						>Restore roots...</Button
+					>
+				{/if}
 			</div>
-			<Button variant="warning" size="sm" loading={restore.isPending} onclick={openRestore}
-				>Restore roots...</Button
-			>
-		</div>
+			<div class="mt-3 space-y-2">
+				{#each unifiedRemovedRoots as entry (entry.root_id)}
+					<div class="removed-roots-row">
+						<div class="min-w-0 flex-1 space-y-0.5">
+							<div class="flex flex-wrap items-center gap-2">
+								<strong class="break-all font-mono text-sm">{entry.path ?? entry.root_id}</strong>
+								{#if entry.overlapping_root_label}
+									<span class="removed-roots-tag removed-roots-tag-warn"
+										>Overlaps "{entry.overlapping_root_label}"</span
+									>
+								{:else if entry.restorable}
+									<span class="removed-roots-tag">Folder on disk</span>
+								{/if}
+							</div>
+							<p class="text-xs text-muted">{removedRootStatus(entry)}</p>
+						</div>
+						<div class="flex flex-wrap items-center gap-2">
+							{#if entry.indexed_track_count > 0}
+								<Button
+									variant="warning"
+									size="sm"
+									disabled={!removedRootsRevision || dropRemovedTracks.isPending}
+									onclick={() => openDropRemoved(entry)}>Drop tracks...</Button
+								>
+							{/if}
+						</div>
+					</div>
+				{/each}
+			</div>
+		</section>
 	{/if}
 
 	<Card as="section" variant="bordered">
@@ -600,7 +707,73 @@
 	</div>
 </ConfirmDialog>
 
+<ConfirmDialog
+	bind:open={dropOpen}
+	title={dropTarget
+		? `Drop catalog tracks for ${dropTarget.path ?? dropTarget.root_id}?`
+		: 'Drop catalog tracks?'}
+	confirmLabel="Drop catalog tracks"
+	cancelLabel="Cancel"
+	tone="warning"
+	focusTitle
+	pending={dropRemovedTracks.isPending}
+	canConfirm={Boolean(dropTarget && removedRootsRevision)}
+	onconfirm={confirmDropRemoved}
+>
+	{#if dropTarget}
+		<p class="text-sm text-muted">
+			This marks <strong class="text-base-content"
+				>{dropTarget.indexed_track_count.toLocaleString()} indexed
+				{dropTarget.indexed_track_count === 1 ? 'track' : 'tracks'}</strong
+			>
+			from the removed folder
+			<span class="break-all font-mono text-base-content"
+				>{dropTarget.path ?? dropTarget.root_id}</span
+			>
+			as missing in the catalog.{#if dropTarget.overlapping_root_label}
+				Your active root "{dropTarget.overlapping_root_label}" is not affected.{/if}
+		</p>
+		<p class="mt-2 text-xs text-muted">
+			No files on disk are deleted. Play history, favorites and ratings stay in the database.
+		</p>
+	{/if}
+</ConfirmDialog>
+
 <style>
+	.removed-roots-banner {
+		padding: 1rem 1.25rem;
+		border: 1.5px solid color-mix(in oklab, var(--color-warning) 45%, transparent);
+		border-radius: var(--radius-box);
+		background-color: color-mix(in oklab, var(--color-warning) 10%, var(--color-base-200));
+	}
+	.removed-roots-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		padding: 0.75rem 0.875rem;
+		border: 1px solid color-mix(in oklab, var(--color-warning) 28%, transparent);
+		border-radius: var(--radius-field);
+		background-color: color-mix(in oklab, var(--color-base-100) 75%, transparent);
+	}
+	.removed-roots-tag {
+		display: inline-block;
+		padding: 0.125rem 0.45rem;
+		border: 1px solid var(--dn-edge);
+		border-radius: 0.25rem;
+		background-color: var(--color-base-300);
+		color: var(--dn-muted);
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+	.removed-roots-tag-warn {
+		border-color: color-mix(in oklab, var(--color-warning) 35%, transparent);
+		background-color: color-mix(in oklab, var(--color-warning) 15%, transparent);
+		color: var(--color-warning);
+	}
 	.library-scanning-header {
 		display: flex;
 		align-items: flex-start;

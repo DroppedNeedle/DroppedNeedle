@@ -45,6 +45,30 @@ droppedneedle_kernel::sql! {
         root_id: String,
         relative_path: String,
     }
+    /// Whether any scan is active, queued, paused, or still owing end passes.
+    pub(super) SCAN_ACTIVE_OR_FINISHING = "SELECT EXISTS(SELECT 1 FROM library_scan_runs \
+                     WHERE state NOT IN ('completed','cancelled','superseded_policy_changed','failed') \
+                     OR next_end_pass IS NOT NULL)";
+    /// Up to `?2` indexed track ids belonging to removed root `?1`, in id order.
+    /// Unary `+` prevents SQLite from walking `idx_local_tracks_recent` on
+    /// `availability` instead of seeking `(root_id, relative_path)`.
+    pub(super) REMOVED_ROOT_INDEXED_TRACK_IDS = "SELECT id FROM local_tracks \
+                     WHERE root_id = ?1 AND +availability = 'indexed' ORDER BY id LIMIT ?2";
+    /// Mark one track (`?1`) missing at `?2`, keeping plays, ratings, favorites,
+    /// and playlists intact while firing every read-model trigger.
+    pub(super) MARK_REMOVED_ROOT_TRACK_MISSING = "UPDATE local_tracks \
+                     SET availability = 'missing', missing_at = ?2, row_revision = row_revision + 1 \
+                     WHERE id = ?1 AND availability = 'indexed'";
+    /// Drop residual mass-missing holds for removed root `?1`.
+    pub(super) DROP_ROOT_HELD_SCOPES = "DELETE FROM library_scan_held_scopes WHERE root_id = ?1";
+    /// Drop unjudged-track marks for non-indexed tracks of removed root `?1`.
+    pub(super) DROP_ROOT_UNJUDGED_NON_INDEXED = "DELETE FROM library_scan_unjudged_tracks \
+                     WHERE local_track_id IN (SELECT id FROM local_tracks \
+                       WHERE root_id = ?1 AND availability <> 'indexed')";
+    /// Drop remembered sub-mounts for removed root `?1`.
+    pub(super) DROP_ROOT_MOUNTS = "DELETE FROM library_scan_mounts WHERE root_id = ?1";
+    /// Drop cached folder digests for removed root `?1`.
+    pub(super) DROP_ROOT_FOLDER_DIGESTS = "DELETE FROM library_folder_digests WHERE root_id = ?1";
 }
 
 /// `?,?,?` for an `IN` list of `len` values.

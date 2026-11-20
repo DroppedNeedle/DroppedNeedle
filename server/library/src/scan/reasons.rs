@@ -119,7 +119,7 @@ fn text(code: Code) -> (&'static str, &'static str) {
         Code::MassMissingGuard => (
             "Most of the files under this folder vanished at once, so none were marked missing.",
             "Check that the drive or share is mounted, then scan again. If you deleted the files \
-             on purpose, remove those albums from the library instead. Until a scan finds the \
+             on purpose, confirm the missing files on the Scanning tab. Until a scan finds the \
              folder as expected, DroppedNeedle does not retag or rename files that appeared in \
              it since.",
         ),

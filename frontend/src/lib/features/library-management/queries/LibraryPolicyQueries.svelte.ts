@@ -18,6 +18,13 @@ export const getLibraryRestorableRootsQuery = (enabled: Getter<boolean> = () => 
 		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/settings/library/restorable-roots'), { signal })
 	}));
 
+export const getRemovedLibraryRootsQuery = (enabled: Getter<boolean> = () => true) =>
+	createQuery(() => ({
+		enabled: enabled(),
+		queryKey: LibraryQueryKeyFactory.removedRoots(),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/settings/library/removed-roots'), { signal })
+	}));
+
 export const getLibraryPolicyTreeQuery = (enabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		enabled: enabled(),

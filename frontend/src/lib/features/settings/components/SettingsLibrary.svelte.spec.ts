@@ -29,6 +29,7 @@ const baseSettings = {
 const h = vi.hoisted(() => ({
 	settings: { data: {}, isLoading: false, isError: false } as Record<string, unknown>,
 	restorable: { data: {} } as Record<string, unknown>,
+	removedRoots: { data: {} } as Record<string, unknown>,
 	impactResult: {
 		current_policy_revision: 'policy-1',
 		proposed_policy_revision: 'policy-2',
@@ -45,6 +46,7 @@ const h = vi.hoisted(() => ({
 	impactError: null as unknown,
 	save: vi.fn(),
 	restore: vi.fn(),
+	dropRemovedTracks: vi.fn(),
 	applyPreview: vi.fn(),
 	requestRun: vi.fn(),
 	toast: vi.fn(),
@@ -63,6 +65,7 @@ vi.mock('$lib/stores/toast', () => ({ toastStore: { show: h.toast } }));
 vi.mock('$lib/features/library-management/queries/LibraryPolicyQueries.svelte', () => ({
 	getTargetLibrarySettingsQuery: () => h.settings,
 	getLibraryRestorableRootsQuery: () => h.restorable,
+	getRemovedLibraryRootsQuery: () => h.removedRoots,
 	getLibraryPolicyTreeQuery: () => ({
 		data: {
 			roots: [
@@ -96,6 +99,10 @@ vi.mock('$lib/features/library-management/queries/LibraryPolicyMutations.svelte'
 	}),
 	createSaveTargetLibrarySettingsMutation: () => ({ mutateAsync: h.save, isPending: false }),
 	createRestoreLibraryRootsMutation: () => ({ mutateAsync: h.restore, isPending: false }),
+	createDropRemovedRootTracksMutation: () => ({
+		mutateAsync: h.dropRemovedTracks,
+		isPending: false
+	}),
 	createPreviewLibraryPolicyApplyMutation: () => ({
 		mutateAsync: h.applyPreview,
 		data: {
@@ -172,6 +179,7 @@ beforeEach(() => {
 	h.isAdmin = true;
 	h.settings = { data: structuredClone(baseSettings), isLoading: false, isError: false };
 	h.restorable = { data: { policy_revision: 'policy-1', restorable_roots: [] } };
+	h.removedRoots = { data: { policy_revision: 'policy-1', removed_roots: [] } };
 	h.impactResult = {
 		current_policy_revision: 'policy-1',
 		proposed_policy_revision: 'policy-2',
@@ -206,6 +214,11 @@ beforeEach(() => {
 				rules: []
 			}
 		]
+	});
+	h.dropRemovedTracks.mockResolvedValue({
+		root_id: 'root-overlap',
+		marked_missing_count: 12,
+		policy_revision: 'policy-9'
 	});
 	h.applyPreview.mockResolvedValue({});
 	h.requestRun.mockResolvedValue({});
@@ -307,7 +320,7 @@ describe('SettingsLibrary target policy UI', () => {
 			}
 		};
 		await render(SettingsLibrary);
-		await expect.element(page.getByText(/Library roots were removed/)).toBeVisible();
+		await expect.element(page.getByText('Removed library folders still in catalog')).toBeVisible();
 		await page.getByRole('button', { name: 'Restore roots...' }).click();
 		await expect
 			.element(page.getByRole('heading', { name: 'Restore removed library roots' }))
@@ -320,5 +333,65 @@ describe('SettingsLibrary target policy UI', () => {
 			paths: { 'root-old': '/music' }
 		});
 		await expect.element(page.getByRole('heading', { name: 'Music' })).toBeVisible();
+	});
+
+	it('deduplicates removed and restorable roots and drops catalog tracks after confirmation', async () => {
+		h.restorable = {
+			data: {
+				policy_revision: 'policy-9',
+				restorable_roots: [
+					{ root_id: 'root-standalone', path: '/music/old', indexed_file_count: 5 }
+				]
+			}
+		};
+		h.removedRoots = {
+			data: {
+				policy_revision: 'policy-9',
+				removed_roots: [
+					{
+						root_id: 'root-overlap',
+						path: '/music/archive/sub',
+						indexed_track_count: 12,
+						restorable: false,
+						overlapping_root_label: 'Archive'
+					},
+					{
+						root_id: 'root-standalone',
+						path: '/music/old',
+						indexed_track_count: 5,
+						restorable: true,
+						overlapping_root_label: null
+					}
+				]
+			}
+		};
+
+		await render(SettingsLibrary);
+		await expect.element(page.getByText('Removed library folders still in catalog')).toBeVisible();
+		await expect.element(page.getByText('/music/archive/sub')).toBeVisible();
+		await expect.element(page.getByText('Overlaps "Archive"')).toBeVisible();
+		await expect.element(page.getByText('/music/old')).toBeVisible();
+		await expect.element(page.getByText('Folder on disk')).toBeVisible();
+		// Standalone root appears once (deduplicated across restorable and removed lists).
+		expect(page.getByText('/music/old').elements().length).toBe(1);
+		// Header offers Restore roots... once (no duplicate per-row Restore... button);
+		// both removed roots offer Drop tracks...
+		expect(page.getByRole('button', { name: 'Restore roots...' }).elements().length).toBe(1);
+		expect(page.getByRole('button', { name: 'Restore...' }).elements().length).toBe(0);
+		expect(page.getByRole('button', { name: 'Drop tracks...' }).elements().length).toBe(2);
+
+		await page.getByRole('button', { name: 'Drop tracks...' }).first().click();
+		await expect
+			.element(page.getByRole('heading', { name: 'Drop catalog tracks for /music/archive/sub?' }))
+			.toBeVisible();
+		await expect.element(page.getByText(/12 indexed tracks/)).toBeVisible();
+		await expect
+			.element(page.getByText(/Your active root "Archive" is not affected/))
+			.toBeVisible();
+		await page.getByRole('button', { name: 'Drop catalog tracks' }).click();
+		expect(h.dropRemovedTracks).toHaveBeenCalledWith({
+			root_id: 'root-overlap',
+			expected_policy_revision: 'policy-9'
+		});
 	});
 });
