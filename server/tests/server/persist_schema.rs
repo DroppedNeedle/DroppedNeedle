@@ -380,6 +380,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0152_playlist_unlinked_entries.sql",
         "637f4833cb49e7c5678f31df2c463a0ed6ff4f8c6064df1d8327dd661d3c3ee5",
     ),
+    (
+        "0153_local_track_isrcs.sql",
+        "cd4ddee023119ba0a705bee354c3d7234d978b8584de72949398354a2c863e8b",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -1590,6 +1594,47 @@ fn playlist_unlinked_entries_upgrade_adds_one_index() {
     assert!(
         plan.contains("idx_catalog_playlist_tracks_unlinked"),
         "{plan}"
+    );
+}
+
+/// 0153 adds only the ISRC column to the edition tags, and a row stored
+/// before it reads NULL there: unread, so the scan can tell it from a file
+/// read with none.
+#[test]
+fn local_track_isrcs_upgrade_adds_one_unread_column() {
+    let dir = ScratchDir::new("local-track-isrcs");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..18], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 152);
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF; \
+             INSERT INTO local_track_edition_tags (local_track_id, media, total_tracks) \
+                 VALUES ('t', 'CD', 12);",
+        )
+        .unwrap();
+    let mut before = schema_rows(&connection);
+    before.retain(|(_, name, _, _)| name != "local_track_edition_tags");
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..19], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 153);
+    let mut after = schema_rows(&connection);
+    after.retain(|(_, name, _, _)| name != "local_track_edition_tags");
+    assert_eq!(after, before, "nothing else changes");
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT media || ' ' || total_tracks || ' ' || COALESCE(isrcs, 'unread') \
+             FROM local_track_edition_tags",
+            [],
+        ),
+        ["CD 12 unread"]
     );
 }
 

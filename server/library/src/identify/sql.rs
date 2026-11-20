@@ -179,13 +179,10 @@ droppedneedle_kernel::sql! {
     /// How many backlog identify jobs were queued after `?1`.
     pub(super) BACKLOG_QUEUED_SINCE = "SELECT COUNT(*) FROM library_identify_jobs \
              WHERE kind = 'historical' AND created_at > ?1";
-    /// Albums due another look at `?1`, longest waiting first, at most
-    /// `?2`: listed, unmatched or guessed, not declined, with no custom
-    /// edition, no person's match and no job waiting, running or in
-    /// Attention. One is due once its last job is older than `?3`, `?4`,
-    /// `?5` or `?6` after its first to fourth finished look, then `?7`.
-    pub(super) RELOOK_DUE = "SELECT b.id FROM local_albums b \
-         WHERE " + (crate::owned_album!("b")) + " AND " + (crate::match_flagged!("b.id")) + " \
+    /// The album `b` may be looked at again by itself: listed, not
+    /// declined, with no custom edition, no person's match and no job
+    /// waiting, running or in Attention.
+    pub(crate) fragment RELOOK_OPEN = (crate::owned_album!("b")) + " \
          AND NOT " + (crate::declined_flag!("b.id")) + " \
          AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
              WHERE c.local_album_id = b.id) \
@@ -193,7 +190,13 @@ droppedneedle_kernel::sql! {
              WHERE e.local_album_id = b.id AND e.provider = 'musicbrainz' \
              AND e.decision_source IN " + PERSONS + ") \
          AND NOT EXISTS (SELECT 1 FROM library_identify_jobs w WHERE w.local_album_id = b.id \
-             AND w.state IN ('queued','running','deferred','attention')) \
+             AND w.state IN ('queued','running','deferred','attention'))";
+    /// Albums due another look at `?1`, longest waiting first, at most
+    /// `?2`: unmatched or guessed, and open to a look ([`RELOOK_OPEN`]).
+    /// One is due once its last job is older than `?3`, `?4`, `?5` or `?6`
+    /// after its first to fourth finished look, then `?7`.
+    pub(super) RELOOK_DUE = "SELECT b.id FROM local_albums b \
+         WHERE " + RELOOK_OPEN + " AND " + (crate::match_flagged!("b.id")) + " \
          AND COALESCE((SELECT max(l.updated_at) FROM library_identify_jobs l \
              WHERE l.local_album_id = b.id), 0) \
            + CASE (SELECT COUNT(*) FROM library_identify_jobs s \
@@ -233,7 +236,7 @@ droppedneedle_kernel::sql! {
                  t.embedded_release_track_mbid, t.embedded_release_mbid, \
                  t.embedded_release_group_mbid, t.membership_locked, t.root_id, \
                  t.relative_path, t.stat_revision, h.media, h.barcode, h.catalog_number, \
-                 h.release_country, h.total_discs, t.duration_measured \
+                 h.release_country, h.total_discs, t.duration_measured, h.isrcs \
                  FROM local_tracks t LEFT JOIN local_track_edition_tags h \
                  ON h.local_track_id = t.id \
                  WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
@@ -659,6 +662,7 @@ droppedneedle_kernel::sql! {
         release_country: Option<String>,
         total_discs: Option<i64>,
         duration_measured: Option<i64>,
+        isrcs: Option<String>,
     }
     pub(super) row StoredFingerprint for [FINGERPRINT] {
         fingerprint: String,

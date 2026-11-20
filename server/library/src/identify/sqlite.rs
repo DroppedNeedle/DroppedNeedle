@@ -591,6 +591,14 @@ impl SqliteIdentifyStore {
                         catalog_number: row.catalog_number,
                         release_country: row.release_country,
                         total_discs: row.total_discs.and_then(|total| u32::try_from(total).ok()),
+                        isrcs: row
+                            .isrcs
+                            .as_deref()
+                            .unwrap_or_default()
+                            .split(',')
+                            .filter(|isrc| !isrc.is_empty())
+                            .map(str::to_owned)
+                            .collect(),
                     },
                     row.membership_locked,
                 ))

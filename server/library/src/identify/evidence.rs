@@ -75,6 +75,7 @@ pub fn local_album(
                 .get(&track.local_track_id)
                 .cloned()
                 .unwrap_or_default(),
+            isrcs: track.isrcs.clone(),
         })
         .collect();
     if dropped > 0 {

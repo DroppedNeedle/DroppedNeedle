@@ -101,12 +101,12 @@ pub struct EditionTags {
     pub release_date: Option<String>,
     /// The track total of the file's disc, as [`track_total`] reads it.
     pub total_tracks: Option<u32>,
+    /// The file's well-formed ISRCs, as [`isrcs`] reads them.
+    pub isrcs: Vec<String>,
 }
 
-/// Written by hand so an absent release date or track total prints
-/// nothing. A file's `tag_revision` hashes `AudioTag`'s `Debug` text with
-/// these hints empty, and that text stays what it was before either was
-/// read, so an unchanged file keeps its revision.
+/// Written by hand so an absent release date, track total or ISRC prints
+/// nothing: the text stays what it was before they were read.
 impl std::fmt::Debug for EditionTags {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut out = f.debug_struct("EditionTags");
@@ -120,6 +120,9 @@ impl std::fmt::Debug for EditionTags {
         }
         if let Some(total_tracks) = &self.total_tracks {
             out.field("total_tracks", total_tracks);
+        }
+        if !self.isrcs.is_empty() {
+            out.field("isrcs", &self.isrcs);
         }
         out.finish()
     }
@@ -566,8 +569,26 @@ fn audio_tag_from_values(
             total_discs: total_of(&values_of(ItemKey::DiscTotal)),
             release_date: release_date(tag_type, &values_of),
             total_tracks: track_total(tag_type, &values_of),
+            isrcs: isrcs(&values_of(ItemKey::Isrc)),
         },
     }
+}
+
+/// A file's ISRCs: each value split on `/`, `,` or `;` (an ID3v2.3 frame
+/// holds several joined by `/`), kept only when well formed, uppercased
+/// and without hyphens, each once.
+fn isrcs(values: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for value in values {
+        for part in value.split(['/', ',', ';']) {
+            if let Some(key) = crate::matching::strings::isrc_key(part)
+                && !out.contains(&key)
+            {
+                out.push(key);
+            }
+        }
+    }
+    out
 }
 
 /// A disc total: the part after the slash of "1/2", else the plain number.

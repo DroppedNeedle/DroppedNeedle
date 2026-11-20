@@ -3553,6 +3553,12 @@ fn management_fixtures_read_their_credits() {
         assert_eq!(get(TagField::Work), texts(&["Example Work"]), "{name}");
         assert_eq!(get(TagField::MusicBrainzWorkId), vec![id(7)], "{name}");
         assert_eq!(get(TagField::Isrc), texts(&["GBABC2400001"]), "{name}");
+        // The scan reads the ISRC as an edition tag, which matching uses.
+        let path = fixture(name);
+        let (scanned, _) =
+            tags::read::read_scan_metadata(track_file(&path), format_for_path(&path).unwrap())
+                .unwrap();
+        assert_eq!(scanned.edition.isrcs, ["GBABC2400001"], "{name}");
         assert_eq!(get(TagField::AcoustIdId), vec![id(8)], "{name}");
         assert_eq!(
             get(TagField::AcoustIdFingerprint),

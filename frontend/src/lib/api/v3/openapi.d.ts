@@ -14097,9 +14097,11 @@ export interface components {
              *     `TRACK_ID_CORRECTED` on a kept file whose track ID belongs to
              *     another edition (it is matched by its recording, and the ID is
              *     corrected when the album's MusicBrainz tags are written), or
-             *     `TRACK_ID_ELSEWHERE` on a file that is not kept because its track ID
-             *     belongs to another edition and it has no recording ID. Absent
-             *     otherwise.
+             *     `ISRC_CORRECTED` on a kept file matched by its ISRC because its
+             *     MusicBrainz IDs belong to another release (they are corrected the
+             *     same way), or `TRACK_ID_ELSEWHERE` on a file that is not kept
+             *     because its track ID belongs to another edition and it has no
+             *     recording ID. Absent otherwise.
              */
             note?: null | components["schemas"]["ReasonView"];
             /**
@@ -18593,9 +18595,10 @@ export interface components {
             classification: components["schemas"]["EvidenceClass"];
             /**
              * @description What ties the file to the release track (`embedded_id`, `acoustid`,
-             *     `title_position_length`, or `track_id_elsewhere`: the recording ID,
-             *     on a file whose track ID belongs to another edition), or why it does
-             *     not (`distant_pair`: paired, but not closely). `acoustid_overruled`
+             *     `title_position_length`, `track_id_elsewhere`: the recording ID, on
+             *     a file whose track ID belongs to another edition, or `isrc`: the
+             *     ISRC, on a file whose MusicBrainz IDs belong to another release), or
+             *     why it does not (`distant_pair`: paired, but not closely). `acoustid_overruled`
              *     follows when the file's measured length set aside a fingerprint
              *     that named another track.
              */

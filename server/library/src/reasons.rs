@@ -291,6 +291,11 @@ pub const TRACK_ID_CORRECTED: Reason = reason(
     "This file's track ID belongs to another edition. It is matched by its recording instead, and the right ID is written when DroppedNeedle writes this album's MusicBrainz tags.",
     "Nothing to do.",
 );
+pub const ISRC_CORRECTED: Reason = reason(
+    "ISRC_CORRECTED",
+    "This file's MusicBrainz IDs belong to another release. It is matched by its ISRC instead, and the right IDs are written when DroppedNeedle writes this album's MusicBrainz tags.",
+    "Nothing to do.",
+);
 pub const TRACK_ID_ELSEWHERE: Reason = reason(
     "TRACK_ID_ELSEWHERE",
     "This file names this edition, but its track ID belongs to another edition and it has no recording ID to match it by.",

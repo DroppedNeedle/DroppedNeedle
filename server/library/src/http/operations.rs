@@ -129,9 +129,10 @@ pub struct OperationTrackEvidenceView {
     pub local_track_id: String,
     pub classification: EvidenceClass,
     /// What ties the file to the release track (`embedded_id`, `acoustid`,
-    /// `title_position_length`, or `track_id_elsewhere`: the recording ID,
-    /// on a file whose track ID belongs to another edition), or why it does
-    /// not (`distant_pair`: paired, but not closely). `acoustid_overruled`
+    /// `title_position_length`, `track_id_elsewhere`: the recording ID, on
+    /// a file whose track ID belongs to another edition, or `isrc`: the
+    /// ISRC, on a file whose MusicBrainz IDs belong to another release), or
+    /// why it does not (`distant_pair`: paired, but not closely). `acoustid_overruled`
     /// follows when the file's measured length set aside a fingerprint
     /// that named another track.
     pub evidence_kinds: Vec<String>,

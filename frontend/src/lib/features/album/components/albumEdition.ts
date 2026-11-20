@@ -18,6 +18,8 @@ export interface EditionTrackRow {
 	yourVersionMs: number | null;
 	/** The file's track id is another edition's; the album's one note covers it. */
 	trackIdCorrected: boolean;
+	/** The file's ids are another release's and its ISRC matched it; the album's one note covers it. */
+	isrcCorrected: boolean;
 	note: string | null;
 }
 
@@ -43,17 +45,37 @@ export function isTrackIdCorrected(file: Pick<EditionPlanFile, 'note'>): boolean
 	return file.note?.code === 'TRACK_ID_CORRECTED';
 }
 
-/** The sentence a file's own row shows. A corrected track id has the album's note instead. */
+/** A kept file matched by its ISRC because its ids are another release's. */
+export function isIsrcCorrected(file: Pick<EditionPlanFile, 'note'>): boolean {
+	return file.note?.code === 'ISRC_CORRECTED';
+}
+
+/** The sentence a file's own row shows. Corrected ids have the album's note instead. */
 export function fileNote(file: Pick<EditionPlanFile, 'note'>): string | null {
-	if (!file.note || isTrackIdCorrected(file)) return null;
+	if (!file.note || isTrackIdCorrected(file) || isIsrcCorrected(file)) return null;
 	return FILE_NOTES[file.note.code] ?? file.note.message;
 }
 
-/** One line over the track list for the files whose track id is another edition's. */
-export function trackIdNote(count: number): string | null {
+/** How many files have another edition's track id. */
+function trackIdLine(count: number): string | null {
 	if (count === 0) return null;
 	const files = count === 1 ? '1 file has' : `${count} files have`;
-	return `${files} another edition's track id. Writing this album's MusicBrainz tags fixes this.`;
+	return `${files} another edition's track id.`;
+}
+
+/** How many files were matched by their ISRC. */
+function isrcLine(count: number): string | null {
+	if (count === 0) return null;
+	const files = count === 1 ? '1 file has' : `${count} files have`;
+	const matched = count === 1 ? 'was matched by its ISRC' : 'were matched by their ISRC';
+	return `${files} another release's MusicBrainz ids and ${matched}.`;
+}
+
+/** The album's one line over its track list: each count, then the fix once. */
+export function editionNote(trackIdFiles: number, isrcFiles: number): string | null {
+	const lines = [trackIdLine(trackIdFiles), isrcLine(isrcFiles)].filter(Boolean);
+	if (!lines.length) return null;
+	return `${lines.join(' ')} Writing this album's MusicBrainz tags fixes this.`;
 }
 
 /** The plan's sentence about each file that has one, by track id. */
@@ -91,6 +113,7 @@ export function editionTrackRows(
 			lengthMs: planFile?.length_ms ?? track.length_ms ?? null,
 			yourVersionMs: version ? (version.length_ms ?? null) : null,
 			trackIdCorrected: planFile ? isTrackIdCorrected(planFile) : false,
+			isrcCorrected: planFile ? isIsrcCorrected(planFile) : false,
 			note: planFile ? fileNote(planFile) : null
 		});
 	}

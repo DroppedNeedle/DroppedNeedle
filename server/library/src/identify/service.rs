@@ -40,8 +40,8 @@ use crate::matching::decide::{
 };
 use crate::matching::score::heard_on_candidates;
 use crate::matching::{
-    EditionHints, EditionPrefs, LocalAlbum, Release, ReleaseMatch, ReviewReason, Verdict, decide,
-    match_release,
+    EditionHints, EditionPrefs, LocalAlbum, Release, ReleaseMatch, ReviewReason, Verdict,
+    decide_overruling_ids, match_release,
 };
 
 /// Every dependency the identify service needs, injected by constructor.
@@ -671,7 +671,7 @@ impl IdentifyService {
     ) -> (Ranking, Decision) {
         let heard = heard_on_candidates(&recall.fingerprint_support, &recall.releases);
         let local = local_album(facts, &heard);
-        let matches: Vec<_> = recall
+        let mut matches: Vec<_> = recall
             .releases
             .iter()
             .map(|release| {
@@ -692,7 +692,14 @@ impl IdentifyService {
                 .release_group_id
                 .eq_ignore_ascii_case(group)
         };
-        let verdict = decide(&local, &recall.releases, &matches, prefs);
+        let verdict = decide_overruling_ids(
+            &local,
+            &recall.releases,
+            &mut matches,
+            &recall.recording_aliases,
+            prefs,
+        );
+        let matches = matches;
         let ids = edition_ids(facts);
         let keep = |index: usize, confirmed: bool| -> usize {
             let Some(held_release) = held.release.as_deref() else {

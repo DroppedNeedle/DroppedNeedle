@@ -246,6 +246,97 @@ async fn a_rescan_of_unchanged_files_offers_nothing() {
     );
 }
 
+/// Rows stored before ISRCs were kept hold none. An album whose files' ids
+/// ruled every candidate out has its files' ISRCs read by the next scan,
+/// once, and is looked at again once. Any other album's ISRCs wait for its
+/// files' next read, and a Rescan files reading them offers nothing.
+#[tokio::test]
+async fn a_stuck_album_has_its_isrcs_read_and_looked_at_once() {
+    let scratch = ScratchDir::new("scan-isrc-fill");
+    plant(
+        &scratch.join("music"),
+        "Album/01.flac",
+        "management_full.flac",
+    );
+    let library = bundle(&scratch).await;
+    scan(&library).await;
+    let db = library.scan_store.db();
+    let historical = || {
+        query(
+            &library,
+            "SELECT COUNT(*) FROM library_identify_jobs WHERE kind = 'historical'",
+        )
+    };
+    let stored = || {
+        query(
+            &library,
+            "SELECT COUNT(*) FROM local_track_edition_tags WHERE isrcs = 'GBABC2400001'",
+        )
+    };
+
+    db.run_sql(
+        "UPDATE local_track_edition_tags SET isrcs = NULL; DELETE FROM library_identify_jobs",
+    )
+    .expect("rows from before ISRCs were kept");
+    let run = scan_as(&library, ScanKind::RescanFiles).await;
+    assert_eq!(count(&run, Counter::Unchanged), 1);
+    assert_eq!(stored(), 1, "a full read stores the ISRCs");
+    assert_eq!(
+        query(&library, "SELECT COUNT(*) FROM library_identify_jobs"),
+        0,
+        "reading ISRCs into a row that had none is no change"
+    );
+
+    db.run_sql(
+        "UPDATE local_track_edition_tags SET isrcs = NULL; \
+         INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         updated_at) SELECT local_album_id, 'unmatched', 'CONFLICTING_TRACK_EVIDENCE', 0 \
+         FROM local_tracks",
+    )
+    .expect("a stuck album");
+    let run = scan(&library).await;
+    assert_eq!(count(&run, Counter::Unchanged), 1);
+    assert_eq!(stored(), 1, "the stuck album's ISRCs are read");
+    assert_eq!(historical(), 1, "the stuck album is looked at again");
+
+    db.run_sql("UPDATE library_identify_jobs SET state = 'succeeded'")
+        .expect("the look ran");
+    scan(&library).await;
+    assert_eq!(
+        historical(),
+        1,
+        "a filled file is not read or offered again"
+    );
+
+    // Jobs already done keep keys of their own, so only the rule below
+    // can keep a new look from being queued.
+    let rekey = "UPDATE local_track_edition_tags SET isrcs = NULL; \
+                 UPDATE library_identify_jobs SET state = 'succeeded', \
+                 idempotency_key = 'done-' || id";
+    db.run_sql(rekey).expect("ISRCs unread again");
+    let run = scan_as(&library, ScanKind::RescanFiles).await;
+    assert_eq!(count(&run, Counter::IdentificationEnqueued), 1);
+    assert_eq!(historical(), 2, "a Rescan files reading them offers it too");
+
+    // A day that has had its 20 backlog looks queues no more.
+    db.run_sql(
+        "UPDATE library_identify_jobs SET created_at = 4102444800000; \
+         INSERT INTO library_identify_jobs (id, local_album_id, kind, priority, state, \
+         input_revision, idempotency_key, created_at, updated_at) \
+         SELECT 'filler-' || n.value, j.local_album_id, 'historical', j.priority, \
+         'succeeded', j.input_revision, 'filler-' || n.value, 4102444800000, 0 \
+         FROM library_identify_jobs j, \
+         json_each('[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]') n \
+         WHERE j.id = (SELECT min(id) FROM library_identify_jobs)",
+    )
+    .expect("the day's looks taken");
+    assert_eq!(historical(), 20);
+    db.run_sql(rekey).expect("ISRCs unread again");
+    scan(&library).await;
+    assert_eq!(stored(), 1, "the ISRCs are still read");
+    assert_eq!(historical(), 20, "past the day's limit nothing is queued");
+}
+
 /// A carried file's first full read after the upgrade may be a Rescan
 /// files: an unsettled album whose files carry edition hints is still
 /// looked up again, as the scan's fill of those hints would.

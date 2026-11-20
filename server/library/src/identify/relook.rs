@@ -12,7 +12,7 @@
 //! are albums with a job waiting, running or in Attention.
 
 use droppedneedle_kernel::db::{Db, DbError, Lane};
-use rusqlite::params;
+use rusqlite::{Connection, params};
 
 use super::queue::offer_again;
 
@@ -25,15 +25,22 @@ const DAY_MS: i64 = 86_400_000;
 /// after every later one.
 pub const WAITS_MS: [i64; 5] = [DAY_MS, 3 * DAY_MS, 7 * DAY_MS, 14 * DAY_MS, 30 * DAY_MS];
 
+/// How many more backlog looks [`PER_DAY`] leaves room for at `now_ms`:
+/// every backlog job queued in the last 24 hours counts. Runs inside the
+/// caller's transaction.
+pub(crate) fn backlog_room(conn: &Connection, now_ms: i64) -> rusqlite::Result<i64> {
+    let queued: i64 = conn
+        .prepare_cached(super::sql::BACKLOG_QUEUED_SINCE.text())?
+        .query_row(params![now_ms - DAY_MS], |row| row.get(0))?;
+    Ok(PER_DAY - queued)
+}
+
 /// Offer the albums due another look at `now_ms` to identification, in one
 /// write, as many as the day's [`PER_DAY`] still allows. Answers how many
 /// were offered. Blocking.
 pub fn look_again(db: &Db, now_ms: i64) -> Result<usize, DbError> {
     db.write_blocking(Lane::Background, "identify.look_again", |tx| {
-        let queued: i64 = tx
-            .prepare_cached(super::sql::BACKLOG_QUEUED_SINCE.text())?
-            .query_row(params![now_ms - DAY_MS], |row| row.get(0))?;
-        let room = PER_DAY - queued;
+        let room = backlog_room(tx, now_ms)?;
         if room <= 0 {
             return Ok(0);
         }

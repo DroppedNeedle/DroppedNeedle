@@ -357,9 +357,11 @@ pub struct EditionPlanFileView {
     /// `TRACK_ID_CORRECTED` on a kept file whose track ID belongs to
     /// another edition (it is matched by its recording, and the ID is
     /// corrected when the album's MusicBrainz tags are written), or
-    /// `TRACK_ID_ELSEWHERE` on a file that is not kept because its track ID
-    /// belongs to another edition and it has no recording ID. Absent
-    /// otherwise.
+    /// `ISRC_CORRECTED` on a kept file matched by its ISRC because its
+    /// MusicBrainz IDs belong to another release (they are corrected the
+    /// same way), or `TRACK_ID_ELSEWHERE` on a file that is not kept
+    /// because its track ID belongs to another edition and it has no
+    /// recording ID. Absent otherwise.
     pub note: Option<ReasonView>,
     /// A person matched this file to its edition track by hand, and the
     /// match stands: "Undo match" can take it back.

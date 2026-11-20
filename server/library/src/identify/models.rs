@@ -353,6 +353,9 @@ pub struct LocalTrackFacts {
     pub release_country: Option<String>,
     #[serde(default)]
     pub total_discs: Option<u32>,
+    /// The file's ISRCs, as the scan stored them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub isrcs: Vec<String>,
 }
 
 /// How sure identification is of an album's match, when it is not sure.

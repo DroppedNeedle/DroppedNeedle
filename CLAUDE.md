@@ -713,6 +713,15 @@ Run from the repo root. `make help` lists every target.
   A locked file whose tags now give the key its album's other files were
   retagged to counts as retagged with them: it stays on its album, and
   the album follows the retag.
+- A file whose release id names a release, but whose recording and track
+  ids are on none of its tracks, is matched by its ISRC when a track of
+  that release carries it, the title fits, and the length is within 10 s
+  (the track number when a length is unknown). Its ids are treated as a
+  tagging mistake, as a wrong track id is, and such a match is accepted. On
+  any other release they still veto, a track id on the release keeps its
+  veto, and the ISRC never stands in as proof for the name gate or a live
+  or compilation edition. It is tried only when no release fits without
+  it, so an album that matches without it matches the same way.
 - A release MusicBrainz will not give in a readable form is never
   evidence: identification waits and retries rather than marking an
   album unmatched, and an unreadable tagged release leaves only an

@@ -49,6 +49,7 @@ use crate::corrections::release_join::{Verdict, join_replaced, judge};
 use crate::corrections::retag_merge::{JoinCause, MergeOutcome, album_has_record, merge_retagged};
 use crate::identify::artist_links::{mark_stale, placeholder};
 use crate::identify::queue::offer_again;
+use crate::identify::relook::backlog_room;
 use crate::identify::sqlite::{
     chosen_matches_differ, match_chosen, offer_album, release_chosen, retarget_references,
     settle_followed_match,
@@ -372,6 +373,9 @@ struct AtPath {
     catalog_number: Option<String>,
     release_country: Option<String>,
     total_discs: Option<i64>,
+    /// The stored ISRCs, joined; `None` when the row was stored before
+    /// they were read.
+    isrcs: Option<String>,
 }
 
 /// A file's length and stream properties, as stored or as read.
@@ -457,6 +461,9 @@ struct Written {
     /// first edition hints of a file unchanged on disk, as the scan's
     /// fill of those hints does.
     relook: Option<String>,
+    /// The album whose files' ids ruled every candidate out, when this
+    /// read of a file unchanged on disk stored its first ISRCs.
+    stuck: Option<String>,
 }
 
 /// Whether the file now at `row`'s path is other music, not the track the
@@ -1173,6 +1180,7 @@ fn write_item(
                 catalog_number: row.catalog_number,
                 release_country: row.release_country,
                 total_discs: row.total_discs,
+                isrcs: row.isrcs,
             })
         })
         .optional()?;
@@ -1441,14 +1449,27 @@ fn write_item(
             .map(str::to_owned)
     };
     let edition = &tag.edition;
+    let isrcs = edition.isrcs.join(",");
+    // ISRCs count only against a row that has them: one stored before
+    // they were read is no change, or every file would count as one.
     let hints_differ = |row: &AtPath| {
         row.has_edition_tags
             && (id(&row.media) != id(&edition.media)
                 || id(&row.barcode) != id(&edition.barcode)
                 || id(&row.catalog_number) != id(&edition.catalog_number)
                 || id(&row.release_country) != id(&edition.release_country)
-                || row.total_discs != edition.total_discs.map(i64::from))
+                || row.total_discs != edition.total_discs.map(i64::from)
+                || row.isrcs.as_deref().is_some_and(|stored| stored != isrcs))
     };
+    // A full read that stores a file's first ISRCs offers a stuck album
+    // as the scan's fill of them does.
+    let first_isrcs = continued
+        .as_ref()
+        .is_some_and(|row| row.has_edition_tags && row.isrcs.is_none())
+        && run_id.is_some()
+        && item.verdict_counter == Counter::Unchanged.column()
+        && item.effective_policy == EffectivePolicy::Automatic
+        && !edition.isrcs.is_empty();
     let first_hints = continued.as_ref().is_some_and(|row| !row.has_edition_tags)
         && run_id.is_some()
         && item.verdict_counter == Counter::Unchanged.column()
@@ -1522,9 +1543,17 @@ fn write_item(
             edition.total_discs,
             edition.release_date,
             track_total(edition),
+            isrcs,
         ])?;
     let relook = if first_hints {
         tx.prepare_cached(crate::scan::sql::UNSETTLED_ALBUM_OF_TRACK.text())?
+            .query_row(params![track_id], |row| row.get::<_, String>(0))
+            .optional()?
+    } else {
+        None
+    };
+    let stuck = if first_isrcs {
+        tx.prepare_cached(crate::scan::sql::STUCK_ALBUM_OF_TRACK.text())?
             .query_row(params![track_id], |row| row.get::<_, String>(0))
             .optional()?
     } else {
@@ -1615,6 +1644,7 @@ fn write_item(
         renamed,
         reread_changed,
         relook,
+        stuck,
     })
 }
 
@@ -2963,6 +2993,7 @@ fn write_window(
     let mut adjust: Vec<(Counter, i64)> = Vec::new();
     let mut offered: Vec<String> = Vec::new();
     let mut relooked: Vec<String> = Vec::new();
+    let mut stuck_read: Vec<String> = Vec::new();
     // Albums with a changed file the app has a record of: automatic
     // management looks at them soon, to see who changed it.
     let mut changed: Vec<String> = Vec::new();
@@ -2996,6 +3027,7 @@ fn write_window(
                 renamed: renamed_by_retag,
                 reread_changed,
                 relook: first_hints,
+                stuck: first_isrcs,
             }) => {
                 let changed_on_record = item.verdict_counter == Counter::Changed.column()
                     && takeover::has_record(tx, &track_id)?;
@@ -3044,6 +3076,7 @@ fn write_window(
                     offered.push(album_id);
                 }
                 relooked.extend(first_hints);
+                stuck_read.extend(first_isrcs);
                 emptied.extend(moved_from);
                 outcome.committed += 1;
             }
@@ -3138,13 +3171,33 @@ fn write_window(
         .filter(|fill| !is_fenced(&fill.root_id, &fill.relative_path))
         .cloned()
         .collect();
-    let (filled, mut relook) = fill_edition_tags(tx, &edition_fills)?;
+    let EditionFilled {
+        filled,
+        mut relook,
+        mut stuck,
+    } = fill_edition_tags(tx, &edition_fills)?;
+    stuck.append(&mut stuck_read);
+    stuck.sort();
+    stuck.dedup();
     relook.append(&mut relooked);
     relook.sort();
     relook.dedup();
     let measured = fill_length_measured(tx, &length_fills)?;
     for album_id in &relook {
         if !held_back(tx, &window.run_id, album_id)? && offer_again(tx, album_id, now_ms)? {
+            outcome.enqueued += 1;
+        }
+    }
+    // A stuck album whose files' ISRCs were just read takes one of the
+    // day's backlog looks; past the day's limit the look-again sweep
+    // reaches it.
+    let mut room = backlog_room(tx, now_ms)?;
+    for album_id in stuck.iter().filter(|album_id| !relook.contains(album_id)) {
+        if room <= 0 {
+            break;
+        }
+        if !held_back(tx, &window.run_id, album_id)? && offer_again(tx, album_id, now_ms)? {
+            room -= 1;
             outcome.enqueued += 1;
         }
     }
@@ -3213,15 +3266,23 @@ fn track_total(edition: &crate::tags::read::EditionTags) -> u32 {
     edition.total_tracks.unwrap_or(0)
 }
 
+/// What [`fill_edition_tags`] stored.
+struct EditionFilled {
+    /// How many writes stored something.
+    filled: usize,
+    /// Albums without a settled match that gained a hint, which
+    /// identification looks at again.
+    relook: Vec<String>,
+    /// Albums whose files' ids ruled every candidate out that gained a
+    /// file's ISRCs, which identification looks at again within the day's
+    /// backlog looks.
+    stuck: Vec<String>,
+}
+
 /// Store the edition hints read from unchanged files whose rows held none,
-/// or held no track total.
+/// or held no track total or no ISRCs.
 /// Only those rows are written: the rest of a carried row stays as it is.
-/// Returns how many rows were stored, and the albums without a settled
-/// match that gained a hint, which identification looks at again.
-fn fill_edition_tags(
-    tx: &Connection,
-    fills: &[EditionFill],
-) -> rusqlite::Result<(usize, Vec<String>)> {
+fn fill_edition_tags(tx: &Connection, fills: &[EditionFill]) -> rusqlite::Result<EditionFilled> {
     let blank = |value: &Option<String>| {
         value
             .as_deref()
@@ -3231,8 +3292,10 @@ fn fill_edition_tags(
     };
     let mut filled = 0;
     let mut relook: Vec<String> = Vec::new();
+    let mut stuck: Vec<String> = Vec::new();
     for fill in fills {
         let edition = &fill.edition;
+        let isrcs = edition.isrcs.join(",");
         let (media, barcode, catalog_number, release_country) = (
             blank(&edition.media),
             blank(&edition.barcode),
@@ -3251,8 +3314,10 @@ fn fill_edition_tags(
                 edition.total_discs,
                 edition.release_date,
                 track_total(edition),
+                isrcs,
             ])?;
         filled += stored;
+        let mut isrcs_stored = stored;
         if stored == 0 {
             filled += tx
                 .prepare_cached(crate::scan::sql::FILL_TRACK_TOTAL.text())?
@@ -3261,6 +3326,20 @@ fn fill_edition_tags(
                     fill.stat_revision,
                     track_total(edition)
                 ])?;
+            isrcs_stored = tx
+                .prepare_cached(crate::scan::sql::FILL_ISRCS.text())?
+                .execute(params![fill.track_id, fill.stat_revision, isrcs])?;
+            filled += isrcs_stored;
+        }
+        if isrcs_stored > 0
+            && !edition.isrcs.is_empty()
+            && fill.effective_policy == EffectivePolicy::Automatic
+            && let Some(album_id) = tx
+                .prepare_cached(crate::scan::sql::STUCK_ALBUM_OF_TRACK.text())?
+                .query_row(params![fill.track_id], |row| row.get::<_, String>(0))
+                .optional()?
+        {
+            stuck.push(album_id);
         }
         // Only what edition matching reads counts: it takes no release
         // date, and a disc total only when there is more than one disc.
@@ -3286,7 +3365,13 @@ fn fill_edition_tags(
     }
     relook.sort();
     relook.dedup();
-    Ok((filled, relook))
+    stuck.sort();
+    stuck.dedup();
+    Ok(EditionFilled {
+        filled,
+        relook,
+        stuck,
+    })
 }
 
 /// Record whether each unchanged file's length was measured, on rows

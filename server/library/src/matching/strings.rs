@@ -409,6 +409,26 @@ fn contains(outer: &[String], inner: &[String]) -> bool {
     })
 }
 
+/// An ISRC as matching compares it: trimmed, uppercased and without
+/// hyphens or spaces, when it has the ISRC shape (two letters, three
+/// letters or digits, seven digits). Anything else is none.
+pub fn isrc_key(raw: &str) -> Option<String> {
+    let key: String = raw
+        .trim()
+        .chars()
+        .filter(|character| *character != '-' && *character != ' ')
+        .map(|character| character.to_ascii_uppercase())
+        .collect();
+    let bytes = key.as_bytes();
+    let well_formed = bytes.len() == 12
+        && bytes[..2].iter().all(u8::is_ascii_uppercase)
+        && bytes[2..5]
+            .iter()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        && bytes[5..].iter().all(u8::is_ascii_digit);
+    well_formed.then_some(key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

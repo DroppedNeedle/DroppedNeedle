@@ -36,7 +36,12 @@
 		getAlbumEditionStatusQuery,
 		getEditionPlanQuery
 	} from '$lib/features/library/queries/EditionQueries.svelte';
-	import { isTrackIdCorrected, notesByFile, trackIdNote } from './albumEdition';
+	import {
+		editionNote as noteOver,
+		isIsrcCorrected,
+		isTrackIdCorrected,
+		notesByFile
+	} from './albumEdition';
 	import AddToPlaylistModal from '$lib/features/playlists/components/AddToPlaylistModal.svelte';
 	import { getTrackContextMenuItems } from './albumPlaybackHandlers';
 	import type { QueueItem } from '$lib/features/player/playback/types';
@@ -94,7 +99,10 @@
 	);
 	const fileNotes = $derived(editionPlan ? notesByFile(editionPlan) : undefined);
 	const editionNote = $derived(
-		trackIdNote(editionPlan?.files.filter(isTrackIdCorrected).length ?? 0)
+		noteOver(
+			editionPlan?.files.filter(isTrackIdCorrected).length ?? 0,
+			editionPlan?.files.filter(isIsrcCorrected).length ?? 0
+		)
 	);
 
 	function play(shuffle: boolean): void {

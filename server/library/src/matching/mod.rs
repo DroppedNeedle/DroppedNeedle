@@ -11,10 +11,12 @@
 //! scores into a verdict with fixed thresholds, MBID vetoes, and edition
 //! preferences ([`decide`], which documents the numbers).
 
-pub use decide::{EditionPrefs, ReviewReason, Verdict, decide, should_fingerprint};
+pub use decide::{
+    EditionPrefs, ReviewReason, Verdict, decide, decide_overruling_ids, should_fingerprint,
+};
 pub use distance::{Distance, PenaltyShare};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
-pub use score::{ReleaseMatch, Support, match_release, unknown_recordings};
+pub use score::{ReleaseMatch, Support, match_release, match_release_by_isrc, unknown_recordings};
 
 pub mod assign;
 pub mod decide;

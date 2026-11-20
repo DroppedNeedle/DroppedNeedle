@@ -1477,5 +1477,34 @@
         {"local_track_id": "t12", "title": "Ain’t No Mountain High Enough", "artist_name": "Marvin Gaye & Tammi Terrell", "track_number": 12, "disc_number": 1, "duration_secs": 149, "duration_exact": 149.013, "recording_mbid": "b04b5028-da5b-4f05-bfe3-4f8f80396d98", "release_track_mbid": "1a991c24-eda3-4e25-baa2-533cafc47a8d", "release_mbid": "e02022fc-2f0d-40fa-99ff-c2b9d06d2b3b", "release_group_mbid": "950092d6-45f6-4269-87da-99a9ff2fcc52", "media": "Enhanced CD", "barcode": "050087310851", "catalog_number": "D002054602", "release_country": "US", "total_discs": 1}
       ]
     }
+  },
+  {
+    "key": "permanent-vacation-wrong-ids",
+    "why": "8 of 12 files name the right release but carry another release's recording and track ids, as reported Deezer rips do; their ISRCs are the release's",
+    "truth": {"release_group": "c522e905-3986-3f09-89f3-5d8bb09cc93e", "release": "7a161dde-aa57-3292-9e87-ba512f0201b6"},
+    "tagged": {"verdict": "exact", "release": "7a161dde-aa57-3292-9e87-ba512f0201b6"},
+    "stripped": {"verdict": "group", "release": "0e7cc370-f19c-4f01-8644-25beec263ccf", "known_miss": "without ids, editions with the same tracklist cannot be told apart"},
+    "facts": {
+      "local_album_id": "permanent-vacation-wrong-ids",
+      "title": "Permanent Vacation",
+      "album_artist_name": "Aerosmith",
+      "year": 1987,
+      "is_compilation": false,
+      "locked_track_ids": [],
+      "tracks": [
+        {"local_track_id": "t01", "title": "Heart's Done Time", "artist_name": "Aerosmith", "track_number": 1, "disc_number": 1, "duration_secs": 284, "duration_exact": 284.293, "duration_measured": true, "recording_mbid": "338168b3-22b2-4f83-9174-b384a450d266", "release_track_mbid": "72eb5404-4a6d-54c4-b068-8d516c9dc741", "release_mbid": "7a161dde-aa57-3292-9e87-ba512f0201b6", "isrcs": ["USGF18716201"]},
+        {"local_track_id": "t02", "title": "Magic Touch", "artist_name": "Aerosmith", "track_number": 2, "disc_number": 1, "duration_secs": 277, "duration_exact": 277.733, "duration_measured": true, "recording_mbid": "830ad0bf-4e6d-4411-b2e3-2b421c00f98c", "release_track_mbid": "a675896f-4223-39f0-bf58-0ff9130aa5d5", "release_mbid": "7a161dde-aa57-3292-9e87-ba512f0201b6", "isrcs": ["USIR10000452"]},
+        {"local_track_id": "t03", "title": "Rag Doll", "artist_name": "Aerosmith", "track_number": 3, "disc_number": 1, "duration_secs": 266, "duration_exact": 266.84, "duration_measured": true, "recording_mbid": "dece27f4-4be5-56d3-9a7d-fc320e80e355", "release_track_mbid": "20fffdd0-e686-5834-a25a-a90d252da1bb", "release_mbid": "7a161dde-aa57-3292-9e87-ba512f0201b6", "isrcs": ["USGF18716203"]},
+        {"local_track_id": "t04", "title": "Simoriah", "artist_name": "Aerosmith", "track_number": 4, "disc_number": 1, "duration_secs": 202, "duration_exact": 202.56, "duration_measured": true, "recording_mbid": "4620edb3-7594-50de-87a9-d5273e5c4bda", "release_track_mbid": "4e5808e9-6f11-5301-b227-77c271a48472", "release_mbid": "7a161dde-aa57-3292-9e87-ba512f0201b6", "isrcs": ["USIR10000453"]},
+        {"local_track_id": "t05", "title": "Dude (Looks Like a Lady)", "artist_name": "Aerosmith", "track_number": 5, "disc_number": 1, "duration_secs": 267, "duration_exact": 267.24, "duration_measured": true, "recording_mbid": "494aa13c-f4aa-554e-8d4b-85d26a047380", "release_track_mbid": "da2b5ef9-cef2-564c-b5bd-503f4c7baa88", "release_mbid": "7a161dde-aa57-3292-9e87-ba512f0201b6", "isrcs": ["USIR10000454"]},
+        {"local_track_id": "t06", "title": "St. John", "artist_name": "Aerosmith", "track_number": 6, "disc_number": 1, "duration_secs": 250, "duration_exact": 250.36, "duration_measured": true, "recording_mbid": "eb4ad590-1d3c-41ca-86d6-edddb0f23bf0", "release_track_mbid": "02099da0-0b62-3bdf-a6c4-3fc183418ddd", "release_mbid": "7a161dde-aa57-3292-9e87-ba512f0201b6", "isrcs": ["USIR10000455"]},
+        {"local_track_id": "t07", "title": "Hangman Jury", "artist_name": "Aerosmith", "track_number": 7, "disc_number": 1, "duration_secs": 331, "duration_exact": 331.6, "duration_measured": true, "recording_mbid": "d991e952-0dab-53d3-ab57-b44b21f9c750", "release_track_mbid": "ecc1919e-fced-5338-ba81-1320ede1b4cc", "release_mbid": "7a161dde-aa57-3292-9e87-ba512f0201b6", "isrcs": ["USGF18716207"]},
+        {"local_track_id": "t08", "title": "Girl Keeps Coming Apart", "artist_name": "Aerosmith", "track_number": 8, "disc_number": 1, "duration_secs": 254, "duration_exact": 254.04, "duration_measured": true, "recording_mbid": "5a468523-bced-588b-9984-073377b11c85", "release_track_mbid": "a304941d-3b9b-5479-bd98-d7937ee191cd", "release_mbid": "7a161dde-aa57-3292-9e87-ba512f0201b6", "isrcs": ["USIR10000456"]},
+        {"local_track_id": "t09", "title": "Angel", "artist_name": "Aerosmith", "track_number": 9, "disc_number": 1, "duration_secs": 310, "duration_exact": 310.0, "duration_measured": true, "recording_mbid": "8e491242-cd73-41fa-9d95-ba54527b9854", "release_track_mbid": "8f513d73-c3d8-36ee-85b2-405dfed9e624", "release_mbid": "7a161dde-aa57-3292-9e87-ba512f0201b6", "isrcs": ["USIR10000457"]},
+        {"local_track_id": "t10", "title": "Permanent Vacation", "artist_name": "Aerosmith", "track_number": 10, "disc_number": 1, "duration_secs": 295, "duration_exact": 295.226, "duration_measured": true, "recording_mbid": "58372914-983f-5fd6-bfa7-2e6ef16fface", "release_track_mbid": "fa4b19b1-ef83-5215-9c0f-76890bbc28bb", "release_mbid": "7a161dde-aa57-3292-9e87-ba512f0201b6", "isrcs": ["USIR10000458"]},
+        {"local_track_id": "t11", "title": "I'm Down", "artist_name": "Aerosmith", "track_number": 11, "disc_number": 1, "duration_secs": 140, "duration_exact": 140.44, "duration_measured": true, "recording_mbid": "747b8e08-2a44-4808-92a9-9ee10bbb4448", "release_track_mbid": "3ef476f2-717f-3416-a50d-124baf68c774", "release_mbid": "7a161dde-aa57-3292-9e87-ba512f0201b6", "isrcs": ["USIR10000459"]},
+        {"local_track_id": "t12", "title": "The Movie", "artist_name": "Aerosmith", "track_number": 12, "disc_number": 1, "duration_secs": 240, "duration_exact": 240.293, "duration_measured": true, "recording_mbid": "bda511f1-6d87-54b0-9f2e-0214a21be090", "release_track_mbid": "fc9945d8-bfe4-57fd-b1fe-cee6252b20f7", "release_mbid": "7a161dde-aa57-3292-9e87-ba512f0201b6", "isrcs": ["USIR10000460"]}
+      ]
+    }
   }
 ]

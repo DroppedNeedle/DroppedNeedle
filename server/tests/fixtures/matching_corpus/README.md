@@ -22,6 +22,13 @@ library has none of. Its facts were built on 2026-10-30 from its recorded
 release (the US CD, `e02022fc`): the release's titles, track credits, ids,
 edition tags and track lengths, as a tagger writes them.
 
+`permanent-vacation-wrong-ids` was built on 2026-11-19 from its recorded
+release (the US CD, `7a161dde`), after a report of ripped files that came
+out with no match: eight of its twelve files name that release but carry
+another release's recording and track ids (file 1 the recording the report
+named, the others ids MusicBrainz does not have), and every file carries
+its track's ISRC. It names no release group.
+
 ## Files
 
 - `albums.json`: one entry per album.
@@ -50,7 +57,9 @@ edition tags and track lengths, as a tagger writes them.
   line, keyed by the exact request URL on the BrainzMash mirror, trimmed to
   what matching reads. MusicBrainz data is CC0. Release search pages
   recorded before 2026-10-22 carry no hit titles; only the loose word
-  search reads them, and its answers were recorded after that.
+  search reads them, and its answers were recorded after that. Release
+  lookups recorded before 2026-11-19 carry no ISRCs; later ones keep the
+  recordings' ISRCs.
 - `acoustid.json`: per album, the app's own Chromaprint of each file
   (`generate_fingerprint`, track id, seconds) and AcoustID's answer to the
   batch lookup of them (`POST https://api.acoustid.org/v2/lookup`,

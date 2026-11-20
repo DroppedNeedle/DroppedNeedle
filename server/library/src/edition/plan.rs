@@ -24,8 +24,8 @@ use crate::matching::model::{Release, credit_text};
 use crate::matching::score::{ConflictKind, LENGTH_GRACE_SECS, LENGTH_MAX_SECS, Support};
 use crate::matching::strings::fold;
 use crate::reasons::Reason;
-use crate::reasons::TRACK_ID_CORRECTED;
 use crate::reasons::TRACK_ID_ELSEWHERE;
+use crate::reasons::{ISRC_CORRECTED, TRACK_ID_CORRECTED};
 use crate::reidentify::models::ReidentificationCandidate;
 
 /// What happens to one file when the album takes the edition. Choosing
@@ -574,6 +574,7 @@ fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// The note for a file whose track id belongs to another edition: set
 /// aside when the file is kept by its recording, in the way when it is not.
+/// A file kept by its ISRC, whose ids are another release's, says so.
 fn note_for(
     candidate: &ReidentificationCandidate,
     track_id: &str,
@@ -585,9 +586,18 @@ fn note_for(
         .iter()
         .find(|evidence| evidence.local_track_id == track_id)?
         .evidence_kinds;
+    note_of(kinds, fate)
+}
+
+/// [`note_for`] over the evidence kinds of the file's pair.
+fn note_of(kinds: &[String], fate: FileFate) -> Option<Reason> {
     let has = |code: &str| kinds.iter().any(|kind| kind == code);
     if fate == FileFate::Keep {
-        has(Support::TrackIdElsewhere.code()).then_some(TRACK_ID_CORRECTED)
+        if has(Support::Isrc.code()) {
+            Some(ISRC_CORRECTED)
+        } else {
+            has(Support::TrackIdElsewhere.code()).then_some(TRACK_ID_CORRECTED)
+        }
     } else {
         has(ConflictKind::ReleaseTrack.code()).then_some(TRACK_ID_ELSEWHERE)
     }
@@ -713,6 +723,22 @@ mod tests {
                     .map(|track| (file.local_track_id, track.disc, track.position))
             })
             .collect()
+    }
+
+    /// A kept file matched by its ISRC is told apart from one matched by
+    /// its recording, since its recording id is the wrong one too.
+    #[test]
+    fn a_kept_file_says_what_corrected_its_ids() {
+        let note = |kind: &str, fate| note_of(&[kind.to_owned()], fate).map(|reason| reason.code);
+        assert_eq!(
+            note(Support::Isrc.code(), FileFate::Keep),
+            Some(ISRC_CORRECTED.code)
+        );
+        assert_eq!(
+            note(Support::TrackIdElsewhere.code(), FileFate::Keep),
+            Some(TRACK_ID_CORRECTED.code)
+        );
+        assert_eq!(note(Support::Isrc.code(), FileFate::Extra), None);
     }
 
     fn free(count: u32) -> Vec<Track> {

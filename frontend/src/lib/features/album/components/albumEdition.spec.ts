@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { EditionPlan } from '$lib/features/library/queries/EditionQueries.svelte';
 import type { LocalTrackInfo } from '$lib/features/album/queries/types';
-import { placeOnEdition } from './albumEdition';
+import { editionNote, fileNote, placeOnEdition } from './albumEdition';
 import { buildSortedTrackMap, resolveSourceTrack } from './albumTrackResolvers';
 
 type PlanTrack = EditionPlan['tracks'][number];
@@ -75,5 +75,22 @@ describe('placeOnEdition', () => {
 		const ids = placed.map((t) => t.track_file_id);
 		expect(ids).not.toContain('f24');
 		expect(ids).not.toContain('f25');
+	});
+});
+
+describe('the ISRC note', () => {
+	it('gives a file matched by its ISRC no row note and counts it in one line over the tracks', () => {
+		const note = { code: 'ISRC_CORRECTED', message: 'Server text', action: 'Nothing to do.' };
+		expect(fileNote({ note })).toBeNull();
+		expect(editionNote(0, 3)).toBe(
+			"3 files have another release's MusicBrainz ids and were matched by their ISRC. Writing this album's MusicBrainz tags fixes this."
+		);
+		expect(editionNote(1, 0)).toBe(
+			"1 file has another edition's track id. Writing this album's MusicBrainz tags fixes this."
+		);
+		expect(editionNote(1, 7)).toBe(
+			"1 file has another edition's track id. 7 files have another release's MusicBrainz ids and were matched by their ISRC. Writing this album's MusicBrainz tags fixes this."
+		);
+		expect(editionNote(0, 0)).toBeNull();
 	});
 });

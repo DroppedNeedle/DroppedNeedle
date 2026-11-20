@@ -17,7 +17,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import AlbumSourceBars from './AlbumSourceBars.svelte';
 	import AlbumTrackList from './AlbumTrackList.svelte';
-	import { trackIdNote } from './albumEdition';
+	import { editionNote as noteOver } from './albumEdition';
 	import AlbumDiscovery from './AlbumDiscovery.svelte';
 	import WhereToBuy from './WhereToBuy.svelte';
 	import AlbumPluginDetails from './AlbumPluginDetails.svelte';
@@ -80,11 +80,13 @@
 	);
 	const rate = createSetRatingMutation();
 	const heart = createSetFavoriteMutation();
-	const editionNote = $derived(
-		trackIdNote(
-			[...(state.editionRows?.values() ?? [])].filter((row) => row.trackIdCorrected).length
-		)
-	);
+	const editionNote = $derived.by(() => {
+		const rows = [...(state.editionRows?.values() ?? [])];
+		return noteOver(
+			rows.filter((row) => row.trackIdCorrected).length,
+			rows.filter((row) => row.isrcCorrected).length
+		);
+	});
 	const primaryError = $derived(state.primaryError);
 	const albumNotFound = $derived(primaryError instanceof ApiError && primaryError.status === 404);
 	const providerUnavailable = $derived.by(() => {

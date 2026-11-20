@@ -45379,7 +45379,7 @@
                 "$ref": "#/components/schemas/ReasonView"
               }
             ],
-            "description": "A sentence about the file's tags, when they need one:\n`TRACK_ID_CORRECTED` on a kept file whose track ID belongs to\nanother edition (it is matched by its recording, and the ID is\ncorrected when the album's MusicBrainz tags are written), or\n`TRACK_ID_ELSEWHERE` on a file that is not kept because its track ID\nbelongs to another edition and it has no recording ID. Absent\notherwise."
+            "description": "A sentence about the file's tags, when they need one:\n`TRACK_ID_CORRECTED` on a kept file whose track ID belongs to\nanother edition (it is matched by its recording, and the ID is\ncorrected when the album's MusicBrainz tags are written), or\n`ISRC_CORRECTED` on a kept file matched by its ISRC because its\nMusicBrainz IDs belong to another release (they are corrected the\nsame way), or `TRACK_ID_ELSEWHERE` on a file that is not kept\nbecause its track ID belongs to another edition and it has no\nrecording ID. Absent otherwise."
           },
           "suggested": {
             "oneOf": [
@@ -55002,7 +55002,7 @@
             "items": {
               "type": "string"
             },
-            "description": "What ties the file to the release track (`embedded_id`, `acoustid`,\n`title_position_length`, or `track_id_elsewhere`: the recording ID,\non a file whose track ID belongs to another edition), or why it does\nnot (`distant_pair`: paired, but not closely). `acoustid_overruled`\nfollows when the file's measured length set aside a fingerprint\nthat named another track."
+            "description": "What ties the file to the release track (`embedded_id`, `acoustid`,\n`title_position_length`, `track_id_elsewhere`: the recording ID, on\na file whose track ID belongs to another edition, or `isrc`: the\nISRC, on a file whose MusicBrainz IDs belong to another release), or\nwhy it does not (`distant_pair`: paired, but not closely). `acoustid_overruled`\nfollows when the file's measured length set aside a fingerprint\nthat named another track."
           },
           "local_track_id": {
             "type": "string"

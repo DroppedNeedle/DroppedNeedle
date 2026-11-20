@@ -20,6 +20,12 @@
 //! the file's measured length is that track's and not the heard one's,
 //! the length settles it (see [`ReleaseMatch::overruled`]).
 //!
+//! [`match_release_by_isrc`] scores a second way, used only when the ids
+//! rule every candidate out: a file whose recording and track ids are on
+//! none of the release it names pairs by its ISRC with the tracks of that
+//! release that carry it and fit its title and length (see
+//! [`Support::Isrc`]).
+//!
 //! The album title and artist also pass v2's 0.20 gate: a release whose
 //! title (edition words aside) or artist is further off than that never
 //! identifies on its own, unless the files' own ids prove every track (for
@@ -33,7 +39,7 @@ use super::decide::COMPLETE_TRACK;
 use super::distance::Distance;
 use super::model::{LocalAlbum, LocalTrack, Release, ReleaseTrack, credit_text};
 use super::strings::{
-    artist_dist, artist_subset, basic_dist, string_dist, strip_edition_words, undecorated,
+    artist_dist, artist_subset, basic_dist, isrc_key, string_dist, strip_edition_words, undecorated,
 };
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
@@ -67,6 +73,11 @@ pub enum Support {
     /// and whose track id belongs to another edition. Weaker than
     /// `EmbeddedId`: never proof for the name gate or for credits.
     TrackIdElsewhere,
+    /// The file's ISRC, on a file whose release id names this release and
+    /// whose recording and track ids are on none of its tracks: the ids
+    /// are left out as a tagging mistake. Weaker than `EmbeddedId`: never
+    /// proof for the name gate or for credits.
+    Isrc,
     /// The audio's AcoustID recordings include the release track's.
     Fingerprint,
     /// Title, position, and length only.
@@ -78,6 +89,7 @@ impl Support {
         match self {
             Support::EmbeddedId => "embedded_id",
             Support::TrackIdElsewhere => "track_id_elsewhere",
+            Support::Isrc => "isrc",
             Support::Fingerprint => "acoustid",
             Support::Description => "title_position_length",
         }
@@ -177,6 +189,31 @@ pub fn match_release(
     release: &Release,
     aliases: &HashMap<String, String>,
 ) -> ReleaseMatch {
+    score(local, release, aliases, false)
+}
+
+/// [`match_release`], with a file's ISRC overruling its ids. A file whose
+/// release id names `release`, whose recording id is on none of its tracks
+/// (merges counted) and whose track id is absent or on none of them pairs
+/// only with the tracks that carry one of its ISRCs and fit it: the title
+/// within [`COMPLETE_TRACK`], and the length within [`LENGTH_GRACE_SECS`],
+/// or the track number when a length is unknown. Its ids then veto
+/// nothing. Any other file scores as [`match_release`] scores it, and a
+/// file whose track id is on the release keeps its veto.
+pub fn match_release_by_isrc(
+    local: &LocalAlbum,
+    release: &Release,
+    aliases: &HashMap<String, String>,
+) -> ReleaseMatch {
+    score(local, release, aliases, true)
+}
+
+fn score(
+    local: &LocalAlbum,
+    release: &Release,
+    aliases: &HashMap<String, String>,
+    by_isrc: bool,
+) -> ReleaseMatch {
     let various = local.is_compilation || release.is_various_artists();
     let recordings: Vec<Option<FileRecording>> = local
         .tracks
@@ -214,6 +251,24 @@ pub fn match_release(
             foreign_track_id(track) && recording.as_ref().is_some_and(on_release)
         })
         .collect();
+    // The tracks each file's ISRC places it on, where its ids are
+    // overruled; empty for every other file.
+    let isrc_tracks: Vec<Vec<usize>> = local
+        .tracks
+        .iter()
+        .zip(&recordings)
+        .map(|(track, recording)| {
+            let overruled = by_isrc
+                && claims_release(track)
+                && recording.as_ref().is_some_and(|found| !on_release(found))
+                && (track.release_track_mbid.is_none() || foreign_track_id(track));
+            if overruled {
+                tracks_by_isrc(track, release)
+            } else {
+                Vec::new()
+            }
+        })
+        .collect();
     let unheard: Vec<usize> = local
         .tracks
         .iter()
@@ -230,21 +285,27 @@ pub fn match_release(
             &track.fingerprint_recordings
         };
         for (column, candidate) in release.tracks.iter().enumerate() {
-            let track_id = if set_aside[row] {
+            let file_recording = if !isrc_tracks[row].is_empty() {
+                if !isrc_tracks[row].contains(&column) {
+                    continue;
+                }
+                RecordingId::OverruledByIsrc
+            } else {
+                match recordings[row].as_ref() {
+                    Some(recording) => RecordingId::Binding(recording),
+                    None => RecordingId::Absent,
+                }
+            };
+            let track_id = if set_aside[row] || !isrc_tracks[row].is_empty() {
                 TrackId::SetAside
             } else if claims_release(track) {
                 TrackId::Binding
             } else {
                 TrackId::Ignored
             };
-            if let Some(scored) = track_distance(
-                track,
-                recordings[row].as_ref(),
-                heard,
-                track_id,
-                candidate,
-                various,
-            ) {
+            if let Some(scored) =
+                track_distance(track, file_recording, heard, track_id, candidate, various)
+            {
                 pair_costs.insert((row, column), scored);
             }
         }
@@ -286,6 +347,11 @@ pub fn match_release(
 
     let mut conflicts = Vec::new();
     for (row, track) in local.tracks.iter().enumerate() {
+        // An overruled file sets its ids aside only on the track its ISRC
+        // gave it; left without one, its ids veto as before.
+        if !isrc_tracks[row].is_empty() && pairs.iter().any(|pair| pair.local == row) {
+            continue;
+        }
         if let Some(recording) = recordings[row].as_ref()
             && !on_release(recording)
         {
@@ -420,6 +486,39 @@ fn clearly_fits(local: &LocalTrack, candidate: &ReleaseTrack) -> bool {
     };
     title_fits(&local.title, &candidate.title)
         && (index_fits(local, candidate) == Some(true) || length_fits)
+}
+
+/// The release tracks that carry one of the file's ISRCs and fit it: the
+/// title as [`clearly_fits`] reads it, and the length within
+/// [`LENGTH_GRACE_SECS`] when both are known, else the track number. An
+/// ISRC MusicBrainz also put on an edit or a longer mix stays apart.
+fn tracks_by_isrc(local: &LocalTrack, release: &Release) -> Vec<usize> {
+    let keys: Vec<String> = local.isrcs.iter().filter_map(|raw| isrc_key(raw)).collect();
+    if keys.is_empty() {
+        return Vec::new();
+    }
+    release
+        .tracks
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| {
+            candidate
+                .isrcs
+                .iter()
+                .filter_map(|raw| isrc_key(raw))
+                .any(|key| keys.contains(&key))
+        })
+        .filter(|(_, candidate)| {
+            let length_fits = match (local.duration_secs, candidate.length_ms) {
+                (Some(seconds), Some(length_ms)) => {
+                    (seconds - length_ms as f64 / 1000.0).abs() <= LENGTH_GRACE_SECS
+                }
+                _ => index_fits(local, candidate) == Some(true),
+            };
+            title_fits(&local.title, &candidate.title) && length_fits
+        })
+        .map(|(column, _)| column)
+        .collect()
 }
 
 fn title_fits(file: &str, track: &str) -> bool {
@@ -559,6 +658,18 @@ fn file_recording(track: &LocalTrack, aliases: &HashMap<String, String>) -> Opti
     Some(FileRecording { raw, canonical })
 }
 
+/// How a file's recording id counts against one release track.
+#[derive(Debug, Clone, Copy)]
+enum RecordingId<'a> {
+    /// The track must carry it.
+    Binding(&'a FileRecording),
+    /// The file has none.
+    Absent,
+    /// It is on none of the release the file names, and the file's ISRC
+    /// places it on this track: the id is left out.
+    OverruledByIsrc,
+}
+
 /// How a file's release-track id counts against one release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TrackId {
@@ -597,7 +708,7 @@ fn title_dist(file: &str, track: &str) -> f64 {
 /// `heard` is the file's fingerprint recordings, or none when set aside.
 fn track_distance(
     local: &LocalTrack,
-    recording: Option<&FileRecording>,
+    recording: RecordingId<'_>,
     heard: &[String],
     track_id: TrackId,
     candidate: &ReleaseTrack,
@@ -613,26 +724,34 @@ fn track_distance(
         }
         support = Support::EmbeddedId;
     }
-    if let Some(recording) = recording {
-        if !recording.is(&candidate.recording_id) {
-            return None;
+    match recording {
+        RecordingId::Binding(recording) => {
+            if !recording.is(&candidate.recording_id) {
+                return None;
+            }
+            distance.add_bool("recording_id", false);
+            support = if track_id == TrackId::SetAside {
+                Support::TrackIdElsewhere
+            } else {
+                Support::EmbeddedId
+            };
         }
-        distance.add_bool("recording_id", false);
-        support = if track_id == TrackId::SetAside {
-            Support::TrackIdElsewhere
-        } else {
-            Support::EmbeddedId
-        };
-    } else if !heard.is_empty() {
-        // Every heard recording sits on some candidate: one that is not
-        // this track's is a rival's, and counts against the pair.
-        let heard = heard
-            .iter()
-            .any(|id| id.eq_ignore_ascii_case(&candidate.recording_id));
-        distance.add_bool("recording_id", !heard);
-        if heard && support == Support::Description {
-            support = Support::Fingerprint;
+        RecordingId::OverruledByIsrc => {
+            distance.add_bool("recording_id", false);
+            support = Support::Isrc;
         }
+        RecordingId::Absent if !heard.is_empty() => {
+            // Every heard recording sits on some candidate: one that is not
+            // this track's is a rival's, and counts against the pair.
+            let heard = heard
+                .iter()
+                .any(|id| id.eq_ignore_ascii_case(&candidate.recording_id));
+            distance.add_bool("recording_id", !heard);
+            if heard && support == Support::Description {
+                support = Support::Fingerprint;
+            }
+        }
+        RecordingId::Absent => {}
     }
     distance.add("track_title", title_dist(&local.title, &candidate.title));
     if various && !local.artist.trim().is_empty() {
@@ -646,7 +765,9 @@ fn track_distance(
     }
     if let (Some(seconds), Some(length_ms)) = (local.duration_secs, candidate.length_ms) {
         let gap = (seconds - length_ms as f64 / 1000.0).abs();
-        if support == Support::Description && gap > LENGTH_GRACE_SECS + LENGTH_MAX_SECS {
+        if matches!(support, Support::Description | Support::Isrc)
+            && gap > LENGTH_GRACE_SECS + LENGTH_MAX_SECS
+        {
             return None;
         }
         distance.add_ratio(

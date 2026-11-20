@@ -8,6 +8,7 @@
 use droppedneedle_kernel::db::statement::{Choice, ListLen};
 use droppedneedle_kernel::db::time::Millis;
 
+use crate::identify::sql::RELOOK_OPEN;
 use crate::identity::sql::PERSONS;
 use crate::scan::models::{
     ArtworkSource, Availability, Counter, EffectivePolicy, FailureCode, GroupingSource, Phase,
@@ -136,9 +137,13 @@ droppedneedle_kernel::sql! {
              AND s.discovery_generation = library_scan_inventory.discovery_generation)";
     /// Whether track `?1` has its edition hints stored, its track total
     /// included: a row from before totals were kept holds NULL there, and
-    /// one read since holds the total or 0 for a file that names none.
-    pub(super) HAS_EDITION_TAGS = "SELECT EXISTS(SELECT 1 FROM local_track_edition_tags \
-             WHERE local_track_id = ?1 AND total_tracks IS NOT NULL)";
+    /// one read since holds the total or 0 for a file that names none. On
+    /// an album whose files' ids ruled every candidate out, its ISRCs too
+    /// (NULL until read); elsewhere a file's ISRCs wait for its next read.
+    pub(super) HAS_EDITION_TAGS = "SELECT EXISTS(SELECT 1 FROM local_track_edition_tags h \
+             WHERE h.local_track_id = ?1 AND h.total_tracks IS NOT NULL \
+             AND (h.isrcs IS NOT NULL OR NOT EXISTS (SELECT 1 FROM local_tracks t \
+               WHERE t.id = ?1 AND " + STUCK_ON_IDS + ")))";
     /// Whether track `?1`'s row does not say if its length was measured.
     pub(super) LENGTH_UNREAD = "SELECT EXISTS(SELECT 1 FROM local_tracks \
              WHERE id = ?1 AND duration_measured IS NULL)";
@@ -149,8 +154,8 @@ droppedneedle_kernel::sql! {
     /// Store the edition hints of track `?1` read at stat revision `?2`, unless
     /// the row moved on since or already holds them.
     pub(super) FILL_EDITION_TAGS = "INSERT INTO local_track_edition_tags (local_track_id, media, \
-             barcode, catalog_number, release_country, total_discs, release_date, total_tracks) \
-             SELECT id, ?3, ?4, ?5, ?6, ?7, ?8, ?9 FROM local_tracks \
+             barcode, catalog_number, release_country, total_discs, release_date, total_tracks, \
+             isrcs) SELECT id, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10 FROM local_tracks \
              WHERE id = ?1 AND stat_revision = ?2 \
              ON CONFLICT (local_track_id) DO NOTHING";
     /// Store the track total (`?3`, 0 when the file names none) of track
@@ -159,6 +164,21 @@ droppedneedle_kernel::sql! {
     pub(super) FILL_TRACK_TOTAL = "UPDATE local_track_edition_tags SET total_tracks = ?3 \
              WHERE local_track_id = ?1 AND total_tracks IS NULL \
              AND EXISTS (SELECT 1 FROM local_tracks WHERE id = ?1 AND stat_revision = ?2)";
+    /// Store the ISRCs (`?3`, empty when the file names none) of track
+    /// `?1` read at stat revision `?2` in an edition row stored before
+    /// they were kept, unless the row moved on since.
+    pub(super) FILL_ISRCS = "UPDATE local_track_edition_tags SET isrcs = ?3 \
+             WHERE local_track_id = ?1 AND isrcs IS NULL \
+             AND EXISTS (SELECT 1 FROM local_tracks WHERE id = ?1 AND stat_revision = ?2)";
+    /// The album of track `t`: its files' ids ruled every candidate out.
+    fragment STUCK_ON_IDS = "EXISTS (SELECT 1 FROM library_album_match_state sid \
+             WHERE sid.local_album_id = t.local_album_id \
+             AND sid.reason_code = 'CONFLICTING_TRACK_EVIDENCE')";
+    /// The album of track `?1` when its files' ids ruled every candidate
+    /// out and it is open to another look by itself.
+    pub(super) STUCK_ALBUM_OF_TRACK = "SELECT b.id FROM local_tracks t \
+             JOIN local_albums b ON b.id = t.local_album_id \
+             WHERE t.id = ?1 AND " + STUCK_ON_IDS + " AND " + RELOOK_OPEN;
     /// The album of track `?1` when its MusicBrainz match is not settled:
     /// none, or an automatic one without an edition or still unconfirmed.
     /// Only `automatic`: a match v2 took from the files' own ids already
@@ -338,7 +358,7 @@ droppedneedle_kernel::sql! {
              t.tag_album_title, t.tag_album_artist_name, t.embedded_release_mbid, \
              t.embedded_release_group_mbid, t.embedded_release_track_mbid, \
              h.local_track_id IS NOT NULL AS has_edition_tags, h.media, h.barcode, \
-             h.catalog_number, h.release_country, h.total_discs \
+             h.catalog_number, h.release_country, h.total_discs, h.isrcs \
              FROM local_tracks t LEFT JOIN local_track_edition_tags h ON h.local_track_id = t.id \
              WHERE t.root_id = ?1 AND t.relative_path = ?2";
     pub(super) MOVE_TRACK_PATH = "UPDATE local_tracks SET root_id = ?2, relative_path = ?3, path_hash = ?4, \
@@ -414,11 +434,13 @@ droppedneedle_kernel::sql! {
            THEN COALESCE(local_tracks.excluded_at, excluded.tags_read_at) END";
     pub(super) TRACK_AND_ALBUM_AT_PATH = "SELECT id, local_album_id FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2";
     pub(super) WRITE_EDITION_TAGS = "INSERT INTO local_track_edition_tags (local_track_id, media, barcode, catalog_number, \
-         release_country, total_discs, release_date, total_tracks) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+         release_country, total_discs, release_date, total_tracks, isrcs) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
          ON CONFLICT (local_track_id) DO UPDATE SET media = excluded.media, \
          barcode = excluded.barcode, catalog_number = excluded.catalog_number, \
          release_country = excluded.release_country, total_discs = excluded.total_discs, \
-         release_date = excluded.release_date, total_tracks = excluded.total_tracks";
+         release_date = excluded.release_date, total_tracks = excluded.total_tracks, \
+         isrcs = excluded.isrcs";
     pub(super) DROP_TRACK_CREDITS = "DELETE FROM local_track_artists WHERE local_track_id = ?1";
     pub(super) WRITE_TRACK_CREDIT = "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role, \
          credited_name, join_phrase, artist_mbid) VALUES (?1, ?2, ?3, 'main', ?4, ?5, ?6)";
@@ -1221,6 +1243,7 @@ droppedneedle_kernel::sql! {
         catalog_number: Option<String>,
         release_country: Option<String>,
         total_discs: Option<i64>,
+        isrcs: Option<String>,
     }
     pub(super) row TrackMembership for [TRACK_MEMBERSHIP] {
         membership_source: GroupingSource,

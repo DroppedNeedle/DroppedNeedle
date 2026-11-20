@@ -82,13 +82,21 @@
 //!   `ReleaseMatch::overruled`). Its fingerprint is set aside without
 //!   holding the release.
 //!
+//! - When the files' own ids rule every candidate out
+//!   ([`Verdict::Contradictory`]), the releases the files name are scored
+//!   again with a file's ISRC overruling ids that are on none of its
+//!   tracks (see `score::match_release_by_isrc`), and the decision is
+//!   taken on that, by the same rules ([`decide_overruling_ids`]). An
+//!   album some release fits without it is decided exactly as before.
+//!
 //! "Library distance" leaves missing tracks out, as Lidarr does for files
 //! already on disk: holding part of an album is normal.
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 use super::model::{EditionHints, LocalAlbum, Release};
-use super::score::{ReleaseMatch, TrackPair};
+use super::score::{ReleaseMatch, TrackPair, match_release_by_isrc};
 use super::strings::basic_dist;
 use crate::edition_prefs::{EditionFacts, Preferences};
 
@@ -187,6 +195,51 @@ pub fn decide(
         }
         _ => verdict,
     }
+}
+
+/// [`decide`], and when the files' ids rule every candidate out, decide
+/// again with each release a file names scored by
+/// [`match_release_by_isrc`]. The second scoring replaces `matches` only
+/// when it leaves a candidate standing; otherwise the first verdict and
+/// matches stand. `aliases` are the recording merges the first scoring
+/// used.
+pub fn decide_overruling_ids(
+    local: &LocalAlbum,
+    releases: &[Release],
+    matches: &mut Vec<ReleaseMatch>,
+    aliases: &HashMap<String, String>,
+    prefs: EditionPrefs<'_>,
+) -> Verdict {
+    let verdict = decide(local, releases, matches, prefs);
+    if verdict != Verdict::Contradictory || local.tracks.iter().all(|track| track.isrcs.is_empty())
+    {
+        return verdict;
+    }
+    let named = |release: &Release| {
+        local.tracks.iter().any(|track| {
+            track
+                .release_mbid
+                .as_deref()
+                .is_some_and(|mbid| release.answers_to(mbid))
+        })
+    };
+    let rescored: Vec<ReleaseMatch> = releases
+        .iter()
+        .zip(matches.iter())
+        .map(|(release, matched)| {
+            if named(release) {
+                match_release_by_isrc(local, release, aliases)
+            } else {
+                matched.clone()
+            }
+        })
+        .collect();
+    let second = decide(local, releases, &rescored, prefs);
+    if second == Verdict::Contradictory {
+        return verdict;
+    }
+    *matches = rescored;
+    second
 }
 
 /// True when `named` has an eligible release inside the tie band: within
@@ -1216,6 +1269,138 @@ mod tests {
         late.tracks[1].track_number = 1;
         let (_, matches) = scored(&late, &[two_discs]);
         assert_eq!(matches[0].pair_for(1).map(|pair| pair.track), Some(2));
+    }
+
+    /// A file whose release id names R but whose recording and track ids
+    /// are on none of R's tracks (a ripper's tagging mistake) is matched
+    /// by its ISRC when a track of R carries it and the title and length
+    /// fit. Only when no release fits without it, and never on a release
+    /// the file does not name, a wrong track, a length past the grace, or
+    /// a track id R does carry.
+    #[test]
+    fn an_isrc_overrules_ids_on_none_of_the_named_release() {
+        let isrc = |index: usize| format!("USAAA87{index:05}");
+        let r = || {
+            let mut release = edition("g", "r", "Night Shift");
+            for (index, track) in release.tracks.iter_mut().enumerate() {
+                track.isrcs = vec![isrc(index)];
+            }
+            release
+        };
+        // Files 2 to 4 carry another release's recording and track ids,
+        // and their ISRC as a tagger may write it.
+        let wrong = || {
+            let mut album = named("r");
+            for (index, track) in album.tracks.iter_mut().enumerate().skip(1) {
+                track.recording_mbid = Some(format!("foreign-{index}"));
+                track.release_track_mbid = Some(format!("foreign-track-{index}"));
+                track.isrcs = vec![format!("us-aaa-87-{index:05}")];
+            }
+            album
+        };
+        let overruled = |local: &LocalAlbum, releases: &[Release]| {
+            let mut matches: Vec<_> = releases
+                .iter()
+                .map(|release| match_release(local, release, &HashMap::new()))
+                .collect();
+            let verdict = decide_overruling_ids(
+                local,
+                releases,
+                &mut matches,
+                &HashMap::new(),
+                EditionPrefs::default(),
+            );
+            (verdict, matches)
+        };
+
+        assert_eq!(scored(&wrong(), &[r()]).0, Verdict::Contradictory);
+        let (verdict, matches) = overruled(&wrong(), &[r()]);
+        assert_eq!(verdict, Verdict::Identified(0));
+        assert!(matches[0].conflicts.is_empty());
+        let supports: Vec<_> = (0..4)
+            .map(|file| {
+                matches[0]
+                    .pair_for(file)
+                    .map(|pair| (pair.track, pair.support))
+            })
+            .collect();
+        assert_eq!(
+            supports,
+            [
+                Some((0, Support::EmbeddedId)),
+                Some((1, Support::Isrc)),
+                Some((2, Support::Isrc)),
+                Some((3, Support::Isrc)),
+            ]
+        );
+
+        let mut no_release_id = wrong();
+        no_release_id.tracks[1].release_mbid = None;
+        let mut unknown_isrc = wrong();
+        unknown_isrc.tracks[1].isrcs = vec!["GBXXX0000001".to_owned()];
+        let mut retitled = wrong();
+        retitled.tracks[1].title = "Harbour Lights".to_owned();
+        let mut long = wrong();
+        long.tracks[1].duration_secs = Some(211.0);
+        let mut track_id_on_r = wrong();
+        track_id_on_r.tracks[1].release_track_mbid = Some("r-track-1".to_owned());
+        let mut no_isrc = wrong();
+        no_isrc.tracks[1].isrcs.clear();
+        let cases: Vec<(&str, LocalAlbum)> = vec![
+            ("a file naming no release keeps its veto", no_release_id),
+            ("an ISRC on no track of R", unknown_isrc),
+            ("a title that does not fit the ISRC's track", retitled),
+            ("a length past the grace", long),
+            ("a track id that is on R", track_id_on_r),
+            ("a file with no ISRC", no_isrc),
+        ];
+        for (name, local) in cases {
+            assert_eq!(
+                overruled(&local, &[r()]).0,
+                Verdict::Contradictory,
+                "{name}"
+            );
+        }
+
+        // Two files fit one ISRC's track: the one left without it keeps its
+        // veto.
+        let mut twice = wrong();
+        twice.tracks[2].title = "Blue Hour".to_owned();
+        twice.tracks[2].isrcs = vec![isrc(1)];
+        let rescored = match_release_by_isrc(&twice, &r(), &HashMap::new());
+        assert_eq!(rescored.unmatched.len(), 1);
+        let left = rescored.unmatched[0];
+        assert!([1, 2].contains(&left));
+        assert_eq!(
+            rescored
+                .conflicts
+                .iter()
+                .map(|c| c.local)
+                .collect::<Vec<_>>(),
+            [left]
+        );
+        assert_eq!(overruled(&twice, &[r()]).0, Verdict::Contradictory);
+
+        // With no length the track number stands in for it.
+        let mut unknown_length = wrong();
+        unknown_length.tracks[1].duration_secs = None;
+        assert_eq!(overruled(&unknown_length, &[r()]).0, Verdict::Identified(0));
+
+        // R2 of the same group carries the files' own ids, R the ISRCs:
+        // R2 stays a candidate without the overrule, so the album is
+        // decided exactly as before, and R is not scored again.
+        let mut r2 = r();
+        r2.id = "r2".to_owned();
+        for (index, track) in r2.tracks.iter_mut().enumerate().skip(1) {
+            track.recording_id = format!("foreign-{index}");
+            track.id = format!("foreign-track-{index}");
+        }
+        let releases = [r(), r2];
+        let (verdict, matches) = overruled(&wrong(), &releases);
+        assert_eq!((verdict, matches.clone()), scored(&wrong(), &releases));
+        assert_ne!(verdict, Verdict::Contradictory);
+        assert!(!matches[0].conflicts.is_empty());
+        assert!(matches[1].conflicts.is_empty());
     }
 
     /// Untagged files confirm a live release or an unflagged compilation

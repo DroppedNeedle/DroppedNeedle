@@ -10,10 +10,11 @@ as it came), trims the answer and adds it to the file, sorted by URL. The
 second form trims the answers already in the file again.
 
 Trimming keeps only what recall and matching read: ids, titles, artist
-credits (id and name), lengths, positions, media formats and track counts,
-dates, country, status, barcode, labels and catalog numbers, and the
-release group's types. Search pages keep each hit's id, score, title, release
-group and track counts, plus formats and barcode for edition listings.
+credits (id and name), lengths, positions, the recordings' ISRCs, media
+formats and track counts, dates, country, status, barcode, labels and
+catalog numbers, and the release group's types. Search pages keep each
+hit's id, score, title, release group and track counts, plus formats and
+barcode for edition listings.
 Recording search pages keep each hit's id and score, and the id, release
 group and track count of each release it lists.
 """
@@ -33,7 +34,7 @@ PACE_SECS = 0.35
 
 DROP = {
     "genres", "tags", "aliases", "relations", "text-representation",
-    "cover-art-archive", "release-events", "quality", "isrcs", "asin",
+    "cover-art-archive", "release-events", "quality", "asin",
     "rating", "video", "created", "track-offset", "discs", "type",
     "label-code", "country-code", "artist-credit-phrase", "sort-name", "number",
 }
