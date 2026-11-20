@@ -309,11 +309,52 @@ fn title_key(title: &str) -> String {
     spaced.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// An entry's title and a library track's name the same song: the shorter
-/// key is the longer or a whole-word start of it, so "Song" agrees with
-/// "Song - 2011 Remaster" and "Go" does not with "Gone".
+/// [`title_key`] for a title at an entry's own place on its album, where
+/// the place already says which song it is: "&" reads as "and", "/" as a
+/// space, apostrophes as nothing, and a bracketed credit ("(feat. B)")
+/// is dropped, so "A & B (feat. C)" keys as "A and B" does.
+fn place_key(title: &str) -> String {
+    let mut kept = String::with_capacity(title.len());
+    let mut rest = title;
+    while let Some(open) = rest.find(['(', '[']) {
+        let close = if rest[open..].starts_with('(') {
+            ')'
+        } else {
+            ']'
+        };
+        let Some(end) = rest[open..].find(close).map(|at| open + at) else {
+            break;
+        };
+        kept.push_str(&rest[..open]);
+        if !is_credit(&rest[open + 1..end]) {
+            kept.push_str(&rest[open..=end]);
+        }
+        kept.push(' ');
+        rest = &rest[end + 1..];
+    }
+    kept.push_str(rest);
+    let plain: String = kept
+        .replace('&', " and ")
+        .chars()
+        .filter(|character| !matches!(character, '\'' | '\u{2018}' | '\u{2019}' | '\u{02bc}'))
+        .map(|character| if character == '/' { ' ' } else { character })
+        .collect();
+    title_key(&plain)
+}
+
+/// Whether a bracket's text credits artists: it holds the word "feat",
+/// "ft" or "featuring".
+fn is_credit(text: &str) -> bool {
+    text.split(|character: char| !character.is_alphanumeric())
+        .any(|word| ["feat", "ft", "featuring"].contains(&word.to_lowercase().as_str()))
+}
+
+/// An entry's title and the name of the library track at its place the
+/// same song: the shorter [`place_key`] is the longer or a whole-word start
+/// of it, so "Song" agrees with "Song - 2011 Remaster" and "Go" does not
+/// with "Gone".
 fn titles_agree(entry: &str, track: &str) -> bool {
-    let (entry, track) = (title_key(entry), title_key(track));
+    let (entry, track) = (place_key(entry), place_key(track));
     let (short, long) = if entry.len() <= track.len() {
         (entry, track)
     } else {
@@ -1395,6 +1436,15 @@ mod tests {
             ("Opener - Live", "Opener (live)"),
             ("CAFÉ", "cafe"),
             ("Song 2011 Remaster", "Song"),
+            ("Opener (feat. Aurora) (Live)", "Opener (live)"),
+            ("Opener [feat. Aurora] - Radio Version", "Opener (radio)"),
+            (
+                "Second Song (Aurora & Nightfall feat. Opener) - Remix",
+                "Second Song (remix)",
+            ),
+            ("Night & Day", "Night and Day"),
+            ("Rock N Roll", "Rock 'n' Roll"),
+            ("Dawn / Dusk 12/24", "Dawn/Dusk 12/24"),
         ] {
             assert!(titles_agree(entry, track), "{entry:?} / {track:?}");
         }
@@ -1406,6 +1456,8 @@ mod tests {
             ("Love", "Lovesong"),
             ("Lovesong", "Love"),
             ("The Song", "Song"),
+            ("Opener (Acoustic)", "Opener (Live)"),
+            ("Opener (with Strings)", "Opener (Live)"),
         ] {
             assert!(!titles_agree(entry, track), "{entry:?} / {track:?}");
         }
