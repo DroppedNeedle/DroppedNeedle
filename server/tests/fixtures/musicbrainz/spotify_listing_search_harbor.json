@@ -1,0 +1,71 @@
+{
+  "created": "2026-11-19T00:00:00.000Z",
+  "count": 2,
+  "offset": 0,
+  "releases": [
+    {
+      "id": "5907a1b0-0000-4000-8000-000000000f15",
+      "score": 100,
+      "count": 1,
+      "title": "Quiet Harbor",
+      "status": "Official",
+      "artist-credit": [
+        {
+          "name": "Aurora Current",
+          "artist": {
+            "id": "5907a1b0-0000-4000-8000-000000000f31",
+            "name": "Aurora Current",
+            "sort-name": "Aurora Current"
+          }
+        }
+      ],
+      "release-group": {
+        "id": "5907a1b0-0000-4000-8000-000000000f05",
+        "title": "Quiet Harbor",
+        "primary-type": "Album"
+      },
+      "date": "2025-03-01",
+      "country": "XW",
+      "track-count": 3,
+      "media": [
+        {
+          "format": "Digital Media",
+          "disc-count": 0,
+          "track-count": 3
+        }
+      ]
+    },
+    {
+      "id": "5907a1b0-0000-4000-8000-000000000f16",
+      "score": 100,
+      "count": 1,
+      "title": "Quiet Harbor",
+      "status": "Official",
+      "artist-credit": [
+        {
+          "name": "Aurora Current",
+          "artist": {
+            "id": "5907a1b0-0000-4000-8000-000000000f31",
+            "name": "Aurora Current",
+            "sort-name": "Aurora Current"
+          }
+        }
+      ],
+      "release-group": {
+        "id": "5907a1b0-0000-4000-8000-000000000f06",
+        "title": "Quiet Harbor",
+        "primary-type": "Single"
+      },
+      "date": "2025-03-01",
+      "country": "XW",
+      "track-count": 1,
+      "media": [
+        {
+          "format": "Digital Media",
+          "disc-count": 0,
+          "track-count": 1
+        }
+      ]
+    }
+  ]
+}

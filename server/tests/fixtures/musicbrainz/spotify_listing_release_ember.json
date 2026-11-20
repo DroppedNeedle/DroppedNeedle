@@ -1,0 +1,52 @@
+{
+  "id": "5907a1b0-0000-4000-8000-000000000f17",
+  "title": "Ember Line",
+  "status": "Official",
+  "date": "2025-03-01",
+  "country": "XW",
+  "release-group": {
+    "id": "5907a1b0-0000-4000-8000-000000000f07",
+    "title": "Ember Line",
+    "primary-type": "Album",
+    "secondary-types": []
+  },
+  "media": [
+    {
+      "position": 1,
+      "format": "Digital Media",
+      "track-count": 2,
+      "tracks": [
+        {
+          "id": "5907a1b0-0000-4000-8000-000000000f45",
+          "position": 1,
+          "number": "1",
+          "title": "Ember Line",
+          "length": 200000,
+          "recording": {
+            "id": "5907a1b0-0000-4000-8000-000000000e45",
+            "title": "Ember Line",
+            "length": 200000,
+            "isrcs": [
+              "QZCCC2600001"
+            ]
+          }
+        },
+        {
+          "id": "5907a1b0-0000-4000-8000-000000000f46",
+          "position": 2,
+          "number": "2",
+          "title": "Cinders",
+          "length": 200000,
+          "recording": {
+            "id": "5907a1b0-0000-4000-8000-000000000e46",
+            "title": "Cinders",
+            "length": 200000,
+            "isrcs": [
+              "QZCCC2600002"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

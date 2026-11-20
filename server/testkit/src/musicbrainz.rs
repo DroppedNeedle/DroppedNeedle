@@ -212,6 +212,48 @@ const RECORDINGS: &[Recording] = &[
         param: Some(("query", Some("isrc:QZAAA2600002"))),
         body: include_str!("../../tests/fixtures/musicbrainz/spotify_isrc_single.json"),
     },
+    // musicbrainz/spotify_listing_*.json (hand-written in the shapes of
+    // the recorded release search and lookup): albums whose ISRCs
+    // MusicBrainz doesn't know. Quiet Harbor's album lists no ISRCs, beside
+    // a same-named single; Ember Line's release lists other ISRCs.
+    Recording {
+        path: "/release",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(r#"release:"Quiet Harbor" AND artist:"Aurora Current""#),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/spotify_listing_search_harbor.json"),
+    },
+    Recording {
+        path: "/release/5907a1b0-0000-4000-8000-000000000f15",
+        inc: &["isrcs", "recordings", "release-groups"],
+        param: None,
+        body: include_str!("../../tests/fixtures/musicbrainz/spotify_listing_release_harbor.json"),
+    },
+    Recording {
+        path: "/release/5907a1b0-0000-4000-8000-000000000f16",
+        inc: &["isrcs", "recordings", "release-groups"],
+        param: None,
+        body: include_str!(
+            "../../tests/fixtures/musicbrainz/spotify_listing_release_harbor_single.json"
+        ),
+    },
+    Recording {
+        path: "/release",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(r#"release:"Ember Line" AND artist:"Aurora Current""#),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/spotify_listing_search_ember.json"),
+    },
+    Recording {
+        path: "/release/5907a1b0-0000-4000-8000-000000000f17",
+        inc: &["isrcs", "recordings", "release-groups"],
+        param: None,
+        body: include_str!("../../tests/fixtures/musicbrainz/spotify_listing_release_ember.json"),
+    },
 ];
 
 /// The recording for a request, if one was made for it.
