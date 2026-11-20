@@ -911,20 +911,21 @@ pub async fn lyrics(deps: &LibraryDeps, track_id: &str) -> Result<LyricsView, Li
         .get(&track.id)
         .await?
         .ok_or(LibraryFailure::NotFound)?;
+    let main = &doc.main;
     Ok(LyricsView {
-        text: doc
-            .lines
+        text: main
+            .lines()
             .iter()
-            .map(|(text, _)| text.clone())
+            .map(|line| line.text())
             .collect::<Vec<_>>()
             .join("\n"),
-        is_synced: doc.synced,
-        lines: doc
-            .lines
+        is_synced: main.synced(),
+        lines: main
+            .lines()
             .iter()
-            .map(|(text, start_ms)| LyricLine {
-                text: text.clone(),
-                start_seconds: start_ms.map(|ms| ms as f64 / 1000.0),
+            .map(|line| LyricLine {
+                text: line.text().to_owned(),
+                start_seconds: line.start_ms().map(|ms| ms as f64 / 1000.0),
             })
             .collect(),
     })

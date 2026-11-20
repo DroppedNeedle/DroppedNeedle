@@ -9,18 +9,18 @@
 //! error is an error, never "no lyrics".
 
 use droppedneedle_library::tags::TrackFile;
-use droppedneedle_library::tags::lyrics::read_file_lyrics;
+use droppedneedle_library::tags::lyrics::{Lyrics, read_file_lyrics};
 use droppedneedle_media::stream::local_files::{LibraryFiles, LocateError};
 
 use super::store::LocalCatalog;
-use super::stores::{LyricDoc, StoreError};
+use super::stores::StoreError;
 
 /// The lyrics `track_id`'s file carries, if any.
 pub(crate) async fn read(
     catalog: &LocalCatalog,
     files: &LibraryFiles,
     track_id: &str,
-) -> Result<Option<LyricDoc>, StoreError> {
+) -> Result<Option<Lyrics>, StoreError> {
     if !catalog.track_has_lyrics(track_id).await? {
         return Ok(None);
     }
@@ -34,8 +34,5 @@ pub(crate) async fn read(
     })
     .await
     .map_err(|error| StoreError::Internal(error.to_string()))?;
-    Ok(read.map(|(_, lyrics)| LyricDoc {
-        lines: lyrics.lines,
-        synced: lyrics.synced,
-    }))
+    Ok(read.map(|(_, lyrics)| lyrics))
 }

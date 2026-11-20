@@ -26,11 +26,12 @@ use droppedneedle_catalog::local::player::{
 };
 use droppedneedle_catalog::local::store::LocalCatalog;
 use droppedneedle_catalog::local::stores::{
-    ArtistRecord, ArtistScope, ArtistSort, GenreRecord, LyricDoc, LyricsPort, StoreError,
+    ArtistRecord, ArtistScope, ArtistSort, GenreRecord, LyricsPort, StoreError,
 };
 use droppedneedle_catalog::metadata::Catalog;
 use droppedneedle_catalog::metadata::song_links;
 use droppedneedle_kernel::db::{Db, DbError};
+use droppedneedle_library::tags::lyrics::Lyrics;
 
 use crate::sql;
 use crate::user_settings::UserSettings;
@@ -458,7 +459,7 @@ impl CompatLibrary {
     }
 
     /// Stored lyrics for a track.
-    pub async fn lyrics(&self, track_id: &str) -> Result<Option<LyricDoc>, CompatError> {
+    pub async fn lyrics(&self, track_id: &str) -> Result<Option<Lyrics>, CompatError> {
         Ok(self.lyrics.get(track_id).await?)
     }
 

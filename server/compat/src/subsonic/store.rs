@@ -1196,12 +1196,16 @@ impl SubsonicStore {
     /// Lyrics for a track, or None.
     pub async fn get_lyrics(&self, file_id: &str) -> Result<Option<LyricsData>, CompatError> {
         Ok(self.library.lyrics(file_id).await?.map(|doc| LyricsData {
-            language: "und".to_owned(),
-            synced: doc.synced,
+            language: doc.main.lang().unwrap_or("und").to_owned(),
+            synced: doc.main.synced(),
             lines: doc
-                .lines
-                .into_iter()
-                .map(|(value, start_ms)| LyricLine { value, start_ms })
+                .main
+                .lines()
+                .iter()
+                .map(|line| LyricLine {
+                    value: line.text().to_owned(),
+                    start_ms: line.start_ms(),
+                })
                 .collect(),
         }))
     }

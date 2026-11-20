@@ -13,6 +13,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use droppedneedle_kernel::db::DbError;
+use droppedneedle_library::tags::lyrics::Lyrics;
 use thiserror::Error;
 
 /// Boxed sendable future for object-safe async ports.
@@ -475,15 +476,6 @@ pub struct KeyedPage<T> {
 /// A page of artists with the album-artist and contributor totals.
 pub type ArtistKeyedListing = (KeyedPage<ArtistRecord>, u64, u64);
 
-/// Stored lyrics for one track.
-#[derive(Debug, Clone, PartialEq)]
-pub struct LyricDoc {
-    /// Lines in order: text plus optional start, milliseconds.
-    pub lines: Vec<(String, Option<i64>)>,
-    /// True when lines carry timestamps.
-    pub synced: bool,
-}
-
 /// Lyrics reads for one track.
 ///
 /// Production serves [`crate::lyrics::LyricsService`]: the lyrics
@@ -491,5 +483,5 @@ pub struct LyricDoc {
 /// None is absence (the handler answers 404), never failure.
 pub trait LyricsPort: Send + Sync {
     /// Stored lyrics for one streamable track id.
-    fn get<'a>(&'a self, track_id: &'a str) -> BoxFuture<'a, Result<Option<LyricDoc>, StoreError>>;
+    fn get<'a>(&'a self, track_id: &'a str) -> BoxFuture<'a, Result<Option<Lyrics>, StoreError>>;
 }

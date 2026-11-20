@@ -15,9 +15,19 @@
 //! [`MAX_LYRICS_BYTES`], and UTF-8 (a leading byte order mark is dropped).
 //! Text with LRC timestamps counts as synced, wherever it came from.
 //!
+//! Every source becomes the same [`Lyrics`]: a main track and any
+//! translation or pronunciation tracks, each a list of lines, and a line
+//! may carry word cues. All of it is built by the one line builder
+//! (`line`), which holds the rules for text, times, cues and agents.
+//!
 //! Everything here only reads. The lyrics sweep and the serving path both
 //! call [`read_file_lyrics`], so a track marked as having lyrics is one
 //! that can be served.
+
+mod line;
+mod lrc;
+#[cfg(test)]
+mod tests;
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -28,6 +38,9 @@ use std::path::{Path, PathBuf};
 use lofty::file::TaggedFileExt as _;
 use lofty::tag::{ItemKey, TagType};
 
+pub use line::{LineInput, MAX_TIME_MS, Piece};
+pub use lrc::{parse_lyrics, parse_lyrics_text};
+
 use super::{AudioFormat, TrackFile, format_for_path};
 
 /// Largest lyrics payload read, in bytes.
@@ -35,19 +48,227 @@ pub const MAX_LYRICS_BYTES: usize = 2 * 1024 * 1024;
 /// Largest lyrics payload read, in characters.
 pub const MAX_LYRICS_CHARACTERS: usize = 1_000_000;
 
-/// Lyrics parsed into lines.
+/// A track's lyrics: the lyrics as sung, and any translations and
+/// pronunciations, each a track of its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lyrics {
-    /// Lines in order: text plus the start in milliseconds, when timed.
-    pub lines: Vec<(String, Option<i64>)>,
-    /// True when the lines carry timestamps.
-    pub synced: bool,
+    /// The lyrics as sung.
+    pub main: LyricsTrack,
+    /// Translations and pronunciations, in the order the source lists them.
+    pub layers: Vec<LyricsTrack>,
+}
+
+/// What a lyrics track holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LyricsKind {
+    /// The lyrics as sung.
+    Main,
+    /// A translation into another language.
+    Translation,
+    /// How the words sound, written in another script.
+    Pronunciation,
+}
+
+/// One track of lines, made only by the line builder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LyricsTrack {
+    kind: LyricsKind,
+    lang: Option<String>,
+    synced: bool,
+    agents: Vec<Agent>,
+    lines: Vec<LyricLine>,
+}
+
+impl LyricsTrack {
+    /// What the track holds.
+    #[must_use]
+    pub fn kind(&self) -> LyricsKind {
+        self.kind
+    }
+
+    /// Its language tag, when the source names one.
+    #[must_use]
+    pub fn lang(&self) -> Option<&str> {
+        self.lang.as_deref()
+    }
+
+    /// True when the lines carry times.
+    #[must_use]
+    pub fn synced(&self) -> bool {
+        self.synced
+    }
+
+    /// The singers its cue lines name. Empty unless a line has more than
+    /// one cue line or cue lines name two or more agents; then exactly one
+    /// is [`AgentRole::Main`] and every cue line names one.
+    #[must_use]
+    pub fn agents(&self) -> &[Agent] {
+        &self.agents
+    }
+
+    /// The lines, in order.
+    #[must_use]
+    pub fn lines(&self) -> &[LyricLine] {
+        &self.lines
+    }
+}
+
+/// A singer, a group, or background vocals.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Agent {
+    id: String,
+    role: AgentRole,
+    name: Option<String>,
+}
+
+impl Agent {
+    /// Its id, unique in its track.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// What part it sings.
+    #[must_use]
+    pub fn role(&self) -> AgentRole {
+        self.role
+    }
+
+    /// Its name, when the source gives one.
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+}
+
+/// What part an agent sings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRole {
+    /// The lead.
+    Main,
+    /// Another singer.
+    Voice,
+    /// Background vocals.
+    Bg,
+    /// A group singing together.
+    Group,
+}
+
+/// One line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LyricLine {
+    text: String,
+    start_ms: Option<i64>,
+    end_ms: Option<i64>,
+    cue_lines: Vec<CueLine>,
+}
+
+impl LyricLine {
+    /// The line's text: the main part, then any background part after a
+    /// space. Empty for a stamped blank line.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// When the line starts, in milliseconds.
+    #[must_use]
+    pub fn start_ms(&self) -> Option<i64> {
+        self.start_ms
+    }
+
+    /// When the line ends, in milliseconds: only with a start, never
+    /// before it, and never taken from the next line.
+    #[must_use]
+    pub fn end_ms(&self) -> Option<i64> {
+        self.end_ms
+    }
+
+    /// Its word-timed parts, the main part first. Empty when the line has
+    /// no word timing.
+    #[must_use]
+    pub fn cue_lines(&self) -> &[CueLine] {
+        &self.cue_lines
+    }
+}
+
+/// One word-timed part of a line, sung by one agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CueLine {
+    agent: Option<usize>,
+    text: String,
+    cues: Vec<Cue>,
+}
+
+impl CueLine {
+    /// Index into its track's [`LyricsTrack::agents`], when it has agents.
+    #[must_use]
+    pub fn agent(&self) -> Option<usize> {
+        self.agent
+    }
+
+    /// The part's text, which the cues' byte offsets point into.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Its cues: at least one, in order, each ending at or before the next
+    /// one starts.
+    #[must_use]
+    pub fn cues(&self) -> &[Cue] {
+        &self.cues
+    }
+
+    /// Its start and end in milliseconds: the first cue's start, and the
+    /// later of the line's end (`line_end_ms`) and the last cue's end.
+    #[must_use]
+    pub fn span(&self, line_end_ms: Option<i64>) -> (i64, i64) {
+        let start = self.cues.first().map_or(0, |cue| cue.start_ms);
+        let last = self.cues.last().map_or(start, |cue| cue.end_ms);
+        (start, line_end_ms.map_or(last, |end| end.max(last)))
+    }
+}
+
+/// One timed word or syllable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cue {
+    start_ms: i64,
+    end_ms: i64,
+    byte_start: usize,
+    byte_end: usize,
+}
+
+impl Cue {
+    /// When it starts, in milliseconds.
+    #[must_use]
+    pub fn start_ms(&self) -> i64 {
+        self.start_ms
+    }
+
+    /// When it ends, in milliseconds.
+    #[must_use]
+    pub fn end_ms(&self) -> i64 {
+        self.end_ms
+    }
+
+    /// The first byte of its text in the cue line's text (UTF-8, 0-based).
+    #[must_use]
+    pub fn byte_start(&self) -> usize {
+        self.byte_start
+    }
+
+    /// The last byte of its text, inclusive.
+    #[must_use]
+    pub fn byte_end(&self) -> usize {
+        self.byte_end
+    }
 }
 
 /// Where a file's lyrics were found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LyricsSource {
-    /// A `.lrc` file beside the track.
+    /// A lyrics file beside the track.
     Sidecar,
     /// The file's own lyrics tag.
     Tag,
@@ -65,143 +286,6 @@ pub enum LyricsRefused {
     TooManyBytes,
     #[error("lyrics payload exceeds the character cap")]
     TooManyCharacters,
-}
-
-/// Shape plain and synced lyrics text into lines. Synced text wins when it
-/// has any line. LRC reads as Jellyfin reads it: a line with several stamps
-/// (`[00:12][00:45]Chorus`) gives one line per stamp, a stamped line with
-/// no text stays as a blank line, and lines come out in time order. Plain
-/// empty lines are dropped. `None` when no line has text.
-pub fn parse_lyrics(
-    plain: Option<&str>,
-    synced: Option<&str>,
-) -> Result<Option<Lyrics>, LyricsRefused> {
-    let bytes = plain
-        .map_or(0, str::len)
-        .saturating_add(synced.map_or(0, str::len));
-    if bytes > MAX_LYRICS_BYTES {
-        return Err(LyricsRefused::TooManyBytes);
-    }
-    let plain = plain.map(str::trim).unwrap_or("");
-    let synced = synced.map(str::trim).unwrap_or("");
-    let characters = plain.chars().count().saturating_add(synced.chars().count());
-    if characters > MAX_LYRICS_CHARACTERS {
-        return Err(LyricsRefused::TooManyCharacters);
-    }
-    if synced.is_empty() && plain.is_empty() {
-        return Ok(None);
-    }
-    if synced.is_empty() {
-        let lines: Vec<(String, Option<i64>)> = plain
-            .lines()
-            .map(|line| (line.trim().to_owned(), None))
-            .filter(|(text, _)| !text.is_empty())
-            .collect();
-        return Ok((!lines.is_empty()).then_some(Lyrics {
-            lines,
-            synced: false,
-        }));
-    }
-    // Each line with the time it sorts by. An unstamped text line sorts
-    // with the stamped line above it, so it keeps its place.
-    let mut keyed: Vec<(i64, String, Option<i64>)> = Vec::new();
-    let mut above = i64::MIN;
-    for raw in synced.lines() {
-        let line = raw.trim();
-        if line.is_empty() {
-            continue;
-        }
-        match parse_lrc_line(line) {
-            Some((text, starts)) => {
-                above = starts.first().copied().unwrap_or(above);
-                for start in starts {
-                    keyed.push((start, text.clone(), Some(start)));
-                }
-            }
-            None => {
-                if !line.starts_with('[') {
-                    keyed.push((above, line.to_owned(), None));
-                }
-            }
-        }
-    }
-    if keyed.iter().all(|(_, text, _)| text.is_empty()) {
-        return Ok(None);
-    }
-    keyed.sort_by_key(|(key, _, _)| *key);
-    Ok(Some(Lyrics {
-        lines: keyed
-            .into_iter()
-            .map(|(_, text, start)| (text, start))
-            .collect(),
-        synced: true,
-    }))
-}
-
-/// Lyrics text of unknown kind: synced when any line has an LRC timestamp,
-/// plain otherwise.
-pub fn parse_lyrics_text(text: &str) -> Result<Option<Lyrics>, LyricsRefused> {
-    let timed = text
-        .lines()
-        .any(|line| parse_lrc_line(line.trim()).is_some());
-    if timed {
-        parse_lyrics(None, Some(text))
-    } else {
-        parse_lyrics(Some(text), None)
-    }
-}
-
-/// Parse one LRC line, `[mm:ss.xx]` stamps then text, into the text and
-/// each stamp's start in milliseconds (at least one). `None` for tag lines
-/// (`[ar:...]`) and a malformed first stamp.
-fn parse_lrc_line(line: &str) -> Option<(String, Vec<i64>)> {
-    let mut starts = Vec::new();
-    let mut rest = line;
-    while let Some((start, after)) = parse_lrc_stamp(rest) {
-        starts.push(start);
-        rest = after.trim_start();
-    }
-    (!starts.is_empty()).then(|| (rest.trim_end().to_owned(), starts))
-}
-
-/// One leading `[mm:ss.xx]` stamp: its start in milliseconds and the text
-/// after it.
-fn parse_lrc_stamp(line: &str) -> Option<(i64, &str)> {
-    let inner = line.strip_prefix('[')?;
-    let end = inner.find(']')?;
-    let stamp = &inner[..end];
-    let (minutes_raw, rest) = stamp.split_once(':')?;
-    let minutes: i64 = minutes_raw.parse().ok()?;
-    let (seconds_raw, fraction_raw) = match rest.split_once('.') {
-        Some((seconds, fraction)) => (seconds, Some(fraction)),
-        None => match rest.split_once(':') {
-            Some(_) => return None,
-            None => (rest, None),
-        },
-    };
-    let seconds: i64 = seconds_raw.parse().ok()?;
-    if minutes < 0 || !(0..60).contains(&seconds) {
-        return None;
-    }
-    let fraction_ms: i64 = match fraction_raw {
-        None => 0,
-        Some(digits) => {
-            if digits.is_empty() || digits.len() > 3 || !digits.bytes().all(|b| b.is_ascii_digit())
-            {
-                return None;
-            }
-            let value: i64 = digits.parse().ok()?;
-            match digits.len() {
-                1 => value * 100,
-                2 => value * 10,
-                _ => value,
-            }
-        }
-    };
-    Some((
-        minutes * 60_000 + seconds * 1_000 + fraction_ms,
-        &inner[end + 1..],
-    ))
 }
 
 /// The lyrics `audio` carries: its `.lrc` file first, then its tag. `None`
@@ -393,15 +477,18 @@ fn read_tag_lyrics(at: TrackFile<'_>) -> std::io::Result<Option<Lyrics>> {
             return Ok(None);
         }
     };
-    Ok(values
-        .iter()
-        .find_map(|text| match parse_lyrics_text(text) {
-            Ok(lyrics) => lyrics,
-            Err(refused) => {
-                tracing::debug!(path = %audio.display(), reason = %refused, "lyrics tag skipped");
-                None
-            }
-        }))
+    Ok(values.iter().find_map(|text| tag_text_lyrics(audio, text)))
+}
+
+/// The lyrics one tag value holds.
+fn tag_text_lyrics(audio: &Path, text: &str) -> Option<Lyrics> {
+    match parse_lyrics_text(text) {
+        Ok(lyrics) => lyrics,
+        Err(refused) => {
+            tracing::debug!(path = %audio.display(), reason = %refused, "lyrics tag skipped");
+            None
+        }
+    }
 }
 
 /// Why a file's lyrics tags were not had.
@@ -501,61 +588,4 @@ fn ape_tail(file: &mut File) -> std::io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     file.take(wanted).read_to_end(&mut bytes)?;
     Ok(bytes)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// LRC stamps parse to milliseconds, plain text drops empty lines,
-    /// the byte cap holds, and a `.lrc` reads as Jellyfin reads it: a line
-    /// stamped twice is sung twice, in time order, and a stamped blank line
-    /// stays, so the line before it stops showing through the gap.
-    #[test]
-    fn lyrics_parse_and_cap() {
-        assert_eq!(
-            parse_lrc_line("[01:02.34] hello"),
-            Some(("hello".to_owned(), vec![62_340]))
-        );
-        assert_eq!(
-            parse_lrc_line("[00:00.5] x"),
-            Some(("x".to_owned(), vec![500]))
-        );
-        assert_eq!(parse_lrc_line("[ar:Someone]"), None);
-        assert_eq!(parse_lrc_line("[99:99.99] x"), None);
-        assert_eq!(parse_lrc_line("no stamp"), None);
-
-        let plain = parse_lyrics_text("One\n\n  Two  ").unwrap().unwrap();
-        assert!(!plain.synced);
-        assert_eq!(
-            plain.lines,
-            [("One".to_owned(), None), ("Two".to_owned(), None)]
-        );
-        assert_eq!(parse_lyrics_text(" \n[00:01.00]\n").unwrap(), None);
-        assert_eq!(
-            parse_lyrics(Some(&"x".repeat(MAX_LYRICS_BYTES + 1)), None),
-            Err(LyricsRefused::TooManyBytes)
-        );
-
-        let dir =
-            droppedneedle_kernel::test_support::ScratchDir::new("lyrics-lrc").expect("scratch");
-        std::fs::write(
-            dir.path().join("song.lrc"),
-            "[ar:Someone]\n[00:12.00][00:45.00]Chorus\n[00:20.00]\n",
-        )
-        .expect("lrc writes");
-        let song = dir.path().join("song.flac");
-        let (source, lyrics) =
-            read_file_lyrics(TrackFile::new(dir.path(), &song)).expect("the sidecar reads");
-        assert_eq!(source, LyricsSource::Sidecar);
-        assert!(lyrics.synced);
-        assert_eq!(
-            lyrics.lines,
-            [
-                ("Chorus".to_owned(), Some(12_000)),
-                (String::new(), Some(20_000)),
-                ("Chorus".to_owned(), Some(45_000)),
-            ]
-        );
-    }
 }

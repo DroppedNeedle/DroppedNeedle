@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::LyricsSettings;
-use droppedneedle_library::tags::lyrics::parse_lyrics;
+use droppedneedle_library::tags::lyrics::{Lyrics, parse_lyrics};
 use droppedneedle_media::stream::local_files::LibraryFiles;
 use droppedneedle_providers::degradation::{IntegrationStatus, record_current};
 use droppedneedle_providers::lrclib::{LrclibClient, LyricsCandidate, signature_text};
@@ -25,7 +25,7 @@ use droppedneedle_providers::{
 
 use crate::local::file_lyrics;
 use crate::local::store::LocalCatalog;
-use crate::local::stores::{BoxFuture, LyricDoc, LyricsPort, StoreError};
+use crate::local::stores::{BoxFuture, LyricsPort, StoreError};
 
 /// Source name for logs and the degradation registry.
 const LRCLIB: &str = "lrclib";
@@ -201,7 +201,7 @@ impl LyricsService {
         }
     }
 
-    async fn online(&self, track_id: &str) -> Result<Option<LyricDoc>, StoreError> {
+    async fn online(&self, track_id: &str) -> Result<Option<Lyrics>, StoreError> {
         let track = self
             .catalog
             .get_track(track_id)
@@ -236,10 +236,7 @@ impl LyricsService {
             candidate.plain_lyrics.as_deref(),
             candidate.synced_lyrics.as_deref(),
         ) {
-            Ok(parsed) => Ok(parsed.map(|parsed| LyricDoc {
-                lines: parsed.lines,
-                synced: parsed.synced,
-            })),
+            Ok(parsed) => Ok(parsed),
             Err(refused) => {
                 tracing::debug!(cause = %refused, "online lyrics unusable; reading as absent");
                 record_current(LRCLIB, IntegrationStatus::Error, false);
@@ -250,7 +247,7 @@ impl LyricsService {
 }
 
 impl LyricsPort for LyricsService {
-    fn get<'a>(&'a self, track_id: &'a str) -> BoxFuture<'a, Result<Option<LyricDoc>, StoreError>> {
+    fn get<'a>(&'a self, track_id: &'a str) -> BoxFuture<'a, Result<Option<Lyrics>, StoreError>> {
         Box::pin(async move {
             if let Some(doc) = file_lyrics::read(&self.catalog, &self.files, track_id).await? {
                 return Ok(Some(doc));

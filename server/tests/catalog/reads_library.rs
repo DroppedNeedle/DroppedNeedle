@@ -17,21 +17,22 @@ use axum::http::{Request, StatusCode};
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::db::Db;
 use droppedneedle_library::scan::coordinator::SharedResolver;
+use droppedneedle_library::tags::lyrics::{LineInput, Lyrics, Piece};
 use droppedneedle_media::stream::local_files::LibraryFiles;
 use local::LibraryDeps;
 use local::store::LocalCatalog;
 use local::stores::{
-    After, AlbumFilter, AlbumSort, ArtistScope, ArtistSort, BoxFuture, LyricDoc, LyricsPort,
-    StoreError, TrackFilter, TrackSort,
+    After, AlbumFilter, AlbumSort, ArtistScope, ArtistSort, BoxFuture, LyricsPort, StoreError,
+    TrackFilter, TrackSort,
 };
 use serde_json::Value;
 use tower::ServiceExt as _;
 
-/// Lyrics answered from a fixed set of docs.
-struct ScriptedLyrics(HashMap<String, LyricDoc>);
+/// Lyrics answered from a fixed set.
+struct ScriptedLyrics(HashMap<String, Lyrics>);
 
 impl LyricsPort for ScriptedLyrics {
-    fn get<'a>(&'a self, track_id: &'a str) -> BoxFuture<'a, Result<Option<LyricDoc>, StoreError>> {
+    fn get<'a>(&'a self, track_id: &'a str) -> BoxFuture<'a, Result<Option<Lyrics>, StoreError>> {
         Box::pin(async move { Ok(self.0.get(track_id).cloned()) })
     }
 }
@@ -39,13 +40,19 @@ impl LyricsPort for ScriptedLyrics {
 fn scripted_lyrics() -> ScriptedLyrics {
     ScriptedLyrics(HashMap::from([(
         "t1".to_owned(),
-        LyricDoc {
-            lines: vec![
-                ("line one".to_owned(), Some(1000)),
-                ("line two".to_owned(), Some(4500)),
-            ],
-            synced: true,
-        },
+        Lyrics::from_lines(vec![
+            LineInput {
+                start_ms: Some(1000),
+                end_ms: None,
+                pieces: vec![Piece::plain("line one")],
+            },
+            LineInput {
+                start_ms: Some(4500),
+                end_ms: None,
+                pieces: vec![Piece::plain("line two")],
+            },
+        ])
+        .expect("lines with text"),
     )]))
 }
 

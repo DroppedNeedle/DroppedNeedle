@@ -780,8 +780,13 @@ impl JellyfinLibrary {
     pub async fn lyrics(&self, file_id: &str) -> Result<Option<LyricsView>, ReadFailed> {
         let doc = self.library.lyrics(file_id).await?;
         Ok(doc.map(|doc| LyricsView {
-            lines: doc.lines,
-            synced: doc.synced,
+            lines: doc
+                .main
+                .lines()
+                .iter()
+                .map(|line| (line.text().to_owned(), line.start_ms()))
+                .collect(),
+            synced: doc.main.synced(),
         }))
     }
 
