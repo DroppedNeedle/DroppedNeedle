@@ -1,10 +1,14 @@
+import type { TrackData } from '$lib/api/playlists';
 import type { QueueItem } from '$lib/features/player/playback/types';
 
-export type PlaylistModalHandle = { open: (items: QueueItem[]) => void };
+/** What the dialog adds: tracks from the player, or entries as the server takes them. */
+export type PlaylistAddition = QueueItem | TrackData;
+
+export type PlaylistModalHandle = { open: (items: PlaylistAddition[]) => void };
 
 let shouldMount = $state(false);
 let instance: PlaylistModalHandle | null = null;
-let pendingItems: QueueItem[] | null = null;
+let pendingItems: PlaylistAddition[] | null = null;
 
 function flushPending(): void {
 	if (!instance || !pendingItems) return;
@@ -34,7 +38,7 @@ export function resetPlaylistModal(): void {
 	shouldMount = false;
 }
 
-export function openGlobalPlaylistModal(items: QueueItem[]): void {
+export function openGlobalPlaylistModal(items: PlaylistAddition[]): void {
 	pendingItems = items;
 	shouldMount = true;
 	flushPending();

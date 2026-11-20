@@ -5,7 +5,8 @@
 	import {
 		queueItemToTrackData,
 		isRedactedPlaylist,
-		type PlaylistSummary
+		type PlaylistSummary,
+		type TrackData
 	} from '$lib/api/playlists';
 	import { fetchPlaylistListV3 } from '$lib/features/playlists/queries/PlaylistV3Queries.svelte';
 	import {
@@ -34,7 +35,7 @@
 	const checkTracksMutation = createCheckPlaylistTracksV3Mutation();
 
 	let shown = $state(false);
-	let pendingTracks: QueueItem[] = [];
+	let pendingTracks: TrackData[] = [];
 	let trackCount = $state(0);
 	let playlists = $state<PlaylistSummary[]>([]);
 	let loading = $state(true);
@@ -65,8 +66,9 @@
 		return count > 0 && count < trackCount;
 	}
 
-	export function open(items: QueueItem[]) {
-		pendingTracks = items;
+	// A song the library lacks comes as its entry; it fills in when its album lands.
+	export function open(items: (QueueItem | TrackData)[]) {
+		pendingTracks = items.map((item) => ('trackName' in item ? queueItemToTrackData(item) : item));
 		trackCount = items.length;
 		addedSet.clear();
 		addingSet.clear();
@@ -92,9 +94,9 @@
 			);
 			if (pendingTracks.length > 0) {
 				const trackIdentifiers = pendingTracks.map((t) => ({
-					track_name: t.trackName,
-					artist_name: t.artistName,
-					album_name: t.albumName
+					track_name: t.track_name,
+					artist_name: t.artist_name,
+					album_name: t.album_name
 				}));
 				// The server checks at most CHECK_CHUNK tracks per call; each
 				// answer's keys index into its own chunk.
@@ -130,12 +132,11 @@
 		addingSet.add(playlist.id);
 		try {
 			const existingIndices = new Set(membership[playlist.id] ?? []);
-			const tracksToAdd = pendingTracks.filter((_, i) => !existingIndices.has(i));
-			if (tracksToAdd.length === 0) {
+			const trackData = pendingTracks.filter((_, i) => !existingIndices.has(i));
+			if (trackData.length === 0) {
 				addedSet.add(playlist.id);
 				return;
 			}
-			const trackData = tracksToAdd.map(queueItemToTrackData);
 			await addTracksMutation.mutateAsync({
 				id: playlist.id,
 				tracks: trackData.map(trackDataToV3Input)
@@ -169,15 +170,14 @@
 		try {
 			const created = await createMutation.mutateAsync(name);
 			const detail = toPageDetail(created);
-			const trackData = pendingTracks.map(queueItemToTrackData);
 			await addTracksMutation.mutateAsync({
 				id: detail.id,
-				tracks: trackData.map(trackDataToV3Input)
+				tracks: pendingTracks.map(trackDataToV3Input)
 			});
 			addedSet.add(detail.id);
 			const allIndices = Array.from({ length: trackCount }, (_, i) => i);
 			membership = { ...membership, [detail.id]: allIndices };
-			playlists = [{ ...detail, track_count: trackData.length }, ...playlists];
+			playlists = [{ ...detail, track_count: pendingTracks.length }, ...playlists];
 			newName = '';
 			showStatus(`Pressed "${name}" and filed the tracks.`, 'success');
 		} catch {
