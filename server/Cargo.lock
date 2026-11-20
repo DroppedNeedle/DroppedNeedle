@@ -746,6 +746,7 @@ dependencies = [
  "libc",
  "lofty",
  "percent-encoding",
+ "quick-xml",
  "regex",
  "rubato",
  "rusqlite",

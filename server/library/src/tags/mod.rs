@@ -9,8 +9,8 @@
 //! `fields` lists what it writes (Picard's tag set) and `picard` fills
 //! that set from an identified release.
 //!
-//! `lyrics` reads the lyrics a file carries (a `.lrc` beside it, or its
-//! lyrics tag) and holds the one lyrics parser.
+//! `lyrics` reads the lyrics a file carries (a `.ttml` or `.lrc` beside
+//! it, or its lyrics tag) and holds the lyrics parsers.
 //!
 //! WMA is unrecognized everywhere here: there is no ASF code,
 //! and every entry point rejects `.wma` before touching the file.

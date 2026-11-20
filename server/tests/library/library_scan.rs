@@ -2598,9 +2598,11 @@ async fn symlinks_never_escape_a_root() {
 }
 
 /// The lyrics sweep marks the tracks whose files carry lyrics, a tag or a
-/// `.lrc` named like the track (its extension in any case), and only reads:
-/// no audio or lyrics file changes, a `.lrc` that is a link is not
-/// followed, and a `.lrc` deleted before the next scan takes its mark.
+/// `.lrc` or `.ttml` named like the track (its extension in any case), and
+/// only reads: no audio or lyrics file changes, a `.lrc` that is a link is
+/// not followed, and a `.lrc` deleted before the next scan takes its mark.
+/// A `.ttml` is marked as a lyrics file and is read before a `.lrc` of the
+/// same name.
 #[tokio::test]
 async fn lyrics_sweep_marks_what_files_carry_and_only_reads() {
     use std::os::unix::fs::symlink;
@@ -2610,11 +2612,17 @@ async fn lyrics_sweep_marks_what_files_carry_and_only_reads() {
     plant(&music, "Tagged/01 Words.flac", "flac_lyrics_tag.flac");
     plant(&music, "Album/01 Airbag.flac", "flac_full_01.flac");
     let sidecar = plant(&music, "Album/01 Airbag.LRC", "lyrics_airbag.lrc");
-    plant(
+    let paranoid = plant(
         &music,
         "Album/02 Paranoid Android.flac",
         "flac_full_02.flac",
     );
+    plant(
+        &music,
+        "Album/02 Paranoid Android.ttml",
+        "lyrics_words.ttml",
+    );
+    plant(&music, "Album/02 Paranoid Android.lrc", "lyrics_airbag.lrc");
     plant(&music, "Linked/01 Song A.flac", "flac_compilation_01.flac");
     let elsewhere = plant(&scratch.join("elsewhere"), "song.lrc", "lyrics_airbag.lrc");
     symlink(&elsewhere, music.join("Linked/01 Song A.lrc")).expect("lyrics link");
@@ -2642,7 +2650,19 @@ async fn lyrics_sweep_marks_what_files_carry_and_only_reads() {
     );
     assert_eq!(mark(&library, "Tagged/01 Words.flac", "tag"), 1);
     assert_eq!(mark(&library, "Album/01 Airbag.flac", "sidecar"), 1);
-    assert_eq!(marks(&library), 2, "no plain file and no linked .lrc");
+    assert_eq!(
+        mark(&library, "Album/02 Paranoid Android.flac", "sidecar"),
+        1
+    );
+    assert_eq!(marks(&library), 3, "no plain file and no linked .lrc");
+    let (_, words) =
+        droppedneedle_library::tags::lyrics::read_file_lyrics(TrackFile::new(&music, &paranoid))
+            .expect("lyrics read");
+    assert_eq!(
+        words.main.lines()[0].text(),
+        "Wörding two (echo)",
+        "the .ttml, not the .lrc"
+    );
     assert_eq!(snapshot(&music), before, "the sweep never writes a file");
 
     std::fs::remove_file(&sidecar).expect("lyrics file removes");
@@ -2661,7 +2681,7 @@ async fn lyrics_sweep_marks_what_files_carry_and_only_reads() {
             .complete
     );
     assert_eq!(mark(&library, "Tagged/01 Words.flac", "tag"), 1);
-    assert_eq!(marks(&library), 1, "the deleted .lrc took its mark");
+    assert_eq!(marks(&library), 2, "the deleted .lrc took its mark");
     let mut kept = before;
     kept.remove("Album/01 Airbag.LRC");
     assert_eq!(snapshot(&music), kept);

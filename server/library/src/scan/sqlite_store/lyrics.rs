@@ -2,16 +2,18 @@
 //!
 //! [`SqliteScanStore::refresh_track_lyrics`] walks the indexed albums and
 //! records in `local_track_lyrics` each track whose file carries lyrics: a
-//! `.lrc` file beside it, or a lyrics tag. It reads them with the same
-//! function that serves them, so a marked track can be served.
+//! `.ttml` or `.lrc` file beside it (both marked `sidecar`), or a lyrics
+//! tag. It reads them with the same function that serves them, so a
+//! marked track can be served.
 //!
 //! It works like the album art sweep and shares its snapshot, folders and
 //! signature: an album is read again only when its tracks' stat revisions,
-//! its folders' modification times or the size and time of a `.lrc` file
-//! in its track folders changed. Adding, removing or renaming a `.lrc`
-//! file changes its folder's time; editing one in place changes its own,
-//! so a `.lrc` fixed in place is marked and served after the next sweep.
-//! Each track folder is listed once per album.
+//! its folders' modification times or the size and time of a `.ttml` or
+//! `.lrc` file in its track folders changed. An album with no `.ttml` file
+//! keeps the signature it had before `.ttml` files were read. Adding,
+//! removing or renaming a lyrics file changes its folder's time; editing
+//! one in place changes its own, so a file fixed in place is marked and
+//! served after the next sweep. Each track folder is listed once per album.
 //!
 //! An album with a file that cannot be reached or read keeps its marks, and
 //! gets no new check row, as in the art sweep.
@@ -106,13 +108,14 @@ impl SqliteScanStore {
             let marks = tracks
                 .iter()
                 .filter_map(|track| {
-                    let sidecar = track
+                    let beside = track
                         .path
                         .parent()
                         .and_then(|dir| sidecars.get(dir))
-                        .and_then(|listed| listed.for_track(&track.path));
+                        .map(|listed| listed.for_track(&track.path))
+                        .unwrap_or_default();
                     let (found, failed) = match track.file() {
-                        Some(file) => read_lyrics_checked(file, sidecar),
+                        Some(file) => read_lyrics_checked(file, beside),
                         None => (None, true),
                     };
                     unread |= failed;
@@ -188,7 +191,7 @@ impl SqliteScanStore {
     }
 }
 
-/// The `.lrc` files of each folder the album's tracks live in, each folder
+/// The lyrics files of each folder the album's tracks live in, each folder
 /// listed once.
 fn track_sidecars(tracks: &[TrackFile]) -> HashMap<PathBuf, Sidecars> {
     let mut listed: HashMap<PathBuf, Sidecars> = HashMap::new();
@@ -202,7 +205,7 @@ fn track_sidecars(tracks: &[TrackFile]) -> HashMap<PathBuf, Sidecars> {
     listed
 }
 
-/// The album signature with every `.lrc` file of its track folders, so an
+/// The album signature with every lyrics file of its track folders, so an
 /// edit in place brings the album back.
 fn lyrics_signature(tracks: &[TrackFile], sidecars: &HashMap<PathBuf, Sidecars>) -> String {
     let dirs = album_dirs(tracks);

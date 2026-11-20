@@ -314,3 +314,240 @@ fn stamp_copies_past_the_cap_are_refused() {
         Err(LyricsRefused::TooManyCharacters)
     );
 }
+
+/// What `read_file_lyrics` reads for a track with `ttml` beside it as
+/// `song.ttml`, and a `song.lrc` too.
+fn read_beside_lrc(ttml: &str) -> Lyrics {
+    let dir = droppedneedle_kernel::test_support::ScratchDir::new("lyrics-ttml").expect("scratch");
+    std::fs::write(dir.path().join("song.ttml"), ttml).expect("ttml writes");
+    std::fs::write(dir.path().join("song.lrc"), "[00:01.00]from the lrc").expect("lrc writes");
+    let song = dir.path().join("song.flac");
+    let (source, lyrics) =
+        read_file_lyrics(TrackFile::new(dir.path(), &song)).expect("lyrics read");
+    assert_eq!(source, LyricsSource::Sidecar);
+    lyrics
+}
+
+/// A cue line's agent: its id and role.
+fn agent_of<'a>(track: &'a LyricsTrack, cue_line: &CueLine) -> (&'a str, AgentRole) {
+    let agent = &track.agents()[cue_line.agent().expect("an agent")];
+    (agent.id(), agent.role())
+}
+
+/// A `.ttml` beside a track wins over its `.lrc`: word cues from timed
+/// spans (clock, bare seconds and offsets from the nearest timed
+/// ancestor, read exactly), lines sorted by time, singers with one main,
+/// background vocals as a second cue line on the same line, translations
+/// matched by key as a track of their own. A broken or refused one gives
+/// way to the `.lrc`.
+#[test]
+fn ttml_reads_words_agents_and_layers() {
+    let lyrics = read_beside_lrc(include_str!(
+        "../../../../tests/fixtures/library/lyrics_words.ttml"
+    ));
+    let main = &lyrics.main;
+    assert!(main.synced());
+    assert_eq!(main.lang(), Some("en"));
+    let timed: Vec<(&str, Option<i64>, Option<i64>)> = main
+        .lines()
+        .iter()
+        .map(|line| (line.text(), line.start_ms(), line.end_ms()))
+        .collect();
+    assert_eq!(
+        timed,
+        [
+            ("Wörding two (echo)", Some(1_000), Some(4_000)),
+            ("Rock & roll", Some(5_000), Some(6_500)),
+            ("Exact", Some(10_000), Some(11_000)),
+        ]
+    );
+    let agents: Vec<(&str, AgentRole, Option<&str>)> = main
+        .agents()
+        .iter()
+        .map(|agent| (agent.id(), agent.role(), agent.name()))
+        .collect();
+    assert_eq!(
+        agents,
+        [
+            ("v1", AgentRole::Main, Some("Singer One")),
+            ("v2", AgentRole::Voice, Some("Singer Two")),
+            ("bg", AgentRole::Bg, None),
+        ]
+    );
+    let cues = |cue_line: &CueLine| -> Vec<(i64, i64, usize, usize)> {
+        cue_line
+            .cues()
+            .iter()
+            .map(|cue| {
+                (
+                    cue.start_ms(),
+                    cue.end_ms(),
+                    cue.byte_start(),
+                    cue.byte_end(),
+                )
+            })
+            .collect()
+    };
+    let first = &main.lines()[0];
+    let [sung, background] = first.cue_lines() else {
+        panic!("two cue lines: {first:?}");
+    };
+    assert_eq!(sung.text(), "Wörding two");
+    assert_eq!(agent_of(main, sung), ("v1", AgentRole::Main));
+    assert_eq!(
+        cues(sung),
+        [
+            (1_000, 1_500, 0, 4),
+            (1_500, 2_000, 5, 7),
+            (2_000, 2_500, 9, 11)
+        ]
+    );
+    assert_eq!(background.text(), "(echo)");
+    assert_eq!(agent_of(main, background), ("bg", AgentRole::Bg));
+    assert_eq!(cues(background), [(3_000, 4_500, 0, 5)]);
+    assert_eq!(background.span(first.end_ms()), (3_000, 4_500));
+    let second = &main.lines()[1].cue_lines()[0];
+    assert_eq!(agent_of(main, second), ("v2", AgentRole::Voice));
+    assert_eq!(cues(second), [(5_500, 6_000, 0, 3), (6_000, 6_500, 5, 10)]);
+    let third = &main.lines()[2].cue_lines()[0];
+    assert_eq!(agent_of(main, third), ("v1", AgentRole::Main));
+    assert_eq!(cues(third), [(10_567, 10_800, 0, 4)]);
+
+    let [french] = lyrics.layers.as_slice() else {
+        panic!("one layer: {:?}", lyrics.layers);
+    };
+    assert_eq!(french.kind(), LyricsKind::Translation);
+    assert_eq!(french.lang(), Some("fr"));
+    assert!(french.synced());
+    let layer: Vec<(&str, Option<i64>, Option<i64>, usize)> = french
+        .lines()
+        .iter()
+        .map(|line| {
+            (
+                line.text(),
+                line.start_ms(),
+                line.end_ms(),
+                line.cue_lines().len(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        layer,
+        [
+            ("Un", Some(1_000), Some(4_000), 0),
+            ("Deux mots", Some(5_000), Some(6_500), 0),
+            ("Exacte", Some(10_000), Some(11_000), 0),
+        ]
+    );
+
+    // Background vocals with no singer named: a made-up main, and ids
+    // that never take a declared one.
+    let unnamed = read_beside_lrc(
+        r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+        <head><metadata><ttm:agent type="group" xml:id="bg"/></metadata></head>
+        <body><p begin="1" end="2"><span begin="1" end="1.5">Lead</span><span ttm:role="x-bg"><span begin="1.5" end="2">back</span></span></p></body></tt>"#,
+    );
+    let line = &unnamed.main.lines()[0];
+    assert_eq!(line.text(), "Lead back");
+    let roles: Vec<(&str, AgentRole)> = line
+        .cue_lines()
+        .iter()
+        .map(|cue_line| agent_of(&unnamed.main, cue_line))
+        .collect();
+    assert_eq!(roles, [("main", AgentRole::Main), ("bg2", AgentRole::Bg)]);
+    assert_eq!(unnamed.main.agents().len(), 2);
+
+    // Line timing only: no cues.
+    let by_line = read_beside_lrc(
+        r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="Line">
+        <body><p begin="1" end="2"><span begin="1" end="1.5">no</span> <span begin="1.5" end="2">cues</span></p></body></tt>"#,
+    );
+    assert_eq!(
+        shown(&by_line),
+        [("no cues", Some(1_000), Some(2_000), vec![])]
+    );
+
+    // A DOCTYPE is refused, and so is broken XML: the .lrc is read.
+    for refused in [
+        r#"<!DOCTYPE tt><tt xmlns="http://www.w3.org/ns/ttml"><body><p begin="1">fine</p></body></tt>"#,
+        r#"<tt xmlns="http://www.w3.org/ns/ttml"><body><p begin="1">open</body></tt>"#,
+    ] {
+        assert_eq!(
+            lines(&read_beside_lrc(refused)),
+            [("from the lrc", Some(1_000))]
+        );
+    }
+}
+
+/// A lyrics tag that starts like TTML is read as TTML, and as plain text
+/// when it does not parse as TTML.
+#[test]
+fn ttml_looking_tag_falls_back_to_text() {
+    let audio = Path::new("song.flac");
+    let ttml = tag_text_lyrics(
+        audio,
+        r#"<?xml version="1.0"?><tt xmlns="http://www.w3.org/ns/ttml"><body><p begin="1">Tagged</p></body></tt>"#,
+    )
+    .expect("TTML reads");
+    assert_eq!(lines(&ttml), [("Tagged", Some(1_000))]);
+    let text = tag_text_lyrics(audio, "<tt> not a document\nsecond line").expect("text reads");
+    assert!(!text.main.synced());
+    assert_eq!(
+        lines(&text),
+        [("<tt> not a document", None), ("second line", None)]
+    );
+}
+
+/// A head text feeds only the first line naming its key, so a long text
+/// named by many lines is never copied per line.
+#[test]
+fn ttml_head_text_feeds_one_line() {
+    let mut doc = String::from(
+        r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal"><head><metadata><iTunesMetadata><translations><translation xml:lang="fr"><text for="k">"#,
+    );
+    doc.push_str(&"mot ".repeat(50_000));
+    doc.push_str("</text></translation></translations></iTunesMetadata></metadata></head><body>");
+    for second in 0..20 {
+        doc.push_str(&format!(r#"<p begin="{second}" itunes:key="k">w</p>"#));
+    }
+    doc.push_str("</body></tt>");
+    let lyrics = ttml::parse_ttml(&doc).unwrap().unwrap();
+    assert_eq!(lyrics.main.lines().len(), 20);
+    let [french] = lyrics.layers.as_slice() else {
+        panic!("one layer: {} layers", lyrics.layers.len());
+    };
+    assert_eq!(french.lines().len(), 1);
+    assert_eq!(french.lines()[0].start_ms(), Some(0));
+}
+
+/// Translation languages stop being read once 64 hold text, whether or
+/// not their keys match a line, and at most eight layers with lines are
+/// kept, the first met first.
+#[test]
+fn ttml_layers_stop_at_the_caps() {
+    let mut doc =
+        String::from(r#"<tt xmlns="http://www.w3.org/ns/ttml"><head><metadata><translations>"#);
+    for index in 0..64 {
+        doc.push_str(&format!(
+            r#"<translation lang="h{index:02}"><text for="nowhere">t</text></translation>"#
+        ));
+    }
+    doc.push_str(
+        r#"</translations></metadata></head><body><p begin="1" end="2">w<span role="x-translation" lang="late">t</span></p></body></tt>"#,
+    );
+    let full = ttml::parse_ttml(&doc).unwrap().unwrap();
+    assert_eq!(full.main.lines()[0].text(), "w");
+    assert!(full.layers.is_empty(), "{:?}", full.layers);
+
+    let mut doc =
+        String::from(r#"<tt xmlns="http://www.w3.org/ns/ttml"><body><p begin="1" end="2">w"#);
+    for index in 0..100 {
+        doc.push_str(&format!(
+            r#"<span role="x-translation" lang="l{index:05}">t</span>"#
+        ));
+    }
+    doc.push_str("</p></body></tt>");
+    let lyrics = ttml::parse_ttml(&doc).unwrap().unwrap();
+    assert_eq!(lyrics.layers.len(), 8);
+    assert_eq!(lyrics.layers[0].lang(), Some("l00000"));
+}

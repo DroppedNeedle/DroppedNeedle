@@ -3,18 +3,22 @@
 //!
 //! A file's lyrics come from, in order:
 //!
-//! 1. a `.lrc` file in the same folder with the same stem (the extension
-//!    in any case), where Library Management writes synced lyrics;
-//! 2. the file's lyrics tag: lofty's generic lyrics items (Vorbis
+//! 1. a `.ttml` file in the same folder with the same stem (the extension
+//!    in any case): only tools holding word timing write one, and it can
+//!    carry singers, background vocals and translations;
+//! 2. a `.lrc` file named the same way, where Library Management writes
+//!    synced lyrics;
+//! 3. the file's lyrics tag: lofty's generic lyrics items (Vorbis
 //!    `LYRICS` and `UNSYNCEDLYRICS`, ID3 `USLT`, MP4 `©lyr`). AAC's APEv2
 //!    tag is read too: the APE reader maps keys through lofty's APE table,
-//!    which already has `Lyrics` and `UnsyncedLyrics`.
+//!    which already has `Lyrics` and `UnsyncedLyrics`. A value that starts
+//!    `<?xml` or `<tt` is read as TTML first, and as text when it is not.
 //!
-//! A source counts only when it parses to at least one non-empty line. A
-//! `.lrc` must be a regular file (a link is never followed), at most
-//! [`MAX_LYRICS_BYTES`], and UTF-8 (a leading byte order mark is dropped).
-//! Text with LRC line or word stamps counts as synced, wherever it came
-//! from.
+//! A source counts only when it parses to at least one non-empty line;
+//! otherwise the next one is read. A lyrics file must be a regular file (a
+//! link is never followed), at most [`MAX_LYRICS_BYTES`], and UTF-8 (a
+//! leading byte order mark is dropped). Text with LRC line or word stamps
+//! counts as synced, wherever it came from.
 //!
 //! Every source becomes the same [`Lyrics`]: a main track and any
 //! translation or pronunciation tracks, each a list of lines, and a line
@@ -29,6 +33,7 @@ mod line;
 mod lrc;
 #[cfg(test)]
 mod tests;
+mod ttml;
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -299,10 +304,10 @@ pub enum LyricsRefused {
     TooManyCharacters,
 }
 
-/// The lyrics `audio` carries: its `.lrc` file first, then its tag. `None`
-/// when neither gives a line. A parser panic on a malformed file reads as
-/// no lyrics instead of taking the caller down. Blocking: run it off the
-/// async workers.
+/// The lyrics `audio` carries: its `.ttml` file first, then its `.lrc`
+/// file, then its tag. `None` when none gives a line. A parser panic on a
+/// malformed file passes that source over instead of taking the caller
+/// down. Blocking: run it off the async workers.
 #[must_use]
 pub fn read_file_lyrics(audio: TrackFile<'_>) -> Option<(LyricsSource, Lyrics)> {
     let sidecars = audio
@@ -313,59 +318,105 @@ pub fn read_file_lyrics(audio: TrackFile<'_>) -> Option<(LyricsSource, Lyrics)> 
     read_lyrics_beside(audio, sidecars.for_track(audio.path()))
 }
 
-/// [`read_file_lyrics`] with the `.lrc` file already found (from a
+/// [`read_file_lyrics`] with the lyrics files already found (from a
 /// [`Sidecars`] listing of the track's folder), so a sweep lists each
-/// folder once. The `.lrc` file is read beneath the track's folder.
+/// folder once. The files are read beneath the track's folder.
 #[must_use]
 pub fn read_lyrics_beside(
     audio: TrackFile<'_>,
-    sidecar: Option<&Path>,
+    sidecars: TrackSidecars<'_>,
 ) -> Option<(LyricsSource, Lyrics)> {
-    read_lyrics_checked(audio, sidecar).0
+    read_lyrics_checked(audio, sidecars).0
 }
 
 /// [`read_lyrics_beside`], and whether a file could not be read: then no
-/// lyrics found is not the same as none there.
+/// lyrics found is not the same as none there. A lyrics file that cannot
+/// be read is passed over; it counts only when the read falls through to
+/// the tag. A source whose reader panics counts as one that cannot be read.
 #[must_use]
 pub fn read_lyrics_checked(
     audio: TrackFile<'_>,
-    sidecar: Option<&Path>,
+    sidecars: TrackSidecars<'_>,
 ) -> (Option<(LyricsSource, Lyrics)>, bool) {
-    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut unread = false;
-        if let Some(path) = sidecar {
-            match read_sidecar(audio.beside(path)) {
-                Ok(Some(lyrics)) => return (Some((LyricsSource::Sidecar, lyrics)), false),
-                Ok(None) => {}
-                Err(error) => {
-                    tracing::debug!(path = %path.display(), %error, "lyrics file not read");
-                    unread = true;
-                }
-            }
-        }
-        match read_tag_lyrics(audio) {
-            Ok(lyrics) => (lyrics.map(|lyrics| (LyricsSource::Tag, lyrics)), unread),
+    let mut unread = false;
+    let files: [(
+        Option<&Path>,
+        fn(TrackFile<'_>) -> std::io::Result<Option<Lyrics>>,
+    ); 2] = [(sidecars.ttml, read_ttml), (sidecars.lrc, read_lrc)];
+    for (path, read) in files {
+        let Some(path) = path else {
+            continue;
+        };
+        match guarded(path, || read(audio.beside(path))) {
+            Ok(Some(lyrics)) => return (Some((LyricsSource::Sidecar, lyrics)), false),
+            Ok(None) => {}
             Err(error) => {
-                tracing::debug!(path = %audio.path().display(), %error, "lyrics tag not read");
-                (None, true)
+                tracing::debug!(path = %path.display(), %error, "lyrics file not read");
+                unread = true;
             }
         }
-    }));
-    read.unwrap_or_else(|_| {
-        tracing::error!(path = %audio.path().display(), "lyrics read panicked; read as none");
-        (None, false)
+    }
+    match guarded(audio.path(), || read_tag_lyrics(audio)) {
+        Ok(lyrics) => (lyrics.map(|lyrics| (LyricsSource::Tag, lyrics)), unread),
+        Err(error) => {
+            tracing::debug!(path = %audio.path().display(), %error, "lyrics tag not read");
+            (None, true)
+        }
+    }
+}
+
+/// The lyrics of one `.ttml` file, read beneath its folder with the same
+/// caps and checks as when it is read beside a track. `None` when it
+/// could not be read or holds no lyrics.
+#[must_use]
+pub fn read_ttml_file(at: TrackFile<'_>) -> Option<Lyrics> {
+    match guarded(at.path(), || read_ttml(at)) {
+        Ok(lyrics) => lyrics,
+        Err(error) => {
+            tracing::debug!(path = %at.path().display(), %error, "lyrics file not read");
+            None
+        }
+    }
+}
+
+/// `read`, with a panic in it turned into a read error, so a malformed
+/// file never takes the caller down.
+fn guarded(
+    path: &Path,
+    read: impl FnOnce() -> std::io::Result<Option<Lyrics>>,
+) -> std::io::Result<Option<Lyrics>> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)).unwrap_or_else(|_| {
+        tracing::error!(path = %path.display(), "lyrics read panicked");
+        Err(std::io::Error::other("lyrics read panicked"))
     })
 }
 
-/// The `.lrc` files of one folder (the extension in any case), regular
-/// files only: links are skipped, as the walk skips them.
+/// The lyrics files of one folder, `.ttml` and `.lrc` (the extension in
+/// any case), regular files only: links are skipped, as the walk skips
+/// them.
 #[derive(Debug, Default)]
 pub struct Sidecars {
-    /// By stem. Where two differ only in the extension's case, the first
-    /// by name wins.
-    by_stem: BTreeMap<OsString, PathBuf>,
+    /// By stem. Where two of a kind differ only in the extension's case,
+    /// the first by name wins.
+    by_stem: BTreeMap<OsString, StemFiles>,
     /// The folder, or an entry of it, could not be read.
     unread: bool,
+}
+
+/// The lyrics files of one stem.
+#[derive(Debug, Default)]
+struct StemFiles {
+    ttml: Option<PathBuf>,
+    lrc: Option<PathBuf>,
+}
+
+/// The lyrics files named like one track.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TrackSidecars<'a> {
+    /// Its `.ttml` file.
+    pub ttml: Option<&'a Path>,
+    /// Its `.lrc` file.
+    pub lrc: Option<&'a Path>,
 }
 
 impl Sidecars {
@@ -395,10 +446,9 @@ impl Sidecars {
                 }
             };
             let path = entry.path();
-            if !path
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("lrc"))
-            {
+            if !path.extension().is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("lrc") || extension.eq_ignore_ascii_case("ttml")
+            }) {
                 continue;
             }
             match entry.file_type() {
@@ -411,10 +461,22 @@ impl Sidecars {
             }
         }
         paths.sort();
-        let mut by_stem = BTreeMap::new();
+        let mut by_stem: BTreeMap<OsString, StemFiles> = BTreeMap::new();
         for path in paths {
-            if let Some(stem) = path.file_stem() {
-                by_stem.entry(stem.to_owned()).or_insert(path);
+            let Some(stem) = path.file_stem() else {
+                continue;
+            };
+            let ttml = path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("ttml"));
+            let files = by_stem.entry(stem.to_owned()).or_default();
+            let slot = if ttml {
+                &mut files.ttml
+            } else {
+                &mut files.lrc
+            };
+            if slot.is_none() {
+                *slot = Some(path);
             }
         }
         Self { by_stem, unread }
@@ -427,24 +489,32 @@ impl Sidecars {
         self.unread
     }
 
-    /// The `.lrc` file named like `audio`: the same stem, exactly.
+    /// The lyrics files named like `audio`: the same stem, exactly.
     #[must_use]
-    pub fn for_track(&self, audio: &Path) -> Option<&Path> {
-        self.by_stem.get(audio.file_stem()?).map(PathBuf::as_path)
+    pub fn for_track(&self, audio: &Path) -> TrackSidecars<'_> {
+        audio
+            .file_stem()
+            .and_then(|stem| self.by_stem.get(stem))
+            .map(|files| TrackSidecars {
+                ttml: files.ttml.as_deref(),
+                lrc: files.lrc.as_deref(),
+            })
+            .unwrap_or_default()
     }
 
-    /// Every `.lrc` file a track could take, in stem order.
+    /// Every lyrics file a track could take, in stem order.
     pub fn paths(&self) -> impl Iterator<Item = &Path> {
-        self.by_stem.values().map(PathBuf::as_path)
+        self.by_stem
+            .values()
+            .flat_map(|files| files.ttml.iter().chain(&files.lrc))
+            .map(PathBuf::as_path)
     }
 }
 
-/// The lyrics of a `.lrc` file. `Err` when it could not be read, `None`
-/// when what it holds does not count.
-fn read_sidecar(at: TrackFile<'_>) -> std::io::Result<Option<Lyrics>> {
-    let skip = |why: &dyn std::fmt::Display| {
-        tracing::debug!(path = %at.path().display(), reason = %why, "lyrics file skipped");
-    };
+/// The text of a lyrics file: UTF-8 within [`MAX_LYRICS_BYTES`], a
+/// leading byte order mark dropped. `Err` when it could not be read,
+/// `None` when it does not count.
+fn read_text(at: TrackFile<'_>) -> std::io::Result<Option<String>> {
     let file = at.open()?;
     let mut bytes = Vec::new();
     // One byte past the cap tells an oversized file from one exactly at it.
@@ -453,21 +523,48 @@ fn read_sidecar(at: TrackFile<'_>) -> std::io::Result<Option<Lyrics>> {
         .saturating_add(1);
     file.take(cap).read_to_end(&mut bytes)?;
     if bytes.len() > MAX_LYRICS_BYTES {
-        skip(&LyricsRefused::TooManyBytes);
+        skipped(at, &LyricsRefused::TooManyBytes);
         return Ok(None);
     }
-    let text = match String::from_utf8(bytes) {
-        Ok(text) => text,
-        Err(_) => {
-            skip(&"not UTF-8");
-            return Ok(None);
-        }
+    let Ok(mut text) = String::from_utf8(bytes) else {
+        skipped(at, &"not UTF-8");
+        return Ok(None);
     };
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    Ok(match parse_lyrics_text(text) {
+    if text.starts_with('\u{feff}') {
+        text.drain(..'\u{feff}'.len_utf8());
+    }
+    Ok(Some(text))
+}
+
+fn skipped(at: TrackFile<'_>, why: &dyn std::fmt::Display) {
+    tracing::debug!(path = %at.path().display(), reason = %why, "lyrics file skipped");
+}
+
+/// The lyrics of a `.lrc` file. `Err` when it could not be read, `None`
+/// when what it holds does not count.
+fn read_lrc(at: TrackFile<'_>) -> std::io::Result<Option<Lyrics>> {
+    let Some(text) = read_text(at)? else {
+        return Ok(None);
+    };
+    Ok(match parse_lyrics_text(&text) {
         Ok(lyrics) => lyrics,
         Err(refused) => {
-            skip(&refused);
+            skipped(at, &refused);
+            None
+        }
+    })
+}
+
+/// The lyrics of a `.ttml` file. `Err` when it could not be read, `None`
+/// when what it holds does not count.
+fn read_ttml(at: TrackFile<'_>) -> std::io::Result<Option<Lyrics>> {
+    let Some(text) = read_text(at)? else {
+        return Ok(None);
+    };
+    Ok(match ttml::parse_ttml(&text) {
+        Ok(lyrics) => lyrics,
+        Err(why) => {
+            skipped(at, &why);
             None
         }
     })
@@ -491,8 +588,18 @@ fn read_tag_lyrics(at: TrackFile<'_>) -> std::io::Result<Option<Lyrics>> {
     Ok(values.iter().find_map(|text| tag_text_lyrics(audio, text)))
 }
 
-/// The lyrics one tag value holds.
+/// The lyrics one tag value holds. A value that looks like TTML is read
+/// as TTML, and as text when it does not parse as TTML.
 fn tag_text_lyrics(audio: &Path, text: &str) -> Option<Lyrics> {
+    let trimmed = text.trim_start_matches('\u{feff}').trim_start();
+    if trimmed.starts_with("<?xml") || trimmed.starts_with("<tt") {
+        match ttml::parse_ttml(trimmed) {
+            Ok(lyrics) => return lyrics,
+            Err(why) => {
+                tracing::debug!(path = %audio.display(), reason = why, "lyrics tag not read as TTML");
+            }
+        }
+    }
     match parse_lyrics_text(text) {
         Ok(lyrics) => lyrics,
         Err(refused) => {

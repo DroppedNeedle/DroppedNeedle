@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" itunes:timing="Word" xml:lang="en">
+  <head>
+    <metadata>
+      <ttm:agent type="person" xml:id="v1"><ttm:name type="full">Singer One</ttm:name></ttm:agent>
+      <ttm:agent type="person" xml:id="v2"><ttm:name type="full">Singer Two</ttm:name></ttm:agent>
+      <ttm:agent type="group" xml:id="v1"><ttm:name type="full">Second Declaration</ttm:name></ttm:agent>
+      <iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+        <translations>
+          <translation type="replacement" xml:lang="fr">
+            <text for="L2">Deux <span>mots</span></text>
+            <text for="L1">Un</text>
+            <text for="L9">Nulle part</text>
+          </translation>
+        </translations>
+      </iTunesMetadata>
+    </metadata>
+  </head>
+  <body dur="20.000">
+    <div begin="1.000" end="15.000">
+      <p begin="4s" end="5.5s" itunes:key="L2" ttm:agent="v2">
+        <span begin="500ms" end="1s">Rock</span>
+        <span begin="1s">&amp; roll</span>
+      </p>
+      <p begin="00:01.000" end="00:04.000" itunes:key="L1" ttm:agent="v1"><span begin="00:01.000" end="00:01.500">Wörd</span><span begin="00:01.500" end="00:02.000">ing</span> <span begin="00:02.000" end="00:02.500">two</span><span ttm:role="x-bg"><span begin="00:03.000" end="00:04.500">(echo)</span></span></p>
+      <p begin="10" end="11" itunes:key="L3"><span begin="10.567" end="10.800">Exact</span><span ttm:role="x-translation" xml:lang="fr">Exacte</span></p>
+    </div>
+  </body>
+</tt>

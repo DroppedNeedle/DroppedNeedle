@@ -51,7 +51,7 @@ Sub-folder rules match folder names without regard to letter case or Unicode for
 
 A scan never follows a link. A folder replaced by a link is not read and its tracks stay as they are, on every scan and whichever folders it covers; Recent runs lists it. Put a real folder back and the next scan reads it again.
 
-After a scan, the library notes which tracks carry lyrics (a lyrics tag, or a `.lrc` file named like the track); it only reads them.
+After a scan, the library notes which tracks carry lyrics (a lyrics tag, or a `.ttml` or `.lrc` file named like the track); it only reads them.
 
 Recent runs can also export a diagnostic report for a scan: a small JSON file with the run's counters, timings, scopes and failed files, to attach to a bug report. Paths are replaced by fingerprints, and it holds no user names, passwords or error text.
 
@@ -159,9 +159,11 @@ You can download a single track or a whole album from the library. A track comes
 
 ## Lyrics
 
-The web player and player apps show lyrics for a track. Lyrics your files carry come first: a `.lrc` file next to the track with the same name, else the file's lyrics tag. Jellyfin apps such as Finamp only offer lyrics for those tracks. When a file has none, the server asks LRCLIB ([lrclib.net](https://lrclib.net)), a free lyrics database, at the moment lyrics are opened, sending the track's title, artist, album and length. LRCLIB's answer is remembered for a while (a week when it has lyrics, six hours when it has none), so opening the same track again does not ask again. Nothing is written to your files. This is on unless an admin turns it off under Settings > Library > Lyrics; while it is off, the web player and player apps never ask LRCLIB. Library Management fetching lyrics into files has its own setting.
+The web player and player apps show lyrics for a track. Lyrics your files carry come first: a `.ttml` file next to the track with the same name, else a `.lrc` file named the same way, else the file's lyrics tag. Jellyfin apps such as Finamp only offer lyrics for those tracks. A file that can't be read, or holds no lyrics, gives way to the next; to use a `.lrc` over a `.ttml`, rename or remove the `.ttml`. When a file has none, the server asks LRCLIB ([lrclib.net](https://lrclib.net)), a free lyrics database, at the moment lyrics are opened, sending the track's title, artist, album and length. LRCLIB's answer is remembered for a while (a week when it has lyrics, six hours when it has none), so opening the same track again does not ask again. Nothing is written to your files. This is on unless an admin turns it off under Settings > Library > Lyrics; while it is off, the web player and player apps never ask LRCLIB. Library Management fetching lyrics into files has its own setting.
 
 A `.lrc` file or lyrics tag may time each word as well as each line (enhanced LRC: `<mm:ss.xx>` stamps between the words). DroppedNeedle reads those times, and the stamps themselves never show as text, in the web player or in any app. A line with no line stamp that starts with a word stamp is timed, and sorted, by its first word. `[offset:+n]` moves every time by n milliseconds (a positive offset shows lines sooner), and `[lang:xx]` names the language, which Subsonic apps are told instead of "und".
+
+A `.ttml` file (the word-timed format some lyrics tools save, Apple's included) can also carry singers, background vocals and translations or pronunciations. DroppedNeedle reads the timing of each word or syllable, which singer sings each line, background vocals as a part of their own, and each translation or pronunciation as lyrics of its own. A lyrics tag that holds a TTML document is read the same way. The web player, Jellyfin apps and Subsonic apps that don't ask for word timing get the lines alone, with any background vocals after the main words on the same line.
 
 ## Ratings
 
