@@ -652,6 +652,37 @@ pub struct AlbumFormatCounts {
     pub items: Vec<AlbumFormatCount>,
 }
 
+/// The name an album page asks unlinked copies for.
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct UnlinkedCopiesQuery {
+    /// Album title, as the album page shows it.
+    pub title: String,
+    /// Album artist name, as the album page shows it.
+    pub artist: String,
+}
+
+/// A library album with no MusicBrainz match that shares an album page's
+/// title and album artist.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct UnlinkedCopy {
+    /// Local album id.
+    pub id: String,
+    /// Album title, as the files name it.
+    pub title: String,
+    /// Indexed tracks.
+    pub track_count: u64,
+    /// Most common track format, lowercase; null without indexed tracks.
+    pub format: Option<String>,
+}
+
+/// The unlinked copies of one album name, oldest first, three at most.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct UnlinkedCopies {
+    /// Matching copies; empty when the library has none.
+    pub copies: Vec<UnlinkedCopy>,
+}
+
 /// One suggested track, tagged with why it was picked.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SuggestionTrack {

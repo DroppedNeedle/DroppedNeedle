@@ -91,7 +91,8 @@ export const EFFECTS = {
 		{ everyScope: [RatingQueryKeyFactory.feature] },
 		{ everyScope: [DownloadQueryKeyFactory.feature] },
 		{ everyScope: [DropImportQueryKeyFactory.feature] },
-		{ key: SearchQueryKeyFactory.v3.root(userId) }
+		{ key: SearchQueryKeyFactory.v3.root(userId) },
+		{ key: AlbumQueryKeyFactory.unlinkedCopiesPrefix(userId) }
 	],
 	/** Scans, identification or operations moved without touching the catalog. */
 	libraryActivityChanged: (userId: UserId): Sweep[] => [
@@ -423,9 +424,11 @@ export const EFFECTS = {
 	/**
 	 * One library album's edition: its status and plans, its detail, tracks
 	 * and copies, the library status the album pages read, the Check albums
-	 * lists and the counts they show, and the reviews a choice settles.
+	 * lists and the counts they show, the reviews a choice settles, and the
+	 * unlinked copies the album pages point at.
 	 */
 	editionChanged: (userId: UserId, localId: string): Sweep[] => [
+		{ key: AlbumQueryKeyFactory.unlinkedCopiesPrefix(userId) },
 		{ key: LibraryQueryKeyFactory.catalog.edition(userId, localId) },
 		{ key: LibraryQueryKeyFactory.catalog.albumDetail(userId, localId) },
 		{ key: LibraryQueryKeyFactory.catalog.albumTracksPrefix(userId, localId) },

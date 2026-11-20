@@ -25,7 +25,8 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		every('ratings'),
 		every('downloads'),
 		every('drop-import'),
-		key(U, 'search')
+		key(U, 'search'),
+		key(U, 'albums', 'unlinked-copies')
 	],
 	libraryActivityChanged: [key(U, 'library', 'activity')],
 	libraryOperationsChanged: [
@@ -150,6 +151,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	albumVideoChanged: [key('shared', 'albums', 'youtube-link', 'u')],
 	anyDiscoverChanged: [every('discover')],
 	editionChanged: [
+		key(U, 'albums', 'unlinked-copies'),
 		key(U, 'library', 'catalog', 'edition', 'job'),
 		key(U, 'library', 'catalog', 'album-detail', 'job'),
 		key(U, 'library', 'catalog', 'album-tracks', 'job'),

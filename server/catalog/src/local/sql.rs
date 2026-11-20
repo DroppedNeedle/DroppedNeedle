@@ -742,6 +742,24 @@ droppedneedle_kernel::sql! {
     family OWNERS_BY_RELEASE = owners_by_release;
     /// The album one release group (`?1`, lowercase) opens, owned or not.
     pub(crate) LIVE_COPY_BY_GROUP = (copy_of_group!("= ?1"));
+    /// Owned albums titled `?1` by `?2` (both folded) that have no
+    /// MusicBrainz match row, oldest first, three at most: the name match
+    /// import's local-only twin check makes, kept to unlinked albums.
+    pub(crate) UNLINKED_COPIES = "SELECT a.id AS id, a.title AS title, \
+        (SELECT COUNT(*) FROM local_tracks t WHERE " + (album_track!("t", "a.id")) + ") \
+        AS track_count, " + (album_primary_format!("a")) + " AS format \
+        FROM local_albums a WHERE " + (owned_album!("a")) + " \
+        AND a.title_folded = ?1 AND a.album_artist_name_folded = ?2 \
+        AND NOT EXISTS (SELECT 1 FROM local_album_external_identities e \
+        WHERE e.local_album_id = a.id AND " + (musicbrainz!("e")) + ") \
+        ORDER BY a.created_at, a.id LIMIT 3";
+    /// One unlinked copy: id, title, indexed tracks and primary format.
+    pub(crate) row UnlinkedCopyRow for [UNLINKED_COPIES] {
+        id: String,
+        title: String,
+        track_count: i64,
+        format: Option<String>,
+    }
 
     /// Every identified artist credited on an owned album: lowercase MBID
     /// and display name, by name.

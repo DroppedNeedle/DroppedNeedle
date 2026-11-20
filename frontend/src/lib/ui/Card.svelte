@@ -4,7 +4,9 @@
 	one light island (cream with dark ink in dark, raised paper-white in
 	light), `torn` the same stock with its top and bottom edges ripped (a
 	browse tile, a ticket), `acid` a torn sheet of the acid action colour with
-	dark ink (a short static note beside a page's paper). With `href` the whole card is one link named by its title, so it
+	dark ink (a short static note beside a page's paper), `note` a callout
+	with an action-coloured edge and a faint action tint (a hint beside a
+	page's main actions). With `href` the whole card is one link named by its title, so it
 	holds no other controls.
 	A caller's `aria-*` attributes pass through, so a `section` card can be
 	named by its own heading with `aria-labelledby`. `ref` binds the card's
@@ -21,7 +23,7 @@
 	import { part } from './parts';
 
 	interface Props extends Omit<HTMLAttributes<HTMLElement>, 'title' | 'children'> {
-		variant?: 'flat' | 'bordered' | 'raised' | 'paper' | 'torn' | 'acid';
+		variant?: 'flat' | 'bordered' | 'raised' | 'paper' | 'torn' | 'acid' | 'note';
 		padding?: 'none' | 'sm' | 'md' | 'lg';
 		/** Rendered as an `h2`; use `header` for another heading or more than text. */
 		title?: string;
@@ -56,7 +58,8 @@
 		raised: 'card border border-line bg-base-200',
 		paper: 'card dn-card-paper border border-paper-border bg-paper text-paper-content',
 		torn: 'card dn-card-paper dn-card-torn bg-paper text-paper-content',
-		acid: 'card dn-card-torn bg-action text-action-content'
+		acid: 'card dn-card-torn bg-action text-action-content',
+		note: 'card border border-action-edge bg-action/10'
 	};
 	const linkHover = {
 		flat: 'transition-colors duration-150 hover:bg-neutral',
@@ -64,7 +67,8 @@
 		raised: 'transition duration-150 hover:bg-neutral motion-safe:hover:-translate-y-px',
 		paper: 'transition duration-150 hover:border-paper-content motion-safe:hover:-translate-y-px',
 		torn: 'transition duration-150 motion-safe:hover:-translate-y-px',
-		acid: 'transition duration-150 motion-safe:hover:-translate-y-px'
+		acid: 'transition duration-150 motion-safe:hover:-translate-y-px',
+		note: 'transition-colors duration-150 hover:bg-action/20'
 	};
 	const paddings = {
 		none: 'card-body p-0',

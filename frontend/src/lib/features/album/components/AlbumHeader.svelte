@@ -37,6 +37,8 @@
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import AlbumHero, { type AlbumFact } from './AlbumHero.svelte';
 	import FavoriteHeart from '$lib/features/library/components/FavoriteHeart.svelte';
+	import { getUnlinkedCopiesQuery } from '../queries/AlbumQueries.svelte';
+	import UnlinkedCopyNote from './UnlinkedCopyNote.svelte';
 
 	interface Props {
 		album: AlbumBasicInfo;
@@ -51,6 +53,8 @@
 		downloadClientConfigured: boolean;
 
 		libraryInLibrary?: boolean;
+		/** Whether the library status answered; the unlinked copies wait for it. */
+		libraryStatusKnown?: boolean;
 		libraryTrackCount?: number;
 		mbTrackCount?: number;
 		libraryBelowCutoff?: boolean;
@@ -92,6 +96,7 @@
 		heldFiles = [],
 		downloadClientConfigured,
 		libraryInLibrary = false,
+		libraryStatusKnown = false,
 		libraryTrackCount = 0,
 		mbTrackCount = 0,
 		libraryBelowCutoff = false,
@@ -193,6 +198,14 @@
 	const showPlate = $derived(localCopies.length > 0 || editionSheet.open || !!editionPick);
 
 	const owned = $derived(inLibrary || libraryInLibrary);
+	// A copy of this name with no MusicBrainz match may be this album: point
+	// at it before anyone fetches another.
+	const unlinkedQuery = getUnlinkedCopiesQuery(() =>
+		owned || !libraryStatusKnown ? null : { title: album.title, artist: album.artist_name }
+	);
+	const unlinkedCopies = $derived(
+		owned || !libraryStatusKnown ? [] : (unlinkedQuery.data?.copies ?? [])
+	);
 	const canRemove = $derived(authStore.isAdmin && (owned || isRequested));
 
 	const facts = $derived.by(() => {
@@ -302,6 +315,9 @@
 				request={editionPick ?? undefined}
 			/>
 		{/if}
+		{#if unlinkedCopies.length > 0}
+			<UnlinkedCopyNote copies={unlinkedCopies} />
+		{/if}
 	{/snippet}
 
 	{#snippet actions()}
@@ -333,7 +349,7 @@
 			{/if}
 		{:else}
 			<Button
-				variant={onplay ? 'outline' : 'primary'}
+				variant={onplay || unlinkedCopies.length > 0 ? 'outline' : 'primary'}
 				icon={Plus}
 				loading={requesting}
 				onclick={() => onrequest()}

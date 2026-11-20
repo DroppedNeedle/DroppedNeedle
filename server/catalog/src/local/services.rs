@@ -15,7 +15,7 @@ use super::models::{
     LyricsView, ManagementHoldView, PageQuery, RatingMode, RecentQuery, ResolveTracksRequest,
     ResolveTracksResponse, ResolvedTrack, StatsView, SuggestionReason, SuggestionTrack,
     SuggestionsQuery, SuggestionsResponse, TrackListPage, TrackListSort, TrackPage, TrackQuery,
-    TrackView, TracksMode,
+    TrackView, TracksMode, UnlinkedCopies, UnlinkedCopiesQuery,
 };
 use super::sql;
 use super::stores::{
@@ -24,6 +24,7 @@ use super::stores::{
     UpgradePolicy,
 };
 use crate::artwork::KnownMissing;
+use droppedneedle_kernel::db::fold_text;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use rusqlite::types::Value;
 
@@ -588,6 +589,23 @@ pub async fn album_copies(
         total,
         next: None,
     })
+}
+
+/// The library's unlinked copies of an album by its title and album
+/// artist, matched on the folded names the scan stores.
+pub async fn unlinked_copies(
+    deps: &LibraryDeps,
+    query: &UnlinkedCopiesQuery,
+) -> Result<UnlinkedCopies, LibraryFailure> {
+    let title = fold_text(&query.title);
+    let artist = fold_text(&query.artist);
+    if title.is_empty() || artist.is_empty() {
+        return Err(LibraryFailure::InvalidInput(
+            "title and artist must not be blank".to_owned(),
+        ));
+    }
+    let copies = deps.catalog.unlinked_copies(&title, &artist).await?;
+    Ok(UnlinkedCopies { copies })
 }
 
 /// One page of catalog artists.

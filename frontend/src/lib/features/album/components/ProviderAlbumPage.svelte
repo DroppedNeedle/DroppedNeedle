@@ -185,6 +185,7 @@
 			heldFiles={state.headerHeldFiles}
 			downloadClientConfigured={integrations.current.download_client}
 			libraryInLibrary={state.libraryInLibrary}
+			libraryStatusKnown={libraryStatusQuery.isSuccess}
 			libraryTrackCount={state.libraryTrackCount}
 			libraryBelowCutoff={state.libraryBelowCutoff}
 			editionCounts={state.editionCounts}

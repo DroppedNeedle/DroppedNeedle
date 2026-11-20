@@ -3025,6 +3025,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/unlinked-copies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Library albums with no MusicBrainz match sharing an album's name.
+         * @description Live albums with files whose folded title and album artist equal the
+         *     ones given and that have no MusicBrainz match, oldest first, three at
+         *     most. The album page shows them as copies a person may already hold;
+         *     nothing is linked by name.
+         */
+        get: operations["unlinked_copies"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{album_id}/edition": {
         parameters: {
             query?: never;
@@ -24394,6 +24417,28 @@ export interface components {
          * @enum {string}
          */
         UnicodeNormalization: "NFC" | "NFKC";
+        /** @description The unlinked copies of one album name, oldest first, three at most. */
+        UnlinkedCopies: {
+            /** @description Matching copies; empty when the library has none. */
+            copies: components["schemas"]["UnlinkedCopy"][];
+        };
+        /**
+         * @description A library album with no MusicBrainz match that shares an album page's
+         *     title and album artist.
+         */
+        UnlinkedCopy: {
+            /** @description Most common track format, lowercase; null without indexed tracks. */
+            format?: string | null;
+            /** @description Local album id. */
+            id: string;
+            /** @description Album title, as the files name it. */
+            title: string;
+            /**
+             * Format: int64
+             * @description Indexed tracks.
+             */
+            track_count: number;
+        };
         /** @description Unseen-count answer. */
         UnseenCountResponse: {
             /** @description Sightings newer than the caller's seen watermark. */
@@ -31869,6 +31914,49 @@ export interface operations {
             };
             /** @description An album changed since the page loaded */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    unlinked_copies: {
+        parameters: {
+            query: {
+                /** @description Album title, as the album page shows it. */
+                title: string;
+                /** @description Album artist name, as the album page shows it. */
+                artist: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unlinked copies */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnlinkedCopies"];
+                };
+            };
+            /** @description Missing or blank title or artist */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

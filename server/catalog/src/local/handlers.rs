@@ -17,7 +17,7 @@ use super::models::{
     CursorQuery, DecadesResponse, LibraryAlbumStatus, LibraryMembershipRequest,
     LibraryMembershipResponse, LyricsView, PageQuery, RecentQuery, ResolveTracksRequest,
     ResolveTracksResponse, StatsView, SuggestionsQuery, SuggestionsResponse, TrackListPage,
-    TrackPage, TrackQuery,
+    TrackPage, TrackQuery, UnlinkedCopies, UnlinkedCopiesQuery,
 };
 use super::services;
 
@@ -59,6 +59,34 @@ pub async fn album_format_counts(
     User(_caller): User,
 ) -> Result<Json<AlbumFormatCounts>, ApiError> {
     services::album_format_counts(&deps)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Library albums with no MusicBrainz match sharing an album's name.
+///
+/// Live albums with files whose folded title and album artist equal the
+/// ones given and that have no MusicBrainz match, oldest first, three at
+/// most. The album page shows them as copies a person may already hold;
+/// nothing is linked by name.
+#[utoipa::path(
+    get,
+    tag = "library",
+    path = "/api/v3/library/albums/unlinked-copies",
+    params(UnlinkedCopiesQuery),
+    responses(
+        (status = 200, description = "Unlinked copies", body = UnlinkedCopies),
+        (status = 400, description = "Missing or blank title or artist"),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn unlinked_copies(
+    State(deps): State<LibraryDeps>,
+    User(_caller): User,
+    ValidQuery(query): ValidQuery<UnlinkedCopiesQuery>,
+) -> Result<Json<UnlinkedCopies>, ApiError> {
+    services::unlinked_copies(&deps, &query)
         .await
         .map(Json)
         .map_err(ApiError::from)

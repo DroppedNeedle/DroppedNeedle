@@ -186,6 +186,7 @@ function routes(): FakeApi {
 		'GET /api/v3/library/albums/{id}': ({ params }) =>
 			params.id === localAlbumId ? localAlbum() : apiError(404, 'NOT_FOUND', 'Unknown album'),
 		'GET /api/v3/library/albums/{id}/copies': { items: [], total: 0, next: null },
+		'GET /api/v3/library/albums/unlinked-copies': { copies: [] },
 		'GET /api/v3/library/albums/{album_id}/edition': () => ({
 			album_id: localAlbumId,
 			candidates: [],
@@ -228,7 +229,7 @@ function routes(): FakeApi {
 	});
 }
 
-function signIn(role: 'admin' | 'user'): void {
+function signIn(role: 'admin' | 'trusted' | 'user'): void {
 	authStore.setUser(
 		toAuthUser({
 			id: 'user-1',
@@ -569,6 +570,60 @@ describe('choosing the edition to request', () => {
 
 		await vi.waitFor(() => expect(api.calls(requestRoute)).toHaveLength(1));
 		expect(api.calls(requestRoute)[0].body).not.toHaveProperty('release_mbid', expect.anything());
+	});
+});
+
+describe('a copy the library holds under the same name', () => {
+	const unlinkedRoute = 'GET /api/v3/library/albums/unlinked-copies' as const;
+	const note = () => page.getByRole('region', { name: 'You may already have this' });
+
+	function notOwned(): void {
+		api.use({
+			'GET /api/v3/albums/{album_id}/basic': ({ params }) => ({
+				...basic(params.album_id),
+				in_library: false
+			}),
+			'GET /api/v3/requests/active': { count: 0, items: [] },
+			'GET /api/v3/downloads/tasks': { items: [], page: 1, page_size: 100 },
+			[unlinkedRoute]: {
+				copies: [{ id: 'local-only-1', title: 'Daylight Hours', track_count: 4, format: 'flac' }]
+			}
+		});
+	}
+
+	it('points a user at the copy without offering its edition', async () => {
+		notOwned();
+		signIn('user');
+		await renderPage();
+
+		await expect.element(note()).toHaveTextContent('Daylight Hours · 4 tracks · FLAC');
+		await expect
+			.element(note().getByRole('link', { name: 'Open your copy' }))
+			.toHaveAttribute('href', '/album/local-only-1');
+		await expect
+			.element(note().getByRole('link', { name: 'Pick its edition' }))
+			.not.toBeInTheDocument();
+		const query = api.calls(unlinkedRoute)[0].query;
+		expect([query.get('title'), query.get('artist')]).toEqual(['Daylight Hours', 'Lumen']);
+	});
+
+	it("offers a trusted user the copy's edition chooser", async () => {
+		notOwned();
+		signIn('trusted');
+		await renderPage();
+
+		await expect
+			.element(note().getByRole('link', { name: 'Pick its edition' }))
+			.toHaveAttribute('href', '/album/local-only-1?edition=choose');
+	});
+
+	it('shows no note on an album the library holds', async () => {
+		status = (id) => ({ album_id: id, in_library: true, track_count: 4, tracks: [] });
+		await renderPage();
+
+		await expect.element(page.getByText('In Library').first()).toBeVisible();
+		await expect.element(note()).not.toBeInTheDocument();
+		expect(api.calls(unlinkedRoute)).toHaveLength(0);
 	});
 });
 

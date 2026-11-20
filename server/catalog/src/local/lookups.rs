@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 use droppedneedle_kernel::db::statement::ListLen;
 use rusqlite::types::Value;
 
+use super::models::UnlinkedCopy;
 use super::sql;
 use super::store::{LocalCatalog, first, rows, texts, track_row, unsigned};
 use super::stores::{StatsExtras, StoreError, TrackRecord};
@@ -207,6 +208,29 @@ impl LocalCatalog {
             }
         }
         Ok(self.copy_of_group(group).await?.into_iter().collect())
+    }
+
+    /// Up to three owned albums with no MusicBrainz match whose folded
+    /// title and album artist are the ones given, oldest first. A name is
+    /// never proof, so this only points a person at a copy they may hold.
+    pub async fn unlinked_copies(
+        &self,
+        title_folded: &str,
+        artist_folded: &str,
+    ) -> Result<Vec<UnlinkedCopy>, StoreError> {
+        let values = texts(&[title_folded.to_owned(), artist_folded.to_owned()]);
+        self.read("library.lookups.unlinked_copies", move |conn| {
+            rows(conn, sql::UNLINKED_COPIES.text(), &values, |row| {
+                let row = sql::UnlinkedCopyRow::read(row)?;
+                Ok(UnlinkedCopy {
+                    id: row.id,
+                    title: row.title,
+                    track_count: unsigned(row.track_count),
+                    format: row.format,
+                })
+            })
+        })
+        .await
     }
 
     /// The album a lookup by one lowercase release group opens, with or

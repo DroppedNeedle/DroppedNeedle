@@ -10,6 +10,7 @@ import type { YouTubeLink, YouTubeTrackLink } from '$lib/features/youtube/querie
 import { AlbumQueryKeyFactory } from './AlbumQueryKeyFactory';
 import { fetchAlbumTracks } from './albumTracks';
 import { PERSIST, PERSIST_PROVIDER } from '$lib/queries/persistedCache';
+import { authStore } from '$lib/stores/authStore.svelte';
 
 type UserId = string | null | undefined;
 
@@ -152,5 +153,22 @@ export const getAlbumYouTubeTrackLinksQuery = (getAlbumId: Getter<string>) =>
 						{ signal }
 					))
 				].sort(compareDiscTrack)
+		};
+	});
+
+// Library albums with no MusicBrainz match named like the album the page
+// shows, for an album the library does not hold; null asks nothing.
+export const getUnlinkedCopiesQuery = (getName: Getter<{ title: string; artist: string } | null>) =>
+	createQuery(() => {
+		const name = getName();
+		const title = name?.title.trim() ?? '';
+		const artist = name?.artist.trim() ?? '';
+		return {
+			queryKey: AlbumQueryKeyFactory.unlinkedCopies(authStore.user?.id, title, artist),
+			enabled: !!title && !!artist,
+			queryFn: ({ signal }: { signal: AbortSignal }) =>
+				api.v3.GET(v3('/api/v3/library/albums/unlinked-copies', { query: { title, artist } }), {
+					signal
+				})
 		};
 	});

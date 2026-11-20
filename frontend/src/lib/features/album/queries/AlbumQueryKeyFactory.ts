@@ -15,6 +15,9 @@ export const AlbumQueryKeyFactory = {
 	similar: (userId: UserId, albumId: string, artistId: string) =>
 		key(userScope(userId), 'albums', 'similar', albumId, artistId),
 	editions: (userId: UserId, mbid: string) => key(userScope(userId), 'albums', 'editions', mbid),
+	unlinkedCopiesPrefix: (userId: UserId) => key(userScope(userId), 'albums', 'unlinked-copies'),
+	unlinkedCopies: (userId: UserId, title: string, artist: string) =>
+		key(userScope(userId), 'albums', 'unlinked-copies', { title, artist }),
 	editionTracks: (userId: UserId, release: string) =>
 		key(userScope(userId), 'albums', 'edition-tracks', release),
 	lastFm: (albumId: string, artistName: string, albumName: string) =>

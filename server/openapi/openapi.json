@@ -9258,6 +9258,75 @@
         ]
       }
     },
+    "/api/v3/library/albums/unlinked-copies": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Library albums with no MusicBrainz match sharing an album's name.",
+        "description": "Live albums with files whose folded title and album artist equal the\nones given and that have no MusicBrainz match, oldest first, three at\nmost. The album page shows them as copies a person may already hold;\nnothing is linked by name.",
+        "operationId": "unlinked_copies",
+        "parameters": [
+          {
+            "name": "title",
+            "in": "query",
+            "description": "Album title, as the album page shows it.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artist",
+            "in": "query",
+            "description": "Album artist name, as the album page shows it.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Unlinked copies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnlinkedCopies"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or blank title or artist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/albums/{album_id}/edition": {
       "get": {
         "tags": [
@@ -68290,6 +68359,54 @@
           "NFC",
           "NFKC"
         ]
+      },
+      "UnlinkedCopies": {
+        "type": "object",
+        "description": "The unlinked copies of one album name, oldest first, three at most.",
+        "required": [
+          "copies"
+        ],
+        "properties": {
+          "copies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnlinkedCopy"
+            },
+            "description": "Matching copies; empty when the library has none."
+          }
+        }
+      },
+      "UnlinkedCopy": {
+        "type": "object",
+        "description": "A library album with no MusicBrainz match that shares an album page's\ntitle and album artist.",
+        "required": [
+          "id",
+          "title",
+          "track_count"
+        ],
+        "properties": {
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Most common track format, lowercase; null without indexed tracks."
+          },
+          "id": {
+            "type": "string",
+            "description": "Local album id."
+          },
+          "title": {
+            "type": "string",
+            "description": "Album title, as the files name it."
+          },
+          "track_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Indexed tracks.",
+            "minimum": 0
+          }
+        }
       },
       "UnseenCountResponse": {
         "type": "object",

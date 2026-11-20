@@ -862,7 +862,8 @@ Run from the repo root. `make help` lists every target.
   `SideDrawer` (a panel from the right over a dimmed page, with `Tabs`'
   `caps` look for its tabs), `PageShell`, `Toaster`, `CoverPlaceholder`,
   `UnsavedChangesGuard`, `Logo`, `PaperPanel` (the light island), `Card`'s
-  `torn` paper and `acid` torn sheet, `Modal`'s and `ConfirmDialog`'s
+  `torn` paper, `acid` torn sheet and `note` callout (a hint beside a
+  page's main actions), `Modal`'s and `ConfirmDialog`'s
   `paper` stock (a confirm that starts a write), `Button`'s condensed caps
   sizes (`display`, `display-sm`), `paper` outline (a button on a paper card)
   and `danger-outline` (a red outline beside outline buttons), `AuthFrame`

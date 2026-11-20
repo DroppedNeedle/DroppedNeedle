@@ -67,6 +67,7 @@ pub fn routes() -> Routes<LibraryDeps> {
     Routes::new()
         .user(routes!(list_albums))
         .user(routes!(album_format_counts))
+        .user(routes!(unlinked_copies))
         .user(routes!(get_album))
         .user(routes!(album_status))
         .user(routes!(membership))

@@ -116,6 +116,7 @@ const ROUTES: &[&str] = &[
     "/api/v3/library/albums/al1",
     "/api/v3/library/albums/al1/tracks",
     "/api/v3/library/albums/al1/copies",
+    "/api/v3/library/albums/unlinked-copies?title=Second%20Dawn&artist=Aurora",
     "/api/v3/library/artists",
     "/api/v3/library/artists/a1",
     "/api/v3/library/artists/a1/albums",
@@ -1650,6 +1651,47 @@ async fn copies_match_the_release_group_in_any_case() {
         .map(|album| album.id)
         .collect();
     assert_eq!(copies, ["al3"]);
+}
+
+/// An album page asks for copies by name: only a live copy with files and
+/// no MusicBrainz match, under the same folded title and album artist, is
+/// listed. A linked copy, another artist's album and one without files are
+/// not, and a blank name is refused.
+#[tokio::test]
+async fn unlinked_copies_list_only_unmatched_albums_of_that_name() {
+    let fixture = sqlite_fixture().await;
+    seed(
+        &fixture,
+        "UPDATE local_albums SET title = 'Second Dawn', title_folded = 'second dawn' \
+         WHERE id IN ('al1', 'al3'); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, year, \
+         grouping_source, created_at, updated_at) VALUES \
+         ('al5', 'r1', 'g5', 'Second Dawn', 'second dawn', 'Aurora', 'aurora', 'a1', 2001, \
+          'automatic', 500, 500)",
+    )
+    .await;
+    let beside = AuthRig::new("reads-library-unlinked").await;
+    let app = app(deps(&beside, fixture.runtime.db(), None), Some(ADA));
+    let (status, body) = get(
+        app.clone(),
+        "/api/v3/library/albums/unlinked-copies?title=SECOND%20%20Dawn&artist=aurora",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        serde_json::json!({"copies": [
+            {"id": "al2", "title": "Second Dawn", "track_count": 1, "format": "mp3"}
+        ]})
+    );
+
+    let (status, body) = get(
+        app,
+        "/api/v3/library/albums/unlinked-copies?title=%20&artist=aurora",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }
 
 /// Two copies own one release group and the older has the higher id: the
