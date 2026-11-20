@@ -166,8 +166,7 @@ pub enum SearchLinkStatus {
     Read,
     /// The link was read, and MusicBrainz has no song that matches it.
     NoMatch,
-    /// The link's service does not hold the song or did not answer, or a
-    /// Spotify link was given and Spotify is not set up.
+    /// The link's service does not hold the song or did not answer.
     Unreadable,
 }
 

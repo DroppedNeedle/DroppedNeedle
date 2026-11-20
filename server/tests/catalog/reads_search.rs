@@ -2279,6 +2279,9 @@ const DEEZER: &str = "http://127.0.0.1:9/deezer";
 const ITUNES_LOOKUP: &str = "http://127.0.0.1:9/itunes/lookup";
 const SPOTIFY_TOKEN: &str = "http://127.0.0.1:9/spotify-accounts/api/token";
 const SPOTIFY_API: &str = "http://127.0.0.1:9/spotify";
+const SPOTIFY_OPEN: &str = "http://127.0.0.1:9/spotify-open";
+const DEEZER_LINKS: &str = "http://127.0.0.1:9/deezer-links";
+const YOUTUBE_OEMBED: &str = "http://127.0.0.1:9/youtube-oembed";
 
 /// A full search for `query` on `app`, with the answer's body.
 async fn search_for(app: axum::Router, query: &str) -> serde_json::Value {
@@ -2591,4 +2594,173 @@ async fn a_link_that_finds_nothing_says_why() {
     assert_eq!(body["link"], "no_match", "{body}");
     assert!(body["tracks"].as_array().unwrap().is_empty());
     assert_eq!(musicbrainz_queries(&wire), vec!["isrc:USGF19942501"]);
+}
+
+/// One MusicBrainz answer naming "Smells Like Teen Spirit" by Nirvana, at
+/// the length the stores give it.
+fn teen_spirit_answer() -> Vec<u8> {
+    let mut hit = recording_hit(
+        "rec-teen-spirit",
+        "Smells Like Teen Spirit",
+        "Nirvana",
+        100,
+        &[("rel-1", "Nevermind", "Official", "rg-1")],
+    );
+    hit["length"] = serde_json::json!(301_000);
+    search_answer("recordings", vec![hit])
+}
+
+/// A YouTube link is read through oEmbed: "Artist - Title (Official
+/// Video)" becomes a search by name, with the video's tags dropped.
+#[tokio::test]
+async fn a_youtube_link_is_searched_by_its_video_title() {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        YOUTUBE_OEMBED,
+        200,
+        &[],
+        include_str!("../fixtures/youtube/oembed_video.json"),
+    );
+    wire.answer(
+        &format!("{MUSICBRAINZ}/recording"),
+        200,
+        &[],
+        teen_spirit_answer(),
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-youtube-link");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+
+    let body = search_for(app, "https://youtu.be/hTWKbfoikeg?si=x").await;
+    assert_eq!(body["link"], "read", "{body}");
+    assert_eq!(body["tracks"][0]["musicbrainz_id"], "rec-teen-spirit");
+    assert_eq!(
+        musicbrainz_queries(&wire),
+        vec![r#"recording:"Smells Like Teen Spirit" AND artist:"Nirvana""#]
+    );
+    let oembed = wire
+        .sent()
+        .into_iter()
+        .find(|sent| sent.url.as_str().starts_with(YOUTUBE_OEMBED))
+        .expect("oEmbed was asked");
+    assert_eq!(
+        oembed.query("url").as_deref(),
+        Some("https://www.youtube.com/watch?v=hTWKbfoikeg")
+    );
+}
+
+/// A Deezer short link is followed one hop, read from its redirect, never
+/// fetched further; it counts only when it lands on a Deezer track.
+#[tokio::test]
+async fn a_deezer_short_link_is_read_from_its_redirect() {
+    let wire = Arc::new(ScriptedWire::new());
+    let dest = "https://link.deezer.com/?dest=https%3A%2F%2Fwww.deezer.com%2Ftrack%2F13791930%3Fhost%3D1&gwf=x";
+    wire.answer(
+        &format!("{DEEZER_LINKS}/s/TrackCode1"),
+        301,
+        &[("location", dest)],
+        Vec::new(),
+    );
+    let artist = "https://link.deezer.com/?dest=https%3A%2F%2Fwww.deezer.com%2Fartist%2F415";
+    wire.answer(
+        &format!("{DEEZER_LINKS}/s/ArtistCode1"),
+        301,
+        &[("location", artist)],
+        Vec::new(),
+    );
+    wire.answer(
+        &format!("{DEEZER}/track/13791930"),
+        200,
+        &[],
+        include_str!("../fixtures/deezer/track.json"),
+    );
+    wire.answer(
+        &format!("{MUSICBRAINZ}/recording"),
+        200,
+        &[],
+        teen_spirit_answer(),
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-deezer-short-link");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+
+    let body = search_for(app.clone(), "https://link.deezer.com/s/TrackCode1").await;
+    assert_eq!(body["link"], "read", "{body}");
+    assert_eq!(musicbrainz_queries(&wire), vec!["isrc:USGF19942501"]);
+
+    let body = search_for(app, "https://link.deezer.com/s/ArtistCode1").await;
+    assert_eq!(body["link"], "unreadable", "{body}");
+    assert!(
+        wire.sent()
+            .iter()
+            .all(|sent| !sent.url.as_str().contains("link.deezer.com")
+                && !sent.url.path().contains("/artist/")),
+        "nothing past the redirect is fetched"
+    );
+}
+
+/// When the Spotify app is refused, a Spotify link is read from the
+/// track's embed page instead, by name and length.
+#[tokio::test]
+async fn a_spotify_link_falls_back_to_the_embed_page() {
+    let wire = Arc::new(ScriptedWire::new());
+    for _ in 0..2 {
+        wire.on(
+            droppedneedle_providers::executor::Method::Post,
+            SPOTIFY_TOKEN,
+            Scripted::Answer {
+                status: 400,
+                headers: Vec::new(),
+                body: br#"{"error":"invalid_client"}"#.to_vec(),
+            },
+        );
+    }
+    wire.answer(
+        &format!("{SPOTIFY_OPEN}/embed/track/0000000000000000000000"),
+        200,
+        &[("content-type", "text/html; charset=utf-8")],
+        include_str!("../fixtures/spotify/embed_track_not_found.html"),
+    );
+    wire.answer(
+        &format!("{SPOTIFY_OPEN}/embed/track/5ghIJDpPoe3CfHMGu71E6T"),
+        200,
+        &[("content-type", "text/html; charset=utf-8")],
+        include_str!("../fixtures/spotify/embed_track.html"),
+    );
+    wire.answer(
+        &format!("{MUSICBRAINZ}/recording"),
+        200,
+        &[],
+        teen_spirit_answer(),
+    );
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-spotify-embed");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+
+    let body = search_for(
+        app.clone(),
+        "https://open.spotify.com/track/5ghIJDpPoe3CfHMGu71E6T",
+    )
+    .await;
+    assert_eq!(body["link"], "read", "{body}");
+    assert_eq!(body["tracks"][0]["musicbrainz_id"], "rec-teen-spirit");
+    assert_eq!(
+        musicbrainz_queries(&wire),
+        vec![r#"recording:"Smells Like Teen Spirit" AND artist:"Nirvana""#]
+    );
+
+    let body = search_for(app, "https://open.spotify.com/track/0000000000000000000000").await;
+    assert_eq!(body["link"], "unreadable", "{body}");
 }

@@ -214,7 +214,7 @@
 				<SearchEmpty
 					icon={Link2}
 					title="Couldn't read this link"
-					text="Song links from Deezer, Apple Music and Spotify work. Spotify links need Spotify set up in Settings."
+					text="Song links from Deezer, Apple Music, Spotify and YouTube work."
 				/>
 			{/if}
 

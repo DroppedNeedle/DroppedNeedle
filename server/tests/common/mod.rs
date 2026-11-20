@@ -303,6 +303,7 @@ pub fn outbound_at(origin: &str) -> droppedneedle::bootstrap::Outbound {
         commons: at("commons"),
         itunes: at("itunes/search"),
         deezer: at("deezer"),
+        deezer_links: at("deezer-links"),
         // Its own closed origin: pictures are allowed by origin, so the
         // mock's origin must not count as Deezer's.
         deezer_images: "http://127.0.0.1:9".to_owned(),
@@ -313,11 +314,13 @@ pub fn outbound_at(origin: &str) -> droppedneedle::bootstrap::Outbound {
         github_api: at("github"),
         github_codeload: at("codeload"),
         youtube: at("youtube"),
+        youtube_oembed: at("youtube-oembed"),
         acoustid: at("acoustid"),
         pwned_passwords: at("pwned/range/"),
         plex_tv: at("plex"),
         spotify_api: at("spotify"),
         spotify_accounts: at("spotify-accounts"),
+        spotify_open: at("spotify-open"),
         spotify_cover_cdn: Some(at("spotify-cdn")),
         ticketmaster: at("ticketmaster"),
         skiddle: at("skiddle"),

@@ -211,6 +211,68 @@ pub struct AlbumRef {
     pub images: Option<Vec<Image>>,
 }
 
+/// The data on Spotify's track embed page, `GET
+/// https://open.spotify.com/embed/track/{id}`: an HTML page whose
+/// `__NEXT_DATA__` script holds this JSON. Song links read a track through
+/// it when the server has no Spotify app. It is the page Spotify's embed
+/// player loads, not a documented API.
+///
+/// Verified against open.spotify.com/embed/track/5ghIJDpPoe3CfHMGu71E6T on
+/// 2026-11-20: tests/fixtures/spotify/embed_track.html. An id Spotify does
+/// not hold answers a 200 page with no `state`:
+/// tests/fixtures/spotify/embed_track_not_found.html.
+#[derive(Debug, Deserialize)]
+pub struct EmbedPage {
+    /// The page's properties.
+    pub props: EmbedProps,
+}
+
+/// An embed page's properties.
+#[derive(Debug, Deserialize)]
+pub struct EmbedProps {
+    /// What the page shows.
+    #[serde(rename = "pageProps")]
+    pub page_props: EmbedPageProps,
+}
+
+/// What an embed page shows.
+#[derive(Debug, Deserialize)]
+pub struct EmbedPageProps {
+    /// The track, absent when the page names none.
+    #[serde(default)]
+    pub state: Option<EmbedState>,
+}
+
+/// The embed page's state.
+#[derive(Debug, Deserialize)]
+pub struct EmbedState {
+    /// Its data.
+    pub data: EmbedData,
+}
+
+/// The embed page's data.
+#[derive(Debug, Deserialize)]
+pub struct EmbedData {
+    /// The track shown.
+    pub entity: EmbedTrack,
+}
+
+/// The track an embed page shows.
+#[derive(Debug, Deserialize)]
+pub struct EmbedTrack {
+    /// Spotify track id, compared with the id asked for.
+    pub id: String,
+    /// Track title.
+    #[serde(default)]
+    pub name: String,
+    /// Credited artists.
+    #[serde(default)]
+    pub artists: Vec<ArtistRef>,
+    /// Length in milliseconds.
+    #[serde(default)]
+    pub duration: Option<i64>,
+}
+
 /// A track's outside ids.
 #[derive(Debug, Deserialize)]
 pub struct ExternalIds {

@@ -76,12 +76,15 @@ use crate::executor::{
 
 mod models;
 
+pub use models::OEmbed;
 use models::{GoogleErrorAnswer, SearchList, VideoList};
 
 /// The provider name errors carry, and its rate row.
 pub const SOURCE: &str = "youtube";
 /// API host.
 pub const YOUTUBE_API_HOST: &str = "https://www.googleapis.com";
+/// The oEmbed endpoint.
+pub const OEMBED_URL: &str = "https://www.youtube.com/oembed";
 /// Default daily quota budget, kept from v2.
 pub const DEFAULT_DAILY_QUOTA_LIMIT: u32 = 80;
 /// Largest accepted daily budget (v2 validates 1..=10000).
@@ -158,15 +161,41 @@ fn names_reason(answer: &Answer<'_>, reason: &str) -> bool {
 pub struct YouTubeApi {
     executor: Executor,
     base: Option<Url>,
+    oembed: Option<Url>,
 }
 
 impl YouTubeApi {
-    /// The API at `base_url`, sending through `executor`.
+    /// The API at `base_url` and the oEmbed endpoint at `oembed_url`,
+    /// sending through `executor`.
     #[must_use]
-    pub fn new(executor: Executor, base_url: &str) -> Self {
+    pub fn new(executor: Executor, base_url: &str, oembed_url: &str) -> Self {
         Self {
             executor,
             base: parse_base(base_url, SOURCE),
+            oembed: parse_base(oembed_url, SOURCE),
+        }
+    }
+
+    /// Video `video_id`'s title and channel, from oEmbed: no key and no
+    /// quota. `None` when YouTube does not show the video (404), or does
+    /// not let it be embedded (401).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
+    pub async fn oembed(
+        &self,
+        video_id: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<OEmbed>, ProviderError> {
+        let base = self.oembed.as_ref().ok_or_else(|| unusable_base(SOURCE))?;
+        let watch = format!("https://www.youtube.com/watch?v={video_id}");
+        let request = Request::get(base, &[], &[("url", watch.as_str()), ("format", "json")])
+            .map_err(|_| unusable_base(SOURCE))?;
+        match self.executor.send(request, priority).await {
+            Ok(reply) => decode(&reply).map(Some),
+            Err(ProviderError::NotFound { .. } | ProviderError::Unauthorized { .. }) => Ok(None),
+            Err(error) => Err(error),
         }
     }
 

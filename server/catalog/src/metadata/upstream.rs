@@ -26,6 +26,7 @@ use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzView};
 use droppedneedle_providers::preview::PreviewClient;
 use droppedneedle_providers::spotify::SpotifyClient;
 use droppedneedle_providers::wikidata::WikidataClient;
+use droppedneedle_providers::youtube::YouTubeApi;
 use droppedneedle_providers::{ProviderCacheStore, ProviderError, Providers, RequestPriority};
 
 use crate::discover::listening::shared::Lender;
@@ -406,6 +407,11 @@ impl Upstream {
     /// The Spotify client behind song links.
     pub fn spotify(&self) -> &SpotifyClient {
         &self.providers.spotify
+    }
+
+    /// The YouTube client behind song links' video titles.
+    pub fn youtube(&self) -> &YouTubeApi {
+        &self.providers.youtube
     }
 
     /// The users store (roles, Last.fm links).

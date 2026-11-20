@@ -69,6 +69,7 @@ enum Provider {
     ListenBrainz(ListenBrainzRead),
     YouTubeSearch,
     YouTubeVideos,
+    YouTubeOEmbed,
 }
 
 /// The Last.fm read a row's answer goes through.
@@ -899,6 +900,13 @@ const ROWS: &[Row] = &[
         identity: "/items/0/id/videoId",
     },
     Row {
+        name: "youtube /oembed, title",
+        provider: Provider::YouTubeOEmbed,
+        body: include_str!("../fixtures/youtube/oembed_video.json"),
+        kind: PayloadKind::Decode,
+        identity: "/title",
+    },
+    Row {
         name: "youtube /videos, video id",
         provider: Provider::YouTubeVideos,
         body: include_str!("../fixtures/youtube/videos_found.json"),
@@ -1448,6 +1456,22 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
         Provider::YouTubeVideos => {
             youtube_check(200, body).await?;
             Ok(true)
+        }
+        Provider::YouTubeOEmbed => {
+            let wire = Arc::new(ScriptedWire::new());
+            wire.answer("http://fake/oembed", 200, &[], body.as_bytes().to_vec());
+            let providers = Providers::unpaced_at(
+                wire,
+                ProviderEndpoints {
+                    youtube_oembed: "http://fake/oembed".to_owned(),
+                    ..ProviderEndpoints::closed()
+                },
+            );
+            Ok(providers
+                .youtube
+                .oembed("hTWKbfoikeg", PRIORITY)
+                .await?
+                .is_some())
         }
     }
 }

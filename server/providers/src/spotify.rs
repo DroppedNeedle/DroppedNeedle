@@ -17,12 +17,16 @@ use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 use crate::RequestPriority;
 use crate::client::{decode, parse_base, unusable_base};
-use crate::error::ProviderError;
-use crate::executor::{Backoff, Executor, Request, Spec, Url, standard_classify};
+use crate::error::{PayloadKind, ProviderError};
+use crate::executor::{
+    Backoff, Executor, Reply, Request, Spec, Url, decode_failure, standard_classify,
+};
 
 pub mod models;
 
-use models::{EntryPage, EntryTrack, PlaylistInfo, PlaylistPage, Profile, TokenAnswer};
+use models::{
+    EmbedPage, EmbedTrack, EntryPage, EntryTrack, PlaylistInfo, PlaylistPage, Profile, TokenAnswer,
+};
 
 /// The provider name errors carry, and its rate row.
 pub const SOURCE: &str = "spotify";
@@ -30,6 +34,8 @@ pub const SOURCE: &str = "spotify";
 pub const API_BASE: &str = "https://api.spotify.com/v1";
 /// Spotify accounts origin: the authorize page and the token grants.
 pub const ACCOUNTS_BASE: &str = "https://accounts.spotify.com";
+/// Spotify web player origin: the track embed page.
+pub const OPEN_BASE: &str = "https://open.spotify.com";
 /// OAuth scopes the import asks for.
 pub const SCOPES: &str = "playlist-read-private playlist-read-collaborative user-read-private";
 /// Largest Web API or accounts answer read.
@@ -105,17 +111,19 @@ pub struct SpotifyClient {
     executor: Executor,
     api_base: Option<Url>,
     accounts_base: Option<Url>,
+    open_base: Option<Url>,
 }
 
 impl SpotifyClient {
-    /// Calls through `executor` to the Web API at `api_base` and the
-    /// accounts host at `accounts_base`.
+    /// Calls through `executor` to the Web API at `api_base`, the
+    /// accounts host at `accounts_base` and the web player at `open_base`.
     #[must_use]
-    pub fn new(executor: Executor, api_base: &str, accounts_base: &str) -> Self {
+    pub fn new(executor: Executor, api_base: &str, accounts_base: &str, open_base: &str) -> Self {
         Self {
             executor,
             api_base: parse_base(api_base, SOURCE),
             accounts_base: parse_base(accounts_base, SOURCE),
+            open_base: parse_base(open_base, SOURCE),
         }
     }
 
@@ -313,6 +321,34 @@ impl SpotifyClient {
             .await
     }
 
+    /// Track `track_id` as Spotify's embed page shows it, with no token:
+    /// `None` when the page shows no track of that id.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call, or a payload error for a page
+    /// without its data or with data that does not decode.
+    pub async fn embed_track(
+        &self,
+        track_id: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<EmbedTrack>, ProviderError> {
+        let base = self
+            .open_base
+            .as_ref()
+            .ok_or_else(|| unusable_base(SOURCE))?;
+        let request = Request::get(base, &["embed", "track", track_id], &[])
+            .map_err(|_| unusable_base(SOURCE))?;
+        let reply = self.executor.send(request, priority).await?;
+        let page: EmbedPage = page_data(&reply)?;
+        Ok(page
+            .props
+            .page_props
+            .state
+            .map(|state| state.data.entity)
+            .filter(|track| track.id == track_id))
+    }
+
     /// One page of a playlist's entries (`GET /playlists/{id}/items`), from
     /// `offset`, [`ITEMS_PAGE`] at a time. The older `/tracks` endpoint is
     /// deprecated and 403s for development-mode apps after the March 2026
@@ -357,4 +393,24 @@ impl SpotifyClient {
         let reply = self.executor.send(request, priority).await?;
         decode(&reply)
     }
+}
+
+/// The JSON an HTML page carries in its `__NEXT_DATA__` script.
+fn page_data<T: serde::de::DeserializeOwned>(reply: &Reply) -> Result<T, ProviderError> {
+    const OPEN: &str = r#"<script id="__NEXT_DATA__" type="application/json">"#;
+    let page = String::from_utf8_lossy(reply.bytes());
+    let json = page
+        .split_once(OPEN)
+        .and_then(|(_, rest)| rest.split_once("</script>"))
+        .map(|(json, _)| json)
+        .ok_or_else(|| ProviderError::Payload {
+            provider: SOURCE,
+            kind: PayloadKind::Contract,
+            message: "the page carries no page data".to_owned(),
+        })?;
+    serde_json::from_str(json).map_err(|error| ProviderError::Payload {
+        provider: SOURCE,
+        kind: PayloadKind::Decode,
+        message: decode_failure(&error),
+    })
 }

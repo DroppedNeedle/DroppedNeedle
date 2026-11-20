@@ -6,6 +6,21 @@
 
 use serde::{Deserialize, Deserializer};
 
+/// A video's oEmbed answer, `GET https://www.youtube.com/oembed?url=…&format=json`,
+/// which song links read a video's title and channel through. It needs no
+/// key and spends no quota.
+///
+/// Verified against www.youtube.com/oembed on 2026-11-20: tests/fixtures/youtube/oembed_video.json.
+/// A video YouTube does not show answers 404 (checked the same day).
+#[derive(Debug, Clone, Deserialize)]
+pub struct OEmbed {
+    /// The video's title. Required: an answer without it names no video.
+    pub title: String,
+    /// The channel's name.
+    #[serde(default)]
+    pub author_name: String,
+}
+
 /// The answer to a search with `part=id`, `type=video` and `maxResults=1`.
 ///
 /// Verified against www.googleapis.com/youtube/v3/search on 2026-10-29: tests/fixtures/youtube/search_found.json.
