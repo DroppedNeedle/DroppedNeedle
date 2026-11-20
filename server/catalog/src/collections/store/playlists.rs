@@ -309,9 +309,64 @@ fn title_key(title: &str) -> String {
     spaced.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// An entry's title and a library track's name the same song: the shorter
-/// key is the longer or a whole-word start of it, so "Song" agrees with
-/// "Song - 2011 Remaster" and "Go" does not with "Gone".
+/// [`title_key`] for a title at an entry's own place on its album, where
+/// the place narrows which song it is: "&" reads as "and", "/" as a space,
+/// apostrophes as nothing, and a bracketed credit ("(feat. B)") is
+/// dropped, so "A & B (feat. C)" keys as "A and B" does. Folds first, so
+/// fullwidth forms read as their plain ones. Also says whether a credit
+/// was dropped.
+fn place_key(title: &str) -> (String, bool) {
+    let folded = fold_text(title);
+    let mut kept = String::with_capacity(folded.len());
+    let mut dropped = false;
+    let mut rest = folded.as_str();
+    while let Some(open) = rest.find(['(', '[']) {
+        let close = if rest[open..].starts_with('(') {
+            ')'
+        } else {
+            ']'
+        };
+        let Some(end) = rest[open..].find(close).map(|at| open + at) else {
+            break;
+        };
+        kept.push_str(&rest[..open]);
+        if is_credit(&rest[open + 1..end]) {
+            dropped = true;
+        } else {
+            kept.push_str(&rest[open..=end]);
+        }
+        kept.push(' ');
+        rest = &rest[end + 1..];
+    }
+    kept.push_str(rest);
+    let plain: String = kept
+        .replace('&', " and ")
+        .chars()
+        .filter(|character| !matches!(character, '\'' | '\u{2018}' | '\u{2019}' | '\u{02bc}'))
+        .map(|character| if character == '/' { ' ' } else { character })
+        .collect();
+    (title_key(&plain), dropped)
+}
+
+/// Whether a bracket's text credits artists: it holds the word "feat",
+/// "ft" or "featuring".
+fn is_credit(text: &str) -> bool {
+    text.split(|character: char| !character.is_alphanumeric())
+        .any(|word| ["feat", "ft", "featuring"].contains(&word.to_lowercase().as_str()))
+}
+
+/// The shorter key is the longer or a whole-word start of it.
+fn key_starts(short: &str, long: &str) -> bool {
+    !short.is_empty()
+        && long
+            .strip_prefix(short)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+}
+
+/// An entry's title and the name of the library track at its place the
+/// same song: the shorter [`title_key`] is the longer or a whole-word start
+/// of it, so "Song" agrees with "Song - 2011 Remaster" and "Go" does not
+/// with "Gone".
 fn titles_agree(entry: &str, track: &str) -> bool {
     let (entry, track) = (title_key(entry), title_key(track));
     let (short, long) = if entry.len() <= track.len() {
@@ -319,31 +374,47 @@ fn titles_agree(entry: &str, track: &str) -> bool {
     } else {
         (track, entry)
     };
-    !short.is_empty()
-        && long
-            .strip_prefix(short.as_str())
-            .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+    key_starts(&short, &long)
+}
+
+/// [`titles_agree`] by [`place_key`], for when nothing on the album agrees
+/// strictly: a side whose credit was dropped is the shorter one only when
+/// the keys are equal, so "Opener (feat. B)" does not agree with "Opener
+/// (Acoustic)".
+fn titles_agree_at_place(entry: &str, track: &str) -> bool {
+    let (entry, track) = (place_key(entry), place_key(track));
+    let (short, long) = if entry.0.len() <= track.0.len() {
+        (entry, track)
+    } else {
+        (track, entry)
+    };
+    !(short.1 && short.0 != long.0) && key_starts(&short.0, &long.0)
 }
 
 /// The library track each entry links to: the one at its disc and track
 /// number whose title agrees, else one titled the same elsewhere on the
-/// album, as another edition orders it. `candidates` are grouped by entry,
-/// the preferred copy's tracks first.
+/// album, as another edition orders it, else the one at its place whose
+/// title agrees past credits and symbols. `candidates` are grouped by
+/// entry, the preferred copy's tracks first.
 fn library_links(candidates: &[sql::LibraryCopyCandidate]) -> Vec<(String, String)> {
     candidates
         .chunk_by(|a, b| a.entry_id == b.entry_id)
         .filter_map(|copies| {
-            let at_place = copies.iter().find(|copy| {
-                (copy.entry_disc, copy.entry_track) == (copy.track_disc, Some(copy.track_number))
-                    && titles_agree(&copy.entry_title, &copy.track_title)
-            });
+            let at_place = |agree: fn(&str, &str) -> bool| {
+                copies.iter().find(|copy| {
+                    (copy.entry_disc, copy.entry_track)
+                        == (copy.track_disc, Some(copy.track_number))
+                        && agree(&copy.entry_title, &copy.track_title)
+                })
+            };
             let same_title = || {
                 copies
                     .iter()
                     .find(|copy| title_key(&copy.entry_title) == title_key(&copy.track_title))
             };
-            at_place
+            at_place(titles_agree)
                 .or_else(same_title)
+                .or_else(|| at_place(titles_agree_at_place))
                 .map(|copy| (copy.entry_id.clone(), copy.track_id.clone()))
         })
         .collect()
@@ -1383,7 +1454,52 @@ impl OwnedPlaylists<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::titles_agree;
+    use super::{library_links, titles_agree, titles_agree_at_place};
+    use crate::collections::sql::LibraryCopyCandidate;
+
+    fn candidate(entry: (&str, i64), track: (&str, &str, i64)) -> LibraryCopyCandidate {
+        LibraryCopyCandidate {
+            entry_id: "entry".to_owned(),
+            entry_title: entry.0.to_owned(),
+            entry_disc: 1,
+            entry_track: Some(entry.1),
+            track_id: track.0.to_owned(),
+            track_title: track.1.to_owned(),
+            track_disc: 1,
+            track_number: track.2,
+        }
+    }
+
+    /// A credit dropped at the place never beats the same title elsewhere,
+    /// on the same copy or another edition's, and links only what is left.
+    #[test]
+    fn a_loose_match_at_the_place_links_only_when_nothing_strict_does() {
+        let entry = ("Opener (feat. Aurora)", 3);
+        let one_copy = [
+            candidate(entry, ("t3", "Opener (feat. Nightfall)", 3)),
+            candidate(entry, ("t9", "Opener (feat. Aurora)", 9)),
+        ];
+        assert_eq!(
+            library_links(&one_copy),
+            [("entry".to_owned(), "t9".to_owned())]
+        );
+        let two_editions = [
+            candidate(entry, ("a3", "Opener (feat. Nightfall)", 3)),
+            candidate(entry, ("b3", "Opener (feat. Aurora) - Remaster", 3)),
+        ];
+        assert_eq!(
+            library_links(&two_editions),
+            [("entry".to_owned(), "b3".to_owned())]
+        );
+        let loose_only = [
+            candidate(("Night & Day", 2), ("t1", "Opener", 1)),
+            candidate(("Night & Day", 2), ("t2", "Night and Day", 2)),
+        ];
+        assert_eq!(
+            library_links(&loose_only),
+            [("entry".to_owned(), "t2".to_owned())]
+        );
+    }
 
     #[test]
     fn titles_agree_across_typography_and_suffixes() {
@@ -1395,8 +1511,25 @@ mod tests {
             ("Opener - Live", "Opener (live)"),
             ("CAFÉ", "cafe"),
             ("Song 2011 Remaster", "Song"),
+            ("Song (feat. X)", "Song"),
+            ("Song (feat. X)", "Song (feat. X) - Remaster"),
         ] {
             assert!(titles_agree(entry, track), "{entry:?} / {track:?}");
+        }
+        for (entry, track) in [
+            ("Opener (feat. Aurora) (Live)", "Opener (live)"),
+            ("Opener [feat. Aurora] - Radio Version", "Opener (radio)"),
+            (
+                "Second Song (Aurora & Nightfall feat. Opener) - Remix",
+                "Second Song (remix)",
+            ),
+            ("Night & Day", "Night and Day"),
+            ("Rock N Roll", "Rock 'n' Roll"),
+            ("Dawn / Dusk 12/24", "Dawn/Dusk 12/24"),
+            ("Song (feat. A)", "Song (feat. B)"),
+            ("Night ＆ Day（feat. Aurora）", "Night and Day"),
+        ] {
+            assert!(titles_agree_at_place(entry, track), "{entry:?} / {track:?}");
         }
         for (entry, track) in [
             ("Opener", "Second Song"),
@@ -1406,8 +1539,15 @@ mod tests {
             ("Love", "Lovesong"),
             ("Lovesong", "Love"),
             ("The Song", "Song"),
+            ("Opener (Acoustic)", "Opener (Live)"),
+            ("Opener (with Strings)", "Opener (Live)"),
+            ("Opener (feat. Aurora)", "Opener (Acoustic)"),
         ] {
             assert!(!titles_agree(entry, track), "{entry:?} / {track:?}");
+            assert!(
+                !titles_agree_at_place(entry, track),
+                "{entry:?} / {track:?}"
+            );
         }
     }
 }
