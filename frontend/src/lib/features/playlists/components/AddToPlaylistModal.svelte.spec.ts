@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { fakeApi, type FakeRoutes } from '$lib/test/api';
 import { renderWithQuery } from '$lib/test/render';
 import AddToPlaylistModal from './AddToPlaylistModal.svelte';
+import type { TrackData } from '$lib/api/playlists';
 import type { QueueItem } from '$lib/features/player/playback/types';
 
 const ADD = 'POST /api/v3/playlists/{playlist_id}/tracks';
@@ -55,9 +56,9 @@ function serve(routes: FakeRoutes = {}) {
 	});
 }
 
-type ModalRef = { open: (tracks: QueueItem[]) => void };
+type ModalRef = { open: (tracks: (QueueItem | TrackData)[]) => void };
 
-async function openWith(tracks: QueueItem[]) {
+async function openWith(tracks: (QueueItem | TrackData)[]) {
 	const view = await renderWithQuery(AddToPlaylistModal, {});
 	(view.component as unknown as ModalRef).open(tracks);
 	await expect.element(page.getByText('My Playlist')).toBeVisible();
@@ -114,5 +115,32 @@ describe('AddToPlaylistModal.svelte', () => {
 		expect(added).toHaveLength(999);
 		expect(added).not.toContain('Track 0');
 		expect(added).not.toContain('Track 1000');
+	});
+
+	it('adds a song the library lacks as an entry that waits for its album', async () => {
+		const api = serve();
+		const entry: TrackData = {
+			track_name: 'Opener',
+			artist_name: 'Aurora',
+			album_name: 'First Light',
+			album_id: 'rg-first-light',
+			artist_id: null,
+			track_source_id: null,
+			cover_url: '/api/v3/covers/release-group/rg-first-light?size=500',
+			source_type: '',
+			available_sources: null,
+			format: null,
+			track_number: null,
+			disc_number: null,
+			duration: 248,
+			plex_rating_key: null,
+			recording_mbid: 'rec-opener'
+		};
+		await openWith([entry]);
+		await page.getByLabelText('Add to My Playlist').click();
+
+		await expect.poll(() => api.calls(ADD).length).toBe(1);
+		const [call] = api.calls(ADD);
+		expect((call?.body as { tracks: TrackData[] }).tracks).toEqual([entry]);
 	});
 });
