@@ -110,11 +110,17 @@ export async function requestMissingTracks(tracks: PlaylistTrack[]): Promise<Bat
 	// shape with overflow + status.
 	const seen = new Set<string>();
 	const items: { musicbrainz_id: string; artist_name: string; album_title: string }[] = [];
+	// Missing songs with no MusicBrainz album have nothing to request yet.
+	let noAlbum = 0;
 	for (const track of tracks) {
-		const mbid = track.album_id;
-		if (!mbid || seen.has(mbid)) continue;
 		if (track.library_file_id) continue;
 		if (track.available_sources && track.available_sources.length > 0) continue;
+		const mbid = track.album_id;
+		if (!mbid) {
+			noAlbum += 1;
+			continue;
+		}
+		if (seen.has(mbid)) continue;
 		seen.add(mbid);
 		items.push({
 			musicbrainz_id: mbid,
@@ -122,10 +128,14 @@ export async function requestMissingTracks(tracks: PlaylistTrack[]): Promise<Bat
 			album_title: track.album_name || 'Unknown'
 		});
 	}
+	const unmatched =
+		noAlbum === 0
+			? ''
+			: `${noAlbum} missing ${noAlbum === 1 ? 'song has' : 'songs have'} no MusicBrainz album yet, so ${noAlbum === 1 ? "it can't" : "they can't"} be requested.`;
 	if (items.length === 0) {
 		return {
 			success: true,
-			message: 'No missing albums found, all tracks already have a source',
+			message: unmatched || 'No missing albums found, all tracks already have a source',
 			requested: 0,
 			skipped: 0
 		};
@@ -133,7 +143,7 @@ export async function requestMissingTracks(tracks: PlaylistTrack[]): Promise<Bat
 	const data = await api.v3.POST(v3('/api/v3/requests/batches'), { items });
 	return {
 		success: data.success,
-		message: data.message,
+		message: unmatched ? `${data.message} ${unmatched}` : data.message,
 		requested: data.requested,
 		skipped: data.skipped
 	};
