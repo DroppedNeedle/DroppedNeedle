@@ -558,6 +558,23 @@ pub async fn search_query(
         .pint("songOffset", Some(0), Some(0), Some(2_147_483_647))?
         .unwrap_or(0)
         .max(0) as usize;
+    // A song link finds the library's copies of the songs it names, and
+    // nothing else.
+    if song_count > 0
+        && let Some(query) = query.as_deref()
+        && let Some(songs) = ctx
+            .store
+            .song_link_tracks(query)
+            .await
+            .map_err(Ctx::store_err)?
+    {
+        let songs = songs
+            .into_iter()
+            .skip(song_offset)
+            .take(song_count)
+            .collect();
+        return Ok((Vec::new(), Vec::new(), songs));
+    }
     let mut artists = Vec::new();
     if artist_count > 0 {
         artists = ctx

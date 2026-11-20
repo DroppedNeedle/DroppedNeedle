@@ -942,6 +942,8 @@ droppedneedle_kernel::sql! {
     ));
     /// The player projection for some streamable track ids.
     family PLAYER_TRACKS_IN = player_tracks_in;
+    /// The player projection for the streamable tracks of some recordings.
+    family PLAYER_TRACKS_OF_RECORDINGS = player_tracks_of_recordings;
     /// One genre on track `t`, folded: the genre twice.
     pub(crate) fragment TRACK_GENRE_MATCH = "(EXISTS (SELECT 1 FROM local_track_genres g \
         WHERE g.local_track_id = t.id AND g.folded_name = ?) OR t.genre_folded = ?)";
@@ -2265,6 +2267,24 @@ pub(crate) fn player_tracks_in(ids: ListLen) -> String {
         "SELECT {PLAYER_TRACK_COLUMNS} {PLAYER_TRACK_JOINS} \
          WHERE {LIVE_TRACK} AND t.id IN ({})",
         marks(ids)
+    )
+}
+
+/// `PLAYER_TRACKS_OF_RECORDINGS` for `ids` lowercase recording MBIDs, each
+/// bound three times: the streamable tracks whose recording id as pages
+/// read it (the match row's, else the tags') is one of them, on an album
+/// the lists show, by album, disc and track.
+pub(crate) fn player_tracks_of_recordings(ids: ListLen) -> String {
+    let marks = marks(ids);
+    format!(
+        "SELECT {PLAYER_TRACK_COLUMNS} {PLAYER_TRACK_JOINS} \
+         WHERE {LIVE_TRACK} AND {} AND lower({}) IN ({marks}) \
+         AND t.id IN (SELECT local_track_id FROM local_track_external_identities \
+         WHERE lower(recording_mbid) IN ({marks}) UNION SELECT id FROM local_tracks \
+         WHERE lower(COALESCE(embedded_recording_mbid, '')) IN ({marks})) \
+         ORDER BY a.title_folded, a.id, t.disc_number, t.track_number, t.id",
+        owned_album!("a"),
+        recording_mbid!("te", "t"),
     )
 }
 

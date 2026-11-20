@@ -111,6 +111,8 @@ Only tracks in your library are added, each once, in the file's order. The impor
 
 Paste a song link from Deezer, Apple Music or Spotify into search, or a song.link address made from a Deezer, Apple Music or Spotify link, and search shows that song: it plays when your library has it, and you can request it when it doesn't. The clipboard button at the end of the search box pastes and searches in one tap, and on Android, once DroppedNeedle is installed as an app, Share > DroppedNeedle in another app opens the search with the link.
 
+A song link searched from a Subsonic app that searches on the server finds your library's copy of that song in the app's song results; a song you don't have yet shows nothing there.
+
 Deezer and Spotify links are matched exactly, by the song's ISRC, and every MusicBrainz recording filed under that ISRC is shown. Apple Music links give no ISRC, so the song is matched by title and artist, and only a close match is shown: a high MusicBrainz score and a length within three seconds of the store's. When nothing matches, search says so rather than guess. Spotify links need Spotify set up by an admin under Settings > Spotify: they are read with that app, without anyone's sign-in. While Spotify is not set up or is switched off, search says so.
 
 Each new link pasted costs one call to its service and one MusicBrainz search. Spotify also hands out a token, which is reused until it expires, about an hour. Both answers are kept for a day, so pasting the same link again asks nothing.

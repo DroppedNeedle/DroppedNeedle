@@ -574,6 +574,18 @@ impl SubsonicStore {
         self.tracks_for_caller(tracks).await
     }
 
+    /// The caller's view of the library's copies of the songs a song link
+    /// names, `None` when `query` is no song link.
+    pub async fn song_link_tracks(
+        &self,
+        query: &str,
+    ) -> Result<Option<Vec<ViewTrack>>, CompatError> {
+        match self.library.song_link_tracks(query).await? {
+            Some(tracks) => Ok(Some(self.tracks_for_caller(tracks).await?)),
+            None => Ok(None),
+        }
+    }
+
     /// Albums page with sort, year bounds, genre, and match query.
     #[allow(clippy::too_many_arguments)]
     pub async fn get_albums_offset(

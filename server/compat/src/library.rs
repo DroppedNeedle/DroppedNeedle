@@ -29,6 +29,7 @@ use droppedneedle_catalog::local::stores::{
     ArtistRecord, ArtistScope, ArtistSort, GenreRecord, LyricDoc, LyricsPort, StoreError,
 };
 use droppedneedle_catalog::metadata::Catalog;
+use droppedneedle_catalog::metadata::song_links;
 use droppedneedle_kernel::db::{Db, DbError};
 
 use crate::sql;
@@ -193,6 +194,10 @@ pub struct CompatLibrary {
 
 /// Covers in a made playlist picture: a two by two grid.
 const TILE_COUNT: usize = 4;
+/// How long an app's search waits for a song link to be read and matched,
+/// as long as the web UI's search waits for MusicBrainz.
+const SONG_LINK_DEADLINE: std::time::Duration =
+    droppedneedle_catalog::search::service::FULL_SEARCH_DEADLINE;
 /// Side of one tile, pixels.
 const TILE_SIDE: u32 = 250;
 /// The cover size asked of each album, the smallest that fills a tile well.
@@ -361,6 +366,27 @@ impl CompatLibrary {
         offset: u64,
     ) -> Result<Vec<PlayerTrack>, CompatError> {
         Ok(self.catalog.track_page(query, order, limit, offset).await?)
+    }
+
+    /// The library's copies of the songs a song link names, `None` when
+    /// `query` is no song link. The link is read as the web UI's search
+    /// reads it; a link that cannot be read has no copies.
+    pub async fn song_link_tracks(
+        &self,
+        query: &str,
+    ) -> Result<Option<Vec<PlayerTrack>>, CompatError> {
+        let Some(link) = song_links::parse(query) else {
+            return Ok(None);
+        };
+        let Ok(songs) = self
+            .releases
+            .search_song_link(&link, SONG_LINK_DEADLINE)
+            .await
+        else {
+            return Ok(Some(Vec::new()));
+        };
+        let recordings: Vec<String> = songs.hits.into_iter().map(|hit| hit.mbid).collect();
+        Ok(Some(self.catalog.tracks_of_recordings(&recordings).await?))
     }
 
     /// The caller's shuffle seed for a random track page at `offset`.

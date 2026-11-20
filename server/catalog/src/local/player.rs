@@ -1046,6 +1046,31 @@ impl LocalCatalog {
         .await
     }
 
+    /// The streamable tracks on listed albums whose recording id is one of
+    /// `recordings`, by album, disc and track: a song's copies in the
+    /// library.
+    pub async fn tracks_of_recordings(
+        &self,
+        recordings: &[String],
+    ) -> Result<Vec<PlayerTrack>, StoreError> {
+        let mut ids: Vec<String> = recordings
+            .iter()
+            .map(|id| id.trim().to_ascii_lowercase())
+            .filter(|id| !id.is_empty())
+            .collect();
+        ids.sort();
+        ids.dedup();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let text = sql::player_tracks_of_recordings(ListLen::new(ids.len()));
+        let values: Vec<Value> = std::iter::repeat_n(id_values(&ids), 3).flatten().collect();
+        self.read("player.tracks_of_recordings", move |conn| {
+            rows(conn, &text, &values, track_row)
+        })
+        .await
+    }
+
     /// Tracks by id, in no particular order; unknown or unstreamable ids
     /// are absent.
     pub async fn tracks_by_ids(&self, ids: &[String]) -> Result<Vec<PlayerTrack>, StoreError> {

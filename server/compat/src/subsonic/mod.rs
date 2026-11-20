@@ -24,7 +24,7 @@
 //! | getAlbumList2/getAlbumList | albumList2/albumList | yes | `highest` = caller's rated, best first; byYear needs from+to |
 //! | getRandomSongs | randomSongs | yes | filters |
 //! | getMusicDirectory | directory | yes | 1 -> artists (Navidrome 0.62.0: 70); artist -> albums; album -> songs |
-//! | search3/search2 | searchResult3/2 | yes | missing/empty/`""` query = match-all |
+//! | search3/search2 | searchResult3/2 | yes | missing/empty/`""` query = match-all; a song link = its library copies |
 //! | getCoverArt | bytes | yes | RG art/artist image/playlist file; miss -> WebP; size buckets |
 //! | stream/download | bytes | yes | decide() policy; ranges; 416; HEAD |
 //! | getTranscodeDecision | transcodeDecision | yes | POST-only, JSON-only |
