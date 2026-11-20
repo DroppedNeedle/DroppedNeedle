@@ -546,6 +546,120 @@ async fn search3_counts_go_up_to_the_cap() {
     rig.stop().await;
 }
 
+/// Deezer and MusicBrainz as a song link sees them: Deezer's recorded
+/// track 13791930 (ISRC USGF19942501), and a recording search that names
+/// `rec-link-one` for that ISRC and nothing for any other query.
+async fn song_link_server() -> (String, droppedneedle_testkit::usenet::ServerGuard) {
+    use axum::extract::Query;
+    use axum::http::header::CONTENT_TYPE;
+    use axum::response::IntoResponse;
+    use std::collections::HashMap;
+
+    let deezer = || async {
+        (
+            [(CONTENT_TYPE, "application/json")],
+            include_str!("../fixtures/deezer/track.json"),
+        )
+            .into_response()
+    };
+    let recordings = |Query(query): Query<HashMap<String, String>>| async move {
+        let found = query.get("query").map(String::as_str) == Some("isrc:USGF19942501");
+        let hits = if found {
+            json!([{
+                "id": "rec-link-one",
+                "score": 100,
+                "title": "One",
+                "length": 276_000,
+                "artist-credit": [{"name": "U2", "artist": {"id": "artist-u2", "name": "U2"}}],
+                "releases": [{
+                    "id": "rel-link-one",
+                    "title": "Achtung Baby",
+                    "status": "Official",
+                    "release-group": {"id": "rg-link-one", "title": "Achtung Baby", "primary-type": "Album"},
+                }],
+            }])
+        } else {
+            json!([])
+        };
+        (
+            [(CONTENT_TYPE, "application/json")],
+            json!({"count": hits.as_array().map_or(0, Vec::len), "offset": 0, "recordings": hits})
+                .to_string(),
+        )
+            .into_response()
+    };
+    let router = axum::Router::new()
+        .route("/deezer/track/13791930", axum::routing::get(deezer))
+        // The app reads MusicBrainz through BrainzMash, its default source.
+        .route("/brainzmash/recording", axum::routing::get(recordings));
+    droppedneedle_testkit::usenet::serve_loopback(router)
+        .await
+        .expect("song link server starts")
+}
+
+/// An app searching a song link gets the library's copy of the song it
+/// names, and no artists or albums; a link MusicBrainz knows nothing for
+/// finds nothing, never a text search of the link.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search3_finds_a_song_links_library_copy() {
+    let (origin, _server) = song_link_server().await;
+    let rig =
+        CompatApp::start_with("compat-sub-song-link", crate::common::outbound_at(&origin)).await;
+    rig.app
+        .seed(
+            "UPDATE local_tracks SET embedded_recording_mbid = 'rec-link-one' \
+             WHERE relative_path = 'U2/Achtung Baby/03 One.mp3'; \
+             UPDATE local_track_external_identities SET recording_mbid = 'rec-link-one' \
+             WHERE local_track_id = (SELECT id FROM local_tracks \
+             WHERE relative_path = 'U2/Achtung Baby/03 One.mp3')",
+        )
+        .await;
+    let client = Client::player(&rig);
+
+    let found = client
+        .ok(
+            "search3",
+            &[(
+                "query",
+                "https://www.deezer.com/track/13791930?utm_source=x",
+            )],
+        )
+        .await;
+    let result = &found["searchResult3"];
+    let titles: Vec<&str> = result["song"]
+        .as_array()
+        .map(|songs| {
+            songs
+                .iter()
+                .filter_map(|song| song["title"].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert_eq!(titles, vec!["One"], "{found}");
+    assert!(
+        result["artist"].as_array().is_none_or(Vec::is_empty),
+        "{found}"
+    );
+    assert!(
+        result["album"].as_array().is_none_or(Vec::is_empty),
+        "{found}"
+    );
+
+    let other = client
+        .ok(
+            "search3",
+            &[("query", "https://www.deezer.com/track/99999999999")],
+        )
+        .await;
+    assert!(
+        other["searchResult3"]["song"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "{other}"
+    );
+    rig.stop().await;
+}
+
 /// LRCLIB as the lyrics lookup sees it: its recorded found answer for "One"
 /// by U2, its recorded 404 for anything else.
 async fn lyrics_server() -> (String, droppedneedle_testkit::usenet::ServerGuard) {
