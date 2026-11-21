@@ -54,7 +54,7 @@
 		customUrl = null,
 		remoteUrl = null,
 		imageType = 'album',
-		source = 'provider',
+		source: _source = 'provider',
 		available = true,
 		retryOnError = true,
 		transparentFallback = false,
@@ -130,35 +130,33 @@
 			? appendAudioDBSizeSuffix(remoteUrl, 'lg')
 			: null
 	);
-	let resolvedCustomUrl = $derived(customUrl === null ? null : getApiUrl(customUrl));
+	let resolvedCustomUrl = $derived(customUrl ? getApiUrl(customUrl) : null);
 
+	let hasValidMbid = $derived(isValidMbid(mbid));
 	let canonicalAlbumCoverUrl = $derived(
-		imageType === 'album' && isValidMbid(mbid)
-			? coverSrc('release-group', mbid, requestedPixels)
-			: null
-	);
-	let validMbid = $derived(source === 'local' || imageType === 'album' ? true : isValidMbid(mbid));
-	let hasSource = $derived(
-		available &&
-			((useRemoteUrl && resolvedRemoteUrl) ||
-				(imageType === 'album'
-					? canonicalAlbumCoverUrl || resolvedCustomUrl || mbid
-					: validMbid || resolvedCustomUrl))
+		imageType === 'album' && hasValidMbid ? coverSrc('release-group', mbid, requestedPixels) : null
 	);
 	let apiEndpoint: CoverKind = $derived(imageType === 'album' ? 'release-group' : 'artist');
-	let fallbackCoverUrl = $derived(coverSrc(apiEndpoint, mbid, requestedPixels));
+	// Both release-group and artist cover routes serve MusicBrainz ids only:
+	// a remote or local library id belongs to its own cover route (customUrl).
+	let fallbackCoverUrl = $derived(
+		hasValidMbid ? coverSrc(apiEndpoint, mbid, requestedPixels) : null
+	);
 	let responsiveCoverUrl = $derived(
-		requestSize === 250 && responsiveSizes ? coverSrc(apiEndpoint, mbid, 500) : null
+		requestSize === 250 && responsiveSizes && hasValidMbid ? coverSrc(apiEndpoint, mbid, 500) : null
 	);
 	let coverUrl = $derived(
 		imageType === 'album'
-			? (canonicalAlbumCoverUrl ?? resolvedCustomUrl ?? fallbackCoverUrl)
-			: (resolvedCustomUrl ?? fallbackCoverUrl)
+			? (canonicalAlbumCoverUrl ?? resolvedCustomUrl ?? fallbackCoverUrl ?? '')
+			: (resolvedCustomUrl ?? fallbackCoverUrl ?? '')
+	);
+	let hasSource = $derived(
+		available && ((useRemoteUrl && resolvedRemoteUrl && !remoteError) || Boolean(coverUrl))
 	);
 	let displayCoverUrl = $derived(warmResolvedUrl ?? coverUrl);
 	let displayCoverSrcset = $derived.by(() => {
 		if (warmResolvedUrl || !responsiveSizes) return undefined;
-		if (useRemoteUrl && resolvedRemoteUrl && responsiveRemoteUrl) {
+		if (useRemoteUrl && resolvedRemoteUrl && !remoteError && responsiveRemoteUrl) {
 			return `${resolvedRemoteUrl} 250w, ${responsiveRemoteUrl} 500w`;
 		}
 		return responsiveCoverUrl ? `${coverUrl} 250w, ${responsiveCoverUrl} 500w` : undefined;
@@ -203,10 +201,7 @@
 	});
 
 	$effect(() => {
-		const source =
-			imageType === 'album'
-				? (canonicalAlbumCoverUrl ?? resolvedCustomUrl ?? mbid)
-				: (resolvedCustomUrl ?? mbid);
+		const source = coverUrl;
 		if (source && imgElement && source !== currentSource) {
 			currentSource = source;
 			imgError = false;

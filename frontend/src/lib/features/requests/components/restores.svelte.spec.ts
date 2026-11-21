@@ -49,7 +49,7 @@ const trackApproval: RequestItem = {
 	musicbrainz_id: 'recording-angel',
 	request_kind: 'track',
 	track_title: 'Angel',
-	track_release_group_mbid: 'rg-mezzanine',
+	track_release_group_mbid: 'ca09fb65-7ef7-46ea-ac4c-c6b775f612dd',
 	album_title: 'Mezzanine',
 	artist_name: 'Massive Attack',
 	origin: 'user',
@@ -113,7 +113,7 @@ describe('requests restores', () => {
 
 		await expect
 			.element(page.getByRole('img', { name: 'Mezzanine' }))
-			.toHaveAttribute('data-src', expect.stringContaining('rg-mezzanine'));
+			.toHaveAttribute('data-src', expect.stringContaining('ca09fb65-7ef7-46ea-ac4c-c6b775f612dd'));
 	});
 
 	it('lets an admin list the requests that can be reimported', async () => {
