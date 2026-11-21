@@ -50,6 +50,10 @@ enum Reviewed {
     Recorded,
     /// No look applies or nothing was found: search the usual way.
     Search,
+    /// The look decided nothing because the edition's tracklist could not
+    /// be read. The task stays queued and unlinked, and the next look waits
+    /// out the search backoff.
+    Retry,
 }
 
 impl DownloadWorker {
@@ -86,9 +90,12 @@ impl DownloadWorker {
         let mode = pass.config.review;
         let sources = pass.sources.clone();
         let order = pass.config.source_order.clone();
+        let now = pass.now;
         tokio::spawn(async move {
             let outcome = worker.review(mode, &sources, &order, &task).await;
-            if matches!(outcome, Reviewed::Search) {
+            if matches!(outcome, Reviewed::Retry) {
+                worker.backoff(&task.id, now);
+            } else if matches!(outcome, Reviewed::Search) {
                 lock(&worker.reviews.looked).insert(task.id.clone());
             }
             lock(&worker.reviews.running).remove(&task.id);
@@ -136,6 +143,20 @@ impl DownloadWorker {
         let job_id = uuid::Uuid::new_v4().simple().to_string();
         let ordered: Vec<_> = in_try_order(sources, order).into_iter().cloned().collect();
         let (candidates, _failed) = search_sources(&ordered, &target, &job_id).await;
+        // An upgrade with nothing to judge settles the way it did before:
+        // its park is read by settle_upgrade as "no better copy".
+        if target.tracklist.is_empty() && task.origin != DispatchOrigin::Upgrade {
+            // Without a tracklist no candidate can be judged. Deciding
+            // nothing keeps the album queued; the next look waits out the
+            // backoff instead of parking the task for a pick that never
+            // comes.
+            tracing::info!(
+                task_id = %task.id,
+                candidates = candidates.len(),
+                "search review: the edition's tracklist could not be read; leaving the task queued"
+            );
+            return Reviewed::Retry;
+        }
         let upgrade = task.origin == DispatchOrigin::Upgrade;
         // "Always wait for my pick" covers requests and wanted albums: an
         // upgrade that waits costs nothing but a growing queue.

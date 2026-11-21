@@ -434,7 +434,7 @@ impl DownloadWorker {
     }
 
     /// Push one task's next enqueue attempt out by the backoff window.
-    fn backoff(&self, task_id: &str, now: f64) {
+    pub(super) fn backoff(&self, task_id: &str, now: f64) {
         if let Ok(mut backoff) = self.enqueue_not_before.lock() {
             backoff.insert(task_id.to_owned(), now + ENQUEUE_BACKOFF_SECONDS);
         }
