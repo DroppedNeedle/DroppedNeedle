@@ -157,12 +157,26 @@ fn normalize(
     Some((folded, display))
 }
 
-/// The file's genres as candidates, normalized and deduplicated.
-fn existing_genres(values: &[String], settings: &GenreManagementSettings) -> Vec<(String, String)> {
+/// The file's genres as candidates, deduplicated. The caller keeps the
+/// file spelling unless Replace asks for normalization: Fill missing
+/// writes nothing, and Merge only adds genres.
+fn existing_genres(
+    values: &[String],
+    settings: &GenreManagementSettings,
+    keep_spelling: bool,
+) -> Vec<(String, String)> {
     let mut seen = HashSet::new();
     values
         .iter()
-        .filter_map(|value| normalize(value, settings, false))
+        .filter_map(|value| {
+            let (folded, display) = normalize(value, settings, false)?;
+            let display = if keep_spelling {
+                value.trim().to_string()
+            } else {
+                display
+            };
+            Some((folded, display))
+        })
         .filter(|(folded, _)| seen.insert(folded.clone()))
         .collect()
 }
@@ -192,7 +206,7 @@ pub fn project(
     existing: &[String],
 ) -> Projection {
     let cap = usize::try_from(settings.maximum_count.max(1)).unwrap_or(1);
-    let current = existing_genres(existing, settings);
+    let current = existing_genres(existing, settings, settings.mode != GenreMode::Replace);
     let keep_current = |deferred: Vec<&'static str>| Projection {
         genres: current
             .iter()
