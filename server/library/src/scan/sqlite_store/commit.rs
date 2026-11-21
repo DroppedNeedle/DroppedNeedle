@@ -3215,6 +3215,8 @@ fn write_window(
             format!("The catalog could not store this file: {error}"),
             Phase::Indexing,
             crate::clock::ms(window.now),
+            None::<i64>,
+            None::<i64>,
         ])?;
     }
     changed.sort();
