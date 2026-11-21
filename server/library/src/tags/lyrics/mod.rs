@@ -339,10 +339,8 @@ pub fn read_lyrics_checked(
     sidecars: TrackSidecars<'_>,
 ) -> (Option<(LyricsSource, Lyrics)>, bool) {
     let mut unread = false;
-    let files: [(
-        Option<&Path>,
-        fn(TrackFile<'_>) -> std::io::Result<Option<Lyrics>>,
-    ); 2] = [(sidecars.ttml, read_ttml), (sidecars.lrc, read_lrc)];
+    let files: [(Option<&Path>, ReadLyricsFile); 2] =
+        [(sidecars.ttml, read_ttml), (sidecars.lrc, read_lrc)];
     for (path, read) in files {
         let Some(path) = path else {
             continue;
@@ -535,6 +533,9 @@ fn read_text(at: TrackFile<'_>) -> std::io::Result<Option<String>> {
     }
     Ok(Some(text))
 }
+
+/// A lyrics file's reader: [`read_ttml`] or [`read_lrc`].
+type ReadLyricsFile = fn(TrackFile<'_>) -> std::io::Result<Option<Lyrics>>;
 
 fn skipped(at: TrackFile<'_>, why: &dyn std::fmt::Display) {
     tracing::debug!(path = %at.path().display(), reason = %why, "lyrics file skipped");

@@ -62,7 +62,7 @@ pub fn parse_lyrics(
 pub fn parse_lyrics_text(text: &str) -> Result<Option<Lyrics>, LyricsRefused> {
     let timed = text.lines().any(|line| {
         let line = line.trim();
-        leading_stamps(line).0.first().is_some()
+        !leading_stamps(line).0.is_empty()
             || (!line.starts_with('[') && segments(line).iter().any(Segment::is_stamp))
     });
     if timed {
