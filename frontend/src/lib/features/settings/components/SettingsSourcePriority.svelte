@@ -9,6 +9,8 @@
 	} from 'lucide-svelte';
 
 	import {
+		getNzbgetConfigQuery,
+		getSabnzbdConfigQuery,
 		getSourcePriorityQuery,
 		createSaveSourcePriorityMutation
 	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
@@ -20,10 +22,24 @@
 	const priorityQuery = getSourcePriorityQuery();
 	const reorder = createSaveSourcePriorityMutation();
 	const sourcesQuery = getPluginSourcesQuery();
+	const sabnzbdQuery = getSabnzbdConfigQuery();
+	const nzbgetQuery = getNzbgetConfigQuery();
+
+	const sabnzbdActive = $derived(
+		sabnzbdQuery.data?.enabled === true &&
+			Boolean(sabnzbdQuery.data?.url) &&
+			Boolean(sabnzbdQuery.data?.api_key)
+	);
+	const nzbgetActive = $derived(
+		nzbgetQuery.data?.enabled === true && Boolean(nzbgetQuery.data?.url)
+	);
+
+	// The client that receives new Usenet jobs: SABnzbd when it is
+	// configured and enabled, NZBGet when it is.
+	const usenetClient = $derived(sabnzbdActive ? 'SABnzbd' : nzbgetActive ? 'NZBGet' : '');
 
 	const META: Record<string, { label: string; sub: string; icon: typeof Rss }> = {
-		soulseek: { label: 'Soulseek', sub: 'slskd', icon: HardDriveDownload },
-		usenet: { label: 'Usenet', sub: 'SABnzbd', icon: Rss }
+		soulseek: { label: 'Soulseek', sub: 'slskd', icon: HardDriveDownload }
 	};
 
 	const pluginLabels = $derived(
@@ -45,6 +61,8 @@
 	const order = $derived([...savedOrder, ...knownKeys.filter((key) => !savedOrder.includes(key))]);
 
 	function metaFor(source: string) {
+		if (source === 'usenet')
+			return { label: 'Usenet', sub: usenetClient, icon: Rss, missing: false };
 		const base = META[source];
 		if (base) return { ...base, missing: false };
 		if (pluginLabels[source])
