@@ -1,11 +1,14 @@
 //! Discogs, iTunes, preview (Deezer and iTunes), LRCLIB and Wikidata
 //! clients against the scripted provider wire: the decode of each real
 //! wire shape, identity gates, absence, the exact-id artist picture match,
-//! and each provider's own rate-limit defaults. What every other status becomes is pinned in `providers_core`.
+//! LRCLIB's word timing and the lyrics it gives, and each provider's own
+//! rate-limit defaults. What every other status becomes is pinned in `providers_core`.
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use droppedneedle_catalog::lyrics::candidate_lyrics;
+use droppedneedle_library::tags::lyrics::parse_lyrics;
 use droppedneedle_providers::executor::Method;
 use droppedneedle_providers::test_support::{Scripted, ScriptedWire};
 use droppedneedle_providers::{
@@ -77,6 +80,8 @@ const ITUNES_ALBUMS: &str = include_str!("../fixtures/itunes/search_album.json")
 /// Verified against itunes.apple.com/search on 2026-10-20: tests/fixtures/itunes/search_track.json.
 const ITUNES_SONG: &str = include_str!("../fixtures/itunes/search_track.json");
 const LRCLIB_FOUND: &str = include_str!("../fixtures/lrclib/get_found.json");
+/// Verified against lrclib.net/api/get/36210 on 2026-11-21: tests/fixtures/lrclib/get_found_words.json.
+const LRCLIB_WORDS: &str = include_str!("../fixtures/lrclib/get_found_words.json");
 
 const ENTITY: &str = "http://fake/data/wiki/Special:EntityData/Q44190.json";
 const EXTRACT: &str = "http://fake/en.wiki/w/api.php";
@@ -558,6 +563,172 @@ async fn catalog_answers_without_their_identity_are_unusable() {
             "{case}: {error:?}"
         );
     }
+}
+
+/// LRCLIB's exact answer to `body`, which must be found.
+async fn lrclib_candidate(body: &str) -> lrclib::LyricsCandidate {
+    let wire = scripted(LRCLIB, &[(200, &[], body)]);
+    let found = catalog_providers(&wire)
+        .lrclib
+        .get_exact_lyrics("T", "A", "C", 60, PRIORITY)
+        .await
+        .unwrap();
+    found.candidate.filter(|_| found.found).expect("found")
+}
+
+/// A record's lyricsfile gives word timing only when LRCLIB marks it
+/// word-synced, it is version 1.0, some line has words, and it reads under
+/// the YAML budget: no alias or anchor, not too deep, no duplicate key.
+/// Otherwise the record is still found with its synced text.
+#[tokio::test]
+async fn lrclib_word_timing_comes_only_from_a_safe_lyricsfile() {
+    let candidate = lrclib_candidate(LRCLIB_WORDS).await;
+    let words = candidate.word_synced.expect("recorded word timing");
+    assert_eq!(words.lines.len(), 40, "recorded");
+    let first = &words.lines[0];
+    assert_eq!(
+        (first.start_ms, first.end_ms),
+        (200, Some(4020)),
+        "recorded"
+    );
+    assert_eq!(first.words.len(), 8, "recorded");
+    assert_eq!(
+        first.words[1],
+        lrclib::SyncedWord {
+            text: "la ".to_owned(),
+            start_ms: 399,
+            end_ms: None
+        },
+        "recorded"
+    );
+    assert_eq!(
+        first
+            .words
+            .iter()
+            .map(|word| word.text.as_str())
+            .collect::<String>(),
+        first.text,
+        "recorded: the words join to the line"
+    );
+
+    let line = "- text: la la\n  start_ms: 1000\n  end_ms: 2000\n  words:\n  - text: 'la '\n    start_ms: 1000\n  - text: la\n    start_ms: 1500\n";
+    let deep = format!("  extra: {}1{}\n", "[".repeat(10), "]".repeat(10));
+    // Each case: name, `hasWordSync`, lyricsfile, whether it gives word timing.
+    let cases: Vec<(&str, bool, String, bool)> = vec![
+        (
+            "plain",
+            true,
+            format!("version: '1.0'\nlines:\n{line}"),
+            true,
+        ),
+        (
+            "alias and anchor",
+            true,
+            format!("version: '1.0'\nlines:\n- &line\n  {}- *line\n", &line[2..]),
+            false,
+        ),
+        (
+            "anchor",
+            true,
+            format!("version: '1.0'\nlines:\n- &line\n  {}", &line[2..]),
+            false,
+        ),
+        (
+            "over depth",
+            true,
+            format!("version: '1.0'\nlines:\n{line}{deep}"),
+            false,
+        ),
+        (
+            "duplicate key",
+            true,
+            format!("version: '1.0'\nlines:\n{line}  note: a\n  note: b\n"),
+            false,
+        ),
+        (
+            "version 2.0",
+            true,
+            format!("version: '2.0'\nlines:\n{line}"),
+            false,
+        ),
+        (
+            "not marked word-synced",
+            false,
+            format!("version: '1.0'\nlines:\n{line}"),
+            false,
+        ),
+        (
+            "no line with words",
+            true,
+            "version: '1.0'\nlines:\n- text: la la\n  start_ms: 1000\n  end_ms: 2000\n".to_owned(),
+            false,
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (case, has_word_sync, lyricsfile, timed) in cases {
+        let body = serde_json::json!({
+            "id": 7, "trackName": "T", "artistName": "A", "albumName": "C",
+            "duration": 60.0, "instrumental": false, "hasWordSync": has_word_sync,
+            "syncedLyrics": "[00:01.00] la la", "lyricsfile": lyricsfile,
+        })
+        .to_string();
+        let candidate = lrclib_candidate(&body).await;
+        assert!(candidate.synced_lyrics.is_some(), "{case}");
+        if candidate.word_synced.is_some() != timed {
+            wrong.push(case);
+        }
+    }
+    assert!(wrong.is_empty(), "word timing read wrongly: {wrong:?}");
+}
+
+/// An answer with word timing gives lyrics with word cues; one without
+/// gives the lines its synced text always gave.
+#[tokio::test]
+async fn lrclib_word_timing_reaches_the_lyrics() {
+    let candidate = lrclib_candidate(LRCLIB_WORDS).await;
+    let lyrics = candidate_lyrics(&candidate).unwrap().expect("lyrics");
+    let lines = lyrics.main.lines();
+    assert_eq!(lines.len(), 40, "word-synced");
+    assert_eq!(lines[0].text(), "la la la la la la la la", "word-synced");
+    assert_eq!(
+        (lines[0].start_ms(), lines[0].end_ms()),
+        (Some(200), Some(4020)),
+        "word-synced"
+    );
+    let cues = lines[0].cue_lines()[0].cues();
+    assert_eq!(cues.len(), 8, "word-synced");
+    assert_eq!(
+        (cues[1].start_ms(), cues[1].end_ms()),
+        (399, 916),
+        "word-synced"
+    );
+    assert_eq!(
+        (cues[1].byte_start(), cues[1].byte_end()),
+        (3, 4),
+        "word-synced"
+    );
+    assert_eq!(cues[7].end_ms(), 4020, "word-synced: the line's end");
+
+    let candidate = lrclib_candidate(LRCLIB_FOUND).await;
+    assert_eq!(candidate.word_synced, None, "line-synced");
+    let lyrics = candidate_lyrics(&candidate).unwrap().expect("lyrics");
+    assert_eq!(
+        Some(lyrics.clone()),
+        parse_lyrics(
+            candidate.plain_lyrics.as_deref(),
+            candidate.synced_lyrics.as_deref()
+        )
+        .unwrap(),
+        "line-synced"
+    );
+    assert!(
+        lyrics
+            .main
+            .lines()
+            .iter()
+            .all(|line| line.cue_lines().is_empty()),
+        "line-synced"
+    );
 }
 
 /// How a scripted catalog call is answered.

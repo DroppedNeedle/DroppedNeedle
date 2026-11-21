@@ -17,6 +17,14 @@ needs no key.
   not-found query got this answer while LRCLIB reported `ServerOverloaded`;
   the third try got the 404 above.
 
-All three bodies are unchanged except re-indented (two spaces) and the
+- `get_found_words.json`: HTTP 200 for `GET https://lrclib.net/api/get/36210`,
+  fetched on 2026-11-21 with the app's User-Agent
+  (`DroppedNeedleApp/v3.1.0 (contact@droppedneedle.com; https://www.droppedneedle.com)`),
+  a record with `hasWordSync: true`. Every lyric word in `plainLyrics`,
+  `syncedLyrics` and `lyricsfile` is replaced by `la`, keeping each line's
+  word count, each word's trailing space, every time and the YAML layout;
+  each `lines[].text` is its words joined. Every other field is as answered.
+
+All four bodies are unchanged except re-indented (two spaces) and the
 lyric text noted above. None of
 them holds a key, a token or personal data.

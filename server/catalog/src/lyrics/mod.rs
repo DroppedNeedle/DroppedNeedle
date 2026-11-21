@@ -7,17 +7,18 @@
 //! metadata cache (found seven days, missing six hours), else LRCLIB
 //! through its executor. A 429 cools LRCLIB's limiter, and every caller
 //! is held until the wait it named has passed. A lookup that failed
-//! stores nothing.
+//! stores nothing. An answer with word timings is served with them
+//! ([`candidate_lyrics`]); Library Management reads only its text.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::LyricsSettings;
-use droppedneedle_library::tags::lyrics::{Lyrics, parse_lyrics};
+use droppedneedle_library::tags::lyrics::{LineInput, Lyrics, LyricsRefused, Piece, parse_lyrics};
 use droppedneedle_media::stream::local_files::LibraryFiles;
 use droppedneedle_providers::degradation::{IntegrationStatus, record_current};
-use droppedneedle_providers::lrclib::{LrclibClient, LyricsCandidate, signature_text};
+use droppedneedle_providers::lrclib::{LrclibClient, LyricsCandidate, WordSynced, signature_text};
 use droppedneedle_providers::{
     CacheKey, Fetched, Policy, ProviderCacheStore, ProviderError, Providers, RequestPriority,
     Source,
@@ -232,10 +233,7 @@ impl LyricsService {
                 return Ok(None);
             }
         };
-        match parse_lyrics(
-            candidate.plain_lyrics.as_deref(),
-            candidate.synced_lyrics.as_deref(),
-        ) {
+        match candidate_lyrics(&candidate) {
             Ok(parsed) => Ok(parsed),
             Err(refused) => {
                 tracing::debug!(cause = %refused, "online lyrics unusable; reading as absent");
@@ -244,6 +242,46 @@ impl LyricsService {
             }
         }
     }
+}
+
+/// The lyrics an LRCLIB answer gives: its word timings when it has them,
+/// else its plain and synced text. A line's words are its pieces, joined
+/// as they are (each word carries the space after it), as LRCLIB joins
+/// them; a line without words is its text at its start.
+///
+/// # Errors
+///
+/// [`LyricsRefused`] when the plain or synced text is refused.
+pub fn candidate_lyrics(candidate: &LyricsCandidate) -> Result<Option<Lyrics>, LyricsRefused> {
+    if let Some(lyrics) = candidate.word_synced.as_ref().and_then(word_synced_lyrics) {
+        return Ok(Some(lyrics));
+    }
+    parse_lyrics(
+        candidate.plain_lyrics.as_deref(),
+        candidate.synced_lyrics.as_deref(),
+    )
+}
+
+/// Word-synced lines through the line builder. `None` when they give no
+/// text or pass the size limit.
+fn word_synced_lyrics(word_synced: &WordSynced) -> Option<Lyrics> {
+    let lines = word_synced
+        .lines
+        .iter()
+        .map(|line| LineInput {
+            start_ms: Some(line.start_ms),
+            end_ms: line.end_ms,
+            pieces: if line.words.is_empty() {
+                vec![Piece::plain(line.text.as_str())]
+            } else {
+                line.words
+                    .iter()
+                    .map(|word| Piece::timed(word.text.as_str(), word.start_ms, word.end_ms))
+                    .collect()
+            },
+        })
+        .collect();
+    Lyrics::from_lines(lines)
 }
 
 impl LyricsPort for LyricsService {

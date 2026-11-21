@@ -41,6 +41,26 @@ license = "BSD-3-Clause"
 path = "LICENSE"
 checksum = "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
 
+# granit-parser's LICENSE is a notice that asks for every author's notice to be
+# kept; the licence texts it points to are in a hidden .licenses folder, which
+# the scan skips. Read on 2026-11-21.
+[granit-parser.clarify]
+license = "MIT OR Apache-2.0"
+
+[[granit-parser.clarify.files]]
+path = "LICENSE"
+checksum = "1af262e6647807eecaec988ecf2b783fb8fdbdecba396d582c1aab90615f6845"
+
+[[granit-parser.clarify.files]]
+path = ".licenses/ChenYuheng-Apache"
+license = "Apache-2.0"
+checksum = "b2174e5bfaba26c7a78172221e190e57897b643ee21ed8ce582cf72c9b381589"
+
+[[granit-parser.clarify.files]]
+path = ".licenses/Ethiraric-Apache"
+license = "Apache-2.0"
+checksum = "e0f2efbe68fb02db5485f2bef61d8b49e788def182d3262af2df50e87c0d19f8"
+
 # md5 holds both licences in one LICENSE.md, which the scan does not recognise.
 [md5.clarify]
 license = "Apache-2.0 OR MIT"
