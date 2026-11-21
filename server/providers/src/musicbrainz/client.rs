@@ -239,8 +239,9 @@ impl MusicBrainzView {
         self.search_text(text, query, page).await
     }
 
-    /// Search release groups by free text, the way v2's album search
-    /// asked: group title boosted, release title next, then any field.
+    /// Search release groups by free text: the group title first, the
+    /// release title next, the artist after them, then any field. A
+    /// person who types an artist name finds that artist's albums.
     pub async fn search_release_groups_text(
         &self,
         text: &str,
@@ -250,7 +251,7 @@ impl MusicBrainzView {
         criticality: Criticality,
     ) -> Result<SearchPage<ReleaseGroupSearchHit>, ProviderError> {
         let query = |term: &str, words: &str| {
-            format!(r#"releasegroup:{term}^3 OR release:{term}^2 OR {words}"#)
+            format!(r#"releasegroup:{term}^3 OR release:{term}^2 OR artist:{term}^2 OR {words}"#)
         };
         let page = TextPage {
             entity: "release-group",
