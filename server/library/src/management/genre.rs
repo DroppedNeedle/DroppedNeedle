@@ -111,19 +111,15 @@ pub fn fold(value: &str) -> String {
     caseless::default_case_fold_str(&collapsed)
 }
 
-/// One candidate through the profile's rules: `(folded, display)`, or
-/// `None` when the rules drop it.
-fn normalize(
-    name: &str,
-    settings: &GenreManagementSettings,
-    require_canonical: bool,
-) -> Option<(String, String)> {
-    let vocab = vocabulary();
+/// Fold a genre and resolve profile and vocabulary aliases when
+/// canonicalization is on.
+fn canonical_key(name: &str, settings: &GenreManagementSettings) -> Option<String> {
     let mut folded = fold(name);
     if folded.is_empty() {
         return None;
     }
     if settings.canonicalize {
+        let vocab = vocabulary();
         let profile_alias = settings
             .aliases
             .iter()
@@ -133,6 +129,18 @@ fn normalize(
             .or_else(|| vocab.aliases.get(&folded).cloned())
             .unwrap_or(folded);
     }
+    Some(folded)
+}
+
+/// One candidate through the profile's rules: `(folded, display)`, or
+/// `None` when the rules drop it.
+fn normalize(
+    name: &str,
+    settings: &GenreManagementSettings,
+    require_canonical: bool,
+) -> Option<(String, String)> {
+    let vocab = vocabulary();
+    let folded = canonical_key(name, settings)?;
     let allowed: HashSet<String> = settings.allowlist.iter().map(|value| fold(value)).collect();
     let denied = settings.denylist.iter().any(|value| fold(value) == folded);
     if denied || (!allowed.is_empty() && !allowed.contains(&folded)) {
@@ -157,7 +165,8 @@ fn normalize(
     Some((folded, display))
 }
 
-/// The file's genres as candidates, normalized and deduplicated.
+/// The file's genres as normalized candidates, deduplicated, used when
+/// `Replace` includes `ExistingLocal` in its source order.
 fn existing_genres(values: &[String], settings: &GenreManagementSettings) -> Vec<(String, String)> {
     let mut seen = HashSet::new();
     values
@@ -184,6 +193,57 @@ fn musicbrainz_genres(release: &Release, settings: &GenreManagementSettings) -> 
         .collect()
 }
 
+enum SourceOutcome {
+    Candidates(Vec<Candidate>),
+    Off,
+    Deferred(&'static str),
+}
+
+fn source_outcome(
+    source: GenreSource,
+    settings: &GenreManagementSettings,
+    release: &Release,
+    remote: &RemoteGenres,
+) -> SourceOutcome {
+    match source {
+        GenreSource::Musicbrainz => {
+            SourceOutcome::Candidates(musicbrainz_genres(release, settings))
+        }
+        GenreSource::Listenbrainz => match &remote.listenbrainz {
+            SourceGenres::Answered(values) => SourceOutcome::Candidates(
+                values
+                    .iter()
+                    .filter(|value| {
+                        value
+                            .count
+                            .is_none_or(|count| count >= settings.listenbrainz_minimum_count)
+                    })
+                    .filter(|value| !settings.listenbrainz_curated_only || value.curated)
+                    .cloned()
+                    .collect(),
+            ),
+            SourceGenres::Off => SourceOutcome::Off,
+            SourceGenres::Unanswered => SourceOutcome::Deferred("listenbrainz"),
+        },
+        GenreSource::Lastfm => match &remote.lastfm {
+            SourceGenres::Answered(values) => SourceOutcome::Candidates(
+                values
+                    .iter()
+                    .filter(|value| {
+                        value
+                            .count
+                            .is_none_or(|weight| weight >= settings.lastfm_minimum_weight)
+                    })
+                    .cloned()
+                    .collect(),
+            ),
+            SourceGenres::Off => SourceOutcome::Off,
+            SourceGenres::Unanswered => SourceOutcome::Deferred("lastfm"),
+        },
+        GenreSource::ExistingLocal => SourceOutcome::Off,
+    }
+}
+
 /// Project the genres one file of `release` should carry.
 pub fn project(
     settings: &GenreManagementSettings,
@@ -191,76 +251,99 @@ pub fn project(
     remote: &RemoteGenres,
     existing: &[String],
 ) -> Projection {
+    let has_existing = existing.iter().any(|value| !value.trim().is_empty());
+    if settings.mode == GenreMode::FillMissing && has_existing {
+        return Projection {
+            genres: existing.to_vec(),
+            deferred: Vec::new(),
+            preserved_existing: true,
+        };
+    }
+
     let cap = usize::try_from(settings.maximum_count.max(1)).unwrap_or(1);
-    let current = existing_genres(existing, settings);
     let keep_current = |deferred: Vec<&'static str>| Projection {
-        genres: current
-            .iter()
-            .take(cap)
-            .map(|(_, display)| display.clone())
-            .collect(),
+        genres: existing.to_vec(),
         deferred,
         preserved_existing: true,
     };
+
+    if settings.mode == GenreMode::Merge {
+        let mut seen = HashSet::new();
+        let mut genres: Vec<String> = Vec::new();
+        for value in existing {
+            if let Some(folded) = canonical_key(value, settings) {
+                seen.insert(folded);
+                genres.push(value.clone());
+            }
+        }
+        let existing_count = genres.len();
+        let mut deferred = Vec::new();
+        'sources: for &source in &settings.sources {
+            if source == GenreSource::ExistingLocal {
+                continue;
+            }
+            if genres.len() >= cap {
+                break;
+            }
+            let candidates = match source_outcome(source, settings, release, remote) {
+                SourceOutcome::Candidates(candidates) => candidates,
+                SourceOutcome::Off => continue,
+                SourceOutcome::Deferred(name) => {
+                    if !deferred.contains(&name) {
+                        deferred.push(name);
+                    }
+                    continue;
+                }
+            };
+            for candidate in candidates {
+                let require_canonical = match source {
+                    GenreSource::Listenbrainz => !candidate.curated,
+                    GenreSource::Lastfm => settings.lastfm_whitelist_only,
+                    _ => false,
+                };
+                let Some((folded, display)) =
+                    normalize(&candidate.name, settings, require_canonical)
+                else {
+                    continue;
+                };
+                if seen.insert(folded) {
+                    genres.push(display);
+                    if genres.len() >= cap {
+                        break 'sources;
+                    }
+                }
+            }
+        }
+        if has_existing && genres.len() == existing_count {
+            return keep_current(deferred);
+        }
+        return Projection {
+            genres,
+            deferred,
+            preserved_existing: false,
+        };
+    }
+
     let mut deferred = Vec::new();
     let mut by_source: Vec<(GenreSource, Vec<Candidate>)> = Vec::new();
-    for source in &settings.sources {
-        match source {
-            GenreSource::Musicbrainz => {
-                by_source.push((*source, musicbrainz_genres(release, settings)));
-            }
-            GenreSource::Listenbrainz => match &remote.listenbrainz {
-                SourceGenres::Answered(values) => by_source.push((
-                    *source,
-                    values
-                        .iter()
-                        .filter(|value| {
-                            value
-                                .count
-                                .is_none_or(|count| count >= settings.listenbrainz_minimum_count)
-                        })
-                        .filter(|value| !settings.listenbrainz_curated_only || value.curated)
-                        .cloned()
-                        .collect(),
-                )),
-                SourceGenres::Off => {}
-                SourceGenres::Unanswered => deferred.push("listenbrainz"),
-            },
-            GenreSource::Lastfm => match &remote.lastfm {
-                SourceGenres::Answered(values) => by_source.push((
-                    *source,
-                    values
-                        .iter()
-                        .filter(|value| {
-                            value
-                                .count
-                                .is_none_or(|weight| weight >= settings.lastfm_minimum_weight)
-                        })
-                        .cloned()
-                        .collect(),
-                )),
-                SourceGenres::Off => {}
-                SourceGenres::Unanswered => deferred.push("lastfm"),
-            },
-            GenreSource::ExistingLocal => {}
+    for &source in &settings.sources {
+        match source_outcome(source, settings, release, remote) {
+            SourceOutcome::Candidates(candidates) => by_source.push((source, candidates)),
+            SourceOutcome::Off => {}
+            SourceOutcome::Deferred(name) => deferred.push(name),
         }
     }
-    if settings.mode == GenreMode::FillMissing && !current.is_empty() {
-        return keep_current(deferred);
-    }
-    let include_existing = settings.sources.contains(&GenreSource::ExistingLocal)
-        || matches!(settings.mode, GenreMode::Merge | GenreMode::FillMissing);
+
+    let current = existing_genres(existing, settings);
     let mut seen = HashSet::new();
     let mut selected: Vec<(String, String, GenreSource)> = Vec::new();
     'sources: for source in &settings.sources {
         if *source == GenreSource::ExistingLocal {
-            if include_existing {
-                for (folded, display) in &current {
-                    if seen.insert(folded.clone()) {
-                        selected.push((folded.clone(), display.clone(), *source));
-                        if selected.len() >= cap {
-                            break 'sources;
-                        }
+            for (folded, display) in &current {
+                if seen.insert(folded.clone()) {
+                    selected.push((folded.clone(), display.clone(), *source));
+                    if selected.len() >= cap {
+                        break 'sources;
                     }
                 }
             }
@@ -287,21 +370,10 @@ pub fn project(
             }
         }
     }
-    if settings.mode == GenreMode::Merge && !settings.sources.contains(&GenreSource::ExistingLocal)
-    {
-        for (folded, display) in &current {
-            if selected.len() >= cap {
-                break;
-            }
-            if seen.insert(folded.clone()) {
-                selected.push((folded.clone(), display.clone(), GenreSource::ExistingLocal));
-            }
-        }
-    }
     let only_local_answer = selected
         .iter()
         .all(|(_, _, source)| *source == GenreSource::Musicbrainz);
-    if !current.is_empty()
+    if has_existing
         && (selected.is_empty()
             || (settings.mode == GenreMode::Replace && !deferred.is_empty() && only_local_answer))
     {
@@ -345,8 +417,9 @@ mod tests {
 
     /// `project` per mode, source and list: MusicBrainz genres are
     /// canonicalized and capped, a source that did not answer keeps the
-    /// file's genres, fill missing and merge follow v2, and the deny list
-    /// filters.
+    /// file's genres verbatim, Fill missing leaves existing genres alone,
+    /// Merge keeps existing genres as written and appends new provider
+    /// genres, and the deny list filters provider candidates.
     #[test]
     fn genres_follow_mode_sources_and_lists() {
         let replace = || settings(GenreMode::Replace, vec![GenreSource::Musicbrainz]);
@@ -390,7 +463,7 @@ mod tests {
                 &deferring,
                 &[("rock", 3)],
                 &["Pop"],
-                &["pop"],
+                &["Pop"],
                 Some(&["listenbrainz"]),
                 Some(true),
             ),
@@ -399,9 +472,9 @@ mod tests {
                 &fill,
                 &[("rock", 3)],
                 &["Jazz"],
-                &["jazz"],
+                &["Jazz"],
                 None,
-                None,
+                Some(true),
             ),
             (
                 "fill missing, file has none",
@@ -410,16 +483,16 @@ mod tests {
                 &[],
                 &["rock"],
                 None,
-                None,
+                Some(false),
             ),
             (
                 "merge",
                 &merge,
                 &[("rock", 3)],
                 &["Jazz"],
-                &["rock", "jazz"],
+                &["Jazz", "rock"],
                 None,
-                None,
+                Some(false),
             ),
             (
                 "deny list",
@@ -451,7 +524,7 @@ mod tests {
 
     /// A source the admin switched off is not a source: it neither defers
     /// nor keeps the file's genres, and the others answer. One that could
-    /// not be reached still defers, and the file keeps its genres.
+    /// not be reached still defers, and the file keeps its genres verbatim.
     #[test]
     fn a_switched_off_source_is_left_out_but_an_unreachable_one_defers() {
         let sources = settings(
@@ -475,8 +548,162 @@ mod tests {
         assert!(off.deferred.is_empty(), "switched off defers nothing");
         assert!(!off.preserved_existing);
         let unreachable = answer(SourceGenres::Unanswered);
-        assert_eq!(unreachable.genres, ["pop"]);
+        assert_eq!(unreachable.genres, ["Pop"]);
         assert_eq!(unreachable.deferred, ["listenbrainz"]);
         assert!(unreachable.preserved_existing);
+    }
+
+    /// Fill missing leaves any file with non-blank genres untouched:
+    /// spelling, count, denylist/allowlist, and unreachable remote sources
+    /// never rewrite, truncate, or defer it. Blank-only values count as
+    /// missing and are filled from providers.
+    #[test]
+    fn fill_missing_keeps_existing_genres_untouched() {
+        let base = GenreManagementSettings {
+            mode: GenreMode::FillMissing,
+            sources: vec![GenreSource::Musicbrainz, GenreSource::Listenbrainz],
+            canonicalize: false,
+            maximum_count: 1,
+            denylist: vec!["Progressive Rock".to_owned()],
+            allowlist: vec!["jazz".to_owned()],
+            ..GenreManagementSettings::default()
+        };
+        let existing = vec!["Progressive Rock".to_owned(), "Art Rock".to_owned()];
+        let kept = project(
+            &base,
+            &release(&[("jazz", 3)]),
+            &RemoteGenres::default(),
+            &existing,
+        );
+        assert_eq!(kept.genres, existing);
+        assert!(kept.deferred.is_empty());
+        assert!(kept.preserved_existing);
+
+        let blank_only = vec!["   ".to_owned()];
+        let filled = project(
+            &base,
+            &release(&[("jazz", 3)]),
+            &RemoteGenres {
+                listenbrainz: SourceGenres::Off,
+                ..RemoteGenres::default()
+            },
+            &blank_only,
+        );
+        assert_eq!(filled.genres, ["jazz"]);
+        assert!(!filled.preserved_existing);
+    }
+
+    /// Replace keeps the file's spelling verbatim when no provider returns
+    /// any matching candidate.
+    #[test]
+    fn replace_empty_provider_preserves_existing_verbatim() {
+        let replace = settings(GenreMode::Replace, vec![GenreSource::Musicbrainz]);
+        let existing = vec!["Pop".to_owned()];
+        let projection = project(&replace, &release(&[]), &RemoteGenres::default(), &existing);
+        assert_eq!(projection.genres, ["Pop"]);
+        assert!(projection.preserved_existing);
+    }
+
+    /// Merge keeps the file's existing genres in their written spelling and
+    /// order (never truncating past `maximum_count`), deduplicates provider
+    /// tags against them through aliases and folding, and appends normalized
+    /// new provider genres up to `maximum_count`.
+    #[test]
+    fn merge_keeps_existing_verbatim_and_appends_normalized_provider_genres() {
+        use droppedneedle_kernel::runtime_config::sections::GenreAlias;
+
+        let merge = settings(GenreMode::Merge, vec![GenreSource::Musicbrainz]);
+        let overlap = project(
+            &merge,
+            &release(&[("progressive rock", 3), ("art rock", 2)]),
+            &RemoteGenres::default(),
+            &["Progressive Rock".to_owned()],
+        );
+        assert_eq!(overlap.genres, ["Progressive Rock", "art rock"]);
+        assert!(!overlap.preserved_existing);
+
+        let only_overlap = project(
+            &merge,
+            &release(&[("progressive rock", 3)]),
+            &RemoteGenres::default(),
+            &["Progressive Rock".to_owned()],
+        );
+        assert_eq!(only_overlap.genres, ["Progressive Rock"]);
+        assert!(only_overlap.preserved_existing);
+
+        let aliased = GenreManagementSettings {
+            mode: GenreMode::Merge,
+            sources: vec![GenreSource::Musicbrainz],
+            canonicalize: true,
+            aliases: vec![GenreAlias {
+                source: "prog".to_owned(),
+                target: "progressive rock".to_owned(),
+            }],
+            preferred_casing: vec!["PROG ROCK".to_owned(), "Alternative Rock".to_owned()],
+            ..GenreManagementSettings::default()
+        };
+        let merged_alias = project(
+            &aliased,
+            &release(&[("prog", 4), ("alt rock", 3)]),
+            &RemoteGenres::default(),
+            &["Progressive Rock".to_owned()],
+        );
+        assert_eq!(
+            merged_alias.genres,
+            ["Progressive Rock", "Alternative Rock"]
+        );
+        assert!(!merged_alias.preserved_existing);
+
+        let capped = GenreManagementSettings {
+            mode: GenreMode::Merge,
+            sources: vec![GenreSource::Musicbrainz],
+            maximum_count: 1,
+            ..GenreManagementSettings::default()
+        };
+        let kept_over_cap = project(
+            &capped,
+            &release(&[("jazz", 3)]),
+            &RemoteGenres::default(),
+            &["Rock".to_owned(), "Pop".to_owned()],
+        );
+        assert_eq!(kept_over_cap.genres, ["Rock", "Pop"]);
+        assert!(kept_over_cap.preserved_existing);
+    }
+
+    /// Merge does not defer remote sources it never needs to consult because
+    /// the file already met or reached `maximum_count`.
+    #[test]
+    fn merge_skips_deferring_unvisited_remote_sources_once_cap_is_reached() {
+        let at_cap = GenreManagementSettings {
+            mode: GenreMode::Merge,
+            sources: vec![GenreSource::Musicbrainz, GenreSource::Listenbrainz],
+            maximum_count: 1,
+            ..GenreManagementSettings::default()
+        };
+        let over_cap = project(
+            &at_cap,
+            &release(&[("jazz", 3)]),
+            &RemoteGenres::default(),
+            &["Rock".to_owned(), "Pop".to_owned()],
+        );
+        assert_eq!(over_cap.genres, ["Rock", "Pop"]);
+        assert!(over_cap.deferred.is_empty());
+        assert!(over_cap.preserved_existing);
+
+        let filled_before_remote = GenreManagementSettings {
+            mode: GenreMode::Merge,
+            sources: vec![GenreSource::Musicbrainz, GenreSource::Listenbrainz],
+            maximum_count: 2,
+            ..GenreManagementSettings::default()
+        };
+        let filled = project(
+            &filled_before_remote,
+            &release(&[("jazz", 3)]),
+            &RemoteGenres::default(),
+            &["Rock".to_owned()],
+        );
+        assert_eq!(filled.genres, ["Rock", "jazz"]);
+        assert!(filled.deferred.is_empty());
+        assert!(!filled.preserved_existing);
     }
 }

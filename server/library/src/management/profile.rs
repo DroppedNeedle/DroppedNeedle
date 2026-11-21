@@ -601,7 +601,21 @@ pub fn plan_tags(
         .any(|name| name == "genre");
     if profile.genres.enabled && !genre_kept {
         let existing = desired.get("genre").cloned().unwrap_or_default();
-        let projection = super::genre::project(&profile.genres, release, &extras.genres, &existing);
+        let constrained = matches!(format, "m4a" | "aac" | "wav");
+        let genre_settings =
+            if constrained && profile.genres.write_primary_only_for_constrained_formats {
+                let mut capped = profile.genres.clone();
+                capped.maximum_count = 1;
+                Some(capped)
+            } else {
+                None
+            };
+        let projection = super::genre::project(
+            genre_settings.as_ref().unwrap_or(&profile.genres),
+            release,
+            &extras.genres,
+            &existing,
+        );
         for source in &projection.deferred {
             let name = match *source {
                 "listenbrainz" => "ListenBrainz",
@@ -618,13 +632,8 @@ pub fn plan_tags(
             .iter()
             .map(|source| (*source).to_owned())
             .collect();
-        let mut genres = projection.genres;
-        let constrained = matches!(format, "m4a" | "aac" | "wav");
-        if constrained && profile.genres.write_primary_only_for_constrained_formats {
-            genres.truncate(1);
-        }
-        if !genres.is_empty() {
-            desired.insert("genre".to_owned(), genres);
+        if !projection.preserved_existing && !projection.genres.is_empty() {
+            desired.insert("genre".to_owned(), projection.genres);
         }
     }
     let lyrics_settings = &profile.enrichment.lyrics;
@@ -2482,5 +2491,161 @@ mod tests {
             crate::import::naming::render(script, &variables, "/music").expect("renders"),
             "Alice Cooper (1964-1975 American rock band)/Under My Wheels.flac"
         );
+    }
+
+    /// Preserved existing genres stay untouched even on a constrained format
+    /// with `write_primary_only_for_constrained_formats` enabled.
+    #[test]
+    fn fill_missing_leaves_constrained_format_genres_untouched() {
+        use crate::matching::Genre;
+        use droppedneedle_kernel::runtime_config::sections::{GenreMode, GenreSource};
+
+        let mut stored = settings::initial_settings();
+        for profile in &mut stored.profiles {
+            profile.metadata.enabled = false;
+            profile.genres.enabled = true;
+            profile.genres.mode = GenreMode::FillMissing;
+            profile.genres.sources = vec![GenreSource::Musicbrainz];
+            profile.genres.write_primary_only_for_constrained_formats = true;
+        }
+        let pinned = pin(&stored, settings::PICARD_ORGANIZER_PROFILE_ID, None).expect("pinned");
+        let doc: TagDocument = serde_json::from_value(serde_json::json!({
+            "managed": {
+                "genre": ["Progressive Rock", "Art Rock"],
+            },
+            "custom": {},
+        }))
+        .expect("document");
+        let track = ReleaseTrack {
+            title: "Track".to_owned(),
+            disc: 1,
+            position: 1,
+            ..ReleaseTrack::default()
+        };
+        let release = Release {
+            genres: vec![Genre {
+                name: "rock".to_owned(),
+                count: Some(5),
+            }],
+            tracks: vec![track.clone()],
+            ..Release::default()
+        };
+        let extras = AlbumExtras::default();
+        let plan = plan_tags(
+            &pinned,
+            &CompiledScripts::new(&pinned),
+            &FileInput {
+                release: &release,
+                track: &track,
+                doc: &doc,
+                format: "m4a",
+                id3v23: false,
+                writable: true,
+                overrides: &Overrides::default(),
+                extras: &extras,
+                track_id: "track",
+                lyrics: &LyricsAnswer::Off,
+            },
+        )
+        .expect("planned");
+
+        assert_eq!(
+            plan.desired.get("genre"),
+            Some(&vec!["Progressive Rock".to_owned(), "Art Rock".to_owned()])
+        );
+        assert!(
+            !plan.mutations.iter().any(|m| m.name == "genre"),
+            "no genre mutation planned: {:?}",
+            plan.mutations
+        );
+        assert!(plan.updates.is_empty());
+    }
+
+    /// Merge on a constrained format with `write_primary_only_for_constrained_formats`
+    /// keeps existing genres untouched instead of truncating them, while an
+    /// untagged file is capped to a single provider genre.
+    #[test]
+    fn merge_on_constrained_format_preserves_existing_and_caps_missing_to_one() {
+        use crate::matching::Genre;
+        use droppedneedle_kernel::runtime_config::sections::{GenreMode, GenreSource};
+
+        let mut stored = settings::initial_settings();
+        for profile in &mut stored.profiles {
+            profile.metadata.enabled = false;
+            profile.genres.enabled = true;
+            profile.genres.mode = GenreMode::Merge;
+            profile.genres.sources = vec![GenreSource::Musicbrainz];
+            profile.genres.maximum_count = 5;
+            profile.genres.write_primary_only_for_constrained_formats = true;
+        }
+        let pinned = pin(&stored, settings::PICARD_ORGANIZER_PROFILE_ID, None).expect("pinned");
+        let scripts = CompiledScripts::new(&pinned);
+        let track = ReleaseTrack {
+            title: "Track".to_owned(),
+            disc: 1,
+            position: 1,
+            ..ReleaseTrack::default()
+        };
+        let release = Release {
+            genres: vec![
+                Genre {
+                    name: "jazz".to_owned(),
+                    count: Some(5),
+                },
+                Genre {
+                    name: "rock".to_owned(),
+                    count: Some(3),
+                },
+            ],
+            tracks: vec![track.clone()],
+            ..Release::default()
+        };
+        let extras = AlbumExtras::default();
+        let plan_for = |doc: &TagDocument| {
+            plan_tags(
+                &pinned,
+                &scripts,
+                &FileInput {
+                    release: &release,
+                    track: &track,
+                    doc,
+                    format: "m4a",
+                    id3v23: false,
+                    writable: true,
+                    overrides: &Overrides::default(),
+                    extras: &extras,
+                    track_id: "track",
+                    lyrics: &LyricsAnswer::Off,
+                },
+            )
+            .expect("planned")
+        };
+
+        let with_existing: TagDocument = serde_json::from_value(serde_json::json!({
+            "managed": {
+                "genre": ["Progressive Rock", "Art Rock"],
+            },
+            "custom": {},
+        }))
+        .expect("document");
+        let kept = plan_for(&with_existing);
+        assert_eq!(
+            kept.desired.get("genre"),
+            Some(&vec!["Progressive Rock".to_owned(), "Art Rock".to_owned()])
+        );
+        assert!(
+            !kept.mutations.iter().any(|m| m.name == "genre"),
+            "no genre mutation planned: {:?}",
+            kept.mutations
+        );
+        assert!(kept.updates.is_empty());
+
+        let empty_doc: TagDocument = serde_json::from_value(serde_json::json!({
+            "managed": {},
+            "custom": {},
+        }))
+        .expect("document");
+        let filled = plan_for(&empty_doc);
+        assert_eq!(filled.desired.get("genre"), Some(&vec!["jazz".to_owned()]));
     }
 }
