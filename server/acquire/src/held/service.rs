@@ -2159,7 +2159,10 @@ fn track_on(release: &Release, pairing: &Pairing) -> Option<usize> {
 /// Whether a reason's hold is retried as it is ("Retry") rather than
 /// imported past the check that held it.
 pub fn is_retry(reason: Reason) -> bool {
-    reason.kind() == ReasonKind::Library
+    // A no-album-match entry has no track to pair with, so it never
+    // retries through the paired path; the unpaired path in `again_for`
+    // judges it once more by the local-only rule.
+    reason.kind() == ReasonKind::Library || reason == Reason::NoAlbumMatch
 }
 
 /// An upload waiting for AcoustID with a track to go to: it settles as an
