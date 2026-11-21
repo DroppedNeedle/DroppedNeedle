@@ -44,7 +44,7 @@ use self::store::{
 use crate::flows::seams::{FlowEvent, TickSink};
 use crate::held::store::{
     Entry, EntryOrigin, FileState, GroupKey, HeldFile, HeldRows, NewEntry, NewFile,
-    Pairing as HeldPairing,
+    Pairing as HeldPairing, local_only_reason,
 };
 use crate::import_folder::site::ImportSite;
 use crate::intake;
@@ -408,17 +408,35 @@ impl DropImports {
 
     /// The held list retries, by itself, an upload's or import-folder
     /// album's files the library could not take when no track was paired
-    /// to them (a local-only album put off). They are placed as a
-    /// local-only album straight from their tags, with no identification
-    /// (the look-again sweep matches the album later), or left held with
-    /// the reason they now wait for. The caller holds the entry's claim.
-    /// Nothing changes while the library still cannot take them.
+    /// to them (a local-only album put off), and gives files held before
+    /// local-only albums existed, as no album could be told, one look.
+    /// They are placed as a local-only album straight from their tags, with
+    /// no identification (the look-again sweep matches the album later), or
+    /// left held with the reason they now wait for. The caller holds the
+    /// entry's claim. Nothing changes while the library still cannot take
+    /// them, or while it has the album their tags name.
     pub(crate) async fn retry_entry(
         &self,
         entry: &Entry,
         files: &[HeldFile],
     ) -> Result<Matched, DropError> {
         let claimed = self.claim_entry(entry, files, "retried").await?;
+        // Files held for tags naming an album they don't fit go in only
+        // while the library doesn't have that album, as on the first pass.
+        if files.iter().any(|file| file.reason == Reason::TagsDisagree)
+            && !identify::places_local(
+                self.library.as_ref(),
+                &claimed.landing,
+                Reason::TagsDisagree,
+            )
+            .await
+        {
+            self.give_back(&claimed.item).await?;
+            return Ok(Matched {
+                held: files.len(),
+                ..Matched::default()
+            });
+        }
         let folder = match claimed.job.source {
             DropJobSource::Upload => claimed.item.folder_name.clone(),
             DropJobSource::ImportFolder => match claimed.item.folder_name.rsplit('/').next() {
@@ -436,6 +454,19 @@ impl DropImports {
                 &folder,
             )
             .await;
+        // Files having their look that the library puts off now wait for
+        // the library, retried by themselves as any local-only album put
+        // off is; files held for the library already stay as they were.
+        let put_off = organised
+            .deferred
+            .is_some_and(|reason| reason != Reason::JournalUnreadable);
+        if put_off && files.iter().all(|file| local_only_reason(file.reason)) {
+            self.finish(&claimed.job, organised, Some(entry)).await;
+            return Ok(Matched {
+                held: files.len(),
+                ..Matched::default()
+            });
+        }
         self.settle_claimed(&claimed, organised, entry, "drop retry import")
             .await
     }

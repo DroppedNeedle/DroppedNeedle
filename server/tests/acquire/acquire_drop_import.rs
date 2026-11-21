@@ -601,6 +601,172 @@ async fn an_upload_nothing_identifies_goes_in_as_a_local_album() {
     assert_eq!(albums, 1, "the library keeps one album");
 }
 
+/// A release source that counts the calls reaching it.
+struct Counted {
+    inner: OneRelease,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl Counted {
+    fn count(&self) {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl ReleaseSource for Counted {
+    fn search<'a>(
+        &'a self,
+        title: &'a str,
+        artist: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        self.count();
+        self.inner.search(title, artist)
+    }
+
+    fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>> {
+        self.count();
+        self.inner.release(mbid)
+    }
+
+    fn canonical_recording<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
+        self.count();
+        self.inner.canonical_recording(mbid)
+    }
+}
+
+/// An upload held before local-only albums existed, because no album
+/// could be told, gets one look by the held loop: once the album it
+/// duplicated is gone, it goes in as a local-only album with no
+/// MusicBrainz call, and one that stays held is not looked at again. A
+/// twin the local-only rule held stays held after that album is gone, even
+/// one held before such holds were marked, and a paired no-album-match
+/// file in an entry retried for another reason is not placed.
+#[tokio::test]
+async fn an_old_unmatched_upload_gets_one_look_and_a_twin_none() {
+    use std::sync::atomic::Ordering;
+
+    let (_db, library, dir, auth) = bundles().await;
+    let music = dir.join("music");
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).expect("work dir");
+    let glory = tagged(&work, "flac_full_01.flac", "Nothing Alike", "Glory Box", 9);
+    let source = Arc::new(Counted {
+        inner: OneRelease(release(&["Mysterons"], &[None])),
+        calls: 0.into(),
+    });
+    let acquire = acquire_over(
+        &auth,
+        &library,
+        Arc::new(LibraryLanding::new(
+            &library,
+            every_priority(source.clone()),
+        )),
+    );
+    let curator = Viewer {
+        user_id: "u-curator".to_owned(),
+        admin: false,
+    };
+    let files = [("Odds/09 Glory Box.flac", &glory)];
+    let first = drop_zip(&acquire, &curator, "first", &files).await;
+    assert_eq!(first.items[0].status, DropItemStatus::Imported);
+    let mut twins = Vec::new();
+    for name in ["twin", "old", "again", "paired"] {
+        let job = drop_zip(&acquire, &curator, name, &files).await;
+        assert_eq!(job.items[0].reason_code, Some(Reason::NoAlbumMatch));
+        twins.push(job);
+    }
+    let [twin, old, again, paired] = twins.as_slice() else {
+        unreachable!("four uploads");
+    };
+    let db = acquire.db.db();
+    // The twin was held before such holds were marked; the old ones before
+    // local-only albums, with no detail.
+    db.run_sql(&format!(
+        "UPDATE acquire_held_entries SET retry_tries = 0 WHERE drop_item_id IN ({}, {}, {}); \
+         UPDATE acquire_held_files SET reason_detail = NULL WHERE entry_id IN \
+         (SELECT id FROM acquire_held_entries WHERE drop_item_id IN ({}, {}))",
+        twin.items[0].id, old.items[0].id, again.items[0].id, old.items[0].id, again.items[0].id
+    ))
+    .expect("old holds");
+    let (entry, _) = entry_of(&acquire, &curator.user_id, paired.items[0].id).await;
+    let file = entry.files[0].id;
+    db.run_sql(&format!(
+        "UPDATE acquire_held_files SET release_track_mbid = '7d0b7a1e-0000-4000-8000-000000000100', \
+         recording_mbid = '7d0b7a1e-0000-4000-8000-000000000200' WHERE id = {file}; \
+         UPDATE acquire_held_entries SET retry_tries = 0 WHERE id = {entry}; \
+         INSERT INTO acquire_held_files (entry_id, root, path, original_name, release_track_mbid, \
+         recording_mbid, source, reason, state, created_at) VALUES ({entry}, 'drop', \
+         'gone/missing.flac', 'missing.flac', '7d0b7a1e-0000-4000-8000-000000000100', \
+         '7d0b7a1e-0000-4000-8000-000000000200', 'upload', 'library_off', 'held', 0)",
+        entry = entry.id
+    ))
+    .expect("a paired file beside one retried by itself");
+
+    let placed = music.join("Portishead/Nothing Alike (1997)/0109 Glory Box.flac");
+    let album: String = db.one(
+        "SELECT id FROM local_albums WHERE has_indexed_track = 1",
+        [],
+    );
+    droppedneedle_library::removal::Mutations::new(&library)
+        .remove_album(&album, true, true, "u-curator")
+        .expect("the album the twins duplicate is removed");
+    assert!(!placed.exists(), "its file went to the recycle bin");
+    let calls = source.calls.load(Ordering::SeqCst);
+    acquire.held.tend().await;
+
+    assert!(
+        placed.is_file(),
+        "the old hold went in: {:?}",
+        files_under(&music)
+    );
+    let status = |job: &JobRecord| {
+        let id = job.id.clone();
+        let (drops, curator) = (&acquire.drops, &curator);
+        async move { job_now(drops, curator, &id).await.items[0].status }
+    };
+    assert_eq!(status(old).await, DropItemStatus::Imported);
+    assert_eq!(
+        source.calls.load(Ordering::SeqCst),
+        calls,
+        "no MusicBrainz call"
+    );
+    assert_eq!(
+        status(twin).await,
+        DropItemStatus::NeedsReview,
+        "the twin stays held"
+    );
+    assert_eq!(
+        status(again).await,
+        DropItemStatus::NeedsReview,
+        "the old hold the new album duplicates stays held"
+    );
+    let (entry, _) = entry_of(&acquire, &curator.user_id, paired.items[0].id).await;
+    let kept = entry
+        .files
+        .iter()
+        .find(|held| held.id == file)
+        .expect("the paired file stays held");
+    assert_eq!(kept.reason, Reason::NoAlbumMatch);
+
+    let looked = format!(
+        "SELECT e.retry_tries || ':' || COALESCE(e.retry_at, '') || ':' || f.reason || ':' || \
+         COALESCE(f.reason_detail, '') FROM acquire_held_entries e \
+         JOIN acquire_held_files f ON f.entry_id = e.id WHERE e.drop_item_id = {}",
+        again.items[0].id
+    );
+    let before: String = db.one(&looked, []);
+    assert!(
+        before.starts_with("1::no_album_match:Your library"),
+        "{before}"
+    );
+    acquire.held.tend().await;
+    let after: String = db.one(&looked, []);
+    assert_eq!(after, before, "one look only");
+}
+
 /// A local-only upload the library puts off (it is switched off) is held,
 /// and the held loop places it by itself once the library is back.
 #[tokio::test]

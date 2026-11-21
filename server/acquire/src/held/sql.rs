@@ -146,13 +146,54 @@ droppedneedle_kernel::sql! {
                      WHERE o.entry_id = f.entry_id AND (o.state != 'held' \
                      OR COALESCE(o.release_track_mbid, '') != '' \
                      OR COALESCE(o.recording_mbid, '') != '')))))";
-    /// Entries waiting for a person with a file retried by itself, due at
-    /// `?1`, longest waiting first, at most `?2`: id and owner.
+    /// Held file `f` may get one more look by drop import's local-only
+    /// rule: an upload or import-folder file held as no album match, or
+    /// with tags naming an album the files don't fit, in an entry where
+    /// nothing is paired and nothing went in yet.
+    /// Every no-album-match hold made before that rule has no detail,
+    /// while the rule's own holds of a twin or of split tags carry one:
+    /// those are never looked at again, even from before holds were marked.
+    pub(super) fragment LOOKS_AGAIN = "(f.state = 'held' \
+             AND f.reason IN ('no_album_match', 'tags_disagree') AND f.root IN ('drop', 'import') \
+             AND (f.reason != 'no_album_match' OR COALESCE(f.reason_detail, '') = '') \
+             AND NOT EXISTS (SELECT 1 FROM acquire_held_files o \
+                 WHERE o.entry_id = f.entry_id AND (o.state != 'held' \
+                 OR COALESCE(o.release_track_mbid, '') != '' \
+                 OR COALESCE(o.recording_mbid, '') != '')))";
+    /// Entry `e` waits for its one look: it was never retried or looked
+    /// at, and a file may get the look. Holds made since the local-only
+    /// rule mark their entry as looked when they are made.
+    pub(super) fragment LOOK_DUE = "(e.retry_tries = 0 AND e.retry_at IS NULL \
+             AND EXISTS (SELECT 1 FROM acquire_held_files f \
+                 WHERE f.entry_id = e.id AND " + LOOKS_AGAIN + "))";
+    /// Entries waiting for a person with a file retried by itself, or
+    /// waiting for their one look, due at `?1`, at most `?2`: id and
+    /// owner. Retries come first, longest waiting first, so entries that
+    /// only wait for their look never hold them back.
     pub(super) DUE_RETRIES = "SELECT e.id, e.user_id FROM acquire_held_entries e \
              WHERE e.state = 'held' AND (e.retry_at IS NULL OR e.retry_at <= ?1) \
-               AND EXISTS (SELECT 1 FROM acquire_held_files f \
-                   WHERE f.entry_id = e.id AND " + RETRIES + ") \
-             ORDER BY COALESCE(e.retry_at, 0), e.id LIMIT ?2";
+               AND (EXISTS (SELECT 1 FROM acquire_held_files f \
+                   WHERE f.entry_id = e.id AND " + RETRIES + ") OR " + LOOK_DUE + ") \
+             ORDER BY NOT EXISTS (SELECT 1 FROM acquire_held_files f \
+                   WHERE f.entry_id = e.id AND " + RETRIES + "), \
+               COALESCE(e.retry_at, 0), e.id LIMIT ?2";
+    /// Whether entry `?1` waits for its one look.
+    pub(super) ENTRY_LOOK_DUE = "SELECT " + LOOK_DUE + " FROM acquire_held_entries e \
+             WHERE e.id = ?1";
+    /// Whether entry `?1` holds an upload or import-folder file for a
+    /// reason drop import's local-only rule holds files for.
+    pub(super) ENTRY_HOLDS_LOCAL_ONLY = "SELECT EXISTS (SELECT 1 FROM acquire_held_files \
+             WHERE entry_id = ?1 AND state = 'held' \
+             AND reason IN ('no_album_match', 'tags_disagree') AND root IN ('drop', 'import'))";
+    /// Entry `?1` had its look, or its holds were made by the local-only
+    /// rule: it never waits for one.
+    pub(super) MARK_LOOKED = "UPDATE acquire_held_entries \
+             SET retry_tries = MAX(retry_tries, 1) WHERE id = ?1";
+    /// The same for the entry of upload or import-folder file `?1`.
+    pub(super) MARK_FILE_LOOKED = "UPDATE acquire_held_entries \
+             SET retry_tries = MAX(retry_tries, 1) \
+             WHERE id = (SELECT entry_id FROM acquire_held_files \
+                 WHERE id = ?1 AND root IN ('drop', 'import'))";
     /// Whether entry `?1` still has a file retried by itself, and its
     /// tries so far.
     pub(super) RETRY_STATE = "SELECT EXISTS (SELECT 1 FROM acquire_held_files f \

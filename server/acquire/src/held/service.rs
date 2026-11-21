@@ -27,7 +27,9 @@ use droppedneedle_kernel::jobs::{AlreadyRunning, FnTick, Next, Schedule, Supervi
 use droppedneedle_providers::RequestPriority;
 
 use super::HeldFolders;
-use super::store::{Entry, EntryOrigin, FileState, HeldFile, HeldRoot, HeldRows, Pairing};
+use super::store::{
+    Entry, EntryOrigin, FileState, HeldFile, HeldRoot, HeldRows, Pairing, local_only_reason,
+};
 use crate::db::AcquireDb;
 use crate::dispatch::DispatchOrigin;
 use crate::downloads::journal::Journal;
@@ -1694,7 +1696,9 @@ impl HeldService {
     }
 
     /// Retry each due entry's files held for a library reason, exactly as
-    /// its owner pressing Retry would. An entry whose files still cannot
+    /// its owner pressing Retry would, and give an upload or import-folder
+    /// album held before local-only albums existed, as no album could be
+    /// told, its one look by that rule. An entry whose files still cannot
     /// go in waits longer before its next try; a busy database, imports
     /// not set up yet, or a person acting on the entry spend no try.
     async fn retry_due(&self) {
@@ -1713,15 +1717,25 @@ impl HeldService {
         };
         for (entry_id, owner) in due {
             // Work of no user is retried as an admin's view of it.
+            // The entry and whether it waits for its look are read in one
+            // snapshot, so the files chosen are the ones the look is for.
             let (files, again) = match self
-                .read("held.retry_files", move |rows| rows.entry(entry_id))
+                .read("held.retry_files", move |rows| {
+                    let Some(entry) = rows.entry(entry_id)? else {
+                        return Ok(None);
+                    };
+                    Ok(Some((rows.look_due(entry_id)?, entry)))
+                })
                 .await
             {
-                Ok(Some(entry)) => {
+                Ok(Some((look, entry))) => {
                     // An upload or import-folder album put off with no file
                     // on a track goes through drop import's steps again.
                     // The entry lists only held files, and DUE_RETRIES
                     // lists one with none paired only while none went in.
+                    // So does one held as no album match, or for tags
+                    // naming an album the files don't fit, once only: a
+                    // hold from before local-only albums existed.
                     let again = matches!(
                         entry.origin,
                         EntryOrigin::Upload | EntryOrigin::ImportFolder
@@ -1731,7 +1745,7 @@ impl HeldService {
                         .iter()
                         .filter(|file| {
                             if again {
-                                is_retry(file.reason)
+                                is_retry(file.reason) || (look && local_only_reason(file.reason))
                             } else {
                                 retries_by_itself(file)
                             }

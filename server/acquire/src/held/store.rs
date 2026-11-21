@@ -30,6 +30,13 @@ const RETRY_GAPS_MS: [i64; 8] = [
     24 * 3_600_000,
 ];
 
+/// The reasons drop import's local-only rule holds an upload or an
+/// import-folder album for: nothing names one album to place it as, the
+/// library has it already, or its tags name an album the library has.
+pub fn local_only_reason(reason: Reason) -> bool {
+    matches!(reason, Reason::NoAlbumMatch | Reason::TagsDisagree)
+}
+
 /// The gap before the next retry, after `tries` retries in a row.
 pub fn retry_gap(tries: i64) -> i64 {
     let step = usize::try_from(tries).unwrap_or(0);
@@ -516,6 +523,12 @@ impl<'c> HeldRows<'c> {
                 ],
             )?;
         }
+        // Drop import's local-only rule made this hold, or a file joined an
+        // entry holding one: it is never looked at again by itself.
+        if self.holds_local_only(entry_id)? {
+            self.conn
+                .execute(sql::MARK_LOOKED.text(), params![entry_id])?;
+        }
         Ok((entry_id, held))
     }
 
@@ -695,6 +708,10 @@ impl<'c> HeldRows<'c> {
                 detail.filter(|detail| !detail.is_empty())
             ],
         )?;
+        if local_only_reason(reason) {
+            self.conn
+                .execute(sql::MARK_FILE_LOOKED.text(), params![file_id])?;
+        }
         Ok(())
     }
 
@@ -918,10 +935,33 @@ impl<'c> HeldRows<'c> {
         Ok(rows)
     }
 
+    /// Whether entry `entry_id` waits for its one look by drop import's
+    /// local-only rule: an upload or import-folder album held as no album
+    /// match before that rule existed, never retried or looked at since.
+    pub fn look_due(&self, entry_id: i64) -> rusqlite::Result<bool> {
+        Ok(self
+            .conn
+            .query_row(sql::ENTRY_LOOK_DUE.text(), params![entry_id], |row| {
+                row.get(0)
+            })
+            .optional()?
+            .unwrap_or(false))
+    }
+
+    /// Whether entry `entry_id` holds a file for a reason drop import's
+    /// local-only rule holds files for.
+    fn holds_local_only(&self, entry_id: i64) -> rusqlite::Result<bool> {
+        self.conn.query_row(
+            sql::ENTRY_HOLDS_LOCAL_ONLY.text(),
+            params![entry_id],
+            |row| row.get(0),
+        )
+    }
+
     /// After an automatic retry: an entry that still has a file it
     /// retries by itself counts one more try and waits for the next gap;
-    /// one with none left starts again from the first try. Answers when
-    /// the next try is.
+    /// one with none left starts again from the first try, unless it had
+    /// its look, which it keeps. Answers when the next try is.
     pub fn schedule_retry(&self, entry_id: i64, now: i64) -> rusqlite::Result<Option<i64>> {
         let state: Option<(bool, i64)> = self
             .conn
@@ -932,6 +972,9 @@ impl<'c> HeldRows<'c> {
         let (tries, at) = match state {
             None => return Ok(None),
             Some((true, tries)) => (tries + 1, Some(now + retry_gap(tries))),
+            // An entry still holding a file the local-only rule could have
+            // looked at has had its look.
+            Some((false, _)) if self.holds_local_only(entry_id)? => (1, None),
             Some((false, _)) => (0, None),
         };
         self.conn
