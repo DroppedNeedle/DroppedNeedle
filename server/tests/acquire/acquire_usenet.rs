@@ -1024,9 +1024,9 @@ async fn newznab_item_parsing() {
     assert!(!releases[0].title.contains('\u{7}'));
 }
 
-/// The #259 ladder: canonical first, one normalized retry on a genuine
-/// clean empty (free-text even when caps offers `t=music`), silence on
-/// unclean pools.
+/// The #259/#711 ladder: canonical first, then punctuation-stripped and
+/// German-spelled retries on a genuine clean empty (free-text even when caps
+/// offers `t=music`), silence on unclean pools.
 #[tokio::test]
 async fn newznab_query_ladder() {
     assert_eq!(
@@ -1036,6 +1036,11 @@ async fn newznab_query_ladder() {
     assert_eq!(
         normalize_newznab_query("Man\u{2019}s Best Friend"),
         "Mans Best Friend"
+    );
+    assert_eq!(
+        normalize_newznab_query("Mötley Crüe Girls, Girls, Girls"),
+        "Mötley Crüe Girls Girls Girls",
+        "punctuation normalization leaves umlauts intact"
     );
     assert_eq!(normalize_newznab_query("plain query"), "plain query");
 
@@ -1064,6 +1069,149 @@ async fn newznab_query_ladder() {
     let hits = indexer.search_album("x,", "xyzzynomatch", None, USER).await;
     assert!(hits.is_empty());
     assert_eq!(log.calls().len(), 4);
+
+    // German spelling fold: all lowercase/uppercase umlauts and ß/ẞ, skipping
+    // the punctuation rung when there is no punctuation to strip.
+    let before = log.calls().len();
+    let hits = indexer
+        .search_album("ä ö ü ß", "Ä Ö Ü ẞ xyzzynomatch", None, USER)
+        .await;
+    assert!(hits.is_empty());
+    let queries: Vec<String> = log.calls()[before..]
+        .iter()
+        .map(|call| call.q.clone())
+        .collect();
+    assert_eq!(
+        queries,
+        vec![
+            "ä ö ü ß Ä Ö Ü ẞ xyzzynomatch",
+            "ae oe ue ss Ae Oe Ue SS xyzzynomatch",
+        ]
+    );
+
+    // NFD decomposed umlauts (u + combining diaeresis) compose before folding.
+    let before = log.calls().len();
+    let hits = indexer
+        .search_album("Marteria", "Zum Glu\u{0308}ck nfd xyzzynomatch", None, USER)
+        .await;
+    assert!(hits.is_empty());
+    let queries: Vec<String> = log.calls()[before..]
+        .iter()
+        .map(|call| call.q.clone())
+        .collect();
+    assert_eq!(
+        queries,
+        vec![
+            "Marteria Zum Glu\u{0308}ck nfd xyzzynomatch",
+            "Marteria Zum Glueck nfd xyzzynomatch",
+        ]
+    );
+
+    // Clean ASCII, already-folded text (idempotence), and non-German NFD
+    // accents fire no retry rungs.
+    for (artist, album) in [
+        ("Plain", "xyzzynomatch"),
+        ("Marteria", "Zum Glueck idempotent xyzzynomatch"),
+        ("Cafe\u{0301}", "xyzzynomatch"),
+    ] {
+        let before = log.calls().len();
+        let hits = indexer.search_album(artist, album, None, USER).await;
+        assert!(hits.is_empty());
+        assert_eq!(
+            log.calls().len() - before,
+            1,
+            "no retry for {artist} {album}"
+        );
+    }
+
+    // Umlaut-only query skips the punctuation rung and tries German spelling once.
+    let before = log.calls().len();
+    let hits = indexer
+        .search_album("Marteria", "Zum Glück xyzzynomatch", None, USER)
+        .await;
+    assert!(hits.is_empty());
+    let queries: Vec<String> = log.calls()[before..]
+        .iter()
+        .map(|call| call.q.clone())
+        .collect();
+    assert_eq!(
+        queries,
+        vec![
+            "Marteria Zum Glück xyzzynomatch",
+            "Marteria Zum Glueck xyzzynomatch",
+        ]
+    );
+
+    // Punctuated umlaut title tries punctuation-only first and stops when it hits.
+    let before = log.calls().len();
+    let hits = indexer
+        .search_album("Mötley Crüe", "Honestly, Nevermind", None, USER)
+        .await;
+    assert_eq!(hits.len(), 1);
+    let queries: Vec<String> = log.calls()[before..]
+        .iter()
+        .map(|call| call.q.clone())
+        .collect();
+    assert_eq!(
+        queries,
+        vec![
+            "Mötley Crüe Honestly, Nevermind",
+            "Mötley Crüe Honestly Nevermind",
+        ]
+    );
+
+    // Punctuated umlaut title that stays cleanly empty falls through to German spelling.
+    let before = log.calls().len();
+    let hits = indexer
+        .search_album("Mötley Crüe", "xyzzynomatch,", None, USER)
+        .await;
+    assert!(hits.is_empty());
+    let queries: Vec<String> = log.calls()[before..]
+        .iter()
+        .map(|call| call.q.clone())
+        .collect();
+    assert_eq!(
+        queries,
+        vec![
+            "Mötley Crüe xyzzynomatch,",
+            "Mötley Crüe xyzzynomatch",
+            "Moetley Cruee xyzzynomatch",
+        ]
+    );
+
+    // Prowlarr follows the same multi-rung ladder on clean empties.
+    let prowlarr_log = ProwlarrMock::new();
+    let (p_base, _p_server) = serve_loopback(prowlarr_log.router(ProwlarrScenario {
+        torrents_only: true,
+        ..ProwlarrScenario::default()
+    }))
+    .await
+    .expect("mock serves");
+    let prowlarr = usenet::prowlarr::ProwlarrIndexer::new(
+        Some(prowlarr_client(&p_base)),
+        vec![3000],
+        true,
+        Duration::from_secs(300),
+        Duration::from_secs(300),
+        TIMEOUT,
+    );
+    let hits = prowlarr
+        .search_album("Mötley Crüe", "Girls, Girls, Girls", TIMEOUT)
+        .await;
+    assert!(hits.is_empty());
+    let p_queries: Vec<String> = prowlarr_log
+        .calls()
+        .iter()
+        .map(|call| call.query.clone())
+        .collect();
+    assert_eq!(
+        p_queries,
+        vec![
+            "Mötley Crüe Girls, Girls, Girls",
+            "Mötley Crüe Girls Girls Girls",
+            "Moetley Cruee Girls Girls Girls",
+        ]
+    );
 
     // An unclean pool (rate-limited member) never retries.
     let log = NewznabMock::new();

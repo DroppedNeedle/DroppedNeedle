@@ -280,31 +280,31 @@ fn url_decode_pairs(raw: &str) -> Vec<(String, String)> {
 }
 
 fn url_decode(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
+    let mut out = Vec::with_capacity(text.len());
     let bytes = text.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
         match bytes[index] {
             b'+' => {
-                out.push(' ');
+                out.push(b' ');
                 index += 1;
             }
             b'%' if index + 2 < bytes.len() => {
                 let hex = &text[index + 1..index + 3];
                 if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                    out.push(byte as char);
+                    out.push(byte);
                 } else {
-                    out.push_str(&text[index..index + 3]);
+                    out.extend_from_slice(&bytes[index..index + 3]);
                 }
                 index += 3;
             }
-            _ => {
-                out.push(bytes[index] as char);
+            byte => {
+                out.push(byte);
                 index += 1;
             }
         }
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn param(params: &[(String, String)], key: &str) -> Option<String> {

@@ -19,7 +19,7 @@ use reqwest::Client;
 use serde::Deserialize;
 
 use super::indexer::{Indexer, IndexerQuery};
-use super::newznab::{IndexerResult, UsenetRelease, normalize_newznab_query, parse_rfc2822_date};
+use super::newznab::{IndexerResult, UsenetRelease, newznab_retry_queries, parse_rfc2822_date};
 use super::{MAX_INDEXER_BODY_BYTES, read_indexer_body};
 use crate::client_error::{ClientError, Service, retry_after};
 use crate::downloads::source_tag::SourceTag;
@@ -472,26 +472,27 @@ impl ProwlarrIndexer {
             .collect()
     }
 
-    /// Canonical query first; on a genuine clean empty, one normalized
-    /// retry (the #259 ladder, same contract as `NewznabIndexer`).
+    /// Canonical query first; on a genuine clean empty, normalized retry
+    /// rungs (the #259/#711 ladder, same contract as `NewznabIndexer`).
     async fn search_with_ladder(&self, query: &str, timeout: Duration) -> Vec<UsenetRelease> {
         if query.is_empty() {
             return Vec::new();
         }
-        let (releases, clean) = self.search_one(query, timeout).await;
-        if !releases.is_empty() {
+        let (mut releases, mut clean) = self.search_one(query, timeout).await;
+        if !releases.is_empty() || !clean {
             return releases;
         }
-        let normalized = normalize_newznab_query(query);
-        if normalized == query || !clean {
-            return releases;
+        for retry in newznab_retry_queries(query) {
+            tracing::info!(
+                query = query,
+                normalized_query = retry.as_str(),
+                "prowlarr.query_normalized_retry"
+            );
+            (releases, clean) = self.search_one(&retry, timeout).await;
+            if !releases.is_empty() || !clean {
+                break;
+            }
         }
-        tracing::info!(
-            query = query,
-            normalized_query = normalized.as_str(),
-            "prowlarr.query_normalized_retry"
-        );
-        let (releases, _) = self.search_one(&normalized, timeout).await;
         releases
     }
 

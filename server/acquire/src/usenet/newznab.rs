@@ -16,6 +16,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use futures_util::future::{BoxFuture, join_all};
+use unicode_normalization::UnicodeNormalization;
 
 use super::indexer::{Indexer, IndexerQuery};
 use crate::downloads::source_tag::SourceTag;
@@ -84,6 +85,59 @@ pub fn normalize_newznab_query(query: &str) -> String {
         .filter(|ch| !QUERY_STRIP.contains(ch))
         .collect();
     stripped.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Spell one German letter the way a scene release name does. Returns
+/// false for every other character.
+fn fold_german(ch: char, out: &mut String) -> bool {
+    let spelled = match ch {
+        'ä' => "ae",
+        'ö' => "oe",
+        'ü' => "ue",
+        'ß' => "ss",
+        'Ä' => "Ae",
+        'Ö' => "Oe",
+        'Ü' => "Ue",
+        'ẞ' => "SS",
+        _ => return false,
+    };
+    out.push_str(spelled);
+    true
+}
+
+/// German umlaut/ß spelling fold for the retry ladder (#711): the indexer
+/// answers a search for `Zum Glueck in die Zukunft` and returns nothing for
+/// the diacritic form `Glück`. Composes NFD input first so decomposed
+/// umlauts fold too. Idempotent, no-op when no German letter is present.
+pub(crate) fn fold_german_query(query: &str) -> String {
+    let mut out = String::with_capacity(query.len());
+    let mut changed = false;
+    for ch in query.nfc() {
+        if fold_german(ch, &mut out) {
+            changed = true;
+        } else {
+            out.push(ch);
+        }
+    }
+    if changed { out } else { query.to_owned() }
+}
+
+/// Deduplicated retry rungs after the canonical query: punctuation-normalized
+/// first (#259), then German-spelled (#711) on top of the punctuation-normalized
+/// query. Punctuation-stripped stays ahead of German spelling so non-German
+/// titles with umlauts and punctuation (`Mötley Crüe`, `Blue Öyster Cult`,
+/// `Björk`) still try their punctuation-only form first.
+pub(crate) fn newznab_retry_queries(query: &str) -> Vec<String> {
+    let mut rungs = Vec::with_capacity(2);
+    let punctuation = normalize_newznab_query(query);
+    if punctuation != query {
+        rungs.push(punctuation.clone());
+    }
+    let german = fold_german_query(&punctuation);
+    if german != query && german != punctuation {
+        rungs.push(german);
+    }
+    rungs
 }
 
 // ---------------------------------------------------------------------------
@@ -198,15 +252,16 @@ impl NewznabIndexer {
             .collect()
     }
 
-    /// Canonical query first; on a genuine empty, one normalized retry
-    /// (#259). The retry fires only when every enabled indexer actually
-    /// answered (at least one successful empty, none rate-limited,
-    /// auth-failed, or errored): an indexer that sat out a rate limit may
-    /// hold the release, so an empty pool with a silent indexer is not
-    /// proof the query is dead. The retry rung forces free-text `t=search`
-    /// even when caps advertises `t=music`: the structured params stay
-    /// canonical by decision, so re-sending them would be a byte-identical
-    /// repeat; the normalized free text is the new signal.
+    /// Canonical query first; on a genuine empty, normalized retry rungs
+    /// (punctuation-stripped #259, then German umlaut spelling #711). Each
+    /// retry fires only when every enabled indexer actually answered (at
+    /// least one successful empty, none rate-limited, auth-failed, or
+    /// errored): an indexer that sat out a rate limit may hold the release,
+    /// so an empty pool with a silent indexer is not proof the query is dead.
+    /// Retry rungs force free-text `t=search` even when caps advertises
+    /// `t=music`: the structured params stay canonical by decision, so
+    /// re-sending them would be a byte-identical repeat; the normalized free
+    /// text is the new signal.
     async fn search_with_ladder(
         &self,
         query: &str,
@@ -215,24 +270,25 @@ impl NewznabIndexer {
         year: Option<i32>,
         priority: RequestPriority,
     ) -> Vec<UsenetRelease> {
-        let (releases, clean) = self
+        let (mut releases, mut clean) = self
             .fan_out(query, artist, album, year, priority, false)
             .await;
-        if !releases.is_empty() {
+        if !releases.is_empty() || !clean {
             return releases;
         }
-        let normalized = normalize_newznab_query(query);
-        if normalized == query || !clean {
-            return releases;
+        for retry in newznab_retry_queries(query) {
+            tracing::info!(
+                query = query,
+                normalized_query = retry.as_str(),
+                "newznab.query_normalized_retry"
+            );
+            (releases, clean) = self
+                .fan_out(&retry, artist, album, year, priority, true)
+                .await;
+            if !releases.is_empty() || !clean {
+                break;
+            }
         }
-        tracing::info!(
-            query = query,
-            normalized_query = normalized.as_str(),
-            "newznab.query_normalized_retry"
-        );
-        let (releases, _) = self
-            .fan_out(&normalized, artist, album, year, priority, true)
-            .await;
         releases
     }
 
