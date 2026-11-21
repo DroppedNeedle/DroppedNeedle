@@ -74,6 +74,12 @@ export interface NowPlaying {
 	trackName?: string;
 	artistId?: string;
 	format?: string;
+	/** The playing file's bitrate in kbps, when the source reports one. */
+	bitRate?: number | null;
+	/** The playing file's sample rate in Hz, when the source reports one. */
+	sampleRate?: number | null;
+	/** The playing file's channel count, when the source reports one. */
+	audioChannels?: number | null;
 	playlistTrackId?: string;
 	/** 30s preview stream (radio preview tier): never scrobbled/reported, fades out. */
 	isPreview?: boolean;
@@ -104,6 +110,12 @@ export interface QueueItem {
 	sourceType: SourceType;
 	artistId?: string;
 	format?: string;
+	/** This source's bitrate in kbps, when it reports one. */
+	bitRate?: number | null;
+	/** This source's sample rate in Hz, when it reports one. */
+	sampleRate?: number | null;
+	/** This source's channel count, when it reports one. */
+	audioChannels?: number | null;
 	availableSources?: SourceType[];
 	sourceIds?: Partial<Record<SourceType, string>>;
 	/** Each source's format for its file, when known, so a switch to another source carries its own. */

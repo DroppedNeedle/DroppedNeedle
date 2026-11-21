@@ -14,6 +14,9 @@ export function buildNowPlayingMetadata(item: QueueItem): NowPlaying {
 		trackName: item.trackName,
 		artistId: item.artistId,
 		format: item.format,
+		bitRate: item.bitRate,
+		sampleRate: item.sampleRate,
+		audioChannels: item.audioChannels,
 		playlistTrackId: item.playlistTrackId,
 		recordingMbid: item.recordingIds?.[item.sourceType]
 	};

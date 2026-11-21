@@ -77,6 +77,9 @@
 	const isLocal = $derived(np?.sourceType === 'local');
 	const isPlaying = $derived(playerStore.isPlaying);
 	const format = $derived(playerStore.currentQueueItem?.format ?? null);
+	const bitRate = $derived(playerStore.currentQueueItem?.bitRate ?? null);
+	const sampleRate = $derived(playerStore.currentQueueItem?.sampleRate ?? null);
+	const audioChannels = $derived(playerStore.currentQueueItem?.audioChannels ?? null);
 	const isYouTube = $derived(np?.sourceType === 'youtube');
 	const artistLink = $derived(playedArtistHref(np?.artistId));
 	const albumLink = $derived(playedAlbumHref(np?.albumId, isLocal));
@@ -511,7 +514,13 @@
 						{/if}
 						<div class="ml-auto flex max-w-full flex-wrap items-center gap-1.5">
 							{#if format}
-								<AudioQualityBadge codec={format} compact />
+								<AudioQualityBadge
+									codec={format}
+									bitrate={bitRate}
+									{sampleRate}
+									{audioChannels}
+									compact
+								/>
 							{/if}
 							{#if scrobbleManager.enabled && scrobbleManager.status !== 'idle'}
 								<div class="tooltip tooltip-top" data-tip={scrobbleManager.tooltip}>

@@ -121,6 +121,9 @@ export function matchTrackToQueueItem(track: TrackView, coverUrl: string | null)
 		sourceType: 'local',
 		artistId: track.artist_id ?? undefined,
 		format: track.format.toLowerCase(),
+		bitRate: track.bit_rate ?? null,
+		sampleRate: track.sample_rate ?? null,
+		audioChannels: track.channels ?? null,
 		availableSources: ['local'] as SourceType[],
 		duration: track.duration_seconds ?? undefined
 	};

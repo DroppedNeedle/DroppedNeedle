@@ -9,6 +9,7 @@
 	interface Props {
 		codec?: string | null;
 		bitrate?: number | null;
+		sampleRate?: number | null;
 		audioChannels?: number | null;
 		container?: string | null;
 		compact?: boolean;
@@ -18,6 +19,7 @@
 	let {
 		codec = null,
 		bitrate = null,
+		sampleRate = null,
 		audioChannels = null,
 		container = null,
 		compact = false,
@@ -41,11 +43,25 @@
 		return `${audioChannels}.${audioChannels > 6 ? '1' : '0'}`;
 	});
 
-	const hasAnyInfo = $derived(!!codec || !!bitrate);
+	const sampleRateLabel = $derived.by(() => {
+		if (!sampleRate) return '';
+		const khz = sampleRate / 1000;
+		return Number.isInteger(khz) ? `${khz} kHz` : `${khz.toFixed(1)} kHz`;
+	});
+
+	/** The values the compact chip has no room for, as its hover title. */
+	const detailTitle = $derived(
+		[bitrateLabel, sampleRateLabel, channelLabel].filter(Boolean).join(' · ')
+	);
+
+	const hasAnyInfo = $derived(!!codec || !!bitrate || !!sampleRate);
 </script>
 
 {#if hasAnyInfo}
-	<span class="inline-flex flex-wrap items-center gap-1">
+	<span
+		class="inline-flex flex-wrap items-center gap-1"
+		title={compact && detailTitle ? detailTitle : undefined}
+	>
 		{#if codec}
 			<span class="inline-flex" title={isLossless ? 'Lossless' : 'Lossy'}>
 				<StatusChip size="xs" tone={isLossless ? 'action' : 'neutral'}>{codec}</StatusChip>
@@ -60,6 +76,9 @@
 		{#if !compact}
 			{#if bitrate}
 				<StatusChip size="xs">{bitrateLabel}</StatusChip>
+			{/if}
+			{#if sampleRate}
+				<StatusChip size="xs">{sampleRateLabel}</StatusChip>
 			{/if}
 			{#if audioChannels}
 				<StatusChip size="xs">{channelLabel}</StatusChip>
