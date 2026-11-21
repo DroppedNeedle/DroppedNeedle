@@ -74,12 +74,40 @@ fn fold_quote(ch: char) -> char {
     }
 }
 
+/// Spell one German letter the way a scene release name does. Returns
+/// false for every other character.
+fn fold_german(ch: char, out: &mut String) -> bool {
+    let spelled = match ch {
+        'ä' => "ae",
+        'ö' => "oe",
+        'ü' => "ue",
+        'ß' => "ss",
+        'Ä' => "Ae",
+        'Ö' => "Oe",
+        'Ü' => "Ue",
+        'ẞ' => "SS",
+        _ => return false,
+    };
+    out.push_str(spelled);
+    true
+}
+
 /// Punctuation-normalized free-text query rung. Outbound-query-only: the
 /// canonical title still flows untouched to the scorer/import and to the
 /// structured `t=music` params. Idempotent, no-op on clean input.
+///
+/// The fold also spells out German umlauts and ß: the indexer answers
+/// a search for `Zum Glueck in die Zukunft` and returns nothing for the
+/// diacritic form `Glück`.
 pub fn normalize_newznab_query(query: &str) -> String {
-    let folded: String = query.chars().map(fold_quote).collect();
-    let stripped: String = folded
+    let quoted: String = query.chars().map(fold_quote).collect();
+    let mut spelled = String::with_capacity(quoted.len());
+    for ch in quoted.chars() {
+        if !fold_german(ch, &mut spelled) {
+            spelled.push(ch);
+        }
+    }
+    let stripped: String = spelled
         .chars()
         .filter(|ch| !QUERY_STRIP.contains(ch))
         .collect();
