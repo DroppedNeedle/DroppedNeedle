@@ -147,26 +147,6 @@ pub struct NowPlayingRow {
     pub device_name: Option<String>,
 }
 
-/// One lyric line.
-#[derive(Debug, Clone, Default)]
-pub struct LyricLine {
-    /// Line text.
-    pub value: String,
-    /// Start ms (synced only).
-    pub start_ms: Option<i64>,
-}
-
-/// Stored lyrics for a track.
-#[derive(Debug, Clone, Default)]
-pub struct LyricsData {
-    /// Language code.
-    pub language: String,
-    /// Whether lines carry timestamps.
-    pub synced: bool,
-    /// Lines.
-    pub lines: Vec<LyricLine>,
-}
-
 /// Stream facts inside an advanced transcode decision.
 #[derive(Debug, Clone, Default)]
 pub struct StreamDetailsData {

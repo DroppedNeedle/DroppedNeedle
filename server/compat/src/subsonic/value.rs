@@ -7,7 +7,10 @@
 //! objects become child elements and arrays become repeated children.
 //! Null keys are left out of both, and XML leaves out the empty
 //! OpenSubsonic values Navidrome leaves out (`XML_SKIPS_EMPTY_TEXT` and
-//! the lists beside it).
+//! the lists beside it). Two songLyrics 2 shapes differ in XML, as the
+//! OpenSubsonic spec writes them: a `cueLine`'s value is an attribute
+//! (`XML_VALUE_ATTRIBUTE`), and each of `agents` is an `<agent>` element
+//! (`XML_ITEM_TAGS`).
 //!
 //! Quirk (v2): XML booleans lowercase; C0 controls dropped from
 //! XML; JSONP callbacks allowlisted to a bare identifier path (unsafe or
@@ -320,12 +323,14 @@ enum Node {
     List(Vec<Node>),
 }
 
-/// An object's attributes, text and children, written but not yet named.
+/// An object's attributes, text and children, written but not yet named,
+/// and its `value` as it came.
 #[derive(Default)]
 struct Element {
     attrs: String,
     text: String,
     children: String,
+    value: Option<String>,
 }
 
 /// OpenSubsonic keys JSON always sends but Navidrome 0.62.0 leaves out of
@@ -353,6 +358,13 @@ const XML_SKIPS_ZERO: &[&str] = &[
 ];
 const XML_SKIPS_EMPTY_ELEMENT: &[&str] = &["releaseDate", "originalReleaseDate", "replayGain"];
 
+/// Children whose `value` XML writes as an attribute rather than as text
+/// (OpenSubsonic songLyrics 2: `<cueLine ... value="...">`).
+const XML_VALUE_ATTRIBUTE: &[&str] = &["cueLine"];
+/// Lists whose items XML writes under another tag (songLyrics 2: each of
+/// `agents` is an `<agent>`).
+const XML_ITEM_TAGS: &[(&str, &str)] = &[("agents", "agent")];
+
 impl Element {
     fn is_empty(&self) -> bool {
         self.attrs.is_empty() && self.text.is_empty() && self.children.is_empty()
@@ -367,20 +379,37 @@ impl Element {
             Node::Element(element)
                 if element.is_empty() && XML_SKIPS_EMPTY_ELEMENT.contains(&key) => {}
             node if key == "value" => {
-                self.text = match node {
-                    Node::Scalar(text) => xml_text(&text),
+                self.text = match &node {
+                    Node::Scalar(text) => xml_text(text),
                     _ => String::new(),
                 };
+                self.value = match node {
+                    Node::Scalar(text) => Some(text),
+                    _ => None,
+                };
             }
-            Node::Scalar(text) => {
-                self.attrs.push(' ');
-                self.attrs.push_str(key);
-                self.attrs.push_str("=\"");
-                self.attrs.push_str(&xml_attr(&text));
-                self.attrs.push('"');
+            Node::Scalar(text) => self.push_attr(key, &text),
+            node => {
+                let node = if XML_VALUE_ATTRIBUTE.contains(&key) {
+                    value_as_attribute(node)
+                } else {
+                    node
+                };
+                let tag = XML_ITEM_TAGS
+                    .iter()
+                    .find(|(list, _)| *list == key)
+                    .map_or(key, |(_, tag)| tag);
+                write_node(tag, node, &mut self.children);
             }
-            node => write_node(key, node, &mut self.children),
         }
+    }
+
+    fn push_attr(&mut self, key: &str, raw: &str) {
+        self.attrs.push(' ');
+        self.attrs.push_str(key);
+        self.attrs.push_str("=\"");
+        self.attrs.push_str(&xml_attr(raw));
+        self.attrs.push('"');
     }
 
     fn write(self, tag: &str, out: &mut String) {
@@ -397,6 +426,22 @@ impl Element {
             out.push_str(tag);
             out.push('>');
         }
+    }
+}
+
+/// An element, or each element of a list, with its `value` moved from its
+/// text to its last attribute.
+fn value_as_attribute(node: Node) -> Node {
+    match node {
+        Node::Element(mut element) => {
+            if let Some(raw) = element.value.take() {
+                element.push_attr("value", &raw);
+                element.text.clear();
+            }
+            Node::Element(element)
+        }
+        Node::List(items) => Node::List(items.into_iter().map(value_as_attribute).collect()),
+        other => other,
     }
 }
 

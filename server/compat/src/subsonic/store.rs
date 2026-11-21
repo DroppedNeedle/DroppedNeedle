@@ -17,9 +17,8 @@ use crate::subsonic::advanced;
 use crate::subsonic::ids::{IdKind, without_cover_version};
 use crate::subsonic::picture::PictureSigner;
 use crate::subsonic::records::{
-    AlbumSort, BookmarkRecord, ClientInfo, LastScan, LyricLine, LyricsData, NowPlayingRow,
-    PlaylistDetail, PlaylistEntry, PlaylistRecord, PlaylistSummary, QueueState, ScanStatusData,
-    TranscodeDecisionData,
+    AlbumSort, BookmarkRecord, ClientInfo, LastScan, NowPlayingRow, PlaylistDetail, PlaylistEntry,
+    PlaylistRecord, PlaylistSummary, QueueState, ScanStatusData, TranscodeDecisionData,
 };
 use crate::subsonic::views::{ViewAlbum, ViewArtist, ViewGenre, ViewRating, ViewTrack};
 use droppedneedle_auth::users::UsersDeps;
@@ -34,6 +33,7 @@ use droppedneedle_library::scan::Counter;
 use droppedneedle_library::scan::models::{ScanKind, ScanRequest, ScanTrigger};
 use droppedneedle_library::scan::store::ScanStoreError;
 use droppedneedle_library::scans::Scans;
+use droppedneedle_library::tags::lyrics::Lyrics;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 /// Unix seconds to the `YYYY-MM-DDTHH:MM:SSZ` form Subsonic shows.
@@ -1194,20 +1194,8 @@ impl SubsonicStore {
     }
 
     /// Lyrics for a track, or None.
-    pub async fn get_lyrics(&self, file_id: &str) -> Result<Option<LyricsData>, CompatError> {
-        Ok(self.library.lyrics(file_id).await?.map(|doc| LyricsData {
-            language: doc.main.lang().unwrap_or("und").to_owned(),
-            synced: doc.main.synced(),
-            lines: doc
-                .main
-                .lines()
-                .iter()
-                .map(|line| LyricLine {
-                    value: line.text().to_owned(),
-                    start_ms: line.start_ms(),
-                })
-                .collect(),
-        }))
+    pub async fn get_lyrics(&self, file_id: &str) -> Result<Option<Lyrics>, CompatError> {
+        self.library.lyrics(file_id).await
     }
 
     /// Avatar bytes + content type, or None.

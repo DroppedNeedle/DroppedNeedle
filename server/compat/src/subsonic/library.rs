@@ -5,8 +5,8 @@ use super::browse::validate_music_folder;
 use super::error::{NOT_AUTHORIZED, NOT_FOUND, SubsonicError};
 use super::ids::{IdKind, decode, decode_expect, encode};
 use super::models::{
-    SAlbumInfo, SArtistInfo, SBookmark, SLyrics, SLyricsLine, SPlayQueue, SPlayQueueByIndex,
-    SPlaylist, SScanStatus, SSearchResult, SStructuredLyrics, SUser, Wrap,
+    SAgent, SAlbumInfo, SArtistInfo, SBookmark, SCue, SCueLine, SLyrics, SLyricsLine, SPlayQueue,
+    SPlayQueueByIndex, SPlaylist, SScanStatus, SSearchResult, SStructuredLyrics, SUser, Wrap,
 };
 use super::params::SubsonicParameters;
 use super::picture::{INFO_SIZES, PictureKind};
@@ -15,6 +15,7 @@ use super::views::{ViewTrack, iso};
 use super::{Ctx, Outcome};
 use crate::library::CompatError;
 use crate::subsonic::principal::CompatPrincipal;
+use droppedneedle_library::tags::lyrics::{AgentRole, LyricsKind, LyricsTrack};
 
 /// Max play-queue items.
 pub const MAX_QUEUE_ITEMS: usize = 500;
@@ -988,9 +989,14 @@ pub async fn album_info(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     )
 }
 
-/// Structured lyrics (extension songLyrics:1); no lyrics -> empty list.
+/// Structured lyrics (extension songLyrics:1 and 2); no lyrics -> empty
+/// list. Without `enhanced` the answer is songLyrics:1: the main track
+/// only, lines with their starts. With it, the main track then each
+/// translation and pronunciation, each with its kind, line ends and word
+/// timing.
 pub async fn lyrics_by_song_id(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let file_id = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Track)?;
+    let enhanced = ctx.pbool("enhanced", false)?;
     let file_id = current_id(ctx, IdKind::Track, file_id).await?;
     let track = ctx
         .store
@@ -1005,23 +1011,110 @@ pub async fn lyrics_by_song_id(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> 
         .map_err(Ctx::store_err)?;
     let mut values = Vec::new();
     if let Some(lyrics) = lyrics {
-        values.push(SStructuredLyrics {
-            lang: lyrics.language,
-            synced: lyrics.synced,
-            line: lyrics
-                .lines
-                .into_iter()
-                .map(|line| SLyricsLine {
-                    value: line.value,
-                    start: line.start_ms,
-                })
-                .collect(),
-            displayArtist: (!track.artist_name.is_empty()).then(|| track.artist_name.clone()),
-            displayTitle: (!track.title.is_empty()).then(|| track.title.clone()),
-            offset: None,
-        });
+        let layers = if enhanced {
+            lyrics.layers.as_slice()
+        } else {
+            &[]
+        };
+        for lyrics_track in std::iter::once(&lyrics.main).chain(layers) {
+            values.push(SStructuredLyrics {
+                displayArtist: (!track.artist_name.is_empty()).then(|| track.artist_name.clone()),
+                displayTitle: (!track.title.is_empty()).then(|| track.title.clone()),
+                ..structured_lyrics(lyrics_track, enhanced)
+            });
+        }
     }
     Outcome::keyed("lyricsList", Wrap("structuredLyrics", values))
+}
+
+/// One lyrics track as a `structuredLyrics` entry. Under `enhanced`: its
+/// kind, each line's end when it has a start, and its cue lines when it
+/// is synced, with the agents they name.
+fn structured_lyrics(lyrics: &LyricsTrack, enhanced: bool) -> SStructuredLyrics {
+    let line = lyrics
+        .lines()
+        .iter()
+        .map(|line| SLyricsLine {
+            value: line.text().to_owned(),
+            start: line.start_ms(),
+            end: line.start_ms().and(line.end_ms()).filter(|_| enhanced),
+        })
+        .collect();
+    let mut cue_lines = Vec::new();
+    if enhanced && lyrics.synced() {
+        for (index, line) in lyrics.lines().iter().enumerate() {
+            for cue_line in line.cue_lines() {
+                let (start, end) = cue_line.span(line.end_ms());
+                let value = cue_line.text();
+                cue_lines.push(SCueLine {
+                    index,
+                    agentId: cue_line
+                        .agent()
+                        .and_then(|agent| lyrics.agents().get(agent))
+                        .map(|agent| agent.id().to_owned()),
+                    start,
+                    end,
+                    value: value.to_owned(),
+                    cue: cue_line
+                        .cues()
+                        .iter()
+                        .map(|cue| SCue {
+                            start: cue.start_ms(),
+                            end: cue.end_ms(),
+                            value: value
+                                .get(cue.byte_start()..=cue.byte_end())
+                                .unwrap_or_default()
+                                .to_owned(),
+                            byteStart: cue.byte_start(),
+                            byteEnd: cue.byte_end(),
+                        })
+                        .collect(),
+                });
+            }
+        }
+    }
+    let agents = if cue_lines.is_empty() {
+        Vec::new()
+    } else {
+        lyrics
+            .agents()
+            .iter()
+            .map(|agent| SAgent {
+                id: agent.id().to_owned(),
+                role: agent_role(agent.role()),
+                name: agent.name().map(str::to_owned),
+            })
+            .collect()
+    };
+    SStructuredLyrics {
+        kind: enhanced.then(|| lyrics_kind(lyrics.kind())),
+        lang: lyrics.lang().unwrap_or("und").to_owned(),
+        synced: lyrics.synced(),
+        line,
+        agents,
+        cueLine: cue_lines,
+        displayArtist: None,
+        displayTitle: None,
+    }
+}
+
+/// A lyrics track's kind as songLyrics:2 spells it.
+fn lyrics_kind(kind: LyricsKind) -> &'static str {
+    match kind {
+        LyricsKind::Main => "main",
+        LyricsKind::Translation => "translation",
+        LyricsKind::Pronunciation => "pronunciation",
+    }
+}
+
+/// An agent's role as songLyrics:2 spells it.
+fn agent_role(role: AgentRole) -> &'static str {
+    match role {
+        AgentRole::Main => "main",
+        AgentRole::Voice => "voice",
+        AgentRole::Bg => "bg",
+        AgentRole::Group => "group",
+    }
 }
 
 /// Legacy flat lyrics: exact title (+artist) match, deterministic by
@@ -1064,9 +1157,10 @@ pub async fn lyrics(ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     let value = lyrics
         .map(|lyrics| {
             lyrics
-                .lines
-                .into_iter()
-                .map(|line| line.value)
+                .main
+                .lines()
+                .iter()
+                .map(|line| line.text())
                 .collect::<Vec<_>>()
                 .join("\n")
         })

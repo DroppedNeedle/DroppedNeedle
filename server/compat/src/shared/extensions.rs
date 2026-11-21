@@ -2,8 +2,9 @@
 //!
 //! Clients turn features on only for extensions the server lists, so every
 //! extension the Subsonic API serves is listed: API-key auth, form posts,
-//! transcode offsets, synced lyrics (`getLyricsBySongId`), playback reports,
-//! the index-based play queue, and the transcode decision and stream
+//! transcode offsets, synced lyrics (`getLyricsBySongId`, version 2 adding
+//! word timing, singers and translations), playback reports, the
+//! index-based play queue, and the transcode decision and stream
 //! endpoints.
 
 /// Extension name plus its advertised versions.
@@ -15,7 +16,8 @@ pub struct Extension {
     pub versions: &'static [u32],
 }
 
-/// The advertised set: every served extension, all v1.
+/// The advertised set: every served extension, songLyrics at versions 1
+/// and 2, the rest at version 1.
 pub const ADVERTISED: [Extension; 7] = [
     Extension {
         name: "apiKeyAuthentication",
@@ -31,7 +33,7 @@ pub const ADVERTISED: [Extension; 7] = [
     },
     Extension {
         name: "songLyrics",
-        versions: &[1],
+        versions: &[1, 2],
     },
     Extension {
         name: "playbackReport",

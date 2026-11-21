@@ -84,7 +84,8 @@ pub async fn license(_ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {
     Outcome::keyed("license", SLicense { valid: true })
 }
 
-/// Advertised OpenSubsonic extensions, all v1. Public (no auth).
+/// Advertised OpenSubsonic extensions (songLyrics 1 and 2, the rest v1).
+/// Public (no auth).
 /// The set is owned by `compat::shared::extensions`: every served
 /// extension.
 pub async fn extensions(_ctx: &Ctx<'_>) -> Result<Outcome, SubsonicError> {

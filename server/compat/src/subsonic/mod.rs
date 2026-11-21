@@ -17,7 +17,7 @@
 //! |---|---|---|---|
 //! | ping | ok | yes | auth probe |
 //! | getLicense | license | yes | static valid:true |
-//! | getOpenSubsonicExtensions | openSubsonicExtensions | PUBLIC | 3 exts x v1 |
+//! | getOpenSubsonicExtensions | openSubsonicExtensions | PUBLIC | 7 extensions; songLyrics 1 and 2, the rest v1 |
 //! | getMusicFolders | musicFolders | yes | only folder 1; others 70 |
 //! | getArtists/getIndexes | artists/indexes | yes | article-stripped A-Z buckets |
 //! | getArtist/getAlbum/getSong | artist/album/song | yes | artist embeds albums, album embeds songs |
@@ -43,7 +43,7 @@
 //! | getBookmarks/createBookmark/deleteBookmark | bookmarks/ok | yes | pinned bookmark fields |
 //! | getArtistInfo[2]/getAlbumInfo[2] | artistInfo[2]/albumInfo | yes | projected MBIDs + sized open picture links |
 //! | getAvatar | bytes | yes, self-only | non-self -> 403-as-text |
-//! | getLyricsBySongId | lyricsList | yes | extension songLyrics:1 |
+//! | getLyricsBySongId | lyricsList | yes | extension songLyrics:1; `enhanced` gives songLyrics:2 |
 //! | getLyrics | lyrics | yes | exact title (+artist) match; miss -> empty value |
 //! | getGenres/getSongsByGenre | genres/songsByGenre | yes | counts are ints |
 //! | getUser | user | yes | username param ignored, returns caller |
@@ -84,9 +84,11 @@
 //!   enveloped.
 //! - Transcode hints on song children only when transcoding is enabled
 //!   and ffmpeg is present.
-//! - getOpenSubsonicExtensions lists every served extension (all v1):
-//!   apiKeyAuthentication, formPost, transcodeOffset, songLyrics,
-//!   playbackReport, indexBasedQueue, transcoding.
+//! - getOpenSubsonicExtensions lists every served extension, at version 1
+//!   except songLyrics (1 and 2): apiKeyAuthentication, formPost,
+//!   transcodeOffset, songLyrics, playbackReport, indexBasedQueue,
+//!   transcoding. Feishin asks `getLyricsBySongId` for word timing only
+//!   when songLyrics lists version 2.
 //!
 //! # What the handlers call (built in `compat::setup`)
 //!

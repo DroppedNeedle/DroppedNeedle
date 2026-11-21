@@ -114,7 +114,8 @@
             {
               "name": "songLyrics",
               "versions": [
-                1
+                1,
+                2
               ]
             },
             {

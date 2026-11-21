@@ -282,7 +282,7 @@ async fn envelopes_are_byte_exact() {
         (
             unsigned(&rig, "GET", "getOpenSubsonicExtensions", &[]).await,
             "application/xml",
-            format!("{ok}><openSubsonicExtensions name=\"apiKeyAuthentication\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"formPost\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"transcodeOffset\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"songLyrics\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"playbackReport\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"indexBasedQueue\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"transcoding\"><versions>1</versions></openSubsonicExtensions></subsonic-response>"),
+            format!("{ok}><openSubsonicExtensions name=\"apiKeyAuthentication\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"formPost\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"transcodeOffset\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"songLyrics\"><versions>1</versions><versions>2</versions></openSubsonicExtensions><openSubsonicExtensions name=\"playbackReport\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"indexBasedQueue\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"transcoding\"><versions>1</versions></openSubsonicExtensions></subsonic-response>"),
         ),
         (
             unsigned(&rig, "GET", "ping", &[]).await,
@@ -702,9 +702,23 @@ async fn response_shapes() {
              WHERE relative_path = 'U2/Achtung Baby/03 One.mp3'",
         )
         .await;
+    // Word-timed lyrics beside Teardrop: two singers, background vocals and
+    // a French translation.
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/library/lyrics_words.ttml"),
+        rig.app
+            .config
+            .root_app_dir
+            .join("music/Massive Attack/Mezzanine/04 Teardrop.ttml"),
+    )
+    .expect("lyrics file copies");
+    rig.app.scan_library().await;
+    rig.wait_for_lyrics_mark("Teardrop").await;
     let client = Client::player(&rig);
     let ids = Ids::read(&client).await;
     let (one, airbag) = (ids.song("One"), ids.song("Airbag"));
+    let teardrop = ids.song("Teardrop");
     let ok_computer = ids.album("OK Computer");
     let (u2, radiohead) = (ids.artist("U2"), ids.artist("Radiohead"));
 
@@ -1001,15 +1015,62 @@ async fn response_shapes() {
             vec!["<albumInfo "],
             vec![],
         ),
+        // Without `enhanced`, songLyrics 1 exactly: the main track, starts
+        // only.
         (
             "getLyricsBySongId",
             vec![("id", &one)],
-            vec![
-                "lang=\"und\"",
-                "synced=\"true\"",
-                "First line of the song",
-                "displayTitle=\"One\"",
-            ],
+            vec![concat!(
+                "<lyricsList><structuredLyrics lang=\"und\" synced=\"true\" displayArtist=\"U2\" displayTitle=\"One\">",
+                "<line start=\"150\">First line of the song</line>",
+                "<line start=\"7130\">Second line of the song</line>",
+                "</structuredLyrics></lyricsList>",
+            )],
+            vec!["kind=", "end=", "cueLine"],
+        ),
+        (
+            "getLyricsBySongId",
+            vec![("id", &teardrop)],
+            vec!["<line start=\"1000\">Wörding two (echo)</line>"],
+            vec!["kind=", "end=", "cueLine", "<agent", "lang=\"fr\""],
+        ),
+        // With it, songLyrics 2: line, agent and cueLine children in that
+        // order, a cue line's value as an attribute, then the translation.
+        (
+            "getLyricsBySongId",
+            vec![("id", &teardrop), ("enhanced", "true")],
+            vec![concat!(
+                "<lyricsList>",
+                "<structuredLyrics kind=\"main\" lang=\"en\" synced=\"true\" displayArtist=\"Massive Attack\" displayTitle=\"Teardrop\">",
+                "<line start=\"1000\" end=\"4000\">Wörding two (echo)</line>",
+                "<line start=\"5000\" end=\"6500\">Rock &amp; roll</line>",
+                "<line start=\"10000\" end=\"11000\">Exact</line>",
+                "<agent id=\"v1\" role=\"main\" name=\"Singer One\"/>",
+                "<agent id=\"v2\" role=\"voice\" name=\"Singer Two\"/>",
+                "<agent id=\"bg\" role=\"bg\"/>",
+                "<cueLine index=\"0\" agentId=\"v1\" start=\"1000\" end=\"4000\" value=\"Wörding two\">",
+                "<cue start=\"1000\" end=\"1500\" byteStart=\"0\" byteEnd=\"4\">Wörd</cue>",
+                "<cue start=\"1500\" end=\"2000\" byteStart=\"5\" byteEnd=\"7\">ing</cue>",
+                "<cue start=\"2000\" end=\"2500\" byteStart=\"9\" byteEnd=\"11\">two</cue>",
+                "</cueLine>",
+                "<cueLine index=\"0\" agentId=\"bg\" start=\"3000\" end=\"4500\" value=\"(echo)\">",
+                "<cue start=\"3000\" end=\"4500\" byteStart=\"0\" byteEnd=\"5\">(echo)</cue>",
+                "</cueLine>",
+                "<cueLine index=\"1\" agentId=\"v2\" start=\"5500\" end=\"6500\" value=\"Rock &amp; roll\">",
+                "<cue start=\"5500\" end=\"6000\" byteStart=\"0\" byteEnd=\"3\">Rock</cue>",
+                "<cue start=\"6000\" end=\"6500\" byteStart=\"5\" byteEnd=\"10\">&amp; roll</cue>",
+                "</cueLine>",
+                "<cueLine index=\"2\" agentId=\"v1\" start=\"10567\" end=\"11000\" value=\"Exact\">",
+                "<cue start=\"10567\" end=\"10800\" byteStart=\"0\" byteEnd=\"4\">Exact</cue>",
+                "</cueLine>",
+                "</structuredLyrics>",
+                "<structuredLyrics kind=\"translation\" lang=\"fr\" synced=\"true\" displayArtist=\"Massive Attack\" displayTitle=\"Teardrop\">",
+                "<line start=\"1000\" end=\"4000\">Un</line>",
+                "<line start=\"5000\" end=\"6500\">Deux mots</line>",
+                "<line start=\"10000\" end=\"11000\">Exacte</line>",
+                "</structuredLyrics>",
+                "</lyricsList>",
+            )],
             vec![],
         ),
         (
@@ -1128,6 +1189,77 @@ async fn response_shapes() {
             );
         }
     }
+
+    // songLyrics 2 in JSON: the main cue line comes first on a shared
+    // index, a cue's value is its slice of the cue line's value, and the
+    // translation follows with no word timing.
+    let enhanced = client
+        .ok(
+            "getLyricsBySongId",
+            &[("id", &teardrop), ("enhanced", "true")],
+        )
+        .await;
+    let main = json!({
+        "kind": "main",
+        "lang": "en",
+        "synced": true,
+        "line": [
+            {"value": "Wörding two (echo)", "start": 1000, "end": 4000},
+            {"value": "Rock & roll", "start": 5000, "end": 6500},
+            {"value": "Exact", "start": 10000, "end": 11000},
+        ],
+        "agents": [
+            {"id": "v1", "role": "main", "name": "Singer One"},
+            {"id": "v2", "role": "voice", "name": "Singer Two"},
+            {"id": "bg", "role": "bg"},
+        ],
+        "cueLine": [
+            {"index": 0, "agentId": "v1", "start": 1000, "end": 4000, "value": "Wörding two", "cue": [
+                {"start": 1000, "end": 1500, "value": "Wörd", "byteStart": 0, "byteEnd": 4},
+                {"start": 1500, "end": 2000, "value": "ing", "byteStart": 5, "byteEnd": 7},
+                {"start": 2000, "end": 2500, "value": "two", "byteStart": 9, "byteEnd": 11},
+            ]},
+            {"index": 0, "agentId": "bg", "start": 3000, "end": 4500, "value": "(echo)", "cue": [
+                {"start": 3000, "end": 4500, "value": "(echo)", "byteStart": 0, "byteEnd": 5},
+            ]},
+            {"index": 1, "agentId": "v2", "start": 5500, "end": 6500, "value": "Rock & roll", "cue": [
+                {"start": 5500, "end": 6000, "value": "Rock", "byteStart": 0, "byteEnd": 3},
+                {"start": 6000, "end": 6500, "value": "& roll", "byteStart": 5, "byteEnd": 10},
+            ]},
+            {"index": 2, "agentId": "v1", "start": 10567, "end": 11000, "value": "Exact", "cue": [
+                {"start": 10567, "end": 10800, "value": "Exact", "byteStart": 0, "byteEnd": 4},
+            ]},
+        ],
+        "displayArtist": "Massive Attack",
+        "displayTitle": "Teardrop",
+    });
+    let french = json!({
+        "kind": "translation",
+        "lang": "fr",
+        "synced": true,
+        "line": [
+            {"value": "Un", "start": 1000, "end": 4000},
+            {"value": "Deux mots", "start": 5000, "end": 6500},
+            {"value": "Exacte", "start": 10000, "end": 11000},
+        ],
+        "displayArtist": "Massive Attack",
+        "displayTitle": "Teardrop",
+    });
+    assert_eq!(
+        enhanced["lyricsList"]["structuredLyrics"],
+        json!([main, french]),
+        "{enhanced}"
+    );
+    assert_code(
+        &client
+            .get(
+                "getLyricsBySongId",
+                &[("id", &teardrop), ("enhanced", "maybe")],
+            )
+            .await,
+        10,
+        "enhanced=maybe",
+    );
 
     // A scan's time and length are a time and a whole number.
     let status = client.ok("getScanStatus", &[]).await;

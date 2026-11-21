@@ -621,26 +621,83 @@ pub struct SLyricsLine {
     /// Start ms (synced only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<i64>,
+    /// Exact end ms, only with a start (songLyrics:2, `enhanced` only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<i64>,
 }
 
-/// Structured lyrics (extension songLyrics:1; pinned: lang, synced, line).
+/// A singer a cue line names (songLyrics:2).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SAgent {
+    /// Id, unique in its entry.
+    pub id: String,
+    /// `main`, `voice`, `bg` or `group`.
+    pub role: &'static str,
+    /// Name, when the source gives one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// One timed word or syllable (songLyrics:2).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SCue {
+    /// Start ms.
+    pub start: i64,
+    /// End ms.
+    pub end: i64,
+    /// Its text: the cue line's value from `byteStart` to `byteEnd`.
+    pub value: String,
+    /// First byte in the cue line's value (UTF-8, 0-based).
+    pub byteStart: usize,
+    /// Last byte in the cue line's value, inclusive.
+    pub byteEnd: usize,
+}
+
+/// The word timing of one line, or of one singer's part of it
+/// (songLyrics:2). XML writes its value as an attribute.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SCueLine {
+    /// The index of its line in `line`.
+    pub index: usize,
+    /// Its agent, whenever the entry lists agents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agentId: Option<String>,
+    /// Start ms.
+    pub start: i64,
+    /// End ms.
+    pub end: i64,
+    /// The text its cues point into.
+    pub value: String,
+    /// Cues, in order.
+    pub cue: Vec<SCue>,
+}
+
+/// Structured lyrics (extension songLyrics:1 and 2; pinned: lang, synced,
+/// line). Without `enhanced` only the songLyrics:1 fields are sent.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SStructuredLyrics {
+    /// `main`, `translation` or `pronunciation` (`enhanced` only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<&'static str>,
     /// Language code.
     pub lang: String,
     /// Whether lines carry timestamps.
     pub synced: bool,
     /// Lines.
     pub line: Vec<SLyricsLine>,
+    /// Singers the cue lines name (`enhanced` only). XML writes each as
+    /// an `agent` element.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub agents: Vec<SAgent>,
+    /// Word timing (`enhanced` and synced only).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cueLine: Vec<SCueLine>,
     /// Display artist.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub displayArtist: Option<String>,
     /// Display title.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub displayTitle: Option<String>,
-    /// Offset seconds.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub offset: Option<f64>,
 }
 
 /// Artist info (MBIDs projected only; cover URLs credential-free).
