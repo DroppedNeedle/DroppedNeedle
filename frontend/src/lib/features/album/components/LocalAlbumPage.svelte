@@ -131,7 +131,10 @@
 			disc_number: track.disc_number,
 			duration_seconds: track.duration_seconds,
 			size_bytes: track.file_size_bytes,
-			format: track.format
+			format: track.format,
+			bitrate: track.bit_rate ?? null,
+			sample_rate: track.sample_rate ?? null,
+			channels: track.channels ?? null
 		};
 		return getTrackContextMenuItems(
 			{ position: track.track_number, disc_number: track.disc_number, title: track.title },

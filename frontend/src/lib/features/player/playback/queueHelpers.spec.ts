@@ -35,7 +35,10 @@ const localTrack: LocalTrackInfo = {
 	track_number: 1,
 	format: 'FLAC',
 	size_bytes: 30_000_000,
-	duration_seconds: 240
+	duration_seconds: 240,
+	bitrate: 940,
+	sample_rate: 44100,
+	channels: 2
 };
 
 const jellyfinTrack: RemoteTrack = {
@@ -78,6 +81,12 @@ describe('buildQueueItem', () => {
 			expect(item!.albumId).toBe('album-1');
 			expect(item!.availableSources).toEqual(['local']);
 			expect(item!.duration).toBe(240);
+			expect(item!.bitRate).toBe(940);
+			expect(item!.sampleRate).toBe(44100);
+			expect(item!.audioChannels).toBe(2);
+			expect(item!.sourceQuality).toEqual({
+				local: { bitRate: 940, sampleRate: 44100, audioChannels: 2 }
+			});
 		}
 
 		{
@@ -149,6 +158,9 @@ describe('buildQueueItemsFromLocal', () => {
 				coverUrl: '/api/v3/covers/release-group/album-1?size=250'
 			});
 			expect(items[0].coverRemoteUrl).toBeNull();
+			expect(items[0].bitRate).toBe(940);
+			expect(items[0].sampleRate).toBe(44100);
+			expect(items[0].audioChannels).toBe(2);
 		}
 
 		{
@@ -180,10 +192,10 @@ describe('buildDiscoveryQueueFromLocal', () => {
 		year: null,
 		genre: null,
 		duration_seconds: 200,
-		bit_rate: null,
-		sample_rate: null,
-		bit_depth: null,
-		channels: null,
+		bit_rate: 1024,
+		sample_rate: 48000,
+		bit_depth: 16,
+		channels: 2,
 		file_size_bytes: 1,
 		date_added: 1,
 		cover_available: true,
@@ -205,6 +217,9 @@ describe('buildDiscoveryQueueFromLocal', () => {
 			expect(streamUrlFor(item)).toBe('/api/v3/stream/local/file-7');
 			expect(item.coverUrl).toBe('/cover/local-album-9');
 			expect(item.format).toBe('flac');
+			expect(item.bitRate).toBe(1024);
+			expect(item.sampleRate).toBe(48000);
+			expect(item.audioChannels).toBe(2);
 			expect(item.discNumber).toBe(2);
 			expect(item.duration).toBe(200);
 		}

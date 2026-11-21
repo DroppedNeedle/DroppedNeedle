@@ -68,16 +68,33 @@ export function changeItemSource(
 	if (!resolvedId) return { newQueue: queue, error: 'Source ID unavailable for this track' };
 
 	const newQueue = [...queue];
-	// The new source's file has its own format; one nobody named stays unknown.
+	// The new source's file has its own format and quality; one nobody named stays unknown.
 	const sourceFormats = item.format
 		? { [item.sourceType]: item.format, ...item.sourceFormats }
 		: item.sourceFormats;
+	const hasCurrentQuality =
+		item.bitRate != null || item.sampleRate != null || item.audioChannels != null;
+	const sourceQuality = hasCurrentQuality
+		? {
+				[item.sourceType]: {
+					bitRate: item.bitRate ?? null,
+					sampleRate: item.sampleRate ?? null,
+					audioChannels: item.audioChannels ?? null
+				},
+				...item.sourceQuality
+			}
+		: item.sourceQuality;
+	const nextQuality = sourceQuality?.[newSourceType];
 	newQueue[index] = {
 		...item,
 		sourceType: newSourceType,
 		trackSourceId: resolvedId,
 		format: sourceFormats?.[newSourceType],
-		sourceFormats
+		bitRate: nextQuality?.bitRate ?? undefined,
+		sampleRate: nextQuality?.sampleRate ?? undefined,
+		audioChannels: nextQuality?.audioChannels ?? undefined,
+		sourceFormats,
+		sourceQuality
 	};
 	return { newQueue };
 }
@@ -95,11 +112,18 @@ export function updateItemByPlaylistTrackId(
 	if (index < 0 || index === currentIndex) return null;
 
 	const newQueue = [...queue];
+	const existing = newQueue[index];
+	const sameTrack =
+		existing.sourceType === newSourceType && existing.trackSourceId === newTrackSourceId;
 	newQueue[index] = {
-		...newQueue[index],
+		...existing,
 		sourceType: newSourceType,
 		trackSourceId: newTrackSourceId,
 		format: newFormat,
+		bitRate: sameTrack ? existing.bitRate : undefined,
+		sampleRate: sameTrack ? existing.sampleRate : undefined,
+		audioChannels: sameTrack ? existing.audioChannels : undefined,
+		sourceQuality: sameTrack ? existing.sourceQuality : undefined,
 		plexRatingKey: newSourceType === 'plex' ? plexRatingKey : undefined
 	};
 	return newQueue;

@@ -284,7 +284,14 @@
 						<div class="mt-1 hidden items-center gap-1.5 sm:flex">
 							<PlayerTrackMarks class="-ml-1.5" />
 							{#if np.format}
-								<AudioQualityBadge codec={np.format} converted={playerStore.converting} compact />
+								<AudioQualityBadge
+									codec={np.format}
+									bitrate={np.bitRate}
+									sampleRate={np.sampleRate}
+									audioChannels={np.audioChannels}
+									converted={playerStore.converting}
+									compact
+								/>
 							{/if}
 							{#if scrobbleManager.enabled && scrobbleManager.status !== 'idle'}
 								<span class="tooltip tooltip-top" data-tip={scrobbleManager.tooltip}>

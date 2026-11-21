@@ -68,6 +68,8 @@ export type LocalTrackInfo = {
 	size_bytes: number;
 	format: string;
 	bitrate?: number | null;
+	sample_rate?: number | null;
+	channels?: number | null;
 };
 
 export type LocalAlbumMatch = {

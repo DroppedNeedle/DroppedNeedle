@@ -1,4 +1,5 @@
 import type {
+	AudioQuality,
 	LocalTrackInfo,
 	TrackView,
 	QueueItem,
@@ -124,6 +125,19 @@ export function buildQueueItem(meta: TrackMeta, data: TrackSourceData): QueueIte
 	if (data.jellyfinTrack?.format) sourceFormats.jellyfin = data.jellyfinTrack.format;
 	if (data.plexTrack?.part_key && data.plexTrack.format) sourceFormats.plex = data.plexTrack.format;
 
+	const sourceQuality: Partial<Record<SourceType, AudioQuality>> = {};
+	if (data.localTrack) {
+		const quality: AudioQuality = {
+			bitRate: data.localTrack.bitrate ?? null,
+			sampleRate: data.localTrack.sample_rate ?? null,
+			audioChannels: data.localTrack.channels ?? null
+		};
+		if (quality.bitRate != null || quality.sampleRate != null || quality.audioChannels != null) {
+			sourceQuality.local = quality;
+		}
+	}
+	const activeQuality = sourceQuality[best.sourceType];
+
 	return {
 		trackSourceId: best.trackSourceId,
 		trackName: data.trackTitle,
@@ -136,9 +150,13 @@ export function buildQueueItem(meta: TrackMeta, data: TrackSourceData): QueueIte
 		sourceType: best.sourceType,
 		artistId: meta.artistId,
 		format: best.format,
+		bitRate: activeQuality?.bitRate ?? null,
+		sampleRate: activeQuality?.sampleRate ?? null,
+		audioChannels: activeQuality?.audioChannels ?? null,
 		availableSources: getAvailableSources(data),
 		sourceIds,
 		sourceFormats,
+		sourceQuality: Object.keys(sourceQuality).length > 0 ? sourceQuality : undefined,
 		recordingIds: Object.keys(recordingIds).length > 0 ? recordingIds : undefined,
 		duration: data.trackLength,
 		plexRatingKey: data.plexTrack?.id
@@ -188,6 +206,9 @@ export function buildQueueItemsFromLocal(tracks: LocalTrackInfo[], meta: TrackMe
 		sourceType: 'local' as const,
 		artistId: meta.artistId,
 		format: t.format.toLowerCase(),
+		bitRate: t.bitrate ?? null,
+		sampleRate: t.sample_rate ?? null,
+		audioChannels: t.channels ?? null,
 		availableSources: ['local'] as SourceType[],
 		duration: t.duration_seconds ?? undefined
 	}));
@@ -271,6 +292,9 @@ export function buildDiscoveryQueueFromLocal(tracks: TrackView[]): QueueItem[] {
 		sourceType: 'local' as const,
 		artistId: t.artist_id ?? undefined,
 		format: (t.format ?? '').toLowerCase(),
+		bitRate: t.bit_rate ?? null,
+		sampleRate: t.sample_rate ?? null,
+		audioChannels: t.channels ?? null,
 		availableSources: ['local'] as SourceType[],
 		duration: t.duration_seconds ?? undefined
 	}));

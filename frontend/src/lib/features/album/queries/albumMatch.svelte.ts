@@ -31,7 +31,9 @@ function toLocalTrack(track: components['schemas']['TrackView']): LocalTrackInfo
 		duration_seconds: track.duration_seconds ?? null,
 		size_bytes: track.file_size_bytes,
 		format: track.format,
-		bitrate: track.bit_rate ?? null
+		bitrate: track.bit_rate ?? null,
+		sample_rate: track.sample_rate ?? null,
+		channels: track.channels ?? null
 	};
 }
 

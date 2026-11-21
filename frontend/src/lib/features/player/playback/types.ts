@@ -10,6 +10,8 @@ export type LocalTrackInfo = {
 	size_bytes: number;
 	format: string;
 	bitrate?: number | null;
+	sample_rate?: number | null;
+	channels?: number | null;
 	date_added?: string | null;
 };
 
@@ -74,6 +76,12 @@ export interface NowPlaying {
 	trackName?: string;
 	artistId?: string;
 	format?: string;
+	/** The playing file's bitrate in kbps, when the source reports one. */
+	bitRate?: number | null;
+	/** The playing file's sample rate in Hz, when the source reports one. */
+	sampleRate?: number | null;
+	/** The playing file's channel count, when the source reports one. */
+	audioChannels?: number | null;
 	playlistTrackId?: string;
 	/** 30s preview stream (radio preview tier): never scrobbled/reported, fades out. */
 	isPreview?: boolean;
@@ -88,6 +96,12 @@ export type PlaybackMeta = {
 	coverUrl: string | null;
 	artistId?: string;
 };
+
+export interface AudioQuality {
+	bitRate?: number | null;
+	sampleRate?: number | null;
+	audioChannels?: number | null;
+}
 
 export interface QueueItem {
 	/** Source-specific item identifier (Jellyfin item ID, local file ID, or YouTube video ID). */
@@ -104,10 +118,18 @@ export interface QueueItem {
 	sourceType: SourceType;
 	artistId?: string;
 	format?: string;
+	/** This source's bitrate in kbps, when it reports one. */
+	bitRate?: number | null;
+	/** This source's sample rate in Hz, when it reports one. */
+	sampleRate?: number | null;
+	/** This source's channel count, when it reports one. */
+	audioChannels?: number | null;
 	availableSources?: SourceType[];
 	sourceIds?: Partial<Record<SourceType, string>>;
 	/** Each source's format for its file, when known, so a switch to another source carries its own. */
 	sourceFormats?: Partial<Record<SourceType, string>>;
+	/** Each source's audio quality metadata, kept per source so a source switch never leaks stale values. */
+	sourceQuality?: Partial<Record<SourceType, AudioQuality>>;
 	/** MusicBrainz recording each source gave for its file, kept per source. */
 	recordingIds?: Partial<Record<SourceType, string>>;
 	duration?: number;
