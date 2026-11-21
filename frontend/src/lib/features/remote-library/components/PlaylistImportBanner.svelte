@@ -105,7 +105,8 @@
 
 		<div class="pib__fan" aria-hidden="true">
 			{#if !loading && !hasError && coverUrls.length > 0}
-				{#each coverUrls as url, index (url)}
+				<!-- Two playlists can show the same cover; the fan keys by position. -->
+				{#each coverUrls as url, index (index)}
 					<div
 						class="pib__cover"
 						style:transform="rotate({isHovered ? fanAngles[index] * 1.4 : fanAngles[index]}deg)
