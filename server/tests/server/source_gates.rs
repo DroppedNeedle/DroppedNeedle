@@ -79,7 +79,14 @@ const OPENS: &[Place] = &[
     ),
 ];
 
-const TRANSACTIONS: &[Place] = &[DB, TOOL];
+const TRANSACTIONS: &[Place] = &[
+    DB,
+    TOOL,
+    place(
+        "library/src/tags/lyrics/ttml.rs",
+        "reads the `begin` timing attribute of a TTML lyrics file, not SQL; it holds no database handle",
+    ),
+];
 
 const RULES: &[Rule] = &[
     Rule {
