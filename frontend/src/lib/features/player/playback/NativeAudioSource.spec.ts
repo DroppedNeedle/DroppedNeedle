@@ -47,25 +47,27 @@ const hoisted = vi.hoisted(() => {
 		resumeAudioEngine.mockResolvedValue(undefined);
 	};
 
-	return {
-		audio,
-		dispatch,
-		reset,
-		getAudioElement: vi.fn(() => audio as unknown as HTMLAudioElement),
-		resumeAudioEngine
-	};
+	return { audio, dispatch, reset, resumeAudioEngine };
 });
 
 vi.mock('./audioElement', () => ({
-	getAudioElement: hoisted.getAudioElement,
-	resumeAudioEngine: hoisted.resumeAudioEngine
+	resumeAudioEngine: hoisted.resumeAudioEngine,
+	tryGetAudioEngine: () => null
 }));
 
 import { NativeAudioSource } from './NativeAudioSource';
+import type { DeckLease } from './audioElement';
+
+const deck: DeckLease = {
+	element: hoisted.audio as unknown as HTMLAudioElement,
+	deck: 0,
+	held: () => true,
+	played: () => {},
+	release: () => {}
+};
 
 function fresh(): void {
 	hoisted.reset();
-	hoisted.getAudioElement.mockImplementation(() => hoisted.audio as unknown as HTMLAudioElement);
 	vi.useRealTimers();
 }
 
@@ -74,7 +76,7 @@ describe('NativeAudioSource', () => {
 		{
 			// Loads successfully on canplay.
 			fresh();
-			const source = new NativeAudioSource('local', { url: '/audio.mp3', seekable: true });
+			const source = new NativeAudioSource('local', { deck, url: '/audio.mp3', seekable: true });
 			const loadPromise = source.load();
 
 			expect(hoisted.audio.src).toBe('/audio.mp3');
@@ -87,7 +89,7 @@ describe('NativeAudioSource', () => {
 			// Fails load when timeout is reached.
 			fresh();
 			vi.useFakeTimers();
-			const source = new NativeAudioSource('local', { url: '/timeout.mp3', seekable: true });
+			const source = new NativeAudioSource('local', { deck, url: '/timeout.mp3', seekable: true });
 			const loadPromise = source.load();
 
 			vi.advanceTimersByTime(15_000);
@@ -98,7 +100,7 @@ describe('NativeAudioSource', () => {
 		{
 			// Reports autoplay blocked when play promise rejects.
 			fresh();
-			const source = new NativeAudioSource('local', { url: '/blocked.mp3', seekable: true });
+			const source = new NativeAudioSource('local', { deck, url: '/blocked.mp3', seekable: true });
 			const onError = vi.fn();
 			source.onError(onError);
 
@@ -115,7 +117,7 @@ describe('NativeAudioSource', () => {
 		{
 			// Rejects load promise on media error event.
 			fresh();
-			const source = new NativeAudioSource('local', { url: '/bad.mp3', seekable: true });
+			const source = new NativeAudioSource('local', { deck, url: '/bad.mp3', seekable: true });
 			const onError = vi.fn();
 			source.onError(onError);
 
@@ -131,7 +133,7 @@ describe('NativeAudioSource', () => {
 		{
 			// Transitions from buffering back to playing after seek via playing event.
 			fresh();
-			const source = new NativeAudioSource('local', { url: '/seek.mp3', seekable: true });
+			const source = new NativeAudioSource('local', { deck, url: '/seek.mp3', seekable: true });
 			const states: string[] = [];
 			source.onStateChange((s) => states.push(s));
 

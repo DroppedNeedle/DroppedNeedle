@@ -19,8 +19,3 @@ export function streamUrlFor(item: StreamTarget, hints?: StreamHints): string | 
 	const path = streamPath(item, hints);
 	return path === null ? undefined : getApiUrl(path);
 }
-
-/** The path to warm ahead of a track; the API client applies the base path. */
-export function prefetchPathFor(item: StreamTarget): string | null {
-	return streamPath(item);
-}

@@ -1,7 +1,7 @@
 import { expect, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 
-import { setAudioElement } from '$lib/features/player/playback/audioElement';
+import { setAudioDecks } from '$lib/features/player/playback/audioElement';
 import { playerStore } from '$lib/features/player/state/player.svelte';
 import { queryClient } from '$lib/queries/QueryClient';
 
@@ -36,7 +36,7 @@ export async function playSeekableTrack(): Promise<void> {
 		element.dispatchEvent(new Event('play'));
 		setTimeout(() => element.dispatchEvent(new Event('playing')), 2);
 	};
-	setAudioElement(element);
+	setAudioDecks([element, new Audio()]);
 
 	playerStore.playQueue([
 		{

@@ -898,6 +898,11 @@ Run from the repo root. `make help` lists every target.
   would answer 404; the web UI asks for no cover a view marks missing.
 - Navigation destinations live in `lib/shell/navItems.ts`; the
   sidebar, the bottom bar and the More sheet all render from it.
+- In the web player, moving from one track to the next goes through
+  `player/playback/transition.ts`: it alone starts the next deck, schedules
+  gains and ends a tail. The two `<audio>` decks are handed out only by
+  `audioElement.ts`, and a fade between tracks is a gain on the audio
+  engine, never `element.volume`.
 - A Discover or Home section is one entry in the registry in
   `catalog/src/discover/sections.rs` (its page, zone, settings
   title, the reads it needs, its dedupe); the page build, the section

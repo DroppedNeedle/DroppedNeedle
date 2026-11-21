@@ -5,15 +5,25 @@ import type {
 	QueueItem,
 	SourceType
 } from '$lib/features/player/playback/types';
+import { untrack } from 'svelte';
 import { createPlaybackSource } from '$lib/features/player/playback/createSource';
-import { api } from '$lib/api/client';
 import {
 	createPlaybackSession,
 	sessionKeyFor
 } from '$lib/features/player/playback/playbackSession';
-import { prefetchPathFor, streamUrlFor } from '$lib/features/player/playback/streamUrl';
-import { browserPlays, transcodeTarget } from '$lib/features/player/playback/transcodeTarget';
-import { STREAM_REFUSED, UNPLAYABLE_ERROR } from '$lib/features/player/playback/NativeAudioSource';
+import { streamUrlFor } from '$lib/features/player/playback/streamUrl';
+import {
+	browserPlays,
+	transcodeTarget,
+	type TranscodeFormat
+} from '$lib/features/player/playback/transcodeTarget';
+import {
+	NativeAudioSource,
+	STREAM_REFUSED,
+	UNPLAYABLE_ERROR
+} from '$lib/features/player/playback/NativeAudioSource';
+import { createTransition, type Preload } from '$lib/features/player/playback/transition';
+import { crossfade } from './crossfade.svelte';
 import {
 	REFUSAL_SAYS,
 	askWhyRefused,
@@ -93,6 +103,12 @@ const REARM_AFTER_PLAYED_S = 30;
 const MAX_PROGRESS_STEP_S = 5;
 // How long a pick waits for the queue's ratings before it plays on without them.
 const RATINGS_WAIT_MS = 5000;
+// The next track loads this long before the current one ends, or this long
+// before a longer crossfade starts.
+const PRELOAD_LEAD_S = 30;
+const PRELOAD_BEFORE_FADE_S = 15;
+// Sought back this far past the preload's time, the preload is dropped.
+const PRELOAD_RELEASE_S = 15;
 
 /**
  * How the current item is recovering. A failed item is reloaded once (as a transcode when the
@@ -110,7 +126,9 @@ const RATINGS_WAIT_MS = 5000;
  * fails at once, may still move to another source, and is marked with why.
  */
 type RecoveryPhase = 'idle' | 'loading' | 'retrying' | 'fallingBack' | 'failed';
-type LoadKind = 'fresh' | 'retry' | 'fallback';
+// A rejoin loads the same track again after the browser refused it at a join:
+// not a failure, so it spends no recovery step and keeps what recovery knows.
+type LoadKind = 'fresh' | 'retry' | 'fallback' | 'rejoin';
 
 interface Recovery {
 	phase: RecoveryPhase;
@@ -133,7 +151,8 @@ interface Recovery {
 const LOAD_PHASE: Record<LoadKind, RecoveryPhase> = {
 	fresh: 'loading',
 	retry: 'retrying',
-	fallback: 'fallingBack'
+	fallback: 'fallingBack',
+	rejoin: 'loading'
 };
 
 /** Why a track cannot play here: the note the player shows and the queue marks it with. */
@@ -150,6 +169,14 @@ function withinTime<T>(promise: Promise<T>, ms: number): Promise<T> {
 		timer = setTimeout(() => reject(new Error('timed out')), ms);
 	});
 	return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
+/** A track's source as built, before any of it is the player's. */
+interface BuiltSource {
+	source: PlaybackSource;
+	url: string | undefined;
+	format: TranscodeFormat | null;
+	seekable: boolean;
 }
 
 function itemKey(item: QueueItem): string {
@@ -184,6 +211,12 @@ function createPlayerStore() {
 	let floorStopped = $state(false);
 	// A failed ratings read was told once; the next good read clears it.
 	let ratingsReadFailed = false;
+	// Bumped by every new play of a track (a fresh load or a move to the next),
+	// so the same song twice in a row counts twice.
+	let playId = $state(0);
+	// The load whose next track was asked for, so each play preloads once;
+	// null lets the next position ask again.
+	let preloadFor: number | null = null;
 	const recovery: Recovery = {
 		phase: 'idle',
 		generation: 0,
@@ -209,6 +242,7 @@ function createPlayerStore() {
 		recovery.heard = 0;
 		recovery.lastPosition = 0;
 		floorStopped = false;
+		preloadFor = null;
 		return ++recovery.generation;
 	}
 
@@ -228,6 +262,11 @@ function createPlayerStore() {
 		floorTrackIds.length > 0 ? cachedTrackRatings(floorTrackIds) : null
 	);
 	const hasNext = $derived(getNextIndex() !== null);
+	// The track that plays next, by what the cache holds of the ratings.
+	const upcoming = $derived.by(() => {
+		const index = getNextIndex();
+		return index === null ? null : (queue[index] ?? null);
+	});
 	const hasPrevious = $derived(getPreviousIndex() !== null);
 	const upcomingLength = $derived.by(() => {
 		if (cachedRatings === null) {
@@ -260,10 +299,21 @@ function createPlayerStore() {
 		duration: () => duration
 	});
 
+	const transition = createTransition({ handover, refused });
+
 	$effect.root(() => {
 		$effect(() => {
 			// Reads only what no lookup holds, again after the cache lets one go.
 			if (cachedRatings !== null) warmTrackRatings(floorTrackIds);
+		});
+		$effect(() => {
+			// A queue edit, a source switch or the rating floor changed what plays next.
+			const next = upcoming;
+			untrack(() => {
+				if (transition.preload?.item === next) return;
+				transition.drop();
+				preloadFor = null;
+			});
 		});
 	});
 
@@ -341,20 +391,16 @@ function createPlayerStore() {
 		});
 	}
 
+	function tidy(): void {
+		const c = performCleanup(queue, currentIndex, shuffleEnabled, shuffleOrder, MAX_HISTORY_LENGTH);
+		queue = c.newQueue;
+		currentIndex = c.newIndex;
+		shuffleOrder = c.newShuffleOrder;
+		persist();
+	}
+
 	function loadAndTidy(index: number): void {
-		void loadQueueItem(index).then(() => {
-			const c = performCleanup(
-				queue,
-				currentIndex,
-				shuffleEnabled,
-				shuffleOrder,
-				MAX_HISTORY_LENGTH
-			);
-			queue = c.newQueue;
-			currentIndex = c.newIndex;
-			shuffleOrder = c.newShuffleOrder;
-			persist();
-		});
+		void loadQueueItem(index).then(tidy);
 	}
 	function persist(): void {
 		doPersistSession(nowPlaying, queue, currentIndex, progress, shuffleEnabled, shuffleOrder);
@@ -362,7 +408,8 @@ function createPlayerStore() {
 
 	function applyResetState(): void {
 		radioSession.end();
-		currentSource?.destroy();
+		transition.reset();
+		preloadFor = null;
 		currentSource = null;
 		nowPlaying = null;
 		playbackState = 'idle';
@@ -414,18 +461,16 @@ function createPlayerStore() {
 		return null;
 	}
 
-	function resolveSourceForItem(item: QueueItem): {
-		source: PlaybackSource;
-		loadUrl: string | undefined;
-	} {
-		isSeekable = true;
+	/**
+	 * Builds the source for an item on a free deck, touching none of the
+	 * player's state: the load that plays it applies what it says.
+	 */
+	function buildSource(item: QueueItem, directFailed: boolean): BuiltSource {
 		const format =
-			item.sourceType === 'youtube' ? null : transcodeTarget(item.format, recovery.directFailed);
-		recovery.transcoded = format !== null;
-		converting = format !== null;
+			item.sourceType === 'youtube' ? null : transcodeTarget(item.format, directFailed);
 		const url = streamUrlFor(item, format ? { format } : undefined);
 		if (item.sourceType === 'youtube') {
-			return { source: createPlaybackSource('youtube'), loadUrl: url };
+			return { source: createPlaybackSource('youtube'), url, format: null, seekable: true };
 		}
 		const sourceType = item.sourceType;
 		const source = createPlaybackSource(item.sourceType, {
@@ -448,21 +493,30 @@ function createPlayerStore() {
 					}
 				: undefined
 		});
-		isSeekable = source.isSeekable?.() ?? true;
-		return { source, loadUrl: url };
+		return { source, url, format, seekable: source.isSeekable?.() ?? true };
+	}
+
+	/** What a built source says about the current track becomes the player's. */
+	function applyBuilt(built: { format: TranscodeFormat | null; seekable: boolean }): void {
+		isSeekable = built.seekable;
+		recovery.transcoded = built.format !== null;
+		converting = built.format !== null;
 	}
 
 	async function loadQueueItem(index: number, kind: LoadKind = 'fresh'): Promise<void> {
 		const item = queue[index];
 		if (!item) return;
 		const gen = beginLoad(LOAD_PHASE[kind]);
-		if (kind !== 'retry') recovery.directFailed = false;
+		if (kind === 'fresh' || kind === 'fallback') recovery.directFailed = false;
 		if (kind === 'fresh') recovery.fellBack = false;
 		if (kind === 'fallback') recovery.fellBack = true;
 		const prevProgress = progress,
 			prevItem = currentSource ? (queue[currentIndex] ?? null) : null;
 		// A reload of the same track picks up where the listener was.
 		const resumeAt = kind === 'fresh' ? 0 : prevProgress;
+		transition.reset();
+		currentSource = null;
+		if (kind === 'fresh') playId++;
 		currentIndex = index;
 		playbackState = 'loading';
 		progress = 0;
@@ -477,20 +531,22 @@ function createPlayerStore() {
 			const state = await readConversion();
 			if (!isCurrent(gen)) return;
 			if (state === 'off' || state === 'unavailable') {
-				currentSource?.destroy();
-				currentSource = null;
 				converting = false;
 				nowPlaying = buildNowPlayingMetadata(item);
 				handleTrackError(gen, { code: NOT_CONVERTING, message: state });
 				return;
 			}
 		}
-		currentSource?.destroy();
-		let source: PlaybackSource, resolvedUrl: string | undefined;
+		// Fading songs may hold both decks for a few milliseconds after a skip;
+		// a rejoin waits for the deck that played.
+		const deck = transition.waitForDeck(kind === 'rejoin');
+		if (deck) {
+			await deck;
+			if (!isCurrent(gen)) return;
+		}
+		let built: BuiltSource;
 		try {
-			const r = resolveSourceForItem(item);
-			source = r.source;
-			resolvedUrl = r.loadUrl;
+			built = buildSource(item, recovery.directFailed);
 		} catch (e) {
 			handleTrackError(
 				gen,
@@ -498,16 +554,19 @@ function createPlayerStore() {
 			);
 			return;
 		}
+		const { source } = built;
+		applyBuilt(built);
 		currentSource = source;
 		nowPlaying = buildNowPlayingMetadata(queue[index] ?? item);
 		persist();
+		transition.follow({ source, item: queue[index] ?? item, transcoded: built.format !== null });
 		subscribeToSource(source, gen);
 		source.setVolume(volume);
 		try {
 			const activeItem = queue[index] ?? item;
 			const loadPromise = source.load({
 				trackSourceId: activeItem.trackSourceId,
-				url: resolvedUrl,
+				url: built.url,
 				format: activeItem.format
 			});
 			void session.begin(sessionKeyFor(activeItem));
@@ -644,14 +703,76 @@ function createPlayerStore() {
 		}
 	}
 
-	function prefetchNext(): void {
-		const nextIdx = getNextIndex();
-		if (nextIdx === null) return;
-		const nextItem = queue[nextIdx];
-		// A track that will not play here is not worth warming.
-		if (!nextItem || unplayableReasonFor(nextItem)) return;
-		const url = prefetchPathFor(nextItem);
-		if (url) void api.head(url).catch(() => {});
+	/**
+	 * Loads the next track on the idle deck, picked now (with the rating
+	 * floor's read) so the moment the current one ends waits on nothing. A
+	 * preload that fails is dropped, and the track loads as usual at its turn.
+	 */
+	function preloadNext(gen: number): void {
+		// A fading song holds the other deck until it ends.
+		if (preloadFor === gen || transition.hasTail()) return;
+		if (!(currentSource instanceof NativeAudioSource)) return;
+		preloadFor = gen;
+		pick('next', ({ index }) => {
+			if (!isCurrent(gen) || preloadFor !== gen || index === null) return;
+			const item = queue[index];
+			if (!item || item.sourceType === 'youtube' || unplayableReasonFor(item)) return;
+			void preload(item, gen);
+		});
+	}
+
+	async function preload(item: QueueItem, gen: number): Promise<void> {
+		if (needsConversion(item)) {
+			const state = await readConversion();
+			if (state === 'off' || state === 'unavailable') return;
+			if (!isCurrent(gen) || preloadFor !== gen || upcoming !== item) return;
+		}
+		let built: BuiltSource;
+		try {
+			built = buildSource(item, false);
+		} catch (e) {
+			console.warn('The next track could not be loaded ahead', e);
+			return;
+		}
+		const { source } = built;
+		if (!(source instanceof NativeAudioSource)) {
+			source.destroy();
+			return;
+		}
+		source.setVolume(volume);
+		transition.prepare({ item, source, format: built.format, seekable: built.seekable });
+		// A failure reaches the transition, which drops the preload.
+		source
+			.load({ trackSourceId: item.trackSourceId, url: built.url, format: item.format })
+			.catch(() => {});
+	}
+
+	/** The preloaded track takes over, just before it plays: A's session ends, B's begins. */
+	function handover(next: Preload): boolean {
+		const index = getNextIndex();
+		if (index === null || queue[index] !== next.item) return false;
+		void session.end(duration || progress);
+		const gen = beginLoad('loading');
+		recovery.directFailed = false;
+		recovery.fellBack = false;
+		applyBuilt(next);
+		currentSource = next.source;
+		currentIndex = index;
+		nowPlaying = buildNowPlayingMetadata(next.item);
+		playbackState = 'playing';
+		progress = 0;
+		duration = next.source.getDuration();
+		playId++;
+		subscribeToSource(next.source, gen);
+		session.begin(sessionKeyFor(next.item));
+		tidy();
+		return true;
+	}
+
+	/** The preloaded track did not start at its turn: it loads again, on the deck that played. */
+	function refused(next: Preload): void {
+		if (currentSource !== next.source || recovery.phase === 'failed') return;
+		void loadQueueItem(currentIndex, 'rejoin');
 	}
 
 	function subscribeToSource(source: PlaybackSource, gen: number): void {
@@ -662,10 +783,14 @@ function createPlayerStore() {
 				floorStopped = false;
 				recovery.failed = [];
 				session.playing();
-				prefetchNext();
 			}
-			if (state === 'paused') session.paused(progress);
+			if (state === 'paused') {
+				session.paused(progress);
+				transition.interrupt();
+			}
+			if (state === 'buffering') transition.hold();
 			if (state === 'ended') {
+				if (transition.ended()) return;
 				void session.end(progress);
 				pick('next', (next) => {
 					if (!isCurrent(gen)) return;
@@ -685,6 +810,15 @@ function createPlayerStore() {
 			progress = t;
 			duration = d;
 			noteHeard(t);
+			const lead = Math.max(PRELOAD_LEAD_S, crossfade.seconds + PRELOAD_BEFORE_FADE_S);
+			if (d > 0 && d - t <= lead) {
+				preloadNext(gen);
+			} else if (d - t > lead + PRELOAD_RELEASE_S && transition.preload) {
+				// Sought back well before the preload's time: B's stream (or transcode) waits for it.
+				transition.drop();
+				preloadFor = null;
+			}
+			transition.progress(t, d);
 			// preview tier: DJ-style fade over the last 2s so 30s clips blend
 			// instead of stopping dead
 			const item = queue[currentIndex];
@@ -793,6 +927,10 @@ function createPlayerStore() {
 		get converting() {
 			return converting;
 		},
+		/** Bumped by every new play of a track, the same one again included. */
+		get playId() {
+			return playId;
+		},
 
 		unplayableReasonFor,
 
@@ -800,10 +938,12 @@ function createPlayerStore() {
 			radioSession.end();
 			void resumeAudioEngine();
 			void session.end(progress);
-			currentSource?.destroy();
+			transition.reset();
 			const gen = beginLoad('loading');
+			playId++;
 			recovery.failed = [];
 			currentSource = source;
+			transition.follow({ source, item: null, transcoded: false });
 			nowPlaying = metadata;
 			playbackState = 'loading';
 			isSeekable = true;
@@ -849,20 +989,7 @@ function createPlayerStore() {
 		nextAlbum(): void {
 			if (!hasNextAlbum) return;
 			const idx = computeNextAlbumIndex(queue, currentIndex);
-			if (idx !== null)
-				void loadQueueItem(idx).then(() => {
-					const c = performCleanup(
-						queue,
-						currentIndex,
-						shuffleEnabled,
-						shuffleOrder,
-						MAX_HISTORY_LENGTH
-					);
-					queue = c.newQueue;
-					currentIndex = c.newIndex;
-					shuffleOrder = c.newShuffleOrder;
-					persist();
-				});
+			if (idx !== null) loadAndTidy(idx);
 		},
 
 		previousAlbum(): void {
@@ -1086,6 +1213,7 @@ function createPlayerStore() {
 
 		pause(): void {
 			currentSource?.pause();
+			transition.interrupt();
 			session.paused(progress);
 			persist();
 		},
@@ -1093,6 +1221,7 @@ function createPlayerStore() {
 		togglePlay(): void {
 			if (isPlaying) {
 				currentSource?.pause();
+				transition.interrupt();
 				session.paused(progress);
 				persist();
 			} else {
@@ -1102,6 +1231,7 @@ function createPlayerStore() {
 		},
 		seekTo(seconds: number): void {
 			if (!isSeekable) return;
+			transition.interrupt();
 			currentSource?.seekTo(seconds);
 			progress = seconds;
 			persist();
@@ -1111,6 +1241,7 @@ function createPlayerStore() {
 			const clamped = Math.max(0, Math.min(100, level));
 			volume = clamped;
 			currentSource?.setVolume(clamped);
+			transition.setVolume(clamped);
 			storeVolume(clamped);
 		},
 
@@ -1136,26 +1267,39 @@ function createPlayerStore() {
 			isPlayerVisible = true;
 			recovery.failed = [];
 			void session.end(progress);
-			currentSource?.destroy();
+			transition.reset();
+			currentSource = null;
 			currentIndex = resume.currentIndex;
 			playbackState = 'loading';
 			isSeekable = true;
 			progress = 0;
 			duration = 0;
 			const gen = beginLoad('loading');
+			playId++;
 
 			void (async () => {
 				try {
-					const { source, loadUrl } = resolveSourceForItem(resume.currentItem);
-					if (!isCurrent(gen)) return;
+					const deck = transition.waitForDeck();
+					if (deck) {
+						await deck;
+						if (!isCurrent(gen)) return;
+					}
+					const built = buildSource(resume.currentItem, false);
+					const { source } = built;
+					applyBuilt(built);
 					currentSource = source;
+					transition.follow({
+						source,
+						item: resume.currentItem,
+						transcoded: built.format !== null
+					});
 					nowPlaying = resume.nowPlaying;
 					subscribeToSource(source, gen);
 					source.setVolume(volume);
 					void session.begin(sessionKeyFor(resume.currentItem));
 					await source.load({
 						trackSourceId: resume.currentItem.trackSourceId,
-						url: loadUrl,
+						url: built.url,
 						format: resume.currentItem.format
 					});
 					if (!isCurrent(gen)) return;

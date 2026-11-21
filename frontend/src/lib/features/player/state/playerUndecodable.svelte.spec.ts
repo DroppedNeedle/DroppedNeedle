@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { userEvent } from 'vitest/browser';
 
-import { setAudioElement } from '$lib/features/player/playback/audioElement';
+import { setAudioDecks } from '$lib/features/player/playback/audioElement';
 import { launchLocalPlayback } from '$lib/features/player/playback/launchLocalPlayback';
 import { launchRemotePlayback } from '$lib/features/player/playback/launchRemotePlayback';
 import type { PlaybackMeta, QueueItem } from '$lib/features/player/playback/types';
@@ -36,7 +36,7 @@ function fakeElement(plays: (url: string) => boolean) {
 		element.dispatchEvent(new Event('play'));
 		if (!error) setTimeout(() => element.dispatchEvent(new Event('playing')), 2);
 	};
-	setAudioElement(element);
+	setAudioDecks([element, new Audio()]);
 	return { element, loads };
 }
 

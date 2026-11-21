@@ -1,13 +1,22 @@
 <!--
-	The ten-band equalizer, for the drawer's Equalizer tab and the Listening
-	Room's panel: the on/off switch, a preset, a reset to flat, and one
-	vertical slider per band (pointer drag, or the arrow keys by half a
-	decibel, Home and End to the limits). Nothing works while it is off or
-	a YouTube track plays.
+	The sound settings, for the drawer's Sound tab and the Listening Room's
+	panel. On top, what happens between songs: the crossfade dial (Off, or 2
+	to 12 seconds) and whether songs that follow each other on an album
+	blend too. They apply to the songs to come, so they stay usable while a
+	YouTube track plays, with a line saying they don't apply to it. Below,
+	the ten-band equalizer: the on/off switch, a preset, a reset to flat,
+	and one vertical slider per band (pointer drag, or the arrow keys by
+	half a decibel, Home and End to the limits). The equalizer does nothing
+	while it is off or a YouTube track plays.
 -->
 <script lang="ts">
 	import { eqStore } from '$lib/features/player/state/eq.svelte';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
+	import {
+		CROSSFADE_MAX_S,
+		CROSSFADE_STEP_S,
+		crossfade
+	} from '$lib/features/player/state/crossfade.svelte';
 	import {
 		EQ_FREQUENCY_LABELS,
 		EQ_BAND_COUNT,
@@ -18,7 +27,10 @@
 	} from '$lib/features/player/state/eqPresets';
 	import { CircleAlert, RotateCcw } from 'lucide-svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import Knob from '$lib/ui/Knob.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
+	const id = $props.id();
 	const isYouTube = $derived(playerStore.nowPlaying?.sourceType === 'youtube');
 	const locked = $derived(isYouTube || !eqStore.enabled);
 
@@ -95,6 +107,37 @@
 </script>
 
 <div class="flex flex-col gap-4 px-5 py-4">
+	<section class="flex flex-col gap-3" aria-labelledby="{id}-between">
+		<h3 id="{id}-between" class="dn-sound-head">Between songs</h3>
+		<div class="flex items-center gap-5">
+			<Knob
+				size="sm"
+				label="Crossfade"
+				value={crossfade.seconds}
+				onchange={(seconds) => crossfade.setSeconds(seconds)}
+				max={CROSSFADE_MAX_S}
+				step={CROSSFADE_STEP_S}
+				dots={CROSSFADE_MAX_S / CROSSFADE_STEP_S + 1}
+				format={(seconds) => (seconds === 0 ? 'Off' : `${seconds} s`)}
+				class="shrink-0"
+			/>
+			<div class="flex min-w-0 flex-1 flex-col gap-2">
+				<ToggleRow
+					label="Crossfade inside albums"
+					description="When off, albums play straight through."
+					disabled={crossfade.seconds === 0}
+					bind:checked={() => crossfade.insideAlbums, (on) => crossfade.setInsideAlbums(on)}
+				/>
+				{#if isYouTube}
+					<p class="text-sm text-muted">Not for YouTube tracks.</p>
+				{/if}
+			</div>
+		</div>
+	</section>
+
+	<hr class="border-line" />
+
+	<h3 class="dn-sound-head">Equalizer</h3>
 	<div class="flex items-center gap-3">
 		<input
 			type="checkbox"
@@ -184,6 +227,14 @@
 </div>
 
 <style>
+	.dn-sound-head {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.2em;
+		text-transform: uppercase;
+		color: var(--dn-muted);
+	}
 	.dn-eq-state {
 		font-family: var(--font-mono);
 		font-size: 0.75rem;

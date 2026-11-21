@@ -29,6 +29,8 @@ type ScrobbleStatus = 'idle' | 'tracking' | 'scrobbled' | 'error';
 
 interface TrackState {
 	trackKey: string;
+	/** The player's play this state counts, so a song played again starts afresh. */
+	playId: number;
 	accumulatedMs: number;
 	lastProgressS: number;
 	nowPlayingSent: boolean;
@@ -212,10 +214,12 @@ function createScrobbleManager() {
 
 			const currentKey = makeTrackKey(np.artistName, np.trackName);
 			const durationMs = Math.round(playerStore.duration * 1000);
+			const playId = playerStore.playId;
 
-			if (!track || track.trackKey !== currentKey) {
+			if (!track || track.trackKey !== currentKey || track.playId !== playId) {
 				track = {
 					trackKey: currentKey,
+					playId,
 					accumulatedMs: 0,
 					lastProgressS: playerStore.progress,
 					nowPlayingSent: false,

@@ -3,11 +3,11 @@
 	while a track is loaded. Left, what is playing, with its heart and stars;
 	middle, skip by rating, the transport and the seek bar; right (medium
 	width and up), the buttons that open the drawer on its Queue, Lyrics and
-	Equalizer tabs, the volume and where the track comes from. "Close
+	Sound tabs, the volume and where the track comes from. "Close
 	player" is a tab on the bar's top edge. Phones get the cover, the names,
 	the heart and previous, play and next, and a queue tab beside "Close
 	player" that opens the drawer (its own tabs hold the lyrics and the
-	equalizer).
+	sound settings).
 -->
 <script lang="ts">
 	import { isValidMbid } from '$lib/utils/formatting';
@@ -211,7 +211,7 @@
 	<div class="droppedneedle-player-bar dn-player" data-part={part('player-bar')}>
 		<div class="dn-player__tabs">
 			<!-- Phones have no room in the bar for the tools, so one tab opens the drawer,
-			     whose own tabs hold the queue, the lyrics and the equalizer. -->
+			     whose own tabs hold the queue, the lyrics and the sound settings. -->
 			<Button
 				variant={isOpenOn('queue') ? 'primary' : 'neutral'}
 				size="xs"
@@ -460,7 +460,7 @@
 							variant={isOpenOn('eq') ? 'primary' : 'neutral'}
 							shape="square"
 							icon={SlidersHorizontal}
-							label={isYouTube ? 'Equalizer (unavailable for YouTube)' : 'Toggle equalizer'}
+							label="Toggle sound"
 							aria-pressed={isOpenOn('eq')}
 							onclick={() => toggleTab('eq')}
 						/>

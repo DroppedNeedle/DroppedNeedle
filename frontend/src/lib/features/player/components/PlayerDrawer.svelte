@@ -1,5 +1,5 @@
 <!--
-	The player's drawer: Queue, Lyrics and Equalizer as tabs of one panel on
+	The player's drawer: Queue, Lyrics and Sound as tabs of one panel on
 	the right, full height above the player bar. The Lyrics tab is there
 	only while the track has lyrics; a drawer left on it shows the queue
 	until it has. One close button, named for the tab showing.
@@ -38,17 +38,17 @@
 	const tabs = $derived<TabItem<PlayerDrawerTab>[]>([
 		{ id: 'queue', label: 'Queue', count: playerStore.upcomingQueueLength || null },
 		...(hasLyrics ? [{ id: 'lyrics' as const, label: 'Lyrics' }] : []),
-		{ id: 'eq', label: 'Equalizer' }
+		{ id: 'eq', label: 'Sound' }
 	]);
 	const names: Record<PlayerDrawerTab, string> = {
 		queue: 'queue',
 		lyrics: 'lyrics',
-		eq: 'equalizer'
+		eq: 'sound'
 	};
 	const titles: Record<PlayerDrawerTab, string> = {
 		queue: 'Queue',
 		lyrics: 'Lyrics',
-		eq: 'Equalizer'
+		eq: 'Sound'
 	};
 
 	// Clear of the player bar while it shows; the Listening Room hides it behind its deck.

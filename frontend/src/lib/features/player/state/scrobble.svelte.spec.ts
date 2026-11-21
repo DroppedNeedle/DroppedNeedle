@@ -9,7 +9,11 @@ const h = vi.hoisted(() => ({
 	nowPlaying: vi.fn()
 }));
 
-const player = $state<{ now: NowPlaying | null; playing: boolean }>({ now: null, playing: false });
+const player = $state<{ now: NowPlaying | null; playing: boolean; playId: number }>({
+	now: null,
+	playing: false,
+	playId: 0
+});
 let progress = 0;
 
 vi.mock('$lib/api/client', () => ({ api: { v3: { GET: h.settings } } }));
@@ -25,6 +29,9 @@ vi.mock('$lib/features/player/state/player.svelte', () => ({
 		},
 		get isPlaying() {
 			return player.playing;
+		},
+		get playId() {
+			return player.playId;
 		},
 		get progress() {
 			return progress;
@@ -92,6 +99,16 @@ describe('web player plays with forwarding off', () => {
 		h.submit.mockRejectedValue(new Error('server unreachable'));
 		await listen(200);
 		expect(h.submit).toHaveBeenCalledTimes(4);
+	});
+
+	it('records the same song played again straight after as a second play', async () => {
+		// A crossfade leaves the first play before its end, so only the player's new play tells them apart.
+		await listen(150);
+		player.playId += 1;
+		progress = 0;
+		flushSync();
+		await listen(150);
+		expect(h.submit).toHaveBeenCalledTimes(2);
 	});
 
 	it('drops the play when the user signs out mid-play', async () => {

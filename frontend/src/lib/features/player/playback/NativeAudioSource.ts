@@ -1,11 +1,12 @@
 import type { PlaybackSource, PlaybackState } from './types';
 import type { StreamRefusal } from './streamRefusal';
-import { getAudioElement, resumeAudioEngine } from './audioElement';
+import { resumeAudioEngine, tryGetAudioEngine, type DeckLease } from './audioElement';
 
 const LOAD_TIMEOUT_MS = 15_000;
 const STALL_TIMEOUT_MS = 15_000;
 const MEDIA_ERR_DECODE = 3;
 const MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
+const HAVE_FUTURE_DATA = 3;
 
 /** The browser could not read what the server sent. */
 export const UNPLAYABLE_ERROR = 'UNPLAYABLE';
@@ -28,6 +29,8 @@ export interface LiveTranscode {
 export class NativeAudioSource implements PlaybackSource {
 	readonly type: NativeSourceType;
 
+	/** The deck this source plays on. */
+	readonly lease: DeckLease;
 	private readonly audio: HTMLAudioElement;
 	private readonly url: string;
 	private readonly seekable: boolean;
@@ -45,11 +48,14 @@ export class NativeAudioSource implements PlaybackSource {
 	private stallTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
 	private pendingVolume = 75;
 	private destroyed = false;
+	// Asked to play since the last load: only then can it stall.
+	private started = false;
 	private currentState: PlaybackState = 'idle';
 
 	constructor(
 		type: NativeSourceType,
 		opts: {
+			deck: DeckLease;
 			url: string;
 			seekable: boolean;
 			transcode?: LiveTranscode;
@@ -63,11 +69,13 @@ export class NativeAudioSource implements PlaybackSource {
 		this.seekable = opts.seekable && !(opts.transcode && !opts.transcode.duration);
 		this.transcode = opts.transcode;
 		this.whyRefused = opts.whyRefused;
-		this.audio = getAudioElement();
+		this.lease = opts.deck;
+		this.audio = opts.deck.element;
 	}
 
 	async load(_info?: unknown): Promise<void> {
 		this.destroyed = false;
+		this.started = false;
 		this.cleanupListeners();
 		this.clearStallTimeout();
 		this.emitStateChange('loading');
@@ -154,7 +162,7 @@ export class NativeAudioSource implements PlaybackSource {
 				if (settled || this.destroyed) return;
 				settled = true;
 				const message = `Native audio source load timed out after ${LOAD_TIMEOUT_MS}ms`;
-				this.audio.src = '';
+				if (this.lease.held()) this.audio.src = '';
 				this.cleanupListeners();
 				this.clearStallTimeout();
 				this.emitError('LOAD_TIMEOUT', message);
@@ -193,7 +201,24 @@ export class NativeAudioSource implements PlaybackSource {
 	}
 
 	play(): void {
+		this.started = true;
 		void this.playWithEngineResume();
+	}
+
+	/** Enough is buffered to start now and keep going. */
+	isReady(): boolean {
+		return this.audio.readyState >= HAVE_FUTURE_DATA;
+	}
+
+	/** The element's own length, before a transcode's known length stands in; 0 while unknown. */
+	elementDuration(): number {
+		const total = this.audio.duration;
+		return Number.isFinite(total) ? total : 0;
+	}
+
+	/** Sound is coming out of this source's deck. */
+	isAudible(): boolean {
+		return this.lease.held() && !this.audio.paused && !this.audio.ended;
 	}
 
 	pause(): void {
@@ -237,8 +262,12 @@ export class NativeAudioSource implements PlaybackSource {
 		this.destroyed = true;
 		this.clearStallTimeout();
 		this.cleanupListeners();
-		this.audio.src = '';
-		this.audio.load();
+		// A deck another source holds now is left alone.
+		if (this.lease.held()) {
+			this.audio.src = '';
+			this.audio.load();
+			this.lease.release();
+		}
 		this.stateCallbacks = [];
 		this.readyCallbacks = [];
 		this.errorCallbacks = [];
@@ -296,6 +325,8 @@ export class NativeAudioSource implements PlaybackSource {
 	}
 
 	private startStallTimeout(): void {
+		// A preloaded deck waits for its turn; it has not stalled.
+		if (!this.started) return;
 		this.clearStallTimeout();
 		this.stallTimeoutHandle = setTimeout(() => {
 			if (this.destroyed) return;
@@ -311,13 +342,18 @@ export class NativeAudioSource implements PlaybackSource {
 	}
 
 	private async playWithEngineResume(): Promise<void> {
-		try {
-			await resumeAudioEngine();
-		} catch {
-			// Keep native playback attempt alive even if Web Audio resume fails.
+		// Waits only for a context that is not running, so a deck started on time plays at once.
+		const engine = tryGetAudioEngine();
+		if (engine && !engine.running) {
+			try {
+				await resumeAudioEngine();
+			} catch {
+				// Keep native playback attempt alive even if Web Audio resume fails.
+			}
 		}
 		try {
 			await this.audio.play();
+			this.lease.played();
 		} catch (err: unknown) {
 			const name = err instanceof DOMException || err instanceof Error ? err.name : '';
 			// A new load interrupted this play: a seek or a track change, not a failure.

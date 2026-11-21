@@ -13,7 +13,11 @@
 	import { toastStore } from '$lib/stores/toast';
 	import { scrobbleManager } from '$lib/features/player/state/scrobble.svelte';
 	import { serviceStatusStore } from '$lib/stores/serviceStatus';
-	import { resumeAudioEngine, setAudioElement } from '$lib/features/player/playback/audioElement';
+	import {
+		resumeAudioEngine,
+		setAudioDecks,
+		unlockIdleDecks
+	} from '$lib/features/player/playback/audioElement';
 	import { eqStore } from '$lib/features/player/state/eq.svelte';
 	import Player from '$lib/features/player/components/Player.svelte';
 	import PreviewWidget from '$lib/features/discover/components/PreviewWidget.svelte';
@@ -55,7 +59,9 @@
 	let { children }: { children: Snippet } = $props();
 	type PlaylistModalComponent = Component<Record<string, never>, PlaylistModalHandle>;
 
-	let audioElement = $state<HTMLAudioElement | undefined>(undefined);
+	// The player's two decks: one plays while the next track loads on the other.
+	let deckA = $state<HTMLAudioElement | undefined>(undefined);
+	let deckB = $state<HTMLAudioElement | undefined>(undefined);
 	let PlaylistModal = $state<PlaylistModalComponent | null>(null);
 	let DiscographyModal = $state<Component | null>(null);
 	let playlistModalRef = $state<PlaylistModalHandle | undefined>(undefined);
@@ -115,13 +121,14 @@
 	}
 
 	onMount(() => {
-		if (audioElement) {
-			setAudioElement(audioElement);
+		if (deckA && deckB) {
+			setAudioDecks([deckA, deckB]);
 			eqStore.replayToEngine();
 		}
 
 		const resumeAudioContext = () => {
 			void resumeAudioEngine();
+			unlockIdleDecks();
 			cleanupResumeListeners?.();
 			cleanupResumeListeners = null;
 		};
@@ -313,7 +320,8 @@
 <Toaster abovePlayer={playerStore.isPlayerVisible} />
 
 {#if browser}
-	<audio bind:this={audioElement}></audio>
+	<audio bind:this={deckA} preload="auto"></audio>
+	<audio bind:this={deckB} preload="auto"></audio>
 {/if}
 
 <Player />

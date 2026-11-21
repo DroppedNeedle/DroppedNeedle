@@ -7,7 +7,7 @@ Everything DroppedNeedle does, one row each, with links to the page that covers 
 | Request | Whole albums or single tracks from the MusicBrainz catalog, with an approval queue for the User role. See [Requests and downloads](downloads.md) |
 | Wanted | Failed and partial requests get re-searched on their own until a verified copy shows up |
 | Quality | An ordered list of formats and qualities to try, automatic upgrades when a better copy appears, storage caps and quotas |
-| Player | Queue, shuffle, 10-band EQ, lyrics from your files (or from LRCLIB when it is on), live now-playing updates |
+| Player | Queue, shuffle, gapless playback, crossfade, 10-band EQ, lyrics from your files (or from LRCLIB when it is on), live now-playing updates |
 | Discovery | Trending, charts, genre browsing, recommendations from your ListenBrainz and Last.fm history, an album-by-album discover queue, and a weekly mix that can queue up to five missing albums. See [Discovery](discovery.md) |
 | Live events | Ticketmaster and Skiddle gig alerts for artists you follow, each user with their own cities |
 | Following | New-release radar with optional auto-download, release-type filters, and sidebar badges |

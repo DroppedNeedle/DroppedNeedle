@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 
 import QueueList from '$lib/features/player/components/QueueList.svelte';
-import { setAudioElement } from '$lib/features/player/playback/audioElement';
+import { setAudioDecks } from '$lib/features/player/playback/audioElement';
 import type { QueueItem, SourceType } from '$lib/features/player/playback/types';
 import { queryClient } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
@@ -37,7 +37,7 @@ function fakeElement(fails: (url: string) => number | null) {
 		element.dispatchEvent(new Event('play'));
 		if (!error) setTimeout(() => element.dispatchEvent(new Event('playing')), 2);
 	};
-	setAudioElement(element);
+	setAudioDecks([element, new Audio()]);
 	return { element, loads };
 }
 

@@ -373,16 +373,12 @@
 						disabled={isYouTube}
 						disabledReason="EQ unavailable for YouTube"
 					/>
-					<div
-						class="tooltip tooltip-top dn-deck__eq"
-						data-tip={isYouTube ? 'EQ unavailable for YouTube' : 'Equalizer'}
-					>
+					<div class="tooltip tooltip-top dn-deck__eq" data-tip="Sound">
 						<IconButton
 							size="sm"
 							icon={SlidersHorizontal}
-							label="Toggle equalizer"
+							label="Toggle sound"
 							active={eqStore.enabled && !isYouTube}
-							disabled={isYouTube}
 							aria-expanded={eqPanelOpen}
 							onclick={() => (eqPanelOpen = !eqPanelOpen)}
 						/>

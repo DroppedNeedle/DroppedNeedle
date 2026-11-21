@@ -2,6 +2,7 @@ import type { PlaybackSource, SourceType } from './types';
 import type { StreamRefusal } from './streamRefusal';
 import { YouTubePlaybackSource } from './YouTubePlaybackSource';
 import { NativeAudioSource, type LiveTranscode } from './NativeAudioSource';
+import { claimDeck } from './audioElement';
 import { YOUTUBE_PLAYER_ELEMENT_ID } from '$lib/constants';
 
 export type NativeSourceOptions = {
@@ -18,17 +19,12 @@ export function createPlaybackSource(type: SourceType, opts?: NativeSourceOption
 		case 'youtube':
 			return new YouTubePlaybackSource(YOUTUBE_PLAYER_ELEMENT_ID);
 		case 'jellyfin':
-			if (!opts) throw new Error('Jellyfin playback source requires url and seekable options');
-			return new NativeAudioSource('jellyfin', opts);
 		case 'local':
-			if (!opts) throw new Error('Local playback source requires url and seekable options');
-			return new NativeAudioSource('local', opts);
 		case 'navidrome':
-			if (!opts) throw new Error('Navidrome playback source requires url and seekable options');
-			return new NativeAudioSource('navidrome', opts);
 		case 'plex':
-			if (!opts) throw new Error('Plex playback source requires url and seekable options');
-			return new NativeAudioSource('plex', opts);
+			if (!opts) throw new Error(`A ${type} playback source requires url and seekable options`);
+			// A native source plays on a free deck, which it holds until destroyed.
+			return new NativeAudioSource(type, { ...opts, deck: claimDeck() });
 		default: {
 			const _exhaustive: never = type;
 			throw new Error(`Unknown source type: ${_exhaustive}`);
