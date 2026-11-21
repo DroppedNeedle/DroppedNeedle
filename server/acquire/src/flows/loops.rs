@@ -439,6 +439,7 @@ async fn search_watch(
         wanted: Vec::new(),
         track: None,
         release_preferred: false,
+        tracklist_unread: false,
     };
     let (mut candidates, failed) =
         crate::search_jobs::search_sources(&sources, &target, &watch.key).await;

@@ -69,6 +69,11 @@ pub struct SearchTarget {
     /// For an album: no person chose the release, so the landing may take
     /// another edition of the album. False for a pin and for a track.
     pub release_preferred: bool,
+    /// MusicBrainz did not answer just now for the release's tracklist, or
+    /// for the album page's edition of an album no edition was asked for,
+    /// so candidates are judged on file counts. False when it answered,
+    /// even that it knows no such release or edition.
+    pub tracklist_unread: bool,
 }
 
 impl SearchTarget {
@@ -86,6 +91,9 @@ pub enum TargetError {
     /// Our side failed: the journal, or a plan that does not read.
     LocalFault(String),
 }
+
+/// The album page's edition could not be read.
+struct EditionUnread;
 
 /// Works out and remembers each task's target.
 pub struct Targets {
@@ -119,23 +127,36 @@ impl Targets {
         group: &str,
         priority: RequestPriority,
     ) -> Option<String> {
+        self.album_page_edition(group, priority)
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// [`Self::preferred_edition`], with a failed read of the album page's
+    /// edition (logged) told apart from no preferred edition.
+    async fn album_page_edition(
+        &self,
+        group: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<String>, EditionUnread> {
         let group = group.trim().to_ascii_lowercase();
         if group.is_empty() {
-            return None;
+            return Ok(None);
         }
         match library_holds(self.journal.db().db(), &group).await {
             Ok(false) => {}
-            Ok(true) => return None,
+            Ok(true) => return Ok(None),
             Err(error) => {
                 tracing::warn!(release_group_mbid = %group, %error, "library holdings unreadable; no preferred edition");
-                return None;
+                return Ok(None);
             }
         }
         match self.catalog.request_edition(&group, priority).await {
-            Ok(edition) => edition.map(|mbid| mbid.trim().to_ascii_lowercase()),
+            Ok(edition) => Ok(edition.map(|mbid| mbid.trim().to_ascii_lowercase())),
             Err(error) => {
                 tracing::warn!(release_group_mbid = %group, %error, "album page edition unavailable; no preferred edition");
-                None
+                Err(EditionUnread)
             }
         }
     }
@@ -224,15 +245,23 @@ impl Targets {
         // With no edition asked for, the album page's edition is preferred
         // (never for an upgrade or a copy's missing tracks).
         let mut preferred = false;
+        // MusicBrainz did not answer: no tracklist could be read.
+        let mut tracklist_unread = false;
         if release.is_none()
             && plan.planned_album.is_none()
             && task.origin != crate::dispatch::DispatchOrigin::Upgrade
-            && let Some(edition) = self
-                .preferred_edition(&task.release_group_mbid, RequestPriority::BackgroundSync)
-                .await
         {
-            release = Some(edition);
-            preferred = true;
+            match self
+                .album_page_edition(&task.release_group_mbid, RequestPriority::BackgroundSync)
+                .await
+            {
+                Ok(Some(edition)) => {
+                    release = Some(edition);
+                    preferred = true;
+                }
+                Ok(None) => {}
+                Err(EditionUnread) => tracklist_unread = true,
+            }
         }
         let same_release = release
             .as_deref()
@@ -272,11 +301,14 @@ impl Targets {
                     release_mbid,
                     "MusicBrainz does not know the chosen edition; ranking on file counts"
                 ),
-                Err(error) => tracing::warn!(
-                    task_id = %task.id,
-                    %error,
-                    "edition tracklist unavailable; ranking on file counts"
-                ),
+                Err(error) => {
+                    tracing::warn!(
+                        task_id = %task.id,
+                        %error,
+                        "edition tracklist unavailable; ranking on file counts"
+                    );
+                    tracklist_unread = true;
+                }
             }
         }
         SearchTarget {
@@ -289,6 +321,7 @@ impl Targets {
             barcode,
             track: None,
             release_preferred,
+            tracklist_unread,
         }
     }
 
@@ -414,6 +447,7 @@ impl Targets {
                 barcode: plan.barcode.clone(),
                 wanted: album.wanted.clone(),
                 release_preferred: false,
+                tracklist_unread: false,
                 track: Some(TrackWant {
                     artist: task.artist_name.clone(),
                     title,
@@ -444,6 +478,7 @@ impl Targets {
             barcode: None,
             wanted: vec![TrackPosition { disc: 1, track: 0 }],
             release_preferred: false,
+            tracklist_unread: false,
             track: Some(TrackWant {
                 artist: task.artist_name.clone(),
                 title: title.clone(),
@@ -574,6 +609,7 @@ impl Targets {
             barcode: release.barcode.clone(),
             wanted,
             release_preferred: false,
+            tracklist_unread: false,
             track: Some(TrackWant {
                 artist: task.artist_name.clone(),
                 title,

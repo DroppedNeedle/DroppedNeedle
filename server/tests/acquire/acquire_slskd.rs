@@ -1050,6 +1050,7 @@ async fn album_search_finds_the_same_title_with_different_punctuation() {
         wanted: vec![],
         track: None,
         release_preferred: false,
+        tracklist_unread: false,
     };
 
     let result = choose(&repository(&mock), &target, |_| true).await;
@@ -1170,6 +1171,7 @@ async fn soulseek_picks_follow_the_saved_quality_policy() {
         wanted: Vec::new(),
         track: None,
         release_preferred: false,
+        tracklist_unread: false,
     };
 
     seed_album_task(&journal, "task-mp3-only").await;
@@ -1228,6 +1230,7 @@ async fn soulseek_counts_only_readable_files_as_audio() {
         wanted: Vec::new(),
         track: None,
         release_preferred: false,
+        tracklist_unread: false,
     };
 
     mock.script_responses(vec![

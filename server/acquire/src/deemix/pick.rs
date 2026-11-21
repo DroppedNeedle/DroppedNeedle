@@ -667,6 +667,7 @@ mod tests {
             wanted: Vec::new(),
             track: None,
             release_preferred: mode == Mode::Preferred,
+            tracklist_unread: false,
         }
     }
 

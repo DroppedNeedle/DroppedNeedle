@@ -929,6 +929,7 @@ async fn a_persons_pick_skips_the_fit_and_a_review_pick_must_fit() {
         wanted: Vec::new(),
         track: None,
         release_preferred: false,
+        tracklist_unread: false,
     };
     let candidates = rig.source.search(&target).await.expect("search lists");
     assert_eq!(
@@ -1214,6 +1215,7 @@ async fn a_song_search_lists_an_album_without_the_song() {
             no_album: None,
         }),
         release_preferred: false,
+        tracklist_unread: false,
     };
     let candidates = rig.source.search(&target).await.expect("search lists");
     assert_eq!(candidates.len(), 1);

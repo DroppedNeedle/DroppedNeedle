@@ -23,7 +23,9 @@ use droppedneedle_acquire::search_jobs::store::{
     JobPayload, JobStatus, JobStore, NewJob, PickRefusal, PickedTask, ReviewOutcome,
 };
 use droppedneedle_acquire::search_jobs::{AlbumSearch, SearchJobError, SearchJobs, StartOutcome};
-use droppedneedle_acquire::target::lookup::{AlbumRelease, AlbumTrack};
+use droppedneedle_acquire::target::lookup::{
+    AlbumLookup, AlbumRelease, AlbumTrack, LookupError, ReleaseCandidate,
+};
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::events::model::names;
@@ -31,7 +33,9 @@ use droppedneedle_kernel::events::{EventHub, Subscription};
 use droppedneedle_testkit::slskd::MockSlskd;
 use serde_json::{Value, json};
 
-use crate::common::acquire::{FixedAlbums, review_off_in, save_slskd, worker_over, worker_with};
+use crate::common::acquire::{
+    FixedAlbums, review_off_in, save_slskd, worker_over_catalog, worker_with,
+};
 use crate::common::auth::test_principal;
 use crate::common::bundles::quiet_ticks;
 
@@ -92,17 +96,42 @@ struct Rig {
     events: EventHub,
 }
 
+/// MusicBrainz knowing the album's one release.
+fn fixed_albums() -> FixedAlbums {
+    let mut albums = FixedAlbums::default();
+    albums.releases.insert(RELEASE.to_owned(), album());
+    albums
+}
+
 /// The search service and a worker over the slskd mock, with a fixed
 /// MusicBrainz tracklist. `review` leaves the look before an automatic
 /// grab on, as saved by default.
 async fn rig(mock: &MockSlskd, review: bool) -> Rig {
-    let db = AcquireDb::scratch().expect("scratch db");
+    rig_with(
+        mock,
+        review,
+        Arc::new(fixed_albums()),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        None,
+    )
+    .await
+}
+
+/// [`rig`] with MusicBrainz's release reads through `lookup`, time from
+/// `clock`, and the catalog `catalog` (else one that answers nothing).
+async fn rig_with(
+    mock: &MockSlskd,
+    review: bool,
+    lookup: Arc<dyn AlbumLookup>,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    catalog: Option<droppedneedle_catalog::metadata::Catalog>,
+) -> Rig {
+    let scratch = AcquireDb::scratch().expect("scratch db");
+    let db = AcquireDb::new(scratch.db().clone(), clock);
     db.add_user("u1", "U", "user").await.expect("user seeds");
     db.add_user("u2", "V", "user").await.expect("user seeds");
     let staging = crate::common::ScratchDir::new("search-jobs-staging");
     let journal = Arc::new(Journal::new(db.clone(), quiet_ticks()));
-    let mut albums = FixedAlbums::default();
-    albums.releases.insert(RELEASE.to_owned(), album());
     let settings = droppedneedle_acquire::test_support::scratch_settings(&staging.join("settings"))
         .expect("settings open");
     save_slskd(&settings, &mock.base_url());
@@ -110,13 +139,17 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
         review_off_in(&settings);
     }
     let events = EventHub::new();
-    let (worker, targets) = worker_over(
+    let catalog = match catalog {
+        Some(catalog) => catalog,
+        None => crate::common::bundles::closed_catalog(db.db()).await,
+    };
+    let (worker, targets) = worker_over_catalog(
         &db,
         journal.clone(),
         &settings,
         staging.join("unused-mount"),
-        Arc::new(albums),
-        None,
+        lookup,
+        catalog,
         events.clone(),
     )
     .await;
@@ -491,6 +524,18 @@ async fn automatic_download_waits_for_a_pick_when_unsure() {
 }
 
 async fn seed_album_task(journal: &Journal, task_id: &'static str, origin: &'static str) {
+    seed_task(journal, task_id, origin, Some(RELEASE), 1_000.0).await;
+}
+
+/// A queued album download of `release` (none: no edition asked for),
+/// made at `at`.
+async fn seed_task(
+    journal: &Journal,
+    task_id: &'static str,
+    origin: &'static str,
+    release: Option<&'static str>,
+    at: f64,
+) {
     journal
         .run("test.seed", move |store| {
             store.insert_task(
@@ -503,20 +548,173 @@ async fn seed_album_task(journal: &Journal, task_id: &'static str, origin: &'sta
                     origin: origin.to_owned(),
                     retry_count: 0,
                 },
-                1_000.0,
+                at,
             )?;
             store.set_task_details(
                 task_id,
                 &TaskDetails {
-                    release_mbid: Some(RELEASE.to_owned()),
+                    release_mbid: release.map(str::to_owned),
                     year: Some(1991),
                     ..TaskDetails::default()
                 },
-                1_000.0,
+                at,
             )
         })
         .await
         .expect("task seeds");
+}
+
+/// Wait for every look a pass started to finish, whether or not it told
+/// the owner anything.
+async fn looks_settle(worker: &DownloadWorker) {
+    tokio::time::timeout(crate::common::PATIENCE, async {
+        while worker.reviews_running() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the looks finish");
+}
+
+/// MusicBrainz that answers as `albums` does, except for reads of the
+/// album's release while `down` is set, which fail.
+struct Flaky {
+    down: std::sync::atomic::AtomicBool,
+    albums: FixedAlbums,
+}
+
+impl AlbumLookup for Flaky {
+    fn recording_releases<'a>(
+        &'a self,
+        recording_mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<Option<Vec<ReleaseCandidate>>, LookupError>>
+    {
+        self.albums.recording_releases(recording_mbid)
+    }
+
+    fn release<'a>(
+        &'a self,
+        release_mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<Option<AlbumRelease>, LookupError>> {
+        if release_mbid == RELEASE && self.down.load(std::sync::atomic::Ordering::SeqCst) {
+            return Box::pin(async { Err(LookupError("503".to_owned())) });
+        }
+        self.albums.release(release_mbid)
+    }
+
+    fn first_release_date<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<Option<String>, LookupError>> {
+        self.albums.first_release_date(release_group_mbid)
+    }
+}
+
+/// While MusicBrainz cannot be read for the edition's tracklist, the look
+/// leaves the album queued and unparked; after the wait it looks again,
+/// reads the tracklist and takes the complete folder. An edition
+/// MusicBrainz says it does not know parks at once, and so does an album
+/// queued more than a day ago. An album with no edition asked for, whose
+/// album page edition could not be read, waits as well.
+#[tokio::test]
+async fn an_unread_tracklist_waits_and_looks_again() {
+    use droppedneedle_kernel::test_support::ManualClock;
+    use std::sync::atomic::Ordering;
+
+    const UNKNOWN: &str = "44444444-4444-4444-8444-444444444444";
+    let mock = MockSlskd::start().await.expect("mock starts");
+    mock.script_responses(vec![peer(
+        "complete",
+        "@@music\\Massive Attack\\Blue Lines",
+        &[0, 1, 2, 3],
+    )]);
+    let clock = Arc::new(ManualClock::at(1_800_000_000_000));
+    let lookup = Arc::new(Flaky {
+        down: true.into(),
+        albums: fixed_albums(),
+    });
+    let rig = rig_with(&mock, true, lookup.clone(), clock.clone(), None).await;
+    let now = 1_800_000_000.0;
+    let waits = "0123456789abcdef0123456789abcd01";
+    let unknown = "0123456789abcdef0123456789abcd02";
+    seed_task(&rig.journal, waits, "user", Some(RELEASE), now).await;
+    seed_task(&rig.journal, unknown, "user", Some(UNKNOWN), now).await;
+    let task = |task_id: &'static str| {
+        let journal = rig.journal.clone();
+        async move {
+            journal
+                .read_task(task_id)
+                .await
+                .expect("task reads")
+                .expect("task exists")
+        }
+    };
+
+    rig.worker.run_once(1).await;
+    looks_settle(&rig.worker).await;
+    let waiting = task(waits).await;
+    assert_eq!(waiting.status.as_str(), "queued");
+    assert_eq!(waiting.search_job_id, None, "not parked for a pick");
+    assert!(
+        task(unknown).await.search_job_id.is_some(),
+        "parked at once"
+    );
+    let searched = mock.search_texts().len();
+
+    clock.advance(60 * 1000);
+    rig.worker.run_once(2).await;
+    looks_settle(&rig.worker).await;
+    assert_eq!(
+        mock.search_texts().len(),
+        searched,
+        "it waits before looking again"
+    );
+
+    clock.advance(15 * 60 * 1000);
+    lookup.down.store(false, Ordering::SeqCst);
+    rig.worker.run_once(3).await;
+    looks_settle(&rig.worker).await;
+    let taken = task(waits).await;
+    assert!(taken.search_job_id.is_some(), "looked again");
+    assert_eq!(
+        taken.candidate_index,
+        Some(0),
+        "the complete folder is taken"
+    );
+
+    // Out of the way, so later passes fetch nothing.
+    crate::common::library::TestSql::run_sql(
+        rig.journal.db().db(),
+        &format!("UPDATE download_tasks SET status = 'cancelled' WHERE id = '{waits}'"),
+    )
+    .expect("the taken album is cancelled");
+    let late = "0123456789abcdef0123456789abcd03";
+    seed_task(
+        &rig.journal,
+        late,
+        "user",
+        Some(RELEASE),
+        now - 25.0 * 3600.0,
+    )
+    .await;
+    let no_edition = "0123456789abcdef0123456789abcd04";
+    seed_task(&rig.journal, no_edition, "user", None, now).await;
+    lookup.down.store(true, Ordering::SeqCst);
+    rig.worker.run_once(4).await;
+    looks_settle(&rig.worker).await;
+    let parked = task(late).await;
+    assert!(parked.search_job_id.is_some(), "past a day it parks");
+    assert_eq!(parked.candidate_index, None);
+    assert_eq!(
+        task(no_edition).await.search_job_id,
+        None,
+        "an album page edition that could not be read waits too"
+    );
+    let searched = mock.search_texts().len();
+    rig.worker.run_once(5).await;
+    looks_settle(&rig.worker).await;
+    assert_eq!(mock.search_texts().len(), searched, "it was looked at");
+    drop(rig.staging);
 }
 
 /// Park `task_id` on a recorded search `job_id` with nothing picked.

@@ -8,6 +8,13 @@
 //! setting says, and without one it settles on the next pass with the
 //! library copy kept.
 //!
+//! When MusicBrainz did not answer for the edition's tracklist, no folder
+//! can be judged. Unless every album waits for a pick anyway, a look that
+//! would park then leaves the album queued and
+//! looks again later, each wait as long as the time waited so far, for up
+//! to a day after the album was queued; after that it parks as above. A
+//! copy recommended without the tracklist is still taken.
+//!
 //! A look can take minutes (every source answers under its own time
 //! limit), so it runs on its own task, never inside the worker pass: polls,
 //! landings and the watchdog keep their cadence. At most
@@ -44,12 +51,37 @@ fn lock(set: &Mutex<HashSet<String>>) -> MutexGuard<'_, HashSet<String>> {
     }
 }
 
+/// The first wait before looking again at an album whose edition's
+/// tracklist MusicBrainz did not answer for. Each wait after it is as long
+/// as the time waited so far.
+const FIRST_TRACKLIST_WAIT_SECONDS: f64 = 15.0 * 60.0;
+
+/// How long after it was queued an album keeps waiting for its edition's
+/// tracklist before it waits for a pick instead.
+const TRACKLIST_WAIT_WINDOW_SECONDS: f64 = 24.0 * 3_600.0;
+
 /// What one look decided.
 enum Reviewed {
     /// The task is linked to a candidate or parked; the next pass sees it.
     Recorded,
     /// No look applies or nothing was found: search the usual way.
     Search,
+    /// Nothing could be judged without the edition's tracklist: the task
+    /// stays queued and is looked at again at this time (unix seconds).
+    LookAgainAt(f64),
+}
+
+/// When to look again at an album queued at `queued_at` whose edition's
+/// tracklist could not be read at `now`: after as long again as it has
+/// waited, at least the first wait, and never past the window's end.
+/// `None` once the window is over.
+fn next_look(queued_at: f64, now: f64) -> Option<f64> {
+    let waited = (now - queued_at).max(0.0);
+    if waited >= TRACKLIST_WAIT_WINDOW_SECONDS {
+        return None;
+    }
+    let next = now + waited.max(FIRST_TRACKLIST_WAIT_SECONDS);
+    Some(next.min(queued_at + TRACKLIST_WAIT_WINDOW_SECONDS))
 }
 
 impl DownloadWorker {
@@ -87,9 +119,12 @@ impl DownloadWorker {
         let sources = pass.sources.clone();
         let order = pass.config.source_order.clone();
         tokio::spawn(async move {
-            let outcome = worker.review(mode, &sources, &order, &task).await;
-            if matches!(outcome, Reviewed::Search) {
-                lock(&worker.reviews.looked).insert(task.id.clone());
+            match worker.review(mode, &sources, &order, &task).await {
+                Reviewed::Search => {
+                    lock(&worker.reviews.looked).insert(task.id.clone());
+                }
+                Reviewed::LookAgainAt(at) => worker.wait_until(&task.id, at),
+                Reviewed::Recorded => {}
             }
             lock(&worker.reviews.running).remove(&task.id);
             worker.wake();
@@ -146,6 +181,26 @@ impl DownloadWorker {
         };
         let outcome = match verdict(mode, &candidates) {
             Verdict::Nothing => return Reviewed::Search,
+            // MusicBrainz did not answer for the tracklist, so no folder
+            // could be judged: the album waits and is looked at again,
+            // each wait longer, before it waits for a pick.
+            Verdict::Park
+                if target.tracklist_unread && mode == ReviewMode::WhenUnsure && !upgrade =>
+            {
+                let now = self.now_unix_f64();
+                match next_look(task.created_at, now) {
+                    Some(at) => {
+                        tracing::info!(
+                            task_id = %task.id,
+                            candidates = candidates.len(),
+                            wait_minutes = ((at - now) / 60.0).round(),
+                            "search review: the edition's tracklist could not be read; looking again later"
+                        );
+                        return Reviewed::LookAgainAt(at);
+                    }
+                    None => ReviewOutcome::Park,
+                }
+            }
             Verdict::Park => ReviewOutcome::Park,
             Verdict::Take(index) => {
                 let candidate = &candidates[index];

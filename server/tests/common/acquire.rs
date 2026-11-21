@@ -194,14 +194,59 @@ pub async fn worker_over(
     plugins: Option<Arc<PluginHost>>,
     events: droppedneedle_kernel::events::EventHub,
 ) -> (Arc<DownloadWorker>, Arc<Targets>) {
+    let catalog = super::bundles::closed_catalog(db.db()).await;
+    worker_on(
+        db,
+        journal,
+        settings,
+        slskd_downloads,
+        lookup,
+        catalog,
+        plugins,
+        events,
+    )
+    .await
+}
+
+/// [`worker_over`] with album pages and editions read from `catalog`, and
+/// no plugins.
+pub async fn worker_over_catalog(
+    db: &AcquireDb,
+    journal: Arc<Journal>,
+    settings: &ConfigStore,
+    slskd_downloads: PathBuf,
+    lookup: Arc<dyn AlbumLookup>,
+    catalog: droppedneedle_catalog::metadata::Catalog,
+    events: droppedneedle_kernel::events::EventHub,
+) -> (Arc<DownloadWorker>, Arc<Targets>) {
+    worker_on(
+        db,
+        journal,
+        settings,
+        slskd_downloads,
+        lookup,
+        catalog,
+        None,
+        events,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn worker_on(
+    db: &AcquireDb,
+    journal: Arc<Journal>,
+    settings: &ConfigStore,
+    slskd_downloads: PathBuf,
+    lookup: Arc<dyn AlbumLookup>,
+    catalog: droppedneedle_catalog::metadata::Catalog,
+    plugins: Option<Arc<PluginHost>>,
+    events: droppedneedle_kernel::events::EventHub,
+) -> (Arc<DownloadWorker>, Arc<Targets>) {
     let dir = db.path().parent().expect("scratch dir").to_path_buf();
     let platform = super::TestPlatform::on(db.db(), &dir).build().await;
     let (library, _) = super::library::library_at(&platform);
-    let targets = Arc::new(Targets::new(
-        journal.clone(),
-        lookup,
-        super::bundles::closed_catalog(db.db()).await,
-    ));
+    let targets = Arc::new(Targets::new(journal.clone(), lookup, catalog));
     let landing = Arc::new(LandingService::new(
         journal.clone(),
         Arc::new(LibraryLanding::new(
