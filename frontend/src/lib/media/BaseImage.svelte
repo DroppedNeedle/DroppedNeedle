@@ -142,18 +142,25 @@
 		available &&
 			((useRemoteUrl && resolvedRemoteUrl) ||
 				(imageType === 'album'
-					? canonicalAlbumCoverUrl || resolvedCustomUrl || mbid
+					? canonicalAlbumCoverUrl || resolvedCustomUrl || isValidMbid(mbid)
 					: validMbid || resolvedCustomUrl))
 	);
 	let apiEndpoint: CoverKind = $derived(imageType === 'album' ? 'release-group' : 'artist');
-	let fallbackCoverUrl = $derived(coverSrc(apiEndpoint, mbid, requestedPixels));
+	// The release-group route serves a MusicBrainz id only: a remote
+	// library's album id belongs to that library's cover route (customUrl).
+	let releaseGroupId = $derived(apiEndpoint !== 'release-group' || isValidMbid(mbid));
+	let fallbackCoverUrl = $derived(
+		releaseGroupId ? coverSrc(apiEndpoint, mbid, requestedPixels) : null
+	);
 	let responsiveCoverUrl = $derived(
-		requestSize === 250 && responsiveSizes ? coverSrc(apiEndpoint, mbid, 500) : null
+		requestSize === 250 && responsiveSizes && releaseGroupId
+			? coverSrc(apiEndpoint, mbid, 500)
+			: null
 	);
 	let coverUrl = $derived(
 		imageType === 'album'
-			? (canonicalAlbumCoverUrl ?? resolvedCustomUrl ?? fallbackCoverUrl)
-			: (resolvedCustomUrl ?? fallbackCoverUrl)
+			? (canonicalAlbumCoverUrl ?? resolvedCustomUrl ?? fallbackCoverUrl ?? '')
+			: (resolvedCustomUrl ?? fallbackCoverUrl ?? '')
 	);
 	let displayCoverUrl = $derived(warmResolvedUrl ?? coverUrl);
 	let displayCoverSrcset = $derived.by(() => {
