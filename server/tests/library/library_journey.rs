@@ -1747,11 +1747,11 @@ async fn a_tagging_script_reads_the_files_values_and_writes_the_label() {
     assert_eq!(planned["step"], json!("ready"), "{planned}");
     write_planned(app, &admin, &uri, &queued["preview_token"]).await;
 
-    // The profile's genres come first, in MusicBrainz's spelling.
+    // No source names a genre, so the file keeps its own as written.
     let fields = read_fields(track_file(&file)).expect("fields read");
     assert_eq!(
         fields.get(&TagField::Genre),
-        Some(&vec!["alternative rock".to_owned()])
+        Some(&vec!["Alternative Rock".to_owned()])
     );
     assert_eq!(
         fields.get(&TagField::Comment),
