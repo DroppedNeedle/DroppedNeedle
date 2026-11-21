@@ -5074,3 +5074,282 @@ fn flac_with_two_comment_blocks_keeps_the_last() {
     );
     assert_eq!(std::fs::read(&path).unwrap(), before, "file unchanged");
 }
+
+fn id3_syncsafe(len: usize) -> [u8; 4] {
+    [
+        ((len >> 21) & 0x7F) as u8,
+        ((len >> 14) & 0x7F) as u8,
+        ((len >> 7) & 0x7F) as u8,
+        (len & 0x7F) as u8,
+    ]
+}
+
+/// Build a valid ID3v2.3 tag holding `frames` as `(4-char id, payload)`.
+fn id3v23_tag(frames: &[(&[u8; 4], &[u8])]) -> Vec<u8> {
+    let mut body = Vec::new();
+    for (id, payload) in frames {
+        body.extend_from_slice(*id);
+        body.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        body.extend_from_slice(&[0, 0]);
+        body.extend_from_slice(payload);
+    }
+    let mut tag = b"ID3\x03\x00\x00".to_vec();
+    tag.extend_from_slice(&id3_syncsafe(body.len()));
+    tag.extend_from_slice(&body);
+    tag
+}
+
+/// Build a valid ID3v2.4 tag holding `frames`, with an optional `3DI` footer.
+fn id3v24_tag(frames: &[(&[u8; 4], &[u8])], with_footer: bool) -> Vec<u8> {
+    let mut body = Vec::new();
+    for (id, payload) in frames {
+        body.extend_from_slice(*id);
+        body.extend_from_slice(&id3_syncsafe(payload.len()));
+        body.extend_from_slice(&[0, 0]);
+        body.extend_from_slice(payload);
+    }
+    let size = id3_syncsafe(body.len());
+    let flags = if with_footer { 0x10 } else { 0x00 };
+    let mut tag = vec![b'I', b'D', b'3', 0x04, 0x00, flags];
+    tag.extend_from_slice(&size);
+    tag.extend_from_slice(&body);
+    if with_footer {
+        tag.extend_from_slice(b"3DI\x04\x00\x10");
+        tag.extend_from_slice(&size);
+    }
+    tag
+}
+
+/// A FLAC stream sitting behind a leading ID3v2.3 tag saves its Vorbis
+/// comments, leaves the leading ID3v2 bytes byte-for-byte intact, keeps
+/// unrelated Vorbis comments/vendor/pictures/audio, and every reader agrees
+/// on the edited Vorbis tags without stale ID3v2 leakage (#806).
+#[test]
+fn flac_behind_id3v23_tag_saves_and_preserves_prefix() {
+    let (_scratch, path) = temp_copy("flac_full_01.flac", "flac-id3v23-prefix");
+    flac_inject_pairs(
+        &path,
+        &[
+            ("CUSTOM_KEEP", "unchanged"),
+            ("LYRICS", "[00:01.00]Hello from Vorbis"),
+        ],
+    );
+    let expected_vendor = vorbis_vendor(&path);
+    let expected_cover = tags::read_cover_art(track_file(&path)).unwrap();
+    let expected_pictures = tags::read_document(track_file(&path)).unwrap().pictures;
+    let raw_flac = std::fs::read(&path).unwrap();
+    let (_, expected_audio) = flac_blocks(&raw_flac);
+
+    let prefix = id3v23_tag(&[
+        (b"TIT2", b"\x00Stale ID3 Title"),
+        (b"TXXX", b"\x00CUSTOM_ID3\0kept-in-prefix"),
+    ]);
+    let mut prefixed = prefix.clone();
+    prefixed.extend_from_slice(&raw_flac);
+    std::fs::write(&path, &prefixed).unwrap();
+
+    tags::save_tags(&path, &[TagEdit::set_title("Edited Behind ID3")])
+        .expect("ID3v2.3-prefixed FLAC saves");
+
+    let after = std::fs::read(&path).unwrap();
+    assert!(
+        after.starts_with(&prefix),
+        "ID3v2.3 prefix was stripped or mutated by save (expected {} bytes {:?}, got start {:?})",
+        prefix.len(),
+        &prefix,
+        &after[..after.len().min(prefix.len().max(16))]
+    );
+    let (_, after_audio) = flac_blocks(&after[prefix.len()..]);
+    assert_eq!(after_audio, expected_audio, "audio unchanged");
+    assert_eq!(vorbis_vendor(&path), expected_vendor, "vendor unchanged");
+
+    let doc = tags::read_document(track_file(&path)).expect("read_document");
+    assert_eq!(
+        doc.values.get(&TagField::Title).map(Vec::as_slice),
+        Some(&["Edited Behind ID3".to_owned()][..])
+    );
+    assert_eq!(
+        doc.native.get("vorbis:CUSTOM_KEEP").map(Vec::as_slice),
+        Some(&["unchanged".to_owned()][..])
+    );
+    assert_eq!(doc.pictures, expected_pictures, "pictures unchanged");
+
+    let (scan_tag, _) =
+        tags::read::read_scan_metadata(track_file(&path), AudioFormat::Flac).expect("scan read");
+    assert_eq!(
+        scan_tag.title, "Edited Behind ID3",
+        "scan read must not leak stale ID3v2 TIT2"
+    );
+
+    let cover = tags::read_cover_art(track_file(&path)).expect("read_cover_art");
+    assert_eq!(cover, expected_cover, "cover art unchanged");
+
+    let lyrics = tags::lyrics::read_file_lyrics(track_file(&path)).expect("read_file_lyrics");
+    assert_eq!(lyrics.0, tags::lyrics::LyricsSource::Tag);
+    assert!(!lyrics.1.main.lines().is_empty());
+
+    let kept =
+        tags::save::tags_kept(track_file(&path), PicturesPlan::Untouched).expect("tags_kept");
+    assert_eq!(kept.refusal, None, "tags_kept allows save");
+
+    let probed = tags::probe(track_file(&path)).expect("probe");
+    assert!(probed.sample_rate > 0);
+
+    let fp = tags::generate_fingerprint(track_file(&path)).expect("generate_fingerprint");
+    assert!(!fp.fingerprint.is_empty());
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    tags::loudness::analyse(track_file(&path), deadline).expect("loudness::analyse");
+}
+
+/// A FLAC stream behind an ID3v2.4 tag saves and preserves the prefix
+/// byte-for-byte. When a prepended ID3v2.4 tag also carries a `3DI` footer,
+/// our metadata walk still reads the stream cleanly, and if lofty refuses to
+/// probe past the footer on save, the file on disk is left untouched.
+#[test]
+fn flac_behind_id3v24_tag_saves_and_preserves_prefix() {
+    let (_scratch, path) = temp_copy("flac_full_01.flac", "flac-id3v24-prefix");
+    let raw_flac = std::fs::read(&path).unwrap();
+    let (_, expected_audio) = flac_blocks(&raw_flac);
+
+    let prefix = id3v24_tag(&[(b"TXXX", b"\x03CUSTOM_V24\0v24-prefix")], false);
+    let mut prefixed = prefix.clone();
+    prefixed.extend_from_slice(&raw_flac);
+    std::fs::write(&path, &prefixed).unwrap();
+
+    tags::save_tags(&path, &[TagEdit::set_title("Edited Behind V24")])
+        .expect("ID3v2.4-prefixed FLAC saves");
+
+    let after = std::fs::read(&path).unwrap();
+    assert!(
+        after.starts_with(&prefix),
+        "ID3v2.4 prefix was stripped or mutated by save (expected {} bytes {:?}, got start {:?})",
+        prefix.len(),
+        &prefix,
+        &after[..after.len().min(prefix.len().max(16))]
+    );
+    let (_, after_audio) = flac_blocks(&after[prefix.len()..]);
+    assert_eq!(after_audio, expected_audio, "audio unchanged");
+
+    let doc = tags::read_document(track_file(&path)).expect("read_document");
+    assert_eq!(
+        doc.values.get(&TagField::Title).map(Vec::as_slice),
+        Some(&["Edited Behind V24".to_owned()][..])
+    );
+    let (scan_tag, _) =
+        tags::read::read_scan_metadata(track_file(&path), AudioFormat::Flac).expect("scan read");
+    assert_eq!(scan_tag.title, "Edited Behind V24");
+
+    // With a prepended 3DI footer, metadata walk still reads the FLAC stream,
+    // and lofty's refusal leaves the file untouched.
+    let footer_prefix = id3v24_tag(&[(b"TXXX", b"\x03CUSTOM_V24\0footer-prefix")], true);
+    let mut with_footer = footer_prefix;
+    with_footer.extend_from_slice(&raw_flac);
+    std::fs::write(&path, &with_footer).unwrap();
+    let doc = tags::read_document(track_file(&path)).expect("read_document skips 3DI footer");
+    assert!(doc.values.contains_key(&TagField::Title));
+    let result = tags::save_tags(&path, &[TagEdit::set_title("Should Refuse")]);
+    assert!(
+        matches!(result, Err(TagsError::SaveRefused { .. })),
+        "expected clean SaveRefused when lofty cannot probe 3DI footer, got {result:?}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), with_footer, "file unchanged");
+}
+
+/// A FLAC stream with no Vorbis comment block yet (`truth: None`) behind a
+/// leading ID3v2 tag still saves and preserves the ID3v2 prefix.
+#[test]
+fn flac_without_vorbis_comments_behind_id3v2_tag_saves_and_preserves_prefix() {
+    let (_scratch, path) = temp_copy("flac_full_01.flac", "flac-no-comments-id3v2");
+    flac_strip_comments(&path);
+    let raw_flac = std::fs::read(&path).unwrap();
+    let (_, expected_audio) = flac_blocks(&raw_flac);
+
+    let prefix = id3v23_tag(&[(b"TXXX", b"\x00CUSTOM_ID3\0no-vorbis-yet")]);
+    let mut prefixed = prefix.clone();
+    prefixed.extend_from_slice(&raw_flac);
+    std::fs::write(&path, &prefixed).unwrap();
+
+    tags::save_tags(&path, &[TagEdit::set_title("Created Behind ID3")])
+        .expect("commentless ID3v2-prefixed FLAC saves");
+
+    let after = std::fs::read(&path).unwrap();
+    assert!(
+        after.starts_with(&prefix),
+        "ID3v2 prefix on commentless FLAC was stripped or mutated (expected {} bytes {:?}, got start {:?})",
+        prefix.len(),
+        &prefix,
+        &after[..after.len().min(prefix.len().max(16))]
+    );
+    let (_, after_audio) = flac_blocks(&after[prefix.len()..]);
+    assert_eq!(after_audio, expected_audio, "audio unchanged");
+
+    let doc = tags::read_document(track_file(&path)).expect("read_document");
+    assert_eq!(
+        doc.values.get(&TagField::Title).map(Vec::as_slice),
+        Some(&["Created Behind ID3".to_owned()][..])
+    );
+    let (scan_tag, _) =
+        tags::read::read_scan_metadata(track_file(&path), AudioFormat::Flac).expect("scan read");
+    assert_eq!(scan_tag.title, "Created Behind ID3");
+}
+
+/// An overrunning ID3v2 header in front of a FLAC stream refuses cleanly
+/// with a single, non-double-wrapped `NoByteInventory` error and leaves
+/// the file untouched.
+#[test]
+fn flac_with_overrunning_id3v2_prefix_refuses_cleanly() {
+    let (_scratch, path) = temp_copy("flac_full_01.flac", "flac-overrunning-id3v2");
+    let raw_flac = std::fs::read(&path).unwrap();
+    let mut bad = b"ID3\x03\x00\x00\x0F\x7F\x7F\x7F".to_vec();
+    bad.extend_from_slice(&raw_flac);
+    std::fs::write(&path, &bad).unwrap();
+
+    let err = tags::save_tags(&path, &[TagEdit::set_title("Blocked")])
+        .expect_err("overrunning ID3v2 prefix must be refused");
+    match &err {
+        TagsError::SaveRefused {
+            refusal: Refusal::NoByteInventory { detail },
+            ..
+        } => {
+            assert!(
+                detail.contains("tag overruns the file"),
+                "unexpected detail: {detail}"
+            );
+            assert!(
+                !detail.contains("no byte inventory possible"),
+                "detail must not be double-wrapped: {detail}"
+            );
+        }
+        TagsError::TagRead { .. } => {}
+        other => panic!("expected SaveRefused(NoByteInventory) or TagRead, got {other:?}"),
+    }
+    assert!(
+        !err.to_string()
+            .contains("no byte inventory possible: no byte inventory possible"),
+        "error text must not be double-wrapped: {err}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bad, "file unchanged");
+
+    for (label, result) in [
+        (
+            "read_document",
+            tags::read_document(track_file(&path)).map(|_| ()),
+        ),
+        (
+            "tags_kept",
+            tags::save::tags_kept(track_file(&path), PicturesPlan::Untouched).map(|_| ()),
+        ),
+    ] {
+        let err = result.expect_err(&format!("{label} must refuse overrunning ID3v2 prefix"));
+        match err {
+            TagsError::TagRead { reason, .. } => {
+                assert_eq!(
+                    reason, "no byte inventory possible: tag overruns the file",
+                    "{label}: unexpected reason"
+                );
+            }
+            other => panic!("{label}: expected TagRead, got {other:?}"),
+        }
+    }
+}

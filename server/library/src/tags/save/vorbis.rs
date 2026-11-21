@@ -363,19 +363,32 @@ fn flac_comment_blocks(bytes: &[u8]) -> Result<Vec<Vec<u8>>, String> {
     Ok(comments)
 }
 
-/// Where a FLAC stream's audio starts: right after its last metadata
-/// block.
-pub(super) fn flac_audio_start(bytes: &[u8]) -> Result<usize, String> {
+/// Where a FLAC stream and its audio start: `(stream, audio_start)`,
+/// where `bytes[..stream]` is any leading ID3v2 tag before `fLaC` and
+/// `bytes[audio_start..]` is everything after the last metadata block.
+pub(super) fn flac_regions(bytes: &[u8]) -> Result<(usize, usize), String> {
     flac_metadata(bytes, |_, _| {})
 }
 
 /// Walk a FLAC stream's metadata blocks, handing each block's type and
-/// body to `block`, and return the offset just past the last one.
-fn flac_metadata(bytes: &[u8], mut block: impl FnMut(u8, &[u8])) -> Result<usize, String> {
-    if bytes.len() < 4 || &bytes[..4] != b"fLaC" {
+/// body to `block`, and return `(stream, audio_start)`: where `fLaC`
+/// begins (after any leading ID3v2 tag) and the offset just past the
+/// last metadata block.
+fn flac_metadata(bytes: &[u8], mut block: impl FnMut(u8, &[u8])) -> Result<(usize, usize), String> {
+    // Some taggers write an ID3v2 tag in front of the FLAC stream.
+    // libFLAC and ffmpeg read the stream after it, so the walk starts
+    // there.
+    let stream = super::id3_bytes::id3v2_end(bytes).map_err(|refusal| match refusal {
+        Refusal::NoByteInventory { detail } => detail,
+        other => other.to_string(),
+    })?;
+    if !bytes
+        .get(stream..)
+        .is_some_and(|rest| rest.starts_with(b"fLaC"))
+    {
         return Err("not a FLAC stream".to_owned());
     }
-    let mut offset = 4;
+    let mut offset = stream + 4;
     loop {
         if offset + 4 > bytes.len() {
             return Err("FLAC metadata ends mid-block".to_owned());
@@ -389,7 +402,7 @@ fn flac_metadata(bytes: &[u8], mut block: impl FnMut(u8, &[u8])) -> Result<usize
         block(header & 0x7F, &bytes[offset + 4..offset + 4 + len]);
         offset += 4 + len;
         if header & 0x80 != 0 {
-            return Ok(offset);
+            return Ok((stream, offset));
         }
     }
 }
