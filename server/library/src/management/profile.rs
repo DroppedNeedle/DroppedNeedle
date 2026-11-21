@@ -157,6 +157,26 @@ pub fn pin_assignment(
     })
 }
 
+/// The revisions `profile` had before a default-only migration: the same
+/// profile with each older default sidecar list put back. Empty unless
+/// it carries the current default list.
+pub fn pre_migration_revisions(profile: &LibraryManagementProfile) -> Vec<String> {
+    use droppedneedle_kernel::runtime_config::sections::OrganizationManagementSettings;
+    let current = OrganizationManagementSettings::default().sidecar_patterns;
+    if profile.organization.sidecar_patterns != current {
+        return Vec::new();
+    }
+    settings::sidecar_default_history()
+        .into_iter()
+        .filter(|historical| *historical != current)
+        .map(|historical| {
+            let mut pre_migration = profile.clone();
+            pre_migration.organization.sidecar_patterns = historical;
+            settings::profile_revision(&pre_migration)
+        })
+        .collect()
+}
+
 /// The revisions a preview pins.
 pub fn revisions(stored: &LibraryManagement, pinned: &PinnedProfile, policy: &str) -> Revisions {
     let overrides = serde_json::to_value(&pinned.overrides).unwrap_or(serde_json::Value::Null);

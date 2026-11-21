@@ -40,6 +40,10 @@ pub struct ScriptPin {
 pub struct OrganizedPins<'a> {
     pub profile_id: &'a str,
     pub profile_revision: &'a str,
+    /// The profile's revisions from before a default-only migration
+    /// ([`super::profile::pre_migration_revisions`]): a file written under
+    /// one is as this run would leave it.
+    pub older_profile_revisions: Vec<String>,
     pub naming_revision: &'a str,
     pub tagging_scripts: Vec<ScriptPin>,
     /// The library folder the run moves files into, when not their own.
@@ -158,7 +162,10 @@ fn file_organized(
     let revision = |value: Option<u64>| value.and_then(|value| i64::try_from(value).ok());
     written(state)
         && state.profile_id.as_deref() == Some(pins.profile_id)
-        && state.profile_revision.as_deref() == Some(pins.profile_revision)
+        && state.profile_revision.as_deref().is_some_and(|revision| {
+            revision == pins.profile_revision
+                || pins.older_profile_revisions.iter().any(|older| older == revision)
+        })
         && state.naming_revision.as_deref() == Some(pins.naming_revision)
         && facts.applied_scripts == Some(pins.tagging_scripts.as_slice())
         && state.root_id.as_deref() == Some(pins.expected_root.unwrap_or(facts.root_id))
@@ -495,6 +502,7 @@ mod tests {
         OrganizedPins {
             profile_id: "profile",
             profile_revision: "profile-rev",
+            older_profile_revisions: Vec::new(),
             naming_revision: "naming-rev",
             tagging_scripts: scripts(),
             expected_root,

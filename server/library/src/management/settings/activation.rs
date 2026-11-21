@@ -7,12 +7,11 @@ use utoipa::ToSchema;
 
 use super::impact::active_automatic;
 use super::invalid;
-use super::presets::sidecar_default_history;
 use super::revision::{naming_policy_revision, profile_revision};
 use droppedneedle_kernel::runtime_config::secret_sections::{LibraryRoot, TypedLibrary};
 use droppedneedle_kernel::runtime_config::sections::{
     LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment,
-    MultiDiscNamingMode, NamingScript, OrganizationManagementSettings,
+    MultiDiscNamingMode, NamingScript,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
@@ -191,25 +190,12 @@ pub fn migration_carry_applies(
     let Ok(effective) = pin_profile(settings, assignment) else {
         return false;
     };
-    if effective.organization.sidecar_patterns
-        != OrganizationManagementSettings::default().sidecar_patterns
-    {
-        return false;
-    }
-    for historical in sidecar_default_history() {
-        let mut pre_migration = effective.clone();
-        pre_migration.organization.sidecar_patterns = historical;
-        pre_migration.revision = profile_revision(&pre_migration);
-        // The historical substitution must reproduce the pinned profile
-        // revision exactly; the naming/policy pins are unchanged.
-        if assignment.activation_profile_revision.as_deref()
-            == Some(pre_migration.revision.as_str())
-            && activation_pins_match_except_profile(settings, assignment, library_policy_revision)
-        {
-            return true;
-        }
-    }
-    false
+    // The historical substitution must reproduce the pinned profile
+    // revision exactly; the naming/policy pins are unchanged.
+    crate::management::profile::pre_migration_revisions(&effective)
+        .iter()
+        .any(|revision| assignment.activation_profile_revision.as_deref() == Some(revision))
+        && activation_pins_match_except_profile(settings, assignment, library_policy_revision)
 }
 
 fn activation_pins_match_except_profile(

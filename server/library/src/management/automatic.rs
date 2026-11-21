@@ -1001,18 +1001,20 @@ impl Management {
                 relative_path: &file.relative_path,
             })
             .collect();
+        let organized_pins = OrganizedPins {
+            profile_id: &pinned.profile.id,
+            profile_revision: &revisions.profile,
+            older_profile_revisions: profile::pre_migration_revisions(&pinned.profile),
+            naming_revision: &revisions.naming,
+            tagging_scripts: organized::script_pins(&pinned.tagging_scripts),
+            expected_root: None,
+        };
         // A library whose places cannot be read now has nothing organized.
         let managed = match sandbox.as_ref() {
             Some(sandbox) => self.already_organized(
                 album_id,
                 &at,
-                &OrganizedPins {
-                    profile_id: &pinned.profile.id,
-                    profile_revision: &revisions.profile,
-                    naming_revision: &revisions.naming,
-                    tagging_scripts: organized::script_pins(&pinned.tagging_scripts),
-                    expected_root: None,
-                },
+                &organized_pins,
                 sandbox,
                 &mut AppliedScripts::default(),
             )?,
@@ -1075,18 +1077,8 @@ impl Management {
         // and is left when the retries are used.
         let mut retry = None;
         if let (Some(retries), Some(sandbox)) = (retries, sandbox.as_ref())
-            && let Some(last_run) = self.organized_but_for_sources(
-                album_id,
-                &at,
-                &OrganizedPins {
-                    profile_id: &pinned.profile.id,
-                    profile_revision: &revisions.profile,
-                    naming_revision: &revisions.naming,
-                    tagging_scripts: organized::script_pins(&pinned.tagging_scripts),
-                    expected_root: None,
-                },
-                sandbox,
-            )?
+            && let Some(last_run) =
+                self.organized_but_for_sources(album_id, &at, &organized_pins, sandbox)?
         {
             // The last retry's preview may still wait to be applied (the
             // database was busy, or the library was off when it was

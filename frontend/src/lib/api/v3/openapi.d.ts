@@ -16391,6 +16391,7 @@ export interface components {
              *         "*.cue",
              *         "*.log",
              *         "*.lrc",
+             *         "*.ttml",
              *         "*.m3u",
              *         "*.m3u8",
              *         "*.pls"
@@ -18934,6 +18935,7 @@ export interface components {
              *       "*.cue",
              *       "*.log",
              *       "*.lrc",
+             *       "*.ttml",
              *       "*.m3u",
              *       "*.m3u8",
              *       "*.pls"

@@ -8,10 +8,12 @@ use crate::common;
 use std::path::PathBuf;
 
 use droppedneedle_kernel::runtime_config::sections::{
-    LibraryManagement, LibraryManagementProfile, NamingScript, TaggingScript,
+    DEFAULT_SIDECAR_PATTERNS, LibraryManagement, LibraryManagementProfile, NamingScript,
+    TaggingScript,
 };
 use droppedneedle_library::management::settings::{
-    export_profile_bundle, normalize, parse_profile_bundle, preview_materialized_profile,
+    export_profile_bundle, initial_settings, migrate_presets, normalize, parse_profile_bundle,
+    preview_materialized_profile,
 };
 
 fn fixture(name: &str) -> String {
@@ -90,7 +92,7 @@ fn a_bundle_round_trips() {
         .expect("golden profile exports");
     assert_eq!(
         bundle.bundle_hash,
-        "2a22db4c39829bfd3fecc19668dd6f3f3f08438449ca2cb735508086f35523b0"
+        "eda6d9cac2c5edc7ba5ddb0027afc78fdc14e656c998ad207153c418d000efb7"
     );
     assert_eq!(
         bundle.document,
@@ -131,6 +133,40 @@ fn a_bundle_round_trips() {
     };
     normalize(&mut normalized).expect("profile normalizes");
     assert_eq!(imported.profile, normalized.profiles[0]);
+}
+
+/// The upgrade that adds `*.ttml` to the default sidecar list: a profile
+/// still on the 27-pattern default gets the new list, an edited list is
+/// left alone, and the stored settings carry the new catalog version.
+#[test]
+fn the_preset_migration_adds_ttml_only_to_an_unedited_sidecar_list() {
+    let owned =
+        |patterns: &[&str]| -> Vec<String> { patterns.iter().map(ToString::to_string).collect() };
+    let current = owned(&DEFAULT_SIDECAR_PATTERNS);
+    let older: Vec<String> = current
+        .iter()
+        .filter(|pattern| *pattern != "*.ttml")
+        .cloned()
+        .collect();
+    assert_eq!(older.len(), 27);
+    let mut edited = older.clone();
+    edited.push("*.txt".to_owned());
+    let mut settings = initial_settings();
+    settings.preset_catalog_version = 1;
+    settings.profiles[0].organization.sidecar_patterns = older;
+    settings.profiles[1].organization.sidecar_patterns = edited.clone();
+
+    migrate_presets(&mut settings);
+    assert_eq!(settings.preset_catalog_version, 2);
+    let lists: Vec<&Vec<String>> = settings
+        .profiles
+        .iter()
+        .map(|profile| &profile.organization.sidecar_patterns)
+        .collect();
+    assert_eq!(lists[0].len(), 28);
+    assert!(lists[0].contains(&"*.ttml".to_owned()), "{:?}", lists[0]);
+    assert_eq!(*lists[0], current, "the unedited list is the new default");
+    assert_eq!(*lists[1], edited, "the edited list is left alone");
 }
 
 /// Every malformed import is refused with its documented reason. v2's

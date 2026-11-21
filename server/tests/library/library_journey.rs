@@ -4949,8 +4949,9 @@ async fn an_unreadable_section_can_be_repaired_from_the_page() {
     );
 }
 
-/// Removing an album takes its sidecars (the tracks' lyrics, the folder's
-/// art and cue sheet) to the recycle bin with its music and removes the
+/// Removing an album takes its sidecars (the tracks' `.lrc` and `.ttml`
+/// lyrics, the folder's art and cue sheet) to the recycle bin with its
+/// music and removes the
 /// folders that leaves empty, up to the first that still holds music. Put
 /// back brings every file home, folders included, and emptying the bin
 /// leaves nothing of the removal behind.
@@ -4965,6 +4966,7 @@ async fn an_album_removal_takes_its_sidecars_and_leaves_no_folder_behind() {
     let sidecars = [
         ("Artist/LP/01.lrc", b"[00:01.00]one".as_slice()),
         ("Artist/LP/02.lrc", b"[00:01.00]two".as_slice()),
+        ("Artist/LP/01.ttml", b"<tt/>".as_slice()),
         ("Artist/LP/cover.jpg", b"jpeg bytes".as_slice()),
         ("Artist/LP/LP.cue", b"FILE \"01.flac\" WAVE".as_slice()),
     ];
@@ -4992,7 +4994,7 @@ async fn an_album_removal_takes_its_sidecars_and_leaves_no_folder_behind() {
         .remove_album(&album, true, true, "admin")
         .expect("album removed");
     assert_eq!(removed.track_ids.len(), 2);
-    assert_eq!(removed.recycled.len(), 6, "{:?}", removed.recycled);
+    assert_eq!(removed.recycled.len(), 7, "{:?}", removed.recycled);
     assert!(
         !music.join("Artist").exists(),
         "the emptied album and artist folders are gone"
@@ -5002,7 +5004,7 @@ async fn an_album_removal_takes_its_sidecars_and_leaves_no_folder_behind() {
         "other music stays"
     );
     let bin = music.join(".recycle");
-    assert_eq!(std::fs::read_dir(&bin).expect("bin").count(), 6);
+    assert_eq!(std::fs::read_dir(&bin).expect("bin").count(), 7);
 
     let removal = removed.removal_id.expect("removal id");
     let missing = mutations
@@ -5022,7 +5024,7 @@ async fn an_album_removal_takes_its_sidecars_and_leaves_no_folder_behind() {
     let removed = mutations
         .remove_album(&album, true, true, "admin")
         .expect("album removed again");
-    assert_eq!(removed.recycled.len(), 6);
+    assert_eq!(removed.recycled.len(), 7);
     // Emptying takes only copies that landed before now; this test empties
     // in the same millisecond, so it moves the landings back.
     conn.execute(
@@ -5034,7 +5036,7 @@ async fn an_album_removal_takes_its_sidecars_and_leaves_no_folder_behind() {
         .publishing
         .empty_recycle_bin(library.clock.now_ms() + 1_000, &|| true)
         .expect("the bin empties");
-    assert_eq!(report.deleted, 6);
+    assert_eq!(report.deleted, 7);
     assert_eq!(std::fs::read_dir(&bin).expect("bin").count(), 0);
     assert!(!music.join("Artist").exists());
     let open: i64 = conn
@@ -14312,6 +14314,489 @@ async fn a_folder_preview_leaves_out_albums_already_organized() {
     assert_eq!(summary(&alone.job_id).organized_album_count, 0);
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].album_id, second);
+}
+
+impl ManagedLibrary {
+    /// Change the stored Library Management settings, then read them as
+    /// the settings page does, which migrates and stores them.
+    fn edit_settings(
+        &self,
+        change: impl Fn(&mut droppedneedle_kernel::runtime_config::sections::LibraryManagement),
+    ) {
+        use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
+        use droppedneedle_library::management::settings as lm;
+        let store = self.library.settings.store();
+        let mut settings = store.get::<LibraryManagement>().expect("settings read");
+        change(&mut settings);
+        store.save_blocking(settings).expect("settings saved");
+        lm::service::LibraryManagementService::new(Arc::new(store.clone()))
+            .get_settings()
+            .expect("settings normalized");
+    }
+
+    /// A person's preview of one album with the folder's profile and
+    /// `overrides`, planned.
+    async fn preview_overridden(
+        &self,
+        album: &str,
+        key: &str,
+        overrides: droppedneedle_kernel::runtime_config::sections::LibraryManagementRootOverrides,
+    ) -> (
+        droppedneedle_library::management::models::PreviewHandle,
+        Vec<droppedneedle_library::management::models::PlannedItem>,
+    ) {
+        use droppedneedle_library::management::models::{Selection, SelectionKind};
+        use droppedneedle_library::management::service::PreviewRequest;
+        let management = self.management();
+        let handle = management
+            .create_preview(
+                PreviewRequest {
+                    selection: Selection {
+                        kind: SelectionKind::Albums,
+                        ids: vec![album.to_owned()],
+                        catalog_filter: None,
+                    },
+                    profile_id:
+                        droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID
+                            .to_owned(),
+                    expected_settings_revision: self.settings_revision(),
+                    expected_policy_revision: self
+                        .library
+                        .core
+                        .policy_revision()
+                        .expect("policy revision"),
+                    idempotency_key: Some(key.to_owned()),
+                    target_root_id: None,
+                    overrides: Some(overrides),
+                    include_organized: false,
+                },
+                "admin",
+            )
+            .expect("preview queued");
+        assert!(management_step(&self.library).await, "planning runs");
+        let items = management
+            .items(&handle.job_id, -1, 100, &Default::default())
+            .expect("items")
+            .items;
+        (handle, items)
+    }
+}
+
+/// A `.ttml` with timed lyrics stands in for the `.lrc` a run writes, and
+/// counts as lyrics for "required", only where it will sit beside the
+/// track once the run is done: named like the track's destination, or the
+/// track's own while the track keeps its name and the `.ttml` stays or
+/// travels with the album. A `.ttml` that can't be read or has no times,
+/// one the album leaves behind, or a track renamed away from it, still
+/// gets the `.lrc`. A duplicate resolution places one file by itself with
+/// no sidecars, so there only a `.ttml` already at its destination counts.
+#[tokio::test]
+async fn a_ttml_beside_a_track_stands_in_for_its_lrc() {
+    use droppedneedle_kernel::runtime_config::sections::{
+        FieldMode, LibraryManagementRootOverrides,
+    };
+    use droppedneedle_library::management::duplicates::DuplicateRequest;
+    use droppedneedle_library::management::enrich::LyricsFound;
+    use droppedneedle_library::management::models::{
+        CollisionKind, DuplicateAction, DuplicateIntent, Eligibility, PlannedItem,
+    };
+    use droppedneedle_library::test_support::ScriptedEnrichment;
+
+    let managed = ManagedLibrary::scripted(
+        "lib-ttml-lrc",
+        |profile| {
+            let lyrics = &mut profile.enrichment.lyrics;
+            lyrics.enabled = true;
+            lyrics.write_plain = false;
+            lyrics.write_synced = true;
+            lyrics.required = true;
+            // No credits are scripted here.
+            for field in &mut profile.metadata.fields {
+                if droppedneedle_library::management::enrich::CREDIT_FIELDS
+                    .iter()
+                    .any(|(name, _)| *name == field.field)
+                {
+                    field.mode = FieldMode::Disabled;
+                }
+            }
+        },
+        Arc::new(ScriptedEnrichment {
+            lyrics: Some(LyricsFound {
+                plain: None,
+                synced: Some("[00:01.00]Placeholder words\n".to_owned()),
+            }),
+            ..Default::default()
+        }),
+    )
+    .await;
+    let (album, tracks) = managed.add_album("first", 3).await;
+    let folder = managed.music.join("first");
+    // Named with its extension in capitals, as lyrics are still read.
+    std::fs::copy(
+        fixtures_dir().join("lyrics_words.ttml"),
+        folder.join("01.TTML"),
+    )
+    .expect("timed ttml");
+    std::fs::write(
+        folder.join("02.ttml"),
+        "<tt xmlns=\"http://www.w3.org/ns/ttml\"><body><p begin=\"1s\">Placeholder",
+    )
+    .expect("malformed ttml");
+    std::fs::write(
+        folder.join("03.ttml"),
+        "<tt xmlns=\"http://www.w3.org/ns/ttml\" \
+         xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\" itunes:timing=\"None\">\
+         <body><div><p begin=\"00:01.000\" end=\"00:02.000\">Placeholder words</p></div>\
+         </body></tt>",
+    )
+    .expect("untimed ttml");
+    let item = |items: &[PlannedItem], track: &str| -> PlannedItem {
+        items
+            .iter()
+            .find(|item| item.track_id.as_deref() == Some(track))
+            .cloned()
+            .expect("item for the track")
+    };
+    // The `.lrc` the file's plan writes, from a plan that writes.
+    let lrc = |items: &[PlannedItem], track: &str| -> Option<String> {
+        let item = item(items, track);
+        assert!(
+            item.eligibility.writes(),
+            "{:?} {:?}",
+            item.reason(),
+            item.facts
+        );
+        item.diff
+            .generated
+            .iter()
+            .find(|file| file.kind == "lyrics")
+            .map(|file| file.destination_relative_path.clone())
+    };
+    let organize = |rename: bool, moves: bool, sidecars: bool| LibraryManagementRootOverrides {
+        rename_enabled: Some(rename),
+        move_enabled: Some(moves),
+        move_sidecars: Some(sidecars),
+        ..Default::default()
+    };
+
+    let (_, items) = managed
+        .preview_overridden(&album, "in place", organize(false, false, true))
+        .await;
+    assert_eq!(lrc(&items, &tracks[0]), None, "its .ttml stays beside it");
+    assert_eq!(lrc(&items, &tracks[1]).as_deref(), Some("first/02.lrc"));
+    assert_eq!(lrc(&items, &tracks[2]).as_deref(), Some("first/03.lrc"));
+
+    let (_, items) = managed
+        .preview_overridden(&album, "folder moves", organize(false, true, true))
+        .await;
+    assert_eq!(lrc(&items, &tracks[0]), None, "its .ttml travels with it");
+    assert!(
+        items.iter().any(|item| item
+            .diff
+            .sidecars
+            .iter()
+            .any(|sidecar| sidecar.source_relative_path == "first/01.TTML")),
+        "{items:?}"
+    );
+    assert!(lrc(&items, &tracks[1]).is_some());
+
+    let (_, items) = managed
+        .preview_overridden(&album, "sidecars stay", organize(false, true, false))
+        .await;
+    assert!(lrc(&items, &tracks[0]).is_some(), "its .ttml stays behind");
+
+    let (_, items) = managed
+        .preview_overridden(&album, "renamed", organize(true, true, true))
+        .await;
+    assert!(
+        lrc(&items, &tracks[0]).is_some(),
+        "renamed away from its .ttml"
+    );
+
+    // With no lyrics to write (LRCLIB has no plain lyrics, and synced
+    // ones are not written), "required" counts the travelling `.ttml` for
+    // the album, but not for the file placed by itself.
+    managed.edit_settings(|settings| {
+        for profile in &mut settings.profiles {
+            profile.enrichment.lyrics.write_plain = true;
+            profile.enrichment.lyrics.write_synced = false;
+        }
+    });
+    let (_, items) = managed
+        .preview_overridden(&album, "required", organize(false, true, true))
+        .await;
+    let first = item(&items, &tracks[0]);
+    assert_eq!(
+        first.reason().map(|reason| reason.code.as_str()),
+        Some("BUNDLE_BLOCKED")
+    );
+    for track in &tracks[1..] {
+        assert_eq!(
+            item(&items, track)
+                .reason()
+                .map(|reason| reason.code.as_str()),
+            Some("METADATA_UNAVAILABLE")
+        );
+    }
+    let dest = first.dest_rel.clone().expect("a destination");
+    std::fs::create_dir_all(managed.music.join(&dest).parent().expect("folder"))
+        .expect("folder made");
+    std::fs::write(managed.music.join(&dest), b"in the way").expect("file in the way");
+    let (clash, items) = managed
+        .preview_overridden(&album, "clash", organize(false, true, true))
+        .await;
+    let blocked = item(&items, &tracks[0]);
+    assert_eq!(blocked.eligibility, Eligibility::Blocked);
+    assert_eq!(
+        blocked.reason().map(|reason| reason.code.as_str()),
+        Some("PATH_COLLISION_DIFFERENT")
+    );
+    let management = managed.management();
+    let resolve = management
+        .create_duplicate_preview(
+            DuplicateRequest {
+                intent: DuplicateIntent {
+                    source_job_id: clash.job_id.clone(),
+                    source_plan_item_ordinal: blocked.ordinal,
+                    collision_kind: CollisionKind::SamePathDifferentContent,
+                    existing_root_id: "music".to_owned(),
+                    existing_relative_path: dest,
+                    existing_local_track_id: None,
+                    action: DuplicateAction::KeepExisting,
+                    alternate_relative_path: None,
+                },
+                expected_source_row_revision: management
+                    .detail(&clash.job_id)
+                    .expect("clash detail")
+                    .job
+                    .row_revision,
+                expected_settings_revision: managed.settings_revision(),
+                expected_policy_revision: managed
+                    .library
+                    .core
+                    .policy_revision()
+                    .expect("policy revision"),
+                idempotency_key: "keep existing".to_owned(),
+            },
+            "admin",
+        )
+        .expect("duplicate preview");
+    assert!(
+        management_step(&managed.library).await,
+        "duplicate planning runs"
+    );
+    let placed = management
+        .items(&resolve.job_id, -1, 10, &Default::default())
+        .expect("duplicate items")
+        .items;
+    assert_eq!(
+        placed[0].reason().map(|reason| reason.code.as_str()),
+        Some("METADATA_UNAVAILABLE"),
+        "{placed:?}"
+    );
+}
+
+/// A folder's sidecars travel to the folder of its first moving file, so
+/// in a flat two-disc folder split into a folder per disc, both `.ttml`
+/// files land beside the first disc's track: only that track goes without
+/// an `.lrc`, and the second disc's track gets its own.
+#[tokio::test]
+async fn a_ttml_counts_only_where_the_folder_s_sidecars_go() {
+    use droppedneedle_kernel::runtime_config::sections::{
+        FieldMode, LibraryManagementRootOverrides,
+    };
+    use droppedneedle_library::management::enrich::LyricsFound;
+    use droppedneedle_library::matching::model::ReleaseMedium;
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::test_support::ScriptedEnrichment;
+
+    let managed = ManagedLibrary::scripted(
+        "lib-ttml-discs",
+        |profile| {
+            let lyrics = &mut profile.enrichment.lyrics;
+            lyrics.enabled = true;
+            lyrics.write_plain = false;
+            lyrics.write_synced = true;
+            // No credits are scripted here.
+            for field in &mut profile.metadata.fields {
+                if droppedneedle_library::management::enrich::CREDIT_FIELDS
+                    .iter()
+                    .any(|(name, _)| *name == field.field)
+                {
+                    field.mode = FieldMode::Disabled;
+                }
+            }
+        },
+        Arc::new(ScriptedEnrichment {
+            lyrics: Some(LyricsFound {
+                plain: None,
+                synced: Some("[00:01.00]Placeholder words\n".to_owned()),
+            }),
+            ..Default::default()
+        }),
+    )
+    .await;
+    let nth = managed.albums.replace(managed.albums.get() + 1);
+    let mut relative = Vec::new();
+    for disc in [1, 2] {
+        let rel = format!("flat/0{disc}.flac");
+        let file = plant(&managed.music, &rel, "management_full.flac");
+        let mut edits = vec![
+            TagEdit::verbatim(TagField::Title, vec![format!("flat {disc}")]),
+            TagEdit::verbatim(TagField::DiscNumber, vec![disc.to_string()]),
+            TagEdit::verbatim(TagField::TrackNumber, vec!["1".to_owned()]),
+        ];
+        if disc > 1 {
+            edits.extend([
+                TagEdit::verbatim(TagField::MusicBrainzRecordingId, Vec::new()),
+                TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+            ]);
+        }
+        save_tags(&file, &edits).expect("track retagged");
+        std::fs::copy(
+            fixtures_dir().join("lyrics_words.ttml"),
+            managed.music.join(format!("flat/0{disc}.ttml")),
+        )
+        .expect("timed ttml");
+        relative.push(rel);
+    }
+    let (album, tracks) = managed
+        .index_album(nth, &relative, |release| {
+            release.media = [1, 2]
+                .map(|position| ReleaseMedium {
+                    position,
+                    track_count: 1,
+                    ..ReleaseMedium::default()
+                })
+                .to_vec();
+        })
+        .await;
+
+    let (_, items) = managed
+        .preview_overridden(
+            &album,
+            "split",
+            LibraryManagementRootOverrides {
+                rename_enabled: Some(false),
+                move_enabled: Some(true),
+                move_sidecars: Some(true),
+                ..Default::default()
+            },
+        )
+        .await;
+    let planned: Vec<(String, Option<String>)> = tracks
+        .iter()
+        .map(|track| {
+            let item = items
+                .iter()
+                .find(|item| item.track_id.as_deref() == Some(track.as_str()))
+                .expect("item for the track");
+            assert!(
+                item.eligibility.writes(),
+                "{:?} {:?}",
+                item.reason(),
+                item.facts
+            );
+            let lrc = item
+                .diff
+                .generated
+                .iter()
+                .find(|file| file.kind == "lyrics")
+                .map(|file| file.destination_relative_path.clone());
+            (item.dest_rel.clone().expect("a destination"), lrc)
+        })
+        .collect();
+    let folder = |rel: &str| Path::new(rel).parent().map(Path::to_path_buf);
+    assert_ne!(
+        folder(&planned[0].0),
+        folder(&planned[1].0),
+        "a folder per disc: {planned:?}"
+    );
+    assert_eq!(planned[0].1, None, "both .ttml files land beside it");
+    assert_eq!(
+        planned[1].1.as_deref(),
+        Some(
+            Path::new(&planned[1].0)
+                .with_extension("lrc")
+                .to_string_lossy()
+                .as_ref()
+        ),
+        "its .ttml lands in the first disc's folder"
+    );
+}
+
+/// An album organized while the default sidecar list had 27 patterns
+/// stays organized once the upgrade adds `*.ttml` to an unedited list: a
+/// folder preview leaves it out, and automatic management, on without a
+/// new dry run, finds it already managed.
+#[tokio::test]
+async fn an_album_organized_under_the_older_sidecar_list_stays_organized() {
+    use droppedneedle_kernel::runtime_config::sections::{
+        DEFAULT_SIDECAR_PATTERNS, LibraryManagement,
+    };
+    use droppedneedle_library::management::models::SelectionKind;
+    use droppedneedle_library::management::settings as lm;
+
+    let current: Vec<String> = DEFAULT_SIDECAR_PATTERNS
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    let older: Vec<String> = current
+        .iter()
+        .filter(|pattern| *pattern != "*.ttml")
+        .cloned()
+        .collect();
+    assert_eq!(older.len(), 27);
+    let managed = ManagedLibrary::start("lib-organized-older-sidecars", |profile| {
+        profile.organization.sidecar_patterns = older.clone();
+    })
+    .await;
+    let (album, _) = managed.add_album("first", 2).await;
+    let (organize, _) = managed
+        .preview(SelectionKind::Roots, &["music"], "organize")
+        .await;
+    management_apply(&managed.library, &organize).await;
+    rescan(&managed.library).await;
+    managed.activate().await;
+
+    // The upgrade: settings stored under the older preset catalog are
+    // migrated by the next read.
+    managed.edit_settings(|settings| settings.preset_catalog_version = 1);
+    let stored: LibraryManagement = managed
+        .library
+        .settings
+        .store()
+        .get()
+        .expect("settings read");
+    let picard = stored
+        .profiles
+        .iter()
+        .find(|profile| profile.id == lm::PICARD_ORGANIZER_PROFILE_ID)
+        .expect("the profile");
+    assert_eq!(picard.organization.sidecar_patterns, current);
+
+    let (again, items) = managed
+        .preview(SelectionKind::Roots, &["music"], "again")
+        .await;
+    assert!(items.is_empty(), "{items:?}");
+    let summary = managed
+        .management()
+        .detail(&again.job_id)
+        .expect("detail")
+        .summary;
+    assert_eq!(summary.organized_album_count, 1);
+
+    managed.look(&album).await;
+    assert!(managed.automatic_runs().is_empty());
+    assert_eq!(
+        managed.count(&format!(
+            "SELECT COUNT(*) FROM library_management_automatic_queue \
+             WHERE local_album_id = '{album}'"
+        )),
+        0,
+        "looked at and found already managed, not parked"
+    );
 }
 
 /// Albums already exactly as the profile wants, with no record of it (left

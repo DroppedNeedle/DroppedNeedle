@@ -17,7 +17,7 @@ use droppedneedle_kernel::runtime_config::sections::{
 /// Management settings schema version.
 pub const MANAGEMENT_SCHEMA_VERSION: i64 = 1;
 /// Preset catalog version.
-pub const PRESET_CATALOG_VERSION: i64 = 1;
+pub const PRESET_CATALOG_VERSION: i64 = 2;
 /// Picard organizer preset version.
 pub const PICARD_ORGANIZER_PRESET_VERSION: i64 = 6;
 /// Picard organizer profile id.
@@ -494,15 +494,49 @@ pub fn initial_settings() -> LibraryManagement {
     settings
 }
 
-/// Sidecar-pattern history: legacy (`cover`+cue/log/lrc/m3u/pls),
-/// current 27-pattern default, and the skipped-aquarium lineage.
+/// The 27-pattern default sidecar list, before `*.ttml` joined it.
+const PRE_TTML_DEFAULT_SIDECAR_PATTERNS: &[&str] = &[
+    "cover.jpg",
+    "cover.jpeg",
+    "cover.png",
+    "cover.webp",
+    "folder.jpg",
+    "folder.jpeg",
+    "folder.png",
+    "front.jpg",
+    "front.png",
+    "back.jpg",
+    "back.jpeg",
+    "back.png",
+    "back.webp",
+    "booklet*.jpg",
+    "booklet*.jpeg",
+    "booklet*.png",
+    "booklet*.webp",
+    "medium*.jpg",
+    "medium*.jpeg",
+    "medium*.png",
+    "medium*.webp",
+    "*.cue",
+    "*.log",
+    "*.lrc",
+    "*.m3u",
+    "*.m3u8",
+    "*.pls",
+];
+
+/// Sidecar-pattern history, oldest first: legacy
+/// (`cover`+cue/log/lrc/m3u/pls), the 27-pattern default, and the current
+/// default.
 pub fn sidecar_default_history() -> Vec<Vec<String>> {
-    let legacy: Vec<String> = LEGACY_DEFAULT_SIDECAR_PATTERNS
-        .iter()
-        .map(ToString::to_string)
-        .collect();
+    let owned =
+        |patterns: &[&str]| -> Vec<String> { patterns.iter().map(ToString::to_string).collect() };
     let current: Vec<String> = OrganizationManagementSettings::default().sidecar_patterns;
-    vec![legacy, current]
+    vec![
+        owned(LEGACY_DEFAULT_SIDECAR_PATTERNS),
+        owned(PRE_TTML_DEFAULT_SIDECAR_PATTERNS),
+        current,
+    ]
 }
 
 /// Migrate stored settings to the current preset catalog: refresh

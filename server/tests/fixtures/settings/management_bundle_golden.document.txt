@@ -1,5 +1,5 @@
 {
-  "checksum": "sha256:2a22db4c39829bfd3fecc19668dd6f3f3f08438449ca2cb735508086f35523b0",
+  "checksum": "sha256:eda6d9cac2c5edc7ba5ddb0027afc78fdc14e656c998ad207153c418d000efb7",
   "format": "droppedneedle-library-profile",
   "payload": {
     "naming_scripts": [
@@ -147,6 +147,7 @@
           "*.cue",
           "*.log",
           "*.lrc",
+          "*.ttml",
           "*.m3u",
           "*.m3u8",
           "*.pls"

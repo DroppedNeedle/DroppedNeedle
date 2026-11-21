@@ -14,7 +14,7 @@ pub const LIBRARY_MANAGEMENT_SCHEMA_VERSION: i64 = 1;
 pub const PICARD_ORGANIZER_NAMING_SCRIPT_ID: &str = "69202666-cb88-52b0-bac2-0afc62b1e909";
 
 /// Default sidecar patterns (v2 `DEFAULT_SIDECAR_PATTERNS`).
-pub const DEFAULT_SIDECAR_PATTERNS: [&str; 27] = [
+pub const DEFAULT_SIDECAR_PATTERNS: [&str; 28] = [
     "cover.jpg",
     "cover.jpeg",
     "cover.png",
@@ -39,6 +39,7 @@ pub const DEFAULT_SIDECAR_PATTERNS: [&str; 27] = [
     "*.cue",
     "*.log",
     "*.lrc",
+    "*.ttml",
     "*.m3u",
     "*.m3u8",
     "*.pls",

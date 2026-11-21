@@ -7,7 +7,7 @@
 //! blocked, the others wait with a reason saying so.
 
 use crate::identity::ReleaseIdentity;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension as _, params};
@@ -529,7 +529,88 @@ fn destination(
     Ok(Some((dest_root, dest.to_string_lossy().into_owned())))
 }
 
-/// Plan one file. Errors are the file's reason to be left alone.
+/// The folder part of a relative path, as sidecar planning names it.
+fn parent_folder(rel: &str) -> String {
+    Path::new(rel)
+        .parent()
+        .map(|parent| parent.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// The file that carries each moving folder's sidecars, by source
+/// `(root, folder)`: where they go, as `(root, folder)`. The first file
+/// planned to move out of a folder carries them, as [`plan_sidecars`]
+/// chooses.
+type SidecarCarriers = HashMap<(String, String), (String, String)>;
+
+/// Whether a `.ttml` holding synced lyrics will sit beside the file once
+/// it is placed: one already named like its destination, or, when the
+/// file keeps its name, its own `.ttml` travelling with the album's
+/// sidecars into the file's own new folder. Lyrics are read from the
+/// `.ttml` first, so an `.lrc` beside it would never be read. Without
+/// `carriers` (a file planned by itself, whose sidecars are not planned)
+/// only one already there counts.
+fn ttml_at_destination(
+    ctx: &PlanContext<'_>,
+    track: &CatalogTrack,
+    dest_root: &str,
+    dest_rel: &str,
+    carriers: Option<&SidecarCarriers>,
+) -> bool {
+    // The `.ttml` named like the file at `rel` (its extension in any
+    // case, as lyrics are read), when it holds synced lyrics: its name.
+    let usable = |root: &str, rel: &str| -> Option<String> {
+        let root_dir = ctx.sandbox.root_dir(root).ok()?;
+        let audio = ctx.sandbox.resolve_no_symlink(root, rel).ok()?;
+        let folder = audio.parent()?;
+        if !folder.symlink_metadata().is_ok_and(|meta| meta.is_dir()) {
+            return None;
+        }
+        let listed = tags::lyrics::Sidecars::list(folder);
+        let ttml = listed.for_track(&audio).ttml?.to_path_buf();
+        tags::lyrics::read_ttml_file(TrackFile::new(root_dir, &ttml))
+            .filter(|lyrics| lyrics.main.synced())
+            .and_then(|_| {
+                ttml.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+    };
+    if usable(dest_root, dest_rel).is_some() {
+        return true;
+    }
+    let Some(carriers) = carriers else {
+        return false;
+    };
+    let (source, dest) = (Path::new(&track.relative_path), Path::new(dest_rel));
+    if source.file_stem() != dest.file_stem() {
+        return false;
+    }
+    let (source_dir, dest_dir) = (parent_folder(&track.relative_path), parent_folder(dest_rel));
+    // A file that keeps its folder and name keeps its `.ttml` path,
+    // checked above.
+    if track.root_id == dest_root && source_dir == dest_dir {
+        return false;
+    }
+    let organization = &ctx.pinned.profile.organization;
+    let travels_here = carriers
+        .get(&(track.root_id.clone(), source_dir.clone()))
+        .is_some_and(|(root, folder)| root == dest_root && *folder == dest_dir);
+    if !organization.move_sidecars || source_dir.is_empty() || !travels_here {
+        return false;
+    }
+    let patterns: Vec<Vec<char>> = organization
+        .sidecar_patterns
+        .iter()
+        .map(|pattern| caseless::default_case_fold_str(pattern).chars().collect())
+        .collect();
+    usable(&track.root_id, &track.relative_path)
+        .is_some_and(|name| sidecar_match(&patterns, &caseless::default_case_fold_str(&name)))
+}
+
+/// Plan one file. Errors are the file's reason to be left alone. A file
+/// that moves registers as its folder's sidecar carrier in `carriers` when
+/// it is the first; `None` is a file planned by itself, without its
+/// album's sidecars.
 #[allow(clippy::too_many_arguments)]
 fn plan_file(
     ctx: &PlanContext<'_>,
@@ -541,6 +622,7 @@ fn plan_file(
     album_identity_revision: u64,
     overrides: &Overrides,
     extras: &super::enrich::AlbumExtras,
+    mut carriers: Option<&mut SidecarCarriers>,
 ) -> Result<(), ItemReason> {
     let store = &ctx.parts.identify_store;
     let (recording_mbid, release_track_mbid, mapping_revision, release_track) =
@@ -674,6 +756,13 @@ fn plan_file(
     let (dest_root, dest_rel) =
         destination.unwrap_or_else(|| (track.root_id.clone(), track.relative_path.clone()));
     let moves = dest_root != track.root_id || dest_rel != track.relative_path;
+    // A file planned past here either moves as planned or blocks its
+    // album, so the carrier matches the one `plan_sidecars` picks.
+    if moves && let Some(carriers) = carriers.as_deref_mut() {
+        carriers
+            .entry((track.root_id.clone(), parent_folder(&track.relative_path)))
+            .or_insert_with(|| (dest_root.clone(), parent_folder(&dest_rel)));
+    }
     item.dest_root = Some(dest_root.clone());
     item.dest_rel = Some(dest_rel.clone());
     item.fingerprint = fingerprint.sha256.clone();
@@ -765,10 +854,17 @@ fn plan_file(
         .sandbox
         .resolve_no_symlink(&dest_root, &lrc_rel)
         .is_ok_and(|path| path.symlink_metadata().is_ok());
+    let found_synced = match &lyrics {
+        super::enrich::LyricsAnswer::Found(found) => found.synced.as_ref(),
+        _ => None,
+    };
+    let ttml_there = lyrics_settings.enabled
+        && ((lyrics_settings.write_synced && found_synced.is_some()) || lyrics_settings.required)
+        && ttml_at_destination(ctx, track, &dest_root, &dest_rel, carriers.as_deref());
     if lyrics_settings.enabled
         && lyrics_settings.write_synced
-        && let super::enrich::LyricsAnswer::Found(found) = &lyrics
-        && let Some(synced) = &found.synced
+        && !ttml_there
+        && let Some(synced) = found_synced
     {
         if lrc_there {
             let same = ctx
@@ -803,7 +899,7 @@ fn plan_file(
             .desired
             .get(TagField::Lyrics.name())
             .is_some_and(|values| values.iter().any(|value| !value.trim().is_empty()));
-        if !embedded && outputs.is_empty() && !lrc_there {
+        if !embedded && outputs.is_empty() && !lrc_there && !ttml_there {
             return Err(reasons::metadata_unavailable("lyrics"));
         }
     }
@@ -2003,14 +2099,16 @@ fn plan_sidecars(ctx: &PlanContext<'_>, items: &mut [PlannedItem]) {
         return;
     }
     // Every folder the album's files move out of (one per disc for an
-    // album kept in disc subfolders) takes its own sidecars along.
+    // album kept in disc subfolders) takes its own sidecars along, carried
+    // by its first moving file: the same choice `plan_file` records in its
+    // sidecar carriers, so keep the two in step.
     let mut folders = HashSet::new();
     let firsts: Vec<usize> = items
         .iter()
         .enumerate()
         .filter_map(|(index, item)| {
             let plan = item.desired.plan.as_ref()?;
-            let folder = Path::new(&plan.source_rel).parent()?.to_path_buf();
+            let folder = parent_folder(&plan.source_rel);
             (plan.kind == PlanKind::Move && folders.insert((plan.source_root.clone(), folder)))
                 .then_some(index)
         })
@@ -2032,13 +2130,10 @@ fn plan_folder_sidecars(
     let Some(plan) = items[index].desired.plan.clone() else {
         return;
     };
-    let parent = |rel: &str| {
-        Path::new(rel)
-            .parent()
-            .map(|parent| parent.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    };
-    let (source_dir, dest_dir) = (parent(&plan.source_rel), parent(&plan.dest_rel));
+    let (source_dir, dest_dir) = (
+        parent_folder(&plan.source_rel),
+        parent_folder(&plan.dest_rel),
+    );
     if source_dir == dest_dir && plan.source_root == plan.dest_root {
         return;
     }
@@ -2313,6 +2408,7 @@ pub fn plan_album(
         !person,
         &mut extras,
     );
+    let mut carriers = SidecarCarriers::new();
     for ((item, track), overrides) in items.iter_mut().zip(tracks).zip(&saved) {
         // An automatic run never writes a file without the AcoustID id it
         // would have had: it waits for AcoustID.
@@ -2330,6 +2426,7 @@ pub fn plan_album(
             album_identity_revision,
             overrides,
             &extras,
+            Some(&mut carriers),
         ) {
             item.block(reason);
         }
@@ -2453,6 +2550,7 @@ pub fn plan_one(
                 album_identity_revision,
                 &overrides,
                 &extras,
+                None,
             ) {
                 item.block(reason);
             }

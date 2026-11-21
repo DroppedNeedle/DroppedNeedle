@@ -1570,6 +1570,7 @@ impl Management {
         let organized_pins = OrganizedPins {
             profile_id: &pinned.profile.id,
             profile_revision: &snapshot.profile_revision,
+            older_profile_revisions: profile::pre_migration_revisions(&pinned.profile),
             naming_revision: &snapshot.naming_revision,
             tagging_scripts: organized::script_pins(&pinned.tagging_scripts),
             expected_root: snapshot.target_root_id.as_deref(),
