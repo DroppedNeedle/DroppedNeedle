@@ -22351,6 +22351,65 @@
         ]
       }
     },
+    "/api/v3/library/tracks/{id}/loudness": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "A track's gains and peaks for evening out volume: measured first, the\nfile's tags second.",
+        "operationId": "get_track_loudness",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local track id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The track's levelling numbers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackLoudnessView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown track, or one not in the library now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/library/tracks/{id}/lyrics": {
       "get": {
         "tags": [
@@ -68489,6 +68548,44 @@
           "album",
           "random"
         ]
+      },
+      "TrackLoudnessView": {
+        "type": "object",
+        "description": "A track's levelling numbers, as ReplayGain 2.0 gives them. Each is null\nwhen neither a measurement nor the file's tags give it.",
+        "properties": {
+          "album_gain_db": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Gain in dB that brings the track's album to the reference."
+          },
+          "album_peak": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The album's largest sample."
+          },
+          "track_gain_db": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Gain in dB that brings the track to the -18 LUFS reference."
+          },
+          "track_peak": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The track's largest sample, 1.0 being full scale."
+          }
+        }
       },
       "TrackPage": {
         "type": "object",

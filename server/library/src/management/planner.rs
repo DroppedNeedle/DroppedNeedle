@@ -1599,12 +1599,12 @@ fn measure_replaygain(
         };
         match result {
             Ok(found) => measured.push((*track_id, found)),
-            Err(Unanalysed::OutOfTime) => {
+            Err(Unanalysed::OutOfTime | Unanalysed::Stopped) => {
                 extras.replaygain_note =
                     Some("Measuring the album took too long, so it was stopped.".to_owned());
                 return;
             }
-            Err(Unanalysed::Undecodable) => whole = false,
+            Err(Unanalysed::Undecodable | Unanalysed::Unreadable) => whole = false,
         }
     }
     let album = (settings.album_aware && whole && whole_album)

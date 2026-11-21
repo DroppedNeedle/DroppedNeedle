@@ -29,6 +29,7 @@ use super::duplicates::Duplicates;
 use super::identify::service::{IdentifyDeps, IdentifyService};
 use super::identify::sqlite::SqliteIdentifyStore;
 use super::import::Imports;
+use super::loudness::Loudness;
 use super::management::enrich::EnrichmentPort;
 use super::management::service::Management;
 use super::management::settings::service::LibraryManagementService;
@@ -302,6 +303,7 @@ impl LibraryCore {
     /// stat per folder.
     pub fn sweep_soon(&self) {
         self.wakeups.notify(super::jobs::SWEEP_WAKEUP);
+        self.wakeups.notify(super::loudness::WAKEUP);
         self.wakeups.notify("scan");
     }
 
@@ -429,6 +431,8 @@ pub struct LibrarySetup {
     pub publishing: Publishing,
     /// Finished downloads brought into the library.
     pub imports: Imports,
+    /// Each track's measured loudness, and the loop's passes.
+    pub loudness: Loudness,
 }
 
 impl LibrarySetup {
@@ -508,6 +512,7 @@ impl LibrarySetup {
         let io = BlockingPool::new(IO_WORKERS);
         let cpu = BlockingPool::new(cpu_workers());
         let wakeups = core.wakeups.clone();
+        let scan_changed = wakeups.clone();
         let coordinator = Arc::new(ScanCoordinator::new(
             scan_store.clone(),
             io.clone(),
@@ -524,6 +529,7 @@ impl LibrarySetup {
                     && event.event == "scan.transition"
                     && event.changed
                 {
+                    scan_changed.notify(super::loudness::WAKEUP);
                     scan_completed();
                 }
             })),
@@ -598,6 +604,12 @@ impl LibrarySetup {
             releases,
             fingerprints,
         };
+        let loudness = Loudness::new(
+            db.clone(),
+            core.clone(),
+            coordinator.clone(),
+            platform.clock.clone(),
+        );
         Ok(Self {
             ids: platform.ids.clone(),
             management_settings: Arc::new(LibraryManagementService::new(platform.settings.clone())),
@@ -630,6 +642,7 @@ impl LibrarySetup {
             identification,
             publishing,
             imports,
+            loudness,
         })
     }
 }
@@ -653,6 +666,7 @@ pub struct LibraryServices {
     pub management: Management,
     pub mutations: Mutations,
     pub contrib: Arc<ContributionService>,
+    pub loudness: Loudness,
 }
 
 impl LibraryServices {
@@ -676,6 +690,7 @@ impl LibraryServices {
             management: Management::new(setup),
             mutations: Mutations::new(setup),
             contrib: setup.contrib.clone(),
+            loudness: setup.loudness.clone(),
             scans: setup.scans.clone(),
             activity: setup.activity.clone(),
             identification: setup.identification.clone(),
@@ -760,4 +775,5 @@ substate!(
     management: Management,
     mutations: Mutations,
     contrib: Arc<ContributionService>,
+    loudness: Loudness,
 );

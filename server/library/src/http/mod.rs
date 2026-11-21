@@ -10,6 +10,7 @@ pub mod edition;
 pub mod error;
 pub mod handlers;
 pub mod history;
+pub mod loudness;
 pub mod management;
 pub mod management_tools;
 pub mod models;

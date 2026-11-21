@@ -82,7 +82,16 @@ const mockApiHead = vi.fn();
 vi.mock('$lib/api/client', () => ({
 	api: {
 		get: (...args: unknown[]) => mockApiGet(...args),
-		head: (...args: unknown[]) => mockApiHead(...args)
+		head: (...args: unknown[]) => mockApiHead(...args),
+		// Every library track is unmeasured.
+		v3: {
+			GET: async () => ({
+				track_gain_db: null,
+				track_peak: null,
+				album_gain_db: null,
+				album_peak: null
+			})
+		}
 	}
 }));
 
@@ -452,6 +461,8 @@ describe('playerStore queue methods', () => {
 				playerStore.queue.findIndex((item) => item.trackSourceId === 'vid-3')
 			);
 			await vi.waitFor(() => expect(playerStore.currentQueueItem?.trackSourceId).toBe('vid-3'));
+			// Loaded once its loudness is read, so its end is heard.
+			await vi.waitFor(() => expect(playerStore.nowPlaying?.trackName).toBe('Track 4'));
 			expect(playerStore.hasNext).toBe(false);
 
 			const queued = playerStore.queue.length;

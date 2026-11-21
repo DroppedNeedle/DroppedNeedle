@@ -1,9 +1,11 @@
 <!--
 	The sound settings, for the drawer's Sound tab and the Listening Room's
 	panel. On top, what happens between songs: the crossfade dial (Off, or 2
-	to 12 seconds) and whether songs that follow each other on an album
-	blend too. They apply to the songs to come, so they stay usable while a
-	YouTube track plays, with a line saying they don't apply to it. Below,
+	to 12 seconds), whether songs that follow each other on an album blend
+	too, and whether every song plays at a similar loudness. The crossfade
+	settings apply to the songs to come; "Even out volume" also moves the
+	song playing now. All stay usable while a YouTube track plays, with a
+	line saying they don't apply to it. Below,
 	the ten-band equalizer: the on/off switch, a preset, a reset to flat,
 	and one vertical slider per band (pointer drag, or the arrow keys by
 	half a decibel, Home and End to the limits). The equalizer does nothing
@@ -127,6 +129,11 @@
 					description="When off, albums play straight through."
 					disabled={crossfade.seconds === 0}
 					bind:checked={() => crossfade.insideAlbums, (on) => crossfade.setInsideAlbums(on)}
+				/>
+				<ToggleRow
+					label="Even out volume"
+					description="Every song at a similar loudness."
+					bind:checked={() => crossfade.evenOutVolume, (on) => playerStore.setEvenOutVolume(on)}
 				/>
 				{#if isYouTube}
 					<p class="text-sm text-muted">Not for YouTube tracks.</p>

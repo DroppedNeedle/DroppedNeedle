@@ -620,6 +620,14 @@ Run from the repo root. `make help` lists every target.
   unchanged up to the unlink. Its work belongs to no user: its jobs and
   held entries have no owner, only admins see and act on them, and only
   while that folder is still the import folder.
+- Loudness the server measured lives in `library_loudness_measurements`,
+  written only by the library's loudness loop (`library/src/loudness/`),
+  which reads files beneath their library folder, never writes them and
+  gives way to scans. A row counts only while its stat revision equals its
+  track's. The web player gets levelling numbers only from
+  `GET /api/v3/library/tracks/{id}/loudness`, measured first, tags second,
+  and an album's loudness is worked out there from its tracks' rows, never
+  stored.
 
 **Identity** (product rules, not up for debate)
 - An edition a person chose is the album's identity; a v2 pin carries as

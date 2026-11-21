@@ -87,6 +87,13 @@ describe('a track the browser cannot play', () => {
 		queryClient.clear();
 		server = fakeApi({
 			'GET /api/v3/playback/conversion': { conversion: 'on' },
+			// Library tracks are not measured yet.
+			'GET /api/v3/library/tracks/{id}/loudness': {
+				track_gain_db: null,
+				track_peak: null,
+				album_gain_db: null,
+				album_peak: null
+			},
 			// A media server track reports its play session.
 			'POST /api/v3/playback/start': { accepted: true, session: 's' },
 			'POST /api/v3/playback/progress': { accepted: true },

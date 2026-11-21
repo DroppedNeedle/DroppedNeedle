@@ -46,7 +46,7 @@ One container. No Lidarr.
 - **Library Management**, off until you turn it on: Picard-style tags, artwork and file naming behind a preview, with undo.
 - **Drop imports** for music you bought elsewhere: drag in a zip or loose files.
 - **Discovery**: trending, charts, genres, recommendations from ListenBrainz or Last.fm, a discover queue, a weekly mix, new releases from artists you follow, and gig alerts for your cities.
-- **A web player** with a queue, gapless playback, crossfade, a 10-band EQ, lyrics and live now-playing.
+- **A web player** with a queue, gapless playback, crossfade, even volume, a 10-band EQ, lyrics and live now-playing.
 - **Playlists** mixing your library, Jellyfin, Navidrome, Plex, YouTube and Spotify imports.
 - **Plugins** for more download sources, scrobble targets and purchase links.
 

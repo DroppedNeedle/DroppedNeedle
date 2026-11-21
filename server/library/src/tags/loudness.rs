@@ -31,11 +31,33 @@ impl TrackLoudness {
     pub fn loudness(&self) -> Option<f64> {
         integrated(&self.blocks)
     }
+
+    /// About how many seconds of audio were measured.
+    pub fn seconds(&self) -> f64 {
+        match self.blocks.len() {
+            0 => 0.0,
+            blocks => (blocks + 3) as f64 / 10.0,
+        }
+    }
+
+    /// The blocks summed into loudness buckets, which is what is kept.
+    pub fn summary(&self) -> BlockSummary {
+        let mut summary = BlockSummary::default();
+        for energy in &self.blocks {
+            summary.add(*energy);
+        }
+        summary
+    }
+}
+
+/// The ReplayGain gain in dB for a loudness in LUFS.
+pub fn gain(loudness: f64) -> f64 {
+    REFERENCE_LUFS - loudness
 }
 
 /// Format a gain the way ReplayGain readers expect.
 pub fn gain_text(loudness: f64) -> String {
-    format!("{:.2} dB", REFERENCE_LUFS - loudness)
+    format!("{:.2} dB", gain(loudness))
 }
 
 /// Format a peak the way ReplayGain readers expect.
@@ -54,6 +76,131 @@ pub fn album_loudness(tracks: &[&TrackLoudness]) -> Option<f64> {
 
 fn lufs(energy: f64) -> f64 {
     -0.691 + 10.0 * energy.log10()
+}
+
+/// The lowest edge of the lowest bucket: the absolute gate.
+const SUMMARY_FLOOR_LUFS: i32 = -70;
+/// Buckets, 1 LU each, from the gate up to +20 LUFS; a louder block goes
+/// in the top one.
+const SUMMARY_BUCKETS: usize = 90;
+/// The stored form's first byte, so a later form can be told apart.
+const SUMMARY_VERSION: u8 = 1;
+/// A stored bucket: its index, the block count and the summed energy.
+const SUMMARY_ENTRY: usize = 1 + 4 + 8;
+
+/// A file's 400 ms blocks above the absolute gate, summed into 1 LU
+/// buckets by loudness. An album's loudness is worked out from its
+/// tracks' summaries, within a few hundredths of an LU of gating every
+/// block, so it is never measured or stored itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockSummary {
+    buckets: [(u32, f64); SUMMARY_BUCKETS],
+}
+
+impl Default for BlockSummary {
+    fn default() -> Self {
+        Self {
+            buckets: [(0, 0.0); SUMMARY_BUCKETS],
+        }
+    }
+}
+
+/// A stored summary that does not read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("a loudness summary does not read")]
+pub struct BadSummary;
+
+impl BlockSummary {
+    /// Count one block, unless the absolute gate drops it.
+    fn add(&mut self, energy: f64) {
+        if energy.is_nan() || energy <= 0.0 {
+            return;
+        }
+        let level = lufs(energy);
+        if level <= ABSOLUTE_GATE_LUFS {
+            return;
+        }
+        let index =
+            ((level - f64::from(SUMMARY_FLOOR_LUFS)).floor() as usize).min(SUMMARY_BUCKETS - 1);
+        let bucket = &mut self.buckets[index];
+        bucket.0 = bucket.0.saturating_add(1);
+        bucket.1 += energy;
+    }
+
+    /// Add another track's blocks, for an album.
+    pub fn merge(&mut self, other: &Self) {
+        for (mine, theirs) in self.buckets.iter_mut().zip(&other.buckets) {
+            mine.0 = mine.0.saturating_add(theirs.0);
+            mine.1 += theirs.1;
+        }
+    }
+
+    /// Integrated loudness in LUFS; `None` for silence. The relative gate
+    /// keeps or drops each bucket whole, by the mean loudness of its
+    /// blocks: exact for blocks of one level, and off by part of one
+    /// bucket's blocks at most for blocks spread across it.
+    pub fn loudness(&self) -> Option<f64> {
+        let (count, energy) = self
+            .buckets
+            .iter()
+            .fold((0u64, 0.0), |(count, energy), bucket| {
+                (count + u64::from(bucket.0), energy + bucket.1)
+            });
+        if count == 0 {
+            return None;
+        }
+        let threshold = lufs(energy / count as f64) + RELATIVE_GATE_LU;
+        let (kept_count, kept_energy) = self
+            .buckets
+            .iter()
+            .filter(|(count, energy)| *count > 0 && lufs(energy / f64::from(*count)) > threshold)
+            .fold((0u64, 0.0), |(count, energy), bucket| {
+                (count + u64::from(bucket.0), energy + bucket.1)
+            });
+        (kept_count > 0).then(|| lufs(kept_energy / kept_count as f64))
+    }
+
+    /// The stored form: a version byte, then each bucket holding blocks as
+    /// its index, block count and summed energy, little-endian.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut bytes = vec![SUMMARY_VERSION];
+        for (index, (count, energy)) in self.buckets.iter().enumerate() {
+            if *count == 0 {
+                continue;
+            }
+            bytes.push(index as u8);
+            bytes.extend_from_slice(&count.to_le_bytes());
+            bytes.extend_from_slice(&energy.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// Read the stored form back. Anything [`encode`](Self::encode) does
+    /// not write is refused.
+    pub fn decode(bytes: &[u8]) -> Result<Self, BadSummary> {
+        let (&version, entries) = bytes.split_first().ok_or(BadSummary)?;
+        if version != SUMMARY_VERSION || entries.len() % SUMMARY_ENTRY != 0 {
+            return Err(BadSummary);
+        }
+        let mut summary = Self::default();
+        let mut next = 0usize;
+        for entry in entries.chunks_exact(SUMMARY_ENTRY) {
+            let index = usize::from(entry[0]);
+            let count = u32::from_le_bytes(entry[1..5].try_into().map_err(|_| BadSummary)?);
+            let energy = f64::from_le_bytes(entry[5..13].try_into().map_err(|_| BadSummary)?);
+            if index < next
+                || index >= SUMMARY_BUCKETS
+                || count == 0
+                || !energy.is_finite()
+                || energy <= 0.0
+            {
+                return Err(BadSummary);
+            }
+            summary.buckets[index] = (count, energy);
+            next = index + 1;
+        }
+        Ok(summary)
+    }
 }
 
 fn integrated(blocks: &[f64]) -> Option<f64> {
@@ -198,15 +345,30 @@ impl Meter {
 pub enum Unanalysed {
     /// The file could not be decoded.
     Undecodable,
-    /// The time allowed for the album ran out.
+    /// The file could not be opened or read to its end: it may be
+    /// mid-copy, or its folder may be failing. Worth another try later.
+    Unreadable,
+    /// The time allowed ran out.
     OutOfTime,
+    /// The caller asked it to stop.
+    Stopped,
 }
 
 /// Measure one file, giving up at `deadline`.
 pub fn analyse(at: TrackFile<'_>, deadline: Instant) -> Result<TrackLoudness, Unanalysed> {
+    analyse_until(at, deadline, &|| false)
+}
+
+/// [`analyse`], also giving up once `stop` answers true. Both are checked
+/// every 64 packets.
+pub fn analyse_until(
+    at: TrackFile<'_>,
+    deadline: Instant,
+    stop: &dyn Fn() -> bool,
+) -> Result<TrackLoudness, Unanalysed> {
     let format = format_for_path(at.path()).map_err(|_| Unanalysed::Undecodable)?;
     let mut meter: Option<Meter> = None;
-    let mut late = false;
+    let mut ended: Option<Unanalysed> = None;
     let mut reshaped = false;
     let mut packets = 0u32;
     let decoded = super::probe::decode_stream(at, format, |rate, channels, block| {
@@ -218,19 +380,27 @@ pub fn analyse(at: TrackFile<'_>, deadline: Instant) -> Result<TrackLoudness, Un
         }
         meter.feed(block);
         packets += 1;
-        if packets % 64 == 0 && Instant::now() > deadline {
-            late = true;
-            return false;
+        if packets % 64 == 0 {
+            if stop() {
+                ended = Some(Unanalysed::Stopped);
+                return false;
+            }
+            if Instant::now() > deadline {
+                ended = Some(Unanalysed::OutOfTime);
+                return false;
+            }
         }
         true
     });
-    if late {
-        return Err(Unanalysed::OutOfTime);
+    if let Some(ended) = ended {
+        return Err(ended);
     }
     // A stream that stopped early (a decode or read error on the way) is
     // not measured: its numbers would describe part of the track.
     match (decoded, meter) {
-        (Ok(false), Some(meter)) if !reshaped => Ok(meter.finish()),
+        (Ok(end), Some(meter)) if !reshaped && !end.cut_short && !end.wobbled => Ok(meter.finish()),
+        (Ok(end), _) if end.cut_short && !end.wobbled => Err(Unanalysed::Unreadable),
+        (Err(super::TagsError::Io { .. }), _) => Err(Unanalysed::Unreadable),
         _ => Err(Unanalysed::Undecodable),
     }
 }
@@ -250,7 +420,7 @@ static MEASURED: std::sync::Mutex<Option<Measured>> = std::sync::Mutex::new(None
 /// [`analyse`], remembering each file's result by its content hash, so a
 /// file measured once (a preview, then its replan) is not decoded again.
 pub fn analyse_cached(at: TrackFile<'_>, deadline: Instant) -> Result<TrackLoudness, Unanalysed> {
-    let sha = file_sha256(at).map_err(|_| Unanalysed::Undecodable)?;
+    let sha = file_sha256(at).map_err(|_| Unanalysed::Unreadable)?;
     if let Ok(cache) = MEASURED.lock()
         && let Some(found) = cache.as_ref().and_then(|cache| cache.by_sha.get(&sha))
     {
@@ -347,10 +517,65 @@ mod tests {
         }
     }
 
+    /// An album's loudness worked out from its tracks' stored buckets is
+    /// the loudness of every block gated together, within 0.1 LU, even when
+    /// a quiet passage or a fade sits at the relative gate. The stored form reads
+    /// back as it was written, and anything else is refused.
+    #[test]
+    fn album_loudness_from_buckets_matches_every_block() {
+        let measure = |parts: &[(f64, f32)]| {
+            let mut meter = Meter::new(48_000, 2);
+            for (seconds, dbfs) in parts {
+                meter.feed(&sine(48_000, *seconds, 10f32.powf(dbfs / 20.0)));
+            }
+            meter.finish()
+        };
+        let loud = measure(&[(20.0, -16.0), (10.0, -29.5), (15.0, -17.0)]);
+        // A fade spreads blocks over the buckets around the gate.
+        let fade: Vec<(f64, f32)> = (0..40)
+            .map(|step| (0.5, -22.0 - step as f32 * 0.5))
+            .collect();
+        let soft = measure(&[&[(30.0, -24.0)][..], &fade, &[(5.0, -60.0)]].concat());
+        let album = [&loud, &soft];
+        let exact = album_loudness(&album).expect("not silent");
+        let mut summed = loud.summary();
+        summed.merge(&soft.summary());
+        let from_buckets = summed.loudness().expect("not silent");
+        assert!(
+            (from_buckets - exact).abs() < 0.1,
+            "{from_buckets} against {exact}"
+        );
+        let track = loud.summary().loudness().expect("not silent");
+        let track_exact = loud.loudness().expect("not silent");
+        assert!(
+            (track - track_exact).abs() < 0.1,
+            "{track} against {track_exact}"
+        );
+
+        let stored = summed.encode();
+        assert_eq!(BlockSummary::decode(&stored), Ok(summed.clone()));
+        let silent = measure(&[(3.0, -100.0)]).summary();
+        assert_eq!(silent.loudness(), None);
+        assert_eq!(BlockSummary::decode(&silent.encode()), Ok(silent));
+        let mut out_of_order = stored.clone();
+        out_of_order[1] = 89;
+        let mut unknown_bucket = stored.clone();
+        unknown_bucket[1] = 90;
+        for bad in [
+            Vec::new(),
+            [&[2u8][..], &stored[1..]].concat(),
+            stored[..stored.len() - 1].to_vec(),
+            out_of_order,
+            unknown_bucket,
+        ] {
+            assert_eq!(BlockSummary::decode(&bad), Err(BadSummary), "{bad:?}");
+        }
+    }
+
     /// Bytes after a FLAC file's last frame, an ID3v1 tag or a stale copy
     /// of an earlier frame a tagger left behind, cost the reader only that
     /// frame, so the file is still measured. A file cut off before its last
-    /// frame is not.
+    /// frame is not: it reads as unreadable, as a file mid-copy does.
     #[test]
     fn bytes_after_the_last_frame_are_not_audio_cut_short() {
         let fixtures =
@@ -376,6 +601,6 @@ mod tests {
         assert!(measure(&[&plain[..], &id3v1].concat()).is_ok());
         let stale = &plain[before_last..before_last + (last - before_last) / 2];
         assert!(measure(&[&plain[..], stale].concat()).is_ok());
-        assert_eq!(measure(&plain[..before_last]), Err(Unanalysed::Undecodable));
+        assert_eq!(measure(&plain[..before_last]), Err(Unanalysed::Unreadable));
     }
 }

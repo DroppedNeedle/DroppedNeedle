@@ -3367,6 +3367,149 @@ async fn baseline_restore_removes_fields_added_later() {
     assert_eq!(read_fields(track_file(&file)).expect("fields read"), before);
 }
 
+/// The loudness loop measures each track once, from its file, and the
+/// levelling read answers the measured numbers first and the file's tags
+/// second. A move by the publisher keeps the measurement and leaves nothing
+/// to measure; a file whose bytes change, once a scan has read it again, is
+/// answered from its tags until the next pass measures that file alone. A
+/// file cut off before its end, and not changing, is kept as unmeasurable
+/// and not read again.
+#[tokio::test]
+async fn each_track_is_measured_once_until_its_file_changes() {
+    use droppedneedle_library::loudness::{Pace, Sweep, TrackLevels};
+    use droppedneedle_library::publish::planner::PlanKind;
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    let (scratch, library, music) = bare_library("lib-loudness").await;
+    plant(&music, "One/LP/01.flac", "flac_full_01.flac");
+    plant(&music, "One/LP/02.flac", "flac_full_02.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "One/LP/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    let loudness = library.loudness.clone();
+    let mut sweep = Sweep::default();
+    let unpaced = Pace {
+        min_rest: std::time::Duration::ZERO,
+        rest_per_spent: 0.0,
+    };
+    let mut pass = || {
+        loudness
+            .pass(&mut sweep, &unpaced, &|| false, &|_| true)
+            .expect("pass runs")
+    };
+    let levels = |id: &str| library.loudness.levels(id).expect("levels read");
+    // The fixtures are digital silence: measured, they have a peak of 0 and
+    // no gain.
+    let measured = TrackLevels {
+        track_gain_db: None,
+        track_peak: Some(0.0),
+        album_gain_db: None,
+        album_peak: Some(0.0),
+    };
+
+    assert_eq!(
+        levels(&track),
+        Some(TrackLevels::default()),
+        "nothing measured yet"
+    );
+    assert_eq!(levels("no-such-track"), None);
+    let first = pass();
+    assert_eq!((first.decoded, first.kept, first.finished), (2, 2, true));
+    assert_eq!(levels(&track), Some(measured));
+    assert_eq!(pass().decoded, 0, "each track is measured once");
+
+    approve_first_candidate(&library, &scratch.identify, &album).await;
+    publish_one(
+        &library,
+        PlanKind::Move,
+        &album,
+        "One/LP/01.flac",
+        Some("Moved/01.flac"),
+        &[],
+    );
+    assert_eq!(
+        library
+            .scan_store
+            .track_at("music", "Moved/01.flac")
+            .unwrap(),
+        Some(track.clone())
+    );
+    assert_eq!(
+        levels(&track),
+        Some(measured),
+        "a move keeps the measurement"
+    );
+    assert_eq!(pass().decoded, 0, "a move leaves nothing to measure");
+
+    save_tags(
+        &music.join("Moved/01.flac"),
+        &[
+            TagEdit::verbatim(TagField::ReplayGainTrackGain, vec!["-3.00 dB".to_owned()]),
+            TagEdit::verbatim(TagField::ReplayGainTrackPeak, vec!["0.500000".to_owned()]),
+        ],
+    )
+    .expect("file rewritten");
+    rescan(&library).await;
+    assert_eq!(
+        levels(&track),
+        Some(TrackLevels {
+            track_gain_db: Some(-3.0),
+            track_peak: Some(0.5),
+            ..TrackLevels::default()
+        }),
+        "a changed file is answered from its tags until it is measured again"
+    );
+    let again = pass();
+    assert_eq!((again.decoded, again.kept), (1, 1), "only the changed file");
+    assert_eq!(
+        levels(&track),
+        Some(measured),
+        "measured first, tags second"
+    );
+
+    let whole = std::fs::read(fixtures_dir().join("management_full.flac")).expect("fixture");
+    // Cut before the last two frames: the reader lets one missing frame go.
+    let cut_at = (0..whole.len() - 1)
+        .rev()
+        .filter(|&at| whole[at] == 0xFF && whole[at + 1] == 0xF8)
+        .nth(1)
+        .expect("the fixture has two frames or more");
+    std::fs::create_dir_all(music.join("Cut")).expect("mkdir");
+    std::fs::write(music.join("Cut/01.flac"), &whole[..cut_at]).expect("cut copy");
+    rescan(&library).await;
+    let cut = library
+        .scan_store
+        .track_at("music", "Cut/01.flac")
+        .unwrap()
+        .expect("cut track indexed");
+    assert_eq!(
+        (pass().decoded, pass().decoded),
+        (1, 0),
+        "a cut file is read once"
+    );
+    assert_eq!(
+        library
+            .scan_store
+            .db()
+            .query_i64(&format!(
+                "SELECT COUNT(*) FROM library_loudness_measurements \
+                 WHERE local_track_id = '{cut}' AND outcome = 'unmeasurable'"
+            ))
+            .expect("count reads"),
+        1,
+        "a file cut short for good is kept as unmeasurable"
+    );
+}
+
 /// A publish is checked against its own rows, not the catalog counter: a
 /// scan that only adds another album leaves a sealed preview good, and a
 /// change to the previewed track's own row refuses it before anything is

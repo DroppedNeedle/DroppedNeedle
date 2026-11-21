@@ -45,6 +45,7 @@ pub mod identity;
 pub mod import;
 pub mod jobs;
 mod loops;
+pub mod loudness;
 mod sql;
 pub use loops::{LEFTOVERS_JOB, LOOPS};
 pub mod management;

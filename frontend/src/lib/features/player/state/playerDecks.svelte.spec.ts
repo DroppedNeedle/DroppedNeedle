@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { userEvent } from 'vitest/browser';
 
 import { setAudioDecks } from '$lib/features/player/playback/audioElement';
+import { AudioEngine } from '$lib/features/player/playback/audioEngine';
 import type { QueueItem } from '$lib/features/player/playback/types';
 import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
@@ -112,6 +113,35 @@ function playingDecks(decks: FakeDeck[]): string[] {
 }
 
 const stream = (id: string) => `/api/v3/stream/jellyfin/${id}`;
+
+// A library track, which the player levels.
+function local(id: string, albumId: string): QueueItem {
+	return {
+		...track(id, albumId, 1),
+		sourceType: 'local',
+		format: 'flac',
+		availableSources: ['local'],
+		sourceIds: { local: id }
+	};
+}
+
+const isDown2dB = (gain: number) => Math.abs(gain - 10 ** (-2 / 20)) < 1e-9;
+
+/** Every level the engine is asked for, as [deck, gain], in order. */
+function recordLevels(): number[][] {
+	const levels: number[][] = [];
+	const setLevel = AudioEngine.prototype.setLevel;
+	vi.spyOn(AudioEngine.prototype, 'setLevel').mockImplementation(function (
+		this: AudioEngine,
+		deck: number,
+		gain: number,
+		ramp?: number
+	) {
+		levels.push([deck, gain]);
+		setLevel.call(this, deck, gain, ramp);
+	});
+	return levels;
+}
 
 describe('the next track on the second deck', () => {
 	let server: FakeApi;
@@ -300,6 +330,70 @@ describe('the next track on the second deck', () => {
 		await expect.poll(() => b.element.src).toBe('');
 		a.at(181);
 		await expect.poll(() => b.element.src).toBe(stream('other'));
+	});
+
+	it("sets the next song's level on its deck before it plays", async () => {
+		server.use({
+			'GET /api/v3/library/tracks/{id}/loudness': ({ params }) => ({
+				track_gain_db: params.id === 'two' ? -6 : null,
+				track_peak: params.id === 'two' ? 0.5 : null,
+				album_gain_db: null,
+				album_peak: null
+			})
+		});
+		const levels = recordLevels();
+		const levelsAtPlay: number[][][] = [];
+		const playB = b.element.play;
+		b.element.play = () => {
+			levelsAtPlay.push([...levels]);
+			return playB();
+		};
+		playerStore.playQueue([local('one', 'first'), local('two', 'second')]);
+		await expect.poll(() => playerStore.playbackState).toBe('playing');
+		a.at(180);
+		await expect.poll(() => b.element.readyState).toBe(4);
+
+		a.at(199.99);
+
+		await expect.poll(() => b.plays).toEqual(['/api/v3/stream/local/two']);
+		// -6 dB to the reference, 4 dB above it: 2 dB down on B's deck, set before B played.
+		expect(levelsAtPlay).toHaveLength(1);
+		expect(levelsAtPlay[0].some(([deck, gain]) => deck === 1 && isDown2dB(gain))).toBe(true);
+	});
+
+	it('asks for the stream before the loudness answers, and plays once the level is set', async () => {
+		let answer = () => {};
+		const answered = new Promise<void>((resolve) => (answer = resolve));
+		const events: string[] = [];
+		server.use({
+			'GET /api/v3/library/tracks/{id}/loudness': async () => {
+				await answered;
+				events.push('loudness');
+				return { track_gain_db: -6, track_peak: 0.5, album_gain_db: null, album_peak: null };
+			}
+		});
+		const levels = recordLevels();
+		const loadA = a.element.load;
+		a.element.load = () => {
+			events.push('load');
+			loadA.call(a.element);
+		};
+		const playA = a.element.play;
+		a.element.play = () => {
+			events.push(
+				levels.some(([deck, gain]) => deck === 0 && isDown2dB(gain)) ? 'play levelled' : 'play'
+			);
+			return playA.call(a.element);
+		};
+
+		playerStore.playQueue([local('one', 'first')]);
+
+		await expect.poll(() => events).toContain('load');
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(events).toEqual(['load']);
+		answer();
+		await expect.poll(() => playerStore.playbackState).toBe('playing');
+		expect(events).toEqual(['load', 'loudness', 'play levelled']);
 	});
 
 	it('clears both decks on a stop mid-fade', async () => {

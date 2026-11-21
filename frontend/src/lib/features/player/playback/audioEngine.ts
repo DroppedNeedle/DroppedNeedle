@@ -25,6 +25,8 @@ interface DeckNodes {
 	source: MediaElementAudioSourceNode;
 	/** The deck's loudness level; 1 until levelling sets it. */
 	level: GainNode;
+	/** The level's last change, so its value can be worked out at any time. */
+	levelPlan: Fade;
 	/** Fades between tracks, scheduled on the context's clock. */
 	fade: GainNode;
 	/** The fade last scheduled, so its value can be worked out at any time. */
@@ -94,6 +96,7 @@ export class AudioEngine {
 			this.decks.push({
 				source,
 				level,
+				levelPlan: { from: 1, to: 1, start: 0, seconds: 0, curve: 'linear' },
 				fade,
 				plan: { from: 1, to: 1, start: 0, seconds: 0, curve: 'linear' }
 			});
@@ -119,7 +122,10 @@ export class AudioEngine {
 		// Away from running, no fade can be heard to its end: each deck goes to where its fade was going.
 		context.addEventListener('statechange', () => {
 			if (this.running) return;
-			for (let i = 0; i < this.decks.length; i++) this.holdFade(i, this.decks[i].plan.to);
+			for (let i = 0; i < this.decks.length; i++) {
+				this.holdFade(i, this.decks[i].plan.to);
+				this.setLevel(i, this.decks[i].levelPlan.to);
+			}
 		});
 	}
 
@@ -170,6 +176,24 @@ export class AudioEngine {
 	/** Whether the context is playing, so a fade scheduled now is heard. */
 	get running(): boolean {
 		return this.context?.state === 'running';
+	}
+
+	/**
+	 * Sets a deck's loudness level (a linear gain), at once or in a straight
+	 * line over `rampSeconds`. It sits before the fade, so a fade never
+	 * undoes it.
+	 */
+	setLevel(deck: number, gain: number, rampSeconds = 0): void {
+		const nodes = this.decks[deck];
+		if (!nodes || !this.context) return;
+		const now = this.context.currentTime;
+		const seconds = this.running ? Math.max(0, rampSeconds) : 0;
+		const from = valueAt(nodes.levelPlan, now);
+		const param = nodes.level.gain;
+		param.cancelScheduledValues(0);
+		nodes.levelPlan = { from, to: gain, start: now, seconds, curve: 'linear' };
+		param.setValueAtTime(seconds > 0 ? from : gain, now);
+		if (seconds > 0) param.linearRampToValueAtTime(gain, now + seconds);
 	}
 
 	/** Holds a deck's fade gain at `value` from now on, dropping any fade under way. */

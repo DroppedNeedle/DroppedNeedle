@@ -5702,6 +5702,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/tracks/{id}/loudness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A track's gains and peaks for evening out volume: measured first, the
+         *     file's tags second.
+         */
+        get: operations["get_track_loudness"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/tracks/{id}/lyrics": {
         parameters: {
             query?: never;
@@ -24421,6 +24441,32 @@ export interface components {
          * @enum {string}
          */
         TrackListSort: "title" | "date_added" | "artist" | "album" | "random";
+        /**
+         * @description A track's levelling numbers, as ReplayGain 2.0 gives them. Each is null
+         *     when neither a measurement nor the file's tags give it.
+         */
+        TrackLoudnessView: {
+            /**
+             * Format: double
+             * @description Gain in dB that brings the track's album to the reference.
+             */
+            album_gain_db?: number | null;
+            /**
+             * Format: double
+             * @description The album's largest sample.
+             */
+            album_peak?: number | null;
+            /**
+             * Format: double
+             * @description Gain in dB that brings the track to the -18 LUFS reference.
+             */
+            track_gain_db?: number | null;
+            /**
+             * Format: double
+             * @description The track's largest sample, 1.0 being full scale.
+             */
+            track_peak?: number | null;
+        };
         /** @description One page of catalog tracks. */
         TrackPage: {
             /** @description This page of tracks. */
@@ -41274,6 +41320,47 @@ export interface operations {
             };
             /** @description The file could not be recycled; nothing changed */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_track_loudness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local track id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The track's levelling numbers */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackLoudnessView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown track, or one not in the library now */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

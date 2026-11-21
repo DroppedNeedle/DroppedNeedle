@@ -265,15 +265,25 @@ fn decode_count_duration(
     Ok(frames as f64 / f64::from(sample_rate))
 }
 
+/// How a streamed decode ended, short of a hard error.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct StreamEnd {
+    /// A read stopped before the stream's end: the file is shorter than
+    /// it says, or reading it failed on the way.
+    pub cut_short: bool,
+    /// A packet did not decode.
+    pub wobbled: bool,
+}
+
 /// Decode a file one packet at a time, handing each block of interleaved
 /// samples (scaled to -1..1) to `sink` with the sample rate and channel
 /// count. Nothing larger than one packet is held. `sink` answers false to
-/// stop early. True when the decode wobbled mid-stream.
+/// stop early.
 pub(crate) fn decode_stream(
     at: TrackFile<'_>,
     format: AudioFormat,
     mut sink: impl FnMut(u32, u32, &[f32]) -> bool,
-) -> Result<bool, TagsError> {
+) -> Result<StreamEnd, TagsError> {
     let path = at.path();
     let opened = open_reader(at, format).map_err(|error| match error {
         TagsError::Probe { reason, .. } => TagsError::Decode {
@@ -290,7 +300,7 @@ pub(crate) fn decode_stream(
         })?;
     let mut reader = opened.reader;
     let mut block: Vec<f32> = Vec::new();
-    let mut partial = false;
+    let mut end = StreamEnd::default();
     let mut any = false;
     let mut heard = 0u64;
     let mut largest = 0u64;
@@ -305,10 +315,9 @@ pub(crate) fn decode_stream(
             // (an ID3v1 tag, stale data) fail its check, and the FLAC
             // reader drops it.
             Err(_) => {
-                partial = partial
-                    || opened
-                        .frames
-                        .is_none_or(|frames| frames.saturating_sub(heard) > largest);
+                end.cut_short = opened
+                    .frames
+                    .is_none_or(|frames| frames.saturating_sub(heard) > largest);
                 break;
             }
         };
@@ -331,10 +340,14 @@ pub(crate) fn decode_stream(
                 }
             }
             Err(SymphoniaError::DecodeError(_)) | Err(SymphoniaError::ResetRequired) => {
-                partial = true;
+                end.wobbled = true;
+            }
+            Err(SymphoniaError::IoError(_)) => {
+                end.cut_short = true;
+                break;
             }
             Err(_) => {
-                partial = true;
+                end.wobbled = true;
                 break;
             }
         }
@@ -345,7 +358,7 @@ pub(crate) fn decode_stream(
             reason: "decoder produced no samples".to_owned(),
         });
     }
-    Ok(partial)
+    Ok(end)
 }
 
 /// Decode to interleaved s16, stopping after `max_seconds` of audio when

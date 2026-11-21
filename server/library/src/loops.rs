@@ -50,6 +50,8 @@ const UNDO_MOVE_BUSY_CAP: Duration = Duration::from_secs(300);
 pub const RECYCLE_EXPIRY_JOB: &str = "library-recycle-expiry";
 /// The daily look again at unmatched and guessed albums.
 pub const RELOOK_JOB: &str = "library-identify-relook";
+/// The measuring of each track's loudness.
+pub const LOUDNESS_JOB: &str = "library-loudness";
 
 /// Every always-on library loop, by name.
 pub const LOOPS: &[&str] = &[
@@ -64,6 +66,7 @@ pub const LOOPS: &[&str] = &[
     RECYCLE_EXPIRY_JOB,
     LEFTOVERS_JOB,
     RELOOK_JOB,
+    LOUDNESS_JOB,
 ];
 
 /// Scan idle ceiling: how often the scan loop looks for scheduled work
@@ -178,6 +181,16 @@ const RELOOK_FIRST: Duration = Duration::from_secs(3600);
 const RELOOK_JITTER: Duration = Duration::from_secs(600);
 /// Row code of a look-again pass that did not run.
 const RELOOK_FAILED: &str = "IDENTIFY_RELOOK_FAILED";
+
+/// The loudness loop looks for unmeasured files this often when nothing
+/// wakes it, starting a minute after boot so startup settles first. A pass
+/// that fails backs it off from 5 s up to 5 minutes.
+const LOUDNESS_EVERY: Duration = Duration::from_secs(600);
+const LOUDNESS_FIRST: Duration = Duration::from_secs(60);
+const LOUDNESS_JITTER: Duration = Duration::from_secs(30);
+const LOUDNESS_BUSY_CAP: Duration = Duration::from_secs(300);
+/// Row code of a loudness pass that failed on the database.
+const LOUDNESS_FAILED: &str = "LOUDNESS_PASS_FAILED";
 
 impl Scans {
     /// Supervisor inputs, rebuilt per call so settings-swap rebuilds
@@ -817,7 +830,7 @@ pub(crate) fn start_loops(
         Schedule::new(IDENTIFY_POLL)
             .with_jitter(IDENTIFY_JITTER)
             .with_backoff(Duration::from_secs(1), IDENTIFY_BACKOFF_CAP),
-        identify_tick(services.identification.clone(), handle),
+        identify_tick(services.identification.clone(), handle.clone()),
     )?;
     super::contrib::worker::start_upkeep(supervisor, setup.contrib_worker.clone())?;
     crate::jobs::worker::start(setup, services.operations.clone(), supervisor)?;
@@ -866,6 +879,21 @@ pub(crate) fn start_loops(
             }
             Ok(Next::Continue)
         },
+    )?;
+    let mut loudness_asked = setup.wakeups.subscribe(super::loudness::WAKEUP);
+    loudness_asked.mark_changed();
+    supervisor.on_wakeup_blocking(
+        LOUDNESS_JOB,
+        loudness_asked,
+        Schedule::new(LOUDNESS_EVERY)
+            .with_initial_delay(LOUDNESS_FIRST)
+            .with_jitter(LOUDNESS_JITTER)
+            .with_backoff(STORE_BUSY_RETRY, LOUDNESS_BUSY_CAP),
+        loudness_tick(
+            services.loudness.clone(),
+            setup.wakeups.clone(),
+            handle.clone(),
+        ),
     )?;
     let (db, blobs) = (setup.db.clone(), setup.core.blobs.clone());
     supervisor.one_shot(UNDO_MOVE_JOB, move |ctx| undo_move(db, blobs, ctx))?;
@@ -993,6 +1021,52 @@ impl Scans {
                 tracing::warn!(%error, "library sweep could not read the catalog");
                 false
             }
+        }
+    }
+}
+
+/// The loudness loop's turn: measure what is due, resting between files on
+/// the loop's own stop. A busy database is no failure: the turn waits a few
+/// seconds, keeps the results it holds and asks for the next turn at once.
+fn loudness_tick(
+    loudness: super::loudness::Loudness,
+    wakeups: super::scan::watcher::WorkWakeups,
+    handle: Handle,
+) -> impl FnMut(&TickCtx) -> TickResult + Send + 'static {
+    let mut sweep = super::loudness::Sweep::default();
+    move |ctx| {
+        let stop = ctx.token();
+        let rest = |wait: Duration| {
+            ctx.heartbeat();
+            matches!(
+                droppedneedle_kernel::db::block_on(
+                    &handle,
+                    "library_loudness_rest",
+                    ctx.sleep(wait)
+                ),
+                Ok(true)
+            )
+        };
+        let pass = caught("loudness pass", || {
+            loudness.pass(
+                &mut sweep,
+                &super::loudness::PACE,
+                &|| stop.is_cancelled(),
+                &rest,
+            )
+        })?;
+        match pass {
+            Ok(_) => Ok(Next::Continue),
+            Err(super::loudness::LoudnessError::Busy(cause)) => {
+                tracing::info!(%cause, "loudness measuring waits: the database is busy");
+                let jitter =
+                    SplitMix64::new(SplitMix64::seed_from_time()).below_duration(STORE_BUSY_RETRY);
+                if rest(STORE_BUSY_RETRY + jitter) {
+                    wakeups.notify(super::loudness::WAKEUP);
+                }
+                Ok(Next::Continue)
+            }
+            Err(error) => Err(TickError::new(LOUDNESS_FAILED, error)),
         }
     }
 }

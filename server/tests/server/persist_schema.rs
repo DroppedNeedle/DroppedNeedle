@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 181);
+    assert_eq!(table_names(&connection).len(), 182);
     assert_eq!(
         scalar(
             &connection,
@@ -387,6 +387,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0154_library_scan_confirmed_scopes.sql",
         "41aee22cc7a19f69fefee51e79499455b480475502e0dff08c9ce5d41eb8e150",
+    ),
+    (
+        "0155_library_loudness_measurements.sql",
+        "6d53788e67ce93e42735f99e4cd5451a236b2005f8b261c75cf05f76ce304da6",
     ),
 ];
 
@@ -1749,6 +1753,110 @@ fn confirmed_scopes_upgrade_preserves_existing_holds_and_failures() {
     );
 }
 
+/// 0155 adds `library_loudness_measurements`, empty, and changes nothing
+/// else. A row goes with its track, and the table refuses a measured row
+/// without its numbers and an unmeasurable one with them.
+#[test]
+fn loudness_measurements_upgrade_adds_one_empty_table() {
+    let dir = ScratchDir::new("loudness-measurements");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..20], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 154);
+    let before = schema_rows(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..21], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 155);
+    let mut after = schema_rows(&connection);
+    after.retain(|row| !before.contains(row));
+    assert_eq!(
+        after
+            .iter()
+            .map(|(kind, name, table, _)| (kind.as_str(), name.as_str(), table.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "index",
+                "sqlite_autoindex_library_loudness_measurements_1",
+                "library_loudness_measurements"
+            ),
+            (
+                "table",
+                "library_loudness_measurements",
+                "library_loudness_measurements"
+            ),
+        ]
+    );
+    assert!(
+        after[1]
+            .3
+            .as_deref()
+            .is_some_and(|sql| sql.ends_with("STRICT")),
+        "{:?}",
+        after[1].3
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM library_loudness_measurements"
+        ),
+        0
+    );
+
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = ON;
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+                 album_artist_id, grouping_source, created_at, updated_at)
+             VALUES ('a', 'r', 'k', 'A', 'a', '00000000-0000-4000-8000-000000000002',
+                 'automatic', 1, 1);
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path,
+                 relative_path, path_hash, file_size_bytes, file_mtime_ns,
+                 stat_revision, title, title_folded, album_title, album_title_folded,
+                 file_format, ingest_source, imported_at, membership_source)
+             VALUES ('t', 'a', 'r', '/m/t', 't', 't', 1, 1, '1:1', 'T', 't', 'A', 'a',
+                 'flac', 'scan', 1, 'automatic');
+             INSERT INTO library_loudness_measurements
+                 (local_track_id, stat_revision, outcome, peak, blocks, measured_at)
+             VALUES ('t', '1:1', 'measured', 0.5, x'01', 1);",
+        )
+        .unwrap();
+    for refused in [
+        "INSERT INTO library_loudness_measurements \
+         (local_track_id, stat_revision, outcome, peak, blocks, measured_at) \
+         VALUES ('t', '1:1', 'measured', NULL, x'01', 1)",
+        "INSERT INTO library_loudness_measurements \
+         (local_track_id, stat_revision, outcome, peak, blocks, measured_at) \
+         VALUES ('t', '1:1', 'unmeasurable', 0.5, NULL, 1)",
+    ] {
+        connection
+            .execute("DELETE FROM library_loudness_measurements", [])
+            .unwrap();
+        assert!(connection.execute(refused, []).is_err(), "{refused}");
+    }
+    connection
+        .execute_batch(
+            "INSERT INTO library_loudness_measurements
+                 (local_track_id, stat_revision, outcome, peak, blocks, measured_at)
+             VALUES ('t', '1:1', 'unmeasurable', NULL, NULL, 1);
+             DELETE FROM local_tracks WHERE id = 't';",
+        )
+        .unwrap();
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM library_loudness_measurements"
+        ),
+        0,
+        "deleting the track deletes its row"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -2123,6 +2231,7 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("library_identify_reviews", "resolved_by_user_id", "auth_users", "SET NULL"),
     ("library_identity_repair_findings", "job_id", "library_operation_jobs", "CASCADE"),
     ("library_identity_repair_findings", "local_album_id", "local_albums", "RESTRICT"),
+    ("library_loudness_measurements", "local_track_id", "local_tracks", "CASCADE"),
     ("library_management_automatic_queue", "local_album_id", "local_albums", "CASCADE"),
     ("library_management_baseline_purges", "actor_user_id", "auth_users", "SET NULL"),
     ("library_management_baselines", "local_track_id", "local_tracks", "RESTRICT"),
@@ -2583,6 +2692,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_library::identity::DecisionSource;
     use droppedneedle_library::identity::remap::RemapOrigin;
     use droppedneedle_library::jobs::models::Control;
+    use droppedneedle_library::loudness::LoudnessOutcome;
     use droppedneedle_library::jobs::{
         ControlRequest, ManagementPhase, OperationKind, OperationState, WorkState,
     };
@@ -2678,6 +2788,7 @@ fn state_columns() -> Vec<StateColumn> {
         state("library_identify_jobs", "state", &JobState::ALL, JobState::as_str),
         state("library_identify_reviews", "state", &ReviewState::ALL, ReviewState::as_str),
         state("library_identity_repair_findings", "state", &FindingState::ALL, FindingState::as_str),
+        state("library_loudness_measurements", "outcome", &LoudnessOutcome::ALL, LoudnessOutcome::as_str),
         state("library_management_job_snapshots", "mode", &JobMode::ALL, JobMode::as_str),
         state("library_management_job_snapshots", "origin", &Origin::ALL, Origin::as_str),
         state("library_management_job_snapshots", "phase", &ManagementPhase::ALL, ManagementPhase::as_str),
@@ -3186,10 +3297,11 @@ fn every_registered_statement_prepares() {
 /// tracks (the album and recording quality checks and "the library holds
 /// it") walk only because no index covers lowered release-group or
 /// recording ids; the expression indexes that cover them take them off
-/// this list. The library's three: the scan's pass over every indexed track
+/// this list. The library's four: the scan's pass over every indexed track
 /// of a live album, the continuation sweep's walk of every missing track
-/// when no album is named, and the remap sweep over every identified album's
-/// tracks.
+/// when no album is named, the remap sweep over every identified album's
+/// tracks, and the loudness loop's look for the tracks it has not measured,
+/// newest first, a background read about every 20 files.
 /// Discover's four: radio's two track reads, which filter on ids worked out
 /// per track over the whole library, the check for any local file, which
 /// stops at the first row, and the owned groups with their album artist
@@ -3207,6 +3319,7 @@ const TRACK_WALKS: &[&str] = &[
     "droppedneedle_library::corrections::sql::CANDIDATE_ALBUMS",
     "droppedneedle_library::corrections::sql::CANDIDATES",
     "droppedneedle_library::duplicates::sql::DUPLICATE_ALBUMS",
+    "droppedneedle_library::loudness::sql::DUE",
     "droppedneedle_catalog::local::sql::TRACK_PAGE_LIKE",
     "droppedneedle_catalog::local::sql::TRACK_PAGE_WORDS",
     "droppedneedle_catalog::local::sql::TRACK_COUNT_LIKE",

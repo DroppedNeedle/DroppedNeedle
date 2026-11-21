@@ -46,6 +46,13 @@ function fakeElement(fails: (url: string) => number | null) {
 function server(conversion: 'on' | 'off') {
 	return fakeApi({
 		'GET /api/v3/playback/conversion': { conversion },
+		// Library tracks are not measured yet.
+		'GET /api/v3/library/tracks/{id}/loudness': {
+			track_gain_db: null,
+			track_peak: null,
+			album_gain_db: null,
+			album_peak: null
+		},
 		'POST /api/v3/playback/start': { accepted: true, session: 's' },
 		'POST /api/v3/playback/progress': { accepted: true },
 		'POST /api/v3/playback/stop': { accepted: true, scrobbled: false },

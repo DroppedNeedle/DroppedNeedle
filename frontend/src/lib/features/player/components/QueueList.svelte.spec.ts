@@ -70,6 +70,13 @@ afterEach(() => {
 describe('the queue under a rating floor', () => {
 	it('marks and dims the tracks it skips, keeps them playable and counts only the rest', async () => {
 		fakeApi({
+			// Library tracks are not measured yet.
+			'GET /api/v3/library/tracks/{id}/loudness': {
+				track_gain_db: null,
+				track_peak: null,
+				album_gain_db: null,
+				album_peak: null
+			},
 			'POST /api/v3/ratings/lookup': ({ body }) => {
 				const ids = (body as { track_ids: string[] }).track_ids;
 				const tracks: Record<string, number> = {};

@@ -61,6 +61,7 @@ pub fn statement_files() -> Vec<StatementFile> {
         crate::catalog_revision::sql::registered(),
         crate::jobs::sql::registered(),
         crate::management::sql::registered(),
+        crate::loudness::sql::registered(),
     ]
 }
 

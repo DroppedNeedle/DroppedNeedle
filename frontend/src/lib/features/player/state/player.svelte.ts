@@ -67,7 +67,12 @@ import {
 	warmTrackRatings,
 	type TrackRatings
 } from '$lib/features/library/queries/ratings.svelte';
-import { resumeAudioEngine } from '$lib/features/player/playback/audioElement';
+import { resumeAudioEngine, tryGetAudioEngine } from '$lib/features/player/playback/audioElement';
+import { inAlbumOrder, levelFor } from '$lib/features/player/playback/levelling';
+import {
+	getTrackLoudnessQueryOptions,
+	type TrackLoudness
+} from '$lib/features/player/queries/loudness';
 import { registerUserSessionReset } from '$lib/utils/userSessionCleanup';
 import {
 	persistSession as doPersistSession,
@@ -106,6 +111,14 @@ const RATINGS_WAIT_MS = 5000;
 // The next track loads this long before the current one ends, or this long
 // before a longer crossfade starts.
 const PRELOAD_LEAD_S = 30;
+// A song loaded now waits this long for its loudness, a song loaded ahead
+// this long, else it plays unlevelled.
+const LOUDNESS_WAIT_MS = 1000;
+const PRELOAD_LOUDNESS_WAIT_MS = 5000;
+// How fast a switch of "Even out volume" moves the songs heard now.
+const LEVEL_RAMP_S = 0.25;
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const PRELOAD_BEFORE_FADE_S = 15;
 // Sought back this far past the preload's time, the preload is dropped.
 const PRELOAD_RELEASE_S = 15;
@@ -217,6 +230,10 @@ function createPlayerStore() {
 	// The load whose next track was asked for, so each play preloads once;
 	// null lets the next position ask again.
 	let preloadFor: number | null = null;
+	// Each deck's level with "Even out volume" on, as set when its song loaded,
+	// and the level of the song playing, by its play, which a reload keeps.
+	const deckLevels: number[] = [];
+	let currentLevel: { playId: number; factor: number } | null = null;
 	const recovery: Recovery = {
 		phase: 'idle',
 		generation: 0,
@@ -316,6 +333,52 @@ function createPlayerStore() {
 			});
 		});
 	});
+
+	/** The song after the one at `index`, in play order. */
+	function nextAfter(index: number): QueueItem | null {
+		const next = computeAllowedIndex(
+			computeNextIndex,
+			index,
+			queue.length,
+			shuffleEnabled,
+			shuffleOrder,
+			plays(cachedRatings)
+		);
+		return next === null ? null : (queue[next] ?? null);
+	}
+
+	/** A library song's loudness; null for any other, or when it cannot be read. */
+	async function readLoudness(item: QueueItem): Promise<TrackLoudness | null> {
+		if (item.sourceType !== 'local' || !item.trackSourceId) return null;
+		try {
+			return await queryClient.fetchQuery(getTrackLoudnessQueryOptions(item.trackSourceId));
+		} catch (e) {
+			console.warn('A track plays unlevelled: its loudness could not be read', e);
+			return null;
+		}
+	}
+
+	/** The level `item` plays at, between `previous` (played before it) and what follows it. */
+	async function levelOf(
+		item: QueueItem,
+		previous: QueueItem | null,
+		index: number,
+		wait?: Promise<void>
+	): Promise<number> {
+		// With no engine nothing is levelled, so nothing is read.
+		if (!tryGetAudioEngine()) return 1;
+		const read = readLoudness(item);
+		const loudness = await (wait ? Promise.race([read, wait.then(() => null)]) : read);
+		return levelFor(item, loudness, inAlbumOrder(previous, item, nextAfter(index)));
+	}
+
+	/** Sets a deck's level before its song plays, or ramps it while it plays. */
+	function levelDeck(source: PlaybackSource, factor: number, rampSeconds = 0): void {
+		if (!(source instanceof NativeAudioSource)) return;
+		const deck = source.lease.deck;
+		deckLevels[deck] = factor;
+		tryGetAudioEngine()?.setLevel(deck, crossfade.evenOutVolume ? factor : 1, rampSeconds);
+	}
 
 	/** Whether the queue item at an index plays under the floor, given these ratings. */
 	function plays(ratings: TrackRatings | null): (index: number) => boolean {
@@ -517,6 +580,12 @@ function createPlayerStore() {
 		transition.reset();
 		currentSource = null;
 		if (kind === 'fresh') playId++;
+		// A reload of the song playing (a retry, another source) keeps the level it
+		// started at; a new play reads its loudness beside the stream, for a moment.
+		const level =
+			kind !== 'fresh' && currentLevel?.playId === playId
+				? Promise.resolve(currentLevel.factor)
+				: levelOf(item, prevItem, index, delay(LOUDNESS_WAIT_MS));
 		currentIndex = index;
 		playbackState = 'loading';
 		progress = 0;
@@ -569,8 +638,15 @@ function createPlayerStore() {
 				url: built.url,
 				format: activeItem.format
 			});
+			// A failure while the level is awaited is heard below, not as unhandled.
+			loadPromise.catch(() => {});
 			void session.begin(sessionKeyFor(activeItem));
-			if (isCurrent(gen) && activeItem.sourceType !== 'youtube') {
+			// The level is in place before anything is heard, and stays for the song.
+			const factor = await level;
+			if (!isCurrent(gen)) return;
+			currentLevel = { playId, factor };
+			levelDeck(source, factor);
+			if (activeItem.sourceType !== 'youtube') {
 				source.play();
 			}
 			await loadPromise;
@@ -727,6 +803,13 @@ function createPlayerStore() {
 			if (state === 'off' || state === 'unavailable') return;
 			if (!isCurrent(gen) || preloadFor !== gen || upcoming !== item) return;
 		}
+		const factor = await levelOf(
+			item,
+			queue[currentIndex] ?? null,
+			queue.indexOf(item),
+			delay(PRELOAD_LOUDNESS_WAIT_MS)
+		);
+		if (!isCurrent(gen) || preloadFor !== gen || upcoming !== item) return;
 		let built: BuiltSource;
 		try {
 			built = buildSource(item, false);
@@ -741,6 +824,8 @@ function createPlayerStore() {
 		}
 		source.setVolume(volume);
 		transition.prepare({ item, source, format: built.format, seekable: built.seekable });
+		// After prepare, which takes the deck: the level is in place before it plays.
+		levelDeck(source, factor);
 		// A failure reaches the transition, which drops the preload.
 		source
 			.load({ trackSourceId: item.trackSourceId, url: built.url, format: item.format })
@@ -763,6 +848,7 @@ function createPlayerStore() {
 		progress = 0;
 		duration = next.source.getDuration();
 		playId++;
+		currentLevel = { playId, factor: deckLevels[next.source.lease.deck] ?? 1 };
 		subscribeToSource(next.source, gen);
 		session.begin(sessionKeyFor(next.item));
 		tidy();
@@ -1245,6 +1331,13 @@ function createPlayerStore() {
 			storeVolume(clamped);
 		},
 
+		/** Turns "Even out volume" on or off; the songs heard now move to it over a moment. */
+		setEvenOutVolume(on: boolean): void {
+			crossfade.setEvenOutVolume(on);
+			const engine = tryGetAudioEngine();
+			deckLevels.forEach((factor, deck) => engine?.setLevel(deck, on ? factor : 1, LEVEL_RAMP_S));
+		},
+
 		stop(): void {
 			void session.end(progress);
 			recovery.generation++;
@@ -1284,6 +1377,12 @@ function createPlayerStore() {
 						await deck;
 						if (!isCurrent(gen)) return;
 					}
+					const level = levelOf(
+						resume.currentItem,
+						null,
+						resume.currentIndex,
+						delay(LOUDNESS_WAIT_MS)
+					);
 					const built = buildSource(resume.currentItem, false);
 					const { source } = built;
 					applyBuilt(built);
@@ -1303,6 +1402,10 @@ function createPlayerStore() {
 						format: resume.currentItem.format
 					});
 					if (!isCurrent(gen)) return;
+					const factor = await level;
+					if (!isCurrent(gen)) return;
+					currentLevel = { playId, factor };
+					levelDeck(source, factor);
 					playbackState = 'paused';
 					duration = source.getDuration();
 					if (resume.progress > 0) {
