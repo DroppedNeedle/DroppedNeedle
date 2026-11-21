@@ -25,8 +25,9 @@ use super::redirects::{
 };
 use super::{
     BRAINZMASH_MAX_COOLDOWN, Criticality, LiveSource, MAX_BODY_BYTES, MAX_PAGE_LIMIT,
-    MAX_REDIRECT_HOPS, MbSource, SOURCE, SearchTerm, build_release_search_query,
-    escape_lucene_phrase, forgiving_term, is_valid_mbid, lucene_words, normalize_mb_id,
+    MAX_REDIRECT_HOPS, MbSource, SOURCE, SearchTerm, build_release_group_search_query,
+    build_release_search_query, escape_lucene_phrase, forgiving_term, is_valid_mbid, lucene_words,
+    normalize_mb_id,
 };
 use crate::RequestPriority;
 use crate::error::{PayloadKind, ProviderError};
@@ -239,8 +240,8 @@ impl MusicBrainzView {
         self.search_text(text, query, page).await
     }
 
-    /// Search release groups by free text, the way v2's album search
-    /// asked: group title boosted, release title next, then any field.
+    /// Search release groups by free text, matching both titles and artist
+    /// credits across words via [`build_release_group_search_query`].
     pub async fn search_release_groups_text(
         &self,
         text: &str,
@@ -249,18 +250,22 @@ impl MusicBrainzView {
         term: SearchTerm,
         criticality: Criticality,
     ) -> Result<SearchPage<ReleaseGroupSearchHit>, ProviderError> {
-        let query = |term: &str, words: &str| {
-            format!(r#"releasegroup:{term}^3 OR release:{term}^2 OR {words}"#)
+        let Some(built) = build_release_group_search_query(text, term) else {
+            return Ok(SearchPage {
+                count: 0,
+                offset: u64::from(offset),
+                items: Vec::new(),
+            });
         };
-        let page = TextPage {
-            entity: "release-group",
-            array_key: "release-groups",
+        self.search_page(
+            "release-group",
+            &built,
             limit,
             offset,
-            term,
+            "release-groups",
             criticality,
-        };
-        self.search_text(text, query, page).await
+        )
+        .await
     }
 
     /// One page of a text search. `query` builds the Lucene query from the

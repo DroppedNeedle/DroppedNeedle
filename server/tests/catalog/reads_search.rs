@@ -1748,6 +1748,57 @@ async fn the_forgiving_retry_runs_only_on_no_match_and_never_from_typeahead() {
     assert!(asked[2].contains("qwertyuiop~"), "{asked:?}");
 }
 
+/// Remote album search sends per-word `releasegroup:` / `artist:` clauses on
+/// `/ws/2/release-group` (typed and forgiving), dropping standalone `-`
+/// separators so `"Hans Zimmer - Live!"` matches artist and title together
+/// without extra MusicBrainz calls (#807).
+#[tokio::test]
+async fn album_search_matches_artist_and_title_words_in_musicbrainz_query() {
+    let wire = Arc::new(ScriptedWire::new());
+    let url = format!("{MUSICBRAINZ}/release-group");
+    let empty = serde_json::to_vec(&serde_json::json!({
+        "count": 0,
+        "offset": 0,
+        "release-groups": []
+    }))
+    .expect("answer encodes");
+    wire.answer(&url, 200, &[], empty);
+    let (app_db, _dir) = crate::common::migrated_file("reads-search-artist-title-query");
+    let (app, _held) = app_on(
+        app_db,
+        Arc::new(droppedneedle_catalog::test_support::UnconfiguredEnrichment),
+        Some(wire.clone()),
+    )
+    .await;
+
+    let uri = format!(
+        "/api/v3/search?{}&buckets=albums",
+        urlencode_query("Hans Zimmer - Live!")
+    );
+    let (status, _, _) = call(app, Method::GET, &uri, Some(TEST_TOKEN), None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let asked: Vec<String> = wire
+        .sent()
+        .iter()
+        .filter(|sent| sent.url.path().ends_with("/release-group"))
+        .filter_map(|sent| sent.query("query"))
+        .collect();
+    assert_eq!(
+        asked.len(),
+        2,
+        "typed call plus one forgiving retry on empty: {asked:?}"
+    );
+    assert_eq!(
+        asked[0],
+        r#"releasegroup:"Hans Zimmer \- Live\!"^3 OR release:"Hans Zimmer \- Live\!"^2 OR ((releasegroup:Hans^2 OR artist:Hans^0.5) AND (releasegroup:Zimmer^2 OR artist:Zimmer^0.5) AND (releasegroup:Live\!^2 OR artist:Live\!^0.5))"#
+    );
+    assert_eq!(
+        asked[1],
+        r#"releasegroup:(Hans~1 AND Zimmer~ AND Live\!~1)^3 OR release:(Hans~1 AND Zimmer~ AND Live\!~1)^2 OR ((releasegroup:Hans~1^2 OR artist:Hans~1^0.5) AND (releasegroup:Zimmer~^2 OR artist:Zimmer~^0.5) AND (releasegroup:Live\!~1^2 OR artist:Live\!~1^0.5))"#
+    );
+}
+
 /// One ListenBrainz popularity answer: each id under `key` with its
 /// listens, `None` for an id ListenBrainz does not know.
 fn popularity_answer(key: &str, counts: &[(&str, Option<i64>)]) -> Scripted {

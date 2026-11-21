@@ -348,6 +348,34 @@ fn lucene_word(word: &str) -> String {
     }
 }
 
+/// One fuzzy word for a forgiving Lucene query: operators and words under
+/// four letters stay exact through [`lucene_word`], 4-5 letters allow one
+/// edit (`~1`), and longer words allow two (`~`).
+fn fuzzy_lucene_word(word: &str) -> String {
+    let letters = word.chars().count();
+    if matches!(word, "AND" | "OR" | "NOT") || letters < 4 {
+        lucene_word(word)
+    } else if letters < 6 {
+        format!("{}~1", escape_lucene_phrase(word))
+    } else {
+        format!("{}~", escape_lucene_phrase(word))
+    }
+}
+
+/// Whitespace-split tokens carrying at least one alphanumeric character
+/// (dropping standalone separators like `-` in `"Hans Zimmer - Live!"`),
+/// falling back to all whitespace-split tokens when the entire query is
+/// punctuation (e.g. `"!!!"`).
+fn search_word_tokens(text: &str) -> Vec<&str> {
+    let all: Vec<&str> = text.split_whitespace().collect();
+    let words: Vec<&str> = all
+        .iter()
+        .copied()
+        .filter(|word| word.chars().any(char::is_alphanumeric))
+        .collect();
+    if words.is_empty() { all } else { words }
+}
+
 /// The typed words of a text search for a query's free clause, each
 /// through [`lucene_word`].
 pub fn lucene_words(text: &str) -> String {
@@ -371,16 +399,6 @@ pub fn lucene_words(text: &str) -> String {
 /// `sunflwer~` found Sunflower. Not yet checked against BrainzMash.
 pub fn forgiving_term(text: &str) -> Option<String> {
     let words: Vec<&str> = text.split_whitespace().collect();
-    let fuzzy = |word: &str| {
-        let letters = word.chars().count();
-        if matches!(word, "AND" | "OR" | "NOT") || letters < 4 {
-            lucene_word(word)
-        } else if letters < 6 {
-            format!("{}~1", escape_lucene_phrase(word))
-        } else {
-            format!("{}~", escape_lucene_phrase(word))
-        }
-    };
     match words.as_slice() {
         [] => None,
         [word] => {
@@ -388,7 +406,7 @@ pub fn forgiving_term(text: &str) -> Option<String> {
             if letters.len() < 4 {
                 return None;
             }
-            let mut guesses = vec![fuzzy(word)];
+            let mut guesses = vec![fuzzy_lucene_word(word)];
             if (6..=MAX_SPLIT_LETTERS).contains(&letters.len())
                 && letters.iter().all(|letter| letter.is_alphanumeric())
             {
@@ -411,11 +429,71 @@ pub fn forgiving_term(text: &str) -> Option<String> {
                 "({})",
                 words
                     .iter()
-                    .map(|word| fuzzy(word))
+                    .map(|word| fuzzy_lucene_word(word))
                     .collect::<Vec<_>>()
                     .join(" AND ")
             ))
         }
+    }
+}
+
+/// Free-text release-group search query matching both album titles and
+/// artist credits across words (#807). On `/ws/2/release-group`,
+/// unqualified words search only the default title field and never
+/// `artist`, so queries mixing artist and title (e.g. `"Live! Hans Zimmer"`
+/// or `"Hans Zimmer - Live!"`) missed unless each word could match either
+/// `releasegroup` (boosted) or `artist`.
+///
+/// Verified on 2026-11-21 against both `musicbrainz.org/ws/2/release-group`
+/// and `api.brainzmash.cc/ws/2/release-group` (`"Live! Hans Zimmer"`,
+/// `"Hans Zimmer Live"`, `"Hans Zimmer - Live!"`, `"OK Computer Radiohead"`,
+/// `"Hans Zimmer"`, `"Future"`, `"Live"`, and forgiving `"Live! Hans Zimer"`).
+pub fn build_release_group_search_query(text: &str, term: SearchTerm) -> Option<String> {
+    let text = text.trim();
+    let words = search_word_tokens(text);
+    match term {
+        SearchTerm::Typed => {
+            let phrase = format!("\"{}\"", escape_lucene_phrase(text));
+            if words.is_empty() {
+                return Some(format!("releasegroup:{phrase}^3 OR release:{phrase}^2"));
+            }
+            let per_word = words
+                .iter()
+                .map(|word| {
+                    let lw = lucene_word(word);
+                    format!("(releasegroup:{lw}^2 OR artist:{lw}^0.5)")
+                })
+                .collect::<Vec<_>>()
+                .join(" AND ");
+            Some(format!(
+                "releasegroup:{phrase}^3 OR release:{phrase}^2 OR ({per_word})"
+            ))
+        }
+        SearchTerm::Forgiving => match words.as_slice() {
+            [] => None,
+            [word] => {
+                let term = forgiving_term(word)?;
+                Some(format!(
+                    "releasegroup:{term}^3 OR release:{term}^2 OR artist:{term}^0.5"
+                ))
+            }
+            multi => {
+                if multi.iter().all(|word| word.chars().count() < 4) {
+                    return None;
+                }
+                let fuzzy_words: Vec<String> =
+                    multi.iter().map(|word| fuzzy_lucene_word(word)).collect();
+                let joined_and = fuzzy_words.join(" AND ");
+                let per_word = fuzzy_words
+                    .iter()
+                    .map(|fw| format!("(releasegroup:{fw}^2 OR artist:{fw}^0.5)"))
+                    .collect::<Vec<_>>()
+                    .join(" AND ");
+                Some(format!(
+                    "releasegroup:({joined_and})^3 OR release:({joined_and})^2 OR ({per_word})"
+                ))
+            }
+        },
     }
 }
 
@@ -657,5 +735,103 @@ mod tests {
         );
         assert_eq!(forgiving_term("u2"), None);
         assert_eq!(forgiving_term("  "), None);
+    }
+
+    #[test]
+    fn release_group_search_query_matches_artist_and_title_words() {
+        // Single words keep phrase boosts ahead of title-over-artist cross-field match.
+        assert_eq!(
+            build_release_group_search_query("Future", SearchTerm::Typed).as_deref(),
+            Some(
+                r#"releasegroup:"Future"^3 OR release:"Future"^2 OR ((releasegroup:Future^2 OR artist:Future^0.5))"#
+            )
+        );
+        assert_eq!(
+            build_release_group_search_query("Live", SearchTerm::Typed).as_deref(),
+            Some(
+                r#"releasegroup:"Live"^3 OR release:"Live"^2 OR ((releasegroup:Live^2 OR artist:Live^0.5))"#
+            )
+        );
+
+        // Mixed artist + title queries match every word across releasegroup or artist,
+        // escaping punctuation and dropping standalone separators like `-`.
+        assert_eq!(
+            build_release_group_search_query("Live! Hans Zimmer", SearchTerm::Typed).as_deref(),
+            Some(
+                r#"releasegroup:"Live\! Hans Zimmer"^3 OR release:"Live\! Hans Zimmer"^2 OR ((releasegroup:Live\!^2 OR artist:Live\!^0.5) AND (releasegroup:Hans^2 OR artist:Hans^0.5) AND (releasegroup:Zimmer^2 OR artist:Zimmer^0.5))"#
+            )
+        );
+        assert_eq!(
+            build_release_group_search_query("Hans Zimmer Live", SearchTerm::Typed).as_deref(),
+            Some(
+                r#"releasegroup:"Hans Zimmer Live"^3 OR release:"Hans Zimmer Live"^2 OR ((releasegroup:Hans^2 OR artist:Hans^0.5) AND (releasegroup:Zimmer^2 OR artist:Zimmer^0.5) AND (releasegroup:Live^2 OR artist:Live^0.5))"#
+            )
+        );
+        assert_eq!(
+            build_release_group_search_query("Hans Zimmer - Live!", SearchTerm::Typed).as_deref(),
+            Some(
+                r#"releasegroup:"Hans Zimmer \- Live\!"^3 OR release:"Hans Zimmer \- Live\!"^2 OR ((releasegroup:Hans^2 OR artist:Hans^0.5) AND (releasegroup:Zimmer^2 OR artist:Zimmer^0.5) AND (releasegroup:Live\!^2 OR artist:Live\!^0.5))"#
+            )
+        );
+
+        // Operator words are quoted as literals.
+        assert_eq!(
+            build_release_group_search_query("Simon AND Garfunkel", SearchTerm::Typed).as_deref(),
+            Some(
+                r#"releasegroup:"Simon AND Garfunkel"^3 OR release:"Simon AND Garfunkel"^2 OR ((releasegroup:Simon^2 OR artist:Simon^0.5) AND (releasegroup:"AND"^2 OR artist:"AND"^0.5) AND (releasegroup:Garfunkel^2 OR artist:Garfunkel^0.5))"#
+            )
+        );
+
+        // Punctuation-only band name falls back to its token instead of dropping everything.
+        assert_eq!(
+            build_release_group_search_query("!!!", SearchTerm::Typed).as_deref(),
+            Some(
+                r#"releasegroup:"\!\!\!"^3 OR release:"\!\!\!"^2 OR ((releasegroup:\!\!\!^2 OR artist:\!\!\!^0.5))"#
+            )
+        );
+
+        // Blank input stays valid in typed mode and skips forgiving mode.
+        assert_eq!(
+            build_release_group_search_query("  ", SearchTerm::Typed).as_deref(),
+            Some(r#"releasegroup:""^3 OR release:""^2"#)
+        );
+        assert_eq!(
+            build_release_group_search_query("  ", SearchTerm::Forgiving),
+            None
+        );
+
+        // Forgiving mode: multi-word typo (with separator dropped), single-word split,
+        // and short words only -> None.
+        assert_eq!(
+            build_release_group_search_query("Live! Hans Zimer", SearchTerm::Forgiving).as_deref(),
+            Some(
+                r#"releasegroup:(Live\!~1 AND Hans~1 AND Zimer~1)^3 OR release:(Live\!~1 AND Hans~1 AND Zimer~1)^2 OR ((releasegroup:Live\!~1^2 OR artist:Live\!~1^0.5) AND (releasegroup:Hans~1^2 OR artist:Hans~1^0.5) AND (releasegroup:Zimer~1^2 OR artist:Zimer~1^0.5))"#
+            )
+        );
+        assert_eq!(
+            build_release_group_search_query("Hans Zimer - Live!", SearchTerm::Forgiving)
+                .as_deref(),
+            Some(
+                r#"releasegroup:(Hans~1 AND Zimer~1 AND Live\!~1)^3 OR release:(Hans~1 AND Zimer~1 AND Live\!~1)^2 OR ((releasegroup:Hans~1^2 OR artist:Hans~1^0.5) AND (releasegroup:Zimer~1^2 OR artist:Zimer~1^0.5) AND (releasegroup:Live\!~1^2 OR artist:Live\!~1^0.5))"#
+            )
+        );
+        let split_term = forgiving_term("spiderverse").expect("spiderverse splits");
+        assert_eq!(
+            build_release_group_search_query("spiderverse", SearchTerm::Forgiving).as_deref(),
+            Some(
+                format!(
+                    "releasegroup:{split_term}^3 OR release:{split_term}^2 OR artist:{split_term}^0.5"
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(
+            build_release_group_search_query("a b", SearchTerm::Forgiving),
+            None
+        );
+        assert_eq!(
+            build_release_group_search_query("u2", SearchTerm::Forgiving),
+            None
+        );
     }
 }
