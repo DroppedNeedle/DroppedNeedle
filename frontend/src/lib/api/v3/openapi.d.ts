@@ -6382,6 +6382,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/playlists/{playlist_id}/pull-now": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check a playlist's source now and queue an import when it changed.
+         *     `POST /api/v3/playlists/{playlist_id}/pull-now`. Owner only.
+         */
+        post: operations["pull_now_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/playlists/{playlist_id}/request-missing": {
         parameters: {
             query?: never;
@@ -20814,6 +20834,11 @@ export interface components {
         PullBody: {
             /** @description Whether the playlist follows its source. */
             enabled: boolean;
+        };
+        /** @description What one manual check found. */
+        PullNowResponse: {
+            /** @description Whether the source changed and an import was queued. */
+            changed: boolean;
         };
         /** @description A playlist's pull state after a change. */
         PullState: {
@@ -43399,6 +43424,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    pull_now_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullNowResponse"];
                 };
             };
         };

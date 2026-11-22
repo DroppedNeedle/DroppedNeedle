@@ -48,50 +48,87 @@ impl PlaylistPull {
             }
         };
         for (playlist_id, user_id, source_ref, stored) in due {
-            let Some(spotify_id) = source_ref.strip_prefix("spotify:") else {
-                continue;
-            };
-            match self.service.snapshot_of(&user_id, spotify_id).await {
-                Ok(Some(snapshot)) if Some(&snapshot) == stored.as_ref() => {
-                    if let Err(error) = self.service.record_pull(&playlist_id, None, None).await {
-                        warn!(%error, playlist = %playlist_id, "playlist pull: the check was not recorded");
+            let _ = self
+                .check_row(&playlist_id, &user_id, &source_ref, stored)
+                .await;
+        }
+    }
+
+    /// Check one playlist now, for its owner. Answers whether the source
+    /// changed and an import was queued.
+    pub async fn check_now(&self, playlist_id: &str) -> Result<bool, String> {
+        let due = self
+            .service
+            .enabled_pulls()
+            .await
+            .map_err(|error| error.to_string())?;
+        let Some((id, user_id, source_ref, stored)) =
+            due.into_iter().find(|(id, ..)| id == playlist_id)
+        else {
+            return Ok(false);
+        };
+        self.check_row(&id, &user_id, &source_ref, stored).await
+    }
+
+    /// One playlist's check, for the pass and for a person's press.
+    async fn check_row(
+        &self,
+        playlist_id: &str,
+        user_id: &str,
+        source_ref: &str,
+        stored: Option<String>,
+    ) -> Result<bool, String> {
+        let Some(spotify_id) = source_ref.strip_prefix("spotify:") else {
+            return Ok(false);
+        };
+        match self.service.snapshot_of(user_id, spotify_id).await {
+            Ok(Some(snapshot)) if Some(&snapshot) == stored.as_ref() => {
+                if let Err(error) = self.service.record_pull(playlist_id, None, None).await {
+                    warn!(%error, playlist = %playlist_id, "playlist pull: the check was not recorded");
+                }
+                Ok(false)
+            }
+            Ok(Some(snapshot)) => {
+                match self.imports.start(user_id, spotify_id, playlist_id).await {
+                    Ok(()) => {
+                        info!(playlist = %playlist_id, "playlist pull: the source changed; the import is queued");
+                        if let Err(error) = self
+                            .service
+                            .record_pull(playlist_id, Some(&snapshot), None)
+                            .await
+                        {
+                            warn!(%error, playlist = %playlist_id, "playlist pull: the snapshot was not recorded");
+                        }
+                        Ok(true)
+                    }
+                    Err(error) => {
+                        let message = error.to_string();
+                        if let Err(write) = self
+                            .service
+                            .record_pull(playlist_id, None, Some(&message))
+                            .await
+                        {
+                            warn!(%write, playlist = %playlist_id, "playlist pull: the error was not recorded");
+                        }
+                        Err(message)
                     }
                 }
-                Ok(Some(snapshot)) => {
-                    match self.imports.start(&user_id, spotify_id, &playlist_id).await {
-                        Ok(()) => {
-                            info!(playlist = %playlist_id, "playlist pull: the source changed; the import is queued");
-                            if let Err(error) = self
-                                .service
-                                .record_pull(&playlist_id, Some(&snapshot), None)
-                                .await
-                            {
-                                warn!(%error, playlist = %playlist_id, "playlist pull: the snapshot was not recorded");
-                            }
-                        }
-                        Err(error) => {
-                            if let Err(write) = self
-                                .service
-                                .record_pull(&playlist_id, None, Some(&error.to_string()))
-                                .await
-                            {
-                                warn!(%write, playlist = %playlist_id, "playlist pull: the error was not recorded");
-                            }
-                        }
-                    }
-                }
-                Ok(None) => {
-                    let _ = self
-                        .service
-                        .record_pull(&playlist_id, None, Some("spotify returned no snapshot"))
-                        .await;
-                }
-                Err(error) => {
-                    let _ = self
-                        .service
-                        .record_pull(&playlist_id, None, Some(&format!("{error:?}")))
-                        .await;
-                }
+            }
+            Ok(None) => {
+                let message = "spotify returned no snapshot".to_owned();
+                let _ = self
+                    .service
+                    .record_pull(playlist_id, None, Some(&message))
+                    .await;
+                Err(message)
+            }
+            Err(error) => {
+                let message = format!("{error:?}");
+                let _ = self
+                    .service
+                    .record_pull(playlist_id, None, Some(&message))
+                    .await;
+                Err(message)
             }
         }
     }

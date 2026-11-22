@@ -20,6 +20,7 @@ use droppedneedle_kernel::mount::{Routes, routes};
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use crate::imports::playlist_pull::PlaylistPull;
 use crate::imports::spotify_albums::AlbumResolver;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::ApprovalState;
@@ -40,11 +41,15 @@ pub struct PlaylistRequestDeps {
     pub playlists: PlaylistStore,
     /// Finds each album's release group.
     pub resolver: Arc<AlbumResolver>,
+    /// The hourly pull, for a person's check.
+    pub pull: Arc<PlaylistPull>,
 }
 
 /// The route.
 pub fn routes() -> Routes<PlaylistRequestDeps> {
-    Routes::new().user(routes!(request_missing_handler))
+    Routes::new()
+        .user(routes!(request_missing_handler))
+        .user(routes!(pull_now_handler))
 }
 
 /// What one press filed.
@@ -57,6 +62,44 @@ pub struct RequestMissingResponse {
     pub skipped: usize,
     /// Albums the resolver or the intake could not place.
     pub failed: usize,
+}
+
+/// What one manual check found.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PullNowResponse {
+    /// Whether the source changed and an import was queued.
+    pub changed: bool,
+}
+
+/// Check a playlist's source now and queue an import when it changed.
+/// `POST /api/v3/playlists/{playlist_id}/pull-now`. Owner only.
+#[utoipa::path(
+    post,
+    tag = "playlists",
+    path = "/api/v3/playlists/{playlist_id}/pull-now",
+    params(("playlist_id" = String, Path, description = "Playlist id")),
+    responses((status = 202, body = PullNowResponse))
+)]
+pub async fn pull_now_handler(
+    State(deps): State<PlaylistRequestDeps>,
+    User(principal): User,
+    Path(playlist_id): Path<String>,
+) -> Result<Json<PullNowResponse>, ApiError> {
+    let owned = deps.playlists.owned_by(principal.user_id());
+    if owned
+        .get(&playlist_id)
+        .await
+        .map_err(ApiError::internal)?
+        .is_none()
+    {
+        return Err(ApiError::not_found());
+    }
+    let changed = deps
+        .pull
+        .check_now(&playlist_id)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(PullNowResponse { changed }))
 }
 
 /// Request the albums a playlist names that the library lacks.

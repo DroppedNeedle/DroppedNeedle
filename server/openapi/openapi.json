@@ -25108,6 +25108,45 @@
         ]
       }
     },
+    "/api/v3/playlists/{playlist_id}/pull-now": {
+      "post": {
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Check a playlist's source now and queue an import when it changed.\n`POST /api/v3/playlists/{playlist_id}/pull-now`. Owner only.",
+        "operationId": "pull_now_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullNowResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/playlists/{playlist_id}/request-missing": {
       "post": {
         "tags": [
@@ -60134,6 +60173,19 @@
           "enabled": {
             "type": "boolean",
             "description": "Whether the playlist follows its source."
+          }
+        }
+      },
+      "PullNowResponse": {
+        "type": "object",
+        "description": "What one manual check found.",
+        "required": [
+          "changed"
+        ],
+        "properties": {
+          "changed": {
+            "type": "boolean",
+            "description": "Whether the source changed and an import was queued."
           }
         }
       },

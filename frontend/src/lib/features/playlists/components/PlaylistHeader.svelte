@@ -18,7 +18,10 @@
 	import PlaylistDiscoveryModal from '$lib/features/discover/components/PlaylistDiscoveryModal.svelte';
 	import PlaylistExportModal from '$lib/features/playlists/components/PlaylistExportModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { createSetPlaylistPullV3Mutation } from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
+	import {
+		createCheckPlaylistPullV3Mutation,
+		createSetPlaylistPullV3Mutation
+	} from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
 	import { formatTotalDurationSec, formatRelativeTime } from '$lib/utils/formatting';
 	import { getSourceColor, getSourceLabel } from '$lib/utils/sources';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -35,6 +38,7 @@
 		X,
 		Sparkles,
 		Globe,
+		Info,
 		Lock,
 		LogOut,
 		Trash2,
@@ -119,6 +123,8 @@
 
 	const renameMutation = createUpdatePlaylistV3Mutation();
 	const setPull = createSetPlaylistPullV3Mutation();
+	const checkPull = createCheckPlaylistPullV3Mutation();
+	let checkingPull = $state(false);
 	const uploadCoverMutation = createUploadPlaylistCoverV3Mutation();
 	const removeCoverMutation = createDeletePlaylistCoverV3Mutation();
 
@@ -139,6 +145,23 @@
 	function startEditName() {
 		nameInput = playlist.name;
 		editingName = true;
+	}
+
+	async function checkNow() {
+		checkingPull = true;
+		try {
+			const result = await checkPull.mutateAsync(playlist.id);
+			toastStore.show({
+				message: result.changed
+					? 'The source changed; an import is queued.'
+					: 'No new songs since the last check.',
+				type: 'success'
+			});
+		} catch {
+			toastStore.show({ message: "Couldn't check the source.", type: 'error' });
+		} finally {
+			checkingPull = false;
+		}
 	}
 
 	async function togglePull(event: Event) {
@@ -428,14 +451,26 @@
 					</p>
 					{#if sourceType === 'spotify' && playlist.is_owner}
 						<p class="pl-hero__fact">
-							<label class="inline-flex items-center gap-2">
+							<label
+								class="inline-flex items-center gap-2"
+								title="Checks the source every hour and adds the songs it gained."
+							>
 								<input
 									type="checkbox"
 									checked={playlist.pull_enabled}
 									onchange={(event) => void togglePull(event)}
 								/>
-								Sync new songs hourly
+								Sync
+								<Info class="size-3.5 text-muted" aria-hidden="true" />
 							</label>
+							<button
+								type="button"
+								class="text-xs underline hover:no-underline disabled:opacity-50"
+								disabled={checkingPull}
+								onclick={() => void checkNow()}
+							>
+								{checkingPull ? 'Checking…' : 'Check now'}
+							</button>
 							{#if playlist.pull_error}
 								<span class="text-warning">{playlist.pull_error}</span>
 							{:else if playlist.pull_checked_at}

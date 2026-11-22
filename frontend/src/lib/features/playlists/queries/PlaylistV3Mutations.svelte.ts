@@ -82,6 +82,16 @@ export const createSetPlaylistPullV3Mutation = () =>
 		effects: (_data, vars) => detail(vars.id)
 	}));
 
+export type PullNowResponseV3 = components['schemas']['PullNowResponse'];
+
+/** Check a playlist's source now and queue an import when it changed. */
+export const createCheckPlaylistPullV3Mutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (id: string) =>
+			api.v3.POST(v3('/api/v3/playlists/{playlist_id}/pull-now', { path: { playlist_id: id } })),
+		effects: (_data, id) => detail(id)
+	}));
+
 export const createAddPlaylistTracksV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string } & AddTracksBodyV3) =>

@@ -696,6 +696,7 @@ impl AcquireSetup {
             requests: core.requests.clone(),
             playlists: collections.playlists.clone(),
             resolver,
+            pull: playlist_pull.clone(),
         };
 
         // Finished downloads reach the library through its import seam.
