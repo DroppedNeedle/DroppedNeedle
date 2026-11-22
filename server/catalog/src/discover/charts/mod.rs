@@ -20,15 +20,26 @@
 //! switched off or no key, these routes answer "not configured". Last.fm
 //! has no sitewide album chart. This server does not keep an admin Last.fm
 //! account to read one from, so popular albums from Last.fm are an empty
-//! page.
+//! page. Last.fm names an album by its release: each is matched to its
+//! release group as the queue matches them (remembered answers first, a
+//! few MusicBrainz lookups after), and a row not matched yet carries no
+//! id and keeps Last.fm's art.
 //!
 //! "your top albums" fall back to whichever service the user
 //! has linked, and a user with neither gets an empty page. Genre pages are
 //! served by the genre pages in front of this source.
 
+use std::collections::HashMap;
+use std::time::Duration;
+
 use droppedneedle_kernel::db::Db;
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 
 use super::ownership::{owned_albums, owned_artists};
+use super::queue::QueueSettings;
+use super::queue::build::{BuildContext, normalize, resolve_release_groups};
+use super::queue::store::QueueDb;
 use crate::discover::listening::{
     ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListenedAlbum, ListeningData, ListeningError,
     SourcePolicy, StatsRange, one_per_group,
@@ -41,6 +52,11 @@ use crate::discover::{
 /// Most rows one Last.fm range page reads: 200.
 const LASTFM_MAX_ROWS: i64 = 200;
 
+/// How long a person waits on a Last.fm page's new release group lookups.
+/// Each answer is remembered as it comes, so lookups cut off keep what
+/// they found, and the rest are tried again next time.
+const RESOLVE_BUDGET: Duration = Duration::from_secs(5);
+
 /// The sentence a Last.fm chart answers while Last.fm cannot be read.
 const LASTFM_OFF: &str = "Last.fm charts need Last.fm switched on and an API key saved under Settings > Last.fm. ListenBrainz charts work without one.";
 
@@ -48,12 +64,21 @@ const LASTFM_OFF: &str = "Last.fm charts need Last.fm switched on and an API key
 pub struct LiveCharts {
     listening: ListeningData,
     db: Db,
+    queue_db: QueueDb,
+    advanced: Live<AdvancedSettings>,
 }
 
 impl LiveCharts {
-    /// Charts over `listening`, marked against the catalog in `db`.
-    pub fn new(listening: ListeningData, db: Db) -> Self {
-        Self { listening, db }
+    /// Charts over `listening`, marked against the catalog in `db`, with
+    /// Last.fm albums matched to release groups within the lookup budget
+    /// in `advanced`.
+    pub fn new(listening: ListeningData, db: Db, advanced: Live<AdvancedSettings>) -> Self {
+        Self {
+            listening,
+            queue_db: QueueDb::new(db.clone()),
+            db,
+            advanced,
+        }
     }
 
     async fn artist_page(
@@ -180,11 +205,14 @@ fn lastfm_artists(rows: Vec<ArtistRow>) -> Vec<ArtistRef> {
         .collect()
 }
 
-fn lastfm_albums(rows: Vec<LastFmChartAlbum>) -> Vec<AlbumRef> {
+/// Last.fm albums as rows, each with the release group its release id
+/// matched in `groups`, else no id.
+fn lastfm_albums(rows: Vec<LastFmChartAlbum>, groups: &HashMap<String, String>) -> Vec<AlbumRef> {
     rows.into_iter()
         .map(|row| AlbumRef {
+            musicbrainz_id: normalize(row.mbid.as_deref())
+                .and_then(|release| groups.get(&release).cloned()),
             title: row.name,
-            musicbrainz_id: row.mbid,
             local_id: None,
             artist_name: Some(row.artist_name).filter(|name| !name.is_empty()),
             artist_id: None,
@@ -267,11 +295,83 @@ impl LiveCharts {
         ask: &Ask,
     ) -> Result<Vec<AlbumRef>, ProviderFailure> {
         let (count, skip) = lastfm_window(limit, offset);
-        let rows = self
+        let rows: Vec<LastFmChartAlbum> = self
             .listening
             .lastfm_user_albums(user_id, username, lastfm_period(range), count, ask)
-            .await?;
-        Ok(lastfm_albums(rows.into_iter().skip(skip).collect()))
+            .await?
+            .into_iter()
+            .skip(skip)
+            .collect();
+        let groups = self.release_groups(&rows, ask).await;
+        Ok(lastfm_albums(rows, &groups))
+    }
+
+    /// The release group of each Last.fm album: the remembered answers
+    /// always, then new lookups for the rest within [`RESOLVE_BUDGET`] and
+    /// the lookup budget in the advanced settings. While those cannot be
+    /// read, no new lookup is made.
+    async fn release_groups(
+        &self,
+        rows: &[LastFmChartAlbum],
+        ask: &Ask,
+    ) -> HashMap<String, String> {
+        let mut releases: Vec<String> = rows
+            .iter()
+            .filter_map(|row| normalize(row.mbid.as_deref()))
+            .collect();
+        releases.sort();
+        releases.dedup();
+        let remembered = self.remembered(&releases).await;
+        let mut groups: HashMap<String, String> = remembered
+            .iter()
+            .filter_map(|(release, group)| Some((release.clone(), group.clone()?)))
+            .collect();
+        let pending: Vec<String> = releases
+            .into_iter()
+            .filter(|release| !remembered.contains_key(release))
+            .collect();
+        let Some(settings) = QueueSettings::read(&self.advanced) else {
+            return groups;
+        };
+        if pending.is_empty() {
+            return groups;
+        }
+        let ctx = BuildContext {
+            listening: &self.listening,
+            db: &self.queue_db,
+            settings: &settings,
+            ask: ask.clone(),
+        };
+        match tokio::time::timeout(RESOLVE_BUDGET, resolve_release_groups(&ctx, &pending)).await {
+            Ok(found) => groups.extend(found),
+            Err(_) => {
+                tracing::info!(
+                    "last.fm album matching ran out of time; unmatched rows carry no id"
+                );
+                let found = self.remembered(&pending).await;
+                groups.extend(
+                    found
+                        .into_iter()
+                        .filter_map(|(release, group)| Some((release, group?))),
+                );
+            }
+        }
+        groups
+    }
+
+    /// The remembered release group answers for `releases` (misses as
+    /// `None`); empty when they cannot be read.
+    async fn remembered(&self, releases: &[String]) -> HashMap<String, Option<String>> {
+        if releases.is_empty() {
+            return HashMap::new();
+        }
+        self.queue_db
+            .resolutions(releases)
+            .await
+            .unwrap_or_else(|cause| {
+                tracing::warn!(%cause, "release group answers unreadable; chart rows carry no id");
+                HashMap::new()
+            })
     }
 
     /// One trending-artists page for the user.

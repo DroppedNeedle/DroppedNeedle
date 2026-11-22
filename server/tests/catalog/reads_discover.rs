@@ -360,6 +360,121 @@ async fn lastfm_charts_read_the_instance_key_per_call() {
     assert_eq!(*seen.lock().unwrap(), ["instance-key"], "one Last.fm read");
 }
 
+const LASTFM_RELEASE: &str = "5b11f4ce-a62d-471e-81fc-a69a8278c7da";
+const LASTFM_OTHER_RELEASE: &str = "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f";
+const LASTFM_GROUP: &str = "87c5dedd-371d-4a53-9f7f-80522fb7f3cb";
+const LASTFM_UNMATCHED: &str = "0f5a2b4c-1d3e-4f60-8a7b-9c0d1e2f3a4b";
+
+/// A Last.fm user's top albums page: two releases of one owned release
+/// group the app matched before, and a release it never matched, whose
+/// MusicBrainz lookups never answer while `lookups_hang` is set.
+async fn lastfm_top_page(
+    tag: &str,
+    lookups_hang: bool,
+) -> droppedneedle_catalog::discover::models::ChartPage<
+    droppedneedle_catalog::discover::models::AlbumRef,
+> {
+    use droppedneedle_catalog::discover::listening::{LastFmChartAlbum, UserMusic};
+    use droppedneedle_kernel::db::{DbError, Lane};
+
+    let auth = AuthRig::new(tag).await;
+    let seed = format!(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'Aurora', 'aurora', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) \
+         VALUES ('al1', 'r1', 'g1', 'First Light', 'first light', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, decision_source, selected_at) \
+         VALUES ('al1', 'musicbrainz', '{LASTFM_GROUP}', 'manual', 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, availability, ingest_source, \
+         imported_at, membership_source) VALUES ('t1', 'al1', 'r1', '/music/t1.flac', \
+         't1.flac', 'h1', 1, 1, 's1', 'Opener', 'opener', 'First Light', 'first light', 'flac', \
+         'indexed', 'scan', 1, 'automatic'); \
+         INSERT INTO catalog_mbid_resolutions (source_mbid_lower, source_mbid, \
+         release_group_mbid) VALUES ('{LASTFM_RELEASE}', '{LASTFM_RELEASE}', '{LASTFM_GROUP}'), \
+         ('{LASTFM_OTHER_RELEASE}', '{LASTFM_OTHER_RELEASE}', '{LASTFM_GROUP}');"
+    );
+    auth.platform
+        .db
+        .write(Lane::Foreground, "chart seed", move |tx| {
+            tx.execute_batch(&seed).map_err(DbError::from)
+        })
+        .await
+        .expect("seed");
+    let row = |name: &str, mbid: &str, plays: i64| LastFmChartAlbum {
+        name: name.to_owned(),
+        artist_name: "Aurora".to_owned(),
+        mbid: Some(mbid.to_owned()),
+        playcount: Some(plays),
+        image_url: format!("https://lastfm.example/{name}.png"),
+    };
+    let script = crate::discover_queue::Script {
+        user: UserMusic {
+            lastfm_username: Some("scrobbler".to_owned()),
+            lastfm: true,
+            ..UserMusic::default()
+        },
+        lastfm_top_albums: vec![
+            row("First Light", LASTFM_RELEASE, 12),
+            row("Elsewhere", LASTFM_UNMATCHED, 9),
+            row("First Light (Deluxe)", LASTFM_OTHER_RELEASE, 4),
+        ],
+        release_lookups_hang: lookups_hang,
+        ..crate::discover_queue::Script::default()
+    };
+    let dir = crate::common::ScratchDir::new(tag);
+    let charts =
+        crate::discover_queue::discover_deps(&auth, &dir, Providers::closed(), |network| {
+            *network = Arc::new(script);
+        })
+        .charts;
+    if lookups_hang {
+        // The lookup bound then passes at once instead of in real time.
+        tokio::time::pause();
+    }
+    charts
+        .your_top_albums("user-1", StatsRange::AllTime, 5, 0, ListenSource::Lastfm)
+        .await
+        .unwrap()
+}
+
+/// Last.fm names an album by its release. A chart row whose release the
+/// app has matched before answers its release group and is marked owned,
+/// once per group; a row not matched answers no id and keeps Last.fm's art.
+#[tokio::test]
+async fn lastfm_chart_albums_answer_release_groups() {
+    let page = lastfm_top_page("lastfm-chart-albums", false).await;
+    assert_eq!(page.items.len(), 2, "one row per release group");
+    let owned = &page.items[0];
+    assert_eq!(owned.musicbrainz_id.as_deref(), Some(LASTFM_GROUP));
+    assert_eq!(owned.title, "First Light", "the row with more plays");
+    assert!(owned.in_library);
+    assert_eq!(owned.local_id.as_deref(), Some("al1"));
+    let unmatched = &page.items[1];
+    assert_eq!(
+        unmatched.musicbrainz_id, None,
+        "a release id is not passed on"
+    );
+    assert!(!unmatched.in_library);
+    assert_eq!(
+        unmatched.cover_url.as_deref(),
+        Some("https://lastfm.example/Elsewhere.png")
+    );
+}
+
+/// New lookups that run out of time cost only the rows they were for:
+/// a row the app matched before keeps its release group.
+#[tokio::test]
+async fn a_remembered_chart_album_keeps_its_group_when_lookups_run_out_of_time() {
+    let page = lastfm_top_page("lastfm-chart-timeout", true).await;
+    assert_eq!(page.items[0].musicbrainz_id.as_deref(), Some(LASTFM_GROUP));
+    assert!(page.items[0].in_library);
+    assert_eq!(page.items[1].musicbrainz_id, None);
+}
+
 // ---------------------------------------------------------------------------
 // Playlist suggestions: the artists a playlist seeds them with
 // ---------------------------------------------------------------------------

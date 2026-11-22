@@ -81,7 +81,7 @@ pub fn deps_over(
     network: Arc<dyn ListeningNetwork>,
 ) -> DiscoverDeps {
     let listening = ListeningData::new(network, inputs.providers.cache.clone());
-    let charts = charts::LiveCharts::new(listening.clone(), inputs.db.clone());
+    let charts = charts::LiveCharts::new(listening.clone(), inputs.db.clone(), config.live());
     let client = match YouTubeClient::new(
         inputs.providers.youtube.clone(),
         inputs.youtube_quota_path.clone(),

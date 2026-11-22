@@ -72,6 +72,10 @@ pub(crate) struct Script {
     pub release_group: Option<ReleaseGroupFacts>,
     /// The user's ListenBrainz weekly exploration playlist.
     pub weekly: Option<WeeklyPlaylist>,
+    /// The user's Last.fm top albums.
+    pub lastfm_top_albums: Vec<LastFmChartAlbum>,
+    /// When set, MusicBrainz release lookups never answer.
+    pub release_lookups_hang: bool,
     pub musicbrainz_down: AtomicBool,
     pub fresh_down: AtomicBool,
     /// When set, ListenBrainz top-artist reads wait here until released.
@@ -259,7 +263,7 @@ impl ListeningNetwork for Script {
         _l: u32,
         _p: RequestPriority,
     ) -> Answer<'a, Vec<LastFmChartAlbum>> {
-        ok(Vec::new())
+        ok(self.lastfm_top_albums.clone())
     }
     fn lastfm_similar<'a>(
         &'a self,
@@ -383,6 +387,9 @@ impl ListeningNetwork for Script {
         _r: &'a str,
         _p: RequestPriority,
     ) -> Answer<'a, Option<String>> {
+        if self.release_lookups_hang {
+            return Box::pin(std::future::pending());
+        }
         ok(None)
     }
     fn release_group<'a>(
