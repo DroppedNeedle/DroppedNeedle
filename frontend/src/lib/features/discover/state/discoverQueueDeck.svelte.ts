@@ -5,6 +5,7 @@
  * then lightweight server candidates. Only the current and next card hydrate.
  * The queue is consumed-once and changed locally (advance/ignore/jump); every
  * change saves the deck through the query cache so a reload resumes it.
+ * Coming back to a deck still on screen keeps its cards and place.
  */
 import { isAbortError } from '$lib/utils/errorHandling';
 import { applyEffects, recommendationsChanged } from '$lib/queries/effects';
@@ -35,6 +36,9 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { DeckCard, QueueEnrichment } from '$lib/features/discover/queries/types';
 
 export type DeckPhase = 'idle' | 'loading' | 'building' | 'ready' | 'finished' | 'empty' | 'error';
+
+/** How long a deck on screen goes before coming back to it checks it again. */
+const RECHECK_MS = 5 * 60 * 1000;
 
 function emptyEnrichment(): QueueEnrichment {
 	return {
@@ -73,6 +77,13 @@ function createDiscoverQueueDeck() {
 	let sourceUnsub: (() => void) | null = null;
 	let storageUnsub: (() => void) | null = null;
 	let isVisible = () => true;
+	// Whose deck, from which source, is on screen, and when it was last checked.
+	let shownFor = '';
+	let checkedAt = 0;
+
+	function viewer(): string {
+		return `${authStore.user?.id ?? ''}:${musicBrainzSourceStamp()}`;
+	}
 
 	function requestKey(): string {
 		return `${generation}:${musicBrainzSourceStamp()}`;
@@ -249,6 +260,21 @@ function createDiscoverQueueDeck() {
 
 		async init(getVisible?: () => boolean): Promise<void> {
 			if (getVisible) isVisible = getVisible;
+			if (phase === 'ready' && queue.length > 0 && shownFor === viewer()) {
+				if (Date.now() - checkedAt < RECHECK_MS) return;
+				checkedAt = Date.now();
+				const session = generation;
+				try {
+					await recordDiscoverActivity({ feature: 'queue' }, abortController?.signal);
+				} catch {
+					// the cards on screen stay; the next check tries again
+					return;
+				}
+				if (session === generation) await validateCachedQueue();
+				return;
+			}
+			shownFor = viewer();
+			checkedAt = Date.now();
 			generation++;
 			const session = generation;
 			sourceUnsub?.();
@@ -452,6 +478,7 @@ function createDiscoverQueueDeck() {
 			stopWatchingStatus();
 			inFlightEnrich.clear();
 			phase = 'idle';
+			shownFor = '';
 		}
 	};
 }

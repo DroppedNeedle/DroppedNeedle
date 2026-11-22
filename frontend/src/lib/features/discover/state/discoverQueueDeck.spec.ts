@@ -59,6 +59,7 @@ function savedDeck(items: ReturnType<typeof makeItem>[], currentIndex: number, q
 	return { items, currentIndex, queueId, savedAt: Date.now() };
 }
 
+import { recordDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
 import { discoverQueueDeck } from './discoverQueueDeck.svelte';
 
 // Promise.withResolvers needs Node 22+; this repo runs Node 20. The deferred
@@ -192,6 +193,37 @@ describe('discoverQueueDeck state machine', () => {
 		statusMock.emit({ status: 'error', error: 'replacement failed' });
 		expect(discoverQueueDeck.current?.musicbrainz_id).toBe('rg-2');
 		expect(discoverQueueDeck.replacing).toBe(false);
+	});
+
+	it('keeps the cards and place when the deck comes back into view', async () => {
+		const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+		try {
+			queries.readSavedDeck.mockResolvedValue(
+				savedDeck([makeItem('rg-1'), makeItem('rg-2')], 0, 'q1')
+			);
+			await discoverQueueDeck.init();
+			discoverQueueDeck.next();
+			vi.mocked(recordDiscoverActivity).mockClear();
+			queries.fetchQueueInLibrary.mockClear();
+			queries.readSavedDeck.mockClear();
+
+			now.mockReturnValue(1_000_000 + 4 * 60 * 1000);
+			await discoverQueueDeck.init();
+			expect(discoverQueueDeck.phase).toBe('ready');
+			expect(discoverQueueDeck.current?.musicbrainz_id).toBe('rg-2');
+			expect(recordDiscoverActivity).not.toHaveBeenCalled();
+			expect(queries.fetchQueueInLibrary).not.toHaveBeenCalled();
+			expect(queries.readSavedDeck).not.toHaveBeenCalled();
+
+			now.mockReturnValue(1_000_000 + 6 * 60 * 1000);
+			await discoverQueueDeck.init();
+			expect(discoverQueueDeck.current?.musicbrainz_id).toBe('rg-2');
+			expect(recordDiscoverActivity).toHaveBeenCalledTimes(1);
+			expect(queries.fetchQueueInLibrary).toHaveBeenCalledWith(['rg-1', 'rg-2']);
+			expect(queries.readSavedDeck).not.toHaveBeenCalled();
+		} finally {
+			now.mockRestore();
+		}
 	});
 
 	it('ignores a late queue response from a destroyed session', async () => {
