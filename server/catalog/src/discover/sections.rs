@@ -278,14 +278,14 @@ const fn home(
     }
 }
 
+/// A Discover entry with no shared reads and no part in the dedupe;
+/// [`SectionDef::reading`] adds them.
 const fn discover(
     key: SectionKey,
     zone: SectionZone,
     title: &'static str,
     description: &'static str,
     requires: Option<Requires>,
-    inputs: &'static [Input],
-    dedupe: Dedupe,
     basis: Basis,
 ) -> SectionDef {
     SectionDef {
@@ -295,10 +295,22 @@ const fn discover(
         title,
         description,
         requires,
-        inputs,
-        dedupe,
+        inputs: &[],
+        dedupe: Dedupe::None,
         hides_owned: false,
         basis,
+    }
+}
+
+impl SectionDef {
+    /// This entry with the shared reads a build makes for it and its part
+    /// in the dedupe.
+    const fn reading(self, inputs: &'static [Input], dedupe: Dedupe) -> Self {
+        Self {
+            inputs,
+            dedupe,
+            ..self
+        }
     }
 }
 
@@ -395,8 +407,6 @@ pub const SECTIONS: &[SectionDef] = &[
         "Discover Queue",
         "A personalised album-by-album discovery deck.",
         None,
-        &[],
-        Dedupe::None,
         B::Personal,
     ),
     discover(
@@ -405,28 +415,24 @@ pub const SECTIONS: &[SectionDef] = &[
         "Top Picks for You",
         "Albums we think you'd like, scored against your taste.",
         None,
-        &[I::Seeds, I::Similar, I::Genres],
-        Dedupe::Albums(0),
         B::Personal,
-    ),
+    )
+    .reading(&[I::Seeds, I::Similar, I::Genres], Dedupe::Albums(0)),
     discover(
         K::ListenersLikeYou,
         Z::Essentials,
         "Listening Lounge",
         "Browse albums picked for you by ear - tap a cover to hear it.",
         None,
-        &[],
-        Dedupe::Albums(4),
         B::Personal,
-    ),
+    )
+    .reading(&[], Dedupe::Albums(4)),
     discover(
         K::WeeklyExploration,
         Z::Essentials,
         "Weekly Exploration",
         "Your ListenBrainz weekly exploration playlist.",
         Some(Requires::Listenbrainz),
-        &[],
-        Dedupe::None,
         B::Personal,
     ),
     discover(
@@ -435,8 +441,6 @@ pub const SECTIONS: &[SectionDef] = &[
         "Discover for a Playlist",
         "Album suggestions seeded from any playlist.",
         None,
-        &[],
-        Dedupe::None,
         B::Personal,
     ),
     discover(
@@ -445,70 +449,63 @@ pub const SECTIONS: &[SectionDef] = &[
         "Daily Mixes",
         "Genre-clustered mixes of new and familiar albums.",
         Some(Requires::Library),
-        &[I::Seeds, I::Genres, I::LibraryAlbums],
-        Dedupe::Albums(5),
         B::Personal,
-    ),
+    )
+    .reading(&[I::Seeds, I::Genres, I::LibraryAlbums], Dedupe::Albums(5)),
     discover(
         K::RadioSections,
         Z::MadeForYou,
         "Radio Stations",
         "Album radios seeded by your top artists.",
         None,
-        &[I::Seeds, I::LibraryAlbums],
-        Dedupe::Albums(6),
         B::Personal,
-    ),
+    )
+    .reading(&[I::Seeds, I::LibraryAlbums], Dedupe::Albums(6)),
     discover(
         K::BecauseYouListenTo,
         Z::BecauseYouListened,
         "Because You Listened",
         "Artists similar to the ones you play most.",
         None,
-        &[I::Seeds, I::Similar],
-        Dedupe::Artists,
         B::Personal,
-    ),
+    )
+    .reading(&[I::Seeds, I::Similar], Dedupe::Artists),
     discover(
         K::ArtistsYouMightLike,
         Z::BecauseYouListened,
         "Artists You Might Like",
         "A wider net of similar artists.",
         None,
-        &[I::Seeds, I::Similar],
-        Dedupe::Artists,
         B::Personal,
-    ),
+    )
+    .reading(&[I::Seeds, I::Similar], Dedupe::Artists),
     discover(
         K::PopularInYourGenres,
         Z::BecauseYouListened,
         "Popular in Your Genres",
         "Big names in the genres you listen to.",
         None,
-        &[I::Genres, I::LastfmGenreArtists],
-        Dedupe::Artists,
         B::Personal,
-    ),
+    )
+    .reading(&[I::Genres, I::LastfmGenreArtists], Dedupe::Artists),
     discover(
         K::FreshReleases,
         Z::NewAndFresh,
         "Fresh Releases",
         "New releases picked for you by ListenBrainz.",
         Some(Requires::Listenbrainz),
-        &[I::Fresh],
-        Dedupe::Albums(1),
         B::Personal,
-    ),
+    )
+    .reading(&[I::Fresh], Dedupe::Albums(1)),
     discover(
         K::NewFromFollowed,
         Z::NewAndFresh,
         "New From Artists You Follow",
         "Fresh releases from your followed artists.",
         None,
-        &[],
-        Dedupe::Albums(2),
         B::Personal,
-    ),
+    )
+    .reading(&[], Dedupe::Albums(2)),
     SectionDef {
         hides_owned: true,
         ..discover(
@@ -517,10 +514,9 @@ pub const SECTIONS: &[SectionDef] = &[
             "Missing Essentials",
             "Celebrated albums missing from artists you collect.",
             Some(Requires::Library),
-            &[I::LibraryAlbums],
-            Dedupe::Albums(3),
             B::Library,
         )
+        .reading(&[I::LibraryAlbums], Dedupe::Albums(3))
     },
     discover(
         K::Rediscover,
@@ -528,18 +524,15 @@ pub const SECTIONS: &[SectionDef] = &[
         "Rediscover",
         "Library albums you haven't played in a while.",
         None,
-        &[I::Jellyfin],
-        Dedupe::None,
         B::OwnHistory,
-    ),
+    )
+    .reading(&[I::Jellyfin], Dedupe::None),
     discover(
         K::Anniversaries,
         Z::FromYourLibrary,
         "Milestone Anniversaries",
         "Library albums turning 10, 20, 30… this year.",
         Some(Requires::Library),
-        &[],
-        Dedupe::None,
         B::Library,
     ),
     discover(
@@ -548,60 +541,54 @@ pub const SECTIONS: &[SectionDef] = &[
         "Recent Scrobbles",
         "Your latest Last.fm scrobbles.",
         Some(Requires::Lastfm),
-        &[I::LastfmRecent],
-        Dedupe::Albums(8),
         B::OwnHistory,
-    ),
+    )
+    .reading(&[I::LastfmRecent], Dedupe::Albums(8)),
     discover(
         K::UnexploredGenres,
         Z::BrowseGenres,
         "Unexplored Genres",
         "Genres adjacent to your taste you haven't dug into.",
         None,
-        &[I::Seeds, I::Similar],
-        Dedupe::None,
         B::Personal,
-    ),
+    )
+    .reading(&[I::Seeds, I::Similar], Dedupe::None),
     discover(
         K::GenreList,
         Z::BrowseGenres,
         "Browse Genres",
         "Genre tiles built from your library.",
         Some(Requires::Library),
-        &[I::Genres],
-        Dedupe::None,
         B::Library,
-    ),
+    )
+    .reading(&[I::Genres], Dedupe::None),
     discover(
         K::GloballyTrending,
         Z::TrendingNow,
         "Globally Trending",
         "Artists trending worldwide.",
         None,
-        &[I::Trending],
-        Dedupe::Artists,
         B::Chart,
-    ),
+    )
+    .reading(&[I::Trending], Dedupe::Artists),
     discover(
         K::LastfmWeeklyArtistChart,
         Z::TrendingNow,
         "Last.fm Weekly Artists",
         "Your Last.fm weekly artist chart.",
         Some(Requires::Lastfm),
-        &[I::LastfmWeeklyArtists],
-        Dedupe::Artists,
         B::OwnHistory,
-    ),
+    )
+    .reading(&[I::LastfmWeeklyArtists], Dedupe::Artists),
     discover(
         K::LastfmWeeklyAlbumChart,
         Z::TrendingNow,
         "Last.fm Weekly Albums",
         "Your Last.fm weekly album chart.",
         Some(Requires::Lastfm),
-        &[I::LastfmWeeklyAlbums],
-        Dedupe::Albums(7),
         B::OwnHistory,
-    ),
+    )
+    .reading(&[I::LastfmWeeklyAlbums], Dedupe::Albums(7)),
 ];
 
 /// A page's sections in page order.
