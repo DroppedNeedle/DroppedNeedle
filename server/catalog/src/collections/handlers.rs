@@ -293,7 +293,7 @@ pub async fn set_pull_handler(
 ) -> HttpResult<Json<PullState>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .set_pull(caller.user_id(), &playlist_id, body.enabled)
+            .set_pull(caller.user_id(), &playlist_id, body.enabled, body.acquire)
             .await?,
     ))
 }

@@ -95,14 +95,18 @@ droppedneedle_kernel::sql! {
          JOIN catalog_playlists p ON p.id = c.playlist_id WHERE c.playlist_id = ?2 AND " + OWNED;
     /// The caller's playlist imported from source `?2`.
     pub(super) FIND_BY_SOURCE = "SELECT id FROM catalog_playlists WHERE user_id = ?1 AND source_ref = ?2";
-    /// The pull state of playlist `?1`: enabled, last check and error.
-    pub(super) PULL_STATE = "SELECT enabled, last_checked_at, last_error \
+    /// The pull state of playlist `?1`: enabled, acquire, last check and
+    /// error.
+    pub(super) PULL_STATE = "SELECT enabled, acquire, last_checked_at, last_error \
          FROM catalog_playlist_pull_state WHERE playlist_id = ?1";
-    /// Turn the pull for playlist `?1` on or off, keeping its snapshot.
-    pub(super) PULL_SET = "INSERT INTO catalog_playlist_pull_state (playlist_id, enabled) \
-         VALUES (?1, ?2) ON CONFLICT(playlist_id) DO UPDATE SET enabled = excluded.enabled";
-    /// Every playlist that pulls: id, owner, source ref and stored snapshot.
-    pub(super) PULL_DUE = "SELECT p.id, p.user_id, p.source_ref, s.snapshot_id \
+    /// Turn the pull for playlist `?1` on or off, and its acquire flag when
+    /// `?3` says so, keeping the snapshot.
+    pub(super) PULL_SET = "INSERT INTO catalog_playlist_pull_state (playlist_id, enabled, acquire) \
+         VALUES (?1, ?2, COALESCE(?3, 0)) ON CONFLICT(playlist_id) DO UPDATE SET \
+         enabled = excluded.enabled, acquire = COALESCE(?3, acquire)";
+    /// Every playlist that pulls: id, owner, source ref, stored snapshot and
+    /// acquire flag.
+    pub(super) PULL_DUE = "SELECT p.id, p.user_id, p.source_ref, s.snapshot_id, s.acquire \
          FROM catalog_playlists p JOIN catalog_playlist_pull_state s ON s.playlist_id = p.id \
          WHERE s.enabled = 1 AND p.source_ref LIKE 'spotify:%' ORDER BY p.id";
     /// One pull check: the time, the snapshot when it changed, the error.

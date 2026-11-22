@@ -179,6 +179,7 @@ fn detail(
         source_ref: summary.source_ref,
         import_state: None,
         pull_enabled: false,
+        pull_acquire: false,
         pull_checked_at: None,
         pull_error: None,
         tracks,
@@ -566,8 +567,9 @@ impl CollectionsService<'_> {
         let tracks = visible.tracks(playlist_id).await?;
         let mut detail = detail(&row, user_id, admin, tracks);
         detail.import_state = visible.import_state(playlist_id).await?;
-        if let Some((enabled, checked, error)) = visible.pull_state(playlist_id).await? {
+        if let Some((enabled, acquire, checked, error)) = visible.pull_state(playlist_id).await? {
             detail.pull_enabled = enabled;
+            detail.pull_acquire = acquire;
             detail.pull_checked_at = checked;
             detail.pull_error = error;
         }
@@ -879,17 +881,19 @@ impl CollectionsService<'_> {
         user_id: &str,
         playlist_id: &str,
         enabled: bool,
+        acquire: Option<bool>,
     ) -> Result<PullState, CollectionsError> {
         let visible = self.playlists().visible_to(user_id);
-        if !visible.set_pull(playlist_id, enabled).await? {
+        if !visible.set_pull(playlist_id, enabled, acquire).await? {
             return Err(CollectionsError::NotFound);
         }
-        let (enabled, checked_at, error) = visible
+        let (enabled, acquire, checked_at, error) = visible
             .pull_state(playlist_id)
             .await?
-            .unwrap_or((enabled, None, None));
+            .unwrap_or((enabled, acquire.unwrap_or(false), None, None));
         Ok(PullState {
             enabled,
+            acquire,
             checked_at,
             error,
         })

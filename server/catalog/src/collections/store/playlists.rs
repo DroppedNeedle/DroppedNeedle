@@ -635,13 +635,19 @@ impl PlaylistStore {
     /// snapshot.
     pub async fn enabled_pulls(
         &self,
-    ) -> Result<Vec<(String, String, String, Option<String>)>, StoreError> {
+    ) -> Result<Vec<(String, String, String, Option<String>, bool)>, StoreError> {
         self.db
             .read("playlists.enabled_pulls", move |conn| {
                 Ok(conn
                     .prepare(sql::PULL_DUE.text())?
                     .query_map([], |row| {
-                        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get::<_, i64>(4)? != 0,
+                        ))
                     })?
                     .collect::<rusqlite::Result<_>>()?)
             })
@@ -1049,18 +1055,19 @@ impl VisiblePlaylists<'_> {
     pub async fn pull_state(
         &self,
         playlist_id: &str,
-    ) -> Result<Option<(bool, Option<u64>, Option<String>)>, StoreError> {
+    ) -> Result<Option<(bool, bool, Option<u64>, Option<String>)>, StoreError> {
         let playlist_id = playlist_id.to_owned();
         self.store
             .db
             .read("playlists.pull_state", move |conn| {
                 Ok(conn
                     .query_row(sql::PULL_STATE.text(), params![playlist_id], |row| {
-                        let checked: Option<i64> = row.get(1)?;
+                        let checked: Option<i64> = row.get(2)?;
                         Ok((
                             row.get::<_, i64>(0)? != 0,
+                            row.get::<_, i64>(1)? != 0,
                             checked.map(|at| u64::try_from(at).unwrap_or(0)),
-                            row.get(2)?,
+                            row.get(3)?,
                         ))
                     })
                     .optional()?)
@@ -1070,7 +1077,12 @@ impl VisiblePlaylists<'_> {
 
     /// Turn the pull for a playlist on or off; false when the playlist is
     /// not the caller's.
-    pub async fn set_pull(&self, playlist_id: &str, enabled: bool) -> Result<bool, StoreError> {
+    pub async fn set_pull(
+        &self,
+        playlist_id: &str,
+        enabled: bool,
+        acquire: Option<bool>,
+    ) -> Result<bool, StoreError> {
         let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
         self.store
             .db
@@ -1085,7 +1097,7 @@ impl VisiblePlaylists<'_> {
                 }
                 tx.execute(
                     sql::PULL_SET.text(),
-                    params![playlist_id, i64::from(enabled)],
+                    params![playlist_id, i64::from(enabled), acquire.map(i64::from)],
                 )?;
                 Ok(true)
             })

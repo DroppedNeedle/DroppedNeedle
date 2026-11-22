@@ -261,7 +261,7 @@ impl CollectionsPlaylistBridge {
     /// Every playlist that pulls, with its owner, source and snapshot.
     pub async fn enabled_pulls(
         &self,
-    ) -> Result<Vec<(String, String, String, Option<String>)>, String> {
+    ) -> Result<Vec<(String, String, String, Option<String>, bool)>, String> {
         self.playlists
             .enabled_pulls()
             .await

@@ -47,7 +47,7 @@ impl PlaylistPull {
                 return;
             }
         };
-        for (playlist_id, user_id, source_ref, stored) in due {
+        for (playlist_id, user_id, source_ref, stored, _acquire) in due {
             let _ = self
                 .check_row(&playlist_id, &user_id, &source_ref, stored)
                 .await;
@@ -62,7 +62,7 @@ impl PlaylistPull {
             .enabled_pulls()
             .await
             .map_err(|error| error.to_string())?;
-        let Some((id, user_id, source_ref, stored)) =
+        let Some((id, user_id, source_ref, stored, _acquire)) =
             due.into_iter().find(|(id, ..)| id == playlist_id)
         else {
             return Ok(false);

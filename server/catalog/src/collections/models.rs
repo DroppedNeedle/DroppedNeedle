@@ -112,6 +112,8 @@ pub struct PlaylistDetail {
     /// The newest Spotify import for this playlist, `running` or `failed`
     /// while it is worth showing; `None` once it finished or never ran.
     pub import_state: Option<String>,
+    /// Whether a pull also asks for the songs the library lacks.
+    pub pull_acquire: bool,
     /// Whether this playlist follows its source and pulls new entries.
     pub pull_enabled: bool,
     /// When the last pull last read the source, epoch seconds.
@@ -274,6 +276,10 @@ pub struct ImportPlaylistResponse {
 pub struct PullBody {
     /// Whether the playlist follows its source.
     pub enabled: bool,
+    /// Whether a pull also asks for the songs the library lacks; omitted
+    /// keeps the stored flag.
+    #[serde(default)]
+    pub acquire: Option<bool>,
 }
 
 /// A playlist's pull state after a change.
@@ -281,6 +287,8 @@ pub struct PullBody {
 pub struct PullState {
     /// Whether the playlist follows its source.
     pub enabled: bool,
+    /// Whether a pull also asks for the songs the library lacks.
+    pub acquire: bool,
     /// When the last check ran, epoch seconds.
     pub checked_at: Option<u64>,
     /// The last check's error, when it failed.
