@@ -334,12 +334,16 @@ Run from the repo root. `make help` lists every target.
   `Retry-After`, with a row in `rates.rs`. No area builds its own request
   to the internet. Services the user runs keep one client each, built from
   the factory, with no rate limiter: media servers through
-  `ConnectionResolver` (below), and slskd, SABnzbd, Lidarr and Prowlarr
-  through their client in acquire. The caller always states its priority
+  `ConnectionResolver` (below), and slskd, SABnzbd, Lidarr, Prowlarr and
+  Deemix through their client in acquire. The caller always states its priority
   (a person waiting is user priority, background work is background);
   there is no default. slskd and Prowlarr calls follow a redirect only on
   the same host and never to http (the factory's `same_host_redirects`),
   so their keys go nowhere else; an NZB link follows the grab hop rules.
+  Deemix has no sign-in of its own and some of its routes crash it: its
+  client (`acquire/src/deemix/client.rs`) calls only the routes listed
+  there, follows no redirect, and never stores a Deezer sign-in, only
+  reusing the one Deemix saved.
 - Keep 401/403, 404 and 400 distinct. Raw transport errors never reach a
   response.
 - A client for a user's media server (Jellyfin, Navidrome, Plex) is built
@@ -773,8 +777,8 @@ Run from the repo root. `make help` lists every target.
 - v2 exports use stable keys (MusicBrainz IDs), never v2 integer keys, and
   never hold plaintext secrets. Rolling back to v2 restores the app and
   database, not files v3 renamed or retagged.
-- Never gate "can acquire" on slskd alone: acquisition health is slskd or
-  Usenet or an enabled plugin download source, answered by one readiness
+- Never gate "can acquire" on slskd alone: acquisition health is slskd,
+  Usenet, Deemix or an enabled plugin download source, answered by one readiness
   value in acquire (`readiness.rs`) that requests, search, the download
   queue and Discover all read. A source counts once it is turned on,
   whether or not it answers right now. A request made while no source is
