@@ -263,7 +263,7 @@ pub struct ImportPlaylistResponse {
     pub name: String,
     /// Entries that became playlist tracks.
     pub matched: usize,
-    /// Entries kept with no source, in file order, to match and acquire.
+    /// Entries kept with no source, in file order, to request.
     pub kept: usize,
     /// Entries that did not, in file order.
     pub unmatched: Vec<ImportUnmatched>,

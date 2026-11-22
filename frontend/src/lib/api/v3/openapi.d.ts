@@ -15904,7 +15904,7 @@ export interface components {
         };
         /** @description Playlist import answer. */
         ImportPlaylistResponse: {
-            /** @description Entries kept with no source, in file order, to match and acquire. */
+            /** @description Entries kept with no source, in file order, to request. */
             kept: number;
             /** @description Entries that became playlist tracks. */
             matched: number;
@@ -43524,6 +43524,15 @@ export interface operations {
                     "application/json": components["schemas"]["PullNowResponse"];
                 };
             };
+            /** @description Not found or not the caller's */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     request_missing_handler: {
@@ -43548,6 +43557,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AcquireState"];
+                };
+            };
+            /** @description Not found or not the caller's */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

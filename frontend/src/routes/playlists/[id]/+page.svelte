@@ -94,19 +94,20 @@
 		if (!playlist) return [] as MissingItem[];
 		const seen = new SvelteMap<string, MissingItem>();
 		for (const t of playlist.tracks) {
-			// The server groups the same way: owned rows are skipped, an
-			// album row asks for its album, and an album-less row asks for
-			// its recording.
+			// The server groups the same way: an owned row is skipped, a row
+			// playable from another source is skipped, and a row must name a
+			// title and an artist.
 			if (t.library_file_id) continue;
+			if ((t.available_sources?.length ?? 0) > 0) continue;
 			const album = t.album_name.trim();
 			const artist = t.artist_name.trim();
 			const title = t.track_name.trim();
-			if (!artist) continue;
+			if (!artist || !title) continue;
 			if (album) {
-				const key = `a:${album.toLowerCase()}\u0000${artist.toLowerCase()}`;
+				const key = `a:${album}\u0000${artist}`;
 				if (!seen.has(key)) seen.set(key, { kind: 'album', album, artist });
-			} else if (title) {
-				const key = `t:${title.toLowerCase()}\u0000${artist.toLowerCase()}`;
+			} else {
+				const key = `t:${title}\u0000${artist}`;
 				if (!seen.has(key)) seen.set(key, { kind: 'track', title, artist });
 			}
 		}
@@ -117,9 +118,17 @@
 	let requesting = $state(false);
 	let requestOpen = $state(false);
 	let requestChoices = $state<Record<string, 'album' | 'track'>>({});
-	let progress = $state<{ state: string; requested: number; failed: number; total: number } | null>(
-		null
-	);
+	let progress = $state<{
+		state: string;
+		requested: number;
+		skipped: number;
+		failed: number;
+		total: number;
+	} | null>(null);
+	let pageAlive = true;
+	onDestroy(() => {
+		pageAlive = false;
+	});
 
 	const requestRows = $derived(
 		playlist
@@ -165,16 +174,21 @@
 			}
 			const state = await acquireMissing.mutateAsync({ id: playlist.id, items });
 			progress = state;
-			while (progress && progress.state === 'running') {
+			const deadline = Date.now() + 10 * 60 * 1000;
+			while (progress && progress.state === 'running' && pageAlive && Date.now() < deadline) {
 				await new Promise((resolve) => setTimeout(resolve, 1500));
 				const next = await getAcquireProgressV3(playlist.id);
 				if (next) progress = next;
 			}
 			const requested = progress?.requested ?? 0;
 			const failed = progress?.failed ?? 0;
+			const skipped = progress?.skipped ?? 0;
+			const parts = [`${requested} requested`];
+			if (skipped > 0) parts.push(`${skipped} skipped`);
+			if (failed > 0) parts.push(`${failed} unmatched`);
 			toastStore.show({
-				message: `${requested} requested${failed > 0 ? `, ${failed} unmatched` : ''}.`,
-				type: requested > 0 ? 'success' : 'error'
+				message: `${parts.join(', ')}.`,
+				type: failed > 0 ? 'error' : 'success'
 			});
 			requestOpen = false;
 		} catch {

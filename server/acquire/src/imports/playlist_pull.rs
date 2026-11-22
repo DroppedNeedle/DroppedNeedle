@@ -74,8 +74,11 @@ impl PlaylistPull {
         else {
             return Ok(false);
         };
+        let Some(source_ref) = source_ref else {
+            return Ok(false);
+        };
         let changed = self
-            .check_row(playlist_id, &user_id, &source_ref, stored)
+            .check_row(playlist_id, &user_id, source_ref.as_str(), stored)
             .await?;
         if acquire {
             self.acquire_missing(&user_id, playlist_id).await;

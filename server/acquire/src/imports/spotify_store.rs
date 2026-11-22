@@ -262,7 +262,7 @@ impl CollectionsPlaylistBridge {
     pub async fn pull_row(
         &self,
         playlist_id: &str,
-    ) -> Result<Option<(String, String, Option<String>, bool)>, String> {
+    ) -> Result<Option<(String, Option<String>, Option<String>, bool)>, String> {
         self.playlists
             .pull_row(playlist_id)
             .await

@@ -636,17 +636,17 @@ impl PlaylistStore {
     pub async fn pull_row(
         &self,
         playlist_id: &str,
-    ) -> Result<Option<(String, String, Option<String>, bool)>, StoreError> {
+    ) -> Result<Option<(String, Option<String>, Option<String>, bool)>, StoreError> {
         let playlist_id = playlist_id.to_owned();
         self.db
             .read("playlists.pull_row", move |conn| {
                 Ok(conn
                     .query_row(sql::PULL_ROW.text(), params![playlist_id], |row| {
                         Ok((
-                            row.get(0)?,
-                            row.get(1)?,
-                            row.get(2)?,
-                            row.get::<_, i64>(3)? != 0,
+                            row.get::<_, String>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<i64>>(3)?.unwrap_or(0) != 0,
                         ))
                     })
                     .optional()?)

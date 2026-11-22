@@ -105,7 +105,7 @@ An import takes `.m3u`, `.m3u8` and `.csv` files of up to 2 MB. A CSV may have i
 4. its title and artist the same way;
 5. if none of those finds it and its artist cell names several artists, such as `A, B` or `A; B`, its title, the first of them and its album, the same way.
 
-Tracks in your library are linked, each once, in the file's order. A row the library does not have, with a title and an artist, is kept as a playlist entry with no source, ready to match and request; the "Only songs already in the library" switch asks for the old behaviour. The import reports how many tracks it linked, how many it kept, and each entry it left out, with its title, artist and why (the page lists the first 200; the API answer holds them all): it names no file, names no title or artist, or the same track came earlier in the file. It reads the first 10,000 entries; any past that are only counted, and the report says how many.
+Tracks in your library are linked, each once, in the file's order. A row the library does not have, with a title and an artist, is kept as a playlist entry with no source, ready to request; a later import does not link these entries back to the library; the "Only songs already in the library" switch asks for the old behaviour. The import reports how many tracks it linked, how many it kept, and each entry it left out, with its title, artist and why (the page lists the first 200; the API answer holds them all): it names no file, names no title or artist, or the same track came earlier in the file. It reads the first 10,000 entries; any past that are only counted, and the report says how many.
 
 ## Song links
 

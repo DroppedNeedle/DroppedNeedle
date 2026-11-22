@@ -61,7 +61,7 @@ pub struct PullNowResponse {
     tag = "playlists",
     path = "/api/v3/playlists/{playlist_id}/pull-now",
     params(("playlist_id" = String, Path, description = "Playlist id")),
-    responses((status = 200, body = PullNowResponse))
+    responses((status = 200, body = PullNowResponse), (status = 404, description = "Not found or not the caller's"))
 )]
 pub async fn pull_now_handler(
     State(deps): State<PlaylistRequestDeps>,
@@ -93,7 +93,7 @@ pub async fn pull_now_handler(
     path = "/api/v3/playlists/{playlist_id}/request-missing",
     params(("playlist_id" = String, Path, description = "Playlist id")),
     request_body = AcquireBody,
-    responses((status = 202, body = crate::playlist_acquire::AcquireState))
+    responses((status = 202, body = crate::playlist_acquire::AcquireState), (status = 404, description = "Not found or not the caller's"))
 )]
 pub async fn request_missing_handler(
     State(deps): State<PlaylistRequestDeps>,

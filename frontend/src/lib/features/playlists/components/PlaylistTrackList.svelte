@@ -66,11 +66,15 @@
 			? { kind: 'album' as const, album, artist, title: null }
 			: { kind: 'track' as const, album: null, artist, title };
 		try {
-			await acquireMutation.mutateAsync({ id: playlist.id, items: [item] });
-			toastStore.show({
-				message: album ? `Requested the album ${album}.` : `Requested ${title}.`,
-				type: 'success'
-			});
+			const state = await acquireMutation.mutateAsync({ id: playlist.id, items: [item] });
+			if (state.total === 0) {
+				toastStore.show({ message: 'Nothing to request for this row', type: 'info' });
+			} else {
+				toastStore.show({
+					message: album ? `Requested the album ${album}.` : `Requested ${title}.`,
+					type: 'success'
+				});
+			}
 		} catch {
 			toastStore.show({ message: "Couldn't file that request.", type: 'error' });
 		} finally {
@@ -543,11 +547,11 @@
 
 					{#if !readonly}
 						<span class="pl-row__source">
-							{#if !track.library_file_id}
+							{#if !track.library_file_id && !(track.available_sources?.length ?? 0)}
 								<button
 									type="button"
 									class="mr-1 rounded p-1 text-muted hover:text-warning disabled:opacity-50"
-									title="Request this song"
+									title={track.album_name.trim() ? 'Request this album' : 'Request this song'}
 									disabled={acquiringId === track.id}
 									onclick={(e) => {
 										e.stopPropagation();

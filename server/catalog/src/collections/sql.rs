@@ -114,9 +114,10 @@ droppedneedle_kernel::sql! {
          SET last_checked_at = ?2, snapshot_id = COALESCE(?3, snapshot_id), \
          last_error = ?4 WHERE playlist_id = ?1";
     /// Record one check: the snapshot read, when, and the error, if any.
-    pub(super) PULL_RECORD = "UPDATE catalog_playlist_pull_state \
-         SET snapshot_id = ?2, last_checked_at = ?3, last_error = ?4 \
-         WHERE playlist_id = ?1";
+    pub(super) PULL_RECORD = "INSERT INTO catalog_playlist_pull_state \
+         (playlist_id, snapshot_id, last_checked_at, last_error) VALUES (?1, ?2, ?3, ?4) \
+         ON CONFLICT(playlist_id) DO UPDATE SET snapshot_id = COALESCE(?2, snapshot_id), \
+         last_checked_at = ?3, last_error = ?4";
     /// The newest import job for playlist `?1`, while it runs or after it
     /// failed.
     pub(super) PLAYLIST_IMPORT_STATE = "SELECT CASE \
@@ -127,8 +128,8 @@ droppedneedle_kernel::sql! {
          ORDER BY created_at DESC, id DESC LIMIT 1";
     /// One playlist's pull row by id, whatever its enabled flag: owner,
     /// source, stored snapshot and the acquire flag.
-    pub(super) PULL_ROW = "SELECT p.user_id, p.source_ref, s.snapshot_id, s.acquire \
-         FROM catalog_playlists p JOIN catalog_playlist_pull_state s ON s.playlist_id = p.id \
+    pub(super) PULL_ROW = "SELECT p.user_id, p.source_ref, s.snapshot_id, COALESCE(s.acquire, 0) \
+         FROM catalog_playlists p LEFT JOIN catalog_playlist_pull_state s ON s.playlist_id = p.id \
          WHERE p.id = ?1";
     /// For each `[track, artist, album]` in the JSON array `?2`, by its
     /// index, the playlists the caller may read holding an entry with

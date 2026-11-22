@@ -566,7 +566,10 @@ impl CollectionsService<'_> {
         let visible = self.playlists().visible_to(user_id);
         let tracks = visible.tracks(playlist_id).await?;
         let mut detail = detail(&row, user_id, admin, tracks);
-        detail.import_state = visible.import_state(playlist_id).await?.filter(|state| !state.is_empty());
+        detail.import_state = visible
+            .import_state(playlist_id)
+            .await?
+            .filter(|state| !state.is_empty());
         if let Some((enabled, acquire, checked, error)) = visible.pull_state(playlist_id).await? {
             detail.pull_enabled = enabled;
             detail.pull_acquire = acquire;
@@ -884,6 +887,22 @@ impl CollectionsService<'_> {
         acquire: Option<bool>,
     ) -> Result<PullState, CollectionsError> {
         let visible = self.playlists().visible_to(user_id);
+        if visible.is_owner(playlist_id).await? != Some(true) {
+            return Err(CollectionsError::NotFound);
+        }
+        let source = self
+            .playlists()
+            .pull_row(playlist_id)
+            .await?
+            .and_then(|(_, source, _, _)| source);
+        if !source
+            .as_deref()
+            .is_some_and(|source| source.starts_with("spotify:"))
+        {
+            return Err(CollectionsError::InvalidInput {
+                message: "Only a Spotify playlist can be followed".to_owned(),
+            });
+        }
         if !visible.set_pull(playlist_id, enabled, acquire).await? {
             return Err(CollectionsError::NotFound);
         }

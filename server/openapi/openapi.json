@@ -25175,6 +25175,16 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Not found or not the caller's",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -25221,6 +25231,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AcquireState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found or not the caller's",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -49486,7 +49506,7 @@
         "properties": {
           "kept": {
             "type": "integer",
-            "description": "Entries kept with no source, in file order, to match and acquire.",
+            "description": "Entries kept with no source, in file order, to request.",
             "minimum": 0
           },
           "matched": {

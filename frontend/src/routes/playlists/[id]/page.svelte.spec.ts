@@ -8,7 +8,13 @@ const mockShareMutate = vi.fn();
 const mockDeleteMutate = vi.fn();
 const mockResolveMutate = vi.fn();
 const mockRenameMutate = vi.fn();
-const mockRequestMissing = vi.fn().mockResolvedValue({ requested: 1 });
+const mockRequestMissing = vi.fn().mockResolvedValue({
+	state: 'done',
+	requested: 1,
+	skipped: 0,
+	failed: 0,
+	total: 1
+});
 const mockForgetSources = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock('$lib/api/playlists', () => ({

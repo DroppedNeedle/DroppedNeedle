@@ -12,7 +12,7 @@ use utoipa::ToSchema;
 
 use crate::imports::spotify_albums::AlbumResolver;
 use crate::requests::error::RequestsError;
-use crate::requests::ledger::ApprovalState;
+use crate::requests::ledger::{ApprovalState, RequestStatus};
 use crate::requests::models::{AlbumIntake, RequestKind, TrackIntake};
 use crate::requests::service::RequestsService;
 
@@ -63,25 +63,31 @@ pub struct PlaylistAcquire {
     playlists: PlaylistStore,
     resolver: Arc<AlbumResolver>,
     runs: Mutex<HashMap<String, AcquireState>>,
+    generations: Mutex<HashMap<String, u64>>,
 }
 
 impl AcquireItem {
     /// Whether two items name the same album, or the same song.
     fn same(&self, other: &Self) -> bool {
-        self.kind == other.kind
-            && self.artist.eq_ignore_ascii_case(&other.artist)
-            && match self.kind {
-                AcquireKind::Album => self
-                    .album
-                    .as_deref()
-                    .unwrap_or("")
-                    .eq_ignore_ascii_case(other.album.as_deref().unwrap_or("")),
-                AcquireKind::Track => self
-                    .title
-                    .as_deref()
-                    .unwrap_or("")
-                    .eq_ignore_ascii_case(other.title.as_deref().unwrap_or("")),
-            }
+        if !self.artist.trim().eq_ignore_ascii_case(other.artist.trim()) {
+            return false;
+        }
+        match (self.kind, other.kind) {
+            (AcquireKind::Album, AcquireKind::Album) => self
+                .album
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .eq_ignore_ascii_case(other.album.as_deref().unwrap_or("").trim()),
+            // A person may take one song from a row that names an album.
+            (AcquireKind::Track, AcquireKind::Track | AcquireKind::Album) => self
+                .title
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .eq_ignore_ascii_case(other.title.as_deref().unwrap_or("").trim()),
+            _ => false,
+        }
     }
 }
 
@@ -97,6 +103,7 @@ impl PlaylistAcquire {
             playlists,
             resolver,
             runs: Mutex::new(HashMap::new()),
+            generations: Mutex::new(HashMap::new()),
         }
     }
 
@@ -119,9 +126,19 @@ impl PlaylistAcquire {
         items: Vec<AcquireItem>,
     ) -> AcquireState {
         let allowed = self.items_from(principal.user_id(), &playlist_id).await;
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let items: Vec<AcquireItem> = items
             .into_iter()
             .filter(|item| allowed.iter().any(|row| row.same(item)))
+            .filter(|item| {
+                let key = format!(
+                    "{}|{}|{}",
+                    item.artist.trim().to_lowercase(),
+                    item.album.as_deref().unwrap_or("").trim().to_lowercase(),
+                    item.title.as_deref().unwrap_or("").trim().to_lowercase()
+                );
+                seen.insert(key)
+            })
             .collect();
         let state = AcquireState {
             state: "running".to_owned(),
@@ -139,9 +156,18 @@ impl PlaylistAcquire {
             }
             runs.insert(playlist_id.clone(), state.clone());
         }
+        let generation = {
+            let mut gens = self
+                .generations
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let next = gens.get(&playlist_id).copied().unwrap_or(0) + 1;
+            gens.insert(playlist_id.clone(), next);
+            next
+        };
         let this = Arc::clone(self);
         tokio::spawn(async move {
-            this.run(principal, playlist_id, items).await;
+            this.run(principal, playlist_id, items, generation).await;
         });
         state
     }
@@ -161,8 +187,25 @@ impl PlaylistAcquire {
         principal: Principal,
         playlist_id: String,
         items: Vec<AcquireItem>,
+        generation: u64,
     ) {
         let service = RequestsService::new(&self.requests);
+        if items.is_empty() {
+            let current = {
+                let gens = self
+                    .generations
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                gens.get(&playlist_id).copied().unwrap_or(0)
+            };
+            if current == generation {
+                let mut runs = self.runs.lock().unwrap_or_else(|error| error.into_inner());
+                if let Some(state) = runs.get_mut(&playlist_id) {
+                    state.state = "done".to_owned();
+                }
+            }
+            return;
+        }
         let granted = principal.role().is_curator()
             || matches!(
                 self.requests.mixes.state(principal.user_id()).await,
@@ -171,6 +214,16 @@ impl PlaylistAcquire {
         for (index, item) in items.iter().enumerate() {
             let outcome = self.file(&service, &principal, granted, item).await;
             {
+                let current = self
+                    .generations
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .get(&playlist_id)
+                    .copied()
+                    .unwrap_or(0);
+                if current != generation {
+                    return;
+                }
                 let mut runs = self.runs.lock().unwrap_or_else(|error| error.into_inner());
                 let Some(state) = runs.get_mut(&playlist_id) else {
                     return;
@@ -185,14 +238,6 @@ impl PlaylistAcquire {
                 }
             }
             tokio::time::sleep(PACE).await;
-        }
-        if let Some(state) = self
-            .runs
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .get_mut(&playlist_id)
-        {
-            state.state = "done".to_owned();
         }
     }
 
@@ -222,11 +267,17 @@ impl PlaylistAcquire {
                     Ok(None) => return Filed::Failed,
                     Err(_) => return Filed::Failed,
                 };
-                if matches!(
-                    self.requests.store.get(RequestKind::Album, &group).await,
-                    Ok(Some(row)) if row.status.is_active()
-                ) {
-                    return Filed::Skipped;
+                match self.requests.store.get(RequestKind::Album, &group).await {
+                    Ok(Some(row)) if row.status.is_active() => return Filed::Skipped,
+                    Ok(Some(row))
+                        if matches!(
+                            row.status,
+                            RequestStatus::Rejected | RequestStatus::Cancelled
+                        ) =>
+                    {
+                        return Filed::Skipped;
+                    }
+                    _ => {}
                 }
                 let intake = AlbumIntake {
                     musicbrainz_id: group,
