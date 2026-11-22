@@ -151,6 +151,7 @@ function makePlaylist(overrides: Record<string, unknown> = {}): PlaylistDetailV3
 		source_ref: null,
 		import_state: null,
 		pull_enabled: false,
+		pull_acquire: false,
 		pull_checked_at: null,
 		pull_error: null,
 		created_at: 1767225600,

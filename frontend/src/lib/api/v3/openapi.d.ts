@@ -6290,6 +6290,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/playlists/{playlist_id}/acquire-progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The progress of a press.
+         *     `GET /api/v3/playlists/{playlist_id}/acquire-progress`. Owner only.
+         */
+        get: operations["acquire_progress_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/playlists/{playlist_id}/cover": {
         parameters: {
             query?: never;
@@ -10055,6 +10075,19 @@ export interface components {
             new_address?: null | components["schemas"]["UpgradeAddress"];
             /** @description The address v2 registered, as the pre-flight gave it. */
             old_address?: null | components["schemas"]["UpgradeAddress"];
+        };
+        /** @description A press's answer, and its progress while it runs. */
+        AcquireState: {
+            /** @description Items the resolver or the intake could not place. */
+            failed: number;
+            /** @description Requests filed so far. */
+            requested: number;
+            /** @description Items passed over: a live request, or a cap. */
+            skipped: number;
+            /** @description `running` or `done`. */
+            state: string;
+            /** @description Items the press asked for. */
+            total: number;
         };
         /** @description Mutation outcome for approve/reject/cancel/retry/clear. */
         ActionResponse: {
@@ -19951,6 +19984,8 @@ export interface components {
             name: string;
             /** @description Owner display name. */
             owner_name?: string | null;
+            /** @description Whether a pull also asks for the songs the library lacks. */
+            pull_acquire: boolean;
             /**
              * Format: int64
              * @description When the last pull last read the source, epoch seconds.
@@ -20832,6 +20867,11 @@ export interface components {
         PublishOutcome: "committed" | "cleanup_pending";
         /** @description Turn the hourly pull for a playlist on or off. */
         PullBody: {
+            /**
+             * @description Whether a pull also asks for the songs the library lacks; omitted
+             *     keeps the stored flag.
+             */
+            acquire?: boolean | null;
             /** @description Whether the playlist follows its source. */
             enabled: boolean;
         };
@@ -20842,6 +20882,8 @@ export interface components {
         };
         /** @description A playlist's pull state after a change. */
         PullState: {
+            /** @description Whether a pull also asks for the songs the library lacks. */
+            acquire: boolean;
             /**
              * Format: int64
              * @description When the last check ran, epoch seconds.
@@ -43006,6 +43048,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    acquire_progress_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcquireState"];
                 };
             };
         };

@@ -75,9 +75,10 @@ export type PullStateV3 = components['schemas']['PullState'];
 /** Turn the hourly pull for a playlist on or off. */
 export const createSetPlaylistPullV3Mutation = () =>
 	createAppMutation(() => ({
-		mutationFn: (vars: { id: string; enabled: boolean }) =>
+		mutationFn: (vars: { id: string; enabled: boolean; acquire: boolean }) =>
 			api.v3.PUT(v3('/api/v3/playlists/{playlist_id}/pull', { path: { playlist_id: vars.id } }), {
-				enabled: vars.enabled
+				enabled: vars.enabled,
+				acquire: vars.acquire
 			}),
 		effects: (_data, vars) => detail(vars.id)
 	}));

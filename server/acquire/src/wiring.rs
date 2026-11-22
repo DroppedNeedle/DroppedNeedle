@@ -674,7 +674,16 @@ impl AcquireSetup {
             events.clone(),
         ));
         let spotify_imports = SpotifyImports::new(platform.db.clone(), queue);
-        let playlist_pull = Arc::new(PlaylistPull::new(spotify_service, spotify_imports.clone()));
+        let playlist_acquire = Arc::new(crate::playlist_acquire::PlaylistAcquire::new(
+            core.requests.clone(),
+            collections.playlists.clone(),
+            resolver.clone(),
+        ));
+        let playlist_pull = Arc::new(PlaylistPull::new(
+            spotify_service,
+            spotify_imports.clone(),
+            playlist_acquire.clone(),
+        ));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let imports = ImportsDeps {
             lidarr: LidarrClient::new(http.clone()),
@@ -697,6 +706,7 @@ impl AcquireSetup {
             playlists: collections.playlists.clone(),
             resolver,
             pull: playlist_pull.clone(),
+            acquire: playlist_acquire.clone(),
         };
 
         // Finished downloads reach the library through its import seam.

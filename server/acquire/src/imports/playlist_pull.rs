@@ -24,15 +24,21 @@ const LOOP_NAME: &str = "playlist-pull";
 pub struct PlaylistPull {
     service: Arc<SpotifyImportService>,
     imports: SpotifyImports,
+    acquire: Arc<crate::playlist_acquire::PlaylistAcquire>,
     wake: Arc<watch::Sender<u64>>,
 }
 
 impl PlaylistPull {
     /// Pull over the Spotify service and the import queue.
-    pub fn new(service: Arc<SpotifyImportService>, imports: SpotifyImports) -> Self {
+    pub fn new(
+        service: Arc<SpotifyImportService>,
+        imports: SpotifyImports,
+        acquire: Arc<crate::playlist_acquire::PlaylistAcquire>,
+    ) -> Self {
         Self {
             service,
             imports,
+            acquire,
             wake: Arc::new(watch::Sender::new(0)),
         }
     }
@@ -47,10 +53,13 @@ impl PlaylistPull {
                 return;
             }
         };
-        for (playlist_id, user_id, source_ref, stored, _acquire) in due {
+        for (playlist_id, user_id, source_ref, stored, acquire) in due {
             let _ = self
                 .check_row(&playlist_id, &user_id, &source_ref, stored)
                 .await;
+            if acquire {
+                self.acquire_missing(&user_id, &playlist_id).await;
+            }
         }
     }
 
@@ -68,6 +77,17 @@ impl PlaylistPull {
             return Ok(false);
         };
         self.check_row(&id, &user_id, &source_ref, stored).await
+    }
+
+    /// Ask for what the playlist still lacks, as its owner.
+    async fn acquire_missing(&self, user_id: &str, playlist_id: &str) {
+        let Some(principal) = self.acquire.owner_principal(user_id).await else {
+            return;
+        };
+        let items = self.acquire.items_from(user_id, playlist_id).await;
+        if !items.is_empty() {
+            self.acquire.start(principal, playlist_id.to_owned(), items);
+        }
     }
 
     /// One playlist's check, for the pass and for a person's press.

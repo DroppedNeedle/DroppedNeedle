@@ -52,6 +52,7 @@ pub mod intake;
 pub mod landing;
 pub mod library_ready;
 pub mod library_removal;
+pub mod playlist_acquire;
 pub mod playlist_request;
 pub mod plugin_events;
 pub mod plugin_source;

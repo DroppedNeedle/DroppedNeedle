@@ -26,6 +26,7 @@ export type PlaylistDetail = PlaylistSummary & {
 	import_state: string | null;
 	/** Whether the playlist follows its source, and when it last checked. */
 	pull_enabled: boolean;
+	pull_acquire: boolean;
 	pull_checked_at: string | null;
 	pull_error: string | null;
 };

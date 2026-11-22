@@ -24518,6 +24518,45 @@
         ]
       }
     },
+    "/api/v3/playlists/{playlist_id}/acquire-progress": {
+      "get": {
+        "tags": [
+          "playlists"
+        ],
+        "summary": "The progress of a press.\n`GET /api/v3/playlists/{playlist_id}/acquire-progress`. Owner only.",
+        "operationId": "acquire_progress_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcquireState"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/playlists/{playlist_id}/cover": {
       "get": {
         "tags": [
@@ -36524,6 +36563,43 @@
               }
             ],
             "description": "The address v2 registered, as the pre-flight gave it."
+          }
+        }
+      },
+      "AcquireState": {
+        "type": "object",
+        "description": "A press's answer, and its progress while it runs.",
+        "required": [
+          "state",
+          "requested",
+          "skipped",
+          "failed",
+          "total"
+        ],
+        "properties": {
+          "failed": {
+            "type": "integer",
+            "description": "Items the resolver or the intake could not place.",
+            "minimum": 0
+          },
+          "requested": {
+            "type": "integer",
+            "description": "Requests filed so far.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "description": "Items passed over: a live request, or a cap.",
+            "minimum": 0
+          },
+          "state": {
+            "type": "string",
+            "description": "`running` or `done`."
+          },
+          "total": {
+            "type": "integer",
+            "description": "Items the press asked for.",
+            "minimum": 0
           }
         }
       },
@@ -58263,6 +58339,7 @@
           "id",
           "name",
           "cover_urls",
+          "pull_acquire",
           "pull_enabled",
           "tracks",
           "track_count",
@@ -58341,6 +58418,10 @@
               "null"
             ],
             "description": "Owner display name."
+          },
+          "pull_acquire": {
+            "type": "boolean",
+            "description": "Whether a pull also asks for the songs the library lacks."
           },
           "pull_checked_at": {
             "type": [
@@ -60170,6 +60251,13 @@
           "enabled"
         ],
         "properties": {
+          "acquire": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether a pull also asks for the songs the library lacks; omitted\nkeeps the stored flag."
+          },
           "enabled": {
             "type": "boolean",
             "description": "Whether the playlist follows its source."
@@ -60193,9 +60281,14 @@
         "type": "object",
         "description": "A playlist's pull state after a change.",
         "required": [
-          "enabled"
+          "enabled",
+          "acquire"
         ],
         "properties": {
+          "acquire": {
+            "type": "boolean",
+            "description": "Whether a pull also asks for the songs the library lacks."
+          },
           "checked_at": {
             "type": [
               "integer",

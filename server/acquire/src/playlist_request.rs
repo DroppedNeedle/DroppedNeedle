@@ -43,12 +43,15 @@ pub struct PlaylistRequestDeps {
     pub resolver: Arc<AlbumResolver>,
     /// The hourly pull, for a person's check.
     pub pull: Arc<PlaylistPull>,
+    /// The batch a press starts.
+    pub acquire: Arc<crate::playlist_acquire::PlaylistAcquire>,
 }
 
 /// The route.
 pub fn routes() -> Routes<PlaylistRequestDeps> {
     Routes::new()
         .user(routes!(request_missing_handler))
+        .user(routes!(acquire_progress_handler))
         .user(routes!(pull_now_handler))
 }
 
@@ -115,165 +118,60 @@ pub async fn request_missing_handler(
     State(deps): State<PlaylistRequestDeps>,
     User(principal): User,
     Path(playlist_id): Path<String>,
-) -> Result<impl IntoResponse, ApiError> {
+    body: Option<Json<AcquireBody>>,
+) -> Result<Json<crate::playlist_acquire::AcquireState>, ApiError> {
     let owned = deps.playlists.owned_by(principal.user_id());
-    let found = owned.get(&playlist_id).await.map_err(ApiError::internal)?;
-    if found.is_none() {
+    if owned
+        .get(&playlist_id)
+        .await
+        .map_err(ApiError::internal)?
+        .is_none()
+    {
         return Err(ApiError::not_found());
     }
-    let tracks = owned
-        .tracks(&playlist_id)
+    let items = match body.map(|Json(body)| body.items) {
+        Some(items) if !items.is_empty() => items,
+        _ => {
+            deps.acquire
+                .items_from(principal.user_id(), &playlist_id)
+                .await
+        }
+    };
+    Ok(Json(deps.acquire.start(principal, playlist_id, items)))
+}
+
+/// One press's batch, or the default list.
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct AcquireBody {
+    /// What the press asked for; empty asks for everything missing.
+    #[serde(default)]
+    pub items: Vec<crate::playlist_acquire::AcquireItem>,
+}
+
+/// The progress of a press.
+/// `GET /api/v3/playlists/{playlist_id}/acquire-progress`. Owner only.
+#[utoipa::path(
+    get,
+    tag = "playlists",
+    path = "/api/v3/playlists/{playlist_id}/acquire-progress",
+    params(("playlist_id" = String, Path, description = "Playlist id")),
+    responses((status = 200, body = crate::playlist_acquire::AcquireState))
+)]
+pub async fn acquire_progress_handler(
+    State(deps): State<PlaylistRequestDeps>,
+    User(principal): User,
+    Path(playlist_id): Path<String>,
+) -> Result<Json<crate::playlist_acquire::AcquireState>, ApiError> {
+    let owned = deps.playlists.owned_by(principal.user_id());
+    if owned
+        .get(&playlist_id)
         .await
-        .map_err(ApiError::internal)?;
-    // One album or one recording, one request: group the entries without a
-    // library file. A row that names no album asks for its recording.
-    let mut groups: Vec<(String, String)> = Vec::new();
-    let mut recordings: Vec<(String, String)> = Vec::new();
-    let mut skipped = 0_usize;
-    for track in &tracks {
-        if track.library_file_id.is_some() {
-            continue;
-        }
-        let album = track.album_name.trim().to_owned();
-        let artist = track.artist_name.trim().to_owned();
-        let title = track.track_name.trim().to_owned();
-        if artist.is_empty() || title.is_empty() {
-            // A path-only entry has nothing to ask for.
-            skipped += 1;
-            continue;
-        }
-        if album.is_empty() {
-            if !recordings.contains(&(title.clone(), artist.clone())) {
-                recordings.push((title, artist));
-            }
-        } else if !groups.contains(&(album.clone(), artist.clone())) {
-            groups.push((album, artist));
-        }
+        .map_err(ApiError::internal)?
+        .is_none()
+    {
+        return Err(ApiError::not_found());
     }
-    // The Weekly Mix grant decides whether the press waits for an admin:
-    // a curator or an approved row files at once, everyone else through the
-    // normal approval queue.
-    let granted = principal.role().is_curator()
-        || matches!(
-            deps.requests.mixes.state(principal.user_id()).await,
-            Ok(Some(ApprovalState::Approved))
-        );
-    let service = RequestsService::new(&deps.requests);
-    let mut requested = 0_usize;
-    let mut failed = 0_usize;
-    for (album, artist) in groups {
-        if requested >= MAX_REQUESTS_PER_PRESS {
-            skipped += 1;
-            continue;
-        }
-        let group = match deps.resolver.resolve_names(&album, &artist).await {
-            Ok(Some(group)) => group,
-            Ok(None) => {
-                tracing::info!(album = %album, artist = %artist, "playlist request: no release group proved");
-                failed += 1;
-                continue;
-            }
-            Err(error) => {
-                tracing::warn!(album = %album, artist = %artist, ?error, "playlist request: musicbrainz read failed");
-                failed += 1;
-                continue;
-            }
-        };
-        if matches!(
-            deps.requests.store.get(RequestKind::Album, &group).await,
-            Ok(Some(row)) if row.status.is_active()
-        ) {
-            skipped += 1;
-            continue;
-        }
-        let intake = AlbumIntake {
-            musicbrainz_id: group,
-            artist: Some(artist),
-            album: Some(album),
-            year: None,
-            artist_mbid: None,
-            release_mbid: None,
-            monitor_artist: false,
-            auto_download_artist: false,
-        };
-        let outcome = if granted {
-            service.request_album_granted(&principal, &intake).await
-        } else {
-            service.request_album(&principal, &intake).await
-        };
-        match outcome {
-            Ok(response) if response.task_id.is_some() => requested += 1,
-            Ok(_) => skipped += 1,
-            Err(error) => {
-                tracing::warn!(?error, "playlist request: album request failed");
-                if matches!(
-                    error,
-                    RequestsError::QuotaExceeded { .. } | RequestsError::StorageFull { .. }
-                ) {
-                    break;
-                }
-                failed += 1;
-            }
-        }
-    }
-    for (title, artist) in recordings {
-        if requested >= MAX_REQUESTS_PER_PRESS {
-            skipped += 1;
-            continue;
-        }
-        let recording = match deps.resolver.resolve_track(&title, &artist).await {
-            Ok(Some(recording)) => recording,
-            Ok(None) => {
-                tracing::info!(title = %title, artist = %artist, "playlist request: no recording proved");
-                failed += 1;
-                continue;
-            }
-            Err(error) => {
-                tracing::warn!(title = %title, artist = %artist, ?error, "playlist request: musicbrainz read failed");
-                failed += 1;
-                continue;
-            }
-        };
-        if matches!(
-            deps.requests
-                .store
-                .get(RequestKind::Track, &recording)
-                .await,
-            Ok(Some(row)) if row.status.is_active()
-        ) {
-            skipped += 1;
-            continue;
-        }
-        let intake = TrackIntake {
-            recording_mbid: recording,
-            artist_name: artist,
-            track_title: title,
-            album_title: None,
-            duration_seconds: None,
-            release_group_mbid: None,
-            artist_mbid: None,
-            release_mbid: None,
-        };
-        match service.request_track(&principal, &intake).await {
-            Ok(_) => requested += 1,
-            Err(error) => {
-                tracing::warn!(?error, "playlist request: track request failed");
-                if matches!(
-                    error,
-                    RequestsError::QuotaExceeded { .. } | RequestsError::StorageFull { .. }
-                ) {
-                    break;
-                }
-                failed += 1;
-            }
-        }
-    }
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(RequestMissingResponse {
-            requested,
-            skipped,
-            failed,
-        }),
+    Ok(Json(
+        deps.acquire.progress(&playlist_id).unwrap_or_default(),
     ))
 }

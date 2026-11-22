@@ -164,19 +164,32 @@
 		}
 	}
 
-	async function togglePull(event: Event) {
+	async function togglePull(event: Event, which: 'enabled' | 'acquire') {
 		const input = event.currentTarget as HTMLInputElement;
-		const enabled = input.checked;
+		const value = input.checked;
+		const next = {
+			id: playlist.id,
+			enabled: which === 'enabled' ? value : playlist.pull_enabled,
+			acquire: which === 'acquire' ? value : playlist.pull_acquire
+		};
 		try {
-			await setPull.mutateAsync({ id: playlist.id, enabled });
-			playlist.pull_enabled = enabled;
+			await setPull.mutateAsync(next);
+			playlist.pull_enabled = next.enabled;
+			playlist.pull_acquire = next.acquire;
 			toastStore.show({
-				message: enabled ? 'This playlist follows its source hourly.' : 'The hourly sync is off.',
+				message:
+					which === 'enabled'
+						? value
+							? 'This playlist follows its source hourly.'
+							: 'The hourly sync is off.'
+						: value
+							? 'New songs are asked for after each check.'
+							: 'New songs are left for you to request.',
 				type: 'success'
 			});
 		} catch {
-			input.checked = !enabled;
-			toastStore.show({ message: "Couldn't change the sync.", type: 'error' });
+			input.checked = !value;
+			toastStore.show({ message: "Couldn't change the setting.", type: 'error' });
 		}
 	}
 
@@ -450,33 +463,52 @@
 						{/if}
 					</p>
 					{#if sourceType === 'spotify' && playlist.is_owner}
-						<p class="pl-hero__fact">
-							<label
-								class="inline-flex items-center gap-2"
-								title="Checks the source every hour and adds the songs it gained."
-							>
-								<input
-									type="checkbox"
-									checked={playlist.pull_enabled}
-									onchange={(event) => void togglePull(event)}
-								/>
-								Sync
-								<Info class="size-3.5 text-muted" aria-hidden="true" />
-							</label>
-							<button
-								type="button"
-								class="text-xs underline hover:no-underline disabled:opacity-50"
-								disabled={checkingPull}
-								onclick={() => void checkNow()}
-							>
-								{checkingPull ? 'Checking…' : 'Check now'}
-							</button>
-							{#if playlist.pull_error}
-								<span class="text-warning">{playlist.pull_error}</span>
-							{:else if playlist.pull_checked_at}
-								<span>last checked {formatRelativeTime(new Date(playlist.pull_checked_at))}</span>
-							{/if}
-						</p>
+						<details class="pl-hero__fact">
+							<summary class="cursor-pointer select-none">
+								Playlist settings
+								{#if playlist.pull_checked_at}
+									<span class="text-muted">
+										· last checked {formatRelativeTime(new Date(playlist.pull_checked_at))}
+									</span>
+								{/if}
+							</summary>
+							<div class="mt-2 flex flex-col items-start gap-2 text-sm">
+								<label
+									class="inline-flex items-center gap-2"
+									title="Checks the source every hour and adds the songs it gained."
+								>
+									<input
+										type="checkbox"
+										checked={playlist.pull_enabled}
+										onchange={(event) => void togglePull(event, 'enabled')}
+									/>
+									Sync
+									<Info class="size-3.5 text-muted" aria-hidden="true" />
+								</label>
+								<label
+									class="inline-flex items-center gap-2"
+									title="After each check, asks for the songs the library lacks through the same path as Request missing."
+								>
+									<input
+										type="checkbox"
+										checked={playlist.pull_acquire}
+										onchange={(event) => void togglePull(event, 'acquire')}
+									/>
+									Acquire on sync
+								</label>
+								<button
+									type="button"
+									class="text-xs underline hover:no-underline disabled:opacity-50"
+									disabled={checkingPull}
+									onclick={() => void checkNow()}
+								>
+									{checkingPull ? 'Checking…' : 'Check now'}
+								</button>
+								{#if playlist.pull_error}
+									<span class="text-xs text-warning">{playlist.pull_error}</span>
+								{/if}
+							</div>
+						</details>
 					{/if}
 					{#if !playlist.is_owner && playlist.owner_name}
 						<p class="pl-hero__fact">

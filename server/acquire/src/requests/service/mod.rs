@@ -37,7 +37,9 @@ use crate::dispatch::{
 };
 use crate::edition::chosen_edition;
 use crate::follows::Follows;
-use droppedneedle_auth::Principal;
+use droppedneedle_auth::{Principal, Role};
+use droppedneedle_kernel::db::DbError;
+use rusqlite::OptionalExtension;
 
 /// Domain service over the requests state. Every mutation is one durable
 /// write; nothing is held across an await.
@@ -208,6 +210,26 @@ fn stored_dispatch(
 }
 
 impl RequestsService {
+    /// The requester behind a user id, for a pass that files on their
+    /// behalf: their role and the name their requests show.
+    pub async fn owner_principal(&self, user_id: &str) -> Result<Option<Principal>, RequestsError> {
+        let id = user_id.to_owned();
+        let lookup = id.clone();
+        let row: Option<(String, Option<String>)> = self
+            .library
+            .db()
+            .read("requests.owner", move |conn| {
+                conn.query_row(super::sql::MIX_OWNER.text(), [lookup], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })
+                .optional()
+                .map_err(DbError::from)
+            })
+            .await
+            .map_err(|error| RequestsError::internal(&error))?;
+        Ok(row.map(|(role, name)| Principal::acting_for(id, Role::from_stored(&role), name)))
+    }
+
     /// Now, as whole unix seconds.
     fn now_epoch(&self) -> u64 {
         self.library.now_epoch()

@@ -96,6 +96,7 @@ export function toPageDetail(detail: PlaylistDetailV3): PlaylistDetail {
 		tracks: detail.tracks.map(toPageTrack),
 		import_state: detail.import_state ?? null,
 		pull_enabled: detail.pull_enabled ?? false,
+		pull_acquire: detail.pull_acquire ?? false,
 		pull_checked_at: detail.pull_checked_at ? epochSecToIso(detail.pull_checked_at) : null,
 		pull_error: detail.pull_error ?? null
 	};
