@@ -8,14 +8,17 @@
 
 use std::sync::Arc;
 
+use crate::discover::cache::{self, PageKind};
 use crate::discover::genre::artwork::GenreArt;
+use crate::discover::health;
 use crate::discover::home::{LiveHome, genre_names};
 use crate::discover::page::{LiveDiscover, shelves::shelf_of};
 use crate::discover::scheduler::{ArtistDetail, Feature};
 use crate::discover::sql;
 use crate::discover::{
     models::{
-        DiscoverActivityResponse, DiscoverResponse, HomeResponse, IntegrationStatus, SectionKey,
+        DiscoverActivityResponse, DiscoverHealthResponse, DiscoverResponse, HomeResponse,
+        IntegrationStatus, SectionKey,
     },
     ports::{BoxFuture, ProviderFailure},
 };
@@ -205,6 +208,14 @@ impl LiveContent {
                     ProviderFailure::failed(format!("local files check: {error}"))
                 })
         })
+    }
+
+    /// Every user's latest discover page and deck numbers.
+    pub async fn health(&self) -> Result<DiscoverHealthResponse, ProviderFailure> {
+        let rows = cache::stored(&self.db, PageKind::Discover, PageKind::Queue)
+            .await
+            .map_err(|error| ProviderFailure::failed(format!("discover health read: {error}")))?;
+        Ok(health::from_stored(rows))
     }
 
     /// Record one discover interaction; returns the personalization cursor.

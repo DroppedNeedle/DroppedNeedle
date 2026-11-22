@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+pub use super::health::{DeckHealth, PageHealth};
 pub use super::sections::{SectionKey, SectionZone};
 pub use crate::metadata::models::{AlbumRef, ArtistRef};
 pub use droppedneedle_kernel::runtime_config::sections::ListenSource;
@@ -626,6 +627,37 @@ pub struct RefreshResponse {
     pub status: String,
     /// Human message.
     pub message: String,
+}
+
+/// One user's latest discover page numbers.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PageHealthRow {
+    /// The user's id.
+    pub user_id: String,
+    /// When the page was built, unix seconds.
+    pub built_at: i64,
+    /// Its numbers.
+    pub health: PageHealth,
+}
+
+/// One user's latest queue deck numbers.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DeckHealthRow {
+    /// The user's id.
+    pub user_id: String,
+    /// When the deck was built, unix seconds.
+    pub built_at: i64,
+    /// Its numbers.
+    pub health: DeckHealth,
+}
+
+/// Every user's latest discover numbers: counts only, no music named.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DiscoverHealthResponse {
+    /// Discover pages, one per user.
+    pub pages: Vec<PageHealthRow>,
+    /// Queue decks, one per user.
+    pub decks: Vec<DeckHealthRow>,
 }
 
 // ---------------------------------------------------------------------------

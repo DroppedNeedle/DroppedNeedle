@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use droppedneedle_auth::Admin;
 use droppedneedle_providers::ProviderError;
 
 use crate::discover::{
@@ -11,13 +12,13 @@ use crate::discover::{
     genre::WithGenrePages,
     models::{
         AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
-        DiscoverActivityResponse, DiscoverQueuePreview, DiscoverQueueResponse,
-        DiscoverQueueStatusResponse, DiscoverResponse, GenreDetailResponse, HomeResponse,
-        IgnoredReleasesResponse, IntegrationStatus, ListenSource, PlaylistSuggestionsRequest,
-        PlaylistSuggestionsResponse, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
-        QueueIgnoreRequest, QueueValidateRequest, QueueValidateResponse, RadioPlanRequest,
-        RadioPlanResponse, RadioRequest, RadioSeedKind, RefreshResponse, StatsRange,
-        TrackPreviewResponse, YouTubeSearchResponse,
+        DiscoverActivityResponse, DiscoverHealthResponse, DiscoverQueuePreview,
+        DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse, GenreDetailResponse,
+        HomeResponse, IgnoredReleasesResponse, IntegrationStatus, ListenSource,
+        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
+        QueueGenerateRequest, QueueGenerateResponse, QueueIgnoreRequest, QueueValidateRequest,
+        QueueValidateResponse, RadioPlanRequest, RadioPlanResponse, RadioRequest, RadioSeedKind,
+        RefreshResponse, StatsRange, TrackPreviewResponse, YouTubeSearchResponse,
     },
     ports::{ProviderFailure, QueueTrigger, RadioFailure},
     previews::LivePreviews,
@@ -136,6 +137,15 @@ pub async fn discover(
         .discover(user_id)
         .await
         .map_err(owned_store_failure)
+}
+
+/// Every user's latest discover page and deck numbers, for an admin. The
+/// rows are ours, so a failed read is an internal fault (500).
+pub async fn discover_health(
+    deps: &DiscoverDeps,
+    _admin: &Admin,
+) -> Result<DiscoverHealthResponse, ServiceError> {
+    deps.content.health().await.map_err(owned_store_failure)
 }
 
 /// Trigger a background discover rebuild for the user.

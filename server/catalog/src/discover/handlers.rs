@@ -9,7 +9,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
-use droppedneedle_auth::User;
+use droppedneedle_auth::{Admin, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
@@ -18,10 +18,10 @@ use serde::Deserialize;
 use super::{
     models::{
         AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
-        DiscoverActivityRequest, DiscoverActivityResponse, DiscoverQueuePreview,
-        DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse, GenreDetailResponse,
-        HomeResponse, IgnoredReleasesResponse, IntegrationStatus, ListenSource,
-        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
+        DiscoverActivityRequest, DiscoverActivityResponse, DiscoverHealthResponse,
+        DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
+        GenreDetailResponse, HomeResponse, IgnoredReleasesResponse, IntegrationStatus,
+        ListenSource, PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
         QueueGenerateRequest, QueueGenerateResponse, QueueIgnoreRequest, QueueValidateRequest,
         QueueValidateResponse, RadioPlanRequest, RadioPlanResponse, RadioRequest, RefreshResponse,
         StatsRange, TrackPreviewResponse, YouTubeSearchResponse,
@@ -112,6 +112,28 @@ pub async fn get_discover(
     User(user): User,
 ) -> Result<Json<DiscoverResponse>, ApiError> {
     services::discover(&deps, user.user_id())
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Every user's latest discover page and queue deck numbers: counts only,
+/// no music named.
+#[utoipa::path(
+    get,
+    tag = "discover",
+    path = "/api/v3/admin/discover/health",
+    responses(
+        (status = 200, description = "Discover health numbers", body = DiscoverHealthResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+    )
+)]
+pub async fn admin_discover_health(
+    State(deps): State<DiscoverDeps>,
+    admin: Admin,
+) -> Result<Json<DiscoverHealthResponse>, ApiError> {
+    services::discover_health(&deps, &admin)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -763,4 +785,5 @@ pub fn routes() -> Routes<DiscoverDeps> {
         .user(routes!(trending_artists))
         .user(routes!(popular_albums))
         .user(routes!(your_top_albums))
+        .admin(routes!(admin_discover_health))
 }

@@ -142,6 +142,13 @@ pub struct Built {
     /// Whether a read failed or a shelf ran out of time, so some shelf
     /// may be missing or short.
     pub incomplete: bool,
+    /// Seed artists the build grew from.
+    pub seeds_used: usize,
+    /// Whether the user's ListenBrainz sections could fill: linked, with
+    /// ListenBrainz reads on.
+    pub listenbrainz: bool,
+    /// Whether the user's Last.fm sections could fill.
+    pub lastfm: bool,
 }
 
 /// Failed reads of the first round, for the degraded banner.
@@ -476,6 +483,9 @@ impl Builder<'_> {
             page,
             degraded: tracker.degraded(),
             incomplete: tracker.any_failed() || self.ask.met_failure(),
+            seeds_used: seeds.len(),
+            listenbrainz: lb_user.is_some() && self.listening.listenbrainz_on(),
+            lastfm: lfm_user.is_some(),
         }
     }
 

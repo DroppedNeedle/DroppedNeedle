@@ -370,6 +370,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/admin/discover/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every user's latest discover page and queue deck numbers: counts only,
+         *     no music named.
+         */
+        get: operations["admin_discover_health"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/admin/import": {
         parameters: {
             query?: never;
@@ -13049,6 +13069,29 @@ export interface components {
          * @enum {string}
          */
         DecisionSource: "automatic" | "manual" | "legacy_import" | "embedded";
+        /** @description The numbers of one queue deck build. */
+        DeckHealth: {
+            /** @description Cards in the deck. */
+            cards: number;
+            /** @description Trending wildcards among them. */
+            chart_cards: number;
+            /** @description Distinct artists among them. */
+            distinct_artists: number;
+            /** @description The most cards any one artist has. */
+            max_cards_one_artist: number;
+        };
+        /** @description One user's latest queue deck numbers. */
+        DeckHealthRow: {
+            /**
+             * Format: int64
+             * @description When the deck was built, unix seconds.
+             */
+            built_at: number;
+            /** @description Its numbers. */
+            health: components["schemas"]["DeckHealth"];
+            /** @description The user's id. */
+            user_id: string;
+        };
         /**
          * @description The Deemix connection: Deemix downloads from Deezer, signed in with the
          *     Deezer sign-in saved in Deemix itself, so nothing here is secret.
@@ -13298,6 +13341,13 @@ export interface components {
             source_id: string;
             /** @description The MusicBrainz source tier the activity was recorded under. */
             source_mode: string;
+        };
+        /** @description Every user's latest discover numbers: counts only, no music named. */
+        DiscoverHealthResponse: {
+            /** @description Queue decks, one per user. */
+            decks: components["schemas"]["DeckHealthRow"][];
+            /** @description Discover pages, one per user. */
+            pages: components["schemas"]["PageHealthRow"][];
         };
         /** @description A discover teaser on home: one seed artist plus similar artists. */
         DiscoverPreview: {
@@ -19132,6 +19182,47 @@ export interface components {
             items: components["schemas"]["OwnedRelease"][];
             /** @description Sources that degraded while building the list. */
             service_status: components["schemas"]["Option"];
+        };
+        /** @description The numbers of one discover page build. */
+        PageHealth: {
+            /** @description Rows with a MusicBrainz id. */
+            cards: number;
+            /** @description Chart items inside those sections. */
+            chart_under_personal: number;
+            /** @description Distinct albums among them. */
+            distinct_albums: number;
+            /** @description Distinct artists among them. */
+            distinct_artists: number;
+            /** @description Ids shown in more than one section. */
+            duplicates: number;
+            /** @description Whether a read failed or a shelf ran out of time. */
+            incomplete: boolean;
+            /** @description The most cards any one artist has. */
+            max_cards_one_artist: number;
+            /** @description Top Picks the library already holds. */
+            owned_picks: number;
+            /** @description Cards in sections that claim to be about the person. */
+            personal_cards: number;
+            /** @description Albums the page it replaced showed too. */
+            repeats: number;
+            /** @description Sections on the page. */
+            sections: number;
+            /** @description Seed artists the build grew from. */
+            seeds_used: number;
+            /** @description Sections switched on that came back with nothing to show. */
+            wanted_empty: number;
+        };
+        /** @description One user's latest discover page numbers. */
+        PageHealthRow: {
+            /**
+             * Format: int64
+             * @description When the page was built, unix seconds.
+             */
+            built_at: number;
+            /** @description Its numbers. */
+            health: components["schemas"]["PageHealth"];
+            /** @description The user's id. */
+            user_id: string;
         };
         /** @description One section of a page. */
         PageSection: {
@@ -26492,6 +26583,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CacheStatsResponse"];
+                };
+            };
+        };
+    };
+    admin_discover_health: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discover health numbers */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverHealthResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

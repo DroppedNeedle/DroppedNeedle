@@ -25,6 +25,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::discover::cache::{PageKind, Saved, Timing, UserPageCache, Variant};
+use crate::discover::health::{DeckHealth, deck_health, log_deck_health};
 use crate::discover::listening::{Ask, ListeningData};
 use crate::discover::models::{
     DiscoverQueuePreview, DiscoverQueueStatusResponse, IgnoredRelease, QueueAction,
@@ -132,6 +133,9 @@ pub struct Deck {
     queue_id: String,
     /// Deck cards in order.
     items: Vec<QueueItemLight>,
+    /// Its health numbers.
+    #[serde(default)]
+    health: Option<DeckHealth>,
 }
 
 /// Where one user's build stands.
@@ -457,6 +461,7 @@ impl Inner {
             settings: &settings,
             ask: ask.clone(),
         };
+        let started = tokio::time::Instant::now();
         let outcome = build_deck(&ctx, &user_id, settings.queue_size).await;
         let built = {
             let mut states = self.states();
@@ -479,6 +484,7 @@ impl Inner {
                 Ok(items) => {
                     let deck = Saved {
                         value: Deck {
+                            health: Some(deck_health(&items)),
                             items,
                             queue_id: uuid::Uuid::new_v4().to_string(),
                         },
@@ -497,6 +503,9 @@ impl Inner {
                 }
             }
         };
+        if let Some(health) = &built.value.health {
+            log_deck_health(&user_id, started.elapsed().as_secs_f64(), health);
+        }
         let saved = match generation {
             Some(generation) => {
                 self.decks

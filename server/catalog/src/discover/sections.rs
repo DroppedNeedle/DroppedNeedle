@@ -218,6 +218,19 @@ pub enum Dedupe {
     Albums(u8),
 }
 
+/// What a section's rows stand on, for the health numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Basis {
+    /// It claims to be about this person.
+    Personal,
+    /// The same for every account: the shared library.
+    Library,
+    /// Sitewide charts.
+    Chart,
+    /// The person's own plays shown back.
+    OwnHistory,
+}
+
 /// One section.
 #[derive(Debug)]
 pub struct SectionDef {
@@ -239,6 +252,8 @@ pub struct SectionDef {
     pub dedupe: Dedupe,
     /// Whether albums the library holds are left out of it when served.
     pub hides_owned: bool,
+    /// What its rows stand on.
+    pub basis: Basis,
 }
 
 const fn home(
@@ -247,6 +262,7 @@ const fn home(
     title: &'static str,
     description: &'static str,
     requires: Option<Requires>,
+    basis: Basis,
 ) -> SectionDef {
     SectionDef {
         page: Page::Home,
@@ -258,6 +274,7 @@ const fn home(
         inputs: &[],
         dedupe: Dedupe::None,
         hides_owned: false,
+        basis,
     }
 }
 
@@ -269,6 +286,7 @@ const fn discover(
     requires: Option<Requires>,
     inputs: &'static [Input],
     dedupe: Dedupe,
+    basis: Basis,
 ) -> SectionDef {
     SectionDef {
         page: Page::Discover,
@@ -280,9 +298,11 @@ const fn discover(
         inputs,
         dedupe,
         hides_owned: false,
+        basis,
     }
 }
 
+use Basis as B;
 use Input as I;
 use SectionKey as K;
 use SectionZone as Z;
@@ -295,6 +315,7 @@ pub const SECTIONS: &[SectionDef] = &[
         "Popular Now",
         "Albums popular across your music source this week.",
         None,
+        B::Chart,
     ),
     home(
         K::TrendingArtists,
@@ -302,6 +323,7 @@ pub const SECTIONS: &[SectionDef] = &[
         "Trending Artists",
         "Artists trending across your music source right now.",
         None,
+        B::Chart,
     ),
     home(
         K::WeeklyExploration,
@@ -309,6 +331,7 @@ pub const SECTIONS: &[SectionDef] = &[
         "Weekly Exploration",
         "Your ListenBrainz weekly exploration playlist.",
         Some(Requires::Listenbrainz),
+        B::Personal,
     ),
     home(
         K::YourTopAlbums,
@@ -316,6 +339,7 @@ pub const SECTIONS: &[SectionDef] = &[
         "Your Top Albums",
         "What you personally played most this month.",
         None,
+        B::OwnHistory,
     ),
     home(
         K::RecentlyPlayed,
@@ -323,6 +347,7 @@ pub const SECTIONS: &[SectionDef] = &[
         "Recently Played",
         "Your latest plays in DroppedNeedle.",
         None,
+        B::OwnHistory,
     ),
     home(
         K::RecentlyAdded,
@@ -330,6 +355,7 @@ pub const SECTIONS: &[SectionDef] = &[
         "Recently Added",
         "The newest imports in your library.",
         Some(Requires::Library),
+        B::Library,
     ),
     home(
         K::GenreList,
@@ -337,6 +363,7 @@ pub const SECTIONS: &[SectionDef] = &[
         "Browse Genres",
         "Genre tiles built from your library.",
         Some(Requires::Library),
+        B::Library,
     ),
     home(
         K::FavoriteArtists,
@@ -344,6 +371,7 @@ pub const SECTIONS: &[SectionDef] = &[
         "Favorite Artists",
         "Artists from your loved tracks.",
         None,
+        B::OwnHistory,
     ),
     home(
         K::LibraryArtists,
@@ -351,6 +379,7 @@ pub const SECTIONS: &[SectionDef] = &[
         "Library Artists",
         "A shelf of artists from your library.",
         Some(Requires::Library),
+        B::Library,
     ),
     home(
         K::LibraryAlbums,
@@ -358,6 +387,7 @@ pub const SECTIONS: &[SectionDef] = &[
         "Library Albums",
         "A shelf of albums from your library.",
         Some(Requires::Library),
+        B::Library,
     ),
     discover(
         K::DiscoverQueue,
@@ -367,6 +397,7 @@ pub const SECTIONS: &[SectionDef] = &[
         None,
         &[],
         Dedupe::None,
+        B::Personal,
     ),
     discover(
         K::TopPicks,
@@ -376,6 +407,7 @@ pub const SECTIONS: &[SectionDef] = &[
         None,
         &[I::Seeds, I::Similar, I::Genres],
         Dedupe::Albums(0),
+        B::Personal,
     ),
     discover(
         K::ListenersLikeYou,
@@ -385,6 +417,7 @@ pub const SECTIONS: &[SectionDef] = &[
         None,
         &[],
         Dedupe::Albums(4),
+        B::Personal,
     ),
     discover(
         K::WeeklyExploration,
@@ -394,6 +427,7 @@ pub const SECTIONS: &[SectionDef] = &[
         Some(Requires::Listenbrainz),
         &[],
         Dedupe::None,
+        B::Personal,
     ),
     discover(
         K::PlaylistDiscovery,
@@ -403,6 +437,7 @@ pub const SECTIONS: &[SectionDef] = &[
         None,
         &[],
         Dedupe::None,
+        B::Personal,
     ),
     discover(
         K::DailyMixes,
@@ -412,6 +447,7 @@ pub const SECTIONS: &[SectionDef] = &[
         Some(Requires::Library),
         &[I::Seeds, I::Genres, I::LibraryAlbums],
         Dedupe::Albums(5),
+        B::Personal,
     ),
     discover(
         K::RadioSections,
@@ -421,6 +457,7 @@ pub const SECTIONS: &[SectionDef] = &[
         None,
         &[I::Seeds, I::LibraryAlbums],
         Dedupe::Albums(6),
+        B::Personal,
     ),
     discover(
         K::BecauseYouListenTo,
@@ -430,6 +467,7 @@ pub const SECTIONS: &[SectionDef] = &[
         None,
         &[I::Seeds, I::Similar],
         Dedupe::Artists,
+        B::Personal,
     ),
     discover(
         K::ArtistsYouMightLike,
@@ -439,6 +477,7 @@ pub const SECTIONS: &[SectionDef] = &[
         None,
         &[I::Seeds, I::Similar],
         Dedupe::Artists,
+        B::Personal,
     ),
     discover(
         K::PopularInYourGenres,
@@ -448,6 +487,7 @@ pub const SECTIONS: &[SectionDef] = &[
         None,
         &[I::Genres, I::LastfmGenreArtists],
         Dedupe::Artists,
+        B::Personal,
     ),
     discover(
         K::FreshReleases,
@@ -457,6 +497,7 @@ pub const SECTIONS: &[SectionDef] = &[
         Some(Requires::Listenbrainz),
         &[I::Fresh],
         Dedupe::Albums(1),
+        B::Personal,
     ),
     discover(
         K::NewFromFollowed,
@@ -466,6 +507,7 @@ pub const SECTIONS: &[SectionDef] = &[
         None,
         &[],
         Dedupe::Albums(2),
+        B::Personal,
     ),
     SectionDef {
         hides_owned: true,
@@ -477,6 +519,7 @@ pub const SECTIONS: &[SectionDef] = &[
             Some(Requires::Library),
             &[I::LibraryAlbums],
             Dedupe::Albums(3),
+            B::Library,
         )
     },
     discover(
@@ -487,6 +530,7 @@ pub const SECTIONS: &[SectionDef] = &[
         None,
         &[I::Jellyfin],
         Dedupe::None,
+        B::OwnHistory,
     ),
     discover(
         K::Anniversaries,
@@ -496,6 +540,7 @@ pub const SECTIONS: &[SectionDef] = &[
         Some(Requires::Library),
         &[],
         Dedupe::None,
+        B::Library,
     ),
     discover(
         K::LastfmRecentScrobbles,
@@ -505,6 +550,7 @@ pub const SECTIONS: &[SectionDef] = &[
         Some(Requires::Lastfm),
         &[I::LastfmRecent],
         Dedupe::Albums(8),
+        B::OwnHistory,
     ),
     discover(
         K::UnexploredGenres,
@@ -514,6 +560,7 @@ pub const SECTIONS: &[SectionDef] = &[
         None,
         &[I::Seeds, I::Similar],
         Dedupe::None,
+        B::Personal,
     ),
     discover(
         K::GenreList,
@@ -523,6 +570,7 @@ pub const SECTIONS: &[SectionDef] = &[
         Some(Requires::Library),
         &[I::Genres],
         Dedupe::None,
+        B::Library,
     ),
     discover(
         K::GloballyTrending,
@@ -532,6 +580,7 @@ pub const SECTIONS: &[SectionDef] = &[
         None,
         &[I::Trending],
         Dedupe::Artists,
+        B::Chart,
     ),
     discover(
         K::LastfmWeeklyArtistChart,
@@ -541,6 +590,7 @@ pub const SECTIONS: &[SectionDef] = &[
         Some(Requires::Lastfm),
         &[I::LastfmWeeklyArtists],
         Dedupe::Artists,
+        B::OwnHistory,
     ),
     discover(
         K::LastfmWeeklyAlbumChart,
@@ -550,6 +600,7 @@ pub const SECTIONS: &[SectionDef] = &[
         Some(Requires::Lastfm),
         &[I::LastfmWeeklyAlbums],
         Dedupe::Albums(7),
+        B::OwnHistory,
     ),
 ];
 

@@ -63,5 +63,10 @@ export const ROUTE_REASONS: readonly { method: string; path: string; reason: str
 		method: 'GET',
 		path: '/api/v3/remotes/{source}/covers/playlists/{id}',
 		reason: 'the server hands the browser this URL'
+	},
+	{
+		method: 'GET',
+		path: '/api/v3/admin/discover/health',
+		reason: 'admin read with no screen yet'
 	}
 ];

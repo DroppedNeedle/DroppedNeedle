@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 use crate::artwork::warm::{CoverWarm, WarmTargets};
 use crate::discover::cache::{PageKind, Timing, UserPageCache, Variant};
 use crate::discover::content::IntegrationSettings;
+use crate::discover::health::{BuildFacts, PageHealth, log_page_health, page_health};
 use crate::discover::listening::{Ask, ListeningData};
 use crate::discover::models::{
     ChartSection, DiscoverActivityResponse, DiscoverPreview, DiscoverResponse, IntegrationStatus,
@@ -89,14 +90,16 @@ pub fn empty_page() -> DiscoverResponse {
 }
 
 /// A built page as the cache keeps it, with the sections the user had
-/// switched off when it was built, and whether a read failed or a shelf
-/// ran out of time while it was.
+/// switched off when it was built, whether a read failed or a shelf ran
+/// out of time while it was, and its health numbers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuiltPage {
     page: DiscoverResponse,
     skipped: Vec<SectionKey>,
     #[serde(default)]
     incomplete: bool,
+    #[serde(default)]
+    health: Option<PageHealth>,
 }
 
 /// Everything the page reads from.
@@ -254,7 +257,10 @@ impl DiscoverPages {
         generation: i64,
         settings: PageSettings,
     ) -> Option<BuiltPage> {
+        let started = tokio::time::Instant::now();
         let off = sections::switched_off(self.inner.library.db(), user_id, Page::Discover).await;
+        // The page this build replaces, which the health's repeats count.
+        let previous = self.inner.cache.load(user_id, variant).await;
         let source = self.inner.listening.source();
         let now = self.inner.cache.now_ms() as f64 / 1000.0;
         let (today, year) = today(now);
@@ -271,9 +277,8 @@ impl DiscoverPages {
             year,
             now,
         };
-        let built = builder
-            .build(user_id, &sections::wanted(Page::Discover, &off))
-            .await;
+        let wanted = sections::wanted(Page::Discover, &off);
+        let built = builder.build(user_id, &wanted).await;
         if self.inner.listening.source() != source {
             tracing::info!("MusicBrainz source changed during a discover build; dropping it");
             return None;
@@ -289,6 +294,21 @@ impl DiscoverPages {
         page.generated_at = Some(self.inner.cache.now_ms() / 1000);
         page.refresh_started_at = None;
         page.refreshing = false;
+        // Counted as the page would be served now, ownership marked.
+        let mut served = page.clone();
+        mark_ownership(self.inner.library.db(), &mut served).await;
+        let health = page_health(
+            &served,
+            previous.as_ref().map(|saved| &saved.value.page),
+            &BuildFacts {
+                wanted: &wanted,
+                seeds_used: built.seeds_used,
+                incomplete: built.incomplete,
+                listenbrainz: built.listenbrainz,
+                lastfm: built.lastfm,
+            },
+        );
+        log_page_health(user_id, started.elapsed().as_secs_f64(), &health);
         if page.sections.is_empty() {
             tracing::warn!(user = %user_id, "discover build found nothing to show; keeping the previous page");
             return None;
@@ -298,6 +318,7 @@ impl DiscoverPages {
             page,
             skipped: sections::sorted(&off),
             incomplete: built.incomplete,
+            health: Some(health),
         })
     }
 }

@@ -190,6 +190,20 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     })
     .await;
     let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
+    let row: Value = serde_json::from_str(&db.one::<String>(
+        "SELECT CAST(payload AS TEXT) FROM catalog_cached_pages \
+         WHERE user_id = 'user-1' AND page = 'discover'",
+        [],
+    ))
+    .expect("the saved page decodes");
+    assert_eq!(
+        row["health"]["seeds_used"], 1,
+        "the saved row carries its health"
+    );
+    assert_eq!(
+        row["health"]["sections"].as_u64(),
+        page["sections"].as_array().map(|s| s.len() as u64)
+    );
     assert_eq!(
         content(&page, "because_you_listen_to")["entries"][0]["section"]["title"],
         "Because You Listen To Seed"

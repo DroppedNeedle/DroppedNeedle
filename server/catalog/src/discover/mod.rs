@@ -15,6 +15,7 @@ pub mod demand;
 pub mod error;
 pub mod genre;
 pub mod handlers;
+pub mod health;
 pub mod home;
 pub mod listening;
 pub mod models;

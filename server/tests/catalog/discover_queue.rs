@@ -31,6 +31,7 @@ use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
+use crate::common::Probe;
 use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 use crate::common::bundles::{NoDownloadSource, remotes_resolver};
 
@@ -703,13 +704,31 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
         similar_cards, 2,
         "one similar artist holds at most two cards"
     );
-    assert!(
-        deck["items"]
-            .as_array()
-            .expect("items")
-            .iter()
-            .any(|item| item["is_wildcard"] == true),
-        "trending wildcards fill the rest"
+    let wildcards = deck["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .filter(|item| item["is_wildcard"] == true)
+        .count();
+    assert!(wildcards > 0, "trending wildcards fill the rest");
+    let row = after_commits(&db, "the deck was saved", || async {
+        db.maybe::<String>(
+            "SELECT CAST(payload AS TEXT) FROM catalog_cached_pages \
+             WHERE user_id = 'user-1' AND page = 'queue'",
+            [],
+        )
+        .and_then(|payload| serde_json::from_str::<Value>(&payload).ok())
+    })
+    .await;
+    assert_eq!(
+        row["health"],
+        json!({
+            "cards": 5,
+            "chart_cards": wildcards,
+            "distinct_artists": 1 + wildcards,
+            "max_cards_one_artist": 2,
+        }),
+        "the saved deck carries its health"
     );
 
     let ignored = ids[0].clone();

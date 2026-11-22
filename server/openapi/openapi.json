@@ -782,6 +782,54 @@
         ]
       }
     },
+    "/api/v3/admin/discover/health": {
+      "get": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Every user's latest discover page and queue deck numbers: counts only,\nno music named.",
+        "operationId": "admin_discover_health",
+        "responses": {
+          "200": {
+            "description": "Discover health numbers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverHealthResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/admin/import": {
       "post": {
         "tags": [
@@ -42940,6 +42988,62 @@
           "embedded"
         ]
       },
+      "DeckHealth": {
+        "type": "object",
+        "description": "The numbers of one queue deck build.",
+        "required": [
+          "cards",
+          "chart_cards",
+          "distinct_artists",
+          "max_cards_one_artist"
+        ],
+        "properties": {
+          "cards": {
+            "type": "integer",
+            "description": "Cards in the deck.",
+            "minimum": 0
+          },
+          "chart_cards": {
+            "type": "integer",
+            "description": "Trending wildcards among them.",
+            "minimum": 0
+          },
+          "distinct_artists": {
+            "type": "integer",
+            "description": "Distinct artists among them.",
+            "minimum": 0
+          },
+          "max_cards_one_artist": {
+            "type": "integer",
+            "description": "The most cards any one artist has.",
+            "minimum": 0
+          }
+        }
+      },
+      "DeckHealthRow": {
+        "type": "object",
+        "description": "One user's latest queue deck numbers.",
+        "required": [
+          "user_id",
+          "built_at",
+          "health"
+        ],
+        "properties": {
+          "built_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the deck was built, unix seconds."
+          },
+          "health": {
+            "$ref": "#/components/schemas/DeckHealth",
+            "description": "Its numbers."
+          },
+          "user_id": {
+            "type": "string",
+            "description": "The user's id."
+          }
+        }
+      },
       "DeemixConnection": {
         "type": "object",
         "description": "The Deemix connection: Deemix downloads from Deezer, signed in with the\nDeezer sign-in saved in Deemix itself, so nothing here is secret.",
@@ -43706,6 +43810,30 @@
           "source_mode": {
             "type": "string",
             "description": "The MusicBrainz source tier the activity was recorded under."
+          }
+        }
+      },
+      "DiscoverHealthResponse": {
+        "type": "object",
+        "description": "Every user's latest discover numbers: counts only, no music named.",
+        "required": [
+          "pages",
+          "decks"
+        ],
+        "properties": {
+          "decks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeckHealthRow"
+            },
+            "description": "Queue decks, one per user."
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageHealthRow"
+            },
+            "description": "Discover pages, one per user."
           }
         }
       },
@@ -56229,6 +56357,115 @@
           "service_status": {
             "$ref": "#/components/schemas/Option",
             "description": "Sources that degraded while building the list."
+          }
+        }
+      },
+      "PageHealth": {
+        "type": "object",
+        "description": "The numbers of one discover page build.",
+        "required": [
+          "sections",
+          "wanted_empty",
+          "cards",
+          "distinct_albums",
+          "distinct_artists",
+          "personal_cards",
+          "chart_under_personal",
+          "owned_picks",
+          "duplicates",
+          "repeats",
+          "seeds_used",
+          "max_cards_one_artist",
+          "incomplete"
+        ],
+        "properties": {
+          "cards": {
+            "type": "integer",
+            "description": "Rows with a MusicBrainz id.",
+            "minimum": 0
+          },
+          "chart_under_personal": {
+            "type": "integer",
+            "description": "Chart items inside those sections.",
+            "minimum": 0
+          },
+          "distinct_albums": {
+            "type": "integer",
+            "description": "Distinct albums among them.",
+            "minimum": 0
+          },
+          "distinct_artists": {
+            "type": "integer",
+            "description": "Distinct artists among them.",
+            "minimum": 0
+          },
+          "duplicates": {
+            "type": "integer",
+            "description": "Ids shown in more than one section.",
+            "minimum": 0
+          },
+          "incomplete": {
+            "type": "boolean",
+            "description": "Whether a read failed or a shelf ran out of time."
+          },
+          "max_cards_one_artist": {
+            "type": "integer",
+            "description": "The most cards any one artist has.",
+            "minimum": 0
+          },
+          "owned_picks": {
+            "type": "integer",
+            "description": "Top Picks the library already holds.",
+            "minimum": 0
+          },
+          "personal_cards": {
+            "type": "integer",
+            "description": "Cards in sections that claim to be about the person.",
+            "minimum": 0
+          },
+          "repeats": {
+            "type": "integer",
+            "description": "Albums the page it replaced showed too.",
+            "minimum": 0
+          },
+          "sections": {
+            "type": "integer",
+            "description": "Sections on the page.",
+            "minimum": 0
+          },
+          "seeds_used": {
+            "type": "integer",
+            "description": "Seed artists the build grew from.",
+            "minimum": 0
+          },
+          "wanted_empty": {
+            "type": "integer",
+            "description": "Sections switched on that came back with nothing to show.",
+            "minimum": 0
+          }
+        }
+      },
+      "PageHealthRow": {
+        "type": "object",
+        "description": "One user's latest discover page numbers.",
+        "required": [
+          "user_id",
+          "built_at",
+          "health"
+        ],
+        "properties": {
+          "built_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the page was built, unix seconds."
+          },
+          "health": {
+            "$ref": "#/components/schemas/PageHealth",
+            "description": "Its numbers."
+          },
+          "user_id": {
+            "type": "string",
+            "description": "The user's id."
           }
         }
       },

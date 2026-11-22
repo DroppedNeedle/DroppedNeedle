@@ -461,3 +461,21 @@ impl<T: Serialize + DeserializeOwned> UserPageCache<T> {
 pub async fn clear_all(db: &Db) -> Result<usize, DbError> {
     rows::clear_all(db).await
 }
+
+/// One user's saved page as stored, undecoded.
+#[derive(Debug, Clone)]
+pub struct StoredPage {
+    /// The user's id.
+    pub user_id: String,
+    /// Which page it is.
+    pub kind: PageKind,
+    /// The page as saved.
+    pub payload: Vec<u8>,
+    /// When it was built, unix milliseconds.
+    pub built_at: i64,
+}
+
+/// Every user's saved page of kind `a` or `b`, by user.
+pub async fn stored(db: &Db, a: PageKind, b: PageKind) -> Result<Vec<StoredPage>, DbError> {
+    rows::of_kinds(db, a, b).await
+}

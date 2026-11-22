@@ -5,7 +5,7 @@
 //! that ends after the account was deleted or the cache was cleared
 //! leaves no row behind.
 
-use super::{PageKind, Variant};
+use super::{PageKind, StoredPage, Variant};
 use crate::discover::sql;
 use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 
@@ -105,6 +105,35 @@ pub(super) async fn forget(db: &Db, user_id: &str, kind: PageKind) -> Result<(),
         Ok(())
     })
     .await
+}
+
+/// Every user's row of kind `a` or `b`.
+pub(super) async fn of_kinds(
+    db: &Db,
+    a: PageKind,
+    b: PageKind,
+) -> Result<Vec<StoredPage>, DbError> {
+    let rows = db
+        .read::<_, DbError, _>("discover.page_cache.of_kinds", move |conn| {
+            let rows = conn
+                .prepare(sql::SAVED_PAGES_OF_KINDS.text())?
+                .query_map(
+                    rusqlite::params![a.as_str(), b.as_str()],
+                    sql::SavedPageColumns::read,
+                )?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| StoredPage {
+            user_id: row.user_id,
+            kind: if row.page == a.as_str() { a } else { b },
+            payload: row.payload,
+            built_at: row.built_at.0,
+        })
+        .collect())
 }
 
 /// Drop every page and move to the next generation, in one transaction.
