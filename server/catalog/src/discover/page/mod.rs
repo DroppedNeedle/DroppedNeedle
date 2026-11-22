@@ -324,6 +324,7 @@ impl DiscoverPages {
             &BuildFacts {
                 wanted: &wanted,
                 seeds_used: built.seeds_used,
+                seeds_found: built.seeds_found,
                 incomplete: built.incomplete,
                 listenbrainz: built.listenbrainz,
                 lastfm: built.lastfm,

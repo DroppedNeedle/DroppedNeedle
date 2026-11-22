@@ -56,7 +56,7 @@
 			</h2>
 			{#if entry.listen_count}
 				<StatusChip tone="action" size="sm" icon={Headphones}>
-					{entry.listen_count} listens this week
+					{entry.listen_count} plays
 				</StatusChip>
 			{/if}
 		</div>

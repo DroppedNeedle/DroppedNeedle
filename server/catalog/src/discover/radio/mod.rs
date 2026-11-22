@@ -236,6 +236,7 @@ impl LiveRadio {
             db: &self.queue_db,
             settings: &settings,
             ask: Ask::build(RequestPriority::UserInitiated),
+            now_ms: self.clock.now_ms(),
         };
         let excluded = HashSet::new();
         Ok(if use_lastfm && user.lastfm {
@@ -500,6 +501,7 @@ impl LiveRadio {
             db: &self.queue_db,
             settings: &settings,
             ask: Ask::person(),
+            now_ms: self.clock.now_ms(),
         };
         let similar =
             similar_to(&ctx, user_id, &seed(&base.0, &base.1), MAX_SEED_ARTISTS + 1).await;

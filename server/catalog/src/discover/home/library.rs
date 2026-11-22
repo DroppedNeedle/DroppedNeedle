@@ -1,7 +1,7 @@
 //! What home and the genre page read from the local library: the newest
-//! albums, the artists with the most albums, the user's recent plays, the
-//! owned artists and albums of one genre, and the albums whose art can
-//! make up a genre's collage.
+//! albums, the artists with the most albums, the user's recent plays and
+//! most played albums, the owned artists and albums of one genre, and the
+//! albums whose art can make up a genre's collage.
 //!
 //! Only albums with at least one indexed track count, and retired albums
 //! and artists never show.
@@ -49,6 +49,15 @@ pub struct HomeArtist {
     pub mbid: Option<String>,
     /// Albums credited to the artist.
     pub album_count: i64,
+}
+
+/// One album the user played, with their plays.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlayedAlbum {
+    /// The album.
+    pub album: HomeAlbum,
+    /// The user's plays of it in the window read.
+    pub plays: i64,
 }
 
 /// One play from the user's history.
@@ -185,6 +194,40 @@ impl HomeLibrary {
                 recording_mbid: row.recording_mbid,
                 release_group_mbid: row.release_group_mbid,
                 played_at: to_iso(ms_to_secs(row.played_at.0)),
+            })
+            .collect())
+    }
+
+    /// The albums the user played most since `since_ms` (unix ms), most
+    /// played first: only albums the library lists.
+    pub async fn played_albums(
+        &self,
+        user_id: &str,
+        since_ms: i64,
+        limit: i64,
+    ) -> Result<Vec<PlayedAlbum>, String> {
+        let rows = read_all(
+            &self.db,
+            "discover.home.played_albums",
+            sql::PLAYED_ALBUMS.text(),
+            (user_id.to_owned(), since_ms, limit.max(1)),
+            sql::PlayedAlbumColumns::read,
+        )
+        .await
+        .map_err(|error| format!("played albums read: {error}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| PlayedAlbum {
+                plays: row.plays,
+                album: HomeAlbum {
+                    local_id: row.id,
+                    title: row.title,
+                    artist_name: row.artist_name.filter(|name| !name.is_empty()),
+                    release_group_mbid: row.rg,
+                    artist_mbid: row.artist_mbid,
+                    year: row.year,
+                    art_version: row.art_version,
+                },
             })
             .collect())
     }

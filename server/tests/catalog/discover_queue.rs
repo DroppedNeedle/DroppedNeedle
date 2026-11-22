@@ -26,6 +26,7 @@ use droppedneedle_catalog::discover::ports::BoxFuture;
 use droppedneedle_catalog::discover::services::DiscoverDeps;
 use droppedneedle_catalog::discover::wiring::{DiscoverInputs, deps_over, live_network};
 use droppedneedle_catalog::metadata::artist::ReleaseGroupItem;
+use droppedneedle_kernel::clock::Clock as _;
 use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_providers::listenbrainz::{
@@ -52,7 +53,8 @@ fn group(n: u8) -> String {
 /// `fresh_down` is, similar artists while `similar_down` is and an
 /// artist's discography while `albums_down` is. ListenBrainz's similar list
 /// answers `similar`, each row's score as its co-listening score, and
-/// `listeners` its counts; both reads are counted. An artist's
+/// `listeners` its counts; both reads are counted, and the artists whose
+/// list was asked for are recorded in order. An artist's
 /// discography is its rows in `artist_albums`, each counted with its listen
 /// count as both its listens and, unless its facts name some, its
 /// listeners; those reads are recorded too.
@@ -68,7 +70,12 @@ pub(crate) struct Script {
     /// Last.fm's similar artists, by the asked artist's MBID.
     pub lastfm_similar: HashMap<String, Vec<ScoredArtist>>,
     pub source: Option<SourceContext>,
+    /// The user's ListenBrainz top artists of every range but all time.
     pub user_artists: Vec<ArtistRow>,
+    /// The user's ListenBrainz top artists of all time.
+    pub user_artists_all_time: Vec<ArtistRow>,
+    /// All-time top-artist reads made so far.
+    pub all_time_reads: AtomicUsize,
     pub user_albums: Vec<ListenedAlbum>,
     pub sitewide_artists: Vec<ArtistRow>,
     pub sitewide_albums: Vec<ListenedAlbum>,
@@ -77,6 +84,10 @@ pub(crate) struct Script {
     pub listeners: HashMap<String, ArtistPopularity>,
     /// Similar-list reads made so far.
     pub similar_reads: AtomicUsize,
+    /// The artists whose similar list was read, in the order asked.
+    pub similar_asked: Mutex<Vec<String>>,
+    /// The user's top-album reads made so far.
+    pub user_album_reads: AtomicUsize,
     /// Listener-count reads made so far.
     pub listener_reads: AtomicUsize,
     pub artist_albums: HashMap<String, Vec<RankedAlbum>>,
@@ -183,12 +194,17 @@ impl ListeningNetwork for Script {
     fn user_artists<'a>(
         &'a self,
         _u: &'a str,
-        _r: StatsRange,
+        range: StatsRange,
         _c: u32,
         _o: u32,
         _p: RequestPriority,
     ) -> Answer<'a, Vec<ArtistRow>> {
-        let rows = self.user_artists.clone();
+        let rows = if range == StatsRange::AllTime {
+            self.all_time_reads.fetch_add(1, Ordering::SeqCst);
+            self.user_artists_all_time.clone()
+        } else {
+            self.user_artists.clone()
+        };
         let hold = self.hold.clone();
         Box::pin(async move {
             if let Some(hold) = hold {
@@ -205,6 +221,7 @@ impl ListeningNetwork for Script {
         _o: u32,
         _p: RequestPriority,
     ) -> Answer<'a, Vec<ListenedAlbum>> {
+        self.user_album_reads.fetch_add(1, Ordering::SeqCst);
         ok(self.user_albums.clone())
     }
     fn scored_similar<'a>(
@@ -213,6 +230,7 @@ impl ListeningNetwork for Script {
         _p: RequestPriority,
     ) -> Answer<'a, Vec<ScoredSimilarArtist>> {
         self.similar_reads.fetch_add(1, Ordering::SeqCst);
+        self.similar_asked.lock().unwrap().push(artist.to_owned());
         if self.similar_down.load(Ordering::SeqCst) {
             return down("similar artists down");
         }
@@ -1226,8 +1244,247 @@ async fn a_user_without_lastfm_leaves_no_empty_answer_for_others() {
     assert_eq!(with.len(), 1, "the chart is not an empty kept answer");
 }
 
-/// A person with no listening account, seeded from their own Jellyfin
-/// plays, gets album cards of the artists like their seed: the album step
+/// Run `sql` as one batch.
+pub(crate) async fn insert(db: &Db, sql: String) {
+    db.write(Lane::Foreground, "test.rows", move |tx| {
+        tx.execute_batch(&sql)?;
+        Ok::<_, droppedneedle_kernel::db::DbError>(())
+    })
+    .await
+    .expect("rows inserted");
+}
+
+/// A library artist `id` named `name` with MusicBrainz id `mbid`.
+pub(crate) fn library_artist(id: &str, name: &str, mbid: &str, kind: &str) -> String {
+    format!(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+         updated_at) VALUES ('{id}', '{name}', lower('{name}'), '{kind}', 1, 1); \
+         INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+         provider_artist_id, decision_source, selected_at) \
+         VALUES ('{id}', 'musicbrainz', '{mbid}', 'manual', 1);"
+    )
+}
+
+/// `count` plays by `user` of the library artist `artist`, the latest at
+/// `at` (unix ms), a minute apart.
+pub(crate) fn plays(user: &str, artist: &str, count: usize, at: i64) -> String {
+    (0..count)
+        .map(|n| {
+            format!(
+                "INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
+                 artist_name, played_at) VALUES ('{user}-{artist}-{n}', '{user}', '{artist}', \
+                 'Song', 'Someone', {});",
+                at - 60_000 * n as i64
+            )
+        })
+        .collect()
+}
+
+fn mbid_of(n: u8) -> String {
+    format!("{n:08x}-cccc-4ccc-8ccc-cccccccccccc")
+}
+
+/// The queue over `script`, asking for `seeds` seed artists.
+fn seeded_queue(rig: &AuthRig, dir: &Path, script: Arc<Script>, seeds: i64) -> Router {
+    rig.config
+        .save_secret_blocking(AdvancedSettings {
+            discover_queue_size: 5,
+            discover_queue_wildcard_slots: 1,
+            discover_queue_seed_artists: seeds,
+            ..AdvancedSettings::default()
+        })
+        .expect("queue settings save");
+    discover_routes(discover_deps(rig, dir, Providers::closed(), |network| {
+        *network = script;
+    }))
+}
+
+/// Build a deck now and wait until it is ready.
+async fn build_deck(app: &Router, db: &Db) {
+    call(
+        app,
+        "POST",
+        "/api/v3/discover/queue/generate",
+        Some(json!({ "force": true })),
+    )
+    .await;
+    assert_eq!(settled(app, db).await["status"], "ready");
+}
+
+/// A person with nothing linked is seeded from what they did in the app,
+/// heaviest first: a heart and two plays outweigh a follow, which
+/// outweighs three plays, which outweigh eight songs of a library artist
+/// on their own playlist (filed under the artist's MusicBrainz id, not its
+/// library id). One play is not enough, a one-star rating takes an artist
+/// back below the line, Various Artists never counts however often it is
+/// played or listed, and the Weekly Mix the app made for them is not their
+/// taste.
+#[tokio::test]
+async fn local_seeds_come_heaviest_first() {
+    let dir = crate::common::ScratchDir::new("discover-queue-local-seeds");
+    let rig = AuthRig::new("discover-queue-local-seeds").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let (hearted, followed, played, once, disliked, mixed) = (
+        mbid_of(1),
+        mbid_of(2),
+        mbid_of(3),
+        mbid_of(4),
+        mbid_of(5),
+        mbid_of(6),
+    );
+    let listed = mbid_of(7);
+    let listed_id = "aaaaaaaa-0000-4000-8000-00000000000a";
+    let at = rig.platform.clock.now_ms();
+    let mut rows = [
+        library_artist(listed_id, "Listed", &listed, "group"),
+        library_artist("h", "Hearted", &hearted, "group"),
+        library_artist("p", "Played", &played, "group"),
+        library_artist("o", "Once", &once, "group"),
+        library_artist("d", "Disliked", &disliked, "group"),
+        library_artist(
+            "va",
+            "Various Artists",
+            "89ad4ac3-39f7-470e-963a-56509c546377",
+            "various_artists",
+        ),
+        plays("user-1", "h", 2, at),
+        plays("user-1", "p", 3, at),
+        plays("user-1", "o", 1, at),
+        plays("user-1", "d", 2, at),
+        plays("user-1", "va", 10, at),
+    ]
+    .concat();
+    rows.push_str(&format!(
+        "INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('user-1', 'artist', 'h', 1); \
+         INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
+         VALUES ('user-1', 'artist', 'd', 1, 1); \
+         INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+         artist_name, followed_at, updated_at) \
+         VALUES ('user-1', '{followed}', '{followed}', 'Followed', 1, 1); \
+         INSERT INTO catalog_playlists (id, name, created_at, updated_at, source_ref, user_id) \
+         VALUES ('mix', 'Your Weekly Mix', 1, 1, 'personal-mix:user-1', 'user-1'), \
+         ('mine', 'Mine', 1, 1, NULL, 'user-1');"
+    ));
+    let entry = |id: &str, list: &str, at: usize, artist: &str| {
+        format!(
+            "INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, \
+             artist_name, album_name, artist_id, source_type, created_at) \
+             VALUES ('{id}', '{list}', {at}, 'Song', 'Someone', 'Album', '{artist}', 'local', 1);"
+        )
+    };
+    for n in 0..10 {
+        rows.push_str(&entry(&format!("mix-{n}"), "mix", n, &mixed));
+        // The library's own Various Artists row, which has no MusicBrainz id.
+        rows.push_str(&entry(
+            &format!("va-{n}"),
+            "mine",
+            n,
+            "00000000-0000-4000-8000-000000000001",
+        ));
+    }
+    for n in 0..8 {
+        rows.push_str(&entry(&format!("mine-{n}"), "mine", 10 + n, listed_id));
+    }
+    insert(&db, rows).await;
+    let script = Arc::new(Script {
+        user: UserMusic::default(),
+        ..queue_script()
+    });
+    let app = seeded_queue(&rig, &dir, Arc::clone(&script), 10);
+
+    build_deck(&app, &db).await;
+    assert_eq!(
+        *script.similar_asked.lock().unwrap(),
+        [hearted, followed, played, listed],
+        "the seeds, heaviest first"
+    );
+}
+
+/// One person's rows never seed another (R1): another user's plays,
+/// hearts, ratings, follows, playlists and requests leave this person's
+/// seeds as they were. The same rows, made this person's own, are seeds.
+#[tokio::test]
+async fn another_persons_rows_never_seed_this_one() {
+    let dir = crate::common::ScratchDir::new("discover-queue-own-seeds");
+    let rig = AuthRig::new("discover-queue-own-seeds").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let (own, played, rated, followed, listed, asked) = (
+        mbid_of(1),
+        mbid_of(2),
+        mbid_of(3),
+        mbid_of(4),
+        mbid_of(5),
+        mbid_of(6),
+    );
+    let mut rows = [
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('user-2', 'Bea', 'user', 0);"
+            .to_owned(),
+        library_artist("p", "Played", &played, "group"),
+        library_artist("r", "Rated", &rated, "group"),
+        plays("user-2", "p", 5, 1_790_000_000_000),
+    ]
+    .concat();
+    rows.push_str(&format!(
+        "INSERT INTO acquire_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+         artist_name, followed_at, updated_at) \
+         VALUES ('user-1', '{own}', '{own}', 'Own', 1, 1), \
+         ('user-2', '{followed}', '{followed}', 'Followed', 1, 1); \
+         INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('user-2', 'artist', 'p', 1); \
+         INSERT INTO catalog_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
+         VALUES ('user-2', 'artist', 'r', 5, 1); \
+         INSERT INTO catalog_playlists (id, name, created_at, updated_at, user_id) \
+         VALUES ('list', 'Mine', 1, 1, 'user-2'); \
+         INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, \
+         album_title, artist_mbid, requested_at, status, user_id) \
+         VALUES ('{album}', '{album}', 'Asked', 'Album', '{asked}', 1, 'imported', 'user-2'); \
+         INSERT INTO request_history_requesters (user_id, musicbrainz_id_lower, requested_at) \
+         VALUES ('user-2', '{album}', 1);",
+        album = group(9),
+    ));
+    for n in 0..8 {
+        rows.push_str(&format!(
+            "INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, \
+             artist_name, album_name, artist_id, source_type, created_at) \
+             VALUES ('list-{n}', 'list', {n}, 'Song', 'Listed', 'Album', '{listed}', \
+             'youtube', 1);"
+        ));
+    }
+    insert(&db, rows).await;
+    let script = Arc::new(Script {
+        user: UserMusic::default(),
+        ..queue_script()
+    });
+    let app = seeded_queue(&rig, &dir, Arc::clone(&script), 10);
+
+    build_deck(&app, &db).await;
+    assert_eq!(*script.similar_asked.lock().unwrap(), [own.clone()]);
+
+    insert(
+        &db,
+        "UPDATE library_play_history SET user_id = 'user-1' WHERE user_id = 'user-2'; \
+         UPDATE acquire_followed_artists SET user_id = 'user-1' WHERE user_id = 'user-2'; \
+         UPDATE catalog_user_favorites SET user_id = 'user-1' WHERE user_id = 'user-2'; \
+         UPDATE catalog_user_ratings SET user_id = 'user-1' WHERE user_id = 'user-2'; \
+         UPDATE catalog_playlists SET user_id = 'user-1' WHERE user_id = 'user-2'; \
+         UPDATE request_history_requesters SET user_id = 'user-1' WHERE user_id = 'user-2';"
+            .to_owned(),
+    )
+    .await;
+    build_deck(&app, &db).await;
+    let mut asked_for = script.similar_asked.lock().unwrap().clone();
+    asked_for.sort();
+    let mut expected = vec![own, played, rated, followed, listed, asked];
+    expected.sort();
+    assert_eq!(asked_for, expected, "made their own, the rows are seeds");
+}
+
+/// A person with no listening account, seeded from their own plays in the
+/// app, gets album cards of the artists like their seed: the album step
 /// needs no ListenBrainz link, theirs or anyone's.
 #[tokio::test]
 async fn a_person_with_no_listening_account_gets_album_cards() {
@@ -1235,12 +1492,17 @@ async fn a_person_with_no_listening_account_gets_album_cards() {
     let rig = AuthRig::new("discover-queue-unlinked").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
+    insert(
+        &db,
+        [
+            library_artist("s", "Seed", SEED, "group"),
+            plays("user-1", "s", 2, rig.platform.clock.now_ms()),
+        ]
+        .concat(),
+    )
+    .await;
     let script = Script {
-        user: UserMusic {
-            jellyfin: true,
-            ..UserMusic::default()
-        },
-        jellyfin_artists: queue_script().user_artists,
+        user: UserMusic::default(),
         ..queue_script()
     };
     let app = queue_app(&rig, &dir, script);
@@ -1261,4 +1523,100 @@ async fn a_person_with_no_listening_account_gets_album_cards() {
         .filter(|item| item["recommendation_reason"] == "Similar to Seed")
         .count();
     assert!(similar > 0, "{deck}");
+}
+
+/// A seeded person whose seeds turn up nothing like them, with every read
+/// answered, gets the deck of a person with no seeds: a full chart deck,
+/// not one chart card.
+#[tokio::test]
+async fn seeds_with_nothing_like_them_get_the_chart_deck() {
+    let dir = crate::common::ScratchDir::new("discover-queue-empty-pools");
+    let rig = AuthRig::new("discover-queue-empty-pools").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    insert(
+        &db,
+        [
+            library_artist("l", "Lonely", &mbid_of(1), "group"),
+            plays("user-1", "l", 3, rig.platform.clock.now_ms()),
+        ]
+        .concat(),
+    )
+    .await;
+    let script = Arc::new(Script {
+        user: UserMusic::default(),
+        ..queue_script()
+    });
+    let app = seeded_queue(&rig, &dir, Arc::clone(&script), 3);
+
+    build_deck(&app, &db).await;
+    assert_eq!(*script.similar_asked.lock().unwrap(), [mbid_of(1)]);
+    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
+    let items = deck["items"].as_array().expect("items");
+    assert_eq!(items.len(), 5, "{deck}");
+    assert!(
+        items.iter().all(|item| item["is_wildcard"] == true),
+        "{deck}"
+    );
+}
+
+/// Plays fade with time: thirty plays two years ago weigh less than an
+/// artist the person's ListenBrainz names this year, so the one seed asked
+/// for is the current one, and this year's listening is enough without
+/// reading all time.
+#[tokio::test]
+async fn years_old_plays_do_not_outweigh_current_listening() {
+    let dir = crate::common::ScratchDir::new("discover-queue-old-plays");
+    let rig = AuthRig::new("discover-queue-old-plays").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let two_years = 730 * 86_400_000;
+    insert(
+        &db,
+        [
+            library_artist("old", "Old", &mbid_of(1), "group"),
+            plays("user-1", "old", 30, rig.platform.clock.now_ms() - two_years),
+        ]
+        .concat(),
+    )
+    .await;
+    let current = mbid_of(2);
+    let script = Arc::new(Script {
+        user_artists: vec![ArtistRow {
+            name: "Current".to_owned(),
+            mbid: Some(current.clone()),
+            listen_count: Some(20),
+        }],
+        ..queue_script()
+    });
+    let app = seeded_queue(&rig, &dir, Arc::clone(&script), 1);
+
+    build_deck(&app, &db).await;
+    assert_eq!(*script.similar_asked.lock().unwrap(), [current]);
+    assert_eq!(script.all_time_reads.load(Ordering::SeqCst), 0);
+}
+
+/// Early in a year, when this year's ListenBrainz listening names too few
+/// artists, the person's top artists of all time seed them.
+#[tokio::test]
+async fn too_little_listening_this_year_reads_all_time() {
+    let dir = crate::common::ScratchDir::new("discover-queue-all-time");
+    let rig = AuthRig::new("discover-queue-all-time").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let longtime = mbid_of(3);
+    let script = Arc::new(Script {
+        user_artists: Vec::new(),
+        user_artists_all_time: vec![ArtistRow {
+            name: "Longtime".to_owned(),
+            mbid: Some(longtime.clone()),
+            listen_count: Some(500),
+        }],
+        ..queue_script()
+    });
+    let app = seeded_queue(&rig, &dir, Arc::clone(&script), 3);
+
+    build_deck(&app, &db).await;
+    assert_eq!(*script.similar_asked.lock().unwrap(), [longtime]);
+    assert_eq!(script.all_time_reads.load(Ordering::SeqCst), 1);
 }

@@ -104,7 +104,12 @@ fn deps_with(
     catalog: Catalog,
 ) -> DiscoverDeps {
     let listening = ListeningData::new(network, inputs.providers.cache.clone());
-    let charts = charts::LiveCharts::new(listening.clone(), inputs.db.clone(), config.live());
+    let charts = charts::LiveCharts::new(
+        listening.clone(),
+        inputs.db.clone(),
+        config.live(),
+        inputs.clock.clone(),
+    );
     let client = match YouTubeClient::new(
         inputs.providers.youtube.clone(),
         inputs.youtube_quota_path.clone(),

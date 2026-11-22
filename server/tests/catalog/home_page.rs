@@ -4,9 +4,11 @@
 //! genre tiles drawn from the collection, a restart serves the built
 //! shelves at once, the genre page joins owned and popular rows, and a
 //! collage whose art file is gone falls back to a gradient. A release
-//! group the sitewide chart lists twice is one popular album.
+//! group the sitewide chart lists twice is one popular album. Your Top
+//! Albums comes from plays in the app while there are enough of them.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use droppedneedle_catalog::discover::genre::GenrePages;
 use droppedneedle_catalog::discover::genre::artwork::GenreArt;
@@ -316,6 +318,131 @@ async fn home_shows_weekly(date: &str) -> bool {
     page.sections
         .iter()
         .any(|section| section.key == SectionKey::WeeklyExploration)
+}
+
+/// Home over a ListenBrainz user who played the first `albums` of four
+/// library albums in the app during the last 30 days (the first most), and
+/// the fourth 40 days ago: its built Your Top Albums shelf, as (source,
+/// album ids), and how often ListenBrainz was asked for their top albums.
+async fn top_albums_after_plays(albums: usize) -> ((String, Vec<String>), usize) {
+    let dir = crate::common::ScratchDir::new("home-top-albums");
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
+    let db = runtime.db().clone();
+    let now = 1_790_000_000_000_i64;
+    let day = 86_400_000;
+    let mut seed = String::from(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('user-1', 'Ada', 'user', 0); \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+         updated_at) VALUES ('a1', 'Aurora', 'aurora', 'group', 1, 1);",
+    );
+    for n in 1..=4 {
+        seed.push_str(&format!(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) \
+             VALUES ('al{n}', 'r1', 'g{n}', 'Album {n}', 'album {n}', 'a1', 'automatic', 1, 1); \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, availability, ingest_source, \
+             imported_at, membership_source) VALUES ('t{n}', 'al{n}', 'r1', '/music/t{n}.flac', \
+             't{n}.flac', 'h{n}', 1, 1, 's{n}', 'Song', 'song', 'Album {n}', 'album {n}', \
+             'flac', 'indexed', 'scan', 1, 'automatic');"
+        ));
+        let (count, at) = if n == 4 {
+            (5, now - 40 * day)
+        } else if n <= albums {
+            (5 - n, now - day)
+        } else {
+            (0, now)
+        };
+        for play in 0..count {
+            seed.push_str(&format!(
+                "INSERT INTO library_play_history (id, user_id, local_track_id, \
+                 local_album_id, local_artist_id, track_name, artist_name, played_at) \
+                 VALUES ('p{n}-{play}', 'user-1', 't{n}', 'al{n}', 'a1', 'Song', 'Aurora', \
+                 {at});"
+            ));
+        }
+    }
+    db.write(Lane::Foreground, "home seed", move |tx| {
+        tx.execute_batch(&seed).map_err(DbError::from)
+    })
+    .await
+    .expect("seed");
+    let script = Arc::new(Script {
+        user_albums: vec![ListenedAlbum {
+            release_group_mbid: Some(OTHER_RG.to_owned()),
+            title: "Elsewhere".to_owned(),
+            artist_name: "Everyone".to_owned(),
+            artist_mbid: Some(OTHER_ARTIST.to_owned()),
+            listen_count: 30,
+        }],
+        ..home_script()
+    });
+    let network: Arc<Script> = Arc::clone(&script);
+    let listening = ListeningData::new(network, droppedneedle_providers::Providers::closed().cache);
+    let settings = crate::common::config_store(&dir);
+    let integrations = || {
+        droppedneedle_catalog::discover::content::IntegrationSettings::new(
+            &settings,
+            Arc::new(crate::common::bundles::NoDownloadSource),
+        )
+    };
+    let clock = Arc::new(ManualClock::at(now));
+    let warm = crate::common::bundles::cover_warm_at(&db, clock.clone());
+    let home = LiveHome::new(HomeInputs {
+        listening: listening.clone(),
+        db: db.clone(),
+        clock: clock.clone(),
+        integrations: integrations(),
+        art: Arc::new(GenreArt::new(HomeLibrary::new(db.clone()))),
+        warm: warm.clone(),
+        discover: DiscoverPages::new(PageInputs {
+            listening,
+            queue_db: QueueDb::new(db.clone()),
+            db: db.clone(),
+            clock,
+            advanced: settings.live(),
+            integrations: integrations(),
+            warm,
+        }),
+    });
+    home.page("user-1").await;
+    let page = after_commits(&db, "the home build kept its shelves", || async {
+        let page = home.page("user-1").await;
+        shelf_of(&page.sections, SectionKey::TrendingArtists)
+            .is_some()
+            .then_some(page)
+    })
+    .await;
+    let shelf = shelf_of(&page.sections, SectionKey::YourTopAlbums).expect("your top albums");
+    let ids = shelf
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            SectionItem::Album(album) => album.local_id.clone().or(album.musicbrainz_id.clone()),
+            _ => None,
+        })
+        .collect();
+    let source = serde_json::to_value(shelf.source).expect("source encodes");
+    let reads = script.user_album_reads.load(Ordering::SeqCst);
+    ((source.as_str().unwrap_or_default().to_owned(), ids), reads)
+}
+
+/// Your Top Albums comes from the person's own plays in the app over the
+/// last 30 days, most played first, with no ListenBrainz read; with fewer
+/// than three albums played, ListenBrainz's top albums stand in.
+#[tokio::test]
+async fn your_top_albums_come_from_plays_in_the_app() {
+    let local = vec!["al1".to_owned(), "al2".to_owned(), "al3".to_owned()];
+    assert_eq!(
+        top_albums_after_plays(3).await,
+        (("local".to_owned(), local), 0)
+    );
+    assert_eq!(
+        top_albums_after_plays(2).await,
+        (("listenbrainz".to_owned(), vec![OTHER_RG.to_owned()]), 1)
+    );
 }
 
 /// Home shows the weekly exploration playlist only while it is this

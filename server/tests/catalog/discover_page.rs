@@ -32,6 +32,7 @@ use droppedneedle_catalog::discover::wiring::{deps_over, live_network};
 use droppedneedle_catalog::metadata::Catalog;
 use droppedneedle_catalog::metadata::library::LocalCatalog;
 use droppedneedle_catalog::metadata::upstream::{LiveCatalogSettings, Upstream};
+use droppedneedle_kernel::clock::Clock as _;
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::db::cache::CacheDb;
 use droppedneedle_kernel::http_client::HttpClientFactory;
@@ -49,7 +50,8 @@ use tower::ServiceExt as _;
 use crate::common::auth::AuthRig;
 use crate::common::platform::TEST_KEY;
 use crate::discover_queue::{
-    Script, after_commits, discover_deps, discover_inputs, discover_routes,
+    Script, after_commits, discover_deps, discover_inputs, discover_routes, insert, library_artist,
+    plays,
 };
 
 const SEED: &str = "11111111-1111-4111-8111-111111111111";
@@ -843,6 +845,51 @@ async fn sections_say_what_a_person_with_nothing_linked_needs() {
         page["section_states"][0]["zone"], "essentials",
         "each state says where its section sits"
     );
+}
+
+/// A person with nothing linked who plays music in the app gets a "Because
+/// You Listen To" row for the artist they play most, with their own play
+/// count and the app's own badge, and the saved health counts every seed
+/// they have.
+#[tokio::test]
+async fn plays_in_the_app_seed_a_person_with_nothing_linked() {
+    let dir = crate::common::ScratchDir::new("discover-local-seeds");
+    let rig = AuthRig::new("discover-local-seeds").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let at = rig.platform.clock.now_ms();
+    insert(
+        &db,
+        [
+            library_artist("s", "Seed", SEED, "group"),
+            library_artist("x", "Second", &mbid('e', 9), "group"),
+            plays("user-1", "s", 5, at),
+            plays("user-1", "x", 2, at),
+        ]
+        .concat(),
+    )
+    .await;
+    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
+        *slot = Arc::new(Script {
+            user: UserMusic::default(),
+            ..page_script()
+        });
+    }));
+
+    call(&app, "GET", "/api/v3/discover", None).await;
+    let page = settled_page(&rig, &app, "the page was built").await;
+    let entry = &content(&page, "because_you_listen_to")["entries"][0];
+    assert_eq!(entry["seed_artist"], "Seed", "{page}");
+    assert_eq!(entry["listen_count"], 5, "their own plays");
+    assert_eq!(entry["section"]["source"], "local");
+    let row: Value = serde_json::from_str(&db.one::<String>(
+        "SELECT CAST(payload AS TEXT) FROM catalog_cached_pages \
+         WHERE user_id = 'user-1' AND page = 'discover'",
+        [],
+    ))
+    .expect("the saved page decodes");
+    assert_eq!(row["health"]["seeds_found"], 2);
+    assert_eq!(row["health"]["seeds_used"], 2);
 }
 
 /// Top Picks built while an artist's albums would not read are kept for

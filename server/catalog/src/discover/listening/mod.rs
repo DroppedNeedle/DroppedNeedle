@@ -31,7 +31,7 @@ pub(crate) mod similar;
 
 pub use live::LiveNetwork;
 pub use network::{ListeningNetwork, Read};
-pub use policy::{SourcePolicy, blend};
+pub use policy::SourcePolicy;
 pub use rows::*;
 
 use std::collections::HashMap;

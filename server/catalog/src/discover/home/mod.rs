@@ -3,8 +3,9 @@
 //! while people use it.
 //!
 //! A visit never waits on a provider. The local shelves (recently added,
-//! your albums and artists, recently played, the discover teaser) come
-//! straight from SQLite on every visit. The provider shelves come from
+//! your albums and artists, recently played, your top albums when you
+//! played enough in the app, the discover teaser) come straight from
+//! SQLite on every visit. The provider shelves come from
 //! the user's row in the page cache, however old, which survives a
 //! restart; when it is missing or more than five minutes old a rebuild
 //! starts behind the visit (`refreshing`, which the page polls). A build
@@ -51,7 +52,7 @@ use crate::discover::ports::BoxFuture;
 use crate::discover::sections::{self, Page};
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Db;
-use library::HomeLibrary;
+use library::{HomeLibrary, PlayedAlbum};
 
 /// Shelves older than this are rebuilt behind the next visit, and a
 /// failed build is not retried sooner.
@@ -61,6 +62,11 @@ const TIMING: Timing = Timing {
 };
 /// Rows a library read fetches.
 const LIBRARY_ROWS: i64 = 15;
+/// Your Top Albums counts the user's own plays of this many days...
+const TOP_ALBUMS_DAYS: i64 = 30;
+/// ...when they played at least this many albums in them (proposed);
+/// otherwise their listening service's top albums stand in.
+const TOP_ALBUMS_MIN: usize = 3;
 /// Rows a provider read asks for.
 const PROVIDER_ROWS: u32 = 20;
 /// Bound on one provider read in a full build.
@@ -290,7 +296,13 @@ impl LiveHome {
                         let at = list.iter().position(|section| section.key == def.key)?;
                         Some(list.remove(at))
                     };
-                    from(&mut built).or_else(|| from(&mut page.sections))
+                    // A local shelf wins, but for the fixed genre list that
+                    // stands in until the user's own genres are built.
+                    if def.key == SectionKey::GenreList {
+                        from(&mut built).or_else(|| from(&mut page.sections))
+                    } else {
+                        from(&mut page.sections).or_else(|| from(&mut built))
+                    }
                 })
                 .collect();
         }
@@ -361,10 +373,18 @@ impl LiveHome {
         let lastfm_on = status.lastfm;
         let status = user_status(status, music);
         let library = &self.inner.library;
-        let (recent, artists, plays) = tokio::join!(
+        let top_albums = async {
+            if off.contains(&SectionKey::YourTopAlbums) {
+                None
+            } else {
+                self.played_albums(user_id).await
+            }
+        };
+        let (recent, artists, plays, top_albums) = tokio::join!(
             bounded("recent albums", library.recent_albums(LIBRARY_ROWS)),
             bounded("library artists", library.top_artists(LIBRARY_ROWS)),
             bounded("play history", library.recent_plays(user_id, LIBRARY_ROWS)),
+            top_albums,
         );
         let mut page = empty_page(status.clone(), false);
         page.sections = sections::wanted(Page::Home, off)
@@ -375,6 +395,9 @@ impl LiveHome {
                     SectionKey::LibraryAlbums => one(shelves::your_albums(&recent)),
                     SectionKey::LibraryArtists => one(shelves::your_artists(&artists)),
                     SectionKey::RecentlyPlayed => one(shelves::recently_played(&plays)),
+                    SectionKey::YourTopAlbums => {
+                        one(shelves::your_top_albums_local(top_albums.as_deref()?))
+                    }
                     SectionKey::GenreList => one(genre_list(None)),
                     _ => None,
                 }?;
@@ -390,6 +413,20 @@ impl LiveHome {
         );
         page.discover_preview = self.discover_preview(user_id).await;
         page
+    }
+
+    /// The albums the user played most in the app over the last
+    /// [`TOP_ALBUMS_DAYS`], when there are at least [`TOP_ALBUMS_MIN`].
+    async fn played_albums(&self, user_id: &str) -> Option<Vec<PlayedAlbum>> {
+        let since = self.inner.cache.now_ms() - TOP_ALBUMS_DAYS * 86_400_000;
+        let albums = bounded(
+            "played albums",
+            self.inner
+                .library
+                .played_albums(user_id, since, LIBRARY_ROWS),
+        )
+        .await;
+        (albums.len() >= TOP_ALBUMS_MIN).then_some(albums)
     }
 
     /// The shelves what the user's listening services know fill, for the
@@ -455,6 +492,9 @@ impl LiveHome {
                 .await;
                 one(shelves::popular_albums(&albums))
             }
+            // The user's own plays fill it on every visit; a service is
+            // asked only when they do not.
+            SectionKey::YourTopAlbums if self.played_albums(user_id).await.is_some() => None,
             SectionKey::YourTopAlbums => match (lastfm_primary, lb_user, lfm_user) {
                 (false, Some(username), _) => {
                     let top = bounded("listenbrainz top albums", async {

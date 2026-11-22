@@ -28,6 +28,11 @@ impl QueueDb {
         Self { db }
     }
 
+    /// The database, for the seed reads.
+    pub(in crate::discover) fn db(&self) -> &Db {
+        &self.db
+    }
+
     /// Lowercased release-group ids the user ignored.
     pub async fn ignored_mbids(&self, user_id: &str) -> Result<HashSet<String>, String> {
         let rows: Vec<String> = read_all(

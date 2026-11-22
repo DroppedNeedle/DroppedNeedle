@@ -19241,6 +19241,11 @@ export interface components {
             repeats: number;
             /** @description Sections on the page. */
             sections: number;
+            /**
+             * @description Seed artists the person has, the ones used included, at most 30.
+             *     Pages saved before it was counted read 0.
+             */
+            seeds_found: number;
             /** @description Seed artists the build grew from. */
             seeds_used: number;
             /** @description Sections switched on that came back with nothing to show. */

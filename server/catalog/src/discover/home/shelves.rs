@@ -2,7 +2,7 @@
 //! connect-a-service cards.
 
 use super::super::listening::LovedTrack;
-use super::library::{HomeAlbum, HomeArtist, Play};
+use super::library::{HomeAlbum, HomeArtist, Play, PlayedAlbum};
 use crate::discover::listening::{ArtistRow, ListenSource};
 use crate::discover::listening::{LastFmChartAlbum, RankedAlbum};
 use crate::discover::models::{
@@ -140,6 +140,24 @@ pub fn popular_albums(rows: &[RankedAlbum]) -> Option<ChartSection> {
 /// Your Top Albums from ListenBrainz (this month).
 pub fn your_top_albums(rows: &[RankedAlbum]) -> Option<ChartSection> {
     ranked_albums("Your Top Albums", rows)
+}
+
+/// Your Top Albums from the user's own plays in DroppedNeedle, each with
+/// their plays.
+pub fn your_top_albums_local(rows: &[PlayedAlbum]) -> Option<ChartSection> {
+    shelf(
+        "Your Top Albums",
+        SectionKind::Albums,
+        rows.iter()
+            .take(SHELF_SIZE)
+            .map(|row| {
+                let mut item = library_album(&row.album);
+                item.listen_count = Some(row.plays);
+                SectionItem::Album(item)
+            })
+            .collect(),
+        Some(ShelfSource::Local),
+    )
 }
 
 /// Your Top Albums from Last.fm (this month). Last.fm ids name releases,

@@ -74,13 +74,15 @@ impl LiveNetwork {
         }
     }
 
-    /// The user's Jellyfin client, `None` when Jellyfin is not set up for
-    /// them. Discover reads it in its background warm cycle as well as for
-    /// a page, so its reads are not counted against the user read bound.
+    /// The user's Jellyfin client over their own link, `None` when they
+    /// have none. Never the shared account: one person's plays are never
+    /// read for another. Discover reads it in its background warm cycle as
+    /// well as for a page, so its reads are not counted against the user
+    /// read bound.
     async fn jellyfin_client(&self, user_id: &str) -> ListeningResult<Option<RemoteHandle>> {
         match self
             .jellyfin
-            .resolve(user_id, SourceName::Jellyfin, JELLYFIN_ONLY)
+            .resolve_linked(user_id, SourceName::Jellyfin, JELLYFIN_ONLY)
             .await
         {
             Ok(resolved) => Ok(Some(self.jellyfin.client(
@@ -234,9 +236,10 @@ impl ListeningNetwork for LiveNetwork {
             };
             let lastfm_link = user_lastfm(self.upstream.users(), user_id).await;
             let lastfm = self.lastfm(user_id).await.is_some();
+            // Their own Jellyfin link only, as `jellyfin_client` reads it.
             let jellyfin = match self
                 .jellyfin
-                .resolve(user_id, SourceName::Jellyfin, JELLYFIN_ONLY)
+                .resolve_linked(user_id, SourceName::Jellyfin, JELLYFIN_ONLY)
                 .await
             {
                 Ok(_) => true,

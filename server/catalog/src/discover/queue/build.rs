@@ -1,13 +1,14 @@
 //! Building one deck.
 //!
-//! A user with a linked listening service gets a personalised deck: seed
-//! artists from their listening, then candidate pools (similar artists,
-//! their genres, fresh releases, artists they love, deep cuts from their
-//! top artists) picked round-robin, with the set number of trending
-//! wildcards mixed in at fixed slots. Albums the library holds are dropped
-//! before the deal, and a deck short of picks stays short. Without a
-//! service, or without seed artists, the deck is trending albums, topped
-//! up from the charts. Ignored releases never appear.
+//! A user with seed artists, from their own use of the app or an account
+//! they linked ([`weighted_seeds`]), gets a personalised deck: candidate
+//! pools (similar artists, their genres, fresh releases, artists they love,
+//! deep cuts from their top artists) picked round-robin, with the set
+//! number of trending wildcards mixed in at fixed slots. Albums the library
+//! holds are dropped before the deal, and a deck short of picks stays
+//! short. Without seed artists, or when their pools come back empty, the
+//! deck is trending albums, topped up from the charts. Ignored releases
+//! never appear.
 //!
 //! Every provider read is allowed to fail: the failure is logged and that
 //! pool is simply empty.
@@ -18,11 +19,12 @@ use std::time::Duration;
 use futures_util::future::join_all;
 
 use super::QueueSettings;
+use super::seeds::weighted_seeds;
 use super::select::{self, Shuffler};
 use super::store::QueueDb;
 use crate::discover::listening::{
-    AlbumRow, ArtistRow, Ask, JellyfinList, LastFmAlbum, ListenSource, ListenedAlbum,
-    ListeningData, ScoredArtist, StatsRange, TagAlbum, UserMusic, blend,
+    AlbumRow, ArtistRow, Ask, LastFmAlbum, ListenSource, ListenedAlbum, ListeningData,
+    ScoredArtist, StatsRange, TagAlbum, UserMusic,
 };
 use crate::discover::models::QueueItemLight;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
@@ -45,6 +47,8 @@ pub struct BuildContext<'a> {
     /// The build's priority (a person waiting, or the warm cycle) and
     /// its cap on provider calls in flight.
     pub ask: Ask,
+    /// When the build runs, unix milliseconds, from the kernel clock.
+    pub now_ms: i64,
 }
 
 /// The cover URL a card shows.
@@ -123,14 +127,8 @@ pub async fn build_deck(
         HashSet::new()
     });
     let mut shuffler = Shuffler::random();
-    let has_services = user.listenbrainz.is_some()
-        || user.jellyfin
-        || (user.lastfm && user.lastfm_username.is_some());
-    let personal = if has_services {
-        personalized(ctx, user_id, &user, source, count, &ignored, &mut shuffler).await?
-    } else {
-        None
-    };
+    let personal =
+        personalized(ctx, user_id, &user, source, count, &ignored, &mut shuffler).await?;
     let charts_only = personal.is_none();
     let mut items = match personal {
         Some(deck) => deck,
@@ -186,137 +184,20 @@ fn lower_ids(items: &[QueueItemLight]) -> HashSet<String> {
         .collect()
 }
 
-/// Seed artists from the user's listening: Last.fm top artists for a
-/// Last.fm user, else ListenBrainz top artists over widening windows,
-/// else Jellyfin's most played and favorite artists. A user with both
-/// services linked, where the server allows it, gets both lists blended
-/// (artists both name first, then the two alternating, the primary's
-/// first).
+/// The heaviest of the user's seed artists, as many as the settings ask
+/// for (see [`weighted_seeds`]).
 pub(in crate::discover) async fn seed_artists(
     ctx: &BuildContext<'_>,
     user_id: &str,
     user: &UserMusic,
     source: ListenSource,
 ) -> Vec<ArtistRow> {
-    let wanted = ctx.settings.seed_artists.max(1);
-    let mut seeds = if ctx
-        .listening
-        .policy_for(user)
-        .blends(ctx.settings.blend_services)
-    {
-        // Each read answers at least ten rows; keeping them all finds more
-        // artists both services name, at no extra read.
-        let keep = wanted.max(10);
-        let (lastfm, listenbrainz) = tokio::join!(
-            lastfm_seeds(ctx, user_id, user, keep),
-            listenbrainz_seeds(ctx, user, wanted, keep),
-        );
-        let (first, second) = match source {
-            ListenSource::Lastfm => (lastfm, listenbrainz),
-            ListenSource::Listenbrainz => (listenbrainz, lastfm),
-        };
-        let mut seeds = blend(first, second, |row| row.mbid.clone(), |kept, _| kept);
-        seeds.truncate(wanted);
-        seeds
-    } else if source == ListenSource::Lastfm {
-        lastfm_seeds(ctx, user_id, user, wanted).await
-    } else {
-        listenbrainz_seeds(ctx, user, wanted, wanted).await
-    };
-    if source == ListenSource::Lastfm || !user.jellyfin {
-        return seeds;
-    }
-    let mut seen: HashSet<String> = seeds.iter().filter_map(|row| row.mbid.clone()).collect();
-    for list in [JellyfinList::MostPlayed, JellyfinList::Favorites] {
-        if seeds.len() >= wanted {
-            break;
-        }
-        let rows = or_empty(
-            "jellyfin artists",
-            ctx.listening
-                .jellyfin_artists(user_id, list, 10.max(wanted as u32), &ctx.ask)
-                .await,
-        );
-        take_seeds(rows, &mut seeds, &mut seen, wanted);
-    }
-    seeds
-}
-
-/// Add `rows` with a MusicBrainz id not yet `seen` to `seeds`, up to
-/// `keep`, ids lowercased.
-fn take_seeds(
-    rows: Vec<ArtistRow>,
-    seeds: &mut Vec<ArtistRow>,
-    seen: &mut HashSet<String>,
-    keep: usize,
-) {
-    for row in rows {
-        if seeds.len() >= keep {
-            break;
-        }
-        if let Some(mbid) = normalize(row.mbid.as_deref())
-            && seen.insert(mbid.clone())
-        {
-            seeds.push(ArtistRow {
-                mbid: Some(mbid),
-                ..row
-            });
-        }
-    }
-}
-
-/// Up to `keep` of the user's Last.fm top artists.
-async fn lastfm_seeds(
-    ctx: &BuildContext<'_>,
-    user_id: &str,
-    user: &UserMusic,
-    keep: usize,
-) -> Vec<ArtistRow> {
-    let mut seeds = Vec::new();
-    let Some(username) = user.lastfm_username.as_deref().filter(|_| user.lastfm) else {
-        return seeds;
-    };
-    let rows = or_empty(
-        "lastfm top artists",
-        ctx.listening
-            .lastfm_user_artists(user_id, username, 10.max(keep as u32), &ctx.ask)
-            .await,
-    );
-    take_seeds(rows, &mut seeds, &mut HashSet::new(), keep);
-    seeds
-}
-
-/// The user's ListenBrainz top artists, recent listening first, widening
-/// the window until `wanted` are found; up to `keep` are kept.
-async fn listenbrainz_seeds(
-    ctx: &BuildContext<'_>,
-    user: &UserMusic,
-    wanted: usize,
-    keep: usize,
-) -> Vec<ArtistRow> {
-    let mut seeds = Vec::new();
-    let Some(username) = &user.listenbrainz else {
-        return seeds;
-    };
-    let mut seen = HashSet::new();
-    for range in [
-        StatsRange::ThisWeek,
-        StatsRange::ThisMonth,
-        StatsRange::ThisYear,
-        StatsRange::AllTime,
-    ] {
-        if seeds.len() >= wanted {
-            break;
-        }
-        let rows = or_empty(
-            "listenbrainz top artists",
-            ctx.listening
-                .user_artists(username, range, 10.max(wanted as u32), &ctx.ask)
-                .await,
-        );
-        take_seeds(rows, &mut seeds, &mut seen, keep);
-    }
-    seeds
+    weighted_seeds(ctx, user_id, user, source)
+        .await
+        .into_iter()
+        .take(ctx.settings.seed_artists.max(1))
+        .map(|seed| seed.artist)
+        .collect()
 }
 
 /// Release groups the user has played, so deep cuts skip them.
@@ -343,7 +224,8 @@ pub(in crate::discover) async fn listened_albums(
         .collect()
 }
 
-/// The personal deck, `None` when the user has no seed artists. Owned
+/// The personal deck, `None` when the user has no seed artists or every
+/// pool came back empty with no read failing. Owned
 /// albums are dropped from every candidate before the deal, and the deck
 /// holds at most `wildcard_slots` chart cards: one short of picks stays
 /// short. Fails when the library check fails.
@@ -374,6 +256,11 @@ async fn personalized(
         let listened = listened_albums(ctx, user, source).await;
         listenbrainz_pools(ctx, user_id, user, &seeds, ignored, &listened).await
     };
+    // Nothing like the seeds turned up, and nothing failed to say so: the
+    // person gets the deck of someone with no seeds, not two chart cards.
+    if pools.iter().all(Vec::is_empty) && !ctx.ask.met_failure() {
+        return Ok(None);
+    }
     let pooled: HashSet<String> = pools
         .iter()
         .flatten()

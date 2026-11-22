@@ -44,8 +44,9 @@ use crate::discover::ownership;
 use crate::discover::queue::QueueSettings;
 use crate::discover::queue::build::{
     BuildContext, VARIOUS_ARTISTS_MBID, lastfm_pools, listened_albums, normalize, or_empty,
-    resolve_release_groups, seed_artists, similar_artist_pools,
+    resolve_release_groups, similar_artist_pools,
 };
+use crate::discover::queue::seeds::{links_listening, weighted_seeds};
 use crate::discover::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
 use crate::discover::queue::store::QueueDb;
 use crate::discover::sections::{self, Dedupe, Input, Page, Requires, SectionDef};
@@ -150,6 +151,8 @@ pub struct Built {
     pub incomplete: bool,
     /// Seed artists the build grew from.
     pub seeds_used: usize,
+    /// Seed artists the person has, the ones used included, at most 30.
+    pub seeds_found: usize,
     /// Whether the user's ListenBrainz sections could fill: linked, with
     /// ListenBrainz reads on.
     pub listenbrainz: bool,
@@ -436,6 +439,7 @@ impl Builder<'_> {
             db: self.queue_db,
             settings,
             ask: self.ask.clone(),
+            now_ms: (self.now * 1000.0) as i64,
         }
     }
 
@@ -454,12 +458,15 @@ impl Builder<'_> {
     }
 
     /// The badge of shelves grown from the seed artists: both services
-    /// when they are blended, else the primary.
+    /// when they are blended, the primary for a person who linked one, and
+    /// their own use of the app for a person who linked none.
     fn seed_source(&self, user: &UserMusic, primary: ListenSource) -> ShelfSource {
         if self.blends(user) {
             ShelfSource::Blended
-        } else {
+        } else if links_listening(user) {
             primary.into()
+        } else {
+            ShelfSource::Local
         }
     }
 
@@ -474,16 +481,23 @@ impl Builder<'_> {
         // The seeds' reads go on an ask of their own, so a failure counts
         // against the sections grown from them.
         let seed_ask = self.ask.watched();
-        let seeds = if needs(Input::Seeds) {
+        let (seeds, seeds_found) = if needs(Input::Seeds) {
             let mut seed_settings = self.settings.queue.clone();
             seed_settings.seed_artists = SEEDS;
             let seed_ctx = BuildContext {
                 ask: seed_ask.clone(),
                 ..self.queue_ctx(&seed_settings)
             };
-            seed_artists(&seed_ctx, user_id, &user, primary).await
+            let found = weighted_seeds(&seed_ctx, user_id, &user, primary).await;
+            let count = found.len();
+            let used: Vec<ArtistRow> = found
+                .into_iter()
+                .take(SEEDS)
+                .map(|seed| seed.artist)
+                .collect();
+            (used, count)
         } else {
-            Vec::new()
+            (Vec::new(), 0)
         };
         let seeds_failed = seed_ask.met_failure();
 
@@ -617,6 +631,7 @@ impl Builder<'_> {
                 || seeds_failed
                 || sections_failed,
             seeds_used: seeds.len(),
+            seeds_found,
             listenbrainz: lb_user.is_some() && self.listening.listenbrainz_on(),
             lastfm: lfm_user.is_some(),
             outcomes,

@@ -18,6 +18,7 @@
 
 pub mod build;
 pub mod cards;
+pub mod seeds;
 pub mod select;
 pub mod store;
 
@@ -516,6 +517,7 @@ impl Inner {
             db: &self.db,
             settings: &settings,
             ask: ask.clone(),
+            now_ms: self.decks.now_ms(),
         };
         let started = tokio::time::Instant::now();
         let outcome = build_deck(&ctx, &user_id, settings.queue_size).await;
@@ -676,6 +678,7 @@ impl Inner {
             db: &self.db,
             settings: &settings,
             ask: Ask::build(RequestPriority::UserInitiated),
+            now_ms: self.decks.now_ms(),
         };
         let items = build_deck(&ctx, user_id, count.unwrap_or(settings.queue_size))
             .await

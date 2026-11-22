@@ -30,8 +30,10 @@
 //! served by the genre pages in front of this source.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
@@ -66,18 +68,25 @@ pub struct LiveCharts {
     db: Db,
     queue_db: QueueDb,
     advanced: Live<AdvancedSettings>,
+    clock: Arc<dyn Clock>,
 }
 
 impl LiveCharts {
     /// Charts over `listening`, marked against the catalog in `db`, with
     /// Last.fm albums matched to release groups within the lookup budget
-    /// in `advanced`.
-    pub fn new(listening: ListeningData, db: Db, advanced: Live<AdvancedSettings>) -> Self {
+    /// in `advanced`, at the time `clock` tells.
+    pub fn new(
+        listening: ListeningData,
+        db: Db,
+        advanced: Live<AdvancedSettings>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         Self {
             listening,
             queue_db: QueueDb::new(db.clone()),
             db,
             advanced,
+            clock,
         }
     }
 
@@ -343,6 +352,7 @@ impl LiveCharts {
             db: &self.queue_db,
             settings: &settings,
             ask: ask.clone(),
+            now_ms: self.clock.now_ms(),
         };
         match tokio::time::timeout(RESOLVE_BUDGET, resolve_release_groups(&ctx, &pending)).await {
             Ok(found) => groups.extend(found),

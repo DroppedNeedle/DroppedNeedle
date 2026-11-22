@@ -4,8 +4,6 @@
 //! own, so the queue, the page, home, radio and the charts choose the same
 //! way.
 
-use std::collections::{HashMap, HashSet};
-
 use super::ListeningError;
 use super::rows::{ListenSource, UserMusic};
 
@@ -108,61 +106,4 @@ impl SourcePolicy {
         let outage = matches!(error, ListeningError::Provider(error) if error.trips_breaker());
         (outage && self.user.lastfm).then_some(ListenSource::Lastfm)
     }
-}
-
-/// Merge two services' ranked lists, `first` from the user's primary
-/// service: rows both lists hold come first, by their combined rank, then
-/// the rest alternate between the lists, each in its own order. `key`
-/// says when two rows are the same artist (a row without one is never
-/// merged), and `join` makes one row of a pair.
-pub fn blend<T>(
-    first: Vec<T>,
-    second: Vec<T>,
-    key: impl Fn(&T) -> Option<String>,
-    join: impl Fn(T, T) -> T,
-) -> Vec<T> {
-    let mut second_at: HashMap<String, usize> = HashMap::new();
-    for (at, row) in second.iter().enumerate() {
-        if let Some(key) = key(row) {
-            second_at.entry(key).or_insert(at);
-        }
-    }
-    let mut second: Vec<Option<T>> = second.into_iter().map(Some).collect();
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut both: Vec<(usize, usize, T)> = Vec::new();
-    let mut only_first: Vec<T> = Vec::new();
-    for (at, row) in first.into_iter().enumerate() {
-        let Some(row_key) = key(&row) else {
-            only_first.push(row);
-            continue;
-        };
-        if !seen.insert(row_key.clone()) {
-            continue;
-        }
-        let pair = second_at
-            .get(&row_key)
-            .and_then(|&other_at| Some((other_at, second.get_mut(other_at)?.take()?)));
-        match pair {
-            Some((other_at, other)) => both.push((at, other_at, join(row, other))),
-            None => only_first.push(row),
-        }
-    }
-    both.sort_by_key(|(at, other_at, _)| (at + other_at, *at));
-    let only_second: Vec<T> = second
-        .into_iter()
-        .flatten()
-        .filter(|row| key(row).is_none_or(|key| seen.insert(key)))
-        .collect();
-    let mut blended: Vec<T> = both.into_iter().map(|(_, _, row)| row).collect();
-    let mut first_rest = only_first.into_iter();
-    let mut second_rest = only_second.into_iter();
-    loop {
-        let (a, b) = (first_rest.next(), second_rest.next());
-        if a.is_none() && b.is_none() {
-            break;
-        }
-        blended.extend(a);
-        blended.extend(b);
-    }
-    blended
 }

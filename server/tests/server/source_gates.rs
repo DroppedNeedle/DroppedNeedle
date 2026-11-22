@@ -1186,6 +1186,31 @@ fn downloads_start_through_one_concrete_dispatch() {
     );
 }
 
+/// Discover reads a person's media server only through their own link:
+/// `ConnectionResolver::resolve` falls back to an admin's shared account,
+/// whose plays are not that person's, so nothing under Discover calls it or
+/// a resolver of the shared account.
+#[test]
+fn discover_never_resolves_a_shared_media_server_account() {
+    let pattern = Regex::new(r"\.resolve(_shared)?\s*\(|::resolve(_shared)?\b").unwrap();
+    let mut wrong = Vec::new();
+    for source in workspace_sources() {
+        if !source.path.starts_with("catalog/src/discover/") {
+            continue;
+        }
+        let code = source.code();
+        for found in pattern.find_iter(&code) {
+            let line = code[..found.start()].matches('\n').count() + 1;
+            wrong.push(format!("{}:{line}: {}", source.path, found.as_str()));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "read the person's own link with `resolve_linked`:\n{}",
+        wrong.join("\n")
+    );
+}
+
 /// One stop: the supervisor's token. No loop keeps a stop flag, a sleep
 /// seam or a jitter seam of its own.
 #[test]

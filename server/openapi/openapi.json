@@ -56466,6 +56466,7 @@
           "duplicates",
           "repeats",
           "seeds_used",
+          "seeds_found",
           "max_cards_one_artist",
           "incomplete"
         ],
@@ -56522,6 +56523,11 @@
           "sections": {
             "type": "integer",
             "description": "Sections on the page.",
+            "minimum": 0
+          },
+          "seeds_found": {
+            "type": "integer",
+            "description": "Seed artists the person has, the ones used included, at most 30.\nPages saved before it was counted read 0.",
             "minimum": 0
           },
           "seeds_used": {

@@ -114,6 +114,7 @@ fn a_page_counts_chart_fill_owned_picks_duplicates_and_repeats() {
     let facts = |listenbrainz| BuildFacts {
         wanted: &wanted,
         seeds_used: 2,
+        seeds_found: 5,
         incomplete: false,
         listenbrainz,
         lastfm: false,
@@ -140,6 +141,7 @@ fn a_page_counts_chart_fill_owned_picks_duplicates_and_repeats() {
             duplicates: 1,
             repeats: 1,
             seeds_used: 2,
+            seeds_found: 5,
             max_cards_one_artist: 3,
             incomplete: false,
         }

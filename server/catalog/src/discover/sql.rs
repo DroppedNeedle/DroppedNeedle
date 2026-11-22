@@ -191,8 +191,8 @@ droppedneedle_kernel::sql! {
 
     // -- home and genre pages -------------------------------------------------
 
-    /// A live album with its identities and own art.
-    fragment HOME_ALBUM_SELECT = "SELECT a.id AS id, a.title AS title, \
+    /// An album `a` with its identities and own art, its artist `an`.
+    fragment HOME_ALBUM_COLUMNS = "SELECT a.id AS id, a.title AS title, \
          COALESCE(an.display_name, a.album_artist_name) AS artist_name, \
          (SELECT ae.release_group_mbid FROM local_album_external_identities ae \
           WHERE ae.local_album_id = a.id AND ae.provider = 'musicbrainz' \
@@ -202,8 +202,10 @@ droppedneedle_kernel::sql! {
           ORDER BY aie.provider_artist_id LIMIT 1) AS artist_mbid, \
          a.year AS year, \
          (SELECT w.version FROM local_album_artwork w WHERE w.local_album_id = a.id \
-          AND w.source IN ('folder','embedded')) AS art_version \
-         FROM local_albums a LEFT JOIN local_artists an ON an.id = a.album_artist_id \
+          AND w.source IN ('folder','embedded')) AS art_version ";
+    /// A live album with its identities and own art.
+    fragment HOME_ALBUM_SELECT = HOME_ALBUM_COLUMNS
+        + "FROM local_albums a LEFT JOIN local_artists an ON an.id = a.album_artist_id \
          WHERE a.retired_into_album_id IS NULL";
     /// The newest albums with an indexed track.
     pub(super) RECENT_ALBUMS = HOME_ALBUM_SELECT
@@ -225,6 +227,27 @@ droppedneedle_kernel::sql! {
         artist_mbid: Option<String>,
         year: Option<i64>,
         art_version: Option<i64>,
+    }
+    /// The albums a user played most since a time, with their plays: only
+    /// albums the lists show, most played first, then the latest played.
+    pub(super) PLAYED_ALBUMS = "WITH played AS (SELECT local_album_id AS album_id, \
+         COUNT(*) AS plays, MAX(played_at) AS last_at FROM library_play_history \
+         WHERE user_id = ?1 AND played_at >= ?2 AND local_album_id IS NOT NULL \
+         GROUP BY local_album_id) "
+        + HOME_ALBUM_COLUMNS
+        + ", p.plays AS plays FROM played p JOIN local_albums a ON a.id = p.album_id \
+         LEFT JOIN local_artists an ON an.id = a.album_artist_id WHERE "
+        + (owned_album!("a"))
+        + " ORDER BY p.plays DESC, p.last_at DESC, a.id LIMIT ?3";
+    pub(super) row PlayedAlbumColumns for [PLAYED_ALBUMS] {
+        id: String,
+        title: String,
+        artist_name: Option<String>,
+        rg: Option<String>,
+        artist_mbid: Option<String>,
+        year: Option<i64>,
+        art_version: Option<i64>,
+        plays: i64,
     }
     /// The artists with the most albums. No placeholder ranks: not the
     /// sentinel rows (by kind), and not a row tags keyed for one of the
@@ -363,13 +386,12 @@ droppedneedle_kernel::sql! {
     pub(super) VISIBLE_PLAYLIST = "SELECT id FROM catalog_playlists p \
          WHERE id = ?1 AND (user_id = ?2 OR is_public = 1 OR EXISTS (SELECT 1 \
          FROM catalog_playlist_members m WHERE m.playlist_id = p.id AND m.user_id = ?2))";
-    /// A playlist's entries in playlist order: the stored artist id (a
-    /// media server's own id for an imported playlist), the artist name,
-    /// and the MusicBrainz id of the first credited artist of a library
-    /// track with the entry's recording id (its identity, else the credit's
-    /// or the file's id). The `t.id IN` list reaches the tracks through the
-    /// lowered-id indexes.
-    pub(super) PLAYLIST_ENTRIES = "SELECT p.artist_id AS artist_id, \
+    /// A playlist entry `p`: the stored artist id (a media server's own id
+    /// for an imported playlist), the artist name, and the MusicBrainz id
+    /// of the first credited artist of a library track with the entry's
+    /// recording id (its identity, else the credit's or the file's id). The
+    /// `t.id IN` list reaches the tracks through the lowered-id indexes.
+    fragment PLAYLIST_ENTRY_SELECT = "SELECT p.artist_id AS artist_id, \
          p.artist_name AS artist_name, \
          (SELECT lower(COALESCE(ai.provider_artist_id, ta.artist_mbid, t.embedded_artist_mbid)) \
           FROM local_tracks t \
@@ -388,12 +410,128 @@ droppedneedle_kernel::sql! {
             AND lower(COALESCE("
          + (recording_mbid!("ti", "t"))
          + ", '')) = lower(p.recording_mbid) \
-          ORDER BY t.id LIMIT 1) AS recording_artist_mbid \
-         FROM catalog_playlist_tracks p WHERE p.playlist_id = ?1 ORDER BY p.position";
+          ORDER BY t.id LIMIT 1) AS recording_artist_mbid ";
+    /// A playlist's entries in playlist order.
+    pub(super) PLAYLIST_ENTRIES = PLAYLIST_ENTRY_SELECT
+        + "FROM catalog_playlist_tracks p WHERE p.playlist_id = ?1 ORDER BY p.position";
     pub(super) row PlaylistEntry for [PLAYLIST_ENTRIES] {
         artist_id: Option<String>,
         artist_name: String,
         recording_artist_mbid: Option<String>,
+    }
+    /// Every entry of a user's own playlists, leaving out the ones the app
+    /// makes for them (the Weekly Mix), with whether its stored artist id
+    /// names a library artist and that artist's MusicBrainz id.
+    pub(super) SEED_PLAYLIST_ENTRIES = PLAYLIST_ENTRY_SELECT
+        + ", EXISTS (SELECT 1 FROM local_artists la WHERE la.id = p.artist_id) AS local_artist, \
+         (SELECT lower(le.provider_artist_id) FROM local_artist_external_identities le \
+          WHERE le.local_artist_id = p.artist_id AND le.provider = 'musicbrainz') \
+           AS local_artist_mbid \
+         FROM catalog_playlists l JOIN catalog_playlist_tracks p ON p.playlist_id = l.id \
+         WHERE l.user_id = ?1 \
+           AND (l.source_ref IS NULL OR l.source_ref NOT LIKE 'personal-mix:%')";
+    pub(super) row SeedPlaylistEntry for [SEED_PLAYLIST_ENTRIES] {
+        artist_id: Option<String>,
+        artist_name: String,
+        recording_artist_mbid: Option<String>,
+        local_artist: bool,
+        local_artist_mbid: Option<String>,
+    }
+
+    // -- seeds: one person's own rows, each read filtered by their id -------------
+
+    /// The library artist `s.artist_id` with its MusicBrainz id, not a
+    /// placeholder row (by kind).
+    fragment SEED_ARTIST = (concat!(
+        " JOIN local_artists r ON r.id = s.artist_id \
+         AND r.kind NOT IN ('various_artists', 'unknown') \
+         JOIN local_artist_external_identities ai ON ai.local_artist_id = r.id AND ",
+        musicbrainz!("ai"),
+        " GROUP BY lower(ai.provider_artist_id)"
+    ));
+    /// A user's plays per artist: how many, in how many calendar months,
+    /// and the latest. Plays filed by name alone have no artist and are
+    /// left out.
+    pub(super) SEED_PLAYS = "WITH s AS (SELECT local_artist_id AS artist_id, played_at \
+         FROM library_play_history WHERE user_id = ?1 AND local_artist_id IS NOT NULL) \
+         SELECT lower(ai.provider_artist_id) AS mbid, MIN(r.display_name) AS name, \
+         COUNT(*) AS plays, \
+         COUNT(DISTINCT strftime('%Y-%m', s.played_at / 1000, 'unixepoch')) AS months, \
+         MAX(s.played_at) AS last_played_at FROM s"
+        + SEED_ARTIST;
+    pub(super) row SeedPlays for [SEED_PLAYS] {
+        mbid: String,
+        name: String,
+        plays: i64,
+        months: i64,
+        last_played_at: Millis,
+    }
+    /// A user's hearts per artist: on the artist, on an album (its album
+    /// artist) and on a track (its first credited artist).
+    pub(super) SEED_HEARTS = "WITH s(kind, artist_id) AS (\
+         SELECT 'artist', item_id FROM catalog_user_favorites \
+           WHERE user_id = ?1 AND item_kind = 'artist' \
+         UNION ALL SELECT 'album', a.album_artist_id FROM catalog_user_favorites f \
+           JOIN local_albums a ON a.id = f.item_id \
+           WHERE f.user_id = ?1 AND f.item_kind = 'album' \
+         UNION ALL SELECT 'track', ta.local_artist_id FROM catalog_user_favorites f \
+           JOIN local_track_artists ta ON ta.local_track_id = f.item_id AND ta.position = 0 \
+           WHERE f.user_id = ?1 AND f.item_kind = 'track') \
+         SELECT lower(ai.provider_artist_id) AS mbid, MIN(r.display_name) AS name, \
+         SUM(s.kind = 'artist') AS artists, SUM(s.kind = 'album') AS albums, \
+         SUM(s.kind = 'track') AS tracks FROM s"
+        + SEED_ARTIST;
+    pub(super) row SeedHearts for [SEED_HEARTS] {
+        mbid: String,
+        name: String,
+        artists: i64,
+        albums: i64,
+        tracks: i64,
+    }
+    /// A user's ratings per artist, reached as hearts are: how many fives,
+    /// fours, and ones or twos.
+    pub(super) SEED_RATINGS = "WITH s(rating, artist_id) AS (\
+         SELECT rating, item_id FROM catalog_user_ratings \
+           WHERE user_id = ?1 AND item_kind = 'artist' \
+         UNION ALL SELECT f.rating, a.album_artist_id FROM catalog_user_ratings f \
+           JOIN local_albums a ON a.id = f.item_id \
+           WHERE f.user_id = ?1 AND f.item_kind = 'album' \
+         UNION ALL SELECT f.rating, ta.local_artist_id FROM catalog_user_ratings f \
+           JOIN local_track_artists ta ON ta.local_track_id = f.item_id AND ta.position = 0 \
+           WHERE f.user_id = ?1 AND f.item_kind = 'track') \
+         SELECT lower(ai.provider_artist_id) AS mbid, MIN(r.display_name) AS name, \
+         SUM(s.rating = 5) AS fives, SUM(s.rating = 4) AS fours, \
+         SUM(s.rating <= 2) AS lows FROM s"
+        + SEED_ARTIST;
+    pub(super) row SeedRatings for [SEED_RATINGS] {
+        mbid: String,
+        name: String,
+        fives: i64,
+        fours: i64,
+        lows: i64,
+    }
+    /// The artists a user follows.
+    pub(super) SEED_FOLLOWS = "SELECT artist_mbid_lower AS mbid, artist_name AS name \
+         FROM acquire_followed_artists WHERE user_id = ?1";
+    pub(super) row SeedFollow for [SEED_FOLLOWS] {
+        mbid: String,
+        name: String,
+    }
+    /// The albums a user asked for per artist: asked by a person (not
+    /// for a follow, a watch, an upgrade or an edition change), leaving out
+    /// the refused and the withdrawn.
+    pub(super) SEED_REQUESTS = "SELECT lower(h.artist_mbid) AS mbid, \
+         MIN(h.artist_name) AS name, COUNT(*) AS albums \
+         FROM request_history_requesters q JOIN request_history h \
+           ON h.musicbrainz_id_lower = q.musicbrainz_id_lower \
+         WHERE q.user_id = ?1 AND h.request_kind = 'album' \
+           AND h.origin IN ('user', 'approval', 'retry') \
+           AND h.status NOT IN ('rejected', 'cancelled') AND h.artist_mbid IS NOT NULL \
+         GROUP BY lower(h.artist_mbid)";
+    pub(super) row SeedRequests for [SEED_REQUESTS] {
+        mbid: String,
+        name: String,
+        albums: i64,
     }
     /// Live library artists with a MusicBrainz id, up to the folded-name
     /// list.

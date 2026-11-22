@@ -45,6 +45,11 @@ pub struct PageHealth {
     pub repeats: usize,
     /// Seed artists the build grew from.
     pub seeds_used: usize,
+    /// Seed artists the person has, the ones used included, at most 30.
+    /// Pages saved before it was counted read 0.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub seeds_found: usize,
     /// The most cards any one artist has.
     pub max_cards_one_artist: usize,
     /// Whether a read failed or a shelf ran out of time.
@@ -70,6 +75,8 @@ pub struct BuildFacts<'a> {
     pub wanted: &'a [&'static SectionDef],
     /// Seed artists it grew from.
     pub seeds_used: usize,
+    /// Seed artists the person has.
+    pub seeds_found: usize,
     /// Whether a read failed or a shelf ran out of time.
     pub incomplete: bool,
     /// Whether ListenBrainz sections could fill for the person.
@@ -199,6 +206,7 @@ pub fn page_health(
     let mut health = PageHealth {
         sections: page.sections.len(),
         seeds_used: build.seeds_used,
+        seeds_found: build.seeds_found,
         incomplete: build.incomplete,
         ..PageHealth::default()
     };
@@ -293,6 +301,7 @@ pub fn log_page_health(user_id: &str, seconds: f64, health: &PageHealth) {
         duplicates = health.duplicates,
         repeats = health.repeats,
         seeds_used = health.seeds_used,
+        seeds_found = health.seeds_found,
         max_cards_one_artist = health.max_cards_one_artist,
         incomplete = health.incomplete,
         "discover page built"
