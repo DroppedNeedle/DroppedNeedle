@@ -298,6 +298,9 @@ Run from the repo root. `make help` lists every target.
   checks it); a state column is backed by a Rust enum declared through the
   kernel's `spelled!`, with a CHECK listing exactly its values
   (`every_state_column_lists_exactly_its_enums_values`).
+- A person's plays go with their account: `library_play_history.user_id`
+  cascades from `auth_users`, and a new per-person table cascades the same
+  way.
 - Every table has one owning area, listed in `server/table-owners.txt` and
   checked by a test. Only the owner writes and migrates it.
 - A read model derived from other tables (a summary table or a column) is
@@ -307,9 +310,12 @@ Run from the repo root. `make help` lists every target.
   source rows after each kind of write. Trigger guards compare OLD and NEW
   with `IS NOT` and fire only when a value the rule reads changed; a guard
   may also skip a refresh that can only add a reason the kept row already
-  has. The
-  tables it follows are never written with REPLACE, which removes rows
-  without firing their delete triggers.
+  has, and a delete trigger may skip its refresh while the row's account
+  is gone, when a trigger on the account's delete removes all of that
+  account's kept rows (SQLite runs a parent's cascades after removing its
+  row and before its AFTER DELETE trigger). The tables it follows are
+  never written with REPLACE, which removes rows without firing their
+  delete triggers.
 
 **Background work and outbound HTTP**
 - Loops are cancellable, back off with jitter and re-read settings each

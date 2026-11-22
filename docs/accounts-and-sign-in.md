@@ -21,6 +21,8 @@ Who can do what, the ways people sign in, and how to get back in when a password
 
 The first account is always admin. Later accounts are created by an admin or automatically on first Jellyfin, Plex, or OIDC sign-in (all start as User). Plex, Jellyfin and OIDC sign-in are switched on and off in the UI. Username and password sign-in is on unless the server is started with `ALLOW_PASSWORD_LOGIN=false` (see [Configuration](configuration.md)); then the sign-in page offers only the other methods, and passwords cannot be set, changed or recovered. First-admin setup and app passwords still work.
 
+Deleting an account under Settings > Users also deletes its play history.
+
 Any signed-in user can see other users' display names, and nothing else about them, when sharing a playlist. Only names people chose are listed: someone shows up there once they save a display name under Profile, or when an admin typed one other than their username while making their account. A name that came from Jellyfin, Plex or single sign-on is never listed.
 
 ## Sessions

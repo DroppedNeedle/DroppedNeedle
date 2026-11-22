@@ -837,6 +837,13 @@ async fn a_play_outlasting_the_request_wait_is_still_recorded() {
     let dir = scratch_dir("play-busy");
     let db = dir.join("library.db");
     common::migrated_db(&db);
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute(
+            "INSERT INTO auth_users (id, display_name, created_at) VALUES ('user-1', 'U', 0)",
+            [],
+        )
+        .unwrap();
     let runtime = open_runtime(
         &DbConfig::new(
             &db,

@@ -557,13 +557,29 @@ async fn users_named_by_library_history_are_not_deleted() {
     );
     assert!(fx.auth.users.get_by_id("user-2").await.unwrap().is_some());
 
-    // Once nothing names the account, it goes, and its discover rows and
-    // discovery batches with it.
+    // Once nothing names the account, it goes, and its plays, marks, their
+    // album summary, its discover rows and discovery batches with it.
+    // Another account's play and summary stay.
     let side = rusqlite::Connection::open(fx.runtime().path()).unwrap();
     side.busy_timeout(std::time::Duration::from_secs(5))
         .unwrap();
     side.execute_batch(
         "DELETE FROM library_artist_reconciliation_dismissals; \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+         updated_at) VALUES ('artist-1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) \
+         VALUES ('album-1', 'root-1', 'g', 'T', 't', 'artist-1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, availability, ingest_source, \
+         imported_at, membership_source) VALUES ('track-1', 'album-1', 'root-1', '/m/1', \
+         '1', 'h1', 1, 1, 's', 'S', 's', 'T', 't', 'flac', 'indexed', 'scan', 1, 'automatic'); \
+         INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
+         artist_name, played_at) VALUES ('play-2', 'user-2', 'album-1', 'S', 'A', 1000), \
+         ('play-1', 'admin-1', 'album-1', 'S', 'A', 1000); \
+         INSERT INTO catalog_user_play_marks (user_id, local_track_id, marked_played_at) \
+         VALUES ('user-2', 'track-1', 2000); \
          INSERT INTO catalog_ignored_releases (user_id, release_group_mbid_lower, \
          release_group_mbid, artist_mbid, release_name, artist_name, ignored_at) \
          VALUES ('user-2', 'rg', 'RG', 'a', 'R', 'A', 1); \
@@ -589,9 +605,20 @@ async fn users_named_by_library_history_are_not_deleted() {
              + (SELECT COUNT(*) FROM catalog_cached_pages) \
              + (SELECT COUNT(*) FROM catalog_discover_activity) \
              + (SELECT COUNT(*) FROM acquire_discovery_batches) \
-             + (SELECT COUNT(*) FROM acquire_discovery_batch_items)"
+             + (SELECT COUNT(*) FROM acquire_discovery_batch_items) \
+             + (SELECT COUNT(*) FROM library_play_history WHERE user_id = 'user-2') \
+             + (SELECT COUNT(*) FROM catalog_user_play_marks WHERE user_id = 'user-2') \
+             + (SELECT COUNT(*) FROM library_user_album_plays WHERE user_id = 'user-2')"
         ),
         0
+    );
+    assert_eq!(
+        count(
+            &fx,
+            "SELECT (SELECT COUNT(*) FROM library_play_history WHERE user_id = 'admin-1') \
+             + (SELECT COUNT(*) FROM library_user_album_plays WHERE user_id = 'admin-1')"
+        ),
+        2
     );
 }
 

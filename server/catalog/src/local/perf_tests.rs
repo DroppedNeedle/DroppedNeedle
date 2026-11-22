@@ -1757,7 +1757,9 @@ async fn seed_small_plays(fixture: &Fixture) {
         ("u2", "'t8'", "al5", "2026-01-08T00:00:00+00:00"),
     ];
     let mut sql = String::from(
-        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
+         ('u1', 'One', 'user', 0), ('u2', 'Two', 'user', 0); \
+         INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES ",
     );
     for (index, (user, track, album, at)) in plays.iter().enumerate() {
@@ -1802,7 +1804,7 @@ async fn seed_small_marks(fixture: &Fixture) {
     ];
     let mut sql = String::from(
         "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
-         ('u1', 'One', 'user', 0), ('u3', 'Three', 'user', 0); \
+         ('u3', 'Three', 'user', 0); \
          INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES \
          ('v2-1', 'u3', 't8', 'al5', 'x', 'x', CAST(round(unixepoch('2026-01-05 12:00:00', 'subsec') * 1000) AS INTEGER)), \
@@ -2541,7 +2543,7 @@ async fn album_play_summary_follows_every_write() {
     .await;
     assert_album_summary(db, "album deleted").await;
 
-    // Deleted listeners take their marks and keep their plays.
+    // Deleted listeners take their marks and their plays.
     write_batch(
         &fixture,
         "summary users deleted",
@@ -2556,7 +2558,7 @@ async fn album_play_summary_follows_every_write() {
         |row| row.get(0),
     )
     .await;
-    assert_eq!(left, ["u1", "u2", "u3"], "u4 had marks alone");
+    assert_eq!(left, ["u1", "u2"], "u3 had plays and marks, u4 marks alone");
 }
 
 /// One kept artist and album pair: artist, album, indexed tracks, live,
@@ -3216,8 +3218,16 @@ async fn history_plans_read_the_listeners_plays_first() {
     // Statistics over a history shared by many listeners. A connection
     // loads them when the schema changes, so the plans are read after a
     // change.
-    let mut plays = String::from(
-        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+    let mut plays =
+        String::from("INSERT INTO auth_users (id, display_name, role, created_at) VALUES ");
+    for user in 0..200 {
+        if user > 0 {
+            plays.push_str(", ");
+        }
+        plays.push_str(&format!("('u{user}', 'U', 'user', 0)"));
+    }
+    plays.push_str(
+        "; INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES ",
     );
     for user in 0..200 {
@@ -3259,16 +3269,8 @@ async fn history_plans_read_the_listeners_plays_first() {
     write_batch(&fixture, "plan plays with no track", trackless).await;
     // Marks for a quarter of the listeners, so the statistics cover the
     // marks table too.
-    let mut marks =
-        String::from("INSERT INTO auth_users (id, display_name, role, created_at) VALUES ");
-    for user in 0..50 {
-        if user > 0 {
-            marks.push_str(", ");
-        }
-        marks.push_str(&format!("('u{user}', 'U', 'user', 0)"));
-    }
-    marks.push_str(
-        "; INSERT INTO catalog_user_play_marks (user_id, local_track_id, marked_played_at, \
+    let mut marks = String::from(
+        "INSERT INTO catalog_user_play_marks (user_id, local_track_id, marked_played_at, \
          marked_unplayed_at) VALUES ",
     );
     for user in 0..50 {
@@ -3631,6 +3633,14 @@ const PLAY_ROWS: usize = 1000;
 /// also has 40,000 plays that name no track, one in eight of them filed
 /// under an album: what an upgrade leaves when plays fit no single song.
 async fn seed_100k_plays(fixture: &Fixture) {
+    let mut listeners = String::from(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('p-u1', 'P', 'user', 0)",
+    );
+    for user in 0..20 {
+        listeners.push_str(&format!(", ('p-o{user:02}', 'O', 'user', 0)"));
+    }
+    write_batch(fixture, "perf listeners", listeners).await;
     for chunk in 0..8 {
         for start in (0..5000).step_by(PLAY_ROWS) {
             let mut sql = String::from(
@@ -3709,9 +3719,7 @@ async fn seed_100k_plays(fixture: &Fixture) {
 /// played there) and one on each of 50 more.
 async fn seed_100k_marks(fixture: &Fixture) {
     let mut sql = String::from(
-        "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('p-u1', 'P', 'user', 0); \
-         INSERT INTO catalog_user_play_marks (user_id, local_track_id, marked_played_at, \
+        "INSERT INTO catalog_user_play_marks (user_id, local_track_id, marked_played_at, \
          marked_unplayed_at) VALUES ",
     );
     let mut marks = Vec::new();

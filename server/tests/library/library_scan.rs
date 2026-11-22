@@ -3079,10 +3079,10 @@ fn listener_acts(album: &str) -> String {
         "FROM local_tracks WHERE relative_path = 'a/t000.flac' AND local_album_id != '{album}'"
     );
     format!(
-        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) SELECT 'play-1', 'listener', id, local_album_id, \
          'Song', 'Artist', 1767225600000 {moved}; \
-         INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
          INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          SELECT 'listener', 'album', local_album_id, 0 {moved}; \
          INSERT INTO catalog_playlists (id, name, created_at, updated_at) VALUES ('list', 'List', 0, 0); \
@@ -5968,7 +5968,7 @@ async fn retag_across_a_cancelled_scan_is_joined_at_the_next() {
             ""
         };
         rig.run(&format!(
-            "{play} INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+            "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); {play} \
              INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
              VALUES ('listener', 'album', '{album}', 0); \
              INSERT INTO catalog_playlists (id, name, created_at, updated_at) \

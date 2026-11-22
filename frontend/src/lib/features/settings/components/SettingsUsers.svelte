@@ -712,8 +712,8 @@
 >
 	<p class="text-muted">
 		Delete <span class="font-semibold text-base-content">{userToDelete?.display_name}</span>? This
-		permanently removes their account, login methods, sessions, and playlists, public ones included.
-		This cannot be undone.
+		permanently removes their account, login methods, sessions, play history and playlists, public
+		ones included. This cannot be undone.
 	</p>
 </ConfirmDialog>
 

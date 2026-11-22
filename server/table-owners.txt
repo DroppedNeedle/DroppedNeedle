@@ -35,8 +35,9 @@
 #                                           the record split off
 #
 # Auth's user delete removes catalog_playlists rows by cascade, and their
-# entries, covers and members with them, and the user's own
-# catalog_playlist_members rows; it names none of those tables.
+# entries, covers and members with them, the user's own
+# catalog_playlist_members rows, and the user's library_play_history rows;
+# it names none of those tables.
 #
 # And when a missing track continues into the track that took its place
 # (the same release track of the same album):
@@ -62,7 +63,8 @@
 # Kept by triggers (trg_user_album_plays_*), not by code: no code writes
 # library_user_album_plays. The database rewrites its rows inside the
 # transaction of every write to library_play_history,
-# catalog_user_play_marks and local_tracks, whichever area makes it.
+# catalog_user_play_marks and local_tracks, whichever area makes it, and
+# removes a user's rows when auth deletes the user.
 # local_albums.has_indexed_track is kept the same way, from local_tracks.
 #
 # Kept by triggers (trg_artist_*), not by code: no code writes

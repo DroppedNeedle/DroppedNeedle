@@ -21357,10 +21357,10 @@ async fn an_automatic_album_retagged_without_its_ids_is_joined_at_the_seal() {
         "the app wrote the files"
     );
     db.execute_batch(&format!(
-        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES ('p1', 'listener', '{o1}', '{album}', \
          'T', 'A', 1767225600000); \
-         INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
          INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{o1}', 1), ('listener', 'album', '{album}', 1); \
          INSERT INTO catalog_playlists (id, name, created_at, updated_at) \
@@ -22642,10 +22642,10 @@ async fn album_with_a_copy(tag: &str) -> (Scratch, LibrarySetup, PathBuf, String
 /// Give `track` one play, one favourite and one playlist entry.
 fn give_history(db: &rusqlite::Connection, album: &str, track: &str) {
     db.execute_batch(&format!(
-        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+        "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
+         INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
          track_name, artist_name, played_at) VALUES \
          ('play-{track}', 'listener', '{track}', '{album}', 'Two', 'A', 1767225600000); \
-         INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) VALUES ('listener', 'Person', 'user', 1); \
          INSERT INTO catalog_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'track', '{track}', 1); \
          INSERT INTO catalog_playlists (id, name, created_at, updated_at) \

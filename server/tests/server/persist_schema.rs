@@ -78,7 +78,7 @@ fn fresh_migrate_marks_version_and_seeds() {
             &connection,
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'"
         ),
-        73
+        74
     );
 
     let catalog: (i64, i64) = connection
@@ -399,6 +399,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0157_media_playback_events.sql",
         "53b57f329b5c0eac69a90d7b9b3402da446bf3001ba517ef341b0ab5f22b9d95",
+    ),
+    (
+        "0158_play_history_user_cascade.sql",
+        "228a517b9f45ca71403476e314f5759f0731933576d9345c85cf918b31d3d58d",
     ),
 ];
 
@@ -2141,6 +2145,280 @@ fn playback_events_upgrade_adds_one_empty_table() {
     );
 }
 
+/// 0158 gives a play's account a foreign key that cascades. The plays of
+/// an account deleted before it go at the upgrade, and so do the album play
+/// summary rows of every account that is gone. Every other play keeps its
+/// id and rowid, the old orphan stays the only one, nothing else in the
+/// schema changes but the two delete triggers' guard and the account's
+/// trigger (the indexes and other triggers come back as they were), and
+/// the summary is what the rule works out from the plays and marks left.
+/// Afterwards a play needs its account, a play or mark taken off a live
+/// account still moves the summary, and deleting an account takes its
+/// plays, marks and summary rows and nobody else's.
+#[test]
+fn play_history_upgrade_plays_go_with_the_account() {
+    let dir = ScratchDir::new("play-history-user-cascade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 158)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(
+        scalar(&connection, "PRAGMA user_version"),
+        MIGRATIONS[at - 1].version
+    );
+    // Plays in milliseconds on whole seconds, as the summary keeps them.
+    // `gone` is an account deleted before the upgrade, `ghost` one that
+    // left only a summary row, and p7 names a track that is not there.
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);
+             INSERT INTO local_artists (id, display_name, folded_name, kind, created_at,
+                 updated_at) VALUES ('a1', 'Artist', 'artist', 'group', 1, 1);
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+                 album_artist_id, grouping_source, created_at, updated_at)
+                 VALUES ('al1', 'r1', 'g1', 'First', 'first', 'a1', 'automatic', 1, 1),
+                        ('al2', 'r1', 'g2', 'Second', 'second', 'a1', 'automatic', 1, 1);
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path,
+                 path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded,
+                 album_title, album_title_folded, file_format, availability, ingest_source,
+                 imported_at, membership_source)
+                 VALUES ('t1', 'al1', 'r1', '/m/1', '1', 'h1', 1, 1, 's', 'A', 'a', 'First',
+                         'first', 'flac', 'indexed', 'scan', 1, 'automatic'),
+                        ('t2', 'al1', 'r1', '/m/2', '2', 'h2', 1, 1, 's', 'B', 'b', 'First',
+                         'first', 'flac', 'indexed', 'scan', 1, 'automatic'),
+                        ('t3', 'al2', 'r1', '/m/3', '3', 'h3', 1, 1, 's', 'C', 'c', 'Second',
+                         'second', 'flac', 'indexed', 'scan', 1, 'automatic');
+             INSERT INTO library_play_history (rowid, id, user_id, local_track_id,
+                 local_album_id, track_name, artist_name, recording_mbid, source, played_at)
+                 VALUES (10, 'p1', 'u1', 't1', 'al1', 'A', 'Artist', 'rec-1', 'web', 1000000),
+                        (20, 'g1', 'gone', 't1', 'al1', 'A', 'Artist', NULL, NULL, 1500000),
+                        (30, 'p2', 'u1', 't2', 'al1', 'B', 'Artist', NULL, NULL, 2000000),
+                        (40, 'p3', 'u1', NULL, 'al2', 'C', 'Artist', NULL, NULL, 3000000),
+                        (50, 'g2', 'gone', NULL, 'al2', 'C', 'Artist', NULL, NULL, 3500000),
+                        (60, 'p4', 'u2', 't3', 'al2', 'C', 'Artist', NULL, NULL, 4000000),
+                        (70, 'p5', 'u2', 't1', 'al1', 'A', 'Artist', NULL, NULL, 5000000),
+                        (80, 'p6', 'u1', NULL, NULL, 'Loose', 'Someone', NULL, NULL, 6000000),
+                        (90, 'g3', 'gone', NULL, NULL, 'Loose', 'Someone', NULL, NULL, 7000000);
+             INSERT INTO catalog_user_play_marks (user_id, local_track_id, marked_played_at)
+                 VALUES ('u1', 't3', 10000000), ('u2', 't2', 6000000);
+             INSERT INTO library_user_album_plays (user_id, local_album_id, plays,
+                 last_played_at, played) VALUES ('ghost', 'al1', 1, NULL, 0);
+             PRAGMA foreign_keys = OFF;
+             INSERT INTO library_play_history (rowid, id, user_id, local_track_id, track_name,
+                 artist_name, played_at)
+                 VALUES (100, 'p7', 'u1', 'missing', 'Lost', 'Someone', 8000000);",
+        )
+        .unwrap();
+    let kept = "library_play_history WHERE user_id IN (SELECT id FROM auth_users)";
+    let summary = |connection: &Connection, accounts: &str| {
+        texts(
+            connection,
+            &format!(
+                "SELECT user_id || ':' || local_album_id || ':' || plays || ':' || \
+                 COALESCE(last_played_at, '-') || ':' || played \
+                 FROM library_user_album_plays WHERE user_id {accounts} \
+                 ORDER BY user_id, local_album_id"
+            ),
+            [],
+        )
+    };
+    let guarded = [
+        "trg_user_album_plays_play_delete",
+        "trg_user_album_plays_mark_delete",
+        "trg_user_album_plays_account_delete",
+    ];
+    let others = |connection: &Connection| {
+        let mut rows = schema_rows(connection);
+        rows.retain(|(kind, name, _, _)| {
+            let rebuilt_table = kind == "table" && name == "library_play_history";
+            !(rebuilt_table || guarded.contains(&name.as_str()))
+        });
+        rows
+    };
+    let triggers = |connection: &Connection| {
+        guarded.map(|name| {
+            texts(
+                connection,
+                "SELECT tbl_name || ': ' || sql FROM sqlite_master \
+                 WHERE type = 'trigger' AND name = ?1",
+                [name],
+            )
+            .join("")
+        })
+    };
+    let orphans = |connection: &Connection| {
+        texts(
+            connection,
+            "SELECT \"table\" || ':' || \"rowid\" || ':' || parent FROM pragma_foreign_key_check",
+            [],
+        )
+    };
+    let table = |connection: &Connection| {
+        texts(
+            connection,
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'library_play_history'",
+            [],
+        )
+    };
+    let before_plays = table_rows(&connection, kept, "rowid, *");
+    let before_summary = summary(&connection, "IN (SELECT id FROM auth_users)");
+    let (before_schema, before_table) = (others(&connection), table(&connection));
+    let before_triggers = triggers(&connection);
+    assert_eq!(before_plays.len(), 7);
+    assert_eq!(
+        summary(&connection, "NOT IN (SELECT id FROM auth_users)").len(),
+        3,
+        "the gone accounts' summary rows are there to remove"
+    );
+    assert_eq!(
+        orphans(&connection),
+        ["library_play_history:100:local_tracks"]
+    );
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 158);
+    assert_eq!(
+        table_rows(&connection, "library_play_history", "rowid, *"),
+        before_plays,
+        "every play of an account as it was, and none of a gone one"
+    );
+    assert_eq!(others(&connection), before_schema, "nothing else changes");
+    assert_eq!(
+        orphans(&connection),
+        ["library_play_history:100:local_tracks"],
+        "the old orphan stays the only one"
+    );
+    assert_eq!(
+        table(&connection),
+        before_table
+            .iter()
+            .map(|sql| sql.replace(
+                "user_id TEXT NOT NULL,",
+                "user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,"
+            ))
+            .collect::<Vec<_>>(),
+        "the table is as it was but for the account's key"
+    );
+    let gone_skips = "EXISTS (SELECT 1 FROM auth_users WHERE id = OLD.user_id)";
+    assert_eq!(
+        triggers(&connection),
+        [
+            before_triggers[0].replace(
+                "WHEN OLD.local_track_id IS NOT NULL OR OLD.local_album_id IS NOT NULL\n",
+                &format!(
+                    "WHEN (OLD.local_track_id IS NOT NULL OR OLD.local_album_id IS NOT NULL)\n \
+                     AND {gone_skips}\n"
+                ),
+            ),
+            before_triggers[1].replace(
+                "ON catalog_user_play_marks\nBEGIN",
+                &format!("ON catalog_user_play_marks\nWHEN {gone_skips}\nBEGIN"),
+            ),
+            "auth_users: CREATE TRIGGER trg_user_album_plays_account_delete\n\
+             AFTER DELETE ON auth_users\n\
+             BEGIN\n    \
+             DELETE FROM library_user_album_plays WHERE user_id = OLD.id;\n\
+             END"
+            .to_owned(),
+        ],
+        "the delete triggers skip a gone account, whose rows its own trigger removes"
+    );
+    assert!(before_triggers[2].is_empty());
+    let all = "IS NOT NULL";
+    assert_eq!(
+        summary(&connection, all),
+        before_summary,
+        "the summary stays"
+    );
+    // The rule: a track's plays, else 1 for a played mark, plus plays with
+    // an album and no track; the latest in whole seconds; played when
+    // every indexed track has a play or a mark.
+    assert_eq!(
+        summary(&connection, all),
+        [
+            "u1:al1:2:2000000:1",
+            "u1:al2:2:10000000:1",
+            "u2:al1:2:6000000:1",
+            "u2:al2:1:4000000:1",
+        ],
+        "the summary is the rule's, from what is left"
+    );
+
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .unwrap();
+    let refused = connection
+        .execute_batch(
+            "INSERT INTO library_play_history (id, user_id, track_name, artist_name,
+                 played_at) VALUES ('p8', 'nobody', 'A', 'Artist', 9000000)",
+        )
+        .expect_err("a play needs its account");
+    assert!(
+        refused
+            .to_string()
+            .contains("FOREIGN KEY constraint failed"),
+        "{refused}"
+    );
+    connection
+        .execute_batch(
+            "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id,
+                 track_name, artist_name, played_at)
+                 VALUES ('p9', 'u2', 't2', 'al1', 'B', 'Artist', 9000000);",
+        )
+        .unwrap();
+    assert_eq!(
+        summary(&connection, "= 'u2'"),
+        ["u2:al1:2:9000000:1", "u2:al2:1:4000000:1"],
+        "a new play still moves the summary"
+    );
+    connection
+        .execute_batch(
+            "DELETE FROM library_play_history WHERE id = 'p2';
+             DELETE FROM catalog_user_play_marks WHERE user_id = 'u1';",
+        )
+        .unwrap();
+    assert_eq!(
+        summary(&connection, "= 'u1'"),
+        ["u1:al1:1:1000000:0", "u1:al2:1:3000000:0"],
+        "a play or mark taken off a live account still moves the summary"
+    );
+    let u1_plays = table_rows(
+        &connection,
+        "library_play_history WHERE user_id = 'u1'",
+        "rowid, *",
+    );
+    connection
+        .execute_batch("DELETE FROM auth_users WHERE id = 'u2'")
+        .unwrap();
+    assert_eq!(
+        table_rows(&connection, "library_play_history", "rowid, *"),
+        u1_plays,
+        "the account's plays go with it, and only those"
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM catalog_user_play_marks WHERE user_id = 'u2'"
+        ),
+        0,
+        "and its marks"
+    );
+    assert_eq!(
+        summary(&connection, all),
+        ["u1:al1:1:1000000:0", "u1:al2:1:3000000:0"],
+        "its summary rows go too, and the rest is still the rule's"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -2538,6 +2816,7 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("library_play_history", "local_album_id", "local_albums", "RESTRICT"),
     ("library_play_history", "local_artist_id", "local_artists", "RESTRICT"),
     ("library_play_history", "local_track_id", "local_tracks", "RESTRICT"),
+    ("library_play_history", "user_id", "auth_users", "CASCADE"),
     ("library_publish_created_folders", "bundle_id", "library_publish_operations", "CASCADE"),
     ("library_publish_operations", "applied_by_user_id", "auth_users", "SET NULL"),
     ("library_publish_outputs", "bundle_id", "library_publish_operations", "CASCADE"),
