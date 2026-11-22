@@ -57,6 +57,8 @@ pub struct Outbound {
     /// ListenBrainz API root: charts, wrapped, popularity, the Weekly Mix,
     /// scrobble forwarding and the token check.
     pub listenbrainz: String,
+    /// ListenBrainz labs root: the scored similar-artist lists.
+    pub listenbrainz_labs: String,
     /// Last.fm API endpoint: catalog reads, charts, scrobble forwarding
     /// and account linking.
     pub lastfm: String,
@@ -131,6 +133,7 @@ impl Outbound {
     pub fn live() -> Self {
         Self {
             listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+            listenbrainz_labs: listenbrainz::LABS_BASE_URL.to_owned(),
             lastfm: lastfm::DEFAULT_BASE_URL.to_owned(),
             audiodb: audiodb::DEFAULT_BASE_URL.to_owned(),
             wikidata: wikidata::WIKIDATA_BASE.to_owned(),
@@ -172,6 +175,7 @@ impl Outbound {
             brainzmash: self.brainzmash.clone(),
             coverart: self.cover_art_archive.clone(),
             listenbrainz: self.listenbrainz.clone(),
+            listenbrainz_labs: self.listenbrainz_labs.clone(),
             lastfm: self.lastfm.clone(),
             audiodb: self.audiodb.clone(),
             acoustid: self.acoustid.clone(),

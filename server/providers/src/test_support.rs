@@ -205,6 +205,7 @@ impl ProviderEndpoints {
             brainzmash: "http://127.0.0.1:9/brainzmash/ws/2".to_owned(),
             coverart: "http://127.0.0.1:9/coverart".to_owned(),
             listenbrainz: "http://127.0.0.1:9/listenbrainz".to_owned(),
+            listenbrainz_labs: "http://127.0.0.1:9/listenbrainz-labs".to_owned(),
             lastfm: "http://127.0.0.1:9/lastfm/".to_owned(),
             audiodb: "http://127.0.0.1:9/audiodb".to_owned(),
             acoustid: "http://127.0.0.1:9/acoustid".to_owned(),

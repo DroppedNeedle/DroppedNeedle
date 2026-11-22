@@ -103,6 +103,8 @@ pub struct ProviderEndpoints {
     pub coverart: String,
     /// ListenBrainz API root.
     pub listenbrainz: String,
+    /// ListenBrainz labs root: the scored similar-artist lists.
+    pub listenbrainz_labs: String,
     /// Last.fm API root.
     pub lastfm: String,
     /// TheAudioDB API root, without the key segment.
@@ -270,9 +272,18 @@ impl Providers {
             executor(&coverart::SPEC, coverart::SOURCE),
             &endpoints.coverart,
         );
+        // Labs paces on the `listenbrainz` row too: MetaBrainz counts both
+        // hosts together, so one install never sends it more than one call
+        // a second across them. The pace and every rate rest are shared
+        // with the main API, and so is the run of failed calls: labs rests
+        // the row after five in a row (the main API waits for ten), so
+        // callers stop a pass at their first labs failure. Its own spec
+        // keeps a labs failure off ListenBrainz's health.
         let listenbrainz = listenbrainz::ListenBrainzClient::new(
             executor(&listenbrainz::SPEC, listenbrainz::SOURCE),
             &endpoints.listenbrainz,
+            executor(&listenbrainz::LABS_SPEC, listenbrainz::SOURCE),
+            &endpoints.listenbrainz_labs,
         );
         let lastfm =
             lastfm::LastFmClient::new(executor(&lastfm::SPEC, lastfm::SOURCE), &endpoints.lastfm);

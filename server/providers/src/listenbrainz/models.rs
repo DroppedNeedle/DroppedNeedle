@@ -297,6 +297,52 @@ pub struct RadioRecording {
     pub total_listen_count: Option<i64>,
 }
 
+/// `GET /similar-artists/json` on the labs host, for one artist: the
+/// similar artists, highest score first.
+///
+/// Verified against labs.api.listenbrainz.org/similar-artists/json on 2026-11-22: tests/fixtures/listenbrainz/labs_similar_artists_radiohead.json (100 rows)
+/// and tests/fixtures/listenbrainz/labs_similar_artists_unknown.json (`[]` for an id labs does not know).
+/// A read of another artist the same day had rows whose `reference_mbid` was
+/// null.
+pub type ScoredSimilarArtistsAnswer = Vec<ScoredSimilarArtistRow>;
+
+/// One scored similar artist. The other recorded fields (`comment`, `type`,
+/// `gender`) are not read.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ScoredSimilarArtistRow {
+    /// Artist MBID: required identity.
+    pub artist_mbid: String,
+    /// Co-listening score: on every recorded row. The row is skipped
+    /// without one.
+    #[serde(default, deserialize_with = "loose_count")]
+    pub score: Option<i64>,
+    /// Display name.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub name: Option<String>,
+    /// The artist the score is measured from.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub reference_mbid: Option<String>,
+}
+
+/// `POST /1/popularity/artist`: one row per asked MBID.
+///
+/// Verified against api.listenbrainz.org/1/popularity/artist on 2026-11-22: tests/fixtures/listenbrainz/popularity_artist_post.json.
+/// An id ListenBrainz does not know answers a row with both counts null.
+pub type ArtistPopularityAnswer = Vec<ArtistPopularityRow>;
+
+/// One artist's listen and listener counts.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArtistPopularityRow {
+    /// Artist MBID: required identity.
+    pub artist_mbid: String,
+    /// Total listens; null for an unknown id, which gives no count.
+    #[serde(default, deserialize_with = "loose_count")]
+    pub total_listen_count: Option<i64>,
+    /// Distinct listeners, read like the listen count.
+    #[serde(default, deserialize_with = "loose_count")]
+    pub total_user_count: Option<i64>,
+}
+
 /// `GET /1/validate-token`.
 ///
 /// Verified against api.listenbrainz.org/1/validate-token on 2026-11-02: tests/fixtures/listenbrainz/validate_token_invalid.json.

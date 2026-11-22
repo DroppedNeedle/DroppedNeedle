@@ -296,6 +296,7 @@ pub fn outbound_at(origin: &str) -> droppedneedle::bootstrap::Outbound {
     let at = |path: &str| format!("{origin}/{path}");
     droppedneedle::bootstrap::Outbound {
         listenbrainz: at("listenbrainz"),
+        listenbrainz_labs: at("listenbrainz-labs"),
         lastfm: at("lastfm/"),
         audiodb: at("audiodb"),
         wikidata: at("wikidata"),

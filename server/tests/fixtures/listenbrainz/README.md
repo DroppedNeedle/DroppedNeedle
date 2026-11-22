@@ -63,6 +63,30 @@ are still not computed:
   a public account's stats. Re-indented, and `user_id` replaced with
   `listenbrainz-user`; nothing else changed. One row per genre and hour.
 
+Scored similar artists and artist popularity, 2026-11-22, with the app's
+User-Agent and no token. The labs reads are from
+`https://labs.api.listenbrainz.org`, each with
+`algorithm=session_based_days_7500_session_300_contribution_5_threshold_10_limit_100_filter_True_skip_30`
+unless said otherwise:
+
+- `labs_similar_artists_radiohead.json`: HTTP 200 to
+  `GET /similar-artists/json?artist_mbids=a74b1b7f-71a5-4011-9441-d0b5e4122711`.
+  100 rows, highest score first, each with `artist_mbid`, `name`, `comment`,
+  `type`, `gender`, `score` and `reference_mbid`; Radiohead is not among
+  them. The same shape as 23 earlier lists read that day, one of which had
+  rows with `reference_mbid` null.
+- `labs_similar_artists_unknown.json`: HTTP 200 to the same read with
+  `artist_mbids=00000000-0000-4000-8000-000000000000`. The answer is `[]`.
+- `labs_unknown_algorithm.html`: the body of the HTTP 400 to the Radiohead
+  read with `algorithm=droppedneedle_no_such_algorithm`, an HTML page
+  (`text/html`) saying the `algorithm` value is not one it has and listing
+  the six it has. Kept byte for byte.
+- `popularity_artist_post.json`: HTTP 200 to `POST /1/popularity/artist` on
+  `https://api.listenbrainz.org` with `artist_mbids` for
+  `00000000-0000-4000-8000-000000000000`, Queen, Red Hot Chili Peppers,
+  Radiohead and The Rolling Stones, sorted. One row per id in that order; the
+  unknown id's counts are both null.
+
 No file: HTTP 204 with an empty body while a new account's stats are not
 computed yet. Recorded for `GET /1/stats/user/DroppedNeedle/artists?count=5`,
 `.../recordings?count=5`, `.../release-groups?count=5` and

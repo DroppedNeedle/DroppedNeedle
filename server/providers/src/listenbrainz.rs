@@ -8,7 +8,9 @@
 //! Every request goes through the one ListenBrainz [`Executor`], which
 //! paces at the `listenbrainz` row of the rate table: reads and scrobble
 //! forwarding share that bucket, so one install never sends more than one
-//! request a second. Each call names its priority.
+//! request a second. The labs host's scored similar-artist lists go
+//! through an executor of their own on that same row, and never carry a
+//! token. Each call names its priority.
 //!
 //! Every call sends `Accept: application/json`, plus
 //! `Authorization: Token <token>` whenever a token is given, and every
@@ -33,10 +35,11 @@ use crate::error::{ProviderError, TransportKind, retry_delay_from_headers};
 use crate::executor::{Answer, Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 
 use self::models::{
-    ListenCountAnswer, ListenItem, ListensAnswer, RadioArtistAnswer, RecordingMetadataAnswer,
-    RecordingPopularityAnswer, ReleaseGroupEntry, ReleaseGroupMetadataAnswer,
-    ReleaseGroupPopularityAnswer, TagItem, TopRecordingRow, TopRecordingsAnswer,
-    TopReleaseGroupRow, TopReleaseGroupsAnswer, ValidateTokenAnswer,
+    ArtistPopularityAnswer, ListenCountAnswer, ListenItem, ListensAnswer, RadioArtistAnswer,
+    RecordingMetadataAnswer, RecordingPopularityAnswer, ReleaseGroupEntry,
+    ReleaseGroupMetadataAnswer, ReleaseGroupPopularityAnswer, ScoredSimilarArtistsAnswer, TagItem,
+    TopRecordingRow, TopRecordingsAnswer, TopReleaseGroupRow, TopReleaseGroupsAnswer,
+    ValidateTokenAnswer,
 };
 
 pub mod models;
@@ -45,6 +48,16 @@ pub mod stats;
 
 /// Default API host.
 pub const DEFAULT_BASE_URL: &str = "https://api.listenbrainz.org";
+/// The labs host, which serves the scored similar-artist lists.
+pub const LABS_BASE_URL: &str = "https://labs.api.listenbrainz.org";
+/// The labs dataset similar artists are read from: co-listening within
+/// listening sessions. ListenBrainz may retire a dataset; asked for one it
+/// no longer has, labs answers 400 (see [`LABS_SPEC`]).
+pub const SIMILAR_ARTISTS_ALGORITHM: &str =
+    "session_based_days_7500_session_300_contribution_5_threshold_10_limit_100_filter_True_skip_30";
+/// Local ceiling on artist ids per popularity POST: a local bound, not an
+/// upstream limit.
+pub const ARTIST_POPULARITY_BATCH: usize = 500;
 /// Local ceiling on release-group ids per metadata GET: a local safety
 /// bound, not an upstream limit.
 pub const RELEASE_GROUP_BATCH: usize = 25;
@@ -56,6 +69,13 @@ pub const MAX_GENRE_IDS: usize = 500;
 pub const MAX_TOKEN_LEN: usize = 1024;
 /// The provider name errors carry, and the ListenBrainz rate row.
 pub const SOURCE: &str = "listenbrainz";
+/// The provider name and health key of labs reads, so a labs failure never
+/// counts against ListenBrainz's own service health. Labs paces on the
+/// [`SOURCE`] row and shares its rests.
+pub const LABS_SOURCE: &str = "listenbrainz-labs";
+/// Largest labs answer read: a list holds at most 100 rows, 21 KB for
+/// Radiohead (recorded 2026-11-22).
+const MAX_LABS_BODY_BYTES: usize = 1024 * 1024;
 /// Largest ListenBrainz answer read.
 // The popularity lists take no limit: Radiohead's top recordings are 1.5 MB
 // (recorded 2026-11-02). An answer over the cap fails and is asked for again.
@@ -63,6 +83,9 @@ const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// The [`ProviderError::Invalid`] reason when the API root is not a usable
 /// URL, so a caller can tell it from a token that cannot be sent.
 pub const UNUSABLE_ADDRESS: &str = "the ListenBrainz address is not usable";
+/// The [`ProviderError::Invalid`] reason when the labs root is not a
+/// usable URL.
+pub const UNUSABLE_LABS_ADDRESS: &str = "the ListenBrainz labs address is not usable";
 
 /// ListenBrainz on the wire. Popularity switched off for load is
 /// [`ProviderError::Disabled`]; a read sent without a token to an endpoint
@@ -88,22 +111,63 @@ pub static SPEC: Spec = Spec {
     classify,
 };
 
+/// The labs host on the wire: the ListenBrainz rules, under its own name
+/// and health key. A 400 that names the `algorithm` field is a dataset
+/// labs no longer offers, [`ProviderError::Disabled`], never "no similar
+/// artists": asked for a made-up name on 2026-11-22, labs answered 400
+/// with an HTML page listing the datasets it has
+/// (tests/fixtures/listenbrainz/labs_unknown_algorithm.html).
+pub static LABS_SPEC: Spec = Spec {
+    source: LABS_SOURCE,
+    health_key: LABS_SOURCE,
+    timeout: Duration::from_secs(15),
+    max_body: MAX_LABS_BODY_BYTES,
+    retry_after_default: Backoff::Exponential {
+        base: Duration::from_secs(60),
+        max: Duration::from_secs(15 * 60),
+    },
+    retry_after_cap: Duration::from_secs(3600),
+    classify: classify_labs,
+};
+
 /// The ListenBrainz hook over the standard rules.
 fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
+    classify_as(SOURCE, answer)
+}
+
+/// The labs hook: a dataset labs no longer offers, else the ListenBrainz
+/// rules.
+fn classify_labs(answer: &Answer<'_>) -> Result<(), ProviderError> {
+    let reply = answer.reply;
+    if reply.status() == 400 && String::from_utf8_lossy(reply.bytes()).contains("algorithm") {
+        tracing::warn!(
+            algorithm = SIMILAR_ARTISTS_ALGORITHM,
+            "ListenBrainz labs no longer offers this similar-artists dataset"
+        );
+        return Err(ProviderError::Disabled {
+            provider: LABS_SOURCE,
+            message: "ListenBrainz labs no longer offers this similar-artists dataset".to_owned(),
+        });
+    }
+    classify_as(LABS_SOURCE, answer)
+}
+
+/// The ListenBrainz rules, with errors naming `provider`.
+fn classify_as(provider: &'static str, answer: &Answer<'_>) -> Result<(), ProviderError> {
     let reply = answer.reply;
     let status = reply.status();
     if status == 500 && String::from_utf8_lossy(reply.bytes()).contains("currently disabled") {
         return Err(ProviderError::Disabled {
-            provider: SOURCE,
+            provider,
             message: format!("ListenBrainz switched this endpoint off upstream ({status})"),
         });
     }
     if status == 401 && wants_token(&String::from_utf8_lossy(reply.bytes())) {
-        return Err(needs_account());
+        return Err(needs_account_at(provider));
     }
     if status == 429 {
         return Err(ProviderError::RateLimited {
-            provider: SOURCE,
+            provider,
             retry_after: reset_in(reply, answer.now_unix).or_else(|| answer.retry_after()),
         });
     }
@@ -141,8 +205,13 @@ fn wants_token(body: &str) -> bool {
 
 /// A read ListenBrainz answers only with a token, asked without one.
 fn needs_account() -> ProviderError {
+    needs_account_at(SOURCE)
+}
+
+/// [`needs_account`] naming `provider`.
+fn needs_account_at(provider: &'static str) -> ProviderError {
     ProviderError::NotConfigured {
-        provider: SOURCE,
+        provider,
         message: "ListenBrainz answers this read only with an account".to_owned(),
     }
 }
@@ -289,6 +358,32 @@ pub struct SimilarArtist {
     pub listen_count: i64,
 }
 
+/// One artist from the labs similar-artists list: how often its listening
+/// shares a session with the asked artist's. The score is co-listening, not
+/// fame divided out; callers weigh it against listener counts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScoredSimilarArtist {
+    /// Artist MBID.
+    pub artist_mbid: String,
+    /// Artist name, when the row carries one.
+    pub name: Option<String>,
+    /// Co-listening score, highest first as answered.
+    pub score: i64,
+    /// The artist the score is measured from, when the row names one; null
+    /// on some rows of earlier reads.
+    pub reference_mbid: Option<String>,
+}
+
+/// One artist's popularity across ListenBrainz. Both counts are `None`
+/// when ListenBrainz has none, as for an id it does not know.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ArtistPopularity {
+    /// Total listens.
+    pub listen_count: Option<i64>,
+    /// Distinct listeners.
+    pub listeners: Option<i64>,
+}
+
 /// The cache key of one recording's release group.
 #[must_use]
 pub fn recording_group_key(recording_mbid: &str) -> CacheKey {
@@ -310,25 +405,36 @@ pub fn release_group_genres_key(release_group_mbid: &str) -> CacheKey {
     )
 }
 
-/// ListenBrainz client over the ListenBrainz executor. Built once with the
-/// providers; every call names its priority.
+/// ListenBrainz client over the ListenBrainz executor, and the labs
+/// executor beside it. Built once with the providers; every call names its
+/// priority.
 #[derive(Debug, Clone)]
 pub struct ListenBrainzClient {
     executor: Executor,
     base: Option<Url>,
+    labs: Executor,
+    labs_base: Option<Url>,
 }
 
 impl ListenBrainzClient {
-    /// The client sending through `executor` to the API root at `base_url`.
+    /// The client sending through `executor` to the API root at `base_url`,
+    /// and through `labs` to the labs root at `labs_url`.
     #[must_use]
-    pub fn new(executor: Executor, base_url: &str) -> Self {
-        let base = Url::parse(base_url.trim())
-            .ok()
-            .filter(|url| matches!(url.scheme(), "http" | "https") && !url.cannot_be_a_base());
+    pub fn new(executor: Executor, base_url: &str, labs: Executor, labs_url: &str) -> Self {
+        let base = web_root(base_url);
         if base.is_none() {
             tracing::error!("the ListenBrainz address is not an http or https URL");
         }
-        Self { executor, base }
+        let labs_base = web_root(labs_url);
+        if labs_base.is_none() {
+            tracing::error!("the ListenBrainz labs address is not an http or https URL");
+        }
+        Self {
+            executor,
+            base,
+            labs,
+            labs_base,
+        }
     }
 
     /// The executor every ListenBrainz request goes through.
@@ -755,6 +861,110 @@ impl ListenBrainzClient {
         Ok(similar)
     }
 
+    /// Artists whose listening shares sessions with one artist's, scored,
+    /// from labs (`GET /similar-artists/json` over
+    /// [`SIMILAR_ARTISTS_ALGORITHM`]), in the order answered. The id is sent
+    /// in lower case. Rows without
+    /// a score, without a usable id, or naming the asked artist are
+    /// skipped. An artist labs does not know answers an empty list. No
+    /// token is sent: labs answered without one on 2026-11-22.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::Invalid`] for an id that is not an MBID (nothing is
+    /// sent); [`ProviderError::Disabled`] when labs no longer offers the
+    /// dataset; otherwise the typed failure of the call.
+    pub async fn scored_similar_artists(
+        &self,
+        artist_mbid: &str,
+        priority: RequestPriority,
+    ) -> Result<Vec<ScoredSimilarArtist>, ProviderError> {
+        let artist_mbid = artist_mbid.trim().to_ascii_lowercase();
+        let artist_mbid = artist_mbid.as_str();
+        if !super::musicbrainz::is_valid_mbid(artist_mbid) {
+            return Err(labs_invalid("not an artist MBID"));
+        }
+        let base = self
+            .labs_base
+            .as_ref()
+            .ok_or_else(|| labs_invalid(UNUSABLE_LABS_ADDRESS))?;
+        let request = Request::get(
+            base,
+            &["similar-artists", "json"],
+            &[
+                ("artist_mbids", artist_mbid),
+                ("algorithm", SIMILAR_ARTISTS_ALGORITHM),
+            ],
+        )
+        .map_err(|_| labs_invalid(UNUSABLE_LABS_ADDRESS))?
+        .header("accept", "application/json");
+        let reply = send_on(&self.labs, request, priority).await?;
+        let rows = decode_from::<ScoredSimilarArtistsAnswer>(&reply, LABS_SOURCE)?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| {
+                let mbid = row.artist_mbid.trim();
+                if !super::musicbrainz::is_valid_mbid(mbid)
+                    || mbid.eq_ignore_ascii_case(artist_mbid)
+                {
+                    return None;
+                }
+                Some(ScoredSimilarArtist {
+                    artist_mbid: mbid.to_owned(),
+                    name: row.name,
+                    score: row.score?,
+                    reference_mbid: row.reference_mbid,
+                })
+            })
+            .collect())
+    }
+
+    /// Listen and listener counts for artist MBIDs (`POST
+    /// /1/popularity/artist`). The ids go once each, sorted, at most
+    /// [`ARTIST_POPULARITY_BATCH`] a call. An id ListenBrainz does not know
+    /// is in the map with no counts; an id missing from the answer is not
+    /// in it. A 204 yields no rows with a note, and a malformed answer is a
+    /// payload error, never "zero listeners".
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the first batch that failed.
+    pub async fn artist_popularity(
+        &self,
+        artist_mbids: &[String],
+        creds: &ListenBrainzCredentials,
+        priority: RequestPriority,
+    ) -> Result<HashMap<String, ArtistPopularity>, ProviderError> {
+        let mut unique = unique_trimmed(artist_mbids);
+        unique.sort_unstable();
+        let mut counts: HashMap<String, ArtistPopularity> = HashMap::new();
+        for batch in unique.chunks(ARTIST_POPULARITY_BATCH) {
+            let body = serde_json::json!({"artist_mbids": batch});
+            // A read sent as POST: sending it twice is safe.
+            let request = self
+                .post(&["1", "popularity", "artist"], &body, creds)?
+                .idempotent(true);
+            let rows = self
+                .read_unconfirmed::<ArtistPopularityAnswer>(request, priority)
+                .await?
+                .unwrap_or_default();
+            for row in rows {
+                let mbid = row.artist_mbid.trim();
+                if mbid.is_empty() {
+                    continue;
+                }
+                counts.insert(
+                    mbid.to_owned(),
+                    ArtistPopularity {
+                        listen_count: row.total_listen_count,
+                        listeners: row.total_user_count,
+                    },
+                );
+            }
+        }
+        Ok(counts)
+    }
+
     /// Submit listens for the token's account (`POST /1/submit-listens`).
     /// `listens` is the JSON document. Sent once: a submission is never
     /// repeated here, the caller's queue decides about another try.
@@ -888,30 +1098,13 @@ impl ListenBrainzClient {
         with_headers(request, creds.user_token.as_deref())
     }
 
-    /// Send one request. An answer that says the rate window is spent,
-    /// a refusal included, rests the bucket until the window resets, as
-    /// the API docs ask.
+    /// Send one request to the API root, through [`send_on`].
     async fn send(
         &self,
         request: Request,
         priority: RequestPriority,
     ) -> Result<Reply, ProviderError> {
-        let reply = self.executor.send(request, priority).await?;
-        if let Some(wait) = window_spent(&reply) {
-            self.executor
-                .limiter()
-                .cool_down(wait.min(SPEC.retry_after_cap));
-        }
-        // A refusal `classify` passed back for its headers (no other 4xx
-        // gets here). The standard rules read the time only for 429 and
-        // 503, and neither is passed back.
-        if (400..500).contains(&reply.status()) {
-            standard_classify(&Answer {
-                reply: &reply,
-                now_unix: 0,
-            })?;
-        }
-        Ok(reply)
+        send_on(&self.executor, request, priority).await
     }
 
     /// Send one read and decode its body as `T`. `None` is a 204:
@@ -947,6 +1140,37 @@ impl ListenBrainzClient {
     }
 }
 
+/// `address` as an API root: an http or https URL that can carry a path.
+fn web_root(address: &str) -> Option<Url> {
+    Url::parse(address.trim())
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https") && !url.cannot_be_a_base())
+}
+
+/// Send one request through `executor`. An answer that says the rate
+/// window is spent, a refusal included, rests the bucket until the window
+/// resets, as the API docs ask.
+async fn send_on(
+    executor: &Executor,
+    request: Request,
+    priority: RequestPriority,
+) -> Result<Reply, ProviderError> {
+    let reply = executor.send(request, priority).await?;
+    if let Some(wait) = window_spent(&reply) {
+        executor.limiter().cool_down(wait.min(SPEC.retry_after_cap));
+    }
+    // A refusal `classify` passed back for its headers (no other 4xx
+    // gets here). The standard rules read the time only for 429 and
+    // 503, and neither is passed back.
+    if (400..500).contains(&reply.status()) {
+        standard_classify(&Answer {
+            reply: &reply,
+            now_unix: 0,
+        })?;
+    }
+    Ok(reply)
+}
+
 /// `request` with `Authorization: Token <token>` when a token is given.
 /// A token that cannot ride in a header is refused before sending.
 fn with_headers(request: Request, token: Option<&str>) -> Result<Request, ProviderError> {
@@ -962,25 +1186,36 @@ fn with_headers(request: Request, token: Option<&str>) -> Result<Request, Provid
 /// Decode `reply` as `T`. A body that does not decode is a payload error,
 /// noted for the request.
 fn decode<T: DeserializeOwned>(reply: &Reply) -> Result<T, ProviderError> {
+    decode_from(reply, SOURCE)
+}
+
+/// [`decode`] for an answer from `provider`.
+fn decode_from<T: DeserializeOwned>(
+    reply: &Reply,
+    provider: &'static str,
+) -> Result<T, ProviderError> {
     reply
         .json::<T>()
-        .inspect_err(|error| note_shape(&error.to_string()))
+        .inspect_err(|error| note_shape(provider, &error.to_string()))
 }
 
 /// An answer that did not have the expected shape: the service answered,
 /// so it is noted for the request but never counted as an outage.
-fn note_shape(cause: &str) {
-    tracing::debug!(
-        provider = SOURCE,
-        cause,
-        "ListenBrainz answer had no usable shape"
-    );
-    record_current(SOURCE, IntegrationStatus::Error, true);
+fn note_shape(provider: &'static str, cause: &str) {
+    tracing::debug!(provider, cause, "ListenBrainz answer had no usable shape");
+    record_current(provider, IntegrationStatus::Error, true);
 }
 
 fn invalid(reason: &'static str) -> ProviderError {
     ProviderError::Invalid {
         provider: SOURCE,
+        reason,
+    }
+}
+
+fn labs_invalid(reason: &'static str) -> ProviderError {
+    ProviderError::Invalid {
+        provider: LABS_SOURCE,
         reason,
     }
 }

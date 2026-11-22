@@ -448,6 +448,7 @@ fn providers_over(wire: &Arc<ScriptedWire>) -> Providers {
             brainzmash: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
             coverart: coverart::COVER_ART_ARCHIVE_BASE.to_owned(),
             listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+            listenbrainz_labs: listenbrainz::LABS_BASE_URL.to_owned(),
             lastfm: lastfm::DEFAULT_BASE_URL.to_owned(),
             audiodb: audiodb::DEFAULT_BASE_URL.to_owned(),
             acoustid: acoustid::DEFAULT_BASE_URL.to_owned(),
@@ -912,6 +913,124 @@ async fn listenbrainz_token_only_reads_send_nothing_without_a_token() {
         .await
         .expect("songs read with a token");
     assert_eq!(wire.sent().len(), 2, "each went out once");
+}
+
+/// The scored similar-artists list is read from the labs host, naming its
+/// dataset and carrying no token; the artist counts POST sends each id
+/// once, sorted, with the caller's token when one is given and none
+/// otherwise. Both hosts draw from the one `listenbrainz` bucket, so a
+/// labs call and a main-API call back to back are a second apart.
+#[tokio::test(start_paused = true)]
+async fn listenbrainz_labs_and_artist_counts_share_one_bucket() {
+    use droppedneedle_providers::executor::Body;
+    use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
+    const RADIOHEAD: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    const QUEEN: &str = "0383dadf-2a4e-4d10-a46a-e9e041da8eb3";
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(
+        Method::Get,
+        &format!("{}/similar-artists/json", listenbrainz::LABS_BASE_URL),
+        answer(200, &[], "[]"),
+    );
+    wire.on(
+        Method::Post,
+        &format!("{}/1/popularity/artist", listenbrainz::DEFAULT_BASE_URL),
+        answer(200, &[], "[]"),
+    );
+    let client = &providers_over(&wire).listenbrainz;
+    let priority = RequestPriority::BackgroundSync;
+    let linked = ListenBrainzCredentials {
+        username: Some("listener".to_owned()),
+        user_token: Some("token".to_owned()),
+    };
+
+    let started = Instant::now();
+    client
+        .scored_similar_artists(RADIOHEAD, priority)
+        .await
+        .expect("labs answers");
+    client
+        .artist_popularity(
+            &[
+                RADIOHEAD.to_owned(),
+                QUEEN.to_owned(),
+                format!(" {RADIOHEAD} "),
+            ],
+            &linked,
+            priority,
+        )
+        .await
+        .expect("the counts answer");
+    let waited = started.elapsed();
+    assert!(
+        waited >= Duration::from_millis(990) && waited < Duration::from_secs(2),
+        "the second call waits for the shared bucket: {waited:?}"
+    );
+
+    let sent = wire.sent();
+    assert_eq!(sent.len(), 2);
+    let labs = &sent[0];
+    assert_eq!(labs.url.host_str(), Some("labs.api.listenbrainz.org"));
+    assert_eq!(labs.url.path(), "/similar-artists/json");
+    assert_eq!(labs.query("artist_mbids").as_deref(), Some(RADIOHEAD));
+    assert_eq!(
+        labs.query("algorithm").as_deref(),
+        Some(listenbrainz::SIMILAR_ARTISTS_ALGORITHM)
+    );
+    assert!(
+        !labs
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("authorization")),
+        "labs gets no token"
+    );
+    let Body::Json(body) = &sent[1].body else {
+        panic!("the counts are asked with a JSON body");
+    };
+    let body: serde_json::Value = serde_json::from_slice(body).expect("the body is JSON");
+    assert_eq!(
+        body,
+        serde_json::json!({"artist_mbids": [QUEEN, RADIOHEAD]}),
+        "each id once, sorted"
+    );
+    let authorization = |sent: &droppedneedle_providers::test_support::Sent| {
+        sent.headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+            .map(|(_, value)| value.clone())
+    };
+    assert_eq!(authorization(&sent[1]).as_deref(), Some("Token token"));
+
+    client
+        .artist_popularity(
+            &[RADIOHEAD.to_owned()],
+            &ListenBrainzCredentials::default(),
+            priority,
+        )
+        .await
+        .expect("the counts answer without a token");
+    assert_eq!(authorization(&wire.sent()[2]), None, "no token, none sent");
+}
+
+/// A rate rest is shared: a 429 from labs rests the whole row, the main
+/// API included.
+#[tokio::test(start_paused = true)]
+async fn a_labs_rate_limit_rests_the_main_api() {
+    let labs = format!("{}/similar-artists/json", listenbrainz::LABS_BASE_URL);
+    let radiohead = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(Method::Get, &labs, answer(429, &[("retry-after", "7")], ""));
+    let providers = providers_over(&wire);
+    providers
+        .listenbrainz
+        .scored_similar_artists(radiohead, RequestPriority::UserInitiated)
+        .await
+        .expect_err("labs is rate limited");
+    let cooling = providers.limiter("listenbrainz").unwrap().cooling_for();
+    assert!(
+        cooling > Duration::from_secs(6) && cooling <= Duration::from_secs(7),
+        "a labs 429 rests the shared row: {cooling:?}"
+    );
 }
 
 /// The Last.fm rules: an error code inside an answer is read whatever the

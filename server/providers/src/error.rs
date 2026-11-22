@@ -294,7 +294,7 @@ pub fn display_name(provider: &'static str) -> &'static str {
     match provider {
         "musicbrainz" => "MusicBrainz",
         "brainzmash" => "BrainzMash",
-        "listenbrainz" => "ListenBrainz",
+        "listenbrainz" | "listenbrainz-labs" => "ListenBrainz",
         "lastfm" => "Last.fm",
         "coverartarchive" => "Cover Art Archive",
         "audiodb" => "TheAudioDB",

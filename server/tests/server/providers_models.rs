@@ -97,6 +97,8 @@ enum ListenBrainzRead {
     TopReleaseGroups,
     TopRecordings,
     Similar,
+    ScoredSimilar,
+    ArtistPopularity,
     SitewideArtists,
     SitewideReleaseGroups,
     ListenCount,
@@ -788,6 +790,20 @@ const ROWS: &[Row] = &[
         body: include_str!("../fixtures/listenbrainz/lb_radio_artist.json"),
         kind: PayloadKind::Decode,
         identity: "/ada7a83c-e3e1-40f1-93f9-3e73dbc9298a/0/total_listen_count",
+    },
+    Row {
+        name: "listenbrainz labs similar artists, id",
+        provider: Provider::ListenBrainz(ListenBrainzRead::ScoredSimilar),
+        body: include_str!("../fixtures/listenbrainz/labs_similar_artists_radiohead.json"),
+        kind: PayloadKind::Decode,
+        identity: "/0/artist_mbid",
+    },
+    Row {
+        name: "listenbrainz /1/popularity/artist, id",
+        provider: Provider::ListenBrainz(ListenBrainzRead::ArtistPopularity),
+        body: include_str!("../fixtures/listenbrainz/popularity_artist_post.json"),
+        kind: PayloadKind::Decode,
+        identity: "/0/artist_mbid",
     },
     Row {
         name: "listenbrainz sitewide artists, list",
@@ -1500,6 +1516,29 @@ fn listenbrainz_answer(method: Method, path: &str, status: u16, body: &str) -> P
     )
 }
 
+/// The providers answering the labs similar-artists read with `status`
+/// and `body`, and the wire, to count what was sent.
+fn labs_answer(status: u16, body: &str) -> (Providers, Arc<ScriptedWire>) {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(
+        Method::Get,
+        "http://fake/listenbrainz-labs/similar-artists/json",
+        Scripted::Answer {
+            status,
+            headers: Vec::new(),
+            body: body.as_bytes().to_vec(),
+        },
+    );
+    let providers = Providers::unpaced_at(
+        wire.clone(),
+        ProviderEndpoints {
+            listenbrainz_labs: "http://fake/listenbrainz-labs".to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    );
+    (providers, wire)
+}
+
 /// A linked person's identity: an artist's top release groups and
 /// recordings are read only with a token.
 fn linked() -> ListenBrainzCredentials {
@@ -1555,6 +1594,19 @@ async fn listenbrainz(read: ListenBrainzRead, body: &str) -> Result<bool, Provid
             !answer(Method::Get, path)
                 .listenbrainz
                 .similar_artists(MB_RADIOHEAD_MBID, 3, &creds, PRIORITY)
+                .await?
+                .is_empty()
+        }
+        ListenBrainzRead::ScoredSimilar => !labs_answer(200, body)
+            .0
+            .listenbrainz
+            .scored_similar_artists(MB_RADIOHEAD_MBID, PRIORITY)
+            .await?
+            .is_empty(),
+        ListenBrainzRead::ArtistPopularity => {
+            !answer(Method::Post, "/1/popularity/artist".to_owned())
+                .listenbrainz
+                .artist_popularity(&[MB_RADIOHEAD_MBID.to_owned()], &creds, PRIORITY)
                 .await?
                 .is_empty()
         }
@@ -2024,6 +2076,115 @@ async fn listenbrainz_recorded_values_read_as_answered() {
     let names: Vec<&str> = similar.iter().map(|a| a.artist_name.as_str()).collect();
     assert_eq!(names.len(), 2, "the seed is dropped: {names:?}");
     assert!(!names.contains(&"Radiohead"), "{names:?}");
+}
+
+/// The recorded labs lists and artist counts read as answered: the scored
+/// list keeps its order, a null `reference_mbid` (seen on rows of earlier
+/// reads) keeps its row, a row without a score is skipped, and an
+/// unknown artist has no neighbours. A dataset labs no longer offers is a
+/// failure, sent once, never an empty list. An id ListenBrainz does not
+/// know has no counts.
+#[tokio::test]
+async fn listenbrainz_labs_and_artist_counts_read_as_answered() {
+    use droppedneedle_providers::listenbrainz::ArtistPopularity;
+    let recorded = include_str!("../fixtures/listenbrainz/labs_similar_artists_radiohead.json");
+    let similar = labs_answer(200, recorded)
+        .0
+        .listenbrainz
+        .scored_similar_artists(MB_RADIOHEAD_MBID, PRIORITY)
+        .await
+        .expect("the recording decodes");
+    assert_eq!(similar.len(), 100, "no recorded row is dropped");
+    assert_eq!(similar[0].name.as_deref(), Some("Nirvana"));
+    assert_eq!(similar[0].score, 11_156);
+    assert_eq!(
+        similar[0].reference_mbid.as_deref(),
+        Some(MB_RADIOHEAD_MBID)
+    );
+    assert!(
+        similar
+            .windows(2)
+            .all(|pair| pair[0].score >= pair[1].score)
+    );
+
+    let mut rows: serde_json::Value = serde_json::from_str(recorded).expect("recorded body parses");
+    rows[0]["reference_mbid"] = serde_json::Value::Null;
+    rows[1]
+        .as_object_mut()
+        .expect("a row is an object")
+        .remove("score");
+    let edited = labs_answer(200, &rows.to_string())
+        .0
+        .listenbrainz
+        .scored_similar_artists(MB_RADIOHEAD_MBID, PRIORITY)
+        .await
+        .expect("a null reference is not a failure");
+    assert_eq!(edited.len(), 99, "only the row without a score is skipped");
+    assert_eq!(edited[0].name.as_deref(), Some("Nirvana"));
+    assert_eq!(edited[0].reference_mbid, None);
+
+    let unknown = labs_answer(
+        200,
+        include_str!("../fixtures/listenbrainz/labs_similar_artists_unknown.json"),
+    )
+    .0
+    .listenbrainz
+    .scored_similar_artists("00000000-0000-4000-8000-000000000000", PRIORITY)
+    .await
+    .expect("an unknown artist is not a failure");
+    assert!(unknown.is_empty());
+
+    let (retired, wire) = labs_answer(
+        400,
+        include_str!("../fixtures/listenbrainz/labs_unknown_algorithm.html"),
+    );
+    let retired = retired
+        .listenbrainz
+        .scored_similar_artists(MB_RADIOHEAD_MBID, PRIORITY)
+        .await;
+    assert!(
+        matches!(
+            retired,
+            Err(ProviderError::Disabled {
+                provider: "listenbrainz-labs",
+                ..
+            })
+        ),
+        "{retired:?}"
+    );
+    assert_eq!(wire.sent().len(), 1, "a retired dataset is not asked again");
+
+    let ids = [
+        "00000000-0000-4000-8000-000000000000",
+        "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+        "8bfac288-ccc5-448d-9573-c33ea2aa5c30",
+        MB_RADIOHEAD_MBID,
+        "b071f9fa-14b0-4217-8e97-eb41da73f598",
+    ]
+    .map(str::to_owned);
+    let counts = listenbrainz_answer(
+        Method::Post,
+        "/1/popularity/artist",
+        200,
+        include_str!("../fixtures/listenbrainz/popularity_artist_post.json"),
+    )
+    .listenbrainz
+    .artist_popularity(&ids, &ListenBrainzCredentials::default(), PRIORITY)
+    .await
+    .expect("the recording decodes");
+    assert_eq!(counts.len(), 5, "every asked id is answered");
+    assert_eq!(
+        counts[MB_RADIOHEAD_MBID],
+        ArtistPopularity {
+            listen_count: Some(134_659_628),
+            listeners: Some(461_120),
+        }
+    );
+    assert_eq!(
+        counts["00000000-0000-4000-8000-000000000000"],
+        ArtistPopularity::default(),
+        "an unknown id has no counts"
+    );
 }
 
 /// The recorded sitewide charts keep their MBIDs: the artist list names one

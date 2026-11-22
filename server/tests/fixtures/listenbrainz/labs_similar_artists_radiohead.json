@@ -1,0 +1,902 @@
+[
+  {
+    "artist_mbid": "5b11f4ce-a62d-471e-81fc-a69a8278c7da",
+    "name": "Nirvana",
+    "comment": "1980s\u20131990s US grunge band",
+    "type": "Group",
+    "gender": null,
+    "score": 11156,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "8bfac288-ccc5-448d-9573-c33ea2aa5c30",
+    "name": "Red Hot Chili Peppers",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 10587,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "9c9f1380-2516-4fc9-a3e6-f9f61941d090",
+    "name": "Muse",
+    "comment": "UK rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 10286,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "cc197bad-dc9c-440d-a5b5-d52ba2e14234",
+    "name": "Coldplay",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 9919,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "ba0d6274-db14-4ef5-b28d-657ebde1a396",
+    "name": "The Smashing Pumpkins",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 9657,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+    "name": "The Beatles",
+    "comment": "UK rock band, \u201cThe Fab Four\u201d",
+    "type": "Group",
+    "gender": null,
+    "score": 9530,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "83d91898-7763-47d7-b03b-b92132375c47",
+    "name": "Pink Floyd",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 9191,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "b6b2bb8d-54a9-491f-9607-7b546023b433",
+    "name": "Pixies",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 8975,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "5441c29d-3602-4898-b1a1-b77fa23b8e50",
+    "name": "David Bowie",
+    "comment": "English singer\u2010songwriter",
+    "type": "Person",
+    "gender": "Male",
+    "score": 8852,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "67f66c07-6e61-4026-ade5-7e782fad3a5d",
+    "name": "Foo Fighters",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 8765,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "e21857d5-3256-4547-afb3-4b6ded592596",
+    "name": "Gorillaz",
+    "comment": "virtual band",
+    "type": "Group",
+    "gender": null,
+    "score": 8702,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "ba853904-ae25-4ebb-89d6-c44cfbd71bd2",
+    "name": "Blur",
+    "comment": "UK alternative rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 8671,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "ada7a83c-e3e1-40f1-93f9-3e73dbc9298a",
+    "name": "Arctic Monkeys",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 8663,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "309c62ba-7a22-4277-9f67-4a162526d18a",
+    "name": "Beck",
+    "comment": "alt rock, multi\u2010instrumentalist Beck Hansen",
+    "type": "Person",
+    "gender": "Male",
+    "score": 8583,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "ea4dfa26-f633-4da6-a52a-f49ea4897b58",
+    "name": "R.E.M.",
+    "comment": "American rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 8574,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "f181961b-20f7-459e-89de-920ef03c7ed0",
+    "name": "The Strokes",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 8503,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "11ae9fbb-f3d7-4a47-936f-4c0a04d3b3b5",
+    "name": "The White Stripes",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 8362,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "056e4f3e-d505-4dad-8ec1-d04f521cbb56",
+    "name": "Daft Punk",
+    "comment": "French electronic duo",
+    "type": "Group",
+    "gender": null,
+    "score": 8197,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "39ab1aed-75e0-4140-bd47-540276886b60",
+    "name": "Oasis",
+    "comment": "Noel & Liam Gallagher",
+    "type": "Group",
+    "gender": null,
+    "score": 8188,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "69ee3720-a7cb-4402-b48d-a02c366f2bcf",
+    "name": "The Cure",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 8138,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "6fe07aa5-fec0-4eca-a456-f29bff451b04",
+    "name": "Weezer",
+    "comment": "American rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 7955,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "52074ba6-e495-4ef3-9bb4-0703888a9f68",
+    "name": "Arcade Fire",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 7949,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "084308bd-1654-436f-ba03-df6697104e19",
+    "name": "Green Day",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 7691,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "95e1ead9-4d31-4808-a7ac-32c3614c116b",
+    "name": "The Killers",
+    "comment": "American rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 7613,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+    "name": "Queen",
+    "comment": "UK rock group",
+    "type": "Group",
+    "gender": null,
+    "score": 7591,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "7dc8f5bd-9d0b-4087-9f73-dc164950bbd8",
+    "name": "Queens of the Stone Age",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 7419,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "10adbe5e-a2c0-4bf3-8249-2b4cbf6e6ca8",
+    "name": "Massive Attack",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 7165,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "a3cb23fc-acd3-4ce0-8f36-1e5aa6a18432",
+    "name": "U2",
+    "comment": "Irish rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 7120,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "83b9cbe7-9857-49e2-ab8e-b57b01038103",
+    "name": "Pearl Jam",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 7064,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11",
+    "name": "Portishead",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 7045,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "678d88b2-87b0-403b-b63d-5da7465aecc3",
+    "name": "Led Zeppelin",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 7021,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "40f5d9e4-2de7-4f2d-ad41-e31a9a9fea27",
+    "name": "The Smiths",
+    "comment": "1980s English rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 6982,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "b7ffd2af-418f-4be2-bdd1-22f8b48613da",
+    "name": "Nine Inch Nails",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 6913,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "b071f9fa-14b0-4217-8e97-eb41da73f598",
+    "name": "The Rolling Stones",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 6809,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "87c5dedd-371d-4a53-9f7f-80522fb7f3cb",
+    "name": "Bj\u00f6rk",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 6682,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "3798b104-01cb-484c-a3b0-56adc6399b80",
+    "name": "Rage Against the Machine",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 6514,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "c485632c-b784-4ee9-8ea1-c5fb365681fc",
+    "name": "MGMT",
+    "comment": "US pop rock group",
+    "type": "Group",
+    "gender": null,
+    "score": 6483,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "aa7a2827-f74b-473c-bd79-03d065835cf7",
+    "name": "Franz Ferdinand",
+    "comment": "Scottish rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 6472,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "b23e8a63-8f47-4882-b55b-df2c92ef400e",
+    "name": "Interpol",
+    "comment": "NYC rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 6467,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "847e8284-8582-4b0e-9c26-b042a4f49e57",
+    "name": "Placebo",
+    "comment": "UK alternative rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 6371,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "a96ac800-bfcb-412a-8a63-0a98df600700",
+    "name": "Modest Mouse",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 6302,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "8538e728-ca0b-4321-b7e5-cff6565dd4c0",
+    "name": "Depeche Mode",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 6089,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "65f4f0c5-ef9e-490c-aee3-909e7ae6b2ab",
+    "name": "Metallica",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 6084,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "cc0b7089-c08d-4c10-b6b0-873582c17fd6",
+    "name": "System of a Down",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 5958,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "9a58fda3-f4ed-4080-a3a5-f457aac9fcdd",
+    "name": "Joy Division",
+    "comment": "English post-punk band",
+    "type": "Group",
+    "gender": null,
+    "score": 5881,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "d15721d8-56b4-453d-b506-fc915b14cba2",
+    "name": "The Black Keys",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 5773,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "6ffb8ea9-2370-44d8-b678-e9237bbd347b",
+    "name": "Kings of Leon",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 5683,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "f6f2326f-6b25-4170-b89d-e235b25508e8",
+    "name": "Sigur R\u00f3s",
+    "comment": "Icelandic post\u2010rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 5660,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "9efff43b-3b29-4082-824e-bc82f646f93d",
+    "name": "The Doors",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 5630,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "f59c5520-5f46-4d2c-b2c4-822eabf53419",
+    "name": "Linkin Park",
+    "comment": "American rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 5629,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "72c536dc-7137-4477-a521-567eeb840fa8",
+    "name": "Bob Dylan",
+    "comment": "",
+    "type": "Person",
+    "gender": "Male",
+    "score": 5610,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "d4d17620-fd97-4574-92a8-a2cb7e72ce42",
+    "name": "The Verve",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 5515,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "c5c2ea1c-4bde-4f4d-bd0b-47b200bf99d6",
+    "name": "The xx",
+    "comment": "UK indie/dream pop trio",
+    "type": "Group",
+    "gender": null,
+    "score": 5493,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "8970d868-0723-483b-a75b-51088913d3d4",
+    "name": "Moby",
+    "comment": "electronic musician Richard Melville Hall",
+    "type": "Person",
+    "gender": "Male",
+    "score": 5488,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "1f43d76f-8edf-44f6-aaf1-b65f05ad9402",
+    "name": "The Flaming Lips",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 5472,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "8f92558c-2baa-4758-8c38-615519e9deda",
+    "name": "The Clash",
+    "comment": "70s\u201380s British punk rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 5445,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "153c9281-268f-4cf3-8938-f5a4593e5df4",
+    "name": "Soundgarden",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 5434,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "0039c7ae-e1a7-4a7d-9b49-0cbc716821a6",
+    "name": "Death Cab for Cutie",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 5428,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "c98d40fd-f6cf-4b26-883e-eaa515ee2851",
+    "name": "The Cranberries",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 5352,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "23a03e33-a603-404e-bcbf-2c00159d7067",
+    "name": "The Offspring",
+    "comment": "American punk",
+    "type": "Group",
+    "gender": null,
+    "score": 5318,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "5cbef01b-cc35-4f52-af7b-d0df0c4f61b9",
+    "name": "Sonic Youth",
+    "comment": "US rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 5278,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "63aa26c3-d59b-4da4-84ac-716b54f1ef4d",
+    "name": "Tame Impala",
+    "comment": "",
+    "type": "Person",
+    "gender": "Male",
+    "score": 5211,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "9beb62b2-88db-4cea-801e-162cd344ee53",
+    "name": "Beastie Boys",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 5207,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "cb67438a-7f50-4f2b-a6f1-2bb2729fd538",
+    "name": "Air",
+    "comment": "French band",
+    "type": "Group",
+    "gender": null,
+    "score": 5197,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "f22942a1-6f70-4f48-866e-238cb2308fbd",
+    "name": "Aphex Twin",
+    "comment": "",
+    "type": "Person",
+    "gender": "Male",
+    "score": 5134,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "8ed2e0b3-aa4c-4e13-bec3-dc7393ed4d6b",
+    "name": "Thom Yorke",
+    "comment": "",
+    "type": "Person",
+    "gender": "Male",
+    "score": 5078,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "eeb1195b-f213-4ce1-b28c-8565211f8e43",
+    "name": "Guns N\u2019 Roses",
+    "comment": "American hard rock band from Los Angeles",
+    "type": "Group",
+    "gender": null,
+    "score": 5032,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "584c04d2-4acc-491b-8a0a-e63133f4bfc4",
+    "name": "Yeah Yeah Yeahs",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 5031,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "664c3e0e-42d8-48c1-b209-1efca19c0325",
+    "name": "The National",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 5029,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "af37c51c-0790-4a29-b995-456f98a6b8c9",
+    "name": "Vampire Weekend",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 5028,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "6c8b9855-ba8b-48f9-ac1d-42167f7f7b18",
+    "name": "The Shins",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 5018,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "01d3c51b-9b98-418a-8d8e-37f6fab59d8c",
+    "name": "Sufjan Stevens",
+    "comment": "US | folk",
+    "type": "Person",
+    "gender": "Male",
+    "score": 5006,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "164f0d73-1234-4e2c-8743-d77bf2191051",
+    "name": "Ye",
+    "comment": "formerly Kanye West",
+    "type": "Person",
+    "gender": "Male",
+    "score": 4941,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "437a0e49-c6ae-42f6-a6c1-84f25ed366bc",
+    "name": "Bon Iver",
+    "comment": "US indie folk band",
+    "type": "Group",
+    "gender": null,
+    "score": 4923,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "e795e03d-b5d5-4a5f-834d-162cfb308a2c",
+    "name": "PJ Harvey",
+    "comment": "",
+    "type": "Person",
+    "gender": "Female",
+    "score": 4922,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "9fdaa16b-a6c4-4831-b87c-bc9ca8ce7eaa",
+    "name": "The Who",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 4856,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "03ad1736-b7c9-412a-b442-82536d63a5c4",
+    "name": "Elliott Smith",
+    "comment": "US singer\u2010songwriter",
+    "type": "Person",
+    "gender": "Male",
+    "score": 4855,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "8c538f11-c141-4588-8ecb-931083524186",
+    "name": "Bloc Party",
+    "comment": "English indie rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 4785,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "e3e0abcd-7671-4482-a9d8-462f5acc9be5",
+    "name": "Incubus",
+    "comment": "US alternative rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 4774,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "a94a7155-c79d-4409-9fcf-220cb0e4dc3a",
+    "name": "Talking Heads",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 4761,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "6d7b7cd4-254b-4c25-83f6-dd20f98ceacd",
+    "name": "M83",
+    "comment": "French electronic/shoegaze group",
+    "type": "Group",
+    "gender": null,
+    "score": 4760,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "4bd95eea-b9f6-4d70-a36c-cfea77431553",
+    "name": "Alice in Chains",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 4758,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "0743b15a-3c32-48c8-ad58-cb325350befa",
+    "name": "blink\u2010182",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 4736,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "d43d12a1-2dc9-4257-a2fd-0a3bb1081b86",
+    "name": "Johnny Cash",
+    "comment": "country music legend",
+    "type": "Person",
+    "gender": "Male",
+    "score": 4699,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "94b0fb9d-a066-4823-b2ec-af1d324bcfcf",
+    "name": "The Velvet Underground",
+    "comment": "Lou Reed\u2019s seminal rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 4582,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "69158f97-4c07-4c4e-baf8-4e4ab1ed666e",
+    "name": "Boards of Canada",
+    "comment": "Scottish electronic duo",
+    "type": "Group",
+    "gender": null,
+    "score": 4546,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "9e0e2b01-41db-4008-bd8b-988977d6019a",
+    "name": "The Police",
+    "comment": "British rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 4537,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "8d455809-96b3-4bb6-8829-ea4beb580d35",
+    "name": "Phoenix",
+    "comment": "French indie band",
+    "type": "Group",
+    "gender": null,
+    "score": 4531,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "2aaf7396-6ab8-40f3-9776-a41c42c8e26b",
+    "name": "LCD Soundsystem",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 4479,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "f1106b17-dcbb-45f6-b938-199ccfab50cc",
+    "name": "New Order",
+    "comment": "UK synth pop band",
+    "type": "Group",
+    "gender": null,
+    "score": 4479,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "bd13909f-1c29-4c27-a874-d4aaf27c5b1a",
+    "name": "Fleetwood Mac",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 4456,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "f9ef7a22-4262-4596-a2a8-1d19345b8e50",
+    "name": "Garbage",
+    "comment": "US rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 4365,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "a506f761-2c22-4b2f-8a94-bd748c2c8f75",
+    "name": "Neutral Milk Hotel",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 4363,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "e6e879c0-3d56-4f12-b3c5-3ce459661a8e",
+    "name": "Jeff Buckley",
+    "comment": "American singer, guitarist and songwriter",
+    "type": "Person",
+    "gender": "Male",
+    "score": 4335,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "69b39eab-6577-46a4-a9f5-817839092033",
+    "name": "Kasabian",
+    "comment": "GB | rock",
+    "type": "Group",
+    "gender": null,
+    "score": 4318,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "5182c1d9-c7d2-4dad-afa0-ccfeada921a8",
+    "name": "Black Sabbath",
+    "comment": "English heavy metal band",
+    "type": "Group",
+    "gender": null,
+    "score": 4294,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "5d02f264-e225-41ff-83f7-d9b1f0b1874a",
+    "name": "Simon & Garfunkel",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 4279,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "1946a82a-f927-40c2-8235-38d64f50d043",
+    "name": "The Chemical Brothers",
+    "comment": "British electronic music duo",
+    "type": "Group",
+    "gender": null,
+    "score": 4250,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "fa7b9055-3703-473a-8a09-adf2fe031a24",
+    "name": "CAKE",
+    "comment": "US alt. rock band",
+    "type": "Group",
+    "gender": null,
+    "score": 4241,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  },
+  {
+    "artist_mbid": "a66999a7-ae5c-460e-ba94-1a01143ae847",
+    "name": "Snow Patrol",
+    "comment": "",
+    "type": "Group",
+    "gender": null,
+    "score": 4223,
+    "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+  }
+]

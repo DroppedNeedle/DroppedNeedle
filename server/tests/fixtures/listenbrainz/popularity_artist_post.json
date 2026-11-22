@@ -1,0 +1,27 @@
+[
+  {
+    "artist_mbid": "00000000-0000-4000-8000-000000000000",
+    "total_listen_count": null,
+    "total_user_count": null
+  },
+  {
+    "artist_mbid": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+    "total_listen_count": 44066379,
+    "total_user_count": 398012
+  },
+  {
+    "artist_mbid": "8bfac288-ccc5-448d-9573-c33ea2aa5c30",
+    "total_listen_count": 77042163,
+    "total_user_count": 431946
+  },
+  {
+    "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+    "total_listen_count": 134659628,
+    "total_user_count": 461120
+  },
+  {
+    "artist_mbid": "b071f9fa-14b0-4217-8e97-eb41da73f598",
+    "total_listen_count": 38538194,
+    "total_user_count": 378864
+  }
+]
