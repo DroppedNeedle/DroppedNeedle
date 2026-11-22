@@ -144,31 +144,33 @@ impl MixSources for LiveMixSources {
     fn similar_artists<'a>(
         &'a self,
         user_id: &'a str,
-        artist_mbid: &'a str,
+        artist_mbids: &'a [String],
         limit: usize,
-    ) -> BoxFuture<'a, Result<Vec<SimilarArtist>, String>> {
+    ) -> BoxFuture<'a, Vec<Result<Vec<SimilarArtist>, String>>> {
         Box::pin(async move {
-            let rows = settle(
-                shared::similar_artists(
-                    &self.cache,
-                    &self.client,
-                    artist_mbid,
-                    limit,
-                    &self.lender(user_id),
-                    PRIORITY,
-                )
-                .await,
-            )?;
-            Ok(rows
-                .into_iter()
-                .filter_map(|row| {
-                    Some(SimilarArtist {
-                        artist_mbid: row.artist.mbid?,
-                        artist_name: row.artist.name,
-                        listen_count: row.artist.listen_count.unwrap_or_default(),
+            shared::similar_artists_each(
+                &self.cache,
+                &self.client,
+                artist_mbids,
+                limit,
+                &self.lender(user_id),
+                PRIORITY,
+            )
+            .await
+            .into_iter()
+            .map(|rows| {
+                Ok(settle(rows)?
+                    .into_iter()
+                    .filter_map(|row| {
+                        Some(SimilarArtist {
+                            artist_mbid: row.artist.mbid?,
+                            artist_name: row.artist.name,
+                            listen_count: row.artist.listen_count.unwrap_or_default(),
+                        })
                     })
-                })
-                .collect())
+                    .collect())
+            })
+            .collect()
         })
     }
 

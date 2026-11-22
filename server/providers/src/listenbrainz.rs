@@ -1,7 +1,7 @@
 //! ListenBrainz client.
 //!
 //! The core reads (listens, recording and release-group metadata,
-//! popularity, LB Radio), the credential check behind Settings and account
+//! popularity), the credential check behind Settings and account
 //! linking, and listen submission for scrobble forwarding. The wire shapes
 //! are in [`models`], each noting what it was checked against.
 //!
@@ -24,6 +24,7 @@
 //! listens".
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
@@ -35,11 +36,10 @@ use crate::error::{ProviderError, TransportKind, retry_delay_from_headers};
 use crate::executor::{Answer, Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 
 use self::models::{
-    ArtistPopularityAnswer, ListenCountAnswer, ListenItem, ListensAnswer, RadioArtistAnswer,
-    RecordingMetadataAnswer, RecordingPopularityAnswer, ReleaseGroupEntry,
-    ReleaseGroupMetadataAnswer, ReleaseGroupPopularityAnswer, ScoredSimilarArtistsAnswer, TagItem,
-    TopRecordingRow, TopRecordingsAnswer, TopReleaseGroupRow, TopReleaseGroupsAnswer,
-    ValidateTokenAnswer,
+    ArtistPopularityAnswer, ListenCountAnswer, ListenItem, ListensAnswer, RecordingMetadataAnswer,
+    RecordingPopularityAnswer, ReleaseGroupEntry, ReleaseGroupMetadataAnswer,
+    ReleaseGroupPopularityAnswer, ScoredSimilarArtistsAnswer, TagItem, TopRecordingRow,
+    TopRecordingsAnswer, TopReleaseGroupRow, TopReleaseGroupsAnswer, ValidateTokenAnswer,
 };
 
 pub mod models;
@@ -73,6 +73,12 @@ pub const SOURCE: &str = "listenbrainz";
 /// counts against ListenBrainz's own service health. Labs paces on the
 /// [`SOURCE`] row and shares its rests.
 pub const LABS_SOURCE: &str = "listenbrainz-labs";
+/// How long labs reads rest after a failed one. Labs shares the
+/// `listenbrainz` row's run of failures and rests the row after five in a
+/// row, so one failure stops every caller's labs reads for a while.
+pub const LABS_REST: Duration = Duration::from_secs(10 * 60);
+/// How long they rest once labs says it no longer offers the dataset.
+pub const LABS_RETIRED_REST: Duration = Duration::from_secs(3_600);
 /// Largest labs answer read: a list holds at most 100 rows, 21 KB for
 /// Radiohead (recorded 2026-11-22).
 const MAX_LABS_BODY_BYTES: usize = 1024 * 1024;
@@ -194,8 +200,8 @@ fn window_spent(reply: &Reply) -> Option<Duration> {
 
 /// Whether a 401 asks for a token rather than refusing one. ListenBrainz
 /// answers an anonymous read of an artist's top release groups or top
-/// recordings this way, while the release-group popularity POST and LB
-/// Radio still answer one (probed 2026-11-13: "Due to bad actors and AI
+/// recordings this way, while the release-group popularity POST still
+/// answers one (probed 2026-11-13: "Due to bad actors and AI
 /// scrapers causing undue traffic on our sites, you need to provide an Auth
 /// token for this endpoint."), so those two reads are never sent without a
 /// token. Any other 401 is a refused token.
@@ -346,15 +352,15 @@ pub struct TopRecording {
     pub release_mbid: Option<String>,
 }
 
-/// One similar artist from LB Radio. The
-/// MBID keys the row; the listen count sums the sample recordings.
+/// One similar artist as the Weekly Mix reads it: its MBID, name and
+/// total listens.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SimilarArtist {
     /// Artist MBID.
     pub artist_mbid: String,
-    /// Artist name, empty when the sample carried none.
+    /// Artist name, empty when ListenBrainz names none.
     pub artist_name: String,
-    /// Summed listen count of the sampled recordings.
+    /// The artist's total listens, 0 when not counted.
     pub listen_count: i64,
 }
 
@@ -407,13 +413,15 @@ pub fn release_group_genres_key(release_group_mbid: &str) -> CacheKey {
 
 /// ListenBrainz client over the ListenBrainz executor, and the labs
 /// executor beside it. Built once with the providers; every call names its
-/// priority.
+/// priority. Clones share the labs rest.
 #[derive(Debug, Clone)]
 pub struct ListenBrainzClient {
     executor: Executor,
     base: Option<Url>,
     labs: Executor,
     labs_base: Option<Url>,
+    /// Until when labs reads rest after a failed one, in milliseconds.
+    labs_rests_until: Arc<Mutex<Option<i64>>>,
 }
 
 impl ListenBrainzClient {
@@ -434,6 +442,7 @@ impl ListenBrainzClient {
             base,
             labs,
             labs_base,
+            labs_rests_until: Arc::default(),
         }
     }
 
@@ -803,64 +812,6 @@ impl ListenBrainzClient {
             .collect())
     }
 
-    /// Artists similar to one artist, from LB Radio's artist mode
-    /// (`GET /1/lb-radio/artist/{mbid}` in `easy` mode). The reply maps
-    /// each similar artist's MBID to a sample of its recordings; the seed
-    /// artist is dropped and the rest sort by summed listens.
-    ///
-    /// # Errors
-    ///
-    /// The typed failure of the call.
-    pub async fn similar_artists(
-        &self,
-        artist_mbid: &str,
-        max_similar: usize,
-        creds: &ListenBrainzCredentials,
-        priority: RequestPriority,
-    ) -> Result<Vec<SimilarArtist>, ProviderError> {
-        let artist_mbid = artist_mbid.trim();
-        if artist_mbid.is_empty() || max_similar == 0 {
-            return Ok(Vec::new());
-        }
-        let max = max_similar.to_string();
-        let request = self.get(
-            &["1", "lb-radio", "artist", artist_mbid],
-            &[
-                ("mode", "easy"),
-                ("max_similar_artists", max.as_str()),
-                ("max_recordings_per_artist", "5"),
-                ("pop_begin", "0"),
-                ("pop_end", "100"),
-            ],
-            creds,
-        )?;
-        let Some(entries) = self
-            .read_unconfirmed::<RadioArtistAnswer>(request, priority)
-            .await?
-        else {
-            return Ok(Vec::new());
-        };
-        let mut similar: Vec<SimilarArtist> = entries
-            .into_iter()
-            .filter(|(mbid, _)| {
-                super::musicbrainz::is_valid_mbid(mbid) && !mbid.eq_ignore_ascii_case(artist_mbid)
-            })
-            .map(|(mbid, recordings)| SimilarArtist {
-                artist_name: recordings
-                    .first()
-                    .and_then(|first| first.similar_artist_name.clone())
-                    .unwrap_or_default(),
-                listen_count: recordings
-                    .iter()
-                    .filter_map(|recording| recording.total_listen_count)
-                    .sum(),
-                artist_mbid: mbid,
-            })
-            .collect();
-        similar.sort_by(|left, right| right.listen_count.cmp(&left.listen_count));
-        Ok(similar)
-    }
-
     /// Artists whose listening shares sessions with one artist's, scored,
     /// from labs (`GET /similar-artists/json` over
     /// [`SIMILAR_ARTISTS_ALGORITHM`]), in the order answered. The id is sent
@@ -869,11 +820,16 @@ impl ListenBrainzClient {
     /// skipped. An artist labs does not know answers an empty list. No
     /// token is sent: labs answered without one on 2026-11-22.
     ///
+    /// A failed read rests every labs read for [`LABS_REST`], or
+    /// [`LABS_RETIRED_REST`] once labs no longer offers the dataset, and
+    /// nothing is sent while they rest.
+    ///
     /// # Errors
     ///
     /// [`ProviderError::Invalid`] for an id that is not an MBID (nothing is
-    /// sent); [`ProviderError::Disabled`] when labs no longer offers the
-    /// dataset; otherwise the typed failure of the call.
+    /// sent); [`ProviderError::Unavailable`] with the wait while labs reads
+    /// rest (nothing is sent); [`ProviderError::Disabled`] when labs no
+    /// longer offers the dataset; otherwise the typed failure of the call.
     pub async fn scored_similar_artists(
         &self,
         artist_mbid: &str,
@@ -884,6 +840,60 @@ impl ListenBrainzClient {
         if !super::musicbrainz::is_valid_mbid(artist_mbid) {
             return Err(labs_invalid("not an artist MBID"));
         }
+        if let Some(wait) = self.labs_rest() {
+            return Err(ProviderError::Unavailable {
+                provider: LABS_SOURCE,
+                retry_after: Some(wait),
+            });
+        }
+        let read = self.read_scored_similar(artist_mbid, priority).await;
+        if let Err(error) = &read {
+            self.rest_labs_after(error, priority);
+        }
+        read
+    }
+
+    /// How long labs reads still rest, if they do.
+    fn labs_rest(&self) -> Option<Duration> {
+        let until = (*self
+            .labs_rests_until
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner))?;
+        let left = until.saturating_sub(self.labs.now_ms());
+        (left > 0).then(|| Duration::from_millis(u64::try_from(left).unwrap_or(0)))
+    }
+
+    /// Rest labs reads after `error`. A read our own pace turned down for a
+    /// person says nothing about labs; a retired dataset rests longer, and
+    /// lengthens a rest already running.
+    fn rest_labs_after(&self, error: &ProviderError, priority: RequestPriority) {
+        let rest = match error {
+            ProviderError::Invalid { .. } => return,
+            ProviderError::RateLimited { .. } if priority.is_user_facing() => return,
+            ProviderError::Disabled { .. } => LABS_RETIRED_REST,
+            _ => LABS_REST,
+        };
+        let until = self
+            .labs
+            .now_ms()
+            .saturating_add(i64::try_from(rest.as_millis()).unwrap_or(i64::MAX));
+        let mut rests = self
+            .labs_rests_until
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if rests.is_some_and(|current| current >= until) {
+            return;
+        }
+        *rests = Some(until);
+        tracing::warn!(%error, rest_secs = rest.as_secs(), "ListenBrainz labs reads rest after a failed read");
+    }
+
+    /// One labs read, as [`Self::scored_similar_artists`] sends it.
+    async fn read_scored_similar(
+        &self,
+        artist_mbid: &str,
+        priority: RequestPriority,
+    ) -> Result<Vec<ScoredSimilarArtist>, ProviderError> {
         let base = self
             .labs_base
             .as_ref()

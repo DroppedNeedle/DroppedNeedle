@@ -22,7 +22,8 @@ use droppedneedle_catalog::search::models::{ArtistEnrichmentRequest, EnrichmentB
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::runtime_config::sections::{ListenBrainzSettings, ListenSource};
 use droppedneedle_library::management::enrich::{EnrichmentPort as _, GenreAnswer};
-use droppedneedle_providers::test_support::ScriptedWire;
+use droppedneedle_providers::executor::Method;
+use droppedneedle_providers::test_support::{Scripted, ScriptedWire};
 use droppedneedle_providers::{
     ProviderEndpoints, Providers, RequestPriority, ReqwestWire, listenbrainz,
 };
@@ -34,16 +35,12 @@ use crate::discover_queue::discover_deps;
 const USER: &str = "user-ada";
 /// OK Computer, the release group the recorded genre answer is for.
 const ALBUM: &str = "b1392450-e666-3926-a536-22c65f834433";
-const RADIO: &str = include_str!("../fixtures/listenbrainz/lb_radio_artist.json");
+const COUNTS: &str = include_str!("../fixtures/listenbrainz/popularity_artist_post.json");
 const GROUPS: &str = include_str!("../fixtures/listenbrainz/top_release_groups_radiohead.json");
 const GENRES: &str = include_str!("../fixtures/listenbrainz/release_group_metadata.json");
 const SITEWIDE: &str = include_str!("../fixtures/listenbrainz/sitewide_artists.json");
-/// The artists the recorded LB Radio answer names.
-const RADIO_ARTISTS: [&str; 3] = [
-    "a74b1b7f-71a5-4011-9441-d0b5e4122711",
-    "ada7a83c-e3e1-40f1-93f9-3e73dbc9298a",
-    "f181961b-20f7-459e-89de-920ef03c7ed0",
-];
+/// Radiohead, whose top albums the recorded answer holds.
+const RADIOHEAD: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
 
 fn seed(n: u32) -> String {
     format!("{n:08x}-0000-4000-8000-000000000000")
@@ -51,6 +48,17 @@ fn seed(n: u32) -> String {
 
 fn lb(path: &str) -> String {
     format!("{}/1/{path}", listenbrainz::DEFAULT_BASE_URL)
+}
+
+fn labs() -> String {
+    format!("{}/similar-artists/json", listenbrainz::LABS_BASE_URL)
+}
+
+/// A labs list naming Radiohead alone, in the recorded rows' shape.
+fn like_radiohead() -> String {
+    serde_json::json!([{"artist_mbid": RADIOHEAD, "name": "Radiohead", "score": 10,
+        "reference_mbid": null}])
+    .to_string()
 }
 
 /// The catalog, search counts and genre lookups over `rig`'s live
@@ -65,21 +73,29 @@ struct Reads {
 impl Reads {
     fn new(rig: &AuthRig) -> Self {
         let wire = Arc::new(ScriptedWire::new());
-        for artist in RADIO_ARTISTS {
-            wire.answer(
-                &lb(&format!(
-                    "popularity/top-release-groups-for-artist/{artist}"
-                )),
-                200,
-                &[],
-                GROUPS,
-            );
-        }
+        wire.answer(
+            &lb(&format!(
+                "popularity/top-release-groups-for-artist/{RADIOHEAD}"
+            )),
+            200,
+            &[],
+            GROUPS,
+        );
         wire.answer(&lb("metadata/release_group/"), 200, &[], GENRES);
+        wire.on(
+            Method::Post,
+            &lb("popularity/artist"),
+            Scripted::Answer {
+                status: 200,
+                headers: Vec::new(),
+                body: COUNTS.as_bytes().to_vec(),
+            },
+        );
         let providers = Arc::new(Providers::unpaced_at(
             wire.clone(),
             ProviderEndpoints {
                 listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+                listenbrainz_labs: listenbrainz::LABS_BASE_URL.to_owned(),
                 ..ProviderEndpoints::closed()
             },
         ));
@@ -122,41 +138,37 @@ impl Reads {
         }
     }
 
-    /// Answer LB Radio for `artist` with the recorded similar artists.
-    fn radio(&self, artist: &str) {
-        self.wire
-            .answer(&lb(&format!("lb-radio/artist/{artist}")), 200, &[], RADIO);
+    /// Queue `body` as labs' next answer; the last one queued repeats.
+    fn labs(&self, body: &str) {
+        self.wire.answer(&labs(), 200, &[], body);
     }
 
-    /// Requests sent to ListenBrainz so far.
+    /// Requests sent to ListenBrainz and its labs host so far.
     fn sent(&self) -> usize {
         self.wire
             .sent()
             .iter()
             .filter(|sent| {
-                sent.url
-                    .as_str()
-                    .starts_with(listenbrainz::DEFAULT_BASE_URL)
+                let url = sent.url.as_str();
+                url.starts_with(listenbrainz::DEFAULT_BASE_URL)
+                    || url.starts_with(listenbrainz::LABS_BASE_URL)
             })
             .count()
     }
 
-    /// The authorization header of the last LB Radio request for `artist`.
-    fn lent(&self, artist: &str) -> Option<String> {
+    /// The authorization headers of the listener-count reads so far.
+    fn lent(&self) -> Vec<Option<String>> {
         self.wire
             .sent()
             .iter()
-            .rev()
-            .find(|sent| {
-                sent.url
-                    .path()
-                    .ends_with(&format!("lb-radio/artist/{artist}"))
+            .filter(|sent| sent.url.path().ends_with("popularity/artist"))
+            .map(|sent| {
+                sent.headers
+                    .iter()
+                    .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                    .map(|(_, value)| value.clone())
             })
-            .expect("LB Radio was asked")
-            .headers
-            .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
-            .map(|(_, value)| value.clone())
+            .collect()
     }
 }
 
@@ -193,7 +205,7 @@ async fn listenbrainz_reads_are_on_unless_switched_off() {
         if let Some(text) = stored {
             store(text);
         }
-        reads.radio(&seed(n));
+        reads.labs(&like_radiohead());
         let before = reads.sent();
         let similar = reads
             .catalog
@@ -259,7 +271,6 @@ async fn listenbrainz_reads_are_on_unless_switched_off() {
     }
 
     store("{}");
-    reads.radio(&seed(9));
     let before = reads.sent();
     let back_on = reads
         .catalog
@@ -283,18 +294,25 @@ async fn reads_lend_the_persons_own_link() {
         .await
         .expect("link");
     let reads = Reads::new(&rig);
-    for (user, artist) in [(USER, seed(3)), ("user-bob", seed(4))] {
-        reads.radio(&artist);
+    // Each artist has a neighbour of its own, so each read counts one.
+    let asks = [(USER, seed(3), seed(30)), ("user-bob", seed(4), seed(40))];
+    for (_, artist, neighbour) in &asks {
+        reads.labs(
+            &serde_json::json!([{"artist_mbid": neighbour, "name": "Someone",
+                "score": 10, "reference_mbid": artist}])
+            .to_string(),
+        );
+    }
+    for (user, artist, _) in &asks {
         reads
             .catalog
-            .similar_artists(user, &artist, 5, None, RequestPriority::UserInitiated)
+            .similar_artists(user, artist, 5, None, RequestPriority::UserInitiated)
             .await
             .unwrap();
     }
-    assert_eq!(reads.lent(&seed(3)).as_deref(), Some("Token ada-token"));
     assert_eq!(
-        reads.lent(&seed(4)),
-        None,
+        reads.lent(),
+        [Some("Token ada-token".to_owned()), None],
         "an unlinked person reads anonymous"
     );
 }
@@ -314,7 +332,7 @@ async fn an_unlinked_read_keeps_nothing_a_linked_one_needs() {
         .await
         .expect("link");
     let reads = Reads::new(&rig);
-    let artist = RADIO_ARTISTS[0];
+    let artist = RADIOHEAD;
     let top = |user: &'static str| {
         reads.catalog.top_albums(
             user,
@@ -364,7 +382,7 @@ async fn discover_reads_no_listenbrainz_while_it_is_off() {
         let seen = seen.clone();
         async move {
             let path = uri.path().to_owned();
-            if !path.starts_with("/listenbrainz/") {
+            if !path.starts_with("/listenbrainz/") && !path.starts_with("/labs/") {
                 return StatusCode::NOT_FOUND.into_response();
             }
             seen.lock().unwrap().push(path.clone());
@@ -383,6 +401,7 @@ async fn discover_reads_no_listenbrainz_while_it_is_off() {
         Arc::new(ReqwestWire::new(&http)),
         ProviderEndpoints {
             listenbrainz: format!("{origin}/listenbrainz"),
+            listenbrainz_labs: format!("{origin}/labs"),
             musicbrainz: format!("{origin}/musicbrainz"),
             lastfm: format!("{origin}/lastfm/"),
             ..ProviderEndpoints::closed()

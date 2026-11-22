@@ -239,17 +239,9 @@ impl LiveRadio {
         };
         let excluded = HashSet::new();
         Ok(if use_lastfm && user.lastfm {
-            lastfm_pools(
-                &ctx,
-                user_id,
-                user,
-                seeds,
-                &excluded,
-                similar_limit * albums_per,
-            )
-            .await
+            lastfm_pools(&ctx, user_id, seeds, &excluded, similar_limit * albums_per).await
         } else {
-            similar_artist_pools(&ctx, user_id, user, seeds, &excluded).await
+            similar_artist_pools(&ctx, user_id, seeds, &excluded).await
         })
     }
 
@@ -509,16 +501,8 @@ impl LiveRadio {
             settings: &settings,
             ask: Ask::person(),
         };
-        let policy = self.listening.policy(user_id).await;
-        let similar = similar_to(
-            &ctx,
-            user_id,
-            policy.user(),
-            &seed(&base.0, &base.1),
-            MAX_SEED_ARTISTS + 1,
-            policy.popularity() == ListenSource::Lastfm,
-        )
-        .await;
+        let similar =
+            similar_to(&ctx, user_id, &seed(&base.0, &base.1), MAX_SEED_ARTISTS + 1).await;
         let mut seeds = vec![base];
         for artist in similar.into_iter().map(|scored| scored.artist) {
             if seeds.len() >= MAX_SEED_ARTISTS {

@@ -26,10 +26,11 @@ mod network;
 mod policy;
 mod rows;
 pub mod shared;
+pub(crate) mod similar;
 
 pub use live::LiveNetwork;
 pub use network::{ListeningNetwork, Read};
-pub use policy::{SourcePolicy, blend, blend_similar};
+pub use policy::{SourcePolicy, blend};
 pub use rows::*;
 
 use std::collections::HashMap;
@@ -59,8 +60,6 @@ pub const BUILD_LOOKUPS: usize = 30;
 
 /// Rows per ListenBrainz statistics page (the most the endpoints serve).
 const PAGE: u32 = droppedneedle_providers::listenbrainz::stats::MAX_STATS_COUNT;
-/// Similar artists read per artist; a caller asking for more reads more.
-const SIMILAR_FLOOR: usize = shared::SIMILAR_ROWS;
 /// An artist's top albums read per artist.
 const ARTIST_ALBUMS_FLOOR: usize = shared::ARTIST_ALBUM_ROWS;
 /// Rows of the Last.fm sitewide chart read at once (the charts page up to
@@ -154,6 +153,9 @@ pub type ListeningResult<T> = Result<T, ListeningError>;
 pub struct Ask {
     priority: RequestPriority,
     permits: Option<Arc<Semaphore>>,
+    /// The ask's similar-artist reads take turns, so none pile up behind a
+    /// failing one.
+    similar_turns: Arc<tokio::sync::Mutex<()>>,
     failed: Arc<AtomicBool>,
     lookups_left: Option<Arc<AtomicUsize>>,
 }
@@ -164,6 +166,7 @@ impl Ask {
         Self {
             priority: RequestPriority::UserInitiated,
             permits: None,
+            similar_turns: Arc::default(),
             failed: Arc::default(),
             lookups_left: None,
         }
@@ -175,6 +178,7 @@ impl Ask {
         Self {
             priority,
             permits: Some(Arc::new(Semaphore::new(BUILD_CAP))),
+            similar_turns: Arc::default(),
             failed: Arc::default(),
             lookups_left: Some(Arc::new(AtomicUsize::new(BUILD_LOOKUPS))),
         }
@@ -186,6 +190,7 @@ impl Ask {
         Self {
             priority: self.priority,
             permits: self.permits.clone(),
+            similar_turns: Arc::clone(&self.similar_turns),
             failed: Arc::default(),
             lookups_left: self.lookups_left.clone(),
         }
@@ -644,8 +649,8 @@ impl ListeningData {
         .await
     }
 
-    /// Artists ListenBrainz finds similar to one artist, most listened
-    /// first. `user_id` lends its token.
+    /// Artists like one artist, best first, `limit` at most: the one
+    /// answer ([`similar`]). `user_id` lends its link to the count read.
     pub async fn similar_artists(
         &self,
         user_id: &str,
@@ -653,18 +658,43 @@ impl ListeningData {
         limit: usize,
         ask: &Ask,
     ) -> ListeningResult<Vec<ScoredArtist>> {
+        let artist = [artist_mbid.to_owned()];
+        self.similar_artists_each(user_id, &artist, limit, ask)
+            .await
+            .pop()
+            .unwrap_or_else(|| Ok(Vec::new()))
+    }
+
+    /// [`Self::similar_artists`] for each of `artist_mbids`, in their order,
+    /// as one pass: it stops asking at its first failed list read, and
+    /// counts every neighbour in one read.
+    pub async fn similar_artists_each(
+        &self,
+        user_id: &str,
+        artist_mbids: &[String],
+        limit: usize,
+        ask: &Ask,
+    ) -> Vec<ListeningResult<Vec<ScoredArtist>>> {
         if self.listenbrainz_off() {
-            return Ok(Default::default());
+            return artist_mbids.iter().map(|_| Ok(Vec::new())).collect();
         }
-        let read = limit.max(SIMILAR_FLOOR);
-        let key = shared::similar_key(artist_mbid, read);
-        let (user, mbid) = (user_id.to_owned(), artist_mbid.to_owned());
-        let rows = self
-            .list(key, ARTIST, ask, move |network, priority| async move {
-                network.similar_artists(&user, &mbid, read, priority).await
-            })
-            .await?;
-        Ok(cut(rows, limit))
+        let watch = Watch::new(ask);
+        let reads = Arc::new(similar::NetworkReads {
+            network: Arc::clone(&self.network),
+            user_id: user_id.to_owned(),
+            permits: ask.permits.clone(),
+            turns: Arc::clone(&ask.similar_turns),
+            health: Arc::clone(&self.health),
+        });
+        let (found, counted) =
+            similar::neighbours_each(&self.cache, reads, artist_mbids, ask.priority).await;
+        // An order built past a failed count read is not kept for long: the
+        // build that read it is tried again soon.
+        watch.settle(counted && found.iter().all(Result::is_ok));
+        found
+            .into_iter()
+            .map(|rows| rows.map(|rows| cut(rows, limit)))
+            .collect()
     }
 
     /// One artist's most played release groups, empty while ListenBrainz

@@ -1377,10 +1377,10 @@ impl MixSources for FakeMix {
     fn similar_artists<'a>(
         &'a self,
         _user_id: &'a str,
-        _mbid: &'a str,
+        mbids: &'a [String],
         _limit: usize,
-    ) -> BoxFuture<'a, Result<Vec<SimilarArtist>, String>> {
-        Box::pin(async { Ok(Vec::new()) })
+    ) -> BoxFuture<'a, Vec<Result<Vec<SimilarArtist>, String>>> {
+        Box::pin(async move { mbids.iter().map(|_| Ok(Vec::new())).collect() })
     }
     fn top_recording<'a>(
         &'a self,
@@ -1396,9 +1396,8 @@ impl MixSources for FakeMix {
 const RADIOHEAD: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
 const KARMA_POLICE: &str = "9e2ad5bc-c6f9-40d2-a36f-3122ee2072a3";
 const OK_COMPUTER: &str = "b1392450-e666-3926-a536-22c65f834433";
-/// The two artists the recorded LB Radio answer finds like Radiohead, each
-/// with a top song of its own, the album ListenBrainz places it on and that
-/// album's name.
+/// Two artists labs finds like Radiohead, each with a top song of its own,
+/// the album ListenBrainz places it on and that album's name.
 const SIMILAR_TOPS: [(&str, &str, &str, &str); 2] = [
     (
         "ada7a83c-e3e1-40f1-93f9-3e73dbc9298a",
@@ -1417,9 +1416,9 @@ const SIMILAR_TOPS: [(&str, &str, &str, &str); 2] = [
 /// A linked person's Weekly Mix is topped up with the top song of each
 /// artist similar to the ones in it, on the album ListenBrainz places that
 /// song on, and no song twice. ListenBrainz gives an artist's top songs only
-/// to a linked account, so those reads and the album lookup carry the
-/// person's own token; an artist's top albums are never asked for. An
-/// unlinked person gets no mix and nothing is sent.
+/// to a linked account, so those reads, the album lookup and the listener
+/// counts carry the person's own token; an artist's top albums are never
+/// asked for. An unlinked person gets no mix and nothing is sent.
 #[tokio::test]
 async fn a_weekly_mix_tops_up_with_the_persons_own_link() {
     use droppedneedle_providers::listenbrainz::DEFAULT_BASE_URL;
@@ -1466,12 +1465,38 @@ async fn a_weekly_mix_tops_up_with_the_persons_own_link() {
             body: lookup.to_string().into_bytes(),
         },
     );
-    let radio = include_str!("../fixtures/listenbrainz/lb_radio_artist.json");
+    // Labs' list and the listener counts, written to the recorded shapes.
+    let neighbours: Vec<Value> = SIMILAR_TOPS
+        .iter()
+        .enumerate()
+        .map(|(at, (artist, ..))| {
+            json!({"artist_mbid": artist, "name": format!("Like Radiohead {at}"),
+                "score": 100 - at, "reference_mbid": RADIOHEAD})
+        })
+        .collect();
     wire.answer(
-        &lb(&format!("lb-radio/artist/{RADIOHEAD}")),
+        &format!(
+            "{}/similar-artists/json",
+            droppedneedle_providers::listenbrainz::LABS_BASE_URL
+        ),
         200,
         &[],
-        radio,
+        Value::Array(neighbours).to_string(),
+    );
+    let counts: Vec<Value> = SIMILAR_TOPS
+        .iter()
+        .map(|(artist, ..)| {
+            json!({"artist_mbid": artist, "total_listen_count": 5000, "total_user_count": 500})
+        })
+        .collect();
+    wire.on(
+        droppedneedle_providers::executor::Method::Post,
+        &lb("popularity/artist"),
+        Scripted::Answer {
+            status: 200,
+            headers: Vec::new(),
+            body: Value::Array(counts).to_string().into_bytes(),
+        },
     );
     for (artist, song, _, release) in SIMILAR_TOPS {
         let top = json!([{"recording_name": format!("Song on {release}"),
@@ -1498,6 +1523,7 @@ async fn a_weekly_mix_tops_up_with_the_persons_own_link() {
         wire.clone(),
         droppedneedle_providers::ProviderEndpoints {
             listenbrainz: DEFAULT_BASE_URL.to_owned(),
+            listenbrainz_labs: droppedneedle_providers::listenbrainz::LABS_BASE_URL.to_owned(),
             ..droppedneedle_providers::ProviderEndpoints::closed()
         },
     );
@@ -1562,7 +1588,11 @@ async fn a_weekly_mix_tops_up_with_the_persons_own_link() {
         asked("top-release-groups-for-artist").is_empty(),
         "an artist's top albums are never asked for"
     );
-    for read in ["top-recordings-for-artist", "metadata/recording"] {
+    for read in [
+        "top-recordings-for-artist",
+        "metadata/recording",
+        "popularity/artist",
+    ] {
         assert!(!asked(read).is_empty(), "{read} was asked");
         for sent in asked(read) {
             let token = sent

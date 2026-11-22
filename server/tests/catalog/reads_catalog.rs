@@ -174,6 +174,7 @@ impl Fixtures {
             Arc::new(droppedneedle_providers::ReqwestWire::new(http)),
             droppedneedle_providers::ProviderEndpoints {
                 listenbrainz: format!("{}/lb", self.base),
+                listenbrainz_labs: format!("{}/labs", self.base),
                 lastfm: format!("{}/lastfm/2.0/", self.base),
                 audiodb: format!("{}/audiodb", self.base),
                 wikidata: format!("{}/wikidata", self.base),
@@ -263,9 +264,14 @@ fn routes() -> Vec<Route> {
             wikidata_fixture("commons_imageinfo_credit.json"),
         ),
         route(
-            format!("/lb/1/lb-radio/artist/{ARTIST}"),
+            "/labs/similar-artists/json".to_owned(),
+            Some(("artist_mbids", ARTIST)),
+            upstream_fixture("labs_similar_artists"),
+        ),
+        route(
+            "/lb/1/popularity/artist".to_owned(),
             None,
-            upstream_fixture("lb_radio_artist"),
+            upstream_fixture("lb_artist_popularity"),
         ),
         route(
             format!("/lb/1/popularity/top-release-groups-for-artist/{ARTIST}"),
@@ -955,7 +961,7 @@ async fn artist_sections_use_listenbrainz_then_lastfm() {
     assert_eq!(
         names,
         ["Lana Del Rey", "Portishead"],
-        "seed artist dropped, most listened first"
+        "co-listening first, with fame divided out"
     );
     assert_eq!(similar["similar_artists"][1]["listen_count"], 7500);
 
@@ -1031,12 +1037,26 @@ async fn artist_sections_use_listenbrainz_then_lastfm() {
     assert_eq!(lastfm["listeners"], 6_000_000);
     assert_eq!(lastfm["similar_artists"][0]["name"], "Thom Yorke");
 
+    // Similar artists are ListenBrainz's for everyone, a person asking for
+    // Last.fm included.
+    let one_answer = get(
+        &app,
+        &format!("/api/v3/artists/{ARTIST}/similar?count=5&source=lastfm"),
+    )
+    .await;
+    assert_eq!(
+        (&one_answer["source"], &one_answer["asked_source"]),
+        (&json!("listenbrainz"), &json!("listenbrainz")),
+        "{one_answer}"
+    );
+    assert_eq!(one_answer["similar_artists"][0]["name"], "Lana Del Rey");
+
     // Asked for Last.fm with no Last.fm key to read with, ListenBrainz
     // stands in.
     rig.deps.lastfm.delete(USER).await.unwrap();
     let stood_in = get(
         &app,
-        &format!("/api/v3/artists/{ARTIST}/similar?count=5&source=lastfm"),
+        &format!("/api/v3/artists/{ARTIST}/top-albums?source=lastfm"),
     )
     .await;
     assert_eq!(
@@ -1048,7 +1068,7 @@ async fn artist_sections_use_listenbrainz_then_lastfm() {
         (&json!("listenbrainz"), &json!("lastfm"), &json!(["lastfm"])),
         "{stood_in}"
     );
-    assert_eq!(stood_in["similar_artists"][0]["name"], "Lana Del Rey");
+    assert_eq!(titles(&stood_in["albums"]), ["OK Computer", "Kid A"]);
 }
 
 #[tokio::test]
@@ -1728,10 +1748,19 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
         },
     );
     wire.answer(
-        &lb(&format!("lb-radio/artist/{ARTIST}")),
+        &format!("{}/similar-artists/json", listenbrainz::LABS_BASE_URL),
         200,
         &[],
-        upstream_fixture("lb_radio_artist"),
+        upstream_fixture("labs_similar_artists"),
+    );
+    wire.on(
+        Method::Post,
+        &lb("popularity/artist"),
+        Scripted::Answer {
+            status: 200,
+            headers: Vec::new(),
+            body: upstream_fixture("lb_artist_popularity").into_bytes(),
+        },
     );
     let lana = lb(&format!("popularity/top-release-groups-for-artist/{LANA}"));
     wire.on(Method::Get, &lana, down.clone());
@@ -1755,6 +1784,7 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
         Arc::new(droppedneedle_kernel::clock::SystemClock),
         ProviderEndpoints {
             listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+            listenbrainz_labs: listenbrainz::LABS_BASE_URL.to_owned(),
             ..ProviderEndpoints::closed()
         },
     ));
@@ -1846,9 +1876,10 @@ impl CatalogSettings for ListenBrainzOff {
     }
 }
 
-/// "You Might Also Like" asks the service the person prefers first, and
-/// the other one when that is switched off; with neither usable it says
-/// it is not set up.
+/// "You Might Also Like" takes its similar artists from the one answer,
+/// a Last.fm-first person's too, and their albums from the service the
+/// person prefers first, the other one when that is switched off; with
+/// neither usable it says it is not set up.
 #[tokio::test]
 async fn similar_albums_follow_the_persons_service() {
     use droppedneedle_kernel::runtime_config::sections::ListenSource;
@@ -1900,7 +1931,7 @@ async fn similar_albums_follow_the_persons_service() {
             .filter_map(|album| album.musicbrainz_id.clone())
             .collect::<Vec<_>>()
     };
-    let radio = format!("/lb/1/lb-radio/artist/{ARTIST}");
+    let labs = "/labs/similar-artists/json";
 
     listening
         .update_prefs(USER, &prefer(ListenSource::Lastfm))
@@ -1915,7 +1946,11 @@ async fn similar_albums_follow_the_persons_service() {
         (ListenSource::Lastfm, true)
     );
     assert_eq!(ids(&lastfm_first.albums), [DUMMY_GROUP]);
-    assert_eq!(fixtures.hits(&radio), 0, "ListenBrainz was not asked");
+    assert_eq!(
+        fixtures.hits(labs),
+        1,
+        "the similar artists are ListenBrainz's one answer"
+    );
 
     listening
         .update_prefs(USER, &prefer(ListenSource::Listenbrainz))
@@ -1941,7 +1976,11 @@ async fn similar_albums_follow_the_persons_service() {
         (ListenSource::Listenbrainz, false, 0),
         "ListenBrainz off and no Last.fm key: nothing can be asked"
     );
-    assert_eq!(fixtures.hits(&radio), 0, "ListenBrainz was never asked");
+    assert_eq!(
+        fixtures.hits(labs),
+        1,
+        "ListenBrainz is not asked while it is off"
+    );
 }
 
 /// Provider answers outlive a restart: an album header read once from

@@ -26,7 +26,9 @@ use droppedneedle_media::remotes::models::SourceName;
 use droppedneedle_media::remotes::source::RemoteHandle;
 use droppedneedle_providers::lastfm::{LastFmCredentials, TopItem};
 use droppedneedle_providers::listenbrainz::stats::{ArtistStat, ReleaseGroupStat};
-use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
+use droppedneedle_providers::listenbrainz::{
+    ArtistPopularity, ListenBrainzClient, ListenBrainzCredentials, ScoredSimilarArtist,
+};
 use droppedneedle_providers::musicbrainz::models::{ArtistCreditName, Relation};
 use droppedneedle_providers::musicbrainz::{Criticality, is_valid_mbid};
 use droppedneedle_providers::{ProviderError, Providers, RequestPriority, WebAddress};
@@ -329,24 +331,32 @@ impl ListeningNetwork for LiveNetwork {
         })
     }
 
-    fn similar_artists<'a>(
+    fn scored_similar<'a>(
+        &'a self,
+        artist_mbid: &'a str,
+        priority: RequestPriority,
+    ) -> Read<'a, Vec<ScoredSimilarArtist>> {
+        Box::pin(async move {
+            provider(
+                self.listenbrainz
+                    .scored_similar_artists(artist_mbid, priority)
+                    .await,
+            )
+        })
+    }
+
+    fn artist_listeners<'a>(
         &'a self,
         user_id: &'a str,
-        artist_mbid: &'a str,
-        limit: usize,
+        artist_mbids: &'a [String],
         priority: RequestPriority,
-    ) -> Read<'a, Vec<ScoredArtist>> {
+    ) -> Read<'a, HashMap<String, ArtistPopularity>> {
         Box::pin(async move {
             let creds = self.credentials(user_id).await;
             provider(
-                super::shared::similar_from(
-                    &self.listenbrainz,
-                    artist_mbid,
-                    limit,
-                    &creds,
-                    priority,
-                )
-                .await,
+                self.listenbrainz
+                    .artist_popularity(artist_mbids, &creds, priority)
+                    .await,
             )
         })
     }

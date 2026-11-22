@@ -174,13 +174,15 @@ pub trait MixSources: Send + Sync {
         recording_mbids: &'a [String],
         creds: &'a ListenBrainzCredentials,
     ) -> BoxFuture<'a, Result<HashMap<String, String>, String>>;
-    /// Artists similar to one artist, most listened first.
+    /// Artists similar to each of `artist_mbids`, best first, in their
+    /// order: one pass, so every neighbour is counted in one read. A seed
+    /// whose read failed has its cause in place of its list.
     fn similar_artists<'a>(
         &'a self,
         user_id: &'a str,
-        artist_mbid: &'a str,
+        artist_mbids: &'a [String],
         limit: usize,
-    ) -> BoxFuture<'a, Result<Vec<SimilarArtist>, String>>;
+    ) -> BoxFuture<'a, Vec<Result<Vec<SimilarArtist>, String>>>;
     /// An artist's most played recording.
     fn top_recording<'a>(
         &'a self,
@@ -593,18 +595,20 @@ impl PersonalMixBuilder {
     /// taken one per seed in turn. Each artist comes once, Various Artists
     /// never.
     async fn similar_to_seeds(&self, user_id: &str, seeds: &[String]) -> Vec<SimilarArtist> {
-        let mut lists = Vec::with_capacity(seeds.len());
-        for seed in seeds {
-            let similar = self
-                .sources
-                .similar_artists(user_id, seed, SIMILAR_LIMIT)
-                .await
-                .unwrap_or_else(|cause| {
-                    tracing::debug!(%cause, "personal mix: similar artists unavailable");
-                    Vec::new()
-                });
-            lists.push(similar.into_iter());
-        }
+        let mut lists: Vec<_> = self
+            .sources
+            .similar_artists(user_id, seeds, SIMILAR_LIMIT)
+            .await
+            .into_iter()
+            .map(|similar| {
+                similar
+                    .unwrap_or_else(|cause| {
+                        tracing::debug!(%cause, "personal mix: similar artists unavailable");
+                        Vec::new()
+                    })
+                    .into_iter()
+            })
+            .collect();
         let mut seen: HashSet<String> = HashSet::new();
         let mut artists = Vec::new();
         loop {

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::{
@@ -27,6 +27,7 @@ use droppedneedle_catalog::discover::services::DiscoverDeps;
 use droppedneedle_catalog::discover::wiring::{DiscoverInputs, deps_over, live_network};
 use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_providers::listenbrainz::{ArtistPopularity, ScoredSimilarArtist};
 use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -46,7 +47,9 @@ fn group(n: u8) -> String {
 /// Each read answers its field (empty by default). Release-group facts
 /// fail while `musicbrainz_down` is set, fresh releases while
 /// `fresh_down` is, similar artists while `similar_down` is and an
-/// artist's albums while `albums_down` is.
+/// artist's albums while `albums_down` is. ListenBrainz's similar list
+/// answers `similar`, each row's score as its co-listening score, and
+/// `listeners` its counts; both reads are counted.
 #[derive(Default)]
 pub(crate) struct Script {
     pub user: UserMusic,
@@ -64,6 +67,12 @@ pub(crate) struct Script {
     pub sitewide_artists: Vec<ArtistRow>,
     pub sitewide_albums: Vec<ListenedAlbum>,
     pub similar: HashMap<String, Vec<ScoredArtist>>,
+    /// ListenBrainz's listener counts, by artist MBID.
+    pub listeners: HashMap<String, ArtistPopularity>,
+    /// Similar-list reads made so far.
+    pub similar_reads: AtomicUsize,
+    /// Listener-count reads made so far.
+    pub listener_reads: AtomicUsize,
     pub artist_albums: HashMap<String, Vec<RankedAlbum>>,
     pub genres: Vec<(String, i64)>,
     pub fresh: Vec<AlbumRow>,
@@ -186,17 +195,42 @@ impl ListeningNetwork for Script {
     ) -> Answer<'a, Vec<ListenedAlbum>> {
         ok(self.user_albums.clone())
     }
-    fn similar_artists<'a>(
+    fn scored_similar<'a>(
         &'a self,
-        _u: &'a str,
         artist: &'a str,
-        _l: usize,
         _p: RequestPriority,
-    ) -> Answer<'a, Vec<ScoredArtist>> {
+    ) -> Answer<'a, Vec<ScoredSimilarArtist>> {
+        self.similar_reads.fetch_add(1, Ordering::SeqCst);
         if self.similar_down.load(Ordering::SeqCst) {
             return down("similar artists down");
         }
-        ok(self.similar.get(artist).cloned().unwrap_or_default())
+        let rows = self
+            .similar
+            .get(artist)
+            .into_iter()
+            .flatten()
+            .filter_map(|row| {
+                Some(ScoredSimilarArtist {
+                    artist_mbid: row.artist.mbid.clone()?,
+                    name: Some(row.artist.name.clone()),
+                    score: row.score as i64,
+                    reference_mbid: Some(artist.to_owned()),
+                })
+            })
+            .collect();
+        ok(rows)
+    }
+    fn artist_listeners<'a>(
+        &'a self,
+        _u: &'a str,
+        artists: &'a [String],
+        _p: RequestPriority,
+    ) -> Answer<'a, HashMap<String, ArtistPopularity>> {
+        self.listener_reads.fetch_add(1, Ordering::SeqCst);
+        ok(artists
+            .iter()
+            .filter_map(|id| Some((id.clone(), *self.listeners.get(id)?)))
+            .collect())
     }
     fn artist_albums<'a>(
         &'a self,

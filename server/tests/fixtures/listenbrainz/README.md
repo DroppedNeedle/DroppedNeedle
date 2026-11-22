@@ -25,10 +25,6 @@ holds a key, token or personal data. Names, tags and links are catalogue data.
   `GET /1/popularity/top-recordings-for-artist/a74b1b7f-71a5-4011-9441-d0b5e4122711`.
   All 2170 rows, the bytes as received; three have a null `release_mbid` and
   `release_name`. The endpoint takes no limit.
-- `lb_radio_artist.json`: HTTP 200 to
-  `GET /1/lb-radio/artist/a74b1b7f-71a5-4011-9441-d0b5e4122711` with
-  `mode=easy`, `max_similar_artists=3`, `max_recordings_per_artist=5`,
-  `pop_begin=0` and `pop_end=100`. The three entries include the seed artist.
 - `validate_token_invalid.json`: HTTP 200 to `GET /1/validate-token` with a
   made-up token. A refused token is `valid: false` on a 200, not a 401.
 - `listen_count_unknown_user.json`: the body of the HTTP 404 to

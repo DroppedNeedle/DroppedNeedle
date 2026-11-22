@@ -28,11 +28,12 @@ use super::memo::{BuildMemo, MemoKey};
 use super::picks::{self, Candidate};
 use super::shelves::{self, RowMut, SHELF_SIZE, album, artist, genre, one, shelf};
 use droppedneedle_kernel::db::Db;
+use droppedneedle_providers::{ProviderError, TransportKind, listenbrainz};
 
 use crate::discover::cache::Variant;
 use crate::discover::listening::{
     AlbumRow, ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListenedAlbum, ListeningData,
-    PlayedArtist, RankedAlbum, ScoredArtist, StatsRange, TAG_PAGE, UserMusic, blend_similar,
+    ListeningError, PlayedArtist, RankedAlbum, ScoredArtist, StatsRange, TAG_PAGE, UserMusic,
 };
 use crate::discover::models::{
     AlbumRef, BecauseYouListenTo, ChartSection, DiscoverResponse, RadioSeedKind, SectionContent,
@@ -444,16 +445,16 @@ impl Builder<'_> {
         self.listening.policy_for(user).popularity() == ListenSource::Lastfm
     }
 
-    /// Whether this build blends both services' seed and similar artists
-    /// for the user.
+    /// Whether this build blends both services' seed artists for the
+    /// user.
     fn blends(&self, user: &UserMusic) -> bool {
         self.listening
             .policy_for(user)
             .blends(self.settings.queue.blend_services)
     }
 
-    /// The badge of shelves grown from the seed and similar artists:
-    /// both services when they are blended, else the primary.
+    /// The badge of shelves grown from the seed artists: both services
+    /// when they are blended, else the primary.
     fn seed_source(&self, user: &UserMusic, primary: ListenSource) -> ShelfSource {
         if self.blends(user) {
             ShelfSource::Blended
@@ -818,13 +819,6 @@ impl Builder<'_> {
         let listening = self.listening;
         let ask = &self.ask;
         let policy = listening.policy_for(user);
-        // ListenBrainz's similar-artist read is popularity ranked, so it goes
-        // empty in a popularity outage; Last.fm stands in then, and always
-        // for users who chose Last.fm.
-        let lastfm_similar = policy.popularity() == ListenSource::Lastfm;
-        // Blended, both services answer and their lists merge; in a
-        // popularity outage Last.fm answers alone, as above.
-        let blend = policy.blends(self.settings.queue.blend_services) && !policy.popularity_down();
         // Keyed by service, so a failed read counts toward that service's
         // banner.
         const SIMILAR_KEYS: [(&str, &str); SEEDS] = [
@@ -833,42 +827,55 @@ impl Builder<'_> {
             ("lb_similar_2", "lfm_similar_2"),
         ];
         let similar_seeds = if needs(Input::Similar) { SEEDS } else { 0 };
-        let similar = join_all(seeds.iter().take(similar_seeds).enumerate().map(
-            |(index, seed)| {
+        // ListenBrainz's one answer, else Last.fm's where the user can
+        // read it (see `similar_to_each`). The seeds are one pass, so every
+        // neighbour is counted in one read.
+        let similar = async {
+            let wanted: Vec<&ArtistRow> = seeds.iter().take(similar_seeds).collect();
+            let mbids: Vec<String> = wanted.iter().filter_map(|seed| seed.mbid.clone()).collect();
+            let found = match tokio::time::timeout(
+                TASK_TIMEOUT,
+                listening.similar_artists_each(user_id, &mbids, 20, ask),
+            )
+            .await
+            {
+                Ok(found) => found,
+                Err(_) => mbids
+                    .iter()
+                    .map(|_| {
+                        Err(ListeningError::Provider(ProviderError::Transport {
+                            provider: listenbrainz::LABS_SOURCE,
+                            kind: TransportKind::Timeout,
+                        }))
+                    })
+                    .collect(),
+            };
+            let mut found = found.into_iter();
+            join_all(wanted.into_iter().enumerate().map(|(index, seed)| {
                 let (lb_key, lfm_key) = SIMILAR_KEYS[index];
+                let answer = seed.mbid.as_ref().and_then(|_| found.next());
                 async move {
-                    let Some(mbid) = seed.mbid.as_deref() else {
-                        return Vec::new();
-                    };
-                    let lastfm = || {
-                        tracker.run(
+                    if let Some(answer) = answer {
+                        let rows = tracker
+                            .run(Input::Similar, lb_key, std::future::ready(answer))
+                            .await
+                            .unwrap_or_default();
+                        if !rows.is_empty() {
+                            return rows;
+                        }
+                    }
+                    tracker
+                        .run(
                             Input::Similar,
                             lfm_key,
                             listening.lastfm_similar(user_id, seed, 20, ask),
                         )
-                    };
-                    let listenbrainz = || {
-                        tracker.run(
-                            Input::Similar,
-                            lb_key,
-                            listening.similar_artists(user_id, mbid, 20, ask),
-                        )
-                    };
-                    if blend {
-                        let (lastfm, listenbrainz) = tokio::join!(lastfm(), listenbrainz());
-                        let (first, second) = match primary {
-                            ListenSource::Lastfm => (lastfm, listenbrainz),
-                            ListenSource::Listenbrainz => (listenbrainz, lastfm),
-                        };
-                        blend_similar(first.unwrap_or_default(), second.unwrap_or_default())
-                    } else if lastfm_similar {
-                        lastfm().await.unwrap_or_default()
-                    } else {
-                        listenbrainz().await.unwrap_or_default()
-                    }
+                        .await
+                        .unwrap_or_default()
                 }
-            },
-        ));
+            }))
+            .await
+        };
         let trending = async {
             if !needs(Input::Trending) {
                 return Vec::new();
@@ -1290,17 +1297,9 @@ impl Builder<'_> {
             ..self.queue_ctx(&settings)
         };
         if self.lastfm_for_popularity(user) {
-            lastfm_pools(
-                &ctx,
-                user_id,
-                user,
-                seeds,
-                excluded,
-                similar_limit * albums_per,
-            )
-            .await
+            lastfm_pools(&ctx, user_id, seeds, excluded, similar_limit * albums_per).await
         } else {
-            similar_artist_pools(&ctx, user_id, user, seeds, excluded).await
+            similar_artist_pools(&ctx, user_id, seeds, excluded).await
         }
     }
 

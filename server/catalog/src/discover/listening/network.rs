@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 
 use droppedneedle_providers::RequestPriority;
+use droppedneedle_providers::listenbrainz::{ArtistPopularity, ScoredSimilarArtist};
 
 use super::ListeningResult;
 use super::rows::{
@@ -75,15 +76,21 @@ pub trait ListeningNetwork: Send + Sync {
         offset: u32,
         priority: RequestPriority,
     ) -> Read<'a, Vec<ListenedAlbum>>;
-    /// Artists ListenBrainz finds similar, scored by listens. `user_id`
-    /// lends its token.
-    fn similar_artists<'a>(
+    /// ListenBrainz labs' scored similar artists for one artist, as
+    /// answered. No token is sent.
+    fn scored_similar<'a>(
+        &'a self,
+        artist_mbid: &'a str,
+        priority: RequestPriority,
+    ) -> Read<'a, Vec<ScoredSimilarArtist>>;
+    /// Listen and listener counts for artists (a popularity read).
+    /// `user_id` lends its token.
+    fn artist_listeners<'a>(
         &'a self,
         user_id: &'a str,
-        artist_mbid: &'a str,
-        limit: usize,
+        artist_mbids: &'a [String],
         priority: RequestPriority,
-    ) -> Read<'a, Vec<ScoredArtist>>;
+    ) -> Read<'a, HashMap<String, ArtistPopularity>>;
     /// One artist's most played release groups (a popularity read).
     /// ListenBrainz answers it only with the user's token: without one it
     /// is [`ProviderError::NotConfigured`](droppedneedle_providers::ProviderError::NotConfigured)

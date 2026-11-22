@@ -22,7 +22,7 @@ use super::select::{self, Shuffler};
 use super::store::QueueDb;
 use crate::discover::listening::{
     AlbumRow, ArtistRow, Ask, JellyfinList, LastFmAlbum, ListenSource, ListenedAlbum,
-    ListeningData, ScoredArtist, StatsRange, TagAlbum, UserMusic, blend, blend_similar,
+    ListeningData, ScoredArtist, StatsRange, TagAlbum, UserMusic, blend,
 };
 use crate::discover::models::QueueItemLight;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
@@ -369,7 +369,7 @@ async fn personalized(
     let target = count.saturating_sub(wildcard_slots);
     let per_seed = (target / seeds.len().max(1) + 3).max(4);
     let mut pools = if use_lastfm {
-        lastfm_pools(ctx, user_id, user, &seeds, ignored, per_seed).await
+        lastfm_pools(ctx, user_id, &seeds, ignored, per_seed).await
     } else {
         let listened = listened_albums(ctx, user, source).await;
         listenbrainz_pools(ctx, user_id, user, &seeds, ignored, &listened).await
@@ -420,7 +420,7 @@ async fn listenbrainz_pools(
     let mut deep_excluded = excluded.clone();
     deep_excluded.extend(listened.iter().cloned());
     let (similar, genres, fresh, loved, deep) = tokio::join!(
-        similar_artist_pools(ctx, user_id, user, seeds, excluded),
+        similar_artist_pools(ctx, user_id, seeds, excluded),
         genre_albums(ctx, username, excluded),
         fresh_releases(ctx, username, excluded),
         loved_artist_albums(ctx, user_id, username, excluded, per_artist),
@@ -435,74 +435,78 @@ async fn listenbrainz_pools(
     pools
 }
 
-/// Up to `limit` artists similar to `seed`: both services blended when
-/// the server allows it and the user has both linked (Last.fm alone
-/// while ListenBrainz popularity is down), else Last.fm when `lastfm`,
-/// else ListenBrainz. A service that fails leaves the other's answer.
+/// Up to `limit` artists similar to `seed`, best first (see
+/// [`similar_to_each`]).
 pub(in crate::discover) async fn similar_to(
     ctx: &BuildContext<'_>,
     user_id: &str,
-    user: &UserMusic,
     seed: &ArtistRow,
     limit: usize,
-    lastfm: bool,
 ) -> Vec<ScoredArtist> {
-    let policy = ctx.listening.policy_for(user);
-    let lastfm_read = || {
+    similar_to_each(ctx, user_id, std::slice::from_ref(seed), limit)
+        .await
+        .pop()
+        .unwrap_or_default()
+}
+
+/// Up to `limit` artists similar to each of `seeds`, best first, in their
+/// order: ListenBrainz's one answer while its reads are on, read as one
+/// pass so every neighbour is counted in one read; else, or when it has
+/// nothing for a seed, Last.fm's where the user can read it.
+pub(in crate::discover) async fn similar_to_each(
+    ctx: &BuildContext<'_>,
+    user_id: &str,
+    seeds: &[ArtistRow],
+    limit: usize,
+) -> Vec<Vec<ScoredArtist>> {
+    let mbids: Vec<String> = seeds.iter().filter_map(|seed| seed.mbid.clone()).collect();
+    let mut answers = timed("listenbrainz similar artists", async {
+        Ok::<_, std::convert::Infallible>(
+            ctx.listening
+                .similar_artists_each(user_id, &mbids, limit, &ctx.ask)
+                .await,
+        )
+    })
+    .await
+    .into_iter();
+    let lists: Vec<Vec<ScoredArtist>> = seeds
+        .iter()
+        .map(|seed| match seed.mbid {
+            Some(_) => answers
+                .next()
+                .map(|found| or_empty("listenbrainz similar artists", found))
+                .unwrap_or_default(),
+            None => Vec::new(),
+        })
+        .collect();
+    join_all(seeds.iter().zip(lists).map(|(seed, rows)| async move {
+        if !rows.is_empty() {
+            return rows;
+        }
         timed(
             "lastfm similar artists",
             ctx.listening
                 .lastfm_similar(user_id, seed, limit as u32, &ctx.ask),
         )
-    };
-    let listenbrainz_read = || async {
-        let Some(mbid) = seed.mbid.as_deref() else {
-            return Vec::new();
-        };
-        timed(
-            "listenbrainz similar artists",
-            ctx.listening
-                .similar_artists(user_id, mbid, limit, &ctx.ask),
-        )
         .await
-    };
-    if policy.blends(ctx.settings.blend_services) && !policy.popularity_down() {
-        let (lastfm, listenbrainz) = tokio::join!(lastfm_read(), listenbrainz_read());
-        return match policy.listening() {
-            ListenSource::Lastfm => blend_similar(lastfm, listenbrainz),
-            ListenSource::Listenbrainz => blend_similar(listenbrainz, lastfm),
-        };
-    }
-    if lastfm {
-        lastfm_read().await
-    } else {
-        listenbrainz_read().await
-    }
+    }))
+    .await
 }
 
 /// One pool per seed: the top albums of each artist similar to it (see
-/// [`similar_to`]).
+/// [`similar_to_each`]).
 pub(in crate::discover) async fn similar_artist_pools(
     ctx: &BuildContext<'_>,
     user_id: &str,
-    user: &UserMusic,
     seeds: &[ArtistRow],
     excluded: &HashSet<String>,
 ) -> Vec<Vec<QueueItemLight>> {
     let settings = ctx.settings;
-    join_all(seeds.iter().map(|seed| async move {
+    let lists = similar_to_each(ctx, user_id, seeds, settings.similar_artists_limit).await;
+    join_all(seeds.iter().zip(lists).map(|(seed, similar)| async move {
         if seed.mbid.is_none() {
             return Vec::new();
         }
-        let similar = similar_to(
-            ctx,
-            user_id,
-            user,
-            seed,
-            settings.similar_artists_limit,
-            false,
-        )
-        .await;
         let reason = format!("Similar to {}", seed.name);
         let mut pool = Vec::new();
         let mut seen = HashSet::new();
@@ -760,30 +764,21 @@ async fn deep_cuts(
 }
 
 /// One pool per seed from Last.fm: similar artists' top albums, matched
-/// to release groups. The similar artists are read as [`similar_to`]
-/// reads them.
+/// to release groups. The similar artists are read as
+/// [`similar_to_each`] reads them.
 pub(in crate::discover) async fn lastfm_pools(
     ctx: &BuildContext<'_>,
     user_id: &str,
-    user: &UserMusic,
     seeds: &[ArtistRow],
     excluded: &HashSet<String>,
     per_seed: usize,
 ) -> Vec<Vec<QueueItemLight>> {
     let settings = ctx.settings;
-    join_all(seeds.iter().map(|seed| async move {
+    let lists = similar_to_each(ctx, user_id, seeds, settings.similar_artists_limit).await;
+    join_all(seeds.iter().zip(lists).map(|(seed, similar)| async move {
         if seed.mbid.is_none() {
             return Vec::new();
         }
-        let similar = similar_to(
-            ctx,
-            user_id,
-            user,
-            seed,
-            settings.similar_artists_limit,
-            true,
-        )
-        .await;
         let similar: Vec<ArtistRow> = similar
             .into_iter()
             .map(|scored| scored.artist)

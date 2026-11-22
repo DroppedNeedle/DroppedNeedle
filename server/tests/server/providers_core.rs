@@ -1791,11 +1791,8 @@ async fn a_204_or_a_wrong_shape_stores_nothing() {
     use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
     use droppedneedle_providers::{CacheKey, Fetched, Policy, Source};
 
-    const SEED: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
-    let radio = format!(
-        "{}/1/lb-radio/artist/{SEED}",
-        listenbrainz::DEFAULT_BASE_URL
-    );
+    const ARTIST: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    let counts = format!("{}/1/popularity/artist", listenbrainz::DEFAULT_BASE_URL);
     for (name, scripted, kept) in [
         ("204", answer(204, &[], ""), false),
         ("wrong shape", answer(200, &[], r#"{"payload": 7}"#), false),
@@ -1804,15 +1801,15 @@ async fn a_204_or_a_wrong_shape_stores_nothing() {
             answer(
                 200,
                 &[],
-                include_str!("../fixtures/listenbrainz/lb_radio_artist.json"),
+                include_str!("../fixtures/listenbrainz/popularity_artist_post.json"),
             ),
             true,
         ),
     ] {
         let wire = Arc::new(ScriptedWire::new());
-        wire.on(Method::Get, &radio, scripted);
+        wire.on(Method::Post, &counts, scripted);
         let providers = providers_over(&wire);
-        let key = CacheKey::new(Source::ListenBrainz, &["similar_artists", name]);
+        let key = CacheKey::new(Source::ListenBrainz, &["artist_counts", name]);
         let client = providers.listenbrainz.clone();
         let _ = providers
             .cache
@@ -1821,20 +1818,27 @@ async fn a_204_or_a_wrong_shape_stores_nothing() {
                 Policy::LISTENBRAINZ_ARTIST,
                 RequestPriority::BackgroundSync,
                 move |priority| async move {
-                    let rows = client
-                        .similar_artists(SEED, 5, &ListenBrainzCredentials::default(), priority)
+                    let counts = client
+                        .artist_popularity(
+                            &[ARTIST.to_owned()],
+                            &ListenBrainzCredentials::default(),
+                            priority,
+                        )
                         .await?;
-                    let names: Vec<String> = rows.into_iter().map(|row| row.artist_name).collect();
-                    Ok::<_, ProviderError>(if names.is_empty() {
+                    let listeners: Vec<i64> = counts
+                        .values()
+                        .filter_map(|count| count.listeners)
+                        .collect();
+                    Ok::<_, ProviderError>(if listeners.is_empty() {
                         Fetched::Missing
                     } else {
-                        Fetched::Found(names)
+                        Fetched::Found(listeners)
                     })
                 },
             )
             .await;
         providers.cache.forget(&[]).await;
-        let held = providers.cache.peek::<Vec<String>>(&key).await;
+        let held = providers.cache.peek::<Vec<i64>>(&key).await;
         assert_eq!(held.is_some(), kept, "{name}: {held:?}");
     }
 }

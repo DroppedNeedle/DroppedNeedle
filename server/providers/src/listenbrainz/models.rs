@@ -279,24 +279,6 @@ pub struct TopRecordingRow {
     pub release_mbid: Option<String>,
 }
 
-/// `GET /1/lb-radio/artist/{mbid}`: similar-artist MBID to a sample of its
-/// recordings.
-///
-/// Verified against api.listenbrainz.org/1/lb-radio/artist/{mbid} on 2026-11-02: tests/fixtures/listenbrainz/lb_radio_artist.json.
-pub type RadioArtistAnswer = HashMap<String, Vec<RadioRecording>>;
-
-/// One sampled recording of a similar artist.
-#[derive(Debug, Clone, Deserialize)]
-pub struct RadioRecording {
-    /// The similar artist's name.
-    #[serde(default)]
-    pub similar_artist_name: Option<String>,
-    /// Total listens of the recording: on every recorded row. A null adds
-    /// nothing to the artist's sum.
-    #[serde(deserialize_with = "loose_count")]
-    pub total_listen_count: Option<i64>,
-}
-
 /// `GET /similar-artists/json` on the labs host, for one artist: the
 /// similar artists, highest score first.
 ///

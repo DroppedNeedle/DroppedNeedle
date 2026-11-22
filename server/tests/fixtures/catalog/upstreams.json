@@ -1,36 +1,36 @@
 {
-  "lb_radio_artist": {
-    "a74b1b7f-71a5-4011-9441-d0b5e4122711": [
-      {
-        "recording_mbid": "8d3e9f0c-7b2a-4ef5-8a0b-2e3f5c9d1b87",
-        "similar_artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
-        "similar_artist_name": "Radiohead",
-        "total_listen_count": 90000
-      }
-    ],
-    "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11": [
-      {
-        "recording_mbid": "0a1b2c3d-1111-4e5f-8a9b-0c1d2e3f4a5b",
-        "similar_artist_mbid": "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11",
-        "similar_artist_name": "Portishead",
-        "total_listen_count": 4000
-      },
-      {
-        "recording_mbid": "0a1b2c3d-2222-4e5f-8a9b-0c1d2e3f4a5b",
-        "similar_artist_mbid": "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11",
-        "similar_artist_name": "Portishead",
-        "total_listen_count": 3500
-      }
-    ],
-    "b7539c32-53e7-4908-bda3-81449c367da6": [
-      {
-        "recording_mbid": "0a1b2c3d-3333-4e5f-8a9b-0c1d2e3f4a5b",
-        "similar_artist_mbid": "b7539c32-53e7-4908-bda3-81449c367da6",
-        "similar_artist_name": "Lana Del Rey",
-        "total_listen_count": 9000
-      }
-    ]
-  },
+  "labs_similar_artists": [
+    {
+      "artist_mbid": "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11",
+      "name": "Portishead",
+      "comment": "",
+      "type": "Group",
+      "gender": null,
+      "score": 500,
+      "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+    },
+    {
+      "artist_mbid": "b7539c32-53e7-4908-bda3-81449c367da6",
+      "name": "Lana Del Rey",
+      "comment": "",
+      "type": "Person",
+      "gender": "Female",
+      "score": 300,
+      "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+    }
+  ],
+  "lb_artist_popularity": [
+    {
+      "artist_mbid": "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11",
+      "total_listen_count": 7500,
+      "total_user_count": 90000
+    },
+    {
+      "artist_mbid": "b7539c32-53e7-4908-bda3-81449c367da6",
+      "total_listen_count": 9000,
+      "total_user_count": 4000
+    }
+  ],
   "lb_top_release_groups": [
     {
       "artist_mbids": [

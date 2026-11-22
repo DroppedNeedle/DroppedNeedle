@@ -36,6 +36,7 @@ use super::{Catalog, is_mbid, mb_error, mb_search_error, record_mb_down};
 use crate::artwork::warm::WarmTargets;
 use crate::cache_hold::CacheHold;
 use crate::discover::listening::shared;
+use crate::discover::listening::similar::{self, Held};
 use crate::metadata::library::LocalArtistSong;
 
 /// Releases whose tracklists top songs look up, at most.
@@ -158,9 +159,11 @@ impl Catalog {
 
     /// Build one artist section from the preferred source, and from the
     /// other one when the preferred is switched off, not set up or has
-    /// nothing. The answer names the source asked for and the ones that
-    /// failed or are switched off, so the page can say why it shows another
-    /// service.
+    /// nothing. Similar artists are one answer for everyone, so they ask
+    /// ListenBrainz first whichever source is preferred, and name it as
+    /// asked unless the preferred one answered. The answer names the
+    /// source asked for and the ones that failed or are switched off, so
+    /// the page can say why it shows another service.
     async fn artist_section(
         &self,
         user_id: &str,
@@ -171,9 +174,32 @@ impl Catalog {
         priority: RequestPriority,
     ) -> Result<Answer, CatalogError> {
         let mbid = checked_mbid(raw_mbid, "artist")?;
-        let source = self.preferred_source(asked);
+        let preferred = self.preferred_source(asked);
+        let source = match section {
+            Section::Similar => ListenSource::Listenbrainz,
+            _ => preferred,
+        };
+        let mut answer = self
+            .section_with_fallback(user_id, &mbid, count, source, section, priority)
+            .await;
+        if answer.source == preferred {
+            answer.asked = preferred;
+        }
+        Ok(answer)
+    }
+
+    /// One artist section from `source`, else from the other one.
+    async fn section_with_fallback(
+        &self,
+        user_id: &str,
+        mbid: &str,
+        count: u32,
+        source: ListenSource,
+        section: Section,
+        priority: RequestPriority,
+    ) -> Answer {
         let mut first = self
-            .section_from(source, user_id, &mbid, count, section, priority)
+            .section_from(source, user_id, mbid, count, section, priority)
             .await;
         // A service switched off cannot be asked either.
         if !first.configured {
@@ -184,7 +210,7 @@ impl Catalog {
                 .section_from(
                     other_source(source),
                     user_id,
-                    &mbid,
+                    mbid,
                     count,
                     section,
                     priority,
@@ -198,12 +224,12 @@ impl Catalog {
                 fallback.asked = source;
                 fallback.unavailable = unavailable;
                 fallback.needs_account = needs_account;
-                return Ok(fallback);
+                return fallback;
             }
             first.unavailable = unavailable;
             first.needs_account = needs_account;
         }
-        Ok(first)
+        first
     }
 
     /// The cache key of one section from one source.
@@ -264,6 +290,25 @@ impl Catalog {
                 };
                 let lender = self.upstream().lender(user_id);
                 let cache = self.upstream().cache();
+                if matches!(section, Section::Similar) {
+                    // The one similar-artists answer keeps its own rows, so
+                    // no section row is kept over it.
+                    let rows = self
+                        .listenbrainz_rows(
+                            &client,
+                            &lender,
+                            (mbid, count, section, priority),
+                            &mut CacheHold::default(),
+                        )
+                        .await;
+                    return match rows {
+                        Ok(rows) => answer_from(source, Some(rows), &refused),
+                        Err(_) => Answer {
+                            unavailable: vec![source],
+                            ..answer_from(source, None, &refused)
+                        },
+                    };
+                }
                 if section.needs_token()
                     && !cache.fresh(&key).await
                     && !shared::has_token(&lender.credentials().await)
@@ -281,12 +326,11 @@ impl Catalog {
                     Policy::LISTENBRAINZ_ARTIST,
                     priority,
                     move |priority| async move {
-                        let creds = lender.credentials().await;
                         let mut hold = CacheHold::default();
                         let rows = catalog
                             .listenbrainz_rows(
                                 &client,
-                                &creds,
+                                &lender,
                                 (&mbid, count, section, priority),
                                 &mut hold,
                             )
@@ -363,8 +407,9 @@ impl Catalog {
     /// Whether the artist's similar artists, top songs and top albums, at
     /// these counts, are all held, fresh or stale, for a user who can
     /// (`lastfm`) or cannot read Last.fm, in the order the user follows
-    /// (`lastfm_first`). A section the first source has nothing for counts
-    /// once the other's answer, which then fills in, is held too.
+    /// (`lastfm_first`); similar artists ListenBrainz first for everyone.
+    /// A section the first source has nothing for counts once the other's
+    /// answer, which then fills in, is held too.
     pub(super) async fn artist_sections_held(
         &self,
         lastfm: bool,
@@ -373,7 +418,7 @@ impl Catalog {
         (similar, songs, albums): (u32, u32, u32),
     ) -> bool {
         let listenbrainz = self.upstream().listenbrainz().is_some();
-        let order = if lastfm_first {
+        let preferred = if lastfm_first {
             [ListenSource::Lastfm, ListenSource::Listenbrainz]
         } else {
             [ListenSource::Listenbrainz, ListenSource::Lastfm]
@@ -383,6 +428,10 @@ impl Catalog {
             (Section::TopSongs, songs),
             (Section::TopAlbums, albums),
         ] {
+            let order = match section {
+                Section::Similar => [ListenSource::Listenbrainz, ListenSource::Lastfm],
+                _ => preferred,
+            };
             for source in order {
                 let readable = match source {
                     ListenSource::Listenbrainz => listenbrainz,
@@ -390,6 +439,13 @@ impl Catalog {
                 };
                 if !readable {
                     continue;
+                }
+                if let (ListenSource::Listenbrainz, Section::Similar) = (source, section) {
+                    match similar::held(self.upstream().cache(), mbid).await {
+                        Held::No => return false,
+                        Held::Listed => break,
+                        Held::Nothing => continue,
+                    }
                 }
                 let key = self.section_key(source, mbid, count, section);
                 match self.upstream().cache().peek::<SectionRows>(&key).await {
@@ -408,34 +464,39 @@ impl Catalog {
         self.upstream().lastfm(user_id).await.is_some()
     }
 
-    /// ListenBrainz rows for one section, or the failure of its read. A
-    /// secondary read that failed is noted in `hold`.
+    /// ListenBrainz rows for one section, or the failure of its read, the
+    /// reads lending `lender`'s link. A secondary read that failed is noted
+    /// in `hold`.
     async fn listenbrainz_rows(
         &self,
         client: &super::upstream::CatalogListenBrainz,
-        creds: &listenbrainz::ListenBrainzCredentials,
+        lender: &shared::Lender,
         (mbid, count, section, priority): (&str, u32, Section, RequestPriority),
         hold: &mut CacheHold,
     ) -> Result<SectionRows, ProviderError> {
         let count = count as usize;
         match section {
             Section::Similar => {
-                let similar = client.similar_artists(mbid, count, creds, priority).await?;
+                let cache = self.upstream().cache();
+                let similar =
+                    shared::similar_artists(cache, client, mbid, count, lender, priority).await?;
                 Ok(SectionRows {
                     similar: similar
                         .into_iter()
-                        .filter(|artist| is_mbid(&artist.artist_mbid))
-                        .take(count)
-                        .map(|artist| ArtistRef {
-                            musicbrainz_id: Some(artist.artist_mbid),
-                            listen_count: Some(artist.listen_count),
-                            ..ArtistRef::named(artist.artist_name)
+                        .filter_map(|row| {
+                            let mbid = row.artist.mbid.filter(|mbid| is_mbid(mbid))?;
+                            Some(ArtistRef {
+                                musicbrainz_id: Some(mbid),
+                                listen_count: row.artist.listen_count,
+                                ..ArtistRef::named(row.artist.name)
+                            })
                         })
                         .collect(),
                     ..SectionRows::default()
                 })
             }
             Section::TopSongs => {
+                let creds = &lender.credentials().await;
                 let recordings = client
                     .artist_top_recordings(mbid, count, creds, priority)
                     .await?;
@@ -472,6 +533,7 @@ impl Catalog {
                 })
             }
             Section::TopAlbums => {
+                let creds = &lender.credentials().await;
                 let groups = match client
                     .artist_top_release_groups(mbid, count, creds, priority)
                     .await
@@ -877,9 +939,10 @@ impl Catalog {
     }
 
     /// `GET /albums/{album_id}/similar`: top albums of artists similar to
-    /// this album's artist, from the service the person prefers, then from
-    /// the other one when the first is switched off, not set up or has
-    /// nothing. The answer names the service that answered, and is
+    /// this album's artist. The similar artists are the one answer for
+    /// everyone; their albums come from the service the person prefers,
+    /// then from the other one when the first is switched off, not set up
+    /// or has nothing. The answer names the service that answered, and is
     /// unconfigured only when neither can be asked.
     pub async fn similar_albums(
         &self,
@@ -937,7 +1000,12 @@ impl Catalog {
         let lender = self.upstream().lender(user_id);
         let key = CacheKey::new(
             Source::ListenBrainz,
-            &["similar_albums", album, artist, &count.to_string()],
+            &[
+                "similar_albums_by_one_answer",
+                album,
+                artist,
+                &count.to_string(),
+            ],
         );
         let (lb_album, lb_artist) = (album.to_owned(), artist.to_owned());
         let shared_rows = self.upstream().cache().clone();
@@ -1025,9 +1093,9 @@ impl Catalog {
         Some(rows.ok().flatten().unwrap_or_default().albums)
     }
 
-    /// Last.fm's similar albums: the artist's similar artists, as the
-    /// artist page reads them, and their top albums. `None` while Last.fm
-    /// is switched off or no key can read it.
+    /// Last.fm's similar albums: the artist's similar artists, the one
+    /// answer the artist page shows, and their Last.fm top albums. `None`
+    /// while Last.fm is switched off or no key can read it.
     async fn similar_albums_from_lastfm(
         &self,
         user_id: &str,
@@ -1035,16 +1103,20 @@ impl Catalog {
         artist: &str,
         count: u32,
     ) -> Option<Vec<AlbumRef>> {
+        if !self.lastfm_readable(user_id).await {
+            return None;
+        }
         let answer = self
-            .section_from(
-                ListenSource::Lastfm,
+            .artist_section(
                 user_id,
                 artist,
                 SIMILAR_ALBUM_ARTISTS as u32,
+                None,
                 Section::Similar,
                 RequestPriority::UserInitiated,
             )
-            .await;
+            .await
+            .ok()?;
         if !answer.configured {
             return None;
         }
@@ -1082,13 +1154,14 @@ impl Catalog {
             return Vec::new();
         };
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        // The similar artists are Last.fm's for `artist`, so the key names
-        // both; rows keyed by the album alone were built from ListenBrainz's.
+        // The similar artists are the one answer for `artist`, so the key
+        // names both; `similar_albums_of` rows were built from Last.fm's own
+        // similar artists.
         let key = CacheKey::new(
             Source::LastFm,
             &[
                 &namespace,
-                "similar_albums_of",
+                "similar_albums_by_one_answer",
                 album,
                 artist,
                 &count.to_string(),

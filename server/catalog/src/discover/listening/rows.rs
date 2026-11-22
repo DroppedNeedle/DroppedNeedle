@@ -155,13 +155,13 @@ pub struct RankedAlbum {
     pub listen_count: i64,
 }
 
-/// A similar artist with its similarity: ListenBrainz sends a listen
-/// count (unbounded), Last.fm a match between 0 and 1.
+/// A similar artist with its similarity, from 0 to 1: ListenBrainz's
+/// scaled so its best is 1, Last.fm's match as sent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScoredArtist {
     /// The artist.
     pub artist: ArtistRow,
-    /// Raw similarity score.
+    /// Similarity score.
     pub score: f64,
 }
 

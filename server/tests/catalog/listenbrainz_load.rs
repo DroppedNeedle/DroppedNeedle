@@ -59,12 +59,14 @@ const LISTENBRAINZ_BOUNDS: [(&str, u64); 4] = [
     ("day 15", 235),
 ];
 /// The most ListenBrainz plus MusicBrainz calls for a user who follows
-/// Last.fm. The old code made 320, 283, 262 and 260.
+/// Last.fm. The old code made 320, 283, 262 and 260. Similar artists come
+/// from ListenBrainz for everyone, which adds its list and count reads: 4
+/// to 20 a day here.
 const LASTFM_BOUNDS: [(&str, u64); 4] = [
-    ("cold", 300),
+    ("cold", 315),
     ("warm", 165),
-    ("monday", 110),
-    ("day 15", 90),
+    ("monday", 125),
+    ("day 15", 100),
 ];
 
 const USER: &str = "user-1";
@@ -106,7 +108,7 @@ fn endpoint(method: &Method, uri: &Uri) -> String {
             "lb release-group popularity".to_owned()
         }
         ["listenbrainz", "1", "popularity", name, ..] => format!("lb {name}"),
-        ["listenbrainz", "1", "lb-radio", ..] => "lb lb-radio/artist".to_owned(),
+        ["labs", "similar-artists", ..] => "lb labs similar-artists".to_owned(),
         ["listenbrainz", "1", "metadata", "recording", ..] => "lb metadata/recording".to_owned(),
         ["listenbrainz", "1", "stats", "sitewide", name] => format!("lb stats/sitewide/{name}"),
         ["listenbrainz", "1", "stats", "user", _, name] => format!("lb stats/user/{name}"),
@@ -188,7 +190,6 @@ fn lb_answer(uri: &Uri, body: &[u8]) -> Value {
         ["popularity", "top-release-groups-for-artist", artist] if number_of(artist) % 5 == 0 => {
             json!([])
         }
-        ["lb-radio", "artist", artist] if number_of(artist) % 5 == 0 => json!({}),
         ["popularity", "top-release-groups-for-artist", artist] => {
             let base = number_of(artist) % 100_000;
             Value::Array(
@@ -222,19 +223,19 @@ fn lb_answer(uri: &Uri, body: &[u8]) -> Value {
                 .map(|id| json!({"release_group_mbid": id, "total_listen_count": 90}))
                 .collect(),
         ),
-        ["lb-radio", "artist", artist] => {
-            let base = number_of(artist) % SIMILAR_POOL;
-            Value::Object(
-                (0..25)
-                    .map(|n| {
-                        let id = mbid('b', 1 + (base + n * 7) % SIMILAR_POOL);
-                        let rows = json!([{"similar_artist_name": format!("Similar {id}"),
-                                       "total_listen_count": 1000 - n}]);
-                        (id, rows)
-                    })
-                    .collect(),
-            )
-        }
+        ["popularity", "artist"] => Value::Array(
+            asked["artist_mbids"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(|id| {
+                    let listeners = 1 + number_of(id) % 50_000;
+                    json!({"artist_mbid": id, "total_listen_count": listeners * 10,
+                           "total_user_count": listeners})
+                })
+                .collect(),
+        ),
         ["metadata", "recording", ..] => Value::Object(
             asked["recording_mbids"]
                 .as_array()
@@ -252,6 +253,31 @@ fn lb_answer(uri: &Uri, body: &[u8]) -> Value {
         ),
         _ => json!({}),
     }
+}
+
+/// Labs' similar artists for the asked artist: 25 of the pool, none for one
+/// artist in five.
+fn labs_answer(uri: &Uri) -> Value {
+    let artist = uri
+        .query()
+        .unwrap_or_default()
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("artist_mbids="))
+        .unwrap_or_default()
+        .to_owned();
+    if number_of(&artist) % 5 == 0 {
+        return json!([]);
+    }
+    let base = number_of(&artist) % SIMILAR_POOL;
+    Value::Array(
+        (0..25)
+            .map(|n| {
+                let id = mbid('b', 1 + (base + n * 7) % SIMILAR_POOL);
+                json!({"artist_mbid": id, "name": format!("Similar {id}"),
+                       "score": 1000 - n, "reference_mbid": artist})
+            })
+            .collect(),
+    )
 }
 
 fn lastfm_answer(uri: &Uri) -> Value {
@@ -323,6 +349,8 @@ async fn mock(tally: Tally) -> String {
                 .or_default() += 1;
             let answer = if uri.path().starts_with("/listenbrainz/") {
                 lb_answer(&uri, &body)
+            } else if uri.path().starts_with("/labs/") {
+                labs_answer(&uri)
             } else if uri.path().starts_with("/lastfm") {
                 lastfm_answer(&uri)
             } else if uri.path().starts_with("/musicbrainz") {
@@ -502,6 +530,7 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
         rig.platform.clock.clone(),
         ProviderEndpoints {
             listenbrainz: format!("{origin}/listenbrainz"),
+            listenbrainz_labs: format!("{origin}/labs"),
             lastfm: format!("{origin}/lastfm/"),
             musicbrainz: format!("{origin}/musicbrainz"),
             brainzmash: format!("{origin}/musicbrainz"),

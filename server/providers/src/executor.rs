@@ -626,6 +626,11 @@ impl Executor {
         &self.limiter
     }
 
+    /// Now, in milliseconds, from the clock this executor reads.
+    pub(crate) fn now_ms(&self) -> i64 {
+        self.clock.now_ms()
+    }
+
     /// Send `request` at `priority`.
     ///
     /// # Errors

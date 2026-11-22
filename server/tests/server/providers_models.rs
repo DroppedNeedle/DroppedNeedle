@@ -96,7 +96,6 @@ enum ListenBrainzRead {
     Popularity,
     TopReleaseGroups,
     TopRecordings,
-    Similar,
     ScoredSimilar,
     ArtistPopularity,
     SitewideArtists,
@@ -783,13 +782,6 @@ const ROWS: &[Row] = &[
         body: include_str!("../fixtures/listenbrainz/top_recordings_radiohead.json"),
         kind: PayloadKind::Decode,
         identity: "/0/total_listen_count",
-    },
-    Row {
-        name: "listenbrainz /1/lb-radio/artist, count",
-        provider: Provider::ListenBrainz(ListenBrainzRead::Similar),
-        body: include_str!("../fixtures/listenbrainz/lb_radio_artist.json"),
-        kind: PayloadKind::Decode,
-        identity: "/ada7a83c-e3e1-40f1-93f9-3e73dbc9298a/0/total_listen_count",
     },
     Row {
         name: "listenbrainz labs similar artists, id",
@@ -1589,14 +1581,6 @@ async fn listenbrainz(read: ListenBrainzRead, body: &str) -> Result<bool, Provid
                 .await?
                 .is_empty()
         }
-        ListenBrainzRead::Similar => {
-            let path = format!("/1/lb-radio/artist/{MB_RADIOHEAD_MBID}");
-            !answer(Method::Get, path)
-                .listenbrainz
-                .similar_artists(MB_RADIOHEAD_MBID, 3, &creds, PRIORITY)
-                .await?
-                .is_empty()
-        }
         ListenBrainzRead::ScoredSimilar => !labs_answer(200, body)
             .0
             .listenbrainz
@@ -1994,8 +1978,7 @@ async fn a_lastfm_count_that_was_not_sent_reads_as_absent() {
 
 /// What the recorded answers mean once read: the values behind Discover and
 /// the artist page, an album's type, date, listeners and credited artists,
-/// an empty date as no date, a row with no release, and the seed artist LB
-/// Radio names among its own similar artists.
+/// an empty date as no date, and a row with no release.
 #[tokio::test]
 async fn listenbrainz_recorded_values_read_as_answered() {
     let creds = linked();
@@ -2062,20 +2045,6 @@ async fn listenbrainz_recorded_values_read_as_answered() {
     ))
     .expect("the recording decodes");
     assert_eq!(popularity[0].total_user_count, Some(25_280));
-
-    let similar = listenbrainz_answer(
-        Method::Get,
-        &format!("/1/lb-radio/artist/{MB_RADIOHEAD_MBID}"),
-        200,
-        include_str!("../fixtures/listenbrainz/lb_radio_artist.json"),
-    )
-    .listenbrainz
-    .similar_artists(MB_RADIOHEAD_MBID, 3, &creds, PRIORITY)
-    .await
-    .expect("the recording decodes");
-    let names: Vec<&str> = similar.iter().map(|a| a.artist_name.as_str()).collect();
-    assert_eq!(names.len(), 2, "the seed is dropped: {names:?}");
-    assert!(!names.contains(&"Radiohead"), "{names:?}");
 }
 
 /// The recorded labs lists and artist counts read as answered: the scored

@@ -10,33 +10,47 @@
 
 use crate::common::Probe;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
+use axum::response::IntoResponse;
 use axum::{
     Router,
     body::Body,
-    http::{Request, StatusCode},
+    http::{Request, StatusCode, Uri},
 };
 use droppedneedle_catalog::discover::cache::{PageKind, Timing, UserPageCache, Variant, clear_all};
+use droppedneedle_catalog::discover::listening::shared::{self, Lender};
 use droppedneedle_catalog::discover::listening::{
-    AlbumRow, ArtistRow, ListenedAlbum, ListeningData, PlaylistTrack, RankedAlbum, ScoredArtist,
-    SourceContext, UserMusic, WeeklyPlaylist,
+    AlbumRow, ArtistRow, Ask, ListenedAlbum, ListeningData, PlaylistTrack, RankedAlbum,
+    ScoredArtist, SourceContext, UserMusic, WeeklyPlaylist,
 };
 use droppedneedle_catalog::discover::ports::BoxFuture;
 use droppedneedle_catalog::discover::scheduler::activity::ActivityDb;
 use droppedneedle_catalog::discover::scheduler::{ArtistDetail, Feature, Warm, WarmScheduler};
+use droppedneedle_catalog::discover::wiring::{deps_over, live_network};
+use droppedneedle_catalog::metadata::Catalog;
+use droppedneedle_catalog::metadata::library::LocalCatalog;
+use droppedneedle_catalog::metadata::upstream::{LiveCatalogSettings, Upstream};
 use droppedneedle_kernel::db::Lane;
+use droppedneedle_kernel::db::cache::CacheDb;
+use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::runtime_config::secret_sections::{AdvancedSettings, LastFmSettings};
 use droppedneedle_kernel::runtime_config::sections::ListenSource;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, LegacyConfig};
+use droppedneedle_media::playback::listening::PrefsPatch;
 use droppedneedle_providers::Providers;
+use droppedneedle_providers::executor::Method;
+use droppedneedle_providers::test_support::{Scripted, ScriptedWire};
+use droppedneedle_providers::{ProviderEndpoints, RequestPriority, ReqwestWire, listenbrainz};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
 use crate::common::auth::AuthRig;
 use crate::common::platform::TEST_KEY;
-use crate::discover_queue::{Script, after_commits, discover_deps, discover_routes};
+use crate::discover_queue::{
+    Script, after_commits, discover_deps, discover_inputs, discover_routes,
+};
 
 const SEED: &str = "11111111-1111-4111-8111-111111111111";
 
@@ -541,8 +555,8 @@ async fn because_entries(on: bool) -> Vec<(String, String, String)> {
                 (7..=9).map(|n| scored('b', n, 90.0)).collect(),
             ),
         ]),
-        // Last.fm's last pick for "Both" is ListenBrainz's last one too,
-        // named without its id.
+        // Last.fm's list for "Both" shares ListenBrainz's last pick, named
+        // without its id; it is not blended in.
         lastfm_similar: HashMap::from([(
             both.mbid.clone().unwrap_or_default(),
             vec![
@@ -581,9 +595,9 @@ async fn because_entries(on: bool) -> Vec<(String, String, String)> {
 }
 
 /// Blended, the seeds come from both histories with the artist both name
-/// first, its similar artists lead with the one both services suggest
-/// (one by id, the other by name alone), and the shelves carry the
-/// blended badge. Turned off, only the primary service is read.
+/// first, and the shelves carry the blended badge; each seed's similar
+/// artists are ListenBrainz's one answer, with nothing of Last.fm's mixed
+/// in. Turned off, only the primary service's seeds are read.
 #[tokio::test]
 async fn both_services_blend_unless_the_server_turns_it_off() {
     let entry = |seed: &str, source: &str, first: &str| {
@@ -592,7 +606,7 @@ async fn both_services_blend_unless_the_server_turns_it_off() {
     assert_eq!(
         because_entries(true).await,
         vec![
-            entry("Both", "blended", "Artist b6"),
+            entry("Both", "blended", "Artist b4"),
             entry("LB Only", "blended", "Artist b1"),
             entry("Last.fm Only", "blended", "Artist b7"),
         ]
@@ -931,4 +945,434 @@ async fn a_warm_that_kept_nothing_waits_before_it_is_tried_again() {
     );
     rig.clock().advance(2_000);
     assert!(cache.claim("user-1").await.is_some(), "one is after it");
+}
+
+/// The similar artists a stub ListenBrainz knows for [`SEED`], with their
+/// co-listening score and listener count (none for the first), and the
+/// order fame divided out gives them.
+const NEIGHBOURS: [(&str, i64, Option<i64>); 5] = [
+    ("Uncounted", 1_000, None),
+    ("Famous", 900, Some(1_000_000)),
+    ("Middle", 600, Some(40_000)),
+    ("Cult", 400, Some(1_000)),
+    ("Small", 100, Some(100)),
+];
+const RANKED: [&str; 5] = ["Cult", "Small", "Middle", "Famous", "Uncounted"];
+
+fn neighbour_id(at: usize) -> String {
+    mbid('9', at as u8 + 1)
+}
+
+/// A ListenBrainz, labs, Last.fm and MusicBrainz stub for one linked
+/// listener whose one top artist is [`SEED`]: its labs list, its
+/// neighbours' counts, and one album each on ListenBrainz and on Last.fm
+/// (whose release MusicBrainz places). Anything else answers 204. Answers
+/// the origin and the calls per path.
+async fn similar_stub() -> (String, Arc<Mutex<HashMap<String, usize>>>) {
+    let hits: Arc<Mutex<HashMap<String, usize>>> = Arc::default();
+    let seen = hits.clone();
+    let stub = Router::new().fallback(move |uri: Uri| {
+        let seen = seen.clone();
+        async move {
+            let path = uri.path().to_owned();
+            *seen.lock().unwrap().entry(path.clone()).or_default() += 1;
+            let param = |name: &str| {
+                uri.query()
+                    .unwrap_or_default()
+                    .split('&')
+                    .find_map(|pair| pair.strip_prefix(&format!("{name}=")))
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let body = if path == "/lastfm/" && param("method") == "artist.getTopAlbums" {
+                json!({"topalbums": {"album": [{"name": "A Last.fm Album",
+                    "mbid": param("mbid").replace("9999", "7777"), "playcount": "9",
+                    "artist": {"name": "Someone"}}]}})
+            } else if let Some(release) = path.strip_prefix("/musicbrainz/release/") {
+                json!({"id": release, "title": "A Release",
+                    "release-group": {"id": release.replace("7777", "6666"), "title": "A Group"}})
+            } else if path == "/labs/similar-artists/json" {
+                json!(
+                    NEIGHBOURS
+                        .iter()
+                        .enumerate()
+                        .map(
+                            |(at, (name, score, _))| json!({"artist_mbid": neighbour_id(at),
+                            "name": name, "score": score, "reference_mbid": SEED})
+                        )
+                        .collect::<Vec<_>>()
+                )
+            } else if path == "/listenbrainz/1/popularity/artist" {
+                json!(
+                    NEIGHBOURS
+                        .iter()
+                        .enumerate()
+                        .map(
+                            |(at, (_, _, listeners))| json!({"artist_mbid": neighbour_id(at),
+                            "total_listen_count": listeners.map(|n| n * 10),
+                            "total_user_count": listeners})
+                        )
+                        .collect::<Vec<_>>()
+                )
+            } else if path == "/listenbrainz/1/stats/user/listener/artists" {
+                json!({"payload": {"artists": [{"artist_name": "Seed", "listen_count": 50,
+                    "artist_mbids": [SEED]}]}})
+            } else if let Some(artist) =
+                path.strip_prefix("/listenbrainz/1/popularity/top-release-groups-for-artist/")
+            {
+                json!([{"release_group_mbid": artist.replace("9999", "8888"),
+                    "total_listen_count": 100, "release_group": {"name": "An Album"},
+                    "artist": {"name": "Someone"}}])
+            } else {
+                return StatusCode::NO_CONTENT.into_response();
+            };
+            axum::Json(body).into_response()
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+    (origin, hits)
+}
+
+/// One answer serves every "similar to" list: the Because shelf, the artist
+/// page, the album page (a Last.fm-first person's too) and the Weekly Mix's
+/// source give one order for one artist, with fame divided out (a
+/// neighbour with a lower score and far fewer listeners leads a famous
+/// one, and one with no count comes last). The list and the counts are
+/// each read once: the second ask makes no call.
+#[tokio::test]
+async fn one_similar_answer_leads_every_list_in_one_order() {
+    let (origin, hits) = similar_stub().await;
+    let dir = crate::common::ScratchDir::new("discover-one-similar");
+    let rig = AuthRig::new("discover-one-similar").await;
+    seed_user(&rig.platform.db).await;
+    rig.seed_user("2", droppedneedle_auth::Role::User).await;
+    rig.set_lastfm_instance_key("instance-key");
+    let store = crate::common::listening_store(&rig.platform);
+    store
+        .save_listenbrainz("user-1", "listener", "token")
+        .await
+        .expect("link");
+    store
+        .update_prefs(
+            "user-2",
+            &PrefsPatch {
+                primary_music_source: Some(ListenSource::Lastfm),
+                ..PrefsPatch::default()
+            },
+        )
+        .await
+        .expect("Last.fm first");
+    let http = HttpClientFactory::new().unwrap();
+    let providers = Providers::unpaced_on(
+        Arc::new(ReqwestWire::new(&http)),
+        rig.platform.clock.clone(),
+        ProviderEndpoints {
+            listenbrainz: format!("{origin}/listenbrainz"),
+            listenbrainz_labs: format!("{origin}/labs"),
+            lastfm: format!("{origin}/lastfm/"),
+            musicbrainz: format!("{origin}/musicbrainz"),
+            brainzmash: format!("{origin}/musicbrainz"),
+            ..ProviderEndpoints::closed()
+        },
+    );
+    let inputs = discover_inputs(&rig, &dir, providers);
+    let providers = inputs.providers.clone();
+    let network = live_network(&inputs, &rig.config);
+    let app = discover_routes(deps_over(inputs, &rig.config, network));
+    let catalog = Catalog::new(
+        Upstream::new(
+            providers.clone(),
+            Arc::new(LiveCatalogSettings::new(&rig.config)),
+            rig.deps.clone(),
+            store.clone(),
+        ),
+        LocalCatalog::new(rig.platform.db.clone()),
+        crate::common::bundles::quiet_page_sources(crate::common::bundles::cover_warm_at(
+            &rig.platform.db,
+            rig.platform.clock.clone(),
+        )),
+    );
+    let name_of = |id: &str| {
+        (0..NEIGHBOURS.len())
+            .find(|at| neighbour_id(*at) == id)
+            .map_or("?", |at| NEIGHBOURS[at].0)
+    };
+
+    call(&app, "GET", "/api/v3/discover", None).await;
+    let page = settled_page(&rig, &app, "the page was built").await;
+    let shelf: Vec<String> =
+        content(&page, "because_you_listen_to")["entries"][0]["section"]["items"]
+            .as_array()
+            .expect("a Because shelf")
+            .iter()
+            .map(|item| item["name"].as_str().unwrap_or_default().to_owned())
+            .collect();
+    assert_eq!(shelf, RANKED, "{page}");
+
+    let artist_page = catalog
+        .similar_artists("user-1", SEED, 15, None, RequestPriority::UserInitiated)
+        .await
+        .expect("the artist page's similar artists");
+    let names: Vec<&str> = artist_page
+        .similar_artists
+        .iter()
+        .map(|artist| artist.name.as_str())
+        .collect();
+    assert_eq!(names, RANKED, "the artist page");
+    assert_eq!(
+        artist_page.similar_artists[0].listen_count,
+        Some(10_000),
+        "a neighbour carries its own listens"
+    );
+
+    let album_page = catalog
+        .similar_albums("user-1", &mbid('a', 1), SEED, 5)
+        .await
+        .expect("the album page's similar albums");
+    let by: Vec<&str> = album_page
+        .albums
+        .iter()
+        .filter_map(|album| album.artist_id.as_deref())
+        .map(name_of)
+        .collect();
+    assert_eq!(by, RANKED, "the album page");
+
+    let lastfm_first = catalog
+        .similar_albums("user-2", &mbid('a', 1), SEED, 5)
+        .await
+        .expect("a Last.fm-first person's similar albums");
+    assert_eq!(
+        lastfm_first.source,
+        ListenSource::Lastfm,
+        "{lastfm_first:?}"
+    );
+    let by: Vec<&str> = lastfm_first
+        .albums
+        .iter()
+        .filter_map(|album| album.artist_id.as_deref())
+        .map(name_of)
+        .collect();
+    assert_eq!(by, RANKED, "a Last.fm-first person's album page");
+
+    let mix = shared::similar_artists(
+        &providers.cache,
+        &providers.listenbrainz,
+        SEED,
+        10,
+        &Lender::Person(store, "user-1".to_owned()),
+        RequestPriority::BackgroundSync,
+    )
+    .await
+    .expect("the Weekly Mix's similar artists");
+    let names: Vec<&str> = mix.iter().map(|row| row.artist.name.as_str()).collect();
+    assert_eq!(names, RANKED, "the Weekly Mix's source");
+
+    let hits = hits.lock().unwrap();
+    assert_eq!(hits.get("/labs/similar-artists/json"), Some(&1), "{hits:?}");
+    assert_eq!(
+        hits.get("/listenbrainz/1/popularity/artist"),
+        Some(&1),
+        "{hits:?}"
+    );
+}
+
+/// After a good answer, a labs read that fails (labs no longer offers the
+/// dataset) keeps serving the kept list. The failure rests labs reads, so
+/// an artist with nothing kept is not asked for meanwhile.
+#[tokio::test]
+async fn a_failed_labs_read_keeps_the_list_it_had() {
+    const RADIOHEAD: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    let rig = AuthRig::new("discover-labs-kept").await;
+    let wire = Arc::new(ScriptedWire::new());
+    let labs = format!("{}/similar-artists/json", listenbrainz::LABS_BASE_URL);
+    wire.answer(
+        &labs,
+        200,
+        &[],
+        include_str!("../fixtures/listenbrainz/labs_similar_artists_radiohead.json"),
+    );
+    wire.answer(
+        &labs,
+        400,
+        &[("content-type", "text/html")],
+        include_str!("../fixtures/listenbrainz/labs_unknown_algorithm.html"),
+    );
+    wire.on(
+        Method::Post,
+        &format!("{}/1/popularity/artist", listenbrainz::DEFAULT_BASE_URL),
+        Scripted::Answer {
+            status: 200,
+            headers: Vec::new(),
+            body: include_bytes!("../fixtures/listenbrainz/popularity_artist_post.json").to_vec(),
+        },
+    );
+    let providers = Providers::unpaced_on(
+        wire.clone(),
+        rig.platform.clock.clone(),
+        ProviderEndpoints {
+            listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+            listenbrainz_labs: listenbrainz::LABS_BASE_URL.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    );
+    let read = |artist: &'static str| {
+        shared::similar_artists(
+            &providers.cache,
+            &providers.listenbrainz,
+            artist,
+            100,
+            &Lender::Anonymous,
+            RequestPriority::BackgroundSync,
+        )
+    };
+    let labs_reads = || {
+        wire.sent()
+            .iter()
+            .filter(|sent| sent.url.path() == "/similar-artists/json")
+            .count()
+    };
+
+    let first = read(RADIOHEAD).await.expect("the recorded list");
+    assert_eq!(first.len(), 100);
+    assert_eq!(
+        first[0].artist.name, "Red Hot Chili Peppers",
+        "the one neighbour with a count leads"
+    );
+    rig.clock().advance(15 * 86_400_000);
+    let kept = read(RADIOHEAD).await.expect("the kept list stands in");
+    assert_eq!(kept, first);
+    assert_eq!(labs_reads(), 2, "the stale list was asked for again");
+
+    let other = read(SEED).await;
+    assert!(other.is_err(), "nothing kept, and the reads rest");
+    assert_eq!(labs_reads(), 2, "a resting read sends nothing");
+}
+
+/// A pass over several artists stops asking at its first failed similar
+/// read: the rest answer only from kept lists.
+#[tokio::test]
+async fn a_similar_pass_stops_at_its_first_failed_read() {
+    let script = Arc::new(Script::default());
+    script.similar_down.store(true, Ordering::SeqCst);
+    let listening = ListeningData::new(script.clone(), Providers::closed().cache);
+    let ask = Ask::build(RequestPriority::BackgroundSync);
+    let artists: Vec<String> = (1..=4).map(|n| mbid('d', n)).collect();
+    let answers = listening
+        .similar_artists_each("user-1", &artists, 10, &ask)
+        .await;
+    assert!(answers.iter().all(Result::is_err), "{answers:?}");
+    assert_eq!(script.similar_reads.load(Ordering::SeqCst), 1);
+}
+
+/// Labs reads rest after a failed one for every caller, in memory, so a
+/// pass and the passes after it stop at the first failure with the
+/// provider cache off.
+#[tokio::test]
+async fn labs_reads_rest_after_a_failure_with_the_cache_off() {
+    let hits: Arc<Mutex<usize>> = Arc::default();
+    let seen = hits.clone();
+    let stub = Router::new().fallback(move || {
+        let seen = seen.clone();
+        async move {
+            *seen.lock().unwrap() += 1;
+            (
+                StatusCode::BAD_REQUEST,
+                [("content-type", "text/html")],
+                include_str!("../fixtures/listenbrainz/labs_unknown_algorithm.html"),
+            )
+                .into_response()
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+    let rig = AuthRig::new("discover-labs-rest").await;
+    let dir = crate::common::ScratchDir::new("discover-labs-rest");
+    // A cache file that would be the database's own is refused: the cache
+    // is off.
+    let cache = CacheDb::open_blocking(&dir, &dir.join(droppedneedle_kernel::db::cache::FILE_NAME));
+    assert!(!cache.is_on());
+    let providers = Providers::build(
+        &rig.platform,
+        ProviderEndpoints {
+            listenbrainz_labs: format!("{origin}/labs"),
+            ..ProviderEndpoints::closed()
+        },
+        cache,
+    );
+    let artists: Vec<String> = (1..=3).map(|n| mbid('d', n)).collect();
+    let pass = || {
+        shared::similar_artists_each(
+            &providers.cache,
+            &providers.listenbrainz,
+            &artists,
+            10,
+            &Lender::Anonymous,
+            RequestPriority::BackgroundSync,
+        )
+    };
+    assert!(pass().await.iter().all(Result::is_err));
+    assert_eq!(
+        *hits.lock().unwrap(),
+        1,
+        "the pass stopped at its first failure"
+    );
+    assert!(pass().await.iter().all(Result::is_err));
+    assert_eq!(*hits.lock().unwrap(), 1, "the next pass sends nothing");
+}
+
+/// A listener-count read that fails after a good list keeps the list: it
+/// answers in score order, and the next ask reads it without asking labs.
+#[tokio::test]
+async fn a_failed_count_read_keeps_the_list() {
+    const RADIOHEAD: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!("{}/similar-artists/json", listenbrainz::LABS_BASE_URL),
+        200,
+        &[],
+        include_str!("../fixtures/listenbrainz/labs_similar_artists_radiohead.json"),
+    );
+    wire.on(
+        Method::Post,
+        &format!("{}/1/popularity/artist", listenbrainz::DEFAULT_BASE_URL),
+        Scripted::Answer {
+            status: 200,
+            headers: Vec::new(),
+            body: br#"{"payload": 7}"#.to_vec(),
+        },
+    );
+    let providers = Providers::unpaced_at(
+        wire.clone(),
+        ProviderEndpoints {
+            listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+            listenbrainz_labs: listenbrainz::LABS_BASE_URL.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    );
+    let read = || {
+        shared::similar_artists(
+            &providers.cache,
+            &providers.listenbrainz,
+            RADIOHEAD,
+            3,
+            &Lender::Anonymous,
+            RequestPriority::BackgroundSync,
+        )
+    };
+    let names = |rows: Vec<ScoredArtist>| -> Vec<String> {
+        rows.into_iter().map(|row| row.artist.name).collect()
+    };
+    let first = names(read().await.expect("the list answers uncounted"));
+    assert_eq!(first, ["Nirvana", "Red Hot Chili Peppers", "Muse"]);
+    let again = names(read().await.expect("the kept list"));
+    assert_eq!(again, first);
+    let labs_reads = wire
+        .sent()
+        .iter()
+        .filter(|sent| sent.url.path() == "/similar-artists/json")
+        .count();
+    assert_eq!(labs_reads, 1, "the list was kept");
 }

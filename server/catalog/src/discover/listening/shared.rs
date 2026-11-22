@@ -9,17 +9,15 @@ use std::collections::HashMap;
 
 use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_providers::listenbrainz::{
-    ListenBrainzClient, ListenBrainzCredentials, SimilarArtist, TopReleaseGroup,
+    ListenBrainzClient, ListenBrainzCredentials, TopReleaseGroup,
 };
 use droppedneedle_providers::{
     CacheKey, Fetched, Policy, ProviderCacheStore, ProviderError, RequestPriority, Source,
 };
 
-use super::gate;
-use super::rows::{AlbumFacts, AlbumRow, ArtistRow, RankedAlbum, ScoredArtist};
+use super::rows::{AlbumFacts, AlbumRow, RankedAlbum, ScoredArtist};
+use super::{gate, similar};
 
-/// Similar artists read per artist.
-pub const SIMILAR_ROWS: usize = 25;
 /// An artist's top albums read per artist.
 pub const ARTIST_ALBUM_ROWS: usize = 25;
 
@@ -59,14 +57,6 @@ fn lower(text: &str) -> String {
     text.trim().to_lowercase()
 }
 
-/// The cache key of an artist's similar artists, `read` rows long.
-pub(super) fn similar_key(artist_mbid: &str, read: usize) -> CacheKey {
-    CacheKey::new(
-        Source::ListenBrainz,
-        &["similar_artists", &lower(artist_mbid), &read.to_string()],
-    )
-}
-
 /// The cache key of an artist's top albums, `read` rows long.
 pub(super) fn artist_albums_key(artist_mbid: &str, read: usize) -> CacheKey {
     CacheKey::new(
@@ -90,46 +80,6 @@ fn found_or_missing<T>(rows: Vec<T>) -> Fetched<Vec<T>> {
     } else {
         Fetched::Found(rows)
     }
-}
-
-/// Up to `limit` artists similar to one artist, straight from ListenBrainz.
-/// LB Radio counts the seed among the artists it is asked for and the
-/// client drops it, so one more is asked for (the recorded answer,
-/// `tests/fixtures/listenbrainz/lb_radio_artist.json`, was asked for three
-/// and holds the seed and two others).
-///
-/// # Errors
-///
-/// The typed failure of the call.
-pub(super) async fn similar_from(
-    client: &ListenBrainzClient,
-    artist_mbid: &str,
-    limit: usize,
-    creds: &ListenBrainzCredentials,
-    priority: RequestPriority,
-) -> Result<Vec<ScoredArtist>, ProviderError> {
-    if limit == 0 {
-        return Ok(Vec::new());
-    }
-    let mut rows = client
-        .similar_artists(artist_mbid, limit + 1, creds, priority)
-        .await?;
-    rows.truncate(limit);
-    Ok(scored_artists(rows))
-}
-
-/// ListenBrainz's similar artists as kept rows.
-fn scored_artists(rows: Vec<SimilarArtist>) -> Vec<ScoredArtist> {
-    rows.into_iter()
-        .map(|row| ScoredArtist {
-            score: row.listen_count as f64,
-            artist: ArtistRow {
-                name: row.artist_name,
-                mbid: Some(row.artist_mbid),
-                listen_count: Some(row.listen_count),
-            },
-        })
-        .collect()
 }
 
 /// ListenBrainz's top release groups as kept rows, every one as sent: the
@@ -239,12 +189,12 @@ async fn release_group_rows(
     Ok(rows.unwrap_or_default())
 }
 
-/// Artists similar to one artist, `limit` at most, read through the shared
-/// rows.
+/// Artists like one artist, best first, `limit` at most: the one answer
+/// ([`similar`](super::similar)). The count read lends `lender`'s link.
 ///
 /// # Errors
 ///
-/// ListenBrainz's failure when no row is kept to stand in.
+/// ListenBrainz's failure when no list is kept to stand in.
 pub async fn similar_artists(
     cache: &ProviderCacheStore,
     client: &ListenBrainzClient,
@@ -253,23 +203,35 @@ pub async fn similar_artists(
     lender: &Lender,
     priority: RequestPriority,
 ) -> Result<Vec<ScoredArtist>, ProviderError> {
-    let read = limit.max(SIMILAR_ROWS);
-    let (client, mbid, lender) = (client.clone(), artist_mbid.to_owned(), lender.clone());
-    let rows = cache
-        .get_or_fetch(
-            &similar_key(artist_mbid, read),
-            Policy::LISTENBRAINZ_ARTIST,
-            priority,
-            move |priority| async move {
-                let creds = lender.credentials().await;
-                let rows = similar_from(&client, &mbid, read, &creds, priority).await?;
-                Ok(found_or_missing(rows))
-            },
-        )
-        .await?;
-    let mut rows: Vec<ScoredArtist> = rows.unwrap_or_default();
+    let reads = similar::ClientReads::new(client, lender);
+    let mut rows = similar::neighbours(cache, reads, artist_mbid, priority).await?;
     rows.truncate(limit);
     Ok(rows)
+}
+
+/// [`similar_artists`] for each of `artist_mbids`, in their order, as one
+/// pass: it stops asking at its first failed list read, and counts every
+/// neighbour in one read.
+pub async fn similar_artists_each(
+    cache: &ProviderCacheStore,
+    client: &ListenBrainzClient,
+    artist_mbids: &[String],
+    limit: usize,
+    lender: &Lender,
+    priority: RequestPriority,
+) -> Vec<Result<Vec<ScoredArtist>, ProviderError>> {
+    let reads = similar::ClientReads::new(client, lender);
+    similar::neighbours_each(cache, reads, artist_mbids, priority)
+        .await
+        .0
+        .into_iter()
+        .map(|rows| {
+            rows.map(|mut rows| {
+                rows.truncate(limit);
+                rows
+            })
+        })
+        .collect()
 }
 
 /// Listen counts per release group, each kept on its own.
