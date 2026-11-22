@@ -694,11 +694,11 @@ impl PlaylistStore {
         self.db
             .write("playlists.record_pull", move |tx| {
                 tx.execute(
-                    sql::PULL_CHECK.text(),
+                    sql::PULL_RECORD.text(),
                     rusqlite::params![
                         playlist_id,
-                        i64::try_from(now).unwrap_or(i64::MAX),
                         snapshot,
+                        i64::try_from(now).unwrap_or(i64::MAX),
                         error
                     ],
                 )?;

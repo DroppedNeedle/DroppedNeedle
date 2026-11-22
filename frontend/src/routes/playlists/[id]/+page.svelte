@@ -145,7 +145,7 @@
 	function openRequestDialog() {
 		const next: Record<string, 'album' | 'track'> = {};
 		for (const row of requestRows) {
-			next[row.id] = row.album_name.trim() ? 'album' : 'track';
+			next[row.id] = row.album_id || !row.album_name.trim() ? 'track' : 'album';
 		}
 		requestChoices = next;
 		requestOpen = true;
@@ -460,7 +460,7 @@
 								<span class="font-medium">{row.track_name}</span>
 								<span class="text-muted">by {row.artist_name}</span>
 							</span>
-							{#if row.album_name.trim()}
+							{#if row.album_name.trim() && !row.album_id}
 								<span class="flex shrink-0 items-center gap-3">
 									<label class="inline-flex items-center gap-1">
 										<input type="radio" value="album" bind:group={requestChoices[row.id]} />

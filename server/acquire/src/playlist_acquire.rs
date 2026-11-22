@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use droppedneedle_auth::Principal;
+use droppedneedle_catalog::collections::models::PlaylistTrack;
 use droppedneedle_catalog::collections::store::playlists::PlaylistStore;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -18,6 +19,9 @@ use crate::requests::service::RequestsService;
 
 /// How many items one run files, paced by the wait between them.
 const PACE: Duration = Duration::from_millis(300);
+
+/// The most items one press files; a larger body is cut here.
+const MAX_ITEMS_PER_PRESS: usize = 200;
 
 /// One thing a press asks for.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -66,31 +70,6 @@ pub struct PlaylistAcquire {
     generations: Mutex<HashMap<String, u64>>,
 }
 
-impl AcquireItem {
-    /// Whether two items name the same album, or the same song.
-    fn same(&self, other: &Self) -> bool {
-        if !self.artist.trim().eq_ignore_ascii_case(other.artist.trim()) {
-            return false;
-        }
-        match (self.kind, other.kind) {
-            (AcquireKind::Album, AcquireKind::Album) => self
-                .album
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .eq_ignore_ascii_case(other.album.as_deref().unwrap_or("").trim()),
-            // A person may take one song from a row that names an album.
-            (AcquireKind::Track, AcquireKind::Track | AcquireKind::Album) => self
-                .title
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .eq_ignore_ascii_case(other.title.as_deref().unwrap_or("").trim()),
-            _ => false,
-        }
-    }
-}
-
 impl PlaylistAcquire {
     /// A batch runner over the request ledger and the resolver.
     pub fn new(
@@ -125,18 +104,33 @@ impl PlaylistAcquire {
         playlist_id: String,
         items: Vec<AcquireItem>,
     ) -> AcquireState {
-        let allowed = self.items_from(principal.user_id(), &playlist_id).await;
+        let rows = match self
+            .playlists
+            .visible_to(principal.user_id())
+            .tracks(&playlist_id)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(_) => return AcquireState::default(),
+        };
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let items: Vec<AcquireItem> = items
             .into_iter()
-            .filter(|item| allowed.iter().any(|row| row.same(item)))
+            .filter(|item| row_allows(&rows, item))
+            .take(MAX_ITEMS_PER_PRESS)
             .filter(|item| {
-                let key = format!(
-                    "{}|{}|{}",
-                    item.artist.trim().to_lowercase(),
-                    item.album.as_deref().unwrap_or("").trim().to_lowercase(),
-                    item.title.as_deref().unwrap_or("").trim().to_lowercase()
-                );
+                let key = match item.kind {
+                    AcquireKind::Album => format!(
+                        "a|{}|{}",
+                        item.artist.trim().to_lowercase(),
+                        item.album.as_deref().unwrap_or("").trim().to_lowercase()
+                    ),
+                    AcquireKind::Track => format!(
+                        "t|{}|{}",
+                        item.artist.trim().to_lowercase(),
+                        item.title.as_deref().unwrap_or("").trim().to_lowercase()
+                    ),
+                };
                 seen.insert(key)
             })
             .collect();
@@ -320,11 +314,22 @@ impl PlaylistAcquire {
                     Ok(None) => return Filed::Failed,
                     Err(_) => return Filed::Failed,
                 };
-                if matches!(
-                    self.requests.store.get(RequestKind::Track, &recording).await,
-                    Ok(Some(row)) if row.status.is_active()
-                ) {
-                    return Filed::Skipped;
+                match self
+                    .requests
+                    .store
+                    .get(RequestKind::Track, &recording)
+                    .await
+                {
+                    Ok(Some(row)) if row.status.is_active() => return Filed::Skipped,
+                    Ok(Some(row))
+                        if matches!(
+                            row.status,
+                            RequestStatus::Rejected | RequestStatus::Cancelled
+                        ) =>
+                    {
+                        return Filed::Skipped;
+                    }
+                    _ => {}
                 }
                 let intake = TrackIntake {
                     recording_mbid: recording,
@@ -371,7 +376,7 @@ impl PlaylistAcquire {
             if artist.is_empty() || title.is_empty() {
                 continue;
             }
-            if album.is_empty() {
+            if album.is_empty() || track.album_id.is_some() {
                 if !items.iter().any(|seen| {
                     seen.kind == AcquireKind::Track
                         && seen.title.as_deref() == Some(title.as_str())
@@ -399,6 +404,46 @@ impl PlaylistAcquire {
         }
         items
     }
+}
+
+/// Whether a playlist row may be asked for: no library file, no other
+/// source, and both names present.
+fn askable(track: &PlaylistTrack) -> bool {
+    track.library_file_id.is_none()
+        && !track
+            .available_sources
+            .as_ref()
+            .is_some_and(|sources| sources.iter().any(|source| !source.trim().is_empty()))
+        && !track.artist_name.trim().is_empty()
+        && !track.track_name.trim().is_empty()
+}
+
+/// Whether an item names a missing row of this playlist. A song may be
+/// taken from a row that names its album, which is what a row linking to
+/// its album offers.
+fn row_allows(rows: &[PlaylistTrack], item: &AcquireItem) -> bool {
+    rows.iter().any(|row| {
+        askable(row)
+            && row
+                .artist_name
+                .trim()
+                .eq_ignore_ascii_case(item.artist.trim())
+            && match item.kind {
+                // A row that links to its album asks for its song, not
+                // for an album the library already knows.
+                AcquireKind::Album => {
+                    row.album_id.is_none()
+                        && row
+                            .album_name
+                            .trim()
+                            .eq_ignore_ascii_case(item.album.as_deref().unwrap_or(""))
+                }
+                AcquireKind::Track => row
+                    .track_name
+                    .trim()
+                    .eq_ignore_ascii_case(item.title.as_deref().unwrap_or("")),
+            }
+    })
 }
 
 enum Filed {

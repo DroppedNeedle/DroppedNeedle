@@ -62,7 +62,9 @@
 		const album = track.album_name.trim();
 		const artist = track.artist_name.trim();
 		const title = track.track_name.trim();
-		const item = album
+		// A row that links to its album is missing the song, not the album.
+		const wantsAlbum = !track.album_id && album.length > 0;
+		const item = wantsAlbum
 			? { kind: 'album' as const, album, artist, title: null }
 			: { kind: 'track' as const, album: null, artist, title };
 		try {
@@ -71,7 +73,7 @@
 				toastStore.show({ message: 'Nothing to request for this row', type: 'info' });
 			} else {
 				toastStore.show({
-					message: album ? `Requested the album ${album}.` : `Requested ${title}.`,
+					message: wantsAlbum ? `Requested the album ${album}.` : `Requested ${title}.`,
 					type: 'success'
 				});
 			}
@@ -551,7 +553,9 @@
 								<button
 									type="button"
 									class="mr-1 rounded p-1 text-muted hover:text-warning disabled:opacity-50"
-									title={track.album_name.trim() ? 'Request this album' : 'Request this song'}
+									title={!track.album_id && track.album_name.trim()
+										? 'Request this album'
+										: 'Request this song'}
 									disabled={acquiringId === track.id}
 									onclick={(e) => {
 										e.stopPropagation();

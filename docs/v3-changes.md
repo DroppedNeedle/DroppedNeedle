@@ -195,7 +195,8 @@ and the callback addresses and settings to change first are under
   dropped.
 - **Playlist "request missing" for scripts.** v2 had a server route,
   `POST /api/v1/playlists/<id>/request-missing`. v3 has its own,
-  `POST /api/v3/playlists/<id>/request-missing`, owner only: it groups the
-  entries the library lacks by album and artist, resolves each album, and
-  files one request per album. The button on the playlist page calls it,
-  and a script that called the old route uses the new one with no body.
+  `POST /api/v3/playlists/<id>/request-missing`, owner only. It groups the
+  entries the library lacks by album and artist, asks for one album per
+  group, and asks for the song when a row names no album. A script calls it
+  with a JSON body: `{"items": []}` asks for everything missing, and a list
+  of `{kind, album, artist, title}` asks for those rows only.
