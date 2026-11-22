@@ -358,6 +358,7 @@ impl LiveHome {
         off: &HashSet<SectionKey>,
     ) -> HomeResponse {
         let listenbrainz_on = status.listenbrainz;
+        let lastfm_on = status.lastfm;
         let status = user_status(status, music);
         let library = &self.inner.library;
         let (recent, artists, plays) = tokio::join!(
@@ -384,6 +385,7 @@ impl LiveHome {
             status.listenbrainz,
             listenbrainz_on,
             status.download_client,
+            lastfm_on,
             status.lastfm,
         );
         page.discover_preview = self.discover_preview(user_id).await;

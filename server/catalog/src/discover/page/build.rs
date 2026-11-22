@@ -104,6 +104,8 @@ pub struct PageSettings {
     pub queue: QueueSettings,
     /// Whether some download client is set up (connect-a-service cards).
     pub download_client: bool,
+    /// Whether the server has Last.fm switched on (connect-a-service cards).
+    pub lastfm_on: bool,
 }
 
 /// What one build reads from.
@@ -477,6 +479,7 @@ impl Builder<'_> {
             lb_user.is_some() || !self.listening.listenbrainz_on(),
             user.jellyfin,
             self.settings.download_client,
+            self.settings.lastfm_on,
             user.lastfm,
         );
         Built {

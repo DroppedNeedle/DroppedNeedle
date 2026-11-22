@@ -26,7 +26,7 @@ use droppedneedle_catalog::discover::ports::BoxFuture;
 use droppedneedle_catalog::discover::scheduler::activity::ActivityDb;
 use droppedneedle_catalog::discover::scheduler::{ArtistDetail, Feature, Warm, WarmScheduler};
 use droppedneedle_kernel::db::Lane;
-use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_kernel::runtime_config::secret_sections::{AdvancedSettings, LastFmSettings};
 use droppedneedle_kernel::runtime_config::sections::ListenSource;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, LegacyConfig};
 use droppedneedle_providers::Providers;
@@ -324,11 +324,18 @@ pub(crate) fn weekly_playlist(date: &str) -> WeeklyPlaylist {
 }
 
 /// The page built for a ListenBrainz user whose weekly playlist is dated
-/// `date`. The rig's clock reads 2024-01-01 00:00 UTC.
-async fn weekly_page(date: &str) -> Value {
+/// `date`, with Last.fm switched on or off on the server. The rig's clock
+/// reads 2024-01-01 00:00 UTC.
+async fn weekly_page(date: &str, lastfm_on: bool) -> Value {
     let dir = crate::common::ScratchDir::new("discover-weekly");
     let rig = AuthRig::new("discover-weekly").await;
     seed_user(&rig.platform.db).await;
+    rig.config
+        .save_secret_blocking(LastFmSettings {
+            enabled: lastfm_on,
+            ..LastFmSettings::default()
+        })
+        .expect("Last.fm settings save");
     let script = Script {
         weekly: Some(weekly_playlist(date)),
         ..page_script()
@@ -340,18 +347,29 @@ async fn weekly_page(date: &str) -> Value {
     settled_page(&rig, &app, "the weekly page was built").await
 }
 
-/// The weekly exploration playlist shows only while it is this week's:
-/// one made eight days before the build is left off.
-#[tokio::test]
-async fn only_this_weeks_playlist_shows() {
-    let stale = weekly_page("2023-12-24T00:00:00.054723+00:00").await;
-    assert_eq!(content(&stale, "weekly_exploration"), &Value::Null);
+fn offers_lastfm(page: &Value) -> bool {
+    page["service_prompts"]
+        .as_array()
+        .expect("service prompts")
+        .iter()
+        .any(|prompt| prompt["service"] == "lastfm")
+}
 
-    let fresh = weekly_page("2023-12-31T23:00:00.054723+00:00").await;
+/// The weekly exploration playlist shows only while it is this week's:
+/// one made eight days before the build is left off. The Last.fm card is
+/// offered only while the server has Last.fm switched on.
+#[tokio::test]
+async fn only_this_weeks_playlist_and_no_card_for_a_service_switched_off() {
+    let stale = weekly_page("2023-12-24T00:00:00.054723+00:00", false).await;
+    assert_eq!(content(&stale, "weekly_exploration"), &Value::Null);
+    assert!(!offers_lastfm(&stale), "Last.fm is switched off");
+
+    let fresh = weekly_page("2023-12-31T23:00:00.054723+00:00", true).await;
     assert_eq!(
         content(&fresh, "weekly_exploration")["weekly"]["tracks"][0]["title"],
         "Song"
     );
+    assert!(offers_lastfm(&fresh), "switched on, and not readable yet");
 }
 
 /// The page cache keeps what it should, one user per case. A build whose

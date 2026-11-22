@@ -42,7 +42,7 @@ use crate::discover::health::{BuildFacts, PageHealth, log_page_health, page_heal
 use crate::discover::listening::{Ask, ListeningData};
 use crate::discover::models::{
     ChartSection, DiscoverActivityResponse, DiscoverPreview, DiscoverResponse, IntegrationStatus,
-    ListenSource, SectionContent, SectionItem, SectionKey, ServiceState,
+    ListenSource, PromptService, SectionContent, SectionItem, SectionKey, ServiceState,
 };
 use crate::discover::ports::{BoxFuture, ProviderFailure};
 use crate::discover::queue::QueueSettings;
@@ -214,6 +214,7 @@ impl DiscoverPages {
                 / 2.0,
             queue: QueueSettings::from_advanced(&advanced),
             download_client: self.inner.integrations.download_client_ready(),
+            lastfm_on: self.inner.integrations.status().lastfm,
         })
     }
 
@@ -361,6 +362,7 @@ impl LiveDiscover {
         // The ListenBrainz card asks the person to link their own account,
         // so it shows only while reads are on and they have no link.
         let listenbrainz_settled = !status.listenbrainz || variant.listenbrainz;
+        let lastfm_readable = variant.lastfm;
         let saved = inner.cache.load(user_id, &variant).await;
         // A page that left out a section switched on since, or one built
         // past a failed read more than the retry wait ago, is rebuilt as
@@ -379,6 +381,10 @@ impl LiveDiscover {
             Some(saved) => {
                 let mut page = saved.value.page;
                 page.sections.retain(|section| !off.contains(&section.key));
+                if !status.lastfm {
+                    page.service_prompts
+                        .retain(|prompt| prompt.service != PromptService::Lastfm);
+                }
                 mark_ownership(inner.library.db(), &mut page).await;
                 page
             }
@@ -389,6 +395,7 @@ impl LiveDiscover {
                     status.jellyfin,
                     status.download_client,
                     status.lastfm,
+                    lastfm_readable,
                 );
                 page
             }

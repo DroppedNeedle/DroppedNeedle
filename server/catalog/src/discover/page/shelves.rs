@@ -281,11 +281,14 @@ fn prompt(
 
 /// The connect-a-service cards for what the user has not linked yet.
 /// `listenbrainz` is true when there is nothing to ask of ListenBrainz:
-/// the person linked it, or its reads are switched off.
+/// the person linked it, or its reads are switched off. The Last.fm card
+/// shows only while the server has Last.fm on (`lastfm_on`) and the
+/// person cannot read it (`lastfm`).
 pub fn service_prompts(
     listenbrainz: bool,
     jellyfin: bool,
     download_client: bool,
+    lastfm_on: bool,
     lastfm: bool,
 ) -> Vec<ServicePrompt> {
     let mut prompts = Vec::new();
@@ -334,7 +337,7 @@ pub fn service_prompts(
             ],
         ));
     }
-    if !lastfm {
+    if lastfm_on && !lastfm {
         prompts.push(prompt(
             PromptService::Lastfm,
             "Connect Last.fm",
