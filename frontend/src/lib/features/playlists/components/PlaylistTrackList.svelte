@@ -484,6 +484,9 @@
 						{:else}
 							<span class="pl-row__name">{track.track_name}</span>
 						{/if}
+						{#if !track.library_file_id}
+							<span class="pl-row__missing">Not in library</span>
+						{/if}
 						<span class="pl-row__sub">
 							{#if track.artist_id}
 								<a href={withBasePath(`/artist/${track.artist_id}`)} class="hover:underline"
@@ -688,6 +691,16 @@
 	}
 	.pl-row--playing .pl-row__name {
 		color: var(--color-primary);
+	}
+	.pl-row__missing {
+		margin-left: 0.45rem;
+		border: 1px solid var(--dn-warning, var(--dn-muted));
+		border-radius: 9999px;
+		padding: 0 0.4rem;
+		font-size: 0.6875rem;
+		font-weight: 500;
+		color: var(--dn-warning, var(--dn-muted));
+		white-space: nowrap;
 	}
 	.pl-row__sub {
 		overflow: hidden;

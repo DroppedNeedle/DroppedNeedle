@@ -997,6 +997,22 @@ impl VisiblePlaylists<'_> {
             .await
     }
 
+    /// The newest Spotify import for this playlist, while it runs or after
+    /// it failed; `None` once it finished or never ran.
+    pub async fn import_state(&self, playlist_id: &str) -> Result<Option<String>, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.store
+            .db
+            .read("playlists.import_state", move |conn| {
+                Ok(conn
+                    .query_row(sql::PLAYLIST_IMPORT_STATE.text(), params![playlist_id], |row| {
+                        row.get(0)
+                    })
+                    .optional()?)
+            })
+            .await
+    }
+
     /// Entries of a playlist the caller may read, in position order, each
     /// with its live local file's album artist and root-relative path.
     pub(crate) async fn export_entries(

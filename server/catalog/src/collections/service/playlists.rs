@@ -177,6 +177,7 @@ fn detail(
         cover_urls: summary.cover_urls,
         custom_cover_url: summary.custom_cover_url,
         source_ref: summary.source_ref,
+        import_state: None,
         tracks,
         track_count: summary.track_count,
         total_duration: summary.total_duration,
@@ -558,12 +559,11 @@ impl CollectionsService<'_> {
         playlist_id: &str,
     ) -> Result<PlaylistDetail, CollectionsError> {
         let row = self.readable_playlist(user_id, playlist_id).await?;
-        let tracks = self
-            .playlists()
-            .visible_to(user_id)
-            .tracks(playlist_id)
-            .await?;
-        Ok(detail(&row, user_id, admin, tracks))
+        let visible = self.playlists().visible_to(user_id);
+        let tracks = visible.tracks(playlist_id).await?;
+        let mut detail = detail(&row, user_id, admin, tracks);
+        detail.import_state = visible.import_state(playlist_id).await?;
+        Ok(detail)
     }
 
     /// The stub the caller's list shows for a playlist they may not read.

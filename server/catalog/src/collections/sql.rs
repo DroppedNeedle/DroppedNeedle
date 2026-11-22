@@ -95,6 +95,12 @@ droppedneedle_kernel::sql! {
          JOIN catalog_playlists p ON p.id = c.playlist_id WHERE c.playlist_id = ?2 AND " + OWNED;
     /// The caller's playlist imported from source `?2`.
     pub(super) FIND_BY_SOURCE = "SELECT id FROM catalog_playlists WHERE user_id = ?1 AND source_ref = ?2";
+    /// The newest import job for playlist `?1`, while it runs or after it
+    /// failed.
+    pub(super) PLAYLIST_IMPORT_STATE = "SELECT state FROM durable_jobs \
+         WHERE kind = 'spotify.import' \
+         AND json_extract(payload_json, '$.playlist_id') = ?1 \
+         ORDER BY created_at DESC LIMIT 1";
     /// For each `[track, artist, album]` in the JSON array `?2`, by its
     /// index, the playlists the caller may read holding an entry with
     /// exactly those names.

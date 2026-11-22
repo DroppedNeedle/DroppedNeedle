@@ -30,6 +30,7 @@ use droppedneedle_providers::musicbrainz::models::{
 };
 use droppedneedle_providers::musicbrainz::{
     Criticality, MusicBrainzClient, MusicBrainzView, SOURCE, is_valid_mbid, normalize_mb_id,
+    escape_lucene_phrase,
 };
 use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
 
@@ -154,6 +155,70 @@ impl AlbumResolver {
                 },
             )
             .await
+    }
+
+    /// A recording for a playlist row named by a title and an artist, or
+    /// `None` when the names do not prove one. The search needs an exact
+    /// title and an artist credit; music videos are skipped.
+    ///
+    /// # Errors
+    ///
+    /// A MusicBrainz failure, so the caller can stop asking while the
+    /// service is down.
+    pub async fn resolve_track(
+        &self,
+        title: &str,
+        artist: &str,
+    ) -> Result<Option<String>, ProviderError> {
+        let wanted = title_key(title);
+        let who = title_key(artist);
+        if wanted.is_empty() || who.is_empty() {
+            return Ok(None);
+        }
+        let Some(settings) = self.settings.read() else {
+            return Err(ProviderError::NotConfigured {
+                provider: SOURCE,
+                message: "the musicbrainz settings cannot be read".to_owned(),
+            });
+        };
+        let view = self.musicbrainz.fixed(
+            self.musicbrainz.source_from(&settings),
+            RequestPriority::BackgroundSync,
+        );
+        let query = format!(
+            "recording:\"{}\" AND artist:\"{}\"",
+            escape_lucene_phrase(title),
+            escape_lucene_phrase(artist)
+        );
+        let page = view
+            .search_recordings_query(&query, SEARCH_LIMIT, Criticality::IdentityCritical)
+            .await?;
+        let mut recordings: BTreeSet<String> = BTreeSet::new();
+        for hit in &page.items {
+            if hit.video == Some(true) {
+                continue;
+            }
+            let Some(name) = hit.title.as_deref() else {
+                continue;
+            };
+            if title_key(name) != wanted {
+                continue;
+            }
+            let credit = hit
+                .artist_credit
+                .iter()
+                .map(|credit| credit.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !title_key(&credit).contains(&who) {
+                continue;
+            }
+            let id = normalize_mb_id(&hit.id);
+            if is_valid_mbid(&id) {
+                recordings.insert(id);
+            }
+        }
+        Ok((recordings.len() == 1).then(|| recordings.into_iter().next()).flatten())
     }
 
     /// A release group for an album named by a playlist row, or `None`

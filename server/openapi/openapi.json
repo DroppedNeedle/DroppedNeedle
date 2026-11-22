@@ -58189,6 +58189,13 @@
             "type": "string",
             "description": "Playlist id."
           },
+          "import_state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The newest Spotify import for this playlist, `running` or `failed`\nwhile it is worth showing; `None` once it finished or never ran."
+          },
           "is_owner": {
             "type": "boolean",
             "description": "True when the caller owns the playlist."

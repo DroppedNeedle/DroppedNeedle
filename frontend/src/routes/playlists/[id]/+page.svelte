@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
-	import { SvelteSet } from 'svelte/reactivity';
+	import { SvelteMap } from 'svelte/reactivity';
 	import type { PlaylistDetail } from '$lib/api/playlists';
 	import { playlistTrackToQueueItem } from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
@@ -50,6 +50,22 @@
 	// applying optimistic updates; redaction/loading/error leave it null.
 	let playlist = $state<PlaylistDetail | null>(null);
 	let deleting = $state(false);
+	let importPoll: ReturnType<typeof setInterval> | null = null;
+
+	// A Spotify import fills its rows after the page opens; poll while it
+	// runs so the list appears without a reload.
+	$effect(() => {
+		const running = playlist?.import_state === 'running';
+		if (running && importPoll === null) {
+			importPoll = setInterval(() => void detailQuery.refetch(), 3000);
+		} else if (!running && importPoll !== null) {
+			clearInterval(importPoll);
+			importPoll = null;
+		}
+	});
+	onDestroy(() => {
+		if (importPoll !== null) clearInterval(importPoll);
+	});
 
 	let deleteModal = $state<ReturnType<typeof DeletePlaylistModal> | null>(null);
 	let shareModal = $state<ReturnType<typeof SharePlaylistModal> | null>(null);
@@ -68,20 +84,32 @@
 	let isOwner = $derived(playlist?.is_owner ?? false);
 	let canDelete = $derived(playlist?.can_delete ?? false);
 
-	let missingAlbumCount = $derived.by(() => {
-		if (!playlist) return 0;
-		const seen = new SvelteSet<string>();
+	type MissingItem =
+		| { kind: 'album'; album: string; artist: string }
+		| { kind: 'track'; title: string; artist: string };
+	let missingItems = $derived.by(() => {
+		if (!playlist) return [] as MissingItem[];
+		const seen = new SvelteMap<string, MissingItem>();
 		for (const t of playlist.tracks) {
-			// The server groups the same way: owned rows are skipped, and a
-			// row without a title, album or artist has no album to ask for.
+			// The server groups the same way: owned rows are skipped, an
+			// album row asks for its album, and an album-less row asks for
+			// its recording.
 			if (t.library_file_id) continue;
 			const album = t.album_name.trim();
 			const artist = t.artist_name.trim();
-			if (!t.track_name.trim() || !album || !artist) continue;
-			seen.add(`${album.toLowerCase()}\u0000${artist.toLowerCase()}`);
+			const title = t.track_name.trim();
+			if (!artist) continue;
+			if (album) {
+				const key = `a:${album.toLowerCase()}\u0000${artist.toLowerCase()}`;
+				if (!seen.has(key)) seen.set(key, { kind: 'album', album, artist });
+			} else if (title) {
+				const key = `t:${title.toLowerCase()}\u0000${artist.toLowerCase()}`;
+				if (!seen.has(key)) seen.set(key, { kind: 'track', title, artist });
+			}
 		}
-		return seen.size;
+		return [...seen.values()];
 	});
+	let missingAlbumCount = $derived(missingItems.length);
 
 	let requesting = $state(false);
 
@@ -318,14 +346,26 @@
 		/>
 
 		<div class="mx-auto max-w-7xl space-y-6 px-4 pb-10 sm:px-6 lg:px-8">
+			{#if playlist?.import_state === 'running'}
+				<div class="flex items-center gap-3 rounded-box border border-line px-4 py-3 text-sm">
+					<Music class="size-4 shrink-0 animate-pulse" aria-hidden="true" />
+					<p>Importing this playlist from Spotify. The tracks appear here as they arrive.</p>
+				</div>
+			{:else if playlist?.import_state === 'failed'}
+				<div
+					class="flex items-center gap-3 rounded-box border border-warning/60 bg-warning/8 px-4 py-3 text-sm"
+				>
+					<Music class="size-4 shrink-0 text-warning" aria-hidden="true" />
+					<p>The Spotify import failed for this playlist. Import it again to retry.</p>
+				</div>
+			{/if}
 			{#if isOwner && missingAlbumCount > 0}
 				<div
 					class="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-box border border-warning/60 bg-warning/8 px-4 py-3"
 				>
 					<Download class="size-5 shrink-0 text-warning" aria-hidden="true" />
 					<p class="min-w-0 flex-1 basis-48 text-sm font-medium">
-						{missingAlbumCount}
-						{missingAlbumCount === 1 ? 'album' : 'albums'} not in your library
+						{missingAlbumCount} missing from your library
 					</p>
 					<Button
 						variant="outline"
@@ -334,8 +374,32 @@
 						loading={requesting}
 						onclick={() => void handleRequestMissing()}
 					>
-						Request {missingAlbumCount === 1 ? 'album' : missingAlbumCount + ' albums'}
+						Request {missingAlbumCount}
 					</Button>
+					<details class="w-full basis-full">
+						<summary class="cursor-pointer select-none text-sm text-muted">
+							See what will be requested
+						</summary>
+						<ul class="mt-2 space-y-1 text-sm">
+							{#each missingItems.slice(0, 8) as item, i (i)}
+								<li class="truncate">
+									{#if item.kind === 'album'}
+										<span class="font-medium">{item.album}</span>
+										<span class="text-muted">by {item.artist}</span>
+									{:else}
+										<span class="font-medium">{item.title}</span>
+										<span class="text-muted">by {item.artist} (single track)</span>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+						{#if missingItems.length > 8}
+							<p class="mt-1 text-xs text-muted">and {missingItems.length - 8} more</p>
+						{/if}
+						<p class="mt-2 text-xs text-muted">
+							The server matches each album on MusicBrainz and asks for at most ten per press.
+						</p>
+					</details>
 				</div>
 			{/if}
 

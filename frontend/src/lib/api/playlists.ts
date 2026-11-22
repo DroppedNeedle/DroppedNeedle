@@ -20,7 +20,11 @@ export type PlaylistSummary = Required<
 	is_redacted: false;
 };
 
-export type PlaylistDetail = PlaylistSummary & { tracks: PlaylistTrack[] };
+export type PlaylistDetail = PlaylistSummary & {
+	tracks: PlaylistTrack[];
+	/** A running or failed Spotify import for this playlist, else null. */
+	import_state: string | null;
+};
 
 /** A private playlist the caller may not read: count + owner only. */
 export type RedactedPlaylist = Required<Omit<Schemas['RedactedPlaylist'], 'is_redacted'>> & {

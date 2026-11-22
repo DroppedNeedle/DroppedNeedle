@@ -23,7 +23,7 @@ use utoipa::ToSchema;
 use crate::imports::spotify_albums::AlbumResolver;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::ApprovalState;
-use crate::requests::models::{AlbumIntake, RequestKind};
+use crate::requests::models::{AlbumIntake, RequestKind, TrackIntake};
 use crate::requests::service::RequestsService;
 use crate::requests::state::RequestsState;
 
@@ -82,8 +82,10 @@ pub async fn request_missing_handler(
         .tracks(&playlist_id)
         .await
         .map_err(ApiError::internal)?;
-    // One album, one request: group the entries without a library file.
+    // One album or one recording, one request: group the entries without a
+    // library file. A row that names no album asks for its recording.
     let mut groups: Vec<(String, String)> = Vec::new();
+    let mut recordings: Vec<(String, String)> = Vec::new();
     let mut skipped = 0_usize;
     for track in &tracks {
         if track.library_file_id.is_some() {
@@ -92,12 +94,16 @@ pub async fn request_missing_handler(
         let album = track.album_name.trim().to_owned();
         let artist = track.artist_name.trim().to_owned();
         let title = track.track_name.trim().to_owned();
-        if album.is_empty() || artist.is_empty() || title.is_empty() {
-            // A row-only file entry has no album to ask for.
+        if artist.is_empty() || title.is_empty() {
+            // A path-only entry has nothing to ask for.
             skipped += 1;
             continue;
         }
-        if !groups.contains(&(album.clone(), artist.clone())) {
+        if album.is_empty() {
+            if !recordings.contains(&(title.clone(), artist.clone())) {
+                recordings.push((title, artist));
+            }
+        } else if !groups.contains(&(album.clone(), artist.clone())) {
             groups.push((album, artist));
         }
     }
@@ -157,6 +163,58 @@ pub async fn request_missing_handler(
             Ok(_) => skipped += 1,
             Err(error) => {
                 tracing::warn!(?error, "playlist request: album request failed");
+                if matches!(
+                    error,
+                    RequestsError::QuotaExceeded { .. } | RequestsError::StorageFull { .. }
+                ) {
+                    break;
+                }
+                failed += 1;
+            }
+        }
+    }
+    for (title, artist) in recordings {
+        if requested >= MAX_REQUESTS_PER_PRESS {
+            skipped += 1;
+            continue;
+        }
+        let recording = match deps.resolver.resolve_track(&title, &artist).await {
+            Ok(Some(recording)) => recording,
+            Ok(None) => {
+                tracing::info!(title = %title, artist = %artist, "playlist request: no recording proved");
+                failed += 1;
+                continue;
+            }
+            Err(error) => {
+                tracing::warn!(title = %title, artist = %artist, ?error, "playlist request: musicbrainz read failed");
+                failed += 1;
+                continue;
+            }
+        };
+        if matches!(
+            deps.requests
+                .store
+                .get(RequestKind::Track, &recording)
+                .await,
+            Ok(Some(row)) if row.status.is_active()
+        ) {
+            skipped += 1;
+            continue;
+        }
+        let intake = TrackIntake {
+            recording_mbid: recording,
+            artist_name: artist,
+            track_title: title,
+            album_title: None,
+            duration_seconds: None,
+            release_group_mbid: None,
+            artist_mbid: None,
+            release_mbid: None,
+        };
+        match service.request_track(&principal, &intake).await {
+            Ok(_) => requested += 1,
+            Err(error) => {
+                tracing::warn!(?error, "playlist request: track request failed");
                 if matches!(
                     error,
                     RequestsError::QuotaExceeded { .. } | RequestsError::StorageFull { .. }

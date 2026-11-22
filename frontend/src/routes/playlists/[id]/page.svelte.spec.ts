@@ -149,6 +149,7 @@ function makePlaylist(overrides: Record<string, unknown> = {}): PlaylistDetailV3
 		cover_urls: [],
 		custom_cover_url: null,
 		source_ref: null,
+		import_state: null,
 		created_at: 1767225600,
 		updated_at: 1767312000,
 		is_public: false,

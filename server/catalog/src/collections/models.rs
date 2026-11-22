@@ -109,6 +109,9 @@ pub struct PlaylistDetail {
     pub custom_cover_url: Option<String>,
     /// Import provenance (`<source>:<id>`), when the playlist was imported.
     pub source_ref: Option<String>,
+    /// The newest Spotify import for this playlist, `running` or `failed`
+    /// while it is worth showing; `None` once it finished or never ran.
+    pub import_state: Option<String>,
     /// Tracks in position order.
     pub tracks: Vec<PlaylistTrack>,
     /// Track count.

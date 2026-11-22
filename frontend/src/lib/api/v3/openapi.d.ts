@@ -19894,6 +19894,11 @@ export interface components {
             custom_cover_url?: string | null;
             /** @description Playlist id. */
             id: string;
+            /**
+             * @description The newest Spotify import for this playlist, `running` or `failed`
+             *     while it is worth showing; `None` once it finished or never ran.
+             */
+            import_state?: string | null;
             /** @description True when the caller owns the playlist. */
             is_owner: boolean;
             /** @description Public playlists are visible to other users. */

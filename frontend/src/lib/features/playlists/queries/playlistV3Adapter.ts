@@ -93,7 +93,8 @@ function toPageSummary(summary: PlaylistSummaryV3): PlaylistSummary {
 export function toPageDetail(detail: PlaylistDetailV3): PlaylistDetail {
 	return {
 		...toPageSummary(detail),
-		tracks: detail.tracks.map(toPageTrack)
+		tracks: detail.tracks.map(toPageTrack),
+		import_state: detail.import_state ?? null
 	};
 }
 
