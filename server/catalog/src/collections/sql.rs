@@ -95,6 +95,24 @@ droppedneedle_kernel::sql! {
          JOIN catalog_playlists p ON p.id = c.playlist_id WHERE c.playlist_id = ?2 AND " + OWNED;
     /// The caller's playlist imported from source `?2`.
     pub(super) FIND_BY_SOURCE = "SELECT id FROM catalog_playlists WHERE user_id = ?1 AND source_ref = ?2";
+    /// The pull state of playlist `?1`: enabled, last check and error.
+    pub(super) PULL_STATE = "SELECT enabled, last_checked_at, last_error \
+         FROM catalog_playlist_pull_state WHERE playlist_id = ?1";
+    /// Turn the pull for playlist `?1` on or off, keeping its snapshot.
+    pub(super) PULL_SET = "INSERT INTO catalog_playlist_pull_state (playlist_id, enabled) \
+         VALUES (?1, ?2) ON CONFLICT(playlist_id) DO UPDATE SET enabled = excluded.enabled";
+    /// Every playlist that pulls: id, owner, source ref and stored snapshot.
+    pub(super) PULL_DUE = "SELECT p.id, p.user_id, p.source_ref, s.snapshot_id \
+         FROM catalog_playlists p JOIN catalog_playlist_pull_state s ON s.playlist_id = p.id \
+         WHERE s.enabled = 1 AND p.source_ref LIKE 'spotify:%' ORDER BY p.id";
+    /// One pull check: the time, the snapshot when it changed, the error.
+    pub(super) PULL_CHECK = "UPDATE catalog_playlist_pull_state \
+         SET last_checked_at = ?2, snapshot_id = COALESCE(?3, snapshot_id), \
+         last_error = ?4 WHERE playlist_id = ?1";
+    /// Record one check: the snapshot read, when, and the error, if any.
+    pub(super) PULL_RECORD = "UPDATE catalog_playlist_pull_state \
+         SET snapshot_id = ?2, last_checked_at = ?3, last_error = ?4 \
+         WHERE playlist_id = ?1";
     /// The newest import job for playlist `?1`, while it runs or after it
     /// failed.
     pub(super) PLAYLIST_IMPORT_STATE = "SELECT state FROM durable_jobs \

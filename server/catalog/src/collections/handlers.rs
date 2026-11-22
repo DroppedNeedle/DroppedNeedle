@@ -23,11 +23,11 @@ use super::{
         CoverUploadResponse, CreatePlaylistBody, ExportFormat, ExportQuery, FavoriteStatusResponse,
         FollowStatusResponse, FollowedArtistListResponse, ImportPlaylistBody,
         ImportPlaylistResponse, MembersBody, MembersResponse, NewReleaseListResponse,
-        PlaylistDetail, PlaylistListResponse, PlaylistSummary, PlaylistTrack, RatingLookupBody,
-        RatingLookupResponse, RatingStatusResponse, RecentReleasesQuery, RemoveTracksBody,
-        RemoveTracksResponse, ReorderBody, ReorderResponse, ResolveSourcesResponse,
-        SetFavoriteBody, SetRatingBody, StatusResponse, UnseenCountResponse, UpdatePlaylistBody,
-        UpdateTrackBody, VisibilityBody,
+        PlaylistDetail, PlaylistListResponse, PlaylistSummary, PlaylistTrack, PullBody, PullState,
+        RatingLookupBody, RatingLookupResponse, RatingStatusResponse, RecentReleasesQuery,
+        RemoveTracksBody, RemoveTracksResponse, ReorderBody, ReorderResponse,
+        ResolveSourcesResponse, SetFavoriteBody, SetRatingBody, StatusResponse,
+        UnseenCountResponse, UpdatePlaylistBody, UpdateTrackBody, VisibilityBody,
     },
     service::CollectionsService,
     state::CollectionsState,
@@ -267,6 +267,33 @@ pub async fn set_visibility_handler(
     Ok(Json(
         CollectionsService::new(&state)
             .set_visibility(caller.user_id(), &playlist_id, body.is_public)
+            .await?,
+    ))
+}
+
+/// Turn the hourly pull for a playlist on or off.
+#[utoipa::path(
+    put,
+    path = "/api/v3/playlists/{playlist_id}/pull",
+    tag = "collections",
+    params(("playlist_id" = String, Path, description = "Playlist id")),
+    request_body = PullBody,
+    responses(
+        (status = 200, description = "Pull state now", body = PullState),
+        (status = 400, description = "Bad request body"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Unknown playlist id"),
+    )
+)]
+pub async fn set_pull_handler(
+    State(state): State<CollectionsState>,
+    User(caller): User,
+    Path(playlist_id): Path<String>,
+    ValidJson(body): ValidJson<PullBody>,
+) -> HttpResult<Json<PullState>> {
+    Ok(Json(
+        CollectionsService::new(&state)
+            .set_pull(caller.user_id(), &playlist_id, body.enabled)
             .await?,
     ))
 }

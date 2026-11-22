@@ -21,8 +21,8 @@ use crate::collections::models::{
     AddTracksBody, AddTracksResponse, CheckTracksBody, CheckTracksResponse, CoverUploadBody,
     CreatePlaylistBody, ExportFormat, ImportPlaylistBody, ImportPlaylistResponse,
     ImportUnmatchedReason as Reason, MembersResponse, PlaylistDetail, PlaylistListItem,
-    PlaylistListResponse, PlaylistSummary, PlaylistTrack, RedactedPlaylist, ResolveSourcesResponse,
-    TrackInput, UpdatePlaylistBody, UpdateTrackBody,
+    PlaylistListResponse, PlaylistSummary, PlaylistTrack, PullState, RedactedPlaylist,
+    ResolveSourcesResponse, TrackInput, UpdatePlaylistBody, UpdateTrackBody,
 };
 use crate::collections::sql::PlaylistExportRow;
 use crate::collections::store::PlaylistStore;
@@ -178,6 +178,9 @@ fn detail(
         custom_cover_url: summary.custom_cover_url,
         source_ref: summary.source_ref,
         import_state: None,
+        pull_enabled: false,
+        pull_checked_at: None,
+        pull_error: None,
         tracks,
         track_count: summary.track_count,
         total_duration: summary.total_duration,
@@ -563,6 +566,11 @@ impl CollectionsService<'_> {
         let tracks = visible.tracks(playlist_id).await?;
         let mut detail = detail(&row, user_id, admin, tracks);
         detail.import_state = visible.import_state(playlist_id).await?;
+        if let Some((enabled, checked, error)) = visible.pull_state(playlist_id).await? {
+            detail.pull_enabled = enabled;
+            detail.pull_checked_at = checked;
+            detail.pull_error = error;
+        }
         Ok(detail)
     }
 
@@ -862,6 +870,29 @@ impl CollectionsService<'_> {
         self.set_public(user_id, playlist_id, public).await?;
         let row = self.readable_playlist(user_id, playlist_id).await?;
         Ok(summary(&row, user_id, false))
+    }
+
+    /// Turn the hourly pull for a playlist on or off; the caller must own
+    /// it.
+    pub async fn set_pull(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+        enabled: bool,
+    ) -> Result<PullState, CollectionsError> {
+        let visible = self.playlists().visible_to(user_id);
+        if !visible.set_pull(playlist_id, enabled).await? {
+            return Err(CollectionsError::NotFound);
+        }
+        let (enabled, checked_at, error) = visible
+            .pull_state(playlist_id)
+            .await?
+            .unwrap_or((enabled, None, None));
+        Ok(PullState {
+            enabled,
+            checked_at,
+            error,
+        })
     }
 
     /// Flip visibility, reading nothing back.

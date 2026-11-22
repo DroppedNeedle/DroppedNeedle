@@ -112,6 +112,12 @@ pub struct PlaylistDetail {
     /// The newest Spotify import for this playlist, `running` or `failed`
     /// while it is worth showing; `None` once it finished or never ran.
     pub import_state: Option<String>,
+    /// Whether this playlist follows its source and pulls new entries.
+    pub pull_enabled: bool,
+    /// When the last pull last read the source, epoch seconds.
+    pub pull_checked_at: Option<u64>,
+    /// The last pull's error, when it failed.
+    pub pull_error: Option<String>,
     /// Tracks in position order.
     pub tracks: Vec<PlaylistTrack>,
     /// Track count.
@@ -261,6 +267,24 @@ pub struct ImportPlaylistResponse {
     pub unmatched: Vec<ImportUnmatched>,
     /// Entries past the 10,000 an import reads, counted but not read.
     pub over_limit: usize,
+}
+
+/// Turn the hourly pull for a playlist on or off.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct PullBody {
+    /// Whether the playlist follows its source.
+    pub enabled: bool,
+}
+
+/// A playlist's pull state after a change.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PullState {
+    /// Whether the playlist follows its source.
+    pub enabled: bool,
+    /// When the last check ran, epoch seconds.
+    pub checked_at: Option<u64>,
+    /// The last check's error, when it failed.
+    pub error: Option<String>,
 }
 
 /// Create-playlist body.

@@ -258,6 +258,30 @@ impl CollectionsPlaylistBridge {
         Self { playlists, db }
     }
 
+    /// Every playlist that pulls, with its owner, source and snapshot.
+    pub async fn enabled_pulls(
+        &self,
+    ) -> Result<Vec<(String, String, String, Option<String>)>, String> {
+        self.playlists
+            .enabled_pulls()
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    /// Record one pull check for a playlist.
+    pub async fn record_pull(
+        &self,
+        playlist_id: &str,
+        snapshot: Option<&str>,
+        error: Option<&str>,
+        now: u64,
+    ) -> Result<(), String> {
+        self.playlists
+            .record_pull(playlist_id, snapshot, error, now)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
     /// Internal id for a source ref, if imported before.
     pub async fn get_by_source_ref(
         &self,

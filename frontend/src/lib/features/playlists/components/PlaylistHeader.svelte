@@ -18,6 +18,7 @@
 	import PlaylistDiscoveryModal from '$lib/features/discover/components/PlaylistDiscoveryModal.svelte';
 	import PlaylistExportModal from '$lib/features/playlists/components/PlaylistExportModal.svelte';
 	import { toastStore } from '$lib/stores/toast';
+	import { createSetPlaylistPullV3Mutation } from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
 	import { formatTotalDurationSec, formatRelativeTime } from '$lib/utils/formatting';
 	import { getSourceColor, getSourceLabel } from '$lib/utils/sources';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -117,6 +118,7 @@
 	let discoverModalOpen = $state(false);
 
 	const renameMutation = createUpdatePlaylistV3Mutation();
+	const setPull = createSetPlaylistPullV3Mutation();
 	const uploadCoverMutation = createUploadPlaylistCoverV3Mutation();
 	const removeCoverMutation = createDeletePlaylistCoverV3Mutation();
 
@@ -137,6 +139,22 @@
 	function startEditName() {
 		nameInput = playlist.name;
 		editingName = true;
+	}
+
+	async function togglePull(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const enabled = input.checked;
+		try {
+			await setPull.mutateAsync({ id: playlist.id, enabled });
+			playlist.pull_enabled = enabled;
+			toastStore.show({
+				message: enabled ? 'This playlist follows its source hourly.' : 'The hourly sync is off.',
+				type: 'success'
+			});
+		} catch {
+			input.checked = !enabled;
+			toastStore.show({ message: "Couldn't change the sync.", type: 'error' });
+		}
 	}
 
 	async function saveName() {
@@ -408,6 +426,23 @@
 							<span>Created {formatRelativeTime(new Date(playlist.created_at))}</span>
 						{/if}
 					</p>
+					{#if sourceType === 'spotify' && playlist.is_owner}
+						<p class="pl-hero__fact">
+							<label class="inline-flex items-center gap-2">
+								<input
+									type="checkbox"
+									checked={playlist.pull_enabled}
+									onchange={(event) => void togglePull(event)}
+								/>
+								Sync new songs hourly
+							</label>
+							{#if playlist.pull_error}
+								<span class="text-warning">{playlist.pull_error}</span>
+							{:else if playlist.pull_checked_at}
+								<span>last checked {formatRelativeTime(new Date(playlist.pull_checked_at))}</span>
+							{/if}
+						</p>
+					{/if}
 					{#if !playlist.is_owner && playlist.owner_name}
 						<p class="pl-hero__fact">
 							<span class="pl-hero__initials" aria-hidden="true">{ownerInitials}</span>

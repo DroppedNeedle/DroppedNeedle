@@ -125,6 +125,9 @@ pub struct PlaylistInfo {
     /// Cover images, null when none.
     #[serde(default)]
     pub images: Option<Vec<Image>>,
+    /// The source's stamp for the playlist's current contents.
+    #[serde(default)]
+    pub snapshot_id: Option<String>,
 }
 
 /// One page of a playlist's entries, `GET /playlists/{id}/items`.

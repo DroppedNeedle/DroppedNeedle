@@ -25029,6 +25029,85 @@
         ]
       }
     },
+    "/api/v3/playlists/{playlist_id}/pull": {
+      "put": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Turn the hourly pull for a playlist on or off.",
+        "operationId": "set_pull_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PullBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Pull state now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullState"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown playlist id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/playlists/{playlist_id}/request-missing": {
       "post": {
         "tags": [
@@ -58145,6 +58224,7 @@
           "id",
           "name",
           "cover_urls",
+          "pull_enabled",
           "tracks",
           "track_count",
           "created_at",
@@ -58222,6 +58302,26 @@
               "null"
             ],
             "description": "Owner display name."
+          },
+          "pull_checked_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the last pull last read the source, epoch seconds.",
+            "minimum": 0
+          },
+          "pull_enabled": {
+            "type": "boolean",
+            "description": "Whether this playlist follows its source and pulls new entries."
+          },
+          "pull_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The last pull's error, when it failed."
           },
           "source_ref": {
             "type": [
@@ -60023,6 +60123,48 @@
           "committed",
           "cleanup_pending"
         ]
+      },
+      "PullBody": {
+        "type": "object",
+        "description": "Turn the hourly pull for a playlist on or off.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the playlist follows its source."
+          }
+        }
+      },
+      "PullState": {
+        "type": "object",
+        "description": "A playlist's pull state after a change.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the last check ran, epoch seconds.",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the playlist follows its source."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The last check's error, when it failed."
+          }
+        }
       },
       "PurchaseKind": {
         "type": "string",

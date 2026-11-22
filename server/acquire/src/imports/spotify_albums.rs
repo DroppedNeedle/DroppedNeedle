@@ -29,8 +29,8 @@ use droppedneedle_providers::musicbrainz::models::{
     MbRelease, ReleaseGroupRef, ReleaseSearchHit, Track,
 };
 use droppedneedle_providers::musicbrainz::{
-    Criticality, MusicBrainzClient, MusicBrainzView, SOURCE, is_valid_mbid, normalize_mb_id,
-    escape_lucene_phrase,
+    Criticality, MusicBrainzClient, MusicBrainzView, SOURCE, escape_lucene_phrase, is_valid_mbid,
+    normalize_mb_id,
 };
 use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
 
@@ -218,7 +218,9 @@ impl AlbumResolver {
                 recordings.insert(id);
             }
         }
-        Ok((recordings.len() == 1).then(|| recordings.into_iter().next()).flatten())
+        Ok((recordings.len() == 1)
+            .then(|| recordings.into_iter().next())
+            .flatten())
     }
 
     /// A release group for an album named by a playlist row, or `None`

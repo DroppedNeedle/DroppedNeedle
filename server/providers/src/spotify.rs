@@ -362,7 +362,7 @@ impl SpotifyClient {
         self.get(
             access_token,
             &["playlists", playlist_id],
-            &[("fields", "id,name,images,tracks.total")],
+            &[("fields", "id,name,images,tracks.total,snapshot_id")],
             priority,
         )
         .await

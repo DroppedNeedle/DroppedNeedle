@@ -6365,6 +6365,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/playlists/{playlist_id}/pull": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Turn the hourly pull for a playlist on or off. */
+        put: operations["set_pull_handler"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/playlists/{playlist_id}/request-missing": {
         parameters: {
             query?: never;
@@ -19914,6 +19931,15 @@ export interface components {
             name: string;
             /** @description Owner display name. */
             owner_name?: string | null;
+            /**
+             * Format: int64
+             * @description When the last pull last read the source, epoch seconds.
+             */
+            pull_checked_at?: number | null;
+            /** @description Whether this playlist follows its source and pulls new entries. */
+            pull_enabled: boolean;
+            /** @description The last pull's error, when it failed. */
+            pull_error?: string | null;
             /** @description Import provenance (`<source>:<id>`), when the playlist was imported. */
             source_ref?: string | null;
             /**
@@ -20784,6 +20810,23 @@ export interface components {
          * @enum {string}
          */
         PublishOutcome: "committed" | "cleanup_pending";
+        /** @description Turn the hourly pull for a playlist on or off. */
+        PullBody: {
+            /** @description Whether the playlist follows its source. */
+            enabled: boolean;
+        };
+        /** @description A playlist's pull state after a change. */
+        PullState: {
+            /**
+             * Format: int64
+             * @description When the last check ran, epoch seconds.
+             */
+            checked_at?: number | null;
+            /** @description Whether the playlist follows its source. */
+            enabled: boolean;
+            /** @description The last check's error, when it failed. */
+            error?: string | null;
+        };
         /**
          * @description What kind of purchase a link offers.
          * @enum {string}
@@ -43296,6 +43339,60 @@ export interface operations {
                 };
             };
             /** @description Not shared with the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    set_pull_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PullBody"];
+            };
+        };
+        responses: {
+            /** @description Pull state now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullState"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unknown playlist id */
             404: {
                 headers: {
                     [name: string]: unknown;

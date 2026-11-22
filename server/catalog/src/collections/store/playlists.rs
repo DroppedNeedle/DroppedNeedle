@@ -631,6 +631,53 @@ fn insert_entries(
 }
 
 impl PlaylistStore {
+    /// Every playlist that pulls: id, owner, source ref and stored
+    /// snapshot.
+    pub async fn enabled_pulls(
+        &self,
+    ) -> Result<Vec<(String, String, String, Option<String>)>, StoreError> {
+        self.db
+            .read("playlists.enabled_pulls", move |conn| {
+                Ok(conn
+                    .prepare(sql::PULL_DUE.text())?
+                    .query_map([], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                    })?
+                    .collect::<rusqlite::Result<_>>()?)
+            })
+            .await
+    }
+
+    /// Record one pull check: the snapshot now read (kept when `None`),
+    /// when it ran, and the error, if any.
+    pub async fn record_pull(
+        &self,
+        playlist_id: &str,
+        snapshot: Option<&str>,
+        error: Option<&str>,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let (playlist_id, snapshot, error) = (
+            playlist_id.to_owned(),
+            snapshot.map(str::to_owned),
+            error.map(str::to_owned),
+        );
+        self.db
+            .write("playlists.record_pull", move |tx| {
+                tx.execute(
+                    sql::PULL_CHECK.text(),
+                    rusqlite::params![
+                        playlist_id,
+                        i64::try_from(now).unwrap_or(i64::MAX),
+                        snapshot,
+                        error
+                    ],
+                )?;
+                Ok(())
+            })
+            .await
+    }
+
     /// Store over one database.
     pub fn new(db: CollectionsDb) -> Self {
         Self { db }
@@ -997,6 +1044,54 @@ impl VisiblePlaylists<'_> {
             .await
     }
 
+    /// The pull state of a playlist the caller may read: enabled, when the
+    /// last check ran, and the last error.
+    pub async fn pull_state(
+        &self,
+        playlist_id: &str,
+    ) -> Result<Option<(bool, Option<u64>, Option<String>)>, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.store
+            .db
+            .read("playlists.pull_state", move |conn| {
+                Ok(conn
+                    .query_row(sql::PULL_STATE.text(), params![playlist_id], |row| {
+                        let checked: Option<i64> = row.get(1)?;
+                        Ok((
+                            row.get::<_, i64>(0)? != 0,
+                            checked.map(|at| u64::try_from(at).unwrap_or(0)),
+                            row.get(2)?,
+                        ))
+                    })
+                    .optional()?)
+            })
+            .await
+    }
+
+    /// Turn the pull for a playlist on or off; false when the playlist is
+    /// not the caller's.
+    pub async fn set_pull(&self, playlist_id: &str, enabled: bool) -> Result<bool, StoreError> {
+        let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
+        self.store
+            .db
+            .write("playlists.set_pull", move |tx| {
+                let owned: bool = tx.query_row(
+                    sql::READABLE_OWNER.text(),
+                    params![user_id, playlist_id],
+                    |row| Ok(row.get::<_, i64>(0)? != 0),
+                )?;
+                if !owned {
+                    return Ok(false);
+                }
+                tx.execute(
+                    sql::PULL_SET.text(),
+                    params![playlist_id, i64::from(enabled)],
+                )?;
+                Ok(true)
+            })
+            .await
+    }
+
     /// The newest Spotify import for this playlist, while it runs or after
     /// it failed; `None` once it finished or never ran.
     pub async fn import_state(&self, playlist_id: &str) -> Result<Option<String>, StoreError> {
@@ -1005,9 +1100,11 @@ impl VisiblePlaylists<'_> {
             .db
             .read("playlists.import_state", move |conn| {
                 Ok(conn
-                    .query_row(sql::PLAYLIST_IMPORT_STATE.text(), params![playlist_id], |row| {
-                        row.get(0)
-                    })
+                    .query_row(
+                        sql::PLAYLIST_IMPORT_STATE.text(),
+                        params![playlist_id],
+                        |row| row.get(0),
+                    )
                     .optional()?)
             })
             .await

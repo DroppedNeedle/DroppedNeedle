@@ -70,6 +70,18 @@ export const createRequestMissingV3Mutation = () =>
 		effects: (_data, id) => detail(id)
 	}));
 
+export type PullStateV3 = components['schemas']['PullState'];
+
+/** Turn the hourly pull for a playlist on or off. */
+export const createSetPlaylistPullV3Mutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (vars: { id: string; enabled: boolean }) =>
+			api.v3.PUT(v3('/api/v3/playlists/{playlist_id}/pull', { path: { playlist_id: vars.id } }), {
+				enabled: vars.enabled
+			}),
+		effects: (_data, vars) => detail(vars.id)
+	}));
+
 export const createAddPlaylistTracksV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string } & AddTracksBodyV3) =>

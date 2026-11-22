@@ -34,6 +34,7 @@ use crate::import_folder::site::ImportSite;
 use crate::imports::handlers::ImportsDeps;
 use crate::imports::jobs::{SpotifyImportJobs, SpotifyImports};
 use crate::imports::lidarr::LidarrClient;
+use crate::imports::playlist_pull::PlaylistPull;
 use crate::imports::spotify::SpotifyImportService;
 use crate::imports::spotify_albums::AlbumResolver;
 use crate::imports::spotify_client::SpotifyClient;
@@ -242,6 +243,8 @@ pub struct AcquireSetup {
     pub import_folder: Arc<ImportFolders>,
     /// Runs the Spotify import jobs; registered on the jobs table.
     pub spotify_import_jobs: Arc<SpotifyImportJobs>,
+    /// The hourly pull for playlists that follow their Spotify source.
+    pub playlist_pull: Arc<PlaylistPull>,
 }
 
 /// The drop-import service over the landing's library port, a staging
@@ -666,8 +669,12 @@ impl AcquireSetup {
             spotify_playlists.clone(),
             resolver.clone(),
         ));
-        let spotify_import_jobs = Arc::new(SpotifyImportJobs::new(spotify_service, events.clone()));
+        let spotify_import_jobs = Arc::new(SpotifyImportJobs::new(
+            spotify_service.clone(),
+            events.clone(),
+        ));
         let spotify_imports = SpotifyImports::new(platform.db.clone(), queue);
+        let playlist_pull = Arc::new(PlaylistPull::new(spotify_service, spotify_imports.clone()));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let imports = ImportsDeps {
             lidarr: LidarrClient::new(http.clone()),
@@ -787,6 +794,7 @@ impl AcquireSetup {
             held,
             import_folder,
             spotify_import_jobs,
+            playlist_pull,
         })
     }
 
@@ -864,6 +872,7 @@ impl AcquireSetup {
         spawn_prune_loop(supervisor, self.prune.clone())?;
         crate::downloads::worker::spawn_download_worker(self.worker.clone(), supervisor)?;
         crate::held::spawn_held_prune(supervisor, self.held.clone())?;
+        crate::imports::playlist_pull::spawn(supervisor, self.playlist_pull.clone())?;
         crate::import_folder::spawn_import_folder(supervisor, self.import_folder.clone())?;
         crate::probes::spawn_probe_loop(
             supervisor,

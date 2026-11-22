@@ -24,6 +24,10 @@ export type PlaylistDetail = PlaylistSummary & {
 	tracks: PlaylistTrack[];
 	/** A running or failed Spotify import for this playlist, else null. */
 	import_state: string | null;
+	/** Whether the playlist follows its source, and when it last checked. */
+	pull_enabled: boolean;
+	pull_checked_at: string | null;
+	pull_error: string | null;
 };
 
 /** A private playlist the caller may not read: count + owner only. */

@@ -81,6 +81,52 @@ pub enum CoverOutcome {
 }
 
 impl SpotifyImportService {
+    /// Every playlist that pulls, with its owner, source and snapshot.
+    pub async fn enabled_pulls(
+        &self,
+    ) -> Result<Vec<(String, String, String, Option<String>)>, String> {
+        self.playlists.enabled_pulls().await
+    }
+
+    /// The source's snapshot id for a playlist.
+    ///
+    /// # Errors
+    ///
+    /// When the link, the token or the Spotify read fails.
+    pub async fn snapshot_of(
+        &self,
+        user_id: &str,
+        spotify_playlist_id: &str,
+    ) -> Result<Option<String>, ImportFailure> {
+        let refresher = self.refresher(
+            user_id,
+            self.link(user_id).await?,
+            RequestPriority::BackgroundSync,
+        )?;
+        let info = self
+            .client
+            .playlist(&refresher, spotify_playlist_id)
+            .await?;
+        Ok(info.snapshot_id)
+    }
+
+    /// Record one pull check for a playlist.
+    ///
+    /// # Errors
+    ///
+    /// When the write fails.
+    pub async fn record_pull(
+        &self,
+        playlist_id: &str,
+        snapshot: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<(), String> {
+        let now = u64::try_from(self.now_ms() / 1000).unwrap_or(0);
+        self.playlists
+            .record_pull(playlist_id, snapshot, error, now)
+            .await
+    }
+
     /// Wall time in milliseconds, for a job's next try.
     pub fn now_ms(&self) -> i64 {
         self.connections.clock().now_ms()
