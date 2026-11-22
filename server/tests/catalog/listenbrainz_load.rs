@@ -8,6 +8,8 @@
 //! four visits, four searches, two artist pages, two album pages, one radio
 //! shelf and the warm cycle ticking hourly. One artist in five has nothing
 //! on ListenBrainz. Run it with `--nocapture` for the calls per endpoint.
+//!
+//! Beside it: what an artist's albums read offers from those answers.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -18,7 +20,11 @@ use axum::http::{Method, Request, Uri};
 use axum::response::{IntoResponse, Response};
 use droppedneedle_acquire::requests::{RequestsState, mix_sources};
 use droppedneedle_auth::users::models::LastFmConnection;
+use droppedneedle_auth::users::roles::Role;
 use droppedneedle_catalog::collections::store::playlists::PlaylistStore;
+use droppedneedle_catalog::discover::listening::shared::{self, Lender};
+use droppedneedle_catalog::discover::listening::{AlbumFacts, AlbumRow, RankedAlbum, gate};
+use droppedneedle_catalog::discover::models::{AlbumRef, SectionItem};
 use droppedneedle_catalog::discover::scheduler::Feature;
 use droppedneedle_catalog::discover::scheduler::activity::{Activity, ActivityDb};
 use droppedneedle_catalog::discover::wiring::{deps_over, live_network};
@@ -33,8 +39,9 @@ use droppedneedle_kernel::clock::Clock as _;
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_media::playback::listening::PrefsPatch;
+use droppedneedle_providers::test_support::ScriptedWire;
 use droppedneedle_providers::{
-    CallOutcome, ProviderEndpoints, Providers, RequestPriority, ReqwestWire,
+    CallOutcome, ProviderEndpoints, Providers, RequestPriority, ReqwestWire, listenbrainz,
 };
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -724,4 +731,152 @@ async fn one_active_users_days_stay_under_their_bounds() {
             "Last.fm user, {name}: {calls} calls, bound {bound}"
         );
     }
+}
+
+const RADIOHEAD: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+const RADIOHEAD_GROUPS: &str =
+    include_str!("../fixtures/listenbrainz/top_release_groups_radiohead.json");
+
+/// An album row with these facts, credited to `credited` when given.
+fn faceted(
+    primary: Option<&str>,
+    secondary: Option<&[&str]>,
+    credited: Option<&[&str]>,
+) -> AlbumRow {
+    let owned = |list: &[&str]| list.iter().map(|text| (*text).to_owned()).collect();
+    AlbumRow {
+        release_group_mbid: mbid('e', 1),
+        title: "Album".to_owned(),
+        artist_name: "Radiohead".to_owned(),
+        artist_mbid: Some(RADIOHEAD.to_owned()),
+        facts: AlbumFacts {
+            primary_type: primary.map(str::to_owned),
+            secondary_types: secondary.map(owned),
+            credited_artist_mbids: credited.map(owned),
+            ..AlbumFacts::default()
+        },
+    }
+}
+
+/// Of Radiohead's 347 recorded top release groups, the 185 albums and EPs
+/// credited to Radiohead are offered, in their order: no single, broadcast
+/// or other type, and nothing credited only to someone else. Live sets and
+/// demos still pass while the rows name no secondary types.
+#[tokio::test]
+async fn only_an_artists_own_albums_and_eps_are_offered() {
+    let rig = AuthRig::new("lb-offered").await;
+    rig.seed_user("ada", Role::User).await;
+    let store = crate::common::listening_store(&rig.platform);
+    store
+        .save_listenbrainz("user-ada", "ada-lb", "ada-token")
+        .await
+        .expect("link");
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!(
+            "{}/1/popularity/top-release-groups-for-artist/{RADIOHEAD}",
+            listenbrainz::DEFAULT_BASE_URL
+        ),
+        200,
+        &[],
+        RADIOHEAD_GROUPS,
+    );
+    let providers = Providers::unpaced_at(
+        wire,
+        ProviderEndpoints {
+            listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    );
+    let offered = shared::artist_albums(
+        &providers.cache,
+        &providers.listenbrainz,
+        RADIOHEAD,
+        1_000,
+        &Lender::Person(store, "user-ada".to_owned()),
+        RequestPriority::UserInitiated,
+    )
+    .await
+    .expect("the albums read");
+
+    let recorded: Vec<Value> = serde_json::from_str(RADIOHEAD_GROUPS).expect("fixture parses");
+    let own_albums: Vec<&str> = recorded
+        .iter()
+        .filter(|row| matches!(row["release_group"]["type"].as_str(), Some("Album" | "EP")))
+        .filter(|row| {
+            row["artist"]["artists"].as_array().is_some_and(|artists| {
+                artists
+                    .iter()
+                    .any(|artist| artist["artist_mbid"] == RADIOHEAD)
+            })
+        })
+        .filter_map(|row| row["release_group_mbid"].as_str())
+        .collect();
+    let ids: Vec<&str> = offered
+        .iter()
+        .map(|row| row.album.release_group_mbid.as_str())
+        .collect();
+    assert_eq!(ids, own_albums);
+    assert_eq!(ids.len(), 185);
+    let title = |name: &str| offered.iter().any(|row| row.album.title == name);
+    assert!(title("Com Lag: 2plus2isfive"), "an EP is offered");
+    assert!(!title("High & Dry"), "a single is not");
+    assert!(!title("(Ocean) Bloom"), "a broadcast is not");
+    assert!(!title("Acoustic Album"), "a Various Artists album is not");
+    assert!(title("I Might Be Wrong: Live Recordings") && title("On a Friday Demos 1"));
+}
+
+/// A release group whose secondary types name a live set, a demo or a
+/// compilation is never offered; one with none, or other types, is, and so
+/// is a row nothing is known about. A row whose credit leaves the artist
+/// out is dropped.
+#[test]
+fn live_sets_demos_and_compilations_are_left_out() {
+    let credited = Some(&[RADIOHEAD][..]);
+    for kind in ["Live", "Demo", "Compilation"] {
+        let row = faceted(Some("Album"), Some(&["Soundtrack", kind]), credited);
+        assert!(!gate::may_offer(&row, RADIOHEAD), "{kind}");
+    }
+    for secondary in [Some(&[][..]), Some(&["Soundtrack"][..]), None] {
+        let row = faceted(Some("EP"), secondary, credited);
+        assert!(gate::may_offer(&row, RADIOHEAD), "{secondary:?}");
+    }
+    assert!(gate::may_offer(&faceted(None, None, None), RADIOHEAD));
+    let other = mbid('f', 1);
+    let elsewhere = faceted(Some("Album"), None, Some(&[other.as_str()]));
+    assert!(!gate::may_offer(&elsewhere, RADIOHEAD));
+}
+
+/// An album row kept in the provider cache before its facts were read
+/// still decodes, with none known, and is offered.
+#[test]
+fn an_album_row_kept_before_its_facts_still_reads() {
+    let kept: Vec<RankedAlbum> = serde_json::from_value(json!([{
+        "album": {
+            "release_group_mbid": mbid('e', 2),
+            "title": "In Rainbows",
+            "artist_name": "Radiohead",
+            "artist_mbid": RADIOHEAD,
+        },
+        "listen_count": 12,
+    }]))
+    .expect("an old row decodes");
+    assert_eq!(kept[0].album.facts, AlbumFacts::default());
+    assert_eq!(gate::offered(kept, RADIOHEAD).len(), 1);
+}
+
+/// An album shown on a shelf carries its date, year and type, and keeps
+/// the `kind` that tags it as an album row: the type has its own field.
+#[test]
+fn a_shown_album_keeps_its_row_tag() {
+    let mut row = faceted(Some("EP"), None, None);
+    row.facts.first_release_date = Some("2004-03-24".to_owned());
+    let item = SectionItem::Album(row.shown(AlbumRef::titled("Com Lag")));
+    let wire = serde_json::to_value(&item).expect("the row encodes");
+    assert_eq!(wire["kind"], "album", "{wire}");
+    assert_eq!(wire["release_type"], "ep", "{wire}");
+    assert_eq!(wire["year"], 2004, "{wire}");
+    assert_eq!(wire["release_date"], "2004-03-24", "{wire}");
+    let back: SectionItem = serde_json::from_value(wire).expect("the row decodes");
+    assert_eq!(back, item);
 }

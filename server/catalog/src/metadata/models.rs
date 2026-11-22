@@ -262,6 +262,9 @@ pub struct AlbumRef {
     /// First release year, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub year: Option<i32>,
+    /// The release group's primary type, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_type: Option<ReleaseType>,
     /// Listen or play count behind the row, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listen_count: Option<i64>,
@@ -269,6 +272,40 @@ pub struct AlbumRef {
     pub in_library: bool,
     /// True when an acquisition request is open for it.
     pub requested: bool,
+}
+
+/// A release group's MusicBrainz primary type, as a row shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseType {
+    /// An album.
+    Album,
+    /// An EP.
+    Ep,
+    /// A single.
+    Single,
+    /// Any other type (`Broadcast`, `Other`).
+    Other,
+}
+
+impl ReleaseType {
+    /// The kind of a MusicBrainz primary type as sent, `None` when none
+    /// was sent.
+    pub fn from_primary_type(primary_type: Option<&str>) -> Option<Self> {
+        let primary_type = primary_type?.trim();
+        if primary_type.is_empty() {
+            return None;
+        }
+        Some(if primary_type.eq_ignore_ascii_case("album") {
+            Self::Album
+        } else if primary_type.eq_ignore_ascii_case("ep") {
+            Self::Ep
+        } else if primary_type.eq_ignore_ascii_case("single") {
+            Self::Single
+        } else {
+            Self::Other
+        })
+    }
 }
 
 impl AlbumRef {
@@ -283,6 +320,7 @@ impl AlbumRef {
             cover_url: None,
             release_date: None,
             year: None,
+            release_type: None,
             listen_count: None,
             in_library: false,
             requested: false,

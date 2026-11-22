@@ -467,6 +467,7 @@ fn album(n: u8, artist: &str) -> AlbumRow {
         title: format!("Album {n}"),
         artist_name: "Someone".to_owned(),
         artist_mbid: Some(artist.to_owned()),
+        facts: Default::default(),
     }
 }
 

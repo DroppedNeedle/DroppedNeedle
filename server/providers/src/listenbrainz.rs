@@ -235,7 +235,8 @@ pub struct ReleaseGroupMetadata {
 
 /// One top release-group row behind an artist popularity sum. The MBID is
 /// identity; a row without a whole-number count is skipped (zero is a real
-/// count); the display names are empty when the wire omits them.
+/// count); the display names are empty when the wire omits them, and the
+/// other fields are `None` when it does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TopReleaseGroup {
     /// Release-group MBID.
@@ -246,6 +247,15 @@ pub struct TopReleaseGroup {
     pub artist_name: String,
     /// Total listen count.
     pub listen_count: i64,
+    /// Distinct listeners.
+    pub listeners: Option<i64>,
+    /// MusicBrainz primary type, as sent (`Album`, `EP`, `Single`, ...).
+    pub primary_type: Option<String>,
+    /// First release date, as sent.
+    pub first_release_date: Option<String>,
+    /// MBIDs of the credited artists, in credit order; `None` when the
+    /// wire names none.
+    pub credited_artist_mbids: Option<Vec<String>>,
 }
 
 /// One of an artist's most played recordings.
@@ -1018,17 +1028,26 @@ fn top_release_group(row: TopReleaseGroupRow) -> Option<TopReleaseGroup> {
     if mbid.is_empty() {
         return None;
     }
+    let group = row.release_group.unwrap_or_default();
+    let artist = row.artist.unwrap_or_default();
     Some(TopReleaseGroup {
         release_group_mbid: mbid.to_owned(),
-        name: row
-            .release_group
-            .and_then(|group| group.name)
-            .unwrap_or_default(),
-        artist_name: row
-            .artist
-            .and_then(|artist| artist.name)
-            .unwrap_or_default(),
+        name: group.name.unwrap_or_default(),
+        artist_name: artist.name.unwrap_or_default(),
         listen_count: row.total_listen_count?,
+        listeners: row.total_user_count,
+        primary_type: group.primary_type,
+        first_release_date: group.date,
+        credited_artist_mbids: artist
+            .artists
+            .map(|artists| {
+                artists
+                    .into_iter()
+                    .filter_map(|credited| credited.artist_mbid)
+                    .collect::<Vec<_>>()
+            })
+            // A credit that names no id says nothing about who is on it.
+            .filter(|ids| !ids.is_empty()),
     })
 }
 

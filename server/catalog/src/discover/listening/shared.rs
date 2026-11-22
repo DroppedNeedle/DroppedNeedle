@@ -15,7 +15,8 @@ use droppedneedle_providers::{
     CacheKey, Fetched, Policy, ProviderCacheStore, ProviderError, RequestPriority, Source,
 };
 
-use super::rows::{AlbumRow, ArtistRow, RankedAlbum, ScoredArtist};
+use super::gate;
+use super::rows::{AlbumFacts, AlbumRow, ArtistRow, RankedAlbum, ScoredArtist};
 
 /// Similar artists read per artist.
 pub const SIMILAR_ROWS: usize = 25;
@@ -131,9 +132,10 @@ fn scored_artists(rows: Vec<SimilarArtist>) -> Vec<ScoredArtist> {
         .collect()
 }
 
-/// ListenBrainz's top release groups as kept rows. A row without a title
-/// stays: it still counts toward an artist's listens, and shelves that show
-/// titles leave it out when they read it.
+/// ListenBrainz's top release groups as kept rows, every one as sent: the
+/// gate runs when they are read. A row without a title stays: it still
+/// counts toward an artist's listens, and shelves that show titles leave it
+/// out when they read it.
 pub(super) fn ranked_albums(rows: Vec<TopReleaseGroup>, artist_mbid: &str) -> Vec<RankedAlbum> {
     rows.into_iter()
         .map(|row| RankedAlbum {
@@ -142,15 +144,24 @@ pub(super) fn ranked_albums(rows: Vec<TopReleaseGroup>, artist_mbid: &str) -> Ve
                 title: row.name,
                 artist_name: row.artist_name,
                 artist_mbid: Some(artist_mbid.to_lowercase()),
+                facts: AlbumFacts {
+                    primary_type: row.primary_type,
+                    // ListenBrainz sends none.
+                    secondary_types: None,
+                    first_release_date: row.first_release_date,
+                    listeners: row.listeners,
+                    credited_artist_mbids: row.credited_artist_mbids,
+                },
             },
             listen_count: row.listen_count,
         })
         .collect()
 }
 
-/// One artist's most played release groups, `count` at most, read through
-/// the shared rows. ListenBrainz answers them only with a token: without
-/// one, what is held answers and no fetch is started or joined.
+/// One artist's most played release groups that may be offered as their
+/// albums ([`gate`](super::gate)), `count` at most, read through the shared
+/// rows. ListenBrainz answers them only with a token: without one, what is
+/// held answers and no fetch is started or joined.
 ///
 /// # Errors
 ///
@@ -163,13 +174,47 @@ pub async fn artist_albums(
     lender: &Lender,
     priority: RequestPriority,
 ) -> Result<Vec<RankedAlbum>, ProviderError> {
+    let rows = release_group_rows(cache, client, artist_mbid, count, lender, priority).await?;
+    let mut rows = gate::offered(rows, artist_mbid);
+    rows.truncate(count);
+    Ok(rows)
+}
+
+/// One artist's most played release groups of every type, `count` at
+/// most, through the same rows as [`artist_albums`] but not gated: what
+/// the artist's listens add up from, singles included.
+///
+/// # Errors
+///
+/// ListenBrainz's failure when no row is kept to stand in.
+pub async fn artist_release_groups(
+    cache: &ProviderCacheStore,
+    client: &ListenBrainzClient,
+    artist_mbid: &str,
+    count: usize,
+    lender: &Lender,
+    priority: RequestPriority,
+) -> Result<Vec<RankedAlbum>, ProviderError> {
+    let mut rows = release_group_rows(cache, client, artist_mbid, count, lender, priority).await?;
+    rows.truncate(count);
+    Ok(rows)
+}
+
+/// Every kept row of one artist's top release groups, read at least
+/// [`ARTIST_ALBUM_ROWS`] long, so a gated read can fill its count.
+async fn release_group_rows(
+    cache: &ProviderCacheStore,
+    client: &ListenBrainzClient,
+    artist_mbid: &str,
+    count: usize,
+    lender: &Lender,
+    priority: RequestPriority,
+) -> Result<Vec<RankedAlbum>, ProviderError> {
     let read = count.max(ARTIST_ALBUM_ROWS);
     let key = artist_albums_key(artist_mbid, read);
     if !cache.fresh(&key).await && !has_token(&lender.credentials().await) {
         let held: Option<Vec<RankedAlbum>> = cache.peek(&key).await.flatten();
-        let mut rows = held.unwrap_or_default();
-        rows.truncate(count);
-        return Ok(rows);
+        return Ok(held.unwrap_or_default());
     }
     let (client, mbid, lender) = (client.clone(), artist_mbid.to_owned(), lender.clone());
     let rows = cache
@@ -191,9 +236,7 @@ pub async fn artist_albums(
             },
         )
         .await?;
-    let mut rows: Vec<RankedAlbum> = rows.unwrap_or_default();
-    rows.truncate(count);
-    Ok(rows)
+    Ok(rows.unwrap_or_default())
 }
 
 /// Artists similar to one artist, `limit` at most, read through the shared

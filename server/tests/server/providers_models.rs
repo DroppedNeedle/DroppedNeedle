@@ -12,7 +12,9 @@ use droppedneedle_providers::executor::Method;
 use droppedneedle_providers::geocoding::DEFAULT_CITY_COUNT;
 use droppedneedle_providers::lastfm::{ArtistInfo, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
-use droppedneedle_providers::listenbrainz::models::ListenCountAnswer;
+use droppedneedle_providers::listenbrainz::models::{
+    ListenCountAnswer, ReleaseGroupPopularityAnswer,
+};
 use droppedneedle_providers::musicbrainz::{self, Criticality, MbSource, SearchTerm};
 use droppedneedle_providers::test_support::{Scripted, ScriptedWire};
 use droppedneedle_providers::youtube::{YouTubeClient, YouTubeSettings, YoutubeError};
@@ -1939,8 +1941,9 @@ async fn a_lastfm_count_that_was_not_sent_reads_as_absent() {
 }
 
 /// What the recorded answers mean once read: the values behind Discover and
-/// the artist page, a row with no release, and the seed artist LB Radio
-/// names among its own similar artists.
+/// the artist page, an album's type, date, listeners and credited artists,
+/// an empty date as no date, a row with no release, and the seed artist LB
+/// Radio names among its own similar artists.
 #[tokio::test]
 async fn listenbrainz_recorded_values_read_as_answered() {
     let creds = linked();
@@ -1978,6 +1981,35 @@ async fn listenbrainz_recorded_values_read_as_answered() {
     assert_eq!(groups[0].name, "In Rainbows");
     assert_eq!(groups[0].artist_name, "Radiohead");
     assert_eq!(groups[0].listen_count, 27_057_653);
+    assert_eq!(groups[0].listeners, Some(277_665));
+    assert_eq!(groups[0].primary_type.as_deref(), Some("Album"));
+    assert_eq!(groups[0].first_release_date.as_deref(), Some("2007-10-10"));
+    assert_eq!(
+        groups[0].credited_artist_mbids,
+        Some(vec![MB_RADIOHEAD_MBID.to_owned()])
+    );
+    let undated = groups
+        .iter()
+        .find(|group| group.name == "2+2=5, Are You Listening?")
+        .expect("the recorded row with an empty date");
+    assert_eq!(undated.first_release_date, None, "an empty date is no date");
+    let shared = groups
+        .iter()
+        .find(|group| group.name == "Creep (Very 2021 rmx)")
+        .expect("the recorded row with two credited artists");
+    assert_eq!(shared.primary_type.as_deref(), Some("Single"));
+    assert_eq!(
+        shared.credited_artist_mbids,
+        Some(vec![
+            "8ed2e0b3-aa4c-4e13-bec3-dc7393ed4d6b".to_owned(),
+            MB_RADIOHEAD_MBID.to_owned(),
+        ])
+    );
+    let popularity: ReleaseGroupPopularityAnswer = serde_json::from_str(include_str!(
+        "../fixtures/listenbrainz/popularity_release_group_post.json"
+    ))
+    .expect("the recording decodes");
+    assert_eq!(popularity[0].total_user_count, Some(25_280));
 
     let similar = listenbrainz_answer(
         Method::Get,

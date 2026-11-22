@@ -187,7 +187,7 @@ impl SearchCounts {
             artists
                 .iter()
                 .map(|item| async move {
-                    shared::artist_albums(
+                    shared::artist_release_groups(
                         &self.cache,
                         &self.listenbrainz,
                         &item.musicbrainz_id,

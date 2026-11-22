@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use super::network::{ListeningNetwork, Read};
 use super::rows::{
-    AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts,
-    ListenSource, ListenedAlbum, LovedTrack, PlayedArtist, PlaylistTrack, RankedAlbum,
+    AlbumFacts, AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmChartAlbum,
+    LastFmFacts, ListenSource, ListenedAlbum, LovedTrack, PlayedArtist, PlaylistTrack, RankedAlbum,
     ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange, TagAlbum, UserMusic,
     WeeklyPlaylist,
 };
@@ -407,6 +407,7 @@ impl ListeningNetwork for LiveNetwork {
                         title: row.release_name,
                         artist_name,
                         artist_mbid: row.artist_mbids.into_iter().next(),
+                        facts: AlbumFacts::default(),
                     })
                 })
                 .collect())

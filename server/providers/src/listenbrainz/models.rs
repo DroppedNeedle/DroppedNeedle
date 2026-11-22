@@ -163,6 +163,11 @@ pub struct ReleaseGroupPopularity {
     /// no count, and the row is skipped.
     #[serde(default, deserialize_with = "loose_count")]
     pub total_listen_count: Option<i64>,
+    /// Distinct listeners, read like the listen count. On the recorded row
+    /// in tests/fixtures/listenbrainz/popularity_release_group_post.json
+    /// (2026-11-02).
+    #[serde(default, deserialize_with = "loose_count")]
+    pub total_user_count: Option<i64>,
 }
 
 /// `POST /1/popularity/recording`: one row per asked MBID, in the shape
@@ -188,7 +193,9 @@ pub struct RecordingPopularity {
 /// Verified against api.listenbrainz.org/1/popularity/top-release-groups-for-artist/{mbid} on 2026-11-02: tests/fixtures/listenbrainz/top_release_groups_radiohead.json.
 pub type TopReleaseGroupsAnswer = Vec<TopReleaseGroupRow>;
 
-/// One of an artist's top release groups.
+/// One of an artist's top release groups. The fields beside the count
+/// are on every row of tests/fixtures/listenbrainz/top_release_groups_radiohead.json
+/// (2026-11-02), and absent reads as unknown.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TopReleaseGroupRow {
     /// Release-group MBID: required identity.
@@ -196,20 +203,51 @@ pub struct TopReleaseGroupRow {
     /// Total listens: on every recorded row. The row is skipped if null.
     #[serde(deserialize_with = "loose_count")]
     pub total_listen_count: Option<i64>,
-    /// The release group's display fields.
+    /// Distinct listeners.
+    #[serde(default, deserialize_with = "loose_count")]
+    pub total_user_count: Option<i64>,
+    /// The release group's own fields.
     #[serde(default)]
-    pub release_group: Option<Named>,
-    /// The credited artist's display fields.
+    pub release_group: Option<TopReleaseGroupFields>,
+    /// The artist credit.
     #[serde(default)]
-    pub artist: Option<Named>,
+    pub artist: Option<ArtistCredit>,
 }
 
-/// A nested object read only for its name.
+/// A top release group's title, type and date.
 #[derive(Debug, Clone, Default, Deserialize)]
-pub struct Named {
+pub struct TopReleaseGroupFields {
     /// Display name.
     #[serde(default)]
     pub name: Option<String>,
+    /// MusicBrainz primary type (`Album`, `EP`, `Single`, `Broadcast`,
+    /// `Other`); null on one recorded row.
+    #[serde(default, rename = "type", deserialize_with = "loose_text")]
+    pub primary_type: Option<String>,
+    /// First release date, `YYYY`, `YYYY-MM` or `YYYY-MM-DD`; an empty
+    /// string on 86 recorded rows, which reads as absent.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub date: Option<String>,
+}
+
+/// An artist credit: its display name and the credited artists.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ArtistCredit {
+    /// Display name of the whole credit.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The credited artists, in credit order. Absent, not a list, or a
+    /// list with an entry that is not an artist reads as unknown.
+    #[serde(default, deserialize_with = "loose_credits")]
+    pub artists: Option<Vec<CreditedArtist>>,
+}
+
+/// One artist in a credit.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CreditedArtist {
+    /// The artist's MBID; on every recorded entry.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub artist_mbid: Option<String>,
 }
 
 /// `GET /1/popularity/top-recordings-for-artist/{mbid}`, most played first.
@@ -783,6 +821,23 @@ fn loose_text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Strin
     Ok(match Loose::deserialize(deserializer)? {
         Loose::Text(text) if !text.trim().is_empty() => Some(text.trim().to_owned()),
         Loose::Text(_) | Loose::Other(_) => None,
+    })
+}
+
+/// A list of credited artists where anything else, or a list holding
+/// anything but artists, reads as absent.
+fn loose_credits<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<CreditedArtist>>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Loose {
+        List(Vec<CreditedArtist>),
+        Other(IgnoredAny),
+    }
+    Ok(match Loose::deserialize(deserializer)? {
+        Loose::List(list) => Some(list),
+        Loose::Other(_) => None,
     })
 }
 

@@ -1094,13 +1094,13 @@ impl Builder<'_> {
                 }
                 missing.push((
                     ranked.listen_count,
-                    album(
+                    ranked.album.shown(album(
                         Some(&ranked.album.release_group_mbid),
                         &ranked.album.title,
                         Some(&ranked.album.artist_name),
                         ranked.album.artist_mbid.as_deref(),
                         (ranked.listen_count > 0).then_some(ranked.listen_count),
-                    ),
+                    )),
                 ));
                 taken += 1;
             }
@@ -1201,6 +1201,7 @@ impl Builder<'_> {
                                     row.artist_name
                                 },
                                 artist_mbid: artist.mbid.clone(),
+                                facts: Default::default(),
                             },
                             listen_count: 0,
                         })

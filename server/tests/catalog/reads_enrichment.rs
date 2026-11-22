@@ -26,6 +26,21 @@ fn counts_stub() -> axum::Router {
                 if mbid == "artist-mbid-2" {
                     return StatusCode::FORBIDDEN.into_response();
                 }
+                if mbid == "artist-mbid-3" {
+                    let single = |id: &str, listens: i64| {
+                        serde_json::json!({
+                            "release_group_mbid": id,
+                            "total_listen_count": listens,
+                            "release_group": {"name": id, "type": "Single"},
+                            "artist": {"name": "Singles", "artists": [{"artist_mbid": mbid}]},
+                        })
+                    };
+                    return axum::Json(serde_json::json!([
+                        single("rg-s1", 3_000),
+                        single("rg-s2", 2_000),
+                    ]))
+                    .into_response();
+                }
                 axum::Json(serde_json::json!([
                     {"release_group_mbid": "rg-a", "total_listen_count": 3_000_000},
                     {"release_group_mbid": "rg-b", "total_listen_count": 1_000_000},
@@ -162,6 +177,45 @@ async fn a_failed_count_stays_on_its_row() {
     let notes = body["degradations"].as_array().expect("degradations");
     assert_eq!(notes.len(), 1, "{body}");
     assert_eq!(notes[0]["source"], "listenbrainz", "{body}");
+    app.stop().await;
+    server.abort();
+}
+
+/// An artist ListenBrainz knows only by singles still gets a listen count:
+/// search adds up every release group, not only the albums Discover offers.
+#[tokio::test]
+async fn a_singles_only_artist_still_has_a_count() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, counts_stub()).await.unwrap() });
+    let app =
+        crate::common::TestApp::start_with("search-singles", crate::common::outbound_at(&origin))
+            .await;
+    let admin = app.login_admin().await;
+    let auth = [("authorization", admin.as_str())];
+    let (status, body) = app
+        .call(
+            "PUT",
+            "/api/v3/me/connections/listenbrainz",
+            &auth,
+            Some(serde_json::json!({"username": "owner", "user_token": "owner-token"})),
+        )
+        .await;
+    assert!(status.is_success(), "{status} {body}");
+
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/search/enrich/batch",
+            &auth,
+            Some(serde_json::json!({
+                "artists": [{"musicbrainz_id": "artist-mbid-3", "name": "Singles"}],
+                "albums": [],
+            })),
+        )
+        .await;
+    assert!(status.is_success(), "{status} {body}");
+    assert_eq!(body["artists"][0]["listen_count"], 5_000, "{body}");
     app.stop().await;
     server.abort();
 }

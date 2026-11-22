@@ -4,6 +4,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::metadata::mapping::year_of;
+use crate::metadata::models::{AlbumRef, ReleaseType};
+
 pub use crate::discover::models::StatsRange;
 pub use droppedneedle_kernel::runtime_config::sections::ListenSource;
 
@@ -53,6 +56,43 @@ pub struct AlbumRow {
     pub artist_name: String,
     /// MusicBrainz id of the first credited artist, when known.
     pub artist_mbid: Option<String>,
+    /// What the provider said about the album; rows kept before these
+    /// were read have none.
+    #[serde(default)]
+    pub facts: AlbumFacts,
+}
+
+impl AlbumRow {
+    /// `item` showing the album's first release date, year and type.
+    pub fn shown(&self, mut item: AlbumRef) -> AlbumRef {
+        if let Some(date) = &self.facts.first_release_date {
+            item.year = year_of(Some(date));
+            item.release_date = Some(date.clone());
+        }
+        item.release_type = ReleaseType::from_primary_type(self.facts.primary_type.as_deref());
+        item
+    }
+}
+
+/// The release-group facts a provider sent with an album row. `None` is
+/// not known: ListenBrainz's top albums carry no secondary types.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AlbumFacts {
+    /// MusicBrainz primary type, as sent (`Album`, `EP`, `Single`, ...).
+    #[serde(default)]
+    pub primary_type: Option<String>,
+    /// MusicBrainz secondary types, as sent (`Live`, `Compilation`, ...).
+    #[serde(default)]
+    pub secondary_types: Option<Vec<String>>,
+    /// First release date, `YYYY` or finer.
+    #[serde(default)]
+    pub first_release_date: Option<String>,
+    /// Distinct listeners.
+    #[serde(default)]
+    pub listeners: Option<i64>,
+    /// MusicBrainz ids of every credited artist, in credit order.
+    #[serde(default)]
+    pub credited_artist_mbids: Option<Vec<String>>,
 }
 
 /// One Last.fm album row. Its MBID, when present, usually names a
@@ -270,6 +310,7 @@ impl TagAlbum {
             title: self.title,
             artist_name: self.artist_name,
             artist_mbid: self.artist_mbid,
+            facts: AlbumFacts::default(),
         }
     }
 }
@@ -299,6 +340,7 @@ impl ListenedAlbum {
                 title: self.title,
                 artist_name: self.artist_name,
                 artist_mbid: self.artist_mbid,
+                facts: AlbumFacts::default(),
             },
             listen_count: self.listen_count,
         })

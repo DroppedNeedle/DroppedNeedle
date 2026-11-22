@@ -37828,6 +37828,17 @@
             ],
             "description": "Release date (`YYYY-MM-DD` or coarser), when known."
           },
+          "release_type": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReleaseType"
+              }
+            ],
+            "description": "The release group's primary type, when known."
+          },
           "requested": {
             "type": "boolean",
             "description": "True when an acquisition request is open for it."
@@ -41577,6 +41588,17 @@
                     "null"
                   ],
                   "description": "Release date (`YYYY-MM-DD` or coarser), when known."
+                },
+                "release_type": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ReleaseType",
+                      "description": "The release group's primary type, when known."
+                    }
+                  ]
                 },
                 "requested": {
                   "type": "boolean",
@@ -62496,6 +62518,16 @@
             "format": "int64"
           }
         }
+      },
+      "ReleaseType": {
+        "type": "string",
+        "description": "A release group's MusicBrainz primary type, as a row shows it.",
+        "enum": [
+          "album",
+          "ep",
+          "single",
+          "other"
+        ]
       },
       "RemotesAlbumPage": {
         "type": "object",

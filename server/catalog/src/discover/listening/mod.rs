@@ -20,6 +20,7 @@
 //! - the build cap: an [`Ask`] made for a build lets at most
 //!   [`BUILD_CAP`] of its provider calls run at once.
 
+pub mod gate;
 mod live;
 mod network;
 mod policy;
@@ -346,9 +347,11 @@ fn cut<T>(rows: Vec<T>, count: usize) -> Vec<T> {
     rows.into_iter().take(count).collect()
 }
 
-/// The albums of `rows` that have a title.
-fn titled(rows: Vec<RankedAlbum>) -> Vec<RankedAlbum> {
-    rows.into_iter()
+/// The albums of `rows` that have a title and may be offered as albums by
+/// `artist_mbid`.
+fn offered(rows: Vec<RankedAlbum>, artist_mbid: &str) -> Vec<RankedAlbum> {
+    gate::offered(rows, artist_mbid)
+        .into_iter()
         .filter(|row| !row.album.title.is_empty())
         .collect()
 }
@@ -688,7 +691,7 @@ impl ListeningData {
         // fetch another user's read could share: what is held answers.
         if !self.cache.fresh(&key).await && !self.network.lends_token(user_id).await {
             let held: Option<Vec<RankedAlbum>> = self.cache.peek(&key).await.flatten();
-            return Ok(cut(titled(held.unwrap_or_default()), count));
+            return Ok(cut(offered(held.unwrap_or_default(), artist_mbid), count));
         }
         let (user, mbid, health) = (
             user_id.to_owned(),
@@ -710,7 +713,7 @@ impl ListeningData {
             })
             .await?
             .unwrap_or_default();
-        Ok(cut(titled(rows), count))
+        Ok(cut(offered(rows, artist_mbid), count))
     }
 
     /// A ListenBrainz user's genres with their listens, most listened

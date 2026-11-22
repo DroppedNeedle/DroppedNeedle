@@ -10653,6 +10653,8 @@ export interface components {
             musicbrainz_id?: string | null;
             /** @description Release date (`YYYY-MM-DD` or coarser), when known. */
             release_date?: string | null;
+            /** @description The release group's primary type, when known. */
+            release_type?: null | components["schemas"]["ReleaseType"];
             /** @description True when an acquisition request is open for it. */
             requested: boolean;
             /** @description Album title. */
@@ -12416,6 +12418,7 @@ export interface components {
                 musicbrainz_id?: string | null;
                 /** @description Release date (`YYYY-MM-DD` or coarser), when known. */
                 release_date?: string | null;
+                release_type?: null | components["schemas"]["ReleaseType"];
                 /** @description True when an acquisition request is open for it. */
                 requested: boolean;
                 /** @description Album title. */
@@ -21828,6 +21831,11 @@ export interface components {
             /** Format: int64 */
             track_number: number;
         };
+        /**
+         * @description A release group's MusicBrainz primary type, as a row shows it.
+         * @enum {string}
+         */
+        ReleaseType: "album" | "ep" | "single" | "other";
         /** @description One page of albums. */
         RemotesAlbumPage: {
             /** @description Page items. */

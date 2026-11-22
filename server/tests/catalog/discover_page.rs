@@ -52,6 +52,7 @@ fn ranked(n: u8, artist: &str, listens: i64) -> RankedAlbum {
             title: format!("Album {n}"),
             artist_name: format!("Artist {artist}"),
             artist_mbid: Some(artist.to_owned()),
+            facts: Default::default(),
         },
         listen_count: listens,
     }
