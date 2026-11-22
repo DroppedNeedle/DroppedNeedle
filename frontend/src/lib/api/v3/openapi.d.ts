@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v3/acquire/deemix/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Deemix's status from the last check of the saved config (admin only). */
+        get: operations["get_deemix_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/acquire/lidarr-import/artists": {
         parameters: {
             query?: never;
@@ -8115,6 +8132,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/download-clients/deemix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the Deemix connection. */
+        get: operations["get_deemix"];
+        /** Save the Deemix connection. */
+        put: operations["put_deemix"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/download-clients/deemix/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the submitted Deemix values: whether Deemix answers, its Deezer
+         *     sign-in and the quality that gives, and what to change. The saved
+         *     address is read on the session DroppedNeedle keeps with Deemix; another
+         *     address on a new one. Nothing signs in.
+         */
+        post: operations["test_deemix"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/settings/download-clients/nzbget": {
         parameters: {
             query?: never;
@@ -12992,6 +13049,79 @@ export interface components {
          * @enum {string}
          */
         DecisionSource: "automatic" | "manual" | "legacy_import" | "embedded";
+        /**
+         * @description The Deemix connection: Deemix downloads from Deezer, signed in with the
+         *     Deezer sign-in saved in Deemix itself, so nothing here is secret.
+         */
+        DeemixConnection: {
+            /**
+             * @description Where DroppedNeedle sees Deemix's downloads folder.
+             * @default /deemix-downloads
+             */
+            downloads_mount: string;
+            /**
+             * @description Master switch.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * @description Deemix base URL.
+             * @default
+             */
+            url: string;
+        };
+        /**
+         * @description A quality Deezer serves through Deemix.
+         * @enum {string}
+         */
+        DeemixQuality: "flac" | "mp3_320" | "mp3_128";
+        /**
+         * @description What Deemix answered a check with, for the settings card. Every value is
+         *     DroppedNeedle's own words; nothing Deemix wrote is passed on but its
+         *     version numbers.
+         */
+        DeemixStatusResponse: {
+            /**
+             * @description The best quality the Deezer account downloads; null while not
+             *     signed in.
+             */
+            account_quality?: null | components["schemas"]["DeemixQuality"];
+            /**
+             * @description The best quality the account gives that the quality settings take;
+             *     null while not signed in, while those settings cannot be read, or
+             *     when they take none of it.
+             */
+            best_quality?: null | components["schemas"]["DeemixQuality"];
+            /** @description A URL is set. */
+            configured: boolean;
+            /** @description Deemix's library version, when it answered. */
+            deemix_version?: string | null;
+            /** @description Deemix can reach Deezer. */
+            deezer_reachable: boolean;
+            /** @description Admin master switch. */
+            enabled: boolean;
+            /** @description User-safe summary. */
+            message: string;
+            /** @description Deemix answered. */
+            reachable: boolean;
+            /**
+             * @description Not signed in, and Deemix offers the Deezer sign-in it saved, which
+             *     DroppedNeedle uses when it needs to.
+             */
+            sign_in_offered: boolean;
+            /** @description DroppedNeedle's session with Deemix is signed in to Deezer. */
+            signed_in: boolean;
+            /** @description What to change, in a fixed order. */
+            warnings: components["schemas"]["DeemixWarning"][];
+            /** @description Deemix's web UI version, when it answered. */
+            webui_version?: string | null;
+        };
+        /**
+         * @description Something about Deemix or its folder that keeps downloads from working
+         *     as they should.
+         * @enum {string}
+         */
+        DeemixWarning: "overwrite_off" | "fallback_on" | "single_user_off" | "command_set" | "mount_unusable" | "mount_overlaps" | "mapping_wrong" | "quality_not_taken";
         /** @description One deferred identification job, named. */
         DeferredJobView: {
             album_title: string | null;
@@ -13804,7 +13934,7 @@ export interface components {
              */
             retry_max: number;
             search_job_id?: string | null;
-            /** @description `soulseek`, `usenet` or `plugin:<key>`. */
+            /** @description `soulseek`, `usenet`, `deezer` or `plugin:<key>`. */
             source: string;
             source_username?: string | null;
             status: components["schemas"]["TaskStatus"];
@@ -20834,7 +20964,7 @@ export interface components {
         QualityRecipeStatus: "valid" | "invalid";
         /** @description One blocklisted release. */
         QuarantineEntry: {
-            /** @description The client label: `slskd`, `sabnzbd`, or the source for plugins. */
+            /** @description The client label: `slskd`, `sabnzbd`, `deemix`, or the source for plugins. */
             client_id: string;
             /** @description What the check found, when it was recorded. */
             detail?: string | null;
@@ -20856,7 +20986,7 @@ export interface components {
             /** @description The reason as a plain sentence: the check's when it is recorded. */
             reason_text: string;
             release_group_mbid?: string | null;
-            /** @description `soulseek`, `usenet` or `plugin:<key>`. */
+            /** @description `soulseek`, `usenet`, `deezer` or `plugin:<key>`. */
             source: string;
             /** @description Soulseek peer, empty for other sources. */
             username: string;
@@ -21220,7 +21350,7 @@ export interface components {
          * @description One reason, stored and sent by its snake_case spelling.
          * @enum {string}
          */
-        Reason: "weak_match" | "no_artist_evidence" | "mostly_unmatched" | "tag_mismatch" | "fingerprint_mismatch" | "fingerprint_unconfirmed" | "album_version_only" | "no_release" | "no_tracks" | "version_lower_quality" | "no_better_than_yours" | "owned_elsewhere" | "owned_on_album" | "album_needs_check" | "no_album_match" | "album_not_found" | "tags_disagree" | "not_chosen_edition" | "samples" | "too_many_files" | "interrupted" | "import_failed" | "held_by_earlier_version" | "format_not_listed" | "target_occupied" | "upgrade_blocked" | "library_changed" | "library_unavailable" | "naming_script_failed" | "library_folder_missing" | "library_off" | "local_fault" | "files_missing" | "files_unlisted" | "outside_downloads_folder" | "size_mismatch" | "corrupt" | "no_audio" | "sample" | "wrong_edition" | "not_pinned_edition" | "wrong_album" | "quality_rejected" | "not_an_upgrade" | "wrong_track" | "stalled" | "queue_timeout" | "queue_gave_way" | "never_started" | "deadline" | "source_failed" | "no_source" | "download_failed" | "album_lookup_unavailable" | "recording_unknown" | "no_album_for_recording" | "no_album_folder" | "no_album_release" | "album_releases_exhausted" | "track_not_found" | "nothing_allowed" | "no_download_source" | "settings_unreadable" | "journal_unreadable" | "musicbrainz_unavailable" | "acoustid_unavailable" | "held_for_review" | "tracks_missing" | "already_owned" | "cancelled" | "moved_on" | "no_better_copy" | "already_downloading" | "already_in_library";
+        Reason: "weak_match" | "no_artist_evidence" | "mostly_unmatched" | "tag_mismatch" | "fingerprint_mismatch" | "fingerprint_unconfirmed" | "album_version_only" | "no_release" | "no_tracks" | "version_lower_quality" | "no_better_than_yours" | "owned_elsewhere" | "owned_on_album" | "album_needs_check" | "no_album_match" | "album_not_found" | "tags_disagree" | "not_chosen_edition" | "samples" | "too_many_files" | "interrupted" | "import_failed" | "held_by_earlier_version" | "format_not_listed" | "target_occupied" | "upgrade_blocked" | "library_changed" | "library_unavailable" | "naming_script_failed" | "library_folder_missing" | "library_off" | "local_fault" | "files_missing" | "files_unlisted" | "outside_downloads_folder" | "size_mismatch" | "corrupt" | "no_audio" | "sample" | "wrong_edition" | "not_pinned_edition" | "wrong_album" | "quality_rejected" | "not_an_upgrade" | "wrong_track" | "stalled" | "queue_timeout" | "queue_gave_way" | "never_started" | "deadline" | "source_failed" | "no_source" | "download_failed" | "album_lookup_unavailable" | "recording_unknown" | "no_album_for_recording" | "no_album_folder" | "no_album_release" | "album_releases_exhausted" | "track_not_found" | "nothing_allowed" | "account_refused" | "client_dropped" | "no_download_source" | "settings_unreadable" | "journal_unreadable" | "musicbrainz_unavailable" | "acoustid_unavailable" | "held_for_review" | "tracks_missing" | "already_owned" | "cancelled" | "moved_on" | "no_better_copy" | "already_downloading" | "already_in_library";
         /** @description How many reviews one reason holds. */
         ReasonCount: {
             /** Format: int64 */
@@ -23787,7 +23917,7 @@ export interface components {
          */
         SourceName: "jellyfin" | "navidrome" | "plex";
         /**
-         * @description Acquisition source try-order, e.g. `["soulseek", "usenet"]`. Bundled
+         * @description Acquisition source try-order, e.g. `["soulseek", "usenet", "deezer"]`. Bundled
          *     sources are always present; well-formed `plugin:<name>` keys pass
          *     through order-preserved; anything else is dropped.
          */
@@ -25843,6 +25973,26 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_deemix_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deemix status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeemixStatusResponse"];
+                };
+            };
+        };
+    };
     list_lidarr_artists: {
         parameters: {
             query?: never;
@@ -46738,6 +46888,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TestConnectionResponse"];
+                };
+            };
+        };
+    };
+    get_deemix: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deemix connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeemixConnection"];
+                };
+            };
+        };
+    };
+    put_deemix: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeemixConnection"];
+            };
+        };
+        responses: {
+            /** @description Saved connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeemixConnection"];
+                };
+            };
+        };
+    };
+    test_deemix: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeemixConnection"];
+            };
+        };
+        responses: {
+            /** @description Deemix check */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeemixStatusResponse"];
                 };
             };
         };

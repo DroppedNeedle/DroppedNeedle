@@ -1168,6 +1168,7 @@ async fn a_redirected_edition_keeps_its_plan_for_later_targets() {
             artist: "artist".to_owned(),
             various_artists: false,
             year: Some(1994),
+            barcode: None,
             tracks: (1..=3)
                 .map(|position| AlbumTrack {
                     disc: 1,
@@ -1176,6 +1177,7 @@ async fn a_redirected_edition_keeps_its_plan_for_later_targets() {
                     duration_seconds: Some(200.0),
                     recording_mbid: format!("rec-{position}"),
                     release_track_mbid: format!("rt-{position}"),
+                    isrcs: Vec::new(),
                 })
                 .collect(),
         },
@@ -1359,6 +1361,7 @@ impl droppedneedle_acquire::target::lookup::AlbumLookup for PageTracks {
                 artist: "artist".to_owned(),
                 various_artists: false,
                 year: Some(1994),
+                barcode: None,
                 tracks: (1..=3)
                     .map(|position| AlbumTrack {
                         disc: 1,
@@ -1367,6 +1370,7 @@ impl droppedneedle_acquire::target::lookup::AlbumLookup for PageTracks {
                         duration_seconds: Some(200.0),
                         recording_mbid: format!("rec-{position}"),
                         release_track_mbid: format!("rt-{position}"),
+                        isrcs: Vec::new(),
                     })
                     .collect(),
             }))

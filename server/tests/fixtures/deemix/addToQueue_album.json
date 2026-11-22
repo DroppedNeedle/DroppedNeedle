@@ -1,0 +1,28 @@
+{
+ "result": true,
+ "data": {
+  "url": [
+   "https://www.deezer.com/album/14880659"
+  ],
+  "bitrate": 1,
+  "obj": [
+   {
+    "type": "album",
+    "id": "14880659",
+    "bitrate": 1,
+    "uuid": "album_14880659_1",
+    "title": "In Rainbows",
+    "artist": "Radiohead",
+    "explicit": false,
+    "size": 10,
+    "downloaded": 0,
+    "failed": 0,
+    "progress": 0,
+    "errors": [],
+    "files": [],
+    "extrasPath": "",
+    "__type__": "Collection"
+   }
+  ]
+ }
+}

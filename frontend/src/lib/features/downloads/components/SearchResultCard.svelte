@@ -13,6 +13,7 @@
 
 <script lang="ts">
 	import {
+		AudioLines,
 		BadgeCheck,
 		CircleAlert,
 		Disc3,
@@ -40,6 +41,7 @@
 
 	const isSoulseek = $derived(candidate.source === 'soulseek');
 	const isUsenet = $derived(candidate.source === 'usenet');
+	const isDeezer = $derived(candidate.source === 'deezer');
 	const recommended = $derived(candidate.tier === 'recommended');
 	const refusal = $derived(candidate.refusal?.[0] ?? null);
 	const noteTone = $derived(recommended ? 'text-success' : refusal ? 'text-muted' : 'text-warning');
@@ -73,7 +75,11 @@
 				: null
 	);
 	const subtitle = $derived(
-		isUsenet ? (candidate.indexer ?? 'Usenet') : (candidate.username ?? candidate.source)
+		isUsenet
+			? (candidate.indexer ?? 'Usenet')
+			: isDeezer
+				? 'Deezer'
+				: (candidate.username ?? candidate.source)
 	);
 	const fileList = $derived(
 		candidate.files
@@ -93,6 +99,8 @@
 				<Disc3 class="size-7 text-muted" />
 			{:else if isUsenet}
 				<Download class="size-7 text-muted" />
+			{:else if isDeezer}
+				<AudioLines class="size-7 text-muted" />
 			{:else}
 				<Puzzle class="size-7 text-muted" />
 			{/if}

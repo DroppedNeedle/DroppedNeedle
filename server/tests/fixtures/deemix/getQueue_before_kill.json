@@ -1,0 +1,154 @@
+{
+ "queue": {
+  "track_138546807_1": {
+   "type": "track",
+   "id": "138546807",
+   "bitrate": 1,
+   "uuid": "track_138546807_1",
+   "title": "Nude",
+   "artist": "Radiohead",
+   "explicit": true,
+   "size": 1,
+   "downloaded": 1,
+   "failed": 0,
+   "progress": 98,
+   "errors": [],
+   "files": [
+    {
+     "filename": "Radiohead - Nude.mp3",
+     "data": {
+      "id": "138546807",
+      "title": "Nude",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - Nude.mp3"
+    }
+   ],
+   "extrasPath": "/downloads/",
+   "__type__": "Single",
+   "status": "completed"
+  },
+  "album_6158273_1": {
+   "type": "album",
+   "id": "6158273",
+   "bitrate": 1,
+   "uuid": "album_6158273_1",
+   "title": "Mellon Collie And The Infinite Sadness (Remastered)",
+   "artist": "The Smashing Pumpkins",
+   "explicit": true,
+   "size": 28,
+   "extrasPath": "",
+   "status": "downloading"
+  },
+  "album_14880659_1": {
+   "type": "album",
+   "id": "14880659",
+   "bitrate": 1,
+   "uuid": "album_14880659_1",
+   "title": "In Rainbows",
+   "artist": "Radiohead",
+   "explicit": false,
+   "size": 10,
+   "extrasPath": "",
+   "status": "inQueue"
+  }
+ },
+ "queueOrder": [
+  "album_14880659_1"
+ ],
+ "current": {
+  "type": "album",
+  "id": "6158273",
+  "bitrate": 1,
+  "uuid": "album_6158273_1",
+  "title": "Mellon Collie And The Infinite Sadness (Remastered)",
+  "artist": "The Smashing Pumpkins",
+  "explicit": true,
+  "size": 28,
+  "downloaded": 7,
+  "failed": 0,
+  "progress": 28,
+  "errors": [],
+  "files": [
+   {
+    "albumPath": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/10 - Cupid De Locke (Remastered 2012).mp3",
+    "data": {
+     "id": "62738618",
+     "title": "Cupid De Locke (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/10 - Cupid De Locke (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/04 - Zero (Remastered 2012).mp3",
+    "data": {
+     "id": "62738612",
+     "title": "Zero (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/04 - Zero (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/03 - Jellybelly (Remastered 2012).mp3",
+    "data": {
+     "id": "62738611",
+     "title": "Jellybelly (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/03 - Jellybelly (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/01 - Mellon Collie And The Infinite Sadness (Remastered 2012).mp3",
+    "data": {
+     "id": "62738609",
+     "title": "Mellon Collie And The Infinite Sadness (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/01 - Mellon Collie And The Infinite Sadness (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/07 - To Forgive (Remastered 2012).mp3",
+    "data": {
+     "id": "62738615",
+     "title": "To Forgive (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/07 - To Forgive (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/09 - Love (Remastered 2012).mp3",
+    "data": {
+     "id": "62738617",
+     "title": "Love (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/09 - Love (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/02 - Tonight, Tonight (Remastered 2012).mp3",
+    "data": {
+     "id": "62738610",
+     "title": "Tonight, Tonight (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/02 - Tonight, Tonight (Remastered 2012).mp3"
+   }
+  ],
+  "extrasPath": "/downloads/The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+  "__type__": "Collection"
+ }
+}

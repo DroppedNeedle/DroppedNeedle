@@ -23,9 +23,9 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    AppConnect, ConnectApps, EditionPreferences, FilesystemWatcher, GetIt, ImportFolder,
-    ListenBrainzSettings, LyricsSettings, PlainSection, PublicAddress, SecuritySettings,
-    UserPreferences, WantedWatcher,
+    AppConnect, ConnectApps, DeemixConnection, EditionPreferences, FilesystemWatcher, GetIt,
+    ImportFolder, ListenBrainzSettings, LyricsSettings, PlainSection, PublicAddress,
+    SecuritySettings, UserPreferences, WantedWatcher,
 };
 use droppedneedle_kernel::runtime_config::{Masked, SecretSection, Section};
 
@@ -218,6 +218,12 @@ section_routes! {
             => "Wanted watcher toggles";
         put put_wanted: "Save the wanted watcher toggles."
             => "Saved toggles";
+    }
+    plain DeemixConnection at "/api/v3/settings/download-clients/deemix", read admin, write admin {
+        get get_deemix: "Read the Deemix connection."
+            => "Deemix connection";
+        put put_deemix: "Save the Deemix connection."
+            => "Saved connection";
     }
     secret AdvancedSettings at "/api/v3/settings/advanced", read admin, write admin {
         get get_advanced: "Read the advanced tunables (AudioDB key masked unless unset)."

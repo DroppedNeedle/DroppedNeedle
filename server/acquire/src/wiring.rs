@@ -14,6 +14,8 @@ use std::sync::Arc;
 
 use crate::clients::{ClientSettings, LiveClients};
 use crate::db::AcquireDb;
+use crate::deemix::session::DeemixSession;
+use crate::deemix::source::{MountNeighbours, SourceMemory};
 use crate::dispatch::DownloadDispatch;
 use crate::downloads::journal::Journal;
 use crate::downloads::store::StoreError;
@@ -42,7 +44,7 @@ use crate::imports::spotify_store::{
 };
 use crate::landing::LandingService;
 use crate::landing::ports::LandingLibrary;
-use crate::probes::{LiveProbes, ProbeCache};
+use crate::probes::{DeemixChecks, DeemixFolders, LiveProbes, ProbeCache};
 use crate::readiness::{SourceNotices, SourceReadiness};
 use crate::requests::error::RequestsError;
 use crate::requests::mix::PersonalMixBuilder;
@@ -59,6 +61,7 @@ use crate::usenet::newznab::NewznabIndexer;
 use crate::usenet::prowlarr::ProwlarrIndexer;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::collections::store::Stores as CollectionsStores;
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::ids::IdGenerator;
@@ -69,7 +72,8 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     DownloadClients, Indexers as ConfigIndexers, ProwlarrConnection, SlskdConnection, TypedLibrary,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy, UsenetBackend, UsenetBackendSetting,
+    DeemixConnection, DownloadPolicy, ImportFolder, LibraryManagement, UsenetBackend,
+    UsenetBackendSetting,
 };
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, Section};
 use droppedneedle_library::edition::port::EditionPlans;
@@ -78,6 +82,7 @@ use droppedneedle_library::removal::Mutations;
 use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_providers::Providers;
+use droppedneedle_providers::preview::PreviewClient;
 use tokio::sync::watch;
 
 /// Every loop [`AcquireSetup::spawn_loops`] starts, by job name.
@@ -102,6 +107,7 @@ pub struct ClientLives {
     policy: Live<DownloadPolicy>,
     backend: Live<UsenetBackendSetting>,
     library: Live<TypedLibrary>,
+    deemix: Live<DeemixConnection>,
     /// The indexers are not a listed section, so they have no live
     /// handle: they are read through the store's indexer read, and
     /// followed through their change notice.
@@ -118,6 +124,7 @@ impl ClientLives {
             policy: store.live(),
             backend: store.live(),
             library: store.live(),
+            deemix: store.live(),
             indexers: store.clone(),
         }
     }
@@ -131,6 +138,7 @@ impl ClientLives {
             self.policy.subscribe(),
             self.backend.subscribe(),
             self.library.subscribe(),
+            self.deemix.subscribe(),
             self.indexers.subscribe(ConfigIndexers::KEY),
         ]
     }
@@ -163,6 +171,7 @@ impl ClientLives {
                 .iter()
                 .map(|root| PathBuf::from(&root.path))
                 .collect(),
+            deemix: (**self.deemix.read().unwrap_or_default()).clone(),
         }
     }
 }
@@ -239,6 +248,9 @@ pub struct AcquireSetup {
     pub import_folder: Arc<ImportFolders>,
     /// Runs the Spotify import jobs; registered on the jobs table.
     pub spotify_import_jobs: Arc<SpotifyImportJobs>,
+    /// Deemix's Test and status checks, on the session the Deezer source
+    /// keeps.
+    pub deemix: Arc<DeemixChecks>,
 }
 
 /// The drop-import service over the landing's library port, a staging
@@ -420,14 +432,15 @@ pub(crate) fn usenet_indexers(
 
 /// The download folders no recycle bin may overlap: the staging folder,
 /// slskd's downloads and incomplete folders while slskd is set up,
-/// each Usenet client's completed-downloads folder, and each enabled download
-/// plugin's folders. An empty folder setting names no folder, so it guards
-/// nothing.
+/// each Usenet client's completed-downloads folder, each enabled download
+/// plugin's folders, and Deemix's downloads folder while Deemix is set up.
+/// An empty folder setting names no folder, so it guards nothing.
 fn download_trees(
     staging_root: &Path,
     slskd: Option<(PathBuf, PathBuf)>,
     usenet_mounts: Vec<PathBuf>,
     plugins: Vec<PathBuf>,
+    deemix: Option<PathBuf>,
 ) -> Vec<PathBuf> {
     std::iter::once(staging_root.to_owned())
         .chain(
@@ -437,6 +450,7 @@ fn download_trees(
         )
         .chain(usenet_mounts)
         .chain(plugins)
+        .chain(deemix)
         .filter(|tree| !tree.as_os_str().is_empty())
         .collect()
 }
@@ -536,8 +550,66 @@ fn slskd_trees(section: &SlskdConnection, slskd_downloads: &Path) -> Option<(Pat
     })
 }
 
+/// Deemix's downloads folder, while Deemix is set up.
+fn deemix_tree(section: &DeemixConnection) -> Option<PathBuf> {
+    (!section.url.is_empty()).then(|| PathBuf::from(section.downloads_mount.trim()))
+}
+
+/// The settings the download folders come from, read on each use.
+#[derive(Clone)]
+struct DownloadFolders {
+    slskd: Live<SlskdConnection>,
+    sabnzbd: Live<DownloadClients>,
+    deemix: Live<DeemixConnection>,
+    /// Plugin settings are not a listed section, so they have no live
+    /// handle: they are read through the store's plugin read.
+    plugins: ConfigStore,
+    staging_root: PathBuf,
+    slskd_downloads: PathBuf,
+    plugins_dir: PathBuf,
+}
+
+impl DownloadFolders {
+    fn new(
+        store: &ConfigStore,
+        staging_root: PathBuf,
+        slskd_downloads: PathBuf,
+        plugins_dir: PathBuf,
+    ) -> Self {
+        Self {
+            slskd: store.live(),
+            sabnzbd: store.live(),
+            deemix: store.live(),
+            plugins: store.clone(),
+            staging_root,
+            slskd_downloads,
+            plugins_dir,
+        }
+    }
+
+    /// The download folders, Deemix's own left out unless `with_deemix`
+    /// (a folder of another client at the same path still counts). `None`
+    /// while a setting they come from cannot be read. Blocking.
+    fn read(&self, with_deemix: bool) -> Option<Vec<PathBuf>> {
+        let slskd = self.slskd.read()?;
+        let usenet = self.sabnzbd.read()?;
+        let deemix = if with_deemix {
+            deemix_tree(&**self.deemix.read()?)
+        } else {
+            None
+        };
+        Some(download_trees(
+            &self.staging_root,
+            slskd_trees(&slskd, &self.slskd_downloads),
+            usenet_mounts(&usenet),
+            plugin_trees(&self.plugins, &self.plugins_dir)?,
+            deemix,
+        ))
+    }
+}
+
 /// The download folders a configured recycle bin (and the import folder)
-/// must stay clear of, read live from the slskd, SABnzbd and plugin
+/// must stay clear of, read live from the slskd, SABnzbd, Deemix and plugin
 /// settings and the plugins in `plugins_dir`, for the library's builder.
 /// `None` while those settings cannot be read.
 pub fn recycle_guard(
@@ -546,22 +618,177 @@ pub fn recycle_guard(
     slskd_downloads: PathBuf,
     plugins_dir: PathBuf,
 ) -> DownloadTrees {
-    let slskd: Live<SlskdConnection> = store.live();
-    let sabnzbd: Live<DownloadClients> = store.live();
-    // Plugin settings are not a listed section, so they have no live
-    // handle: they are read through the store's plugin read.
-    let plugins = store.clone();
-    Arc::new(move || {
-        let slskd_section = slskd.read()?;
-        let slskd_folders = slskd_trees(&slskd_section, &slskd_downloads);
-        let section = sabnzbd.read()?;
-        Some(download_trees(
-            &staging_root,
-            slskd_folders,
-            usenet_mounts(&section),
-            plugin_trees(&plugins, &plugins_dir)?,
-        ))
-    })
+    let folders = DownloadFolders::new(store, staging_root, slskd_downloads, plugins_dir);
+    Arc::new(move || folders.read(true))
+}
+
+/// Where the app keeps its own files, and what the download folders are
+/// read beside.
+pub(crate) struct AppFolders {
+    /// The staging folder downloads are unpacked in.
+    pub(crate) staging_root: PathBuf,
+    /// slskd's downloads mount (`SLSKD_DOWNLOADS_PATH`).
+    pub(crate) slskd_downloads: PathBuf,
+    /// The plugins folder.
+    pub(crate) plugins_dir: PathBuf,
+    /// The cache, config and database folders.
+    pub(crate) app: Vec<PathBuf>,
+}
+
+impl AppFolders {
+    /// The platform's folders.
+    fn of(platform: &Platform) -> Self {
+        let config = &platform.config;
+        Self {
+            staging_root: config.imports_dir(),
+            slskd_downloads: config.slskd_downloads_path.clone(),
+            plugins_dir: config.plugins_dir(),
+            app: app_dirs(config),
+        }
+    }
+}
+
+/// The cache, config and database folders.
+fn app_dirs(config: &droppedneedle_kernel::config::AppConfig) -> Vec<PathBuf> {
+    [
+        Some(config.cache_dir.clone()),
+        Some(config.config_dir.clone()),
+        config.library_db_path.parent().map(Path::to_path_buf),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// The folders Deemix's downloads folder stays clear of, by kind: the
+/// library folders, the recycle bin, the import folder, the other download
+/// folders and the app's own.
+#[derive(Clone)]
+struct DeemixNeighbours {
+    library: Live<TypedLibrary>,
+    management: Live<LibraryManagement>,
+    import_folder: Live<ImportFolder>,
+    downloads: DownloadFolders,
+    app: Vec<PathBuf>,
+}
+
+impl DeemixNeighbours {
+    /// The sets, read now; the kind reads after "overlaps a". `None` while
+    /// a setting they come from cannot be read. Blocking.
+    fn sets(&self) -> Option<Vec<(&'static str, Vec<PathBuf>)>> {
+        let one = |path: &str| -> Vec<PathBuf> {
+            Some(path.trim())
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+                .into_iter()
+                .collect()
+        };
+        let library = self
+            .library
+            .read()?
+            .library_roots
+            .iter()
+            .map(|root| PathBuf::from(&root.path))
+            .collect();
+        Some(vec![
+            ("library folder", library),
+            (
+                "recycle bin",
+                one(&self.management.read()?.recycle_bin_path),
+            ),
+            (
+                "folder set for imports",
+                one(&self.import_folder.read()?.path),
+            ),
+            ("download folder", self.downloads.read(false)?),
+            ("folder DroppedNeedle keeps its data in", self.app.clone()),
+        ])
+    }
+}
+
+/// The one session DroppedNeedle keeps with Deemix, the settings card's
+/// checks on it, and what each Deezer source the clients build is given.
+/// Built once, beside the clients, so a rebuild after any settings save
+/// keeps the session, its sign-in limits and what the source remembers. A
+/// save of the Deemix settings drops the session only when it changes
+/// Deemix's address; a session is never sent to another address.
+pub struct DeemixWiring {
+    pub(crate) session: Arc<DeemixSession>,
+    pub(crate) checks: Arc<DeemixChecks>,
+    pub(crate) previews: PreviewClient,
+    pub(crate) policy: Live<DownloadPolicy>,
+    pub(crate) neighbours: MountNeighbours,
+    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) memory: Arc<SourceMemory>,
+}
+
+impl DeemixWiring {
+    /// Over the platform's settings, folders, clock and the factory's
+    /// client that follows no redirect, with Deezer's barcode lookups
+    /// through `previews`.
+    pub fn build(platform: &Platform, previews: PreviewClient) -> Self {
+        Self::over(
+            &platform.settings,
+            platform.http.no_redirect().clone(),
+            platform.clock.clone(),
+            previews,
+            AppFolders::of(platform),
+        )
+    }
+
+    /// Over `store`, `no_redirect` (the factory's client that follows no
+    /// redirect), `clock` and the app's `folders`.
+    pub(crate) fn over(
+        store: &ConfigStore,
+        no_redirect: reqwest::Client,
+        clock: Arc<dyn Clock>,
+        previews: PreviewClient,
+        folders: AppFolders,
+    ) -> Self {
+        let neighbours = DeemixNeighbours {
+            library: store.live(),
+            management: store.live(),
+            import_folder: store.live(),
+            downloads: DownloadFolders::new(
+                store,
+                folders.staging_root,
+                folders.slskd_downloads,
+                folders.plugins_dir,
+            ),
+            app: folders.app,
+        };
+        let flat = neighbours.clone();
+        let checked: DeemixFolders = Arc::new(move || {
+            Some(
+                flat.sets()?
+                    .into_iter()
+                    .flat_map(|(_, dirs)| dirs)
+                    .collect(),
+            )
+        });
+        let session = Arc::new(DeemixSession::new());
+        Self {
+            checks: Arc::new(DeemixChecks::new(
+                no_redirect,
+                session.clone(),
+                clock.clone(),
+                store.live(),
+                checked,
+                store.live(),
+            )),
+            session,
+            previews,
+            policy: store.live(),
+            neighbours: Arc::new(move || neighbours.sets()),
+            clock,
+            memory: Arc::default(),
+        }
+    }
+
+    /// The settings card's Test and the status probe, on the kept session.
+    pub fn checks(&self) -> &Arc<DeemixChecks> {
+        &self.checks
+    }
 }
 
 impl AcquireSetup {
@@ -587,6 +814,8 @@ impl AcquireSetup {
         let http = platform.http.shared().clone();
         let staging_root = config.imports_dir();
         let quota = Arc::new(QuotaLedger::new(config_store.live(), db.clone()));
+        let deemix = DeemixWiring::build(platform, ports.providers.previews.clone());
+        let deemix_checks = deemix.checks().clone();
         let clients = Arc::new(LiveClients::new(
             http.clone(),
             platform.http.no_redirect().clone(),
@@ -601,6 +830,7 @@ impl AcquireSetup {
                 ports.catalog,
             )),
             ports.plugins.clone(),
+            deemix,
         ));
         let events = platform.events.clone();
         let search_quota = quota.clone();
@@ -725,14 +955,7 @@ impl AcquireSetup {
                 config.plugins_dir(),
             ),
             config_store.live(),
-            [
-                Some(config.cache_dir.clone()),
-                Some(config.config_dir.clone()),
-                config.library_db_path.parent().map(Path::to_path_buf),
-            ]
-            .into_iter()
-            .flatten()
-            .collect(),
+            app_dirs(config),
         ));
         let drops = drop_imports(
             &db,
@@ -778,6 +1001,7 @@ impl AcquireSetup {
             held,
             import_folder,
             spotify_import_jobs,
+            deemix: deemix_checks,
         })
     }
 

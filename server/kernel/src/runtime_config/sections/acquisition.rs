@@ -1,10 +1,12 @@
 //! Acquisition: quality tiers, the wanted watcher, source priority, the
-//! Usenet backend, store links, and the download policy.
+//! Usenet backend, store links, the Deemix connection, and the download
+//! policy.
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::{Section, check_range, validation};
+use super::{Section, check_range, normalize_http_url, sanitize_absolute_mount, validation};
+use crate::runtime_config::effects::Effect;
 use crate::runtime_config::error::ConfigError;
 
 /// Acquisition quality tiers, worst to best (mirrors v2 `TIER_KEYS`).
@@ -80,7 +82,8 @@ impl Section for WantedWatcher {
 
 // --- source_priority ------------------------------------------------------
 
-/// Acquisition source try-order. Bundled sources are always present;
+/// Acquisition source try-order. Bundled sources (Soulseek, Usenet and
+/// Deezer) are always present, a missing one appended last;
 /// well-formed `plugin:<name>` keys pass through order-preserved (stale keys
 /// survive reload so Settings can grey them); anything else is dropped.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -105,16 +108,19 @@ pub fn is_plugin_source_key(key: &str) -> bool {
         .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
 }
 
+/// The source keys built into the server, in their default order.
+const BUNDLED_SOURCES: [&str; 3] = ["soulseek", "usenet", "deezer"];
+
 impl SourcePriority {
     fn clean(order: &[String]) -> Vec<String> {
         let mut clean = Vec::new();
         for entry in order {
-            let keep = entry == "soulseek" || entry == "usenet" || is_plugin_source_key(entry);
+            let keep = BUNDLED_SOURCES.contains(&entry.as_str()) || is_plugin_source_key(entry);
             if keep && !clean.contains(entry) {
                 clean.push(entry.clone());
             }
         }
-        for bundled in ["soulseek", "usenet"] {
+        for bundled in BUNDLED_SOURCES {
             if !clean.iter().any(|entry| entry == bundled) {
                 clean.push(bundled.to_owned());
             }
@@ -252,6 +258,52 @@ impl Section for GetIt {
 
     fn normalize(&mut self) {
         self.store_region = self.store_region.to_ascii_uppercase();
+    }
+}
+
+// --- deemix ---------------------------------------------------------------
+
+/// The Deemix connection: Deemix downloads from Deezer, signed in with the
+/// Deezer sign-in saved in Deemix itself, so nothing here is secret.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct DeemixConnection {
+    /// Master switch.
+    pub enabled: bool,
+    /// Deemix base URL.
+    pub url: String,
+    /// Where DroppedNeedle sees Deemix's downloads folder.
+    pub downloads_mount: String,
+}
+
+impl Default for DeemixConnection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: String::new(),
+            downloads_mount: "/deemix-downloads".to_owned(),
+        }
+    }
+}
+
+impl Section for DeemixConnection {
+    const KEY: &'static str = "deemix";
+    const EFFECTS: &'static [Effect] = &[Effect::WakeDownloads];
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        if sanitize_absolute_mount(&self.downloads_mount).is_empty() {
+            return Err(validation(
+                Self::KEY,
+                "downloads_mount",
+                "must be an absolute folder path".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn normalize(&mut self) {
+        normalize_http_url(&mut self.url, "http://");
+        self.downloads_mount = sanitize_absolute_mount(&self.downloads_mount);
     }
 }
 
@@ -1033,5 +1085,25 @@ mod tests {
         let mut no_recipe = fresh;
         no_recipe.quality_recipe.clear();
         assert!(no_recipe.validate().is_err(), "a save needs a recipe");
+    }
+
+    /// A saved order keeps its place for every known key, `deezer`
+    /// included, and a bundled source it lacks goes last.
+    #[test]
+    fn source_priority_keeps_deezer_and_appends_it_when_missing() {
+        let clean = |order: &[&str]| {
+            let mut priority = SourcePriority(order.iter().map(|key| (*key).to_owned()).collect());
+            priority.normalize();
+            priority.0
+        };
+        assert_eq!(
+            clean(&["usenet", "plugin:toy", "soulseek"]),
+            ["usenet", "plugin:toy", "soulseek", "deezer"]
+        );
+        assert_eq!(
+            clean(&["deezer", "nope", "usenet", "deezer", "soulseek"]),
+            ["deezer", "usenet", "soulseek"]
+        );
+        assert_eq!(clean(&[]), ["soulseek", "usenet", "deezer"]);
     }
 }

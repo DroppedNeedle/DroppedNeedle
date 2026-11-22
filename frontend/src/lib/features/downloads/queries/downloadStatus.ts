@@ -73,8 +73,8 @@ export function canReimport(task: DownloadTask): boolean {
 	if (!(task.status === 'failed' || task.status === 'partial')) return false;
 	if (task.search_job_id == null || task.candidate_index == null) return false;
 	// Mirrors the backend reimport guard: Soulseek needs the picked username, while
-	// Usenet reimports from the journaled SABnzbd handle (its username is always "").
-	if (task.source === 'usenet') return true;
+	// Usenet and Deezer reimport from the journaled client handle (no username).
+	if (task.source === 'usenet' || task.source === 'deezer') return true;
 	return task.source_username != null && task.source_username !== '';
 }
 

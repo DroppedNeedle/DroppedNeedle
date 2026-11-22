@@ -55,6 +55,12 @@ pub struct SourceHandle {
     /// that pick covers it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pinned: bool,
+    /// This attempt took over an unfinished item already in the client's
+    /// queue that no attempt of ours named (the admin's own download, or
+    /// one a crash left unjournaled). Giving up never removes an adopted
+    /// item from its client: discard and abort leave it there.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub adopted: bool,
 }
 
 impl SourceHandle {
@@ -70,6 +76,7 @@ impl SourceHandle {
             sizes: Vec::new(),
             release_identity: String::new(),
             pinned: false,
+            adopted: false,
         }
     }
 }
@@ -99,6 +106,9 @@ pub struct TransferProgress {
     pub files_completed: u32,
     /// Files the client gave up on.
     pub files_failed: u32,
+    /// The client holds the batch in its own queue, behind other work,
+    /// and has not started it: it exists, so it is not "never started".
+    pub queued_at_client: bool,
 }
 
 /// What a source reports about already-materialized files.
@@ -181,6 +191,13 @@ pub trait DownloadSource: Send + Sync {
     /// Abort a live batch. Returns false when nothing was running.
     fn abort<'a>(&'a self, handle: &'a SourceHandle) -> BoxFuture<'a, Result<bool, SourceError>>;
 
+    /// Whether a batch waits in a queue the client keeps for itself rather
+    /// than at a peer or an indexer. A wait or a stall there says nothing
+    /// against the copy, so it fails over without a blocklist.
+    fn queue_is_local(&self) -> bool {
+        false
+    }
+
     /// Which of the source's clients holds a handle's job, when the source
     /// has more than one (Usenet: SABnzbd or NZBGet). Polls back off per
     /// client, so one client that is down holds up only its own jobs.
@@ -225,4 +242,28 @@ pub trait OrphanOwnership: Send + Sync {
         &self,
         task_id: &str,
     ) -> impl Future<Output = Result<bool, SourceError>> + Send;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A handle journaled before `adopted` existed decodes as not adopted
+    /// and encodes back byte for byte; an adopted one keeps the flag.
+    #[test]
+    fn a_stored_handle_is_unchanged_by_the_adopted_flag() {
+        let stored = r#"{"source":"usenet","username":"","filenames":[],"job_name":"droppedneedle-t1-0","nzo_id":"SABnzbd_nzo_1","plugin_token":"","release_identity":"usenet:dummy","pinned":true}"#;
+        let handle: SourceHandle = serde_json::from_str(stored).expect("stored handle decodes");
+        assert!(!handle.adopted);
+        assert_eq!(serde_json::to_string(&handle).expect("encodes"), stored);
+
+        let adopted = SourceHandle {
+            adopted: true,
+            ..handle
+        };
+        let text = serde_json::to_string(&adopted).expect("encodes");
+        assert!(text.ends_with(r#""pinned":true,"adopted":true}"#), "{text}");
+        let back: SourceHandle = serde_json::from_str(&text).expect("decodes");
+        assert_eq!(back, adopted);
+    }
 }

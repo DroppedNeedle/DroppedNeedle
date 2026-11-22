@@ -392,6 +392,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0155_library_loudness_measurements.sql",
         "6d53788e67ce93e42735f99e4cd5451a236b2005f8b261c75cf05f76ce304da6",
     ),
+    (
+        "0156_download_attempts_deezer.sql",
+        "63ce857b68c35e1e4094de1cc92eac0d296b2dc34449dc3aed23b1a12c665abf",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -1854,6 +1858,160 @@ fn loudness_measurements_upgrade_adds_one_empty_table() {
         ),
         0,
         "deleting the track deletes its row"
+    );
+}
+
+/// 0156 lets an attempt be stored under the source `deezer`. The attempts
+/// table is rebuilt: every row keeps its id and rowid, the old orphan of
+/// its child stays the only one, the child's key still names it, nothing
+/// else in the schema changes, and the triggers still move the revisions.
+#[test]
+fn download_attempts_deezer_upgrade_keeps_every_row() {
+    let dir = ScratchDir::new("download-attempts-deezer");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..21], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 155);
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'U', 1);
+             INSERT INTO download_tasks (id, user_id, release_group_mbid, artist_name,
+                 album_title, created_at, updated_at)
+                 VALUES ('t1', 'u1', 'rg-1', 'Band', 'LP', 1, 1);
+             INSERT INTO download_attempts (rowid, id, task_id, source, candidate_index,
+                 job_name, handle_json, state, created_at, updated_at, row_revision)
+                 VALUES (7, 'a1', 't1', 'soulseek', 0, 'peer/LP', '{}', 'complete', 2, 3, 4),
+                        (9, 'a2', 't1', 'plugin:toy', 1, '', '{}', 'acquiring', 5, 6, 1),
+                        (11, 'a3', 't1', 'usenet', 2, 'nzb-1', '{}', 'preserved', 7, 8, 2);
+             INSERT INTO download_import_decisions (id, task_id, attempt_id, outcome,
+                 decided_at)
+                 VALUES (1, 't1', 'a1', 'imported', 9),
+                        (2, 't1', 'gone', 'rejected', 10);",
+        )
+        .unwrap();
+    let rows = |connection: &Connection| {
+        (
+            table_rows(connection, "download_attempts", "rowid, *"),
+            table_rows(connection, "download_import_decisions", "rowid, *"),
+        )
+    };
+    let others = |connection: &Connection| {
+        let mut rows = schema_rows(connection);
+        rows.retain(|(kind, name, _, _)| !(kind == "table" && name == "download_attempts"));
+        rows
+    };
+    let orphans = |connection: &Connection| {
+        texts(
+            connection,
+            "SELECT \"table\" || ':' || \"rowid\" || ':' || parent FROM pragma_foreign_key_check",
+            [],
+        )
+    };
+    let table = |connection: &Connection| {
+        texts(
+            connection,
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'download_attempts'",
+            [],
+        )
+    };
+    let (before_rows, before_schema) = (rows(&connection), others(&connection));
+    let before_table = table(&connection);
+    assert_eq!(
+        orphans(&connection),
+        ["download_import_decisions:2:download_attempts"]
+    );
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..22], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 156);
+    assert_eq!(rows(&connection), before_rows, "every row as it was");
+    assert_eq!(others(&connection), before_schema, "nothing else changes");
+    assert_eq!(
+        orphans(&connection),
+        ["download_import_decisions:2:download_attempts"],
+        "the old orphan stays the only one"
+    );
+    let child = texts(
+        &connection,
+        "SELECT sql FROM sqlite_master WHERE name = 'download_import_decisions'",
+        [],
+    );
+    assert!(
+        child[0].contains("attempt_id TEXT REFERENCES download_attempts(id) ON DELETE SET NULL"),
+        "the child still names the table: {child:?}"
+    );
+    assert_eq!(
+        table(&connection),
+        before_table
+            .iter()
+            .map(|sql| sql.replace(
+                "source IN ('soulseek','usenet')",
+                "source IN ('soulseek','usenet','deezer')"
+            ))
+            .collect::<Vec<_>>(),
+        "the table is as it was but for the source check"
+    );
+
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .unwrap();
+    let revisions = |connection: &Connection| {
+        (
+            scalar(
+                connection,
+                "SELECT revision FROM download_activity_global_revision",
+            ),
+            scalar(
+                connection,
+                "SELECT COALESCE((SELECT revision FROM download_activity_user_revisions \
+                 WHERE user_id = 'u1'), 0)",
+            ),
+        )
+    };
+    let (global, user) = revisions(&connection);
+    connection
+        .execute_batch(
+            "INSERT INTO download_attempts (id, task_id, source, candidate_index, job_name,
+                 handle_json, state, created_at, updated_at)
+                 VALUES ('a4', 't1', 'deezer', 3, 'album_302127_9', '{}', 'acquiring', 12, 12);",
+        )
+        .expect("a Deezer attempt is stored");
+    assert_eq!(revisions(&connection), (global + 1, user + 1), "insert");
+    connection
+        .execute_batch("UPDATE download_attempts SET state = 'in_use' WHERE id = 'a4'")
+        .unwrap();
+    assert_eq!(revisions(&connection), (global + 2, user + 2), "state");
+    connection
+        .execute_batch("DELETE FROM download_attempts WHERE id = 'a4'")
+        .unwrap();
+    assert_eq!(revisions(&connection), (global + 3, user + 3), "delete");
+    let refused = connection
+        .execute_batch(
+            "INSERT INTO download_attempts (id, task_id, source, candidate_index,
+                 handle_json, state, created_at, updated_at)
+                 VALUES ('a5', 't1', 'soulseek2', 4, '{}', 'acquiring', 13, 13);",
+        )
+        .expect_err("an unknown source is refused");
+    assert!(
+        refused.to_string().contains("CHECK constraint failed"),
+        "{refused}"
+    );
+    connection
+        .execute_batch("DELETE FROM download_attempts WHERE id = 'a1'")
+        .unwrap();
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT COALESCE(attempt_id, '-') FROM download_import_decisions ORDER BY id",
+            [],
+        ),
+        ["-", "gone"],
+        "the child's key still acts on the table"
     );
 }
 

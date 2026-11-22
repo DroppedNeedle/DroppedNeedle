@@ -255,6 +255,7 @@ export const EFFECTS = {
 		{ key: DownloadQueryKeyFactory.clientStatus() },
 		{ key: DownloadQueryKeyFactory.sabnzbdStatus() },
 		{ key: DownloadQueryKeyFactory.nzbgetStatus() },
+		{ key: DownloadQueryKeyFactory.deemixStatus() },
 		{ everyScope: [HomeQueryKeyFactory.feature] }
 	],
 	/** The Soulseek connection settings. */
@@ -266,6 +267,8 @@ export const EFFECTS = {
 		{ key: DownloadQueryKeyFactory.prowlarr() },
 		{ key: DownloadQueryKeyFactory.indexers() }
 	],
+	/** The Deemix connection settings. */
+	deemixSettingsChanged: (): Sweep[] => [{ key: DownloadQueryKeyFactory.deemix() }],
 	/** The order download sources are tried in. */
 	sourcePriorityChanged: (): Sweep[] => [{ key: DownloadQueryKeyFactory.sourcePriority() }],
 	/** The download policy. */
@@ -545,6 +548,7 @@ export const libraryCountsChanged = fact('libraryCountsChanged');
 export const downloadReadinessChanged = fact('downloadReadinessChanged');
 export const slskdSettingsChanged = fact('slskdSettingsChanged');
 export const usenetSettingsChanged = fact('usenetSettingsChanged');
+export const deemixSettingsChanged = fact('deemixSettingsChanged');
 export const sourcePriorityChanged = fact('sourcePriorityChanged');
 export const downloadPolicyChanged = fact('downloadPolicyChanged');
 export const wantedSettingsChanged = fact('wantedSettingsChanged');

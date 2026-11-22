@@ -52,6 +52,7 @@ fn album() -> AlbumRelease {
         artist: "Massive Attack".to_owned(),
         various_artists: false,
         year: Some(1991),
+        barcode: None,
         tracks: titles
             .iter()
             .enumerate()
@@ -66,6 +67,7 @@ fn album() -> AlbumRelease {
                     format!("aaaaaaaa-0000-4000-8000-00000000000{index}")
                 },
                 release_track_mbid: format!("bbbbbbbb-0000-4000-8000-00000000000{index}"),
+                isrcs: Vec::new(),
             })
             .collect(),
     }

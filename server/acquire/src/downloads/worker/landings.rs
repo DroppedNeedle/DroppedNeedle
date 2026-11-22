@@ -18,16 +18,30 @@ use std::sync::{Arc, Mutex};
 
 use super::{Attempt, DownloadWorker, Pass, handled_count};
 use crate::downloads::quarantine::QuarantineReason;
-use crate::downloads::sources::{DownloadSource, SourceHandle};
+use crate::downloads::sources::{DownloadSource, SourceError, SourceHandle};
 use crate::downloads::state::{AttemptState, TaskStatus};
 use crate::downloads::store::{AttemptRow, ReimportStart, TaskOutcome, TaskRow};
 use crate::landing::specs::Disposition;
 use crate::landing::{LandingReport, LandingResult};
-use crate::reason::Reason;
+use crate::reason::{Reason, ReasonKind};
 
 /// The outcome a reason records when its own sentence is the log text.
 fn said(reason: Reason) -> TaskOutcome<'static> {
     TaskOutcome::new(reason, reason.message())
+}
+
+/// The outcome of a landing whose source could not hand over its files. A
+/// refusal that settles the matter keeps its own reason (another task
+/// holding the files is `AlreadyDownloading`, which blames nothing). Any
+/// other failure is `FilesUnlisted`: the reasons the sources give for a
+/// refused poll or enqueue would misread here.
+fn not_landed(error: &SourceError) -> TaskOutcome<'_> {
+    match error {
+        SourceError::Rejected { reason, detail } if reason.kind() == ReasonKind::Settled => {
+            TaskOutcome::new(*reason, detail)
+        }
+        _ => said(Reason::FilesUnlisted),
+    }
 }
 
 /// Passes a landing may wait on files that are not ready before the task
@@ -220,7 +234,7 @@ impl DownloadWorker {
             Ok(landed) => landed,
             Err(error) => {
                 tracing::warn!(task_id = %task.id, %error, "download client could not list the landed files");
-                let outcome = said(Reason::FilesUnlisted);
+                let outcome = not_landed(&error);
                 match origin {
                     Origin::Poll => self.wait_or_fail(task, attempt, outcome, now).await,
                     Origin::Reimport { was_partial } => {
@@ -717,4 +731,29 @@ fn landable_attempt(attempts: &[Attempt]) -> Option<&Attempt> {
                 AttemptState::Preserved | AttemptState::CleanupPending
             )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A source that refuses a landing because another task holds the
+    /// files records that, not that it could not list them; the refusals
+    /// sources give for polls, and every other failure, read as unlisted.
+    #[test]
+    fn a_settled_refusal_keeps_its_reason() {
+        let held = SourceError::rejected(Reason::AlreadyDownloading, "held by another task");
+        let outcome = not_landed(&held);
+        assert_eq!(outcome.reason, Reason::AlreadyDownloading);
+        assert_eq!(outcome.text, "held by another task");
+
+        for error in [
+            SourceError::rejected(Reason::MovedOn, "the client that took this job is gone"),
+            SourceError::rejected(Reason::DownloadFailed, "bad answer"),
+            SourceError::Unavailable("down".to_owned()),
+            SourceError::LocalFault("mount gone".to_owned()),
+        ] {
+            assert_eq!(not_landed(&error).reason, Reason::FilesUnlisted, "{error}");
+        }
+    }
 }

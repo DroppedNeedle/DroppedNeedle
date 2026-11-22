@@ -7,6 +7,7 @@ import type { components } from '$lib/api/v3/openapi';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import {
 	createAppMutation,
+	deemixSettingsChanged,
 	downloadPolicyChanged,
 	downloadReadinessChanged,
 	sourcePriorityChanged,
@@ -18,6 +19,10 @@ export type DownloadPolicySettings = components['schemas']['DownloadPolicyView']
 export type SabnzbdConnectionSettings = components['schemas']['SabnzbdConnection'];
 export type NzbgetConnectionSettings = components['schemas']['NzbgetConnection'];
 export type UsenetClientTestResult = components['schemas']['UsenetClientTestResponse'];
+export type DeemixConnectionSettings = components['schemas']['DeemixConnection'];
+export type DeemixStatus = components['schemas']['DeemixStatusResponse'];
+export type DeemixQuality = components['schemas']['DeemixQuality'];
+export type DeemixWarning = components['schemas']['DeemixWarning'];
 export type WantedWatcherSettings = components['schemas']['WantedWatcher'];
 
 const sourcePriorityOptions = () =>
@@ -75,6 +80,22 @@ const nzbgetStatusOptions = () =>
 
 export const getNzbgetStatusQuery = () => createQuery(() => nzbgetStatusOptions());
 
+const deemixOptions = () =>
+	queryOptions({
+		queryKey: DownloadQueryKeyFactory.deemix(),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/settings/download-clients/deemix'), { signal })
+	});
+
+export const getDeemixConfigQuery = () => createQuery(() => deemixOptions());
+
+const deemixStatusOptions = () =>
+	queryOptions({
+		queryKey: DownloadQueryKeyFactory.deemixStatus(),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/acquire/deemix/status'), { signal })
+	});
+
+export const getDeemixStatusQuery = () => createQuery(() => deemixStatusOptions());
+
 const policyOptions = () =>
 	queryOptions({
 		queryKey: DownloadQueryKeyFactory.policy(),
@@ -115,6 +136,22 @@ export function createTestNzbgetMutation() {
 		effects: () => [],
 		mutationFn: (config: NzbgetConnectionSettings) =>
 			api.v3.POST(v3('/api/v3/settings/download-clients/nzbget/test'), config)
+	}));
+}
+
+export function createSaveDeemixConfigMutation() {
+	return createAppMutation(() => ({
+		mutationFn: (config: DeemixConnectionSettings) =>
+			api.v3.PUT(v3('/api/v3/settings/download-clients/deemix'), config),
+		effects: () => [deemixSettingsChanged(), downloadReadinessChanged()]
+	}));
+}
+
+export function createTestDeemixMutation() {
+	return createAppMutation(() => ({
+		effects: () => [],
+		mutationFn: (config: DeemixConnectionSettings) =>
+			api.v3.POST(v3('/api/v3/settings/download-clients/deemix/test'), config)
 	}));
 }
 

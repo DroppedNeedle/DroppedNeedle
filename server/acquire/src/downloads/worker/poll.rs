@@ -7,10 +7,10 @@ use std::sync::Arc;
 use super::{DownloadWorker, Pass, handled_count, live_attempt};
 use crate::downloads::quarantine::{QUARANTINE_TTL_SECONDS, QuarantineReason, failover_identities};
 use crate::downloads::source_tag::SourceTag;
-use crate::downloads::sources::{DownloadSource, SourceError, SourceHandle};
+use crate::downloads::sources::{DownloadSource, SourceError, SourceHandle, TransferProgress};
 use crate::downloads::state::{AttemptDisposition, AttemptState, TaskStatus};
 use crate::downloads::store::{AttemptRow, TaskOutcome, TaskRow};
-use crate::downloads::watchdog::PollSample;
+use crate::downloads::watchdog::{PollSample, WatchdogOutcome};
 use crate::reason::Reason;
 
 /// First wait before polling a source again after its client stopped
@@ -72,6 +72,83 @@ pub(super) struct PollMemory {
     /// Start of the preferred-quality wait: the enqueue, or the last
     /// search that found no other copy.
     pub(super) give_way_from: f64,
+    /// A poll since the batch was last active reported it waiting in its
+    /// client's own queue, or this run has not yet seen it active there.
+    pub(super) waited_at_client: bool,
+}
+
+impl PollMemory {
+    /// Memory for a live attempt first seen in this run, measured from its
+    /// own enqueue and its task's last poll (`now` when it has none). A
+    /// batch in a queue the client keeps for itself may have waited there
+    /// all the while the worker was away, so it counts as waiting until it
+    /// turns active.
+    fn reseeded(enqueued_at: f64, last_polled_at: f64, source: &dyn DownloadSource) -> Self {
+        // The preferred-quality wait starts again from the last poll: when
+        // it began is not stored.
+        Self {
+            enqueued_at,
+            last_bytes: 0,
+            last_move_at: last_polled_at,
+            give_way_from: last_polled_at,
+            waited_at_client: source.queue_is_local(),
+        }
+    }
+
+    /// Take one poll's progress into the memory and turn it into the
+    /// watchdog's sample. Growing bytes count as movement, and so does a
+    /// batch turning active after it waited in its client's own queue, so
+    /// that wait is not read as a stall. A batch exists, rather than never
+    /// started, once slskd reports a Soulseek transfer's size (it waits at
+    /// the peer) or the client says, or last said, that it holds it in its
+    /// queue.
+    fn sample(&mut self, progress: &TransferProgress, now: f64, soulseek: bool) -> PollSample {
+        if progress.downloaded_bytes > self.last_bytes {
+            self.last_move_at = now;
+            self.last_bytes = progress.downloaded_bytes;
+        }
+        if progress.has_active_transfer {
+            if self.waited_at_client {
+                self.last_move_at = now;
+            }
+            self.waited_at_client = false;
+        } else if progress.queued_at_client {
+            self.waited_at_client = true;
+        }
+        let materialized = (soulseek && progress.total_bytes.is_some())
+            || progress.queued_at_client
+            || self.waited_at_client;
+        PollSample {
+            elapsed_seconds: now - self.enqueued_at,
+            idle_seconds: now - self.last_move_at,
+            has_active_transfer: progress.has_active_transfer,
+            downloaded_bytes: progress.downloaded_bytes,
+            all_terminal: progress.all_terminal,
+            all_succeeded: progress.all_succeeded,
+            materialize_wait_seconds: if progress.downloaded_bytes == 0
+                && !progress.has_active_transfer
+                && !materialized
+            {
+                now - self.enqueued_at
+            } else {
+                0.0
+            },
+        }
+    }
+}
+
+/// The blocklist a verdict that fails a copy over files it under. A wait
+/// or a stall in a queue the client keeps for itself says nothing against
+/// the copy, so it files none there.
+fn verdict_quarantine(
+    outcome: WatchdogOutcome,
+    source: &dyn DownloadSource,
+) -> Option<QuarantineReason> {
+    let local_wait = matches!(
+        outcome,
+        WatchdogOutcome::QueuedTimeout | WatchdogOutcome::Stalled
+    ) && source.queue_is_local();
+    (!local_wait).then_some(QuarantineReason::DownloadFailed)
 }
 
 /// Whether a person picked the copy this attempt fetches: they picked
@@ -206,38 +283,15 @@ impl DownloadWorker {
         if self.backing_off(&lane, now) {
             return Polled::Answered;
         }
-        let mut memory = self.poll_memory(&task.id, task, &attempt.row, now);
+        let mut memory = self.poll_memory(&task.id, task, &attempt.row, source.as_ref(), now);
         match source.poll(&handle).await {
             Ok(progress) => {
-                if progress.downloaded_bytes > memory.last_bytes {
-                    memory.last_move_at = now;
-                    memory.last_bytes = progress.downloaded_bytes;
-                }
                 let soulseek = attempt.row.source == SourceTag::Soulseek;
-                // A Soulseek transfer slskd reports a size for exists as a
-                // record, queued at the peer: it waits there rather than
-                // counting as never started.
-                let materialized = soulseek && progress.total_bytes.is_some();
+                let sample = memory.sample(&progress, now, soulseek);
                 let give_way_waited = (soulseek
                     && !picked_by_hand(task, &attempt.row)
                     && handled_count(&attempts, None) < pass.config.max_failover_attempts)
                     .then_some(now - memory.give_way_from);
-                let sample = PollSample {
-                    elapsed_seconds: now - memory.enqueued_at,
-                    idle_seconds: now - memory.last_move_at,
-                    has_active_transfer: progress.has_active_transfer,
-                    downloaded_bytes: progress.downloaded_bytes,
-                    all_terminal: progress.all_terminal,
-                    all_succeeded: progress.all_succeeded,
-                    materialize_wait_seconds: if progress.downloaded_bytes == 0
-                        && !progress.has_active_transfer
-                        && !materialized
-                    {
-                        now - memory.enqueued_at
-                    } else {
-                        0.0
-                    },
-                };
                 self.store_poll_memory(&task.id, &memory);
                 self.apply_verdict(
                     pass,
@@ -299,6 +353,7 @@ impl DownloadWorker {
         task_id: &str,
         task: &TaskRow,
         attempt: &AttemptRow,
+        source: &dyn DownloadSource,
         now: f64,
     ) -> PollMemory {
         if let Ok(cache) = self.poll_cache.lock()
@@ -306,17 +361,14 @@ impl DownloadWorker {
         {
             return memory.clone();
         }
-        // After a restart the preferred-quality wait starts again from the
-        // last poll: when it began is not stored. The copy is measured from
-        // its own enqueue, as an unbroken run measures it, because the task
-        // can be hours older (approval, earlier copies).
-        let last_polled_at = task.last_polled_at.unwrap_or(now);
-        PollMemory {
-            enqueued_at: attempt.created_at,
-            last_bytes: 0,
-            last_move_at: last_polled_at,
-            give_way_from: last_polled_at,
-        }
+        // The copy is measured from its own enqueue, as an unbroken run
+        // measures it, because the task can be hours older (approval,
+        // earlier copies).
+        PollMemory::reseeded(
+            attempt.created_at,
+            task.last_polled_at.unwrap_or(now),
+            source,
+        )
     }
 
     /// Store refreshed poll memory.
@@ -335,13 +387,13 @@ impl DownloadWorker {
         attempt: &AttemptRow,
         source: &Arc<dyn DownloadSource>,
         handle: &SourceHandle,
-        progress: crate::downloads::sources::TransferProgress,
+        progress: TransferProgress,
         sample: PollSample,
         give_way_waited: Option<f64>,
     ) {
-        use crate::downloads::watchdog::WatchdogOutcome;
         let now = pass.now;
-        let (reason, text) = match pass.watchdog.evaluate_with(&sample, give_way_waited) {
+        let outcome = pass.watchdog.evaluate_with(&sample, give_way_waited);
+        let (reason, text) = match outcome {
             WatchdogOutcome::Continue => {
                 self.record_progress(pass, task, &progress).await;
                 return;
@@ -378,7 +430,12 @@ impl DownloadWorker {
                 return;
             }
             WatchdogOutcome::QueuedTimeout => {
-                (Reason::QueueTimeout, "stuck in the remote queue".to_owned())
+                let text = if source.queue_is_local() {
+                    "waited too long in the download client's queue"
+                } else {
+                    "stuck in the remote queue"
+                };
+                (Reason::QueueTimeout, text.to_owned())
             }
             WatchdogOutcome::MaterializeTimeout => (
                 Reason::NeverStarted,
@@ -393,7 +450,7 @@ impl DownloadWorker {
             source,
             handle,
             TaskOutcome::new(reason, &text),
-            Some(QuarantineReason::DownloadFailed),
+            verdict_quarantine(outcome, source.as_ref()),
         )
         .await;
     }
@@ -562,5 +619,212 @@ impl DownloadWorker {
                 "download source blocklisted"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::downloads::watchdog::{Watchdog, WatchdogConfig};
+    use crate::landing::Landed;
+    use crate::search_jobs::candidates::Candidate;
+    use crate::target::SearchTarget;
+    use futures_util::future::BoxFuture;
+
+    /// A source that only says whether its client keeps its own queue.
+    struct Queue {
+        local: bool,
+    }
+
+    fn refused<'a, T: Send + 'a>() -> BoxFuture<'a, Result<T, SourceError>> {
+        Box::pin(async { Err(SourceError::Unavailable("not called here".to_owned())) })
+    }
+
+    impl DownloadSource for Queue {
+        fn tag(&self) -> SourceTag {
+            SourceTag::plugin("queue")
+        }
+        fn search<'a>(
+            &'a self,
+            _target: &'a SearchTarget,
+        ) -> BoxFuture<'a, Result<Vec<Candidate>, SourceError>> {
+            refused()
+        }
+        fn enqueue<'a>(
+            &'a self,
+            _task_id: &'a str,
+            _candidate_index: i64,
+        ) -> BoxFuture<'a, Result<SourceHandle, SourceError>> {
+            refused()
+        }
+        fn poll<'a>(
+            &'a self,
+            _handle: &'a SourceHandle,
+        ) -> BoxFuture<'a, Result<TransferProgress, SourceError>> {
+            refused()
+        }
+        fn landed<'a>(
+            &'a self,
+            _handle: &'a SourceHandle,
+        ) -> BoxFuture<'a, Result<Landed, SourceError>> {
+            refused()
+        }
+        fn discard<'a>(
+            &'a self,
+            _handle: &'a SourceHandle,
+        ) -> BoxFuture<'a, Result<bool, SourceError>> {
+            refused()
+        }
+        fn abort<'a>(
+            &'a self,
+            _handle: &'a SourceHandle,
+        ) -> BoxFuture<'a, Result<bool, SourceError>> {
+            refused()
+        }
+        fn queue_is_local(&self) -> bool {
+            self.local
+        }
+    }
+
+    const MINUTE: f64 = 60.0;
+
+    /// One poll of `source`'s batch at `now` minutes, as the poll pass
+    /// judges it: the verdict, and the blocklist a fail-over would file.
+    fn judge(
+        source: &Queue,
+        memory: &mut PollMemory,
+        progress: TransferProgress,
+        now: f64,
+        soulseek: bool,
+    ) -> (WatchdogOutcome, Option<QuarantineReason>) {
+        let watchdog = Watchdog::new(WatchdogConfig::default());
+        let outcome = watchdog.evaluate(&memory.sample(&progress, now * MINUTE, soulseek));
+        (outcome, verdict_quarantine(outcome, source))
+    }
+
+    fn enqueued() -> PollMemory {
+        PollMemory {
+            enqueued_at: 0.0,
+            last_bytes: 0,
+            last_move_at: 0.0,
+            give_way_from: 0.0,
+            waited_at_client: false,
+        }
+    }
+
+    /// Waiting in the client's own queue, as a source that keeps one says.
+    fn at_client() -> TransferProgress {
+        TransferProgress {
+            queued_at_client: true,
+            ..Default::default()
+        }
+    }
+
+    /// Waiting at a Soulseek peer, which slskd reports with a size.
+    fn at_peer() -> TransferProgress {
+        TransferProgress {
+            total_bytes: Some(1),
+            ..Default::default()
+        }
+    }
+
+    fn started() -> TransferProgress {
+        TransferProgress {
+            has_active_transfer: true,
+            ..Default::default()
+        }
+    }
+
+    /// Active, and still said to be in the client's queue.
+    fn both() -> TransferProgress {
+        TransferProgress {
+            queued_at_client: true,
+            ..started()
+        }
+    }
+
+    /// A batch waiting in its client's own queue is not "never started",
+    /// its stall clock starts when it turns active, and a queue wait or a
+    /// stall there fails over with no blocklist. A source that reports
+    /// neither keeps the verdicts and the blocklist it had.
+    #[test]
+    fn a_batch_in_its_clients_own_queue_waits_without_blame() {
+        let local = Queue { local: true };
+        let blocklist = Some(QuarantineReason::DownloadFailed);
+        let go_on = WatchdogOutcome::Continue;
+
+        let mut memory = enqueued();
+        assert_eq!(judge(&local, &mut memory, at_client(), 2.0, false).0, go_on);
+        assert_eq!(
+            judge(&local, &mut memory, at_client(), 90.0, false).0,
+            go_on
+        );
+        assert_eq!(judge(&local, &mut memory, started(), 91.0, false).0, go_on);
+        assert_eq!(judge(&local, &mut memory, both(), 100.0, false).0, go_on);
+        assert_eq!(judge(&local, &mut memory, started(), 120.0, false).0, go_on);
+        assert_eq!(
+            judge(&local, &mut memory, both(), 121.0, false),
+            (WatchdogOutcome::Stalled, None)
+        );
+
+        // A poll that reports neither, after one that said queued, is not
+        // read as never started.
+        let mut memory = enqueued();
+        assert_eq!(judge(&local, &mut memory, at_client(), 1.0, false).0, go_on);
+        assert_eq!(
+            judge(&local, &mut memory, TransferProgress::default(), 2.0, false).0,
+            go_on
+        );
+
+        // After the worker was away, a batch there may have waited in its
+        // queue all along: turning active starts its stall clock.
+        let mut memory = PollMemory::reseeded(0.0, 10.0 * MINUTE, &local);
+        assert_eq!(judge(&local, &mut memory, started(), 150.0, false).0, go_on);
+
+        let mut memory = enqueued();
+        assert_eq!(
+            judge(&local, &mut memory, at_client(), 60.0, false).0,
+            go_on
+        );
+        assert_eq!(
+            judge(&local, &mut memory, at_client(), 120.0, false),
+            (WatchdogOutcome::QueuedTimeout, None)
+        );
+        assert_eq!(
+            verdict_quarantine(WatchdogOutcome::Deadline, &local),
+            blocklist
+        );
+
+        let elsewhere = Queue { local: false };
+        let mut memory = PollMemory::reseeded(0.0, 10.0 * MINUTE, &elsewhere);
+        assert_eq!(
+            judge(&elsewhere, &mut memory, started(), 150.0, false),
+            (WatchdogOutcome::Stalled, blocklist)
+        );
+        let mut memory = enqueued();
+        assert_eq!(
+            judge(
+                &elsewhere,
+                &mut memory,
+                TransferProgress::default(),
+                2.0,
+                false
+            ),
+            (WatchdogOutcome::MaterializeTimeout, blocklist)
+        );
+        let mut memory = enqueued();
+        assert_eq!(
+            judge(&elsewhere, &mut memory, at_peer(), 90.0, true).0,
+            go_on
+        );
+        assert_eq!(
+            judge(&elsewhere, &mut memory, started(), 91.0, true),
+            (WatchdogOutcome::Stalled, blocklist)
+        );
+        let mut memory = enqueued();
+        assert_eq!(
+            judge(&elsewhere, &mut memory, at_peer(), 120.0, true),
+            (WatchdogOutcome::QueuedTimeout, blocklist)
+        );
     }
 }

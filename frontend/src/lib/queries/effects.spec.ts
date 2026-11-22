@@ -85,6 +85,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		key('shared', 'downloads', 'client-status'),
 		key('admin', 'downloads', 'sabnzbd-status'),
 		key('admin', 'downloads', 'nzbget-status'),
+		key('admin', 'downloads', 'deemix-status'),
 		every('home')
 	],
 	slskdSettingsChanged: [key('admin', 'downloads', 'client-config')],
@@ -94,6 +95,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		key('admin', 'downloads', 'prowlarr'),
 		key('admin', 'downloads', 'indexers')
 	],
+	deemixSettingsChanged: [key('admin', 'downloads', 'deemix')],
 	sourcePriorityChanged: [key('admin', 'downloads', 'source-priority')],
 	downloadPolicyChanged: [key('admin', 'downloads', 'policy')],
 	wantedSettingsChanged: [key('admin', 'downloads', 'wanted-settings')],

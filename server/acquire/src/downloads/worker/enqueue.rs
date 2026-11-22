@@ -427,6 +427,7 @@ impl DownloadWorker {
                     last_bytes: 0,
                     last_move_at: now,
                     give_way_from: now,
+                    waited_at_client: false,
                 },
             );
         }

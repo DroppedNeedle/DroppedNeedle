@@ -1,0 +1,28 @@
+{
+ "result": true,
+ "data": {
+  "url": [
+   "https://www.deezer.com/album/6158273"
+  ],
+  "bitrate": 1,
+  "obj": [
+   {
+    "type": "album",
+    "id": "6158273",
+    "bitrate": 1,
+    "uuid": "album_6158273_1",
+    "title": "Mellon Collie And The Infinite Sadness (Remastered)",
+    "artist": "The Smashing Pumpkins",
+    "explicit": true,
+    "size": 28,
+    "downloaded": 0,
+    "failed": 0,
+    "progress": 0,
+    "errors": [],
+    "files": [],
+    "extrasPath": "",
+    "__type__": "Collection"
+   }
+  ]
+ }
+}

@@ -359,7 +359,8 @@ pub struct Alias {
 /// (BrainzMash mirror). The lookups with `inc=release-groups`, `url-rels`,
 /// `recordings`, `labels+recordings+url-rels`,
 /// `artist-credits+labels+recordings+release-groups+url-rels`,
-/// `artist-credits+genres+isrcs+labels+recordings+release-groups` and
+/// `artist-credits+genres+isrcs+labels+recordings+release-groups`,
+/// `artist-credits+isrcs+recordings+release-groups` and
 /// `isrcs+recordings+release-groups` are subsets of that include set, so that
 /// answer covers them as recorded.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

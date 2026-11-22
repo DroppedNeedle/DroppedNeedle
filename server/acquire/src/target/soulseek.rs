@@ -151,6 +151,7 @@ mod tests {
             recording_mbid: None,
             title: Some("Alpha".to_owned()),
             release_track_mbid: None,
+            isrcs: Vec::new(),
         }];
         let stranger = SearchResult {
             username: "stranger".to_owned(),

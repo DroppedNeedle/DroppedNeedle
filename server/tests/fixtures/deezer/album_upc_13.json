@@ -1,0 +1,67 @@
+{
+  "id": 6158273,
+  "title": "Mellon Collie And The Infinite Sadness (Remastered)",
+  "upc": "5099997855354",
+  "link": "https://www.deezer.com/album/6158273",
+  "share": "https://www.deezer.com/album/6158273?utm_source=deezer&utm_content=album-6158273&utm_term=REDACTED&utm_medium=web",
+  "cover": "https://api.deezer.com/album/6158273/image",
+  "cover_small": "https://cdn-images.dzcdn.net/images/cover/eebc22076a527fa2ae9159a9b1b95649/56x56-000000-80-0-0.jpg",
+  "cover_medium": "https://cdn-images.dzcdn.net/images/cover/eebc22076a527fa2ae9159a9b1b95649/250x250-000000-80-0-0.jpg",
+  "cover_big": "https://cdn-images.dzcdn.net/images/cover/eebc22076a527fa2ae9159a9b1b95649/500x500-000000-80-0-0.jpg",
+  "cover_xl": "https://cdn-images.dzcdn.net/images/cover/eebc22076a527fa2ae9159a9b1b95649/1000x1000-000000-80-0-0.jpg",
+  "md5_image": "eebc22076a527fa2ae9159a9b1b95649",
+  "genre_id": 85,
+  "genres": {
+    "data": [
+      {
+        "id": 85,
+        "name": "Alternative",
+        "picture": "https://api.deezer.com/genre/85/image",
+        "type": "genre"
+      }
+    ]
+  },
+  "label": "Virgin Records",
+  "nb_tracks": 28,
+  "duration": 6521,
+  "fans": 74000,
+  "release_date": "2012-11-30",
+  "record_type": "album",
+  "available": true,
+  "tracklist": "https://api.deezer.com/album/6158273/tracks",
+  "explicit_lyrics": true,
+  "explicit_content_lyrics": 4,
+  "explicit_content_cover": 0,
+  "contributors": [
+    {
+      "id": 193331,
+      "name": "The Smashing Pumpkins",
+      "link": "https://www.deezer.com/artist/193331",
+      "share": "https://www.deezer.com/artist/193331?utm_source=deezer&utm_content=artist-193331&utm_term=REDACTED&utm_medium=web",
+      "picture": "https://api.deezer.com/artist/193331/image",
+      "picture_small": "https://cdn-images.dzcdn.net/images/artist/1f2926478cb4283b53ae32e8c73ca494/56x56-000000-80-0-0.jpg",
+      "picture_medium": "https://cdn-images.dzcdn.net/images/artist/1f2926478cb4283b53ae32e8c73ca494/250x250-000000-80-0-0.jpg",
+      "picture_big": "https://cdn-images.dzcdn.net/images/artist/1f2926478cb4283b53ae32e8c73ca494/500x500-000000-80-0-0.jpg",
+      "picture_xl": "https://cdn-images.dzcdn.net/images/artist/1f2926478cb4283b53ae32e8c73ca494/1000x1000-000000-80-0-0.jpg",
+      "radio": true,
+      "tracklist": "https://api.deezer.com/artist/193331/top?limit=50",
+      "type": "artist",
+      "role": "Main"
+    }
+  ],
+  "artist": {
+    "id": 193331,
+    "name": "The Smashing Pumpkins",
+    "picture": "https://api.deezer.com/artist/193331/image",
+    "picture_small": "https://cdn-images.dzcdn.net/images/artist/1f2926478cb4283b53ae32e8c73ca494/56x56-000000-80-0-0.jpg",
+    "picture_medium": "https://cdn-images.dzcdn.net/images/artist/1f2926478cb4283b53ae32e8c73ca494/250x250-000000-80-0-0.jpg",
+    "picture_big": "https://cdn-images.dzcdn.net/images/artist/1f2926478cb4283b53ae32e8c73ca494/500x500-000000-80-0-0.jpg",
+    "picture_xl": "https://cdn-images.dzcdn.net/images/artist/1f2926478cb4283b53ae32e8c73ca494/1000x1000-000000-80-0-0.jpg",
+    "tracklist": "https://api.deezer.com/artist/193331/top?limit=50",
+    "type": "artist"
+  },
+  "type": "album",
+  "tracks": {
+    "data": []
+  }
+}

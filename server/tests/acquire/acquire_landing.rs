@@ -4084,6 +4084,7 @@ impl droppedneedle_acquire::target::lookup::AlbumLookup for Lookup {
                 artist: "Portishead".to_owned(),
                 various_artists: false,
                 year: None,
+                barcode: None,
                 tracks: release
                     .tracks
                     .iter()
@@ -4094,6 +4095,7 @@ impl droppedneedle_acquire::target::lookup::AlbumLookup for Lookup {
                         duration_seconds: track.length_ms.map(|ms| ms as f64 / 1000.0),
                         recording_mbid: track.recording_id.clone(),
                         release_track_mbid: track.id.clone(),
+                        isrcs: Vec::new(),
                     })
                     .collect(),
             });
@@ -7303,6 +7305,7 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
             artist: "Portishead".to_owned(),
             various_artists: false,
             year: Some(1995),
+            barcode: None,
             tracks: vec![AlbumTrack {
                 disc: 1,
                 position: 1,
@@ -7310,6 +7313,7 @@ async fn a_single_found_only_on_its_album_is_held_then_taken_from_the_album() {
                 duration_seconds: seconds,
                 recording_mbid: RECORDING.to_owned(),
                 release_track_mbid: RECORDING.to_owned(),
+                isrcs: Vec::new(),
             }],
         },
     );

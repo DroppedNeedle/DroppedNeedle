@@ -469,7 +469,7 @@ impl RequestsService {
                 response.status = EditionAcquireStatus::Started;
                 response.message = if waiting {
                     "No download source is set up, so this edition waits. It starts by \
-                     itself once Soulseek, Usenet or a plugin source is saved."
+                     itself once Soulseek, Usenet, Deemix or a plugin source is saved."
                         .to_owned()
                 } else {
                     let versions = response.versions.unwrap_or_default();

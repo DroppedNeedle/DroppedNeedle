@@ -1,0 +1,29 @@
+{
+ "status": 2,
+ "arl": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+ "user": {
+  "id": 1000001,
+  "name": "Test User",
+  "picture": "",
+  "license_token": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "can_stream_hq": false,
+  "can_stream_lossless": false,
+  "country": "XX",
+  "language": "en",
+  "loved_tracks": "1000002"
+ },
+ "childs": [
+  {
+   "id": 1000001,
+   "name": "Test User",
+   "picture": "",
+   "license_token": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "can_stream_hq": false,
+   "can_stream_lossless": false,
+   "country": "XX",
+   "language": "en",
+   "loved_tracks": "1000002"
+  }
+ ],
+ "currentChild": 0
+}

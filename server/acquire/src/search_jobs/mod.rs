@@ -107,7 +107,9 @@ impl SearchReason {
     /// What the person can do about it.
     pub fn action(self) -> &'static str {
         match self {
-            Self::NoSources => "Turn on slskd, SABnzbd or a plugin source in Settings, Downloads.",
+            Self::NoSources => {
+                "Turn on slskd, SABnzbd, Deemix or a plugin source in Settings, Downloads."
+            }
             Self::SourcesFailed => {
                 "Check that your download clients are running and reachable, then search again."
             }
@@ -324,15 +326,16 @@ impl SearchJobs {
                 None => (None, false),
             },
         };
-        let tracklist = match release_mbid.as_deref() {
+        let (tracklist, barcode) = match release_mbid.as_deref() {
             Some(release) => self.targets.edition_tracklist(release).await,
-            None => Vec::new(),
+            None => (Vec::new(), None),
         };
         let target = SearchTarget {
             artist: job.artist_name.clone(),
             album_title: job.album_title.clone(),
             year: job.year,
             tracklist,
+            barcode,
             wanted: Vec::new(),
             track: None,
             release_preferred,

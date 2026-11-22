@@ -8,6 +8,7 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+pub mod deemix;
 pub mod imports;
 pub mod musicbrainz;
 pub mod nzbget;

@@ -195,6 +195,12 @@ fn rig_with(
             crate::common::bundles::offline_catalog(&platform.db, auth.deps.clone()),
         )),
         plugins.clone(),
+        droppedneedle_acquire::test_support::deemix_wiring(
+            &platform.settings,
+            platform.clock.clone(),
+            &droppedneedle_providers::Providers::closed(),
+        )
+        .expect("deemix wiring"),
     ));
     let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
     let probes = Arc::new(LiveProbes::new(probe_cache.clone()));

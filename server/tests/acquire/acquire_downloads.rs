@@ -1826,3 +1826,279 @@ async fn a_busy_database_spends_no_retry() {
     drop((acquire, library, platform));
     runtime.shutdown().await;
 }
+
+/// One attempt on the Deezer source, journaled with its job name as its
+/// handle.
+fn deezer_attempt(
+    store: &DownloadStore<'_>,
+    id: &str,
+    task_id: &str,
+    job: &str,
+    state: AttemptState,
+) {
+    store
+        .insert_attempt(id, task_id, "deezer", 0, job, "{}", state, 1.0)
+        .unwrap();
+}
+
+// The attempts holding a Deezer item are found by the item's prefix,
+// whatever bitrate each asked for, and never another item's: `album_1_`
+// does not find `album_12_`. An attempt holds the item against a caller
+// when it belongs to another task and is still fetching or in use, or its
+// task is landing; a settled task's attempt does not hold it.
+#[test]
+fn a_deezer_item_is_held_by_other_tasks_live_attempts() {
+    use downloads::source_tag::SourceTag;
+    let dir = scratch_dir("item-holders");
+    let conn = scratch_store(&dir);
+    let store = DownloadStore::new(&conn);
+    for (task, status) in [
+        ("mine", TaskStatus::Downloading),
+        ("other", TaskStatus::Downloading),
+        ("landing", TaskStatus::Processing),
+        ("done", TaskStatus::Completed),
+    ] {
+        store.insert_task(&new_task(task), 1.0).unwrap();
+        store.transition_task(task, status, 1.0, None).unwrap();
+    }
+    deezer_attempt(
+        &store,
+        "a1",
+        "mine",
+        "album_1_9:mine:0",
+        AttemptState::Acquiring,
+    );
+    deezer_attempt(
+        &store,
+        "a2",
+        "other",
+        "album_1_9:other:0",
+        AttemptState::InUse,
+    );
+    deezer_attempt(
+        &store,
+        "a3",
+        "other",
+        "album_1_3:other:1",
+        AttemptState::Acquiring,
+    );
+    deezer_attempt(
+        &store,
+        "a4",
+        "other",
+        "album_12_9:other:2",
+        AttemptState::Acquiring,
+    );
+    deezer_attempt(
+        &store,
+        "a5",
+        "other",
+        "track_1_9:other:3",
+        AttemptState::Acquiring,
+    );
+    deezer_attempt(
+        &store,
+        "a6",
+        "landing",
+        "album_1_1:landing:0",
+        AttemptState::Preserved,
+    );
+    deezer_attempt(
+        &store,
+        "a7",
+        "done",
+        "album_1_9:done:0",
+        AttemptState::CleanupPending,
+    );
+    deezer_attempt(
+        &store,
+        "a8",
+        "gone",
+        "album_1_9:gone:0",
+        AttemptState::Acquiring,
+    );
+    store
+        .insert_attempt(
+            "a9",
+            "other",
+            "usenet",
+            4,
+            "album_1_9:other:4",
+            "{}",
+            AttemptState::Acquiring,
+            1.0,
+        )
+        .unwrap();
+
+    let held_by = |prefix: &str, caller: &str| {
+        let mut jobs: Vec<String> = store
+            .item_holders(&SourceTag::Deezer, prefix, caller)
+            .unwrap()
+            .into_iter()
+            .map(|holder| holder.job_name)
+            .collect();
+        jobs.sort();
+        jobs
+    };
+    assert_eq!(
+        held_by("album_1_", "mine"),
+        [
+            "album_1_1:landing:0",
+            "album_1_3:other:1",
+            "album_1_9:gone:0",
+            "album_1_9:other:0",
+        ]
+    );
+    assert_eq!(
+        held_by("album_1_", "other"),
+        [
+            "album_1_1:landing:0",
+            "album_1_9:gone:0",
+            "album_1_9:mine:0"
+        ]
+    );
+    assert_eq!(held_by("album_12_", "mine"), ["album_12_9:other:2"]);
+    assert_eq!(held_by("track_1_", "mine"), ["track_1_9:other:3"]);
+    assert!(held_by("album_1_", "landing").contains(&"album_1_9:other:0".to_owned()));
+    assert!(held_by("", "mine").is_empty());
+
+    let holder: Vec<_> = store
+        .item_holders(&SourceTag::Deezer, "album_1_", "mine")
+        .unwrap()
+        .into_iter()
+        .filter(|holder| holder.task_id == "landing")
+        .collect();
+    assert_eq!(holder.len(), 1);
+    assert_eq!(holder[0].task_id, "landing");
+    assert_eq!(holder[0].state, AttemptState::Preserved);
+    assert_eq!(holder[0].task_status, Some(TaskStatus::Processing));
+}
+
+// The landed paths an attempt stores read back as stored, by source and
+// job name; an attempt that stores none, and one that does not exist,
+// read as none.
+#[test]
+fn an_attempts_landed_paths_read_back_as_stored() {
+    use downloads::source_tag::SourceTag;
+    use std::path::PathBuf;
+    let dir = scratch_dir("stored-paths");
+    let conn = scratch_store(&dir);
+    let store = DownloadStore::new(&conn);
+    store.insert_task(&new_task("t1"), 1.0).unwrap();
+    deezer_attempt(&store, "a1", "t1", "album_1_9:t1:0", AttemptState::InUse);
+    let deezer = SourceTag::Deezer;
+
+    assert_eq!(store.stored_paths(&deezer, "album_1_9:t1:0").unwrap(), None);
+    assert_eq!(store.stored_paths(&deezer, "album_2_9:t1:0").unwrap(), None);
+
+    let paths = vec![
+        PathBuf::from("/downloads/deemix/Artist - Album/01 - One.flac"),
+        PathBuf::from("/downloads/deemix/Artist - Album/02 - Two.flac"),
+    ];
+    assert!(
+        store
+            .store_paths(&deezer, "album_1_9:t1:0", &paths, 2.0)
+            .unwrap()
+    );
+    assert_eq!(
+        store.stored_paths(&deezer, "album_1_9:t1:0").unwrap(),
+        Some(paths.clone())
+    );
+    assert_eq!(
+        store
+            .stored_paths(&SourceTag::Usenet, "album_1_9:t1:0")
+            .unwrap(),
+        None
+    );
+    assert!(
+        !store
+            .store_paths(&deezer, "album_2_9:t1:0", &paths, 2.0)
+            .unwrap()
+    );
+}
+
+// The in-attempt bitrate step points a live attempt at its new client job
+// in one write at the revision the caller read: both the job name and the
+// handle change and the revision moves. A stale revision, or an attempt
+// that is no longer live, changes nothing and says so.
+#[test]
+fn a_live_attempts_handle_is_rewritten_only_at_its_revision() {
+    let dir = scratch_dir("rewrite-handle");
+    let conn = scratch_store(&dir);
+    let store = DownloadStore::new(&conn);
+    store.insert_task(&new_task("t1"), 1.0).unwrap();
+    store
+        .insert_attempt(
+            "a1",
+            "t1",
+            "deezer",
+            0,
+            "album_1_9:t1:0",
+            r#"{"job_name":"album_1_9:t1:0"}"#,
+            AttemptState::Acquiring,
+            1.0,
+        )
+        .unwrap();
+    let read = store.get_attempt("a1").unwrap().unwrap();
+
+    let rewritten = store
+        .rewrite_handle(
+            "a1",
+            read.row_revision,
+            "album_1_3:t1:0",
+            r#"{"job_name":"album_1_3:t1:0"}"#,
+            2.0,
+        )
+        .unwrap()
+        .expect("the current revision rewrites");
+    assert_eq!(rewritten.job_name, "album_1_3:t1:0");
+    assert_eq!(rewritten.row_revision, read.row_revision + 1);
+    assert_eq!(
+        store.attempt_handle_json("a1").unwrap().as_deref(),
+        Some(r#"{"job_name":"album_1_3:t1:0"}"#)
+    );
+
+    let stale = store
+        .rewrite_handle(
+            "a1",
+            read.row_revision,
+            "album_1_1:t1:0",
+            r#"{"job_name":"album_1_1:t1:0"}"#,
+            3.0,
+        )
+        .unwrap();
+    assert!(stale.is_none(), "a stale revision rewrites nothing");
+    let kept = store.get_attempt("a1").unwrap().unwrap();
+    assert_eq!(kept.job_name, "album_1_3:t1:0");
+    assert_eq!(kept.row_revision, rewritten.row_revision);
+    assert_eq!(
+        store.attempt_handle_json("a1").unwrap().as_deref(),
+        Some(r#"{"job_name":"album_1_3:t1:0"}"#)
+    );
+
+    let settled = store
+        .transition_attempt(
+            "a1",
+            kept.row_revision,
+            AttemptState::Complete,
+            4.0,
+            None,
+            None,
+            true,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(
+        store
+            .rewrite_handle(
+                "a1",
+                settled.row_revision,
+                "album_1_1:t1:0",
+                r#"{"job_name":"album_1_1:t1:0"}"#,
+                5.0
+            )
+            .unwrap()
+            .is_none(),
+        "a settled attempt is not rewritten"
+    );
+}

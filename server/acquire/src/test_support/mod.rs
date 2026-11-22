@@ -42,6 +42,30 @@ pub fn scratch_settings(dir: &std::path::Path) -> Result<ConfigStore, String> {
     ConfigStore::scratch(dir, crypto)
 }
 
+/// The Deemix wiring over `settings` and `clock` for clients built
+/// outside the app, with Deezer's API through `providers` and no app
+/// folders.
+pub fn deemix_wiring(
+    settings: &ConfigStore,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
+    providers: &droppedneedle_providers::Providers,
+) -> Result<crate::wiring::DeemixWiring, String> {
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new()
+        .map_err(|error| error.to_string())?;
+    Ok(crate::wiring::DeemixWiring::over(
+        settings,
+        http.no_redirect().clone(),
+        clock,
+        providers.previews.clone(),
+        crate::wiring::AppFolders {
+            staging_root: std::path::PathBuf::new(),
+            slskd_downloads: std::path::PathBuf::new(),
+            plugins_dir: std::path::PathBuf::new(),
+            app: Vec::new(),
+        },
+    ))
+}
+
 impl crate::requests::quota::QuotaLedger {
     /// A ledger over a download policy nobody saved, whose defaults set no
     /// limits. Its settings live in a folder beside the database file.

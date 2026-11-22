@@ -10,7 +10,7 @@
 //! tests, which point [`QuarantineDir`] at a throwaway sandbox.
 //!
 //! Every source journals what it fetched on the attempt's handle (soulseek
-//! the peer and files, Usenet and plugin sources the release identity), so
+//! the peer and files, the other sources the release identity), so
 //! one write path blocklists any source's failed release and one filter,
 //! [`Blocklist`], keeps it out of every source's search and pick.
 
@@ -69,8 +69,8 @@ pub fn canonical_soulseek_identity(identity: &str) -> String {
 
 /// Blocklist identities for a failed fetch, from the journaled handle.
 /// Soulseek identifies by peer + filename (canonicalized, so older rows
-/// cannot evade the match), one row per enqueued file; Usenet and plugin
-/// sources by the release identity the handle carries. A handle with
+/// cannot evade the match), one row per enqueued file; every other source
+/// by the release identity the handle carries. A handle with
 /// neither yields no identities and nothing is recorded.
 pub fn failover_identities(handle: &SourceHandle) -> Vec<String> {
     match handle.source {
@@ -85,7 +85,7 @@ pub fn failover_identities(handle: &SourceHandle) -> Vec<String> {
                 .map(|file| soulseek_file_identity(&handle.username, file))
                 .collect()
         }
-        SourceTag::Usenet | SourceTag::Plugin(_) => {
+        SourceTag::Usenet | SourceTag::Deezer | SourceTag::Plugin(_) => {
             if handle.release_identity.is_empty() {
                 Vec::new()
             } else {
@@ -121,7 +121,8 @@ impl Blocklist {
         Self { identities }
     }
 
-    /// Whether the Usenet or plugin release with this identity is blocked.
+    /// Whether the Usenet, Deezer or plugin release with this identity is
+    /// blocked.
     pub fn blocks(&self, identity: &str) -> bool {
         self.identities.contains(identity)
     }

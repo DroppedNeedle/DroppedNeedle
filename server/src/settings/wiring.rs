@@ -26,6 +26,7 @@ use crate::settings::musicbrainz::MusicBrainzLifecycle;
 use crate::settings::section_prefs::SectionPrefs;
 use crate::settings::services::SettingsService;
 use crate::settings::verify::{LiveProbes, VerifyProbes};
+use droppedneedle_acquire::probes::DeemixChecks;
 use droppedneedle_auth::sqlite::LastFmLinks;
 use droppedneedle_catalog::metadata::library::LocalCatalog;
 use droppedneedle_kernel::mount::{Routes, routes};
@@ -52,6 +53,8 @@ pub struct SettingsSetup {
     /// The appearance routes, which save the site section through the
     /// same service.
     appearance: AppearanceSetup,
+    /// Deemix's Test, on the session DroppedNeedle keeps with Deemix.
+    deemix: Arc<DeemixChecks>,
 }
 
 impl SettingsSetup {
@@ -63,7 +66,8 @@ impl SettingsSetup {
     /// section prefs read Last.fm links through `lastfm`, and the Library
     /// Management settings say through `bins` when the recycle bin path is
     /// not used. The appearance routes use `appearance`, the store the
-    /// admin routes share.
+    /// admin routes share, and Deemix's Test `deemix`, the checks on the
+    /// session the Deezer source keeps.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         platform: &Platform,
@@ -74,6 +78,7 @@ impl SettingsSetup {
         lastfm: LastFmLinks,
         bins: BinSource,
         appearance: AppearanceStore,
+        deemix: Arc<DeemixChecks>,
     ) -> Self {
         let store = platform.settings.clone();
         let service = Arc::new(
@@ -97,6 +102,7 @@ impl SettingsSetup {
             )),
             bins,
             scans: Arc::new(LocalCatalog::new(platform.db.clone())),
+            deemix,
         }
     }
 
@@ -185,6 +191,11 @@ impl SettingsSetup {
     pub fn appearance(&self) -> &AppearanceSetup {
         &self.appearance
     }
+
+    /// Deemix's Test.
+    pub fn deemix(&self) -> &DeemixChecks {
+        &self.deemix
+    }
 }
 
 /// Every settings route: the section registry's, the hand-written
@@ -218,6 +229,7 @@ pub fn routes() -> Routes<SettingsSetup> {
         .admin(routes!(h::verify_musicbrainz))
         .admin(routes!(h::activate_brainzmash))
         .admin(routes!(h::test_slskd))
+        .admin(routes!(h::test_deemix))
         .admin(routes!(h::get_sabnzbd, h::put_sabnzbd))
         .admin(routes!(h::test_sabnzbd))
         .admin(routes!(h::get_nzbget, h::put_nzbget))

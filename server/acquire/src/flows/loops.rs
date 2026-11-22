@@ -435,6 +435,7 @@ async fn search_watch(
         album_title: watch.album_title.clone(),
         year: None,
         tracklist: Vec::new(),
+        barcode: None,
         wanted: Vec::new(),
         track: None,
         release_preferred: false,

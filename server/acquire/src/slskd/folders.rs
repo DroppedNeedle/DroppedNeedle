@@ -696,6 +696,7 @@ mod tests {
             recording_mbid: None,
             title: Some(title.to_owned()),
             release_track_mbid: None,
+            isrcs: Vec::new(),
         }
     }
 

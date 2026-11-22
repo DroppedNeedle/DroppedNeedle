@@ -13,6 +13,7 @@
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::db::statement::ListLen;
 use std::cell::RefCell;
+use std::path::PathBuf;
 
 use rusqlite::{Connection, OptionalExtension, Row};
 
@@ -42,6 +43,15 @@ pub enum StoreError {
     Plan {
         /// The task the plan belongs to.
         task_id: String,
+        /// What serde said.
+        detail: String,
+    },
+    /// An attempt's stored landed paths do not decode, or the paths given
+    /// do not encode.
+    #[error("landed paths of job {job_name}: {detail}")]
+    StoredPaths {
+        /// The client job the paths belong to.
+        job_name: String,
         /// What serde said.
         detail: String,
     },
@@ -329,6 +339,60 @@ impl QuarantineRow {
             quarantined_at: secs(row.get("quarantined_at")?),
         })
     }
+}
+
+/// An attempt on a client item that some other task holds: while one
+/// exists, nothing else adds, removes or lands that item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemHolder {
+    /// The holding attempt's client job name.
+    pub job_name: String,
+    /// The holding attempt's state.
+    pub state: AttemptState,
+    /// The task the attempt belongs to.
+    pub task_id: String,
+    /// That task's status, while its row exists.
+    pub task_status: Option<TaskStatus>,
+}
+
+impl ItemHolder {
+    fn from_row(row: sql::ItemAttemptRow) -> rusqlite::Result<Self> {
+        let state = AttemptState::parse(&row.state)
+            .ok_or_else(|| unknown_value("state", row.state.clone()))?;
+        let task_status = match row.task_status {
+            Some(text) => {
+                Some(TaskStatus::parse(&text).ok_or_else(|| unknown_value("status", text))?)
+            }
+            None => None,
+        };
+        Ok(Self {
+            job_name: row.job_name,
+            state,
+            task_id: row.task_id,
+            task_status,
+        })
+    }
+
+    /// Whether this attempt holds its item against `caller_task_id`: it
+    /// belongs to another task, and it is still fetching or in use, or its
+    /// task is landing.
+    fn holds_against(&self, caller_task_id: &str) -> bool {
+        self.task_id != caller_task_id
+            && (matches!(self.state, AttemptState::Acquiring | AttemptState::InUse)
+                || self.task_status == Some(TaskStatus::Processing))
+    }
+}
+
+/// The least text above every text that starts with `prefix`: the prefix
+/// with its last character raised by one, which orders right because
+/// SQLite compares text as UTF-8 bytes. `None` for an empty prefix, or one
+/// whose last character has no next one.
+fn prefix_end(prefix: &str) -> Option<String> {
+    let last = prefix.chars().next_back()?;
+    let next = char::from_u32(u32::from(last) + 1)?;
+    let mut end = prefix[..prefix.len() - last.len_utf8()].to_owned();
+    end.push(next);
+    Some(end)
 }
 
 /// When a failed task's next automatic retry is anchored.
@@ -907,6 +971,126 @@ impl<'conn> DownloadStore<'conn> {
                 ms(now),
                 attempt_id,
                 expected_revision,
+            ],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        self.get_attempt(attempt_id)
+    }
+
+    /// The attempts on `source` whose job name starts with `prefix` (one
+    /// client item, any bitrate) that hold it against `caller_task_id`. An
+    /// empty prefix names no item and finds none.
+    ///
+    /// The prefix is `album_<id>_` or `track_<id>_`, trailing underscore
+    /// included: `album_1` would also match `album_12_`.
+    pub fn item_holders(
+        &self,
+        source: &SourceTag,
+        prefix: &str,
+        caller_task_id: &str,
+    ) -> Result<Vec<ItemHolder>, StoreError> {
+        let Some(end) = prefix_end(prefix) else {
+            return Ok(Vec::new());
+        };
+        debug_assert!(
+            prefix.ends_with('_'),
+            "item prefix {prefix} lacks its trailing _"
+        );
+        let rows = self.rows(
+            sql::ITEM_ATTEMPTS.text(),
+            rusqlite::params![source, prefix, end],
+            sql::ItemAttemptRow::read,
+        )?;
+        let mut holders = Vec::new();
+        for row in rows {
+            let attempt = ItemHolder::from_row(row)?;
+            if attempt.holds_against(caller_task_id) {
+                holders.push(attempt);
+            }
+        }
+        Ok(holders)
+    }
+
+    /// The landed paths stored on the attempt with `source` and
+    /// `job_name`. `None` when there is no such attempt or it stores none.
+    pub fn stored_paths(
+        &self,
+        source: &SourceTag,
+        job_name: &str,
+    ) -> Result<Option<Vec<PathBuf>>, StoreError> {
+        let stored: Option<String> = self
+            .conn
+            .query_row(
+                sql::STORED_PATHS.text(),
+                rusqlite::params![source, job_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(json) = stored else {
+            return Ok(None);
+        };
+        let paths: Vec<PathBuf> =
+            serde_json::from_str(&json).map_err(|error| StoreError::StoredPaths {
+                job_name: job_name.to_owned(),
+                detail: error.to_string(),
+            })?;
+        Ok((!paths.is_empty()).then_some(paths))
+    }
+
+    /// Store the landed paths of the attempt with `source` and `job_name`,
+    /// so a later landing reads the same files. False when no attempt has
+    /// that name.
+    pub fn store_paths(
+        &self,
+        source: &SourceTag,
+        job_name: &str,
+        paths: &[PathBuf],
+        now: f64,
+    ) -> Result<bool, StoreError> {
+        let json = serde_json::to_string(paths).map_err(|error| StoreError::StoredPaths {
+            job_name: job_name.to_owned(),
+            detail: error.to_string(),
+        })?;
+        let changed = self.conn.execute(
+            sql::SET_STORED_PATHS.text(),
+            rusqlite::params![source, job_name, json, ms(now)],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Point a live attempt at a new client job in place, guarded by its
+    /// revision. The refreshed row, or `None` when the revision moved under
+    /// the caller or the attempt is no longer live: then nothing changed.
+    ///
+    /// `job_name` must equal the `job_name` inside `handle_json`: polls and
+    /// cleanup read the handle, the holder and path reads the column.
+    pub fn rewrite_handle(
+        &self,
+        attempt_id: &str,
+        expected_revision: i64,
+        job_name: &str,
+        handle_json: &str,
+        now: f64,
+    ) -> Result<Option<AttemptRow>, StoreError> {
+        debug_assert_eq!(
+            serde_json::from_str::<serde_json::Value>(handle_json)
+                .ok()
+                .as_ref()
+                .and_then(|handle| handle.get("job_name"))
+                .and_then(serde_json::Value::as_str),
+            Some(job_name),
+            "the handle names another job"
+        );
+        let changed = self.conn.execute(
+            sql::REWRITE_HANDLE.text(),
+            rusqlite::params![
+                job_name,
+                handle_json,
+                ms(now),
+                attempt_id,
+                expected_revision
             ],
         )?;
         if changed == 0 {

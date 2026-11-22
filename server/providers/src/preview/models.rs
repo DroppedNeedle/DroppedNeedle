@@ -1,4 +1,5 @@
-//! Deezer wire shapes for the preview legs and the artist picture.
+//! Deezer wire shapes for the preview legs, the artist picture and the barcode
+//! lookup.
 //!
 //! Tolerant of unknown fields. A track's, an album's and an artist's id is the
 //! identity of the answer and is required: one without it fails decoding. A
@@ -105,6 +106,23 @@ pub struct Album {
 pub struct AlbumTracks {
     /// The tracks, in album order.
     pub data: Vec<Track>,
+}
+
+/// One album by barcode, `GET /album/upc:{barcode}`. The id is the answer; the
+/// barcode is compared with the one asked for, so both fields are required.
+///
+/// Verified against api.deezer.com/album/upc:{barcode} on 2026-11-21 (the
+/// leading-zero form on 2026-11-22): In Rainbows (12 digits) is
+/// tests/fixtures/deezer/album_upc_12.json and Mellon Collie (13 digits) is
+/// album_upc_13.json. The 14-digit form, the leading-zero GTIN-13 form and an
+/// unknown barcode answer the error object, code 800: album_upc_14.json,
+/// album_upc_13_leading_zero.json and album_upc_unknown.json.
+#[derive(Debug, Deserialize)]
+pub struct AlbumByUpc {
+    /// Deezer album id. Decoding requires it.
+    pub id: u64,
+    /// The album's barcode as Deezer holds it, digits as text.
+    pub upc: String,
 }
 
 /// One artist, `GET /artist/{id}`. Its picture is read by exact id.

@@ -1,0 +1,174 @@
+{
+ "queue": {
+  "album_14880659_1": {
+   "type": "album",
+   "id": "14880659",
+   "bitrate": 1,
+   "uuid": "album_14880659_1",
+   "title": "In Rainbows",
+   "artist": "Radiohead",
+   "explicit": false,
+   "size": 10,
+   "downloaded": 10,
+   "failed": 0,
+   "progress": 98,
+   "errors": [],
+   "files": [
+    {
+     "albumPath": "/downloads/Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "06 - Faust Arp.mp3",
+     "data": {
+      "id": "138546813",
+      "title": "Faust Arp",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads/Radiohead - In Rainbows/06 - Faust Arp.mp3"
+    },
+    {
+     "albumPath": "/downloads/Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "05 - All I Need.mp3",
+     "data": {
+      "id": "138546811",
+      "title": "All I Need",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads/Radiohead - In Rainbows/05 - All I Need.mp3"
+    },
+    {
+     "albumPath": "/downloads/Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "01 - 15 Step.mp3",
+     "data": {
+      "id": "138546803",
+      "title": "15 Step",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads/Radiohead - In Rainbows/01 - 15 Step.mp3"
+    },
+    {
+     "albumPath": "/downloads/Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "02 - Bodysnatchers.mp3",
+     "data": {
+      "id": "138546805",
+      "title": "Bodysnatchers",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads/Radiohead - In Rainbows/02 - Bodysnatchers.mp3"
+    },
+    {
+     "albumPath": "/downloads/Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "09 - Jigsaw Falling Into Place.mp3",
+     "data": {
+      "id": "138546819",
+      "title": "Jigsaw Falling Into Place",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads/Radiohead - In Rainbows/09 - Jigsaw Falling Into Place.mp3"
+    },
+    {
+     "albumPath": "/downloads/Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "03 - Nude.mp3",
+     "data": {
+      "id": "138546807",
+      "title": "Nude",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads/Radiohead - In Rainbows/03 - Nude.mp3"
+    },
+    {
+     "albumPath": "/downloads/Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "10 - Videotape.mp3",
+     "data": {
+      "id": "138546821",
+      "title": "Videotape",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads/Radiohead - In Rainbows/10 - Videotape.mp3"
+    },
+    {
+     "albumPath": "/downloads/Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "07 - Reckoner.mp3",
+     "data": {
+      "id": "138546815",
+      "title": "Reckoner",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads/Radiohead - In Rainbows/07 - Reckoner.mp3"
+    },
+    {
+     "albumPath": "/downloads/Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "04 - Weird Fishes _ Arpeggi.mp3",
+     "data": {
+      "id": "138546809",
+      "title": "Weird Fishes / Arpeggi",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads/Radiohead - In Rainbows/04 - Weird Fishes _ Arpeggi.mp3"
+    },
+    {
+     "albumPath": "/downloads/Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "08 - House Of Cards.mp3",
+     "data": {
+      "id": "138546817",
+      "title": "House Of Cards",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads/Radiohead - In Rainbows/08 - House Of Cards.mp3"
+    }
+   ],
+   "extrasPath": "/downloads/Radiohead - In Rainbows",
+   "__type__": "Collection",
+   "status": "completed"
+  },
+  "album_6158273_1": {
+   "type": "album",
+   "id": "6158273",
+   "bitrate": 1,
+   "uuid": "album_6158273_1",
+   "title": "Mellon Collie And The Infinite Sadness (Remastered)",
+   "artist": "The Smashing Pumpkins",
+   "explicit": true,
+   "size": 28,
+   "extrasPath": "",
+   "status": "inQueue"
+  },
+  "track_138546807_1": {
+   "type": "track",
+   "id": "138546807",
+   "bitrate": 1,
+   "uuid": "track_138546807_1",
+   "title": "Nude",
+   "artist": "Radiohead",
+   "explicit": true,
+   "size": 1,
+   "downloaded": 1,
+   "failed": 0,
+   "progress": 98,
+   "errors": [],
+   "files": [
+    {
+     "filename": "Radiohead - Nude.mp3",
+     "data": {
+      "id": "138546807",
+      "title": "Nude",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - Nude.mp3"
+    }
+   ],
+   "extrasPath": "/downloads/",
+   "__type__": "Single",
+   "status": "completed"
+  }
+ },
+ "queueOrder": []
+}

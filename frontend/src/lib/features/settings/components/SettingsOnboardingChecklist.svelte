@@ -6,6 +6,7 @@
 		getDownloadClientStatusQuery
 	} from '$lib/features/downloads/queries/DownloadClientQueries.svelte';
 	import {
+		getDeemixConfigQuery,
 		getNzbgetConfigQuery,
 		getSabnzbdConfigQuery
 	} from '$lib/features/downloads/queries/DownloadClientsQueries.svelte';
@@ -24,6 +25,7 @@
 	const statusQuery = getDownloadClientStatusQuery();
 	const sabQuery = getSabnzbdConfigQuery();
 	const nzbgetQuery = getNzbgetConfigQuery();
+	const deemixQuery = getDeemixConfigQuery();
 	const indexersQuery = getIndexersQuery();
 	const backendQuery = getSearchBackendQuery();
 	const prowlarrQuery = getProwlarrConfigQuery();
@@ -33,6 +35,9 @@
 	const sabnzbdEnabled = $derived(sabQuery.data?.enabled === true && Boolean(sabQuery.data?.url));
 	const nzbgetEnabled = $derived(
 		nzbgetQuery.data?.enabled === true && Boolean(nzbgetQuery.data?.url)
+	);
+	const deemixEnabled = $derived(
+		deemixQuery.data?.enabled === true && Boolean(deemixQuery.data?.url)
 	);
 	const usenetClient = $derived(sabnzbdEnabled ? 'SABnzbd' : nzbgetEnabled ? 'NZBGet' : null);
 	// Either/or backends, backend-aware like is_usenet_ready: the SELECTED side is
@@ -62,22 +67,22 @@
 		)
 	);
 
-	// Source-agnostic: "configured" if EITHER acquisition path can act, so a Usenet-only
-	// (or Soulseek-only) install isn't nagged about the other. The slskd mount item only
-	// appears once Soulseek is set up.
-	const aSourceConfigured = $derived(slskdConfigured || hasIndexer);
-	const aClientConfigured = $derived(slskdConfigured || usenetClient !== null);
+	// Source-agnostic: "configured" if ANY acquisition path can act, so a Usenet-only
+	// (or Soulseek-only, or Deemix-only) install isn't nagged about the others. Deemix is
+	// its own source and client. The slskd mount item only appears once Soulseek is set up.
+	const aSourceConfigured = $derived(slskdConfigured || hasIndexer || deemixEnabled);
+	const aClientConfigured = $derived(slskdConfigured || usenetClient !== null || deemixEnabled);
 
 	const items = $derived([
 		{ label: 'Add a library path', done: hasLibraryPath, required: true, optional: false },
 		{
-			label: 'Add an indexer or configure Soulseek',
+			label: 'Add an indexer, or configure Soulseek or Deemix',
 			done: aSourceConfigured,
 			required: true,
 			optional: false
 		},
 		{
-			label: 'Configure a download client (slskd and/or a Usenet client)',
+			label: 'Configure a download client (slskd, a Usenet client or Deemix)',
 			done: aClientConfigured,
 			required: true,
 			optional: false

@@ -3,7 +3,7 @@
 ## Set up
 
 - [Configuration](configuration.md): environment variables, folders to persist, permissions, where each setting lives, updating.
-- [Download clients](download-clients.md): setting up slskd, SABnzbd or NZBGet with Newznab indexers or Prowlarr, and drop imports.
+- [Download clients](download-clients.md): setting up slskd, SABnzbd or NZBGet with Newznab indexers or Prowlarr, Deemix for Deezer, and drop imports.
 - [Bringing in an existing library](downloads.md#bringing-in-an-existing-library): the import folder, for a collection DroppedNeedle should file for you.
 - [Accounts and sign-in](accounts-and-sign-in.md): roles, single sign-on, Plex and Jellyfin sign-in, password recovery.
 - [Reverse proxy and security](reverse-proxy-and-security.md): proxy headers, base path, public address, HSTS, content-security policy.

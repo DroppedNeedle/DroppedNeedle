@@ -1,0 +1,33 @@
+{
+ "queue": {
+  "track_138546807_1": {
+   "type": "track",
+   "id": "138546807",
+   "bitrate": 1,
+   "uuid": "track_138546807_1",
+   "title": "Nude",
+   "artist": "Radiohead",
+   "explicit": true,
+   "size": 1,
+   "downloaded": 1,
+   "failed": 0,
+   "progress": 98,
+   "errors": [],
+   "files": [
+    {
+     "filename": "Radiohead - Nude.mp3",
+     "data": {
+      "id": "138546807",
+      "title": "Nude",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - Nude.mp3"
+    }
+   ],
+   "extrasPath": "/downloads/",
+   "__type__": "Single",
+   "status": "completed"
+  }
+ },
+ "queueOrder": []
+}

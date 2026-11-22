@@ -268,6 +268,12 @@ pub fn worker_with(
         journal.clone(),
         targets.clone(),
         plugins.clone(),
+        droppedneedle_acquire::test_support::deemix_wiring(
+            settings,
+            platform.clock.clone(),
+            &droppedneedle_providers::Providers::closed(),
+        )
+        .expect("deemix wiring"),
     ));
     let worker_settings = Arc::new(WorkerSettings::new(settings, clients));
     Arc::new(DownloadWorker::new(

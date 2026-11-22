@@ -24,6 +24,8 @@ use super::models::{
     VerifyConnectionResponse,
 };
 use super::verify::{UsenetClientVerdict, VerifyProbes, check_hibp_file, require_service_url};
+use droppedneedle_acquire::imports::health::DeemixStatusResponse;
+use droppedneedle_acquire::probes::DeemixChecks;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     DownloadClients, EventsSettings, JellyfinConnection, NavidromeConnection, NewznabIndexer,
@@ -31,8 +33,8 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     SlskdConnection, TypedLibrary, YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy, LibraryScanSchedule, PlainSection, SecuritySettings, SourcePriority,
-    UsenetBackendSetting, validate_quality_recipe,
+    DeemixConnection, DownloadPolicy, LibraryScanSchedule, PlainSection, SecuritySettings,
+    SourcePriority, UsenetBackendSetting, validate_quality_recipe,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_kernel::runtime_config::{
@@ -638,6 +640,22 @@ impl SettingsService {
             )
             .await;
         Ok(usenet_test_response(verdict))
+    }
+
+    /// Check the submitted Deemix values through `deemix`, which reads the
+    /// session DroppedNeedle keeps with Deemix while the address is the
+    /// saved one. While the saved section does not read, no address counts
+    /// as saved.
+    pub async fn verify_deemix(
+        &self,
+        mut incoming: DeemixConnection,
+        deemix: &DeemixChecks,
+    ) -> Result<DeemixStatusResponse, SettingsError> {
+        require_service_url(&incoming.url, "Deemix URL")?;
+        incoming.validate().map_err(|error| self.config(error))?;
+        incoming.normalize();
+        let saved = self.get::<DeemixConnection>().ok().map(|saved| saved.url);
+        Ok(deemix.test(&incoming, saved.as_deref()).await)
     }
 
     /// Test the submitted Prowlarr values.

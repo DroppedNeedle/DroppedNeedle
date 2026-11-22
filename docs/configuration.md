@@ -101,7 +101,7 @@ services:
 |-|-|
 | Library paths, import naming script, scan schedule, folder watching, AcoustID key, storage cap | Settings > Library |
 | Library Management profiles, previews, recovery, the recycle bin folder and retention | Library Management (admin), also reached from Organize files under Settings > Library |
-| Download clients (slskd, SABnzbd, NZBGet), source priority, quality tiers, picking a copy, wanted watcher, Usenet retention days | Settings > Download Client |
+| Download clients (slskd, SABnzbd, NZBGet), Deemix ([below](#deemix)), source priority, quality tiers, picking a copy, wanted watcher, Usenet retention days | Settings > Download Client |
 | Newznab indexers or Prowlarr | Settings > Indexers / Prowlarr |
 | Edition preferences, managing unconfirmed matches | Settings > Editions |
 | Lidarr import ([below](#lidarr-import)) | Settings > Lidarr Import |
@@ -136,6 +136,16 @@ services:
 | App version, update check and release notes | Settings > About |
 | Theme and your own CSS (kept on your account) | Profile > Appearance |
 | Site CSS for every signed-in page, and whether people may add their own (admin) | Settings > Appearance |
+
+### Deemix
+
+Settings > Download Client (admin) has the Deemix card, which saves three values:
+
+- **Turned on**: off by default. Deezer is a download source only while this is on and a URL is set.
+- **URL**: Deemix's address, such as `http://deemix:6595` on the private network in [Deemix](download-clients.md#deemix).
+- **Downloads folder**: where DroppedNeedle sees Deemix's download folder. The default is `/deemix-downloads`. Set it to the folder mounted as Deemix's `/downloads`.
+
+There is no quality setting: the quality comes from your quality list and your Deezer account. DroppedNeedle never changes Deemix's own settings.
 
 ### Lidarr import
 

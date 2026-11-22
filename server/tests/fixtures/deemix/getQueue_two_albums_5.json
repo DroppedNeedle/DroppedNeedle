@@ -1,0 +1,434 @@
+{
+ "queue": {
+  "track_138546807_1": {
+   "type": "track",
+   "id": "138546807",
+   "bitrate": 1,
+   "uuid": "track_138546807_1",
+   "title": "Nude",
+   "artist": "Radiohead",
+   "explicit": true,
+   "size": 1,
+   "downloaded": 1,
+   "failed": 0,
+   "progress": 98,
+   "errors": [],
+   "files": [
+    {
+     "filename": "Radiohead - Nude.mp3",
+     "data": {
+      "id": "138546807",
+      "title": "Nude",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - Nude.mp3"
+    }
+   ],
+   "extrasPath": "/downloads/",
+   "__type__": "Single",
+   "status": "completed"
+  },
+  "album_14880659_1": {
+   "type": "album",
+   "id": "14880659",
+   "bitrate": 1,
+   "uuid": "album_14880659_1",
+   "title": "In Rainbows",
+   "artist": "Radiohead",
+   "explicit": false,
+   "size": 10,
+   "downloaded": 10,
+   "failed": 0,
+   "progress": 98,
+   "errors": [],
+   "files": [
+    {
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "06 - Faust Arp.mp3",
+     "data": {
+      "id": "138546813",
+      "title": "Faust Arp",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/06 - Faust Arp.mp3"
+    },
+    {
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "05 - All I Need.mp3",
+     "data": {
+      "id": "138546811",
+      "title": "All I Need",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/05 - All I Need.mp3"
+    },
+    {
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "01 - 15 Step.mp3",
+     "data": {
+      "id": "138546803",
+      "title": "15 Step",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/01 - 15 Step.mp3"
+    },
+    {
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "03 - Nude.mp3",
+     "data": {
+      "id": "138546807",
+      "title": "Nude",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/03 - Nude.mp3"
+    },
+    {
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "10 - Videotape.mp3",
+     "data": {
+      "id": "138546821",
+      "title": "Videotape",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/10 - Videotape.mp3"
+    },
+    {
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "07 - Reckoner.mp3",
+     "data": {
+      "id": "138546815",
+      "title": "Reckoner",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/07 - Reckoner.mp3"
+    },
+    {
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "04 - Weird Fishes _ Arpeggi.mp3",
+     "data": {
+      "id": "138546809",
+      "title": "Weird Fishes / Arpeggi",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/04 - Weird Fishes _ Arpeggi.mp3"
+    },
+    {
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "08 - House Of Cards.mp3",
+     "data": {
+      "id": "138546817",
+      "title": "House Of Cards",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/08 - House Of Cards.mp3"
+    },
+    {
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "02 - Bodysnatchers.mp3",
+     "data": {
+      "id": "138546805",
+      "title": "Bodysnatchers",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/02 - Bodysnatchers.mp3"
+    },
+    {
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "09 - Jigsaw Falling Into Place.mp3",
+     "data": {
+      "id": "138546819",
+      "title": "Jigsaw Falling Into Place",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/09 - Jigsaw Falling Into Place.mp3"
+    }
+   ],
+   "extrasPath": "/downloads//Radiohead - In Rainbows",
+   "__type__": "Collection",
+   "status": "completed"
+  },
+  "album_6158273_1": {
+   "type": "album",
+   "id": "6158273",
+   "bitrate": 1,
+   "uuid": "album_6158273_1",
+   "title": "Mellon Collie And The Infinite Sadness (Remastered)",
+   "artist": "The Smashing Pumpkins",
+   "explicit": true,
+   "size": 28,
+   "extrasPath": "",
+   "status": "downloading"
+  }
+ },
+ "queueOrder": [],
+ "current": {
+  "type": "album",
+  "id": "6158273",
+  "bitrate": 1,
+  "uuid": "album_6158273_1",
+  "title": "Mellon Collie And The Infinite Sadness (Remastered)",
+  "artist": "The Smashing Pumpkins",
+  "explicit": true,
+  "size": 28,
+  "downloaded": 22,
+  "failed": 0,
+  "progress": 94,
+  "errors": [],
+  "files": [
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/06 - Bullet With Butterfly Wings (Remastered 2012).mp3",
+    "data": {
+     "id": "62738614",
+     "title": "Bullet With Butterfly Wings (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/06 - Bullet With Butterfly Wings (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/11 - Galapogos (Remastered 2012).mp3",
+    "data": {
+     "id": "62738619",
+     "title": "Galapogos (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/11 - Galapogos (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/12 - Muzzle (Remastered 2012).mp3",
+    "data": {
+     "id": "62738620",
+     "title": "Muzzle (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/12 - Muzzle (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/13 - Porcelina Of The Vast Oceans (Remastered 2012).mp3",
+    "data": {
+     "id": "62738621",
+     "title": "Porcelina Of The Vast Oceans (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/13 - Porcelina Of The Vast Oceans (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/14 - Take Me Down (Remastered 2012).mp3",
+    "data": {
+     "id": "62738622",
+     "title": "Take Me Down (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/14 - Take Me Down (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/05 - Here Is No Why (Remastered 2012).mp3",
+    "data": {
+     "id": "62738613",
+     "title": "Here Is No Why (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/05 - Here Is No Why (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD2/01 - Where Boys Fear To Tread (Remastered 2012).mp3",
+    "data": {
+     "id": "62738623",
+     "title": "Where Boys Fear To Tread (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD2/01 - Where Boys Fear To Tread (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/01 - Mellon Collie And The Infinite Sadness (Remastered 2012).mp3",
+    "data": {
+     "id": "62738609",
+     "title": "Mellon Collie And The Infinite Sadness (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/01 - Mellon Collie And The Infinite Sadness (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/08 - An Ode To No One (Remastered 2012).mp3",
+    "data": {
+     "id": "62738616",
+     "title": "An Ode To No One (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/08 - An Ode To No One (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD2/02 - Bodies (Remastered 2012).mp3",
+    "data": {
+     "id": "62738624",
+     "title": "Bodies (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD2/02 - Bodies (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/02 - Tonight, Tonight (Remastered 2012).mp3",
+    "data": {
+     "id": "62738610",
+     "title": "Tonight, Tonight (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/02 - Tonight, Tonight (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD2/04 - In The Arms Of Sleep (Remastered 2012).mp3",
+    "data": {
+     "id": "62738626",
+     "title": "In The Arms Of Sleep (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD2/04 - In The Arms Of Sleep (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD2/06 - Tales Of A Scorched Earth (Remastered 2012).mp3",
+    "data": {
+     "id": "62738628",
+     "title": "Tales Of A Scorched Earth (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD2/06 - Tales Of A Scorched Earth (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD2/03 - Thirty-Three (Remastered 2012).mp3",
+    "data": {
+     "id": "62738625",
+     "title": "Thirty-Three (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD2/03 - Thirty-Three (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD2/07 - Thru The Eyes Of Ruby (Remastered 2012).mp3",
+    "data": {
+     "id": "62738629",
+     "title": "Thru The Eyes Of Ruby (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD2/07 - Thru The Eyes Of Ruby (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD2/09 - X.Y.U. (Remastered 2012).mp3",
+    "data": {
+     "id": "62738631",
+     "title": "X.Y.U. (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD2/09 - X.Y.U. (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD2/10 - We Only Come Out At Night (Remastered 2012).mp3",
+    "data": {
+     "id": "62738632",
+     "title": "We Only Come Out At Night (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD2/10 - We Only Come Out At Night (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD2/11 - Beautiful (Remastered 2012).mp3",
+    "data": {
+     "id": "62738633",
+     "title": "Beautiful (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD2/11 - Beautiful (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD2/12 - Lily (My One And Only) (Remastered 2012).mp3",
+    "data": {
+     "id": "62738634",
+     "title": "Lily (My One And Only) (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD2/12 - Lily (My One And Only) (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD2/13 - By Starlight (Remastered 2012).mp3",
+    "data": {
+     "id": "62738635",
+     "title": "By Starlight (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD2/13 - By Starlight (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD1/10 - Cupid De Locke (Remastered 2012).mp3",
+    "data": {
+     "id": "62738618",
+     "title": "Cupid De Locke (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD1/10 - Cupid De Locke (Remastered 2012).mp3"
+   },
+   {
+    "albumPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+    "albumFilename": "cover",
+    "filename": "CD2/08 - Stumbleine (Remastered 2012).mp3",
+    "data": {
+     "id": "62738630",
+     "title": "Stumbleine (Remastered 2012)",
+     "artist": "The Smashing Pumpkins"
+    },
+    "path": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)/CD2/08 - Stumbleine (Remastered 2012).mp3"
+   }
+  ],
+  "extrasPath": "/downloads//The Smashing Pumpkins - Mellon Collie And The Infinite Sadness (Remastered)",
+  "__type__": "Collection"
+ }
+}

@@ -67,6 +67,7 @@ fn album() -> AlbumRelease {
         artist: "Massive Attack".to_owned(),
         various_artists: false,
         year: Some(1991),
+        barcode: None,
         tracks: TITLES
             .iter()
             .enumerate()
@@ -77,6 +78,7 @@ fn album() -> AlbumRelease {
                 duration_seconds: Some(*length),
                 recording_mbid: format!("aaaaaaaa-0000-4000-8000-00000000000{index}"),
                 release_track_mbid: format!("bbbbbbbb-0000-4000-8000-00000000000{index}"),
+                isrcs: Vec::new(),
             })
             .collect(),
     }
@@ -843,6 +845,7 @@ async fn kept_rig_with(copies: &[Copy], saved: Value) -> KeptRig {
             artist: "Portishead".to_owned(),
             various_artists: false,
             year: Some(1994),
+            barcode: None,
             tracks: vec![AlbumTrack {
                 disc: 1,
                 position: 1,
@@ -850,6 +853,7 @@ async fn kept_rig_with(copies: &[Copy], saved: Value) -> KeptRig {
                 duration_seconds: length.map(|ms| ms as f64 / 1000.0),
                 recording_mbid: edition.tracks[0].recording_id.clone(),
                 release_track_mbid: edition.tracks[0].id.clone(),
+                isrcs: Vec::new(),
             }],
         },
     );

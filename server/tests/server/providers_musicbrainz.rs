@@ -570,7 +570,11 @@ async fn exact_release_fails_closed_without_provider_group() {
     );
     let client = official_client(fake.clone());
     let error = client
-        .lookup_exact_release(IMMUNITY_MBID, musicbrainz::Criticality::IdentityCritical)
+        .lookup_exact_release(
+            IMMUNITY_MBID,
+            &["artist-credits", "recordings"],
+            musicbrainz::Criticality::IdentityCritical,
+        )
         .await
         .expect_err("missing group fails closed");
     assert!(
@@ -601,7 +605,11 @@ async fn exact_release_fails_closed_without_provider_group() {
     );
     let client = official_client(fake.clone());
     let found = client
-        .lookup_exact_release(CLASSICAL_MBID, musicbrainz::Criticality::IdentityCritical)
+        .lookup_exact_release(
+            CLASSICAL_MBID,
+            &["artist-credits", "isrcs", "recordings", "release-groups"],
+            musicbrainz::Criticality::IdentityCritical,
+        )
         .await
         .expect("exact release with group decodes");
     let release = found.expect("present").entity;

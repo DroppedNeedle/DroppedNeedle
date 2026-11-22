@@ -654,6 +654,7 @@ pub(crate) async fn build_on(
         auth.users.lastfm.clone(),
         library.bins.clone(),
         appearance,
+        acquire.deemix.clone(),
     );
     let plugins = PluginsSetup::build(p, plugin_host, plugin_ticks, providers.github_repos.clone());
     plugins.sync_ticks().await;

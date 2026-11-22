@@ -13,6 +13,11 @@ use droppedneedle_providers::musicbrainz::{
 /// Various Artists: a compilation credit that no Soulseek path carries.
 pub const VARIOUS_ARTISTS_MBID: &str = "89ad4ac3-39f7-470e-963a-56509c546377";
 
+/// What the one release lookup of a task asks for: the tracklist with
+/// its recordings' ISRCs, the credits and the group. The barcode comes
+/// with every release lookup.
+const RELEASE_INCLUDES: [&str; 4] = ["artist-credits", "isrcs", "recordings", "release-groups"];
+
 /// Medium formats that carry video, not downloadable audio.
 /// DVD-Audio stays.
 const VIDEO_FORMATS: [&str; 12] = [
@@ -62,6 +67,8 @@ pub struct AlbumTrack {
     pub recording_mbid: String,
     /// Release-track MBID, lowercase.
     pub release_track_mbid: String,
+    /// The recording's ISRCs, uppercase.
+    pub isrcs: Vec<String>,
 }
 
 /// One release with its audio tracklist.
@@ -79,6 +86,8 @@ pub struct AlbumRelease {
     pub various_artists: bool,
     /// Year of the group's first release, else of this release.
     pub year: Option<i32>,
+    /// The release's barcode, trimmed; `None` when it has none.
+    pub barcode: Option<String>,
     /// Audio tracks in disc and position order.
     pub tracks: Vec<AlbumTrack>,
 }
@@ -167,7 +176,11 @@ impl AlbumLookup for MusicBrainzAlbums {
         Box::pin(async move {
             let found = self
                 .client
-                .lookup_exact_release(release_mbid, Criticality::IdentityCritical)
+                .lookup_exact_release(
+                    release_mbid,
+                    &RELEASE_INCLUDES,
+                    Criticality::IdentityCritical,
+                )
                 .await
                 .map_err(|error| LookupError(error.to_string()))?;
             Ok(found.and_then(|lookup| album_release(lookup.entity)))
@@ -249,6 +262,12 @@ pub fn album_release(release: MbRelease) -> Option<AlbumRelease> {
                 duration_seconds: track.length_ms().map(|ms| ms as f64 / 1000.0),
                 recording_mbid: recording.id.to_ascii_lowercase(),
                 release_track_mbid: track.id.to_ascii_lowercase(),
+                isrcs: recording
+                    .isrcs
+                    .iter()
+                    .map(|isrc| isrc.trim().to_ascii_uppercase())
+                    .filter(|isrc| !isrc.is_empty())
+                    .collect(),
             });
         }
     }
@@ -262,6 +281,48 @@ pub fn album_release(release: MbRelease) -> Option<AlbumRelease> {
         various_artists,
         year: parse_year(group.first_release_date.as_deref())
             .or_else(|| parse_year(release.date.as_deref())),
+        barcode: release
+            .barcode
+            .map(|barcode| barcode.trim().to_owned())
+            .filter(|barcode| !barcode.is_empty()),
         tracks,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The recorded release lookup (its include set covers ours) gives
+    /// the release's barcode and every track's ISRCs, which the plan keeps.
+    #[test]
+    fn a_release_lookup_keeps_the_barcode_and_each_tracks_isrcs() {
+        assert!(
+            RELEASE_INCLUDES.contains(&"isrcs"),
+            "the one release lookup asks for the ISRCs it maps"
+        );
+        let wire: MbRelease = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/musicbrainz/release_lookup_classical.json"
+        ))
+        .expect("the recorded release decodes");
+        let release = album_release(wire).expect("the release has its group");
+        assert_eq!(release.barcode.as_deref(), Some("888880520562"));
+        let isrcs: Vec<Vec<&str>> = release
+            .tracks
+            .iter()
+            .map(|track| track.isrcs.iter().map(String::as_str).collect())
+            .collect();
+        assert_eq!(
+            isrcs,
+            [
+                vec!["DEE860800220"],
+                vec!["DEE860800221", "DEE860800222"],
+                vec![],
+                vec!["DEE860800224"],
+                vec!["DEE860800225"],
+                vec!["DEE860800226"],
+                vec!["DEE860800262"],
+            ]
+        );
+    }
 }

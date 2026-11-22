@@ -438,6 +438,7 @@ impl SlskdSource {
             files_total: u32::try_from(status.files_total).unwrap_or(u32::MAX),
             files_completed: u32::try_from(status.files_completed).unwrap_or(u32::MAX),
             files_failed: u32::try_from(status.files_failed).unwrap_or(u32::MAX),
+            queued_at_client: false,
         })
     }
 
@@ -909,6 +910,7 @@ impl UsenetSource {
             files_total: status.files_total,
             files_completed: status.files_completed,
             files_failed: u32::from(status.status == "failed"),
+            queued_at_client: false,
         })
     }
 

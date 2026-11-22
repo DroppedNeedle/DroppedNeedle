@@ -65,7 +65,7 @@ pub struct MixRoutes {
 /// source is set up and the staging disk has room.
 #[derive(Clone)]
 pub struct AcquireReadiness {
-    /// Whether a download source (Soulseek, Usenet or a plugin) is on.
+    /// Whether a download source (Soulseek, Usenet, Deemix or a plugin) is on.
     /// Queued downloads wait while none is.
     pub sources: crate::readiness::SourceReadiness,
     /// Where downloads land before import.

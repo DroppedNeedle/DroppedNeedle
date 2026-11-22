@@ -309,6 +309,7 @@ mod tests {
             "app_connect",
             "library_import_folder",
             "appearance",
+            "deemix",
             // This install's own id.
             "instance_id",
         ];

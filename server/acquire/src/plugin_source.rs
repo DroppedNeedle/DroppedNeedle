@@ -297,6 +297,7 @@ impl PluginDownloadSource {
             sizes: Vec::new(),
             release_identity: release_identity(release),
             pinned: false,
+            adopted: false,
         })
     }
 

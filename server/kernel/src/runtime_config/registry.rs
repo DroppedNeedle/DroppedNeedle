@@ -96,6 +96,7 @@ section_list! {
         FilesystemWatcher,
         ImportFolder,
         WantedWatcher,
+        DeemixConnection,
         SourcePriority,
         UsenetBackendSetting,
         GetIt,

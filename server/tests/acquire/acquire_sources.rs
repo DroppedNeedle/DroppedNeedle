@@ -381,6 +381,12 @@ async fn a_usenet_job_stays_with_the_client_that_took_it() {
         journal.clone(),
         no_targets(&journal).await,
         crate::common::bundles::idle_host_over(journal.db()).await,
+        droppedneedle_acquire::test_support::deemix_wiring(
+            &rig.settings,
+            journal.db().clock().clone(),
+            &Providers::closed(),
+        )
+        .expect("deemix wiring"),
     );
     let usenet = || {
         clients
@@ -814,6 +820,7 @@ fn album(artist: &str, title: &str) -> SearchTarget {
         album_title: title.to_owned(),
         year: None,
         tracklist: Vec::new(),
+        barcode: None,
         wanted: Vec::new(),
         track: None,
         release_preferred: false,
@@ -995,6 +1002,12 @@ async fn a_redirect_takes_no_key_elsewhere() {
         journal.clone(),
         no_targets(&journal).await,
         crate::common::bundles::idle_host_over(&db).await,
+        droppedneedle_acquire::test_support::deemix_wiring(
+            &settings,
+            db.clock().clone(),
+            &Providers::closed(),
+        )
+        .expect("deemix wiring"),
     );
     let repo = clients
         .current()

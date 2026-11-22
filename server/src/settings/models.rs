@@ -37,7 +37,7 @@ pub struct LibraryScanScheduleResponse {
     pub last_scan_at: Option<f64>,
 }
 
-/// Acquisition source try-order, e.g. `["soulseek", "usenet"]`. Bundled
+/// Acquisition source try-order, e.g. `["soulseek", "usenet", "deezer"]`. Bundled
 /// sources are always present; well-formed `plugin:<name>` keys pass
 /// through order-preserved; anything else is dropped.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]

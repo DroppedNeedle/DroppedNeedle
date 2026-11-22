@@ -314,6 +314,11 @@ const HTTP: Rule = Rule {
             why: USER_RUN,
         },
         Allow {
+            path: "acquire/src/deemix/client.rs",
+            shapes: &["client"],
+            why: USER_RUN,
+        },
+        Allow {
             path: "auth/src/federated/jellyfin_http.rs",
             shapes: &["client", "send"],
             why: "the user's own Jellyfin, which signs people in",

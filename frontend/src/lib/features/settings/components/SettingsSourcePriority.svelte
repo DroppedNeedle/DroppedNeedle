@@ -1,5 +1,6 @@
 <script lang="ts">
 	import {
+		AudioLines,
 		ChevronDown,
 		ChevronUp,
 		GripVertical,
@@ -39,7 +40,8 @@
 	const usenetClient = $derived(sabnzbdActive ? 'SABnzbd' : nzbgetActive ? 'NZBGet' : '');
 
 	const META: Record<string, { label: string; sub: string; icon: typeof Rss }> = {
-		soulseek: { label: 'Soulseek', sub: 'slskd', icon: HardDriveDownload }
+		soulseek: { label: 'Soulseek', sub: 'slskd', icon: HardDriveDownload },
+		deezer: { label: 'Deezer', sub: 'Deemix', icon: AudioLines }
 	};
 
 	const pluginLabels = $derived(
@@ -50,9 +52,10 @@
 			])
 		)
 	);
+	const BUILT_IN = ['soulseek', 'usenet', 'deezer'];
+
 	const knownKeys = $derived([
-		'soulseek',
-		'usenet',
+		...BUILT_IN,
 		...(sourcesQuery.data?.sources ?? []).map((source) => source.key)
 	]);
 	// Saved order wins; newly installed plugin keys append, and keys from removed
@@ -75,10 +78,7 @@
 	function persist(next: string[]) {
 		const roster = sourcesQuery.data?.sources;
 		const payload = roster
-			? next.filter(
-					(key) =>
-						key === 'soulseek' || key === 'usenet' || roster.some((source) => source.key === key)
-				)
+			? next.filter((key) => BUILT_IN.includes(key) || roster.some((source) => source.key === key))
 			: next;
 		reorder.mutate(payload, {
 			onError: (error: Error) =>

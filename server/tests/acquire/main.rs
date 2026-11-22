@@ -4,6 +4,9 @@
 mod common;
 
 mod acquire_album_removal;
+mod acquire_deemix;
+mod acquire_deemix_client;
+mod acquire_deemix_source;
 mod acquire_download_tasks;
 mod acquire_downloads;
 mod acquire_drop_import;

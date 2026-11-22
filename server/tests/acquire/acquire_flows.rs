@@ -240,6 +240,12 @@ async fn sources_over(
             crate::common::bundles::closed_catalog(db.db()).await,
         )),
         idle_host_over(db).await,
+        droppedneedle_acquire::test_support::deemix_wiring(
+            settings,
+            db.clock().clone(),
+            &droppedneedle_providers::Providers::closed(),
+        )
+        .expect("deemix wiring"),
     ));
     let sources = Arc::new(WorkerSettings::new(settings, clients));
     (sources, slskd)

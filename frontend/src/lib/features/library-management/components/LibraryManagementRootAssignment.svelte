@@ -125,7 +125,7 @@
 		<div class="management-trigger">
 			<ToggleRow
 				label="Acquisitions"
-				description="Applies to new Soulseek and Usenet downloads."
+				description="Applies to new downloads."
 				disabled={!assignment.enabled}
 				bind:checked={
 					() => assignment.automatic_acquisitions,

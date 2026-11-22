@@ -83,6 +83,8 @@ pub enum Reason {
     AlbumReleasesExhausted,
     TrackNotFound,
     NothingAllowed,
+    AccountRefused,
+    ClientDropped,
     // Wait: nothing is wrong yet; the work resumes by itself.
     NoDownloadSource,
     SettingsUnreadable,
@@ -122,7 +124,7 @@ pub enum ReasonKind {
 
 impl Reason {
     /// Every reason, in declaration order.
-    pub const ALL: [Reason; 74] = [
+    pub const ALL: [Reason; 76] = [
         Self::WeakMatch,
         Self::NoArtistEvidence,
         Self::MostlyUnmatched,
@@ -184,6 +186,8 @@ impl Reason {
         Self::AlbumReleasesExhausted,
         Self::TrackNotFound,
         Self::NothingAllowed,
+        Self::AccountRefused,
+        Self::ClientDropped,
         Self::NoDownloadSource,
         Self::SettingsUnreadable,
         Self::JournalUnreadable,
@@ -315,6 +319,8 @@ impl Reason {
             Self::AlbumReleasesExhausted => "album_releases_exhausted",
             Self::TrackNotFound => "track_not_found",
             Self::NothingAllowed => "nothing_allowed",
+            Self::AccountRefused => "account_refused",
+            Self::ClientDropped => "client_dropped",
             Self::NoDownloadSource => "no_download_source",
             Self::SettingsUnreadable => "settings_unreadable",
             Self::JournalUnreadable => "journal_unreadable",
@@ -453,7 +459,7 @@ impl Reason {
             Self::NotAnUpgrade => "The files are not better than the copy you already have.",
             Self::WrongTrack => "The downloaded track is not the one you asked for.",
             Self::Stalled => "The transfer stopped moving and timed out.",
-            Self::QueueTimeout => "The peer kept the files in its upload queue for too long.",
+            Self::QueueTimeout => "The download waited in the source's queue for too long.",
             Self::QueueGaveWay => {
                 "The best copy stayed queued at the peer, so the next one was tried."
             }
@@ -480,6 +486,8 @@ impl Reason {
             Self::TrackNotFound => {
                 "Nobody shares this track, either as part of its album or on its own."
             }
+            Self::AccountRefused => "Your Deezer account couldn't stream this download.",
+            Self::ClientDropped => "Deemix dropped this download.",
             Self::NoDownloadSource => "Waiting: no download source configured.",
             Self::SettingsUnreadable => {
                 "The download settings cannot be read, so the files wait where they are."
@@ -638,8 +646,10 @@ impl Reason {
             Self::TrackNotFound => {
                 "It retries later on its own. You can also request the whole album, or pick another edition."
             }
+            Self::AccountRefused => "Nothing to do: DroppedNeedle tries another copy.",
+            Self::ClientDropped => "Nothing to do: DroppedNeedle tries again.",
             Self::NoDownloadSource => {
-                "Turn on slskd, SABnzbd or a plugin source in Settings, Downloads. It starts by itself."
+                "Turn on slskd, SABnzbd, Deemix or a plugin source in Settings, Downloads. It starts by itself."
             }
             Self::SettingsUnreadable => {
                 "Save Settings, Downloads again. The import then goes ahead by itself."
@@ -728,7 +738,9 @@ impl Reason {
             | Self::NoAlbumRelease
             | Self::AlbumReleasesExhausted
             | Self::TrackNotFound
-            | Self::NothingAllowed => ReasonKind::Source,
+            | Self::NothingAllowed
+            | Self::AccountRefused
+            | Self::ClientDropped => ReasonKind::Source,
             Self::NoDownloadSource
             | Self::SettingsUnreadable
             | Self::JournalUnreadable
@@ -814,6 +826,8 @@ impl Reason {
             | Self::AlbumReleasesExhausted
             | Self::TrackNotFound
             | Self::NothingAllowed
+            | Self::AccountRefused
+            | Self::ClientDropped
             | Self::NoDownloadSource
             | Self::SettingsUnreadable
             | Self::JournalUnreadable
@@ -1026,6 +1040,10 @@ mod tests {
             (Reason::AlreadyDownloading, NotProduced(false)),
             (Reason::AlreadyInLibrary, NotProduced(false)),
             (Reason::QueueGaveWay, FailedOver { blocklisted: false }),
+            // New: Deemix's account refusal and a download it dropped move on
+            // to another try and say nothing against the copy.
+            (Reason::AccountRefused, FailedOver { blocklisted: false }),
+            (Reason::ClientDropped, FailedOver { blocklisted: false }),
             (Reason::FilesUnlisted, Waited),
             (Reason::NoSource, Unserved),
             (Reason::AlbumLookupUnavailable, Unserved),

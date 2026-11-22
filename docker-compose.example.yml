@@ -1,9 +1,10 @@
 # DroppedNeedle example compose.
 #
-# DroppedNeedle downloads through your OWN slskd (Soulseek) or SABnzbd with Newznab
-# indexers (Usenet), or a plugin download source; it doesn't run slskd or SABnzbd for
-# you. Start them yourself, then connect them under Settings > Download Client. A
-# commented-out slskd sidecar is at the bottom.
+# DroppedNeedle downloads through your OWN slskd (Soulseek), SABnzbd with Newznab
+# indexers (Usenet) or Deemix (Deezer), or a plugin download source; it doesn't run
+# them for you. Start them yourself, then connect them under Settings > Download
+# Client (Deemix: docs/download-clients.md). A commented-out slskd sidecar is at the
+# bottom.
 # Full walkthrough: the Quick start section of the README.
 
 services:

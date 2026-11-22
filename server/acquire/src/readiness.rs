@@ -1,9 +1,9 @@
 //! Whether music can be acquired right now: the one answer requests,
 //! manual search, the download queue and Discover read.
 //!
-//! A source counts once the saved settings turn it on: slskd or one Usenet
-//! client (SABnzbd or NZBGet)
-//! with its connection set, or an enabled plugin download client. That is
+//! A source counts once the saved settings turn it on: slskd, one Usenet
+//! client (SABnzbd or NZBGet) or Deezer through Deemix with its connection
+//! set, or an enabled plugin download client. That is
 //! the worker's own source list, so nothing tells a person to set up a
 //! source the worker already uses. Reachability is reported beside it from
 //! the probe cache, and never decides it: a source that is down still

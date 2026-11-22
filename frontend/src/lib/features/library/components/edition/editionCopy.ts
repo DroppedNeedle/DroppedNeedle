@@ -406,7 +406,7 @@ export const REPLACE_ALSO_GETS_MISSING =
 
 // A request made with no source waits for one, never refused.
 export const NO_SOURCE_SENTENCE =
-	'No download source is set up yet, so the download waits and starts by itself once Soulseek, Usenet or a plugin source is saved.';
+	'No download source is set up yet, so the download waits and starts by itself once Soulseek, Usenet, Deemix or a plugin source is saved.';
 
 /** "None of these is right" (admins): what each way out does, shown before the click. */
 export function customEditionSentence(album: string): string {

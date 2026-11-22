@@ -114,7 +114,7 @@ pub struct DownloadTaskResponse {
     pub user_id: String,
     /// `album` or `track`.
     pub download_type: String,
-    /// `soulseek`, `usenet` or `plugin:<key>`.
+    /// `soulseek`, `usenet`, `deezer` or `plugin:<key>`.
     pub source: String,
     /// What started the download.
     pub origin: DispatchOrigin,
@@ -369,9 +369,9 @@ pub struct RetryAllResponse {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct QuarantineEntry {
     pub id: i64,
-    /// `soulseek`, `usenet` or `plugin:<key>`.
+    /// `soulseek`, `usenet`, `deezer` or `plugin:<key>`.
     pub source: String,
-    /// The client label: `slskd`, `sabnzbd`, or the source for plugins.
+    /// The client label: `slskd`, `sabnzbd`, `deemix`, or the source for plugins.
     pub client_id: String,
     /// Soulseek peer, empty for other sources.
     pub username: String,
@@ -400,7 +400,9 @@ impl From<QuarantineRow> for QuarantineEntry {
             _ => (String::new(), row.identity.clone()),
         };
         let client_id = match &tag {
-            Some(tag @ (SourceTag::Soulseek | SourceTag::Usenet)) => tag.client().to_owned(),
+            Some(tag @ (SourceTag::Soulseek | SourceTag::Usenet | SourceTag::Deezer)) => {
+                tag.client().to_owned()
+            }
             _ => row.source.clone(),
         };
         Self {

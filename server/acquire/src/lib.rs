@@ -7,7 +7,8 @@
 //!   math, recovery classification, quarantine, and the worker that
 //!   drives every download through them.
 //! - [`slskd`] and [`usenet`] own the source clients and indexers, which
-//!   all fail with one [`client_error::ClientError`].
+//!   all fail with one [`client_error::ClientError`]; [`deemix`] owns the
+//!   Deemix client and its session.
 //! - [`flows`] runs the wanted watcher, follow poll, upgrade sweep and
 //!   request-status sweep.
 //! - [`follows`] owns the follows, their auto-download approvals and the
@@ -39,11 +40,13 @@
 pub mod client_error;
 pub mod clients;
 pub mod db;
+pub mod deemix;
 pub mod dispatch;
 pub mod downloads;
 pub mod drop_import;
 pub mod edition;
 pub mod flows;
+pub mod folder_overlap;
 pub mod follows;
 pub mod held;
 pub mod import_folder;

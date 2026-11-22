@@ -7,6 +7,7 @@
 
 	import PluginHealthBadge from './PluginHealthBadge.svelte';
 	import SettingsPaneHeader from './SettingsPaneHeader.svelte';
+	import SettingsDeemix from './SettingsDeemix.svelte';
 	import SettingsDownloadClient from './SettingsDownloadClient.svelte';
 	import SettingsDownloadPolicy from './SettingsDownloadPolicy.svelte';
 	import SettingsOnboardingChecklist from './SettingsOnboardingChecklist.svelte';
@@ -22,11 +23,12 @@
 <div class="space-y-5">
 	<SettingsPaneHeader
 		title="Download clients"
-		description="Soulseek and Usenet are two ways to acquire music. Configure either or both, set which is tried first, and tune the shared policy."
+		description="Soulseek, Usenet and Deezer (through Deemix) are the ways to acquire music. Configure any of them, set which is tried first, and tune the shared policy."
 	/>
 	<SettingsDownloadClient />
 	<SettingsSabnzbd />
 	<SettingsNzbget />
+	<SettingsDeemix />
 	<Card variant="bordered">
 		<div class="space-y-3">
 			<div>

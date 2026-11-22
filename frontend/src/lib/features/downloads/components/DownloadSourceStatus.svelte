@@ -1,5 +1,13 @@
 <script lang="ts">
-	import { Bird, Clock3, ListOrdered, Newspaper, Puzzle, SkipForward } from 'lucide-svelte';
+	import {
+		AudioLines,
+		Bird,
+		Clock3,
+		ListOrdered,
+		Newspaper,
+		Puzzle,
+		SkipForward
+	} from 'lucide-svelte';
 
 	import { NO_FALLBACK_COPY } from '$lib/features/downloads/components/acquisitionLabels';
 
@@ -94,10 +102,18 @@
 			? 'Soulseek'
 			: source === 'usenet'
 				? 'Usenet'
-				: (source?.replace(/^plugin:/, '') ?? null)
+				: source === 'deezer'
+					? 'Deezer'
+					: (source?.replace(/^plugin:/, '') ?? null)
 	);
 	const SourceMark = $derived(
-		source === 'soulseek' ? Bird : source === 'usenet' ? Newspaper : Puzzle
+		source === 'soulseek'
+			? Bird
+			: source === 'usenet'
+				? Newspaper
+				: source === 'deezer'
+					? AudioLines
+					: Puzzle
 	);
 	const peer = $derived(source === 'soulseek' ? task.source_username || null : null);
 	const panelFacts = $derived(

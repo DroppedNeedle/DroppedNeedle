@@ -33,7 +33,7 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 
 use super::error::ImportsError;
-use super::health::HealthProbes;
+use super::health::{DeemixStatusResponse, HealthProbes};
 use super::jobs::SpotifyImports;
 use super::lidarr::{
     LIDARR_NOT_CONNECTED, LidarrClient, LidarrError, LidarrImportService, ServiceError,
@@ -128,6 +128,7 @@ pub fn routes() -> Routes<ImportsDeps> {
         .user(routes!(get_slskd_status))
         .admin(routes!(get_sabnzbd_status))
         .admin(routes!(get_nzbget_status))
+        .admin(routes!(get_deemix_status))
 }
 
 /// Map a Lidarr service failure to the wire. Upstream detail reaches the
@@ -590,6 +591,16 @@ pub async fn get_nzbget_status(
     _admin: Admin,
 ) -> Json<UsenetStatusResponse> {
     Json(super::health::usenet_status(deps.probes.nzbget.as_ref()))
+}
+
+/// Deemix's status from the last check of the saved config (admin only).
+#[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/deemix/status",
+    responses((status = 200, description = "Deemix status", body = DeemixStatusResponse)))]
+pub async fn get_deemix_status(
+    State(deps): State<ImportsDeps>,
+    _admin: Admin,
+) -> Json<DeemixStatusResponse> {
+    Json(deps.probes.deemix.status())
 }
 
 /// Fresh OAuth state token: 32 random bytes, base64url, unpadded.

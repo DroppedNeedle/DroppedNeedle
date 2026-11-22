@@ -181,9 +181,12 @@
 						<StatusChip size="xs">via album NZB</StatusChip>
 					</span>
 				{/if}
+				{#if task.source === 'deezer'}
+					<StatusChip size="xs">Deezer</StatusChip>
+				{/if}
 				<!-- Plugin sources take the generic path: no client-specific badges or
 					remote-queue hints, just the source key. -->
-				{#if task.source && task.source !== 'soulseek' && task.source !== 'usenet'}
+				{#if task.source && !['soulseek', 'usenet', 'deezer'].includes(task.source)}
 					<StatusChip size="xs">{task.source}</StatusChip>
 				{/if}
 				{#if isOwnedByOther}

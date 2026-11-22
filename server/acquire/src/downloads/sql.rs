@@ -173,6 +173,38 @@ droppedneedle_kernel::sql! {
     /// Stored handles of a task's (`?1`) attempts on one source (`?2`).
     pub(super) SOURCE_HANDLES = "SELECT handle_json FROM download_attempts \
              WHERE task_id = ?1 AND source = ?2 AND handle_json != ''";
+    /// Every attempt on one source (`?1`) whose job name is at least `?2`
+    /// and below `?3`, read as a range on `idx_download_attempts_job`: the
+    /// attempts on one client item, whatever bitrate each asked for, each
+    /// with its task's status (NULL once the task row is gone).
+    pub(super) ITEM_ATTEMPTS = "SELECT a.job_name AS job_name, a.state AS state, \
+             a.task_id AS task_id, t.status AS task_status \
+             FROM download_attempts a LEFT JOIN download_tasks t ON t.id = a.task_id \
+             WHERE a.source = ?1 AND a.job_name >= ?2 AND a.job_name < ?3";
+    /// One attempt `ITEM_ATTEMPTS` reads.
+    pub(super) row ItemAttemptRow for [ITEM_ATTEMPTS] {
+        job_name: String,
+        state: String,
+        task_id: String,
+        task_status: Option<String>,
+    }
+    /// The landed paths stored on the attempt with source `?1` and job
+    /// name `?2`, as a JSON list. One row per job name, here and below: a
+    /// job name `<uuid>:<task_id>:<index>` is unique per attempt.
+    pub(super) STORED_PATHS = "SELECT materialized_paths_json FROM download_attempts \
+             WHERE source = ?1 AND job_name = ?2 LIMIT 1";
+    /// Store landed paths (`?3`) on the attempt with source `?1` and job
+    /// name `?2`. The revision stays: the paths move no state, so a worker
+    /// holding the row's revision still moves it.
+    pub(super) SET_STORED_PATHS = "UPDATE download_attempts \
+             SET materialized_paths_json = ?3, updated_at = ?4 \
+             WHERE source = ?1 AND job_name = ?2";
+    /// Point a live attempt (`?4`) at a new client job (`?1`, its handle
+    /// `?2`) behind its revision (`?5`), which bumps.
+    pub(super) REWRITE_HANDLE = "UPDATE download_attempts \
+             SET job_name = ?1, handle_json = ?2, updated_at = ?3, \
+                 row_revision = row_revision + 1 \
+             WHERE id = ?4 AND row_revision = ?5 AND state IN ('acquiring', 'in_use')";
     /// Move an attempt behind its revision; every move bumps the revision.
     pub(super) TRANSITION_ATTEMPT = "UPDATE download_attempts \
              SET state = ?1, \

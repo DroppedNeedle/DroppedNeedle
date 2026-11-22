@@ -1,0 +1,59 @@
+{
+ "queue": {
+  "album_14880659_1": {
+   "type": "album",
+   "id": "14880659",
+   "bitrate": 1,
+   "uuid": "album_14880659_1",
+   "title": "In Rainbows",
+   "artist": "Radiohead",
+   "explicit": false,
+   "size": 10,
+   "extrasPath": "",
+   "status": "inQueue"
+  },
+  "album_6158273_1": {
+   "type": "album",
+   "id": "6158273",
+   "bitrate": 1,
+   "uuid": "album_6158273_1",
+   "title": "Mellon Collie And The Infinite Sadness (Remastered)",
+   "artist": "The Smashing Pumpkins",
+   "explicit": true,
+   "size": 28,
+   "extrasPath": "",
+   "status": "inQueue"
+  },
+  "track_138546807_1": {
+   "type": "track",
+   "id": "138546807",
+   "bitrate": 1,
+   "uuid": "track_138546807_1",
+   "title": "Nude",
+   "artist": "Radiohead",
+   "explicit": true,
+   "size": 1,
+   "downloaded": 1,
+   "failed": 0,
+   "progress": 98,
+   "errors": [],
+   "files": [
+    {
+     "filename": "Radiohead - Nude.mp3",
+     "data": {
+      "id": "138546807",
+      "title": "Nude",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - Nude.mp3"
+    }
+   ],
+   "extrasPath": "/downloads/",
+   "__type__": "Single",
+   "status": "completed"
+  }
+ },
+ "queueOrder": [
+  "album_14880659_1"
+ ]
+}

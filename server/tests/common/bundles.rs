@@ -658,9 +658,10 @@ pub fn covers_at(platform: &Platform) -> droppedneedle_catalog::artwork::cache::
 }
 
 /// The settings bundle over `platform` as the app builds it, with `probes`
-/// behind the Verify routes. Its save effects never run, the outside
-/// addresses are closed, and the recycle bin check sees no download
-/// folders.
+/// behind the Verify routes and Deemix's Test built as acquisition's wiring
+/// builds it, on a Deemix session of its own. Its save effects never run,
+/// the outside addresses are closed, and the recycle bin check sees no
+/// download folders.
 pub fn settings_at(
     platform: &Platform,
     probes: Arc<dyn droppedneedle::settings::verify::VerifyProbes>,
@@ -700,6 +701,9 @@ pub fn settings_at(
             platform.db.clone(),
             platform.clock.clone(),
         ),
+        droppedneedle_acquire::wiring::DeemixWiring::build(platform, Providers::closed().previews)
+            .checks()
+            .clone(),
     )
 }
 

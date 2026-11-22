@@ -1,0 +1,34 @@
+{
+ "queue": {
+  "track_138546807_1": {
+   "type": "track",
+   "id": "138546807",
+   "bitrate": 1,
+   "uuid": "track_138546807_1",
+   "title": "Nude",
+   "artist": "Radiohead",
+   "explicit": true,
+   "size": 1,
+   "extrasPath": "",
+   "status": "downloading"
+  }
+ },
+ "queueOrder": [],
+ "current": {
+  "type": "track",
+  "id": "138546807",
+  "bitrate": 1,
+  "uuid": "track_138546807_1",
+  "title": "Nude",
+  "artist": "Radiohead",
+  "explicit": true,
+  "size": 1,
+  "downloaded": 0,
+  "failed": 0,
+  "progress": 6,
+  "errors": [],
+  "files": [],
+  "extrasPath": "/downloads/",
+  "__type__": "Single"
+ }
+}

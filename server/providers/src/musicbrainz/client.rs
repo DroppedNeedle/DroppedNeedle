@@ -555,19 +555,17 @@ impl MusicBrainzView {
     /// group. Exact-release identification must include `release-groups`
     /// (Clairo _Immunity_ omits the member without it, live 2026-08-10);
     /// absence after that request is a fail-closed contract break, never
-    /// an assumed group.
+    /// an assumed group. `release-groups` is added to the caller's
+    /// `includes` whether or not they name it.
     pub async fn lookup_exact_release(
         &self,
         mbid: &str,
+        includes: &[&str],
         criticality: Criticality,
     ) -> Result<Option<Lookup<MbRelease>>, ProviderError> {
-        let found = self
-            .lookup_release(
-                mbid,
-                &["artist-credits", "recordings", "release-groups"],
-                criticality,
-            )
-            .await?;
+        let mut includes = includes.to_vec();
+        includes.push("release-groups");
+        let found = self.lookup_release(mbid, &includes, criticality).await?;
         match found {
             Some(lookup) if lookup.entity.release_group.is_none() => Err(ProviderError::Payload {
                 provider: SOURCE,

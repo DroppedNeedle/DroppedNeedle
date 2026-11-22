@@ -85,7 +85,8 @@ holds a key, a token or personal data.
   with `inc=artist-credits+genres+isrcs+labels+recordings+release-groups+url-rels`.
   HTTP 200. The include sets `release-groups`, `url-rels`, `recordings`,
   `labels+recordings+url-rels`, `artist-credits+labels+recordings+release-groups+url-rels`,
-  `artist-credits+genres+isrcs+labels+recordings+release-groups` and
+  `artist-credits+genres+isrcs+labels+recordings+release-groups`,
+  `artist-credits+isrcs+recordings+release-groups` and
   `isrcs+recordings+release-groups` are subsets of it, so this answer covers them.
 - `recording_lookup_url_rels.json`: `recording/33ea7e59-3691-4414-92d3-6bce48d5d9cc`
   with `inc=url-rels`. HTTP 200.

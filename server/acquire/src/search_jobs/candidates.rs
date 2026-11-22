@@ -20,6 +20,9 @@ use droppedneedle_library::tags::format_for_extension;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::deemix::client::Bitrate;
+use crate::deemix::models::Tracklist;
+use crate::deemix::pick::{Misfit, Score};
 use crate::downloads::quarantine::RejectedCopies;
 use crate::downloads::source_tag::SourceTag;
 use crate::plugin_source::{Band, ScoredRelease, release_identity};
@@ -436,6 +439,106 @@ impl Candidate {
             },
             pin: Pin::Release {
                 identity: usenet_identity(&release.title, release.size_bytes),
+            },
+        }
+        .refused(refusal)
+    }
+
+    /// A Deezer album, judged by how its tracklist fits the edition
+    /// (`fit`, with `held` of the edition's tracks found on it). It would
+    /// be fetched at `bitrate`, which is outside the download settings when
+    /// `refused`.
+    pub fn from_deezer(
+        album: &Tracklist,
+        fit: Result<Score, Misfit>,
+        held: usize,
+        target: &SearchTarget,
+        bitrate: Bitrate,
+        refused: bool,
+    ) -> Self {
+        let total = target.tracklist.len();
+        let note = |code: CandidateNoteCode, text: &str| {
+            (
+                CandidateTier::Possible,
+                CandidateNote::new(code, text.to_owned()),
+            )
+        };
+        let (tier, note) = match fit {
+            Ok(_) if target.track.is_some() => (
+                CandidateTier::Recommended,
+                CandidateNote::new(CandidateNoteCode::Complete, "Has this song.".to_owned()),
+            ),
+            Ok(_) => (
+                CandidateTier::Recommended,
+                CandidateNote::new(
+                    CandidateNoteCode::Complete,
+                    format!("Holds all {total} tracks of this edition."),
+                ),
+            ),
+            Err(Misfit::TargetTrackUnpaired | Misfit::WantedUnpaired | Misfit::NoTargetTracks) => (
+                CandidateTier::Possible,
+                CandidateNote::new(
+                    CandidateNoteCode::Incomplete,
+                    format!("Holds {held} of the {total} tracks on this edition."),
+                ),
+            ),
+            Err(Misfit::Unreadable) => note(
+                CandidateNoteCode::Incomplete,
+                "Deezer can't serve some of its tracks where Deemix runs.",
+            ),
+            Err(Misfit::ExtraTracks) => note(
+                CandidateNoteCode::Weak,
+                "It has tracks this edition doesn't.",
+            ),
+            Err(Misfit::DiscCount) => note(
+                CandidateNoteCode::Weak,
+                "Its discs don't match this edition's.",
+            ),
+            Err(Misfit::IsrcMismatch) => note(
+                CandidateNoteCode::Weak,
+                "Its recordings differ from this edition's.",
+            ),
+            Err(Misfit::NothingToGoOn) => note(
+                CandidateNoteCode::Weak,
+                "Its track lengths can't be compared with this edition's.",
+            ),
+        };
+        let format = match bitrate {
+            Bitrate::Flac => "FLAC 16-bit",
+            Bitrate::Mp3At320 => "MP3 320",
+            Bitrate::Mp3At128 => "MP3 128",
+        };
+        let refusal = if refused {
+            vec![CandidateRefusal::QualityOutsideRange]
+        } else {
+            Vec::new()
+        };
+        Self {
+            view: SearchCandidateView {
+                candidate_index: 0,
+                source: SourceTag::Deezer.to_string(),
+                title: format!("{} - {}", album.artist.name, album.title),
+                tier,
+                note,
+                refusal: Vec::new(),
+                username: None,
+                files: Vec::new(),
+                file_count: album.tracks.len(),
+                size_bytes: 0,
+                tracks_matched: Some(held),
+                length_misses: None,
+                tracks_total: (total > 0).then_some(total),
+                format: Some(format.to_owned()),
+                has_free_slot: None,
+                queue_length: None,
+                upload_speed: None,
+                indexer: None,
+                posted_at: None,
+                grabs: None,
+                score: None,
+            },
+            pin: Pin::Release {
+                identity: format!("deezer:album:{}", album.id),
             },
         }
         .refused(refusal)

@@ -3,6 +3,7 @@
 //! [`StoreError`].
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use droppedneedle_kernel::db::Lane;
@@ -12,7 +13,9 @@ use super::queue_rows::{ActivitySummary, ListFilter, QueueTask, TaskFacts, Viewe
 use super::source_tag::SourceTag;
 use super::sources::SourceHandle;
 use super::state::TaskStatus;
-use super::store::{AttemptRow, DownloadStore, QuarantineRow, RetryAnchor, StoreError, TaskRow};
+use super::store::{
+    AttemptRow, DownloadStore, ItemHolder, QuarantineRow, RetryAnchor, StoreError, TaskRow,
+};
 use crate::db::AcquireDb;
 use crate::dispatch::DispatchOrigin;
 use crate::flows::seams::TickSink;
@@ -171,6 +174,35 @@ impl Journal {
         let (task_id, source) = (task_id.to_owned(), source.to_string());
         self.read("downloads.source_handles", move |store| {
             store.source_handles(&task_id, &source)
+        })
+        .await
+    }
+
+    /// The attempts holding one client item against a caller's task (see
+    /// [`DownloadStore::item_holders`]).
+    pub async fn read_item_holders(
+        &self,
+        source: &SourceTag,
+        prefix: &str,
+        caller_task_id: &str,
+    ) -> Result<Vec<ItemHolder>, StoreError> {
+        let (source, prefix, caller) =
+            (source.clone(), prefix.to_owned(), caller_task_id.to_owned());
+        self.read("downloads.item_holders", move |store| {
+            store.item_holders(&source, &prefix, &caller)
+        })
+        .await
+    }
+
+    /// The landed paths stored on one attempt, by source and job name.
+    pub async fn read_stored_paths(
+        &self,
+        source: &SourceTag,
+        job_name: &str,
+    ) -> Result<Option<Vec<PathBuf>>, StoreError> {
+        let (source, job_name) = (source.clone(), job_name.to_owned());
+        self.read("downloads.stored_paths", move |store| {
+            store.stored_paths(&source, &job_name)
         })
         .await
     }

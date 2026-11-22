@@ -40,6 +40,7 @@ mod providers_models;
 mod providers_musicbrainz;
 mod route_gate;
 mod route_walk;
+mod settings_deemix;
 mod settings_readers;
 mod settings_sections;
 mod settings_store;

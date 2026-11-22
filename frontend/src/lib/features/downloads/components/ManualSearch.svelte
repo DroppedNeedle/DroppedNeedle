@@ -47,6 +47,7 @@
 	function labelFor(source: string): string {
 		if (source === 'soulseek') return 'Soulseek';
 		if (source === 'usenet') return 'Usenet';
+		if (source === 'deezer') return 'Deezer';
 		return sourceLabels[source] ?? source.replace(/^plugin:/, '');
 	}
 	const groups = $derived.by(() => {

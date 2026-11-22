@@ -1,0 +1,410 @@
+{
+ "update": {
+  "webuiVersion": "4.8.0",
+  "deemixVersion": "3.14.1"
+ },
+ "autologin": false,
+ "currentUser": {
+  "id": 1000001,
+  "name": "Test User",
+  "picture": "",
+  "license_token": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "can_stream_hq": false,
+  "can_stream_lossless": false,
+  "country": "XX",
+  "language": "en",
+  "loved_tracks": "1000002"
+ },
+ "deezerAvailable": "yes",
+ "spotifyEnabled": false,
+ "settingsData": {
+  "settings": {
+   "downloadLocation": "/downloads/",
+   "tracknameTemplate": "%artist% - %title%",
+   "albumTracknameTemplate": "%tracknumber% - %title%",
+   "playlistTracknameTemplate": "%artist% - %title%",
+   "createPlaylistFolder": true,
+   "playlistNameTemplate": "%playlist%",
+   "createArtistFolder": false,
+   "artistNameTemplate": "%artist%",
+   "createAlbumFolder": true,
+   "albumNameTemplate": "%artist% - %album%",
+   "createCDFolder": true,
+   "createStructurePlaylist": false,
+   "createSingleFolder": false,
+   "padTracks": true,
+   "padSingleDigit": true,
+   "paddingSize": 0,
+   "illegalCharacterReplacer": "_",
+   "queueConcurrency": 10,
+   "maxBitrate": 1,
+   "feelingLucky": false,
+   "fallbackBitrate": false,
+   "fallbackSearch": false,
+   "fallbackISRC": false,
+   "logErrors": true,
+   "logSearched": false,
+   "overwriteFile": "n",
+   "createM3U8File": false,
+   "playlistFilenameTemplate": "playlist",
+   "syncedLyrics": false,
+   "embeddedArtworkSize": 800,
+   "embeddedArtworkPNG": false,
+   "localArtworkSize": 1200,
+   "localArtworkFormat": "jpg",
+   "saveArtwork": true,
+   "coverImageTemplate": "cover",
+   "saveArtworkArtist": false,
+   "artistImageTemplate": "folder",
+   "jpegImageQuality": 90,
+   "dateFormat": "Y-M-D",
+   "albumVariousArtists": true,
+   "removeAlbumVersion": false,
+   "removeDuplicateArtists": true,
+   "featuredToTitle": "0",
+   "titleCasing": "nothing",
+   "artistCasing": "nothing",
+   "executeCommand": "",
+   "tags": {
+    "title": true,
+    "artist": true,
+    "artists": true,
+    "album": true,
+    "cover": true,
+    "trackNumber": true,
+    "trackTotal": false,
+    "discNumber": true,
+    "discTotal": false,
+    "albumArtist": true,
+    "genre": true,
+    "year": true,
+    "date": true,
+    "explicit": false,
+    "isrc": true,
+    "length": true,
+    "barcode": true,
+    "bpm": true,
+    "replayGain": false,
+    "label": true,
+    "lyrics": false,
+    "syncedLyrics": false,
+    "copyright": false,
+    "composer": false,
+    "involvedPeople": false,
+    "source": false,
+    "rating": false,
+    "savePlaylistAsCompilation": false,
+    "useNullSeparator": false,
+    "saveID3v1": true,
+    "multiArtistSeparator": "default",
+    "singleAlbumArtist": false,
+    "coverDescriptionUTF8": false
+   }
+  },
+  "defaultSettings": {
+   "downloadLocation": "/downloads/",
+   "tracknameTemplate": "%artist% - %title%",
+   "albumTracknameTemplate": "%tracknumber% - %title%",
+   "playlistTracknameTemplate": "%artist% - %title%",
+   "createPlaylistFolder": true,
+   "playlistNameTemplate": "%playlist%",
+   "createArtistFolder": false,
+   "artistNameTemplate": "%artist%",
+   "createAlbumFolder": true,
+   "albumNameTemplate": "%artist% - %album%",
+   "createCDFolder": true,
+   "createStructurePlaylist": false,
+   "createSingleFolder": false,
+   "padTracks": true,
+   "padSingleDigit": true,
+   "paddingSize": 0,
+   "illegalCharacterReplacer": "_",
+   "queueConcurrency": 10,
+   "maxBitrate": 1,
+   "feelingLucky": false,
+   "fallbackBitrate": false,
+   "fallbackSearch": false,
+   "fallbackISRC": false,
+   "logErrors": true,
+   "logSearched": false,
+   "overwriteFile": "n",
+   "createM3U8File": false,
+   "playlistFilenameTemplate": "playlist",
+   "syncedLyrics": false,
+   "embeddedArtworkSize": 800,
+   "embeddedArtworkPNG": false,
+   "localArtworkSize": 1200,
+   "localArtworkFormat": "jpg",
+   "saveArtwork": true,
+   "coverImageTemplate": "cover",
+   "saveArtworkArtist": false,
+   "artistImageTemplate": "folder",
+   "jpegImageQuality": 90,
+   "dateFormat": "Y-M-D",
+   "albumVariousArtists": true,
+   "removeAlbumVersion": false,
+   "removeDuplicateArtists": true,
+   "featuredToTitle": "0",
+   "titleCasing": "nothing",
+   "artistCasing": "nothing",
+   "executeCommand": "",
+   "tags": {
+    "title": true,
+    "artist": true,
+    "artists": true,
+    "album": true,
+    "cover": true,
+    "trackNumber": true,
+    "trackTotal": false,
+    "discNumber": true,
+    "discTotal": false,
+    "albumArtist": true,
+    "genre": true,
+    "year": true,
+    "date": true,
+    "explicit": false,
+    "isrc": true,
+    "length": true,
+    "barcode": true,
+    "bpm": true,
+    "replayGain": false,
+    "label": true,
+    "lyrics": false,
+    "syncedLyrics": false,
+    "copyright": false,
+    "composer": false,
+    "involvedPeople": false,
+    "source": false,
+    "rating": false,
+    "savePlaylistAsCompilation": false,
+    "useNullSeparator": false,
+    "saveID3v1": true,
+    "multiArtistSeparator": "default",
+    "singleAlbumArtist": false,
+    "coverDescriptionUTF8": false
+   }
+  },
+  "spotifySettings": {
+   "clientId": "",
+   "clientSecret": "",
+   "fallbackSearch": false
+  }
+ },
+ "queue": {
+  "queue": {
+   "track_138546807_1": {
+    "type": "track",
+    "id": "138546807",
+    "bitrate": 1,
+    "uuid": "track_138546807_1",
+    "title": "Nude",
+    "artist": "Radiohead",
+    "cover": "https://e-cdns-images.dzcdn.net/images/cover/a175af9b7d329bc678cb4d26fc13d6de/75x75-000000-80-0-0.jpg",
+    "explicit": true,
+    "size": 1,
+    "downloaded": 1,
+    "failed": 0,
+    "progress": 98,
+    "errors": [],
+    "files": [
+     {
+      "filename": "Radiohead - Nude.mp3",
+      "data": {
+       "id": "138546807",
+       "title": "Nude",
+       "artist": "Radiohead"
+      },
+      "path": "/downloads//Radiohead - Nude.mp3"
+     }
+    ],
+    "extrasPath": "/downloads/",
+    "__type__": "Single",
+    "status": "completed"
+   },
+   "album_14880659_1": {
+    "type": "album",
+    "id": "14880659",
+    "bitrate": 1,
+    "uuid": "album_14880659_1",
+    "title": "In Rainbows",
+    "artist": "Radiohead",
+    "cover": "https://cdn-images.dzcdn.net/images/cover/a175af9b7d329bc678cb4d26fc13d6de/75x75-000000-80-0-0.jpg",
+    "explicit": false,
+    "size": 10,
+    "extrasPath": "",
+    "status": "downloading"
+   },
+   "album_6158273_1": {
+    "type": "album",
+    "id": "6158273",
+    "bitrate": 1,
+    "uuid": "album_6158273_1",
+    "title": "Mellon Collie And The Infinite Sadness (Remastered)",
+    "artist": "The Smashing Pumpkins",
+    "cover": "https://cdn-images.dzcdn.net/images/cover/eebc22076a527fa2ae9159a9b1b95649/75x75-000000-80-0-0.jpg",
+    "explicit": true,
+    "size": 28,
+    "extrasPath": "",
+    "status": "inQueue"
+   }
+  },
+  "queueOrder": [
+   "album_6158273_1"
+  ],
+  "current": {
+   "type": "album",
+   "id": "14880659",
+   "bitrate": 1,
+   "uuid": "album_14880659_1",
+   "title": "In Rainbows",
+   "artist": "Radiohead",
+   "cover": "https://cdn-images.dzcdn.net/images/cover/a175af9b7d329bc678cb4d26fc13d6de/75x75-000000-80-0-0.jpg",
+   "explicit": false,
+   "size": 10,
+   "downloaded": 8,
+   "failed": 0,
+   "progress": 78,
+   "errors": [],
+   "files": [
+    {
+     "albumURLs": [
+      {
+       "url": "https://e-cdns-images.dzcdn.net/images/cover/a175af9b7d329bc678cb4d26fc13d6de/1200x1200-000000-90-0-0.jpg",
+       "ext": "jpg"
+      }
+     ],
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "06 - Faust Arp.mp3",
+     "data": {
+      "id": "138546813",
+      "title": "Faust Arp",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/06 - Faust Arp.mp3"
+    },
+    {
+     "albumURLs": [
+      {
+       "url": "https://e-cdns-images.dzcdn.net/images/cover/a175af9b7d329bc678cb4d26fc13d6de/1200x1200-000000-90-0-0.jpg",
+       "ext": "jpg"
+      }
+     ],
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "05 - All I Need.mp3",
+     "data": {
+      "id": "138546811",
+      "title": "All I Need",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/05 - All I Need.mp3"
+    },
+    {
+     "albumURLs": [
+      {
+       "url": "https://e-cdns-images.dzcdn.net/images/cover/a175af9b7d329bc678cb4d26fc13d6de/1200x1200-000000-90-0-0.jpg",
+       "ext": "jpg"
+      }
+     ],
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "01 - 15 Step.mp3",
+     "data": {
+      "id": "138546803",
+      "title": "15 Step",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/01 - 15 Step.mp3"
+    },
+    {
+     "albumURLs": [
+      {
+       "url": "https://e-cdns-images.dzcdn.net/images/cover/a175af9b7d329bc678cb4d26fc13d6de/1200x1200-000000-90-0-0.jpg",
+       "ext": "jpg"
+      }
+     ],
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "03 - Nude.mp3",
+     "data": {
+      "id": "138546807",
+      "title": "Nude",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/03 - Nude.mp3"
+    },
+    {
+     "albumURLs": [
+      {
+       "url": "https://e-cdns-images.dzcdn.net/images/cover/a175af9b7d329bc678cb4d26fc13d6de/1200x1200-000000-90-0-0.jpg",
+       "ext": "jpg"
+      }
+     ],
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "10 - Videotape.mp3",
+     "data": {
+      "id": "138546821",
+      "title": "Videotape",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/10 - Videotape.mp3"
+    },
+    {
+     "albumURLs": [
+      {
+       "url": "https://e-cdns-images.dzcdn.net/images/cover/a175af9b7d329bc678cb4d26fc13d6de/1200x1200-000000-90-0-0.jpg",
+       "ext": "jpg"
+      }
+     ],
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "07 - Reckoner.mp3",
+     "data": {
+      "id": "138546815",
+      "title": "Reckoner",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/07 - Reckoner.mp3"
+    },
+    {
+     "albumURLs": [
+      {
+       "url": "https://e-cdns-images.dzcdn.net/images/cover/a175af9b7d329bc678cb4d26fc13d6de/1200x1200-000000-90-0-0.jpg",
+       "ext": "jpg"
+      }
+     ],
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "04 - Weird Fishes _ Arpeggi.mp3",
+     "data": {
+      "id": "138546809",
+      "title": "Weird Fishes / Arpeggi",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/04 - Weird Fishes _ Arpeggi.mp3"
+    },
+    {
+     "albumURLs": [
+      {
+       "url": "https://e-cdns-images.dzcdn.net/images/cover/a175af9b7d329bc678cb4d26fc13d6de/1200x1200-000000-90-0-0.jpg",
+       "ext": "jpg"
+      }
+     ],
+     "albumPath": "/downloads//Radiohead - In Rainbows",
+     "albumFilename": "cover",
+     "filename": "08 - House Of Cards.mp3",
+     "data": {
+      "id": "138546817",
+      "title": "House Of Cards",
+      "artist": "Radiohead"
+     },
+     "path": "/downloads//Radiohead - In Rainbows/08 - House Of Cards.mp3"
+    }
+   ],
+   "extrasPath": "/downloads//Radiohead - In Rainbows",
+   "__type__": "Collection"
+  }
+ }
+}

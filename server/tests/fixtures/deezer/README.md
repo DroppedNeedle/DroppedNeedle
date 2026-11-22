@@ -32,6 +32,25 @@ than the five-a-second row in the rate table.
   `isrc`, `duration` in seconds, its artist and its album.
 - `track_not_found.json`: HTTP 200 for `GET /track/99999999999`, fetched on
   2026-11-19: the error object, code 800.
+- `album_upc_12.json`: HTTP 200 for `GET /album/upc:634904032463` (In Rainbows, a
+  12-digit barcode), fetched on 2026-11-21 during development with a research
+  User-Agent, `dn-probe/0.1 ( research probe )`, not the app's. Album id 14880659.
+  Tracks trimmed: `tracks.data` is empty and every other field is as recorded. The
+  `utm_term` values in the `share` links are REDACTED.
+- `album_upc_13.json`: HTTP 200 for `GET /album/upc:5099997855354` (Mellon Collie and
+  the Infinite Sadness, Remastered, a 13-digit barcode), fetched on 2026-11-21 with the
+  same User-Agent. Album id 6158273. Tracks trimmed as above; the `utm_term` values in
+  the `share` links are REDACTED.
+- `album_upc_13_leading_zero.json`: HTTP 200 for `GET /album/upc:0634904032463` (the
+  GTIN-13 form of In Rainbows with a leading zero), fetched on 2026-11-22 with the same
+  User-Agent. The error object, code 800. The 12-digit form of that album answers with
+  the album (`album_upc_12.json`).
+- `album_upc_14.json`: HTTP 200 for `GET /album/upc:05099997855354` (the 14-digit form
+  of Mellon Collie), fetched on 2026-11-21 with the same User-Agent. The error object,
+  code 800.
+- `album_upc_unknown.json`: HTTP 200 for `GET /album/upc:999999999999`, a barcode
+  Deezer does not hold, fetched on 2026-11-21 with the same User-Agent. The error
+  object, code 800.
 
 The preview URLs in `search_artist.json` and `album_tracks.json` are signed (an
 `hdnea` token) and expire, so the token in each of the 22 URLs is replaced by
@@ -41,7 +60,8 @@ The tracking value in `artist.json`'s and `track.json`'s `share` links (`utm_ter
 is replaced by `REDACTED` too, and so are `track.json`'s preview token and
 `track_token`. The two artist answers were fetched on 2026-10-20 as well.
 
-All nine bodies are unchanged except re-indented (two spaces) and those values.
+The bodies above are unchanged except re-indented (two spaces), the trimmed track
+lists and those values.
 No field was replaced for copyright: the answers hold titles, names, ids, flags
 and links, and no lyric or biography text. None of them holds a key, a token or
 personal data.

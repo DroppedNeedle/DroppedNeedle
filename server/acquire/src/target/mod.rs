@@ -60,6 +60,8 @@ pub struct SearchTarget {
     pub year: Option<i32>,
     /// The release's audio tracks (empty when no release is known).
     pub tracklist: Vec<ExpectedTrack>,
+    /// The release's barcode, when it has one and the plan kept it.
+    pub barcode: Option<String>,
     /// Positions to fetch (empty for a whole album).
     pub wanted: Vec<TrackPosition>,
     /// Set for a single-track task.
@@ -174,22 +176,25 @@ impl Targets {
         }
     }
 
-    /// One edition's audio tracklist, for ranking a manual search. Empty
-    /// when MusicBrainz is down or does not know the release; folders are
-    /// then judged on their file counts.
-    pub async fn edition_tracklist(&self, release_mbid: &str) -> Vec<ExpectedTrack> {
+    /// One edition's audio tracklist and barcode, for ranking a manual
+    /// search. Empty and `None` when MusicBrainz is down or does not know
+    /// the release; folders are then judged on their file counts.
+    pub async fn edition_tracklist(
+        &self,
+        release_mbid: &str,
+    ) -> (Vec<ExpectedTrack>, Option<String>) {
         match self.lookup.release(release_mbid).await {
-            Ok(Some(found)) => expected_tracks(&found),
+            Ok(Some(found)) => (expected_tracks(&found), found.barcode),
             Ok(None) => {
                 tracing::warn!(
                     release_mbid,
                     "MusicBrainz does not know the searched edition"
                 );
-                Vec::new()
+                (Vec::new(), None)
             }
             Err(error) => {
                 tracing::warn!(release_mbid, %error, "edition tracklist unavailable for a manual search");
-                Vec::new()
+                (Vec::new(), None)
             }
         }
     }
@@ -234,10 +239,10 @@ impl Targets {
             .is_some_and(|release| plan.is_for(release));
         // As the landing reads it: a release the plan is not for is a pin.
         let release_preferred = preferred || (plan.release_preferred && same_release);
-        let mut tracklist = if same_release {
-            plan.expected_tracks.clone()
+        let (mut tracklist, mut barcode) = if same_release {
+            (plan.expected_tracks.clone(), plan.barcode.clone())
         } else {
-            Vec::new()
+            (Vec::new(), None)
         };
         // "Get missing tracks" asks for some positions of the edition only.
         let wanted = if same_release {
@@ -253,11 +258,12 @@ impl Targets {
             match self.lookup.release(release_mbid).await {
                 Ok(Some(found)) => {
                     tracklist = expected_tracks(&found);
+                    barcode = found.barcode.clone();
                     if preferred {
-                        self.keep_preference(task, release_mbid, &found.id, &tracklist)
+                        self.keep_preference(task, release_mbid, &found, &tracklist)
                             .await;
                     } else {
-                        self.keep_tracklist(task, release_mbid, &found.id, &tracklist)
+                        self.keep_tracklist(task, release_mbid, &found, &tracklist)
                             .await;
                     }
                 }
@@ -280,24 +286,27 @@ impl Targets {
             // Without the tracklist the source matches these by file name.
             wanted,
             tracklist,
+            barcode,
             track: None,
             release_preferred,
         }
     }
 
-    /// Keep an album's tracklist in its plan, under the release MusicBrainz
-    /// answered for `asked` (the one it redirected to, when it did). The
-    /// copy fetched for stays only while it belongs to that release. A
-    /// failed write is logged: the next attempt reads the tracklist again.
+    /// Keep an album's tracklist and barcode in its plan, under the release
+    /// MusicBrainz answered for `asked` (the one it redirected to, when it
+    /// did). The copy fetched for stays only while it belongs to that
+    /// release. A failed write is logged: the next attempt reads the
+    /// tracklist again.
     async fn keep_tracklist(
         &self,
         task: &TaskRow,
         asked: &str,
-        found: &str,
+        found: &AlbumRelease,
         tracklist: &[ExpectedTrack],
     ) {
         let task_id = task.id.clone();
-        let (asked, found) = (asked.to_owned(), found.to_owned());
+        let (asked, barcode) = (asked.to_owned(), found.barcode.clone());
+        let found = found.id.clone();
         let tracklist = tracklist.to_vec();
         let clock = self.journal.db().clock().clone();
         let kept = self
@@ -310,6 +319,7 @@ impl Targets {
                 plan.redirected_from = (!asked.eq_ignore_ascii_case(&found)).then_some(asked);
                 plan.release_mbid = Some(found);
                 plan.expected_tracks = tracklist;
+                plan.barcode = barcode;
                 let now = crate::db::unix_secs_f64(clock.as_ref());
                 store.set_task_plan(&task_id, &plan, now)
             })
@@ -320,19 +330,20 @@ impl Targets {
     }
 
     /// Keep the album page's edition as the task's preferred release, with
-    /// its tracklist under the release MusicBrainz answered for `asked`.
-    /// Only while the task still asks for no release: a release written
-    /// meanwhile (in its details or its plan) stands. A failed write is
-    /// logged: the next search fills it again.
+    /// its tracklist and barcode under the release MusicBrainz answered for
+    /// `asked`. Only while the task still asks for no release: a release
+    /// written meanwhile (in its details or its plan) stands. A failed
+    /// write is logged: the next search fills it again.
     async fn keep_preference(
         &self,
         task: &TaskRow,
         asked: &str,
-        found: &str,
+        found: &AlbumRelease,
         tracklist: &[ExpectedTrack],
     ) {
         let task_id = task.id.clone();
-        let (asked, found) = (asked.to_owned(), found.to_owned());
+        let (asked, barcode) = (asked.to_owned(), found.barcode.clone());
+        let found = found.id.clone();
         let release = found.clone();
         let tracklist = tracklist.to_vec();
         let clock = self.journal.db().clock().clone();
@@ -350,6 +361,7 @@ impl Targets {
                 plan.redirected_from = (!asked.eq_ignore_ascii_case(&found)).then_some(asked);
                 plan.release_mbid = Some(found);
                 plan.expected_tracks = tracklist;
+                plan.barcode = barcode;
                 plan.release_preferred = true;
                 let now = crate::db::unix_secs_f64(clock.as_ref());
                 store.set_task_plan(&task_id, &plan, now)?;
@@ -399,6 +411,7 @@ impl Targets {
                 album_title: task.album_title.clone(),
                 year: details.year,
                 tracklist: plan.expected_tracks.clone(),
+                barcode: plan.barcode.clone(),
                 wanted: album.wanted.clone(),
                 release_preferred: false,
                 track: Some(TrackWant {
@@ -426,7 +439,9 @@ impl Targets {
                 recording_mbid: Some(recording.clone()),
                 title: Some(title.clone()),
                 release_track_mbid: None,
+                isrcs: Vec::new(),
             }],
+            barcode: None,
             wanted: vec![TrackPosition { disc: 1, track: 0 }],
             release_preferred: false,
             track: Some(TrackWant {
@@ -529,6 +544,7 @@ impl Targets {
                 wanted: wanted.clone(),
             };
             let tracks = tracklist.clone();
+            let barcode = release.barcode.clone();
             self.journal
                 .run("downloads.target.track_album", move |store| {
                     let now = crate::db::unix_secs_f64(clock.as_ref());
@@ -537,6 +553,7 @@ impl Targets {
                     plan.release_mbid = Some(release_mbid);
                     plan.redirected_from = None;
                     plan.expected_tracks = tracks;
+                    plan.barcode = barcode;
                     plan.track_album = Some(track_album);
                     store.set_task_plan(&task_id, &plan, now)
                 })
@@ -554,6 +571,7 @@ impl Targets {
             album_title: release.title.clone(),
             year: release.year,
             tracklist,
+            barcode: release.barcode.clone(),
             wanted,
             release_preferred: false,
             track: Some(TrackWant {
@@ -582,6 +600,7 @@ pub fn expected_tracks(release: &AlbumRelease) -> Vec<ExpectedTrack> {
             recording_mbid: Some(track.recording_mbid.clone()),
             title: Some(track.title.clone()),
             release_track_mbid: Some(track.release_track_mbid.clone()),
+            isrcs: track.isrcs.clone(),
         })
         .collect()
 }

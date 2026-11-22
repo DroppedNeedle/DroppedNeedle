@@ -1,7 +1,7 @@
 //! Which download source a task, attempt or handle belongs to.
 //!
 //! The journal, the stored handles and the source-priority setting keep a
-//! source as text (`soulseek`, `usenet`, `plugin:<name>`). This module is
+//! source as text (`soulseek`, `usenet`, `deezer`, `plugin:<name>`). This module is
 //! the one place that writes and reads that text; everything else compares
 //! [`SourceTag`] values.
 
@@ -12,6 +12,8 @@ use std::str::FromStr;
 const SOULSEEK: &str = "soulseek";
 /// Stored text of the Usenet source.
 const USENET: &str = "usenet";
+/// Stored text of the Deezer source.
+const DEEZER: &str = "deezer";
 /// Prefix of a plugin source's stored text.
 const PLUGIN_PREFIX: &str = "plugin:";
 
@@ -22,6 +24,8 @@ pub enum SourceTag {
     Soulseek,
     /// Usenet through SABnzbd.
     Usenet,
+    /// Deezer through Deemix.
+    Deezer,
     /// A plugin's download client, by plugin name.
     Plugin(String),
 }
@@ -38,22 +42,24 @@ impl SourceTag {
         Self::Plugin(key.strip_prefix(PLUGIN_PREFIX).unwrap_or(key).to_owned())
     }
 
-    /// The source as people know it: "Soulseek", "Usenet", or the
-    /// plugin's name.
+    /// The source as people know it: "Soulseek", "Usenet", "Deezer", or
+    /// the plugin's name.
     pub fn label(&self) -> &str {
         match self {
             Self::Soulseek => "Soulseek",
             Self::Usenet => "Usenet",
+            Self::Deezer => "Deezer",
             Self::Plugin(name) => name,
         }
     }
 
-    /// The download client behind the source: `slskd`, `sabnzbd`, or the
-    /// plugin's name.
+    /// The download client behind the source: `slskd`, `sabnzbd`,
+    /// `deemix`, or the plugin's name.
     pub fn client(&self) -> &str {
         match self {
             Self::Soulseek => "slskd",
             Self::Usenet => "sabnzbd",
+            Self::Deezer => "deemix",
             Self::Plugin(name) => name,
         }
     }
@@ -64,6 +70,7 @@ impl fmt::Display for SourceTag {
         match self {
             Self::Soulseek => out.write_str(SOULSEEK),
             Self::Usenet => out.write_str(USENET),
+            Self::Deezer => out.write_str(DEEZER),
             Self::Plugin(name) => write!(out, "{PLUGIN_PREFIX}{name}"),
         }
     }
@@ -76,6 +83,7 @@ impl FromStr for SourceTag {
         match text {
             SOULSEEK => Ok(Self::Soulseek),
             USENET => Ok(Self::Usenet),
+            DEEZER => Ok(Self::Deezer),
             other => match other.strip_prefix(PLUGIN_PREFIX) {
                 Some(name) if !name.is_empty() => Ok(Self::Plugin(name.to_owned())),
                 _ => Err(UnknownSource(other.to_owned())),
@@ -89,6 +97,7 @@ impl PartialEq<str> for SourceTag {
         match self {
             Self::Soulseek => text == SOULSEEK,
             Self::Usenet => text == USENET,
+            Self::Deezer => text == DEEZER,
             Self::Plugin(name) => text
                 .strip_prefix(PLUGIN_PREFIX)
                 .is_some_and(|stored| stored == name),
@@ -144,6 +153,7 @@ mod tests {
         for (tag, text) in [
             (SourceTag::Soulseek, "soulseek"),
             (SourceTag::Usenet, "usenet"),
+            (SourceTag::Deezer, "deezer"),
             (SourceTag::Plugin("toy".to_owned()), "plugin:toy"),
         ] {
             assert_eq!(tag.to_string(), text);
@@ -153,9 +163,13 @@ mod tests {
             assert_eq!(json, format!("\"{text}\""));
             assert_eq!(serde_json::from_str::<SourceTag>(&json).unwrap(), tag);
         }
-        for unknown in ["", "slskd", "plugin:", "Soulseek"] {
+        for unknown in ["", "slskd", "plugin:", "Soulseek", "deemix", "Deezer"] {
             assert!(unknown.parse::<SourceTag>().is_err(), "{unknown}");
         }
         assert_eq!(SourceTag::plugin("plugin:toy"), SourceTag::plugin("toy"));
+        assert_eq!(
+            (SourceTag::Deezer.label(), SourceTag::Deezer.client()),
+            ("Deezer", "deemix")
+        );
     }
 }

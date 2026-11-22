@@ -27,6 +27,10 @@ pub struct TaskPlan {
     /// The release's tracklist.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub expected_tracks: Vec<ExpectedTrack>,
+    /// The release's barcode, kept with its tracklist. Absent on a plan
+    /// written before barcodes were kept, or when the release has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub barcode: Option<String>,
     /// For an album download: the only positions to fetch ("Get missing
     /// tracks"). Empty fetches the whole album.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -69,8 +73,8 @@ impl TaskPlan {
 
     /// What a retry carries over: the release and whether it is only a
     /// preference, the positions it asks for, the copy it is for and "Get
-    /// it from the album". The tracklist and a track's album are worked
-    /// out again. A quality waiver is never
+    /// it from the album". The tracklist with its barcode and a track's
+    /// album are worked out again. A quality waiver is never
     /// carried over: it belongs to the pick a person confirmed.
     pub fn for_successor(&self) -> Self {
         Self {
@@ -116,6 +120,9 @@ pub struct ExpectedTrack {
     /// Release-track MBID; makes attribution edition-specific.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_track_mbid: Option<String>,
+    /// The recording's ISRCs, for matching a source's tracklist.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub isrcs: Vec<String>,
 }
 
 fn default_disc() -> i64 {
@@ -171,6 +178,32 @@ pub struct ReplaceVersion {
 #[cfg(test)]
 mod tests {
     use super::TaskPlan;
+
+    fn round_trip(stored: &str) -> serde_json::Value {
+        let plan = TaskPlan::decode(stored).expect("the stored plan decodes");
+        serde_json::from_str(&plan.encode().expect("the plan encodes")).expect("encoded JSON")
+    }
+
+    fn json(text: &str) -> serde_json::Value {
+        serde_json::from_str(text).expect("test JSON")
+    }
+
+    #[test]
+    fn a_plan_keeps_its_barcode_and_isrcs_and_an_older_plan_still_reads() {
+        let kept = r#"{"release_mbid":"rel","barcode":"888880520562","expected_tracks":[
+            {"track_number":1,"disc_number":1,"isrcs":["USSM11200001","USSM11200002"]},
+            {"track_number":2,"disc_number":1}]}"#;
+        assert_eq!(round_trip(kept), json(kept));
+
+        let older = r#"{"release_mbid":"rel","expected_tracks":[{"track_number":1}]}"#;
+        assert_eq!(
+            round_trip(older),
+            json(
+                r#"{"release_mbid":"rel","expected_tracks":[{"track_number":1,"disc_number":1}]}"#
+            ),
+            "an older plan reads with no barcode and no ISRCs, and writes none"
+        );
+    }
 
     #[test]
     fn a_successor_keeps_the_preference_but_not_the_waiver() {

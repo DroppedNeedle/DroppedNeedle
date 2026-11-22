@@ -9,7 +9,7 @@
 //! nothing in it is read or removed. Blocking: callers run it off the
 //! async runtime.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use droppedneedle_kernel::runtime_config::Live;
@@ -18,7 +18,7 @@ use droppedneedle_library::publish::bin::DownloadTrees;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::landing::canonical_dirs;
+use crate::folder_overlap::folder_clear;
 use crate::landing::ports::LandingLibrary;
 
 /// Which kind of folder the import folder overlaps.
@@ -107,14 +107,7 @@ impl ImportSite {
             (ImportFolderOverlap::Downloads, downloads),
             (ImportFolderOverlap::App, self.app.clone()),
         ];
-        for (kind, dirs) in others {
-            if let Some(other) = canonical_dirs(&dirs)
-                .into_iter()
-                .find(|other| overlaps(&real, other))
-            {
-                return Err(Unusable::Overlaps(kind, other));
-            }
-        }
+        folder_clear(&real, others).map_err(|(kind, other)| Unusable::Overlaps(kind, other))?;
         Ok(real)
     }
 
@@ -128,10 +121,4 @@ impl ImportSite {
             Err(Unusable::Off)
         }
     }
-}
-
-/// Whether one folder is, holds or sits inside the other, by whole path
-/// components.
-fn overlaps(left: &Path, right: &Path) -> bool {
-    !right.as_os_str().is_empty() && (left.starts_with(right) || right.starts_with(left))
 }

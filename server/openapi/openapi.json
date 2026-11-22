@@ -10,6 +10,34 @@
     "version": "3.0.0"
   },
   "paths": {
+    "/api/v3/acquire/deemix/status": {
+      "get": {
+        "tags": [
+          "imports"
+        ],
+        "summary": "Deemix's status from the last check of the saved config (admin only).",
+        "operationId": "get_deemix_status",
+        "responses": {
+          "200": {
+            "description": "Deemix status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeemixStatusResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/acquire/lidarr-import/artists": {
       "get": {
         "tags": [
@@ -30760,6 +30788,108 @@
         ]
       }
     },
+    "/api/v3/settings/download-clients/deemix": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read the Deemix connection.",
+        "operationId": "get_deemix",
+        "responses": {
+          "200": {
+            "description": "Deemix connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeemixConnection"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Save the Deemix connection.",
+        "operationId": "put_deemix",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeemixConnection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeemixConnection"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/settings/download-clients/deemix/test": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Check the submitted Deemix values: whether Deemix answers, its Deezer\nsign-in and the quality that gives, and what to change. The saved\naddress is read on the session DroppedNeedle keeps with Deemix; another\naddress on a new one. Nothing signs in.",
+        "operationId": "test_deemix",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeemixConnection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Deemix check",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeemixStatusResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/settings/download-clients/nzbget": {
       "get": {
         "tags": [
@@ -42810,6 +42940,137 @@
           "embedded"
         ]
       },
+      "DeemixConnection": {
+        "type": "object",
+        "description": "The Deemix connection: Deemix downloads from Deezer, signed in with the\nDeezer sign-in saved in Deemix itself, so nothing here is secret.",
+        "properties": {
+          "downloads_mount": {
+            "type": "string",
+            "description": "Where DroppedNeedle sees Deemix's downloads folder.",
+            "default": "/deemix-downloads"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch.",
+            "default": false
+          },
+          "url": {
+            "type": "string",
+            "description": "Deemix base URL.",
+            "default": ""
+          }
+        }
+      },
+      "DeemixQuality": {
+        "type": "string",
+        "description": "A quality Deezer serves through Deemix.",
+        "enum": [
+          "flac",
+          "mp3_320",
+          "mp3_128"
+        ]
+      },
+      "DeemixStatusResponse": {
+        "type": "object",
+        "description": "What Deemix answered a check with, for the settings card. Every value is\nDroppedNeedle's own words; nothing Deemix wrote is passed on but its\nversion numbers.",
+        "required": [
+          "enabled",
+          "configured",
+          "reachable",
+          "deezer_reachable",
+          "signed_in",
+          "sign_in_offered",
+          "warnings",
+          "message"
+        ],
+        "properties": {
+          "account_quality": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DeemixQuality"
+              }
+            ],
+            "description": "The best quality the Deezer account downloads; null while not\nsigned in."
+          },
+          "best_quality": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DeemixQuality"
+              }
+            ],
+            "description": "The best quality the account gives that the quality settings take;\nnull while not signed in, while those settings cannot be read, or\nwhen they take none of it."
+          },
+          "configured": {
+            "type": "boolean",
+            "description": "A URL is set."
+          },
+          "deemix_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Deemix's library version, when it answered."
+          },
+          "deezer_reachable": {
+            "type": "boolean",
+            "description": "Deemix can reach Deezer."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Admin master switch."
+          },
+          "message": {
+            "type": "string",
+            "description": "User-safe summary."
+          },
+          "reachable": {
+            "type": "boolean",
+            "description": "Deemix answered."
+          },
+          "sign_in_offered": {
+            "type": "boolean",
+            "description": "Not signed in, and Deemix offers the Deezer sign-in it saved, which\nDroppedNeedle uses when it needs to."
+          },
+          "signed_in": {
+            "type": "boolean",
+            "description": "DroppedNeedle's session with Deemix is signed in to Deezer."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeemixWarning"
+            },
+            "description": "What to change, in a fixed order."
+          },
+          "webui_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Deemix's web UI version, when it answered."
+          }
+        }
+      },
+      "DeemixWarning": {
+        "type": "string",
+        "description": "Something about Deemix or its folder that keeps downloads from working\nas they should.",
+        "enum": [
+          "overwrite_off",
+          "fallback_on",
+          "single_user_off",
+          "command_set",
+          "mount_unusable",
+          "mount_overlaps",
+          "mapping_wrong",
+          "quality_not_taken"
+        ]
+      },
       "DeferredJobView": {
         "type": "object",
         "description": "One deferred identification job, named.",
@@ -44699,7 +44960,7 @@
           },
           "source": {
             "type": "string",
-            "description": "`soulseek`, `usenet` or `plugin:<key>`."
+            "description": "`soulseek`, `usenet`, `deezer` or `plugin:<key>`."
           },
           "source_username": {
             "type": [
@@ -60144,7 +60405,7 @@
         "properties": {
           "client_id": {
             "type": "string",
-            "description": "The client label: `slskd`, `sabnzbd`, or the source for plugins."
+            "description": "The client label: `slskd`, `sabnzbd`, `deemix`, or the source for plugins."
           },
           "detail": {
             "type": [
@@ -60196,7 +60457,7 @@
           },
           "source": {
             "type": "string",
-            "description": "`soulseek`, `usenet` or `plugin:<key>`."
+            "description": "`soulseek`, `usenet`, `deezer` or `plugin:<key>`."
           },
           "username": {
             "type": "string",
@@ -61074,6 +61335,8 @@
           "album_releases_exhausted",
           "track_not_found",
           "nothing_allowed",
+          "account_refused",
+          "client_dropped",
           "no_download_source",
           "settings_unreadable",
           "journal_unreadable",
@@ -66962,7 +67225,7 @@
       },
       "SourcePriorityOrder": {
         "type": "object",
-        "description": "Acquisition source try-order, e.g. `[\"soulseek\", \"usenet\"]`. Bundled\nsources are always present; well-formed `plugin:<name>` keys pass\nthrough order-preserved; anything else is dropped.",
+        "description": "Acquisition source try-order, e.g. `[\"soulseek\", \"usenet\", \"deezer\"]`. Bundled\nsources are always present; well-formed `plugin:<name>` keys pass\nthrough order-preserved; anything else is dropped.",
         "properties": {
           "order": {
             "type": "array",

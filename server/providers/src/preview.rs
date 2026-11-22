@@ -1,5 +1,5 @@
 //! 30-second track and album previews via Deezer (primary) and iTunes (fallback),
-//! and Deezer artist pictures by Deezer artist id.
+//! Deezer artist pictures by Deezer artist id, and Deezer album ids by barcode.
 //!
 //! A Rust port of v2's preview repository. Both APIs are keyless. Deezer
 //! matches better (field-scoped query syntax, ordered album track lists);
@@ -36,7 +36,9 @@ use crate::web_address::{self, WebAddress};
 mod models;
 
 pub use self::models::SongLookup;
-use self::models::{AlbumSearch, AlbumTracks, DeezerArtist, DeezerFault, Track, TrackSearch};
+use self::models::{
+    AlbumByUpc, AlbumSearch, AlbumTracks, DeezerArtist, DeezerFault, Track, TrackSearch,
+};
 
 /// Live Deezer API origin.
 pub const DEEZER_API_BASE: &str = "https://api.deezer.com";
@@ -67,6 +69,9 @@ pub static DEEZER_SPEC: Spec = Spec {
 ///
 /// - 800, no data: [`ProviderError::NotFound`], which the lookups read as
 ///   absence. Seen for an unknown album id on 2026-10-20.
+/// - 4, quota: [`ProviderError::RateLimited`], which the executor paces and
+///   retries like a 429, never absence. Deezer's quota code, not yet seen on
+///   the wire.
 /// - any other code: [`ProviderError::BadRequest`] with the status, never
 ///   retried. Only 800 has been seen on the wire, so the other codes are
 ///   refused rather than mapped to a guessed meaning.
@@ -85,6 +90,10 @@ fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
     };
     Err(match error.code {
         800 => ProviderError::NotFound { provider: DEEZER },
+        4 => ProviderError::RateLimited {
+            provider: DEEZER,
+            retry_after: answer.retry_after(),
+        },
         _ => ProviderError::BadRequest {
             provider: DEEZER,
             status,
@@ -137,6 +146,39 @@ pub fn names_match(wanted: &str, got: &str) -> bool {
     let a = norm(wanted);
     let b = norm(got);
     !a.is_empty() && (a.contains(&b) || b.contains(&a))
+}
+
+// ---------------------------------------------------------------------------
+// Barcodes
+// ---------------------------------------------------------------------------
+
+/// A barcode as a 14-digit GTIN, padded with leading zeros, or `None` when it
+/// is not one: digits only, a GTIN length (8, 12, 13 or 14), at least eight
+/// significant digits and a valid check digit. Surrounding whitespace is
+/// ignored.
+fn gtin14(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if !matches!(raw.len(), 8 | 12 | 13 | 14) || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let gtin = format!("{raw:0>14}");
+    if gtin.trim_start_matches('0').len() < 8 {
+        return None;
+    }
+    // The check digit is the last one. Counting from the left, the digits
+    // before it weigh 3, 1, 3, and so on; with the check digit added, the
+    // weighted sum is a multiple of 10.
+    let digits: Vec<u32> = gtin.bytes().map(|b| u32::from(b - b'0')).collect();
+    let (check, body) = digits.split_last()?;
+    let sum: u32 = body
+        .iter()
+        .enumerate()
+        .map(|(at, digit)| {
+            let weight = if at % 2 == 0 { 3 } else { 1 };
+            digit * weight
+        })
+        .sum();
+    ((sum + check) % 10 == 0).then_some(gtin)
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +307,49 @@ impl PreviewClient {
         };
         let track: SongLookup = decode(&reply)?;
         Ok((u64::try_from(track.id).ok() == Some(track_id)).then_some(track))
+    }
+
+    /// The Deezer id of the album whose barcode is `barcode`. `None` when no
+    /// answer names an album whose barcode equals it once both are padded to
+    /// 14 digits, or when `barcode` is not a GTIN. When the GTIN-13 starts with
+    /// 0, the 12-digit form is asked first and the GTIN-13 form second; otherwise
+    /// only the GTIN-13 form is asked. The 14-digit form is never asked: Deezer
+    /// answers it with code 800. A GTIN-14 whose first (indicator) digit is not
+    /// 0 names a pack of items, never an album, so nothing is asked for it.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of a call or of its answer, quota included.
+    pub async fn deezer_album_by_upc(
+        &self,
+        barcode: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<u64>, ProviderError> {
+        let Some(gtin) = gtin14(barcode).filter(|gtin| gtin.starts_with('0')) else {
+            return Ok(None);
+        };
+        let gtin13 = &gtin[1..];
+        // Deezer answers the leading-zero GTIN-13 of a UPC-A with code 800
+        // (probed), so the 12-digit form is asked first.
+        let forms = if gtin13.starts_with('0') {
+            vec![&gtin[2..], gtin13]
+        } else {
+            vec![gtin13]
+        };
+        for form in forms {
+            let segment = format!("upc:{form}");
+            let Some(reply) = self
+                .deezer_get(&["album", segment.as_str()], &[], priority)
+                .await?
+            else {
+                continue;
+            };
+            let album: AlbumByUpc = decode(&reply)?;
+            if format!("{:0>14}", album.upc) == gtin {
+                return Ok(Some(album.id));
+            }
+        }
+        Ok(None)
     }
 
     /// Where Deezer short link `code` (`link.deezer.com/s/{code}`) leads:
@@ -623,5 +708,194 @@ impl PreviewClient {
             Ok(tracks) if !tracks.is_empty() => (tracks, Some("itunes")),
             _ => (Vec::new(), None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::gtin14;
+    use crate::test_support::ScriptedWire;
+    use crate::{ProviderEndpoints, Providers, RequestPriority};
+
+    const BASE: &str = "https://api.deezer.com";
+    /// In Rainbows, UPC 634904032463.
+    const IN_RAINBOWS: &str = include_str!("../../tests/fixtures/deezer/album_upc_12.json");
+    /// Mellon Collie (Remastered), EAN 5099997855354.
+    const MELLON_COLLIE: &str = include_str!("../../tests/fixtures/deezer/album_upc_13.json");
+    const UNKNOWN_14: &str = include_str!("../../tests/fixtures/deezer/album_upc_14.json");
+    /// In Rainbows' GTIN-13 form with a leading zero: code 800.
+    const LEADING_ZERO_800: &str =
+        include_str!("../../tests/fixtures/deezer/album_upc_13_leading_zero.json");
+    const UNKNOWN: &str = include_str!("../../tests/fixtures/deezer/album_upc_unknown.json");
+    /// Synthetic: no quota answer has been recorded, so this body is written by
+    /// hand. Only its code is read; Deezer's quota code is 4.
+    const QUOTA: &str = r#"{"error":{"code":4}}"#;
+
+    /// Providers with Deezer at [`BASE`], answering from `wire`.
+    fn providers(wire: &Arc<ScriptedWire>) -> Providers {
+        Providers::unpaced_at(
+            wire.clone(),
+            ProviderEndpoints {
+                deezer: BASE.to_owned(),
+                ..ProviderEndpoints::closed()
+            },
+        )
+    }
+
+    /// The paths the wire was asked for, in order.
+    fn asked(wire: &ScriptedWire) -> Vec<String> {
+        wire.sent()
+            .iter()
+            .map(|sent| sent.url.path().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn barcode_normaliser_table() {
+        let cases = [
+            ("634904032463", Some("00634904032463")),
+            ("0634904032463", Some("00634904032463")),
+            ("00634904032463", Some("00634904032463")),
+            ("5099997855354", Some("05099997855354")),
+            ("05099997855354", Some("05099997855354")),
+            (" 634904032463 ", Some("00634904032463")),
+            ("634904032464", None),
+            ("5099997855355", None),
+            ("000000000017", None),
+            ("00000017", None),
+            ("63490403246X", None),
+            ("6349 0403 2463", None),
+            ("123456789", None),
+            ("123456789012345", None),
+            ("", None),
+        ];
+        for (barcode, expected) in cases {
+            assert_eq!(gtin14(barcode).as_deref(), expected, "barcode {barcode:?}");
+        }
+    }
+
+    /// A 14-digit barcode asks only its GTIN-13 form. A 12-digit barcode asks its
+    /// 12-digit form first, and the hit ends the lookup. The leading-zero GTIN-13
+    /// form is scripted with its recorded 800 and must not be asked, so a lookup
+    /// that asked it would show in the request list.
+    #[tokio::test]
+    async fn barcode_lookup_takes_the_album_whose_barcode_matches() {
+        let wire = Arc::new(ScriptedWire::new());
+        wire.answer(
+            &format!("{BASE}/album/upc:5099997855354"),
+            200,
+            &[],
+            MELLON_COLLIE,
+        );
+        let found = providers(&wire)
+            .previews
+            .deezer_album_by_upc("05099997855354", RequestPriority::UserInitiated)
+            .await;
+        assert_eq!(found, Ok(Some(6158273)));
+        assert_eq!(asked(&wire), ["/album/upc:5099997855354"]);
+
+        let wire = Arc::new(ScriptedWire::new());
+        wire.answer(
+            &format!("{BASE}/album/upc:0634904032463"),
+            200,
+            &[],
+            LEADING_ZERO_800,
+        );
+        wire.answer(
+            &format!("{BASE}/album/upc:634904032463"),
+            200,
+            &[],
+            IN_RAINBOWS,
+        );
+        let found = providers(&wire)
+            .previews
+            .deezer_album_by_upc("634904032463", RequestPriority::UserInitiated)
+            .await;
+        assert_eq!(found, Ok(Some(14880659)));
+        assert_eq!(asked(&wire), ["/album/upc:634904032463"]);
+    }
+
+    /// Code 800 and an answer naming another barcode are both absence. The
+    /// 14-digit form is scripted too, so a lookup that asked it would show. In
+    /// the second case the 12-digit answer is a scripted mismatch (another
+    /// album's recorded answer, given at the path asked); the leading-zero
+    /// answer is recorded.
+    #[tokio::test]
+    async fn barcode_lookup_is_absence_for_code_800_and_for_a_miss() {
+        let wire = Arc::new(ScriptedWire::new());
+        wire.answer(
+            &format!("{BASE}/album/upc:05099997855354"),
+            200,
+            &[],
+            UNKNOWN_14,
+        );
+        wire.answer(
+            &format!("{BASE}/album/upc:5099997855354"),
+            200,
+            &[],
+            UNKNOWN,
+        );
+        let found = providers(&wire)
+            .previews
+            .deezer_album_by_upc("05099997855354", RequestPriority::UserInitiated)
+            .await;
+        assert_eq!(found, Ok(None));
+        assert_eq!(asked(&wire), ["/album/upc:5099997855354"]);
+
+        let wire = Arc::new(ScriptedWire::new());
+        // The mismatch is scripted: Mellon Collie's recorded answer, given at
+        // the 12-digit path that In Rainbows' barcode asks first.
+        wire.answer(
+            &format!("{BASE}/album/upc:634904032463"),
+            200,
+            &[],
+            MELLON_COLLIE,
+        );
+        wire.answer(
+            &format!("{BASE}/album/upc:0634904032463"),
+            200,
+            &[],
+            LEADING_ZERO_800,
+        );
+        let found = providers(&wire)
+            .previews
+            .deezer_album_by_upc("634904032463", RequestPriority::UserInitiated)
+            .await;
+        assert_eq!(found, Ok(None));
+        assert_eq!(
+            asked(&wire),
+            ["/album/upc:634904032463", "/album/upc:0634904032463"]
+        );
+
+        // A GTIN-14 with indicator digit 1 is a pack of In Rainbows, not the
+        // album: nothing is asked.
+        let wire = Arc::new(ScriptedWire::new());
+        let found = providers(&wire)
+            .previews
+            .deezer_album_by_upc("10634904032460", RequestPriority::UserInitiated)
+            .await;
+        assert_eq!(found, Ok(None));
+        assert!(asked(&wire).is_empty());
+    }
+
+    /// A quota answer is a failure the executor paces and retries, never
+    /// absence: the retry's album is the answer.
+    #[tokio::test(start_paused = true)]
+    async fn barcode_lookup_paces_a_quota_answer_and_retries_it() {
+        let wire = Arc::new(ScriptedWire::new());
+        let url = format!("{BASE}/album/upc:5099997855354");
+        wire.answer(&url, 200, &[], QUOTA);
+        wire.answer(&url, 200, &[], MELLON_COLLIE);
+        let found = providers(&wire)
+            .previews
+            .deezer_album_by_upc("5099997855354", RequestPriority::BackgroundSync)
+            .await;
+        assert_eq!(found, Ok(Some(6158273)));
+        assert_eq!(
+            asked(&wire),
+            ["/album/upc:5099997855354", "/album/upc:5099997855354"]
+        );
     }
 }

@@ -27,6 +27,7 @@ use super::models::{
     UsenetSearchBackend, VerifyConnectionResponse,
 };
 use super::wiring::SettingsSetup;
+use droppedneedle_acquire::imports::health::DeemixStatusResponse;
 use droppedneedle_auth::{Admin, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidJson;
@@ -37,7 +38,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     SlskdConnection, YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy, LibraryScanSchedule, SecuritySettings, listenbrainz_reads_on,
+    DeemixConnection, DownloadPolicy, LibraryScanSchedule, SecuritySettings, listenbrainz_reads_on,
 };
 use droppedneedle_library::management::script_preview::{
     self, ScriptPreviewRequest, ScriptPreviewResponse,
@@ -695,6 +696,30 @@ pub async fn test_sabnzbd(
     settings
         .service()
         .verify_sabnzbd(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Check the submitted Deemix values: whether Deemix answers, its Deezer
+/// sign-in and the quality that gives, and what to change. The saved
+/// address is read on the session DroppedNeedle keeps with Deemix; another
+/// address on a new one. Nothing signs in.
+#[utoipa::path(
+    post,
+    tag = "settings",
+    path = "/api/v3/settings/download-clients/deemix/test",
+    request_body = DeemixConnection,
+    responses((status = 200, description = "Deemix check", body = DeemixStatusResponse))
+)]
+pub async fn test_deemix(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+    ValidJson(body): ValidJson<DeemixConnection>,
+) -> JsonResult<DeemixStatusResponse> {
+    settings
+        .service()
+        .verify_deemix(body, settings.deemix())
         .await
         .map(Json)
         .map_err(ApiError::from)

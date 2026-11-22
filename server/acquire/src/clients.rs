@@ -1,15 +1,18 @@
 //! The acquisition clients, built from the saved settings: the slskd
-//! repository, the Usenet queue (SABnzbd or NZBGet) and the indexers, as download
-//! sources for the worker and as inputs for the health probes.
+//! repository, the Usenet queue (SABnzbd or NZBGet), the indexers and
+//! Deemix, as download sources for the worker and as inputs for the health
+//! probes.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::deemix::client::{DeemixClient, DeemixError};
+use crate::deemix::source::{DeemixParts, DeemixSource};
 use crate::downloads::journal::Journal;
 use crate::downloads::sources::DownloadSource;
 use crate::downloads::worker::SourceSet;
-use crate::probes::ProbeInputs;
+use crate::probes::{DeemixInputs, ProbeInputs};
 use crate::slskd::{DownloadPolicy as SlskdPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository};
 use crate::sources::{SlskdSource, UsenetSource};
 use crate::target::Targets;
@@ -19,11 +22,13 @@ use crate::usenet::policy::UsenetPolicy;
 use crate::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
 use crate::usenet::queue::{UsenetClients, UsenetQueue};
 use crate::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
-use crate::wiring::{ClientLives, usenet_indexers};
+use crate::wiring::{ClientLives, DeemixWiring, usenet_indexers};
 use droppedneedle_kernel::runtime_config::secret_sections::{
     DownloadClients, NewznabIndexer as ConfigIndexer, ProwlarrConnection, SlskdConnection,
 };
-use droppedneedle_kernel::runtime_config::sections::{DownloadPolicy, UsenetBackendSetting};
+use droppedneedle_kernel::runtime_config::sections::{
+    DeemixConnection, DownloadPolicy, UsenetBackendSetting,
+};
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_providers::newznab::NewznabIndexers;
 use tokio::sync::watch;
@@ -39,7 +44,13 @@ pub(crate) struct ClientSettings {
     pub(crate) backend: UsenetBackendSetting,
     /// Library root folders (the mount probe compares filesystems).
     pub(crate) library_roots: Vec<PathBuf>,
+    /// The Deemix connection; a section that does not read is Deemix off.
+    pub(crate) deemix: DeemixConnection,
 }
+
+/// How long one Deemix call from a download may take. A queue read is
+/// at most 32 MB.
+const DEEMIX_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// One built set of clients for the current settings.
 pub struct ClientSet {
@@ -80,13 +91,17 @@ pub struct LiveClients {
     /// pipeline through the host.
     plugins: Arc<PluginHost>,
     targets: Arc<Targets>,
+    /// The Deemix session and what every Deezer source is given, kept
+    /// across rebuilds.
+    deemix: DeemixWiring,
 }
 
 impl LiveClients {
     /// Clients over the live sections. `slskd_downloads` is the slskd
     /// downloads mount (`SLSKD_DOWNLOADS_PATH`); `newznab` hands out the
     /// indexers' clients; `no_redirect` follows no redirect and
-    /// `same_host` only one on the same host.
+    /// `same_host` only one on the same host. `deemix` holds the one
+    /// Deemix session every Deezer source shares.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         http: reqwest::Client,
@@ -98,6 +113,7 @@ impl LiveClients {
         journal: Arc<Journal>,
         targets: Arc<Targets>,
         plugins: Arc<PluginHost>,
+        deemix: DeemixWiring,
     ) -> Self {
         Self {
             http,
@@ -110,6 +126,7 @@ impl LiveClients {
             built: Mutex::new(None),
             plugins,
             targets,
+            deemix,
         }
     }
 
@@ -151,6 +168,7 @@ impl LiveClients {
 
     /// The client set for the current settings.
     pub fn current(&self) -> Arc<ClientSet> {
+        self.deemix.checks.after_saves();
         let mut built = match self.built.lock() {
             Ok(built) => built,
             Err(poisoned) => poisoned.into_inner(),
@@ -244,6 +262,14 @@ impl LiveClients {
                 self.targets.clone(),
             )));
         }
+        if readable && settings.deemix.enabled && !settings.deemix.url.is_empty() {
+            match self.deemix_source(&settings.deemix) {
+                Ok(source) => sources.push(Arc::new(source)),
+                Err(error) => {
+                    tracing::warn!(%error, "the Deemix address is not usable; Deezer is not a download source");
+                }
+            }
+        }
         let probe_inputs = Arc::new(ProbeInputs {
             slskd: slskd_repo,
             slskd_enabled: settings.slskd.enabled,
@@ -253,11 +279,36 @@ impl LiveClients {
             sabnzbd: sab_queue,
             nzbget: nzbget_queue,
             sabnzbd_section: settings.sabnzbd.clone(),
+            deemix: DeemixInputs {
+                checks: self.deemix.checks.clone(),
+                section: settings.deemix.clone(),
+            },
         });
         ClientSet {
             sources: Arc::new(sources),
             probe_inputs,
         }
+    }
+
+    /// Deezer through the Deemix the section sets up, on the kept session.
+    fn deemix_source(&self, section: &DeemixConnection) -> Result<DeemixSource, DeemixError> {
+        let client = DeemixClient::new(
+            self.no_redirect.clone(),
+            &section.url,
+            self.deemix.session.clone(),
+            DEEMIX_TIMEOUT,
+        )?;
+        Ok(DeemixSource::new(DeemixParts {
+            client,
+            previews: self.deemix.previews.clone(),
+            journal: self.journal.clone(),
+            targets: self.targets.clone(),
+            policy: self.deemix.policy.clone(),
+            downloads_mount: PathBuf::from(section.downloads_mount.trim()),
+            neighbours: self.deemix.neighbours.clone(),
+            clock: self.deemix.clock.clone(),
+            memory: self.deemix.memory.clone(),
+        }))
     }
 }
 
