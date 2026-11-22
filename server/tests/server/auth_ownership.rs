@@ -174,6 +174,27 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
     (
         Owned::Playlist,
         "POST",
+        "/api/v3/playlists/{playlist_id}/pull-now",
+        404,
+        404,
+    ),
+    (
+        Owned::Playlist,
+        "PUT",
+        "/api/v3/playlists/{playlist_id}/pull",
+        404,
+        404,
+    ),
+    (
+        Owned::Playlist,
+        "GET",
+        "/api/v3/playlists/{playlist_id}/acquire-progress",
+        404,
+        404,
+    ),
+    (
+        Owned::Playlist,
+        "POST",
         "/api/v3/playlists/{playlist_id}/tracks",
         404,
         404,

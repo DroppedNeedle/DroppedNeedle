@@ -65,6 +65,26 @@ pub struct PlaylistAcquire {
     runs: Mutex<HashMap<String, AcquireState>>,
 }
 
+impl AcquireItem {
+    /// Whether two items name the same album, or the same song.
+    fn same(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.artist.eq_ignore_ascii_case(&other.artist)
+            && match self.kind {
+                AcquireKind::Album => self
+                    .album
+                    .as_deref()
+                    .unwrap_or("")
+                    .eq_ignore_ascii_case(other.album.as_deref().unwrap_or("")),
+                AcquireKind::Track => self
+                    .title
+                    .as_deref()
+                    .unwrap_or("")
+                    .eq_ignore_ascii_case(other.title.as_deref().unwrap_or("")),
+            }
+    }
+}
+
 impl PlaylistAcquire {
     /// A batch runner over the request ledger and the resolver.
     pub fn new(
@@ -89,13 +109,20 @@ impl PlaylistAcquire {
             .flatten()
     }
 
-    /// Start a run for `playlist_id`, unless one is going.
-    pub fn start(
+    /// Start a run for `playlist_id`, unless one is going. Items that do
+    /// not match an unowned row of the playlist are dropped first, so a
+    /// caller cannot ask for anything else through this route.
+    pub async fn start(
         self: &Arc<Self>,
         principal: Principal,
         playlist_id: String,
         items: Vec<AcquireItem>,
     ) -> AcquireState {
+        let allowed = self.items_from(principal.user_id(), &playlist_id).await;
+        let items: Vec<AcquireItem> = items
+            .into_iter()
+            .filter(|item| allowed.iter().any(|row| row.same(item)))
+            .collect();
         let state = AcquireState {
             state: "running".to_owned(),
             requested: 0,
@@ -217,8 +244,7 @@ impl PlaylistAcquire {
                     service.request_album(principal, &intake).await
                 };
                 match outcome {
-                    Ok(response) if response.task_id.is_some() => Filed::Requested,
-                    Ok(_) => Filed::Skipped,
+                    Ok(_) => Filed::Requested,
                     Err(
                         RequestsError::QuotaExceeded { .. } | RequestsError::StorageFull { .. },
                     ) => Filed::Skipped,
@@ -279,6 +305,13 @@ impl PlaylistAcquire {
         let mut items: Vec<AcquireItem> = Vec::new();
         for track in &tracks {
             if track.library_file_id.is_some() {
+                continue;
+            }
+            if track
+                .available_sources
+                .as_ref()
+                .is_some_and(|sources| sources.iter().any(|source| !source.trim().is_empty()))
+            {
                 continue;
             }
             let artist = track.artist_name.trim().to_owned();

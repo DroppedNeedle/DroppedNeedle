@@ -66,17 +66,21 @@ impl PlaylistPull {
     /// Check one playlist now, for its owner. Answers whether the source
     /// changed and an import was queued.
     pub async fn check_now(&self, playlist_id: &str) -> Result<bool, String> {
-        let due = self
+        let Some((user_id, source_ref, stored, acquire)) = self
             .service
-            .enabled_pulls()
+            .pull_row(playlist_id)
             .await
-            .map_err(|error| error.to_string())?;
-        let Some((id, user_id, source_ref, stored, _acquire)) =
-            due.into_iter().find(|(id, ..)| id == playlist_id)
+            .map_err(|error| error.to_string())?
         else {
             return Ok(false);
         };
-        self.check_row(&id, &user_id, &source_ref, stored).await
+        let changed = self
+            .check_row(playlist_id, &user_id, &source_ref, stored)
+            .await?;
+        if acquire {
+            self.acquire_missing(&user_id, playlist_id).await;
+        }
+        Ok(changed)
     }
 
     /// Ask for what the playlist still lacks, as its owner.
@@ -86,7 +90,7 @@ impl PlaylistPull {
         };
         let items = self.acquire.items_from(user_id, playlist_id).await;
         if !items.is_empty() {
-            self.acquire.start(principal, playlist_id.to_owned(), items);
+            self.acquire.start(principal, playlist_id.to_owned(), items).await;
         }
     }
 

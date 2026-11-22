@@ -124,19 +124,23 @@
 	const requestRows = $derived(
 		playlist
 			? playlist.tracks.filter(
-					(t) => !t.library_file_id && t.track_name.trim() !== '' && t.artist_name.trim() !== ''
+					(t) =>
+						!t.library_file_id &&
+						!(t.available_sources?.length ?? 0) &&
+						t.track_name.trim() !== '' &&
+						t.artist_name.trim() !== ''
 				)
 			: []
 	);
 
-	$effect(() => {
-		if (!requestOpen) return;
-		const next: Record<string, 'album' | 'track'> = { ...requestChoices };
+	function openRequestDialog() {
+		const next: Record<string, 'album' | 'track'> = {};
 		for (const row of requestRows) {
-			if (!(row.id in next)) next[row.id] = row.album_name.trim() ? 'album' : 'track';
+			next[row.id] = row.album_name.trim() ? 'album' : 'track';
 		}
 		requestChoices = next;
-	});
+		requestOpen = true;
+	}
 
 	async function handleRequestMissing() {
 		if (requesting || !playlist) return;
@@ -410,7 +414,7 @@
 						size="display-sm"
 						icon={Download}
 						loading={requesting}
-						onclick={() => (requestOpen = true)}
+						onclick={openRequestDialog}
 					>
 						Request {missingAlbumCount}
 					</Button>

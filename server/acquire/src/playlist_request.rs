@@ -11,7 +11,6 @@ use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
-    response::IntoResponse,
 };
 use droppedneedle_auth::User;
 use droppedneedle_catalog::collections::store::playlists::PlaylistStore;
@@ -22,15 +21,7 @@ use utoipa::ToSchema;
 
 use crate::imports::playlist_pull::PlaylistPull;
 use crate::imports::spotify_albums::AlbumResolver;
-use crate::requests::error::RequestsError;
-use crate::requests::ledger::ApprovalState;
-use crate::requests::models::{AlbumIntake, RequestKind, TrackIntake};
-use crate::requests::service::RequestsService;
 use crate::requests::state::RequestsState;
-
-/// Most albums one press files. The Weekly Mix caps the same way, so one
-/// press on a large import never turns into a long MusicBrainz walk.
-const MAX_REQUESTS_PER_PRESS: usize = 10;
 
 /// Every dependency the route needs.
 #[derive(Clone)]
@@ -69,7 +60,7 @@ pub struct PullNowResponse {
     tag = "playlists",
     path = "/api/v3/playlists/{playlist_id}/pull-now",
     params(("playlist_id" = String, Path, description = "Playlist id")),
-    responses((status = 202, body = PullNowResponse))
+    responses((status = 200, body = PullNowResponse))
 )]
 pub async fn pull_now_handler(
     State(deps): State<PlaylistRequestDeps>,
@@ -108,7 +99,7 @@ pub async fn request_missing_handler(
     User(principal): User,
     Path(playlist_id): Path<String>,
     body: Option<Json<AcquireBody>>,
-) -> Result<Json<crate::playlist_acquire::AcquireState>, ApiError> {
+) -> Result<(StatusCode, Json<crate::playlist_acquire::AcquireState>), ApiError> {
     let owned = deps.playlists.owned_by(principal.user_id());
     if owned
         .get(&playlist_id)
@@ -126,7 +117,7 @@ pub async fn request_missing_handler(
                 .await
         }
     };
-    Ok(Json(deps.acquire.start(principal, playlist_id, items)))
+    Ok((StatusCode::ACCEPTED, Json(deps.acquire.start(principal, playlist_id, items).await)))
 }
 
 /// One press's batch, or the default list.

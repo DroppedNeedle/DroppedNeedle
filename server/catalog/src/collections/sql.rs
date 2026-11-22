@@ -119,10 +119,16 @@ droppedneedle_kernel::sql! {
          WHERE playlist_id = ?1";
     /// The newest import job for playlist `?1`, while it runs or after it
     /// failed.
-    pub(super) PLAYLIST_IMPORT_STATE = "SELECT state FROM durable_jobs \
-         WHERE kind = 'spotify.import' \
+    pub(super) PLAYLIST_IMPORT_STATE = "SELECT CASE \
+         WHEN state IN ('queued', 'running') THEN 'running' \
+         WHEN state = 'failed' THEN 'failed' END \
+         FROM durable_jobs WHERE kind = 'spotify.import' \
          AND json_extract(payload_json, '$.playlist_id') = ?1 \
-         ORDER BY created_at DESC LIMIT 1";
+         ORDER BY created_at DESC, id DESC LIMIT 1";
+    /// One playlist's pull row by id, whatever its enabled flag: owner,
+    /// source, stored snapshot and the acquire flag.
+    pub(super) PULL_ROW = "SELECT user_id, source_ref, snapshot_id, acquire \
+         FROM catalog_playlist_pull_state WHERE playlist_id = ?1";
     /// For each `[track, artist, album]` in the JSON array `?2`, by its
     /// index, the playlists the caller may read holding an entry with
     /// exactly those names.

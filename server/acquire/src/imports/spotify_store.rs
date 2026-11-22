@@ -258,6 +258,17 @@ impl CollectionsPlaylistBridge {
         Self { playlists, db }
     }
 
+    /// One playlist's pull row, whatever its enabled flag.
+    pub async fn pull_row(
+        &self,
+        playlist_id: &str,
+    ) -> Result<Option<(String, String, Option<String>, bool)>, String> {
+        self.playlists
+            .pull_row(playlist_id)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
     /// Every playlist that pulls, with its owner, source and snapshot.
     pub async fn enabled_pulls(
         &self,

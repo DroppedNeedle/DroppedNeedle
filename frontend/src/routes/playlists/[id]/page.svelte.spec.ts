@@ -49,7 +49,12 @@ vi.mock('$lib/features/playlists/queries/PlaylistV3Queries.svelte', () => ({
 vi.mock('$lib/features/playlists/queries/PlaylistV3Mutations.svelte', () => ({
 	createSetPlaylistVisibilityV3Mutation: () => ({ mutateAsync: mockShareMutate, isPending: false }),
 	createDeletePlaylistV3Mutation: () => ({ mutateAsync: mockDeleteMutate, isPending: false }),
-	createRequestMissingV3Mutation: () => ({ mutateAsync: mockRequestMissing, isPending: false }),
+	createAcquirePlaylistV3Mutation: () => ({ mutateAsync: mockRequestMissing, isPending: false }),
+	getAcquireProgressV3: vi
+		.fn()
+		.mockResolvedValue({ state: 'done', requested: 0, skipped: 0, failed: 0, total: 0 }),
+	createSetPlaylistPullV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createCheckPlaylistPullV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createLeavePlaylistV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createSetPlaylistMembersV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createUpdatePlaylistV3Mutation: () => ({ mutateAsync: mockRenameMutate, isPending: false }),

@@ -631,6 +631,29 @@ fn insert_entries(
 }
 
 impl PlaylistStore {
+    /// One playlist's pull row by id, whatever its enabled flag: owner,
+    /// source, stored snapshot and the acquire flag.
+    pub async fn pull_row(
+        &self,
+        playlist_id: &str,
+    ) -> Result<Option<(String, String, Option<String>, bool)>, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.db
+            .read("playlists.pull_row", move |conn| {
+                Ok(conn
+                    .query_row(sql::PULL_ROW.text(), params![playlist_id], |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get::<_, i64>(3)? != 0,
+                        ))
+                    })
+                    .optional()?)
+            })
+            .await
+    }
+
     /// Every playlist that pulls: id, owner, source ref and stored
     /// snapshot.
     pub async fn enabled_pulls(

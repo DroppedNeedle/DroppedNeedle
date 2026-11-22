@@ -43513,7 +43513,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            202: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
