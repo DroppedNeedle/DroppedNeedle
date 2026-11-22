@@ -20,11 +20,15 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use super::{DownloadWorker, Pass, SourceSet, in_try_order};
 use crate::dispatch::DispatchOrigin;
 use crate::downloads::store::TaskRow;
-use crate::search_jobs::candidates::Pin;
+use crate::search_jobs::candidates::{
+    Candidate, CandidateFile, CandidateNote, CandidateNoteCode, CandidateTier, Pin,
+};
 use crate::search_jobs::review::{ReviewMode, Verdict, verdict};
 use crate::search_jobs::search_sources;
 use crate::search_jobs::store::{JobPayload, JobStatus, JobStore, NewJob, ReviewOutcome};
+use crate::target::SearchTarget;
 use droppedneedle_kernel::events::{SearchJobUpdated, UserNotice, new_event_id};
+use droppedneedle_library::tags::format_for_extension;
 
 /// Looks running at once.
 pub(super) const MAX_CONCURRENT_REVIEWS: usize = 2;
@@ -135,7 +139,7 @@ impl DownloadWorker {
         };
         let job_id = uuid::Uuid::new_v4().simple().to_string();
         let ordered: Vec<_> = in_try_order(sources, order).into_iter().cloned().collect();
-        let (candidates, _failed) = search_sources(&ordered, &target, &job_id).await;
+        let (mut candidates, _failed) = search_sources(&ordered, &target, &job_id).await;
         let upgrade = task.origin == DispatchOrigin::Upgrade;
         // "Always wait for my pick" covers requests and wanted albums: an
         // upgrade that waits costs nothing but a growing queue.
@@ -143,6 +147,22 @@ impl DownloadWorker {
             ReviewMode::WhenUnsure
         } else {
             mode
+        };
+        // The edition is a preference and nothing fits it: a folder that
+        // holds every track of another edition of the group, to the second,
+        // proves itself just as well, and the download may prefer that
+        // edition.
+        let fitted = if mode == ReviewMode::WhenUnsure && target.release_preferred {
+            fit_other_edition(
+                self,
+                task,
+                &target,
+                &mut candidates,
+                release_mbid.as_deref(),
+            )
+            .await
+        } else {
+            None
         };
         let outcome = match verdict(mode, &candidates) {
             Verdict::Nothing => return Reviewed::Search,
@@ -161,6 +181,14 @@ impl DownloadWorker {
             }
         };
         let count = candidates.len();
+        let (payload_release, payload_preferred) = match (&outcome, &fitted) {
+            (ReviewOutcome::Take(index, _, _), Some((fitted_index, release)))
+                if usize::try_from(*index).ok() == Some(*fitted_index) =>
+            {
+                (Some(release.clone()), true)
+            }
+            _ => (release_mbid.clone(), false),
+        };
         let job = NewJob {
             id: job_id.clone(),
             user_id: task.user_id.clone(),
@@ -172,8 +200,8 @@ impl DownloadWorker {
             release_mbid: release_mbid.clone(),
         };
         let payload = JobPayload {
-            release_mbid,
-            release_preferred: false,
+            release_mbid: payload_release,
+            release_preferred: payload_preferred,
             tracks_total: (!target.tracklist.is_empty()).then_some(target.tracklist.len()),
             candidates,
         };
@@ -224,4 +252,114 @@ impl DownloadWorker {
             }),
         );
     }
+}
+
+/// How far a file's length may sit from the edition's, in seconds: the
+/// same tolerance the folder ranking allows.
+const LENGTH_TOLERANCE_SECONDS: f64 = 3.0;
+
+/// The first candidate that holds every track of another edition of the
+/// group, each length within the tolerance, and the release it fits.
+async fn fit_other_edition(
+    worker: &DownloadWorker,
+    task: &TaskRow,
+    target: &SearchTarget,
+    candidates: &mut [Candidate],
+    preferred: Option<&str>,
+) -> Option<(usize, String)> {
+    let group = task.release_group_mbid.trim();
+    if group.is_empty() {
+        return None;
+    }
+    if candidates
+        .iter()
+        .any(|candidate| candidate.view.tier == CandidateTier::Recommended)
+    {
+        return None;
+    }
+    let mut counts: Vec<usize> = candidates
+        .iter()
+        .filter(|candidate| candidate.view.tier == CandidateTier::Possible)
+        .map(audio_file_count)
+        .filter(|count| *count > 0)
+        .collect();
+    counts.sort_unstable();
+    counts.dedup();
+    if counts.is_empty() {
+        return None;
+    }
+    let editions = worker
+        .targets
+        .other_editions(group, &counts, preferred)
+        .await;
+    if editions.is_empty() {
+        return None;
+    }
+    for (index, candidate) in candidates.iter_mut().enumerate() {
+        if candidate.view.tier != CandidateTier::Possible {
+            continue;
+        }
+        for (release, lengths) in &editions {
+            if edition_fits(&candidate.view.files, lengths) {
+                candidate.view.tier = CandidateTier::Recommended;
+                candidate.view.note = CandidateNote {
+                    code: CandidateNoteCode::Complete,
+                    text: "Holds every track of another edition of this album.".to_owned(),
+                };
+                tracing::info!(
+                    task_id = %task.id,
+                    %release,
+                    artist = %target.artist,
+                    "search review: another edition of the album fits"
+                );
+                return Some((index, release.clone()));
+            }
+        }
+    }
+    None
+}
+
+/// Audio files the candidate would fetch.
+fn audio_file_count(candidate: &Candidate) -> usize {
+    candidate
+        .view
+        .files
+        .iter()
+        .filter(|file| format_for_extension(&file.extension).is_some())
+        .count()
+}
+
+/// Whether every audio file fits a distinct track of the edition within
+/// the tolerance. A file whose length the source does not give cannot
+/// prove a fit, so one missing length answers no.
+fn edition_fits(files: &[CandidateFile], lengths_ms: &[u64]) -> bool {
+    let mut audio = Vec::new();
+    for file in files {
+        if format_for_extension(&file.extension).is_none() {
+            continue;
+        }
+        let Some(seconds) = file.duration_seconds else {
+            return false;
+        };
+        audio.push(seconds);
+    }
+    if audio.len() != lengths_ms.len() || audio.is_empty() {
+        return false;
+    }
+    let mut used = vec![false; audio.len()];
+    for length in lengths_ms {
+        let want = *length as f64 / 1000.0;
+        let mut matched = false;
+        for (index, seconds) in audio.iter().enumerate() {
+            if !used[index] && (*seconds - want).abs() <= LENGTH_TOLERANCE_SECONDS {
+                used[index] = true;
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            return false;
+        }
+    }
+    true
 }

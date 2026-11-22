@@ -36,6 +36,9 @@ use droppedneedle_providers::RequestPriority;
 /// Release lookups tried for one recording before giving up on an album.
 const MAX_RELEASES_TRIED: usize = 4;
 
+/// Other editions of the group one review tries before it parks.
+const MAX_OTHER_EDITIONS: usize = 4;
+
 /// The single track a track task wants.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackWant {
@@ -136,6 +139,59 @@ impl Targets {
                 None
             }
         }
+    }
+
+    /// Other editions of `group` whose track count is in `counts`, with
+    /// their track lengths in milliseconds. `preferred` is skipped, since a
+    /// folder that fits it already ranked against it. Empty when the group
+    /// is unknown, nothing matches, or the catalog cannot answer; the
+    /// review then parks as it did before.
+    pub async fn other_editions(
+        &self,
+        group: &str,
+        counts: &[usize],
+        preferred: Option<&str>,
+    ) -> Vec<(String, Vec<u64>)> {
+        let group = group.trim();
+        if group.is_empty() || counts.is_empty() {
+            return Vec::new();
+        }
+        let editions = match self.catalog.album_editions(group).await {
+            Ok(response) => response.items,
+            Err(error) => {
+                tracing::debug!(release_group_mbid = %group, %error, "edition list unavailable; no other edition tried");
+                return Vec::new();
+            }
+        };
+        let mut found = Vec::new();
+        for edition in editions {
+            if found.len() >= MAX_OTHER_EDITIONS {
+                break;
+            }
+            if preferred.is_some_and(|id| id.eq_ignore_ascii_case(&edition.release_mbid)) {
+                continue;
+            }
+            let count = usize::try_from(edition.track_count).unwrap_or(usize::MAX);
+            if !counts.contains(&count) {
+                continue;
+            }
+            match self.catalog.edition_tracks(&edition.release_mbid).await {
+                Ok(tracks) => {
+                    let lengths: Vec<u64> = tracks
+                        .tracks
+                        .iter()
+                        .filter_map(|track| track.length)
+                        .collect();
+                    if lengths.len() == count && !lengths.is_empty() {
+                        found.push((edition.release_mbid, lengths));
+                    }
+                }
+                Err(error) => {
+                    tracing::debug!(release_mbid = %edition.release_mbid, %error, "edition tracks unavailable");
+                }
+            }
+        }
+        found
     }
 
     /// The task's target, resolved now or read back from its plan. A plan
