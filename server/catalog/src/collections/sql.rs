@@ -121,7 +121,7 @@ droppedneedle_kernel::sql! {
     /// failed.
     pub(super) PLAYLIST_IMPORT_STATE = "SELECT CASE \
          WHEN state IN ('queued', 'running') THEN 'running' \
-         WHEN state = 'failed' THEN 'failed' END \
+         WHEN state = 'failed' THEN 'failed' ELSE '' END \
          FROM durable_jobs WHERE kind = 'spotify.import' \
          AND json_extract(payload_json, '$.playlist_id') = ?1 \
          ORDER BY created_at DESC, id DESC LIMIT 1";

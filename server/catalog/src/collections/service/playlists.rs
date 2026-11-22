@@ -566,7 +566,7 @@ impl CollectionsService<'_> {
         let visible = self.playlists().visible_to(user_id);
         let tracks = visible.tracks(playlist_id).await?;
         let mut detail = detail(&row, user_id, admin, tracks);
-        detail.import_state = visible.import_state(playlist_id).await?;
+        detail.import_state = visible.import_state(playlist_id).await?.filter(|state| !state.is_empty());
         if let Some((enabled, acquire, checked, error)) = visible.pull_state(playlist_id).await? {
             detail.pull_enabled = enabled;
             detail.pull_acquire = acquire;
