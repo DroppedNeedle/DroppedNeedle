@@ -30,6 +30,7 @@
 	import Modal from '$lib/ui/Modal.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import { untrack } from 'svelte';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
 	interface Props {
 		open: boolean;
@@ -113,12 +114,26 @@
 		suggestedAlbums.filter((a) => !ignoredIds.has(a.musicbrainz_id ?? a.title))
 	);
 
+	// genre_distribution lists each artist's genres; a chip is a genre, ranked
+	// by how many of the playlist's artists carry it.
 	const topGenres = $derived.by(() => {
-		const distribution = profile?.genre_distribution ?? {};
-		const entries = Object.entries(distribution);
-		if (entries.length === 0) return [];
-		entries.sort((a, b) => b[1].length - a[1].length);
-		return entries.slice(0, 5).map(([genre]) => genre);
+		const counts = new SvelteMap<string, { name: string; count: number }>();
+		for (const genres of Object.values(profile?.genre_distribution ?? {})) {
+			const seen = new SvelteSet<string>();
+			for (const genre of genres) {
+				const name = genre.trim();
+				const key = name.toLowerCase();
+				if (!key || seen.has(key)) continue;
+				seen.add(key);
+				const entry = counts.get(key);
+				if (entry) entry.count++;
+				else counts.set(key, { name, count: 1 });
+			}
+		}
+		return [...counts.values()]
+			.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+			.slice(0, 5)
+			.map((entry) => entry.name);
 	});
 
 	const errorStatus = $derived.by(() => {

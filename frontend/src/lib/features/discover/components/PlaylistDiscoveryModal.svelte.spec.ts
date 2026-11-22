@@ -53,6 +53,33 @@ describe('PlaylistDiscoveryModal.svelte', () => {
 		await expect.element(page.getByRole('button', { name: 'Try Again' })).not.toBeInTheDocument();
 	});
 
+	it('shows genre names as chips, the most common first', async () => {
+		const ids = ['a1111111', 'a2222222', 'a3333333'];
+		fakeApi({
+			[SUGGEST]: {
+				...answer(['First']),
+				profile: {
+					artist_mbids: ids,
+					genre_distribution: {
+						[ids[0]]: ['Rock', 'Shoegaze'],
+						[ids[1]]: ['Shoegaze', 'Dream Pop'],
+						[ids[2]]: ['shoegaze', 'Rock']
+					},
+					track_count: 30
+				}
+			}
+		});
+		await open();
+		const chips = page.getByText(/^(Shoegaze|Rock|Dream Pop)$/);
+		await expect.element(chips.first()).toBeVisible();
+		expect(chips.elements().map((chip) => chip.textContent)).toEqual([
+			'Shoegaze',
+			'Rock',
+			'Dream Pop'
+		]);
+		await expect.element(page.getByText(ids[0])).not.toBeInTheDocument();
+	});
+
 	it('says no more suggestions are left once every result is ignored', async () => {
 		fakeApi({ [SUGGEST]: answer(['First', 'Second']) });
 		await open();
