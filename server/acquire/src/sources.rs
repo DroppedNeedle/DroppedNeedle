@@ -263,10 +263,11 @@ impl SlskdSource {
             single_track: false,
             release_preferred: target.release_preferred,
         };
-        Ok(rank_listing(&hits, request, self.repo.policy())
+        let policy = self.repo.policy();
+        Ok(rank_listing(&hits, request, policy)
             .into_iter()
             .take(MAX_PER_SOURCE)
-            .map(Candidate::from_folder)
+            .map(|pick| Candidate::from_listed_folder(pick, policy))
             .collect())
     }
 }

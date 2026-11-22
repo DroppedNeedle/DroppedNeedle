@@ -56,7 +56,7 @@ pub struct EnqueueFile {
 }
 
 /// One per-file search hit, translated from slskd's shapes.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult {
     pub username: String,
     pub filename: String,

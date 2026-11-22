@@ -16,6 +16,8 @@
 //! What cannot be fetched at all (blocklisted, password-protected, past
 //! retention, nothing importable) is never listed.
 
+use std::sync::Arc;
+
 use droppedneedle_library::tags::format_for_extension;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -23,12 +25,13 @@ use utoipa::ToSchema;
 use crate::deemix::client::Bitrate;
 use crate::deemix::models::Tracklist;
 use crate::deemix::pick::{Misfit, Score};
+use crate::downloads::plan::ExpectedTrack;
 use crate::downloads::quarantine::RejectedCopies;
 use crate::downloads::source_tag::SourceTag;
 use crate::plugin_source::{Band, ScoredRelease, release_identity};
 use crate::reason::Reason;
-use crate::slskd::SearchResult;
-use crate::slskd::folders::FolderPick;
+use crate::slskd::folders::{FolderPick, RankRequest, rank_listing};
+use crate::slskd::{DownloadPolicy, SearchResult};
 use crate::target::SearchTarget;
 use crate::target::releases::release_fit;
 use crate::usenet::newznab::{IndexerResult, usenet_identity};
@@ -223,6 +226,18 @@ pub struct Candidate {
     pub view: SearchCandidateView,
     /// What the worker fetches.
     pub pin: Pin,
+    /// A Soulseek folder's search hits and the rules they were ranked by,
+    /// while the search that found it is running: the search review judges
+    /// the folder against another edition with them. Never stored.
+    #[serde(skip)]
+    listed: Option<Arc<ListedFolder>>,
+}
+
+/// What a Soulseek folder was ranked from.
+#[derive(Debug, PartialEq)]
+struct ListedFolder {
+    hits: Vec<SearchResult>,
+    policy: DownloadPolicy,
 }
 
 /// Mark each candidate a landing turned down for this album before: still
@@ -301,6 +316,77 @@ impl Candidate {
         }
     }
 
+    /// [`Self::from_folder`] for a folder a search ranked under `policy`,
+    /// keeping its hits while the search runs so the search review can
+    /// judge it against another edition ([`Self::fit_edition`]).
+    pub fn from_listed_folder(pick: FolderPick, policy: &DownloadPolicy) -> Self {
+        let hits = pick.files.clone();
+        let mut candidate = Self::from_folder(pick);
+        candidate.listed = Some(Arc::new(ListedFolder {
+            hits,
+            policy: policy.clone(),
+        }));
+        candidate
+    }
+
+    /// A Soulseek folder that is possible only because of how it fits the
+    /// edition it was ranked against: it misses tracks, a length is off,
+    /// or the tracklist could not be read. One possible for its quality, or
+    /// refused, never is. A copy turned down before is only marked when the
+    /// search is stored, and the enqueue skips it then.
+    pub fn unfit_for_its_edition(&self) -> bool {
+        self.listed.is_some()
+            && self.view.tier == CandidateTier::Possible
+            && matches!(
+                self.view.note.code,
+                CandidateNoteCode::Incomplete
+                    | CandidateNoteCode::Lengths
+                    | CandidateNoteCode::NoTracklist
+            )
+    }
+
+    /// The audio files of a Soulseek folder whose hits are kept.
+    pub fn listed_audio(&self) -> usize {
+        self.listed.as_ref().map_or(0, |listed| {
+            listed
+                .hits
+                .iter()
+                .filter(|hit| format_for_extension(&hit.extension.to_ascii_lowercase()).is_some())
+                .count()
+        })
+    }
+
+    /// Judge a Soulseek folder against another edition's `tracklist` the
+    /// way the ranking judges one: when, ranked against it, the folder is
+    /// one folder that would be recommended, it is recommended now, its
+    /// counts and note those of that edition, and true is answered. Any
+    /// other candidate is left as it is.
+    pub fn fit_edition(&mut self, tracklist: &[ExpectedTrack]) -> bool {
+        let Some(listed) = &self.listed else {
+            return false;
+        };
+        let request = RankRequest {
+            tracklist,
+            wanted: &[],
+            single_track: false,
+            release_preferred: true,
+        };
+        let picks = rank_listing(&listed.hits, request, &listed.policy);
+        let [pick] = picks.as_slice() else {
+            return false;
+        };
+        let (tier, note) = folder_note(pick);
+        if pick.out_of_band || tier != CandidateTier::Recommended {
+            return false;
+        }
+        self.view.tier = tier;
+        self.view.note = note;
+        self.view.tracks_matched = Some(pick.coverage);
+        self.view.length_misses = Some(pick.duration_misses);
+        self.view.tracks_total = Some(pick.total);
+        true
+    }
+
     /// A ranked Soulseek folder; one whose known quality is outside the
     /// band or the recipe is refused.
     pub fn from_folder(pick: FolderPick) -> Self {
@@ -374,6 +460,7 @@ impl Candidate {
                 score: None,
             },
             pin,
+            listed: None,
         }
         .refused(refusal)
     }
@@ -440,6 +527,7 @@ impl Candidate {
             pin: Pin::Release {
                 identity: usenet_identity(&release.title, release.size_bytes),
             },
+            listed: None,
         }
         .refused(refusal)
     }
@@ -540,6 +628,7 @@ impl Candidate {
             pin: Pin::Release {
                 identity: format!("deezer:album:{}", album.id),
             },
+            listed: None,
         }
         .refused(refusal)
     }
@@ -613,6 +702,7 @@ impl Candidate {
                 grabs: None,
                 score: Some(score),
             },
+            listed: None,
         }
         .refused(refusal)
     }

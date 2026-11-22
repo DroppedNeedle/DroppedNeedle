@@ -118,13 +118,14 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
 }
 
 /// [`rig`] with MusicBrainz's release reads through `lookup`, time from
-/// `clock`, and the catalog `catalog` (else one that answers nothing).
+/// `clock`, and album pages and editions read from MusicBrainz at
+/// [`MIRROR`] through `musicbrainz` (else a catalog that answers nothing).
 async fn rig_with(
     mock: &MockSlskd,
     review: bool,
     lookup: Arc<dyn AlbumLookup>,
     clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
-    catalog: Option<droppedneedle_catalog::metadata::Catalog>,
+    musicbrainz: Option<Arc<droppedneedle_providers::test_support::ScriptedWire>>,
 ) -> Rig {
     let scratch = AcquireDb::scratch().expect("scratch db");
     let db = AcquireDb::new(scratch.db().clone(), clock);
@@ -139,8 +140,8 @@ async fn rig_with(
         review_off_in(&settings);
     }
     let events = EventHub::new();
-    let catalog = match catalog {
-        Some(catalog) => catalog,
+    let catalog = match musicbrainz {
+        Some(wire) => crate::common::bundles::catalog_on_wire(db.db(), wire, MIRROR).await,
         None => crate::common::bundles::closed_catalog(db.db()).await,
     };
     let (worker, targets) = worker_over_catalog(
@@ -715,6 +716,266 @@ async fn an_unread_tracklist_waits_and_looks_again() {
     looks_settle(&rig.worker).await;
     assert_eq!(mock.search_texts().len(), searched, "it was looked at");
     drop(rig.staging);
+}
+
+/// The mirror the other-edition test's catalog reads MusicBrainz at.
+const MIRROR: &str = "http://mb.test/ws/2";
+
+/// The preferred edition: the album's four tracks and a fifth.
+fn preferred_edition(id: &str) -> AlbumRelease {
+    let mut release = album();
+    release.id = id.to_owned();
+    release.tracks.push(AlbumTrack {
+        disc: 1,
+        position: 5,
+        title: "Hymn of the Big Wheel".to_owned(),
+        duration_seconds: Some(396.0),
+        recording_mbid: "aaaaaaaa-0000-4000-8000-000000000009".to_owned(),
+        release_track_mbid: "bbbbbbbb-0000-4000-8000-000000000009".to_owned(),
+        isrcs: Vec::new(),
+    });
+    release
+}
+
+/// Script `wire` with release group `group` listing `editions` (id and
+/// track count) and no release index, and `fits` as a release holding the
+/// album's four tracks.
+fn script_group(
+    wire: &droppedneedle_providers::test_support::ScriptedWire,
+    group: &str,
+    editions: &[(&str, u32)],
+    fits: &str,
+) {
+    use droppedneedle_providers::executor::Method;
+    use droppedneedle_providers::test_support::Scripted;
+    let answer = |body: Value| Scripted::Answer {
+        status: 200,
+        headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+        body: body.to_string().into_bytes(),
+    };
+    let releases: Vec<Value> = editions
+        .iter()
+        .map(|(id, count)| {
+            json!({"id": id, "title": "Blue Lines", "status": "Official",
+                   "media": [{"position": 1, "format": "CD", "track-count": count}]})
+        })
+        .collect();
+    wire.on(
+        Method::Get,
+        &format!("{MIRROR}/release-group/{group}"),
+        answer(
+            json!({"id": group, "title": "Blue Lines", "primary-type": "Album",
+                      "releases": releases}),
+        ),
+    );
+    wire.on(
+        Method::Get,
+        &format!("{MIRROR}/release"),
+        answer(json!({"count": 0, "offset": 0, "releases": []})),
+    );
+    let tracks: Vec<Value> = TITLES
+        .iter()
+        .enumerate()
+        .map(|(index, (title, length))| {
+            let ms = (*length * 1000.0) as u64;
+            json!({"id": format!("cccccccc-0000-4000-8000-00000000000{index}"),
+                   "position": index + 1, "number": (index + 1).to_string(),
+                   "title": title, "length": ms,
+                   "recording": {"id": format!("aaaaaaaa-0000-4000-8000-00000000000{index}"),
+                                 "title": title, "length": ms}})
+        })
+        .collect();
+    wire.on(
+        Method::Get,
+        &format!("{MIRROR}/release/{fits}"),
+        answer(
+            json!({"id": fits, "title": "Blue Lines", "status": "Official",
+                      "media": [{"position": 1, "format": "CD", "track-count": 4,
+                                 "tracks": tracks}]}),
+        ),
+    );
+}
+
+/// One look at a download of the album in group `group`, in a fresh rig
+/// whose catalog reads MusicBrainz through `wire`, the slskd mock
+/// answering with `folder`. The album prefers `edition`, or a person chose
+/// it when `pinned`. Answers the task, its plan and its search.
+async fn look_once(
+    mock: &MockSlskd,
+    wire: &Arc<droppedneedle_providers::test_support::ScriptedWire>,
+    folder: Value,
+    group: &'static str,
+    edition: &'static str,
+    pinned: bool,
+) -> (
+    droppedneedle_acquire::downloads::store::TaskRow,
+    droppedneedle_acquire::downloads::TaskPlan,
+    Option<JobPayload>,
+) {
+    let mut albums = fixed_albums();
+    albums
+        .releases
+        .insert(edition.to_owned(), preferred_edition(edition));
+    mock.script_responses(vec![folder]);
+    let rig = rig_with(
+        mock,
+        true,
+        Arc::new(albums),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        Some(wire.clone()),
+    )
+    .await;
+    let task_id = "0123456789abcdef0123456789abcd11";
+    rig.journal
+        .run("test.seed", move |store| {
+            store.insert_task(
+                &NewTask {
+                    id: task_id.to_owned(),
+                    user_id: "u1".to_owned(),
+                    artist_name: "Massive Attack".to_owned(),
+                    album_title: "Blue Lines".to_owned(),
+                    release_group_mbid: group.to_owned(),
+                    origin: "user".to_owned(),
+                    retry_count: 0,
+                },
+                1_000.0,
+            )?;
+            store.set_task_details(
+                task_id,
+                &TaskDetails {
+                    release_mbid: pinned.then(|| edition.to_owned()),
+                    year: Some(1991),
+                    ..TaskDetails::default()
+                },
+                1_000.0,
+            )?;
+            if pinned {
+                return Ok(());
+            }
+            let plan = droppedneedle_acquire::downloads::TaskPlan {
+                release_mbid: Some(edition.to_owned()),
+                expected_tracks: droppedneedle_acquire::target::expected_tracks(
+                    &preferred_edition(edition),
+                ),
+                release_preferred: true,
+                ..Default::default()
+            };
+            store.set_task_plan(task_id, &plan, 1_000.0)
+        })
+        .await
+        .expect("task seeds");
+    rig.worker.run_once(1).await;
+    looks_settle(&rig.worker).await;
+    let (task, plan) = rig
+        .journal
+        .read("test.task", move |store| {
+            Ok((
+                store.get_task(task_id)?.expect("task exists"),
+                store.task_plan(task_id)?,
+            ))
+        })
+        .await
+        .expect("task reads");
+    let payload = match task.search_job_id.as_deref() {
+        Some(job_id) => {
+            rig.jobs
+                .get(&principal("u1"), job_id)
+                .await
+                .expect("job reads")
+                .payload
+        }
+        None => None,
+    };
+    (task, plan, payload)
+}
+
+/// With an edition that is only preferred and no folder fitting it, a
+/// Soulseek folder that holds every track of another edition of the album
+/// is taken by itself, and the download prefers that edition, still as a
+/// preference. The same folder parks for an edition a person chose, a
+/// folder whose quality the search does not show is not taken, and a look
+/// reads at most four other editions' tracklists.
+#[tokio::test]
+async fn a_folder_holding_another_edition_whole_is_taken_for_a_preference() {
+    const PREFERRED: &str = "55555555-5555-4555-8555-555555555555";
+    const OTHER: &str = "66666666-6666-4666-8666-666666666666";
+    const WIDE: &str = "77777777-7777-4777-8777-777777777777";
+    let mock = MockSlskd::start().await.expect("mock starts");
+    let wire = Arc::new(droppedneedle_providers::test_support::ScriptedWire::new());
+    script_group(&wire, GROUP, &[(PREFERRED, 5), (OTHER, 4)], OTHER);
+    let misses: Vec<String> = (0..5)
+        .map(|index| format!("88888888-8888-4888-8888-88888888888{index}"))
+        .collect();
+    let mut wide: Vec<(&str, u32)> = vec![(PREFERRED, 5)];
+    wide.extend(misses.iter().map(|id| (id.as_str(), 4)));
+    script_group(&wire, WIDE, &wide, OTHER);
+    for id in &misses {
+        wire.on(
+            droppedneedle_providers::executor::Method::Get,
+            &format!("{MIRROR}/release/{id}"),
+            droppedneedle_providers::test_support::Scripted::Answer {
+                status: 404,
+                headers: Vec::new(),
+                body: br#"{"error": "Not Found"}"#.to_vec(),
+            },
+        );
+    }
+    let complete = peer(
+        "complete",
+        "@@music\\Massive Attack\\Blue Lines",
+        &[0, 1, 2, 3],
+    );
+    let mut unknown_quality = complete.clone();
+    for file in unknown_quality["files"].as_array_mut().expect("files") {
+        let mp3 = file["filename"]
+            .as_str()
+            .expect("name")
+            .replace(".flac", ".mp3");
+        file["filename"] = json!(mp3);
+        file["extension"] = json!("mp3");
+        file["bitDepth"] = Value::Null;
+    }
+    let reads = |id: &str| {
+        let path = format!("/ws/2/release/{id}");
+        wire.sent()
+            .iter()
+            .filter(|sent| sent.url.path() == path)
+            .count()
+    };
+
+    let (task, plan, payload) =
+        look_once(&mock, &wire, complete.clone(), GROUP, PREFERRED, false).await;
+    assert_eq!(task.candidate_index, Some(0), "the folder is taken");
+    assert_eq!(
+        (plan.release_mbid.as_deref(), plan.release_preferred),
+        (Some(OTHER), true),
+        "the edition it holds is preferred, not pinned"
+    );
+    let payload = payload.expect("the search is kept");
+    assert_eq!(
+        (payload.release_mbid.as_deref(), payload.tracks_total),
+        (Some(OTHER), Some(4))
+    );
+    assert_eq!(payload.candidates[0].view.tier, CandidateTier::Recommended);
+
+    let (task, _, _) = look_once(&mock, &wire, complete.clone(), GROUP, PREFERRED, true).await;
+    assert!(
+        task.search_job_id.is_some(),
+        "a chosen edition waits for a pick"
+    );
+    assert_eq!(task.candidate_index, None);
+
+    let (task, _, _) = look_once(&mock, &wire, unknown_quality, GROUP, PREFERRED, false).await;
+    assert!(
+        task.search_job_id.is_some(),
+        "an unshown quality waits for a pick"
+    );
+    assert_eq!(task.candidate_index, None);
+
+    let (task, _, _) = look_once(&mock, &wire, complete, WIDE, PREFERRED, false).await;
+    assert_eq!(task.candidate_index, None, "nothing fits the editions read");
+    let tried: usize = misses.iter().map(|id| reads(id)).sum();
+    assert_eq!(tried, 4, "four other editions are read, no more");
 }
 
 /// Park `task_id` on a recorded search `job_id` with nothing picked.

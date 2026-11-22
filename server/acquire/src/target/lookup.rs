@@ -35,6 +35,11 @@ const VIDEO_FORMATS: [&str; 12] = [
     "laserdisc",
 ];
 
+/// Whether a medium format carries video, not downloadable audio.
+pub fn is_video_format(format: &str) -> bool {
+    VIDEO_FORMATS.contains(&format.trim().to_ascii_lowercase().as_str())
+}
+
 /// One release carrying a recording, with the fields release choice ranks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseCandidate {
@@ -241,10 +246,7 @@ pub fn album_release(release: MbRelease) -> Option<AlbumRelease> {
         .to_owned();
     let mut tracks = Vec::new();
     for (index, medium) in release.media.iter().enumerate() {
-        let video = medium.format.as_deref().is_some_and(|format| {
-            VIDEO_FORMATS.contains(&format.trim().to_ascii_lowercase().as_str())
-        });
-        if video {
+        if medium.format.as_deref().is_some_and(is_video_format) {
             continue;
         }
         let disc = medium

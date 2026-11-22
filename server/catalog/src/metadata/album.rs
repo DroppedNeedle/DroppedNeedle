@@ -729,9 +729,20 @@ impl Catalog {
         &self,
         raw_id: &str,
     ) -> Result<AlbumEditionsResponse, CatalogError> {
+        self.album_editions_at(raw_id, RequestPriority::UserInitiated)
+            .await
+    }
+
+    /// [`Self::album_editions`] with MusicBrainz asked at `priority` for
+    /// what the cache does not hold.
+    pub async fn album_editions_at(
+        &self,
+        raw_id: &str,
+        priority: RequestPriority,
+    ) -> Result<AlbumEditionsResponse, CatalogError> {
         let id = self.album_id(raw_id).await?;
         let group = self
-            .group_detail(&id)
+            .group_detail_at(&id, priority)
             .await?
             .ok_or(CatalogError::NotFound)?;
         let selection = self.select_edition(&group).await?;
@@ -740,7 +751,7 @@ impl Catalog {
                 .as_deref()
                 .is_some_and(|wanted| wanted.eq_ignore_ascii_case(id))
         };
-        let mut items = match self.every_edition(&group.mbid).await {
+        let mut items = match self.every_edition(&group.mbid, priority).await {
             Ok(items) if !items.is_empty() => items,
             Ok(_) => listed_editions(&group),
             Err(error) => {
@@ -770,15 +781,19 @@ impl Catalog {
     }
 
     /// Every release of one group from MusicBrainz's release index, cached
-    /// like the group detail.
-    async fn every_edition(&self, mbid: &str) -> Result<Vec<AlbumEditionItem>, CatalogError> {
+    /// like the group detail, fetched at `priority` on a miss.
+    async fn every_edition(
+        &self,
+        mbid: &str,
+        priority: RequestPriority,
+    ) -> Result<Vec<AlbumEditionItem>, CatalogError> {
         let catalog = self.clone();
         let group = mbid.to_owned();
         let items = self
             .cached(
                 &self.editions_key(mbid),
                 Policy::MUSICBRAINZ_ENTITY,
-                RequestPriority::UserInitiated,
+                priority,
                 move |priority| async move {
                     let (client, _) = catalog.upstream().musicbrainz(priority);
                     let mut items: Vec<AlbumEditionItem> = Vec::new();
@@ -821,9 +836,20 @@ impl Catalog {
     /// `GET /albums/{album_id}/editions/{release_mbid}/tracks`: one
     /// release's tracklist (cached like every release lookup).
     pub async fn edition_tracks(&self, raw_release: &str) -> Result<AlbumTracksInfo, CatalogError> {
+        self.edition_tracks_at(raw_release, RequestPriority::UserInitiated)
+            .await
+    }
+
+    /// [`Self::edition_tracks`] with MusicBrainz asked at `priority` on a
+    /// miss.
+    pub async fn edition_tracks_at(
+        &self,
+        raw_release: &str,
+        priority: RequestPriority,
+    ) -> Result<AlbumTracksInfo, CatalogError> {
         let id = checked_mbid(raw_release, "release")?;
         let release = self
-            .release_detail(&id)
+            .release_detail_at(&id, priority)
             .await?
             .ok_or(CatalogError::NotFound)?;
         Ok(AlbumTracksInfo {

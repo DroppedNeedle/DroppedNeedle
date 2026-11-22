@@ -159,6 +159,34 @@ fn store_failed(operation: &str, error: StoreError) -> DbError {
     }
 }
 
+/// Make `release` the preferred edition of a task that only prefers one:
+/// the edition the copy a review took holds whole, so the landing checks
+/// it first and still accepts another edition of the album. A release in
+/// the task's details or a pin in its plan stands, and so does a plan for
+/// a library copy. The tracklist is read again for the new edition.
+fn prefer_edition(
+    store: &DownloadStore<'_>,
+    task_id: &str,
+    release: &str,
+    at: f64,
+) -> Result<(), StoreError> {
+    let asked = store
+        .task_details(task_id)?
+        .release_mbid
+        .is_some_and(|release| !release.trim().is_empty());
+    let mut plan = store.task_plan(task_id)?;
+    let pinned = plan.release_mbid.is_some() && !plan.release_preferred;
+    if asked || pinned || plan.planned_album.is_some() || plan.is_for(release) {
+        return Ok(());
+    }
+    plan.release_mbid = Some(release.to_ascii_lowercase());
+    plan.redirected_from = None;
+    plan.expected_tracks = Vec::new();
+    plan.barcode = None;
+    plan.release_preferred = true;
+    store.set_task_plan(task_id, &plan, at)
+}
+
 /// Mark the candidates a landing turned down for the job's album before
 /// (see [`mark_turned_down`]), in the write that stores them.
 fn mark_turned_down_copies(
@@ -351,17 +379,28 @@ impl JobStore {
                     ],
                 )?;
                 match outcome {
-                    ReviewOutcome::Take(index, source, username) => DownloadStore::new(tx)
-                        .link_candidate(
-                            &task_id,
-                            &source,
-                            username.as_deref(),
-                            &job.id,
-                            index,
-                            false,
-                            at,
-                        )
-                        .map_err(|error| store_failed("search_jobs.review", error))?,
+                    ReviewOutcome::Take(index, source, username) => {
+                        let store = DownloadStore::new(tx);
+                        store
+                            .link_candidate(
+                                &task_id,
+                                &source,
+                                username.as_deref(),
+                                &job.id,
+                                index,
+                                false,
+                                at,
+                            )
+                            .map_err(|error| store_failed("search_jobs.review", error))?;
+                        if let Some(release) = payload
+                            .release_mbid
+                            .as_deref()
+                            .filter(|_| payload.release_preferred)
+                        {
+                            prefer_edition(&store, &task_id, release, at)
+                                .map_err(|error| store_failed("search_jobs.review", error))?;
+                        }
+                    }
                     ReviewOutcome::Park => {
                         tx.execute(sql::PARK_TASK.text(), params![task_id, job.id, ms(at)])?;
                     }

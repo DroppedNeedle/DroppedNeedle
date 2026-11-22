@@ -31,7 +31,7 @@ pub fn search_tier(
 }
 
 /// The quality rules and timings of every Soulseek search.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DownloadPolicy {
     /// Lowest tier the landing keeps.
     pub quality_min: String,

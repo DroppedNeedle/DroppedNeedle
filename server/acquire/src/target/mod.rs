@@ -31,6 +31,7 @@ use super::downloads::plan::{ExpectedTrack, TaskPlan, TrackAlbum, TrackPosition}
 use super::downloads::store::{TaskDetails, TaskRow, TrackAlbumColumns};
 use super::edition::{EditionBasis, chosen_edition, library_holds};
 use droppedneedle_catalog::metadata::Catalog;
+use droppedneedle_catalog::metadata::error::CatalogError;
 use droppedneedle_providers::RequestPriority;
 
 /// Release lookups tried for one recording before giving up on an album.
@@ -159,6 +160,67 @@ impl Targets {
                 Err(EditionUnread)
             }
         }
+    }
+
+    /// The editions MusicBrainz lists for `group`, each with its track
+    /// count across all media, in the album page's order. Empty when
+    /// MusicBrainz does not know the group. Read from the catalog, asked at
+    /// background priority for what its cache does not hold.
+    pub async fn group_editions(&self, group: &str) -> Result<Vec<(String, usize)>, CatalogError> {
+        match self
+            .catalog
+            .album_editions_at(group, RequestPriority::BackgroundSync)
+            .await
+        {
+            Ok(editions) => Ok(editions
+                .items
+                .into_iter()
+                .map(|edition| {
+                    let count = usize::try_from(edition.track_count).unwrap_or(usize::MAX);
+                    (edition.release_mbid.to_ascii_lowercase(), count)
+                })
+                .collect()),
+            Err(CatalogError::NotFound) => Ok(Vec::new()),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// One edition's audio tracklist as the catalog reads it, to judge a
+    /// folder against: `None` when MusicBrainz does not know the release.
+    /// Asked at background priority for what the cache does not hold.
+    pub async fn catalog_tracklist(
+        &self,
+        release_mbid: &str,
+    ) -> Result<Option<Vec<ExpectedTrack>>, CatalogError> {
+        let tracks = match self
+            .catalog
+            .edition_tracks_at(release_mbid, RequestPriority::BackgroundSync)
+            .await
+        {
+            Ok(info) => info.tracks,
+            Err(CatalogError::NotFound) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        Ok(Some(
+            tracks
+                .into_iter()
+                .filter(|track| {
+                    !track
+                        .media_format
+                        .as_deref()
+                        .is_some_and(lookup::is_video_format)
+                })
+                .map(|track| ExpectedTrack {
+                    track_number: i64::from(track.position),
+                    disc_number: i64::from(track.disc_number),
+                    duration_seconds: track.length.map(|ms| ms as f64 / 1000.0),
+                    recording_mbid: track.recording_id,
+                    title: Some(track.title),
+                    release_track_mbid: track.release_track_id,
+                    isrcs: Vec::new(),
+                })
+                .collect(),
+        ))
     }
 
     /// The task's target, resolved now or read back from its plan. A plan

@@ -298,6 +298,70 @@ pub fn offline_catalog(db: &Db, users: UsersDeps) -> Catalog {
 /// bundle builds them on a platform of their own: nothing is written to
 /// `db` or its settings, and no outside address is open.
 pub async fn closed_catalog(db: &Db) -> Catalog {
+    offline_catalog(db, closed_users().await)
+}
+
+/// A metadata catalog over `db` that reads MusicBrainz as a mirror at
+/// `musicbrainz` through `wire`, unpaced, with its users built as
+/// [`closed_catalog`] builds them.
+pub async fn catalog_on_wire(
+    db: &Db,
+    wire: Arc<droppedneedle_providers::test_support::ScriptedWire>,
+    musicbrainz: &str,
+) -> Catalog {
+    let users = closed_users().await;
+    Catalog::new(
+        Upstream::new(
+            Arc::new(Providers::unpaced(wire)),
+            Arc::new(MirrorAt(musicbrainz.to_owned())),
+            users.clone(),
+            droppedneedle_media::playback::listening::ListeningStore::new(
+                db.clone(),
+                users.crypto.clone(),
+                users.clock.clone(),
+            ),
+        ),
+        LocalCatalog::new(db.clone()),
+        quiet_page_sources(db, Arc::new(droppedneedle_kernel::clock::SystemClock)),
+    )
+}
+
+/// Catalog settings reading MusicBrainz as an unlimited mirror at this
+/// address, the other sections at their defaults and ListenBrainz off.
+struct MirrorAt(String);
+
+impl CatalogSettings for MirrorAt {
+    fn musicbrainz(&self) -> Option<MusicBrainzSettings> {
+        Some(MusicBrainzSettings {
+            source_mode: droppedneedle_kernel::runtime_config::sections::MbSourceMode::Mirror,
+            api_url: self.0.clone(),
+            rate_limit: 0.0,
+            source_id: "test-source".to_owned(),
+            generation: 1,
+            ..MusicBrainzSettings::default()
+        })
+    }
+
+    fn preferences(&self) -> UserPreferences {
+        UserPreferences::default()
+    }
+
+    fn advanced(&self) -> AdvancedSettings {
+        AdvancedSettings::default()
+    }
+
+    fn listenbrainz_enabled(&self) -> bool {
+        false
+    }
+
+    fn store_region(&self) -> Option<String> {
+        None
+    }
+}
+
+/// The users a catalog reads, built the way the auth bundle builds them on
+/// a platform of their own.
+async fn closed_users() -> UsersDeps {
     let own = Db::scratch("closed-catalog").expect("scratch database");
     let dir = own.path().parent().expect("scratch folder").to_path_buf();
     let platform = super::TestPlatform::on(&own, &dir).build().await;
@@ -316,7 +380,7 @@ pub async fn closed_catalog(db: &Db) -> Catalog {
         droppedneedle::bootstrap::sign_in_links(&platform),
         None,
     );
-    offline_catalog(db, setup.users)
+    setup.users
 }
 
 /// Catalog settings whose MusicBrainz section does not read, with the

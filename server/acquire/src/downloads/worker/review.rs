@@ -8,6 +8,12 @@
 //! setting says, and without one it settles on the next pass with the
 //! library copy kept.
 //!
+//! When the edition is only a preference and no copy fits it, a Soulseek
+//! folder that holds another edition of the album whole, by the ranking's
+//! own check, is recommended too, and the task then prefers that edition,
+//! still only as a preference. A pinned edition and an upgrade are judged
+//! against their edition alone.
+//!
 //! When MusicBrainz did not answer for the edition's tracklist, no folder
 //! can be judged. Unless every album waits for a pick anyway, a look that
 //! would park then leaves the album queued and
@@ -21,13 +27,14 @@
 //! [`MAX_CONCURRENT_REVIEWS`] run at once; other albums wait their turn in
 //! the queue.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::{DownloadWorker, Pass, SourceSet, in_try_order};
 use crate::dispatch::DispatchOrigin;
+use crate::downloads::TaskPlan;
 use crate::downloads::store::TaskRow;
-use crate::search_jobs::candidates::Pin;
+use crate::search_jobs::candidates::{Candidate, CandidateTier, Pin};
 use crate::search_jobs::review::{ReviewMode, Verdict, verdict};
 use crate::search_jobs::search_sources;
 use crate::search_jobs::store::{JobPayload, JobStatus, JobStore, NewJob, ReviewOutcome};
@@ -59,6 +66,20 @@ const FIRST_TRACKLIST_WAIT_SECONDS: f64 = 15.0 * 60.0;
 /// How long after it was queued an album keeps waiting for its edition's
 /// tracklist before it waits for a pick instead.
 const TRACKLIST_WAIT_WINDOW_SECONDS: f64 = 24.0 * 3_600.0;
+
+/// Tracklists one look reads for other editions of an album, at most,
+/// whatever they answer.
+const MAX_EDITION_READS: usize = 4;
+
+/// A folder a look recommended for another edition of the album.
+struct Fitted {
+    /// Its place among the candidates.
+    index: usize,
+    /// The edition it holds whole.
+    release_mbid: String,
+    /// That edition's audio tracks.
+    tracks: usize,
+}
 
 /// What one look decided.
 enum Reviewed {
@@ -152,25 +173,25 @@ impl DownloadWorker {
                 return Reviewed::Search;
             }
         };
-        let release_mbid = {
+        let (release_mbid, plan) = {
             let task_id = task.id.clone();
             match self
                 .journal
                 .read("downloads.review.details", move |store| {
-                    store.task_details(&task_id)
+                    Ok((store.task_details(&task_id)?, store.task_plan(&task_id)?))
                 })
                 .await
             {
-                Ok(details) => details.release_mbid,
+                Ok((details, plan)) => (details.release_mbid, Some(plan)),
                 Err(error) => {
                     tracing::warn!(task_id = %task.id, %error, "search review: task details unreadable");
-                    None
+                    (None, None)
                 }
             }
         };
         let job_id = uuid::Uuid::new_v4().simple().to_string();
         let ordered: Vec<_> = in_try_order(sources, order).into_iter().cloned().collect();
-        let (candidates, _failed) = search_sources(&ordered, &target, &job_id).await;
+        let (mut candidates, _failed) = search_sources(&ordered, &target, &job_id).await;
         let upgrade = task.origin == DispatchOrigin::Upgrade;
         // "Always wait for my pick" covers requests and wanted albums: an
         // upgrade that waits costs nothing but a growing queue.
@@ -178,6 +199,20 @@ impl DownloadWorker {
             ReviewMode::WhenUnsure
         } else {
             mode
+        };
+        // The edition is only a preference and no copy fits it: a folder
+        // that holds another edition of the album whole proves that
+        // edition just as well.
+        let fitted = match &plan {
+            Some(plan)
+                if mode == ReviewMode::WhenUnsure
+                    && target.release_preferred
+                    && target.wanted.is_empty()
+                    && !upgrade =>
+            {
+                self.fit_other_edition(task, plan, &mut candidates).await
+            }
+            _ => None,
         };
         let outcome = match verdict(mode, &candidates) {
             Verdict::Nothing => return Reviewed::Search,
@@ -226,11 +261,25 @@ impl DownloadWorker {
                 .then(|| task.release_group_mbid.clone()),
             release_mbid: release_mbid.clone(),
         };
-        let payload = JobPayload {
-            release_mbid,
-            release_preferred: false,
-            tracks_total: (!target.tracklist.is_empty()).then_some(target.tracklist.len()),
-            candidates,
+        // A folder taken for the edition it fits names that edition, still
+        // only a preference, which the task's plan then keeps.
+        let payload = match (&outcome, fitted) {
+            (ReviewOutcome::Take(index, ..), Some(fit))
+                if usize::try_from(*index).ok() == Some(fit.index) =>
+            {
+                JobPayload {
+                    release_mbid: Some(fit.release_mbid),
+                    release_preferred: true,
+                    tracks_total: Some(fit.tracks),
+                    candidates,
+                }
+            }
+            _ => JobPayload {
+                release_mbid,
+                release_preferred: false,
+                tracks_total: (!target.tracklist.is_empty()).then_some(target.tracklist.len()),
+                candidates,
+            },
         };
         let store = JobStore::new(self.journal.db().clone());
         match store
@@ -260,6 +309,76 @@ impl DownloadWorker {
             }
         }
         Reviewed::Recorded
+    }
+
+    /// For an album whose edition is only a preference and that no copy
+    /// fits: look for a Soulseek folder that holds another edition of the
+    /// album whole. Only while nothing is recommended, and only folders
+    /// possible for how they fit the preferred edition are judged. The
+    /// editions read are the album's others whose track count is a judged
+    /// folder's audio count, in the album page's order, at most
+    /// [`MAX_EDITION_READS`] of them, whatever each answers. A read that
+    /// fails ends the look there: what could not be read is never
+    /// evidence. The first folder that fits is recommended.
+    async fn fit_other_edition(
+        &self,
+        task: &TaskRow,
+        plan: &TaskPlan,
+        candidates: &mut [Candidate],
+    ) -> Option<Fitted> {
+        let group = task.release_group_mbid.trim();
+        if group.is_empty()
+            || candidates
+                .iter()
+                .any(|candidate| candidate.view.tier == CandidateTier::Recommended)
+        {
+            return None;
+        }
+        let counts: BTreeSet<usize> = candidates
+            .iter()
+            .filter(|candidate| candidate.unfit_for_its_edition())
+            .map(Candidate::listed_audio)
+            .filter(|count| *count > 0)
+            .collect();
+        if counts.is_empty() {
+            return None;
+        }
+        let editions = match self.targets.group_editions(group).await {
+            Ok(editions) => editions,
+            Err(error) => {
+                tracing::info!(task_id = %task.id, %error, "search review: the album's editions could not be read; no other edition tried");
+                return None;
+            }
+        };
+        let others = editions
+            .into_iter()
+            .filter(|(release, count)| counts.contains(count) && !plan.is_for(release))
+            .take(MAX_EDITION_READS);
+        for (release, _) in others {
+            let tracklist = match self.targets.catalog_tracklist(&release).await {
+                Ok(Some(tracklist)) if !tracklist.is_empty() => tracklist,
+                Ok(_) => continue,
+                Err(error) => {
+                    tracing::info!(task_id = %task.id, release_mbid = %release, %error, "search review: another edition's tracklist could not be read; no further edition tried");
+                    return None;
+                }
+            };
+            for (index, candidate) in candidates.iter_mut().enumerate() {
+                if candidate.unfit_for_its_edition() && candidate.fit_edition(&tracklist) {
+                    tracing::info!(
+                        task_id = %task.id,
+                        release_mbid = %release,
+                        "search review: a folder holds another edition of the album whole"
+                    );
+                    return Some(Fitted {
+                        index,
+                        release_mbid: release,
+                        tracks: tracklist.len(),
+                    });
+                }
+            }
+        }
+        None
     }
 
     fn announce_review(
