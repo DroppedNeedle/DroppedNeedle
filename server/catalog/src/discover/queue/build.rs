@@ -518,7 +518,7 @@ pub(in crate::discover) async fn similar_artist_pools(
                 continue;
             }
             let albums = timed(
-                "listenbrainz artist albums",
+                "artist albums",
                 ctx.listening.artist_albums(
                     user_id,
                     &artist_mbid,
@@ -663,7 +663,7 @@ async fn loved_artist_albums(
     let mut items = Vec::new();
     let mut seen = HashSet::new();
     for (artist, result) in artists.iter().zip(found) {
-        for album in or_empty("listenbrainz artist albums", result)
+        for album in or_empty("artist albums", result)
             .into_iter()
             .map(|ranked| ranked.album)
         {
@@ -731,7 +731,7 @@ async fn deep_cuts(
     let mut items = Vec::new();
     let mut seen = HashSet::new();
     for ((artist, name), result) in artists.iter().zip(found) {
-        for album in or_empty("listenbrainz artist albums", result)
+        for album in or_empty("artist albums", result)
             .into_iter()
             .map(|ranked| ranked.album)
         {

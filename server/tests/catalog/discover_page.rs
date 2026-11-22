@@ -1376,3 +1376,95 @@ async fn a_failed_count_read_keeps_the_list() {
         .count();
     assert_eq!(labs_reads, 1, "the list was kept");
 }
+
+/// People with nothing linked, on an install where nobody has linked
+/// ListenBrainz, get Missing Essentials from the artist their library holds
+/// most of: its albums they do not have. Two of them asking for that artist
+/// cost one discography read and one count read.
+#[tokio::test]
+async fn people_with_nothing_linked_get_album_cards_for_one_read() {
+    let dir = crate::common::ScratchDir::new("discover-unlinked-albums");
+    let rig = AuthRig::new("discover-unlinked-albums").await;
+    let artist = mbid('e', 1);
+    let mut seed = format!(
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
+         ('user-1', 'Ada', 'user', 0), ('user-2', 'Bob', 'user', 0); \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+         updated_at) VALUES ('a1', 'Collected', 'collected', 'group', 1, 1); \
+         INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+         provider_artist_id, decision_source, selected_at) \
+         VALUES ('a1', 'musicbrainz', '{artist}', 'manual', 1);"
+    );
+    for n in 100..103u8 {
+        let group = mbid('a', n);
+        seed.push_str(&format!(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) \
+             VALUES ('al{n}', 'r1', 'g{n}', 'Owned', 'owned', 'a1', 'automatic', 1, 1); \
+             INSERT INTO local_album_artists (local_album_id, position, local_artist_id, \
+             role) VALUES ('al{n}', 0, 'a1', 'main'); \
+             INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, decision_source, selected_at) \
+             VALUES ('al{n}', 'musicbrainz', '{group}', 'manual', 1); \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, \
+             relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, \
+             title_folded, album_title, album_title_folded, file_format, availability, \
+             ingest_source, imported_at, membership_source) VALUES ('t{n}', 'al{n}', 'r1', \
+             '/music/t{n}.flac', 't{n}.flac', 'h{n}', 1, 1, 's{n}', 'Song', 'song', 'Owned', \
+             'owned', 'flac', 'indexed', 'scan', 1, 'automatic');"
+        ));
+    }
+    rig.platform
+        .db
+        .write(Lane::Foreground, "test.seed", move |tx| {
+            tx.execute_batch(&seed)?;
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        })
+        .await
+        .expect("library rows");
+    let script = Arc::new(Script {
+        artist_albums: HashMap::from([(
+            artist.clone(),
+            (100..106u8)
+                .map(|n| ranked(n, &artist, 1_000 - i64::from(n)))
+                .collect(),
+        )]),
+        ..Script::default()
+    });
+    let network = Arc::clone(&script);
+    let service = discover_deps(&rig, &dir, Providers::closed(), |slot| {
+        *slot = network;
+    })
+    .content;
+    let settled = |user: &'static str| {
+        let service = service.clone();
+        async move {
+            tokio::time::timeout(crate::common::PATIENCE, async {
+                loop {
+                    let page = service.discover(user).await.expect("page");
+                    let page = serde_json::to_value(page).expect("the page encodes");
+                    if page["refreshing"] == false && page["generated_at"].is_number() {
+                        return page;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("the build finished")
+        }
+    };
+
+    let (first, second) = tokio::join!(settled("user-1"), settled("user-2"));
+    let missing: Vec<String> = (103..106u8).map(|n| mbid('a', n)).collect();
+    for page in [first, second] {
+        let shown: Vec<&str> = content(&page, "missing_essentials")["shelf"]["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["musicbrainz_id"].as_str())
+            .collect();
+        assert_eq!(shown, missing, "{page}");
+    }
+    assert_eq!(*script.discography_reads.lock().unwrap(), [artist]);
+    assert_eq!(script.count_reads.lock().unwrap().len(), 1);
+}

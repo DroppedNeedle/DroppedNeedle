@@ -7,7 +7,8 @@
 //! day 15, past the 14-day rows, with a Weekly Mix after it. Each day has
 //! four visits, four searches, two artist pages, two album pages, one radio
 //! shelf and the warm cycle ticking hourly. One artist in five has nothing
-//! on ListenBrainz. Run it with `--nocapture` for the calls per endpoint.
+//! on ListenBrainz or MusicBrainz. Run it with `--nocapture` for the calls
+//! per endpoint.
 //!
 //! Beside it: what an artist's albums read offers from those answers.
 
@@ -20,9 +21,8 @@ use axum::http::{Method, Request, Uri};
 use axum::response::{IntoResponse, Response};
 use droppedneedle_acquire::requests::{RequestsState, mix_sources};
 use droppedneedle_auth::users::models::LastFmConnection;
-use droppedneedle_auth::users::roles::Role;
 use droppedneedle_catalog::collections::store::playlists::PlaylistStore;
-use droppedneedle_catalog::discover::listening::shared::{self, Lender};
+use droppedneedle_catalog::discover::listening::shared;
 use droppedneedle_catalog::discover::listening::{AlbumFacts, AlbumRow, RankedAlbum, gate};
 use droppedneedle_catalog::discover::models::{AlbumRef, SectionItem};
 use droppedneedle_catalog::discover::scheduler::Feature;
@@ -39,7 +39,8 @@ use droppedneedle_kernel::clock::Clock as _;
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::events::EventHub;
 use droppedneedle_media::playback::listening::PrefsPatch;
-use droppedneedle_providers::test_support::ScriptedWire;
+use droppedneedle_providers::executor::{Body as WireBody, Method as WireMethod};
+use droppedneedle_providers::test_support::{Scripted, ScriptedWire};
 use droppedneedle_providers::{
     CallOutcome, ProviderEndpoints, Providers, RequestPriority, ReqwestWire, listenbrainz,
 };
@@ -57,6 +58,17 @@ const LISTENBRAINZ_BOUNDS: [(&str, u64); 4] = [
     ("warm", 105),
     ("monday", 195),
     ("day 15", 235),
+];
+/// The most MusicBrainz calls each day for the same user. Artists' album
+/// lists read their discographies, about one browse an artist every 14
+/// days, an artist with nothing to offer included; the old code made 12 a
+/// day, and this code 173, 16, 90 and 130. On a default install these go to
+/// BrainzMash, not MusicBrainz itself.
+const MUSICBRAINZ_BOUNDS: [(&str, u64); 4] = [
+    ("cold", 185),
+    ("warm", 25),
+    ("monday", 100),
+    ("day 15", 140),
 ];
 /// The most ListenBrainz plus MusicBrainz calls for a user who follows
 /// Last.fm. The old code made 320, 283, 262 and 260. Similar artists come
@@ -96,6 +108,14 @@ fn number_of(text: &str) -> u32 {
 
 type Tally = Arc<Mutex<BTreeMap<String, u64>>>;
 
+/// The value of `name` in `uri`'s query.
+fn query_value(uri: &Uri, name: &str) -> Option<String> {
+    uri.query()?.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        (key == name).then(|| value.to_owned())
+    })
+}
+
 /// The name a call counts under.
 fn endpoint(method: &Method, uri: &Uri) -> String {
     let parts: Vec<&str> = uri
@@ -117,10 +137,14 @@ fn endpoint(method: &Method, uri: &Uri) -> String {
         ["listenbrainz", "1", "playlist", ..] => "lb playlist".to_owned(),
         ["listenbrainz", ..] => format!("lb other {method} {}", uri.path()),
         ["musicbrainz", kind, rest @ ..] => {
-            format!(
-                "musicbrainz {kind}{}",
-                if rest.is_empty() { " search" } else { "" }
-            )
+            let how = if !rest.is_empty() {
+                ""
+            } else if query_value(uri, "artist").is_some() {
+                " browse"
+            } else {
+                " search"
+            };
+            format!("musicbrainz {kind}{how}")
         }
         ["musicbrainz", ..] => "musicbrainz other".to_owned(),
         ["lastfm", ..] => "lastfm".to_owned(),
@@ -220,7 +244,12 @@ fn lb_answer(uri: &Uri, body: &[u8]) -> Value {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .map(|id| json!({"release_group_mbid": id, "total_listen_count": 90}))
+                .filter_map(Value::as_str)
+                .map(|id| {
+                    let listeners = 1 + number_of(id) % 5_000;
+                    json!({"release_group_mbid": id, "total_listen_count": listeners * 9,
+                           "total_user_count": listeners})
+                })
                 .collect(),
         ),
         ["popularity", "artist"] => Value::Array(
@@ -330,9 +359,26 @@ fn musicbrainz_answer(uri: &Uri) -> Value {
     match parts.as_slice() {
         ["musicbrainz", "release", id] => json!({"id": id, "title": "Release",
             "release-group": {"id": mbid('d', number_of(id) % 100_000), "title": "Group"}}),
-        ["musicbrainz", "release-group"] => {
-            json!({"release-groups": [], "count": 0, "offset": 0})
-        }
+        ["musicbrainz", "release-group"] => match query_value(uri, "artist") {
+            // An artist's discography: none for one artist in five, else
+            // twelve groups, a single in every four and one live album.
+            Some(artist) if number_of(&artist) % 5 != 0 => {
+                let base = number_of(&artist) % 100_000;
+                let groups: Vec<Value> = (0..12)
+                    .map(|n| {
+                        json!({"id": mbid('d', base * 30 + n), "title": format!("Album {base}-{n}"),
+                            "primary-type": if n % 4 == 3 { "Single" } else { "Album" },
+                            "secondary-types": if n == 5 { vec!["Live"] } else { Vec::new() },
+                            "first-release-date": format!("{}", 1990 + n),
+                            "artist-credit": [{"name": format!("Name of {artist}"),
+                                "joinphrase": "", "artist": {"id": artist, "name": "Someone"}}]})
+                    })
+                    .collect();
+                json!({"release-groups": groups, "release-group-count": 12,
+                       "release-group-offset": 0})
+            }
+            _ => json!({"release-groups": [], "release-group-count": 0, "release-group-offset": 0}),
+        },
         ["musicbrainz", "artist"] => json!({"artists": [], "count": 0, "offset": 0}),
         _ => json!({"error": "not found"}),
     }
@@ -752,6 +798,13 @@ async fn one_active_users_days_stay_under_their_bounds() {
         let calls = listenbrainz_total(&listenbrainz.days[name]);
         assert!(calls <= bound, "{name}: {calls} calls, bound {bound}");
     }
+    for (name, bound) in MUSICBRAINZ_BOUNDS {
+        let calls = musicbrainz_total(&listenbrainz.days[name]);
+        assert!(
+            calls <= bound,
+            "{name}: {calls} MusicBrainz calls, bound {bound}"
+        );
+    }
     for (name, bound) in LASTFM_BOUNDS {
         let day = &lastfm.days[name];
         let calls = listenbrainz_total(day) + musicbrainz_total(day);
@@ -787,72 +840,253 @@ fn faceted(
     }
 }
 
-/// Of Radiohead's 347 recorded top release groups, the 185 albums and EPs
-/// credited to Radiohead are offered, in their order: no single, broadcast
-/// or other type, and nothing credited only to someone else. Live sets and
-/// demos still pass while the rows name no secondary types.
-#[tokio::test]
-async fn only_an_artists_own_albums_and_eps_are_offered() {
-    let rig = AuthRig::new("lb-offered").await;
-    rig.seed_user("ada", Role::User).await;
-    let store = crate::common::listening_store(&rig.platform);
-    store
-        .save_listenbrainz("user-ada", "ada-lb", "ada-token")
-        .await
-        .expect("link");
+const MUSICBRAINZ: &str = "https://musicbrainz.test/ws/2";
+const RADIOHEAD_COUNTS: &str =
+    include_str!("../fixtures/listenbrainz/popularity_release_group_radiohead_post.json");
+/// Various Artists, credited alone on one recorded group.
+const VARIOUS_ARTISTS: &str = "89ad4ac3-39f7-470e-963a-56509c546377";
+
+/// Radiohead's release groups of these titles in MusicBrainz's browse
+/// shape, `count` listed in all: the ids, titles and dates of the recorded
+/// top release groups, with the types and credit given here.
+fn discography(groups: &[Group], count: usize) -> String {
+    let recorded: Vec<Value> = serde_json::from_str(RADIOHEAD_GROUPS).expect("fixture parses");
+    let rows: Vec<Value> = groups
+        .iter()
+        .map(|(title, primary, secondary, credited)| {
+            let row = recorded
+                .iter()
+                .find(|row| row["release_group"]["name"] == *title)
+                .expect("a recorded group");
+            json!({
+                "id": row["release_group_mbid"],
+                "title": title,
+                "primary-type": primary,
+                "secondary-types": secondary,
+                "first-release-date": row["release_group"]["date"],
+                "artist-credit": [{"name": "Someone", "joinphrase": "",
+                    "artist": {"id": credited, "name": "Someone"}}],
+            })
+        })
+        .collect();
+    json!({"release-group-count": count, "release-group-offset": 0, "release-groups": rows})
+        .to_string()
+}
+
+/// A title, primary type, secondary types and the one credited artist.
+type Group = (
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    &'static str,
+);
+
+/// Four albums, an EP and two albums ListenBrainz has no count for, which
+/// may be offered; a live album, a demo set, a compilation, a single and
+/// an album credited only to someone else, which may not.
+const GROUPS: [Group; 11] = [
+    ("High & Dry", "Single", &[], RADIOHEAD),
+    ("Painkiller", "Album", &[], RADIOHEAD),
+    ("The Best Of", "Album", &["Compilation"], RADIOHEAD),
+    ("Kid A", "Album", &[], RADIOHEAD),
+    ("On a Friday Demos 1", "Album", &["Demo"], RADIOHEAD),
+    ("Com Lag: 2plus2isfive", "EP", &[], RADIOHEAD),
+    ("Acoustic Album", "Album", &[], VARIOUS_ARTISTS),
+    ("OK Computer", "Album", &[], RADIOHEAD),
+    (
+        "I Might Be Wrong: Live Recordings",
+        "Album",
+        &["Live"],
+        RADIOHEAD,
+    ),
+    ("Oxford Angels: The Rarities", "Album", &[], RADIOHEAD),
+    ("In Rainbows", "Album", &[], RADIOHEAD),
+];
+
+fn popularity_url() -> String {
+    format!(
+        "{}/1/popularity/release-group",
+        listenbrainz::DEFAULT_BASE_URL
+    )
+}
+
+/// The catalog and providers over a wire that answers the album list's two
+/// reads: `discography_body` for the MusicBrainz browse and `counts` for
+/// ListenBrainz's popularity POST.
+fn album_reads(
+    rig: &AuthRig,
+    discography_body: String,
+    counts: Scripted,
+) -> (Catalog, Arc<Providers>, Arc<ScriptedWire>) {
     let wire = Arc::new(ScriptedWire::new());
     wire.answer(
-        &format!(
-            "{}/1/popularity/top-release-groups-for-artist/{RADIOHEAD}",
-            listenbrainz::DEFAULT_BASE_URL
-        ),
+        &format!("{MUSICBRAINZ}/release-group"),
         200,
         &[],
-        RADIOHEAD_GROUPS,
+        discography_body,
     );
-    let providers = Providers::unpaced_at(
-        wire,
+    wire.on(WireMethod::Post, &popularity_url(), counts);
+    let providers = Arc::new(Providers::unpaced_on(
+        wire.clone(),
+        rig.platform.clock.clone(),
         ProviderEndpoints {
             listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+            musicbrainz: MUSICBRAINZ.to_owned(),
+            brainzmash: MUSICBRAINZ.to_owned(),
             ..ProviderEndpoints::closed()
         },
+    ));
+    let catalog = Catalog::new(
+        Upstream::new(
+            providers.clone(),
+            Arc::new(LiveCatalogSettings::new(&rig.config)),
+            rig.deps.clone(),
+            crate::common::listening_store(&rig.platform),
+        ),
+        LocalCatalog::new(rig.platform.db.clone()),
+        crate::common::bundles::quiet_page_sources(crate::common::bundles::cover_warm_at(
+            &rig.platform.db,
+            rig.platform.clock.clone(),
+        )),
     );
-    let offered = shared::artist_albums(
-        &providers.cache,
+    (catalog, providers, wire)
+}
+
+fn recorded_counts() -> Scripted {
+    Scripted::Answer {
+        status: 200,
+        headers: Vec::new(),
+        body: RADIOHEAD_COUNTS.as_bytes().to_vec(),
+    }
+}
+
+/// The titles offered for Radiohead, `None` while its list is not read yet.
+async fn offered(catalog: &Catalog, providers: &Providers) -> Option<Vec<String>> {
+    let rows = shared::artist_albums(
+        catalog,
         &providers.listenbrainz,
         RADIOHEAD,
-        1_000,
-        &Lender::Person(store, "user-ada".to_owned()),
+        100,
         RequestPriority::UserInitiated,
     )
     .await
-    .expect("the albums read");
+    .expect("the albums read")?;
+    Some(rows.into_iter().map(|row| row.album.title).collect())
+}
 
-    let recorded: Vec<Value> = serde_json::from_str(RADIOHEAD_GROUPS).expect("fixture parses");
-    let own_albums: Vec<&str> = recorded
+async fn offered_titles(catalog: &Catalog, providers: &Providers) -> Vec<String> {
+    offered(catalog, providers).await.expect("a whole list")
+}
+
+/// An artist's albums come from its discography, counted with no token:
+/// its own albums and EPs, most listeners first, then the ones ListenBrainz
+/// has no count for, newest first. A live album, a demo set, a compilation,
+/// a single and an album credited to someone else are not offered. One
+/// discography read and one count read of the offered groups make the
+/// list, and it is kept.
+#[tokio::test]
+async fn an_artists_albums_are_ordered_by_listeners() {
+    let rig = AuthRig::new("lb-albums-ranked").await;
+    let (catalog, providers, wire) =
+        album_reads(&rig, discography(&GROUPS, GROUPS.len()), recorded_counts());
+
+    let titles = offered_titles(&catalog, &providers).await;
+    assert_eq!(
+        titles,
+        [
+            "OK Computer",
+            "In Rainbows",
+            "Kid A",
+            "Com Lag: 2plus2isfive",
+            "Oxford Angels: The Rarities",
+            "Painkiller",
+        ]
+    );
+    assert_eq!(offered_titles(&catalog, &providers).await, titles);
+    let sent = wire.sent();
+    assert_eq!(sent.len(), 2, "one discography read and one count read");
+    let counted = sent
         .iter()
-        .filter(|row| matches!(row["release_group"]["type"].as_str(), Some("Album" | "EP")))
-        .filter(|row| {
-            row["artist"]["artists"].as_array().is_some_and(|artists| {
-                artists
-                    .iter()
-                    .any(|artist| artist["artist_mbid"] == RADIOHEAD)
-            })
-        })
-        .filter_map(|row| row["release_group_mbid"].as_str())
-        .collect();
-    let ids: Vec<&str> = offered
-        .iter()
-        .map(|row| row.album.release_group_mbid.as_str())
-        .collect();
-    assert_eq!(ids, own_albums);
-    assert_eq!(ids.len(), 185);
-    let title = |name: &str| offered.iter().any(|row| row.album.title == name);
-    assert!(title("Com Lag: 2plus2isfive"), "an EP is offered");
-    assert!(!title("High & Dry"), "a single is not");
-    assert!(!title("(Ocean) Bloom"), "a broadcast is not");
-    assert!(!title("Acoustic Album"), "a Various Artists album is not");
-    assert!(title("I Might Be Wrong: Live Recordings") && title("On a Friday Demos 1"));
+        .find(|sent| sent.url.as_str() == popularity_url())
+        .expect("the count read");
+    let WireBody::Json(body) = &counted.body else {
+        panic!("the count read sends JSON");
+    };
+    let asked: Value = serde_json::from_slice(body).expect("its body");
+    assert_eq!(
+        asked["release_group_mbids"].as_array().map(Vec::len),
+        Some(titles.len()),
+        "only the groups that may be offered are counted"
+    );
+}
+
+/// While ListenBrainz will not count, the list still answers, newest first
+/// with the undated last, and is not kept: once it counts again the next
+/// read is ranked.
+#[tokio::test]
+async fn with_popularity_down_the_list_is_in_date_order() {
+    let rig = AuthRig::new("lb-albums-dated").await;
+    let (catalog, providers, wire) = album_reads(
+        &rig,
+        discography(&GROUPS, GROUPS.len()),
+        Scripted::Answer {
+            status: 500,
+            headers: Vec::new(),
+            body: b"This endpoint is currently disabled".to_vec(),
+        },
+    );
+    // Answered after the refusal.
+    wire.on(WireMethod::Post, &popularity_url(), recorded_counts());
+
+    assert_eq!(
+        offered_titles(&catalog, &providers).await,
+        [
+            "Oxford Angels: The Rarities",
+            "In Rainbows",
+            "Com Lag: 2plus2isfive",
+            "Kid A",
+            "OK Computer",
+            "Painkiller",
+        ]
+    );
+    assert_eq!(
+        offered_titles(&catalog, &providers).await[0],
+        "OK Computer",
+        "the dated list was not kept"
+    );
+}
+
+/// A discography over 100 groups answers its first page at once and the
+/// rest later: until it is whole the artist's list is not read yet, and
+/// nothing is counted for it.
+#[tokio::test]
+async fn a_partial_discography_offers_nothing() {
+    let rig = AuthRig::new("lb-albums-partial").await;
+    let (catalog, providers, wire) =
+        album_reads(&rig, discography(&GROUPS, 150), recorded_counts());
+
+    assert_eq!(offered(&catalog, &providers).await, None);
+    assert!(
+        wire.sent()
+            .iter()
+            .all(|sent| sent.url.as_str() != popularity_url()),
+        "nothing is counted for a list that is not whole"
+    );
+}
+
+/// An artist with no album or EP to offer, read without a failure, is not
+/// asked again the next day.
+#[tokio::test]
+async fn an_artist_with_nothing_to_offer_is_not_asked_again_the_next_day() {
+    let rig = AuthRig::new("lb-albums-none").await;
+    let singles: [Group; 1] = [("High & Dry", "Single", &[], RADIOHEAD)];
+    let (catalog, providers, wire) = album_reads(&rig, discography(&singles, 1), recorded_counts());
+
+    assert!(offered_titles(&catalog, &providers).await.is_empty());
+    let asked = wire.sent().len();
+    rig.clock().advance(2 * 86_400_000);
+    assert!(offered_titles(&catalog, &providers).await.is_empty());
+    assert_eq!(wire.sent().len(), asked, "nothing was asked again");
 }
 
 /// A release group whose secondary types name a live set, a demo or a

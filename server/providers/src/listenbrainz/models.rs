@@ -150,8 +150,9 @@ pub struct TagItem {
 /// `POST /1/popularity/release-group`: one row per asked MBID.
 ///
 /// Verified against api.listenbrainz.org/1/popularity/release-group on 2026-11-02: tests/fixtures/listenbrainz/popularity_release_group_post.json.
-/// Not verified: the row for an MBID ListenBrainz does not know, so its
-/// count stays optional.
+/// Again on 2026-11-22 with no token and 347 ids
+/// (tests/fixtures/listenbrainz/popularity_release_group_radiohead_post.json):
+/// one row per id, sorted as sent, and 20 ids with both counts `null`.
 pub type ReleaseGroupPopularityAnswer = Vec<ReleaseGroupPopularity>;
 
 /// One release group's listen count.
@@ -160,7 +161,7 @@ pub struct ReleaseGroupPopularity {
     /// Release-group MBID: required identity.
     pub release_group_mbid: String,
     /// Total listens; absent or not a whole number when ListenBrainz has
-    /// no count, and the row is skipped.
+    /// no count.
     #[serde(default, deserialize_with = "loose_count")]
     pub total_listen_count: Option<i64>,
     /// Distinct listeners, read like the listen count. On the recorded row

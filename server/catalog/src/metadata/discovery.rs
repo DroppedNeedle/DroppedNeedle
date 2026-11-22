@@ -1009,6 +1009,7 @@ impl Catalog {
         );
         let (lb_album, lb_artist) = (album.to_owned(), artist.to_owned());
         let shared_rows = self.upstream().cache().clone();
+        let catalog = self.clone();
         // Album pages and radio wait on this.
         let priority = RequestPriority::UserInitiated;
         let rows = self
@@ -1037,19 +1038,17 @@ impl Catalog {
                     let mut hold = CacheHold::default();
                     for (similar_mbid, similar_name) in &similar {
                         let groups = match shared::artist_albums(
-                            &shared_rows,
+                            &catalog,
                             &client,
                             similar_mbid,
                             ALBUMS_PER_SIMILAR_ARTIST,
-                            &lender,
                             priority,
                         )
                         .await
                         {
-                            Ok(groups) => groups,
-                            // Not sent without the person's account: what is
-                            // held is shown and nothing is kept for others.
-                            Err(ProviderError::NotConfigured { .. }) => {
+                            Ok(Some(groups)) => groups,
+                            // Still being read: shown without it and not kept.
+                            Ok(None) => {
                                 hold.local();
                                 continue;
                             }
@@ -1773,6 +1772,7 @@ mod tests {
             secondary_types: secondary.iter().map(|value| (*value).to_owned()).collect(),
             first_release_date: None,
             artist_name: None,
+            credited_artist_mbids: Vec::new(),
         }
     }
 
@@ -1808,6 +1808,7 @@ mod tests {
             ],
             complete: true,
             total: 7,
+            walking: false,
         };
         let albums = match_lastfm_albums(
             vec![

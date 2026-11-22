@@ -1079,7 +1079,7 @@ impl Builder<'_> {
         } else {
             join_all(artists.iter().map(|(artist_mbid, _)| async move {
                 or_empty(
-                    "listenbrainz artist albums",
+                    "artist albums",
                     self.listening
                         .artist_albums(user_id, artist_mbid, 10, &self.ask)
                         .await,

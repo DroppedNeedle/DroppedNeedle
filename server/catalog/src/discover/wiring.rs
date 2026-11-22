@@ -57,8 +57,18 @@ pub struct DiscoverInputs {
 
 /// The live listening reads production makes.
 pub fn live_network(inputs: &DiscoverInputs, config: &ConfigStore) -> Arc<dyn ListeningNetwork> {
+    network_over(inputs, config, reads_catalog(inputs, config))
+}
+
+/// The live listening reads, reading discographies through `catalog`.
+fn network_over(
+    inputs: &DiscoverInputs,
+    config: &ConfigStore,
+    catalog: Catalog,
+) -> Arc<dyn ListeningNetwork> {
     Arc::new(LiveNetwork::new(
         live_upstream(inputs, config),
+        catalog,
         &inputs.providers,
         inputs.http.clone(),
         inputs.remotes.clone(),
@@ -67,10 +77,12 @@ pub fn live_network(inputs: &DiscoverInputs, config: &ConfigStore) -> Arc<dyn Li
 }
 
 /// Build the production discover deps, each holding live handles from
-/// `config` on the settings it reads.
+/// `config` on the settings it reads. Radio and the listening reads share
+/// one catalog, so a large discography has one walker.
 pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> DiscoverDeps {
-    let network = live_network(&inputs, config);
-    deps_over(inputs, config, network)
+    let catalog = reads_catalog(&inputs, config);
+    let network = network_over(&inputs, config, catalog.clone());
+    deps_with(inputs, config, network, catalog)
 }
 
 /// Build the discover deps over the listening reads of `network`, each
@@ -79,6 +91,17 @@ pub fn deps_over(
     inputs: DiscoverInputs,
     config: &ConfigStore,
     network: Arc<dyn ListeningNetwork>,
+) -> DiscoverDeps {
+    let catalog = reads_catalog(&inputs, config);
+    deps_with(inputs, config, network, catalog)
+}
+
+/// [`deps_over`] with radio reading through `catalog`.
+fn deps_with(
+    inputs: DiscoverInputs,
+    config: &ConfigStore,
+    network: Arc<dyn ListeningNetwork>,
+    catalog: Catalog,
 ) -> DiscoverDeps {
     let listening = ListeningData::new(network, inputs.providers.cache.clone());
     let charts = charts::LiveCharts::new(listening.clone(), inputs.db.clone(), config.live());
@@ -119,18 +142,7 @@ pub fn deps_over(
         queue_db: queue::store::QueueDb::new(inputs.db.clone()),
         settings,
         db: inputs.db.clone(),
-        // Radio reads albums and discographies only: no follow state, no
-        // plugin links or details, and nothing it reads warms images.
-        catalog: Catalog::new(
-            live_upstream(&inputs, config),
-            LocalCatalog::new(inputs.db.clone()),
-            PageSources {
-                follows: Arc::new(NoFollows),
-                purchase_links: Arc::new(NoPurchaseLinks),
-                details: Arc::new(NoDetails),
-                cover_warm: inputs.warm.clone(),
-            },
-        ),
+        catalog,
         previews: inputs.providers.previews.clone(),
         cache: inputs.providers.cache.clone(),
         clock: Arc::clone(&inputs.clock),
@@ -181,6 +193,22 @@ pub fn deps_over(
         youtube,
         radio: Arc::new(radio),
     }
+}
+
+/// The catalog radio and the listening reads use. They read albums and
+/// discographies only: no follow state, no plugin links or details, and
+/// nothing they read warms images.
+fn reads_catalog(inputs: &DiscoverInputs, config: &ConfigStore) -> Catalog {
+    Catalog::new(
+        live_upstream(inputs, config),
+        LocalCatalog::new(inputs.db.clone()),
+        PageSources {
+            follows: Arc::new(NoFollows),
+            purchase_links: Arc::new(NoPurchaseLinks),
+            details: Arc::new(NoDetails),
+            cover_warm: inputs.warm.clone(),
+        },
+    )
 }
 
 /// The catalog upstreams discover reads through.

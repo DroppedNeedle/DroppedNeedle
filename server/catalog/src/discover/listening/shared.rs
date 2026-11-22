@@ -3,9 +3,10 @@
 //! cache rows as [`ListeningData`](super::ListeningData), so one artist is
 //! read once whichever feature asks first. The answers are public, so the
 //! keys carry no token; a read lends the person's own link when it goes
-//! out.
+//! out, except an artist's album list, which lends none.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_providers::listenbrainz::{
@@ -16,10 +17,11 @@ use droppedneedle_providers::{
 };
 
 use super::rows::{AlbumFacts, AlbumRow, RankedAlbum, ScoredArtist};
-use super::{gate, similar};
+use super::{albums, similar};
+use crate::metadata::Catalog;
 
-/// An artist's top albums read per artist.
-pub const ARTIST_ALBUM_ROWS: usize = 25;
+/// An artist's top release groups read per artist.
+const ARTIST_ALBUM_ROWS: usize = 25;
 
 /// Whose ListenBrainz link a read lends: a person's own, looked up only
 /// when no fresh answer is held, so a fresh one costs no store read; or
@@ -58,7 +60,7 @@ fn lower(text: &str) -> String {
 }
 
 /// The cache key of an artist's top albums, `read` rows long.
-pub(super) fn artist_albums_key(artist_mbid: &str, read: usize) -> CacheKey {
+fn artist_albums_key(artist_mbid: &str, read: usize) -> CacheKey {
     CacheKey::new(
         Source::ListenBrainz,
         &["artist_albums", &lower(artist_mbid), &read.to_string()],
@@ -86,7 +88,7 @@ fn found_or_missing<T>(rows: Vec<T>) -> Fetched<Vec<T>> {
 /// gate runs when they are read. A row without a title stays: it still
 /// counts toward an artist's listens, and shelves that show titles leave it
 /// out when they read it.
-pub(super) fn ranked_albums(rows: Vec<TopReleaseGroup>, artist_mbid: &str) -> Vec<RankedAlbum> {
+fn ranked_albums(rows: Vec<TopReleaseGroup>, artist_mbid: &str) -> Vec<RankedAlbum> {
     rows.into_iter()
         .map(|row| RankedAlbum {
             album: AlbumRow {
@@ -108,31 +110,47 @@ pub(super) fn ranked_albums(rows: Vec<TopReleaseGroup>, artist_mbid: &str) -> Ve
         .collect()
 }
 
-/// One artist's most played release groups that may be offered as their
-/// albums ([`gate`](super::gate)), `count` at most, read through the shared
-/// rows. ListenBrainz answers them only with a token: without one, what is
-/// held answers and no fetch is started or joined.
+/// The albums `artist_mbid` may be offered by, `count` at most, read
+/// through the same row as [`ListeningData`](super::ListeningData)'s
+/// ([`albums`](super::albums)): the discography through `catalog`, counted
+/// by `client` with no token. `None` is "not yet": the artist's
+/// discography is still being read, so an answer built without it is not
+/// one to keep.
 ///
 /// # Errors
 ///
-/// ListenBrainz's failure when no row is kept to stand in.
+/// The discography read's failure when no list is kept to stand in.
 pub async fn artist_albums(
-    cache: &ProviderCacheStore,
+    catalog: &Catalog,
     client: &ListenBrainzClient,
     artist_mbid: &str,
     count: usize,
-    lender: &Lender,
     priority: RequestPriority,
-) -> Result<Vec<RankedAlbum>, ProviderError> {
-    let rows = release_group_rows(cache, client, artist_mbid, count, lender, priority).await?;
-    let mut rows = gate::offered(rows, artist_mbid);
-    rows.truncate(count);
-    Ok(rows)
+) -> Result<Option<Vec<RankedAlbum>>, ProviderError> {
+    let (_, namespace) = catalog.upstream().musicbrainz(priority);
+    let reads = Arc::new(albums::CatalogReads {
+        catalog: catalog.clone(),
+        client: client.clone(),
+    });
+    let rows = albums::artist_albums(
+        catalog.upstream().cache(),
+        reads,
+        &namespace,
+        artist_mbid,
+        true,
+        priority,
+    )
+    .await?;
+    Ok(rows.map(|mut rows| {
+        rows.truncate(count);
+        rows
+    }))
 }
 
 /// One artist's most played release groups of every type, `count` at
-/// most, through the same rows as [`artist_albums`] but not gated: what
-/// the artist's listens add up from, singles included.
+/// most, from ListenBrainz and not gated: what the artist's listens add up
+/// from, singles included. ListenBrainz answers them only with a token:
+/// without one, what is held answers and no fetch is started or joined.
 ///
 /// # Errors
 ///
@@ -151,7 +169,7 @@ pub async fn artist_release_groups(
 }
 
 /// Every kept row of one artist's top release groups, read at least
-/// [`ARTIST_ALBUM_ROWS`] long, so a gated read can fill its count.
+/// [`ARTIST_ALBUM_ROWS`] long.
 async fn release_group_rows(
     cache: &ProviderCacheStore,
     client: &ListenBrainzClient,

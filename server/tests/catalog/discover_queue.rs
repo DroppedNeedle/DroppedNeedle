@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::{
@@ -25,9 +25,12 @@ use droppedneedle_catalog::discover::listening::{
 use droppedneedle_catalog::discover::ports::BoxFuture;
 use droppedneedle_catalog::discover::services::DiscoverDeps;
 use droppedneedle_catalog::discover::wiring::{DiscoverInputs, deps_over, live_network};
+use droppedneedle_catalog::metadata::artist::ReleaseGroupItem;
 use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
-use droppedneedle_providers::listenbrainz::{ArtistPopularity, ScoredSimilarArtist};
+use droppedneedle_providers::listenbrainz::{
+    ArtistPopularity, ReleaseGroupCounts, ScoredSimilarArtist,
+};
 use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -47,9 +50,12 @@ fn group(n: u8) -> String {
 /// Each read answers its field (empty by default). Release-group facts
 /// fail while `musicbrainz_down` is set, fresh releases while
 /// `fresh_down` is, similar artists while `similar_down` is and an
-/// artist's albums while `albums_down` is. ListenBrainz's similar list
+/// artist's discography while `albums_down` is. ListenBrainz's similar list
 /// answers `similar`, each row's score as its co-listening score, and
-/// `listeners` its counts; both reads are counted.
+/// `listeners` its counts; both reads are counted. An artist's
+/// discography is its rows in `artist_albums`, each counted with its listen
+/// count as both its listens and, unless its facts name some, its
+/// listeners; those reads are recorded too.
 #[derive(Default)]
 pub(crate) struct Script {
     pub user: UserMusic,
@@ -74,6 +80,12 @@ pub(crate) struct Script {
     /// Listener-count reads made so far.
     pub listener_reads: AtomicUsize,
     pub artist_albums: HashMap<String, Vec<RankedAlbum>>,
+    /// The artists whose discography was read, one entry a read.
+    pub discography_reads: Mutex<Vec<String>>,
+    /// The release groups of each album count read.
+    pub count_reads: Mutex<Vec<Vec<String>>>,
+    /// The user's Jellyfin artists.
+    pub jellyfin_artists: Vec<ArtistRow>,
     pub genres: Vec<(String, i64)>,
     pub fresh: Vec<AlbumRow>,
     pub loved: Vec<LovedTrack>,
@@ -232,17 +244,57 @@ impl ListeningNetwork for Script {
             .filter_map(|id| Some((id.clone(), *self.listeners.get(id)?)))
             .collect())
     }
-    fn artist_albums<'a>(
+    fn discography<'a>(
         &'a self,
-        _u: &'a str,
         artist: &'a str,
-        _c: usize,
         _p: RequestPriority,
-    ) -> Answer<'a, Vec<RankedAlbum>> {
+    ) -> Answer<'a, Option<Vec<ReleaseGroupItem>>> {
+        self.discography_reads
+            .lock()
+            .unwrap()
+            .push(artist.to_owned());
         if self.albums_down.load(Ordering::SeqCst) {
             return down("artist albums down");
         }
-        ok(self.artist_albums.get(artist).cloned().unwrap_or_default())
+        let groups = self
+            .artist_albums
+            .get(artist)
+            .into_iter()
+            .flatten()
+            .map(|row| {
+                let album = row.album.clone();
+                ReleaseGroupItem {
+                    id: album.release_group_mbid,
+                    title: Some(album.title),
+                    primary_type: album.facts.primary_type,
+                    secondary_types: album.facts.secondary_types.unwrap_or_default(),
+                    first_release_date: album.facts.first_release_date,
+                    artist_name: Some(album.artist_name),
+                    credited_artist_mbids: album.facts.credited_artist_mbids.unwrap_or_default(),
+                }
+            })
+            .collect();
+        ok(Some(groups))
+    }
+    fn release_group_counts<'a>(
+        &'a self,
+        groups: &'a [String],
+        _p: RequestPriority,
+    ) -> Answer<'a, HashMap<String, ReleaseGroupCounts>> {
+        self.count_reads.lock().unwrap().push(groups.to_vec());
+        ok(self
+            .artist_albums
+            .values()
+            .flatten()
+            .filter(|row| groups.contains(&row.album.release_group_mbid))
+            .map(|row| {
+                let counts = ReleaseGroupCounts {
+                    listen_count: Some(row.listen_count),
+                    listeners: row.album.facts.listeners.or(Some(row.listen_count)),
+                };
+                (row.album.release_group_mbid.clone(), counts)
+            })
+            .collect())
     }
     fn genres<'a>(&'a self, _u: &'a str, _p: RequestPriority) -> Answer<'a, Vec<(String, i64)>> {
         ok(self.genres.clone())
@@ -488,7 +540,7 @@ impl ListeningNetwork for Script {
         _list: JellyfinList,
         _l: u32,
     ) -> Answer<'a, Vec<ArtistRow>> {
-        ok(Vec::new())
+        ok(self.jellyfin_artists.clone())
     }
     fn jellyfin_plays<'a>(&'a self, _id: &'a str, _l: u32) -> Answer<'a, Vec<PlayedArtist>> {
         ok(Vec::new())
@@ -1172,4 +1224,41 @@ async fn a_user_without_lastfm_leaves_no_empty_answer_for_others() {
         .await
         .unwrap();
     assert_eq!(with.len(), 1, "the chart is not an empty kept answer");
+}
+
+/// A person with no listening account, seeded from their own Jellyfin
+/// plays, gets album cards of the artists like their seed: the album step
+/// needs no ListenBrainz link, theirs or anyone's.
+#[tokio::test]
+async fn a_person_with_no_listening_account_gets_album_cards() {
+    let dir = crate::common::ScratchDir::new("discover-queue-unlinked");
+    let rig = AuthRig::new("discover-queue-unlinked").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let script = Script {
+        user: UserMusic {
+            jellyfin: true,
+            ..UserMusic::default()
+        },
+        jellyfin_artists: queue_script().user_artists,
+        ..queue_script()
+    };
+    let app = queue_app(&rig, &dir, script);
+
+    call(
+        &app,
+        "POST",
+        "/api/v3/discover/queue/generate",
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(settled(&app, &db).await["status"], "ready");
+    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
+    let similar = deck["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .filter(|item| item["recommendation_reason"] == "Similar to Seed")
+        .count();
+    assert!(similar > 0, "{deck}");
 }

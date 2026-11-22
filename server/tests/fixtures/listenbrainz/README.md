@@ -82,6 +82,11 @@ unless said otherwise:
   `00000000-0000-4000-8000-000000000000`, Queen, Red Hot Chili Peppers,
   Radiohead and The Rolling Stones, sorted. One row per id in that order; the
   unknown id's counts are both null.
+- `popularity_release_group_radiohead_post.json`: HTTP 200 to
+  `POST /1/popularity/release-group` on `https://api.listenbrainz.org` with the
+  347 `release_group_mbids` of `top_release_groups_radiohead.json`, sorted, in
+  one call. The bytes as received: one row per id in that order, 20 of them
+  with both counts null.
 
 No file: HTTP 204 with an empty body while a new account's stats are not
 computed yet. Recorded for `GET /1/stats/user/DroppedNeedle/artists?count=5`,

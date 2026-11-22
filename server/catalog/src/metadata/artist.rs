@@ -137,6 +137,11 @@ pub struct ReleaseGroupItem {
     pub first_release_date: Option<String>,
     /// Credited artist name, for "more by" rows.
     pub artist_name: Option<String>,
+    /// MusicBrainz ids of every credited artist, in credit order. Empty
+    /// when not known: lists kept before these were read, and groups found
+    /// through the artist's releases.
+    #[serde(default)]
+    pub credited_artist_mbids: Vec<String>,
 }
 
 impl ReleaseGroupItem {
@@ -145,6 +150,11 @@ impl ReleaseGroupItem {
             .artist_credit
             .first()
             .map(|_| mapping::first_credit(&group.artist_credit).0);
+        let credited_artist_mbids = group
+            .artist_credit
+            .iter()
+            .map(|credit| credit.artist.id.to_ascii_lowercase())
+            .collect();
         Self {
             id: group.id,
             title: group.title,
@@ -152,6 +162,7 @@ impl ReleaseGroupItem {
             secondary_types: group.secondary_types,
             first_release_date: group.first_release_date,
             artist_name,
+            credited_artist_mbids,
         }
     }
 }
@@ -167,6 +178,10 @@ pub struct ReleaseGroupList {
     /// Release groups MusicBrainz lists for the artist, before filtering.
     #[serde(default)]
     pub total: u64,
+    /// Whether the walker is still fetching the rest. Such a list is never
+    /// stored.
+    #[serde(skip)]
+    pub walking: bool,
 }
 
 /// A discography split into the three sections the pages show, each
@@ -657,6 +672,7 @@ impl Catalog {
                         items,
                         complete: true,
                         total,
+                        walking: false,
                     }));
                 }
                 // The first page stands in, unstored, until the walker
@@ -666,11 +682,25 @@ impl Catalog {
                     items,
                     complete: false,
                     total,
+                    walking: true,
                 }))
             },
         )
         .await
         .map(Option::unwrap_or_default)
+    }
+
+    /// An artist's discography at `priority`, through the row the artist
+    /// page reads; `None` while the walker is still fetching a large one.
+    /// One found through the artist's releases answers its first page of
+    /// releases: no walker reads more of them.
+    pub(crate) async fn complete_release_groups(
+        &self,
+        mbid: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<Vec<ReleaseGroupItem>>, CatalogError> {
+        let list = self.release_groups(mbid, priority).await?;
+        Ok((!list.walking).then_some(list.items))
     }
 
     /// The discography of an artist credited on no release group: the
@@ -696,11 +726,18 @@ impl Catalog {
             .filter_map(|release| release.release_group)
             .filter(|group| seen.insert(group.id.to_ascii_lowercase()))
             .map(ReleaseGroupItem::from_wire)
+            // The artist is credited on the release, not on its group, so
+            // the group's credit reads as not known.
+            .map(|item| ReleaseGroupItem {
+                credited_artist_mbids: Vec::new(),
+                ..item
+            })
             .collect();
         let list = ReleaseGroupList {
             total: items.len() as u64,
             items,
             complete,
+            walking: false,
         };
         Ok(if complete {
             Fetched::Found(list)
@@ -785,6 +822,7 @@ impl Catalog {
             items,
             complete: true,
             total,
+            walking: false,
         };
         let bytes = serde_json::to_vec(&list)
             .map_err(|error| CatalogError::Internal(format!("discography encode: {error}")))?;

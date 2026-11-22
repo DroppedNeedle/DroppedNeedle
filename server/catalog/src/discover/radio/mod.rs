@@ -290,7 +290,7 @@ impl LiveRadio {
             Err(cause) => tracing::warn!(%cause, "radio artist name read failed"),
         }
         timed(
-            "listenbrainz artist albums",
+            "artist albums",
             self.listening
                 .artist_albums(user_id, mbid, 1, &Ask::person()),
         )

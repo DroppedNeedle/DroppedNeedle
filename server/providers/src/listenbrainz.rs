@@ -58,6 +58,11 @@ pub const SIMILAR_ARTISTS_ALGORITHM: &str =
 /// Local ceiling on artist ids per popularity POST: a local bound, not an
 /// upstream limit.
 pub const ARTIST_POPULARITY_BATCH: usize = 500;
+/// Most release-group ids per popularity POST: the size recorded, 347 ids
+/// answered in one call (tests/fixtures/listenbrainz/
+/// popularity_release_group_radiohead_post.json, 2026-11-22). ListenBrainz
+/// publishes no limit; raise it only after recording a larger call.
+pub const RELEASE_GROUP_POPULARITY_BATCH: usize = 347;
 /// Local ceiling on release-group ids per metadata GET: a local safety
 /// bound, not an upstream limit.
 pub const RELEASE_GROUP_BATCH: usize = 25;
@@ -390,6 +395,16 @@ pub struct ArtistPopularity {
     pub listeners: Option<i64>,
 }
 
+/// One release group's popularity across ListenBrainz. Both counts are
+/// `None` when ListenBrainz has none, as for an id it does not know.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ReleaseGroupCounts {
+    /// Total listens.
+    pub listen_count: Option<i64>,
+    /// Distinct listeners.
+    pub listeners: Option<i64>,
+}
+
 /// The cache key of one recording's release group.
 #[must_use]
 pub fn recording_group_key(recording_mbid: &str) -> CacheKey {
@@ -657,46 +672,72 @@ impl ListenBrainzClient {
         Ok(resolved)
     }
 
-    /// Listen counts for release-group MBIDs (`POST
-    /// /1/popularity/release-group`). A 204 yields an empty map with a note
-    /// and a malformed answer a payload error, never "zero listens"; a row
-    /// without a whole-number count is left out. A well-formed empty list
-    /// is legitimate.
+    /// Listen counts for release-group MBIDs, read as
+    /// [`Self::release_group_counts`] reads them; an id without a
+    /// whole-number count is left out, and a zero count is kept.
     ///
     /// # Errors
     ///
-    /// The typed failure of the call.
+    /// The typed failure of the first batch that failed.
     pub async fn release_group_popularity(
         &self,
         release_group_mbids: &[String],
         creds: &ListenBrainzCredentials,
         priority: RequestPriority,
     ) -> Result<HashMap<String, i64>, ProviderError> {
-        if release_group_mbids.is_empty() {
-            return Ok(HashMap::new());
-        }
-        let mut unique: Vec<&str> = Vec::new();
-        for mbid in release_group_mbids {
-            if !unique.contains(&mbid.as_str()) {
-                unique.push(mbid.as_str());
+        Ok(self
+            .release_group_counts(release_group_mbids, creds, priority)
+            .await?
+            .into_iter()
+            .filter_map(|(mbid, counts)| Some((mbid, counts.listen_count?)))
+            .collect())
+    }
+
+    /// Listen and listener counts for release-group MBIDs (`POST
+    /// /1/popularity/release-group`). ListenBrainz answers it without a
+    /// token. The ids go once each, sorted, at most
+    /// [`RELEASE_GROUP_POPULARITY_BATCH`] a call. An id ListenBrainz does
+    /// not know is in the map with no counts; an id missing from the answer
+    /// is not in it. A 204 yields no rows with a note, and a malformed
+    /// answer is a payload error, never "zero listens".
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the first batch that failed.
+    pub async fn release_group_counts(
+        &self,
+        release_group_mbids: &[String],
+        creds: &ListenBrainzCredentials,
+        priority: RequestPriority,
+    ) -> Result<HashMap<String, ReleaseGroupCounts>, ProviderError> {
+        let mut unique = unique_trimmed(release_group_mbids);
+        unique.sort_unstable();
+        let mut counts = HashMap::new();
+        for batch in unique.chunks(RELEASE_GROUP_POPULARITY_BATCH) {
+            let body = serde_json::json!({"release_group_mbids": batch});
+            // A read sent as POST: sending it twice is safe.
+            let request = self
+                .post(&["1", "popularity", "release-group"], &body, creds)?
+                .idempotent(true);
+            let rows = self
+                .read_unconfirmed::<ReleaseGroupPopularityAnswer>(request, priority)
+                .await?
+                .unwrap_or_default();
+            for row in rows {
+                let mbid = row.release_group_mbid.trim();
+                if mbid.is_empty() {
+                    continue;
+                }
+                counts.insert(
+                    mbid.to_owned(),
+                    ReleaseGroupCounts {
+                        listen_count: row.total_listen_count,
+                        listeners: row.total_user_count,
+                    },
+                );
             }
         }
-        unique.sort_unstable();
-        let body = serde_json::json!({"release_group_mbids": unique});
-        // A read sent as POST: sending it twice is safe.
-        let request = self
-            .post(&["1", "popularity", "release-group"], &body, creds)?
-            .idempotent(true);
-        let rows = self
-            .read_unconfirmed::<ReleaseGroupPopularityAnswer>(request, priority)
-            .await?
-            .unwrap_or_default();
-        // A zero count is kept; a blank id is skipped.
-        Ok(rows
-            .into_iter()
-            .filter(|row| !row.release_group_mbid.trim().is_empty())
-            .filter_map(|row| Some((row.release_group_mbid, row.total_listen_count?)))
-            .collect())
+        Ok(counts)
     }
 
     /// Listen counts for recording MBIDs (`POST /1/popularity/recording`),

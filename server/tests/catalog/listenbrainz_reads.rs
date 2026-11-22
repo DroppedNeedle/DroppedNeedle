@@ -11,7 +11,9 @@ use axum::Router;
 use axum::http::{StatusCode, Uri};
 use axum::response::IntoResponse;
 use droppedneedle_auth::users::roles::Role;
+use droppedneedle_catalog::discover::listening::{Ask, ListeningData};
 use droppedneedle_catalog::discover::models::PromptService;
+use droppedneedle_catalog::discover::wiring::live_network;
 use droppedneedle_catalog::enrichment::library::LiveEnrichment;
 use droppedneedle_catalog::lyrics::OnlineLyrics;
 use droppedneedle_catalog::metadata::Catalog;
@@ -30,7 +32,7 @@ use droppedneedle_providers::{
 
 use crate::common::auth::AuthRig;
 use crate::common::{PATIENCE, ScratchDir};
-use crate::discover_queue::discover_deps;
+use crate::discover_queue::{discover_deps, discover_inputs};
 
 const USER: &str = "user-ada";
 /// OK Computer, the release group the recorded genre answer is for.
@@ -41,6 +43,28 @@ const GENRES: &str = include_str!("../fixtures/listenbrainz/release_group_metada
 const SITEWIDE: &str = include_str!("../fixtures/listenbrainz/sitewide_artists.json");
 /// Radiohead, whose top albums the recorded answer holds.
 const RADIOHEAD: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+const MUSICBRAINZ: &str = "https://musicbrainz.test/ws/2";
+/// Five of Radiohead's release groups, as recorded from a browse.
+const BROWSE: &str = include_str!("../fixtures/musicbrainz/browse_release_groups_radiohead.json");
+const GROUP_COUNTS: &str =
+    include_str!("../fixtures/listenbrainz/popularity_release_group_radiohead_post.json");
+
+/// The recorded browse page as a whole discography of five.
+fn whole_discography() -> String {
+    let mut page: serde_json::Value = serde_json::from_str(BROWSE).expect("fixture parses");
+    page["release-group-count"] = 5.into();
+    page.to_string()
+}
+
+fn endpoints() -> ProviderEndpoints {
+    ProviderEndpoints {
+        listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+        listenbrainz_labs: listenbrainz::LABS_BASE_URL.to_owned(),
+        musicbrainz: MUSICBRAINZ.to_owned(),
+        brainzmash: MUSICBRAINZ.to_owned(),
+        ..ProviderEndpoints::closed()
+    }
+}
 
 fn seed(n: u32) -> String {
     format!("{n:08x}-0000-4000-8000-000000000000")
@@ -72,6 +96,12 @@ struct Reads {
 
 impl Reads {
     fn new(rig: &AuthRig) -> Self {
+        Self::over(rig, &[whole_discography()])
+    }
+
+    /// The reads with MusicBrainz answering Radiohead's discography with
+    /// `discographies` in turn, the last one again after that.
+    fn over(rig: &AuthRig, discographies: &[String]) -> Self {
         let wire = Arc::new(ScriptedWire::new());
         wire.answer(
             &lb(&format!(
@@ -91,14 +121,24 @@ impl Reads {
                 body: COUNTS.as_bytes().to_vec(),
             },
         );
-        let providers = Arc::new(Providers::unpaced_at(
-            wire.clone(),
-            ProviderEndpoints {
-                listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
-                listenbrainz_labs: listenbrainz::LABS_BASE_URL.to_owned(),
-                ..ProviderEndpoints::closed()
+        for discography in discographies {
+            wire.answer(
+                &format!("{MUSICBRAINZ}/release-group"),
+                200,
+                &[],
+                discography.clone(),
+            );
+        }
+        wire.on(
+            Method::Post,
+            &lb("popularity/release-group"),
+            Scripted::Answer {
+                status: 200,
+                headers: Vec::new(),
+                body: GROUP_COUNTS.as_bytes().to_vec(),
             },
-        ));
+        );
+        let providers = Arc::new(Providers::unpaced_at(wire.clone(), endpoints()));
         let listening = crate::common::listening_store(&rig.platform);
         let upstream = || {
             Upstream::new(
@@ -158,10 +198,15 @@ impl Reads {
 
     /// The authorization headers of the listener-count reads so far.
     fn lent(&self) -> Vec<Option<String>> {
+        self.lent_to("popularity/artist")
+    }
+
+    /// The authorization headers of the reads to paths ending `path`.
+    fn lent_to(&self, path: &str) -> Vec<Option<String>> {
         self.wire
             .sent()
             .iter()
-            .filter(|sent| sent.url.path().ends_with("popularity/artist"))
+            .filter(|sent| sent.url.path().ends_with(path))
             .map(|sent| {
                 sent.headers
                     .iter()
@@ -182,11 +227,6 @@ impl Reads {
 async fn listenbrainz_reads_are_on_unless_switched_off() {
     let rig = AuthRig::new("listenbrainz-reads").await;
     rig.seed_user("ada", Role::User).await;
-    // Similar albums read artists' top albums, which need an account.
-    crate::common::listening_store(&rig.platform)
-        .save_listenbrainz(USER, "ada-lb", "ada-token")
-        .await
-        .expect("link");
     let reads = Reads::new(&rig);
     let store = |text: &str| {
         rig.config
@@ -357,6 +397,100 @@ async fn an_unlinked_read_keeps_nothing_a_linked_one_needs() {
     assert!(!linked.albums.is_empty(), "{linked:?}");
     assert!(linked.needs_account.is_empty());
     assert_eq!(reads.sent(), 1, "nothing was kept, so the read went out");
+}
+
+/// No album list lends a token, the listening data's or the album page's,
+/// for a linked person or anyone else. With ListenBrainz reads off the
+/// list still answers, newest first, and nothing is sent to ListenBrainz.
+#[tokio::test]
+async fn album_lists_lend_no_token_and_answer_with_listenbrainz_off() {
+    let rig = AuthRig::new("listenbrainz-album-lists").await;
+    rig.seed_user("ada", Role::User).await;
+    rig.seed_user("bob", Role::User).await;
+    crate::common::listening_store(&rig.platform)
+        .save_listenbrainz(USER, "ada-lb", "ada-token")
+        .await
+        .expect("link");
+    let reads = Reads::new(&rig);
+    let dir = ScratchDir::new("listenbrainz-album-lists");
+    // Its own cache, so the album page's read below is sent as well.
+    let inputs = discover_inputs(
+        &rig,
+        &dir,
+        Providers::unpaced_at(reads.wire.clone(), endpoints()),
+    );
+    let listening = ListeningData::new(
+        live_network(&inputs, &rig.config),
+        inputs.providers.cache.clone(),
+    );
+
+    for user in [USER, "user-bob"] {
+        let albums = listening
+            .artist_albums(user, RADIOHEAD, 10, &Ask::person())
+            .await
+            .expect("the albums read");
+        assert_eq!(albums.len(), 5, "{user}");
+    }
+    reads.labs(&like_radiohead());
+    let similar = reads
+        .catalog
+        .similar_albums(USER, ALBUM, &seed(1), 4)
+        .await
+        .unwrap();
+    assert!(!similar.albums.is_empty());
+    let lent = reads.lent_to("popularity/release-group");
+    assert_eq!(lent, [None, None], "one count read each, with no token");
+
+    rig.config
+        .save_blocking(ListenBrainzSettings {
+            reads_enabled: false,
+        })
+        .expect("off");
+    let before = reads.sent();
+    let dated: Vec<String> = listening
+        .artist_albums(USER, RADIOHEAD, 10, &Ask::person())
+        .await
+        .expect("the albums read")
+        .into_iter()
+        .map(|row| row.album.title)
+        .collect();
+    assert_eq!(
+        dated,
+        [
+            "Kid A",
+            "OK Computer",
+            "Radiotick Tracks 2",
+            "The Bends",
+            "Pablo Honey"
+        ]
+    );
+    assert_eq!(reads.sent(), before, "nothing reached ListenBrainz");
+}
+
+/// An album page built while a similar artist's discography is still
+/// being read is shown without that artist's albums and is not kept: the
+/// next visit has them.
+#[tokio::test]
+async fn an_album_page_built_before_a_discography_is_whole_is_not_kept() {
+    let rig = AuthRig::new("listenbrainz-album-page-partial").await;
+    rig.seed_user("ada", Role::User).await;
+    // The recorded page as answered: 5 of 587 groups, so the rest is read
+    // in the background.
+    let reads = Reads::over(&rig, &[BROWSE.to_owned(), whole_discography()]);
+    reads.labs(&like_radiohead());
+
+    let first = reads
+        .catalog
+        .similar_albums(USER, ALBUM, &seed(2), 4)
+        .await
+        .unwrap();
+    assert!(first.albums.is_empty(), "{first:?}");
+    let next = reads
+        .catalog
+        .similar_albums(USER, ALBUM, &seed(2), 4)
+        .await
+        .unwrap();
+    assert!(!next.albums.is_empty(), "the first answer was not kept");
 }
 
 /// Two genre plans for the same album ask ListenBrainz once.

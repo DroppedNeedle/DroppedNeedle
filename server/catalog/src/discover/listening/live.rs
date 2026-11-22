@@ -12,12 +12,14 @@ use std::sync::Arc;
 use super::network::{ListeningNetwork, Read};
 use super::rows::{
     AlbumFacts, AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmChartAlbum,
-    LastFmFacts, ListenSource, ListenedAlbum, LovedTrack, PlayedArtist, PlaylistTrack, RankedAlbum,
+    LastFmFacts, ListenSource, ListenedAlbum, LovedTrack, PlayedArtist, PlaylistTrack,
     ReleaseGroupFacts, ScoredArtist, SourceContext, StatsRange, TagAlbum, UserMusic,
     WeeklyPlaylist,
 };
 use super::{ListeningError, ListeningResult};
 use crate::discover::ports::BoxFuture;
+use crate::metadata::Catalog;
+use crate::metadata::artist::ReleaseGroupItem;
 use crate::metadata::mapping::should_include_release;
 use crate::metadata::upstream::{CatalogLastFm, Upstream, user_lastfm};
 use droppedneedle_media::playback::listening::ListeningStore;
@@ -27,7 +29,8 @@ use droppedneedle_media::remotes::source::RemoteHandle;
 use droppedneedle_providers::lastfm::{LastFmCredentials, TopItem};
 use droppedneedle_providers::listenbrainz::stats::{ArtistStat, ReleaseGroupStat};
 use droppedneedle_providers::listenbrainz::{
-    ArtistPopularity, ListenBrainzClient, ListenBrainzCredentials, ScoredSimilarArtist,
+    ArtistPopularity, ListenBrainzClient, ListenBrainzCredentials, ReleaseGroupCounts,
+    ScoredSimilarArtist,
 };
 use droppedneedle_providers::musicbrainz::models::{ArtistCreditName, Relation};
 use droppedneedle_providers::musicbrainz::{Criticality, is_valid_mbid};
@@ -43,6 +46,7 @@ const WEEKLY_EXPLORATION_PATCH: &str = "weekly-exploration";
 /// The live provider reads.
 pub struct LiveNetwork {
     upstream: Upstream,
+    catalog: Catalog,
     listenbrainz: ListenBrainzClient,
     jellyfin: Arc<ConnectionResolver>,
     http: reqwest::Client,
@@ -50,9 +54,11 @@ pub struct LiveNetwork {
 }
 
 impl LiveNetwork {
-    /// Build over the catalog upstream.
+    /// Build over the catalog upstream, reading discographies through
+    /// `catalog`.
     pub fn new(
         upstream: Upstream,
+        catalog: Catalog,
         providers: &Providers,
         http: reqwest::Client,
         jellyfin: Arc<ConnectionResolver>,
@@ -61,6 +67,7 @@ impl LiveNetwork {
         Self {
             listenbrainz: providers.listenbrainz.clone(),
             upstream,
+            catalog,
             jellyfin,
             http,
             listening,
@@ -257,10 +264,6 @@ impl ListeningNetwork for LiveNetwork {
         Box::pin(async move { self.lastfm(user_id).await.is_some() })
     }
 
-    fn lends_token<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, bool> {
-        Box::pin(async move { super::shared::has_token(&self.credentials(user_id).await) })
-    }
-
     fn sitewide_artists(
         &self,
         range: StatsRange,
@@ -361,21 +364,34 @@ impl ListeningNetwork for LiveNetwork {
         })
     }
 
-    fn artist_albums<'a>(
+    fn discography<'a>(
         &'a self,
-        user_id: &'a str,
         artist_mbid: &'a str,
-        count: usize,
         priority: RequestPriority,
-    ) -> Read<'a, Vec<RankedAlbum>> {
+    ) -> Read<'a, Option<Vec<ReleaseGroupItem>>> {
         Box::pin(async move {
-            let creds = self.credentials(user_id).await;
-            let rows = provider(
+            self.catalog
+                .complete_release_groups(artist_mbid, priority)
+                .await
+                .map_err(|error| ListeningError::Provider(super::albums::provider_error(error)))
+        })
+    }
+
+    fn release_group_counts<'a>(
+        &'a self,
+        release_group_mbids: &'a [String],
+        priority: RequestPriority,
+    ) -> Read<'a, HashMap<String, ReleaseGroupCounts>> {
+        Box::pin(async move {
+            provider(
                 self.listenbrainz
-                    .artist_top_release_groups(artist_mbid, count, &creds, priority)
+                    .release_group_counts(
+                        release_group_mbids,
+                        &ListenBrainzCredentials::default(),
+                        priority,
+                    )
                     .await,
-            )?;
-            Ok(super::shared::ranked_albums(rows, artist_mbid))
+            )
         })
     }
 

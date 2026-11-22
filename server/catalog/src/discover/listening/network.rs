@@ -9,15 +9,18 @@
 use std::collections::HashMap;
 
 use droppedneedle_providers::RequestPriority;
-use droppedneedle_providers::listenbrainz::{ArtistPopularity, ScoredSimilarArtist};
+use droppedneedle_providers::listenbrainz::{
+    ArtistPopularity, ReleaseGroupCounts, ScoredSimilarArtist,
+};
 
 use super::ListeningResult;
 use super::rows::{
     AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmChartAlbum, LastFmFacts,
-    ListenedAlbum, LovedTrack, PlayedArtist, RankedAlbum, ReleaseGroupFacts, ScoredArtist,
-    SourceContext, StatsRange, TagAlbum, UserMusic, WeeklyPlaylist,
+    ListenedAlbum, LovedTrack, PlayedArtist, ReleaseGroupFacts, ScoredArtist, SourceContext,
+    StatsRange, TagAlbum, UserMusic, WeeklyPlaylist,
 };
 use crate::discover::ports::BoxFuture;
+use crate::metadata::artist::ReleaseGroupItem;
 
 /// A read that answers `T` or a typed failure.
 pub type Read<'a, T> = BoxFuture<'a, ListeningResult<T>>;
@@ -36,10 +39,6 @@ pub trait ListeningNetwork: Send + Sync {
     /// the server's).
     fn lastfm_ready<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, bool> {
         Box::pin(async move { self.accounts(user_id).await.lastfm })
-    }
-    /// Whether the user's reads carry a ListenBrainz token.
-    fn lends_token<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, bool> {
-        Box::pin(async move { self.accounts(user_id).await.listenbrainz.is_some() })
     }
 
     /// One page of the sitewide ListenBrainz artist chart.
@@ -91,18 +90,20 @@ pub trait ListeningNetwork: Send + Sync {
         artist_mbids: &'a [String],
         priority: RequestPriority,
     ) -> Read<'a, HashMap<String, ArtistPopularity>>;
-    /// One artist's most played release groups (a popularity read).
-    /// ListenBrainz answers it only with the user's token: without one it
-    /// is [`ProviderError::NotConfigured`](droppedneedle_providers::ProviderError::NotConfigured)
-    /// and nothing is sent, never an empty answer that would be kept for
-    /// every user.
-    fn artist_albums<'a>(
+    /// One artist's whole discography from the install's MusicBrainz
+    /// source, `None` while a large one is still being fetched.
+    fn discography<'a>(
         &'a self,
-        user_id: &'a str,
         artist_mbid: &'a str,
-        count: usize,
         priority: RequestPriority,
-    ) -> Read<'a, Vec<RankedAlbum>>;
+    ) -> Read<'a, Option<Vec<ReleaseGroupItem>>>;
+    /// Listen and listener counts for release groups (a popularity read),
+    /// sent with no token.
+    fn release_group_counts<'a>(
+        &'a self,
+        release_group_mbids: &'a [String],
+        priority: RequestPriority,
+    ) -> Read<'a, HashMap<String, ReleaseGroupCounts>>;
     /// A user's genres with their listens, most listened first.
     fn genres<'a>(
         &'a self,

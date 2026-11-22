@@ -1692,10 +1692,10 @@ async fn a_commons_portrait_answers_its_credit_as_plain_text() {
     );
 }
 
-/// A section built past a failed ListenBrainz read is not cached as the
-/// answer: once ListenBrainz is back, the next read gets the whole one.
-/// Top songs lose their album links and similar albums lose an artist
-/// while the read behind them fails.
+/// A section built past a failed read is not cached as the answer: once
+/// the service is back, the next read gets the whole one. Top songs lose
+/// their album links while ListenBrainz fails, and similar albums lose an
+/// artist while its MusicBrainz discography fails.
 #[tokio::test]
 async fn a_passing_failure_is_not_cached_as_a_short_section() {
     use droppedneedle_catalog::metadata::models::AlbumRef;
@@ -1712,15 +1712,15 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
     const BORN_TO_DIE: &str = "5e6f7a8b-2222-4c2d-8e3f-4a5b6c7d8e9f";
     let lb = |path: &str| format!("{}/1/{path}", listenbrainz::DEFAULT_BASE_URL);
     let down = Scripted::Transport(TransportKind::Connect);
-    let group = |id: &str, name: &str, artist: &str| {
-        json!([{
-            "artist_mbids": [],
-            "artist_name": artist,
-            "release_group_mbid": id,
-            "release_group": {"name": name},
-            "total_listen_count": 100
-        }])
+    let discography = |id: &str, name: &str, (artist, mbid): (&str, &str)| Scripted::Answer {
+        status: 200,
+        headers: Vec::new(),
+        body: json!({"release-group-count": 1, "release-group-offset": 0,
+            "release-groups": [{"id": id, "title": name, "primary-type": "Album",
+                "secondary-types": [], "artist-credit": [{"name": artist,
+                    "joinphrase": "", "artist": {"id": mbid, "name": artist}}]}]})
         .to_string()
+        .into_bytes(),
     };
 
     // Each failing read fails both of its attempts, then answers.
@@ -1762,22 +1762,28 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
             body: upstream_fixture("lb_artist_popularity").into_bytes(),
         },
     );
-    let lana = lb(&format!("popularity/top-release-groups-for-artist/{LANA}"));
-    wire.on(Method::Get, &lana, down.clone());
-    wire.on(Method::Get, &lana, down);
-    wire.answer(
-        &lana,
-        200,
-        &[],
-        group(BORN_TO_DIE, "Born to Die", "Lana Del Rey"),
-    );
-    wire.answer(
-        &lb(&format!(
-            "popularity/top-release-groups-for-artist/{PORTISHEAD}"
-        )),
-        200,
-        &[],
-        group(DUMMY_GROUP, "Dummy", "Portishead"),
+    // One browse address serves both artists' discographies, in the order
+    // they are read: Lana Del Rey's fails both attempts, Portishead's
+    // answers, and the next read of Lana Del Rey's answers.
+    let browse = "http://127.0.0.1:9/ws/2/release-group";
+    let portishead = discography(DUMMY_GROUP, "Dummy", ("Portishead", PORTISHEAD));
+    for answer in [
+        down.clone(),
+        down,
+        portishead.clone(),
+        discography(BORN_TO_DIE, "Born to Die", ("Lana Del Rey", LANA)),
+        portishead,
+    ] {
+        wire.on(Method::Get, browse, answer);
+    }
+    wire.on(
+        Method::Post,
+        &lb("popularity/release-group"),
+        Scripted::Answer {
+            status: 200,
+            headers: Vec::new(),
+            body: b"[]".to_vec(),
+        },
     );
     let providers = Arc::new(Providers::over_wire(
         wire,
@@ -1847,7 +1853,7 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
     assert_eq!(
         ids(&second.albums),
         [BORN_TO_DIE, DUMMY_GROUP],
-        "both artists once ListenBrainz answers"
+        "both artists once MusicBrainz answers"
     );
 }
 

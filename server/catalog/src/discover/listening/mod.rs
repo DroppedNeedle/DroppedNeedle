@@ -20,6 +20,7 @@
 //! - the build cap: an [`Ask`] made for a build lets at most
 //!   [`BUILD_CAP`] of its provider calls run at once.
 
+mod albums;
 pub mod gate;
 mod live;
 mod network;
@@ -60,8 +61,6 @@ pub const BUILD_LOOKUPS: usize = 30;
 
 /// Rows per ListenBrainz statistics page (the most the endpoints serve).
 const PAGE: u32 = droppedneedle_providers::listenbrainz::stats::MAX_STATS_COUNT;
-/// An artist's top albums read per artist.
-const ARTIST_ALBUMS_FLOOR: usize = shared::ARTIST_ALBUM_ROWS;
 /// Rows of the Last.fm sitewide chart read at once (the charts page up to
 /// this many rows).
 const LASTFM_CHART_ROWS: u32 = 200;
@@ -88,9 +87,8 @@ const SITEWIDE: Policy = Policy {
     fresh: Duration::from_secs(12 * 3_600),
     miss: HOUR,
 };
-/// Artist-level lists (similar artists, an artist's albums, tags,
-/// popularity): they move over weeks, so a warm build reads them from the
-/// rows it finds.
+/// Artist-level lists (similar artists, tags, popularity): they move over
+/// weeks, so a warm build reads them from the rows it finds.
 const ARTIST: Policy = Policy::LISTENBRAINZ_ARTIST;
 /// A user's statistics (top artists and albums, weekly charts and
 /// playlists): ListenBrainz recomputes them about once a day, so each warm
@@ -697,53 +695,34 @@ impl ListeningData {
             .collect()
     }
 
-    /// One artist's most played release groups, empty while ListenBrainz
-    /// popularity is down. `user_id` lends its token. ListenBrainz answers
-    /// it only for a linked account: anyone else gets what the cache holds
-    /// from other people's reads, else an empty answer that is not kept and
-    /// is not a failed read.
+    /// The albums `artist_mbid` may be offered by ([`albums`]), `count` at
+    /// most, for anyone asking: no person's token is read or lent for it.
+    /// While ListenBrainz reads are off, or popularity is down, the list is
+    /// in date order, newest first. A list not read yet answers empty.
     pub async fn artist_albums(
         &self,
-        user_id: &str,
+        _user_id: &str,
         artist_mbid: &str,
         count: usize,
         ask: &Ask,
     ) -> ListeningResult<Vec<RankedAlbum>> {
-        if self.listenbrainz_off() {
-            return Ok(Default::default());
-        }
-        if self.popularity_down() {
-            return Ok(Vec::new());
-        }
-        let read = count.max(ARTIST_ALBUMS_FLOOR);
-        let key = shared::artist_albums_key(artist_mbid, read);
-        // Without a token the read is never sent, so it starts or joins no
-        // fetch another user's read could share: what is held answers.
-        if !self.cache.fresh(&key).await && !self.network.lends_token(user_id).await {
-            let held: Option<Vec<RankedAlbum>> = self.cache.peek(&key).await.flatten();
-            return Ok(cut(offered(held.unwrap_or_default(), artist_mbid), count));
-        }
-        let (user, mbid, health) = (
-            user_id.to_owned(),
-            artist_mbid.to_owned(),
-            Arc::clone(&self.health),
-        );
-        let rows = self
-            .lookup(key, ARTIST, ask, move |network, priority| async move {
-                let found = network.artist_albums(&user, &mbid, read, priority).await;
-                health.note(&found, priority);
-                match found {
-                    Ok(rows) if rows.is_empty() => Ok(Fetched::Missing),
-                    Ok(rows) => Ok(Fetched::Found(rows)),
-                    Err(ListeningError::Provider(ProviderError::NotConfigured { .. })) => {
-                        Ok(Fetched::Partial(Vec::new()))
-                    }
-                    Err(error) => Err(error),
-                }
-            })
-            .await?
-            .unwrap_or_default();
-        Ok(cut(offered(rows, artist_mbid), count))
+        let watch = Watch::new(ask);
+        let reads = Arc::new(albums::NetworkReads {
+            network: Arc::clone(&self.network),
+            permits: ask.permits.clone(),
+            health: Arc::clone(&self.health),
+        });
+        let found = albums::artist_albums(
+            &self.cache,
+            reads,
+            &self.namespace(),
+            artist_mbid,
+            self.listenbrainz_on(),
+            ask.priority,
+        )
+        .await;
+        watch.settle(found.is_ok());
+        Ok(cut(offered(found?.unwrap_or_default(), artist_mbid), count))
     }
 
     /// A ListenBrainz user's genres with their listens, most listened
