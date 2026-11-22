@@ -33,7 +33,11 @@ import {
 	watchMusicBrainzSourceScope
 } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-import type { DeckCard, QueueEnrichment } from '$lib/features/discover/queries/types';
+import type {
+	DeckCard,
+	QueueEnrichment,
+	SectionCondition
+} from '$lib/features/discover/queries/types';
 
 export type DeckPhase = 'idle' | 'loading' | 'building' | 'ready' | 'finished' | 'empty' | 'error';
 
@@ -72,6 +76,8 @@ function createDiscoverQueueDeck() {
 	let currentIndex = $state(0);
 	let queueId = $state('');
 	let errorMessage = $state('');
+	// why the last ready deck is short, as its status said
+	let reason = $state<SectionCondition | null>(null);
 	let replacing = $state(false);
 	let generation = $state(0);
 	let sourceUnsub: (() => void) | null = null;
@@ -115,6 +121,7 @@ function createDiscoverQueueDeck() {
 	function onBuildStatus(s: QueueStatus): void {
 		if (phase !== 'building' && phase !== 'finished' && !replacing) return;
 		if (s.status === 'ready') {
+			reason = s.reason ?? null;
 			void fetchQueue();
 		} else if (s.status === 'error') {
 			replacing = false;
@@ -257,6 +264,9 @@ function createDiscoverQueueDeck() {
 		get errorMessage() {
 			return errorMessage;
 		},
+		get reason() {
+			return reason;
+		},
 
 		async init(getVisible?: () => boolean): Promise<void> {
 			if (getVisible) isVisible = getVisible;
@@ -333,6 +343,7 @@ function createDiscoverQueueDeck() {
 			const status = await fetchDiscoverQueueStatus();
 			if (session !== generation) return;
 			if (status?.status === 'ready') {
+				reason = status.reason ?? null;
 				await fetchQueue();
 				return;
 			}

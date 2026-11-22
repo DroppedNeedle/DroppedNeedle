@@ -45,7 +45,8 @@ fn group(n: u8) -> String {
 /// Scripted listening answers, the network behind the listening data.
 /// Each read answers its field (empty by default). Release-group facts
 /// fail while `musicbrainz_down` is set, fresh releases while
-/// `fresh_down` is.
+/// `fresh_down` is, similar artists while `similar_down` is and an
+/// artist's albums while `albums_down` is.
 #[derive(Default)]
 pub(crate) struct Script {
     pub user: UserMusic,
@@ -78,6 +79,8 @@ pub(crate) struct Script {
     pub release_lookups_hang: bool,
     pub musicbrainz_down: AtomicBool,
     pub fresh_down: AtomicBool,
+    pub similar_down: AtomicBool,
+    pub albums_down: AtomicBool,
     /// When set, ListenBrainz top-artist reads wait here until released.
     pub hold: Option<Arc<Hold>>,
 }
@@ -116,6 +119,10 @@ type Answer<'a, T> = Read<'a, T>;
 
 fn ok<T: Send + 'static>(value: T) -> Answer<'static, T> {
     Box::pin(async move { Ok(value) })
+}
+
+fn down<T: Send + 'static>(cause: &'static str) -> Answer<'static, T> {
+    Box::pin(async move { Err(ListeningError::MediaServer(cause.to_owned())) })
 }
 
 impl ListeningNetwork for Script {
@@ -186,6 +193,9 @@ impl ListeningNetwork for Script {
         _l: usize,
         _p: RequestPriority,
     ) -> Answer<'a, Vec<ScoredArtist>> {
+        if self.similar_down.load(Ordering::SeqCst) {
+            return down("similar artists down");
+        }
         ok(self.similar.get(artist).cloned().unwrap_or_default())
     }
     fn artist_albums<'a>(
@@ -195,6 +205,9 @@ impl ListeningNetwork for Script {
         _c: usize,
         _p: RequestPriority,
     ) -> Answer<'a, Vec<RankedAlbum>> {
+        if self.albums_down.load(Ordering::SeqCst) {
+            return down("artist albums down");
+        }
         ok(self.artist_albums.get(artist).cloned().unwrap_or_default())
     }
     fn genres<'a>(&'a self, _u: &'a str, _p: RequestPriority) -> Answer<'a, Vec<(String, i64)>> {
@@ -1015,6 +1028,87 @@ async fn a_card_built_during_an_outage_is_not_kept() {
     script.musicbrainz_down.store(false, Ordering::SeqCst);
     let card = queue.enrich("user-1", &group(1)).await.unwrap();
     assert_eq!(card.tags, ["shoegaze"], "the card fills in once it answers");
+}
+
+/// The status once no build is running. A build that keeps the deck
+/// before it writes nothing, so this asks until it has settled.
+async fn settled_status(app: &Router) -> Value {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let (_, body) = call(app, "GET", "/api/v3/discover/queue/status", None).await;
+            if body["status"] != "building" {
+                return body;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the queue build settled")
+}
+
+/// A build that met failed reads and would deal fewer cards of its own
+/// than the deck it replaces keeps that deck and says why. The next build
+/// may start five minutes later.
+#[tokio::test]
+async fn a_build_whose_pools_failed_keeps_the_deck_before_it() {
+    let dir = crate::common::ScratchDir::new("discover-queue-kept");
+    let rig = AuthRig::new("discover-queue-kept").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    rig.config
+        .save_secret_blocking(AdvancedSettings {
+            discover_queue_size: 5,
+            discover_queue_wildcard_slots: 1,
+            ..AdvancedSettings::default()
+        })
+        .expect("queue settings save");
+    let script = Arc::new(queue_script());
+    let network = Arc::clone(&script);
+    let providers = Providers::closed();
+    let answers = providers.cache.clone();
+    let app = discover_routes(discover_deps(&rig, &dir, providers, |slot| {
+        *slot = network;
+    }));
+    let generate = |force: bool| {
+        let app = app.clone();
+        async move {
+            let (_, body) = call(
+                &app,
+                "POST",
+                "/api/v3/discover/queue/generate",
+                Some(json!({ "force": force })),
+            )
+            .await;
+            body
+        }
+    };
+
+    assert_eq!(generate(false).await["action"], "started");
+    let first = settled(&app, &db).await;
+    assert_eq!(first["item_count"], 3);
+    assert_eq!(first["reason"], Value::Null, "three of five is not short");
+
+    script.similar_down.store(true, Ordering::SeqCst);
+    answers.clear().await.expect("provider answers cleared");
+    assert_eq!(generate(true).await["action"], "started");
+    let kept = settled_status(&app).await;
+    assert_eq!(kept["status"], "ready");
+    assert_eq!(
+        kept["queue_id"], first["queue_id"],
+        "the deck before it stays"
+    );
+    assert_eq!(kept["item_count"], 3);
+    assert_eq!(kept["reason"], "source_down");
+    let again = generate(false).await;
+    assert_eq!(again["action"], "already_ready");
+    assert_eq!(again["reason"], "source_down", "the answer says why too");
+
+    rig.clock().advance(301_000);
+    assert_eq!(
+        generate(false).await["action"],
+        "started",
+        "tried again five minutes on"
+    );
 }
 
 /// Last.fm answers are kept under keys every user shares, so a user who

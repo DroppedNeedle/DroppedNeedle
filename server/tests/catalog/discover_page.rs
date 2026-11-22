@@ -4,7 +4,8 @@
 //! activity is recorded for the warm cycle, and refresh is accepted. A
 //! user with Last.fm and ListenBrainz both linked gets shelves grown from
 //! both, unless the server turns the blend off. Unreadable settings hold
-//! every build, a page built past a failed read is rebuilt soon, and a
+//! every build, a page built past a failed read is rebuilt soon and keeps
+//! the sections it had, each section not plainly built says why, and a
 //! background warm that keeps nothing waits before it is tried again.
 
 use crate::common::Probe;
@@ -145,6 +146,20 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
         status,
         serde_json::from_slice(&bytes).unwrap_or(Value::Null),
     )
+}
+
+/// How section `key` of a page stands, without its zone, `null` when it is
+/// plainly built.
+fn state_of(page: &Value, key: &str) -> Value {
+    let mut state = page["section_states"]
+        .as_array()
+        .and_then(|states| states.iter().find(|state| state["key"] == key))
+        .cloned()
+        .unwrap_or(Value::Null);
+    if let Some(state) = state.as_object_mut() {
+        state.remove("zone");
+    }
+    state
 }
 
 /// The content of section `key` of a page.
@@ -687,6 +702,11 @@ async fn a_shelf_whose_read_failed_is_built_again_soon() {
     call(&app, "GET", "/api/v3/discover", None).await;
     let page = settled_page(&rig, &app, "the first page was built").await;
     assert_eq!(fresh(&page), None, "the failed shelf is left out");
+    assert_eq!(
+        state_of(&page, "fresh_releases"),
+        json!({"key": "fresh_releases", "state": "source_down", "source": "listenbrainz"}),
+        "and says which service failed"
+    );
 
     script.fresh_down.store(false, Ordering::SeqCst);
     rig.clock().advance(301_000);
@@ -698,11 +718,153 @@ async fn a_shelf_whose_read_failed_is_built_again_soon() {
     })
     .await;
     assert_eq!(fresh(&page), Some(1));
+    assert_eq!(state_of(&page, "fresh_releases"), Value::Null);
     settled_page(&rig, &app, "the rebuild finished").await;
 
     rig.clock().advance(301_000);
     let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
     assert_eq!(page["refreshing"], false, "a whole page is kept");
+}
+
+/// The page once a build newer than `before` has landed and settled.
+async fn page_after(app: &Router, before: &Value, what: &str) -> Value {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let (_, page) = call(app, "GET", "/api/v3/discover", None).await;
+            if page["refreshing"] == false && page["generated_at"] != before["generated_at"] {
+                return page;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("never happened: {what}"))
+}
+
+/// A rebuild whose similar-artist reads fail keeps the Because shelves the
+/// page had, as they were, and says when they are from. A section whose
+/// reads all answered with nothing says it is empty.
+#[tokio::test]
+async fn a_failed_read_keeps_the_sections_the_page_had() {
+    let dir = crate::common::ScratchDir::new("discover-kept");
+    let rig = AuthRig::new("discover-kept").await;
+    seed_user(&rig.platform.db).await;
+    let script = Arc::new(page_script());
+    let network = Arc::clone(&script);
+    let providers = Providers::closed();
+    let answers = providers.cache.clone();
+    let app = discover_routes(discover_deps(&rig, &dir, providers, |slot| {
+        *slot = network;
+    }));
+
+    call(&app, "GET", "/api/v3/discover", None).await;
+    let first = settled_page(&rig, &app, "the first page was built").await;
+    let because = content(&first, "because_you_listen_to").clone();
+    assert!(
+        because["entries"].as_array().is_some_and(|e| !e.is_empty()),
+        "{first}"
+    );
+    assert_eq!(state_of(&first, "because_you_listen_to"), Value::Null);
+    assert_eq!(
+        state_of(&first, "anniversaries"),
+        json!({"key": "anniversaries", "state": "empty"}),
+        "an empty library has no anniversaries"
+    );
+
+    script.similar_down.store(true, Ordering::SeqCst);
+    answers.clear().await.expect("provider answers cleared");
+    rig.clock().advance(60_000);
+    let (status, _) = call(&app, "POST", "/api/v3/discover/refresh", None).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let page = page_after(&app, &first, "the rebuild landed").await;
+    assert_eq!(
+        content(&page, "because_you_listen_to"),
+        &because,
+        "the shelves are kept as they were"
+    );
+    assert_eq!(
+        state_of(&page, "because_you_listen_to"),
+        json!({
+            "key": "because_you_listen_to",
+            "state": "kept",
+            "source": "listenbrainz",
+            "since": first["generated_at"],
+        })
+    );
+}
+
+/// For a person with nothing linked, the Listening Lounge and the shelves
+/// grown from listening ask for ListenBrainz, and a library shelf with
+/// nothing in it says it is empty.
+#[tokio::test]
+async fn sections_say_what_a_person_with_nothing_linked_needs() {
+    let dir = crate::common::ScratchDir::new("discover-unlinked");
+    let rig = AuthRig::new("discover-unlinked").await;
+    seed_user(&rig.platform.db).await;
+    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
+        *slot = Arc::new(Script {
+            user: UserMusic::default(),
+            ..page_script()
+        });
+    }));
+
+    call(&app, "GET", "/api/v3/discover", None).await;
+    let page = settled_page(&rig, &app, "the page was built").await;
+    let needs_listenbrainz =
+        |key: &str| json!({"key": key, "state": "needs_link", "source": "listenbrainz"});
+    assert_eq!(
+        state_of(&page, "listeners_like_you"),
+        needs_listenbrainz("listeners_like_you")
+    );
+    assert_eq!(
+        state_of(&page, "because_you_listen_to"),
+        needs_listenbrainz("because_you_listen_to")
+    );
+    assert_eq!(
+        state_of(&page, "anniversaries"),
+        json!({"key": "anniversaries", "state": "empty"})
+    );
+    assert_eq!(
+        page["section_states"][0]["zone"], "essentials",
+        "each state says where its section sits"
+    );
+}
+
+/// Top Picks built while an artist's albums would not read are kept for
+/// five minutes, not four hours: the rebuild after the retry wait takes
+/// the albums up.
+#[tokio::test]
+async fn top_picks_built_past_a_failed_read_are_built_again_soon() {
+    let dir = crate::common::ScratchDir::new("discover-picks-retry");
+    let rig = AuthRig::new("discover-picks-retry").await;
+    seed_user(&rig.platform.db).await;
+    let script = Arc::new(page_script());
+    script.albums_down.store(true, Ordering::SeqCst);
+    let network = Arc::clone(&script);
+    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
+        *slot = network;
+    }));
+    let personal = |page: &Value| {
+        content(page, "top_picks")["picks"]["items"]
+            .as_array()
+            .map_or(0, |items| {
+                items
+                    .iter()
+                    .filter(|pick| pick["seed_artist"].is_string())
+                    .count()
+            })
+    };
+
+    call(&app, "GET", "/api/v3/discover", None).await;
+    let first = settled_page(&rig, &app, "the first page was built").await;
+    assert_eq!(personal(&first), 0, "no artist's albums read");
+
+    script.albums_down.store(false, Ordering::SeqCst);
+    rig.clock().advance(361_000);
+    let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
+    assert_eq!(page["refreshing"], true, "a rebuild started");
+    let page = page_after(&app, &first, "the rebuild landed").await;
+    assert!(personal(&page) > 0, "{}", content(&page, "top_picks"));
 }
 
 /// A home warm that keeps nothing, as every warm does while ListenBrainz

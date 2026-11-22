@@ -43998,6 +43998,17 @@
             ],
             "description": "Build id, when there is one."
           },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SectionCondition"
+              }
+            ],
+            "description": "Why the deck is short (`source_down`, `thin` or `empty`), when it\nis; `source_down` too while the last build failed a read and the\ndeck before it is kept."
+          },
           "stale": {
             "type": [
               "boolean",
@@ -44013,7 +44024,7 @@
       },
       "DiscoverResponse": {
         "type": "object",
-        "description": "Discover: its sections, in page order, plus the page-level fields. A\nsection with no rows is left out.",
+        "description": "Discover: its sections, in page order, plus the page-level fields. A\nsection with no rows is left out, and `section_states` says why.",
         "required": [
           "sections",
           "discover_queue_enabled",
@@ -44071,6 +44082,13 @@
           "refreshing": {
             "type": "boolean",
             "description": "True while a fuller build runs in the background (the UI polls)."
+          },
+          "section_states": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SectionState"
+            },
+            "description": "In page order, each section switched on that is not plainly built:\nkept from an earlier build, short, empty or missing, and why."
           },
           "sections": {
             "type": "array",
@@ -61067,6 +61085,17 @@
             ],
             "description": "Build id, when there is one."
           },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SectionCondition"
+              }
+            ],
+            "description": "Why the deck is short, when it is, as the status says."
+          },
           "stale": {
             "type": [
               "boolean",
@@ -66572,6 +66601,18 @@
           }
         }
       },
+      "SectionCondition": {
+        "type": "string",
+        "description": "Why a section switched on is not plainly built. The one list of these\nreasons: the page's sections and the queue deck both use it.",
+        "enum": [
+          "building",
+          "kept",
+          "source_down",
+          "needs_link",
+          "thin",
+          "empty"
+        ]
+      },
       "SectionContent": {
         "oneOf": [
           {
@@ -66940,6 +66981,48 @@
               "$ref": "#/components/schemas/SectionPrefUpdateItem"
             },
             "description": "Toggles to apply."
+          }
+        }
+      },
+      "SectionState": {
+        "type": "object",
+        "description": "How one section of a page stands, when it is not plainly built.",
+        "required": [
+          "key",
+          "zone",
+          "state"
+        ],
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/SectionKey",
+            "description": "Which section it is."
+          },
+          "since": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the section shown was built (unix seconds), for `kept`."
+          },
+          "source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ListenSource"
+              }
+            ],
+            "description": "The service behind it, when one is the cause."
+          },
+          "state": {
+            "$ref": "#/components/schemas/SectionCondition",
+            "description": "How it stands."
+          },
+          "zone": {
+            "$ref": "#/components/schemas/SectionZone",
+            "description": "The zone it is shown in."
           }
         }
       },

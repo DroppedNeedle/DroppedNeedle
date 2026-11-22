@@ -521,6 +521,42 @@ pub enum ServiceState {
     Unavailable,
 }
 
+/// Why a section switched on is not plainly built. The one list of these
+/// reasons: the page's sections and the queue deck both use it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SectionCondition {
+    /// No build has made it since it was switched on.
+    Building,
+    /// Its last build failed, so the one built before is shown.
+    Kept,
+    /// Its last build failed and there is nothing earlier to show.
+    SourceDown,
+    /// It needs a service the person has not linked.
+    NeedsLink,
+    /// It came back under half its usual size.
+    Thin,
+    /// Every read answered, with nothing to show.
+    Empty,
+}
+
+/// How one section of a page stands, when it is not plainly built.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SectionState {
+    /// Which section it is.
+    pub key: SectionKey,
+    /// The zone it is shown in.
+    pub zone: SectionZone,
+    /// How it stands.
+    pub state: SectionCondition,
+    /// The service behind it, when one is the cause.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ListenSource>,
+    /// When the section shown was built (unix seconds), for `kept`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<i64>,
+}
+
 /// One section of a page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PageSection {
@@ -564,11 +600,15 @@ pub enum SectionContent {
 }
 
 /// Discover: its sections, in page order, plus the page-level fields. A
-/// section with no rows is left out.
+/// section with no rows is left out, and `section_states` says why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverResponse {
     /// The sections, in page order.
     pub sections: Vec<PageSection>,
+    /// In page order, each section switched on that is not plainly built:
+    /// kept from an earlier build, short, empty or missing, and why.
+    #[serde(default)]
+    pub section_states: Vec<SectionState>,
     /// Whether the queue deck is enabled for the user.
     pub discover_queue_enabled: bool,
     /// Integration availability behind the shelves.
@@ -759,6 +799,11 @@ pub struct DiscoverQueueStatusResponse {
     /// Build failure, when failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Why the deck is short (`source_down`, `thin` or `empty`), when it
+    /// is; `source_down` too while the last build failed a read and the
+    /// deck before it is kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<SectionCondition>,
 }
 
 /// Body triggering a queue build.
@@ -805,6 +850,9 @@ pub struct QueueGenerateResponse {
     /// Build failure, when failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Why the deck is short, when it is, as the status says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<SectionCondition>,
 }
 
 /// Whether a queue card's YouTube preview was found.

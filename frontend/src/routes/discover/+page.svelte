@@ -30,7 +30,7 @@
 	import Button from '$lib/ui/Button.svelte';
 	import { isDismissed } from '$lib/features/discover/state/dismissedPrompts';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { PROVIDER_NAMES } from '$lib/utils/serviceError';
+	import SectionStateLine from '$lib/features/discover/components/SectionStateLine.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
 		EyeOff,
@@ -53,7 +53,9 @@
 	import { useDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
 	import type {
 		ChartSection,
+		PageSection,
 		SectionKey,
+		SectionState,
 		SectionZone,
 		TopPickItem
 	} from '$lib/features/discover/queries/types';
@@ -64,6 +66,7 @@
 		picksOf,
 		shelfOf,
 		shelvesOf,
+		stateOf,
 		weeklyOf,
 		zoneSections
 	} from '$lib/features/discover/queries/sections';
@@ -78,10 +81,10 @@
 	const ignoreDiscoveryMutation = createIgnoreDiscoveryV3Mutation();
 	const refreshDiscoverMutation = createRefreshDiscoverV3Mutation();
 	const sectionPrefsQuery = getSectionPrefsQuery();
+	const discoverPrefs = $derived(sectionPrefsQuery.data?.pages?.discover ?? []);
 	// client-only chrome: the backend can't blank an action card, so filter here
 	const playlistDiscoveryEnabled = $derived(
-		sectionPrefsQuery.data?.pages?.discover?.find((s) => s.key === 'playlist_discovery')?.enabled ??
-			true
+		discoverPrefs.find((s) => s.key === 'playlist_discovery')?.enabled ?? true
 	);
 	const discoverData = $derived(discoverQuery.data ?? null);
 	const loading = $derived(discoverQuery.isLoading);
@@ -119,11 +122,36 @@
 	const genreList = $derived(shelfOf(sections, 'genre_list'));
 
 	let hasContent = $derived((sections?.length ?? 0) > 0);
-	// build-time degradation summary; explains an empty or slow page instead of
-	// leaving the user on endless skeletons
-	const degradedSources = $derived(Object.keys(discoverData?.service_status ?? {}));
-	const degradedLabel = $derived(degradedSources.map((s) => PROVIDER_NAMES[s] ?? s).join(', '));
-	const degradedVerb = $derived(degradedSources.length > 1 ? 'are' : 'is');
+	const sectionStates = $derived(discoverData?.section_states ?? []);
+
+	// A section that is not on the page but says how it stands takes its
+	// place in its zone, named and ordered as the section settings list it
+	// (in page order, like the page).
+	type Entry = { key: SectionKey; zone: SectionZone; section: PageSection | null };
+	let entries = $derived.by((): Entry[] => {
+		const shown = new Set((sections ?? []).map((section) => section.key));
+		const rank = new Map(discoverPrefs.map((pref, i) => [pref.key, i]));
+		const absent = sectionStates
+			.filter((state) => !shown.has(state.key) && rank.has(state.key))
+			.map((state): Entry => ({ key: state.key, zone: state.zone, section: null }));
+		const list: Entry[] = [
+			...(sections ?? []).map((section) => ({ key: section.key, zone: section.zone, section })),
+			...absent
+		];
+		const at = (key: SectionKey) => rank.get(key) ?? Number.MAX_SAFE_INTEGER;
+		return list.sort((a, b) => at(a.key) - at(b.key));
+	});
+	const titleOf = (key: SectionKey) => discoverPrefs.find((p) => p.key === key)?.title ?? '';
+	// the lines of the Because You Listened zone sit inside its block
+	let becauseStates = $derived(
+		entries
+			.filter((entry) => entry.zone === 'because_you_listened')
+			.flatMap((entry) => {
+				const state = stateOf(sectionStates, entry.key);
+				return state ? [state] : [];
+			})
+	);
+	let becauseState = $derived(stateOf(sectionStates, 'because_you_listen_to'));
 	let isBuilding = $derived(
 		!!discoverData && !hasContent && (!!discoverData.refreshing || isUpdating)
 	);
@@ -154,11 +182,14 @@
 		/** The zone strip's link, for the first block of a zone. */
 		nav?: { id: string; label: string };
 		kicker?: Kicker;
+		/** How the section stands, when it is not plainly built. */
+		state?: SectionState;
 	} & (
 		| { kind: 'queue' | 'picks' | 'lounge' | 'weekly' | 'playlist' | 'because' }
 		| { kind: 'mixes' | 'radio' | 'genres-explore' | 'genres-browse' }
 		| { kind: 'shelf'; shelf: ChartSection; key: SectionKey; playable: boolean; link?: string }
 		| { kind: 'trending-lead'; shelf: ChartSection }
+		| { kind: 'state'; title: string; state: SectionState }
 	);
 
 	const ZONES: Partial<Record<SectionZone, { id: string; nav: string } & Kicker>> = {
@@ -224,8 +255,7 @@
 				nav: { id: 'zone-queue', label: 'Queue' }
 			});
 
-		for (const section of sections ?? []) {
-			const { key, zone, content } = section;
+		for (const { key, zone, section } of entries) {
 			if (!EARLY_ZONES.has(zone)) placePlaylist();
 			if (!EARLY_ZONES.has(zone) && zone !== 'made_for_you') placeBecause();
 
@@ -244,6 +274,18 @@
 				}
 				list.push(block);
 			};
+			const state = stateOf(sectionStates, key) ?? undefined;
+
+			if (!section) {
+				// its lines sit inside the Because You Listened block, and the
+				// lounge plays Top Picks' runners-up when it has no shelf
+				if (zone === 'because_you_listened') placeBecause();
+				else if (state && (key !== 'listeners_like_you' || !hasLounge))
+					place({ id, kind: 'state', width: 'half', kicker, title: titleOf(key), state });
+				continue;
+			}
+			const { content } = section;
+			const placed = list.length;
 
 			if (key === 'top_picks') {
 				if (topPicks)
@@ -307,6 +349,8 @@
 					link: SHELF_LINKS[key]
 				});
 			}
+			if (state && zone !== 'because_you_listened' && list.length > placed)
+				list[placed].state = state;
 		}
 		placePlaylist();
 		placeBecause();
@@ -405,12 +449,6 @@
 								Your recommendations will appear here as each section becomes ready.
 							</p>
 						</div>
-						{#if degradedSources.length > 0}
-							<p class="text-xs text-muted">
-								{degradedLabel}
-								{degradedVerb} temporarily unavailable, so this may take longer than usual.
-							</p>
-						{/if}
 					</div>
 				{/if}
 				<div class="space-y-8" aria-label="Loading Discover sections">
@@ -459,6 +497,9 @@
 									class:dn-discover-block--ruled={i === 1 && block.kind === 'genres-browse'}
 								>
 									{@render blockBody(block, row.length === 2)}
+									{#if block.state && block.kind !== 'state'}
+										<SectionStateLine status={block.state} />
+									{/if}
 								</div>
 							{/each}
 						</div>
@@ -477,19 +518,6 @@
 								href={withBasePath(authStore.isAdmin ? '/settings' : '/profile#scrobbling')}
 								>Connect Services</Button
 							>
-						</div>
-					{:else if !hasContent && degradedSources.length > 0}
-						<div class="flex flex-col items-center justify-center py-12 sm:py-16">
-							<CircleAlert class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-muted" />
-							<h2 class="dn-panel__title mb-3 text-center">Recommendations Unavailable</h2>
-							<p class="mb-6 max-w-md px-4 text-center text-sm text-muted sm:text-base">
-								{degradedLabel}
-								{degradedVerb} temporarily unavailable, so we couldn't build recommendations. We'll keep
-								retrying in the background - your page will fill in as soon as it recovers.
-							</p>
-							<Button variant="primary" loading={refreshing} onclick={() => void handleRefresh()}>
-								Retry Now
-							</Button>
 						</div>
 					{:else if !hasContent && !queueEnabled}
 						<div class="flex flex-col items-center justify-center py-12 sm:py-16">
@@ -542,6 +570,12 @@
 			{#snippet icon()}<Icon class="h-3.5 w-3.5" />{/snippet}
 		</SectionDivider>
 	{/if}
+{/snippet}
+
+{#snippet zoneLines(skip: SectionKey[] = [])}
+	{#each becauseStates.filter((state) => !skip.includes(state.key)) as state (state.key)}
+		<SectionStateLine status={state} title={titleOf(state.key)} />
+	{/each}
 {/snippet}
 
 {#snippet blockBody(block: Block, paired: boolean)}
@@ -603,9 +637,15 @@
 						{/if}
 					</div>
 				{/if}
+				{@render zoneLines()}
 			</div>
+		{:else if becauseState && becauseState.state !== 'empty' && becauseState.state !== 'building'}
+			{@render kickerRow({ label: 'Because You Listened', icon: Heart })}
+			<SectionHead title={titleOf('because_you_listen_to') || 'Because You Listened'} />
+			{@render zoneLines()}
 		{:else}
 			<DiscoverBecauseEmpty updating={sectionsUpdating} />
+			{@render zoneLines(['because_you_listen_to'])}
 		{/if}
 	{:else if block.kind === 'shelf'}
 		{@render kickerRow(block.kicker)}
@@ -627,6 +667,10 @@
 		<div class="dn-discover-genres" class:dn-discover-genres--paired={paired}>
 			<GenreGrid title={genreList.title} genres={genreRows(genreList)} />
 		</div>
+	{:else if block.kind === 'state'}
+		{@render kickerRow(block.kicker)}
+		<SectionHead title={block.title} />
+		<SectionStateLine status={block.state} />
 	{:else if block.kind === 'trending-lead'}
 		{@render kickerRow({ label: 'Trending Now', icon: TrendingUp })}
 		<div class="dn-trending">

@@ -8,6 +8,10 @@
 //! durable: every later build skips them, and a deck is served without
 //! them, so one built before the ignore never shows the album again.
 //!
+//! A build that met a failed read and found fewer cards of its own than
+//! the deck it would replace keeps that deck, and the next build may start
+//! five minutes later. The status says why a deck is short (`reason`).
+//!
 //! The pieces: [`build`] assembles a deck from the listening reads,
 //! [`select`] holds the pure picking logic, [`cards`] the per-card
 //! details and [`store`] the tables.
@@ -30,6 +34,7 @@ use crate::discover::listening::{Ask, ListeningData};
 use crate::discover::models::{
     DiscoverQueuePreview, DiscoverQueueStatusResponse, IgnoredRelease, QueueAction,
     QueueBuildStatus, QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, QueueItemLight,
+    SectionCondition,
 };
 use crate::discover::ports::{BoxFuture, ProviderFailure, QueueDeck, QueueTrigger};
 use crate::discover::scheduler::{Feature, Warm};
@@ -80,6 +85,9 @@ const DECK_TIMING: Timing = Timing {
     fresh_ms: QUEUE_TTL_MS,
     retry_ms: 0,
 };
+/// How long after a build that kept the deck before it the next may
+/// start, ms.
+const KEPT_RETRY_MS: i64 = 300_000;
 /// How long a queue card's details are reused: a day.
 const QUEUE_ENRICH_TTL: Duration = Duration::from_secs(86400);
 
@@ -136,6 +144,9 @@ pub struct Deck {
     /// Its health numbers.
     #[serde(default)]
     health: Option<DeckHealth>,
+    /// Why it is short, when it is.
+    #[serde(default)]
+    reason: Option<SectionCondition>,
 }
 
 /// Where one user's build stands.
@@ -160,6 +171,9 @@ struct UserState {
     /// A finished deck until its row is written, so the build reads as
     /// done the moment it is.
     unsaved: Option<Saved<Deck>>,
+    /// When the last build met a failed read and kept the deck before it:
+    /// the time the next build may start, ms.
+    kept_until: Option<i64>,
 }
 
 impl UserState {
@@ -172,6 +186,7 @@ impl UserState {
             run: 0,
             task: None,
             unsaved: None,
+            kept_until: None,
         }
     }
 
@@ -186,14 +201,39 @@ impl UserState {
     }
 }
 
-fn is_stale(deck: Option<&Saved<Deck>>, now: i64) -> bool {
+/// Whether a new deck is due: there is none, it is past its age, or the
+/// build that kept it is past its wait (`kept_until`).
+fn is_stale(deck: Option<&Saved<Deck>>, kept_until: Option<i64>, now: i64) -> bool {
     deck.is_none_or(|deck| now - deck.built_at > QUEUE_TTL_MS)
+        || kept_until.is_some_and(|until| now >= until)
+}
+
+/// Why `items`, built for a deck of `count`, is short: a failed read,
+/// nothing at all, or under half the cards. `None` when it is not short.
+fn short_reason(items: &[QueueItemLight], count: usize, failed: bool) -> Option<SectionCondition> {
+    if items.len() >= count {
+        None
+    } else if failed {
+        Some(SectionCondition::SourceDown)
+    } else if items.is_empty() {
+        Some(SectionCondition::Empty)
+    } else if items.len() * 2 < count {
+        Some(SectionCondition::Thin)
+    } else {
+        None
+    }
+}
+
+/// The cards of a deck that are not trending wildcards.
+fn own_cards(items: &[QueueItemLight]) -> usize {
+    items.iter().filter(|item| !item.is_wildcard).count()
 }
 
 fn status_of(
     phase: Phase,
     error: Option<String>,
     deck: Option<&Saved<Deck>>,
+    kept_until: Option<i64>,
     now: i64,
 ) -> DiscoverQueueStatusResponse {
     let mut status = DiscoverQueueStatusResponse {
@@ -203,6 +243,7 @@ fn status_of(
         built_at: None,
         stale: None,
         error: None,
+        reason: None,
     };
     match (phase, deck) {
         (Phase::Building, _) => status.status = QueueBuildStatus::Building,
@@ -215,7 +256,12 @@ fn status_of(
             status.queue_id = Some(deck.value.queue_id.clone());
             status.item_count = Some(deck.value.items.len() as i64);
             status.built_at = Some(deck.built_at / 1000);
-            status.stale = Some(is_stale(Some(deck), now));
+            status.stale = Some(is_stale(Some(deck), kept_until, now));
+            status.reason = if kept_until.is_some() {
+                Some(SectionCondition::SourceDown)
+            } else {
+                deck.value.reason
+            };
         }
         (Phase::Settled, None) => {}
     }
@@ -241,6 +287,7 @@ fn generate_response(
         built_at: status.built_at,
         stale: status.stale,
         error: status.error,
+        reason: status.reason,
     }
 }
 
@@ -343,16 +390,16 @@ impl Inner {
         let variant = Variant::for_user(&self.listening, user_id).await;
         // The phase is read before the deck, so a build that settles in
         // between never reads as ready with the deck it replaced.
-        let (phase, error) = {
+        let (phase, error, kept_until) = {
             let mut states = self.states();
             let state = Self::state(&mut states, user_id, &variant.source);
-            (state.phase, state.error.clone())
+            (state.phase, state.error.clone(), state.kept_until)
         };
         let deck = match phase {
             Phase::Settled => self.deck(user_id, &variant).await,
             Phase::Building | Phase::Failed => None,
         };
-        status_of(phase, error, deck.as_ref(), self.decks.now_ms())
+        status_of(phase, error, deck.as_ref(), kept_until, self.decks.now_ms())
     }
 
     /// The user's deck without the albums they ignored: a deck built, or
@@ -392,7 +439,13 @@ impl Inner {
         let answer = |action: QueueAction, state: &UserState| {
             generate_response(
                 action,
-                status_of(state.phase, state.error.clone(), deck.as_ref(), now),
+                status_of(
+                    state.phase,
+                    state.error.clone(),
+                    deck.as_ref(),
+                    state.kept_until,
+                    now,
+                ),
             )
         };
         // Unreadable settings hold every build until they are saved again;
@@ -415,7 +468,10 @@ impl Inner {
         if state.phase == Phase::Building {
             return (answer(QueueAction::AlreadyBuilding, state), None);
         }
-        if !force && state.phase == Phase::Settled && !is_stale(deck.as_ref(), now) {
+        if !force
+            && state.phase == Phase::Settled
+            && !is_stale(deck.as_ref(), state.kept_until, now)
+        {
             return (answer(QueueAction::AlreadyReady, state), None);
         }
         state.stop_task();
@@ -463,6 +519,12 @@ impl Inner {
         };
         let started = tokio::time::Instant::now();
         let outcome = build_deck(&ctx, &user_id, settings.queue_size).await;
+        // The deck this build would replace, read before the state is
+        // locked.
+        let replaced = match &outcome {
+            Ok(_) if ask.met_failure() => self.deck(&user_id, &variant).await,
+            _ => None,
+        };
         let built = {
             let mut states = self.states();
             let Some(state) = states.get_mut(&user_id) else {
@@ -481,16 +543,31 @@ impl Inner {
                 return;
             }
             match outcome {
+                Ok(items)
+                    if replaced.as_ref().is_some_and(|before| {
+                        own_cards(&items) < own_cards(&before.value.items)
+                    }) =>
+                {
+                    tracing::warn!(
+                        cards = items.len(),
+                        "discover queue build met a failed read; keeping the deck before it"
+                    );
+                    state.kept_until = Some(self.decks.now_ms() + KEPT_RETRY_MS);
+                    state.settled();
+                    return;
+                }
                 Ok(items) => {
                     let deck = Saved {
                         value: Deck {
                             health: Some(deck_health(&items)),
+                            reason: short_reason(&items, settings.queue_size, ask.met_failure()),
                             items,
                             queue_id: uuid::Uuid::new_v4().to_string(),
                         },
                         built_at: self.decks.now_ms(),
                     };
                     state.unsaved = Some(deck.clone());
+                    state.kept_until = None;
                     state.settled();
                     deck
                 }

@@ -25,6 +25,7 @@
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import YouTubeIcon from '$lib/media/icons/YouTubeIcon.svelte';
 	import { createQueuePreviewV3Mutation } from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
+	import SectionStateLine from '$lib/features/discover/components/SectionStateLine.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
@@ -321,7 +322,13 @@
 					<Disc3 class="h-10 w-10 text-muted" strokeWidth={1.5} aria-hidden="true" />
 					<div>
 						<h3 class="dn-deck__state-title">Nothing to discover right now</h3>
-						<p class="mt-2 text-sm text-muted">Listen to more music, or try again in a moment.</p>
+						{#if deck.reason}
+							<div class="mt-2 flex justify-center">
+								<SectionStateLine status={{ state: deck.reason }} />
+							</div>
+						{:else}
+							<p class="mt-2 text-sm text-muted">Listen to more music, or try again in a moment.</p>
+						{/if}
 					</div>
 					<Button variant="primary" size="sm" icon={RefreshCw} onclick={() => deck.retryBuild()}>
 						Try again

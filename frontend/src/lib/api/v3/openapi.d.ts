@@ -13410,6 +13410,12 @@ export interface components {
             item_count?: number | null;
             /** @description Build id, when there is one. */
             queue_id?: string | null;
+            /**
+             * @description Why the deck is short (`source_down`, `thin` or `empty`), when it
+             *     is; `source_down` too while the last build failed a read and the
+             *     deck before it is kept.
+             */
+            reason?: null | components["schemas"]["SectionCondition"];
             /** @description True when the deck is older than its TTL. */
             stale?: boolean | null;
             /** @description Build state. A saved queue past its age is `ready` with `stale` set. */
@@ -13417,7 +13423,7 @@ export interface components {
         };
         /**
          * @description Discover: its sections, in page order, plus the page-level fields. A
-         *     section with no rows is left out.
+         *     section with no rows is left out, and `section_states` says why.
          */
         DiscoverResponse: {
             /** @description Whether the queue deck is enabled for the user. */
@@ -13442,6 +13448,11 @@ export interface components {
             refresh_started_at?: number | null;
             /** @description True while a fuller build runs in the background (the UI polls). */
             refreshing: boolean;
+            /**
+             * @description In page order, each section switched on that is not plainly built:
+             *     kept from an earlier build, short, empty or missing, and why.
+             */
+            section_states?: components["schemas"]["SectionState"][];
             /** @description The sections, in page order. */
             sections: components["schemas"]["PageSection"][];
             /** @description Connect-a-service cards. */
@@ -21247,6 +21258,8 @@ export interface components {
             item_count?: number | null;
             /** @description Build id, when there is one. */
             queue_id?: string | null;
+            /** @description Why the deck is short, when it is, as the status says. */
+            reason?: null | components["schemas"]["SectionCondition"];
             /** @description True when the deck is older than its TTL. */
             stale?: boolean | null;
             /** @description Build state after the trigger. */
@@ -23645,6 +23658,12 @@ export interface components {
              */
             track_number: number;
         };
+        /**
+         * @description Why a section switched on is not plainly built. The one list of these
+         *     reasons: the page's sections and the queue deck both use it.
+         * @enum {string}
+         */
+        SectionCondition: "building" | "kept" | "source_down" | "needs_link" | "thin" | "empty";
         /** @description A section's rows, tagged by `shape`. */
         SectionContent: {
             /** @enum {string} */
@@ -23746,6 +23765,22 @@ export interface components {
             page: components["schemas"]["SectionPage"];
             /** @description Toggles to apply. */
             sections: components["schemas"]["SectionPrefUpdateItem"][];
+        };
+        /** @description How one section of a page stands, when it is not plainly built. */
+        SectionState: {
+            /** @description Which section it is. */
+            key: components["schemas"]["SectionKey"];
+            /**
+             * Format: int64
+             * @description When the section shown was built (unix seconds), for `kept`.
+             */
+            since?: number | null;
+            /** @description The service behind it, when one is the cause. */
+            source?: null | components["schemas"]["ListenSource"];
+            /** @description How it stands. */
+            state: components["schemas"]["SectionCondition"];
+            /** @description The zone it is shown in. */
+            zone: components["schemas"]["SectionZone"];
         };
         /**
          * @description A group of sections on a page.

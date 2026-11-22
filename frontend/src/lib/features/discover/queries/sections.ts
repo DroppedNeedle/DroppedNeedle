@@ -3,6 +3,7 @@ import type {
 	ChartSection,
 	PageSection,
 	SectionKey,
+	SectionState,
 	SectionZone,
 	TopPicksSection,
 	WeeklyExploration
@@ -49,4 +50,12 @@ export function picksOf(sections: Sections): TopPicksSection | null {
 /** The weekly exploration playlist. */
 export function weeklyOf(sections: Sections): WeeklyExploration | null {
 	return contentOf(sections, 'weekly_exploration', 'weekly')?.weekly ?? null;
+}
+
+/** How section `key` stands, when it is not plainly built. */
+export function stateOf(
+	states: SectionState[] | null | undefined,
+	key: SectionKey
+): SectionState | null {
+	return states?.find((state) => state.key === key) ?? null;
 }

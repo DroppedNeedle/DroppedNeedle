@@ -1,8 +1,9 @@
 //! Memos for the two costliest shelves, so a page rebuild within their
 //! window reuses them instead of paying for every read again: Daily Mixes
 //! for the rest of the day, Top Picks for four hours (five minutes when
-//! they fell back to the chart only, so the next build tries again). Each
-//! is a row of the page cache, so they survive a restart.
+//! they fell back to the chart only or met a failed read, so the next
+//! build tries again). Each is a row of the page cache, so they survive a
+//! restart.
 
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +14,8 @@ use crate::discover::models::{ChartSection, TopPicksSection};
 const MIX_MS: i64 = 86_400_000;
 /// How long Top Picks are reused, ms.
 const PICKS_MS: i64 = 14_400_000;
-/// How long chart-only Top Picks are reused, ms.
+/// How long chart-only Top Picks, or ones built past a failed read, are
+/// reused, ms.
 const DEGRADED_PICKS_MS: i64 = 300_000;
 
 /// One memo: the shelf, and what it was built from.
@@ -23,7 +25,7 @@ pub struct Memo<T> {
     listening: String,
     /// The UTC day it was built on (`YYYY-MM-DD`).
     day: String,
-    /// Whether it fell back to the chart only.
+    /// Whether it fell back to the chart only or met a failed read.
     degraded: bool,
     /// The shelf.
     value: T,
@@ -89,7 +91,8 @@ impl BuildMemo {
         fresh.then_some(saved.value.value)
     }
 
-    /// Remember Top Picks; chart-only ones for five minutes.
+    /// Remember Top Picks; `degraded` ones (chart-only, or built past a
+    /// failed read) for five minutes.
     pub async fn store_picks(
         &self,
         key: &MemoKey<'_>,

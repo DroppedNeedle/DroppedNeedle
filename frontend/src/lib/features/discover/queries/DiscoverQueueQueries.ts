@@ -70,7 +70,8 @@ export async function generateDiscoverQueue(force: boolean): Promise<QueueStatus
 			status: answer.status,
 			queue_id: answer.queue_id ?? null,
 			item_count: answer.item_count ?? null,
-			error: answer.error ?? null
+			error: answer.error ?? null,
+			reason: answer.reason ?? null
 		};
 		await queryClient.cancelQueries({ queryKey: options.queryKey, exact: true });
 		await setQueryDataWithPersister(options.queryKey, status);

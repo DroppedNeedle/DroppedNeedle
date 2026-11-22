@@ -9,9 +9,12 @@
 //! the sections in parallel under the same bound (the Daily Mixes stop at
 //! it themselves and keep the mixes finished by then), except the artist
 //! sections, which are built one after another in page order and share a
-//! "seen" set so an artist appears once on the page. Album sections are
-//! then deduplicated by rank. Ownership is marked when the page is served
-//! ([`mark_ownership`]), so a library change never makes a page wrong.
+//! "seen" set so an artist appears once on the page. Each section builds
+//! under an ask of its own and says how it came out ([`Outcome`]): a read
+//! it needed failing, its own or a shared one, or its bound running out
+//! makes it failed. Album sections are then deduplicated by rank.
+//! Ownership is marked when the page is served ([`mark_ownership`]), so a
+//! library change never makes a page wrong.
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -44,7 +47,7 @@ use crate::discover::queue::build::{
 };
 use crate::discover::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
 use crate::discover::queue::store::QueueDb;
-use crate::discover::sections::{self, Dedupe, Input, Page, SectionDef};
+use crate::discover::sections::{self, Dedupe, Input, Page, Requires, SectionDef};
 
 /// Bound on any one upstream read in a build.
 const TASK_TIMEOUT: Duration = Duration::from_secs(25);
@@ -151,19 +154,51 @@ pub struct Built {
     pub listenbrainz: bool,
     /// Whether the user's Last.fm sections could fill.
     pub lastfm: bool,
+    /// How each section on the page came out, in page order. The
+    /// deck and the playlist tool, served by routes of their own, are
+    /// left out.
+    pub outcomes: Vec<(SectionKey, Outcome)>,
 }
 
-/// Failed reads of the first round, for the degraded banner.
+/// How one section of a build came out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// It has rows, and every read it made answered.
+    Built,
+    /// Every read answered, with nothing to show.
+    Empty,
+    /// A read it needed failed or it ran out of time; rows it has are
+    /// partial. The service is the one that failed, when known.
+    Failed(Option<ListenSource>),
+    /// It needs a service the person has not linked.
+    NeedsLink(ListenSource),
+}
+
+/// Failed reads of the first round, for the degraded banner and for the
+/// sections that read them.
 #[derive(Default)]
 struct Tracker {
     attempted: Mutex<Vec<&'static str>>,
     failed: Mutex<HashSet<&'static str>>,
+    failed_inputs: Mutex<Vec<(Input, Option<ListenSource>)>>,
+}
+
+/// The service behind a first-round read, from its key.
+fn service_of(key: &str) -> Option<ListenSource> {
+    if key.starts_with("lb_") {
+        Some(ListenSource::Listenbrainz)
+    } else if key.starts_with("lfm_") {
+        Some(ListenSource::Lastfm)
+    } else {
+        None
+    }
 }
 
 impl Tracker {
-    /// Run one read under the task bound. `None` when it failed.
+    /// Run one read of `input` under the task bound. `None` when it failed.
     async fn run<T, E: std::fmt::Display>(
         &self,
+        input: Input,
         key: &'static str,
         read: impl Future<Output = Result<T, E>>,
     ) -> Option<T> {
@@ -179,12 +214,27 @@ impl Tracker {
         if let Ok(mut failed) = self.failed.lock() {
             failed.insert(key);
         }
+        if let Ok(mut inputs) = self.failed_inputs.lock() {
+            inputs.push((input, service_of(key)));
+        }
         None
     }
 
     /// Whether any read failed.
     fn any_failed(&self) -> bool {
         self.failed.lock().map(|f| !f.is_empty()).unwrap_or(true)
+    }
+
+    /// `Some` when a read of one of `inputs` failed, with the service
+    /// behind it when one is known.
+    fn failed_among(&self, inputs: &[Input]) -> Option<Option<ListenSource>> {
+        let failed = self
+            .failed_inputs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut hits = failed.iter().filter(|(input, _)| inputs.contains(input));
+        let (_, first) = hits.next()?;
+        Some(first.or_else(|| hits.find_map(|(_, source)| *source)))
     }
 
     /// Services whose every attempted read failed.
@@ -225,6 +275,24 @@ async fn bounded_by<T: Default>(
             ask.note_failure();
             T::default()
         }
+    }
+}
+
+/// Whether a section's rows are on the page: the deck and the playlist
+/// tool are served by routes of their own.
+pub(super) fn on_page(key: SectionKey) -> bool {
+    !matches!(
+        key,
+        SectionKey::DiscoverQueue | SectionKey::PlaylistDiscovery
+    )
+}
+
+/// The listening service a section needs, when it names one.
+fn required_service(def: &SectionDef) -> Option<ListenSource> {
+    match def.requires {
+        Some(Requires::Listenbrainz) => Some(ListenSource::Listenbrainz),
+        Some(Requires::Lastfm) => Some(ListenSource::Lastfm),
+        Some(Requires::Library) | None => None,
     }
 }
 
@@ -347,6 +415,19 @@ fn days_since(iso: &str, now: f64) -> Option<f64> {
     Some(f64::from(today.to_julian_day() - played.to_julian_day()))
 }
 
+impl<'a> Builder<'a> {
+    /// This builder with `ask` in place of its own: one section builds
+    /// through it, so its failures are its own.
+    fn with_ask(&self, ask: Ask) -> Builder<'a> {
+        Builder {
+            ask,
+            settings: self.settings.clone(),
+            today: self.today.clone(),
+            ..*self
+        }
+    }
+}
+
 impl Builder<'_> {
     fn queue_ctx<'b>(&'b self, settings: &'b QueueSettings) -> BuildContext<'b> {
         BuildContext {
@@ -389,13 +470,21 @@ impl Builder<'_> {
         let lb_user = user.listenbrainz.clone();
         let lfm_user = user.lastfm_username.clone().filter(|_| user.lastfm);
         let needs = |input: Input| wanted.iter().any(|def| def.inputs.contains(&input));
+        // The seeds' reads go on an ask of their own, so a failure counts
+        // against the sections grown from them.
+        let seed_ask = self.ask.watched();
         let seeds = if needs(Input::Seeds) {
             let mut seed_settings = self.settings.queue.clone();
             seed_settings.seed_artists = SEEDS;
-            seed_artists(&self.queue_ctx(&seed_settings), user_id, &user, primary).await
+            let seed_ctx = BuildContext {
+                ask: seed_ask.clone(),
+                ..self.queue_ctx(&seed_settings)
+            };
+            seed_artists(&seed_ctx, user_id, &user, primary).await
         } else {
             Vec::new()
         };
+        let seeds_failed = seed_ask.met_failure();
 
         let tracker = Tracker::default();
         let shared = self
@@ -434,46 +523,80 @@ impl Builder<'_> {
             lb_user: lb_user.as_deref(),
         };
 
+        // Each section builds under an ask of its own, which starts out
+        // failed when a shared read it needs failed, so it can tell whether
+        // everything it stands on answered.
+        let input_failure = |def: &SectionDef| {
+            tracker
+                .failed_among(def.inputs)
+                .or_else(|| (seeds_failed && def.inputs.contains(&Input::Seeds)).then_some(None))
+        };
+        let own_ask = |def: &SectionDef| {
+            let ask = self.ask.watched();
+            if input_failure(def).is_some() {
+                ask.note_failure();
+            }
+            ask
+        };
         let independent = join_all(
             wanted
                 .iter()
                 .filter(|def| def.dedupe != Dedupe::Artists)
                 .map(|def| async {
+                    let section = self.with_ask(own_ask(def));
                     let name = def.key.name();
                     let content = bounded_by(
-                        &self.ask,
+                        &section.ask,
                         &name,
                         section_bound(def.key),
-                        self.section(def.key, &ctx),
+                        section.section(def.key, &ctx),
                     )
                     .await;
-                    (def.key, content)
+                    (def.key, (content, section.ask.met_failure()))
                 }),
         )
         .await;
-        let mut built: HashMap<SectionKey, SectionContent> = independent
-            .into_iter()
-            .filter_map(|(key, content)| Some((key, content?)))
-            .collect();
+        let mut built: HashMap<SectionKey, (Option<SectionContent>, bool)> =
+            independent.into_iter().collect();
         let mut seen_artists: HashSet<String> = HashSet::new();
         for def in wanted.iter().filter(|def| def.dedupe == Dedupe::Artists) {
+            let section = self.with_ask(own_ask(def));
             let name = def.key.name();
             let content = bounded(
-                &self.ask,
+                &section.ask,
                 &name,
-                self.artist_section(def.key, &ctx, &mut seen_artists),
+                section.artist_section(def.key, &ctx, &mut seen_artists),
             )
             .await;
-            if let Some(content) = content {
-                built.insert(def.key, content);
-            }
+            built.insert(def.key, (content, section.ask.met_failure()));
         }
 
         let mut page = super::empty_page();
-        page.sections = wanted
-            .iter()
-            .filter_map(|def| shelves::section(Page::Discover, def.key, built.remove(&def.key)?))
-            .collect();
+        let mut outcomes = Vec::new();
+        for def in wanted.iter().filter(|def| on_page(def.key)) {
+            let Some((content, failed)) = built.remove(&def.key) else {
+                continue;
+            };
+            let section =
+                content.and_then(|content| shelves::section(Page::Discover, def.key, content));
+            let outcome = if failed {
+                let source = input_failure(def)
+                    .flatten()
+                    .or_else(|| required_service(def));
+                Some(Outcome::Failed(source))
+            } else if section.is_some() {
+                Some(Outcome::Built)
+            } else {
+                match self.missing_link(def, &user, lb_user.as_deref(), lfm_user.as_deref()) {
+                    Some(Some(service)) => Some(Outcome::NeedsLink(service)),
+                    // Nothing the person can link fills it: no state.
+                    Some(None) => None,
+                    None => Some(Outcome::Empty),
+                }
+            };
+            outcomes.extend(outcome.map(|outcome| (def.key, outcome)));
+            page.sections.extend(section);
+        }
         shelves::dedupe_albums(&mut page.sections);
         page.service_prompts = shelves::service_prompts(
             lb_user.is_some() || !self.listening.listenbrainz_on(),
@@ -482,13 +605,72 @@ impl Builder<'_> {
             self.settings.lastfm_on,
             user.lastfm,
         );
+        let sections_failed = outcomes
+            .iter()
+            .any(|(_, outcome)| matches!(outcome, Outcome::Failed(_)));
         Built {
             page,
             degraded: tracker.degraded(),
-            incomplete: tracker.any_failed() || self.ask.met_failure(),
+            incomplete: tracker.any_failed()
+                || self.ask.met_failure()
+                || seeds_failed
+                || sections_failed,
             seeds_used: seeds.len(),
             listenbrainz: lb_user.is_some() && self.listening.listenbrainz_on(),
             lastfm: lfm_user.is_some(),
+            outcomes,
+        }
+    }
+
+    /// Why `def` came back with nothing, when a missing link explains it:
+    /// `Some(Some(service))` when linking that service would fill it,
+    /// `Some(None)` when the server has what it needs switched off. A
+    /// section grown from the person's listening (seed or similar artists,
+    /// their genres) needs some listening service linked, and the Listening
+    /// Lounge reads ListenBrainz's similar listeners, so it needs ListenBrainz,
+    /// though neither says so in `requires`.
+    fn missing_link(
+        &self,
+        def: &SectionDef,
+        user: &UserMusic,
+        lb_user: Option<&str>,
+        lfm_user: Option<&str>,
+    ) -> Option<Option<ListenSource>> {
+        let listenbrainz_on = self.listening.listenbrainz_on();
+        let lastfm_on = self.settings.lastfm_on;
+        let needs = |on: bool, linked: bool, service| match (on, linked) {
+            (false, _) => Some(None),
+            (true, false) => Some(Some(service)),
+            (true, true) => None,
+        };
+        let listens = def.inputs.iter().any(|input| {
+            matches!(
+                input,
+                Input::Seeds | Input::Similar | Input::Genres | Input::LastfmGenreArtists
+            )
+        });
+        match def.requires {
+            Some(Requires::Listenbrainz) => needs(
+                listenbrainz_on,
+                lb_user.is_some(),
+                ListenSource::Listenbrainz,
+            ),
+            Some(Requires::Lastfm) => needs(lastfm_on, lfm_user.is_some(), ListenSource::Lastfm),
+            _ if def.key == SectionKey::ListenersLikeYou => needs(
+                listenbrainz_on,
+                lb_user.is_some(),
+                ListenSource::Listenbrainz,
+            ),
+            _ if listens && lb_user.is_none() && lfm_user.is_none() && !user.jellyfin => {
+                if listenbrainz_on {
+                    Some(Some(ListenSource::Listenbrainz))
+                } else if lastfm_on {
+                    Some(Some(ListenSource::Lastfm))
+                } else {
+                    Some(None)
+                }
+            }
+            _ => None,
         }
     }
 
@@ -658,10 +840,20 @@ impl Builder<'_> {
                     let Some(mbid) = seed.mbid.as_deref() else {
                         return Vec::new();
                     };
-                    let lastfm =
-                        || tracker.run(lfm_key, listening.lastfm_similar(user_id, seed, 20, ask));
-                    let listenbrainz =
-                        || tracker.run(lb_key, listening.similar_artists(user_id, mbid, 20, ask));
+                    let lastfm = || {
+                        tracker.run(
+                            Input::Similar,
+                            lfm_key,
+                            listening.lastfm_similar(user_id, seed, 20, ask),
+                        )
+                    };
+                    let listenbrainz = || {
+                        tracker.run(
+                            Input::Similar,
+                            lb_key,
+                            listening.similar_artists(user_id, mbid, 20, ask),
+                        )
+                    };
                     if blend {
                         let (lastfm, listenbrainz) = tokio::join!(lastfm(), listenbrainz());
                         let (first, second) = match primary {
@@ -684,6 +876,7 @@ impl Builder<'_> {
             if policy.sitewide() == ListenSource::Lastfm {
                 tracker
                     .run(
+                        Input::Trending,
                         "lfm_global_top",
                         listening.lastfm_chart_artists(user_id, 20, ask),
                     )
@@ -691,6 +884,7 @@ impl Builder<'_> {
             } else {
                 tracker
                     .run(
+                        Input::Trending,
                         "lb_trending",
                         listening.sitewide_artists(StatsRange::ThisWeek, 20, 0, ask),
                     )
@@ -709,6 +903,7 @@ impl Builder<'_> {
                     }
                     tracker
                         .run(
+                            Input::LastfmWeeklyArtists,
                             "lfm_weekly_artists",
                             listening.lastfm_weekly_artists(user_id, username, ask),
                         )
@@ -721,6 +916,7 @@ impl Builder<'_> {
                     }
                     tracker
                         .run(
+                            Input::LastfmWeeklyAlbums,
                             "lfm_weekly_albums",
                             listening.lastfm_weekly_albums(user_id, username, ask),
                         )
@@ -733,6 +929,7 @@ impl Builder<'_> {
                     }
                     tracker
                         .run(
+                            Input::LastfmRecent,
                             "lfm_recent",
                             listening.lastfm_recent_albums(user_id, username, 20, ask),
                         )
@@ -751,7 +948,11 @@ impl Builder<'_> {
                         return Vec::new();
                     }
                     tracker
-                        .run("lb_fresh", listening.fresh_releases(username, ask))
+                        .run(
+                            Input::Fresh,
+                            "lb_fresh",
+                            listening.fresh_releases(username, ask),
+                        )
                         .await
                         .unwrap_or_default()
                 },
@@ -760,7 +961,7 @@ impl Builder<'_> {
                         return None;
                     }
                     tracker
-                        .run("lb_genres", listening.genres(username, ask))
+                        .run(Input::Genres, "lb_genres", listening.genres(username, ask))
                         .await
                 },
             )
@@ -772,6 +973,7 @@ impl Builder<'_> {
                 {
                     tracker
                         .run(
+                            Input::LastfmGenreArtists,
                             "lfm_user_top_artists_for_genres",
                             listening.lastfm_user_artists(user_id, username, 5, ask),
                         )
@@ -786,7 +988,11 @@ impl Builder<'_> {
                 return Vec::new();
             }
             tracker
-                .run("jf_most_played", listening.jellyfin_plays(user_id, 50, ask))
+                .run(
+                    Input::Jellyfin,
+                    "jf_most_played",
+                    listening.jellyfin_plays(user_id, 50, ask),
+                )
                 .await
                 .unwrap_or_default()
         };
@@ -795,7 +1001,11 @@ impl Builder<'_> {
                 return Vec::new();
             }
             tracker
-                .run("library_albums", self.library.owned_albums())
+                .run(
+                    Input::LibraryAlbums,
+                    "library_albums",
+                    self.library.owned_albums(),
+                )
                 .await
                 .unwrap_or_default()
         };
@@ -1400,7 +1610,8 @@ impl Builder<'_> {
 
     /// Scored album picks, memoised per user and source for four hours
     /// (five minutes when ListenBrainz is down and nothing personal came
-    /// back, so the next build tries again).
+    /// back, or when a read they stand on failed, so the next build tries
+    /// again).
     async fn top_picks(
         &self,
         user_id: &str,
@@ -1416,7 +1627,10 @@ impl Builder<'_> {
         let (picks, degraded) = self
             .build_top_picks(user_id, user, primary, seeds, shared)
             .await;
-        self.memo.store_picks(&key, picks.clone(), degraded).await;
+        // The section's own ask, which also holds the shared reads it
+        // stands on.
+        let short = degraded || self.ask.met_failure();
+        self.memo.store_picks(&key, picks.clone(), short).await;
         picks
     }
 
