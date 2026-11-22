@@ -477,16 +477,22 @@
 					/>
 
 					<span class="pl-row__title">
-						{#if albumLinked}
-							<a href={withBasePath(`/album/${track.album_id}`)} class="pl-row__name"
-								>{track.track_name}</a
-							>
-						{:else}
-							<span class="pl-row__name">{track.track_name}</span>
-						{/if}
-						{#if !track.library_file_id}
-							<span class="pl-row__missing">Not in library</span>
-						{/if}
+						<span class="flex min-w-0 items-center gap-2">
+							{#if albumLinked}
+								<a href={withBasePath(`/album/${track.album_id}`)} class="pl-row__name"
+									>{track.track_name}</a
+								>
+							{:else}
+								<span class="pl-row__name">{track.track_name}</span>
+							{/if}
+							{#if !track.library_file_id}
+								<span
+									class="shrink-0 rounded-full border border-warning/60 bg-warning/8 px-1.5 text-[0.6875rem] font-medium leading-5 text-warning"
+								>
+									Not in library
+								</span>
+							{/if}
+						</span>
 						<span class="pl-row__sub">
 							{#if track.artist_id}
 								<a href={withBasePath(`/artist/${track.artist_id}`)} class="hover:underline"
@@ -691,16 +697,6 @@
 	}
 	.pl-row--playing .pl-row__name {
 		color: var(--color-primary);
-	}
-	.pl-row__missing {
-		margin-left: 0.45rem;
-		border: 1px solid var(--dn-warning, var(--dn-muted));
-		border-radius: 9999px;
-		padding: 0 0.4rem;
-		font-size: 0.6875rem;
-		font-weight: 500;
-		color: var(--dn-warning, var(--dn-muted));
-		white-space: nowrap;
 	}
 	.pl-row__sub {
 		overflow: hidden;
