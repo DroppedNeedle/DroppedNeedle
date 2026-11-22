@@ -681,7 +681,9 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
     assert_eq!(started["action"], "started");
     let ready = settled(&app, &db).await;
     assert_eq!(ready["status"], "ready");
-    assert_eq!(ready["item_count"], 5);
+    // Two cards from the one similar artist and the one chart slot: a
+    // deck short of picks stays short.
+    assert_eq!(ready["item_count"], 3);
     assert_eq!(ready["stale"], false);
 
     let (_, again) = call(
@@ -695,7 +697,7 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
 
     let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
     let ids = deck_ids(&deck);
-    assert_eq!(ids.len(), 5);
+    assert_eq!(ids.len(), 3);
     let similar_cards = deck["items"]
         .as_array()
         .expect("items")
@@ -712,7 +714,7 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
         .iter()
         .filter(|item| item["is_wildcard"] == true)
         .count();
-    assert!(wildcards > 0, "trending wildcards fill the rest");
+    assert_eq!(wildcards, 1, "one chart card for the one wildcard slot");
     let row = after_commits(&db, "the deck was saved", || async {
         db.maybe::<String>(
             "SELECT CAST(payload AS TEXT) FROM catalog_cached_pages \
@@ -725,7 +727,7 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
     assert_eq!(
         row["health"],
         json!({
-            "cards": 5,
+            "cards": 3,
             "chart_cards": wildcards,
             "distinct_artists": 1 + wildcards,
             "max_cards_one_artist": 2,
@@ -779,6 +781,74 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
         (reloaded["status"] == "ready" && reloaded["queue_id"] == rebuilt["queue_id"]).then_some(())
     })
     .await;
+}
+
+/// The library holds `groups`: one album with a file for each.
+async fn own(db: &Db, groups: &[String]) {
+    let mut seed = String::from(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+         updated_at) VALUES ('a1', 'Someone', 'someone', 'group', 1, 1);",
+    );
+    for (n, group) in groups.iter().enumerate() {
+        seed.push_str(&format!(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) \
+             VALUES ('al{n}', 'r1', 'g{n}', 'Owned', 'owned', 'a1', 'automatic', 1, 1); \
+             INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, decision_source, selected_at) \
+             VALUES ('al{n}', 'musicbrainz', '{group}', 'manual', 1); \
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, availability, ingest_source, \
+             imported_at, membership_source) VALUES ('t{n}', 'al{n}', 'r1', '/music/t{n}.flac', \
+             't{n}.flac', 'h{n}', 1, 1, 's{n}', 'Song', 'song', 'Owned', 'owned', 'flac', \
+             'indexed', 'scan', 1, 'automatic');"
+        ));
+    }
+    db.write(Lane::Foreground, "test.own", move |tx| {
+        tx.execute_batch(&seed)?;
+        Ok::<_, droppedneedle_kernel::db::DbError>(())
+    })
+    .await
+    .expect("owned albums");
+}
+
+/// Owned albums are dropped before the deal, never after it: with a
+/// similar artist's album and a chart album owned, the deck holds neither,
+/// one chart card for its one wildcard slot, and stays short of the five
+/// it asks for rather than filling up from the chart.
+#[tokio::test]
+async fn a_seeded_deck_holds_nothing_owned_and_is_never_refilled() {
+    let dir = crate::common::ScratchDir::new("discover-queue-owned");
+    let rig = AuthRig::new("discover-queue-owned").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let owned = [group(1), group(11)];
+    own(&db, &owned).await;
+    let app = queue_app(&rig, &dir, queue_script());
+
+    call(
+        &app,
+        "POST",
+        "/api/v3/discover/queue/generate",
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(settled(&app, &db).await["status"], "ready");
+    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
+    let ids = deck_ids(&deck);
+    assert!(
+        ids.iter().all(|id| !owned.contains(id)),
+        "no owned card: {ids:?}"
+    );
+    let charts = deck["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .filter(|item| item["is_wildcard"] == true)
+        .count();
+    assert_eq!(charts, 1, "the one wildcard slot: {ids:?}");
+    assert_eq!(ids.len(), 3, "two picks and one chart card: {ids:?}");
 }
 
 /// An ignore that lands while a build is running, after that build read

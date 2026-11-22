@@ -3,10 +3,11 @@
 //! A user with a linked listening service gets a personalised deck: seed
 //! artists from their listening, then candidate pools (similar artists,
 //! their genres, fresh releases, artists they love, deep cuts from their
-//! top artists) picked round-robin, with trending wildcards mixed in at
-//! fixed slots and top the deck up. Without a service the deck is
-//! trending albums. Ignored releases never appear, and albums the library
-//! already holds are dropped at the end.
+//! top artists) picked round-robin, with the set number of trending
+//! wildcards mixed in at fixed slots. Albums the library holds are dropped
+//! before the deal, and a deck short of picks stays short. Without a
+//! service, or without seed artists, the deck is trending albums, topped
+//! up from the charts. Ignored releases never appear.
 //!
 //! Every provider read is allowed to fail: the failure is logged and that
 //! pool is simply empty.
@@ -125,16 +126,22 @@ pub async fn build_deck(
     let has_services = user.listenbrainz.is_some()
         || user.jellyfin
         || (user.lastfm && user.lastfm_username.is_some());
-    let mut items = if has_services {
-        personalized(ctx, user_id, &user, source, count, &ignored, &mut shuffler).await
+    let personal = if has_services {
+        personalized(ctx, user_id, &user, source, count, &ignored, &mut shuffler).await?
     } else {
-        anonymous(ctx, user_id, &user, count, &ignored, &mut shuffler).await
+        None
     };
+    let charts_only = personal.is_none();
+    let mut items = match personal {
+        Some(deck) => deck,
+        None => anonymous(ctx, user_id, &user, count, &ignored, &mut shuffler).await,
+    };
+    // A guard: the personal deck dropped owned albums before its deal.
     let mut owned = owned_of(ctx, &items).await?;
     items.retain(|item| !owned.contains(&item.musicbrainz_id.to_ascii_lowercase()));
-    // Owned picks would shrink the deck. One more trending pass fills the
+    // Only the chart deck is topped up: one more trending pass fills the
     // gap, skipping everything seen so far.
-    if items.len() < count {
+    if charts_only && items.len() < count {
         let mut skip = ignored.clone();
         skip.extend(owned.iter().cloned());
         let seen = lower_ids(&items);
@@ -158,12 +165,12 @@ pub async fn build_deck(
     Ok(items)
 }
 
-async fn owned_of(
+async fn owned_of<'i>(
     ctx: &BuildContext<'_>,
-    items: &[QueueItemLight],
+    items: impl IntoIterator<Item = &'i QueueItemLight>,
 ) -> Result<HashSet<String>, String> {
     let ids: Vec<String> = items
-        .iter()
+        .into_iter()
         .map(|item| item.musicbrainz_id.clone())
         .collect();
     if ids.is_empty() {
@@ -336,6 +343,10 @@ pub(in crate::discover) async fn listened_albums(
         .collect()
 }
 
+/// The personal deck, `None` when the user has no seed artists. Owned
+/// albums are dropped from every candidate before the deal, and the deck
+/// holds at most `wildcard_slots` chart cards: one short of picks stays
+/// short. Fails when the library check fails.
 #[allow(clippy::too_many_arguments)]
 async fn personalized(
     ctx: &BuildContext<'_>,
@@ -345,10 +356,10 @@ async fn personalized(
     count: usize,
     ignored: &HashSet<String>,
     shuffler: &mut Shuffler,
-) -> Vec<QueueItemLight> {
+) -> Result<Option<Vec<QueueItemLight>>, String> {
     let seeds = seed_artists(ctx, user_id, user, source).await;
     if seeds.is_empty() {
-        return anonymous(ctx, user_id, user, count, ignored, shuffler).await;
+        return Ok(None);
     }
     let settings = ctx.settings;
     // During a ListenBrainz popularity outage, Last.fm stands in for the
@@ -357,34 +368,41 @@ async fn personalized(
     let wildcard_slots = settings.wildcard_slots;
     let target = count.saturating_sub(wildcard_slots);
     let per_seed = (target / seeds.len().max(1) + 3).max(4);
-    let pools = if use_lastfm {
+    let mut pools = if use_lastfm {
         lastfm_pools(ctx, user_id, user, &seeds, ignored, per_seed).await
     } else {
         let listened = listened_albums(ctx, user, source).await;
         listenbrainz_pools(ctx, user_id, user, &seeds, ignored, &listened).await
     };
-    let picked = select::round_robin(pools, target, select::MAX_PER_ARTIST, shuffler);
-    let seen = lower_ids(&picked);
-    let wildcard_count = wildcard_slots.max(count.saturating_sub(picked.len()));
-    let wildcards =
-        trending_filler(ctx, user_id, user, wildcard_count, ignored, &seen, shuffler).await;
-    let mut deck = select::interleave(picked, wildcards, &select::WILDCARD_POSITIONS);
-    if deck.len() < count {
-        let seen = lower_ids(&deck);
-        let more = trending_filler(
-            ctx,
-            user_id,
-            user,
-            count - deck.len(),
-            ignored,
-            &seen,
-            shuffler,
-        )
-        .await;
-        deck.extend(more);
+    let pooled: HashSet<String> = pools
+        .iter()
+        .flatten()
+        .map(|item| item.musicbrainz_id.to_ascii_lowercase())
+        .collect();
+    // Twice the slots, so owned chart albums leave spares; the chart read
+    // is the same size either way.
+    let mut wildcards = trending_filler(
+        ctx,
+        user_id,
+        user,
+        wildcard_slots * 2,
+        ignored,
+        &pooled,
+        shuffler,
+    )
+    .await;
+    let owned = owned_of(ctx, pools.iter().flatten().chain(&wildcards)).await?;
+    let unowned =
+        |item: &QueueItemLight| !owned.contains(&item.musicbrainz_id.to_ascii_lowercase());
+    for pool in &mut pools {
+        pool.retain(unowned);
     }
+    wildcards.retain(unowned);
+    wildcards.truncate(wildcard_slots);
+    let picked = select::round_robin(pools, target, select::MAX_PER_ARTIST, shuffler);
+    let mut deck = select::interleave(picked, wildcards, &select::WILDCARD_POSITIONS);
     deck.truncate(count);
-    deck
+    Ok(Some(deck))
 }
 
 /// The ListenBrainz candidate pools: one per seed of similar artists'
