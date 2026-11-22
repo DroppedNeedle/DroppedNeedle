@@ -255,3 +255,73 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
         .expect("art row removed");
     assert_eq!(art.one("Shoegaze").await.kind, ArtworkKind::Gradient);
 }
+
+/// Home over a ListenBrainz user whose weekly playlist is dated `date`,
+/// on a clock at 2026-09-21 15:33 UTC: whether the built shelves hold it.
+async fn home_shows_weekly(date: &str) -> bool {
+    let dir = crate::common::ScratchDir::new("home-weekly");
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
+    let db = runtime.db().clone();
+    db.write(Lane::Foreground, "home seed", |tx| {
+        tx.execute(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('user-1', 'Ada', 'user', 0)",
+            [],
+        )?;
+        Ok::<_, DbError>(())
+    })
+    .await
+    .expect("seed");
+    let listening = ListeningData::new(
+        Arc::new(Script {
+            weekly: Some(crate::discover_page::weekly_playlist(date)),
+            ..home_script()
+        }),
+        droppedneedle_providers::Providers::closed().cache,
+    );
+    let settings = crate::common::config_store(&dir);
+    let integrations = || {
+        droppedneedle_catalog::discover::content::IntegrationSettings::new(
+            &settings,
+            Arc::new(crate::common::bundles::NoDownloadSource),
+        )
+    };
+    let clock = Arc::new(ManualClock::at(1_790_000_000_000));
+    let warm = crate::common::bundles::cover_warm_at(&db, clock.clone());
+    let home = LiveHome::new(HomeInputs {
+        listening: listening.clone(),
+        db: db.clone(),
+        clock: clock.clone(),
+        integrations: integrations(),
+        art: Arc::new(GenreArt::new(HomeLibrary::new(db.clone()))),
+        warm: warm.clone(),
+        discover: DiscoverPages::new(PageInputs {
+            listening,
+            queue_db: QueueDb::new(db.clone()),
+            db: db.clone(),
+            clock,
+            advanced: settings.live(),
+            integrations: integrations(),
+            warm,
+        }),
+    });
+    home.page("user-1").await;
+    let page = after_commits(&db, "the home build kept its shelves", || async {
+        let page = home.page("user-1").await;
+        shelf_of(&page.sections, SectionKey::TrendingArtists)
+            .is_some()
+            .then_some(page)
+    })
+    .await;
+    page.sections
+        .iter()
+        .any(|section| section.key == SectionKey::WeeklyExploration)
+}
+
+/// Home shows the weekly exploration playlist only while it is this
+/// week's: the one dated 14 September is gone a week later.
+#[tokio::test]
+async fn home_shows_only_this_weeks_playlist() {
+    assert!(!home_shows_weekly("2026-09-14T00:21:44.054723+00:00").await);
+    assert!(home_shows_weekly("2026-09-21T00:00:00+00:00").await);
+}

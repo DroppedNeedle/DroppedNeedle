@@ -503,7 +503,13 @@ impl LiveHome {
                 let username = lb_user?;
                 tokio::time::timeout(
                     READ_TIMEOUT,
-                    weekly_exploration(listening, ask, user_id, username),
+                    weekly_exploration(
+                        listening,
+                        ask,
+                        user_id,
+                        username,
+                        self.inner.cache.now_ms() / 1000,
+                    ),
                 )
                 .await
                 .unwrap_or_else(|_| {

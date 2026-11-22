@@ -70,6 +70,8 @@ pub(crate) struct Script {
     pub tag_artists: Vec<ArtistRow>,
     pub tag_albums: Vec<TagAlbum>,
     pub release_group: Option<ReleaseGroupFacts>,
+    /// The user's ListenBrainz weekly exploration playlist.
+    pub weekly: Option<WeeklyPlaylist>,
     pub musicbrainz_down: AtomicBool,
     pub fresh_down: AtomicBool,
     /// When set, ListenBrainz top-artist reads wait here until released.
@@ -221,7 +223,7 @@ impl ListeningNetwork for Script {
         _u: &'a str,
         _p: RequestPriority,
     ) -> Answer<'a, Option<WeeklyPlaylist>> {
-        ok(None)
+        ok(self.weekly.clone())
     }
     fn recording_groups<'a>(
         &'a self,

@@ -1752,7 +1752,14 @@ impl Builder<'_> {
 
     /// The user's ListenBrainz weekly exploration playlist.
     async fn weekly_exploration(&self, user_id: &str, username: &str) -> Option<WeeklyExploration> {
-        weekly_exploration(self.listening, &self.ask, user_id, username).await
+        weekly_exploration(
+            self.listening,
+            &self.ask,
+            user_id,
+            username,
+            self.now as i64,
+        )
+        .await
     }
 
     /// Library albums turning 10, 20, 25, ... years old this year,
@@ -2270,14 +2277,29 @@ fn rediscover(plays: &[PlayedArtist], now: f64) -> Option<ChartSection> {
     )
 }
 
+/// How old a weekly exploration playlist may be and still show: a week,
+/// since ListenBrainz makes a new one each Monday.
+const WEEKLY_MAX_AGE_SECS: i64 = 7 * 86_400;
+
+/// Whether a playlist dated `date` is this week's at `now` (unix seconds).
+/// ListenBrainz dates a playlist in RFC 3339, as in
+/// `2026-09-14T00:21:44.054723+00:00` (a saved page, 2026-11-22); a date
+/// that does not parse is not this week's.
+fn this_weeks(date: &str, now: i64) -> bool {
+    use time::format_description::well_known::Rfc3339;
+    time::OffsetDateTime::parse(date.trim(), &Rfc3339)
+        .is_ok_and(|made| now - made.unix_timestamp() <= WEEKLY_MAX_AGE_SECS)
+}
+
 /// The user's ListenBrainz weekly exploration playlist, with covers from
-/// each track's release group where it can be found in time. Home shows
-/// the same playlist.
+/// each track's release group where it can be found in time, while it is
+/// this week's at `now` (unix seconds). Home shows the same playlist.
 pub async fn weekly_exploration(
     listening: &ListeningData,
     ask: &Ask,
     user_id: &str,
     username: &str,
+    now: i64,
 ) -> Option<WeeklyExploration> {
     let playlist = match listening.weekly_playlist(user_id, username, ask).await {
         Ok(Some(playlist)) => playlist,
@@ -2287,6 +2309,10 @@ pub async fn weekly_exploration(
             return None;
         }
     };
+    if !this_weeks(&playlist.date, now) {
+        tracing::debug!(date = %playlist.date, "weekly exploration is not this week's; leaving it off");
+        return None;
+    }
     let recordings: Vec<String> = playlist
         .tracks
         .iter()

@@ -19,8 +19,8 @@ use axum::{
 };
 use droppedneedle_catalog::discover::cache::{PageKind, Timing, UserPageCache, Variant, clear_all};
 use droppedneedle_catalog::discover::listening::{
-    AlbumRow, ArtistRow, ListenedAlbum, ListeningData, RankedAlbum, ScoredArtist, SourceContext,
-    UserMusic,
+    AlbumRow, ArtistRow, ListenedAlbum, ListeningData, PlaylistTrack, RankedAlbum, ScoredArtist,
+    SourceContext, UserMusic, WeeklyPlaylist,
 };
 use droppedneedle_catalog::discover::ports::BoxFuture;
 use droppedneedle_catalog::discover::scheduler::activity::ActivityDb;
@@ -303,6 +303,55 @@ fn built_for() -> Variant {
         listenbrainz: true,
         lastfm: false,
     }
+}
+
+/// A weekly exploration playlist dated `date`, one track long.
+pub(crate) fn weekly_playlist(date: &str) -> WeeklyPlaylist {
+    WeeklyPlaylist {
+        title: "Weekly Exploration".to_owned(),
+        date: date.to_owned(),
+        source_url: String::new(),
+        tracks: vec![PlaylistTrack {
+            title: "Song".to_owned(),
+            creator: "Someone".to_owned(),
+            album: "Album".to_owned(),
+            recording_mbid: None,
+            artist_mbid: None,
+            caa_release_mbid: None,
+            duration_ms: None,
+        }],
+    }
+}
+
+/// The page built for a ListenBrainz user whose weekly playlist is dated
+/// `date`. The rig's clock reads 2024-01-01 00:00 UTC.
+async fn weekly_page(date: &str) -> Value {
+    let dir = crate::common::ScratchDir::new("discover-weekly");
+    let rig = AuthRig::new("discover-weekly").await;
+    seed_user(&rig.platform.db).await;
+    let script = Script {
+        weekly: Some(weekly_playlist(date)),
+        ..page_script()
+    };
+    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |network| {
+        *network = Arc::new(script);
+    }));
+    call(&app, "GET", "/api/v3/discover", None).await;
+    settled_page(&rig, &app, "the weekly page was built").await
+}
+
+/// The weekly exploration playlist shows only while it is this week's:
+/// one made eight days before the build is left off.
+#[tokio::test]
+async fn only_this_weeks_playlist_shows() {
+    let stale = weekly_page("2023-12-24T00:00:00.054723+00:00").await;
+    assert_eq!(content(&stale, "weekly_exploration"), &Value::Null);
+
+    let fresh = weekly_page("2023-12-31T23:00:00.054723+00:00").await;
+    assert_eq!(
+        content(&fresh, "weekly_exploration")["weekly"]["tracks"][0]["title"],
+        "Song"
+    );
 }
 
 /// The page cache keeps what it should, one user per case. A build whose
