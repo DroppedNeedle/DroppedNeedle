@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 182);
+    assert_eq!(table_names(&connection).len(), 183);
     assert_eq!(
         scalar(
             &connection,
@@ -391,6 +391,14 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0155_library_loudness_measurements.sql",
         "6d53788e67ce93e42735f99e4cd5451a236b2005f8b261c75cf05f76ce304da6",
+    ),
+    (
+        "0156_catalog_playlist_pull_state.sql",
+        "889b0a1f14fa3fcd1f6e69e1f3e9e8ff41cd37e9ddd8370f706640484dacf04c",
+    ),
+    (
+        "0157_playlist_pull_acquire.sql",
+        "757ab93c9e951bd6e42ad75eac40d9e2d58f7a3f0c0d1427b16cfbf54d9c9f55",
     ),
 ];
 
@@ -2167,6 +2175,7 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("catalog_playlist_covers", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlist_members", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlist_members", "user_id", "auth_users", "CASCADE"),
+    ("catalog_playlist_pull_state", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlist_tracks", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlists", "user_id", "auth_users", "CASCADE"),
     ("catalog_user_favorite_names", "user_id, item_kind, item_id", "catalog_user_favorites", "CASCADE"),

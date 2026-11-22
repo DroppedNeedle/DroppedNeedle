@@ -102,8 +102,8 @@ droppedneedle_kernel::sql! {
     /// Turn the pull for playlist `?1` on or off, and its acquire flag when
     /// `?3` says so, keeping the snapshot.
     pub(super) PULL_SET = "INSERT INTO catalog_playlist_pull_state (playlist_id, enabled, acquire) \
-         VALUES (?1, ?2, COALESCE(?3, 0)) ON CONFLICT(playlist_id) DO UPDATE SET \
-         enabled = excluded.enabled, acquire = COALESCE(?3, acquire)";
+         VALUES (?1, COALESCE(?2, 0), COALESCE(?3, 0)) ON CONFLICT(playlist_id) DO UPDATE SET \
+         enabled = COALESCE(?2, enabled), acquire = COALESCE(?3, acquire)";
     /// Every playlist that pulls: id, owner, source ref, stored snapshot and
     /// acquire flag.
     pub(super) PULL_DUE = "SELECT p.id, p.user_id, p.source_ref, s.snapshot_id, s.acquire \
@@ -127,8 +127,9 @@ droppedneedle_kernel::sql! {
          ORDER BY created_at DESC, id DESC LIMIT 1";
     /// One playlist's pull row by id, whatever its enabled flag: owner,
     /// source, stored snapshot and the acquire flag.
-    pub(super) PULL_ROW = "SELECT user_id, source_ref, snapshot_id, acquire \
-         FROM catalog_playlist_pull_state WHERE playlist_id = ?1";
+    pub(super) PULL_ROW = "SELECT p.user_id, p.source_ref, s.snapshot_id, s.acquire \
+         FROM catalog_playlists p JOIN catalog_playlist_pull_state s ON s.playlist_id = p.id \
+         WHERE p.id = ?1";
     /// For each `[track, artist, album]` in the JSON array `?2`, by its
     /// index, the playlists the caller may read holding an entry with
     /// exactly those names.

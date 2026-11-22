@@ -880,17 +880,20 @@ impl CollectionsService<'_> {
         &self,
         user_id: &str,
         playlist_id: &str,
-        enabled: bool,
+        enabled: Option<bool>,
         acquire: Option<bool>,
     ) -> Result<PullState, CollectionsError> {
         let visible = self.playlists().visible_to(user_id);
         if !visible.set_pull(playlist_id, enabled, acquire).await? {
             return Err(CollectionsError::NotFound);
         }
-        let (enabled, acquire, checked_at, error) = visible
-            .pull_state(playlist_id)
-            .await?
-            .unwrap_or((enabled, acquire.unwrap_or(false), None, None));
+        let (enabled, acquire, checked_at, error) =
+            visible.pull_state(playlist_id).await?.unwrap_or((
+                enabled.unwrap_or(false),
+                acquire.unwrap_or(false),
+                None,
+                None,
+            ));
         Ok(PullState {
             enabled,
             acquire,

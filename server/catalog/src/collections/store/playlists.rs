@@ -1103,24 +1103,27 @@ impl VisiblePlaylists<'_> {
     pub async fn set_pull(
         &self,
         playlist_id: &str,
-        enabled: bool,
+        enabled: Option<bool>,
         acquire: Option<bool>,
     ) -> Result<bool, StoreError> {
         let (user_id, playlist_id) = (self.user_id.to_owned(), playlist_id.to_owned());
         self.store
             .db
             .write("playlists.set_pull", move |tx| {
-                let owned: bool = tx.query_row(
-                    sql::READABLE_OWNER.text(),
-                    params![user_id, playlist_id],
-                    |row| Ok(row.get::<_, i64>(0)? != 0),
-                )?;
+                let owned: bool = tx
+                    .query_row(
+                        sql::READABLE_OWNER.text(),
+                        params![user_id, playlist_id],
+                        |row| Ok(row.get::<_, i64>(0)? != 0),
+                    )
+                    .optional()?
+                    .unwrap_or(false);
                 if !owned {
                     return Ok(false);
                 }
                 tx.execute(
                     sql::PULL_SET.text(),
-                    params![playlist_id, i64::from(enabled), acquire.map(i64::from)],
+                    params![playlist_id, enabled.map(i64::from), acquire.map(i64::from)],
                 )?;
                 Ok(true)
             })

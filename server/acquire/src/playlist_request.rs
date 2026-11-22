@@ -15,6 +15,7 @@ use axum::{
 use droppedneedle_auth::User;
 use droppedneedle_catalog::collections::store::playlists::PlaylistStore;
 use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::mount::{Routes, routes};
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -98,7 +99,7 @@ pub async fn request_missing_handler(
     State(deps): State<PlaylistRequestDeps>,
     User(principal): User,
     Path(playlist_id): Path<String>,
-    body: Option<Json<AcquireBody>>,
+    ValidJson(body): ValidJson<AcquireBody>,
 ) -> Result<(StatusCode, Json<crate::playlist_acquire::AcquireState>), ApiError> {
     let owned = deps.playlists.owned_by(principal.user_id());
     if owned
@@ -109,15 +110,17 @@ pub async fn request_missing_handler(
     {
         return Err(ApiError::not_found());
     }
-    let items = match body.map(|Json(body)| body.items) {
-        Some(items) if !items.is_empty() => items,
-        _ => {
-            deps.acquire
-                .items_from(principal.user_id(), &playlist_id)
-                .await
-        }
+    let items = if body.items.is_empty() {
+        deps.acquire
+            .items_from(principal.user_id(), &playlist_id)
+            .await
+    } else {
+        body.items
     };
-    Ok((StatusCode::ACCEPTED, Json(deps.acquire.start(principal, playlist_id, items).await)))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(deps.acquire.start(principal, playlist_id, items).await),
+    ))
 }
 
 /// One press's batch, or the default list.

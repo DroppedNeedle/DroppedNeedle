@@ -274,8 +274,10 @@ pub struct ImportPlaylistResponse {
 /// Turn the hourly pull for a playlist on or off.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct PullBody {
-    /// Whether the playlist follows its source.
-    pub enabled: bool,
+    /// Whether the playlist follows its source; omitted keeps the stored
+    /// flag.
+    #[serde(default)]
+    pub enabled: Option<bool>,
     /// Whether a pull also asks for the songs the library lacks; omitted
     /// keeps the stored flag.
     #[serde(default)]

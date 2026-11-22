@@ -8,6 +8,6 @@ CREATE TABLE catalog_playlist_pull_state (
     last_checked_at INTEGER,
     last_pulled_at INTEGER,
     last_error TEXT
-);
+) STRICT;
 
 PRAGMA user_version = 156;

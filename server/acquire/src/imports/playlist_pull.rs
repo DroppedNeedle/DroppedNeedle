@@ -90,7 +90,9 @@ impl PlaylistPull {
         };
         let items = self.acquire.items_from(user_id, playlist_id).await;
         if !items.is_empty() {
-            self.acquire.start(principal, playlist_id.to_owned(), items).await;
+            self.acquire
+                .start(principal, playlist_id.to_owned(), items)
+                .await;
         }
     }
 

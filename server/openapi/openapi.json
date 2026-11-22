@@ -60310,9 +60310,6 @@
       "PullBody": {
         "type": "object",
         "description": "Turn the hourly pull for a playlist on or off.",
-        "required": [
-          "enabled"
-        ],
         "properties": {
           "acquire": {
             "type": [
@@ -60322,8 +60319,11 @@
             "description": "Whether a pull also asks for the songs the library lacks; omitted\nkeeps the stored flag."
           },
           "enabled": {
-            "type": "boolean",
-            "description": "Whether the playlist follows its source."
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the playlist follows its source; omitted keeps the stored\nflag."
           }
         }
       },

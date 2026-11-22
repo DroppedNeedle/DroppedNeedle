@@ -20893,8 +20893,11 @@ export interface components {
              *     keeps the stored flag.
              */
             acquire?: boolean | null;
-            /** @description Whether the playlist follows its source. */
-            enabled: boolean;
+            /**
+             * @description Whether the playlist follows its source; omitted keeps the stored
+             *     flag.
+             */
+            enabled?: boolean | null;
         };
         /** @description What one manual check found. */
         PullNowResponse: {

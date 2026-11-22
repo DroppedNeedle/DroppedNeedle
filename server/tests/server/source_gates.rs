@@ -831,6 +831,7 @@ const DROP_IMPORT: &str = "a drop import a request starts; it logs its own end";
 const MIX_REFRESH: &str = "a personal-mix refresh a request starts; it logs its own end";
 const SEARCH: &str = "an acquire search a request starts; it logs its own end";
 const LIBRARY_CHECK: &str = "the library folder check, bounded by a timeout; one that hangs is left to end and none starts beside it";
+const PLAYLIST_ACQUIRE: &str = "a playlist acquire batch a request starts; it logs its own end";
 const WORKER_CHILD: &str = "a landing or review the download worker waits for";
 const REQUEST: &str = "blocking file or store work, awaited by the request that runs it";
 const CATALOG_WARM: &str =
@@ -867,6 +868,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/drop_import/http.rs", 1, UPLOAD_CLEANUP),
     ("acquire/src/drop_import/mod.rs", 12, DROP_IMPORT_STEP),
     ("acquire/src/drop_import/mod.rs", 1, DROP_IMPORT),
+    ("acquire/src/playlist_acquire.rs", 1, PLAYLIST_ACQUIRE),
     ("acquire/src/held/service.rs", 8, AWAITED),
     ("acquire/src/import_folder/mod.rs", 5, LOOP_STEP),
     ("acquire/src/intake/dispose.rs", 1, AWAITED),
