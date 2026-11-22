@@ -467,7 +467,7 @@ async fn album_primary_bitrate_averages_primary_format_positive_bitrates() {
         year, duration_seconds, file_format, bit_rate, bit_depth, availability, \
         ingest_source, imported_at, membership_source) VALUES ",
     );
-    let tracks: &[(&str, &str, Option<i64>, Option<i64>, &str)] = &[
+    let tracks: &[BitrateTrack] = &[
         // CBR: all 320 -> 320
         ("br-cbr", "mp3", Some(320), None, "indexed"),
         ("br-cbr", "mp3", Some(320), None, "indexed"),
@@ -2562,6 +2562,17 @@ async fn album_play_summary_follows_every_write() {
 /// One kept artist and album pair: artist, album, indexed tracks, live,
 /// appearance.
 type ArtistAlbumPair = (String, String, i64, bool, bool);
+
+/// A bitrate fixture track: album id, file format, bit rate, bit depth and
+/// availability.
+type BitrateTrack = (
+    &'static str,
+    &'static str,
+    Option<i64>,
+    Option<i64>,
+    &'static str,
+);
+
 /// One kept artist row: artist, folded name, album count, appearance
 /// count, and each negated count added to its count.
 type ArtistCountRow = (String, String, i64, i64, i64, i64);

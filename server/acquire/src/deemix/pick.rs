@@ -682,11 +682,10 @@ mod tests {
         target
     }
 
-    fn built(
-        title: &str,
-        artist: &str,
-        tracks: &[(u32, u32, Option<u32>, Option<&str>, &str, &str)],
-    ) -> Tracklist {
+    /// A Deezer track: disc, position, length, ISRC, title and version.
+    type TrackRow<'a> = (u32, u32, Option<u32>, Option<&'a str>, &'a str, &'a str);
+
+    fn built(title: &str, artist: &str, tracks: &[TrackRow<'_>]) -> Tracklist {
         Tracklist {
             id: 1,
             title: title.to_owned(),

@@ -223,8 +223,18 @@ const HTTP: Rule = Rule {
         },
         Allow {
             path: "acquire/src/wiring.rs",
+            shapes: &["client", "factory"],
+            why: "passes the factory's client to slskd, SABnzbd, Prowlarr, Lidarr and Deemix",
+        },
+        Allow {
+            path: "acquire/src/probes.rs",
+            shapes: &["client"],
+            why: "the Deemix card's checks, over the factory's client that follows no redirect",
+        },
+        Allow {
+            path: "acquire/src/test_support/mod.rs",
             shapes: &["factory"],
-            why: "passes the factory's client to slskd, SABnzbd, Prowlarr and Lidarr",
+            why: "test support: the Deemix wiring for tests, over a factory of its own",
         },
         Allow {
             path: "auth/src/wiring.rs",

@@ -702,7 +702,7 @@ impl DeemixSource {
             .candidates(target, RequestPriority::BackgroundSync, at_once)
             .await?
             .into_iter()
-            .filter(|album| usable(album))
+            .filter(usable)
             .collect();
         pick::best_fit(target, &albums)
             .map(|(album, _)| (album.clone(), false))

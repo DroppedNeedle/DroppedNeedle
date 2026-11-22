@@ -45,10 +45,13 @@ mod tests {
         Downloads,
     }
 
+    /// Case, kind, checked folder, the set's folders, expected overlap (Ok
+    /// when clear).
+    type Row<'a> = (&'a str, Kind, &'a str, Vec<&'a str>, Result<(), &'a str>);
+
     #[test]
     fn folder_clear_compares_whole_paths() {
-        // Case, kind, checked folder, the set's folders, expected overlap (Ok when clear).
-        let rows: Vec<(&str, Kind, &str, Vec<&str>, Result<(), &str>)> = vec![
+        let rows: Vec<Row<'_>> = vec![
             (
                 "equal",
                 Library,

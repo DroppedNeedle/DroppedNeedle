@@ -84,11 +84,6 @@ pub mod snapshots {
         include_str!("../../tests/fixtures/deemix/getQueue_two_albums_7.json"),
     ];
 
-    /// After a kill mid-download: both albums waiting, only 14880659 in
-    /// `queueOrder`, nothing current.
-    pub const AFTER_KILL: &str =
-        include_str!("../../tests/fixtures/deemix/getQueue_after_kill.json");
-
     /// Just after the current item was removed: `current` still names
     /// album 6158273, which has left `queue`.
     pub const AFTER_CANCEL: &str =

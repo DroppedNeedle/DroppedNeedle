@@ -864,6 +864,7 @@ const UPGRADE_RUN: &str = "an upgrade tool run a signed-in admin starts in upgra
 const FOLDER_LISTING: &str = "a folder listing its asker waits on up to a deadline; one that hangs is left to end, and at most four run at once";
 
 const SPAWN_SITES: &[(&str, usize, &str)] = &[
+    ("acquire/src/deemix/source.rs", 2, AWAITED),
     ("acquire/src/drop_import/http.rs", 1, UPLOAD_CLEANUP),
     ("acquire/src/drop_import/mod.rs", 12, DROP_IMPORT_STEP),
     ("acquire/src/drop_import/mod.rs", 1, DROP_IMPORT),
@@ -873,7 +874,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("acquire/src/landing/hold.rs", 1, AWAITED),
     ("acquire/src/landing/library.rs", 2, AWAITED),
     ("acquire/src/landing/mod.rs", 2, AWAITED),
-    ("acquire/src/probes.rs", 2, AWAITED),
+    ("acquire/src/probes.rs", 4, AWAITED),
     ("acquire/src/requests/batches/mod.rs", 1, AWAITED),
     ("acquire/src/requests/mix.rs", 1, MIX_REFRESH),
     ("acquire/src/requests/service/edition.rs", 1, AWAITED),

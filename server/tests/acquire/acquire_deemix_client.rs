@@ -41,10 +41,11 @@ fn uuid(text: &str) -> QueueUuid {
 }
 
 async fn queue_of(client: &DeemixClient, mock: &DeemixMock, answer: Value) -> Queue {
-    let mut state = mock.state();
-    state.queue_walk.clear();
-    state.queue = answer;
-    drop(state);
+    {
+        let mut state = mock.state();
+        state.queue_walk.clear();
+        state.queue = answer;
+    }
     client.queue().await.expect("the queue decodes")
 }
 

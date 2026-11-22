@@ -446,7 +446,7 @@ impl Loudness {
     pub fn levels(&self, track_id: &str) -> Result<Option<TrackLevels>, LoudnessError> {
         let rows = self.db.read_blocking("library.loudness_levels", |conn| {
             conn.prepare_cached(sql::ALBUM_LEVELS.text())?
-                .query_map([track_id], |row| sql::AlbumLevel::read(row))?
+                .query_map([track_id], sql::AlbumLevel::read)?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(LoudnessError::from)
         })?;
