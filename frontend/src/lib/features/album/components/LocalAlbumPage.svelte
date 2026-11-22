@@ -47,7 +47,10 @@
 	import type { QueueItem } from '$lib/features/player/playback/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
-	import { buildDiscoveryQueueFromLocal } from '$lib/features/player/playback/queueHelpers';
+	import {
+		buildDiscoveryQueueFromLocal,
+		withPlayedFrom
+	} from '$lib/features/player/playback/queueHelpers';
 	import {
 		getLibraryAlbumDetailQuery,
 		getLibraryAlbumTracksQuery
@@ -108,7 +111,7 @@
 	function play(shuffle: boolean): void {
 		const queue = buildDiscoveryQueueFromLocal(tracks);
 		if (!queue.length) return;
-		playerStore.playQueue(queue, 0, shuffle);
+		playerStore.playQueue(withPlayedFrom(queue, { kind: 'album', id: albumId }), 0, shuffle);
 	}
 
 	let playlistModal = $state<{ open: (tracks: QueueItem[]) => void } | null>(null);

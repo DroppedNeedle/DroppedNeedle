@@ -8,7 +8,10 @@
 	import FavoriteHeart from '$lib/features/library/components/FavoriteHeart.svelte';
 	import LibraryFormatBadge from '$lib/features/library/components/LibraryFormatBadge.svelte';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
-	import { buildDiscoveryQueueFromLocal } from '$lib/features/player/playback/queueHelpers';
+	import {
+		buildDiscoveryQueueFromLocal,
+		withPlayedFrom
+	} from '$lib/features/player/playback/queueHelpers';
 	import { formatBytes, formatDurationSec } from '$lib/utils/formatting';
 	import type { TrackView } from '$lib/features/library/queries/types';
 	import { artistHref } from '$lib/utils/entityRoutes';
@@ -114,7 +117,15 @@
 					icon={Play}
 					class="order-7 shrink-0 [&_svg]:fill-current"
 					aria-label={`Play ${track.title}`}
-					onclick={() => playerStore.playQueue(buildDiscoveryQueueFromLocal(tracks), index, false)}
+					onclick={() =>
+						playerStore.playQueue(
+							withPlayedFrom(buildDiscoveryQueueFromLocal(tracks), {
+								kind: 'album',
+								id: track.album_id
+							}),
+							index,
+							false
+						)}
 				>
 					<LocalFilesIcon class="h-4 w-4" />
 				</Button>

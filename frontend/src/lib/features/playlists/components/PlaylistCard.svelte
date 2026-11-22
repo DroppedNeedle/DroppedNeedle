@@ -11,7 +11,10 @@
 	import type { PlaylistSummary } from '$lib/api/playlists';
 	import { fetchPlaylist, isRedactedPlaylist } from '$lib/api/playlists';
 	import { createDeletePlaylistV3Mutation } from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
-	import { playlistTrackToQueueItem } from '$lib/features/player/playback/queueHelpers';
+	import {
+		playlistTrackToQueueItem,
+		withPlayedFrom
+	} from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { formatTotalDurationSec } from '$lib/utils/formatting';
@@ -83,7 +86,7 @@
 			});
 			return;
 		}
-		playerStore.playQueue(items, 0, shuffle);
+		playerStore.playQueue(withPlayedFrom(items, { kind: 'playlist', id: playlist.id }), 0, shuffle);
 	}
 
 	async function handlePlay(e: Event) {

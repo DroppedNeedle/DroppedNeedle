@@ -17,6 +17,7 @@
 	import type { RemoteSourceDescriptor } from '$lib/features/remote-library/queries/remoteSources';
 	import type { RemoteAlbum, RemoteTrack } from '$lib/features/remote-library/queries/types';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
+	import { withPlayedFrom } from '$lib/features/player/playback/queueHelpers';
 	import { formatDurationSec as formatDuration } from '$lib/utils/formatting';
 	import { SvelteMap } from 'svelte/reactivity';
 	import AlbumCarousel from './AlbumCarousel.svelte';
@@ -58,9 +59,13 @@
 	const recommended = $derived(discoveryQuery.data?.hubs ?? []);
 	const showMix = $derived(caps.mix && (genres.length > 0 || mixTracks.length > 0));
 
+	/** The server's own lists play as the library's. */
+	const fromLibrary = (tracks: RemoteTrack[]) =>
+		withPlayedFrom(remote.queue(tracks), { kind: 'library' });
+
 	function play(tracks: RemoteTrack[], startIndex = 0, shuffle = false) {
 		if (tracks.length === 0) return;
-		playerStore.playQueue(remote.queue(tracks), startIndex, shuffle);
+		playerStore.playQueue(fromLibrary(tracks), startIndex, shuffle);
 	}
 
 	// The genre browser hands back its own rows; keep the full tracks to queue them.
@@ -78,7 +83,7 @@
 	}
 
 	function genreQueue(tracks: BrowseTrack[]) {
-		return remote.queue(
+		return fromLibrary(
 			tracks.map(
 				(t) =>
 					genreTracks.get(t.id) ?? {

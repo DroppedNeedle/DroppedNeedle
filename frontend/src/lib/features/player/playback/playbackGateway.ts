@@ -10,6 +10,7 @@ export type PlaybackStartRequest = components['schemas']['PlaybackStartRequest']
 export type PlaybackStartResponse = components['schemas']['PlaybackStartResponse'];
 export type PlaybackProgressRequest = components['schemas']['PlaybackProgressRequest'];
 export type PlaybackStopRequest = components['schemas']['PlaybackStopRequest'];
+export type PlaybackEventRequest = components['schemas']['PlaybackEventRequest'];
 export type ScrobbleNowPlayingRequest = components['schemas']['ScrobbleNowPlayingRequest'];
 export type ScrobbleSubmitRequest = components['schemas']['ScrobbleSubmitRequest'];
 export type ScrobbleResponse = components['schemas']['ScrobbleResponse'];
@@ -58,6 +59,11 @@ export async function reportPlaybackProgress(request: PlaybackProgressRequest): 
 
 export async function stopPlaybackSession(request: PlaybackStopRequest): Promise<void> {
 	await api.v3.POST(v3('/api/v3/playback/stop'), request);
+}
+
+/** How one playback ended. Kept alive, so it still goes while the page is closing. */
+export async function reportPlaybackEvent(request: PlaybackEventRequest): Promise<void> {
+	await api.v3.POST(v3('/api/v3/playback/events'), request, { keepalive: true });
 }
 
 export async function sendScrobbleNowPlaying(

@@ -6,6 +6,7 @@
 	import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import type { RadioPlanRequest } from '$lib/features/discover/queries/types';
+	import type { PlayedFrom } from '$lib/features/player/playback/types';
 
 	interface Props {
 		seed: Omit<RadioPlanRequest, 'exclude_recording_mbids' | 'fast'>;
@@ -19,6 +20,8 @@
 		variant?: 'primary' | 'ghost';
 		label?: string;
 		className?: string;
+		/** What the station's plays say they came from, when not the station itself. */
+		playedFrom?: PlayedFrom;
 	}
 
 	let {
@@ -30,7 +33,8 @@
 		size = 'sm',
 		variant = 'primary',
 		label = 'Play',
-		className = ''
+		className = '',
+		playedFrom
 	}: Props = $props();
 
 	const integrations = useIntegrationStatus();
@@ -68,7 +72,7 @@
 			tuning = true;
 		}
 		try {
-			await launchRadio(seed, ytConfigured, { shuffle, mode });
+			await launchRadio(seed, ytConfigured, { shuffle, mode, playedFrom });
 		} finally {
 			tuning = false;
 			shuffling = false;

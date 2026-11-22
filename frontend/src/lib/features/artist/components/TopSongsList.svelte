@@ -13,9 +13,11 @@
 		loading?: boolean;
 		configured?: boolean;
 		source?: string;
+		/** The artist whose page this is, which a play from the list says it came from. */
+		artistId?: string;
 	}
 
-	let { songs, loading = false, configured = true, source = '' }: Props = $props();
+	let { songs, loading = false, configured = true, source = '', artistId }: Props = $props();
 
 	function resolveKey(rgMbid: string, disc: number, track: number): string {
 		return `${rgMbid}|${disc}|${track}`;
@@ -69,7 +71,8 @@
 				coverUrl: null,
 				sourceType: resolved.source as SourceType,
 				format: resolved.format ?? undefined,
-				duration: resolved.duration ?? undefined
+				duration: resolved.duration ?? undefined,
+				playedFrom: { kind: 'artist', id: artistId }
 			});
 		}
 

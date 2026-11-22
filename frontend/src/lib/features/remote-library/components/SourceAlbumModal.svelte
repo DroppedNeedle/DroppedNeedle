@@ -143,7 +143,8 @@
 					sourceType: 'jellyfin' as const,
 					format: t.format ?? undefined,
 					recordingIds: recordingFor('jellyfin', t.recording_mbid),
-					duration: t.duration_secs ?? undefined
+					duration: t.duration_secs ?? undefined,
+					playedFrom: { kind: 'mix' }
 				}));
 				playerStore.playQueue(items, 0, false);
 			}

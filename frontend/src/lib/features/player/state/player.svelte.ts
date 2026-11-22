@@ -2,6 +2,7 @@ import type {
 	PlaybackSource,
 	PlaybackState,
 	NowPlaying,
+	PlayEnd,
 	QueueItem,
 	SourceType
 } from '$lib/features/player/playback/types';
@@ -23,6 +24,7 @@ import {
 	UNPLAYABLE_ERROR
 } from '$lib/features/player/playback/NativeAudioSource';
 import { createTransition, type Preload } from '$lib/features/player/playback/transition';
+import { playEndFrom } from '$lib/features/player/playback/playEnd';
 import { crossfade } from './crossfade.svelte';
 import {
 	REFUSAL_SAYS,
@@ -227,6 +229,9 @@ function createPlayerStore() {
 	// Bumped by every new play of a track (a fresh load or a move to the next),
 	// so the same song twice in a row counts twice.
 	let playId = $state(0);
+	// Why the last play ended, set wherever one ends; the scrobble manager
+	// reads it when it sees that play go.
+	let playEnd: PlayEnd = 'stopped';
 	// The load whose next track was asked for, so each play preloads once;
 	// null lets the next position ask again.
 	let preloadFor: number | null = null;
@@ -470,6 +475,7 @@ function createPlayerStore() {
 	}
 
 	function applyResetState(): void {
+		playEnd = playEndFrom(playbackState, 'stopped');
 		radioSession.end();
 		transition.reset();
 		preloadFor = null;
@@ -579,7 +585,10 @@ function createPlayerStore() {
 		const resumeAt = kind === 'fresh' ? 0 : prevProgress;
 		transition.reset();
 		currentSource = null;
-		if (kind === 'fresh') playId++;
+		if (kind === 'fresh') {
+			playEnd = playEndFrom(playbackState, 'skipped');
+			playId++;
+		}
 		// A reload of the song playing (a retry, another source) keeps the level it
 		// started at; a new play reads its loudness beside the stream, for a moment.
 		const level =
@@ -847,6 +856,7 @@ function createPlayerStore() {
 		playbackState = 'playing';
 		progress = 0;
 		duration = next.source.getDuration();
+		playEnd = 'finished';
 		playId++;
 		currentLevel = { playId, factor: deckLevels[next.source.lease.deck] ?? 1 };
 		subscribeToSource(next.source, gen);
@@ -1017,6 +1027,10 @@ function createPlayerStore() {
 		get playId() {
 			return playId;
 		},
+		/** Why the last play ended, read when `playId` moves on or the player stops. */
+		get playEnd() {
+			return playEnd;
+		},
 
 		unplayableReasonFor,
 
@@ -1026,6 +1040,7 @@ function createPlayerStore() {
 			void session.end(progress);
 			transition.reset();
 			const gen = beginLoad('loading');
+			playEnd = playEndFrom(playbackState, 'skipped');
 			playId++;
 			recovery.failed = [];
 			currentSource = source;
@@ -1368,6 +1383,7 @@ function createPlayerStore() {
 			progress = 0;
 			duration = 0;
 			const gen = beginLoad('loading');
+			playEnd = 'stopped';
 			playId++;
 
 			void (async () => {

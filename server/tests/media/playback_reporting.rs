@@ -2815,3 +2815,178 @@ fn compat_now_playing_forwards_once_and_expires() {
     assert!(present_at(&rig, NOW + 45), "a Jellyfin report holds 45 s");
     assert!(!present_at(&rig, NOW + 46), "45 s without a report");
 }
+
+// ---------------------------------------------------------------------------
+// How a playback ended
+// ---------------------------------------------------------------------------
+
+/// One stored playback event: what it is filed under, how it ended and
+/// what it was started from.
+#[derive(Debug, PartialEq, Eq)]
+struct StoredEvent {
+    track: Option<String>,
+    recording: Option<String>,
+    release_group: Option<String>,
+    client: String,
+    started_at: i64,
+    ended_at: i64,
+    listened_ms: i64,
+    ended_by: String,
+    came_from: String,
+    came_from_id: Option<String>,
+    counted: bool,
+}
+
+/// The listener's playback events, oldest first.
+fn stored_events(rig: &Rig, user_id: &str) -> Vec<StoredEvent> {
+    rig.sql()
+        .prepare(
+            "SELECT local_track_id, recording_mbid, release_group_mbid, client, started_at, \
+             ended_at, listened_ms, ended_by, came_from, came_from_id, counted \
+             FROM media_playback_events WHERE user_id = ?1 ORDER BY rowid",
+        )
+        .expect("events query")
+        .query_map([user_id], |row| {
+            Ok(StoredEvent {
+                track: row.get(0)?,
+                recording: row.get(1)?,
+                release_group: row.get(2)?,
+                client: row.get(3)?,
+                started_at: row.get(4)?,
+                ended_at: row.get(5)?,
+                listened_ms: row.get(6)?,
+                ended_by: row.get(7)?,
+                came_from: row.get(8)?,
+                came_from_id: row.get(9)?,
+                counted: row.get(10)?,
+            })
+        })
+        .expect("events read")
+        .collect::<Result<_, _>>()
+        .expect("events decode")
+}
+
+/// How a playback ended is a record of its own and never a play:
+/// - an event naming a library track is filed under it with the track's
+///   recording and release group, whatever the body sent, ending now;
+/// - its time heard is held to the time it could have run (with the clock
+///   skew its start may have);
+/// - a start in the future or older than 14 days, an empty or overlong
+///   name and a recording that is not a MusicBrainz id are refused and
+///   store nothing;
+/// - events add no play and no scrobble job, and a counted play (a
+///   scrobble submit or a session stop) adds no event;
+/// - forgetting one listener's events leaves another's.
+#[tokio::test]
+async fn a_playback_event_is_a_record_of_its_own_and_never_a_play() {
+    let rig = rig();
+    let event = |started_at: i64, listened_ms: i64| {
+        json!({
+            "track_id": "track-1",
+            "track_name": "Roads",
+            "artist_name": "Portishead",
+            "recording_mbid": "0d6a5b2c-1111-4222-8333-444455556666",
+            "source": "local",
+            "started_at": started_at,
+            "listened_ms": listened_ms,
+            "duration_ms": 240_000,
+            "ended_by": "skipped",
+            "came_from": "album",
+            "came_from_id": "album-1",
+            "counted": false,
+        })
+    };
+    let post = |user: &'static str, body: Value| {
+        let app = app(&rig, Some(user));
+        async move { call(app, "POST", "/api/v3/playback/events", Some(body)).await }
+    };
+
+    let (status, body, _) = post("user-1", event(NOW - 20, 20_000)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let (status, body, _) = post("user-1", event(NOW - 10, 600_000)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let filed = |started_at: i64, listened_ms: i64| StoredEvent {
+        track: Some("track-1".to_owned()),
+        recording: Some("recording-mbid-1".to_owned()),
+        release_group: Some("rg-mbid-1".to_owned()),
+        client: "web".to_owned(),
+        started_at: started_at * 1000,
+        ended_at: NOW * 1000,
+        listened_ms,
+        ended_by: "skipped".to_owned(),
+        came_from: "album".to_owned(),
+        came_from_id: Some("album-1".to_owned()),
+        counted: false,
+    };
+    assert_eq!(
+        stored_events(&rig, "user-1"),
+        [filed(NOW - 20, 20_000), filed(NOW - 10, 70_000)]
+    );
+
+    for (case, started_at) in [
+        ("in the future", NOW + 61),
+        ("older than 14 days", NOW - 14 * 24 * 60 * 60 - 1),
+    ] {
+        let (status, body, _) = post("user-1", event(started_at, 1_000)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{case}: {body}");
+        assert_eq!(error_code(&body), "INVALID_INPUT", "{case}: {body}");
+    }
+    for (case, field, value) in [
+        ("an empty name", "track_name", json!("  ")),
+        ("an overlong name", "artist_name", json!("a".repeat(1025))),
+        (
+            "a recording that is not an id",
+            "recording_mbid",
+            json!("sent"),
+        ),
+    ] {
+        let mut body = event(NOW - 5, 1_000);
+        body[field] = value;
+        let (status, body, _) = post("user-1", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{case}: {body}");
+        assert_eq!(error_code(&body), "INVALID_INPUT", "{case}: {body}");
+    }
+    assert_eq!(stored_events(&rig, "user-1").len(), 2, "refused events");
+    assert_eq!(rig.plays(), 0, "an event is not a play");
+    assert_eq!(rig.scrobbles(), 0, "an event is not a scrobble");
+
+    let (status, answer, _) = call(
+        app(&rig, Some("user-1")),
+        "POST",
+        "/api/v3/scrobble/submit",
+        Some(json!({
+            "track_name": "Roads",
+            "artist_name": "Portishead",
+            "timestamp": NOW,
+            "duration_ms": 240_000,
+            "track_id": "track-1",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    // Later, so the session's play is not the submit's twice.
+    rig.clock.advance(300 * 1000);
+    start(&rig, "user-1", "track-1", "local").await;
+    let (_, stopped) = stop(&rig, "user-1", "track-1", "local", Some(230_000)).await;
+    assert_eq!(stopped["scrobbled"], true, "{stopped}");
+    assert_eq!(rig.plays(), 2, "both plays count");
+    assert_eq!(
+        stored_events(&rig, "user-1").len(),
+        2,
+        "a counted play adds no event"
+    );
+
+    let (status, body, _) = post("user-hidden", event(NOW - 30, 30_000)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let forgotten = playback::events::forget(&rig.deps.store, "user-1")
+        .await
+        .expect("forget runs");
+    assert_eq!(forgotten, 2);
+    assert_eq!(stored_events(&rig, "user-1"), []);
+    assert_eq!(
+        stored_events(&rig, "user-hidden").len(),
+        1,
+        "another listener's events stay"
+    );
+    assert_eq!(rig.plays(), 2, "forgetting leaves the plays");
+}

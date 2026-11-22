@@ -23956,6 +23956,57 @@
         ]
       }
     },
+    "/api/v3/playback/events": {
+      "post": {
+        "tags": [
+          "playback"
+        ],
+        "summary": "Record how one web-player playback ended. It counts no play: the\nscrobble submit does that.",
+        "operationId": "record_playback_event",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackEventRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Event recorded"
+          },
+          "400": {
+            "description": "Bad request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/playback/progress": {
       "post": {
         "tags": [
@@ -58371,6 +58422,46 @@
           }
         }
       },
+      "PlayEnd": {
+        "type": "string",
+        "description": "How a playback ended.",
+        "enum": [
+          "finished",
+          "skipped",
+          "stopped",
+          "failed",
+          "unknown"
+        ]
+      },
+      "PlayOrigin": {
+        "type": "string",
+        "description": "What a playback was started from.",
+        "enum": [
+          "album",
+          "artist",
+          "playlist",
+          "radio",
+          "mix",
+          "search",
+          "library",
+          "unknown",
+          "weekly_set",
+          "dig_further",
+          "later_pile"
+        ]
+      },
+      "PlaySource": {
+        "type": "string",
+        "description": "Where a playback's audio came from.",
+        "enum": [
+          "local",
+          "youtube",
+          "jellyfin",
+          "navidrome",
+          "plex",
+          "plugin"
+        ]
+      },
       "PlaybackConversion": {
         "type": "object",
         "description": "Whether the web player's format asks are converted.",
@@ -58381,6 +58472,85 @@
           "conversion": {
             "$ref": "#/components/schemas/Conversion",
             "description": "On, turned off by an admin, or impossible without ffmpeg."
+          }
+        }
+      },
+      "PlaybackEventRequest": {
+        "type": "object",
+        "description": "How one web-player playback ended. A record of its own, never a play:\nwhat counts as a play is the scrobble submit's.",
+        "required": [
+          "track_name",
+          "artist_name",
+          "source",
+          "started_at",
+          "listened_ms",
+          "ended_by",
+          "came_from",
+          "counted"
+        ],
+        "properties": {
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name, 1 to 1024 characters."
+          },
+          "came_from": {
+            "$ref": "#/components/schemas/PlayOrigin",
+            "description": "What it was started from."
+          },
+          "came_from_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The album, playlist or station it was started from, when named: the\nid as the page that started the play named it (a library id, a\nMusicBrainz id or a media server's id)."
+          },
+          "counted": {
+            "type": "boolean",
+            "description": "Whether the playback also counted as a play."
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Track length in milliseconds, when known."
+          },
+          "ended_by": {
+            "$ref": "#/components/schemas/PlayEnd",
+            "description": "How it ended."
+          },
+          "listened_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Time heard in milliseconds, seeks left out."
+          },
+          "recording_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Recording MBID the source gave, for a playback from anywhere else."
+          },
+          "source": {
+            "$ref": "#/components/schemas/PlaySource",
+            "description": "Where the audio came from."
+          },
+          "started_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the playback started, unix seconds."
+          },
+          "track_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The library track played, for a playback from the library. Files the\nevent under that track, whose own recording and release group\nreplace any sent."
+          },
+          "track_name": {
+            "type": "string",
+            "description": "Track title, 1 to 1024 characters."
           }
         }
       },

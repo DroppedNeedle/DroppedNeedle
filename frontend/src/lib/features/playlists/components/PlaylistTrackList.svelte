@@ -153,8 +153,14 @@
 		}
 	}
 
-	function addTrackToQueue(track: PlaylistTrack) {
+	/** A playlist row as a queue item that says it came from this playlist. */
+	function rowItem(track: PlaylistTrack) {
 		const item = playlistTrackToQueueItem(track);
+		return item && { ...item, playedFrom: { kind: 'playlist' as const, id: playlist.id } };
+	}
+
+	function addTrackToQueue(track: PlaylistTrack) {
+		const item = rowItem(track);
 		if (!item) {
 			toastStore.show({ message: 'Track is not playable', type: 'error' });
 			return;
@@ -163,7 +169,7 @@
 	}
 
 	function playTrackNext(track: PlaylistTrack) {
-		const item = playlistTrackToQueueItem(track);
+		const item = rowItem(track);
 		if (!item) {
 			toastStore.show({ message: 'Track is not playable', type: 'error' });
 			return;

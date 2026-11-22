@@ -13,6 +13,7 @@
 	} from '$lib/features/remote-library/queries/RemoteQueries.svelte';
 	import type { RemoteSourceDescriptor } from '$lib/features/remote-library/queries/remoteSources';
 	import type { RemoteArtist, RemoteTrack } from '$lib/features/remote-library/queries/types';
+	import { withPlayedFrom } from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { formatDurationSec as formatDuration } from '$lib/utils/formatting';
 	import { toDiscoveryTrack } from './remoteTracks';
@@ -49,7 +50,10 @@
 
 	function play(tracks: RemoteTrack[], startIndex = 0) {
 		if (tracks.length === 0) return;
-		playerStore.playQueue(remote.queue(tracks), startIndex);
+		playerStore.playQueue(
+			withPlayedFrom(remote.queue(tracks), { kind: 'artist', id: artist?.id }),
+			startIndex
+		);
 	}
 </script>
 

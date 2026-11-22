@@ -12,9 +12,9 @@ use axum::{
 };
 
 use super::{
-    PlaybackDeps,
+    PlaybackDeps, events,
     models::{
-        NowPlayingDeleteQuery, NowPlayingHeartbeat, PlaybackProgressRequest,
+        NowPlayingDeleteQuery, NowPlayingHeartbeat, PlaybackEventRequest, PlaybackProgressRequest,
         PlaybackProgressResponse, PlaybackStartRequest, PlaybackStartResponse, PlaybackStopRequest,
         PlaybackStopResponse, ScrobbleNowPlayingRequest, ScrobbleResponse, ScrobbleSubmitRequest,
     },
@@ -105,6 +105,29 @@ pub async fn stop_playback(
 ) -> Result<Json<PlaybackStopResponse>, ApiError> {
     sessions::stop_playback(&deps, user.user_id(), &body)
         .map(Json)
+        .map_err(map)
+}
+
+/// Record how one web-player playback ended. It counts no play: the
+/// scrobble submit does that.
+#[utoipa::path(
+    post,
+    tag = "playback",
+    path = "/api/v3/playback/events",
+    request_body = PlaybackEventRequest,
+    responses(
+        (status = 204, description = "Event recorded"),
+        (status = 400, description = "Bad request body"),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn record_playback_event(
+    State(deps): State<PlaybackDeps>,
+    User(user): User,
+    ValidJson(body): ValidJson<PlaybackEventRequest>,
+) -> Result<StatusCode, ApiError> {
+    events::submit(&deps, user.user_id(), &body)
+        .map(|()| StatusCode::NO_CONTENT)
         .map_err(map)
 }
 
@@ -234,6 +257,7 @@ where
         .user(routes!(start_playback))
         .user(routes!(report_progress))
         .user(routes!(stop_playback))
+        .user(routes!(record_playback_event))
         .user(routes!(submit_scrobble))
         .user(routes!(forward_now_playing))
         .user(routes!(now_playing, heartbeat, clear_now_playing))

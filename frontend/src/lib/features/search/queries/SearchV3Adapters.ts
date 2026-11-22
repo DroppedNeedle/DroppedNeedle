@@ -166,6 +166,7 @@ export function searchSongQueueItem(song: SearchLibrarySong): QueueItem {
 		artistId: detail.artist_id ?? undefined,
 		format: detail.format.toLowerCase(),
 		availableSources: ['local'],
-		duration: detail.duration_seconds ?? undefined
+		duration: detail.duration_seconds ?? undefined,
+		playedFrom: { kind: 'search' }
 	};
 }

@@ -6201,6 +6201,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/playback/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record how one web-player playback ended. It counts no play: the
+         *     scrobble submit does that.
+         */
+        post: operations["record_playback_event"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/playback/progress": {
         parameters: {
             query?: never;
@@ -19946,10 +19966,72 @@ export interface components {
         PickResponse: {
             task_id: string;
         };
+        /**
+         * @description How a playback ended.
+         * @enum {string}
+         */
+        PlayEnd: "finished" | "skipped" | "stopped" | "failed" | "unknown";
+        /**
+         * @description What a playback was started from.
+         * @enum {string}
+         */
+        PlayOrigin: "album" | "artist" | "playlist" | "radio" | "mix" | "search" | "library" | "unknown" | "weekly_set" | "dig_further" | "later_pile";
+        /**
+         * @description Where a playback's audio came from.
+         * @enum {string}
+         */
+        PlaySource: "local" | "youtube" | "jellyfin" | "navidrome" | "plex" | "plugin";
         /** @description Whether the web player's format asks are converted. */
         PlaybackConversion: {
             /** @description On, turned off by an admin, or impossible without ffmpeg. */
             conversion: components["schemas"]["Conversion"];
+        };
+        /**
+         * @description How one web-player playback ended. A record of its own, never a play:
+         *     what counts as a play is the scrobble submit's.
+         */
+        PlaybackEventRequest: {
+            /** @description Artist name, 1 to 1024 characters. */
+            artist_name: string;
+            /** @description What it was started from. */
+            came_from: components["schemas"]["PlayOrigin"];
+            /**
+             * @description The album, playlist or station it was started from, when named: the
+             *     id as the page that started the play named it (a library id, a
+             *     MusicBrainz id or a media server's id).
+             */
+            came_from_id?: string | null;
+            /** @description Whether the playback also counted as a play. */
+            counted: boolean;
+            /**
+             * Format: int64
+             * @description Track length in milliseconds, when known.
+             */
+            duration_ms?: number | null;
+            /** @description How it ended. */
+            ended_by: components["schemas"]["PlayEnd"];
+            /**
+             * Format: int64
+             * @description Time heard in milliseconds, seeks left out.
+             */
+            listened_ms: number;
+            /** @description Recording MBID the source gave, for a playback from anywhere else. */
+            recording_mbid?: string | null;
+            /** @description Where the audio came from. */
+            source: components["schemas"]["PlaySource"];
+            /**
+             * Format: int64
+             * @description When the playback started, unix seconds.
+             */
+            started_at: number;
+            /**
+             * @description The library track played, for a playback from the library. Files the
+             *     event under that track, whose own recording and release group
+             *     replace any sent.
+             */
+            track_id?: string | null;
+            /** @description Track title, 1 to 1024 characters. */
+            track_name: string;
         };
         /** @description Heartbeat for a live session: keeps presence alive and the scrubber live. */
         PlaybackProgressRequest: {
@@ -42692,6 +42774,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlaybackConversion"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    record_playback_event: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaybackEventRequest"];
+            };
+        };
+        responses: {
+            /** @description Event recorded */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not authenticated */

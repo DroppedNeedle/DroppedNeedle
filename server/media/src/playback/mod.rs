@@ -27,6 +27,8 @@
 //!   silent idle reconciles, publish-if-removed sweeps)
 //! - Media-server session reports (per-source calls, logged and dropped,
 //!   own linked account only)
+//! - Playback events (how each playback ended, a side record that never
+//!   counts a play; [`events`])
 //!
 //! ## Wiring
 //!
@@ -43,6 +45,7 @@
 //! fan-out consumes the registry's generation yet.
 
 pub mod error;
+pub mod events;
 pub mod forwarding;
 pub mod handlers;
 pub mod listening;

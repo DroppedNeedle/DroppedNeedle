@@ -37,6 +37,19 @@ export type SourceType = 'youtube' | 'local' | 'jellyfin' | 'navidrome' | 'plex'
 
 export type QueueOrigin = 'context' | 'manual';
 
+/** What a playback was started from, as its event names it. */
+export type PlayOrigin = components['schemas']['PlayOrigin'];
+
+/** How a playback ended, as its event names it. */
+export type PlayEnd = components['schemas']['PlayEnd'];
+
+/** What a queue was started from: an album, a playlist, a station. */
+export interface PlayedFrom {
+	kind: PlayOrigin;
+	/** The album, playlist or station it names, when it names one. */
+	id?: string;
+}
+
 export interface PlaybackSource {
 	readonly type: SourceType;
 
@@ -87,6 +100,8 @@ export interface NowPlaying {
 	isPreview?: boolean;
 	/** MusicBrainz recording the playing source gave for this file. */
 	recordingMbid?: string;
+	/** What the playing queue was started from; unset reads `unknown`. */
+	playedFrom?: PlayedFrom;
 }
 
 export type PlaybackMeta = {
@@ -140,4 +155,6 @@ export interface QueueItem {
 	playlistTrackId?: string;
 	/** 30s preview stream (radio preview tier): never scrobbled/reported, fades out. */
 	isPreview?: boolean;
+	/** What the queue this item joined was started from; unset reads `unknown`. */
+	playedFrom?: PlayedFrom;
 }

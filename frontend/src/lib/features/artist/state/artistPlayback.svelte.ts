@@ -2,10 +2,11 @@ import { PersistedState } from 'runed';
 import { useIntegrationStatus } from '$lib/features/home/queries/home.svelte';
 import { playerStore } from '$lib/features/player/state/player.svelte';
 import { openGlobalPlaylistModal } from '$lib/features/playlists/state/playlistModal.svelte';
-import type { SourceType } from '$lib/features/player/playback/types';
+import type { QueueItem, SourceType } from '$lib/features/player/playback/types';
 import type { ReleaseGroup } from '$lib/features/album/queries/types';
 import { toastStore } from '$lib/stores/toast';
 import { createArtistTrackLoader } from './artistTrackLoader.svelte';
+import { withPlayedFrom } from '$lib/features/player/playback/queueHelpers';
 
 export type PlaybackSourceType = Exclude<SourceType, 'youtube'>;
 
@@ -71,10 +72,12 @@ export interface ReleasePlaybackConfig {
  * source, through the player, with toasts for what it did.
  */
 export function createReleasePlayback(getConfig: () => ReleasePlaybackConfig) {
+	const fromArtist = (items: QueueItem[]) =>
+		withPlayedFrom(items, { kind: 'artist', id: getConfig().artistId });
 	const loader = createArtistTrackLoader(
 		getConfig,
-		(items, startIndex, shuffle) => playerStore.playQueue(items, startIndex, shuffle),
-		(items) => playerStore.appendQueueSilent(items),
+		(items, startIndex, shuffle) => playerStore.playQueue(fromArtist(items), startIndex, shuffle),
+		(items) => playerStore.appendQueueSilent(fromArtist(items)),
 		() => playerStore.regenerateShuffleOrder(),
 		(message, type) => toastStore.show({ message, type: type === 'error' ? 'error' : 'info' })
 	);
@@ -82,7 +85,7 @@ export function createReleasePlayback(getConfig: () => ReleasePlaybackConfig) {
 	async function addToQueue() {
 		const tracks = await loader.fetchTracks();
 		if (tracks.length === 0) return;
-		playerStore.addMultipleToQueue(tracks);
+		playerStore.addMultipleToQueue(fromArtist(tracks));
 		toastStore.show({
 			message: `Added ${tracks.length} tracks to queue from ${getConfig().artistName}`,
 			type: 'success'

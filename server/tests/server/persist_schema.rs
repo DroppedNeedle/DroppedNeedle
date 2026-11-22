@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 182);
+    assert_eq!(table_names(&connection).len(), 183);
     assert_eq!(
         scalar(
             &connection,
@@ -395,6 +395,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0156_download_attempts_deezer.sql",
         "63ce857b68c35e1e4094de1cc92eac0d296b2dc34449dc3aed23b1a12c665abf",
+    ),
+    (
+        "0157_media_playback_events.sql",
+        "53b57f329b5c0eac69a90d7b9b3402da446bf3001ba517ef341b0ab5f22b9d95",
     ),
 ];
 
@@ -2015,6 +2019,128 @@ fn download_attempts_deezer_upgrade_keeps_every_row() {
     );
 }
 
+/// 0157 adds `media_playback_events`, empty, with its index on the person
+/// and the end time, and changes nothing else. An event goes with its
+/// account, names its library track with no key (a track's removal never
+/// waits on it), and the table refuses a value outside each list and a
+/// time it cannot hold.
+#[test]
+fn playback_events_upgrade_adds_one_empty_table() {
+    let dir = ScratchDir::new("playback-events");
+    let path = dir.join("app.db");
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..22], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 156);
+    let before = schema_rows(&connection);
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..23], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 157);
+    let after = schema_rows(&connection);
+    assert!(
+        before.iter().all(|row| after.contains(row)),
+        "nothing else changes"
+    );
+    let added: Vec<_> = after.iter().filter(|row| !before.contains(row)).collect();
+    assert_eq!(
+        added
+            .iter()
+            .map(|(kind, name, table, _)| (kind.as_str(), name.as_str(), table.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "index",
+                "idx_media_playback_events_user_ended",
+                "media_playback_events"
+            ),
+            (
+                "index",
+                "sqlite_autoindex_media_playback_events_1",
+                "media_playback_events"
+            ),
+            ("table", "media_playback_events", "media_playback_events"),
+        ]
+    );
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT name FROM pragma_index_info('idx_media_playback_events_user_ended') \
+             ORDER BY seqno",
+            [],
+        ),
+        ["user_id", "ended_at"]
+    );
+    assert!(
+        added[2]
+            .3
+            .as_deref()
+            .is_some_and(|sql| sql.ends_with("STRICT")),
+        "{:?}",
+        added[2].3
+    );
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM media_playback_events"),
+        0
+    );
+
+    let insert = "INSERT INTO media_playback_events (id, user_id, local_track_id, track_name, \
+         artist_name, source, client, started_at, ended_at, listened_ms, duration_ms, \
+         ended_by, came_from, came_from_id, counted) VALUES ";
+    connection
+        .execute_batch(&format!(
+            "PRAGMA foreign_keys = ON;
+             INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'U', 1), ('u2', 'V', 1);
+             {insert}
+                 ('e1', 'u1', 'no-such-track', 'T', 'A', 'local', 'web', 1000, 21000, 20000,
+                  240000, 'skipped', 'album', 'album-1', 0),
+                 ('e2', 'u2', NULL, 'T', 'A', 'plugin', 'jellyfin', 1000, 2000, 0, NULL,
+                  'unknown', 'later_pile', NULL, 1);"
+        ))
+        .expect("events are stored");
+    let good = concat!(
+        "'x', 'u1', NULL, 'T', 'A', 'local', 'web', ",
+        "1, 2, 0, NULL, 'finished', 'album', NULL, 0"
+    );
+    connection
+        .execute(&format!("{insert}({good})"), [])
+        .expect("the row the refusals start from is stored");
+    connection
+        .execute("DELETE FROM media_playback_events WHERE id = 'x'", [])
+        .unwrap();
+    for (column, from, to) in [
+        ("source", "'local'", "'spotify'"),
+        ("client", "'web'", "'app'"),
+        ("ended_by", "'finished'", "'paused'"),
+        ("came_from", "'album'", "'home'"),
+        ("started_at", "'web', 1,", "'web', 'soon',"),
+        ("listened_ms", "2, 0, NULL", "2, -1, NULL"),
+        ("duration_ms", "2, 0, NULL", "2, 0, 0"),
+        ("counted", "NULL, 0", "NULL, 2"),
+    ] {
+        let refused = good.replacen(from, to, 1);
+        assert_ne!(refused, good, "{column}");
+        assert!(
+            connection
+                .execute(&format!("{insert}({refused})"), [])
+                .is_err(),
+            "{column}"
+        );
+    }
+    connection
+        .execute("DELETE FROM auth_users WHERE id = 'u1'", [])
+        .unwrap();
+    assert_eq!(
+        texts(&connection, "SELECT id FROM media_playback_events", []),
+        ["e2"],
+        "an account's events go with it"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -2477,6 +2603,7 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("local_track_lyrics", "local_track_id", "local_tracks", "CASCADE"),
     ("local_tracks", "local_album_id", "local_albums", "RESTRICT"),
     ("media_navidrome_folder_preferences", "user_id", "auth_users", "CASCADE"),
+    ("media_playback_events", "user_id", "auth_users", "CASCADE"),
     ("personal_mix_approvals", "reviewed_by_id", "auth_users", "SET NULL"),
     ("personal_mix_approvals", "user_id", "auth_users", "CASCADE"),
     ("request_history", "reviewed_by_id", "auth_users", "SET NULL"),
@@ -2869,6 +2996,7 @@ fn state_columns() -> Vec<StateColumn> {
     };
     use droppedneedle_library::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPairState};
     use droppedneedle_library::tags::lyrics::LyricsSource;
+    use droppedneedle_media::playback::events::{PlayClient, PlayEnd, PlayOrigin, PlaySource};
     use droppedneedle_media::playback::ports::Visibility;
     use droppedneedle_media::remotes::folders::FolderMode;
     use droppedneedle_tool::export::sections::{LinkMode, RefKind};
@@ -2917,6 +3045,10 @@ fn state_columns() -> Vec<StateColumn> {
         state("durable_loops", "state", &LoopState::ALL, LoopState::as_str),
         // media
         state("media_navidrome_folder_preferences", "mode", &FolderMode::ALL, FolderMode::as_str),
+        state("media_playback_events", "came_from", &PlayOrigin::ALL, PlayOrigin::as_str),
+        state("media_playback_events", "client", &PlayClient::ALL, PlayClient::as_str),
+        state("media_playback_events", "ended_by", &PlayEnd::ALL, PlayEnd::as_str),
+        state("media_playback_events", "source", &PlaySource::ALL, PlaySource::as_str),
         state("user_listening_prefs", "now_playing_visibility", &Visibility::ALL, Visibility::as_str),
         state("user_listening_prefs", "primary_music_source", &ListenSource::ALL, ListenSource::as_str),
         // tool

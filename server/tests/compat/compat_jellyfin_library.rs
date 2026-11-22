@@ -1,8 +1,8 @@
 //! The Jellyfin wire contract over the whole app and a library its own
 //! scanner filled: gates and system routes, login, the query dialects of
 //! Finamp, Jellify and Manet, pictures, both favourite dialects, played
-//! markers, audio routes, PlaybackInfo, session reports, playlists and
-//! token transports.
+//! markers, audio routes, PlaybackInfo, session reports and how each
+//! playback ended, playlists and token transports.
 //!
 //! The rig is given no ffmpeg, so nothing transcodes and every answer is
 //! the same on a host with ffmpeg and one without. The transcoding rig is
@@ -19,7 +19,7 @@ use axum::http::{HeaderMap, StatusCode};
 use droppedneedle_auth::compat_auth::jellyfin::server_id;
 use serde_json::{Value, json};
 
-use crate::common::compat::{CompatApp, PLAYER, named};
+use crate::common::compat::{CompatApp, PLAYER, named, rest};
 use droppedneedle_compat::jellyfin::{Access, ROUTES, Verb};
 
 struct Reply {
@@ -1348,6 +1348,155 @@ async fn session_reports_drive_presence_and_scrobbles() {
             "{body}"
         );
     }
+    rig.stop().await;
+}
+
+/// The player's playback events, oldest first: (track, app, time heard,
+/// how it ended, whether it counted).
+fn playback_events(rig: &CompatApp) -> Vec<(String, String, i64, String, bool)> {
+    rig.app
+        .db()
+        .prepare(
+            "SELECT track_name, client, listened_ms, ended_by, counted \
+             FROM media_playback_events ORDER BY rowid",
+        )
+        .expect("events query")
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .expect("events read")
+        .collect::<Result<_, _>>()
+        .expect("events decode")
+}
+
+/// A player app's stop records how the playback ended, beside what it
+/// did before and with the same answer:
+/// - Jellyfin: a stop at 30% is `stopped` at its position and counts no
+///   play, one at 95% is `finished` and counts the play, a failed stop is
+///   `failed` and counts nothing, a stop with no position is `unknown`
+///   and counts, as before, and a position past the track's end is held
+///   to its length;
+/// - Subsonic: a `reportPlayback` stop is recorded under the app,
+///   while one with `ignoreScrobble` and a `scrobble` call record nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stop_reports_record_how_each_playback_ended() {
+    let rig = CompatApp::start("jf-playback-events").await;
+    // Three minutes each, as the stops' run time says: the fixtures are
+    // under a second long.
+    rig.app
+        .seed("UPDATE local_tracks SET duration_seconds = 180.0")
+        .await;
+    let auth = finamp(&rig.secret);
+    let runtime = 1_800_000_000_i64;
+    for (name, body) in [
+        (
+            "Paranoid Android",
+            json!({"PositionTicks": 540_000_000_i64, "RunTimeTicks": runtime}),
+        ),
+        (
+            "One",
+            json!({"PositionTicks": 1_710_000_000_i64, "RunTimeTicks": runtime}),
+        ),
+        (
+            "Teardrop",
+            json!({"Failed": true, "PositionTicks": 100_000_000_i64}),
+        ),
+        ("Song A", json!({})),
+        ("Airbag", json!({"PositionTicks": 3_000_000_000_i64})),
+    ] {
+        let mut body = body;
+        body["ItemId"] = json!(track_id(&rig, &auth, name).await);
+        let stopped = send(
+            &rig,
+            "POST",
+            "/jellyfin/Sessions/Playing/Stopped",
+            Some(&auth),
+            Some(body),
+        )
+        .await;
+        assert_eq!(stopped.bare(), (204, 0), "{name}");
+    }
+    let event = |name: &str, client: &str, heard: i64, ended_by: &str, counted: bool| {
+        (
+            name.to_owned(),
+            client.to_owned(),
+            heard,
+            ended_by.to_owned(),
+            counted,
+        )
+    };
+    assert_eq!(
+        playback_events(&rig),
+        [
+            event("Paranoid Android", "jellyfin", 54_000, "stopped", false),
+            event("One", "jellyfin", 171_000, "finished", true),
+            event("Teardrop", "jellyfin", 10_000, "failed", false),
+            event("Song A", "jellyfin", 0, "unknown", true),
+            event("Airbag", "jellyfin", 180_000, "finished", true),
+        ]
+    );
+    let played = |name: &'static str| {
+        let rig = &rig;
+        let auth = auth.clone();
+        async move { play_count(rig, &auth, &track_id(rig, &auth, name).await).await }
+    };
+    for (name, plays) in [
+        ("Paranoid Android", 0),
+        ("One", 1),
+        ("Teardrop", 0),
+        ("Song A", 1),
+        ("Airbag", 1),
+    ] {
+        assert_eq!(played(name).await, plays, "{name}");
+    }
+
+    let subsonic = rig.subsonic_auth("events");
+    let ask = |call: String| {
+        let rig = &rig;
+        let subsonic = subsonic.clone();
+        async move {
+            let (status, body) = rig
+                .app
+                .call_through_busy("GET", &rest(&call, &subsonic), &[], None)
+                .await;
+            assert_eq!(status, StatusCode::OK, "{call}: {body}");
+            assert_eq!(
+                body["subsonic-response"]["status"],
+                json!("ok"),
+                "{call}: {body}"
+            );
+            body
+        }
+    };
+    let found = ask("search3?query=Airbag".to_owned()).await;
+    let airbag = named(
+        &found["subsonic-response"]["searchResult3"]["song"],
+        "title",
+        "Airbag",
+    )["id"]
+        .as_str()
+        .expect("song id")
+        .to_owned();
+    let stop = |ignore: bool| {
+        format!(
+            "reportPlayback?mediaId={airbag}&mediaType=song&positionMs=0&state=stopped\
+             &ignoreScrobble={ignore}"
+        )
+    };
+    ask(stop(true)).await;
+    ask(format!("scrobble?id={airbag}&submission=true")).await;
+    assert_eq!(playback_events(&rig).len(), 5, "neither records an event");
+    ask(stop(false)).await;
+    assert_eq!(
+        playback_events(&rig)[5],
+        event("Airbag", "subsonic", 0, "stopped", true)
+    );
     rig.stop().await;
 }
 

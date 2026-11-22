@@ -2,7 +2,10 @@
 	import { Play, Shuffle, Sparkles, ArrowRight } from 'lucide-svelte';
 	import { getLocalStatsV3Query } from '$lib/features/library/queries/LocalV3Queries.svelte';
 	import { formatBytes } from '$lib/utils/formatting';
-	import { buildDiscoveryQueueFromLocal } from '$lib/features/player/playback/queueHelpers';
+	import {
+		buildDiscoveryQueueFromLocal,
+		withPlayedFrom
+	} from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import {
@@ -21,7 +24,8 @@
 	const stats = $derived(statsQuery.data);
 
 	const queue = createLibraryTrackQueue({
-		buildQueue: (tracks) => buildDiscoveryQueueFromLocal(tracks),
+		buildQueue: (tracks) =>
+			withPlayedFrom(buildDiscoveryQueueFromLocal(tracks), { kind: 'library' }),
 		playQueue: (items, startIndex, shuffle) => playerStore.playQueue(items, startIndex, shuffle),
 		appendQueue: (items) => playerStore.appendQueueSilent(items),
 		reshuffle: () => playerStore.regenerateShuffleOrder(),
@@ -55,7 +59,11 @@
 				toastStore.notify('Nothing to surprise you with yet', 'info');
 				return;
 			}
-			playerStore.playQueue(buildDiscoveryQueueFromLocal([track]), 0, false);
+			playerStore.playQueue(
+				withPlayedFrom(buildDiscoveryQueueFromLocal([track]), { kind: 'library' }),
+				0,
+				false
+			);
 		} catch {
 			toastStore.notify("Couldn't pick a track", 'error');
 		} finally {

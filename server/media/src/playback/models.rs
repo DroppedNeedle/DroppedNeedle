@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::events::{PlayEnd, PlayOrigin, PlaySource};
 use super::ports::Visibility;
 use crate::remotes::models::SourceName;
 use droppedneedle_kernel::runtime_config::sections::ListenSource;
@@ -168,6 +169,48 @@ pub struct PlaybackStopResponse {
     /// Always false for a media-server play: the web player's scrobble
     /// submit records that one.
     pub scrobbled: bool,
+}
+
+// ---------------------------------------------------------------------------
+// How a playback ended
+// ---------------------------------------------------------------------------
+
+/// How one web-player playback ended. A record of its own, never a play:
+/// what counts as a play is the scrobble submit's.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PlaybackEventRequest {
+    /// The library track played, for a playback from the library. Files the
+    /// event under that track, whose own recording and release group
+    /// replace any sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<String>,
+    /// Track title, 1 to 1024 characters.
+    pub track_name: String,
+    /// Artist name, 1 to 1024 characters.
+    pub artist_name: String,
+    /// Recording MBID the source gave, for a playback from anywhere else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recording_mbid: Option<String>,
+    /// Where the audio came from.
+    pub source: PlaySource,
+    /// When the playback started, unix seconds.
+    pub started_at: i64,
+    /// Time heard in milliseconds, seeks left out.
+    pub listened_ms: i64,
+    /// Track length in milliseconds, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+    /// How it ended.
+    pub ended_by: PlayEnd,
+    /// What it was started from.
+    pub came_from: PlayOrigin,
+    /// The album, playlist or station it was started from, when named: the
+    /// id as the page that started the play named it (a library id, a
+    /// MusicBrainz id or a media server's id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub came_from_id: Option<String>,
+    /// Whether the playback also counted as a play.
+    pub counted: bool,
 }
 
 // ---------------------------------------------------------------------------

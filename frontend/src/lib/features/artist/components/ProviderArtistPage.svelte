@@ -760,6 +760,7 @@
 							</div>
 							<div bind:this={songsDemandEl} class="min-w-0">
 								<TopSongsList
+									artistId={data.artistId}
 									songs={topSongs?.songs || []}
 									loading={loadingTopSongs}
 									configured={topSongs?.configured ?? true}

@@ -4,7 +4,10 @@
 	import { getLibrarySearchQuery } from '$lib/features/library/queries/LibraryQueries.svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import ArtistImage from '$lib/media/ArtistImage.svelte';
-	import { buildDiscoveryQueueFromLocal } from '$lib/features/player/playback/queueHelpers';
+	import {
+		buildDiscoveryQueueFromLocal,
+		withPlayedFrom
+	} from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import type { TrackView } from '$lib/features/library/queries/types';
 	import { artistHref, libraryAlbumHref } from '$lib/utils/entityRoutes';
@@ -74,7 +77,11 @@
 	}
 
 	function playTrack(t: TrackView) {
-		playerStore.playQueue(buildDiscoveryQueueFromLocal([t]), 0, false);
+		playerStore.playQueue(
+			withPlayedFrom(buildDiscoveryQueueFromLocal([t]), { kind: 'search' }),
+			0,
+			false
+		);
 		focused = false;
 	}
 

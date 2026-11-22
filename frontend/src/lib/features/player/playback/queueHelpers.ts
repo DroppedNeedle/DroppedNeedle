@@ -1,6 +1,7 @@
 import type {
 	AudioQuality,
 	LocalTrackInfo,
+	PlayedFrom,
 	TrackView,
 	QueueItem,
 	SourceType,
@@ -21,6 +22,16 @@ export interface TrackMeta {
 	artistName: string;
 	coverUrl: string | null;
 	artistId?: string;
+}
+
+/** Marks every item of a queue with what it was started from. */
+export function withPlayedFrom(items: QueueItem[], playedFrom: PlayedFrom): QueueItem[] {
+	return items.map((item) => ({ ...item, playedFrom }));
+}
+
+/** An album's queue says it was started from that album. */
+function fromAlbum(meta: TrackMeta): PlayedFrom {
+	return meta.albumId ? { kind: 'album', id: meta.albumId } : { kind: 'album' };
 }
 
 export interface TrackSourceData {
@@ -159,7 +170,8 @@ export function buildQueueItem(meta: TrackMeta, data: TrackSourceData): QueueIte
 		sourceQuality: Object.keys(sourceQuality).length > 0 ? sourceQuality : undefined,
 		recordingIds: Object.keys(recordingIds).length > 0 ? recordingIds : undefined,
 		duration: data.trackLength,
-		plexRatingKey: data.plexTrack?.id
+		plexRatingKey: data.plexTrack?.id,
+		playedFrom: fromAlbum(meta)
 	};
 }
 
@@ -185,7 +197,8 @@ export function buildRemoteQueueItems(tracks: RemoteTrack[], meta: TrackMeta): Q
 				availableSources: [t.source] as SourceType[],
 				recordingIds: recordingFor(t.source, t.recording_mbid),
 				duration: t.duration_secs ?? 0,
-				plexRatingKey: t.source === 'plex' ? t.id : undefined
+				plexRatingKey: t.source === 'plex' ? t.id : undefined,
+				playedFrom: fromAlbum(meta)
 			}
 		];
 	});
@@ -210,7 +223,8 @@ export function buildQueueItemsFromLocal(tracks: LocalTrackInfo[], meta: TrackMe
 		sampleRate: t.sample_rate ?? null,
 		audioChannels: t.channels ?? null,
 		availableSources: ['local'] as SourceType[],
-		duration: t.duration_seconds ?? undefined
+		duration: t.duration_seconds ?? undefined,
+		playedFrom: fromAlbum(meta)
 	}));
 }
 
@@ -228,7 +242,8 @@ export function buildQueueItemFromYouTube(track: YouTubeTrackLink, meta: TrackMe
 		sourceType: 'youtube' as const,
 		artistId: meta.artistId,
 		availableSources: ['youtube'] as SourceType[],
-		recordingIds: recordingFor('youtube', track.recording_mbid)
+		recordingIds: recordingFor('youtube', track.recording_mbid),
+		playedFrom: fromAlbum(meta)
 	};
 }
 

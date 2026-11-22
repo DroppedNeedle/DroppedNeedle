@@ -9,6 +9,7 @@
 	} from '$lib/features/remote-library/queries/RemoteQueries.svelte';
 	import { defaultSortOrder } from '$lib/features/remote-library/queries/remoteSources';
 	import type { RemoteTrack } from '$lib/features/remote-library/queries/types';
+	import { withPlayedFrom } from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { createLibraryTrackLoader } from '$lib/features/remote-library/state/libraryTrackLoader.svelte';
@@ -27,6 +28,8 @@
 
 	let { data }: { data: PageData } = $props();
 	const remote = $derived(data.remote);
+	const fromLibrary = (tracks: RemoteTrack[]) =>
+		withPlayedFrom(remote.queue(tracks), { kind: 'library' });
 	// The layout remounts the page for another server, so its first sort stands.
 	const start = untrack(() => data.remote);
 	const sorts = $derived(remote.sorts.tracks);
@@ -56,7 +59,7 @@
 		{
 			fetchPage: async (limit, offset, signal) =>
 				fetchRemoteTracksPage(remote.source, { ...listParams, limit, offset }, signal),
-			buildQueue: (tracks) => remote.queue(tracks),
+			buildQueue: (tracks) => fromLibrary(tracks),
 			pageSize: PAGE_SIZE,
 			resolveShuffleStartIndex: (tracks, requestedIndex, queue) => {
 				const key = tracks[requestedIndex] ? remote.playKey(tracks[requestedIndex]) : null;
@@ -105,7 +108,7 @@
 
 	function playTrack(track: RemoteTrack) {
 		loader.abort();
-		const queue = remote.queue(playableTracks);
+		const queue = fromLibrary(playableTracks);
 		if (queue.length === 0) return;
 		const queueIndex = queue.findIndex((q) => q.trackSourceId === remote.playKey(track));
 		playerStore.playQueue(queue, queueIndex >= 0 ? queueIndex : 0, false);
@@ -116,7 +119,7 @@
 			toastStore.show({ message: "This track can't be played.", type: 'error' });
 			return;
 		}
-		const queued = remote.queue([track]);
+		const queued = fromLibrary([track]);
 		if (queued.length === 0) return;
 		if (next) {
 			playerStore.playMultipleNext(queued);

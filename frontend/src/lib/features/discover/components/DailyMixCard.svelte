@@ -132,6 +132,7 @@
 					{section}
 					sectionKey="daily_mixes"
 					seed={{ seed_type: 'items', items: seedItems }}
+					playedFrom={{ kind: 'mix' }}
 				/>
 			</div>
 			<HomeSection {section} showConnectCard={false} />

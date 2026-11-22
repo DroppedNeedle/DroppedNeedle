@@ -3,13 +3,16 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { queryClient } from '$lib/queries/QueryClient';
 import { getScrobblePreferencesQueryOptions } from '$lib/features/profile/queries/scrobble-preferences.svelte';
 import type { components } from '$lib/api/v3/openapi';
-import type { SourceType } from '$lib/features/player/playback/types';
+import type { PlayEnd, PlayedFrom, SourceType } from '$lib/features/player/playback/types';
 import {
+	reportPlaybackEvent,
 	sendScrobbleNowPlaying,
 	submitScrobble,
+	type PlaybackEventRequest,
 	type ScrobbleNowPlayingRequest,
 	type ScrobbleSubmitRequest
 } from '$lib/features/player/playback/playbackGateway';
+import { playEndFrom } from '$lib/features/player/playback/playEnd';
 import {
 	makeTrackKey,
 	shouldAccumulate,
@@ -27,6 +30,9 @@ export type ScrobbleResponse = components['schemas']['ScrobbleResponse'];
 
 type ScrobbleStatus = 'idle' | 'tracking' | 'scrobbled' | 'error';
 
+// A playback heard for less than this is not reported as ended.
+const MIN_PLAYBACK_EVENT_MS = 1000;
+
 interface TrackState {
 	trackKey: string;
 	/** The player's play this state counts, so a song played again starts afresh. */
@@ -39,6 +45,13 @@ interface TrackState {
 	durationMs: number;
 	submitFailures: number;
 	nextSubmitAt: number;
+	/** What is playing, as the player knew it when the play started. */
+	play: CompletedPlay;
+	playedFrom?: PlayedFrom;
+	/** The play's submit was accepted: it counted as a play. */
+	counted: boolean;
+	/** How the play ended was sent, or the play was too short to send. */
+	ended: boolean;
 }
 
 export function makeNowPlayingSubmission(
@@ -89,6 +102,33 @@ export function makeScrobbleSubmission(
 		if (play.trackSourceId) body.track_id = play.trackSourceId;
 	} else if (play.recordingMbid) {
 		body.mbid = play.recordingMbid;
+	}
+	return body;
+}
+
+/** How a play ended, as the web player reports it once it is over. */
+export function makePlaybackEvent(
+	play: CompletedPlay,
+	heard: { startedAt: number; listenedMs: number; durationMs: number; counted: boolean },
+	endedBy: PlayEnd,
+	playedFrom: PlayedFrom | undefined
+): PlaybackEventRequest {
+	const body: PlaybackEventRequest = {
+		track_name: play.trackName,
+		artist_name: play.artistName,
+		source: play.sourceType,
+		started_at: heard.startedAt,
+		listened_ms: Math.round(heard.listenedMs),
+		ended_by: endedBy,
+		came_from: playedFrom?.kind ?? 'unknown',
+		counted: heard.counted
+	};
+	if (heard.durationMs > 0) body.duration_ms = heard.durationMs;
+	if (playedFrom?.id) body.came_from_id = playedFrom.id;
+	if (play.sourceType === 'local') {
+		if (play.trackSourceId) body.track_id = play.trackSourceId;
+	} else if (play.recordingMbid) {
+		body.recording_mbid = play.recordingMbid;
 	}
 	return body;
 }
@@ -166,16 +206,61 @@ function createScrobbleManager() {
 		}
 	}
 
+	/**
+	 * Reports how the tracked play ended, once and with no retry. A play heard for under a
+	 * second is not reported.
+	 */
+	function endPlay(endedBy: PlayEnd): void {
+		const t = track;
+		if (!t || t.ended) return;
+		t.ended = true;
+		if (t.accumulatedMs < MIN_PLAYBACK_EVENT_MS) return;
+		const body = makePlaybackEvent(
+			t.play,
+			{
+				startedAt: t.startedAt,
+				listenedMs: t.accumulatedMs,
+				durationMs: t.durationMs,
+				counted: t.counted
+			},
+			endedBy,
+			t.playedFrom
+		);
+		void (async () => {
+			try {
+				await reportPlaybackEvent(body);
+			} catch {
+				// Sent once: a report that does not go is not tried again.
+			}
+		})();
+	}
+
+	if (typeof window !== 'undefined') {
+		// Leaving the page ends what plays. A page kept to come back to keeps its play,
+		// which goes on, and is reported, when the page returns.
+		window.addEventListener('pagehide', (event) => {
+			if (event.persisted) return;
+			endPlay(playEndFrom(playerStore.playbackState, 'stopped'));
+		});
+	}
+
 	$effect.root(() => {
 		$effect(() => {
 			const np = playerStore.nowPlaying;
 			const isPlaying = playerStore.isPlaying;
+			// Read on every run, so a new play ends the one before at once.
+			const playId = playerStore.playId;
 
 			if (!active) {
 				track = null;
 				if (status !== 'idle') status = 'idle';
 				stopInterval();
 				return;
+			}
+
+			// The player moved on to another play, or has none.
+			if (track && (track.playId !== playId || !np?.trackName || np.isPreview)) {
+				endPlay(playerStore.playEnd);
 			}
 
 			if (np?.isPreview) {
@@ -214,9 +299,11 @@ function createScrobbleManager() {
 
 			const currentKey = makeTrackKey(np.artistName, np.trackName);
 			const durationMs = Math.round(playerStore.duration * 1000);
-			const playId = playerStore.playId;
 
 			if (!track || track.trackKey !== currentKey || track.playId !== playId) {
+				// The same play under other names: it moved to another source, which only a failed
+				// source does.
+				endPlay('failed');
 				track = {
 					trackKey: currentKey,
 					playId,
@@ -227,7 +314,18 @@ function createScrobbleManager() {
 					startedAt: Math.floor(Date.now() / 1000),
 					durationMs,
 					submitFailures: 0,
-					nextSubmitAt: 0
+					nextSubmitAt: 0,
+					play: {
+						artistName: np.artistName,
+						trackName: np.trackName,
+						albumName: np.albumName,
+						sourceType: np.sourceType,
+						trackSourceId: np.trackSourceId,
+						recordingMbid: np.recordingMbid
+					},
+					playedFrom: np.playedFrom,
+					counted: false,
+					ended: false
 				};
 				status = 'tracking';
 				lastServiceDetail = null;
@@ -254,6 +352,9 @@ function createScrobbleManager() {
 				track.lastProgressS = progressS;
 
 				if (isLoopReset(prevProgressS, progressS, track.durationMs)) {
+					endPlay('finished');
+					track.counted = false;
+					track.ended = false;
 					track.accumulatedMs = 0;
 					track.scrobbled = false;
 					track.nowPlayingSent = false;
@@ -297,14 +398,18 @@ function createScrobbleManager() {
 						},
 						t.durationMs,
 						t.startedAt
-					).catch(() => {
-						// Retried after a growing pause, a few times per play; then it stays failed.
-						t.submitFailures += 1;
-						const delay = scrobbleRetryDelayMs(t.submitFailures);
-						if (delay === null) return;
-						t.nextSubmitAt = Date.now() + delay;
-						t.scrobbled = false;
-					});
+					)
+						.then(() => {
+							t.counted = true;
+						})
+						.catch(() => {
+							// Retried after a growing pause, a few times per play; then it stays failed.
+							t.submitFailures += 1;
+							const delay = scrobbleRetryDelayMs(t.submitFailures);
+							if (delay === null) return;
+							t.nextSubmitAt = Date.now() + delay;
+							t.scrobbled = false;
+						});
 				}
 			}, 1000);
 

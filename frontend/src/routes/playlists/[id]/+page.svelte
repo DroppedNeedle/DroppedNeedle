@@ -3,7 +3,10 @@
 	import { onDestroy, untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { requestMissingTracks, type PlaylistDetail } from '$lib/api/playlists';
-	import { playlistTrackToQueueItem } from '$lib/features/player/playback/queueHelpers';
+	import {
+		playlistTrackToQueueItem,
+		withPlayedFrom
+	} from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -185,7 +188,7 @@
 			toastStore.show({ message: 'Nothing here can be played right now', type: 'info' });
 			return;
 		}
-		playerStore.playQueue(items, 0, false);
+		playerStore.playQueue(withPlayedFrom(items, { kind: 'playlist', id: playlist.id }), 0, false);
 	}
 
 	function shuffleAll() {
@@ -197,7 +200,7 @@
 			toastStore.show({ message: 'Nothing here can be played right now', type: 'info' });
 			return;
 		}
-		playerStore.playQueue(items, 0, true);
+		playerStore.playQueue(withPlayedFrom(items, { kind: 'playlist', id: playlist.id }), 0, true);
 	}
 
 	function playFromTrack(index: number) {
@@ -210,7 +213,11 @@
 		const items = rowItems.filter((item): item is NonNullable<typeof item> => item !== null);
 		// Rows with no file are not queued, so count only the playable rows above this one.
 		const startIndex = rowItems.slice(0, index).filter((item) => item !== null).length;
-		playerStore.playQueue(items, startIndex, false);
+		playerStore.playQueue(
+			withPlayedFrom(items, { kind: 'playlist', id: playlist.id }),
+			startIndex,
+			false
+		);
 	}
 
 	function handleSourceChange() {

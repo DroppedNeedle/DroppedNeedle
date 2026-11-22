@@ -5,15 +5,18 @@
 	import { libraryStore } from '$lib/stores/library';
 	import Button from '$lib/ui/Button.svelte';
 	import type { ChartSection, RadioPlanRequest } from '$lib/features/discover/queries/types';
+	import type { PlayedFrom } from '$lib/features/player/playback/types';
 	import { albumRows } from '$lib/features/discover/components/sectionRows';
 
 	interface Props {
 		section: ChartSection;
 		sectionKey: string;
 		seed: Omit<RadioPlanRequest, 'exclude_recording_mbids' | 'fast'>;
+		/** What the shelf's plays say they came from, when not a station. */
+		playedFrom?: PlayedFrom;
 	}
 
-	let { section, sectionKey, seed }: Props = $props();
+	let { section, sectionKey, seed, playedFrom }: Props = $props();
 	let batchModalOpen = $state(false);
 
 	const albums = $derived(albumRows(section));
@@ -30,7 +33,7 @@
 </script>
 
 <div class="flex flex-wrap items-center gap-2">
-	<RadioPlayButton {seed} size="sm" label="Play all" />
+	<RadioPlayButton {seed} {playedFrom} size="sm" label="Play all" />
 	{#if canDownload}
 		<Button
 			variant="outline"

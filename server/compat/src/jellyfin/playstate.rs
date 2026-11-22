@@ -10,7 +10,8 @@ use super::builders::{self};
 use super::models::{PlaybackProgressInfo, PlaybackStartInfo, PlaybackStopInfo, UserItemDataDto};
 use super::router::*;
 use super::views::{ItemView, ReadFailed, TICKS_PER_SECOND, WriteRefusal, should_scrobble};
-use crate::playback::Reporter;
+use crate::playback::{AppStop, Reporter};
+use droppedneedle_media::playback::events::PlayClient;
 
 // ===== Favorites + played (both route forms, 200 UserItemDataDto) =====
 
@@ -289,8 +290,8 @@ pub(super) async fn playing_progress(
     Ok(no_content())
 }
 
-/// Stop → always drop presence, then scrobble only if past the threshold.
-/// `Failed` stops skip the scrobble.
+/// Stop → always drop presence, then scrobble only if past the threshold,
+/// then record how the playback ended. `Failed` stops skip the scrobble.
 pub(super) async fn playing_stopped(
     State(state): State<JellyfinState>,
     authed: Authed,
@@ -303,7 +304,34 @@ pub(super) async fn playing_stopped(
     let Some(body) = body else {
         return Ok(no_content());
     };
+    let position_ms = body
+        .position_ticks
+        .map(|ticks| (ticks / (TICKS_PER_SECOND / 1000)).max(0));
+    let stop = |reached_end, counted| AppStop {
+        client: PlayClient::Jellyfin,
+        position_ms,
+        failed: body.failed,
+        reached_end: Some(reached_end),
+        counted,
+    };
     if body.failed {
+        // A failed stop counts nothing, so its track is looked up for the
+        // playback event alone: a lookup that fails changes no answer.
+        if let Some(item_id) = body.item_id.as_deref() {
+            match report_file_id(&state, item_id).await {
+                Ok(Some(file_id)) => {
+                    state.sessions.playback_ended(
+                        &file_id,
+                        &authed.principal.id,
+                        stop(false, false),
+                    );
+                }
+                Ok(None) => {}
+                Err(failed) => {
+                    tracing::warn!(?failed, "a failed stop's track could not be looked up");
+                }
+            }
+        }
         return Ok(no_content());
     }
     let Some(item_id) = body.item_id.as_deref() else {
@@ -320,21 +348,26 @@ pub(super) async fn playing_stopped(
             .await?
             .and_then(|t| builders::ticks(t.duration_seconds)),
     };
-    if !should_scrobble(body.position_ticks, runtime) {
-        return Ok(no_content());
+    let reached_end = should_scrobble(body.position_ticks, runtime);
+    let mut counted = false;
+    if reached_end {
+        let key = body
+            .play_session_id
+            .as_deref()
+            .or(Some(item_id))
+            .unwrap_or("");
+        state.sessions.pop_started(&authed.principal.id, key);
+        let played = state
+            .sessions
+            .record_play(&file_id, &authed.principal.id, None);
+        if !played.taken {
+            tracing::warn!("jellyfin scrobble was refused");
+        }
+        counted = played.saved;
     }
-    let key = body
-        .play_session_id
-        .as_deref()
-        .or(Some(item_id))
-        .unwrap_or("");
-    state.sessions.pop_started(&authed.principal.id, key);
-    if !state
+    state
         .sessions
-        .scrobble(&file_id, &authed.principal.id, None)
-    {
-        tracing::warn!("jellyfin scrobble was refused");
-    }
+        .playback_ended(&file_id, &authed.principal.id, stop(reached_end, counted));
     Ok(no_content())
 }
 

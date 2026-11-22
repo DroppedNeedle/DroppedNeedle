@@ -9,7 +9,10 @@
 //! [`clear_presence`](droppedneedle_media::playback::presence::clear_presence); the
 //! now-playing list reads
 //! [`PresenceRegistry::compat_now_playing`](droppedneedle_media::playback::presence::PresenceRegistry::compat_now_playing),
-//! which already skips redacted and trackless rows. Failures never fail a
+//! which already skips redacted and trackless rows. A stop report also
+//! records how the playback ended
+//! ([`events::record`](droppedneedle_media::playback::events::record)),
+//! after everything else it does. Failures never fail a
 //! report: unknown files resolve to nothing and service errors map to the
 //! caller's store error (code 0 on Subsonic).
 
@@ -18,6 +21,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::subsonic::records::NowPlayingRow;
 use droppedneedle_media::playback::PlaybackDeps;
+use droppedneedle_media::playback::events::{
+    self, PlayClient, PlayEnd, PlayOrigin, PlaySource, PlaybackEvent,
+};
 use droppedneedle_media::playback::models::{
     NowPlayingHeartbeat, ScrobbleNowPlayingRequest, ScrobbleSubmitRequest,
 };
@@ -26,7 +32,9 @@ use droppedneedle_media::playback::presence::{
     PRESENCE_TTL_SECS, clear_presence, compat_heartbeat,
 };
 use droppedneedle_media::playback::report::{forward_sink_now_playing, submit_track_scrobble};
-use droppedneedle_media::playback::rules::{normalize_client, presence_cover_url};
+use droppedneedle_media::playback::rules::{
+    normalize_client, presence_cover_url, should_scrobble_native,
+};
 
 /// The longest a Subsonic report holds presence for: past it a listener
 /// that never said `stopped` is gone.
@@ -43,6 +51,33 @@ pub enum Reporter {
     /// Jellyfin: a progress report every few seconds. Presence lasts
     /// [`PRESENCE_TTL_SECS`] past each report, and every start is forwarded.
     Jellyfin,
+}
+
+/// How a player app's stop report ended a playback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AppStop {
+    /// The kind of app that reported it.
+    pub client: PlayClient,
+    /// The last position the app reported, in milliseconds; `None` when it
+    /// sent none.
+    pub position_ms: Option<i64>,
+    /// The app said playback failed (a Jellyfin failed stop).
+    pub failed: bool,
+    /// Whether the protocol's stop threshold says the play counts; `None`
+    /// judges the position against the track's length by the native
+    /// threshold (a Subsonic stop, which counts without one).
+    pub reached_end: Option<bool>,
+    /// Whether the stop counted a play: it is in history.
+    pub counted: bool,
+}
+
+/// What recording a player app's play did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecordedPlay {
+    /// The report was taken: false only when the service refused it.
+    pub taken: bool,
+    /// The play is in history.
+    pub saved: bool,
 }
 
 /// A track the scrobble services were told is playing.
@@ -214,12 +249,26 @@ impl CompatPlayback {
     /// Record a scrobble. Unknown files are skipped; played_at defaults to
     /// now. Returns false when the service refused the report.
     pub fn scrobble(&self, file_id: &str, user_id: &str, played_at: Option<f64>) -> bool {
+        self.record_play(file_id, user_id, played_at).taken
+    }
+
+    /// [`Self::scrobble`], also saying whether the play is in history: a
+    /// report can be taken while its play could not be saved.
+    pub fn record_play(
+        &self,
+        file_id: &str,
+        user_id: &str,
+        played_at: Option<f64>,
+    ) -> RecordedPlay {
         let Some(track) = self.deps.store.get_track(file_id) else {
-            return true;
+            return RecordedPlay {
+                taken: true,
+                saved: false,
+            };
         };
         let now = self.deps.clock.now_unix();
         let timestamp = played_at.map(|at| at as i64).unwrap_or(now);
-        submit_track_scrobble(
+        let answer = submit_track_scrobble(
             &self.deps,
             user_id,
             &track.track_id,
@@ -234,13 +283,17 @@ impl CompatPlayback {
                 source: Some("local".to_owned()),
                 track_id: None,
             },
-        )
-        .is_ok()
+        );
+        RecordedPlay {
+            taken: answer.is_ok(),
+            saved: answer.is_ok_and(|response| response.accepted),
+        }
     }
 
     /// Subsonic playback report: starting sets presence without a position,
     /// playing and paused set it with the reported position, stopped drops
-    /// it and scrobbles unless ignored.
+    /// it and, unless ignored, scrobbles and records how the playback
+    /// ended.
     pub fn report_playback(
         &self,
         file_id: &str,
@@ -258,7 +311,19 @@ impl CompatPlayback {
             if ignore_scrobble {
                 return true;
             }
-            return self.scrobble(file_id, user_id, None);
+            let played = self.record_play(file_id, user_id, None);
+            self.playback_ended(
+                file_id,
+                user_id,
+                AppStop {
+                    client: PlayClient::Subsonic,
+                    position_ms: Some(position_ms),
+                    failed: false,
+                    reached_end: None,
+                    counted: played.saved,
+                },
+            );
+            return played.taken;
         }
         let position = (state != "starting").then_some(position_ms);
         self.now_playing(
@@ -270,6 +335,60 @@ impl CompatPlayback {
             state == "paused",
         );
         true
+    }
+
+    /// Record how a player app's playback ended, once its stop report has
+    /// done all it did before: a side write whose failure changes nothing
+    /// the app sees. The time heard is the last position the app reported,
+    /// not time listened (an app that seeks reports where it stopped), and
+    /// the playback started that long before the stop. The position is
+    /// held to the track's length. An unknown file writes nothing.
+    pub fn playback_ended(&self, file_id: &str, user_id: &str, stop: AppStop) {
+        let Some(track) = self.deps.store.get_track(file_id) else {
+            return;
+        };
+        let duration_ms = Some(track.duration_ms).filter(|duration| *duration > 0);
+        let reached_end = stop
+            .reached_end
+            .unwrap_or_else(|| should_scrobble_native(stop.position_ms, duration_ms));
+        let ended_by = if stop.failed {
+            PlayEnd::Failed
+        } else if stop.position_ms.is_none() {
+            PlayEnd::Unknown
+        } else if reached_end {
+            PlayEnd::Finished
+        } else {
+            PlayEnd::Stopped
+        };
+        let ended_at = self.deps.clock.now_ms();
+        // A position is held to the track's length and is never negative, so
+        // a bad report cannot claim more than the track holds.
+        let listened_ms = stop
+            .position_ms
+            .unwrap_or(0)
+            .max(0)
+            .min(duration_ms.unwrap_or(i64::MAX));
+        events::record(
+            &self.deps,
+            user_id,
+            &PlaybackEvent {
+                local_track_id: Some(track.track_id),
+                recording_mbid: track.recording_mbid,
+                release_group_mbid: track.rg_mbid,
+                track_name: track.title,
+                artist_name: track.artist_name,
+                source: PlaySource::Local,
+                client: stop.client,
+                started_at: (ended_at - listened_ms).max(0),
+                ended_at,
+                listened_ms,
+                duration_ms,
+                ended_by,
+                came_from: PlayOrigin::Unknown,
+                came_from_id: None,
+                counted: stop.counted,
+            },
+        );
     }
 
     /// Live presence rows servable over compat (file id + update time

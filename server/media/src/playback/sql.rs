@@ -68,4 +68,12 @@ droppedneedle_kernel::sql! {
          WHERE user_id = ?1 AND service = ?2";
     /// One user's display name and username.
     pub(super) DISPLAY_NAMES = "SELECT display_name, username FROM auth_users WHERE id = ?1";
+    /// Record how one playback ended.
+    pub(super) RECORD_EVENT = "INSERT INTO media_playback_events \
+         (id, user_id, local_track_id, recording_mbid, release_group_mbid, track_name, \
+          artist_name, source, client, started_at, ended_at, listened_ms, duration_ms, \
+          ended_by, came_from, came_from_id, counted) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)";
+    /// Every playback event of one user.
+    pub(super) FORGET_EVENTS = "DELETE FROM media_playback_events WHERE user_id = ?1";
 }

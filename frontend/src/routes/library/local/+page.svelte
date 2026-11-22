@@ -151,7 +151,8 @@
 			coverUrl: crateCoverUrl(t),
 			sourceType: 'local',
 			format: (t.format ?? '').toLowerCase(),
-			duration: t.duration_seconds ?? undefined
+			duration: t.duration_seconds ?? undefined,
+			playedFrom: { kind: 'library' }
 		};
 	}
 
@@ -201,7 +202,10 @@
 			(a, b) => a.disc_number - b.disc_number || a.track_number - b.track_number
 		);
 		const cover = albumCoverUrl(album);
-		return tracks.map((t) => matchTrackToQueueItem(t, cover));
+		return tracks.map((t) => ({
+			...matchTrackToQueueItem(t, cover),
+			playedFrom: { kind: 'album', id: album.id }
+		}));
 	}
 
 	async function queueAlbum(album: SpinAlbum) {

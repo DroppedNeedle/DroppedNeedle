@@ -18,6 +18,9 @@
 //!
 //! A play and its scrobble jobs (one per service it goes to) are written
 //! in one transaction: the jobs exist exactly when the play does.
+//!
+//! How each playback ended lands in `media_playback_events`, one
+//! foreground write of its own that no play, job or count reads.
 
 use std::sync::Arc;
 
@@ -29,6 +32,7 @@ use droppedneedle_kernel::jobs::queue::{JobError, JobQueue};
 use droppedneedle_library::repairs::plays::{Matched, PlayKeys, match_play};
 use rusqlite::OptionalExtension;
 
+use super::events::PlaybackEvent;
 use super::forwarding::{ScrobblePayload, Service};
 use super::listening::{LastFmSession, ListeningStore, ScrobblePrefs};
 use super::ports::{PlayRecord, ProviderFailure, ScrobbleTargets, TrackInfo};
@@ -98,6 +102,23 @@ impl PlaybackStore {
     /// the play and its jobs are then not kept.
     pub fn record(&self, user_id: &str, record: &PlayRecord, forward: ScrobbleTargets) -> bool {
         off_worker(|| self.write_play(user_id, record, forward))
+    }
+
+    /// Record how one playback ended, as one foreground write. A write
+    /// that fails is logged with what the event was, and not kept.
+    pub fn record_event(&self, user_id: &str, event: &PlaybackEvent) {
+        off_worker(|| self.write_event(user_id, event));
+    }
+
+    /// Remove every playback event of `user_id` in one write; the count
+    /// removed.
+    pub async fn forget_events(&self, user_id: &str) -> Result<usize, DbError> {
+        let user_id = user_id.to_owned();
+        self.db
+            .write(Lane::Foreground, "playback-events-forget", move |tx| {
+                Ok::<_, DbError>(tx.execute(sql::FORGET_EVENTS.text(), [user_id])?)
+            })
+            .await
     }
 
     /// One stored play by id; `None` when it is gone.
@@ -341,6 +362,51 @@ impl PlaybackStore {
                 );
                 false
             }
+        }
+    }
+}
+
+impl PlaybackStore {
+    /// Insert one playback event. An event the lane refuses is logged with
+    /// what it was, never dropped silently.
+    fn write_event(&self, user_id: &str, event: &PlaybackEvent) {
+        let id = self.ids.new_id();
+        let outcome = self
+            .db
+            .write_blocking(Lane::Foreground, "playback-event", |tx| {
+                tx.execute(
+                    sql::RECORD_EVENT.text(),
+                    rusqlite::params![
+                        id,
+                        user_id,
+                        event.local_track_id,
+                        event.recording_mbid,
+                        event.release_group_mbid,
+                        event.track_name,
+                        event.artist_name,
+                        event.source,
+                        event.client,
+                        event.started_at,
+                        event.ended_at,
+                        event.listened_ms,
+                        event.duration_ms,
+                        event.ended_by,
+                        event.came_from,
+                        event.came_from_id,
+                        event.counted,
+                    ],
+                )?;
+                Ok::<_, DbError>(())
+            });
+        if let Err(error) = outcome {
+            tracing::error!(
+                %error,
+                user_id,
+                track = %event.track_name,
+                artist = %event.artist_name,
+                ended_by = event.ended_by.as_str(),
+                "playback event write failed; the event is not recorded"
+            );
         }
     }
 }

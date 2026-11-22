@@ -7,7 +7,10 @@
 		type LibraryTrackSort
 	} from '$lib/features/library/queries/libraryTracks';
 	import { createLibraryTrackQueue } from '$lib/features/library/queries/libraryTrackQueue.svelte';
-	import { buildDiscoveryQueueFromLocal } from '$lib/features/player/playback/queueHelpers';
+	import {
+		buildDiscoveryQueueFromLocal,
+		withPlayedFrom
+	} from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
@@ -126,8 +129,11 @@
 	});
 	const total = $derived(pages[0]?.total ?? 0);
 
+	const fromLibrary = (items: TrackView[]) =>
+		withPlayedFrom(buildDiscoveryQueueFromLocal(items), { kind: 'library' });
+
 	const queue = createLibraryTrackQueue({
-		buildQueue: (items) => buildDiscoveryQueueFromLocal(items),
+		buildQueue: fromLibrary,
 		playQueue: (items, startIndex, shuffle) => playerStore.playQueue(items, startIndex, shuffle),
 		appendQueue: (items) => playerStore.appendQueueSilent(items),
 		reshuffle: () => playerStore.regenerateShuffleOrder(),
@@ -160,7 +166,7 @@
 
 	function playTrack(index: number) {
 		queue.abort();
-		const items = buildDiscoveryQueueFromLocal(tracks);
+		const items = fromLibrary(tracks);
 		if (items.length === 0) return;
 		playerStore.playQueue(items, index, false);
 	}
@@ -185,14 +191,14 @@
 	}
 
 	function addTrackToQueue(track: TrackView) {
-		const items = buildDiscoveryQueueFromLocal([track]);
+		const items = fromLibrary([track]);
 		if (items.length === 0) return;
 		playerStore.addMultipleToQueue(items);
 		toastStore.show({ message: `"${track.title}" was added to the queue`, type: 'info' });
 	}
 
 	function playTrackNext(track: TrackView) {
-		const items = buildDiscoveryQueueFromLocal([track]);
+		const items = fromLibrary([track]);
 		if (items.length === 0) return;
 		playerStore.playMultipleNext(items);
 		toastStore.show({ message: `"${track.title}" will play next`, type: 'info' });

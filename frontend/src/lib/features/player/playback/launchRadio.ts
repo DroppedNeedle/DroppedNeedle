@@ -17,8 +17,8 @@ import {
 	resolveRadioPatch,
 	startRadioHydration
 } from '$lib/features/player/playback/radioQueueHydrator';
-import { recordingFor } from '$lib/features/player/playback/queueHelpers';
-import type { QueueItem } from '$lib/features/player/playback/types';
+import { recordingFor, withPlayedFrom } from '$lib/features/player/playback/queueHelpers';
+import type { PlayedFrom, QueueItem } from '$lib/features/player/playback/types';
 import type {
 	RadioPlanRequest,
 	RadioPlanResponse,
@@ -31,6 +31,15 @@ export interface LaunchRadioOptions {
 	shuffle?: boolean;
 	mode?: RadioMode;
 	count?: number;
+	/** What the station's plays say they came from; the station itself unless told. */
+	playedFrom?: PlayedFrom;
+}
+
+/** A station is named by its seed (`artist:<mbid>`, `genre:<name>`); one made of items is not. */
+function stationPlayedFrom(seed: Omit<RadioPlanRequest, 'exclude_recording_mbids'>): PlayedFrom {
+	return seed.seed_id
+		? { kind: 'radio', id: `${seed.seed_type}:${seed.seed_id}` }
+		: { kind: 'radio' };
 }
 
 function radioTrackKey(track: { artist_name: string; track_name: string }): string {
@@ -149,9 +158,12 @@ export async function launchRadio(
 		return false;
 	}
 
-	const items = dedupeTracks(plan.tracks)
-		.map((t) => planTrackToQueueItem(t, effectiveYt))
-		.filter((item): item is QueueItem => item !== null);
+	const items = withPlayedFrom(
+		dedupeTracks(plan.tracks)
+			.map((t) => planTrackToQueueItem(t, effectiveYt))
+			.filter((item): item is QueueItem => item !== null),
+		options.playedFrom ?? stationPlayedFrom(seed)
+	);
 
 	// resolve the head inline or rapid placeholder failures can stop the station
 	prepareRadioHydration();
