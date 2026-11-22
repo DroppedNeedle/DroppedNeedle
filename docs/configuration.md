@@ -10,6 +10,7 @@ Everything user-editable lives in the web UI and is stored in the database, so a
 - [Storage and permissions](#storage-and-permissions)
 - [Where settings live](#where-settings-live)
 - [Updating and image tags](#updating-and-image-tags)
+- [Running without Docker](#running-without-docker)
 
 ## Environment variables
 
@@ -192,3 +193,31 @@ Before a new version changes the database schema, DroppedNeedle writes a verifie
 A `:dev` tag (`droppedneedle/droppedneedle:dev`) is built from `main` on every push that changes the code, and may break. Pin a commit with `:dev-<short-sha>`.
 
 Pre-releases are published to the same image under their own version tag, for example `droppedneedle/droppedneedle:v3.1.0-rc.1`. They never move `:latest`, so you only get one by asking for its tag. `:beta` always points at the newest pre-release, so testers can stay on `droppedneedle/droppedneedle:beta` and get each new one with a pull. A full release does not move it: once the version you were testing is released, switch back to `:latest`.
+
+## Running without Docker
+
+Each release on GitHub carries Linux builds, for a machine or container without Docker:
+
+| File | What it is |
+|-|-|
+| `droppedneedle-<version>-x86_64-linux.tar.gz` | The server (`droppedneedle`) and `droppedneedle-tool`, for 64-bit Intel and AMD |
+| `droppedneedle-<version>-aarch64-linux.tar.gz` | The same, for 64-bit ARM |
+| `droppedneedle-frontend-<version>.tar.gz` | The web UI, in `static/` |
+| `SHA256SUMS` | Checksums of the three |
+
+The files are attached once the image is published, up to an hour after the release appears. `SHA256SUMS` goes up last, so once it is there the set is complete.
+
+They are the binaries the image ships, built on Debian 12, so they need glibc 2.36 or newer (Debian 12, Ubuntu 24.04 or later). Install `ffmpeg` for transcoding and `python3` for Python plugins, both on `PATH`.
+
+Set these before starting `droppedneedle`:
+
+- `ROOT_APP_DIR` to a folder the server's account can write. `config`, `cache`, `plugins` and `imports` go inside it, in place of `/app` in the tables above.
+- `DROPPEDNEEDLE_STATIC_DIR` to the `static` folder from the web UI archive. The server copies it into the cache at each start, so it can sit where the server's account cannot write.
+- `COMMIT_TAG` to the release's version, such as `v3.2.0`. The About page and the update check read it: unset, the server calls itself a dev build and always offers an update.
+- `TZ` to your time zone. The server reads only `TZ`, not the system's, so scans otherwise run in UTC.
+
+Keep `droppedneedle-tool` in the same folder as `droppedneedle`: the v2 upgrade page runs it from there.
+
+Run it as an ordinary account, never root, and only one server per data folder. `PUID`, `PGID` and `UMASK` belong to the image's entrypoint and do nothing here: files belong to the account that runs the server, under its own umask. Use 027 (`UMask=0027` in a systemd unit) to match the image, so the database and backups stay private. The other variables work as in a container.
+
+To update, stop the server, swap in the new release's binaries and web UI, set `COMMIT_TAG`, and start it. The database backup before a schema change happens the same way. Coming from v2, point `ROOT_APP_DIR` at the folder that holds v2's `config` and `cache` and follow [Upgrading from v2](upgrading-from-v2.md). Where that page runs `droppedneedle-tool` in a container, run the same command directly, as the server's account with the same variables.

@@ -1,9 +1,11 @@
 name: Release
 
-# Publishes droppedneedle/droppedneedle from a version tag. A tag push
-# publishes only after every check below passes and a reviewer approves the
-# `release` environment. A manual run is a dry run unless it is started on
-# the tag itself with `push` ticked.
+# Publishes droppedneedle/droppedneedle from a version tag, and attaches the
+# Linux binaries and the web UI to the tag's GitHub release for people who run
+# DroppedNeedle without Docker. A tag push publishes only after every check
+# below passes and a reviewer approves the `release` environment. A manual
+# run is a dry run unless it is started on the tag itself with `push` ticked;
+# a dry run still keeps the release files as a workflow artifact.
 on:
   push:
     tags:
@@ -231,9 +233,11 @@ jobs:
           - runner: ubuntu-24.04
             platform: linux/amd64
             arch: amd64
+            triple: x86_64
           - runner: ubuntu-24.04-arm
             platform: linux/arm64
             arch: arm64
+            triple: aarch64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
@@ -262,6 +266,57 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
           provenance: false
+
+      # The same build cut at the release-files stage, so every layer comes
+      # from the cache the step above filled and the binaries are the ones
+      # the image ships. They are built on Debian 12, so they need glibc 2.36
+      # or newer.
+      - name: Export the release files
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          target: release-files
+          outputs: type=local,dest=release-files
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          provenance: false
+
+      # The names are what install scripts download, so they stay as they
+      # are. The web UI is the same on both, so only amd64 packs it.
+      - name: Pack the release files
+        env:
+          VERSION: ${{ needs.checks.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+          TRIPLE: ${{ matrix.triple }}
+        run: |
+          chmod 0755 release-files/server/droppedneedle release-files/server/droppedneedle-tool
+          release-files/server/droppedneedle --print-openapi > /dev/null
+          release-files/server/droppedneedle-tool --help > /dev/null
+
+          # Fixed order, owner and times, so a re-run packs the same bytes and
+          # the checksums of a release never change.
+          pack() {
+            tar --sort=name --mtime="@$(git log -1 --format=%ct)" \
+              --owner=0 --group=0 --numeric-owner -cf - "$1" | gzip -n > "assets/$1.tar.gz"
+          }
+          mkdir assets
+          server="droppedneedle-${VERSION}-${TRIPLE}-linux"
+          mv release-files/server "$server"
+          pack "$server"
+          if [[ "$ARCH" == "amd64" ]]; then
+            web="droppedneedle-frontend-${VERSION}"
+            mv release-files/web-ui "$web"
+            pack "$web"
+          fi
+          ls -l assets
+
+      - name: Keep the release files
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-files-${{ matrix.arch }}
+          path: assets/
+          if-no-files-found: error
+          retention-days: 7
 
   publish:
     name: Publish multi-arch image
@@ -339,3 +394,39 @@ jobs:
             -t "ghcr.io/droppedneedle/droppedneedle:beta" \
             -t "droppedneedle/droppedneedle:beta" \
             "droppedneedle/droppedneedle:${VERSION}"
+
+  # Runs once the image is published, so the files only appear on a release
+  # the reviewer approved, up to an hour after the release itself. SHA256SUMS
+  # goes up last, so its presence means the set is complete. GitHub's Releases
+  # page makes the release with the tag; for a tag pushed on its own, make the
+  # release, then re-run this job within the 7 days the artifacts are kept.
+  attach:
+    name: Attach the release files
+    needs: [checks, publish]
+    if: needs.checks.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.checks.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Fetch the release files
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-files-*
+          path: assets
+          merge-multiple: true
+
+      - name: Attach them to the release
+        working-directory: assets
+        run: |
+          if ! gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null; then
+            echo "::error::There is no GitHub release for $VERSION. Make it on the Releases page, then re-run this job within 7 days."
+            exit 1
+          fi
+          sha256sum -- *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$VERSION" --repo "$GITHUB_REPOSITORY" --clobber -- *.tar.gz
+          gh release upload "$VERSION" --repo "$GITHUB_REPOSITORY" --clobber -- SHA256SUMS

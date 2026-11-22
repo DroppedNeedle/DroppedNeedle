@@ -143,6 +143,17 @@ RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.s
     && echo "$ver" > VERSION \
     && rm -rf /var/lib/apt/lists/*
 
+# The files attached to each GitHub release, for running without Docker: the
+# two binaries and the web UI, each with its licence and notices. The release
+# workflow builds this stage alone; the image is the stage below.
+FROM scratch AS release-files
+COPY --from=builder /out/ /server/
+COPY --from=builder /notices/NOTICES-server.txt /server/NOTICES-server.txt
+COPY LICENSE /server/LICENSE
+COPY --from=frontend /app/frontend/build /web-ui/static
+COPY --from=frontend /app/NOTICES-web-ui.txt /web-ui/NOTICES-web-ui.txt
+COPY LICENSE /web-ui/LICENSE
+
 FROM debian:bookworm-slim
 
 ENV PORT=8688

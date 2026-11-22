@@ -72,6 +72,8 @@ The engine searches your client, ranks candidates, and accepts a confident match
 
 You need Docker, a music library, and a download client. The example below uses slskd; [SABnzbd](https://sabnzbd.org/) or [NZBGet](https://nzbget.com/) with Newznab indexers or Prowlarr works too, and so does Deemix for Deezer. DroppedNeedle runs none of them for you: see [Download clients](docs/download-clients.md).
 
+No Docker? Each release also carries Linux builds: see [Running without Docker](docs/configuration.md#running-without-docker).
+
 **1. Save this compose file.** Images are on [Docker Hub](https://hub.docker.com/r/droppedneedle/droppedneedle) as `droppedneedle/droppedneedle`.
 
 ```yaml
