@@ -194,7 +194,8 @@ and the callback addresses and settings to change first are under
   carries the folder your removals used; the report names any path it
   dropped.
 - **Playlist "request missing" for scripts.** v2 had a server route,
-  `POST /api/v1/playlists/<id>/request-missing`. The button on the playlist
-  page works as before, but v3 has no such route: the page works out the
-  missing albums itself and sends them to `POST /api/v3/requests/batches`.
-  A script that called the old route has to do the same.
+  `POST /api/v1/playlists/<id>/request-missing`. v3 has its own,
+  `POST /api/v3/playlists/<id>/request-missing`, owner only: it groups the
+  entries the library lacks by album and artist, resolves each album, and
+  files one request per album. The button on the playlist page calls it,
+  and a script that called the old route uses the new one with no body.

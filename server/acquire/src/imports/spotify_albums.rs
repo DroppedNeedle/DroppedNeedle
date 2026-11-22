@@ -155,6 +155,71 @@ impl AlbumResolver {
             )
             .await
     }
+
+    /// A release group for an album named by a playlist row, or `None`
+    /// when the names do not prove one. The search needs an exact title and
+    /// an artist credit; it does not need an edition's track count, because
+    /// a playlist row names songs rather than an edition.
+    ///
+    /// # Errors
+    ///
+    /// A MusicBrainz failure, so the caller can stop asking while the
+    /// service is down.
+    pub async fn resolve_names(
+        &self,
+        album_title: &str,
+        artist: &str,
+    ) -> Result<Option<String>, ProviderError> {
+        let wanted = title_key(album_title);
+        let who = title_key(artist);
+        if wanted.is_empty() || who.is_empty() {
+            return Ok(None);
+        }
+        let Some(settings) = self.settings.read() else {
+            return Err(ProviderError::NotConfigured {
+                provider: SOURCE,
+                message: "the musicbrainz settings cannot be read".to_owned(),
+            });
+        };
+        let view = self.musicbrainz.fixed(
+            self.musicbrainz.source_from(&settings),
+            RequestPriority::BackgroundSync,
+        );
+        let page = view
+            .search_releases(
+                album_title,
+                artist,
+                SEARCH_LIMIT,
+                Criticality::IdentityCritical,
+            )
+            .await?;
+        let mut groups: BTreeSet<String> = BTreeSet::new();
+        for hit in &page.items {
+            let Some(group) = &hit.release_group else {
+                continue;
+            };
+            let title = hit.title.as_deref().unwrap_or_default();
+            if title_key(title) != wanted {
+                continue;
+            }
+            let credit = hit
+                .artist_credit
+                .iter()
+                .map(|credit| credit.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !title_key(&credit).contains(&who) {
+                continue;
+            }
+            let id = normalize_mb_id(&group.id);
+            if is_valid_mbid(&id) {
+                groups.insert(id);
+            }
+        }
+        Ok((groups.len() == 1)
+            .then(|| groups.into_iter().next())
+            .flatten())
+    }
 }
 
 /// A release group a release proved, with what a tie is broken by.

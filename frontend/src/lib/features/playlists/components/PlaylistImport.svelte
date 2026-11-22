@@ -27,6 +27,7 @@
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let importing = $state(false);
 	let open = $state(false);
+	let libraryOnly = $state(false);
 	let report = $state<ImportPlaylistResponseV3 | null>(null);
 
 	function chooseFile() {
@@ -53,7 +54,8 @@
 			report = await mutation.mutateAsync({
 				name: playlistName(file.name),
 				format,
-				content
+				content,
+				library_only: libraryOnly
 			});
 			open = true;
 		} catch (error) {
@@ -80,9 +82,15 @@
 	}
 </script>
 
-<Button variant="outline" size="display" icon={Upload} loading={importing} onclick={chooseFile}>
-	Import playlist
-</Button>
+<div class="flex flex-wrap items-center gap-3">
+	<Button variant="outline" size="display" icon={Upload} loading={importing} onclick={chooseFile}>
+		Import playlist
+	</Button>
+	<label class="flex items-center gap-2 text-xs text-muted">
+		<input type="checkbox" bind:checked={libraryOnly} />
+		Only songs already in the library
+	</label>
+</div>
 <input
 	type="file"
 	accept=".m3u,.m3u8,.csv"
@@ -106,6 +114,10 @@
 				<strong>{report.matched}</strong>
 				{report.matched === 1 ? 'track' : 'tracks'} added to
 				<strong>{report.name}</strong>.
+				{#if report.kept > 0}
+					<strong>{report.kept}</strong>
+					{report.kept === 1 ? 'song was' : 'songs were'} kept to match.
+				{/if}
 				{#if report.unmatched.length > 0}
 					{report.unmatched.length}
 					{report.unmatched.length === 1 ? 'entry was' : 'entries were'} left out.

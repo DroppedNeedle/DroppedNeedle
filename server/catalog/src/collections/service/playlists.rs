@@ -244,6 +244,37 @@ fn to_entry(input: &TrackInput) -> Result<NewEntry, CollectionsError> {
 /// The playlist entry for one matched library track: the file's names, its
 /// album's artwork when the album has some, its local id and its recording
 /// id, as a local track the web UI adds.
+/// One row of an import, in file order.
+enum Planned<'a> {
+    /// It matched a live track, by id.
+    Matched(&'a import::ParsedEntry, String),
+    /// It names a title and an artist the library lacks, so it is kept.
+    Kept(NewEntry),
+}
+
+/// The entry an unmatched row becomes: the names and numbers the file
+/// gave, with no source.
+fn kept_entry(entry: &import::ParsedEntry) -> NewEntry {
+    NewEntry {
+        track_name: entry.title.trim().to_owned(),
+        artist_name: entry.artist.trim().to_owned(),
+        album_name: entry.album.trim().to_owned(),
+        album_id: None,
+        artist_id: None,
+        track_source_id: None,
+        cover_url: None,
+        source_type: String::new(),
+        available_sources: None,
+        format: None,
+        track_number: entry.track_number,
+        disc_number: entry.disc_number,
+        duration: None,
+        plex_rating_key: None,
+        library_file_id: None,
+        recording_mbid: None,
+    }
+}
+
 fn import_entry(track: &PlayerTrack) -> NewEntry {
     let cover_url = track.cover_available.then(|| {
         let version = track
@@ -617,7 +648,7 @@ impl CollectionsService<'_> {
             .await
             .map_err(library_error)?;
         let index = import::ImportIndex::new(identities);
-        let mut matched: Vec<(&import::ParsedEntry, String)> = Vec::new();
+        let mut planned: Vec<Planned> = Vec::new();
         let mut seen = HashSet::new();
         let mut unmatched = Vec::new();
         for entry in &entries {
@@ -628,17 +659,33 @@ impl CollectionsService<'_> {
                 unmatched.push(import::unmatched(entry, Reason::NamesNothing));
                 continue;
             }
-            let Some(id) = index.find(entry) else {
-                unmatched.push(import::unmatched(entry, Reason::NoMatch));
-                continue;
-            };
-            if !seen.insert(id.to_owned()) {
-                unmatched.push(import::unmatched(entry, Reason::Duplicate));
+            if let Some(id) = index.find(entry) {
+                if !seen.insert(id.to_owned()) {
+                    unmatched.push(import::unmatched(entry, Reason::Duplicate));
+                    continue;
+                }
+                planned.push(Planned::Matched(entry, id.to_owned()));
                 continue;
             }
-            matched.push((entry, id.to_owned()));
+            // A row that names a title and an artist becomes an entry with
+            // no source, so an import can carry songs the library lacks.
+            // The import window can ask for the old, library-only way.
+            if !body.library_only
+                && !entry.title.trim().is_empty()
+                && !entry.artist.trim().is_empty()
+            {
+                planned.push(Planned::Kept(kept_entry(entry)));
+                continue;
+            }
+            unmatched.push(import::unmatched(entry, Reason::NoMatch));
         }
-        let ids: Vec<String> = matched.iter().map(|(_, id)| id.clone()).collect();
+        let ids: Vec<String> = planned
+            .iter()
+            .filter_map(|planned| match planned {
+                Planned::Matched(_, id) => Some(id.clone()),
+                Planned::Kept(_) => None,
+            })
+            .collect();
         let tracks = self
             .state
             .items
@@ -649,14 +696,21 @@ impl CollectionsService<'_> {
             .into_iter()
             .map(|track| (track.id.clone(), track))
             .collect();
-        let mut new_entries = Vec::with_capacity(matched.len());
-        for (entry, id) in &matched {
-            match by_id.get(id) {
-                Some(track) => new_entries.push(import_entry(track)),
-                None => unmatched.push(import::unmatched(entry, Reason::NoMatch)),
+        let mut new_entries = Vec::with_capacity(planned.len());
+        let mut kept = 0_usize;
+        for planned in planned {
+            match planned {
+                Planned::Matched(entry, id) => match by_id.get(&id) {
+                    Some(track) => new_entries.push(import_entry(track)),
+                    None => unmatched.push(import::unmatched(entry, Reason::NoMatch)),
+                },
+                Planned::Kept(entry) => {
+                    new_entries.push(entry);
+                    kept += 1;
+                }
             }
         }
-        let matched = new_entries.len();
+        let matched = new_entries.len() - kept;
         let (playlist_id, _) = self
             .playlists()
             .owned_by(user_id)
@@ -666,6 +720,7 @@ impl CollectionsService<'_> {
             playlist_id,
             name,
             matched,
+            kept,
             unmatched,
             over_limit,
         })

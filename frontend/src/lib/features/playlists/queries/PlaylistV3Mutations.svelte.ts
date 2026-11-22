@@ -58,6 +58,18 @@ export const createDeletePlaylistV3Mutation = () =>
 		effects: (_data, id) => listAndDetail(id)
 	}));
 
+export type RequestMissingResponseV3 = components['schemas']['RequestMissingResponse'];
+
+/** Ask for the albums a playlist names and the library lacks. */
+export const createRequestMissingV3Mutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (id: string) =>
+			api.v3.POST(
+				v3('/api/v3/playlists/{playlist_id}/request-missing', { path: { playlist_id: id } })
+			),
+		effects: (_data, id) => detail(id)
+	}));
+
 export const createAddPlaylistTracksV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: { id: string } & AddTracksBodyV3) =>

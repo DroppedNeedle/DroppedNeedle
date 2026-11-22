@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
-	import { requestMissingTracks, type PlaylistDetail } from '$lib/api/playlists';
+	import type { PlaylistDetail } from '$lib/api/playlists';
 	import { playlistTrackToQueueItem } from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -15,6 +15,7 @@
 	import {
 		createDeletePlaylistV3Mutation,
 		createLeavePlaylistV3Mutation,
+		createRequestMissingV3Mutation,
 		forgetPlaylistSources,
 		refreshPlaylist
 	} from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
@@ -43,6 +44,7 @@
 	);
 	const leaveMutation = createLeavePlaylistV3Mutation();
 	const deleteMutation = createDeletePlaylistV3Mutation();
+	const requestMissing = createRequestMissingV3Mutation();
 
 	// A local mutable copy of the (full) playlist so child components can keep
 	// applying optimistic updates; redaction/loading/error leave it null.
@@ -70,14 +72,13 @@
 		if (!playlist) return 0;
 		const seen = new SvelteSet<string>();
 		for (const t of playlist.tracks) {
-			// library_file_id means owned locally (request-missing skips these too).
-			if (
-				t.album_id &&
-				!t.library_file_id &&
-				(!t.available_sources || t.available_sources.length === 0)
-			) {
-				seen.add(t.album_id);
-			}
+			// The server groups the same way: owned rows are skipped, and a
+			// row without a title, album or artist has no album to ask for.
+			if (t.library_file_id) continue;
+			const album = t.album_name.trim();
+			const artist = t.artist_name.trim();
+			if (!t.track_name.trim() || !album || !artist) continue;
+			seen.add(`${album.toLowerCase()}\u0000${artist.toLowerCase()}`);
 		}
 		return seen.size;
 	});
@@ -88,8 +89,24 @@
 		if (requesting || !playlist) return;
 		requesting = true;
 		try {
-			const result = await requestMissingTracks(playlist.tracks);
-			toastStore.show({ message: result.message, type: 'success' });
+			const result = await requestMissing.mutateAsync(playlist.id);
+			const requested = result?.requested ?? 0;
+			const skipped = result?.skipped ?? 0;
+			const failed = result?.failed ?? 0;
+			if (requested > 0) {
+				const tail = skipped + failed > 0 ? ` (${skipped} skipped, ${failed} unmatched)` : '';
+				toastStore.show({
+					message: `${requested} ${requested === 1 ? 'album' : 'albums'} requested${tail}`,
+					type: 'success'
+				});
+			} else if (failed > 0) {
+				toastStore.show({
+					message: `${failed} ${failed === 1 ? 'album' : 'albums'} could not be matched`,
+					type: 'error'
+				});
+			} else {
+				toastStore.show({ message: 'Nothing new to request', type: 'success' });
+			}
 		} catch {
 			toastStore.show({ message: "Couldn't submit requests", type: 'error' });
 		} finally {

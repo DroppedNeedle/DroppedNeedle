@@ -6365,6 +6365,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/playlists/{playlist_id}/request-missing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request the albums a playlist names that the library lacks.
+         *     `POST /api/v3/playlists/{playlist_id}/request-missing`. Owner only.
+         */
+        post: operations["request_missing_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/playlists/{playlist_id}/resolve-sources": {
         parameters: {
             query?: never;
@@ -15782,11 +15802,19 @@ export interface components {
             content: string;
             /** @description The file's format. */
             format: components["schemas"]["ImportFormat"];
+            /**
+             * @description Keep only rows the library has; rows it lacks are left out as
+             *     before. Off by default, so an import keeps them as entries to match
+             *     and acquire.
+             */
+            library_only?: boolean;
             /** @description Name for the new playlist. Must not be blank. */
             name: string;
         };
         /** @description Playlist import answer. */
         ImportPlaylistResponse: {
+            /** @description Entries kept with no source, in file order, to match and acquire. */
+            kept: number;
             /** @description Entries that became playlist tracks. */
             matched: number;
             /** @description Its name as stored. */
@@ -22065,6 +22093,18 @@ export interface components {
          * @enum {string}
          */
         RequestKind: "album" | "track";
+        /** @description What one press filed. */
+        RequestMissingResponse: {
+            /** @description Albums the resolver or the intake could not place. */
+            failed: number;
+            /** @description Albums a request was filed for. */
+            requested: number;
+            /**
+             * @description Albums passed over: the entry names nothing, the album already has a
+             *     live request, or the press reached its cap.
+             */
+            skipped: number;
+        };
         /**
          * @description What made a request row.
          * @enum {string}
@@ -43257,6 +43297,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    request_missing_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestMissingResponse"];
                 };
             };
         };

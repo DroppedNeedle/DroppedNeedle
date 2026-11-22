@@ -278,6 +278,9 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
             droppedneedle_acquire::imports::handlers::routes(),
             |state| state.acquire.imports.clone(),
         )
+        .area(droppedneedle_acquire::playlist_request::routes(), |state| {
+            state.acquire.playlist_request.clone()
+        })
 }
 
 /// The server crate's own routes.

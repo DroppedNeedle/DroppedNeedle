@@ -201,6 +201,9 @@ pub struct AcquireSetup {
     pub mixer: Arc<PersonalMixBuilder>,
     /// Imports deps (config-backed settings, bridged follows).
     pub imports: ImportsDeps,
+    /// The playlist's request-missing route: playlists, the resolver and
+    /// request intake.
+    pub playlist_request: crate::playlist_request::PlaylistRequestDeps,
     /// The one way into the download queue.
     pub dispatch: Arc<DownloadDispatch>,
     /// Shared download journal.
@@ -675,12 +678,17 @@ impl AcquireSetup {
             spotify_states,
             spotify_links,
             spotify_playlists,
-            resolver,
+            resolver: resolver.clone(),
             spotify_imports,
             probes: Arc::new(LiveProbes::bundle(&probes)),
             ids: ids.clone(),
             base_path: config.base_path.clone(),
             trusted_proxies: config.trusted_proxies.clone(),
+        };
+        let playlist_request = crate::playlist_request::PlaylistRequestDeps {
+            requests: core.requests.clone(),
+            playlists: collections.playlists.clone(),
+            resolver,
         };
 
         // Finished downloads reach the library through its import seam.
@@ -760,6 +768,7 @@ impl AcquireSetup {
             requests: core.requests,
             mixer: core.mixer,
             imports,
+            playlist_request,
             dispatch: core.dispatch,
             journal: core.journal,
             flows: core.flows,

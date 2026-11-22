@@ -213,6 +213,11 @@ pub struct ImportPlaylistBody {
     pub format: ImportFormat,
     /// The file's text.
     pub content: String,
+    /// Keep only rows the library has; rows it lacks are left out as
+    /// before. Off by default, so an import keeps them as entries to match
+    /// and acquire.
+    #[serde(default)]
+    pub library_only: bool,
 }
 
 /// One entry an import could not match.
@@ -247,6 +252,8 @@ pub struct ImportPlaylistResponse {
     pub name: String,
     /// Entries that became playlist tracks.
     pub matched: usize,
+    /// Entries kept with no source, in file order, to match and acquire.
+    pub kept: usize,
     /// Entries that did not, in file order.
     pub unmatched: Vec<ImportUnmatched>,
     /// Entries past the 10,000 an import reads, counted but not read.

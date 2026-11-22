@@ -25029,6 +25029,45 @@
         ]
       }
     },
+    "/api/v3/playlists/{playlist_id}/request-missing": {
+      "post": {
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Request the albums a playlist names that the library lacks.\n`POST /api/v3/playlists/{playlist_id}/request-missing`. Owner only.",
+        "operationId": "request_missing_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestMissingResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/playlists/{playlist_id}/resolve-sources": {
       "post": {
         "tags": [
@@ -49166,6 +49205,10 @@
             "$ref": "#/components/schemas/ImportFormat",
             "description": "The file's format."
           },
+          "library_only": {
+            "type": "boolean",
+            "description": "Keep only rows the library has; rows it lacks are left out as\nbefore. Off by default, so an import keeps them as entries to match\nand acquire."
+          },
           "name": {
             "type": "string",
             "description": "Name for the new playlist. Must not be blank."
@@ -49179,10 +49222,16 @@
           "playlist_id",
           "name",
           "matched",
+          "kept",
           "unmatched",
           "over_limit"
         ],
         "properties": {
+          "kept": {
+            "type": "integer",
+            "description": "Entries kept with no source, in file order, to match and acquire.",
+            "minimum": 0
+          },
           "matched": {
             "type": "integer",
             "description": "Entries that became playlist tracks.",
@@ -63016,6 +63065,32 @@
           "album",
           "track"
         ]
+      },
+      "RequestMissingResponse": {
+        "type": "object",
+        "description": "What one press filed.",
+        "required": [
+          "requested",
+          "skipped",
+          "failed"
+        ],
+        "properties": {
+          "failed": {
+            "type": "integer",
+            "description": "Albums the resolver or the intake could not place.",
+            "minimum": 0
+          },
+          "requested": {
+            "type": "integer",
+            "description": "Albums a request was filed for.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "description": "Albums passed over: the entry names nothing, the album already has a\nlive request, or the press reached its cap.",
+            "minimum": 0
+          }
+        }
       },
       "RequestOrigin": {
         "type": "string",

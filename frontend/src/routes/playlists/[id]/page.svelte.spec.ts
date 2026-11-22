@@ -8,6 +8,7 @@ const mockShareMutate = vi.fn();
 const mockDeleteMutate = vi.fn();
 const mockResolveMutate = vi.fn();
 const mockRenameMutate = vi.fn();
+const mockRequestMissing = vi.fn().mockResolvedValue({ requested: 1 });
 const mockForgetSources = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock('$lib/api/playlists', () => ({
@@ -48,6 +49,7 @@ vi.mock('$lib/features/playlists/queries/PlaylistV3Queries.svelte', () => ({
 vi.mock('$lib/features/playlists/queries/PlaylistV3Mutations.svelte', () => ({
 	createSetPlaylistVisibilityV3Mutation: () => ({ mutateAsync: mockShareMutate, isPending: false }),
 	createDeletePlaylistV3Mutation: () => ({ mutateAsync: mockDeleteMutate, isPending: false }),
+	createRequestMissingV3Mutation: () => ({ mutateAsync: mockRequestMissing, isPending: false }),
 	createLeavePlaylistV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createSetPlaylistMembersV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createUpdatePlaylistV3Mutation: () => ({ mutateAsync: mockRenameMutate, isPending: false }),
