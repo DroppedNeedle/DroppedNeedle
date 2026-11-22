@@ -10076,6 +10076,27 @@ export interface components {
             /** @description The address v2 registered, as the pre-flight gave it. */
             old_address?: null | components["schemas"]["UpgradeAddress"];
         };
+        /** @description One press's batch, or the default list. */
+        AcquireBody: {
+            /** @description What the press asked for; empty asks for everything missing. */
+            items?: components["schemas"]["AcquireItem"][];
+        };
+        /** @description One thing a press asks for. */
+        AcquireItem: {
+            /** @description Album title, for `album`. */
+            album?: string | null;
+            /** @description Artist credit, always. */
+            artist: string;
+            /** @description `album` for the whole release, `track` for one recording. */
+            kind: components["schemas"]["AcquireKind"];
+            /** @description Track title, for `track`. */
+            title?: string | null;
+        };
+        /**
+         * @description What one item asks for.
+         * @enum {string}
+         */
+        AcquireKind: "album" | "track";
         /** @description A press's answer, and its progress while it runs. */
         AcquireState: {
             /** @description Items the resolver or the intake could not place. */
@@ -22208,18 +22229,6 @@ export interface components {
          * @enum {string}
          */
         RequestKind: "album" | "track";
-        /** @description What one press filed. */
-        RequestMissingResponse: {
-            /** @description Albums the resolver or the intake could not place. */
-            failed: number;
-            /** @description Albums a request was filed for. */
-            requested: number;
-            /**
-             * @description Albums passed over: the entry names nothing, the album already has a
-             *     live request, or the press reached its cap.
-             */
-            skipped: number;
-        };
         /**
          * @description What made a request row.
          * @enum {string}
@@ -43524,14 +43533,18 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcquireBody"];
+            };
+        };
         responses: {
             202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RequestMissingResponse"];
+                    "application/json": components["schemas"]["AcquireState"];
                 };
             };
         };

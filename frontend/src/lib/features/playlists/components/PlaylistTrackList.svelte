@@ -3,6 +3,7 @@
 	import { slide, fly } from '$lib/ui/motion';
 	import type { PlaylistDetail, PlaylistTrack } from '$lib/api/playlists';
 	import {
+		createAcquirePlaylistV3Mutation,
 		createRemovePlaylistTrackV3Mutation,
 		createRemovePlaylistTracksV3Mutation,
 		createReorderPlaylistTrackV3Mutation,
@@ -20,7 +21,7 @@
 	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import SourcePickerDropdown from '$lib/features/playlists/components/SourcePickerDropdown.svelte';
 	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
-	import { Trash2, ListPlus, ListStart, GripVertical, Play, X } from 'lucide-svelte';
+	import { Trash2, ListPlus, ListStart, GripVertical, Play, X, Download } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import VinylRecord from '$lib/ui/VinylRecord.svelte';
 	import PaperPanel from '$lib/ui/PaperPanel.svelte';
@@ -52,6 +53,30 @@
 	let selectionMode = $derived(selectedIds.size > 0);
 
 	const removeTrackMutation = createRemovePlaylistTrackV3Mutation();
+	const acquireMutation = createAcquirePlaylistV3Mutation();
+	let acquiringId = $state<string | null>(null);
+
+	async function acquireOne(track: PlaylistTrack) {
+		if (acquiringId || !track.track_name.trim() || !track.artist_name.trim()) return;
+		acquiringId = track.id;
+		const album = track.album_name.trim();
+		const artist = track.artist_name.trim();
+		const title = track.track_name.trim();
+		const item = album
+			? { kind: 'album' as const, album, artist, title: null }
+			: { kind: 'track' as const, album: null, artist, title };
+		try {
+			await acquireMutation.mutateAsync({ id: playlist.id, items: [item] });
+			toastStore.show({
+				message: album ? `Requested the album ${album}.` : `Requested ${title}.`,
+				type: 'success'
+			});
+		} catch {
+			toastStore.show({ message: "Couldn't file that request.", type: 'error' });
+		} finally {
+			acquiringId = null;
+		}
+	}
 	const removeTracksMutation = createRemovePlaylistTracksV3Mutation();
 	const updateTrackMutation = createUpdatePlaylistTrackV3Mutation();
 	const reorderTrackMutation = createReorderPlaylistTrackV3Mutation();
@@ -518,6 +543,20 @@
 
 					{#if !readonly}
 						<span class="pl-row__source">
+							{#if !track.library_file_id}
+								<button
+									type="button"
+									class="mr-1 rounded p-1 text-muted hover:text-warning disabled:opacity-50"
+									title="Request this song"
+									disabled={acquiringId === track.id}
+									onclick={(e) => {
+										e.stopPropagation();
+										void acquireOne(track);
+									}}
+								>
+									<Download class="size-4" />
+								</button>
+							{/if}
 							<SourcePickerDropdown
 								currentSource={track.source_type}
 								availableSources={track.available_sources ?? [track.source_type]}

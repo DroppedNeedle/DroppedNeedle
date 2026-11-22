@@ -5,6 +5,7 @@
 	import type { PlaylistDetail } from '$lib/api/playlists';
 	import { playlistTrackToQueueItem } from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { toastStore } from '$lib/stores/toast';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
@@ -15,8 +16,9 @@
 	import {
 		createDeletePlaylistV3Mutation,
 		createLeavePlaylistV3Mutation,
-		createRequestMissingV3Mutation,
+		createAcquirePlaylistV3Mutation,
 		forgetPlaylistSources,
+		getAcquireProgressV3,
 		refreshPlaylist
 	} from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
 	import {
@@ -28,6 +30,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { Music, Download, Lock, LogOut } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import type { PageData } from './$types';
 	import PlaylistHeader from '$lib/features/playlists/components/PlaylistHeader.svelte';
@@ -44,7 +47,7 @@
 	);
 	const leaveMutation = createLeavePlaylistV3Mutation();
 	const deleteMutation = createDeletePlaylistV3Mutation();
-	const requestMissing = createRequestMissingV3Mutation();
+	const acquireMissing = createAcquirePlaylistV3Mutation();
 
 	// A local mutable copy of the (full) playlist so child components can keep
 	// applying optimistic updates; redaction/loading/error leave it null.
@@ -112,29 +115,64 @@
 	let missingAlbumCount = $derived(missingItems.length);
 
 	let requesting = $state(false);
+	let requestOpen = $state(false);
+	let requestChoices = $state<Record<string, 'album' | 'track'>>({});
+	let progress = $state<{ state: string; requested: number; failed: number; total: number } | null>(
+		null
+	);
+
+	const requestRows = $derived(
+		playlist
+			? playlist.tracks.filter(
+					(t) => !t.library_file_id && t.track_name.trim() !== '' && t.artist_name.trim() !== ''
+				)
+			: []
+	);
+
+	$effect(() => {
+		if (!requestOpen) return;
+		const next: Record<string, 'album' | 'track'> = { ...requestChoices };
+		for (const row of requestRows) {
+			if (!(row.id in next)) next[row.id] = row.album_name.trim() ? 'album' : 'track';
+		}
+		requestChoices = next;
+	});
 
 	async function handleRequestMissing() {
 		if (requesting || !playlist) return;
 		requesting = true;
 		try {
-			const result = await requestMissing.mutateAsync(playlist.id);
-			const requested = result?.requested ?? 0;
-			const skipped = result?.skipped ?? 0;
-			const failed = result?.failed ?? 0;
-			if (requested > 0) {
-				const tail = skipped + failed > 0 ? ` (${skipped} skipped, ${failed} unmatched)` : '';
-				toastStore.show({
-					message: `${requested} ${requested === 1 ? 'album' : 'albums'} requested${tail}`,
-					type: 'success'
-				});
-			} else if (failed > 0) {
-				toastStore.show({
-					message: `${failed} ${failed === 1 ? 'album' : 'albums'} could not be matched`,
-					type: 'error'
-				});
-			} else {
-				toastStore.show({ message: 'Nothing new to request', type: 'success' });
+			const seen = new SvelteSet<string>();
+			const items = [];
+			for (const row of requestRows) {
+				const album = row.album_name.trim();
+				const artist = row.artist_name.trim();
+				const title = row.track_name.trim();
+				if (!artist || !title) continue;
+				const wantsAlbum = album.length > 0 && (requestChoices[row.id] ?? 'album') === 'album';
+				if (wantsAlbum) {
+					const key = `${album.toLowerCase()}\u0000${artist.toLowerCase()}`;
+					if (seen.has(key)) continue;
+					seen.add(key);
+					items.push({ kind: 'album' as const, album, artist, title: null });
+				} else {
+					items.push({ kind: 'track' as const, album: null, artist, title });
+				}
 			}
+			const state = await acquireMissing.mutateAsync({ id: playlist.id, items });
+			progress = state;
+			while (progress && progress.state === 'running') {
+				await new Promise((resolve) => setTimeout(resolve, 1500));
+				const next = await getAcquireProgressV3(playlist.id);
+				if (next) progress = next;
+			}
+			const requested = progress?.requested ?? 0;
+			const failed = progress?.failed ?? 0;
+			toastStore.show({
+				message: `${requested} requested${failed > 0 ? `, ${failed} unmatched` : ''}.`,
+				type: requested > 0 ? 'success' : 'error'
+			});
+			requestOpen = false;
 		} catch {
 			toastStore.show({ message: "Couldn't submit requests", type: 'error' });
 		} finally {
@@ -372,34 +410,10 @@
 						size="display-sm"
 						icon={Download}
 						loading={requesting}
-						onclick={() => void handleRequestMissing()}
+						onclick={() => (requestOpen = true)}
 					>
 						Request {missingAlbumCount}
 					</Button>
-					<details class="w-full basis-full">
-						<summary class="cursor-pointer select-none text-sm text-muted">
-							See what will be requested
-						</summary>
-						<ul class="mt-2 space-y-1 text-sm">
-							{#each missingItems.slice(0, 8) as item, i (i)}
-								<li class="truncate">
-									{#if item.kind === 'album'}
-										<span class="font-medium">{item.album}</span>
-										<span class="text-muted">by {item.artist}</span>
-									{:else}
-										<span class="font-medium">{item.title}</span>
-										<span class="text-muted">by {item.artist} (single track)</span>
-									{/if}
-								</li>
-							{/each}
-						</ul>
-						{#if missingItems.length > 8}
-							<p class="mt-1 text-xs text-muted">and {missingItems.length - 8} more</p>
-						{/if}
-						<p class="mt-2 text-xs text-muted">
-							The server matches each album on MusicBrainz and asks for at most ten per press.
-						</p>
-					</details>
 				</div>
 			{/if}
 
@@ -414,6 +428,48 @@
 		</div>
 
 		{#if isOwner}
+			<Modal
+				bind:open={requestOpen}
+				title="Request missing songs"
+				description="Choose what to ask for, album or single track"
+				size="lg"
+				closeButton
+			>
+				<div class="flex max-h-[60vh] flex-col gap-2 overflow-y-auto">
+					{#each requestRows as row (row.id)}
+						<div class="flex items-center justify-between gap-3 text-sm">
+							<span class="min-w-0 truncate">
+								<span class="font-medium">{row.track_name}</span>
+								<span class="text-muted">by {row.artist_name}</span>
+							</span>
+							{#if row.album_name.trim()}
+								<span class="flex shrink-0 items-center gap-3">
+									<label class="inline-flex items-center gap-1">
+										<input type="radio" value="album" bind:group={requestChoices[row.id]} />
+										Album
+									</label>
+									<label class="inline-flex items-center gap-1">
+										<input type="radio" value="track" bind:group={requestChoices[row.id]} />
+										Track
+									</label>
+								</span>
+							{:else}
+								<span class="shrink-0 text-xs text-muted">single track</span>
+							{/if}
+						</div>
+					{/each}
+				</div>
+				{#snippet actions()}
+					<Button variant="ghost" onclick={() => (requestOpen = false)}>Cancel</Button>
+					<Button
+						variant="primary"
+						loading={requesting}
+						onclick={() => void handleRequestMissing()}
+					>
+						Request {requestRows.length}
+					</Button>
+				{/snippet}
+			</Modal>
 			<SharePlaylistModal
 				bind:this={shareModal}
 				playlistId={playlist.id}

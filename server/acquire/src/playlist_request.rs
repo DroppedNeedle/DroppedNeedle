@@ -55,18 +55,6 @@ pub fn routes() -> Routes<PlaylistRequestDeps> {
         .user(routes!(pull_now_handler))
 }
 
-/// What one press filed.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct RequestMissingResponse {
-    /// Albums a request was filed for.
-    pub requested: usize,
-    /// Albums passed over: the entry names nothing, the album already has a
-    /// live request, or the press reached its cap.
-    pub skipped: usize,
-    /// Albums the resolver or the intake could not place.
-    pub failed: usize,
-}
-
 /// What one manual check found.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PullNowResponse {
@@ -112,7 +100,8 @@ pub async fn pull_now_handler(
     tag = "playlists",
     path = "/api/v3/playlists/{playlist_id}/request-missing",
     params(("playlist_id" = String, Path, description = "Playlist id")),
-    responses((status = 202, body = RequestMissingResponse))
+    request_body = AcquireBody,
+    responses((status = 202, body = crate::playlist_acquire::AcquireState))
 )]
 pub async fn request_missing_handler(
     State(deps): State<PlaylistRequestDeps>,

@@ -25204,13 +25204,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcquireBody"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "202": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RequestMissingResponse"
+                  "$ref": "#/components/schemas/AcquireState"
                 }
               }
             }
@@ -36565,6 +36575,59 @@
             "description": "The address v2 registered, as the pre-flight gave it."
           }
         }
+      },
+      "AcquireBody": {
+        "type": "object",
+        "description": "One press's batch, or the default list.",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AcquireItem"
+            },
+            "description": "What the press asked for; empty asks for everything missing."
+          }
+        }
+      },
+      "AcquireItem": {
+        "type": "object",
+        "description": "One thing a press asks for.",
+        "required": [
+          "kind",
+          "artist"
+        ],
+        "properties": {
+          "album": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Album title, for `album`."
+          },
+          "artist": {
+            "type": "string",
+            "description": "Artist credit, always."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AcquireKind",
+            "description": "`album` for the whole release, `track` for one recording."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Track title, for `track`."
+          }
+        }
+      },
+      "AcquireKind": {
+        "type": "string",
+        "description": "What one item asks for.",
+        "enum": [
+          "album",
+          "track"
+        ]
       },
       "AcquireState": {
         "type": "object",
@@ -63359,32 +63422,6 @@
           "album",
           "track"
         ]
-      },
-      "RequestMissingResponse": {
-        "type": "object",
-        "description": "What one press filed.",
-        "required": [
-          "requested",
-          "skipped",
-          "failed"
-        ],
-        "properties": {
-          "failed": {
-            "type": "integer",
-            "description": "Albums the resolver or the intake could not place.",
-            "minimum": 0
-          },
-          "requested": {
-            "type": "integer",
-            "description": "Albums a request was filed for.",
-            "minimum": 0
-          },
-          "skipped": {
-            "type": "integer",
-            "description": "Albums passed over: the entry names nothing, the album already has a\nlive request, or the press reached its cap.",
-            "minimum": 0
-          }
-        }
       },
       "RequestOrigin": {
         "type": "string",

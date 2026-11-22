@@ -58,17 +58,7 @@ export const createDeletePlaylistV3Mutation = () =>
 		effects: (_data, id) => listAndDetail(id)
 	}));
 
-export type RequestMissingResponseV3 = components['schemas']['RequestMissingResponse'];
-
 /** Ask for the albums a playlist names and the library lacks. */
-export const createRequestMissingV3Mutation = () =>
-	createAppMutation(() => ({
-		mutationFn: (id: string) =>
-			api.v3.POST(
-				v3('/api/v3/playlists/{playlist_id}/request-missing', { path: { playlist_id: id } })
-			),
-		effects: (_data, id) => detail(id)
-	}));
 
 export type PullStateV3 = components['schemas']['PullState'];
 
@@ -92,6 +82,26 @@ export const createCheckPlaylistPullV3Mutation = () =>
 			api.v3.POST(v3('/api/v3/playlists/{playlist_id}/pull-now', { path: { playlist_id: id } })),
 		effects: (_data, id) => detail(id)
 	}));
+
+export type AcquireItemV3 = components['schemas']['AcquireItem'];
+export type AcquireStateV3 = components['schemas']['AcquireState'];
+
+/** Ask for the chosen songs; the run continues in the background. */
+export const createAcquirePlaylistV3Mutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (vars: { id: string; items: AcquireItemV3[] }) =>
+			api.v3.POST(
+				v3('/api/v3/playlists/{playlist_id}/request-missing', {
+					path: { playlist_id: vars.id }
+				}),
+				{ items: vars.items }
+			),
+		effects: (_data, vars) => detail(vars.id)
+	}));
+
+/** The progress of the running batch for one playlist. */
+export const getAcquireProgressV3 = (id: string) =>
+	api.v3.GET(v3('/api/v3/playlists/{playlist_id}/acquire-progress', { path: { playlist_id: id } }));
 
 export const createAddPlaylistTracksV3Mutation = () =>
 	createAppMutation(() => ({
