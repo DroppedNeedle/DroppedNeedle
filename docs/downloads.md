@@ -7,6 +7,7 @@ What happens between pressing Request and the album landing in your library, and
 - [Which edition is fetched](#which-edition-is-fetched)
 - [Single tracks](#single-tracks)
 - [Following artists](#following-artists)
+- [Approvals](#approvals)
 - [When a download finishes](#when-a-download-finishes)
 - [Import naming script](#import-naming-script)
 - [Held files](#held-files)
@@ -43,6 +44,10 @@ Every finished download is checked before it touches the library: the files must
 ## Following artists
 
 Follow an artist and DroppedNeedle checks MusicBrainz for their new releases once a day, a few artists at a time and behind your own page loads, so it never crowds MusicBrainz. The first check only remembers what the artist already has. After that, anything new that matches the server's release types (Settings > Release Types, set by an admin) and that you don't already own shows up under Following > New Releases, with a badge in the sidebar. Turn on auto-download for an artist and new releases are downloaded on their release day: one download per release, even when several people follow the artist, and nothing is fetched if it's already in the library or already downloading. Each download is a request of the follower's, so it shows on their Requests page and counts toward their quota; with the quota full it waits there and starts by itself once there is room. Regular users need an admin to approve auto-download first; trusted users and admins don't. An approval stays until an admin revokes it (Requests > Auto-downloads), so turning auto-download off and on again doesn't need a second one. If MusicBrainz can't be reached, the artist is tried again an hour later.
+
+## Approvals
+
+A regular user's request waits for an admin under Requests > Approvals; trusted users and admins are never asked. A playlist's Request missing from a regular user waits there as one card: the playlist's name, who asked, and Approve all or Reject all. Show the albums lists them with a tick each; Approve then takes only the ticked ones and rejects the rest in the same step. A rejected album stays rejected, and the person who asked hears how many were approved. The tab's count counts a card once.
 
 ## When a download finishes
 
