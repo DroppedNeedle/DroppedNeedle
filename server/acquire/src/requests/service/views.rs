@@ -5,6 +5,11 @@ use std::collections::HashMap;
 
 use super::RequestsService;
 use crate::downloads::state::TaskStatus;
+use crate::requests::batches::models::{
+    ApprovalCard, ApprovalCardItem, ApprovalCardListResponse, BatchSource,
+};
+use crate::requests::batches::rfc3339;
+use crate::requests::batches::store::BatchStore;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{RequestRecord, RequestStatus, validate_mbid};
 use crate::requests::models::{
@@ -162,12 +167,25 @@ impl RequestsService {
         })
     }
 
-    /// Rows waiting for review.
+    /// Rows waiting for review that no approval card holds: a card's
+    /// albums are decided on the card.
+    async fn single_approvals(&self) -> Result<Vec<RequestRecord>, RequestsError> {
+        let on_cards = BatchStore::new(self.library.clone()).card_keys().await?;
+        Ok(self
+            .store
+            .pending_approvals()
+            .await?
+            .into_iter()
+            .filter(|row| !(row.kind == RequestKind::Album && on_cards.contains(&row.key)))
+            .collect())
+    }
+
+    /// Rows waiting for review, an approval card's left out.
     pub async fn pending_approvals(
         &self,
         _admin: &Admin,
     ) -> Result<ActiveRequestsResponse, RequestsError> {
-        let rows = self.store.pending_approvals().await?;
+        let rows = self.single_approvals().await?;
         let items = self.to_items(&rows).await;
         Ok(ActiveRequestsResponse {
             count: items.len() as u32,
@@ -175,18 +193,67 @@ impl RequestsService {
         })
     }
 
-    /// Pending-review badge count: album/track rows plus auto-download units
-    /// plus personal-mix rows.
+    /// Pending-review badge count: album/track rows no card holds, each
+    /// approval card as one, auto-download units and personal-mix rows.
     pub async fn pending_approval_count(
         &self,
         _admin: &Admin,
     ) -> Result<ActiveCountResponse, RequestsError> {
-        let asks = self.store.pending_approvals().await?.len() as u32;
+        let asks = self.single_approvals().await?.len() as u32;
+        let cards = BatchStore::new(self.library.clone())
+            .waiting_cards()
+            .await?
+            .len() as u32;
         let follows = self.follows.pending_units().await?;
         let mixes = self.mixes.pending_count().await?;
         Ok(ActiveCountResponse {
-            count: asks.saturating_add(follows).saturating_add(mixes),
+            count: asks
+                .saturating_add(cards)
+                .saturating_add(follows)
+                .saturating_add(mixes),
         })
+    }
+
+    /// The approval cards, oldest first, each with its waiting albums.
+    pub async fn approval_cards(
+        &self,
+        _admin: &Admin,
+    ) -> Result<ApprovalCardListResponse, RequestsError> {
+        let batches = BatchStore::new(self.library.clone());
+        let mut cards = Vec::new();
+        for card in batches.waiting_cards().await? {
+            let source = BatchSource::parse(&card.source).ok_or_else(|| {
+                RequestsError::internal(&format_args!("unknown batch source {}", card.source))
+            })?;
+            let items: Vec<ApprovalCardItem> = batches
+                .card_items(&card.batch_id)
+                .await?
+                .into_iter()
+                .map(|item| ApprovalCardItem {
+                    cover_url: format!(
+                        "/api/v3/covers/release-group/{}?size=250",
+                        item.musicbrainz_id
+                    ),
+                    musicbrainz_id: item.musicbrainz_id,
+                    title: item.album_name,
+                    artist_name: item.artist_name,
+                    song_count: item.song_count,
+                })
+                .collect();
+            if items.is_empty() {
+                continue;
+            }
+            cards.push(ApprovalCard {
+                id: card.batch_id,
+                source,
+                name: card.name,
+                requester_name: card.requester_name,
+                created_at: rfc3339(card.created_at),
+                waiting: u32::try_from(items.len()).unwrap_or(u32::MAX),
+                items,
+            });
+        }
+        Ok(ApprovalCardListResponse { cards })
     }
 
     /// Wanted watches plus the still-retrying set. Admins see every row.

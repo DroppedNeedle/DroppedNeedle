@@ -965,6 +965,58 @@ impl RequestStore {
             .map_err(|error| lane_error("requests.claim_approval", error))
     }
 
+    /// Decide an approval card's albums in one write: each `(key,
+    /// generation, approve)` still waiting at that generation is approved
+    /// as [`Self::claim_approval`] approves, or rejected as
+    /// [`Self::claim_rejection`] rejects. Answers the approved rows as the
+    /// claim left them and how many were rejected; a row that moved on is
+    /// neither.
+    pub(crate) async fn decide_card(
+        &self,
+        claims: Vec<(String, u64, bool)>,
+        reviewer_name: Option<String>,
+        now: u64,
+    ) -> Result<(Vec<RequestRecord>, u32), RequestsError> {
+        self.db
+            .write("requests.decide_card", move |tx| {
+                let mut approved = Vec::new();
+                let mut rejected = 0_u32;
+                for (key, generation, approve) in claims {
+                    let stored = row_key(RequestKind::Album, &key);
+                    let (statement, status) = if approve {
+                        (sql::CLAIM_APPROVAL.text(), RequestStatus::Pending)
+                    } else {
+                        (sql::CLAIM_REJECTION.text(), RequestStatus::Rejected)
+                    };
+                    let changed = tx.execute(
+                        statement,
+                        params![
+                            stored,
+                            status,
+                            reviewer_name,
+                            ms_from_secs(now),
+                            RequestStatus::AwaitingApproval,
+                            to_i64(generation)
+                        ],
+                    )?;
+                    if changed == 0 {
+                        continue;
+                    }
+                    if approve {
+                        approved.extend(load_record_tx(tx, &stored)?);
+                    } else {
+                        // A rejected album is not downloaded again by its
+                        // watch.
+                        tx.execute(sql::STOP_ROW_WATCH.text(), params![stored])?;
+                        rejected += 1;
+                    }
+                }
+                Ok((approved, rejected))
+            })
+            .await
+            .map_err(|error| lane_error("requests.decide_card", error))
+    }
+
     /// Claim a rejection: `awaiting_approval` becomes `rejected`, and an
     /// album's wanted watch stops in the same write.
     pub async fn claim_rejection(

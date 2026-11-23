@@ -29713,6 +29713,93 @@
         ]
       }
     },
+    "/api/v3/requests/approvals/batches": {
+      "get": {
+        "tags": [
+          "requests"
+        ],
+        "summary": "The approval cards: each playlist press of a plain user whose albums\nwait for approval, decided as one. `GET /api/v3/requests/approvals/batches`.\nAdmin only.",
+        "operationId": "approval_cards_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalCardListResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/requests/approvals/batches/{batch_id}/decide": {
+      "post": {
+        "tags": [
+          "requests"
+        ],
+        "summary": "Decide one approval card: approve the albums named, reject every other\nalbum still waiting on it, in one write.\n`POST /api/v3/requests/approvals/batches/{batch_id}/decide`. Admin only.",
+        "operationId": "decide_card_handler",
+        "parameters": [
+          {
+            "name": "batch_id",
+            "in": "path",
+            "description": "Approval card id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CardDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardDecisionResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such approval card",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/requests/approvals/count": {
       "get": {
         "tags": [
@@ -39610,6 +39697,107 @@
           }
         }
       },
+      "ApprovalCard": {
+        "type": "object",
+        "description": "One press's albums waiting for approval, decided together.",
+        "required": [
+          "id",
+          "source",
+          "name",
+          "requester_name",
+          "created_at",
+          "waiting",
+          "items"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "description": "When (RFC 3339)."
+          },
+          "id": {
+            "type": "string",
+            "description": "The batch id."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApprovalCardItem"
+            },
+            "description": "Every waiting album, in the press's order."
+          },
+          "name": {
+            "type": "string",
+            "description": "The playlist's name when it was pressed."
+          },
+          "requester_name": {
+            "type": "string",
+            "description": "Who pressed it."
+          },
+          "source": {
+            "$ref": "#/components/schemas/BatchSource",
+            "description": "Where the press came from."
+          },
+          "waiting": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Albums still waiting.",
+            "minimum": 0
+          }
+        }
+      },
+      "ApprovalCardItem": {
+        "type": "object",
+        "description": "One album waiting for approval on a card.",
+        "required": [
+          "musicbrainz_id",
+          "title",
+          "artist_name",
+          "cover_url"
+        ],
+        "properties": {
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "cover_url": {
+            "type": "string",
+            "description": "The album's cover route."
+          },
+          "musicbrainz_id": {
+            "type": "string",
+            "description": "MusicBrainz release-group id."
+          },
+          "song_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How many of the playlist's songs it carries.",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string",
+            "description": "Album title."
+          }
+        }
+      },
+      "ApprovalCardListResponse": {
+        "type": "object",
+        "description": "The approval cards, oldest first.",
+        "required": [
+          "cards"
+        ],
+        "properties": {
+          "cards": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApprovalCard"
+            },
+            "description": "Cards with an album still waiting."
+          }
+        }
+      },
       "ApproveBody": {
         "type": "object",
         "description": "Approve a review with the curator's chosen candidate.",
@@ -41736,6 +41924,14 @@
           "not_requested"
         ]
       },
+      "BatchSource": {
+        "type": "string",
+        "description": "Where a request batch came from.",
+        "enum": [
+          "discover",
+          "playlist"
+        ]
+      },
       "BecauseYouListenTo": {
         "type": "object",
         "description": "One \"because you listen to\" shelf: seed plus similar albums.",
@@ -42333,6 +42529,48 @@
               "$ref": "#/components/schemas/TrackEvidenceView"
             },
             "description": "How each of the album's files fits this release."
+          }
+        }
+      },
+      "CardDecision": {
+        "type": "object",
+        "description": "One decision on a card: the albums to approve. Every other album\nstill waiting on it is rejected in the same write.",
+        "properties": {
+          "approve": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Release-group ids to approve; empty rejects them all."
+          }
+        }
+      },
+      "CardDecisionResult": {
+        "type": "object",
+        "description": "What a decision on a card did.",
+        "required": [
+          "approved",
+          "rejected",
+          "skipped"
+        ],
+        "properties": {
+          "approved": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Albums approved.",
+            "minimum": 0
+          },
+          "rejected": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Albums rejected.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Ids that named no album still waiting on the card.",
+            "minimum": 0
           }
         }
       },
@@ -65459,6 +65697,43 @@
           "stop"
         ]
       },
+      "RequestsDecided": {
+        "type": "object",
+        "description": "`requests_decided`: an admin decided one of the user's approval cards,\nthe albums one playlist press asked for.",
+        "required": [
+          "event_id",
+          "batch_id",
+          "name",
+          "approved",
+          "rejected"
+        ],
+        "properties": {
+          "approved": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Albums approved.",
+            "minimum": 0
+          },
+          "batch_id": {
+            "type": "string",
+            "description": "The card's batch."
+          },
+          "event_id": {
+            "type": "string",
+            "description": "Id for de-duplication."
+          },
+          "name": {
+            "type": "string",
+            "description": "The playlist's name when it was pressed."
+          },
+          "rejected": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Albums rejected.",
+            "minimum": 0
+          }
+        }
+      },
       "RequestsRefreshResponse": {
         "type": "object",
         "description": "Personal-mix refresh outcome. The schema renames to avoid discover's\nunrelated `RefreshResponse` in the shared document.",
@@ -70052,6 +70327,26 @@
                 "type": "string",
                 "enum": [
                   "search_job_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To one user: an admin decided their approval card.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/RequestsDecided",
+                "description": "To one user: an admin decided their approval card."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "requests_decided"
                 ]
               }
             }

@@ -14,8 +14,9 @@ use axum::{
 };
 use droppedneedle_auth::{Admin, User};
 use droppedneedle_kernel::error::ApiError;
-use droppedneedle_kernel::extract::ValidQuery;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
+use super::batches::models::{ApprovalCardListResponse, CardDecision, CardDecisionResult};
 use super::error::RequestsError;
 use super::http::{decided_reply, mix_reply};
 use super::models::{
@@ -121,6 +122,51 @@ pub async fn approvals_count_handler(
     Ok(Json(
         RequestsService::new(&state)
             .pending_approval_count(&admin)
+            .await?,
+    ))
+}
+
+/// The approval cards: each playlist press of a plain user whose albums
+/// wait for approval, decided as one. `GET /api/v3/requests/approvals/batches`.
+/// Admin only.
+#[utoipa::path(
+    get,
+    tag = "requests",
+    path = "/api/v3/requests/approvals/batches",
+    responses((status = 200, body = ApprovalCardListResponse))
+)]
+pub async fn approval_cards_handler(
+    State(state): State<RequestsState>,
+    admin: Admin,
+) -> Result<Json<ApprovalCardListResponse>, ApiError> {
+    Ok(Json(
+        RequestsService::new(&state).approval_cards(&admin).await?,
+    ))
+}
+
+/// Decide one approval card: approve the albums named, reject every other
+/// album still waiting on it, in one write.
+/// `POST /api/v3/requests/approvals/batches/{batch_id}/decide`. Admin only.
+#[utoipa::path(
+    post,
+    tag = "requests",
+    path = "/api/v3/requests/approvals/batches/{batch_id}/decide",
+    params(("batch_id" = String, Path, description = "Approval card id")),
+    request_body = CardDecision,
+    responses(
+        (status = 200, body = CardDecisionResult),
+        (status = 404, description = "No such approval card"),
+    )
+)]
+pub async fn decide_card_handler(
+    State(state): State<RequestsState>,
+    admin: Admin,
+    Path(batch_id): Path<String>,
+    ValidJson(body): ValidJson<CardDecision>,
+) -> Result<Json<CardDecisionResult>, ApiError> {
+    Ok(Json(
+        RequestsService::new(&state)
+            .decide_card(&admin, &batch_id, &body.approve)
             .await?,
     ))
 }

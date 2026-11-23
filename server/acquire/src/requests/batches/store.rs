@@ -3,6 +3,8 @@
 //! requests, in their one transaction ([`NewBatch::insert_tx`]); the store
 //! reads batches and forgets them.
 
+use std::collections::HashSet;
+
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::models::{BatchOutcome, BatchSource};
@@ -183,6 +185,40 @@ impl BatchStore {
                         request_generation: None,
                     })
                 })?
+                .collect()
+        })
+        .await
+    }
+
+    /// The approval cards, oldest first.
+    pub(crate) async fn waiting_cards(&self) -> Result<Vec<sql::WaitingCard>, RequestsError> {
+        read(&self.db, "requests.batches.cards", move |conn| {
+            conn.prepare_cached(sql::WAITING_CARDS.text())?
+                .query_map([], sql::WaitingCard::read)?
+                .collect()
+        })
+        .await
+    }
+
+    /// The albums waiting for approval on card `batch_id`.
+    pub(crate) async fn card_items(
+        &self,
+        batch_id: &str,
+    ) -> Result<Vec<sql::CardItem>, RequestsError> {
+        let batch_id = batch_id.to_owned();
+        read(&self.db, "requests.batches.card_items", move |conn| {
+            conn.prepare_cached(sql::CARD_ITEMS.text())?
+                .query_map(params![batch_id], sql::CardItem::read)?
+                .collect()
+        })
+        .await
+    }
+
+    /// The album keys waiting for approval on any card.
+    pub(crate) async fn card_keys(&self) -> Result<HashSet<String>, RequestsError> {
+        read(&self.db, "requests.batches.card_keys", move |conn| {
+            conn.prepare_cached(sql::CARD_KEYS.text())?
+                .query_map([], |row| row.get(0))?
                 .collect()
         })
         .await

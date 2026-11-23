@@ -83,7 +83,7 @@ fn store_failure(error: StoreError) -> RequestsError {
 }
 
 /// A stored millisecond time as RFC 3339, as the routes answer it.
-fn rfc3339(millis: i64) -> String {
+pub(crate) fn rfc3339(millis: i64) -> String {
     time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(millis) * 1_000_000)
         .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
         .format(&time::format_description::well_known::Rfc3339)

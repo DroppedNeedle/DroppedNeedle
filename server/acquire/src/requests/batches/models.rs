@@ -154,6 +154,67 @@ pub struct DiscoveryBatchListResponse {
     pub batches: Vec<DiscoveryBatchSummary>,
 }
 
+/// One album waiting for approval on a card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct ApprovalCardItem {
+    /// MusicBrainz release-group id.
+    pub musicbrainz_id: String,
+    /// Album title.
+    pub title: String,
+    /// Artist name.
+    pub artist_name: String,
+    /// The album's cover route.
+    pub cover_url: String,
+    /// How many of the playlist's songs it carries.
+    pub song_count: Option<u32>,
+}
+
+/// One press's albums waiting for approval, decided together.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct ApprovalCard {
+    /// The batch id.
+    pub id: String,
+    /// Where the press came from.
+    pub source: BatchSource,
+    /// The playlist's name when it was pressed.
+    pub name: String,
+    /// Who pressed it.
+    pub requester_name: String,
+    /// When (RFC 3339).
+    pub created_at: String,
+    /// Albums still waiting.
+    pub waiting: u32,
+    /// Every waiting album, in the press's order.
+    pub items: Vec<ApprovalCardItem>,
+}
+
+/// The approval cards, oldest first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct ApprovalCardListResponse {
+    /// Cards with an album still waiting.
+    pub cards: Vec<ApprovalCard>,
+}
+
+/// One decision on a card: the albums to approve. Every other album
+/// still waiting on it is rejected in the same write.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct CardDecision {
+    /// Release-group ids to approve; empty rejects them all.
+    #[serde(default)]
+    pub approve: Vec<String>,
+}
+
+/// What a decision on a card did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct CardDecisionResult {
+    /// Albums approved.
+    pub approved: u32,
+    /// Albums rejected.
+    pub rejected: u32,
+    /// Ids that named no album still waiting on the card.
+    pub skipped: u32,
+}
+
 /// What removing a batch did.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DiscoveryBatchRemoveResult {

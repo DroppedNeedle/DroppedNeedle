@@ -59,6 +59,8 @@ pub fn routes() -> Routes<RequestsState> {
         .user(routes!(wanted_clear_finished_handler))
         .admin(routes!(approvals_handler))
         .admin(routes!(approvals_count_handler))
+        .admin(routes!(approval_cards_handler))
+        .admin(routes!(decide_card_handler))
         .admin(routes!(approve_handler))
         .admin(routes!(reject_handler))
         .admin(routes!(mix_approvals_handler))

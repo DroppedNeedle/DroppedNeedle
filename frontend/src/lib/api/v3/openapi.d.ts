@@ -7628,6 +7628,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/requests/approvals/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The approval cards: each playlist press of a plain user whose albums
+         *     wait for approval, decided as one. `GET /api/v3/requests/approvals/batches`.
+         *     Admin only.
+         */
+        get: operations["approval_cards_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/requests/approvals/batches/{batch_id}/decide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide one approval card: approve the albums named, reject every other
+         *     album still waiting on it, in one write.
+         *     `POST /api/v3/requests/approvals/batches/{batch_id}/decide`. Admin only.
+         */
+        post: operations["decide_card_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/requests/approvals/count": {
         parameters: {
             query?: never;
@@ -11361,6 +11403,47 @@ export interface components {
             /** @description Batch count. */
             count: number;
         };
+        /** @description One press's albums waiting for approval, decided together. */
+        ApprovalCard: {
+            /** @description When (RFC 3339). */
+            created_at: string;
+            /** @description The batch id. */
+            id: string;
+            /** @description Every waiting album, in the press's order. */
+            items: components["schemas"]["ApprovalCardItem"][];
+            /** @description The playlist's name when it was pressed. */
+            name: string;
+            /** @description Who pressed it. */
+            requester_name: string;
+            /** @description Where the press came from. */
+            source: components["schemas"]["BatchSource"];
+            /**
+             * Format: int32
+             * @description Albums still waiting.
+             */
+            waiting: number;
+        };
+        /** @description One album waiting for approval on a card. */
+        ApprovalCardItem: {
+            /** @description Artist name. */
+            artist_name: string;
+            /** @description The album's cover route. */
+            cover_url: string;
+            /** @description MusicBrainz release-group id. */
+            musicbrainz_id: string;
+            /**
+             * Format: int32
+             * @description How many of the playlist's songs it carries.
+             */
+            song_count?: number | null;
+            /** @description Album title. */
+            title: string;
+        };
+        /** @description The approval cards, oldest first. */
+        ApprovalCardListResponse: {
+            /** @description Cards with an album still waiting. */
+            cards: components["schemas"]["ApprovalCard"][];
+        };
         /** @description Approve a review with the curator's chosen candidate. */
         ApproveBody: {
             /** @description Candidate key from the review. */
@@ -12282,6 +12365,11 @@ export interface components {
          * @enum {string}
          */
         BatchOutcome: "requested" | "skipped_in_library" | "skipped_duplicate" | "not_requested";
+        /**
+         * @description Where a request batch came from.
+         * @enum {string}
+         */
+        BatchSource: "discover" | "playlist";
         /** @description One "because you listen to" shelf: seed plus similar albums. */
         BecauseYouListenTo: {
             /** @description Banner art URL, when resolved. */
@@ -12630,6 +12718,32 @@ export interface components {
             supported_tracks: number;
             /** @description How each of the album's files fits this release. */
             track_evidence: components["schemas"]["TrackEvidenceView"][];
+        };
+        /**
+         * @description One decision on a card: the albums to approve. Every other album
+         *     still waiting on it is rejected in the same write.
+         */
+        CardDecision: {
+            /** @description Release-group ids to approve; empty rejects them all. */
+            approve?: string[];
+        };
+        /** @description What a decision on a card did. */
+        CardDecisionResult: {
+            /**
+             * Format: int32
+             * @description Albums approved.
+             */
+            approved: number;
+            /**
+             * Format: int32
+             * @description Albums rejected.
+             */
+            rejected: number;
+            /**
+             * Format: int32
+             * @description Ids that named no album still waiting on the card.
+             */
+            skipped: number;
         };
         /** @description An applied correction, as recorded in the audit row and returned. */
         CatalogCorrectionResponse: {
@@ -23058,6 +23172,28 @@ export interface components {
          */
         RequestedControl: "none" | "pause" | "stop";
         /**
+         * @description `requests_decided`: an admin decided one of the user's approval cards,
+         *     the albums one playlist press asked for.
+         */
+        RequestsDecided: {
+            /**
+             * Format: int32
+             * @description Albums approved.
+             */
+            approved: number;
+            /** @description The card's batch. */
+            batch_id: string;
+            /** @description Id for de-duplication. */
+            event_id: string;
+            /** @description The playlist's name when it was pressed. */
+            name: string;
+            /**
+             * Format: int32
+             * @description Albums rejected.
+             */
+            rejected: number;
+        };
+        /**
          * @description Personal-mix refresh outcome. The schema renames to avoid discover's
          *     unrelated `RefreshResponse` in the shared document.
          */
@@ -25034,6 +25170,11 @@ export interface components {
             data: components["schemas"]["SearchJobUpdated"];
             /** @enum {string} */
             event: "search_job_updated";
+        } | {
+            /** @description To one user: an admin decided their approval card. */
+            data: components["schemas"]["RequestsDecided"];
+            /** @enum {string} */
+            event: "requests_decided";
         };
         /** @description Typeahead response: one merged list across buckets, best first. */
         SuggestResponse: {
@@ -47217,6 +47358,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActiveRequestsResponse"];
+                };
+            };
+        };
+    };
+    approval_cards_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalCardListResponse"];
+                };
+            };
+        };
+    };
+    decide_card_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Approval card id */
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CardDecision"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardDecisionResult"];
+                };
+            };
+            /** @description No such approval card */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

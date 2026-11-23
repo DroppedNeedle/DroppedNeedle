@@ -4,11 +4,17 @@ use super::{
     Dispatched, RequestsService, cancel_linked, dispatch_fault, record_title, stored_dispatch,
 };
 use crate::dispatch::{DispatchError, DispatchOrigin, DispatchTarget};
+use std::collections::HashSet;
+
+use crate::db::to_u64;
 use crate::requests::auth::auto_approves;
+use crate::requests::batches::models::{BatchSource, CardDecisionResult};
+use crate::requests::batches::store::BatchStore;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{CancelDecision, RequestRecord, RequestStatus, validate_mbid};
 use crate::requests::models::{ClearHistoryResponse, RequestKind};
 use droppedneedle_auth::{Admin, Principal};
+use droppedneedle_kernel::events::{RequestsDecided, UserNotice, new_event_id};
 
 /// How an admin's stop of one row's download ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,6 +290,125 @@ impl RequestsService {
             Dispatched::Linked(_) => Ok(Decided::Approved {
                 title: record_title(&record),
             }),
+        }
+    }
+
+    /// Decide one approval card in one write: the albums in `approve`
+    /// still waiting on it are approved and every other album waiting on it
+    /// is rejected. Each approved album then starts its download as a
+    /// single approval does; one a crash or a busy database leaves
+    /// unstarted reads authorized and is started by the waiting pass. The
+    /// card's requester hears the outcome once.
+    pub async fn decide_card(
+        &self,
+        admin: &Admin,
+        batch_id: &str,
+        approve: &[String],
+    ) -> Result<CardDecisionResult, RequestsError> {
+        let batches = BatchStore::new(self.library.clone());
+        let head = batches
+            .head(batch_id)
+            .await?
+            .filter(|head| head.source == BatchSource::Playlist)
+            .ok_or(RequestsError::NotFound)?;
+        let waiting = batches.card_items(&head.id).await?;
+        let wanted: HashSet<String> = approve
+            .iter()
+            .map(|id| id.trim().to_ascii_lowercase())
+            .collect();
+        let on_card: HashSet<&str> = waiting
+            .iter()
+            .map(|item| item.musicbrainz_id.as_str())
+            .collect();
+        let skipped = wanted
+            .iter()
+            .filter(|id| !on_card.contains(id.as_str()))
+            .count();
+        let claims = waiting
+            .iter()
+            .map(|item| {
+                (
+                    item.musicbrainz_id.clone(),
+                    to_u64(item.generation),
+                    wanted.contains(&item.musicbrainz_id),
+                )
+            })
+            .collect();
+        let now = self.now_epoch();
+        let (approved, rejected) = self
+            .store
+            .decide_card(claims, Some(admin.username_display().to_owned()), now)
+            .await?;
+        let approved_count = u32::try_from(approved.len()).unwrap_or(u32::MAX);
+        // The requester hears as soon as the decision is written, whatever
+        // starting the downloads then comes to.
+        if approved_count > 0 || rejected > 0 {
+            self.events.notify(
+                &head.user_id,
+                UserNotice::RequestsDecided(RequestsDecided {
+                    event_id: new_event_id(),
+                    batch_id: head.id.clone(),
+                    name: head.name.clone(),
+                    approved: approved_count,
+                    rejected,
+                }),
+            );
+        }
+        for claimed in &approved {
+            self.start_card_album(admin, claimed, now).await;
+        }
+        Ok(CardDecisionResult {
+            approved: approved_count,
+            rejected,
+            skipped: u32::try_from(skipped).unwrap_or(u32::MAX),
+        })
+    }
+
+    /// Start the download of one album a card approved. A busy database
+    /// leaves it to the waiting pass; a dispatch that fails reads failed,
+    /// as a single approval's does.
+    async fn start_card_album(&self, admin: &Admin, claimed: &RequestRecord, now: u64) {
+        let owner = claimed
+            .user_id
+            .clone()
+            .unwrap_or_else(|| admin.user_id().to_owned());
+        let request = stored_dispatch(claimed, DispatchOrigin::Approval, &owner);
+        match self
+            .dispatch_and_link(
+                RequestKind::Album,
+                &claimed.key,
+                &request,
+                claimed.generation,
+            )
+            .await
+        {
+            Ok(Dispatched::Linked(_) | Dispatched::Stale) => {}
+            Ok(Dispatched::Failed(DispatchError::Busy { .. }))
+            | Err(RequestsError::Busy { .. }) => {
+                tracing::info!(
+                    key = %claimed.key,
+                    "approved album left to the waiting pass: the database was busy"
+                );
+            }
+            Ok(Dispatched::Failed(DispatchError::Failed(cause))) => {
+                tracing::error!(%cause, "approved dispatch failed");
+                if let Err(error) = self
+                    .store
+                    .update_status(
+                        RequestKind::Album,
+                        &claimed.key,
+                        RequestStatus::Failed,
+                        Some(now),
+                        Some(claimed.generation),
+                    )
+                    .await
+                {
+                    tracing::warn!(key = %claimed.key, ?error, "approved album not marked failed");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(key = %claimed.key, ?error, "approved album did not start");
+            }
         }
     }
 

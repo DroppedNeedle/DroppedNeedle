@@ -519,6 +519,53 @@ droppedneedle_kernel::sql! {
     pub(crate) INSERT_BATCH_ITEM = "INSERT INTO acquire_discovery_batch_items (batch_id, \
          release_group_mbid, artist_mbid, album_name, artist_name, outcome, added_at, \
          song_count, request_generation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
+    /// Batch album `i` of batch `b` and the request `h` its press made: the
+    /// same album, the generation the filing won and the presser's own, so
+    /// a later request for the album is never the card's.
+    fragment CARD_REQUEST = "h.musicbrainz_id_lower = lower(i.release_group_mbid) \
+         AND h.request_kind = 'album' AND h.generation = i.request_generation \
+         AND h.user_id = b.user_id";
+    /// The playlist batches with an album whose request waits for
+    /// approval, oldest first: the approval cards.
+    pub(crate) WAITING_CARDS = "SELECT b.id AS batch_id, b.source, b.name, b.created_at, \
+         COALESCE(u.display_name, u.username, '') AS requester_name \
+         FROM acquire_discovery_batches b LEFT JOIN auth_users u ON u.id = b.user_id \
+         WHERE b.source = 'playlist' AND EXISTS (SELECT 1 \
+           FROM acquire_discovery_batch_items i JOIN request_history h ON " + CARD_REQUEST + " \
+           WHERE i.batch_id = b.id AND i.outcome = 'requested' \
+           AND h.status = 'awaiting_approval') \
+         ORDER BY b.created_at, b.id";
+    /// One approval card.
+    pub(crate) row WaitingCard for [WAITING_CARDS] {
+        batch_id: String,
+        source: String,
+        name: String,
+        created_at: i64,
+        requester_name: String,
+    }
+    /// Playlist batch `?1`'s albums whose requests wait for approval, in
+    /// the press's order, each with its request's generation.
+    pub(crate) CARD_ITEMS = "SELECT lower(i.release_group_mbid) AS musicbrainz_id, \
+         i.album_name, i.artist_name, i.song_count, h.generation \
+         FROM acquire_discovery_batch_items i JOIN acquire_discovery_batches b ON b.id = i.batch_id \
+         JOIN request_history h ON " + CARD_REQUEST + " \
+         WHERE i.batch_id = ?1 AND b.source = 'playlist' AND i.outcome = 'requested' \
+           AND h.status = 'awaiting_approval' \
+         ORDER BY i.added_at, i.rowid";
+    /// One album waiting on an approval card.
+    pub(crate) row CardItem for [CARD_ITEMS] {
+        musicbrainz_id: String,
+        album_name: String,
+        artist_name: String,
+        song_count: Option<u32>,
+        generation: i64,
+    }
+    /// The album keys waiting for approval on an approval card.
+    pub(crate) CARD_KEYS = "SELECT DISTINCT lower(i.release_group_mbid) \
+         FROM acquire_discovery_batch_items i JOIN acquire_discovery_batches b ON b.id = i.batch_id \
+         JOIN request_history h ON " + CARD_REQUEST + " \
+         WHERE b.source = 'playlist' AND i.outcome = 'requested' \
+           AND h.status = 'awaiting_approval'";
     /// Drop album `?2` from batch `?1`.
     pub(crate) DELETE_BATCH_ITEM = "DELETE FROM acquire_discovery_batch_items \
          WHERE batch_id = ?1 AND release_group_mbid = ?2";

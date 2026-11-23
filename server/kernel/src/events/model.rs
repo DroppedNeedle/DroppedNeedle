@@ -77,6 +77,8 @@ pub mod names {
     pub const DOWNLOAD_PROGRESS: &str = "download_progress";
     /// One of the user's manual album searches moved.
     pub const SEARCH_JOB_UPDATED: &str = "search_job_updated";
+    /// An admin decided the user's approval card.
+    pub const REQUESTS_DECIDED: &str = "requests_decided";
     /// The download queue changed (a task was added, moved status,
     /// switched source or was removed, or a held file came or went).
     pub const DOWNLOADS_CHANGED: &str = "downloads.changed";
@@ -84,7 +86,7 @@ pub mod names {
     pub const CACHE_SYNC: &str = "cache.sync";
 
     /// Every event name the stream sends.
-    pub const ALL: [&str; 15] = [
+    pub const ALL: [&str; 16] = [
         ACTIVITY_CHANGED,
         NOW_PLAYING,
         WANTED_NEW_CANDIDATES,
@@ -98,6 +100,7 @@ pub mod names {
         CONCERTS_NEW,
         DOWNLOAD_PROGRESS,
         SEARCH_JOB_UPDATED,
+        REQUESTS_DECIDED,
         DOWNLOADS_CHANGED,
         CACHE_SYNC,
     ];
@@ -155,6 +158,9 @@ pub enum StreamEvent {
     /// To one user: one of their manual album searches moved.
     #[serde(rename = "search_job_updated")]
     SearchJobUpdated(SearchJobUpdated),
+    /// To one user: an admin decided their approval card.
+    #[serde(rename = "requests_decided")]
+    RequestsDecided(RequestsDecided),
 }
 
 /// A fresh id the web UI uses to drop an event it has already shown (a
@@ -241,6 +247,22 @@ pub struct RequestImported {
     pub artist_name: String,
     /// Album title.
     pub album_title: String,
+}
+
+/// `requests_decided`: an admin decided one of the user's approval cards,
+/// the albums one playlist press asked for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct RequestsDecided {
+    /// Id for de-duplication.
+    pub event_id: String,
+    /// The card's batch.
+    pub batch_id: String,
+    /// The playlist's name when it was pressed.
+    pub name: String,
+    /// Albums approved.
+    pub approved: u32,
+    /// Albums rejected.
+    pub rejected: u32,
 }
 
 /// `playlist_imported`: an imported playlist has its tracks.
@@ -411,6 +433,8 @@ pub enum UserNotice {
     DownloadProgress(DownloadProgress),
     /// `search_job_updated`.
     SearchJobUpdated(SearchJobUpdated),
+    /// `requests_decided`.
+    RequestsDecided(RequestsDecided),
 }
 
 impl UserNotice {
@@ -428,6 +452,7 @@ impl UserNotice {
             Self::ConcertsNew(_) => names::CONCERTS_NEW,
             Self::DownloadProgress(_) => names::DOWNLOAD_PROGRESS,
             Self::SearchJobUpdated(_) => names::SEARCH_JOB_UPDATED,
+            Self::RequestsDecided(_) => names::REQUESTS_DECIDED,
         }
     }
 
@@ -444,6 +469,7 @@ impl UserNotice {
             Self::ConcertsNew(payload) => serde_json::to_string(payload),
             Self::DownloadProgress(payload) => serde_json::to_string(payload),
             Self::SearchJobUpdated(payload) => serde_json::to_string(payload),
+            Self::RequestsDecided(payload) => serde_json::to_string(payload),
         }
     }
 }

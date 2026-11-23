@@ -123,8 +123,22 @@ export const EVENT_TABLE: { [N in ServerEventName]: EventEntry<N> } = {
 	download_progress: {},
 	search_job_updated: {
 		effects: (data, { userId }) => [searchJobChanged(userId, data.job_id)]
+	},
+	requests_decided: {
+		effects: (_, { userId }) => [requestsChanged(userId)],
+		toast: (data) => ({
+			id: `requests-decided:${data.event_id}`,
+			message: decidedMessage(data),
+			type: data.approved > 0 ? 'success' : 'info'
+		})
 	}
 };
+
+function decidedMessage(data: ServerEventData<'requests_decided'>): string {
+	const total = data.approved + data.rejected;
+	const albums = total === 1 ? 'album' : 'albums';
+	return `${data.approved} of your ${total} ${albums} from ${data.name} ${data.approved === 1 ? 'was' : 'were'} approved.`;
+}
 
 function mixMessage(data: ServerEventData<'personal_mix_refreshed'>): string {
 	if (data.skipped) {

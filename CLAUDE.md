@@ -846,6 +846,13 @@ Run from the repo root. `make help` lists every target.
   whether or not it answers right now. A request made while no source is
   ready is held and starts by itself when one is saved. It is never
   refused or lost.
+- A request batch (`acquire/src/requests/batches/`) has a source:
+  Discover's "Download all" or a playlist's Request missing
+  (`acquire/src/playlist_requests/`). Discover's batch list, detail and
+  remove read only Discover's. A plain user's playlist press is one
+  approval card: one decide call approves the albums ticked and rejects
+  the rest in the same write, and the Approvals count counts a card as
+  one.
 - Every file kept for a person's decision (a held download, an upload
   waiting for review, a file the import folder could not place) is an
   entry in acquire's one held list (`acquire/src/held/`). Copies in the
