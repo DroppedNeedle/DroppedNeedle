@@ -1107,18 +1107,36 @@ async fn an_artist_with_nothing_to_offer_is_not_asked_again_the_next_day() {
     assert_eq!(wire.sent().len(), asked, "nothing was asked again");
 }
 
-/// A release group whose secondary types name a live set, a demo or a
-/// compilation is never offered; one with none, or other types, is, and so
-/// is a row nothing is known about. A row whose credit leaves the artist
+/// A release group whose secondary types name a live set, a demo, a
+/// compilation, a soundtrack, a remix album, a DJ mix or a spoken record
+/// (in any case) is never offered; one with none, or other types, is, and
+/// so is a row nothing is known about. A row whose credit leaves the artist
 /// out is dropped.
 #[test]
-fn live_sets_demos_and_compilations_are_left_out() {
+fn left_out_release_kinds_are_never_offered() {
     let credited = Some(&[RADIOHEAD][..]);
-    for kind in ["Live", "Demo", "Compilation"] {
-        let row = faceted(Some("Album"), Some(&["Soundtrack", kind]), credited);
+    for kind in [
+        "Live",
+        "Demo",
+        "Compilation",
+        "Soundtrack",
+        "Remix",
+        "DJ-mix",
+        "Spokenword",
+        "Interview",
+        "Audiobook",
+        "Audio drama",
+        "audio DRAMA",
+    ] {
+        let row = faceted(Some("Album"), Some(&["Mixtape/Street", kind]), credited);
         assert!(!gate::may_offer(&row, RADIOHEAD), "{kind}");
     }
-    for secondary in [Some(&[][..]), Some(&["Soundtrack"][..]), None] {
+    for secondary in [
+        Some(&[][..]),
+        Some(&["Mixtape/Street"][..]),
+        Some(&["Field recording"][..]),
+        None,
+    ] {
         let row = faceted(Some("EP"), secondary, credited);
         assert!(gate::may_offer(&row, RADIOHEAD), "{secondary:?}");
     }

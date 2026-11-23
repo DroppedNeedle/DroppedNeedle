@@ -1,15 +1,29 @@
 //! What may be offered as one artist's album: a release group whose
-//! primary type is Album or EP, that is not a live set, demo or
-//! compilation, and that credits the artist. Every read of an artist's
-//! albums answers through it, so no surface offers a single as an album
-//! or files another artist's album under this one. A fact that is not
-//! known passes its test: rows kept before the facts were read, and
-//! ListenBrainz's rows, which carry no secondary types.
+//! primary type is Album or EP, that is not a live set, demo, compilation,
+//! soundtrack, remix album, DJ mix or spoken record (spoken word, an
+//! interview, an audiobook, an audio drama), and that credits the artist.
+//! Every read of an artist's albums answers through it, so no surface
+//! offers a single as an album or files another artist's album under this
+//! one. A fact that is not known passes its test: rows kept before the
+//! facts were read, and ListenBrainz's rows, which carry no secondary
+//! types.
 
 use super::rows::{AlbumRow, RankedAlbum};
 
-/// Secondary types that keep a release group off every album shelf.
-const LEFT_OUT: [&str; 3] = ["Live", "Demo", "Compilation"];
+/// Secondary types that keep a release group off every album shelf, as
+/// MusicBrainz spells them; compared ignoring case.
+const LEFT_OUT: [&str; 10] = [
+    "Live",
+    "Demo",
+    "Compilation",
+    "Soundtrack",
+    "Remix",
+    "DJ-mix",
+    "Spokenword",
+    "Interview",
+    "Audiobook",
+    "Audio drama",
+];
 
 /// Whether `album` may be offered as an album by `artist_mbid`.
 pub fn may_offer(album: &AlbumRow, artist_mbid: &str) -> bool {
