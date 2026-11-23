@@ -126,6 +126,9 @@ pub struct NewEntry {
     /// The recording `source_type` gave for this entry, lowercase, when
     /// known.
     pub recording_mbid: Option<String>,
+    /// The ISRC a playlist file gave for an entry the library lacked,
+    /// uppercased.
+    pub isrc: Option<String>,
 }
 
 /// Uploaded cover bytes.
@@ -621,6 +624,7 @@ fn insert_entries(
             entry.plex_rating_key,
             entry.library_file_id,
             entry.recording_mbid,
+            entry.isrc,
         ])?;
         added.push(id);
     }

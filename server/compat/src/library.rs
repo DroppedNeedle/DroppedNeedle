@@ -806,6 +806,7 @@ impl CompatLibrary {
                 plex_rating_key: None,
                 library_file_id: Some(track.id),
                 recording_mbid: None,
+                isrc: None,
             })
             .collect())
     }

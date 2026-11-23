@@ -23,6 +23,7 @@ const EXPORT_COLUMNS: Columns = Columns {
     path: Some(5),
     track_number: None,
     disc_number: None,
+    isrc: None,
 };
 /// Header names each column is read from, lowercased. The header test and
 /// the column lookup both read these, so they cannot drift apart.
@@ -33,6 +34,8 @@ const PATH_NAMES: &[&str] = &["path"];
 /// Track and disc numbers, read when the export writes them.
 const TRACK_NUMBER_NAMES: &[&str] = &["track number", "track no"];
 const DISC_NUMBER_NAMES: &[&str] = &["disc number", "disc no", "disc", "disk number"];
+/// The song's ISRC, which Exportify and others write.
+const ISRC_NAMES: &[&str] = &["isrc"];
 /// Other columns the common exports write. They mark a header row but are
 /// not read.
 const OTHER_NAMES: &[&str] = &["album artist", "duration"];
@@ -53,6 +56,8 @@ pub(crate) struct ParsedEntry {
     pub track_number: Option<i32>,
     /// Disc number the file gives, when it gives one.
     pub disc_number: Option<i32>,
+    /// The ISRC the file gives, uppercased, when it gives a well-formed one.
+    pub isrc: Option<String>,
 }
 
 /// What a file holds: its first [`MAX_IMPORT_ENTRIES`] entries in file
@@ -100,11 +105,13 @@ pub(crate) fn unmatched(entry: &ParsedEntry, reason: ImportUnmatchedReason) -> I
     }
 }
 
-/// Extended M3U: an `#EXTINF` line names the next path's artist and title;
-/// a path-only file names neither. Other directives are skipped.
+/// Extended M3U: an `#EXTINF` line names the next path's artist and title,
+/// and an `#EXTALB:` line its album; a path-only file names neither. Other
+/// directives are skipped.
 fn parse_m3u(content: &str) -> Parsed {
     let mut parsed = Parsed::default();
     let mut pending: Option<&str> = None;
+    let mut album: Option<&str> = None;
     for raw in content.lines() {
         let line = raw.trim();
         if line.is_empty() {
@@ -114,10 +121,15 @@ fn parse_m3u(content: &str) -> Parsed {
             pending = Some(rest);
             continue;
         }
+        if let Some(rest) = line.strip_prefix("#EXTALB:") {
+            album = Some(rest.trim());
+            continue;
+        }
         if line.starts_with('#') {
             continue;
         }
         let extinf = pending.take();
+        let entry_album = album.take().unwrap_or_default();
         parsed.take(|| {
             let (artist, title) = match extinf {
                 Some(rest) => extinf_names(rest),
@@ -126,10 +138,11 @@ fn parse_m3u(content: &str) -> Parsed {
             ParsedEntry {
                 title,
                 artist,
-                album: String::new(),
+                album: entry_album.to_owned(),
                 path: line.to_owned(),
                 track_number: None,
                 disc_number: None,
+                isrc: None,
             }
         });
     }
@@ -155,6 +168,7 @@ struct Columns {
     path: Option<usize>,
     track_number: Option<usize>,
     disc_number: Option<usize>,
+    isrc: Option<usize>,
 }
 
 impl Columns {
@@ -176,6 +190,7 @@ impl Columns {
             PATH_NAMES,
             TRACK_NUMBER_NAMES,
             DISC_NUMBER_NAMES,
+            ISRC_NAMES,
             OTHER_NAMES,
         ];
         let is_header = header
@@ -191,6 +206,7 @@ impl Columns {
             path: column(PATH_NAMES),
             track_number: column(TRACK_NUMBER_NAMES),
             disc_number: column(DISC_NUMBER_NAMES),
+            isrc: column(ISRC_NAMES),
         })
     }
 }
@@ -230,7 +246,32 @@ fn csv_entry(row: &[String], columns: Columns) -> ParsedEntry {
         path: cell(columns.path),
         track_number: number(row, columns.track_number),
         disc_number: number(row, columns.disc_number),
+        isrc: isrc(&cell(columns.isrc)),
     }
+}
+
+/// An ISRC cell as stored: uppercased, without the hyphens some exports
+/// write, and only when it is well formed.
+fn isrc(cell: &str) -> Option<String> {
+    let isrc: String = cell
+        .chars()
+        .filter(|character| *character != '-')
+        .collect::<String>()
+        .trim()
+        .to_ascii_uppercase();
+    is_isrc(&isrc).then_some(isrc)
+}
+
+/// `CC XXX YY NNNNN`: two letters, three letters or digits, then seven
+/// digits.
+fn is_isrc(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 12
+        && bytes[..2].iter().all(u8::is_ascii_uppercase)
+        && bytes[2..5]
+            .iter()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        && bytes[5..].iter().all(u8::is_ascii_digit)
 }
 
 /// A number cell, also read as `1/12` when an export writes the pair.

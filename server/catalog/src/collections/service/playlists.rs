@@ -238,6 +238,7 @@ fn to_entry(input: &TrackInput) -> Result<NewEntry, CollectionsError> {
         plex_rating_key: input.plex_rating_key.clone(),
         library_file_id,
         recording_mbid: input.recording_mbid.as_deref().and_then(clean_recording),
+        isrc: None,
     })
 }
 
@@ -269,6 +270,7 @@ fn kept_entry(entry: &import::ParsedEntry) -> NewEntry {
         plex_rating_key: None,
         library_file_id: None,
         recording_mbid: None,
+        isrc: entry.isrc.clone(),
     }
 }
 
@@ -303,6 +305,7 @@ fn import_entry(track: &PlayerTrack) -> NewEntry {
         plex_rating_key: None,
         library_file_id: Some(track.id.clone()),
         recording_mbid: track.recording_mbid.as_deref().and_then(clean_recording),
+        isrc: None,
     }
 }
 

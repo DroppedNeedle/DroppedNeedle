@@ -141,8 +141,9 @@ droppedneedle_kernel::sql! {
     pub(super) INSERT_ENTRY = "INSERT INTO catalog_playlist_tracks (id, playlist_id, position, \
          track_name, artist_name, album_name, album_id, artist_id, track_source_id, \
          cover_url, source_type, available_sources, format, track_number, disc_number, \
-         duration_ms, created_at, plex_rating_key, library_file_id, recording_mbid) VALUES \
-         (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)";
+         duration_ms, created_at, plex_rating_key, library_file_id, recording_mbid, isrc) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, \
+         ?18, ?19, ?20, ?21)";
     /// Every entry of one playlist.
     pub(super) CLEAR_ENTRIES = "DELETE FROM catalog_playlist_tracks WHERE playlist_id = ?1";
     /// One entry of one playlist.

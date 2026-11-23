@@ -433,6 +433,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0165_discover_tunings.sql",
         "7152b80406102ccecfca548fda7a0a69c2bd3fb0f5c12c546462dd40e3661af2",
     ),
+    (
+        "0166_playlist_entry_isrcs.sql",
+        "f922b00f2c3648386c251061d5d6a97c062da5c99897a366f6052ea30bf44247",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -3267,6 +3271,77 @@ fn discover_tunings_upgrade_adds_one_empty_table() {
         ),
         ["u2"],
         "an account's tunings go with it, and only its own"
+    );
+}
+
+/// 0166 gives playlist entries an ISRC column: every entry written before
+/// reads none, and nothing else changes. Only a 12-character ISRC is
+/// stored.
+#[test]
+fn playlist_entry_isrcs_upgrade_adds_an_empty_column() {
+    let dir = ScratchDir::new("playlist-entry-isrcs-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 166)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    let before_version = scalar(&connection, "PRAGMA user_version");
+    assert!(before_version < 166, "{before_version}");
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'One', 1);
+             INSERT INTO catalog_playlists (id, name, created_at, updated_at, user_id, is_public)
+                 VALUES ('p1', 'Road Trip', 1, 1, 'u1', 0);
+             INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name,
+                 artist_name, album_name, source_type, created_at)
+                 VALUES ('e1', 'p1', 0, 'Song', 'Someone', 'Album', '', 1);",
+        )
+        .unwrap();
+    let kept = ["auth_users", "catalog_playlists", "catalog_playlist_tracks"];
+    let before_schema = schema_rows(&connection);
+    let before: Vec<Vec<String>> = kept
+        .iter()
+        .map(|table| table_rows(&connection, table, "rowid, *"))
+        .collect();
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 166);
+    for (table, rows) in kept.iter().zip(&before).take(2) {
+        assert_eq!(&table_rows(&connection, table, "rowid, *"), rows, "{table}");
+    }
+    let entries = table_rows(&connection, "catalog_playlist_tracks", "rowid, *");
+    let without_isrc: Vec<String> = entries
+        .iter()
+        .map(|row| {
+            row.strip_suffix("|Null")
+                .unwrap_or_else(|| panic!("an old entry reads no isrc: {row}"))
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(without_isrc, before[2], "the old entry keeps every value");
+    let mut after_schema = schema_rows(&connection);
+    after_schema.retain(|(_, name, _, _)| name != "catalog_playlist_tracks");
+    let mut unchanged = before_schema.clone();
+    unchanged.retain(|(_, name, _, _)| name != "catalog_playlist_tracks");
+    assert_eq!(after_schema, unchanged, "nothing else changes");
+
+    connection
+        .execute_batch("UPDATE catalog_playlist_tracks SET isrc = 'USRC17607839' WHERE id = 'e1'")
+        .expect("an ISRC is stored");
+    assert!(
+        connection
+            .execute_batch(
+                "UPDATE catalog_playlist_tracks SET isrc = 'USRC1760783' WHERE id = 'e1'"
+            )
+            .is_err(),
+        "a short ISRC is refused"
     );
 }
 

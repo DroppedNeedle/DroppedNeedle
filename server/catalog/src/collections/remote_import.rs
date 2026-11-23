@@ -71,6 +71,7 @@ impl ImportSink for PlaylistImportSink {
                         plex_rating_key: rating_key,
                         library_file_id: None,
                         recording_mbid: track.recording_mbid.as_deref().and_then(clean_recording),
+                        isrc: None,
                     })
                 })
                 .collect::<Vec<_>>();

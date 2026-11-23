@@ -51,6 +51,7 @@ pub static MIGRATIONS: &[Migration<'static>] = &[
     migration!(163, "0163_taste_groups.sql"),
     migration!(164, "0164_discover_pool.sql"),
     migration!(165, "0165_discover_tunings.sql"),
+    migration!(166, "0166_playlist_entry_isrcs.sql"),
 ];
 
 /// The stamp of a database made by the migration chain the baseline
