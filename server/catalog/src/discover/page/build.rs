@@ -423,19 +423,6 @@ fn days_since(iso: &str, now: f64) -> Option<f64> {
     Some(f64::from(today.to_julian_day() - played.to_julian_day()))
 }
 
-impl<'a> Builder<'a> {
-    /// This builder with `ask` in place of its own: one section builds
-    /// through it, so its failures are its own.
-    fn with_ask(&self, ask: Ask) -> Builder<'a> {
-        Builder {
-            ask,
-            settings: self.settings.clone(),
-            today: self.today.clone(),
-            ..*self
-        }
-    }
-}
-
 impl Builder<'_> {
     fn queue_ctx<'b>(&'b self, settings: &'b QueueSettings) -> BuildContext<'b> {
         BuildContext {
@@ -542,27 +529,33 @@ impl Builder<'_> {
             lb_user: lb_user.as_deref(),
         };
 
-        // Each section builds under an ask of its own, which starts out
-        // failed when a shared read it needs failed, so it can tell whether
-        // everything it stands on answered.
+        // Each section builds through a builder of its own, made with an
+        // ask of its own, which starts out failed when a shared read it
+        // needs failed, so it can tell whether everything it stands on
+        // answered.
         let input_failure = |def: &SectionDef| {
             tracker
                 .failed_among(def.inputs)
                 .or_else(|| (seeds_failed && def.inputs.contains(&Input::Seeds)).then_some(None))
         };
-        let own_ask = |def: &SectionDef| {
+        let section_builder = |def: &SectionDef| {
             let ask = self.ask.watched();
             if input_failure(def).is_some() {
                 ask.note_failure();
             }
-            ask
+            Builder {
+                ask,
+                settings: self.settings.clone(),
+                today: self.today.clone(),
+                ..*self
+            }
         };
         let independent = join_all(
             wanted
                 .iter()
                 .filter(|def| def.dedupe != Dedupe::Artists)
                 .map(|def| async {
-                    let section = self.with_ask(own_ask(def));
+                    let section = section_builder(def);
                     let name = def.key.name();
                     let content = bounded_by(
                         &section.ask,
@@ -579,7 +572,7 @@ impl Builder<'_> {
             independent.into_iter().collect();
         let mut seen_artists: HashSet<String> = HashSet::new();
         for def in wanted.iter().filter(|def| def.dedupe == Dedupe::Artists) {
-            let section = self.with_ask(own_ask(def));
+            let section = section_builder(def);
             let name = def.key.name();
             let content = bounded(
                 &section.ask,
