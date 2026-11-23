@@ -10,9 +10,9 @@
 //!    way ([`fame_divided`]). A seed the person asked for less from
 //!    ("Less from this") weighs [`proposed::LESS_FROM_SEED`] of its weight
 //!    ([`tuned_weight`]), so every link of it counts that much less.
-//! 2. Artist gates: not an artist the person knows or the library
-//!    holds, not one they turned down, not Various Artists or another
-//!    special-purpose id.
+//! 2. Artist gates: not an artist the person knows, not one the library
+//!    has with a MusicBrainz id (an album of theirs held or not), not one
+//!    they turned down, not Various Artists or another special-purpose id.
 //! 3. Hubs out: with two taste groups or more, an artist less than
 //!    [`proposed::HUB_SHARE`] of whose support comes from one group is left
 //!    out.
@@ -263,13 +263,14 @@ pub fn fame_divided(
     ranked
 }
 
-/// Who an artist may not be: one the person knows or the library holds,
+/// Who an artist may not be: one the person knows or the library has,
 /// one they turned down.
 pub struct ArtistGates<'a> {
     /// Every artist the person's rows name, lowercased.
     pub known: &'a HashSet<String>,
-    /// Every artist the library holds an album of, lowercased.
-    pub owned: &'a HashSet<String>,
+    /// Every library artist with a MusicBrainz id, lowercased, whether or
+    /// not the library holds an album of theirs.
+    pub library: &'a HashSet<String>,
     /// What the person told Discover.
     pub feedback: &'a Feedback,
 }
@@ -277,7 +278,7 @@ pub struct ArtistGates<'a> {
 impl ArtistGates<'_> {
     /// Whether `mbid` is known to the person: theirs or the library's.
     pub fn knows(&self, mbid: &str) -> bool {
-        self.known.contains(mbid) || self.owned.contains(mbid)
+        self.known.contains(mbid) || self.library.contains(mbid)
     }
 
     /// Whether `mbid` may not be offered for a reason other than being
@@ -313,7 +314,7 @@ pub struct Ranking {
     pub artists: Vec<RankedArtist>,
     /// Distinct artists the seeds point at, before any gate.
     pub neighbours_found: usize,
-    /// Of those, the ones the person knows or the library holds.
+    /// Of those, the ones the person knows or the library has.
     pub known_left_out: usize,
     /// Of the rest, the hubs left out; `None` when the rule did not run
     /// (fewer than two groups).
@@ -762,10 +763,10 @@ mod tests {
         listeners: &HashMap<String, i64>,
         groups: usize,
     ) -> Ranking {
-        let (known, owned, feedback) = (HashSet::new(), HashSet::new(), Feedback::default());
+        let (known, library, feedback) = (HashSet::new(), HashSet::new(), Feedback::default());
         let gates = ArtistGates {
             known: &known,
-            owned: &owned,
+            library: &library,
             feedback: &feedback,
         };
         rank(seeds, lists, listeners, groups, &gates)

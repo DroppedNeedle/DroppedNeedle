@@ -341,12 +341,17 @@ impl Rig {
 }
 
 async fn rig(name: &str) -> Rig {
+    rig_with(name, "").await
+}
+
+/// The rig, with `extra` rows in the database before the first build.
+async fn rig_with(name: &str, extra: &str) -> Rig {
     let dir = crate::common::ScratchDir::new(name);
     let rig = AuthRig::new(name).await;
     let db = rig.platform.db.clone();
     let at = rig.clock().now_ms() - DAY;
     let (rows, _) = lists(at);
-    insert(&db, taste(at) + &shelves() + &rows).await;
+    insert(&db, taste(at) + &shelves() + &rows + extra).await;
     // Seen today, so the day's background reads have room for her playlist.
     seen_now(&rig, "user-1").await;
     let (weekly, recordings) = playlist(at);
@@ -632,6 +637,45 @@ async fn audit_a_pick_whose_seed_left_has_no_reason() {
     assert_eq!(status, StatusCode::NOT_FOUND, "not in her pool");
     let (status, _) = rig.why("not-an-mbid").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// A library artist `local_id` with the MusicBrainz id `mbid` and no album
+/// of their own: a guest on the first song of the fifth seed's first album,
+/// at credit `position`.
+fn guest(local_id: &str, mbid: &str, position: usize) -> String {
+    format!(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+         updated_at) VALUES ('{local_id}', 'Guest', 'guest', 'person', 1, 1); \
+         INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+         provider_artist_id, decision_source, selected_at) \
+         VALUES ('{local_id}', 'musicbrainz', '{mbid}', 'manual', 1); \
+         INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
+         VALUES ('t-s5-0', {position}, '{local_id}', 'featured');"
+    )
+}
+
+/// An artist the library has with a MusicBrainz id but holds no album of,
+/// only a guest credit on someone else's song, is known: nothing filed
+/// under them is a candidate, whether the walk found it or the weekly
+/// playlist did, while both still find other artists' albums.
+#[tokio::test]
+async fn a_library_artist_without_an_album_is_never_a_candidate() {
+    let (walked, (listed, ..)) = (artist(1), picked(1));
+    let guests = guest("lib-walked", &walked, 1) + &guest("lib-listed", &listed, 2);
+    let rig = rig_with("discover-reasons-library-artist", &guests).await;
+    let filed: Vec<(String, String)> = rig.db().rows(
+        "SELECT artist_mbid, kind FROM catalog_discover_candidates WHERE user_id = 'user-1'",
+        [],
+    );
+    for (artist, _) in &filed {
+        assert!(*artist != walked && *artist != listed, "{artist} is filed");
+    }
+    for kind in ["new_artist", "source_pick"] {
+        assert!(
+            filed.iter().any(|(_, filed)| filed == kind),
+            "the {kind} path still finds albums"
+        );
+    }
 }
 
 /// No field of a reason or of the evidence behind it, at any depth, is a

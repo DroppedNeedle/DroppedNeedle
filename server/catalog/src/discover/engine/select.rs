@@ -603,7 +603,7 @@ mod tests {
         let feedback = Feedback::default();
         let artist_gates = ArtistGates {
             known: &known,
-            owned: &owned,
+            library: &owned,
             feedback: &feedback,
         };
 

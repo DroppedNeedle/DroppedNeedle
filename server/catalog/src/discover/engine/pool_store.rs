@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 use droppedneedle_kernel::jobs::queue::JobError;
+use droppedneedle_library::identify::artist_links::placeholder;
 use rusqlite::{Connection, Transaction, params};
 
 use super::candidate::{Candidate, CandidateKind, Link, Path, PathArtist};
@@ -106,8 +107,9 @@ async fn taste_rows(db: &Db, user_id: &str) -> Result<Option<Taste>, DbError> {
 /// What the library holds and is fetching, as the pool's gates read it.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Library {
-    /// Artists the library holds an album of, lowercased.
-    pub owned_artists: HashSet<String>,
+    /// Every library artist with a MusicBrainz id, lowercased: the
+    /// artists the library knows, held album or not.
+    pub library_artists: HashSet<String>,
     /// Release groups the library is fetching, lowercased.
     pub fetching: HashSet<String>,
     /// How many albums the library holds of each of the asked artists.
@@ -130,7 +132,11 @@ pub(crate) async fn library(db: &Db, artists: &[String]) -> Result<Library, DbEr
                 .query_map([], |row| row.get(0))?
                 .collect()
         };
-        let owned_artists = all(sql::POOL_OWNED_ARTISTS.text())?;
+        // MusicBrainz's special-purpose ids never count.
+        let library_artists = all(sql::POOL_LIBRARY_ARTISTS.text())?
+            .into_iter()
+            .filter(|mbid| !placeholder(mbid))
+            .collect();
         let fetching = all(sql::POOL_FETCHING.text())?;
         let albums_owned = conn
             .prepare_cached(sql::POOL_ALBUMS_OWNED.text())?
@@ -138,7 +144,7 @@ pub(crate) async fn library(db: &Db, artists: &[String]) -> Result<Library, DbEr
             .map(|row| row.map(|row| (row.mbid, row.albums)))
             .collect::<rusqlite::Result<_>>()?;
         Ok(Library {
-            owned_artists,
+            library_artists,
             fetching,
             albums_owned,
         })

@@ -226,7 +226,7 @@ impl PoolJobs {
             neighbours::read(&self.db, &self.listening, user_id, &seeds, accounts.lastfm).await?;
         let artist_gates = ArtistGates {
             known: &taste.known_artists,
-            owned: &library.owned_artists,
+            library: &library.library_artists,
             feedback: &feedback,
         };
         let ranking = rank::rank(

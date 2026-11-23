@@ -11,7 +11,7 @@ use droppedneedle_library::owns_group;
 
 use super::candidate::{CandidateKind, PathKind, PathSource};
 use crate::discover::tunings::TuningKind;
-use crate::local::sql::{OPEN_REQUEST, musicbrainz, owned_album, owned_artist};
+use crate::local::sql::{OPEN_REQUEST, musicbrainz, owned_album};
 
 droppedneedle_kernel::sql! {
     // -- history -------------------------------------------------------------
@@ -248,13 +248,15 @@ droppedneedle_kernel::sql! {
     /// Every artist a person's rows name: the artists they know.
     pub(in crate::discover) POOL_KNOWN_ARTISTS = "SELECT artist_mbid_lower \
          FROM catalog_taste_artists WHERE user_id = ?1";
-    /// Every artist the library holds an album of, by MusicBrainz id.
-    pub(in crate::discover) POOL_OWNED_ARTISTS = "SELECT DISTINCT lower(ai.provider_artist_id) \
-         FROM local_artist_external_identities ai \
+    /// Every live library artist with a MusicBrainz id, whether or not the
+    /// library holds an album of theirs (a guest on one song counts), by
+    /// that id. Placeholder rows are left out by kind.
+    pub(in crate::discover) POOL_LIBRARY_ARTISTS = "SELECT DISTINCT \
+         lower(ai.provider_artist_id) FROM local_artist_external_identities ai \
          JOIN local_artists r ON r.id = ai.local_artist_id WHERE "
         + (musicbrainz!("ai"))
-        + " AND "
-        + (owned_artist!("r"));
+        + " AND r.retired_into_artist_id IS NULL \
+         AND r.kind NOT IN ('various_artists', 'unknown')";
     /// The release groups among the JSON list `?1` the library holds.
     pub(in crate::discover) POOL_OWNED_AMONG = "WITH asked(g) AS \
          (SELECT value FROM json_each(?1)) SELECT DISTINCT o.group_mbid FROM ("

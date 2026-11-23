@@ -1443,7 +1443,7 @@ struct AtCut {
     /// The person's artists, heaviest first.
     own_artists: Vec<String>,
     known: HashSet<String>,
-    owned_artists: HashSet<String>,
+    library_artists: HashSet<String>,
     named: HashSet<String>,
     lists_kept: HashSet<String>,
     seeds_without_list: usize,
@@ -1476,13 +1476,12 @@ impl AtCut {
             ),
             known: own_artists.iter().cloned().collect(),
             own_artists,
-            owned_artists: set(
+            library_artists: set(
                 "SELECT DISTINCT lower(ai.provider_artist_id) \
                  FROM local_artist_external_identities ai \
-                 JOIN local_album_artists oc ON oc.local_artist_id = ai.local_artist_id \
-                 JOIN local_albums ob ON ob.id = oc.local_album_id \
-                 WHERE ai.provider = 'musicbrainz' AND ob.retired_into_album_id IS NULL \
-                 AND ob.has_indexed_track = 1",
+                 JOIN local_artists r ON r.id = ai.local_artist_id \
+                 WHERE ai.provider = 'musicbrainz' AND r.retired_into_artist_id IS NULL \
+                 AND r.kind NOT IN ('various_artists', 'unknown')",
                 &[],
             ),
             named: set(
@@ -1533,8 +1532,8 @@ fn stage(
     if at.known.contains(artist) {
         return "known to the engine at the cut";
     }
-    if at.owned_artists.contains(artist) {
-        return "the library held them at the cut";
+    if at.library_artists.contains(artist) {
+        return "a library artist at the cut";
     }
     if at.named.contains(artist) {
         return if at.lists_kept.contains(artist) {
