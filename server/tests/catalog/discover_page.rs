@@ -33,7 +33,6 @@ use droppedneedle_catalog::discover::wiring::{deps_over, live_network};
 use droppedneedle_catalog::metadata::Catalog;
 use droppedneedle_catalog::metadata::library::LocalCatalog;
 use droppedneedle_catalog::metadata::upstream::{LiveCatalogSettings, Upstream};
-use droppedneedle_kernel::clock::Clock as _;
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::db::cache::CacheDb;
 use droppedneedle_kernel::http_client::HttpClientFactory;

@@ -27,7 +27,6 @@ use droppedneedle_catalog::discover::ports::BoxFuture;
 use droppedneedle_catalog::discover::services::DiscoverDeps;
 use droppedneedle_catalog::discover::wiring::{DiscoverInputs, deps_over, live_network};
 use droppedneedle_catalog::metadata::artist::ReleaseGroupItem;
-use droppedneedle_kernel::clock::Clock as _;
 use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_providers::listenbrainz::{
@@ -1659,7 +1658,10 @@ async fn another_persons_rows_never_seed_this_one() {
     let app = seeded_queue(&rig, &dir, Arc::clone(&script), 10);
 
     build_deck(&app, &db).await;
-    assert_eq!(*script.similar_asked.lock().unwrap(), [own.clone()]);
+    assert_eq!(
+        *script.similar_asked.lock().unwrap(),
+        std::slice::from_ref(&own)
+    );
 
     insert(
         &db,
