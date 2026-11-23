@@ -5,9 +5,9 @@
 //! contract (key in query is ignored, wrong key 401s) and the tolerant
 //! decode shape (extra fields, `mbId` present-but-ignored); the Spotify
 //! mock pins the `/me/playlists` current shape (`items: {total}`, `tracks`
-//! null), the `/items` tracks endpoint (the legacy `/tracks` path 403s, as
-//! it does for dev-mode apps after the March 2026 migration), and the
-//! `track`/`item` entry alias. No test touches a live Lidarr or Spotify.
+//! null, `collaborative`), the `/items` tracks endpoint (the legacy `/tracks`
+//! path 403s, as it does for dev-mode apps after the March 2026 migration),
+//! and the `track`/`item` entry alias. No test touches a live Lidarr or Spotify.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -315,8 +315,12 @@ async fn spotify_playlists(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     // Current simplified-playlist shape: the count under `items` as a dict,
-    // `tracks` null. One foreign-owned playlist must be filtered out.
-    let all = vec![
+    // `tracks` null, `collaborative` on every entry. The list runs past one
+    // page (the client asks for 50 at a time): sp-playlist-2 is its fiftieth
+    // entry and comes again first on the second page, as Spotify can when the
+    // list moves between requests. Followed playlists of other owners fill the
+    // first page, and only the collaborative one is kept.
+    let mut all = vec![
         json!({
             "id": "sp-playlist-1",
             "name": "Neon Nights",
@@ -326,16 +330,19 @@ async fn spotify_playlists(
                 {"url": format!("{}/covers/neon.jpg", state.cover_base), "width": 640},
             ],
             "owner": {"id": SPOTIFY_USER_ID, "display_name": "Mock Listener"},
+            "collaborative": false,
             "items": {"href": "https://api.spotify.com/v1/x", "total": 2},
             "tracks": null,
         }),
         json!({
-            "id": "sp-playlist-2",
-            "name": "Paper Satellites",
+            "id": "sp-joined",
+            "name": "Joined Mix",
             "description": "",
             "images": [],
-            "owner": {"id": SPOTIFY_USER_ID, "display_name": "Mock Listener"},
-            "tracks": {"href": "https://api.spotify.com/v1/y", "total": 0},
+            "owner": {"id": "another-user", "display_name": "Stranger"},
+            "collaborative": true,
+            "items": {"href": "https://api.spotify.com/v1/j", "total": 4},
+            "tracks": null,
         }),
         json!({
             "id": "sp-foreign",
@@ -343,10 +350,34 @@ async fn spotify_playlists(
             "description": "",
             "images": [],
             "owner": {"id": "another-user", "display_name": "Stranger"},
+            "collaborative": false,
             "items": {"href": "https://api.spotify.com/v1/z", "total": 9},
             "tracks": null,
         }),
     ];
+    all.extend((0..46).map(|n| {
+        json!({
+            "id": format!("sp-followed-{n}"),
+            "name": format!("Followed {n}"),
+            "description": "",
+            "images": [],
+            "owner": {"id": "another-user", "display_name": "Stranger"},
+            "collaborative": false,
+            "items": {"href": "https://api.spotify.com/v1/f", "total": 1},
+            "tracks": null,
+        })
+    }));
+    let page_boundary = json!({
+        "id": "sp-playlist-2",
+        "name": "Paper Satellites",
+        "description": "",
+        "images": [],
+        "owner": {"id": SPOTIFY_USER_ID, "display_name": "Mock Listener"},
+        "collaborative": false,
+        "tracks": {"href": "https://api.spotify.com/v1/y", "total": 0},
+    });
+    all.push(page_boundary.clone());
+    all.push(page_boundary);
     let offset: usize = params
         .get("offset")
         .and_then(|value| value.parse().ok())

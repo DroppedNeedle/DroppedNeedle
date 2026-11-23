@@ -1599,6 +1599,38 @@ async fn linked(links: &SqliteSpotifyLinks, user_id: &str) -> SpotifyConnection 
         .expect("link row")
 }
 
+/// The listing holds the playlists the user owns and the collaborative one
+/// they joined, each once, across Spotify's two pages. A followed playlist
+/// that is not collaborative stays out.
+#[tokio::test]
+async fn spotify_listing_keeps_owned_and_collaborative_playlists_once() {
+    let (auth, admin_id, user_id) = seed_rig().await;
+    let (api, accounts, covers, recorder) = serve_spotify().await.expect("mock serves");
+    let bundle = rig_for(
+        &auth,
+        &api.base_url,
+        &accounts.base_url,
+        Some(&covers.base_url),
+    );
+    seed_spotify_app(bundle.deps.clone(), &admin_id).await;
+    link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
+
+    let (status, body) = get_json(
+        authed_app(bundle.deps, &user_id, Role::User),
+        "/api/v3/acquire/spotify/playlists",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "listing");
+    let mut ids: Vec<&str> = body["playlists"]
+        .as_array()
+        .expect("a playlist list")
+        .iter()
+        .map(|playlist| playlist["id"].as_str().expect("an id"))
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["sp-joined", "sp-playlist-1", "sp-playlist-2"]);
+}
+
 /// A stored link's lifecycle: an expired token refreshes on the next call
 /// instead of failing, then the account disconnects and its link goes.
 #[tokio::test]
@@ -1632,7 +1664,7 @@ async fn spotify_link_refreshes_and_disconnects() {
     assert_eq!(status, StatusCode::OK, "refresh");
     assert_eq!(
         body["playlists"].as_array().map(Vec::len),
-        Some(2),
+        Some(3),
         "refresh"
     );
     let refreshed = linked(&bundle.spotify_links, &user_id).await;

@@ -1,4 +1,4 @@
-//! Spotify playlist import: the owner-only playlist listing and the
+//! Spotify playlist import: the playlist listing and the
 //! populate worker the `spotify:import` job runs.
 //!
 //! Imported playlists persist through the collections playlist store (see
@@ -155,9 +155,10 @@ impl SpotifyImportService {
         ))
     }
 
-    /// Owned playlists annotated with the imported mapping. Only playlists
-    /// whose owner id matches the caller's Spotify id are listed; the id is
-    /// fetched from `/me` when the link row does not carry it yet.
+    /// The playlists the caller owns, and collaborative ones, each annotated
+    /// with the imported mapping. Other followed playlists are left out:
+    /// Spotify gives their songs only to their owner and collaborators. The id
+    /// is fetched from `/me` when the link row does not carry it yet.
     pub async fn list_playlists(
         &self,
         user_id: &str,
@@ -185,7 +186,7 @@ impl SpotifyImportService {
 
         let playlists = listed
             .into_iter()
-            .filter(|playlist| playlist.owner.id == spotify_user_id)
+            .filter(|playlist| playlist.owner.id == spotify_user_id || playlist.collaborative)
             .map(|playlist| SpotifyPlaylistItem {
                 track_count: playlist_track_count(&playlist),
                 cover_url: best_image_url(playlist.images.as_deref(), 250),

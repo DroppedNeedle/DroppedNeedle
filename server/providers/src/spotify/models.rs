@@ -71,6 +71,12 @@ pub struct SimplifiedPlaylist {
     pub images: Option<Vec<Image>>,
     /// Who owns it.
     pub owner: Owner,
+    /// `true` when the owner lets other users modify it. Read from Spotify's
+    /// Web API reference (SimplifiedPlaylistObject) on 2026-11-23. Absent
+    /// reads as `false`, so a followed playlist stays hidden unless Spotify
+    /// says it is collaborative.
+    #[serde(default)]
+    pub collaborative: bool,
     /// Track count on the current shape (`{"href", "total"}`).
     #[serde(default)]
     pub items: Option<TrackCount>,

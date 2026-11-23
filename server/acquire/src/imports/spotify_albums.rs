@@ -67,6 +67,14 @@ const FILE_ALBUM_POLICY: Policy = Policy {
     miss: Duration::from_secs(7 * 24 * 3600),
 };
 
+/// How long a Spotify album's proof is kept: a week when MusicBrainz places
+/// it, a day when it does not, so an album it cannot place is asked about
+/// once a day.
+const RESOLVE_POLICY: Policy = Policy {
+    fresh: Duration::from_secs(7 * 24 * 3600),
+    miss: Duration::from_secs(24 * 3600),
+};
+
 /// One song a playlist file filed under an album.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileSong {
@@ -195,7 +203,7 @@ impl AlbumResolver {
         self.cache
             .get_or_fetch(
                 &key,
-                Policy::RELEASE_TO_GROUP,
+                RESOLVE_POLICY,
                 RequestPriority::BackgroundSync,
                 move |_| async move {
                     Ok(match prove(&view, &album).await? {

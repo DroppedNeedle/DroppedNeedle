@@ -9,6 +9,7 @@
 //! alias with `is_local` skips, and the cover fetch that never fails an
 //! import.
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Mutex;
 
@@ -220,7 +221,9 @@ impl SpotifyClient {
         }
     }
 
-    /// Every owned-or-followed playlist, page by page.
+    /// Every playlist the caller owns or follows, page by page. Spotify can
+    /// list one playlist on two pages when the list moves between requests,
+    /// so each id is kept once, at its first place.
     pub async fn user_playlists(
         &self,
         refresher: &TokenRefresher<'_>,
@@ -241,6 +244,8 @@ impl SpotifyClient {
             }
             offset += spotify::PLAYLISTS_PAGE;
         }
+        let mut seen = HashSet::new();
+        playlists.retain(|playlist| seen.insert(playlist.id.clone()));
         Ok(playlists)
     }
 
