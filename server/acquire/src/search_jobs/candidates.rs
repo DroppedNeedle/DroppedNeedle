@@ -16,8 +16,6 @@
 //! What cannot be fetched at all (blocklisted, password-protected, past
 //! retention, nothing importable) is never listed.
 
-use std::sync::Arc;
-
 use droppedneedle_library::tags::format_for_extension;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -230,11 +228,11 @@ pub struct Candidate {
     /// while the search that found it is running: the search review judges
     /// the folder against another edition with them. Never stored.
     #[serde(skip)]
-    listed: Option<Arc<ListedFolder>>,
+    listed: Option<ListedFolder>,
 }
 
 /// What a Soulseek folder was ranked from.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct ListedFolder {
     hits: Vec<SearchResult>,
     policy: DownloadPolicy,
@@ -320,13 +318,14 @@ impl Candidate {
     /// keeping its hits while the search runs so the search review can
     /// judge it against another edition ([`Self::fit_edition`]).
     pub fn from_listed_folder(pick: FolderPick, policy: &DownloadPolicy) -> Self {
-        let hits = pick.files.clone();
-        let mut candidate = Self::from_folder(pick);
-        candidate.listed = Some(Arc::new(ListedFolder {
-            hits,
+        let listed = ListedFolder {
+            hits: pick.files.clone(),
             policy: policy.clone(),
-        }));
-        candidate
+        };
+        Self {
+            listed: Some(listed),
+            ..Self::from_folder(pick)
+        }
     }
 
     /// A Soulseek folder that is possible only because of how it fits the
