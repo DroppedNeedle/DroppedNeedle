@@ -154,8 +154,9 @@ fn epoch(now: i64) -> u64 {
 }
 
 /// Run one wanted sweep: enrol availability-dead requests, then
-/// check due watches. Disabled reads as an empty pass. One bad watch never
-/// kills the sweep.
+/// check due watches. A watch whose album has files held for its owner
+/// waits without taking a check. Disabled reads as an empty pass. One bad
+/// watch never kills the sweep.
 pub async fn wanted_tick(now: i64, deps: &WantedDeps) -> WantedSummary {
     let Some(section) = deps.settings.read() else {
         return WantedSummary::default();
@@ -168,11 +169,18 @@ pub async fn wanted_tick(now: i64, deps: &WantedDeps) -> WantedSummary {
         enrolled: enrol_watches(now, &settings, deps).await,
         ..WantedSummary::default()
     };
-    let due = match deps
-        .watches
-        .list_due(epoch(now), settings.max_checks_per_sweep)
-        .await
-    {
+    let held = match deps.watches.held_albums().await {
+        Ok(held) => held,
+        Err(error) => {
+            tracing::warn!(?error, "wanted sweep could not read the held albums");
+            summary.errors += 1;
+            return summary;
+        }
+    };
+    // Each held album is at most one watch, so listing that many more keeps
+    // the held ones from taking a check.
+    let limit = settings.max_checks_per_sweep.saturating_add(held.len());
+    let due = match deps.watches.list_due(epoch(now), limit).await {
         Ok(due) => due,
         Err(error) => {
             tracing::warn!(?error, "wanted sweep could not list due watches");
@@ -181,24 +189,41 @@ pub async fn wanted_tick(now: i64, deps: &WantedDeps) -> WantedSummary {
         }
     };
     for watch in due {
-        summary.checked += 1;
-        if let Err(error) = check_watch(now, &settings, deps, &watch, &mut summary).await {
-            tracing::warn!(key = %watch.key, ?error, "wanted check failed");
-            summary.errors += 1;
+        if summary.checked >= settings.max_checks_per_sweep {
+            break;
+        }
+        match check_watch(now, &settings, deps, &watch, &held, &mut summary).await {
+            Ok(Checked::Held) => {}
+            Ok(Checked::Yes) => summary.checked += 1,
+            Err(error) => {
+                tracing::warn!(key = %watch.key, ?error, "wanted check failed");
+                summary.checked += 1;
+                summary.errors += 1;
+            }
         }
     }
     summary
 }
 
+/// Whether a due watch took one of the sweep's checks.
+enum Checked {
+    /// It was checked, whatever came of it.
+    Yes,
+    /// Its album has files held for its owner: it waits for their decision.
+    Held,
+}
+
 /// Check one due watch: satisfied from the library, dispatched on a find,
-/// badged on a find when auto-download is off, or rescheduled quietly.
+/// badged on a find when auto-download is off, or rescheduled quietly. A
+/// watch whose album has files in `held` for its owner is only rescheduled.
 async fn check_watch(
     now: i64,
     settings: &WantedSettings,
     deps: &WantedDeps,
     watch: &WantedWatch,
+    held: &HashSet<(String, String)>,
     summary: &mut WantedSummary,
-) -> Result<(), RequestsError> {
+) -> Result<Checked, RequestsError> {
     let at = epoch(now);
     if deps.library.contains(&watch.key).await {
         let fulfilled = deps
@@ -208,7 +233,23 @@ async fn check_watch(
         announce_fulfilled(deps.ticks.as_ref(), fulfilled, now);
         notify_wanted(deps, watch, UserNotice::WantedFulfilled, |_| {});
         summary.fulfilled += 1;
-        return Ok(());
+        return Ok(Checked::Yes);
+    }
+    // Another copy would only be held beside the one waiting for a
+    // person: no search, and the watch keeps its streak.
+    if held.contains(&(watch.user_id.clone(), watch.key.to_lowercase())) {
+        let date = watch_date(
+            &deps.targets,
+            &watch.key,
+            watch.first_release_date.as_deref(),
+            watch.year,
+        )
+        .await;
+        let wait = interval_seconds(date.schedule.as_deref(), watch.quiet_streak, now);
+        let next = at + u64::try_from(wait).unwrap_or(0);
+        tracing::debug!(key = %watch.key, next, "wanted check waits on held files");
+        deps.watches.postpone(&watch.key, next, date.found).await?;
+        return Ok(Checked::Held);
     }
     let searched = match search_watch(deps, watch).await {
         Ok(None) => {
@@ -216,7 +257,7 @@ async fn check_watch(
             // watch stays due, unrecorded, and is checked once that
             // changes.
             tracing::debug!(key = %watch.key, "wanted check waits for a download source");
-            return Ok(());
+            return Ok(Checked::Yes);
         }
         Ok(Some(found)) => Ok(found),
         Err(cause) => Err(cause),
@@ -263,7 +304,7 @@ async fn check_watch(
                             },
                         )
                         .await?;
-                    return Ok(());
+                    return Ok(Checked::Yes);
                 }
                 let fresh = u32::try_from(fresh).unwrap_or(u32::MAX);
                 deps.watches
@@ -287,7 +328,7 @@ async fn check_watch(
                 notify_wanted(deps, watch, UserNotice::WantedNewCandidates, |notice| {
                     notice.new_candidates = Some(fresh);
                 });
-                return Ok(());
+                return Ok(Checked::Yes);
             }
             // A stop, a cancel or a re-ask waiting for approval may have
             // arrived while the sources were searched: a person decides
@@ -299,7 +340,7 @@ async fn check_watch(
                 .await?
                 .is_some_and(|current| current.state == WatchState::Watching);
             if !still_watching {
-                return Ok(());
+                return Ok(Checked::Yes);
             }
             let row = deps.ledger.get(RequestKind::Album, &watch.key).await?;
             if row.as_ref().is_some_and(|row| {
@@ -308,7 +349,7 @@ async fn check_watch(
                     RequestStatus::AwaitingApproval | RequestStatus::Cancelling
                 )
             }) {
-                return Ok(());
+                return Ok(Checked::Yes);
             }
             // A cancel between this read and the link fails the link.
             let generation = row.as_ref().map(|row| row.generation);
@@ -336,7 +377,7 @@ async fn check_watch(
                         if let Err(cause) = deps.downloads.cancel(&task_id).await {
                             tracing::warn!(%task_id, %cause, "wanted dispatch cancel failed");
                         }
-                        return Ok(());
+                        return Ok(Checked::Yes);
                     }
                     deps.watches
                         .record_check(
@@ -349,7 +390,7 @@ async fn check_watch(
                         .await?;
                     if !outcome.started() {
                         // Another download of the album is already working.
-                        return Ok(());
+                        return Ok(Checked::Yes);
                     }
                     deps.ticks.emit(
                         "wanted.dispatched",
@@ -391,7 +432,7 @@ async fn check_watch(
             summary.errors += 1;
         }
     }
-    Ok(())
+    Ok(Checked::Yes)
 }
 
 /// Whether the watch's request reads cancelled, mid-cancel or rejected now.

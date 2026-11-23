@@ -9,6 +9,7 @@ use super::super::ledger::{WantedWatch, WatchOutcome, WatchState};
 use super::super::sql;
 use super::{lane_error, ms_from_secs, ms_from_secs_f64, read, secs_from_ms};
 use crate::db::AcquireDb;
+use crate::held::store::HeldRows;
 
 /// Decode one watch selected by `WATCH_SELECT`. A state outside its set
 /// fails the read.
@@ -155,6 +156,43 @@ impl WantedStore {
             )
         })
         .await
+    }
+
+    /// The `(owner, release group)` of every album with an open held
+    /// entry of a user: a watch on one waits for that person's decision.
+    pub async fn held_albums(&self) -> Result<HashSet<(String, String)>, RequestsError> {
+        read(&self.db, "wanted.held_albums", |conn| {
+            HeldRows::new(conn).open_albums()
+        })
+        .await
+        .map(|albums| {
+            albums
+                .into_iter()
+                .filter_map(|(user, group)| Some((user?, group)))
+                .collect()
+        })
+    }
+
+    /// Move watch `key`'s next check to `at` (epoch seconds), leaving its
+    /// counts, streak and last outcome as they were. A release date found
+    /// on the way is kept, as a check keeps it.
+    pub async fn postpone(
+        &self,
+        key: &str,
+        at: u64,
+        first_release_date: Option<String>,
+    ) -> Result<(), RequestsError> {
+        let key = key.to_lowercase();
+        self.db
+            .write_background("wanted.postpone", move |tx| {
+                tx.execute(
+                    sql::POSTPONE_WATCH.text(),
+                    params![key, ms_from_secs(at), first_release_date],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(|error| lane_error("wanted.postpone", error))
     }
 
     /// Enrol a watch. A fulfilled watch re-arms with fresh counters (the

@@ -14,6 +14,7 @@ use rusqlite::{Connection, OptionalExtension, Params, params_from_iter};
 
 use super::sql;
 use crate::db::AcquireDb;
+use crate::held::store::HeldRows;
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_kernel::runtime_config::sections::{DownloadPolicy, tier_rank};
@@ -303,10 +304,11 @@ impl UpgradeWorklist {
     /// than its back-off.
     pub async fn list_resting(&self, now: i64) -> Result<HashSet<String>, StoreFailure> {
         let mut resting: HashSet<String> = read(self.db.db(), "upgrades.held_groups", |conn| {
-            read_rows(conn, sql::HELD_GROUPS.text(), [], |row| row.get(0))
+            HeldRows::new(conn).open_albums()
         })
         .await?
         .into_iter()
+        .map(|(_, group)| group)
         .collect();
         let rows: Vec<(String, String, i64)> = read(self.db.db(), "upgrades.history", |conn| {
             read_rows(conn, sql::UPGRADE_HISTORY.text(), [], |row| {

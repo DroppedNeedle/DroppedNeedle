@@ -768,6 +768,16 @@ impl<'c> HeldRows<'c> {
         Ok(rows)
     }
 
+    /// The owner (`None` for no user) and lowercased release group of
+    /// every open entry that names a group. The background sweeps leave
+    /// these albums alone until a person decides on their files.
+    pub fn open_albums(&self) -> rusqlite::Result<Vec<(Option<String>, String)>> {
+        let mut statement = self.conn.prepare_cached(sql::OPEN_ALBUMS.text())?;
+        let rows = statement.query_map([], sql::OpenAlbumRow::read)?;
+        rows.map(|row| row.map(|row| (row.user_id, row.release_group_mbid)))
+            .collect()
+    }
+
     /// Open entries of one owner, or of everyone; with `admin`, those of
     /// no user too.
     pub fn count_open(&self, owner: Option<&str>, admin: bool) -> rusqlite::Result<i64> {

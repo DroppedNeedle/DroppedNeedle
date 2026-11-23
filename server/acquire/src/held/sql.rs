@@ -120,6 +120,16 @@ droppedneedle_kernel::sql! {
     /// Tasks among a list that wait on a file held in an open entry, their
     /// own or another task's for the same ask.
     family ASKS_HOLDING = asks_holding;
+    /// The owner (NULL for no user) and release group of every open entry
+    /// that names a group: the albums whose held files wait for a person.
+    pub(super) OPEN_ALBUMS = "SELECT DISTINCT user_id, \
+             lower(release_group_mbid) AS release_group_mbid FROM acquire_held_entries \
+             WHERE state IN " + OPEN + " AND release_group_mbid IS NOT NULL";
+    /// One album `OPEN_ALBUMS` reads.
+    pub(super) row OpenAlbumRow for [OPEN_ALBUMS] {
+        user_id: Option<String>,
+        release_group_mbid: String,
+    }
     /// Open entries of owner `?1` (NULL for everyone); with `?2`, those of
     /// no user too.
     pub(super) COUNT_OPEN = "SELECT COUNT(*) FROM acquire_held_entries \

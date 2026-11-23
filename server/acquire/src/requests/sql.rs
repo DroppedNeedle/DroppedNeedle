@@ -374,6 +374,11 @@ droppedneedle_kernel::sql! {
     /// Move watch `?1` from state `?3` to `?2`.
     pub(crate) MOVE_WATCH = "UPDATE wanted_watches SET state = ?2 \
          WHERE release_group_mbid_lower = ?1 AND state = ?3";
+    /// Make watch `?1` due at `?2` without a check, keeping release date
+    /// `?3` when one was found (a stored date is kept).
+    pub(crate) POSTPONE_WATCH = "UPDATE wanted_watches SET next_check_at = ?2, \
+         first_release_date = COALESCE(?3, first_release_date) \
+         WHERE release_group_mbid_lower = ?1";
     /// Make watch `?1` due at `?2`.
     pub(crate) WATCH_DUE_AT = "UPDATE wanted_watches SET next_check_at = ?2 \
          WHERE release_group_mbid_lower = ?1";

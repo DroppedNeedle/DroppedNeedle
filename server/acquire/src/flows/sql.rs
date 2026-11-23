@@ -48,10 +48,6 @@ droppedneedle_kernel::sql! {
            AND lower(COALESCE(" + (recording_mbid!("ti", "t")) + ", '')) = ?1";
     /// The quality facts of several tracks: `(id, format, bitrate, depth)`.
     family TRACK_QUALITY_IN = track_quality_in;
-    /// Release groups with an open held entry.
-    pub(crate) HELD_GROUPS = "SELECT DISTINCT lower(release_group_mbid) \
-         FROM acquire_held_entries \
-         WHERE state IN ('held', 'placing') AND release_group_mbid IS NOT NULL";
     /// Finished upgrade tasks by album, newest first within one:
     /// `(group, status, finished at)`.
     pub(crate) UPGRADE_HISTORY = "SELECT lower(release_group_mbid), status, \

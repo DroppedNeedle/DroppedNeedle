@@ -495,30 +495,26 @@ async fn a_removed_watch_stays_gone_until_the_request_fails_again() {
     assert_eq!(wanted_tick(NOW, &rig.deps).await.enrolled, 1);
 }
 
-// A failed request whose download left a file in the held list is not
-// watched: another copy would only be held the same way. Once the file is
-// discarded, the request enrols.
-#[tokio::test]
-async fn a_request_with_a_held_file_is_not_watched() {
-    let db = AcquireDb::scratch().unwrap();
-    let rig = wanted(&db).await;
-    seed_task(&db, "t-held", "rg-blue", TaskStatus::Failed).await;
-    seed_request(&rig.deps.ledger, "rg-blue", "failed", Some("t-held")).await;
+/// Hold one file of `user-1`'s album `rg_mbid`, downloaded by `task`:
+/// the entry and the file.
+async fn hold_file(db: &AcquireDb, rg_mbid: &str, task: Option<&str>) -> (i64, i64) {
+    let rg_mbid = rg_mbid.to_owned();
+    let task = task.map(str::to_owned);
     let (entry, file) = db
-        .write("test.hold", |tx| {
+        .write("test.hold", move |tx| {
             let (entry, files) = HeldRows::new(tx).hold(
                 &NewEntry {
                     user_id: Some("user-1".to_owned()),
                     origin: EntryOrigin::Download,
-                    key: GroupKey::Album("rg-blue".to_owned()),
-                    release_group_mbid: Some("rg-blue".to_owned()),
+                    key: GroupKey::Album(rg_mbid.clone()),
+                    release_group_mbid: Some(rg_mbid),
                     recording_mbid: None,
                     drop_item_id: None,
                     artist_name: None,
                     album_title: None,
                 },
                 &[NewFile {
-                    source_task_id: Some("t-held".to_owned()),
+                    source_task_id: task,
                     ..NewFile::new(
                         HeldRoot::Held,
                         "01.flac",
@@ -532,16 +528,60 @@ async fn a_request_with_a_held_file_is_not_watched() {
         })
         .await
         .expect("file holds");
-    assert_eq!(wanted_tick(NOW, &rig.deps).await.enrolled, 0);
+    (entry, file.expect("a new file is held"))
+}
 
-    let file = file.expect("a new file is held");
+/// Discard held file `file` of entry `entry`.
+async fn discard_file(db: &AcquireDb, entry: i64, file: i64) {
     db.write("test.discard", move |tx| {
         HeldRows::new(tx).resolve(entry, &[file], FileState::Discarded, NOW)?;
         Ok(())
     })
     .await
     .expect("file discards");
+}
+
+// A failed request whose download left a file in the held list is not
+// watched: another copy would only be held the same way. Once the file is
+// discarded, the request enrols.
+#[tokio::test]
+async fn a_request_with_a_held_file_is_not_watched() {
+    let db = AcquireDb::scratch().unwrap();
+    let rig = wanted(&db).await;
+    seed_task(&db, "t-held", "rg-blue", TaskStatus::Failed).await;
+    seed_request(&rig.deps.ledger, "rg-blue", "failed", Some("t-held")).await;
+    let (entry, file) = hold_file(&db, "rg-blue", Some("t-held")).await;
+    assert_eq!(wanted_tick(NOW, &rig.deps).await.enrolled, 0);
+
+    discard_file(&db, entry, file).await;
     assert_eq!(wanted_tick(NOW, &rig.deps).await.enrolled, 1);
+}
+
+// A watch whose album has a file held for its owner skips its checks: no
+// search, no download and none of the sweep's checks. It comes due again
+// later with its streak as it was, and once the file is discarded it is
+// checked as before.
+#[tokio::test]
+async fn a_watch_waits_while_its_album_has_a_held_file() {
+    let db = AcquireDb::scratch().unwrap();
+    let rig = wanted(&db).await;
+    seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
+    assert_eq!(wanted_tick(NOW, &rig.deps).await.enrolled, 1);
+    let before = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
+    let (entry, file) = hold_file(&db, "rg-blue", None).await;
+
+    let due = before.next_check_at as i64;
+    let waited = wanted_tick(due, &rig.deps).await;
+    assert_eq!((waited.checked, waited.dispatched), (0, 0));
+    assert!(tasks(&db).await.is_empty(), "nothing downloads");
+    let after = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
+    assert!(after.next_check_at > before.next_check_at, "rescheduled");
+    assert_eq!(after.check_count, before.check_count, "no check recorded");
+    assert_eq!(after.quiet_streak, before.quiet_streak);
+
+    discard_file(&db, entry, file).await;
+    let checked = wanted_tick(after.next_check_at as i64, &rig.deps).await;
+    assert_eq!((checked.checked, checked.dispatched), (1, 1));
 }
 
 // The status sweep settles what the journal did not: rows whose task
