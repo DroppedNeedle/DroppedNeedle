@@ -555,7 +555,7 @@
 						</span>
 					</span>
 
-					{#if !readonly}
+					{#if !readonly && track.source_type}
 						<span class="pl-row__source">
 							{#if !track.library_file_id && !(track.available_sources?.length ?? 0)}
 								<button

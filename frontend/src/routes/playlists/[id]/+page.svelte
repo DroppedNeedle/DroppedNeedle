@@ -143,6 +143,14 @@
 			: []
 	);
 
+	function setAllChoices(choice: 'album' | 'track') {
+		const next: Record<string, 'album' | 'track'> = {};
+		for (const row of requestRows) {
+			next[row.id] = row.album_name.trim() ? choice : 'track';
+		}
+		requestChoices = next;
+	}
+
 	function openRequestDialog() {
 		const next: Record<string, 'album' | 'track'> = {};
 		for (const row of requestRows) {
@@ -457,6 +465,24 @@
 				closeButton
 			>
 				<div class="flex max-h-[60vh] flex-col gap-2 overflow-y-auto">
+					<div
+						class="flex items-center justify-between gap-3 border-b border-line pb-2 text-xs text-muted"
+					>
+						<span>{requestRows.length} missing</span>
+						<span class="flex items-center gap-2">
+							<span>Choose all as</span>
+							<button
+								type="button"
+								class="rounded-full border border-line px-2 py-0.5 hover:border-warning hover:text-warning"
+								onclick={() => setAllChoices('album')}>Album</button
+							>
+							<button
+								type="button"
+								class="rounded-full border border-line px-2 py-0.5 hover:border-warning hover:text-warning"
+								onclick={() => setAllChoices('track')}>Track</button
+							>
+						</span>
+					</div>
 					{#each requestRows as row (row.id)}
 						<div class="flex items-center justify-between gap-3 text-sm">
 							<span class="min-w-0 truncate">
@@ -464,15 +490,23 @@
 								<span class="text-muted">by {row.artist_name}</span>
 							</span>
 							{#if row.album_name.trim()}
-								<span class="flex shrink-0 items-center gap-3">
-									<label class="inline-flex items-center gap-1">
-										<input type="radio" value="album" bind:group={requestChoices[row.id]} />
-										Album
-									</label>
-									<label class="inline-flex items-center gap-1">
-										<input type="radio" value="track" bind:group={requestChoices[row.id]} />
-										Track
-									</label>
+								<span
+									class="flex shrink-0 items-center gap-0.5 rounded-full border border-line p-0.5 text-xs"
+								>
+									<button
+										type="button"
+										class="rounded-full px-2 py-0.5 {requestChoices[row.id] === 'album'
+											? 'bg-warning/20 font-medium text-warning'
+											: 'text-muted hover:text-foreground'}"
+										onclick={() => (requestChoices[row.id] = 'album')}>Album</button
+									>
+									<button
+										type="button"
+										class="rounded-full px-2 py-0.5 {requestChoices[row.id] === 'track'
+											? 'bg-warning/20 font-medium text-warning'
+											: 'text-muted hover:text-foreground'}"
+										onclick={() => (requestChoices[row.id] = 'track')}>Track</button
+									>
 								</span>
 							{:else}
 								<span class="shrink-0 text-xs text-muted">single track</span>

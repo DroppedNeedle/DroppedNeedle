@@ -269,10 +269,21 @@ impl PlaylistAcquire {
                 if artist.is_empty() {
                     return Filed::Skipped;
                 }
-                let group = match self.resolver.resolve_names(album, artist).await {
-                    Ok(Some(group)) => group,
-                    Ok(None) => return Filed::Failed,
-                    Err(_) => return Filed::Failed,
+                // A row that links to its album already names the release
+                // group; asking MusicBrainz again by names would fail on a
+                // joined track credit and drop an album the library knows.
+                let group = match pending
+                    .release_group_mbid
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|group| !group.is_empty())
+                {
+                    Some(group) => group.to_owned(),
+                    None => match self.resolver.resolve_names(album, artist).await {
+                        Ok(Some(group)) => group,
+                        Ok(None) => return Filed::Failed,
+                        Err(_) => return Filed::Failed,
+                    },
                 };
                 // An album already parked on a search job waits for a person
                 // to pick a candidate; re-filing would queue a duplicate.
