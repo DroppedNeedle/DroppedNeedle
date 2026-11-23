@@ -41,15 +41,17 @@
 		position: relative;
 		height: 100%;
 		min-height: 0;
+		box-sizing: border-box;
+		border: 1px solid color-mix(in srgb, var(--color-base-content) 12%, transparent);
+		border-radius: 0.5rem;
 	}
 	.home-widget-body {
 		height: 100%;
 		min-height: 0;
 	}
 	.home-widget.is-editing {
-		outline: 1px solid color-mix(in srgb, var(--color-base-content) 34%, transparent);
-		outline-offset: 2px;
-		border-radius: 0.25rem;
+		border-color: color-mix(in srgb, var(--color-base-content) 40%, transparent);
+		border-radius: 0.5rem;
 	}
 
 	/* the bar is the only grab and hide surface, so while editing it stays
