@@ -191,13 +191,6 @@ fn deps_with(
         charts,
         forgets: forgets.clone(),
     });
-    let taste = Arc::new(engine::jobs::TasteJobs::new(engine::jobs::TasteInputs {
-        db: inputs.db.clone(),
-        clock: Arc::clone(&inputs.clock),
-        listening: listening.clone(),
-        advanced: config.live(),
-        forgets: forgets.clone(),
-    }));
     let fact_jobs = Arc::new(facts::job::FactJobs::new(kept, network));
     let due = Arc::new(due::Due::new(
         inputs.db.clone(),
@@ -206,6 +199,20 @@ fn deps_with(
         inputs.discover_warmer,
         (fact_jobs.due(), inputs.history.clone()),
     ));
+    let taste = Arc::new(engine::jobs::TasteJobs::new(engine::jobs::TasteInputs {
+        db: inputs.db.clone(),
+        clock: Arc::clone(&inputs.clock),
+        listening: listening.clone(),
+        advanced: config.live(),
+        forgets: forgets.clone(),
+        due: Arc::clone(&due),
+    }));
+    let pool = Arc::new(engine::pool::PoolJobs::new(engine::pool::PoolInputs {
+        db: inputs.db.clone(),
+        clock: Arc::clone(&inputs.clock),
+        listening: listening.clone(),
+        forgets: forgets.clone(),
+    }));
     let warm_scheduler = Arc::new(scheduler::WarmScheduler::new(
         scheduler::activity::ActivityDb::new(inputs.db.clone()),
         listening,
@@ -244,6 +251,7 @@ fn deps_with(
         ),
         facts: fact_jobs,
         taste,
+        pool,
     }
 }
 

@@ -1,13 +1,16 @@
 //! The engine's statements: a person's history as their taste is worked
-//! out from it, their taste build and who is due one.
+//! out from it, their taste build and who is due one, and their candidate
+//! pool with what it is built from.
 
 // `sql!` joins one token per part, so a part built by a definition macro
 // is written in parentheses.
 #![allow(unused_parens, clippy::double_parens)]
 
 use droppedneedle_kernel::db::time::Millis;
+use droppedneedle_library::owns_group;
 
-use crate::local::sql::musicbrainz;
+use super::candidate::{CandidateKind, PathKind, PathSource};
+use crate::local::sql::{OPEN_REQUEST, musicbrainz, owned_album, owned_artist};
 
 droppedneedle_kernel::sql! {
     // -- history -------------------------------------------------------------
@@ -201,4 +204,178 @@ droppedneedle_kernel::sql! {
              JOIN catalog_fact_fetches f ON f.artist_mbid = n.neighbour_mbid \
              WHERE s.user_id = b.user_id AND s.is_seed = 1 AND f.kind = ?5 \
                AND f.source = ?6 AND f.fetched_at > b.built_at))";
+
+    // -- the candidate pool ------------------------------------------------------
+
+    /// Whether a person has a taste build.
+    pub(in crate::discover) POOL_HAS_TASTE = "SELECT EXISTS (SELECT 1 \
+         FROM catalog_taste_builds WHERE user_id = ?1)";
+    /// A person's seeds, heaviest first, their plays in the app and imported
+    /// listens together.
+    pub(in crate::discover) POOL_SEEDS = "SELECT artist_mbid_lower AS mbid, name, \
+         plays + imported_listens AS plays, weight, group_no FROM catalog_taste_artists \
+         WHERE user_id = ?1 AND is_seed = 1 ORDER BY weight DESC, artist_mbid_lower";
+    pub(in crate::discover) row PoolSeed for [POOL_SEEDS] {
+        mbid: String,
+        name: String,
+        plays: i64,
+        weight: f64,
+        group_no: Option<i64>,
+    }
+    /// A person's taste groups and their shares.
+    pub(in crate::discover) POOL_GROUPS = "SELECT group_no, share FROM catalog_taste_groups \
+         WHERE user_id = ?1 ORDER BY group_no";
+    pub(in crate::discover) row PoolGroup for [POOL_GROUPS] {
+        group_no: i64,
+        share: f64,
+    }
+    /// Every artist a person's rows name: the artists they know.
+    pub(in crate::discover) POOL_KNOWN_ARTISTS = "SELECT artist_mbid_lower \
+         FROM catalog_taste_artists WHERE user_id = ?1";
+    /// Every artist the library holds an album of, by MusicBrainz id.
+    pub(in crate::discover) POOL_OWNED_ARTISTS = "SELECT DISTINCT lower(ai.provider_artist_id) \
+         FROM local_artist_external_identities ai \
+         JOIN local_artists r ON r.id = ai.local_artist_id WHERE "
+        + (musicbrainz!("ai"))
+        + " AND "
+        + (owned_artist!("r"));
+    /// The release groups among the JSON list `?1` the library holds.
+    pub(in crate::discover) POOL_OWNED_AMONG = "WITH asked(g) AS \
+         (SELECT value FROM json_each(?1)) SELECT DISTINCT o.group_mbid FROM ("
+        + (owns_group!("IN (SELECT g FROM asked)"))
+        + ") o";
+    /// Every album the library is fetching: an open album request.
+    pub(in crate::discover) POOL_FETCHING = "SELECT musicbrainz_id_lower FROM request_history \
+         WHERE " + OPEN_REQUEST;
+    /// How many albums the library holds of each artist in the JSON list
+    /// `?1`, one row an artist that has any.
+    pub(in crate::discover) POOL_ALBUMS_OWNED = "SELECT lower(ai.provider_artist_id) AS mbid, \
+         COUNT(DISTINCT ob.id) AS albums FROM local_artist_external_identities ai \
+         JOIN local_artists r ON r.id = ai.local_artist_id \
+         JOIN local_album_artists oc ON oc.local_artist_id = r.id \
+         JOIN local_albums ob ON ob.id = oc.local_album_id \
+         WHERE lower(ai.provider_artist_id) IN (SELECT value FROM json_each(?1)) AND "
+        + (musicbrainz!("ai"))
+        + " AND r.retired_into_artist_id IS NULL AND "
+        + (owned_album!("ob"))
+        + " GROUP BY lower(ai.provider_artist_id)";
+    pub(in crate::discover) row PoolAlbumsOwned for [POOL_ALBUMS_OWNED] {
+        mbid: String,
+        albums: i64,
+    }
+    /// A person's picks shown at `?2` or later: whether each was sampled,
+    /// and whether they asked for it, read from their requests (the pick
+    /// record learns of a request only once a day).
+    pub(in crate::discover) POOL_SHOWN = "SELECT p.release_group_mbid_lower AS release_group, \
+         lower(p.artist_mbid) AS artist_mbid, p.last_shown_at AS last_shown_at, \
+         p.sampled_at IS NOT NULL AS sampled, \
+         EXISTS (SELECT 1 FROM request_history_requesters r WHERE r.user_id = p.user_id \
+           AND r.musicbrainz_id_lower = p.release_group_mbid_lower) AS requested \
+         FROM catalog_discover_picks p WHERE p.user_id = ?1 AND p.last_shown_at >= ?2";
+    pub(in crate::discover) row PoolShown for [POOL_SHOWN] {
+        release_group: String,
+        artist_mbid: String,
+        last_shown_at: Millis,
+        sampled: bool,
+        requested: bool,
+    }
+    /// The kept album rows of the release groups in the JSON list `?1`.
+    pub(in crate::discover) POOL_GROUP_FACTS = "SELECT release_group_mbid, artist_mbid, \
+         primary_type, secondary_types, first_release_date, credited_artist_mbids, listeners \
+         FROM catalog_artist_albums \
+         WHERE release_group_mbid IN (SELECT value FROM json_each(?1)) \
+         ORDER BY release_group_mbid, artist_mbid";
+    pub(in crate::discover) row PoolGroupFacts for [POOL_GROUP_FACTS] {
+        release_group_mbid: String,
+        artist_mbid: String,
+        primary_type: Option<String>,
+        secondary_types: String,
+        first_release_date: Option<String>,
+        credited_artist_mbids: Option<String>,
+        listeners: Option<i64>,
+    }
+    /// A person's candidates, in their place in the pool.
+    pub(in crate::discover) POOL_CANDIDATES = "SELECT release_group_mbid_lower, title, \
+         artist_mbid, artist_name, credited_artist_mbids, primary_type, first_release_date, \
+         album_listeners, artist_listeners, kind, support, group_no, group_support \
+         FROM catalog_discover_candidates WHERE user_id = ?1 ORDER BY rank";
+    pub(in crate::discover) row PoolCandidate for [POOL_CANDIDATES] {
+        release_group_mbid_lower: String,
+        title: String,
+        artist_mbid: String,
+        artist_name: String,
+        credited_artist_mbids: String,
+        primary_type: Option<String>,
+        first_release_date: Option<String>,
+        album_listeners: Option<i64>,
+        artist_listeners: Option<i64>,
+        kind: CandidateKind,
+        support: f64,
+        group_no: Option<i64>,
+        group_support: f64,
+    }
+    /// A person's candidates' paths, each candidate's in order.
+    pub(in crate::discover) POOL_PATHS = "SELECT release_group_mbid_lower, kind, source, \
+         fetched_at, artist_mbid, artist_name, artist_plays, artist_weight, \
+         artist_albums_owned, link_strength, link_rank, link_of, named_by_labs, \
+         named_by_lastfm, known_credit_mbid FROM catalog_discover_candidate_paths \
+         WHERE user_id = ?1 ORDER BY release_group_mbid_lower, path_no";
+    pub(in crate::discover) row PoolPath for [POOL_PATHS] {
+        release_group_mbid_lower: String,
+        kind: PathKind,
+        source: PathSource,
+        fetched_at: Option<Millis>,
+        artist_mbid: Option<String>,
+        artist_name: Option<String>,
+        artist_plays: Option<i64>,
+        artist_weight: Option<f64>,
+        artist_albums_owned: Option<i64>,
+        link_strength: Option<f64>,
+        link_rank: Option<i64>,
+        link_of: Option<i64>,
+        named_by_labs: bool,
+        named_by_lastfm: bool,
+        known_credit_mbid: Option<String>,
+    }
+    /// A person's pool build row.
+    pub(in crate::discover) POOL_BUILD_DELETE = "DELETE FROM catalog_discover_pool_builds \
+         WHERE user_id = ?1";
+    /// A person's candidates' paths.
+    pub(in crate::discover) POOL_PATHS_DELETE = "DELETE FROM catalog_discover_candidate_paths \
+         WHERE user_id = ?1";
+    /// A person's candidates.
+    pub(in crate::discover) POOL_CANDIDATES_DELETE = "DELETE FROM catalog_discover_candidates \
+         WHERE user_id = ?1";
+    /// Keep a person's pool build row.
+    pub(in crate::discover) POOL_BUILD_INSERT = "INSERT INTO catalog_discover_pool_builds \
+         (user_id, built_at, incomplete, waiting_for, seeds_used, neighbours_found, \
+          known_left_out, hubs_left_out, artists_ranked, artists_without_album, \
+          new_artist_candidates, source_pick_candidates, gap_candidates, shelf_candidates, \
+          fresh_candidates, thread_candidates) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)";
+    /// Keep one of a person's candidates.
+    pub(in crate::discover) POOL_CANDIDATE_INSERT = "INSERT INTO catalog_discover_candidates \
+         (user_id, release_group_mbid_lower, rank, kind, title, artist_mbid, artist_name, \
+          credited_artist_mbids, primary_type, first_release_date, album_listeners, \
+          artist_listeners, support, group_no, group_support) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)";
+    /// Keep one path of a person's candidate.
+    pub(in crate::discover) POOL_PATH_INSERT = "INSERT INTO catalog_discover_candidate_paths \
+         (user_id, release_group_mbid_lower, path_no, kind, source, fetched_at, artist_mbid, \
+          artist_name, artist_plays, artist_weight, artist_albums_owned, link_strength, \
+          link_rank, link_of, named_by_labs, named_by_lastfm, known_credit_mbid) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)";
+
+    // -- who is due a pool build -------------------------------------------------
+
+    /// Of the people in the JSON list `?1`, the ones whose pool was built
+    /// waiting for album facts of which at least one has arrived since: an
+    /// artist's album list (kind `?2` from `?3`) or its albums' counts (kind
+    /// `?4` from `?5`).
+    pub(in crate::discover) POOL_DUE = "SELECT u.value FROM json_each(?1) u \
+         JOIN catalog_discover_pool_builds b ON b.user_id = u.value \
+         WHERE b.incomplete = 1 AND EXISTS (SELECT 1 FROM json_each(b.waiting_for) w \
+           JOIN catalog_fact_fetches f ON f.artist_mbid = w.value \
+           WHERE ((f.kind = ?2 AND f.source = ?3) OR (f.kind = ?4 AND f.source = ?5)) \
+             AND f.fetched_at > b.built_at)";
 }

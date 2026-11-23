@@ -165,8 +165,11 @@ catalog_artist_tm_attractions
 catalog_background_read_days
 catalog_cached_pages
 catalog_discover_activity
+catalog_discover_candidate_paths
+catalog_discover_candidates
 catalog_discover_feedback
 catalog_discover_picks
+catalog_discover_pool_builds
 catalog_event_cities
 catalog_event_seen_marks
 catalog_fact_fetches

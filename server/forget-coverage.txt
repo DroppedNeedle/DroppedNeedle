@@ -13,7 +13,10 @@
 # Discover and playback: what forget removes.
 catalog_cached_pages forgotten
 catalog_discover_activity forgotten
+catalog_discover_candidate_paths forgotten
+catalog_discover_candidates forgotten
 catalog_discover_picks forgotten
+catalog_discover_pool_builds forgotten
 catalog_known_release_groups forgotten
 catalog_taste_artists forgotten
 catalog_taste_builds forgotten

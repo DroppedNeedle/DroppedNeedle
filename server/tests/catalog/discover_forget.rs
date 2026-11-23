@@ -131,6 +131,34 @@ fn forgotten_row(table: &str, user: &str, at: i64) -> (String, &'static str) {
             ),
             "last_played_at",
         ),
+        "catalog_discover_pool_builds" => (
+            format!(
+                "INSERT INTO catalog_discover_pool_builds (user_id, built_at, incomplete, \
+                 waiting_for, seeds_used, neighbours_found, known_left_out, hubs_left_out, \
+                 artists_ranked, artists_without_album, new_artist_candidates, \
+                 source_pick_candidates, gap_candidates, shelf_candidates, fresh_candidates, \
+                 thread_candidates) VALUES ('{user}', {at}, 0, '[]', 1, 1, 0, NULL, 1, 0, 1, \
+                 0, 0, 0, 0, 0);"
+            ),
+            "built_at",
+        ),
+        // A candidate and its paths hold no time of their own: every row of
+        // theirs counts as from before.
+        "catalog_discover_candidates" | "catalog_discover_candidate_paths" => (
+            format!(
+                "INSERT OR IGNORE INTO catalog_discover_candidates (user_id, \
+                 release_group_mbid_lower, rank, kind, title, artist_mbid, \
+                 artist_name, credited_artist_mbids, support, group_no, group_support) \
+                 VALUES ('{user}', 'eeeeeeee-0000-4000-8000-000000000004', 0, 'new_artist', 'Album', \
+                 'cccccccc-0000-4000-8000-000000000002', 'Someone else', '[]', 1.0, 0, 1.0); \
+                 INSERT OR IGNORE INTO catalog_discover_candidate_paths (user_id, \
+                 release_group_mbid_lower, path_no, kind, source, fetched_at, artist_mbid, \
+                 named_by_labs, named_by_lastfm) VALUES ('{user}', \
+                 'eeeeeeee-0000-4000-8000-000000000004', 0, 'seed', 'listenbrainz_labs', {at}, \
+                 'cccccccc-0000-4000-8000-000000000001', 1, 0);"
+            ),
+            "0",
+        ),
         other => panic!("{other} is listed as forgotten: give it a row here and a step"),
     }
 }

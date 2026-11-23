@@ -12,7 +12,9 @@
 //! on the build row too, and the seeds are grouped again. The
 //! person's own top artists are still read in two cases, through the
 //! cache: ListenBrainz's while their imported history is not current (and
-//! the day's background reads have room), and Last.fm's. A run is safe to
+//! the day's background reads have room), and Last.fm's. The write that
+//! completes a run also queues the person's pool build
+//! ([`pool`](super::pool)), through [`Due::queue_now`]. A run is safe to
 //! repeat.
 
 use std::collections::HashSet;
@@ -29,9 +31,11 @@ use droppedneedle_providers::RequestPriority;
 use rusqlite::Transaction;
 
 use super::history::History;
+use super::pool;
 use super::taste::{self, Links, TasteSeed};
 use super::taste_store::{self, ArtistOut, Build, BuildRow, Kept, KnownGroupOut};
 use crate::discover::cache::ForgetCounts;
+use crate::discover::due::Due;
 use crate::discover::facts::plan;
 use crate::discover::listening::{Ask, ListenSource, ListeningData};
 use crate::discover::queue::QueueSettings;
@@ -63,6 +67,8 @@ pub struct TasteInputs {
     pub advanced: Live<AdvancedSettings>,
     /// The forget counts every page cache shares.
     pub forgets: ForgetCounts,
+    /// Where the pool build a taste build makes due is queued.
+    pub due: Arc<Due>,
 }
 
 /// Runs [`KIND`] jobs.
@@ -74,6 +80,7 @@ pub struct TasteJobs {
     listening: ListeningData,
     advanced: Live<AdvancedSettings>,
     forgets: ForgetCounts,
+    due: Arc<Due>,
 }
 
 /// Why a run kept nothing.
@@ -97,11 +104,12 @@ impl TasteJobs {
             listening: inputs.listening,
             advanced: inputs.advanced,
             forgets: inputs.forgets,
+            due: inputs.due,
         }
     }
 
     /// Work out `user_id`'s taste and keep it; `complete` runs inside the
-    /// write.
+    /// write, which also queues their pool build.
     ///
     /// # Errors
     ///
@@ -175,6 +183,11 @@ impl TasteJobs {
             links_missing,
         };
         let build = assemble(&history, &tallies, &seed_ids, &links, now_ms, gaps);
+        let (due, user) = (Arc::clone(&self.due), user_id.to_owned());
+        let complete = move |tx: &Transaction| {
+            complete(tx)?;
+            due.queue_now(tx, pool::KIND, &user)
+        };
         let kept = taste_store::rebuild(
             &self.db,
             &self.forgets,

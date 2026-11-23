@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 195);
+    assert_eq!(table_names(&connection).len(), 198);
     assert_eq!(
         scalar(
             &connection,
@@ -424,6 +424,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0163_taste_groups.sql",
         "f0b4bf32802c8e684b081146b4de3ece1a255fb18b267c942584a0133ba704d8",
+    ),
+    (
+        "0164_discover_pool.sql",
+        "001749c613ff6b85165b3889ad81875e607f1ff26c78b10aec992a80d45d20d8",
     ),
 ];
 
@@ -3006,6 +3010,145 @@ fn taste_tables_upgrade_adds_four_empty_tables() {
     );
 }
 
+/// 0164 adds the three pool tables, all empty, and changes nothing else:
+/// the rows a database held before it survive as they were. A kind or a
+/// source outside its list, a negative count, a path for no candidate or a
+/// row for no account is refused, and an account's rows go with it.
+#[test]
+fn discover_pool_upgrade_adds_three_empty_tables() {
+    let dir = ScratchDir::new("discover-pool-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 164)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 163);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);
+             INSERT INTO catalog_taste_builds (user_id, built_at, plays_counted,
+                 imported_listens_counted, artists_played, seeds, incomplete)
+                 VALUES ('u1', 1, 1, 0, 1, 1, 0);
+             INSERT INTO catalog_discover_picks (user_id, release_group_mbid_lower,
+                 release_group_mbid, first_surface, first_offered_at, last_offered_at,
+                 evidence) VALUES ('u1', 'rg', 'rg', 'deck', 1, 1, '{}');",
+        )
+        .unwrap();
+    let kept = [
+        "auth_users",
+        "catalog_taste_builds",
+        "catalog_discover_picks",
+    ];
+    let added = [
+        "catalog_discover_pool_builds",
+        "catalog_discover_candidates",
+        "catalog_discover_candidate_paths",
+    ];
+    let before_schema = schema_rows(&connection);
+    let before: Vec<Vec<String>> = kept
+        .iter()
+        .map(|table| table_rows(&connection, table, "rowid, *"))
+        .collect();
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 164);
+    for (table, rows) in kept.iter().zip(&before) {
+        assert_eq!(&table_rows(&connection, table, "rowid, *"), rows, "{table}");
+    }
+    let mut after_schema = schema_rows(&connection);
+    for (_, name, table, sql) in &after_schema {
+        if added.contains(&table.as_str()) && name == table {
+            assert!(
+                sql.as_deref().is_some_and(|sql| sql.ends_with("STRICT")),
+                "{name}: {sql:?}"
+            );
+        }
+    }
+    for table in added {
+        assert_eq!(
+            scalar(&connection, &format!("SELECT COUNT(*) FROM {table}")),
+            0,
+            "{table} starts empty"
+        );
+    }
+    after_schema.retain(|(_, _, table, _)| !added.contains(&table.as_str()));
+    assert_eq!(after_schema, before_schema, "nothing else changes");
+
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = ON;
+             INSERT INTO catalog_discover_pool_builds (user_id, built_at, incomplete,
+                 waiting_for, seeds_used, neighbours_found, known_left_out, hubs_left_out,
+                 artists_ranked, artists_without_album, new_artist_candidates,
+                 source_pick_candidates, gap_candidates, shelf_candidates, fresh_candidates,
+                 thread_candidates)
+                 VALUES ('u1', 1, 1, '[\"a\"]', 2, 3, 1, NULL, 2, 0, 1, 0, 0, 0, 0, 0),
+                        ('u2', 1, 0, '[]', 1, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0);
+             INSERT INTO catalog_discover_candidates (user_id, release_group_mbid_lower,
+                 rank, kind, title, artist_mbid, artist_name,
+                 credited_artist_mbids, support, group_no, group_support)
+                 VALUES ('u1', 'rg', 0, 'new_artist', 'T', 'a', 'A', '[]', 1.0, 0, 1.0),
+                        ('u2', 'rg', 0, 'source_pick', 'T', 'a', 'A', '[]', 0.0,
+                            NULL, 0.0);
+             INSERT INTO catalog_discover_candidate_paths (user_id, release_group_mbid_lower,
+                 path_no, kind, source, artist_mbid, link_strength, link_rank, link_of,
+                 named_by_labs, named_by_lastfm)
+                 VALUES ('u1', 'rg', 0, 'seed', 'listenbrainz_labs', 's', 0.5, 1, 100, 1, 0),
+                        ('u2', 'rg', 0, 'source', 'listenbrainz', NULL, NULL, NULL, NULL,
+                            0, 0);",
+        )
+        .expect("pool rows are stored");
+    for refused in [
+        "INSERT INTO catalog_discover_candidates (user_id, release_group_mbid_lower, \
+         rank, kind, title, artist_mbid, artist_name, \
+         credited_artist_mbids, support, group_support) \
+         VALUES ('u1', 'rg-2', 1, 'chart', 'T', 'a', 'A', '[]', 1.0, 1.0)",
+        "INSERT INTO catalog_discover_candidates (user_id, release_group_mbid_lower, \
+         rank, kind, title, artist_mbid, artist_name, \
+         credited_artist_mbids, support, group_support) \
+         VALUES ('nobody', 'rg-2', 1, 'gap', 'T', 'a', 'A', '[]', 1.0, 1.0)",
+        "INSERT INTO catalog_discover_candidates (user_id, release_group_mbid_lower, \
+         rank, kind, title, artist_mbid, artist_name, \
+         credited_artist_mbids, support, group_support) \
+         VALUES ('u1', 'rg-2', -1, 'gap', 'T', 'a', 'A', '[]', 1.0, 1.0)",
+        "INSERT INTO catalog_discover_candidate_paths (user_id, release_group_mbid_lower, \
+         path_no, kind, source, named_by_labs, named_by_lastfm) \
+         VALUES ('u1', 'rg', 1, 'seed', 'spotify', 0, 0)",
+        "INSERT INTO catalog_discover_candidate_paths (user_id, release_group_mbid_lower, \
+         path_no, kind, source, named_by_labs, named_by_lastfm) \
+         VALUES ('u1', 'rg', 1, 'hunch', 'lastfm', 0, 0)",
+        "INSERT INTO catalog_discover_candidate_paths (user_id, release_group_mbid_lower, \
+         path_no, kind, source, named_by_labs, named_by_lastfm) \
+         VALUES ('u1', 'no-such-rg', 0, 'seed', 'lastfm', 0, 0)",
+        "UPDATE catalog_discover_pool_builds SET hubs_left_out = -1 WHERE user_id = 'u1'",
+        "UPDATE catalog_discover_pool_builds SET incomplete = 2 WHERE user_id = 'u1'",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+    connection
+        .execute("DELETE FROM auth_users WHERE id = 'u1'", [])
+        .unwrap();
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id FROM catalog_discover_pool_builds UNION ALL \
+             SELECT user_id FROM catalog_discover_candidates UNION ALL \
+             SELECT user_id FROM catalog_discover_candidate_paths",
+            []
+        ),
+        ["u2", "u2", "u2"],
+        "an account's pool goes with it, and only its own"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -3309,8 +3452,17 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("auto_download_approvals", "user_id", "auth_users", "CASCADE"),
     ("catalog_cached_pages", "user_id", "auth_users", "CASCADE"),
     ("catalog_discover_activity", "user_id", "auth_users", "CASCADE"),
+    ("catalog_discover_candidate_paths", "user_id", "auth_users", "CASCADE"),
+    (
+        "catalog_discover_candidate_paths",
+        "user_id, release_group_mbid_lower",
+        "catalog_discover_candidates",
+        "CASCADE",
+    ),
+    ("catalog_discover_candidates", "user_id", "auth_users", "CASCADE"),
     ("catalog_discover_feedback", "user_id", "auth_users", "CASCADE"),
     ("catalog_discover_picks", "user_id", "auth_users", "CASCADE"),
+    ("catalog_discover_pool_builds", "user_id", "auth_users", "CASCADE"),
     ("catalog_event_cities", "user_id", "auth_users", "CASCADE"),
     ("catalog_event_seen_marks", "user_id", "auth_users", "CASCADE"),
     ("catalog_known_release_groups", "user_id", "auth_users", "CASCADE"),
@@ -3886,6 +4038,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_catalog::concerts::models::{ConcertStatus, EventSource};
     use droppedneedle_catalog::concerts::store::CheckOutcome;
     use droppedneedle_catalog::discover::cache::PageKind;
+    use droppedneedle_catalog::discover::engine::candidate::{CandidateKind, PathKind, PathSource};
     use droppedneedle_catalog::discover::engine::taste::Trend;
     use droppedneedle_catalog::discover::feedback::{FeedbackKind, FeedbackTarget};
     use droppedneedle_catalog::discover::facts::{FactKind, FactSource, ListSource, MeteredSource, Outcome};
@@ -3972,6 +4125,9 @@ fn state_columns() -> Vec<StateColumn> {
         state("catalog_artist_tm_attractions", "match_basis", &TmBasis::ALL, TmBasis::as_str),
         state("catalog_cached_pages", "page", &PageKind::ALL, PageKind::as_str),
         state("catalog_discover_activity", "feature", &Feature::ALL, Feature::as_str),
+        state("catalog_discover_candidate_paths", "kind", &PathKind::ALL, PathKind::as_str),
+        state("catalog_discover_candidate_paths", "source", &PathSource::ALL, PathSource::as_str),
+        state("catalog_discover_candidates", "kind", &CandidateKind::ALL, CandidateKind::as_str),
         state("catalog_discover_feedback", "kind", &FeedbackKind::ALL, FeedbackKind::as_str),
         state("catalog_discover_feedback", "made_from", &MadeFrom::ALL, MadeFrom::as_str),
         state("catalog_discover_feedback", "target", &FeedbackTarget::ALL, FeedbackTarget::as_str),
