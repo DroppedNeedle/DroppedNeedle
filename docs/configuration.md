@@ -101,6 +101,7 @@ services:
 | Setting | Location |
 |-|-|
 | Library paths, import naming script, scan schedule, folder watching, AcoustID key, storage cap | Settings > Library |
+| Prefer local cover art before online covers | Settings > Library > Covers |
 | Library Management profiles, previews, recovery, the recycle bin folder and retention | Library Management (admin), also reached from Organize files under Settings > Library |
 | Download clients (slskd, SABnzbd, NZBGet), Deemix ([below](#deemix)), source priority, quality tiers, picking a copy, wanted watcher, Usenet retention days | Settings > Download Client |
 | Newznab indexers or Prowlarr | Settings > Indexers / Prowlarr |
@@ -132,7 +133,7 @@ services:
 | Wrapped API key ([Wrapped API](accounts-and-sign-in.md#wrapped-api)) | Settings > Wrapped API |
 | Outbound provider calls, rate limits and background jobs | Settings > Diagnostics |
 | Discover queue and top picks tuning | Settings > Advanced |
-| AudioDB images: on or off, key, name search fallback, direct remote images, preferring local cover art | Settings > Advanced |
+| AudioDB images: on or off, key, name search fallback, direct remote images | Settings > Advanced |
 | Request history, ignored albums and clean-up interval | Settings > Advanced |
 | App version, update check and release notes | Settings > About |
 | Theme and your own CSS (kept on your account) | Profile > Appearance |

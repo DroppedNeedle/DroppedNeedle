@@ -40,10 +40,4 @@
 		description="When enabled, your browser loads images directly from TheAudioDB's CDN (faster). Disable to route all images through DroppedNeedle (more private)."
 		bind:checked={data.direct_remote_images_enabled}
 	/>
-
-	<ToggleRow
-		label="Prefer Local Cover Art"
-		description="When enabled, covers come from folder images (cover.jpg and similar) or art embedded in the audio files before any online source is checked. Local art still works when an image provider is down."
-		bind:checked={data.prefer_local_cover_art}
-	/>
 </div>

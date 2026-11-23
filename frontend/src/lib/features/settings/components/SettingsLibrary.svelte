@@ -31,6 +31,7 @@
 	import LibraryScanScheduleControl from '$lib/features/library-management/components/LibraryScanScheduleControl.svelte';
 	import SettingsImportFolder from './SettingsImportFolder.svelte';
 	import SettingsLyrics from './SettingsLyrics.svelte';
+	import SettingsCovers from './SettingsCovers.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
@@ -600,6 +601,7 @@
 
 	{#if authStore.isAdmin}
 		<SettingsLyrics />
+		<SettingsCovers />
 		<section class="management-settings-portal">
 			<div class="management-write-mark"><FolderCog class="h-6 w-6" /></div>
 			<div class="min-w-0 flex-1">

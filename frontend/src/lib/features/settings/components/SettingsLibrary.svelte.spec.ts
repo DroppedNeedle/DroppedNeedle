@@ -166,7 +166,13 @@ vi.mock('$lib/features/settings/queries/SectionSettingsQueries.svelte', async (i
 	createSaveImportFolderSettingsMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	getImportFolderStatusQuery: () => ({
 		data: { state: 'off', overlap: null, overlap_path: null, waiting: 0 }
-	})
+	}),
+	getAdvancedSettingsQuery: () => ({
+		data: { prefer_local_cover_art: true },
+		isPending: false,
+		isError: false
+	}),
+	createSaveAdvancedSettingsMutation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/features/settings/queries/LyricsSettingsQueries.svelte', () => ({
 	getLyricsSettingsQuery: () => ({ data: { enabled: true }, isPending: false, isError: false }),
