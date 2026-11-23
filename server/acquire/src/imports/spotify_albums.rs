@@ -19,17 +19,25 @@
 //! unresolved, so an import never points a request at the wrong music.
 //! Lookups run at background priority, paced by the executor, and each
 //! album's answer is kept in the metadata cache.
+//!
+//! A playlist file's album ([`FileAlbum`]) is proven the same way by an
+//! ISRC the file gives, else by its listing, read from one recording
+//! search a song ([`AlbumResolver::resolve_file_album`]).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
 
 use droppedneedle_kernel::db::fold_text;
 use droppedneedle_kernel::runtime_config::{Live, sections::MusicBrainzSettings};
 use droppedneedle_providers::cache::{CacheKey, Fetched, Policy, ProviderCacheStore, Source};
 use droppedneedle_providers::musicbrainz::models::{
-    MbRelease, ReleaseGroupRef, ReleaseSearchHit, Track,
+    MbRelease, RecordingSearchHit, ReleaseGroupRef, ReleaseSearchHit, Track,
 };
 use droppedneedle_providers::musicbrainz::{
-    Criticality, MusicBrainzClient, MusicBrainzView, SOURCE, is_valid_mbid, normalize_mb_id,
+    Criticality, MusicBrainzClient, MusicBrainzView, SOURCE, escape_lucene_phrase, is_valid_mbid,
+    normalize_mb_id,
 };
 use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
 
@@ -47,6 +55,49 @@ const ISRC_SEARCHES: usize = 2;
 
 /// The includes a candidate is proven with.
 const PROOF_INCLUDES: [&str; 3] = ["isrcs", "recordings", "release-groups"];
+
+/// Songs of one file album the listing proof searches for, in file order.
+const FILE_SONGS: usize = 5;
+
+/// How long a playlist file album's answer is kept, found or not: a week.
+/// A miss outlasts the identify job's three days of retries, so a retry
+/// asks MusicBrainz only about albums it has not answered yet.
+const FILE_ALBUM_POLICY: Policy = Policy {
+    fresh: Duration::from_secs(7 * 24 * 3600),
+    miss: Duration::from_secs(7 * 24 * 3600),
+};
+
+/// One song a playlist file filed under an album.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileSong {
+    /// The title as the file gives it.
+    pub title: String,
+    /// The ISRC the file gives, uppercased and well formed.
+    pub isrc: Option<String>,
+}
+
+/// An album a playlist file names for songs the library lacks: its title
+/// and artist as the file gives them, and its songs in file order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileAlbum {
+    /// Album title.
+    pub title: String,
+    /// The artist text of its first song, every credit included.
+    pub artist: String,
+    /// Its songs, in file order.
+    pub songs: Vec<FileSong>,
+}
+
+/// The release group a file album was proven to be, and for each song
+/// whose title only one recording on that group carries, that recording,
+/// keyed by the song's title as the file gives it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FoundAlbum {
+    /// The release group, lowercased.
+    pub group: String,
+    /// Song title key ([`title_key`]) to recording id, lowercased.
+    pub recordings: BTreeMap<String, String>,
+}
 
 /// One Spotify album as the import knows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +206,279 @@ impl AlbumResolver {
             )
             .await
     }
+
+    /// The release group a playlist file's album is, by proof only: an
+    /// ISRC the file gives, else the album's listing. `None` when nothing
+    /// proves exactly one group.
+    ///
+    /// # Errors
+    ///
+    /// A MusicBrainz failure, or settings that cannot be read
+    /// ([`ProviderError::NotConfigured`]). Nothing is cached for it.
+    pub async fn resolve_file_album(
+        &self,
+        album: &FileAlbum,
+    ) -> Result<Option<FoundAlbum>, ProviderError> {
+        if non_empty_forms(&album.title).is_empty()
+            || title_key(&album.artist).is_empty()
+            || album.songs.is_empty()
+        {
+            return Ok(None);
+        }
+        let Some(settings) = self.settings.read() else {
+            return Err(ProviderError::NotConfigured {
+                provider: SOURCE,
+                message: "the musicbrainz settings cannot be read".to_owned(),
+            });
+        };
+        let namespace = format!("{}:g{}", settings.source_id, settings.generation);
+        let view = self.musicbrainz.fixed(
+            self.musicbrainz.source_from(&settings),
+            RequestPriority::BackgroundSync,
+        );
+        // The unit separator survives CacheKey::hashed's whitespace
+        // collapse, as in `resolve`.
+        let songs: Vec<&str> = album.songs.iter().map(|song| song.title.as_str()).collect();
+        let isrcs: Vec<&str> = album
+            .songs
+            .iter()
+            .map(|song| song.isrc.as_deref().unwrap_or_default())
+            .collect();
+        let key = CacheKey::hashed(
+            Source::MusicBrainz,
+            "playlist_file_album",
+            &[
+                &namespace,
+                &album.title,
+                &album.artist,
+                &songs.join("\x1f"),
+                &isrcs.join("\x1f"),
+            ],
+        );
+        let album = album.clone();
+        self.cache
+            .get_or_fetch(
+                &key,
+                FILE_ALBUM_POLICY,
+                RequestPriority::BackgroundSync,
+                move |_| async move {
+                    Ok(match prove_file(&view, &album).await? {
+                        Some(found) => Fetched::Found(found),
+                        None => Fetched::Missing,
+                    })
+                },
+            )
+            .await
+    }
+}
+
+/// A file album's group: by its ISRCs when the file gives any; by its
+/// listing when it gives none, or when its ISRCs prove no group. ISRCs
+/// that prove two groups leave it unknown.
+async fn prove_file(
+    view: &MusicBrainzView,
+    album: &FileAlbum,
+) -> Result<Option<FoundAlbum>, ProviderError> {
+    let isrcs: BTreeSet<String> = album
+        .songs
+        .iter()
+        .filter_map(|song| song.isrc.clone())
+        .filter(|isrc| is_isrc(isrc))
+        .collect();
+    if !isrcs.is_empty() {
+        let as_listed = SpotifyAlbum {
+            title: album.title.clone(),
+            artist: album.artist.clone(),
+            kind: None,
+            total_tracks: None,
+            songs: BTreeSet::new(),
+            isrcs,
+        };
+        let (proven, hits) = isrc_search(view, &as_listed).await?;
+        if proven.is_empty() {
+            return by_listing(view, album).await;
+        }
+        let Some(group) = pick(&as_listed, proven) else {
+            return Ok(None);
+        };
+        let songs: Vec<(&FileSong, Vec<&RecordingSearchHit>)> = album
+            .songs
+            .iter()
+            .map(|song| {
+                let carrying = hits
+                    .iter()
+                    .filter(|(isrc, _)| song.isrc.as_deref() == Some(isrc.as_str()))
+                    .map(|(_, hit)| hit)
+                    .collect();
+                (song, carrying)
+            })
+            .collect();
+        return Ok(Some(found_on(&group, &songs)));
+    }
+    by_listing(view, album).await
+}
+
+/// The group of the one release every searched song is on by its listing:
+/// for each song, a recording with its title, credited to the album's
+/// artist by exact name, on an official release of two or more tracks
+/// under one of the album's title forms. A recording MusicBrainz lists
+/// under ISRCs none of which is the song's file ISRC never counts for it.
+/// A search answering more than it shows proves nothing, and the songs
+/// stop once no group is left.
+async fn by_listing(
+    view: &MusicBrainzView,
+    album: &FileAlbum,
+) -> Result<Option<FoundAlbum>, ProviderError> {
+    let album_forms = non_empty_forms(&album.title);
+    let first_credit = album
+        .artist
+        .split([',', ';'])
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let artists: BTreeSet<String> = [title_key(&album.artist), title_key(&first_credit)]
+        .into_iter()
+        .filter(|key| !key.is_empty())
+        .collect();
+    let release = title_forms(&album.title).pop().unwrap_or_default();
+    let mut seen = BTreeSet::new();
+    let songs: Vec<&FileSong> = album
+        .songs
+        .iter()
+        .filter(|song| {
+            let key = title_key(&song.title);
+            !key.is_empty() && seen.insert(key)
+        })
+        .take(FILE_SONGS)
+        .collect();
+    let mut left: Option<BTreeSet<String>> = None;
+    let mut pages = Vec::with_capacity(songs.len());
+    for song in songs {
+        let query = format!(
+            r#"recording:"{}" AND artist:"{}" AND release:"{}""#,
+            escape_lucene_phrase(song.title.trim()),
+            escape_lucene_phrase(&first_credit),
+            escape_lucene_phrase(&release),
+        );
+        let page = view
+            .search_recordings_query(
+                &query,
+                RECORDING_SEARCH_LIMIT,
+                Criticality::IdentityCritical,
+            )
+            .await?;
+        if page.count > page.items.len() as u64 {
+            return Ok(None);
+        }
+        let song_forms = non_empty_forms(&song.title);
+        let other_isrcs = |hit: &RecordingSearchHit| {
+            song.isrc.as_deref().is_some_and(|isrc| {
+                !hit.isrcs.is_empty()
+                    && !hit
+                        .isrcs
+                        .iter()
+                        .any(|listed| listed.trim().eq_ignore_ascii_case(isrc))
+            })
+        };
+        let hits: Vec<RecordingSearchHit> = page
+            .items
+            .into_iter()
+            .filter(|hit| {
+                hit.video != Some(true)
+                    && !other_isrcs(hit)
+                    && hit
+                        .title
+                        .as_deref()
+                        .is_some_and(|title| !non_empty_forms(title).is_disjoint(&song_forms))
+                    && hit.artist_credit.iter().any(|credit| {
+                        artists.contains(&title_key(&credit.name))
+                            || artists.contains(&title_key(&credit.artist.name))
+                    })
+            })
+            .collect();
+        let groups: BTreeSet<String> = hits
+            .iter()
+            .flat_map(|hit| listed_groups(hit, &album_forms))
+            .collect();
+        let narrowed: BTreeSet<String> = match left {
+            Some(left) => left.intersection(&groups).cloned().collect(),
+            None => groups,
+        };
+        if narrowed.is_empty() {
+            return Ok(None);
+        }
+        left = Some(narrowed);
+        pages.push((song, hits));
+    }
+    let Some(left) = left else {
+        return Ok(None);
+    };
+    let mut groups = left.into_iter();
+    let (Some(group), None) = (groups.next(), groups.next()) else {
+        tracing::debug!("a playlist file album matches more than one release group");
+        return Ok(None);
+    };
+    let songs: Vec<(&FileSong, Vec<&RecordingSearchHit>)> = pages
+        .iter()
+        .map(|(song, hits)| (*song, hits.iter().collect()))
+        .collect();
+    Ok(Some(found_on(&group, &songs)))
+}
+
+/// The groups a hit's releases put it on by their listing: official, two
+/// or more tracks, under one of the album's title forms.
+fn listed_groups(hit: &RecordingSearchHit, album_forms: &BTreeSet<String>) -> Vec<String> {
+    hit.releases
+        .iter()
+        .filter(|release| {
+            release
+                .status
+                .as_deref()
+                .is_some_and(|status| status.eq_ignore_ascii_case("official"))
+                && release.track_count.is_some_and(|tracks| tracks >= 2)
+                && release
+                    .title
+                    .as_deref()
+                    .is_some_and(|title| !non_empty_forms(title).is_disjoint(album_forms))
+        })
+        .filter_map(|release| release.release_group.as_ref())
+        .map(|group| normalize_mb_id(&group.id))
+        .filter(|id| is_valid_mbid(id))
+        .collect()
+}
+
+/// The found album: `group`, and each song's recording when exactly one
+/// of its hits is on that group.
+fn found_on(group: &str, songs: &[(&FileSong, Vec<&RecordingSearchHit>)]) -> FoundAlbum {
+    let mut recordings = BTreeMap::new();
+    for (song, hits) in songs {
+        let song_forms = non_empty_forms(&song.title);
+        let on_group: BTreeSet<String> = hits
+            .iter()
+            .filter(|hit| {
+                hit.title
+                    .as_deref()
+                    .is_some_and(|title| !non_empty_forms(title).is_disjoint(&song_forms))
+                    && hit.releases.iter().any(|release| {
+                        release
+                            .release_group
+                            .as_ref()
+                            .is_some_and(|ref_group| normalize_mb_id(&ref_group.id) == group)
+                    })
+            })
+            .map(|hit| normalize_mb_id(&hit.id))
+            .filter(|id| is_valid_mbid(id))
+            .collect();
+        let mut ids = on_group.into_iter();
+        if let (Some(recording), None) = (ids.next(), ids.next()) {
+            recordings.insert(title_key(&song.title), recording);
+        }
+    }
+    FoundAlbum {
+        group: group.to_owned(),
+        recordings,
+    }
 }
 
 /// A release group a release proved, with what a tie is broken by.
@@ -222,9 +546,19 @@ async fn by_isrc(
     view: &MusicBrainzView,
     album: &SpotifyAlbum,
 ) -> Result<BTreeMap<String, Proven>, ProviderError> {
+    Ok(isrc_search(view, album).await?.0)
+}
+
+/// [`by_isrc`]'s groups, with every hit its searches read and the ISRC
+/// each was searched by.
+async fn isrc_search(
+    view: &MusicBrainzView,
+    album: &SpotifyAlbum,
+) -> Result<(BTreeMap<String, Proven>, Vec<(String, RecordingSearchHit)>), ProviderError> {
     let forms = non_empty_forms(&album.title);
+    let mut hits = Vec::new();
     if forms.is_empty() {
-        return Ok(BTreeMap::new());
+        return Ok((BTreeMap::new(), hits));
     }
     let mut proven: BTreeMap<String, Proven> = BTreeMap::new();
     for isrc in album
@@ -253,11 +587,12 @@ async fn by_isrc(
                     .extend(release.track_count);
             }
         }
+        hits.extend(page.items.into_iter().map(|hit| (isrc.clone(), hit)));
         if !proven.is_empty() {
             break;
         }
     }
-    Ok(proven)
+    Ok((proven, hits))
 }
 
 /// The groups proven by a release search for each title form, until one
@@ -428,11 +763,12 @@ fn lists_the_album(
         })
 }
 
-/// A title as the proof compares it: folded, with punctuation as spaces,
+/// A title as the proof compares it, and the key a found album's
+/// recordings are kept under: folded, with punctuation as spaces,
 /// so "Awesome Mix, Vol. 1" reads as "Awesome Mix Vol. 1". Titles made only
 /// of symbols (`+`, `÷`, `( )`) keep their folded symbols instead of
 /// collapsing to the empty string.
-fn title_key(title: &str) -> String {
+pub(crate) fn title_key(title: &str) -> String {
     let folded = fold_text(title);
     let words = folded
         .chars()

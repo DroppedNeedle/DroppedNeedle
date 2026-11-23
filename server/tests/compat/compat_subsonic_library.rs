@@ -2124,6 +2124,10 @@ async fn a_busy_read_answers_503_with_retry_after_in_both_protocols() {
         CollectionsState::new(
             CollectionsDb::new(starved.db().clone(), platform.clock.clone()),
             LocalCatalog::new(runtime.db().clone()),
+            droppedneedle_kernel::jobs::queue::JobQueue::new(
+                starved.db().clone(),
+                platform.clock.clone(),
+            ),
         ),
         None,
         playback.clone(),
@@ -2316,6 +2320,10 @@ async fn a_busy_playlist_create_writes_nothing_and_asking_again_makes_one() {
         CollectionsState::new(
             CollectionsDb::new(starved.db().clone(), platform.clock.clone()),
             LocalCatalog::new(main.db().clone()),
+            droppedneedle_kernel::jobs::queue::JobQueue::new(
+                starved.db().clone(),
+                platform.clock.clone(),
+            ),
         ),
         None,
         playback.clone(),

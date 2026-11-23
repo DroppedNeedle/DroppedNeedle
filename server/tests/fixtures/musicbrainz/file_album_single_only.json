@@ -1,0 +1,39 @@
+{
+  "created": "2026-11-23T00:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "recordings": [
+    {
+      "id": "5907a1b0-0000-4000-8000-000000001103",
+      "score": 100,
+      "title": "Lone Star",
+      "length": 200000,
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Willow Fen",
+          "artist": {
+            "id": "5907a1b0-0000-4000-8000-000000001031",
+            "name": "Willow Fen",
+            "sort-name": "Willow Fen"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "5907a1b0-0000-4000-8000-000000001204",
+          "title": "Lone Star",
+          "status": "Official",
+          "release-group": {
+            "id": "5907a1b0-0000-4000-8000-000000001004",
+            "title": "Lone Star",
+            "primary-type": "Single",
+            "secondary-types": []
+          },
+          "track-count": 1,
+          "date": "2025"
+        }
+      ]
+    }
+  ]
+}

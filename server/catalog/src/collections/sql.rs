@@ -209,6 +209,29 @@ droppedneedle_kernel::sql! {
         user_id: String,
         playlist_id: String,
     }
+    /// The entries of playlist `?1` with no source, no file and no album
+    /// that name a title, an artist and an album, in playlist order: the
+    /// songs an identify job proves albums for.
+    pub(super) ENTRIES_TO_IDENTIFY = "SELECT id AS entry_id, track_name, artist_name, \
+         album_name, isrc FROM catalog_playlist_tracks WHERE playlist_id = ?1 \
+         AND source_type = '' AND library_file_id IS NULL AND album_id IS NULL \
+         AND trim(track_name) <> '' AND trim(artist_name) <> '' AND trim(album_name) <> '' \
+         ORDER BY position";
+    /// A song an identify job proves the album of.
+    pub(super) row EntryToIdentify for [ENTRIES_TO_IDENTIFY] {
+        entry_id: String,
+        track_name: String,
+        artist_name: String,
+        album_name: String,
+        isrc: Option<String>,
+    }
+    /// Give entry `?2` of playlist `?1` release group `?3`, cover `?4` and,
+    /// when `?5` is set, recording `?5`, while it still has no source, no
+    /// file and no album.
+    pub(super) SET_ENTRY_ALBUM = "UPDATE catalog_playlist_tracks SET album_id = ?3, \
+         cover_url = ?4, recording_mbid = COALESCE(?5, recording_mbid) \
+         WHERE id = ?2 AND playlist_id = ?1 AND album_id IS NULL AND source_type = '' \
+         AND library_file_id IS NULL";
     /// What a link pass follows: the library's catalog revision, which
     /// every change to its albums and tracks moves, and the latest change
     /// to any playlist, which adding entries moves.

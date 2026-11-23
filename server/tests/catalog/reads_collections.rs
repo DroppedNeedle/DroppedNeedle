@@ -136,6 +136,10 @@ impl Rig {
                 std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
             ),
             droppedneedle_catalog::local::store::LocalCatalog::new(self.runtime.db().clone()),
+            droppedneedle_kernel::jobs::queue::JobQueue::new(
+                self.runtime.db().clone(),
+                std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+            ),
         )
     }
 

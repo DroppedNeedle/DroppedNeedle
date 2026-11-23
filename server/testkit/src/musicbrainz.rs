@@ -212,6 +212,140 @@ const RECORDINGS: &[Recording] = &[
         param: Some(("query", Some("isrc:QZAAA2600002"))),
         body: include_str!("../../tests/fixtures/musicbrainz/spotify_isrc_single.json"),
     },
+    // musicbrainz/file_album_*.json (hand-written in the shape of the
+    // recorded recording search): the songs of a playlist file's albums,
+    // searched by title, artist and album. Willow Fen's albums: one found,
+    // a same-named EP, a one-track single, a soundtrack, two compilations
+    // of one title, an album whose deluxe edition holds a bonus track, a
+    // search that counts more than it shows, and a bootleg.
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(
+                r#"recording:"Paper Lanterns" AND artist:"Willow Fen" AND release:"Harbour Lights""#,
+            ),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/file_album_found.json"),
+    },
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(r#"recording:"Salt Road" AND artist:"Willow Fen" AND release:"Harbour Lights""#),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/file_album_found_second.json"),
+    },
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(r#"recording:"Tin Roof" AND artist:"Willow Fen" AND release:"Copper Sky""#),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/file_album_ep_tie.json"),
+    },
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(r#"recording:"Lone Star" AND artist:"Willow Fen" AND release:"Lone Star""#),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/file_album_single_only.json"),
+    },
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(r#"recording:"Paper Lanterns" AND artist:"Fen" AND release:"Harbour Lights""#),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/file_album_substring.json"),
+    },
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(r#"recording:"Night Drive" AND artist:"Willow Fen" AND release:"Midnight Run""#),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/file_album_soundtrack.json"),
+    },
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(r#"recording:"Bright Days" AND artist:"Willow Fen" AND release:"Greatest Hits""#),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/file_album_greatest_hits.json"),
+    },
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(r#"recording:"Copper Wire" AND artist:"Willow Fen" AND release:"Deep Water""#),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/file_album_two_songs_first.json"),
+    },
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(r#"recording:"Iron Gate" AND artist:"Willow Fen" AND release:"Deep Water""#),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/file_album_two_songs_second.json"),
+    },
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(r#"recording:"Common Song" AND artist:"Willow Fen" AND release:"Everyday""#),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/file_album_over_limit.json"),
+    },
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(
+                r#"recording:"Ghost Light" AND artist:"Willow Fen" AND release:"Live at the Mill""#,
+            ),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/file_album_bootleg.json"),
+    },
+    // musicbrainz/file_album_none.json: ISRCs MusicBrainz does not know, and
+    // a listing search under an album title it has none of.
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some(("query", Some("isrc:QZBBB2600001"))),
+        body: include_str!("../../tests/fixtures/musicbrainz/file_album_none.json"),
+    },
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some(("query", Some("isrc:QZBBB2600002"))),
+        body: include_str!("../../tests/fixtures/musicbrainz/file_album_none.json"),
+    },
+    Recording {
+        path: "/recording",
+        inc: &[],
+        param: Some((
+            "query",
+            Some(
+                r#"recording:"Signal Fire" AND artist:"Aurora Current" AND release:"Another Night""#,
+            ),
+        )),
+        body: include_str!("../../tests/fixtures/musicbrainz/file_album_none.json"),
+    },
     // musicbrainz/spotify_listing_*.json (hand-written in the shapes of
     // the recorded release search and lookup): albums whose ISRCs
     // MusicBrainz doesn't know. Quiet Harbor's album lists no ISRCs, beside

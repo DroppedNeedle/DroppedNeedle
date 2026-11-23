@@ -975,6 +975,10 @@ impl Rig {
             CollectionsState::new(
                 CollectionsDb::new(runtime.db().clone(), platform.clock.clone()),
                 droppedneedle_catalog::local::store::LocalCatalog::new(runtime.db().clone()),
+                droppedneedle_kernel::jobs::queue::JobQueue::new(
+                    runtime.db().clone(),
+                    platform.clock.clone(),
+                ),
             ),
             None,
             playback.clone(),

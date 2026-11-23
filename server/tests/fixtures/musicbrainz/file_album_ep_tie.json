@@ -1,0 +1,52 @@
+{
+  "created": "2026-11-23T00:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "recordings": [
+    {
+      "id": "5907a1b0-0000-4000-8000-000000001102",
+      "score": 100,
+      "title": "Tin Roof",
+      "length": 200000,
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Willow Fen",
+          "artist": {
+            "id": "5907a1b0-0000-4000-8000-000000001031",
+            "name": "Willow Fen",
+            "sort-name": "Willow Fen"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "5907a1b0-0000-4000-8000-000000001202",
+          "title": "Copper Sky",
+          "status": "Official",
+          "release-group": {
+            "id": "5907a1b0-0000-4000-8000-000000001002",
+            "title": "Copper Sky",
+            "primary-type": "Album",
+            "secondary-types": []
+          },
+          "track-count": 11,
+          "date": "2025"
+        },
+        {
+          "id": "5907a1b0-0000-4000-8000-000000001203",
+          "title": "Copper Sky",
+          "status": "Official",
+          "release-group": {
+            "id": "5907a1b0-0000-4000-8000-000000001003",
+            "title": "Copper Sky",
+            "primary-type": "EP",
+            "secondary-types": []
+          },
+          "track-count": 2,
+          "date": "2025"
+        }
+      ]
+    }
+  ]
+}

@@ -450,6 +450,7 @@ pub struct Collections {
     pub db: CollectionsDb,
     pub stores: Stores,
     pub catalog: LocalCatalog,
+    pub jobs: JobQueue,
 }
 
 /// The collections over the platform's database.
@@ -460,13 +461,19 @@ pub fn collections_at(platform: &Platform) -> Collections {
         db,
         stores,
         catalog: LocalCatalog::new(platform.db.clone()),
+        jobs: JobQueue::new(platform.db.clone(), platform.clock.clone()),
     }
 }
 
 impl Collections {
     /// The collections state over these stores.
     pub fn wired(&self) -> CollectionsState {
-        CollectionsState::over(self.db.clone(), self.stores.clone(), self.catalog.clone())
+        CollectionsState::over(
+            self.db.clone(),
+            self.stores.clone(),
+            self.catalog.clone(),
+            self.jobs.clone(),
+        )
     }
 }
 

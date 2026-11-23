@@ -58,7 +58,7 @@ use imports::jobs::{SPEC, SpotifyImportJobs, SpotifyImports};
 use imports::lidarr::LidarrClient;
 use imports::models::{LidarrConnectionSettings, SpotifySettings};
 use imports::spotify::{ImportedTrack, SpotifyImportService};
-use imports::spotify_albums::{AlbumResolver, SpotifyAlbum};
+use imports::spotify_albums::{AlbumResolver, FileAlbum, FileSong, FoundAlbum, SpotifyAlbum};
 use imports::spotify_client::SpotifyClient;
 use imports::spotify_oauth::{PendingAuth, SPOTIFY_CALLBACK_PATH, SpotifyConnection};
 use imports::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates};
@@ -1060,6 +1060,192 @@ async fn spotify_albums_without_isrcs_in_musicbrainz_are_proven_by_their_listing
     ] {
         assert_eq!(resolve(title, tracks, songs).await, None, "{why}");
     }
+}
+
+/// The resolver of playlist file albums, over the MusicBrainz mock.
+async fn file_album_resolver(tag: &str) -> (AuthRig, MockMusicBrainz, AlbumResolver) {
+    let auth = AuthRig::new(tag).await;
+    let musicbrainz = serve_musicbrainz(&auth).await;
+    let closed = "http://127.0.0.1:9";
+    let providers = providers_at(&auth.platform, closed, closed, None);
+    let resolver = AlbumResolver::new(&providers, auth.platform.settings.live());
+    (auth, musicbrainz, resolver)
+}
+
+/// A file album of `title` by `artist` holding `songs`, each with the
+/// ISRC given beside it.
+fn file_album(title: &str, artist: &str, songs: &[(&str, Option<&str>)]) -> FileAlbum {
+    FileAlbum {
+        title: title.to_owned(),
+        artist: artist.to_owned(),
+        songs: songs
+            .iter()
+            .map(|(song, isrc)| FileSong {
+                title: (*song).to_owned(),
+                isrc: isrc.map(str::to_owned),
+            })
+            .collect(),
+    }
+}
+
+/// A playlist file's album is the group of a release under its title that
+/// carries a recording with an ISRC the file gives, with nothing to break
+/// a tie: a same-named album and single both carrying it leave it unknown.
+/// An ISRC that proves no group, MusicBrainz knowing it only under another
+/// title or not at all, falls back to the listing, where a recording
+/// MusicBrainz lists under another ISRC does not count.
+#[tokio::test]
+async fn file_album_proof_by_isrc() {
+    const SOUNDTRACK: &str = "5907a1b0-0000-4000-8000-000000000f01";
+    let (_auth, _musicbrainz, resolver) = file_album_resolver("file-album-isrc").await;
+    for (title, isrc, group) in [
+        (
+            "Night Signals: Music From the Film",
+            "QZAAA2600001",
+            Some(SOUNDTRACK),
+        ),
+        ("Glass Bloom", "QZAAA2600002", None),
+        ("Another Night", "QZAAA2600001", None),
+    ] {
+        let album = file_album(title, "Aurora Current", &[("Signal Fire", Some(isrc))]);
+        let found = resolver
+            .resolve_file_album(&album)
+            .await
+            .expect("musicbrainz answers");
+        assert_eq!(
+            found.as_ref().map(|found| found.group.as_str()),
+            group,
+            "{title} by {isrc}"
+        );
+    }
+    for (song, isrc, group, why) in [
+        (
+            "Paper Lanterns",
+            "QZBBB2600001",
+            Some("5907a1b0-0000-4000-8000-000000001001"),
+            "an ISRC MusicBrainz lacks falls back to the listing",
+        ),
+        (
+            "Salt Road",
+            "QZBBB2600002",
+            None,
+            "a recording listed under another ISRC does not count",
+        ),
+    ] {
+        let album = file_album("Harbour Lights", "Willow Fen", &[(song, Some(isrc))]);
+        let found = resolver
+            .resolve_file_album(&album)
+            .await
+            .expect("musicbrainz answers");
+        assert_eq!(found.map(|found| found.group).as_deref(), group, "{why}");
+    }
+}
+
+/// With no ISRC a playlist file's album is the one release group where a
+/// recording of each song, credited to the album's artist by exact name,
+/// sits on an official release of two or more tracks under the album's
+/// title. A same-named EP ties, a one-track single, a bootleg, a credit
+/// that only contains the artist's name, two compilations of one title and
+/// a search counting more than it shows find nothing. A soundtrack is
+/// found through the recording's credit, and a song only on the deluxe
+/// edition still proves the album's group.
+#[tokio::test]
+async fn file_album_proof_by_listing() {
+    let group = |n: u64| format!("5907a1b0-0000-4000-8000-{n:012}");
+    let (_auth, _musicbrainz, resolver) = file_album_resolver("file-album-listing").await;
+    let cases: [(&str, &str, &[&str], Option<String>, &str); 9] = [
+        (
+            "Harbour Lights",
+            "Willow Fen",
+            &["Paper Lanterns"],
+            Some(group(1001)),
+            "one song on one album",
+        ),
+        (
+            "Copper Sky",
+            "Willow Fen",
+            &["Tin Roof"],
+            None,
+            "a same-named EP",
+        ),
+        (
+            "Lone Star",
+            "Willow Fen",
+            &["Lone Star"],
+            None,
+            "only a single",
+        ),
+        (
+            "Harbour Lights",
+            "Fen",
+            &["Paper Lanterns"],
+            None,
+            "part of a name",
+        ),
+        (
+            "Midnight Run (Original Soundtrack)",
+            "Willow Fen",
+            &["Night Drive"],
+            Some(group(1005)),
+            "a soundtrack",
+        ),
+        (
+            "Greatest Hits",
+            "Willow Fen",
+            &["Bright Days"],
+            None,
+            "two compilations",
+        ),
+        (
+            "Deep Water",
+            "Willow Fen, Guest Singer",
+            &["Copper Wire", "Iron Gate"],
+            Some(group(1008)),
+            "two songs, one on the deluxe edition",
+        ),
+        (
+            "Everyday",
+            "Willow Fen",
+            &["Common Song"],
+            None,
+            "a search over its limit",
+        ),
+        (
+            "Live at the Mill",
+            "Willow Fen",
+            &["Ghost Light"],
+            None,
+            "a bootleg",
+        ),
+    ];
+    for (title, artist, songs, want, why) in cases {
+        let songs: Vec<(&str, Option<&str>)> = songs.iter().map(|song| (*song, None)).collect();
+        let found = resolver
+            .resolve_file_album(&file_album(title, artist, &songs))
+            .await
+            .expect("musicbrainz answers");
+        assert_eq!(found.map(|found| found.group), want, "{why}");
+    }
+    let found = resolver
+        .resolve_file_album(&file_album(
+            "Deep Water",
+            "Willow Fen",
+            &[("Copper Wire", None), ("Iron Gate", None)],
+        ))
+        .await
+        .expect("musicbrainz answers");
+    assert_eq!(
+        found,
+        Some(FoundAlbum {
+            group: group(1008),
+            recordings: [
+                ("copper wire".to_owned(), group(1106)),
+                ("iron gate".to_owned(), group(1107)),
+            ]
+            .into(),
+        }),
+        "each song gets the one recording of its title on the group"
+    );
 }
 
 /// An import answers at once, then fills the playlist from the `/items`

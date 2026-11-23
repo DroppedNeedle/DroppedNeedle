@@ -24,10 +24,12 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use super::super::db::{CollectionsDb, StoreError};
 use super::super::entry_cover::entry_cover;
+use super::super::identify_job::{IDENTIFY, IdentifyJob, identify_key};
 use super::super::models::{PlaylistMember, PlaylistTrack};
 use super::super::sql::{self, PlaylistExportRow};
 use droppedneedle_auth::users::roles::Admin;
 use droppedneedle_kernel::db::{DbError, fold_text};
+use droppedneedle_kernel::jobs::queue::JobQueue;
 
 /// How many track covers a summary carries.
 const SUMMARY_COVER_COUNT: i64 = 4;
@@ -128,6 +130,22 @@ pub struct NewEntry {
     pub recording_mbid: Option<String>,
     /// The ISRC a playlist file gave for an entry the library lacked,
     /// uppercased.
+    pub isrc: Option<String>,
+}
+
+/// A song an import kept that still waits for its album: no source, no
+/// file and no album, with the names the file gave.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptEntry {
+    /// Entry id.
+    pub entry_id: String,
+    /// Track title.
+    pub title: String,
+    /// Artist text, every credit included.
+    pub artist: String,
+    /// Album name.
+    pub album: String,
+    /// The ISRC the file gave, uppercased.
     pub isrc: Option<String>,
 }
 
@@ -666,6 +684,67 @@ impl PlaylistStore {
             .await
     }
 
+    /// The songs of `playlist_id` an import kept that still wait for an
+    /// album, in playlist order: no source, no file and no album, and a
+    /// title, an artist and an album named. A playlist that is gone has
+    /// none.
+    pub async fn entries_to_identify(
+        &self,
+        playlist_id: &str,
+    ) -> Result<Vec<KeptEntry>, StoreError> {
+        let playlist_id = playlist_id.to_owned();
+        self.db
+            .read("playlists.entries_to_identify", move |conn| {
+                let rows = conn
+                    .prepare(sql::ENTRIES_TO_IDENTIFY.text())?
+                    .query_map(params![playlist_id], sql::EntryToIdentify::read)?
+                    .map(|row| {
+                        row.map(|row| KeptEntry {
+                            entry_id: row.entry_id,
+                            title: row.track_name,
+                            artist: row.artist_name,
+                            album: row.album_name,
+                            isrc: row.isrc,
+                        })
+                    })
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+    }
+
+    /// Give `entries` of `playlist_id`, each with the recording found for
+    /// it when one was, the release group `group` and its cover, in one
+    /// write. An entry that has meanwhile gained a source, a file or an
+    /// album is left alone. A change stamps the playlist, so the link pass
+    /// looks at it again. Answers how many entries changed.
+    pub async fn set_entries_album(
+        &self,
+        playlist_id: &str,
+        group: &str,
+        entries: Vec<(String, Option<String>)>,
+    ) -> Result<usize, StoreError> {
+        let group = group.to_ascii_lowercase();
+        let cover = entry_cover(&format!("/api/v3/covers/release-group/{group}?size=250"));
+        let playlist_id = playlist_id.to_owned();
+        let now = self.db.now_ms();
+        self.db
+            .write("playlists.set_entries_album", move |tx| {
+                let mut changed = 0;
+                for (entry_id, recording) in &entries {
+                    changed += tx.execute(
+                        sql::SET_ENTRY_ALBUM.text(),
+                        params![playlist_id, entry_id, group, cover, recording],
+                    )?;
+                }
+                if changed > 0 {
+                    tx.execute(sql::STAMP.text(), params![now, playlist_id])?;
+                }
+                Ok(changed)
+            })
+            .await
+    }
+
     /// One user's own playlists, to read and change.
     pub fn owned_by<'a>(&'a self, user_id: &'a str) -> OwnedPlaylists<'a> {
         OwnedPlaylists {
@@ -1193,6 +1272,32 @@ impl OwnedPlaylists<'_> {
             .write("playlists.create_with", move |tx| {
                 insert_playlist(tx, &id, &name, now, None, &owner_id)?;
                 insert_entries(tx, &id, None, &entries, now)?;
+                Ok((id, epoch(now / 1000)))
+            })
+            .await
+    }
+
+    /// [`Self::create_with`] for an import that kept songs naming an album:
+    /// the same write queues the job on `queue` that finds those albums.
+    pub async fn create_identifying(
+        &self,
+        name: &str,
+        entries: Vec<NewEntry>,
+        queue: &JobQueue,
+    ) -> Result<(String, u64), StoreError> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let (owner_id, name) = (self.user_id.to_owned(), name.to_owned());
+        let now = self.store.db.now_ms();
+        let queue = queue.clone();
+        self.store
+            .db
+            .write_queueing("playlists.create_identifying", move |tx| {
+                insert_playlist(tx, &id, &name, now, None, &owner_id)?;
+                insert_entries(tx, &id, None, &entries, now)?;
+                let job = IdentifyJob {
+                    playlist_id: id.clone(),
+                };
+                queue.enqueue(tx, IDENTIFY, &identify_key(&id), &job)?;
                 Ok((id, epoch(now / 1000)))
             })
             .await

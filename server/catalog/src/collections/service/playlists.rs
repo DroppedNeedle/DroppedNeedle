@@ -701,6 +701,7 @@ impl CollectionsService<'_> {
             .collect();
         let mut new_entries = Vec::with_capacity(planned.len());
         let mut kept = 0_usize;
+        let mut kept_an_album = false;
         for planned in planned {
             match planned {
                 Planned::Matched(entry, id) => match by_id.get(&id) {
@@ -708,17 +709,23 @@ impl CollectionsService<'_> {
                     None => unmatched.push(import::unmatched(entry, Reason::NoMatch)),
                 },
                 Planned::Kept(entry) => {
+                    kept_an_album |= !entry.album_name.is_empty();
                     new_entries.push(entry);
                     kept += 1;
                 }
             }
         }
         let matched = new_entries.len() - kept;
-        let (playlist_id, _) = self
-            .playlists()
-            .owned_by(user_id)
-            .create_with(&name, new_entries)
-            .await?;
+        let playlists = self.playlists();
+        let owned = playlists.owned_by(user_id);
+        // A kept song that names its album is looked up in the background.
+        let (playlist_id, _) = if kept_an_album {
+            owned
+                .create_identifying(&name, new_entries, &self.state.jobs)
+                .await?
+        } else {
+            owned.create_with(&name, new_entries).await?
+        };
         Ok(ImportPlaylistResponse {
             playlist_id,
             name,

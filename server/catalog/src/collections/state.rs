@@ -1,5 +1,7 @@
 //! Collections state: the SQLite stores.
 
+use droppedneedle_kernel::jobs::queue::JobQueue;
+
 use super::db::CollectionsDb;
 use super::store::Stores;
 use crate::local::store::LocalCatalog;
@@ -48,18 +50,26 @@ pub struct CollectionsState {
     /// names: the same id resolution and existence check Subsonic's
     /// `setRating` goes through, over the same database.
     pub items: LocalCatalog,
+    /// The jobs table: a playlist file import queues the job that finds
+    /// the albums of the songs it kept.
+    pub(crate) jobs: JobQueue,
 }
 
 impl CollectionsState {
-    /// State over one database and the local catalog.
-    pub fn new(db: CollectionsDb, items: LocalCatalog) -> Self {
+    /// State over one database, the local catalog and the jobs table.
+    pub fn new(db: CollectionsDb, items: LocalCatalog, jobs: JobQueue) -> Self {
         let stores = Stores::new(&db);
-        Self::over(db, stores, items)
+        Self::over(db, stores, items, jobs)
     }
 
-    /// The production state over the stores acquisition was built with
-    /// and the one local catalog the composition root built.
-    pub fn over(db: CollectionsDb, stores: Stores, items: LocalCatalog) -> Self {
-        Self { db, stores, items }
+    /// The production state over the stores acquisition was built with,
+    /// the one local catalog and the jobs table the composition root built.
+    pub fn over(db: CollectionsDb, stores: Stores, items: LocalCatalog, jobs: JobQueue) -> Self {
+        Self {
+            db,
+            stores,
+            items,
+            jobs,
+        }
     }
 }

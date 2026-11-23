@@ -674,6 +674,16 @@ pub struct RecordingSearchHit {
     /// Namespaced score key.
     #[serde(rename = "ext:score", default)]
     pub ext_score: Option<i64>,
+    /// The recording's ISRCs, sent with no include. Verified against
+    /// musicbrainz.org/ws/2/recording on 2026-11-23, each hit's releases
+    /// cut to two: tests/fixtures/musicbrainz/search_recording_isrc_bohemian_rhapsody.json,
+    /// a search for `isrc:GBUM71029604`, and
+    /// tests/fixtures/musicbrainz/search_recording_title_bohemian_rhapsody.json,
+    /// a title search for `recording:"Bohemian Rhapsody" AND artist:"Queen"`,
+    /// where the one hit with ISRCs carried them and the hits without sent
+    /// no key, which reads as none.
+    #[serde(default)]
+    pub isrcs: Vec<String>,
     /// Releases carrying the recording.
     #[serde(default)]
     pub releases: Vec<RecordingSearchRelease>,

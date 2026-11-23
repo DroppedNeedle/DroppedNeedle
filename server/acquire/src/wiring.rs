@@ -36,6 +36,7 @@ use crate::import_folder::site::ImportSite;
 use crate::imports::handlers::ImportsDeps;
 use crate::imports::jobs::{SpotifyImportJobs, SpotifyImports};
 use crate::imports::lidarr::LidarrClient;
+use crate::imports::playlist_identify::PlaylistIdentifyJobs;
 use crate::imports::spotify::SpotifyImportService;
 use crate::imports::spotify_albums::AlbumResolver;
 use crate::imports::spotify_client::SpotifyClient;
@@ -248,6 +249,9 @@ pub struct AcquireSetup {
     pub import_folder: Arc<ImportFolders>,
     /// Runs the Spotify import jobs; registered on the jobs table.
     pub spotify_import_jobs: Arc<SpotifyImportJobs>,
+    /// Finds the albums of the songs a playlist file import kept;
+    /// registered on the jobs table.
+    pub playlist_identify_jobs: Arc<PlaylistIdentifyJobs>,
     /// Deemix's Test and status checks, on the session the Deezer source
     /// keeps.
     pub deemix: Arc<DeemixChecks>,
@@ -894,6 +898,11 @@ impl AcquireSetup {
             resolver.clone(),
         ));
         let spotify_import_jobs = Arc::new(SpotifyImportJobs::new(spotify_service, events.clone()));
+        let playlist_identify_jobs = Arc::new(PlaylistIdentifyJobs::new(
+            collections.playlists.clone(),
+            resolver.clone(),
+            config_store.live(),
+        ));
         let spotify_imports = SpotifyImports::new(platform.db.clone(), queue);
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let imports = ImportsDeps {
@@ -1001,6 +1010,7 @@ impl AcquireSetup {
             held,
             import_folder,
             spotify_import_jobs,
+            playlist_identify_jobs,
             deemix: deemix_checks,
         })
     }

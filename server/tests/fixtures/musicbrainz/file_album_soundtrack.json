@@ -1,0 +1,41 @@
+{
+  "created": "2026-11-23T00:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "recordings": [
+    {
+      "id": "5907a1b0-0000-4000-8000-000000001104",
+      "score": 100,
+      "title": "Night Drive",
+      "length": 200000,
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Willow Fen",
+          "artist": {
+            "id": "5907a1b0-0000-4000-8000-000000001031",
+            "name": "Willow Fen",
+            "sort-name": "Willow Fen"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "5907a1b0-0000-4000-8000-000000001205",
+          "title": "Midnight Run",
+          "status": "Official",
+          "release-group": {
+            "id": "5907a1b0-0000-4000-8000-000000001005",
+            "title": "Midnight Run",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Soundtrack"
+            ]
+          },
+          "track-count": 14,
+          "date": "2025"
+        }
+      ]
+    }
+  ]
+}

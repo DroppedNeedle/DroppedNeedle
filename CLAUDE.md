@@ -784,6 +784,25 @@ Run from the repo root. `make help` lists every target.
   album's history shows the move.
 - Album and track identities, match state and their undo rows are written
   only through `library/src/identity/`; a source gate holds it.
+- A playlist entry a file import kept gets an album only by proof, from
+  the identify job (`acquire/src/imports/playlist_identify.rs`) through
+  the cached `AlbumResolver::resolve_file_album`
+  (`acquire/src/imports/spotify_albums.rs`). Names alone are never proof.
+  When the file gives an ISRC for one of the album's songs, the album is
+  the release group of a release under one of its title forms carrying a
+  recording with that ISRC, with no type or track count to break a tie;
+  ISRCs that prove two groups leave the album unknown. With no ISRC, or
+  ISRCs that prove no group, it is the one group where each song filed
+  under that album name and first artist (at most five, in file order)
+  has a recording of its title, credited by exact name to the entry's
+  artist or its first credit, on an official release of two or more
+  tracks under one of the album's title forms; a recording MusicBrainz
+  lists under ISRCs none of which is the song's file ISRC never counts.
+  In that listing proof, one-track releases, bootlegs, music videos, a
+  search that counts more than it shows and a credit that only contains
+  the artist's name never count. A found album is written as the entry's
+  album and cover only while it still has no source, no file and no album,
+  with the recording when only one on that group has the song's title.
 
 **Discover**
 - Discover's seed artists come from one function, `weighted_seeds`

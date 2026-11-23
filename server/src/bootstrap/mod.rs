@@ -435,8 +435,12 @@ pub(crate) async fn build_on(
     let local = LocalCatalog::new(db.clone());
     let collections_db = CollectionsDb::new(db.clone(), p.clock.clone());
     let collections = Stores::new(&collections_db);
-    let collections_state =
-        CollectionsState::over(collections_db, collections.clone(), local.clone());
+    let collections_state = CollectionsState::over(
+        collections_db,
+        collections.clone(),
+        local.clone(),
+        queues.queue().clone(),
+    );
     // The artist and album pages, with the follow state, plugin purchase
     // links and details. The artwork service names artist images through
     // it, and the library plans covers through that service.
@@ -647,6 +651,10 @@ pub(crate) async fn build_on(
         .with(
             droppedneedle_acquire::imports::jobs::SPEC,
             acquire.spotify_import_jobs.clone(),
+        )
+        .with(
+            droppedneedle_catalog::collections::identify_job::SPEC,
+            acquire.playlist_identify_jobs.clone(),
         )
         .with(library_removal::SPEC, album_cleanup);
     let jobs = JobsSetup::build(

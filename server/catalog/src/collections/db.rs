@@ -13,6 +13,7 @@ use rusqlite::{Connection, Transaction};
 
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
+use droppedneedle_kernel::jobs::queue::JobError;
 
 /// Every way a store call can fail. The text goes to the log only.
 #[derive(Debug, thiserror::Error)]
@@ -29,6 +30,21 @@ impl From<DbError> for StoreError {
     fn from(error: DbError) -> Self {
         match error {
             DbError::Busy { operation } => Self::Busy(operation),
+            other => Self::Internal(other.to_string()),
+        }
+    }
+}
+
+impl From<rusqlite::Error> for StoreError {
+    fn from(error: rusqlite::Error) -> Self {
+        DbError::from(error).into()
+    }
+}
+
+impl From<JobError> for StoreError {
+    fn from(error: JobError) -> Self {
+        match error {
+            JobError::Db(error) => error.into(),
             other => Self::Internal(other.to_string()),
         }
     }
@@ -95,6 +111,16 @@ impl CollectionsDb {
             .write(Lane::Foreground, name, op)
             .await
             .map_err(StoreError::from)
+    }
+
+    /// [`Self::write`] for a write that also queues a job, so its closure
+    /// fails with the store's own error.
+    pub async fn write_queueing<F, R>(&self, name: &'static str, op: F) -> Result<R, StoreError>
+    where
+        F: FnOnce(&Transaction) -> Result<R, StoreError> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.db.write(Lane::Foreground, name, op).await
     }
 }
 

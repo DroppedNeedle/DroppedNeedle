@@ -1,0 +1,56 @@
+{
+  "created": "2026-11-23T00:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "recordings": [
+    {
+      "id": "5907a1b0-0000-4000-8000-000000001105",
+      "score": 100,
+      "title": "Bright Days",
+      "length": 200000,
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Willow Fen",
+          "artist": {
+            "id": "5907a1b0-0000-4000-8000-000000001031",
+            "name": "Willow Fen",
+            "sort-name": "Willow Fen"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "5907a1b0-0000-4000-8000-000000001206",
+          "title": "Greatest Hits",
+          "status": "Official",
+          "release-group": {
+            "id": "5907a1b0-0000-4000-8000-000000001006",
+            "title": "Greatest Hits",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Compilation"
+            ]
+          },
+          "track-count": 16,
+          "date": "2025"
+        },
+        {
+          "id": "5907a1b0-0000-4000-8000-000000001207",
+          "title": "Greatest Hits",
+          "status": "Official",
+          "release-group": {
+            "id": "5907a1b0-0000-4000-8000-000000001007",
+            "title": "Greatest Hits",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Compilation"
+            ]
+          },
+          "track-count": 18,
+          "date": "2025"
+        }
+      ]
+    }
+  ]
+}

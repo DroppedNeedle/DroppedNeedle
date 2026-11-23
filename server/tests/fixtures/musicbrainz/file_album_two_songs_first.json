@@ -1,0 +1,65 @@
+{
+  "created": "2026-11-23T00:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "recordings": [
+    {
+      "id": "5907a1b0-0000-4000-8000-000000001106",
+      "score": 100,
+      "title": "Copper Wire",
+      "length": 200000,
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Willow Fen",
+          "artist": {
+            "id": "5907a1b0-0000-4000-8000-000000001031",
+            "name": "Willow Fen",
+            "sort-name": "Willow Fen"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "5907a1b0-0000-4000-8000-000000001208",
+          "title": "Deep Water",
+          "status": "Official",
+          "release-group": {
+            "id": "5907a1b0-0000-4000-8000-000000001008",
+            "title": "Deep Water",
+            "primary-type": "Album",
+            "secondary-types": []
+          },
+          "track-count": 10,
+          "date": "2025"
+        },
+        {
+          "id": "5907a1b0-0000-4000-8000-000000001209",
+          "title": "Deep Water (Deluxe Edition)",
+          "status": "Official",
+          "release-group": {
+            "id": "5907a1b0-0000-4000-8000-000000001008",
+            "title": "Deep Water",
+            "primary-type": "Album",
+            "secondary-types": []
+          },
+          "track-count": 14,
+          "date": "2025"
+        },
+        {
+          "id": "5907a1b0-0000-4000-8000-000000001210",
+          "title": "Deep Water",
+          "status": "Official",
+          "release-group": {
+            "id": "5907a1b0-0000-4000-8000-000000001009",
+            "title": "Deep Water",
+            "primary-type": "EP",
+            "secondary-types": []
+          },
+          "track-count": 3,
+          "date": "2025"
+        }
+      ]
+    }
+  ]
+}

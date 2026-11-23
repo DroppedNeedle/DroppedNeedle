@@ -1,0 +1,1192 @@
+{
+  "created": "2026-11-23T21:59:12.980Z",
+  "count": 237,
+  "offset": 0,
+  "recordings": [
+    {
+      "id": "43e7dfa7-6c41-4693-9e51-804998836597",
+      "score": 100,
+      "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+      "title": "Bohemian Rhapsody",
+      "length": 362109,
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Queen",
+          "artist": {
+            "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+            "name": "Queen",
+            "sort-name": "Queen",
+            "disambiguation": "UK rock group",
+            "aliases": [
+              {
+                "sort-name": "Queen",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "Queen",
+                "locale": "en",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "皇后乐队",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "皇后乐队",
+                "locale": "zh_Hans_CN",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "クイーン",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "クイーン",
+                "locale": "ja",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              }
+            ]
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "1f510c0d-b69c-408b-98ad-19f9bca3c18b",
+          "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+          "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+          "count": 1,
+          "title": "Golden Ballads",
+          "status": "Official",
+          "artist-credit": [
+            {
+              "name": "Queen",
+              "artist": {
+                "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+                "name": "Queen",
+                "sort-name": "Queen",
+                "disambiguation": "UK rock group"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "439511f8-eb74-4434-bc6b-112f986824e4",
+            "type-id": "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Golden Ballads",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Compilation"
+            ],
+            "secondary-type-ids": [
+              "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+            ]
+          },
+          "track-count": 18,
+          "media": [
+            {
+              "id": "c229cd06-3191-34e8-bcd0-16a2ab757280",
+              "position": 1,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "5e7f9617-3b2b-4e63-a197-6fb9a2ffcbb9",
+                  "number": "14",
+                  "title": "Bohemian Rhapsody",
+                  "length": 362109
+                }
+              ],
+              "track-count": 18,
+              "track-offset": 14
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "588e52ca-915e-4ebf-bcb6-c92752edcf14",
+      "score": 100,
+      "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+      "title": "Bohemian Rhapsody",
+      "length": 314786,
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Queen",
+          "artist": {
+            "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+            "name": "Queen",
+            "sort-name": "Queen",
+            "disambiguation": "UK rock group",
+            "aliases": [
+              {
+                "sort-name": "Queen",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "Queen",
+                "locale": "en",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "皇后乐队",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "皇后乐队",
+                "locale": "zh_Hans_CN",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "クイーン",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "クイーン",
+                "locale": "ja",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              }
+            ]
+          }
+        }
+      ],
+      "first-release-date": "2020",
+      "releases": [
+        {
+          "id": "fc4ce4fe-00ec-4728-aa81-7a5b7b2f0f13",
+          "status-id": "1156806e-d06a-38bd-83f0-cf2284a808b9",
+          "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+          "count": 2,
+          "title": "Argentina 1981",
+          "status": "Bootleg",
+          "artist-credit": [
+            {
+              "name": "Queen",
+              "artist": {
+                "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+                "name": "Queen",
+                "sort-name": "Queen",
+                "disambiguation": "UK rock group"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "47c5cbaa-c9a3-4f5e-99e9-81b9c72833f4",
+            "type-id": "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Argentina 1981",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Live"
+            ],
+            "secondary-type-ids": [
+              "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+            ]
+          },
+          "track-count": 30,
+          "media": [
+            {
+              "id": "339adf1e-9a7a-356e-8e2d-367ddb355f09",
+              "position": 2,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "80bbfdf0-5bfe-4a39-92d1-47e3ed1c29dd",
+                  "number": "7",
+                  "title": "Bohemian Rhapsody",
+                  "length": 314786
+                }
+              ],
+              "track-count": 15,
+              "track-offset": 6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "73647d8a-6a1c-4e71-a9d0-474d6ba5e88b",
+      "score": 100,
+      "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+      "title": "Bohemian Rhapsody",
+      "length": 329000,
+      "disambiguation": "live, 1985-05-15: Osaka-Jo Hall, Osaka, Japan",
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Queen",
+          "artist": {
+            "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+            "name": "Queen",
+            "sort-name": "Queen",
+            "disambiguation": "UK rock group",
+            "aliases": [
+              {
+                "sort-name": "Queen",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "Queen",
+                "locale": "en",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "皇后乐队",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "皇后乐队",
+                "locale": "zh_Hans_CN",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "クイーン",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "クイーン",
+                "locale": "ja",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              }
+            ]
+          }
+        }
+      ],
+      "first-release-date": "2018",
+      "releases": [
+        {
+          "id": "ece29507-8025-4bfe-b88f-aee92f5cb835",
+          "status-id": "1156806e-d06a-38bd-83f0-cf2284a808b9",
+          "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+          "count": 2,
+          "title": "Definitive Osaka 1985",
+          "status": "Bootleg",
+          "artist-credit": [
+            {
+              "name": "Queen",
+              "artist": {
+                "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+                "name": "Queen",
+                "sort-name": "Queen",
+                "disambiguation": "UK rock group"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "ee99acce-62e2-4112-a927-b356c895e540",
+            "type-id": "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Definitive Osaka 1985",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Live"
+            ],
+            "secondary-type-ids": [
+              "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+            ]
+          },
+          "date": "2018",
+          "country": "JP",
+          "release-events": [
+            {
+              "date": "2018",
+              "area": {
+                "id": "2db42837-c832-3c27-b4a3-08198f75693c",
+                "name": "Japan",
+                "sort-name": "Japan",
+                "iso-3166-1-codes": [
+                  "JP"
+                ]
+              }
+            }
+          ],
+          "track-count": 30,
+          "media": [
+            {
+              "id": "52987ba6-98ed-3fa6-869d-29c7dc614cec",
+              "position": 2,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "c149da67-484f-4dd2-b33c-59d86ba3e3e4",
+                  "number": "6",
+                  "title": "Bohemian Rhapsody",
+                  "length": 329000
+                }
+              ],
+              "track-count": 12,
+              "track-offset": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cdb01e2a-8dfe-4f66-91f5-4eb0d1aac885",
+      "score": 100,
+      "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+      "title": "Bohemian Rhapsody",
+      "length": 328933,
+      "disambiguation": "live, 1981-11-(24-25): Montreal Forum, Montreal, Canada",
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Queen",
+          "artist": {
+            "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+            "name": "Queen",
+            "sort-name": "Queen",
+            "disambiguation": "UK rock group",
+            "aliases": [
+              {
+                "sort-name": "Queen",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "Queen",
+                "locale": "en",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "皇后乐队",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "皇后乐队",
+                "locale": "zh_Hans_CN",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "クイーン",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "クイーン",
+                "locale": "ja",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              }
+            ]
+          }
+        }
+      ],
+      "first-release-date": "2007-10-26",
+      "releases": [
+        {
+          "id": "83075fb3-1e85-4fe5-ae33-2cb82c9a5e2a",
+          "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+          "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+          "count": 2,
+          "title": "Rock Montreal",
+          "status": "Official",
+          "artist-credit": [
+            {
+              "name": "Queen",
+              "artist": {
+                "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+                "name": "Queen",
+                "sort-name": "Queen",
+                "disambiguation": "UK rock group"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "e0d97e8d-dc9e-3f1b-91a4-ec7df83eecb1",
+            "type-id": "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Rock Montreal",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Live"
+            ],
+            "secondary-type-ids": [
+              "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+            ]
+          },
+          "date": "2007-10-29",
+          "country": "XE",
+          "release-events": [
+            {
+              "date": "2007-10-29",
+              "area": {
+                "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+                "name": "Europe",
+                "sort-name": "Europe",
+                "iso-3166-1-codes": [
+                  "XE"
+                ]
+              }
+            }
+          ],
+          "track-count": 28,
+          "media": [
+            {
+              "id": "c13ad309-c447-3faf-855f-8279bac5b69d",
+              "position": 2,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "ef72b75e-ffd1-4190-bac6-187d98ed5f20",
+                  "number": "9",
+                  "title": "Bohemian Rhapsody",
+                  "length": 328933
+                }
+              ],
+              "track-count": 15,
+              "track-offset": 8
+            }
+          ]
+        },
+        {
+          "id": "a1b1166b-6c18-4837-bfa2-5961fd0f43cd",
+          "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+          "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+          "count": 2,
+          "title": "Rock Montreal",
+          "status": "Official",
+          "artist-credit": [
+            {
+              "name": "Queen",
+              "artist": {
+                "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+                "name": "Queen",
+                "sort-name": "Queen",
+                "disambiguation": "UK rock group"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "e0d97e8d-dc9e-3f1b-91a4-ec7df83eecb1",
+            "type-id": "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Rock Montreal",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Live"
+            ],
+            "secondary-type-ids": [
+              "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+            ]
+          },
+          "date": "2024-05-10",
+          "country": "JP",
+          "release-events": [
+            {
+              "date": "2024-05-10",
+              "area": {
+                "id": "2db42837-c832-3c27-b4a3-08198f75693c",
+                "name": "Japan",
+                "sort-name": "Japan",
+                "iso-3166-1-codes": [
+                  "JP"
+                ]
+              }
+            }
+          ],
+          "track-count": 28,
+          "media": [
+            {
+              "id": "9271b470-85e7-434e-b10b-8d8184b1c3bc",
+              "position": 2,
+              "format": "SHM-CD",
+              "track": [
+                {
+                  "id": "f1dad155-4a1a-4982-90e1-ddd85dbf5a4f",
+                  "number": "9",
+                  "title": "Bohemian Rhapsody",
+                  "length": 328000
+                }
+              ],
+              "track-count": 15,
+              "track-offset": 8
+            }
+          ]
+        }
+      ],
+      "isrcs": [
+        "GBCEE0700025"
+      ],
+      "tags": [
+        {
+          "count": 5,
+          "name": "rock"
+        },
+        {
+          "count": 2,
+          "name": "classic rock"
+        },
+        {
+          "count": 1,
+          "name": "arena rock"
+        }
+      ]
+    },
+    {
+      "id": "ca78c946-7258-452a-ad3d-deab4524c178",
+      "score": 100,
+      "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+      "title": "Bohemian Rhapsody",
+      "length": 362000,
+      "disambiguation": "live, 1982-04-16: Hallenstadion, Zürich, Switzerland",
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Queen",
+          "artist": {
+            "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+            "name": "Queen",
+            "sort-name": "Queen",
+            "disambiguation": "UK rock group",
+            "aliases": [
+              {
+                "sort-name": "Queen",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "Queen",
+                "locale": "en",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "皇后乐队",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "皇后乐队",
+                "locale": "zh_Hans_CN",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "クイーン",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "クイーン",
+                "locale": "ja",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              }
+            ]
+          }
+        }
+      ],
+      "first-release-date": "2009",
+      "releases": [
+        {
+          "id": "8d3f612c-cfab-47fe-912e-ec8de03c2268",
+          "status-id": "1156806e-d06a-38bd-83f0-cf2284a808b9",
+          "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+          "count": 1,
+          "title": "Good Evening Zürich",
+          "status": "Bootleg",
+          "artist-credit": [
+            {
+              "name": "Queen",
+              "artist": {
+                "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+                "name": "Queen",
+                "sort-name": "Queen",
+                "disambiguation": "UK rock group"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "47bea7b6-11ff-48e6-8817-4bc5dd1e7294",
+            "type-id": "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Good Evening Zürich",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Live"
+            ],
+            "secondary-type-ids": [
+              "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+            ]
+          },
+          "track-count": 19,
+          "media": [
+            {
+              "id": "17cf8434-7cf8-3a2e-942e-0abca2301187",
+              "position": 1,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "f9839f33-6b98-47a2-a709-bdbf0d359146",
+                  "number": "11",
+                  "title": "Bohemian Rhapsody",
+                  "length": 362000
+                }
+              ],
+              "track-count": 19,
+              "track-offset": 10
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "390380ae-2963-4974-8a26-3bc569ac8a2f",
+      "score": 100,
+      "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+      "title": "Bohemian Rhapsody",
+      "disambiguation": "live, 1984-09-24: Deutchlandhalle, Berlin, Germany",
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Queen",
+          "artist": {
+            "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+            "name": "Queen",
+            "sort-name": "Queen",
+            "disambiguation": "UK rock group",
+            "aliases": [
+              {
+                "sort-name": "Queen",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "Queen",
+                "locale": "en",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "皇后乐队",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "皇后乐队",
+                "locale": "zh_Hans_CN",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "クイーン",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "クイーン",
+                "locale": "ja",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              }
+            ]
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "691738c9-6e82-4128-9a29-8cfdc0c839ab",
+          "status-id": "1156806e-d06a-38bd-83f0-cf2284a808b9",
+          "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+          "count": 2,
+          "title": "1984-09-24: Deutchlandhalle, Berlin, Germany",
+          "status": "Bootleg",
+          "artist-credit": [
+            {
+              "name": "Queen",
+              "artist": {
+                "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+                "name": "Queen",
+                "sort-name": "Queen",
+                "disambiguation": "UK rock group"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "8f9c7d63-4cd5-4a95-bafb-4f52dff348e8",
+            "title": "1984-09-24: Deutchlandhalle, Berlin, Germany",
+            "secondary-types": [
+              "Live"
+            ],
+            "secondary-type-ids": [
+              "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+            ]
+          },
+          "track-count": 31,
+          "media": [
+            {
+              "id": "316b60c3-6cac-3286-9a1b-af82c5b33357",
+              "position": 2,
+              "format": "Digital Media",
+              "track": [
+                {
+                  "id": "7d486480-6b07-3a1d-8257-4c5d449279bd",
+                  "number": "4",
+                  "title": "Bohemian Rhapsody"
+                }
+              ],
+              "track-count": 10,
+              "track-offset": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "b6f8a822-0555-4836-91e9-c20c9a52ccfa",
+      "score": 100,
+      "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+      "title": "Bohemian Rhapsody",
+      "disambiguation": "live, 1977-03-13: Seattle Center Arena, Seattle, WA, USA",
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Queen",
+          "artist": {
+            "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+            "name": "Queen",
+            "sort-name": "Queen",
+            "disambiguation": "UK rock group",
+            "aliases": [
+              {
+                "sort-name": "Queen",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "Queen",
+                "locale": "en",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "皇后乐队",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "皇后乐队",
+                "locale": "zh_Hans_CN",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "クイーン",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "クイーン",
+                "locale": "ja",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              }
+            ]
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "68456e0b-4eb4-4276-8b3e-aa0ca3ce188f",
+          "status-id": "1156806e-d06a-38bd-83f0-cf2284a808b9",
+          "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+          "count": 1,
+          "title": "1977-03-13: Seattle Center Arena, Seattle, WA, USA",
+          "status": "Bootleg",
+          "artist-credit": [
+            {
+              "name": "Queen",
+              "artist": {
+                "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+                "name": "Queen",
+                "sort-name": "Queen",
+                "disambiguation": "UK rock group"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "005a2131-0a0b-4af4-ae5f-d27602a62182",
+            "title": "1977-03-13: Seattle Center Arena, Seattle, WA, USA",
+            "secondary-types": [
+              "Live"
+            ],
+            "secondary-type-ids": [
+              "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+            ]
+          },
+          "track-count": 23,
+          "media": [
+            {
+              "id": "03fd7b3f-a574-311a-98a7-2b2b62e28a9a",
+              "position": 1,
+              "format": "Digital Media",
+              "track": [
+                {
+                  "id": "a9957d9c-4460-3bd3-be21-fa0d03437233",
+                  "number": "16",
+                  "title": "Bohemian Rhapsody"
+                }
+              ],
+              "track-count": 23,
+              "track-offset": 15
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "de3b0879-2f20-4f5f-abee-68c5cd8075df",
+      "score": 100,
+      "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+      "title": "Bohemian Rhapsody",
+      "length": 314000,
+      "disambiguation": "live, 1977‐03‐13: Seattle Center Arena, Seattle, WA, USA",
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Queen",
+          "artist": {
+            "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+            "name": "Queen",
+            "sort-name": "Queen",
+            "disambiguation": "UK rock group",
+            "aliases": [
+              {
+                "sort-name": "Queen",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "Queen",
+                "locale": "en",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "皇后乐队",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "皇后乐队",
+                "locale": "zh_Hans_CN",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "クイーン",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "クイーン",
+                "locale": "ja",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              }
+            ]
+          }
+        }
+      ],
+      "first-release-date": "1993",
+      "releases": [
+        {
+          "id": "a5154926-b4c7-4565-810b-32da51262cd9",
+          "status-id": "1156806e-d06a-38bd-83f0-cf2284a808b9",
+          "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+          "count": 1,
+          "title": "The Mercury Is Rising",
+          "status": "Bootleg",
+          "artist-credit": [
+            {
+              "name": "Queen",
+              "artist": {
+                "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+                "name": "Queen",
+                "sort-name": "Queen",
+                "disambiguation": "UK rock group"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "4519093d-fc7f-441d-aa05-4912a9214300",
+            "type-id": "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "The Mercury Is Rising",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Compilation",
+              "Live"
+            ],
+            "secondary-type-ids": [
+              "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+              "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+            ]
+          },
+          "date": "1993",
+          "country": "GB",
+          "release-events": [
+            {
+              "date": "1993",
+              "area": {
+                "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+                "name": "United Kingdom",
+                "sort-name": "United Kingdom",
+                "iso-3166-1-codes": [
+                  "GB"
+                ]
+              }
+            }
+          ],
+          "track-count": 15,
+          "media": [
+            {
+              "id": "b48f4276-059b-3506-9a5d-be5659605d04",
+              "position": 1,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "4316fee4-43d4-3168-b7ae-35c78c9af965",
+                  "number": "14",
+                  "title": "Bohemian Rhapsody",
+                  "length": 314000
+                }
+              ],
+              "track-count": 15,
+              "track-offset": 13
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "571ab5d4-2329-4356-a910-f161310f7b9d",
+      "score": 100,
+      "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+      "title": "Bohemian Rhapsody",
+      "length": 355293,
+      "disambiguation": "live, 1984-09-15: Sports Palace, Milan, Italy",
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Queen",
+          "artist": {
+            "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+            "name": "Queen",
+            "sort-name": "Queen",
+            "disambiguation": "UK rock group",
+            "aliases": [
+              {
+                "sort-name": "Queen",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "Queen",
+                "locale": "en",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "皇后乐队",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "皇后乐队",
+                "locale": "zh_Hans_CN",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "クイーン",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "クイーン",
+                "locale": "ja",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              }
+            ]
+          }
+        }
+      ],
+      "releases": [
+        {
+          "id": "02ef550e-fe17-4ff4-88f0-cfde88e4f190",
+          "status-id": "1156806e-d06a-38bd-83f0-cf2284a808b9",
+          "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+          "count": 2,
+          "title": "1984‐09‐15: The Jewels: Sports Palace, Milan, Italy",
+          "status": "Bootleg",
+          "artist-credit": [
+            {
+              "name": "Queen",
+              "artist": {
+                "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+                "name": "Queen",
+                "sort-name": "Queen",
+                "disambiguation": "UK rock group"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "1e13dc6d-5517-3907-ab33-87d0db388d47",
+            "type-id": "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "1984‐09‐15: The Jewels: Sports Palace, Milan, Italy",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Live"
+            ],
+            "secondary-type-ids": [
+              "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+            ]
+          },
+          "track-count": 26,
+          "media": [
+            {
+              "id": "64d69ac7-3b1a-34b5-bc75-c89dd9476c7e",
+              "position": 2,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "d74e6a6b-d3ad-3485-9e9d-0021c208200f",
+                  "number": "4",
+                  "title": "Bohemian Rhapsody",
+                  "length": 355293
+                }
+              ],
+              "track-count": 10,
+              "track-offset": 3
+            }
+          ]
+        }
+      ],
+      "tags": [
+        {
+          "count": 1,
+          "name": "rock"
+        },
+        {
+          "count": 1,
+          "name": "classic rock"
+        }
+      ]
+    },
+    {
+      "id": "e14a8c70-b4c3-43f1-b4fe-42f93c722289",
+      "score": 100,
+      "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+      "title": "Bohemian Rhapsody",
+      "video": null,
+      "artist-credit": [
+        {
+          "name": "Queen",
+          "artist": {
+            "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+            "name": "Queen",
+            "sort-name": "Queen",
+            "disambiguation": "UK rock group",
+            "aliases": [
+              {
+                "sort-name": "Queen",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "Queen",
+                "locale": "en",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "皇后乐队",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "皇后乐队",
+                "locale": "zh_Hans_CN",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              },
+              {
+                "sort-name": "クイーン",
+                "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+                "name": "クイーン",
+                "locale": "ja",
+                "type": "Artist name",
+                "primary": true,
+                "begin-date": null,
+                "end-date": null
+              }
+            ]
+          }
+        }
+      ],
+      "first-release-date": "1994",
+      "releases": [
+        {
+          "id": "30d45bd9-0378-4b15-b6cd-a9f617ca1c09",
+          "status-id": "1156806e-d06a-38bd-83f0-cf2284a808b9",
+          "artist-credit-id": "edbf1ee2-3861-3d95-b971-8f243cbc7e54",
+          "count": 1,
+          "title": "Pearly Queen",
+          "status": "Bootleg",
+          "artist-credit": [
+            {
+              "name": "Queen",
+              "artist": {
+                "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+                "name": "Queen",
+                "sort-name": "Queen",
+                "disambiguation": "UK rock group"
+              }
+            }
+          ],
+          "release-group": {
+            "id": "37c2f5e0-84d9-472e-8c2c-5e1cc1701ddb",
+            "type-id": "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0",
+            "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+            "title": "Pearly Queen",
+            "primary-type": "Album",
+            "secondary-types": [
+              "Live"
+            ],
+            "secondary-type-ids": [
+              "6fd474e2-6b58-3102-9d17-d6f7eb7da0a0"
+            ]
+          },
+          "date": "1994",
+          "country": "IT",
+          "release-events": [
+            {
+              "date": "1994",
+              "area": {
+                "id": "c6500277-9a3d-349b-bf30-41afdbf42add",
+                "name": "Italy",
+                "sort-name": "Italy",
+                "iso-3166-1-codes": [
+                  "IT"
+                ]
+              }
+            }
+          ],
+          "track-count": 17,
+          "media": [
+            {
+              "id": "e6322354-f929-30c1-a371-14a2f7d8b815",
+              "position": 1,
+              "format": "CD",
+              "track": [
+                {
+                  "id": "e4b36013-9789-46ce-962f-8b9ded2c8b4b",
+                  "number": "12",
+                  "title": "Bohemian Rhapsody"
+                }
+              ],
+              "track-count": 17,
+              "track-offset": 11
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

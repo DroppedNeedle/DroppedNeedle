@@ -26,6 +26,7 @@ pub mod jobs;
 pub mod lidarr;
 pub mod models;
 pub mod mount;
+pub mod playlist_identify;
 pub mod spotify;
 pub mod spotify_albums;
 pub mod spotify_client;

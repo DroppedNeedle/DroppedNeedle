@@ -11,6 +11,7 @@ mod entry_cover;
 pub mod error;
 pub mod handlers;
 pub mod http;
+pub mod identify_job;
 mod import;
 pub mod library_links;
 pub mod models;
