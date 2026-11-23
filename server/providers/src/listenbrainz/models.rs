@@ -807,6 +807,98 @@ pub struct TrackArtist {
     pub artist_mbid: Option<String>,
 }
 
+/// One export of a person's data: the answer to `POST /1/export/` and to
+/// `GET /1/export/{id}`, and each row of `GET /1/export/list`.
+///
+/// Not recorded yet: written from ListenBrainz's description of the answer
+/// (`docs/users/api/export.rst`) and the code that writes it
+/// (`listenbrainz/db/user_data_export.py`, `_row_to_dict`), both read at
+/// listenbrainz-server 6a2ea2a24 on 2026-11-23. `export_id` is an integer,
+/// `status` one of `waiting`, `in_progress`, `completed` and `failed`,
+/// `created` and `available_until` ISO 8601 times (the second null until
+/// the export completes), `start_time` and `end_time` the range asked
+/// for, in unix seconds, null when none was. The id and the status are
+/// identity; tests/fixtures/listenbrainz/export_*.json hold answers in
+/// that shape.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExportAnswer {
+    /// The export's id.
+    pub export_id: i64,
+    /// What it exports.
+    #[serde(rename = "type", default, deserialize_with = "loose_text")]
+    pub kind: Option<String>,
+    /// Where it stands.
+    pub status: ExportStatus,
+    /// When it was asked for.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub created: Option<String>,
+    /// Until when a completed one can be downloaded.
+    #[serde(default, deserialize_with = "loose_text")]
+    pub available_until: Option<String>,
+    /// The first listen time asked for, unix seconds.
+    #[serde(default, deserialize_with = "loose_count")]
+    pub start_time: Option<i64>,
+    /// The last listen time asked for, unix seconds.
+    #[serde(default, deserialize_with = "loose_count")]
+    pub end_time: Option<i64>,
+}
+
+/// Where an export stands, as ListenBrainz spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportStatus {
+    /// Asked for, not started.
+    Waiting,
+    /// Being made.
+    InProgress,
+    /// Ready to download.
+    Completed,
+    /// It could not be made.
+    Failed,
+    /// A status this client does not know: read as still being made.
+    #[serde(other)]
+    Unknown,
+}
+
+/// `GET /1/export/list`: the person's exports, newest first.
+pub type ExportListAnswer = Vec<ExportAnswer>;
+
+/// `GET /1/user/{user}/listens` with `min_ts`, read for a person's kept
+/// history: the listens as export lines, so they get the same checks as
+/// an uploaded file.
+///
+/// Verified against api.listenbrainz.org/1/user/{user}/listens on
+/// 2026-11-03 (tests/fixtures/listenbrainz/listens_account.json, without
+/// `min_ts`). What `min_ts` does was read in listenbrainz-server 6a2ea2a24
+/// on 2026-11-23 (`webserver/views/api.py` `get_listens`,
+/// `listenstore/timescale_listenstore.py` `fetch_listens`): the oldest
+/// `count` listens after `min_ts`, not including it, answered newest
+/// first, so a full page goes on from its newest listen.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListensPageAnswer {
+    /// The envelope.
+    pub payload: ListensPagePayload,
+}
+
+/// The listens envelope.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListensPagePayload {
+    /// The listens, newest first. Required: an answer without the list is
+    /// not "no listens".
+    pub listens: Vec<ListensPageItem>,
+}
+
+/// One item of a listens page: a listen, or something that is not one,
+/// which still counts toward the page being full.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum ListensPageItem {
+    /// A listen as an export line.
+    Listen(Box<super::history::ExportLine>),
+    /// Anything else.
+    Other(IgnoredAny),
+}
+
 /// A count as ListenBrainz writes it: an integer, or a float with no
 /// fraction.
 #[derive(Deserialize)]

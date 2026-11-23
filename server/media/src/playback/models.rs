@@ -442,4 +442,9 @@ pub struct ListenBrainzConnectRequest {
     /// ListenBrainz username.
     #[serde(default)]
     pub username: String,
+    /// Replace the listening history kept from another ListenBrainz
+    /// account with this one's. Without it, a link that would replace one
+    /// answers 409 `HISTORY_ACCOUNT_DIFFERS` and stores nothing.
+    #[serde(default)]
+    pub replace_history: bool,
 }

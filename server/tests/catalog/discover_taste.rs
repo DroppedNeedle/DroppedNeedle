@@ -225,11 +225,14 @@ async fn due_on_visit(rig: &AuthRig) -> bool {
         JobQueue::new(db.clone(), rig.platform.clock.clone()),
         rig.platform.clock.clone(),
         false,
-        FactJobs::new(
-            KeptFacts::new(db.clone(), rig.platform.clock.clone()),
-            Arc::new(Script::default()),
-        )
-        .due(),
+        (
+            FactJobs::new(
+                KeptFacts::new(db.clone(), rig.platform.clock.clone()),
+                Arc::new(Script::default()),
+            )
+            .due(),
+            crate::common::history_store(&rig.platform),
+        ),
     );
     due.visit("user-1").await;
     let queued: i64 = db.one(

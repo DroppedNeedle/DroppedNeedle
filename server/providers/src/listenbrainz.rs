@@ -32,11 +32,16 @@ use serde::de::DeserializeOwned;
 use crate::RequestPriority;
 use crate::cache::{CacheKey, Policy, ProviderCacheStore, Source};
 use crate::degradation::{IntegrationStatus, record_current};
-use crate::error::{ProviderError, TransportKind, retry_delay_from_headers};
-use crate::executor::{Answer, Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
+use crate::error::{PayloadKind, ProviderError, TransportKind, retry_delay_from_headers};
+use crate::executor::{
+    Answer, Backoff, DownloadError, Executor, Reply, Request, Spec, Url, standard_classify,
+};
 
+use self::history::HistoryListen;
+pub use self::models::ExportStatus;
 use self::models::{
-    ArtistPopularityAnswer, ListenCountAnswer, ListenItem, ListensAnswer, RecordingMetadataAnswer,
+    ArtistPopularityAnswer, ExportAnswer, ExportListAnswer, ListenCountAnswer, ListenItem,
+    ListensAnswer, ListensPageAnswer, ListensPageItem, RecordingMetadataAnswer,
     RecordingPopularityAnswer, ReleaseGroupEntry, ReleaseGroupMetadataAnswer,
     ReleaseGroupPopularityAnswer, ScoredSimilarArtistsAnswer, TagItem, TopRecordingRow,
     TopRecordingsAnswer, TopReleaseGroupRow, TopReleaseGroupsAnswer, ValidateTokenAnswer,
@@ -168,6 +173,10 @@ fn classify_labs(answer: &Answer<'_>) -> Result<(), ProviderError> {
 fn classify_as(provider: &'static str, answer: &Answer<'_>) -> Result<(), ProviderError> {
     let reply = answer.reply;
     let status = reply.status();
+    // Passed back: the caller of the export request reads it.
+    if export_pending(reply) {
+        return Ok(());
+    }
     if status == 500 && String::from_utf8_lossy(reply.bytes()).contains("currently disabled") {
         return Err(ProviderError::Disabled {
             provider,
@@ -291,6 +300,76 @@ pub struct Listen {
     pub release_mbid: Option<String>,
     /// Artist MBIDs.
     pub artist_mbids: Option<Vec<String>>,
+}
+
+/// The most listens one listens read may ask for: the documented maximum.
+pub const MAX_LISTENS_PAGE: u32 = 1000;
+
+/// One page of a person's listens after a time.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ListensPage {
+    /// The listens that passed the checks.
+    pub listens: Vec<HistoryListen>,
+    /// How many items the page held, listens or not: a page as long as
+    /// asked for may have more after it.
+    pub read: usize,
+    /// The newest listen time on the page, unix seconds, whether or not
+    /// that listen passed the checks.
+    pub newest_at: Option<i64>,
+    /// How many items were not kept: not a listen, or failing its checks.
+    pub skipped: usize,
+}
+
+/// What asking for an export did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AskedExport {
+    /// This export was asked for.
+    Asked(ListenBrainzExport),
+    /// The account's one pending export already waits.
+    AlreadyPending,
+}
+
+/// One export of a person's ListenBrainz data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListenBrainzExport {
+    /// Its id.
+    pub id: i64,
+    /// What it exports: `export_all_user_data`, the only kind there is.
+    pub kind: Option<String>,
+    /// Where it stands.
+    pub status: ExportStatus,
+    /// When it was asked for, unix seconds; `None` when the time does not
+    /// read.
+    pub created_at: Option<i64>,
+    /// Until when a completed one can be downloaded, unix seconds.
+    pub available_until: Option<i64>,
+    /// The first listen time asked for, unix seconds; `None` for the start
+    /// of the history.
+    pub start_time: Option<i64>,
+    /// The last listen time asked for; `None` for the end of the history.
+    pub end_time: Option<i64>,
+}
+
+impl From<ExportAnswer> for ListenBrainzExport {
+    fn from(answer: ExportAnswer) -> Self {
+        Self {
+            id: answer.export_id,
+            kind: answer.kind,
+            status: answer.status,
+            created_at: answer.created.as_deref().and_then(iso_seconds),
+            available_until: answer.available_until.as_deref().and_then(iso_seconds),
+            start_time: answer.start_time,
+            end_time: answer.end_time,
+        }
+    }
+}
+
+/// An ISO 8601 time with an offset, as ListenBrainz writes it, in unix
+/// seconds.
+fn iso_seconds(text: &str) -> Option<i64> {
+    time::OffsetDateTime::parse(text, &time::format_description::well_known::Rfc3339)
+        .ok()
+        .map(time::OffsetDateTime::unix_timestamp)
 }
 
 /// A genre tag on a release group. Curated genre entries carry
@@ -500,6 +579,171 @@ impl ListenBrainzClient {
             .into_iter()
             .filter_map(listen)
             .collect())
+    }
+
+    /// The listens of `username` after `min_ts` (unix seconds, not
+    /// including it), at most `count` of them and never more than
+    /// [`MAX_LISTENS_PAGE`]: the oldest ones after it, answered newest
+    /// first (`GET /1/user/{user}/listens` with `min_ts`). Each is checked
+    /// as an export line is. A page as long as asked for may have more
+    /// after [`ListensPage::newest_at`].
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::Invalid`] for an empty username or a `min_ts` that
+    /// is not positive (ListenBrainz reads a zero as none and answers the
+    /// newest listens), nothing sent; [`ProviderError::Payload`] for a page
+    /// with items of which none is a listen to keep, a changed answer and
+    /// never "no listens"; otherwise the typed failure of the call.
+    pub async fn listens_after(
+        &self,
+        username: &str,
+        min_ts: i64,
+        count: u32,
+        creds: &ListenBrainzCredentials,
+        priority: RequestPriority,
+    ) -> Result<ListensPage, ProviderError> {
+        if username.is_empty() {
+            return Err(invalid("a listens read needs a username"));
+        }
+        if min_ts <= 0 {
+            return Err(invalid("a listens read needs a positive min_ts"));
+        }
+        let (count, min_ts) = (count.min(MAX_LISTENS_PAGE).to_string(), min_ts.to_string());
+        let request = self.get(
+            &["1", "user", username, "listens"],
+            &[("min_ts", &min_ts), ("count", &count)],
+            creds,
+        )?;
+        let reply = self.send(request, priority).await?;
+        let answer: ListensPageAnswer = decode(&reply)?;
+        let mut page = ListensPage {
+            read: answer.payload.listens.len(),
+            ..ListensPage::default()
+        };
+        for item in answer.payload.listens {
+            let ListensPageItem::Listen(line) = item else {
+                page.skipped += 1;
+                continue;
+            };
+            page.newest_at = page.newest_at.max(Some(line.listened_at));
+            match line.listen() {
+                Ok(listen) => page.listens.push(listen),
+                Err(_) => page.skipped += 1,
+            }
+        }
+        // A page that holds items but no listen to keep would move the
+        // cursor past what it never kept.
+        if page.read > 0 && page.listens.is_empty() {
+            note_shape(SOURCE, "no item on a listens page reads as a listen");
+            return Err(ProviderError::Payload {
+                provider: SOURCE,
+                kind: PayloadKind::Contract,
+                message: "no item on the page reads as a listen".to_owned(),
+            });
+        }
+        Ok(page)
+    }
+
+    /// The token's account's exports, newest first (`GET /1/export/list`).
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::NotConfigured`] without a token, nothing sent;
+    /// otherwise the typed failure of the call.
+    pub async fn exports(
+        &self,
+        creds: &ListenBrainzCredentials,
+        priority: RequestPriority,
+    ) -> Result<Vec<ListenBrainzExport>, ProviderError> {
+        let request = self.get(&["1", "export", "list"], &[], with_token(creds)?)?;
+        let reply = self.send(request, priority).await?;
+        let answer: ExportListAnswer = decode(&reply)?;
+        Ok(answer.into_iter().map(ListenBrainzExport::from).collect())
+    }
+
+    /// Ask for an export of the token's account (`POST /1/export/`): its
+    /// whole history, or its listens from `start_time` (unix seconds) on.
+    /// A state-changing call, sent once. ListenBrainz keeps one pending
+    /// export an account and, while one waits, answers
+    /// [`AskedExport::AlreadyPending`]: the caller lists them and takes
+    /// that one.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::NotConfigured`] without a token, nothing sent;
+    /// [`ProviderError::BadRequest`] for a range or body ListenBrainz
+    /// refused; otherwise the typed failure of the call.
+    pub async fn create_export(
+        &self,
+        start_time: Option<i64>,
+        creds: &ListenBrainzCredentials,
+        priority: RequestPriority,
+    ) -> Result<AskedExport, ProviderError> {
+        let body = match start_time {
+            Some(start) => serde_json::json!({ "start_time": start }),
+            None => serde_json::json!({}),
+        };
+        let request = self
+            .post(&["1", "export"], &body, with_token(creds)?)?
+            .trailing_slash();
+        let reply = self.send(request, priority).await?;
+        if export_pending(&reply) {
+            return Ok(AskedExport::AlreadyPending);
+        }
+        let answer: ExportAnswer = decode(&reply)?;
+        Ok(AskedExport::Asked(answer.into()))
+    }
+
+    /// Where one export stands (`GET /1/export/{id}`). An id that is not
+    /// the token's account's, or no longer kept, is
+    /// [`ProviderError::NotFound`].
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::NotConfigured`] without a token, nothing sent;
+    /// otherwise the typed failure of the call.
+    pub async fn export(
+        &self,
+        export_id: i64,
+        creds: &ListenBrainzCredentials,
+        priority: RequestPriority,
+    ) -> Result<ListenBrainzExport, ProviderError> {
+        let id = export_id.to_string();
+        let request = self.get(&["1", "export", &id], &[], with_token(creds)?)?;
+        let reply = self.send(request, priority).await?;
+        let answer: ExportAnswer = decode(&reply)?;
+        Ok(answer.into())
+    }
+
+    /// Download a completed export's ZIP (`GET /1/export/{id}/download`) to
+    /// `to`, streamed, under `cap` bytes and within `deadline`. One not
+    /// completed, gone or not the token's account's is
+    /// [`ProviderError::NotFound`].
+    ///
+    /// # Errors
+    ///
+    /// [`DownloadError::Provider`] with [`ProviderError::NotConfigured`]
+    /// without a token (nothing sent) or the typed failure of the call;
+    /// [`DownloadError::Write`] when the file could not be written.
+    pub async fn download_export(
+        &self,
+        export_id: i64,
+        creds: &ListenBrainzCredentials,
+        priority: RequestPriority,
+        to: &std::path::Path,
+        (cap, deadline): (u64, Duration),
+    ) -> Result<u64, DownloadError> {
+        let id = export_id.to_string();
+        let request = Request::get(self.base()?, &["1", "export", &id, "download"], &[])
+            .map_err(|_| invalid(UNUSABLE_ADDRESS))?
+            .header("accept", "application/zip");
+        let request = with_headers(request, with_token(creds)?.user_token.as_deref())?;
+        let written = self
+            .executor
+            .download(request, priority, to, (cap, deadline), window_spent)
+            .await?;
+        Ok(written)
     }
 
     /// Resolve recording MBIDs to release-group MBIDs (`POST
@@ -1214,13 +1458,23 @@ async fn send_on(
     // A refusal `classify` passed back for its headers (no other 4xx
     // gets here). The standard rules read the time only for 429 and
     // 503, and neither is passed back.
-    if (400..500).contains(&reply.status()) {
+    if (400..500).contains(&reply.status()) && !export_pending(&reply) {
         standard_classify(&Answer {
             reply: &reply,
             now_unix: 0,
         })?;
     }
     Ok(reply)
+}
+
+/// Whether `reply` is the 400 an export request gets while the account's
+/// one pending export waits. ListenBrainz words it "Data export already
+/// requested." (`webserver/views/export_api.py`, read at
+/// listenbrainz-server 6a2ea2a24 on 2026-11-23); any other 400 to the
+/// request is a body or range it refused.
+fn export_pending(reply: &Reply) -> bool {
+    reply.status() == 400
+        && String::from_utf8_lossy(reply.bytes()).contains("Data export already requested")
 }
 
 /// `request` with `Authorization: Token <token>` when a token is given.

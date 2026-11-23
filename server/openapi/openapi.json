@@ -23367,7 +23367,7 @@
         "tags": [
           "listening"
         ],
-        "summary": "Link the caller's ListenBrainz account. The credential verifies first;\nonly a verified pair stores.",
+        "summary": "Link the caller's ListenBrainz account. The credential verifies first;\nonly a verified pair stores. Once linked, the caller's history is\nimported from ListenBrainz. A link of another account than the one a\nkept history is from replaces that history, so it needs\n`replace_history`: without it the answer is 409\n`HISTORY_ACCOUNT_DIFFERS`, with the kept account in\n`details.kept_account`, and nothing is stored or sent.",
         "operationId": "connect_listenbrainz_route",
         "requestBody": {
           "content": {
@@ -23402,6 +23402,16 @@
           },
           "401": {
             "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The link would replace a history kept from another account",
             "content": {
               "application/json": {
                 "schema": {
@@ -23570,7 +23580,7 @@
         "tags": [
           "listening"
         ],
-        "summary": "Where the caller's listening history stands: their import, the listens\nkept from ListenBrainz and their plays here.",
+        "summary": "Where the caller's listening history stands: their import, the listens\nkept from ListenBrainz and their plays here. Reading it is the caller\nlooking: a linked caller with no import gets one started, and a history\nnot brought up to date for six hours gets its read.",
         "operationId": "get_listening_history",
         "responses": {
           "200": {
@@ -23585,6 +23595,64 @@
           },
           "401": {
             "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server is busy; try again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/me/listening-history/import": {
+      "post": {
+        "tags": [
+          "listening"
+        ],
+        "summary": "Import the caller's history from ListenBrainz again, after they forgot\nit or an import failed: an export is asked for with their own link, and\nwhat is kept stays. The answer says where their history stands.",
+        "operationId": "import_listening_history",
+        "responses": {
+          "202": {
+            "description": "An export is asked for",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListeningHistory"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No ListenBrainz link, ListenBrainz reads off, or the history is kept already",
             "content": {
               "application/json": {
                 "schema": {
@@ -49487,7 +49555,7 @@
       },
       "HistoryImportSource": {
         "type": "string",
-        "description": "Where an import's file came from. Declared whole: `export` is first\nwritten by the export fetched from ListenBrainz.",
+        "description": "Where an import's file came from.",
         "enum": [
           "upload",
           "export"
@@ -52863,6 +52931,10 @@
           "user_token"
         ],
         "properties": {
+          "replace_history": {
+            "type": "boolean",
+            "description": "Replace the listening history kept from another ListenBrainz\naccount with this one's. Without it, a link that would replace one\nanswers 409 `HISTORY_ACCOUNT_DIFFERS` and stores nothing."
+          },
           "user_token": {
             "type": "string",
             "description": "User token."
@@ -52905,7 +52977,7 @@
               "string",
               "null"
             ],
-            "description": "The ListenBrainz account the history is from; null for an upload."
+            "description": "The ListenBrainz account the history is kept from; null for an\nupload no link has read since."
           },
           "imported_listens": {
             "type": "integer",
@@ -52918,7 +52990,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "When the last import finished, unix seconds."
+            "description": "When the history was last brought up to date, unix seconds."
           },
           "newest_listened_at": {
             "type": [

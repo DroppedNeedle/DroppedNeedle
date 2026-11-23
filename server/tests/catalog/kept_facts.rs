@@ -342,11 +342,14 @@ async fn nothing_runs_for_a_person_unseen_for_a_week_and_a_request_wakes_it() {
         JobQueue::new(rig.db().clone(), rig.rig.platform.clock.clone()),
         rig.rig.platform.clock.clone(),
         true,
-        FactJobs::new(
-            KeptFacts::new(rig.db().clone(), rig.rig.platform.clock.clone()),
-            rig.script.clone(),
-        )
-        .due(),
+        (
+            FactJobs::new(
+                KeptFacts::new(rig.db().clone(), rig.rig.platform.clock.clone()),
+                rig.script.clone(),
+            )
+            .due(),
+            crate::common::history_store(&rig.rig.platform),
+        ),
     );
     let queued = |db: &Db| -> i64 {
         db.one(

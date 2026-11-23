@@ -1227,7 +1227,10 @@ async fn a_warm_that_kept_nothing_waits_before_it_is_tried_again() {
             ),
             rig.platform.clock.clone(),
             true,
-            FactJobs::new(facts, Arc::new(Script::default())).due(),
+            (
+                FactJobs::new(facts, Arc::new(Script::default())).due(),
+                crate::common::history_store(&rig.platform),
+            ),
         )),
         vec![warm.clone()],
     );

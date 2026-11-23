@@ -204,7 +204,7 @@ fn deps_with(
         inputs.jobs.clone(),
         Arc::clone(&inputs.clock),
         inputs.discover_warmer,
-        fact_jobs.due(),
+        (fact_jobs.due(), inputs.history.clone()),
     ));
     let warm_scheduler = Arc::new(scheduler::WarmScheduler::new(
         scheduler::activity::ActivityDb::new(inputs.db.clone()),

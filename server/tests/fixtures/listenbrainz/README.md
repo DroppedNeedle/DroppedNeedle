@@ -100,6 +100,23 @@ A hand-made export file, 2026-11-23:
   the ids are made up and name nothing in MusicBrainz. No real person's
   listens.
 
+Export answers, written, not recorded: making an export changes the
+account, so none is made to record one. Each file is the answer's shape as
+ListenBrainz describes it (`docs/users/api/export.rst`) and its code writes
+it (`listenbrainz/db/user_data_export.py`, `_row_to_dict`, and
+`webserver/errors.py` for the 400), read at listenbrainz-server 6a2ea2a24 on
+2026-11-23. The ids, times and file names are invented. Replace them with
+recordings once an export of a test account is made by hand.
+
+- `export_waiting.json`: the answer to `POST /1/export/`, the docs' own
+  example.
+- `export_completed.json`: `GET /1/export/{id}` once the export is made,
+  `available_until` with microseconds as Python writes it.
+- `export_list.json`: `GET /1/export/list`, newest first: one export of a
+  range being made, one whole export made.
+- `export_already_requested.json`: the body of the HTTP 400 to
+  `POST /1/export/` while one export is pending.
+
 No file: HTTP 204 with an empty body while a new account's stats are not
 computed yet. Recorded for `GET /1/stats/user/DroppedNeedle/artists?count=5`,
 `.../recordings?count=5`, `.../release-groups?count=5` and

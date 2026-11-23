@@ -1,0 +1,11 @@
+{
+  "export_id": 123,
+  "type": "export_all_user_data",
+  "available_until": null,
+  "created": "2026-09-17T12:00:00+00:00",
+  "progress": "Your data export will start soon.",
+  "status": "waiting",
+  "filename": null,
+  "start_time": null,
+  "end_time": null
+}

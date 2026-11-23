@@ -12,10 +12,12 @@
 //! Transport errors carry only a [`TransportKind`]: the URL, which can
 //! hold a key in its path or query, never reaches an error or a log line.
 
-use std::{sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use droppedneedle_kernel::clock::Clock;
-use droppedneedle_kernel::http_client::{BodyError, HttpClientFactory, read_capped};
+use droppedneedle_kernel::http_client::{
+    BodyError, FileBodyError, HttpClientFactory, read_capped, read_capped_to,
+};
 use futures_util::future::BoxFuture;
 use serde::de::DeserializeOwned;
 use tokio::time::Instant;
@@ -447,6 +449,8 @@ pub enum WireError {
     Transport(TransportKind),
     /// The body passed the cap and was not read.
     TooLarge,
+    /// A download's file could not be written.
+    Write,
 }
 
 /// One request ready for the wire.
@@ -477,6 +481,72 @@ pub trait Wire: Send + Sync {
     /// Send one request, following no redirects, and read its body under
     /// the cap.
     fn send<'a>(&'a self, prepared: Prepared<'a>) -> BoxFuture<'a, Result<WireAnswer, WireError>>;
+
+    /// Send one request, following no redirects, and write a success's
+    /// body to `to` under `cap` bytes within `deadline`; any other
+    /// answer's body is read under the request's cap, as [`Wire::send`]
+    /// reads it. By default the body is read whole through [`Wire::send`]
+    /// and then written, which suits a scripted wire; the production wire
+    /// streams it.
+    fn download<'a>(
+        &'a self,
+        prepared: Prepared<'a>,
+        to: &'a Path,
+        (cap, _deadline): (u64, Duration),
+    ) -> BoxFuture<'a, Result<WireDownload, WireError>> {
+        Box::pin(async move {
+            let error_cap = prepared.max_body;
+            let answer = self
+                .send(Prepared {
+                    max_body: usize::try_from(cap).unwrap_or(usize::MAX),
+                    ..prepared
+                })
+                .await?;
+            if !(200..300).contains(&answer.status) {
+                let mut body = answer.body;
+                body.truncate(error_cap);
+                return Ok(WireDownload {
+                    status: answer.status,
+                    headers: answer.headers,
+                    written: 0,
+                    body,
+                });
+            }
+            tokio::fs::write(to, &answer.body)
+                .await
+                .map_err(|_| WireError::Write)?;
+            Ok(WireDownload {
+                status: answer.status,
+                headers: answer.headers,
+                written: answer.body.len() as u64,
+                body: Vec::new(),
+            })
+        })
+    }
+}
+
+/// Why a download did not land.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DownloadError {
+    /// The provider's answer, or its absence.
+    #[error(transparent)]
+    Provider(#[from] ProviderError),
+    /// The file could not be written.
+    #[error("the download's file could not be written")]
+    Write,
+}
+
+/// What the wire hands back for one download.
+#[derive(Debug, Clone)]
+pub struct WireDownload {
+    /// The status code.
+    pub status: u16,
+    /// Response headers; the executor keeps the ones it reads.
+    pub headers: Vec<(String, String)>,
+    /// Bytes written to the file: a success's whole body.
+    pub written: u64,
+    /// Any other answer's body, read under the request's cap.
+    pub body: Vec<u8>,
 }
 
 /// The production wire: the factory's client that never follows a
@@ -496,65 +566,123 @@ impl ReqwestWire {
     }
 }
 
+impl ReqwestWire {
+    /// Send `prepared` and hand back the response with its status and
+    /// headers. A `deadline` replaces the client's own total timeout, for
+    /// a body that takes longer to arrive.
+    async fn respond(
+        &self,
+        prepared: &Prepared<'_>,
+        deadline: Option<Duration>,
+    ) -> Result<(reqwest::Response, u16, Vec<(String, String)>), WireError> {
+        let method = match prepared.request.method {
+            Method::Get => reqwest::Method::GET,
+            Method::Post => reqwest::Method::POST,
+        };
+        let mut outgoing = self.client.request(method, prepared.url.clone());
+        for (name, value) in &prepared.request.headers {
+            outgoing = outgoing.header(*name, value.as_str());
+        }
+        outgoing = match &prepared.request.body {
+            Body::Empty => outgoing,
+            Body::Form(pairs) => outgoing.form(pairs),
+            Body::Json(json) => outgoing
+                .header("content-type", "application/json")
+                .body(json.clone()),
+        };
+        if let Some(deadline) = deadline {
+            outgoing = outgoing.timeout(deadline);
+        }
+        let response = outgoing.send().await.map_err(|error| {
+            let kind = if error.is_timeout() {
+                TransportKind::Timeout
+            } else if error.is_connect() {
+                TransportKind::Connect
+            } else {
+                TransportKind::Other
+            };
+            tracing::debug!(
+                provider = prepared.provider,
+                cause = droppedneedle_kernel::http_client::transport_error(error),
+                "provider request failed"
+            );
+            WireError::Transport(kind)
+        })?;
+        let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                Some((name.as_str().to_owned(), value.to_str().ok()?.to_owned()))
+            })
+            .collect();
+        Ok((response, status, headers))
+    }
+}
+
+/// A body that could not be read, for `provider`'s answer.
+fn unread(provider: &'static str, error: BodyError) -> WireError {
+    match error {
+        BodyError::TooLarge => WireError::TooLarge,
+        BodyError::Transport(cause) => {
+            tracing::debug!(provider, cause, "provider answer broke off");
+            WireError::Transport(TransportKind::Other)
+        }
+    }
+}
+
 impl Wire for ReqwestWire {
     fn send<'a>(&'a self, prepared: Prepared<'a>) -> BoxFuture<'a, Result<WireAnswer, WireError>> {
         Box::pin(async move {
-            let method = match prepared.request.method {
-                Method::Get => reqwest::Method::GET,
-                Method::Post => reqwest::Method::POST,
-            };
-            let mut outgoing = self.client.request(method, prepared.url.clone());
-            for (name, value) in &prepared.request.headers {
-                outgoing = outgoing.header(*name, value.as_str());
-            }
-            outgoing = match &prepared.request.body {
-                Body::Empty => outgoing,
-                Body::Form(pairs) => outgoing.form(pairs),
-                Body::Json(json) => outgoing
-                    .header("content-type", "application/json")
-                    .body(json.clone()),
-            };
-            let response = outgoing.send().await.map_err(|error| {
-                let kind = if error.is_timeout() {
-                    TransportKind::Timeout
-                } else if error.is_connect() {
-                    TransportKind::Connect
-                } else {
-                    TransportKind::Other
-                };
-                tracing::debug!(
-                    provider = prepared.provider,
-                    cause = droppedneedle_kernel::http_client::transport_error(error),
-                    "provider request failed"
-                );
-                WireError::Transport(kind)
-            })?;
-            let status = response.status().as_u16();
-            let headers = response
-                .headers()
-                .iter()
-                .filter_map(|(name, value)| {
-                    Some((name.as_str().to_owned(), value.to_str().ok()?.to_owned()))
-                })
-                .collect();
-            let body =
-                read_capped(response, prepared.max_body)
-                    .await
-                    .map_err(|error| match error {
-                        BodyError::TooLarge => WireError::TooLarge,
-                        BodyError::Transport(cause) => {
-                            tracing::debug!(
-                                provider = prepared.provider,
-                                cause,
-                                "provider answer broke off"
-                            );
-                            WireError::Transport(TransportKind::Other)
-                        }
-                    })?;
+            let (response, status, headers) = self.respond(&prepared, None).await?;
+            let body = read_capped(response, prepared.max_body)
+                .await
+                .map_err(|error| unread(prepared.provider, error))?;
             Ok(WireAnswer {
                 status,
                 headers,
                 body,
+            })
+        })
+    }
+
+    fn download<'a>(
+        &'a self,
+        prepared: Prepared<'a>,
+        to: &'a Path,
+        (cap, deadline): (u64, Duration),
+    ) -> BoxFuture<'a, Result<WireDownload, WireError>> {
+        Box::pin(async move {
+            let (response, status, headers) = self.respond(&prepared, Some(deadline)).await?;
+            if !(200..300).contains(&status) {
+                let body = read_capped(response, prepared.max_body)
+                    .await
+                    .map_err(|error| unread(prepared.provider, error))?;
+                return Ok(WireDownload {
+                    status,
+                    headers,
+                    written: 0,
+                    body,
+                });
+            }
+            let mut file = tokio::fs::File::create(to)
+                .await
+                .map_err(|_| WireError::Write)?;
+            let written = read_capped_to(response, cap, &mut file)
+                .await
+                .map_err(|error| match error {
+                    FileBodyError::TooLarge => WireError::TooLarge,
+                    FileBodyError::Transport(cause) => {
+                        unread(prepared.provider, BodyError::Transport(cause))
+                    }
+                    FileBodyError::Write(_) => WireError::Write,
+                })?;
+            file.sync_all().await.map_err(|_| WireError::Write)?;
+            Ok(WireDownload {
+                status,
+                headers,
+                written,
+                body: Vec::new(),
             })
         })
     }
@@ -724,6 +852,115 @@ impl Executor {
         }
     }
 
+    /// Send `request` once at `priority` and write a success's body to `to`
+    /// as it arrives, under `cap` bytes and within `deadline`: for a file
+    /// too large to hold in memory. Paced, counted, classified and recorded
+    /// for service health as [`Executor::send`] does; never retried here, and
+    /// no redirect is followed. `cool_down` reads an answer, a refusal
+    /// included, for a wait the provider asks for, which rests the row as
+    /// its other calls do. Answers the bytes written; after a failure the
+    /// caller removes what was written.
+    ///
+    /// # Errors
+    ///
+    /// [`DownloadError::Provider`] with the typed failure of the call, or
+    /// [`DownloadError::Write`] when the file could not be written.
+    pub async fn download(
+        &self,
+        request: Request,
+        priority: RequestPriority,
+        to: &Path,
+        (cap, deadline): (u64, Duration),
+        cool_down: fn(&Reply) -> Option<Duration>,
+    ) -> Result<u64, DownloadError> {
+        let provider = self.spec.source;
+        let Ok(slot) = self.limiter.acquire_slot(priority).await else {
+            return Err(DownloadError::Provider(ProviderError::Invalid {
+                provider,
+                reason: "the rate row grants no requests",
+            }));
+        };
+        let fetched = tokio::time::timeout(
+            deadline,
+            self.wire.download(
+                Prepared {
+                    provider,
+                    request: &request,
+                    url: &request.url,
+                    max_body: self.spec.max_body,
+                },
+                to,
+                (cap, deadline),
+            ),
+        )
+        .await
+        .unwrap_or(Err(WireError::Transport(TransportKind::Timeout)));
+        drop(slot);
+        let (outcome, bytes) = match fetched {
+            Err(WireError::Write) => {
+                self.limiter.record_call(priority, CallOutcome::Failed, 0);
+                return Err(DownloadError::Write);
+            }
+            Err(error) => (Err(wire_failure(provider, error, cap)), 0),
+            Ok(got) => {
+                let reply = Reply {
+                    provider,
+                    status: got.status,
+                    headers: got
+                        .headers
+                        .into_iter()
+                        .filter(|(name, _)| kept(name))
+                        .collect(),
+                    body: got.body,
+                };
+                let bytes = got.written.saturating_add(reply.body.len() as u64);
+                if let Some(wait) = cool_down(&reply) {
+                    self.limiter.cool_down(wait.min(self.spec.retry_after_cap));
+                }
+                let outcome = if (300..400).contains(&reply.status) {
+                    Err(ProviderError::Redirect {
+                        provider,
+                        status: reply.status,
+                    })
+                } else {
+                    (self.spec.classify)(&Answer {
+                        reply: &reply,
+                        now_unix: self.clock.now_unix(),
+                    })
+                    .and_then(|()| {
+                        // A refusal the hook passed back for its headers.
+                        if (200..300).contains(&reply.status) {
+                            Ok(got.written)
+                        } else {
+                            standard_classify(&Answer {
+                                reply: &reply,
+                                now_unix: self.clock.now_unix(),
+                            })
+                            .map(|()| got.written)
+                        }
+                    })
+                };
+                (outcome, bytes)
+            }
+        };
+        self.limiter
+            .record_call(priority, CallOutcome::of(&outcome), bytes);
+        match outcome {
+            Ok(written) => {
+                self.limiter.clear_headerless_limits();
+                self.answered(None);
+                Ok(written)
+            }
+            Err(error) => {
+                let error = self.cap_wait(error);
+                if let Some(delay) = self.cooldown_after(&error) {
+                    self.limiter.cool_down(delay);
+                }
+                Err(DownloadError::Provider(self.finish(error)))
+            }
+        }
+    }
+
     /// Turn down a person's call whose turn is `wait` away, without
     /// sending. A local decline is quiet: it is no failure of the provider.
     fn decline(&self, wait: Duration) -> ProviderError {
@@ -781,14 +1018,7 @@ impl Executor {
                     max_body,
                 })
                 .await;
-            let raw = answer.map_err(|error| match error {
-                WireError::Transport(kind) => ProviderError::Transport { provider, kind },
-                WireError::TooLarge => ProviderError::Payload {
-                    provider,
-                    kind: PayloadKind::TooLarge,
-                    message: format!("larger than {max_body} bytes"),
-                },
-            })?;
+            let raw = answer.map_err(|error| wire_failure(provider, error, max_body as u64))?;
             *body_bytes = body_bytes.saturating_add(raw.body.len() as u64);
             let reply = Reply {
                 provider,
@@ -945,6 +1175,24 @@ impl Executor {
             record_current(provider, IntegrationStatus::Error, error.is_deterministic());
         }
         error
+    }
+}
+
+/// A wire failure as the provider failure it reads as: a body over
+/// `max_body`, or no usable answer.
+fn wire_failure(provider: &'static str, error: WireError, max_body: u64) -> ProviderError {
+    match error {
+        WireError::Transport(kind) => ProviderError::Transport { provider, kind },
+        WireError::TooLarge => ProviderError::Payload {
+            provider,
+            kind: PayloadKind::TooLarge,
+            message: format!("larger than {max_body} bytes"),
+        },
+        // Only a download writes a file, and it reads this variant itself.
+        WireError::Write => ProviderError::Transport {
+            provider,
+            kind: TransportKind::Other,
+        },
     }
 }
 

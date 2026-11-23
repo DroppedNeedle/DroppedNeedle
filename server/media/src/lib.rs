@@ -9,8 +9,9 @@
 //! now-playing reports drain through [`MediaWorkers`], one job on the loop
 //! supervisor. Scrobbles wait as jobs on the jobs table; their handlers are
 //! [`MediaSetup::scrobble_jobs`], registered by the builder. A person's
-//! ListenBrainz history, imported from an export file, is kept by the one
-//! [`history::HistoryStore`] and read in by its job kind.
+//! ListenBrainz history, imported from an export file or through
+//! ListenBrainz's export and kept current with their link, is kept by the
+//! one [`history::HistoryStore`] and read in by its job kinds.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
@@ -29,6 +30,7 @@ use axum::extract::FromRef;
 
 use crate::history::HistoryStore;
 use crate::history::import::{self as history_import, ImportJobs};
+use crate::history::sync::{self as history_sync, SyncJobs};
 use crate::playback::PlaybackDeps;
 use crate::playback::forwarding::{Courier, NowPlayingSender, NowPlayingWorker, ScrobbleJobs};
 use crate::playback::listening_routes::{ListeningDeps, MixGrants};
@@ -233,6 +235,7 @@ impl MediaSetup {
             verifier: Arc::new(providers.listenbrainz.clone()),
             mix,
             presence: presence.clone(),
+            history: history.clone(),
         };
         let playback = PlaybackDeps {
             store,
@@ -272,13 +275,19 @@ impl MediaSetup {
         self.scrobble_jobs.clone()
     }
 
-    /// The listening history import kind and its handler, for the builder
-    /// to register with the jobs table.
-    pub fn history_jobs(&self) -> (KindSpec, Arc<dyn JobHandler>) {
-        (
-            history_import::SPEC,
-            Arc::new(ImportJobs::new(self.history.clone())),
-        )
+    /// The listening history import and read kinds and their handlers, for
+    /// the builder to register with the jobs table.
+    pub fn history_jobs(&self) -> Vec<(KindSpec, Arc<dyn JobHandler>)> {
+        vec![
+            (
+                history_import::SPEC,
+                Arc::new(ImportJobs::new(self.history.clone())),
+            ),
+            (
+                history_sync::SPEC,
+                Arc::new(SyncJobs::new(self.history.clone())),
+            ),
+        ]
     }
 
     /// What the jobs bundle reads from media: the presence registry the

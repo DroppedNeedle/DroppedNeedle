@@ -36,6 +36,11 @@ const nothing: ListeningHistory = {
 	last_synced_at: null
 };
 
+// ListenBrainz linked as `username`.
+const linkedAs = (username: string) => ({
+	connections: [{ service: 'listenbrainz', enabled: true, username }]
+});
+
 const integrations = (lastfm: boolean): IntegrationStatus => ({
 	download_client: false,
 	jellyfin: false,
@@ -262,6 +267,118 @@ describe('Listening history on the profile', () => {
 		await page.getByRole('button', { name: 'Forget my history' }).click();
 		await page.getByRole('button', { name: 'Forget', exact: true }).click();
 		await expect.element(refused).not.toBeInTheDocument();
+	});
+
+	it('says an export from ListenBrainz is on its way', async () => {
+		fakeApi({
+			'GET /api/v3/me/connections': linkedAs('ada'),
+			'GET /api/v3/me/scrobble-preferences': prefs,
+			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/me/listening-history': {
+				...nothing,
+				state: 'exporting',
+				source: 'export',
+				account: 'ada'
+			}
+		});
+		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
+
+		await expect.element(page.getByText('Importing your ListenBrainz history')).toBeVisible();
+	});
+
+	it('says how many listens are kept and when they were last checked', async () => {
+		fakeApi({
+			'GET /api/v3/me/connections': linkedAs('ada'),
+			'GET /api/v3/me/scrobble-preferences': prefs,
+			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/me/listening-history': {
+				...nothing,
+				state: 'current',
+				source: 'export',
+				account: 'ada',
+				imported_listens: 4512,
+				last_synced_at: Math.floor(Date.now() / 1000) - 2 * 3600 - 60
+			}
+		});
+		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
+
+		await expect
+			.element(page.getByText('4,512 listens from ListenBrainz, checked 2 hours ago'))
+			.toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: 'Import again' }))
+			.not.toBeInTheDocument();
+	});
+
+	it('imports again after a forget', async () => {
+		let asked = false;
+		const api = fakeApi({
+			'GET /api/v3/me/connections': linkedAs('ada'),
+			'GET /api/v3/me/scrobble-preferences': prefs,
+			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/me/listening-history': () =>
+				asked
+					? { ...nothing, state: 'pending', source: 'export', account: 'ada' }
+					: { ...nothing, state: 'forgotten' },
+			'POST /api/v3/me/listening-history/import': () => {
+				asked = true;
+				return { ...nothing, state: 'pending', source: 'export', account: 'ada' };
+			}
+		});
+		await renderWithQuery(
+			ScrobblingDiscoveryCard,
+			{ navidromeEnabled: false },
+			{ client: queryClient }
+		);
+
+		await expect
+			.element(page.getByText('Forgotten. Nothing is imported until you ask.'))
+			.toBeVisible();
+		await page.getByRole('button', { name: 'Import again' }).click();
+		await expect.poll(() => api.calls('POST /api/v3/me/listening-history/import').length).toBe(1);
+		await expect.element(page.getByText('Importing your ListenBrainz history')).toBeVisible();
+	});
+
+	it('asks before a link to another account replaces the kept history', async () => {
+		const sent: unknown[] = [];
+		fakeApi({
+			'GET /api/v3/me/connections': { connections: [] },
+			'GET /api/v3/me/scrobble-preferences': prefs,
+			'GET /api/v3/home/integration-status': integrations(true),
+			'GET /api/v3/me/listening-history': {
+				...nothing,
+				state: 'current',
+				source: 'export',
+				account: 'ada',
+				imported_listens: 12
+			},
+			'PUT /api/v3/me/connections/listenbrainz': (request: FakeRequest) => {
+				sent.push(request.body);
+				return sent.length === 1
+					? apiError(
+							409,
+							'HISTORY_ACCOUNT_DIFFERS',
+							'Linking bea replaces the history kept from ada.',
+							{ kept_account: 'ada' }
+						)
+					: { service: 'listenbrainz', enabled: true, username: 'bea' };
+			}
+		});
+		await renderWithQuery(ScrobblingDiscoveryCard, { navidromeEnabled: false });
+
+		await page.getByRole('button', { name: 'Connect' }).first().click();
+		await page.getByLabelText('ListenBrainz user token').fill('token');
+		await page.getByLabelText('ListenBrainz username').fill('bea');
+		await page.getByRole('button', { name: 'Link account' }).click();
+		await expect
+			.element(page.getByText("Replace the history kept from ada with bea's?"))
+			.toBeVisible();
+		await page.getByRole('button', { name: 'Replace', exact: true }).click();
+		await expect.poll(() => sent.length).toBe(2);
+		expect(sent).toEqual([
+			{ user_token: 'token', username: 'bea', replace_history: false },
+			{ user_token: 'token', username: 'bea', replace_history: true }
+		]);
 	});
 
 	it('says when the history could not be checked, and offers to try again', async () => {

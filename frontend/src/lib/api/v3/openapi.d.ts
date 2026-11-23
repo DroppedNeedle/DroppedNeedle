@@ -6051,7 +6051,12 @@ export interface paths {
         get?: never;
         /**
          * Link the caller's ListenBrainz account. The credential verifies first;
-         *     only a verified pair stores.
+         *     only a verified pair stores. Once linked, the caller's history is
+         *     imported from ListenBrainz. A link of another account than the one a
+         *     kept history is from replaces that history, so it needs
+         *     `replace_history`: without it the answer is 409
+         *     `HISTORY_ACCOUNT_DIFFERS`, with the kept account in
+         *     `details.kept_account`, and nothing is stored or sent.
          */
         put: operations["connect_listenbrainz_route"];
         post?: never;
@@ -6108,11 +6113,34 @@ export interface paths {
         };
         /**
          * Where the caller's listening history stands: their import, the listens
-         *     kept from ListenBrainz and their plays here.
+         *     kept from ListenBrainz and their plays here. Reading it is the caller
+         *     looking: a linked caller with no import gets one started, and a history
+         *     not brought up to date for six hours gets its read.
          */
         get: operations["get_listening_history"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/me/listening-history/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import the caller's history from ListenBrainz again, after they forgot
+         *     it or an import failed: an export is asked for with their own link, and
+         *     what is kept stays. The answer says where their history stands.
+         */
+        post: operations["import_listening_history"];
         delete?: never;
         options?: never;
         head?: never;
@@ -15910,8 +15938,7 @@ export interface components {
             viewed_at: number;
         };
         /**
-         * @description Where an import's file came from. Declared whole: `export` is first
-         *     written by the export fetched from ListenBrainz.
+         * @description Where an import's file came from.
          * @enum {string}
          */
         HistoryImportSource: "upload" | "export";
@@ -17608,6 +17635,12 @@ export interface components {
          *     empty discovery.
          */
         ListenBrainzConnectRequest: {
+            /**
+             * @description Replace the listening history kept from another ListenBrainz
+             *     account with this one's. Without it, a link that would replace one
+             *     answers 409 `HISTORY_ACCOUNT_DIFFERS` and stores nothing.
+             */
+            replace_history?: boolean;
             /** @description User token. */
             user_token: string;
             /** @description ListenBrainz username. */
@@ -17629,7 +17662,10 @@ export interface components {
         ListenSource: "listenbrainz" | "lastfm";
         /** @description Where the caller's listening history stands. */
         ListeningHistory: {
-            /** @description The ListenBrainz account the history is from; null for an upload. */
+            /**
+             * @description The ListenBrainz account the history is kept from; null for an
+             *     upload no link has read since.
+             */
             account?: string | null;
             /**
              * Format: int64
@@ -17638,7 +17674,7 @@ export interface components {
             imported_listens: number;
             /**
              * Format: int64
-             * @description When the last import finished, unix seconds.
+             * @description When the history was last brought up to date, unix seconds.
              */
             last_synced_at?: number | null;
             /**
@@ -42622,6 +42658,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description The link would replace a history kept from another account */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description ListenBrainz is rate-limiting */
             429: {
                 headers: {
@@ -42760,6 +42805,53 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server is busy; try again */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    import_listening_history: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An export is asked for */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListeningHistory"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No ListenBrainz link, ListenBrainz reads off, or the history is kept already */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

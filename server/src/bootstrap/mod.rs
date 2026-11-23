@@ -86,7 +86,7 @@ use droppedneedle_kernel::{
     runtime_config::crypto::CryptoError,
 };
 use droppedneedle_library::wiring::{LibraryServices, LibrarySetup};
-use droppedneedle_media::history::HistoryStore;
+use droppedneedle_media::history::{HistoryParts, HistoryStore};
 use droppedneedle_media::playback::listening::ListeningStore;
 use droppedneedle_media::playback::sqlite::PlaybackStore;
 use droppedneedle_media::{
@@ -393,9 +393,23 @@ pub(crate) async fn build_on(
         listening.clone(),
         queues.queue().clone(),
     ));
+    // Discover's kept facts and its count of background reads, which a
+    // person's ListenBrainz history reads draw on too.
+    let kept_facts =
+        droppedneedle_catalog::discover::facts::KeptFacts::new(db.clone(), p.clock.clone());
     // The one listening history store: uploads land through the media
-    // routes, its job reads them, and Discover's forget removes them.
-    let history = Arc::new(HistoryStore::new(p, queues.queue().clone()));
+    // routes, a link imports through ListenBrainz's export, its jobs read
+    // them in and keep them current, and Discover's forget removes them.
+    let history = Arc::new(HistoryStore::new(
+        p,
+        HistoryParts {
+            jobs: queues.queue().clone(),
+            job_clock: queues.clock(),
+            listening: listening.clone(),
+            listenbrainz: providers.listenbrainz.clone(),
+            budget: Arc::new(kept_facts.clone()),
+        },
+    ));
     // Read live so turning ListenBrainz, Last.fm or lyrics on or off takes effect
     // at once.
     let lyrics = OnlineLyrics::new(&providers, config_store.live());
@@ -439,10 +453,7 @@ pub(crate) async fn build_on(
             purchase_links: Arc::new(PluginPurchaseLinks(plugin_host.clone())),
             details: Arc::new(PluginDetailsSource(plugin_host.clone())),
             cover_warm: cover_warm.clone(),
-            facts: droppedneedle_catalog::discover::facts::KeptFacts::new(
-                db.clone(),
-                p.clock.clone(),
-            ),
+            facts: kept_facts,
         },
     );
     let artwork = droppedneedle_catalog::wiring::artwork(p, &catalog_inputs, catalog.clone());
@@ -588,14 +599,13 @@ pub(crate) async fn build_on(
     // it. Library Management queues the media-server rescans after a run,
     // sent through media's connection resolver; pages queue their image
     // warms, run through the artwork service.
-    let (history_spec, history_jobs) = media.history_jobs();
     let handlers = media
         .scrobble_jobs()
         .into_iter()
+        .chain(media.history_jobs())
         .fold(Handlers::default(), |handlers, (spec, handler)| {
             handlers.with(spec, handler)
         })
-        .with(history_spec, history_jobs)
         .with(
             droppedneedle_media::remotes::refresh::SPEC,
             Arc::new(droppedneedle_media::remotes::refresh::RefreshJobs::new(

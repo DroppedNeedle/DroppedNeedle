@@ -279,6 +279,45 @@ pub async fn read_capped(
     Ok(body)
 }
 
+/// Why a body could not be written to a file.
+pub enum FileBodyError {
+    /// The body is larger than the cap it was read under.
+    TooLarge,
+    /// The connection broke part-way. Never holds the request URL.
+    Transport(String),
+    /// The file could not be written.
+    Write(std::io::Error),
+}
+
+/// Write a body to `file` as it arrives, giving up as soon as it passes
+/// `cap` bytes, whether or not the server declared its length: for an
+/// answer too large to hold in memory. Answers the bytes written. What was
+/// written before a failure stays in the file for the caller to remove.
+pub async fn read_capped_to(
+    mut response: reqwest::Response,
+    cap: u64,
+    file: &mut tokio::fs::File,
+) -> Result<u64, FileBodyError> {
+    use tokio::io::AsyncWriteExt as _;
+    if response.content_length().is_some_and(|length| length > cap) {
+        return Err(FileBodyError::TooLarge);
+    }
+    let mut written: u64 = 0;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| FileBodyError::Transport(transport_error(error)))?
+    {
+        written = written.saturating_add(chunk.len() as u64);
+        if written > cap {
+            return Err(FileBodyError::TooLarge);
+        }
+        file.write_all(&chunk).await.map_err(FileBodyError::Write)?;
+    }
+    file.flush().await.map_err(FileBodyError::Write)?;
+    Ok(written)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

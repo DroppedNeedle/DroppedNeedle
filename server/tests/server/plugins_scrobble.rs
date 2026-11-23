@@ -107,11 +107,15 @@ async fn rig() -> Rig {
     let runtime = crate::common::scratch_runtime(&scratch.join("app.db")).await;
     mirror_user(&runtime, "user-1").await;
     let verifier = Arc::new(Verifier(Mutex::new(connected())));
+    let platform = crate::common::platform::TestPlatform::on(runtime.db(), &scratch)
+        .build()
+        .await;
     let deps = ListeningDeps {
         store: store_over(&runtime),
         verifier: verifier.clone(),
         mix: Arc::new(RoleOnlyGrants),
         presence: PresenceRegistry::new(EventHub::new()),
+        history: crate::common::history_store(&platform),
     };
     Rig {
         deps,

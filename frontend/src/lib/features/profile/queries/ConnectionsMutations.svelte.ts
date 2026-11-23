@@ -8,6 +8,7 @@ import {
 	applyEffects,
 	connectionsChanged,
 	createAppMutation,
+	listeningHistoryChanged,
 	sourcePlaylistsChanged,
 	spotifyPlaylistsChanged,
 	type Effect
@@ -64,11 +65,12 @@ export const createLastFmExchangeSessionMutation = () =>
 		effects: connections
 	}));
 
+// A link starts the import of the person's history, so its status moves.
 export const createConnectListenBrainzMutation = () =>
 	createAppMutation(() => ({
 		mutationFn: (vars: ListenBrainzConnectVars) =>
 			api.v3.PUT(v3('/api/v3/me/connections/listenbrainz'), vars),
-		effects: connections
+		effects: () => [...connections(), listeningHistoryChanged(authStore.user?.id)]
 	}));
 
 export const createDisconnectMutation = () =>

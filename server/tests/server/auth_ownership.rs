@@ -1934,6 +1934,15 @@ async fn caller_keyed_state_stays_with_its_caller() {
         assert_eq!(body["imported_listens"], listens, "{what}: {body}");
         assert_eq!(body["state"], state, "{what}: {body}");
     }
+    // Asking to import again acts on the caller's own history only.
+    let import = "/api/v3/me/listening-history/import";
+    for (who, what) in [(&bob, "B"), (&admin, "an admin")] {
+        let (status, body) = call(&app, who, "POST", import, None).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{what} has no link: {body}");
+    }
+    let (status, body) = call(&app, &ada, "GET", listening, None).await;
+    ok(status, &body, "reads their listening history");
+    assert_eq!(body["state"], "current", "A's import as it was: {body}");
 
     // Forgetting takes the caller's history only: B's forget and an
     // admin's leave A's pick and listens, and A's takes them.

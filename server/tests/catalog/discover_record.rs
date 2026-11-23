@@ -363,11 +363,14 @@ async fn a_visit_queues_the_job_with_the_warm_cycle_off() {
         JobQueue::new(db.clone(), rig.platform.clock.clone()),
         Arc::clone(&rig.platform.clock) as Arc<dyn Clock>,
         true,
-        FactJobs::new(
-            KeptFacts::new(db.clone(), rig.platform.clock.clone()),
-            Arc::new(crate::discover_queue::Script::default()),
-        )
-        .due(),
+        (
+            FactJobs::new(
+                KeptFacts::new(db.clone(), rig.platform.clock.clone()),
+                Arc::new(crate::discover_queue::Script::default()),
+            )
+            .due(),
+            crate::common::history_store(&rig.platform),
+        ),
     );
     on.visit("nobody").await;
     on.clock_pass().await;

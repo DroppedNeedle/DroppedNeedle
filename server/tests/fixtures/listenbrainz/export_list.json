@@ -1,0 +1,24 @@
+[
+  {
+    "export_id": 124,
+    "type": "export_all_user_data",
+    "available_until": null,
+    "created": "2026-09-18T08:30:00+00:00",
+    "progress": "Exporting your listens.",
+    "status": "in_progress",
+    "filename": null,
+    "start_time": 1767225600,
+    "end_time": null
+  },
+  {
+    "export_id": 123,
+    "type": "export_all_user_data",
+    "available_until": "2026-10-17T12:04:31.512345+00:00",
+    "created": "2026-09-17T12:00:00+00:00",
+    "progress": "Export completed.",
+    "status": "completed",
+    "filename": "listenbrainz_example_1758110671.zip",
+    "start_time": null,
+    "end_time": null
+  }
+]

@@ -11,10 +11,10 @@ use droppedneedle_providers::acoustid::{self, BatchOutcome, Unanswered};
 use droppedneedle_providers::executor::Method;
 use droppedneedle_providers::geocoding::DEFAULT_CITY_COUNT;
 use droppedneedle_providers::lastfm::{ArtistInfo, LastFmCredentials};
-use droppedneedle_providers::listenbrainz::ListenBrainzCredentials;
 use droppedneedle_providers::listenbrainz::models::{
     ListenCountAnswer, ReleaseGroupPopularityAnswer,
 };
+use droppedneedle_providers::listenbrainz::{AskedExport, ExportStatus, ListenBrainzCredentials};
 use droppedneedle_providers::musicbrainz::{self, Criticality, MbSource, SearchTerm};
 use droppedneedle_providers::test_support::{Scripted, ScriptedWire};
 use droppedneedle_providers::youtube::{YouTubeClient, YouTubeSettings, YoutubeError};
@@ -102,6 +102,10 @@ enum ListenBrainzRead {
     SitewideReleaseGroups,
     ListenCount,
     Listens,
+    ListensAfter,
+    ExportCreate,
+    ExportStatus,
+    ExportList,
     Feedback,
     FreshReleases,
     SimilarUsers,
@@ -868,6 +872,55 @@ const ROWS: &[Row] = &[
         identity: "/payload/listens/0/listened_at",
     },
     Row {
+        name: "listenbrainz /1/user/{user}/listens after min_ts, list",
+        provider: Provider::ListenBrainz(ListenBrainzRead::ListensAfter),
+        body: include_str!("../fixtures/listenbrainz/listens_account.json"),
+        kind: PayloadKind::Decode,
+        identity: "/payload/listens",
+    },
+    Row {
+        name: "listenbrainz POST /1/export/, export_id",
+        provider: Provider::ListenBrainz(ListenBrainzRead::ExportCreate),
+        body: include_str!("../fixtures/listenbrainz/export_waiting.json"),
+        kind: PayloadKind::Decode,
+        identity: "/export_id",
+    },
+    Row {
+        name: "listenbrainz POST /1/export/, status",
+        provider: Provider::ListenBrainz(ListenBrainzRead::ExportCreate),
+        body: include_str!("../fixtures/listenbrainz/export_waiting.json"),
+        kind: PayloadKind::Decode,
+        identity: "/status",
+    },
+    Row {
+        name: "listenbrainz /1/export/{id}, export_id",
+        provider: Provider::ListenBrainz(ListenBrainzRead::ExportStatus),
+        body: include_str!("../fixtures/listenbrainz/export_completed.json"),
+        kind: PayloadKind::Decode,
+        identity: "/export_id",
+    },
+    Row {
+        name: "listenbrainz /1/export/{id}, status",
+        provider: Provider::ListenBrainz(ListenBrainzRead::ExportStatus),
+        body: include_str!("../fixtures/listenbrainz/export_completed.json"),
+        kind: PayloadKind::Decode,
+        identity: "/status",
+    },
+    Row {
+        name: "listenbrainz /1/export/list, export_id",
+        provider: Provider::ListenBrainz(ListenBrainzRead::ExportList),
+        body: include_str!("../fixtures/listenbrainz/export_list.json"),
+        kind: PayloadKind::Decode,
+        identity: "/0/export_id",
+    },
+    Row {
+        name: "listenbrainz /1/export/list, status",
+        provider: Provider::ListenBrainz(ListenBrainzRead::ExportList),
+        body: include_str!("../fixtures/listenbrainz/export_list.json"),
+        kind: PayloadKind::Decode,
+        identity: "/1/status",
+    },
+    Row {
         name: "listenbrainz get-feedback, list",
         provider: Provider::ListenBrainz(ListenBrainzRead::Feedback),
         body: include_str!("../fixtures/listenbrainz/feedback_account.json"),
@@ -1627,6 +1680,43 @@ async fn listenbrainz(read: ListenBrainzRead, body: &str) -> Result<bool, Provid
                 .await?
                 .is_empty()
         }
+        ListenBrainzRead::ListensAfter => {
+            let page = answer(Method::Get, "/1/user/DroppedNeedle/listens".to_owned())
+                .listenbrainz
+                .listens_after("DroppedNeedle", 1_793_600_000, 1000, &creds, PRIORITY)
+                .await?;
+            page.read == 3 && page.listens.len() == 3 && page.newest_at == Some(1_793_640_555)
+        }
+        ListenBrainzRead::ExportCreate => {
+            let asked = answer(Method::Post, "/1/export/".to_owned())
+                .listenbrainz
+                .create_export(None, &creds, PRIORITY)
+                .await?;
+            matches!(asked, AskedExport::Asked(export)
+                if export.id == 123
+                    && export.status == ExportStatus::Waiting
+                    && export.kind.as_deref() == Some("export_all_user_data"))
+        }
+        ListenBrainzRead::ExportStatus => {
+            let export = answer(Method::Get, "/1/export/123".to_owned())
+                .listenbrainz
+                .export(123, &creds, PRIORITY)
+                .await?;
+            // 2026-09-17T12:00:00Z and 2026-10-17T12:04:31Z.
+            export.status == ExportStatus::Completed
+                && export.created_at == Some(1_789_646_400)
+                && export.available_until == Some(1_792_238_671)
+        }
+        ListenBrainzRead::ExportList => {
+            let exports = answer(Method::Get, "/1/export/list".to_owned())
+                .listenbrainz
+                .exports(&creds, PRIORITY)
+                .await?;
+            exports.len() == 2
+                && exports[0].status == ExportStatus::InProgress
+                && exports[0].start_time == Some(1_767_225_600)
+                && exports[1].start_time.is_none()
+        }
         ListenBrainzRead::Feedback => {
             answer(
                 Method::Get,
@@ -2231,6 +2321,33 @@ async fn listenbrainz_recorded_refusals_read_as_refusals() {
     .await;
     assert!(!token.valid, "{token:?}");
     assert_eq!(token.message, "Token invalid or expired");
+
+    // The 400 while an export is pending reads as that; another 400 is a
+    // refusal.
+    let linked = linked();
+    let pending = listenbrainz_answer(
+        Method::Post,
+        "/1/export/",
+        400,
+        include_str!("../fixtures/listenbrainz/export_already_requested.json"),
+    )
+    .listenbrainz
+    .create_export(None, &linked, PRIORITY)
+    .await;
+    assert_eq!(pending, Ok(AskedExport::AlreadyPending));
+    let refused = listenbrainz_answer(
+        Method::Post,
+        "/1/export/",
+        400,
+        r#"{"code": 400, "error": "Request body must be a JSON object."}"#,
+    )
+    .listenbrainz
+    .create_export(None, &linked, PRIORITY)
+    .await;
+    assert!(
+        matches!(refused, Err(ProviderError::BadRequest { status: 400, .. })),
+        "{refused:?}"
+    );
 
     let user = "droppedneedle-no-such-user-fixture";
     let count = listenbrainz_answer(

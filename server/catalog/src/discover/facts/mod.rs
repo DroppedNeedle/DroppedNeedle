@@ -208,3 +208,18 @@ pub async fn clear(db: &Db) -> Result<u64, DbError> {
 pub async fn kept_rows(db: &Db) -> Result<u64, DbError> {
     store::kept_rows(db).await
 }
+
+/// A person's ListenBrainz history reads draw on the same day as
+/// Discover's other background reads: the room left under
+/// [`plan::ceiling`], and each read counted against ListenBrainz.
+impl droppedneedle_media::history::ReadBudget for KeptFacts {
+    fn room(
+        &self,
+    ) -> droppedneedle_media::playback::listening::BoxFuture<'_, Result<u64, DbError>> {
+        Box::pin(plan::room(self))
+    }
+
+    fn count(&self, reads: u64) -> droppedneedle_media::playback::listening::BoxFuture<'_, ()> {
+        Box::pin(self.count_read(MeteredSource::ListenBrainz, reads))
+    }
+}

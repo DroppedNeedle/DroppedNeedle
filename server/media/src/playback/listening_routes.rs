@@ -4,8 +4,9 @@
 //! A ListenBrainz link is verified before it is stored, and only a verified
 //! pair is stored. A saved visibility reaches the live presence feed at
 //! once, and the personal-mix toggle feeds the requests side's approval
-//! queue through [`MixGrants`]. A ListenBrainz export file the person
-//! uploads lands in the cache folder and is read by the history import
+//! queue through [`MixGrants`]. A new link starts the import of the
+//! person's ListenBrainz history, and a ListenBrainz export file the person
+//! uploads lands in the cache folder; both are read by the history import
 //! job ([`crate::history`]).
 
 use std::path::{Path, PathBuf};
@@ -40,11 +41,16 @@ use super::models::{
 use super::presence::PresenceRegistry;
 use super::sqlite::off_worker;
 use crate::history::archive::Export;
+use crate::history::due::{AccountCheck, StartAgain};
 use crate::history::store::remove;
 use crate::history::{HistoryStore, ListeningHistory, ListeningHistoryUpload};
 
 /// The largest listening history upload accepted, in bytes.
 const MAX_HISTORY_UPLOAD_BYTES: usize = 512 * (1 << 20);
+
+/// The code of a link that would replace a history kept from another
+/// ListenBrainz account.
+pub const HISTORY_ACCOUNT_DIFFERS: &str = "HISTORY_ACCOUNT_DIFFERS";
 
 /// The personal-mix standing grant, which the requests side keeps. A
 /// trait because that side is built above this crate.
@@ -71,6 +77,8 @@ pub struct ListeningDeps {
     pub mix: Arc<dyn MixGrants>,
     /// The live presence feed a saved visibility applies to.
     pub presence: PresenceRegistry,
+    /// The listening history a new link imports.
+    pub history: Arc<HistoryStore>,
 }
 
 /// Every way a ListenBrainz connect can fail.
@@ -225,7 +233,12 @@ pub async fn update_scrobble_preferences(
 }
 
 /// Link the caller's ListenBrainz account. The credential verifies first;
-/// only a verified pair stores.
+/// only a verified pair stores. Once linked, the caller's history is
+/// imported from ListenBrainz. A link of another account than the one a
+/// kept history is from replaces that history, so it needs
+/// `replace_history`: without it the answer is 409
+/// `HISTORY_ACCOUNT_DIFFERS`, with the kept account in
+/// `details.kept_account`, and nothing is stored or sent.
 #[utoipa::path(
     put,
     tag = "listening",
@@ -235,6 +248,7 @@ pub async fn update_scrobble_preferences(
         (status = 200, description = "Link status", body = LinkStatus),
         (status = 400, description = "Username required or credential rejected"),
         (status = 401, description = "Not authenticated"),
+        (status = 409, description = "The link would replace a history kept from another account"),
         (status = 429, description = "ListenBrainz is rate-limiting"),
         (status = 503, description = "The server is busy; try again"),
     )
@@ -244,8 +258,38 @@ pub async fn connect_listenbrainz_route(
     User(user): User,
     ValidJson(body): ValidJson<ListenBrainzConnectRequest>,
 ) -> Result<Json<LinkStatus>, ApiError> {
+    let history = &deps.history;
+    let username = body.username.trim();
+    let check = if username.is_empty() {
+        AccountCheck::Same
+    } else {
+        history
+            .account_check(user.user_id(), username)
+            .await
+            .map_err(store_error)?
+    };
+    let replace = match check {
+        AccountCheck::Same => false,
+        AccountCheck::Differs { kept, holds: true } if !body.replace_history => {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                HISTORY_ACCOUNT_DIFFERS,
+                format!("Linking {username} replaces the history kept from {kept}."),
+            )
+            .with_details(serde_json::json!({ "kept_account": kept })));
+        }
+        AccountCheck::Differs { .. } => true,
+    };
     match connect_listenbrainz(&deps, user.user_id(), &body.username, &body.user_token).await {
-        Ok(link) => Ok(Json(linked(link))),
+        Ok(link) => {
+            if let Err(error) = history
+                .linked_as(user.user_id(), &link.username, replace)
+                .await
+            {
+                tracing::warn!(%error, "a new link's listening history import not started");
+            }
+            Ok(Json(linked(link)))
+        }
         Err(ConnectError::UsernameRequired) => Err(ApiError::invalid_input(
             "A ListenBrainz username is required",
         )),
@@ -400,7 +444,9 @@ pub async fn upload_listening_history(
 }
 
 /// Where the caller's listening history stands: their import, the listens
-/// kept from ListenBrainz and their plays here.
+/// kept from ListenBrainz and their plays here. Reading it is the caller
+/// looking: a linked caller with no import gets one started, and a history
+/// not brought up to date for six hours gets its read.
 #[utoipa::path(
     get,
     tag = "listening",
@@ -415,8 +461,47 @@ pub async fn get_listening_history(
     State(history): State<Arc<HistoryStore>>,
     User(user): User,
 ) -> Result<Json<ListeningHistory>, ApiError> {
+    history.visit(user.user_id()).await;
     let status = history.status(user.user_id()).await.map_err(store_error)?;
     Ok(Json(status.into()))
+}
+
+/// Import the caller's history from ListenBrainz again, after they forgot
+/// it or an import failed: an export is asked for with their own link, and
+/// what is kept stays. The answer says where their history stands.
+#[utoipa::path(
+    post,
+    tag = "listening",
+    path = "/api/v3/me/listening-history/import",
+    responses(
+        (status = 202, description = "An export is asked for", body = ListeningHistory),
+        (status = 401, description = "Not authenticated"),
+        (status = 409, description = "No ListenBrainz link, ListenBrainz reads off, or the history is kept already"),
+        (status = 503, description = "The server is busy; try again"),
+    )
+)]
+pub async fn import_listening_history(
+    State(history): State<Arc<HistoryStore>>,
+    User(user): User,
+) -> Result<(StatusCode, Json<ListeningHistory>), ApiError> {
+    match history
+        .start_again(user.user_id())
+        .await
+        .map_err(job_error)?
+    {
+        StartAgain::Started => {}
+        StartAgain::NoLink => return Err(ApiError::conflict("Connect ListenBrainz first.")),
+        StartAgain::ReadsOff => {
+            return Err(ApiError::conflict(
+                "ListenBrainz is switched off on this server.",
+            ));
+        }
+        StartAgain::Running => {
+            return Err(ApiError::conflict("Your history is kept already."));
+        }
+    }
+    let status = history.status(user.user_id()).await.map_err(store_error)?;
+    Ok((StatusCode::ACCEPTED, Json(status.into())))
 }
 
 /// Every listening-settings route, for any signed-in user.
@@ -448,4 +533,5 @@ where
     Routes::new()
         .user((schemas, paths, upload))
         .user(routes!(get_listening_history))
+        .user(routes!(import_listening_history))
 }

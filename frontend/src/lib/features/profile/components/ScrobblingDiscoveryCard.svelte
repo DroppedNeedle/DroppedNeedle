@@ -33,6 +33,7 @@
 	import type { MusicSource } from '$lib/stores/musicSource';
 	import { createForgetDiscoverHistoryMutation } from '$lib/features/profile/queries/discover-history.svelte';
 	import {
+		createImportListeningHistoryMutation,
 		createUploadListeningHistoryMutation,
 		getListeningHistoryQuery
 	} from '$lib/features/profile/queries/listening-history.svelte';
@@ -80,13 +81,49 @@
 	const uploadHistoryMutation = createUploadListeningHistoryMutation();
 	let historyInput = $state<HTMLInputElement | null>(null);
 	let historyError = $state<string | null>(null);
+	const importHistoryMutation = createImportListeningHistoryMutation();
+	const fromExport = (history: ListeningHistory) => history.source === 'export';
+	function checkedAgo(seconds: number): string {
+		const minutes = Math.floor((Date.now() / 1000 - seconds) / 60);
+		if (minutes < 1) return 'just now';
+		if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
+		const hours = Math.floor(minutes / 60);
+		if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+		const days = Math.floor(hours / 24);
+		return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+	}
 	function historyLine(history: ListeningHistory): string {
-		if (history.state === 'importing') return 'Reading your file';
-		if (history.state === 'failed') return 'Your file could not be read.';
+		if (history.state === 'pending' || history.state === 'exporting')
+			return 'Importing your ListenBrainz history';
+		if (history.state === 'importing')
+			return fromExport(history) ? 'Importing your ListenBrainz history' : 'Reading your file';
+		if (history.state === 'failed')
+			return fromExport(history)
+				? "Your ListenBrainz history couldn't be imported."
+				: 'Your file could not be read.';
+		if (history.state === 'forgotten') return 'Forgotten. Nothing is imported until you ask.';
 		const count = history.imported_listens;
 		if (count === 0) return 'Nothing imported yet.';
-		return `${count.toLocaleString()} ${count === 1 ? 'listen' : 'listens'} from ListenBrainz`;
+		const listens = `${count.toLocaleString()} ${count === 1 ? 'listen' : 'listens'} from ListenBrainz`;
+		return history.account && history.last_synced_at
+			? `${listens}, checked ${checkedAgo(history.last_synced_at)}`
+			: listens;
 	}
+	const canImportAgain = (history: ListeningHistory) =>
+		Boolean(lb) && (history.state === 'forgotten' || history.state === 'failed');
+	async function importAgain() {
+		historyError = null;
+		try {
+			await importHistoryMutation.mutateAsync();
+		} catch (e) {
+			historyError = errorMessage(e, "Couldn't start the import.");
+		}
+	}
+
+	// Linking another account than the one the history is kept from asks
+	// first: the kept history is replaced.
+	let replacing = $state<{ from: string; to: string } | null>(null);
+	let replaceOpen = $state(false);
 
 	const loading = $derived(connectionsQuery.isPending || prefsQuery.isPending);
 
@@ -142,17 +179,27 @@
 		return e instanceof ApiError ? e.message : fallback;
 	}
 
-	async function connectListenBrainz() {
+	async function connectListenBrainz(replaceHistory = false) {
 		lbError = null;
 		try {
 			await connectLbMutation.mutateAsync({
 				user_token: lbToken.trim(),
-				username: lbUsername.trim()
+				username: lbUsername.trim(),
+				replace_history: replaceHistory
 			});
 			lbFormOpen = false;
 			lbToken = '';
 			lbUsername = '';
 		} catch (e) {
+			if (e instanceof ApiError && e.code === 'HISTORY_ACCOUNT_DIFFERS') {
+				const kept = (e.details as { kept_account?: unknown } | null)?.kept_account;
+				replacing = {
+					from: typeof kept === 'string' ? kept : 'your other account',
+					to: lbUsername.trim()
+				};
+				replaceOpen = true;
+				return;
+			}
 			lbError = errorMessage(e, 'Could not verify that token.');
 		}
 	}
@@ -389,7 +436,7 @@
 								size="sm"
 								loading={connectLbMutation.isPending}
 								disabled={!lbToken.trim() || !lbUsername.trim()}
-								onclick={connectListenBrainz}
+								onclick={() => connectListenBrainz()}
 							>
 								Link account
 							</Button>
@@ -405,6 +452,16 @@
 						<QueryBoundary query={historyQuery} what="your listening history">
 							{#snippet children(history)}
 								<p class="pf-meta">{historyLine(history)}</p>
+								{#if canImportAgain(history)}
+									<Button
+										variant="ghost"
+										size="xs"
+										loading={importHistoryMutation.isPending}
+										onclick={importAgain}
+									>
+										Import again
+									</Button>
+								{/if}
 							{/snippet}
 							{#snippet loading()}
 								<p class="pf-meta">Checking your history</p>
@@ -705,6 +762,17 @@
 	tone="danger"
 	pending={forgetHistoryMutation.isPending}
 	onconfirm={forgetHistory}
+/>
+
+<ConfirmDialog
+	bind:open={replaceOpen}
+	title="Replace your listening history?"
+	message={`Replace the history kept from ${replacing?.from ?? ''} with ${replacing?.to ?? ''}'s?`}
+	confirmLabel="Replace"
+	tone="danger"
+	pending={connectLbMutation.isPending}
+	onconfirm={() => connectListenBrainz(true)}
+	onclose={() => (replacing = null)}
 />
 
 <style>
