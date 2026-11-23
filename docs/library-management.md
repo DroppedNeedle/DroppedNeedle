@@ -91,6 +91,7 @@ Naming scripts can also read these. Tagging scripts read `year`, `artist_display
 | `album_artist`, `album_artist_display` | The album artist credit | Radiohead |
 | `artists` | Each track artist's name, as a list | Radiohead |
 | `album_artists` | The album artist credit, as a list of one | Radiohead |
+| `primary_album_artist` | The first artist credited on the album's MusicBrainz release, named under the profile's artist naming when it writes artist names, else as credited; the album artist credit when the release credits none | Radiohead |
 | `artist_sorts`, `album_artist_sorts` | The artist sort and album artist sort tags, as lists | Radiohead |
 | `albumartist_disambiguation` | MusicBrainz's comment telling the first album artist apart from others of the name | (empty; "1964-1975 American rock band" on Name shared) |
 | `artist_disambiguation` | The same for the first track artist | (empty) |
@@ -178,6 +179,7 @@ gives `Radiohead/OK Computer (1997)/02 - Paranoid Android.flac` and `The Smashin
 - The year the album first came out, not the edition's: `{slice(default(original_date, date), 0, 4)}`.
 - Release type in the folder: `{album} [{title(first(release_type))}]` gives `OK Computer [Album]`.
 - Letter folders: `{initial}/{albumartist}/...` gives `R/Radiohead/...`.
+- One folder per main artist: `{primary_album_artist}/...` files an album by "A Day to Remember & Someone" under `A Day to Remember/...`.
 - Sort-name artist folders: `{default(album_artist_sort, albumartist)}/...` gives `Beatles, The/...`.
 
 ### Coming from Lidarr

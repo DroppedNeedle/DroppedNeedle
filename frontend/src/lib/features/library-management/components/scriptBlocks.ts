@@ -75,6 +75,7 @@ export const NAMING_BLOCKS: ScriptBlockGroup[] = [
 		name: 'Names',
 		blocks: [
 			value('Album artist', 'albumartist'),
+			value('Primary album artist', 'primary_album_artist'),
 			value('Track artist', 'artist'),
 			value('Artist disambiguation', 'albumartist_disambiguation')
 		]

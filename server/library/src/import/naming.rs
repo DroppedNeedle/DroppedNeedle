@@ -9,12 +9,14 @@ use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::management::profile::{NamingFacts, artist_disambiguations, naming_variables};
+use crate::management::profile::{
+    NamingFacts, artist_disambiguations, naming_variables, primary_album_artist,
+};
 use crate::management::script::{ScriptFault, Value, Variables, render_path};
 use crate::management::settings::validate_naming_language;
 use crate::matching::model::{CreditedArtist, ReleaseMedium};
 use crate::matching::{Release, ReleaseTrack};
-use crate::tags::picard::release_tags;
+use crate::tags::picard::{ArtistNaming, release_tags};
 use crate::tags::read::HeaderInfo;
 
 /// The variables an imported file's name is made from. `format` is the
@@ -45,6 +47,9 @@ pub fn variables(
         album_disambiguation: release.disambiguation.clone().unwrap_or_default(),
         album_artist_disambiguation,
         artist_disambiguation,
+        // Names as credited never need a lookup, so this is always known.
+        primary_album_artist: primary_album_artist(release, &ArtistNaming::credited())
+            .unwrap_or_default(),
     };
     naming_variables(&fields, &facts)
 }

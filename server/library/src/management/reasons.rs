@@ -46,6 +46,17 @@ pub fn disambiguation_unavailable() -> ItemReason {
     )
 }
 
+/// The naming script reads the album's main artist, whose MusicBrainz
+/// name the profile's artist naming needs and could not be had.
+pub fn primary_album_artist_unavailable() -> ItemReason {
+    ItemReason::new(
+        "METADATA_UNAVAILABLE",
+        "The naming script reads the album's main artist, whose MusicBrainz name could not be \
+         read for this album, so its path is not planned.",
+        "Make a new preview later; automatic management looks again by itself.",
+    )
+}
+
 /// Lyrics or ReplayGain the profile requires could not be had.
 pub fn metadata_unavailable(what: &str) -> ItemReason {
     ItemReason {

@@ -28323,6 +28323,52 @@ async fn translated_names_wait_for_musicbrainz() {
     );
 }
 
+/// A path that reads the album's main artist waits while MusicBrainz's
+/// artist names can't be read, rather than filing the album under its
+/// whole credit and moving it back once they can.
+#[tokio::test]
+async fn a_path_reading_the_main_artist_waits_for_its_name() {
+    use droppedneedle_kernel::runtime_config::sections::NamingScript;
+    use droppedneedle_library::management::models::SelectionKind;
+    use droppedneedle_library::management::settings as lm;
+    use droppedneedle_library::test_support::ScriptedEnrichment;
+
+    let scripted = Arc::new(ScriptedEnrichment::default());
+    let managed =
+        ManagedLibrary::scripted("lib-main-artist-down", translating, scripted.clone()).await;
+    const SCRIPT: &str = "7f3c2a1e-4b5d-4e6f-8a9b-0c1d2e3f4a5b";
+    managed.edit_settings(|settings| {
+        settings.naming_scripts.push(NamingScript {
+            id: SCRIPT.to_owned(),
+            name: "Main artist".to_owned(),
+            source: "{primary_album_artist}/{album}/{title}.{ext}".to_owned(),
+            ..NamingScript::default()
+        });
+        for profile in &mut settings.profiles {
+            if profile.id == lm::PICARD_ORGANIZER_PROFILE_ID {
+                profile.preset_origin = None;
+                profile.organization.naming_script_id = SCRIPT.to_owned();
+                profile.organization.multi_disc_naming_script_id = None;
+            }
+        }
+    });
+    let (album, tracks) = managed
+        .add_album_from("down", &["management_full.flac"], sakamoto_edition)
+        .await;
+    *scripted.relations.lock().expect("script") =
+        Some(managed.scripted_credits(&tracks, |_| concerto_credits()));
+
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "main-artist-down")
+        .await;
+    assert_eq!(
+        items[0].reason().map(|reason| reason.code.as_str()),
+        Some("METADATA_UNAVAILABLE"),
+        "{:?}",
+        items[0].dest_rel
+    );
+}
+
 /// A profile writing credits and translated names asks MusicBrainz once
 /// per album, for both parts together.
 #[tokio::test]

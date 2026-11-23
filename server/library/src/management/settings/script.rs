@@ -26,6 +26,7 @@ pub(crate) fn naming_variables() -> BTreeSet<&'static str> {
             "album_artists",
             "album_artist_sorts",
             "albumartist",
+            "primary_album_artist",
             "initial",
             "year",
             "track",

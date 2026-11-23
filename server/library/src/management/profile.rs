@@ -658,16 +658,7 @@ pub fn plan_tags(
     )?;
     if profile.metadata.enabled {
         let custom = super::custom::is_custom(release);
-        // A custom edition keeps the names as credited: there is no
-        // MusicBrainz release to ask for the artists' own.
-        let naming = if custom {
-            picard::ArtistNaming::credited()
-        } else {
-            picard::ArtistNaming::new(
-                &profile.metadata.artist_credits,
-                release.artist_names.as_ref(),
-            )
-        };
+        let naming = artist_naming(profile, release);
         // Artist fields whose names were not fetched are left out, and
         // keep the file's values below, never cleared.
         let (mut canonical, unresolved) = picard::named_release_tags(release, track, &naming);
@@ -1320,6 +1311,57 @@ pub struct NamingFacts<'a> {
     pub album_artist_disambiguation: String,
     /// The first track artist's MusicBrainz disambiguation, or empty.
     pub artist_disambiguation: String,
+    /// The release's first credited artist, named as the album artist
+    /// is, or empty.
+    pub primary_album_artist: String,
+}
+
+/// How a profile names a release's artists. A custom edition, or a
+/// profile that writes no metadata, keeps the names as credited: there
+/// is no MusicBrainz release to ask for the artists' own, or nothing
+/// renamed them.
+pub fn artist_naming<'a>(
+    profile: &LibraryManagementProfile,
+    release: &'a Release,
+) -> picard::ArtistNaming<'a> {
+    if !profile.metadata.enabled || super::custom::is_custom(release) {
+        picard::ArtistNaming::credited()
+    } else {
+        picard::ArtistNaming::new(
+            &profile.metadata.artist_credits,
+            release.artist_names.as_ref(),
+        )
+    }
+}
+
+/// How naming scripts name the album's main artist: as the profile names
+/// artists when it writes artist names, else as credited, since no names
+/// are fetched for it and its artist tags are the file's own.
+pub fn main_artist_naming<'a>(
+    profile: &LibraryManagementProfile,
+    release: &'a Release,
+) -> picard::ArtistNaming<'a> {
+    if super::enrich::names_wanted(profile) {
+        artist_naming(profile, release)
+    } else {
+        picard::ArtistNaming::credited()
+    }
+}
+
+/// The release's first credited artist under `naming`, worked out from
+/// the release rather than the planned tags, which an ID3v2.3 file holds
+/// joined into one value. Empty when the release credits no artist, and
+/// `None` when the name `naming` needs was not fetched.
+pub fn primary_album_artist(
+    release: &Release,
+    naming: &picard::ArtistNaming<'_>,
+) -> Option<String> {
+    let Some(artist) = release.artists.first() else {
+        return Some(String::new());
+    };
+    naming
+        .resolve(&artist.id, &artist.name, artist.sort_name.as_deref())
+        .map(|(name, _)| name.trim().to_owned())
 }
 
 /// The first album artist's and the first track artist's MusicBrainz
@@ -1404,6 +1446,11 @@ pub fn naming_variables(
     } else {
         album_artist.clone()
     };
+    let primary_album_artist = if facts.primary_album_artist.is_empty() {
+        albumartist.clone()
+    } else {
+        facts.primary_album_artist.clone()
+    };
     let kbps = facts.bit_rate.unwrap_or(0);
     let pairs = [
         ("artist", Value::Text(artist)),
@@ -1415,6 +1462,7 @@ pub fn naming_variables(
             Value::List(fields.get("album_artist").cloned().unwrap_or_default()),
         ),
         ("album_artist_sorts", list(fields, "album_artist_sort")),
+        ("primary_album_artist", Value::Text(primary_album_artist)),
         ("initial", Value::Text(initial(&albumartist))),
         ("albumartist", Value::Text(albumartist)),
         ("genre", Value::Text(first(fields, "genre"))),
@@ -1517,6 +1565,24 @@ mod tests {
     use droppedneedle_kernel::runtime_config::sections::{
         PathCompatibilitySettings, RelationshipType,
     };
+
+    /// Naming facts for a file with nothing known about it but its
+    /// primary album artist.
+    fn naming_facts(primary_album_artist: &str) -> NamingFacts<'static> {
+        NamingFacts {
+            extension: "x",
+            codec: "x",
+            bit_rate: None,
+            sample_rate: None,
+            bit_depth: None,
+            medium_format: String::new(),
+            medium_number: 1,
+            album_disambiguation: String::new(),
+            album_artist_disambiguation: String::new(),
+            artist_disambiguation: String::new(),
+            primary_album_artist: primary_album_artist.to_owned(),
+        }
+    }
 
     /// The classical probe: Gould and Karajan's Beethoven concerto, then
     /// Sibelius and a spoken track that performs no work.
@@ -2122,21 +2188,9 @@ mod tests {
             Some(&vec!["2016".to_owned()])
         );
         let name = |fields: &BTreeMap<String, Vec<String>>| {
-            let facts = NamingFacts {
-                extension: "x",
-                codec: "x",
-                bit_rate: None,
-                sample_rate: None,
-                bit_depth: None,
-                medium_format: String::new(),
-                medium_number: 1,
-                album_disambiguation: String::new(),
-                album_artist_disambiguation: String::new(),
-                artist_disambiguation: String::new(),
-            };
             script::render_path(
                 "{original_date}/{date}",
-                &naming_variables(fields, &facts),
+                &naming_variables(fields, &naming_facts("")),
                 &PathCompatibilitySettings::default(),
                 "/m",
             )
@@ -2427,6 +2481,91 @@ mod tests {
         );
         assert_eq!(initial("The Cure"), "C");
         assert_eq!(initial("2Pac"), "#");
+    }
+
+    /// `{primary_album_artist}` is the release's first credited artist,
+    /// for an ID3v2.3 file as for a FLAC, and with no such artist it reads
+    /// as the album artist. A profile that writes no artist names names it
+    /// as credited, needing no lookup.
+    #[test]
+    fn primary_album_artist_names_an_mp3_as_its_flac_sibling() {
+        use crate::matching::model::CreditedArtist;
+
+        let (mut release, _) = classical();
+        let artist = |id: &str, name: &str, join: &str| CreditedArtist {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            sort_name: None,
+            join: join.to_owned(),
+            disambiguation: None,
+        };
+        release.artists = vec![
+            artist(
+                "d6d4e2fb-1c03-4ec7-a5c6-8dbc4f9a6b4e",
+                "A Day to Remember",
+                " & ",
+            ),
+            artist("5b11f4ce-a62d-471e-81fc-a69a8278c7da", "Someone", ""),
+        ];
+        let settings = settings::initial_settings();
+        let pinned = pin(&settings, settings::PICARD_ORGANIZER_PROFILE_ID, None).expect("pinned");
+        let empty: TagDocument = serde_json::from_value(serde_json::json!({
+            "managed": {},
+            "custom": {}
+        }))
+        .expect("document");
+        let render = |source: &str, format: &str, id3v23: bool, primary: &str| {
+            let planned = plan_tags(
+                &pinned,
+                &CompiledScripts::new(&pinned),
+                &FileInput {
+                    release: &release,
+                    track: &release.tracks[0],
+                    doc: &empty,
+                    format,
+                    id3v23,
+                    writable: true,
+                    overrides: &Overrides::default(),
+                    extras: &AlbumExtras::default(),
+                    track_id: "track",
+                    lyrics: &LyricsAnswer::Off,
+                },
+            )
+            .expect("planned");
+            script::render_path(
+                source,
+                &naming_variables(&planned.desired, &naming_facts(primary)),
+                &PathCompatibilitySettings::default(),
+                "/m",
+            )
+            .expect("renders")
+        };
+        let primary =
+            primary_album_artist(&release, &main_artist_naming(&pinned.profile, &release))
+                .expect("names as credited need no lookup");
+        assert_eq!(primary, "A Day to Remember");
+        let script = "{primary_album_artist}/{album}";
+        let flac = render(script, "flac", false, &primary);
+        assert_eq!(render(script, "mp3", true, &primary), flac);
+        assert!(flac.starts_with("A Day to Remember/"), "{flac}");
+        assert_eq!(
+            render(script, "flac", false, ""),
+            render("{albumartist}/{album}", "flac", false, "")
+        );
+
+        let mut translating = pinned.profile.clone();
+        translating.metadata.artist_credits.translate_names = true;
+        for field in &mut translating.metadata.fields {
+            if super::super::enrich::ARTIST_FIELDS.contains(&field.field.as_str()) {
+                field.mode = FieldMode::Preserve;
+            }
+        }
+        release.artist_names = None;
+        assert_eq!(
+            primary_album_artist(&release, &main_artist_naming(&translating, &release)),
+            Some("A Day to Remember".to_owned()),
+            "artist names are never fetched for it"
+        );
     }
 
     /// A release stored before its credits kept the artist's

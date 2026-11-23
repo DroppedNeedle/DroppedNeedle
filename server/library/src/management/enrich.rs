@@ -270,18 +270,25 @@ pub fn names_wanted(
 /// disambiguation, which a release stored before its credits kept it
 /// gets from the artist names lookup.
 pub fn script_names_wanted(pinned: &super::models::PinnedProfile) -> bool {
-    const READ: [&str; 2] = ["albumartist_disambiguation", "artist_disambiguation"];
+    naming_scripts_read(
+        pinned,
+        &["albumartist_disambiguation", "artist_disambiguation"],
+    )
+}
+
+/// Whether the profile's naming scripts read any of `names`.
+pub fn naming_scripts_read(pinned: &super::models::PinnedProfile, names: &[&str]) -> bool {
     std::iter::once(&pinned.naming_script)
         .chain(pinned.multi_disc_naming_script.as_ref())
         .filter_map(|script| super::script::compile_naming(&script.source).ok())
         .flatten()
         .any(|segment| match segment {
             super::script::Segment::Literal(_) => false,
-            super::script::Segment::Variable { name, .. } => READ.contains(&name.as_str()),
+            super::script::Segment::Variable { name, .. } => names.contains(&name.as_str()),
             super::script::Segment::Expression(expr) => expr
                 .variables()
                 .iter()
-                .any(|(name, _, _)| READ.contains(name)),
+                .any(|(name, _, _)| names.contains(name)),
         })
 }
 

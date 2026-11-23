@@ -479,6 +479,18 @@ fn destination(
     let medium = release.media.iter().find(|medium| medium.position == disc);
     let (album_artist_disambiguation, artist_disambiguation) =
         profile::artist_disambiguations(release, release_track);
+    // A path that reads the main artist would be planned under the whole
+    // credit, and moved back once the name can be read.
+    let primary_album_artist = match profile::primary_album_artist(
+        release,
+        &profile::main_artist_naming(&ctx.pinned.profile, release),
+    ) {
+        Some(name) => name,
+        None if super::enrich::naming_scripts_read(ctx.pinned, &["primary_album_artist"]) => {
+            return Err(reasons::primary_album_artist_unavailable());
+        }
+        None => String::new(),
+    };
     let facts = NamingFacts {
         extension: &script::cased_extension(&extension, organization.compatibility.extension_case),
         codec: &track.file_format,
@@ -490,6 +502,7 @@ fn destination(
         album_disambiguation: release.disambiguation.clone().unwrap_or_default(),
         album_artist_disambiguation,
         artist_disambiguation,
+        primary_album_artist,
     };
     let variables = profile::naming_variables(fields, &facts);
     let rendered = script::render_path(
