@@ -11,8 +11,8 @@ use std::sync::Arc;
 use crate::discover::listening::{ListeningData, ListeningNetwork, LiveNetwork};
 use crate::discover::services::DiscoverDeps;
 use crate::discover::{
-    cache, charts, content, due, forget, home, page, previews, queue, radio, record, scheduler,
-    youtube,
+    cache, charts, content, due, facts, forget, home, page, previews, queue, radio, record,
+    scheduler, youtube,
 };
 use crate::metadata::library::LocalCatalog;
 use crate::metadata::ports::{NoDetails, NoFollows, NoPurchaseLinks};
@@ -114,7 +114,12 @@ fn deps_with(
     network: Arc<dyn ListeningNetwork>,
     catalog: Catalog,
 ) -> DiscoverDeps {
-    let listening = ListeningData::new(network, inputs.providers.cache.clone());
+    let kept = facts::KeptFacts::new(inputs.db.clone(), Arc::clone(&inputs.clock));
+    let listening = ListeningData::new(
+        Arc::clone(&network),
+        inputs.providers.cache.clone(),
+        kept.clone(),
+    );
     let charts = charts::LiveCharts::new(
         listening.clone(),
         inputs.db.clone(),
@@ -186,11 +191,13 @@ fn deps_with(
         charts,
         forgets: forgets.clone(),
     });
+    let fact_jobs = Arc::new(facts::job::FactJobs::new(kept, network));
     let due = Arc::new(due::Due::new(
         inputs.db.clone(),
         inputs.jobs.clone(),
         Arc::clone(&inputs.clock),
         inputs.discover_warmer,
+        fact_jobs.due(),
     ));
     let warm_scheduler = Arc::new(scheduler::WarmScheduler::new(
         scheduler::activity::ActivityDb::new(inputs.db.clone()),
@@ -228,6 +235,7 @@ fn deps_with(
             inputs.history.clone(),
             forgets,
         ),
+        facts: fact_jobs,
     }
 }
 
@@ -243,6 +251,7 @@ fn reads_catalog(inputs: &DiscoverInputs, config: &ConfigStore) -> Catalog {
             purchase_links: Arc::new(NoPurchaseLinks),
             details: Arc::new(NoDetails),
             cover_warm: inputs.warm.clone(),
+            facts: facts::KeptFacts::new(inputs.db.clone(), Arc::clone(&inputs.clock)),
         },
     )
 }

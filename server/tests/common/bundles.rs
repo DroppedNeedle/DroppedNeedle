@@ -14,6 +14,7 @@ use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::artwork::warm::CoverWarm;
 use droppedneedle_catalog::collections::{CollectionsState, db::CollectionsDb, store::Stores};
 use droppedneedle_catalog::discover::content::DownloadReadiness;
+use droppedneedle_catalog::discover::facts::KeptFacts;
 use droppedneedle_catalog::enrichment::live::CatalogEnrichment;
 use droppedneedle_catalog::lyrics::{LyricsError, LyricsQuery, OnlineLyricsSource};
 use droppedneedle_catalog::metadata::{
@@ -228,7 +229,8 @@ pub fn catalog_setup_at(
         LocalCatalog::new(platform.db.clone()),
         PageSources {
             follows: droppedneedle_catalog::wiring::collections_follows(&collections),
-            ..quiet_page_sources(cover_warm.clone())
+            cover_warm: cover_warm.clone(),
+            ..quiet_page_sources(&platform.db, platform.clock.clone())
         },
     );
     let artwork = droppedneedle_catalog::wiring::artwork(platform, &inputs, catalog.clone());
@@ -257,14 +259,15 @@ pub fn catalog_setup_at(
 }
 
 /// What a catalog's pages read beyond MusicBrainz and the library, with no
-/// follow store and no plugins: an artist page queues its image warm
-/// through `cover_warm`.
-pub fn quiet_page_sources(cover_warm: CoverWarm) -> PageSources {
+/// follow store and no plugins: an artist page queues its image warm on
+/// `db`'s jobs table, and reads the kept facts in `db`, dated by `clock`.
+pub fn quiet_page_sources(db: &Db, clock: Arc<dyn Clock>) -> PageSources {
     PageSources {
         follows: Arc::new(NoFollows),
         purchase_links: Arc::new(NoPurchaseLinks),
         details: Arc::new(NoDetails),
-        cover_warm,
+        cover_warm: cover_warm_at(db, clock.clone()),
+        facts: KeptFacts::new(db.clone(), clock),
     }
 }
 
@@ -287,10 +290,7 @@ pub fn offline_catalog(db: &Db, users: UsersDeps) -> Catalog {
             ),
         ),
         LocalCatalog::new(db.clone()),
-        quiet_page_sources(cover_warm_at(
-            db,
-            Arc::new(droppedneedle_kernel::clock::SystemClock),
-        )),
+        quiet_page_sources(db, Arc::new(droppedneedle_kernel::clock::SystemClock)),
     )
 }
 

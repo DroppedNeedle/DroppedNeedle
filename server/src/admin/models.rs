@@ -89,6 +89,9 @@ pub struct CacheStatsResponse {
     /// Whether the provider cache file is working. When it is not, every
     /// provider answer is fetched each time.
     pub provider_data_on: bool,
+    /// Provider facts Discover keeps in the database (similar artists,
+    /// listener counts, album lists), in rows.
+    pub kept_facts: u64,
     /// Cover and artist images on disk.
     pub cover_images: u64,
     /// Their total size in bytes.

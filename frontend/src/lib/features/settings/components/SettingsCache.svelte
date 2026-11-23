@@ -46,7 +46,7 @@
 	}
 
 	const PROMPTS = {
-		provider_data: 'Clear all cached provider data? It is fetched again on demand.',
+		provider_data: 'Clear all cached provider data and kept facts? They are fetched again.',
 		covers: 'Clear the cached album covers and artist images? They are fetched again on demand.'
 	} as const;
 
@@ -111,7 +111,9 @@
 				<div class="stat">
 					<div class="stat-title">Provider data</div>
 					<div class="stat-value text-primary">{formatCount(stats.entries)}</div>
-					<div class="stat-desc">{formatBytes(providerBytes)}</div>
+					<div class="stat-desc">
+						{formatBytes(providerBytes)}, {formatCount(stats.kept_facts)} kept facts
+					</div>
 				</div>
 				<div class="stat">
 					<div class="stat-title">Cached images</div>

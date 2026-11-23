@@ -439,6 +439,10 @@ pub(crate) async fn build_on(
             purchase_links: Arc::new(PluginPurchaseLinks(plugin_host.clone())),
             details: Arc::new(PluginDetailsSource(plugin_host.clone())),
             cover_warm: cover_warm.clone(),
+            facts: droppedneedle_catalog::discover::facts::KeptFacts::new(
+                db.clone(),
+                p.clock.clone(),
+            ),
         },
     );
     let artwork = droppedneedle_catalog::wiring::artwork(p, &catalog_inputs, catalog.clone());
@@ -617,6 +621,10 @@ pub(crate) async fn build_on(
                     p.clock.clone(),
                 ),
             ),
+        )
+        .with(
+            droppedneedle_catalog::discover::facts::job::SPEC,
+            catalog_setup.discover.facts.clone(),
         )
         .with(
             droppedneedle_acquire::imports::jobs::SPEC,

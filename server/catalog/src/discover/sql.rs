@@ -9,6 +9,7 @@
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
 
+use super::facts::{FactKind, FactSource};
 use super::feedback::{FeedbackKind, FeedbackTarget};
 
 use crate::artwork::local::art_tracks_column;
@@ -866,6 +867,193 @@ droppedneedle_kernel::sql! {
          AND ((first_shown_at IS NULL AND last_offered_at < ?2) \
            OR (first_shown_at IS NOT NULL \
              AND MAX(last_offered_at, COALESCE(last_shown_at, 0)) < ?3))";
+
+    // -- kept facts ------------------------------------------------------------
+
+    /// The fetch rows of kind ?1 from source ?2 for the artists in the JSON
+    /// list ?3.
+    pub(super) FACT_FETCHES = "SELECT artist_mbid, fetched_at, read_at, wanted_at \
+         FROM catalog_fact_fetches WHERE kind = ?1 AND source = ?2 \
+           AND artist_mbid IN (SELECT value FROM json_each(?3))";
+    pub(super) row FactFetchColumns for [FACT_FETCHES] {
+        artist_mbid: String,
+        fetched_at: Option<Millis>,
+        read_at: Millis,
+        wanted_at: Option<Millis>,
+    }
+    /// The kept similar artists from source ?1 of the artists in the JSON
+    /// list ?2, best first by the provider's own rank.
+    pub(super) KEPT_NEIGHBOURS = "SELECT artist_mbid, neighbour_mbid, neighbour_name, score \
+         FROM catalog_artist_neighbours WHERE source = ?1 \
+           AND artist_mbid IN (SELECT value FROM json_each(?2)) ORDER BY artist_mbid, rank";
+    pub(super) row KeptNeighbourColumns for [KEPT_NEIGHBOURS] {
+        artist_mbid: String,
+        neighbour_mbid: String,
+        neighbour_name: Option<String>,
+        score: f64,
+    }
+    /// The kept counts of the artists in the JSON list ?1.
+    pub(super) KEPT_LISTENERS = "SELECT artist_mbid, listeners, listens \
+         FROM catalog_artist_listeners WHERE artist_mbid IN (SELECT value FROM json_each(?1))";
+    pub(super) row KeptListenerColumns for [KEPT_LISTENERS] {
+        artist_mbid: String,
+        listeners: Option<i64>,
+        listens: Option<i64>,
+    }
+    /// Artist ?1's kept albums, in its discography's order.
+    pub(super) KEPT_ALBUMS = "SELECT release_group_mbid, title, artist_name, primary_type, \
+         secondary_types, first_release_date, credited_artist_mbids, listeners, listens \
+         FROM catalog_artist_albums WHERE artist_mbid = ?1 ORDER BY position";
+    pub(super) row KeptAlbumColumns for [KEPT_ALBUMS] {
+        release_group_mbid: String,
+        title: String,
+        artist_name: String,
+        primary_type: Option<String>,
+        secondary_types: String,
+        first_release_date: Option<String>,
+        credited_artist_mbids: Option<String>,
+        listeners: Option<i64>,
+        listens: Option<i64>,
+    }
+    /// The groups of the kept albums of the artists in the JSON list ?1.
+    pub(super) KEPT_ALBUM_GROUPS = "SELECT DISTINCT release_group_mbid \
+         FROM catalog_artist_albums WHERE artist_mbid IN (SELECT value FROM json_each(?1)) \
+         ORDER BY release_group_mbid";
+    /// Fact ?1, kind ?2, source ?3 answered (?4, `found` or `none`) at ?5,
+    /// due again at ?6. A new row counts as read now.
+    pub(super) FACT_ANSWERED = "INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, \
+         outcome, fetched_at, failing_since_at, failures, due_at, wanted_at, want_order, \
+         read_at) VALUES (?1, ?2, ?3, ?4, ?5, NULL, 0, ?6, NULL, NULL, ?5) \
+         ON CONFLICT (artist_mbid, kind, source) DO UPDATE SET outcome = excluded.outcome, \
+           fetched_at = excluded.fetched_at, failing_since_at = NULL, failures = 0, \
+           due_at = excluded.due_at, wanted_at = NULL, want_order = NULL";
+    /// Fact ?1, kind ?2, source ?3 failed at ?4: its rows stay, the first
+    /// failure's time is kept, and it is due again ?5 ms after ?4 doubled
+    /// for each failure in a row, at most ?6 ms after. A new row is wanted
+    /// with order ?7.
+    pub(super) FACT_FAILED = "INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, \
+         outcome, fetched_at, failing_since_at, failures, due_at, wanted_at, want_order, \
+         read_at) VALUES (?1, ?2, ?3, 'failed', NULL, ?4, 1, ?4 + ?5, ?4, ?7, ?4) \
+         ON CONFLICT (artist_mbid, kind, source) DO UPDATE SET outcome = 'failed', \
+           failing_since_at = COALESCE(failing_since_at, excluded.failing_since_at), \
+           failures = failures + 1, due_at = ?4 + MIN(?5 << MIN(failures, 10), ?6)";
+    /// Fact ?1, kind ?2, source ?3 could not answer yet (a discography still
+    /// being walked): asked again at ?5. A new row is wanted at ?4 with
+    /// order ?6.
+    pub(super) FACT_NOT_YET = "INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, \
+         due_at, wanted_at, want_order, read_at) VALUES (?1, ?2, ?3, ?5, ?4, ?6, ?4) \
+         ON CONFLICT (artist_mbid, kind, source) DO UPDATE SET due_at = excluded.due_at";
+    /// The facts of kind ?1 from source ?2 for the artists in the JSON list
+    /// ?3 were read at ?4.
+    pub(super) FACTS_READ = "UPDATE catalog_fact_fetches SET read_at = ?4 \
+         WHERE kind = ?1 AND source = ?2 AND artist_mbid IN (SELECT value FROM json_each(?3)) \
+           AND read_at < ?4";
+    /// The facts of kind ?1 from source ?2 for the artists in the JSON list
+    /// ?3 were wanted at ?4 with order ?5. One that has answered is left
+    /// alone; one already wanted keeps its earliest order.
+    pub(super) FACTS_WANTED = "INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, \
+         due_at, wanted_at, want_order, read_at) \
+         SELECT value, ?1, ?2, ?4, ?4, ?5, ?4 FROM json_each(?3) WHERE true \
+         ON CONFLICT (artist_mbid, kind, source) DO UPDATE SET wanted_at = excluded.wanted_at, \
+           want_order = MIN(COALESCE(want_order, excluded.want_order), excluded.want_order), \
+           read_at = excluded.read_at \
+         WHERE catalog_fact_fetches.fetched_at IS NULL";
+    /// The facts of kind ?1 from source ?2 for the artists in the JSON list
+    /// ?3 are wanted again now (?4) with order ?5, answered before or not.
+    pub(super) FACTS_WANTED_AGAIN = "INSERT INTO catalog_fact_fetches (artist_mbid, kind, \
+         source, due_at, wanted_at, want_order, read_at) \
+         SELECT value, ?1, ?2, ?4, ?4, ?5, ?4 FROM json_each(?3) WHERE true \
+         ON CONFLICT (artist_mbid, kind, source) DO UPDATE SET due_at = excluded.due_at, \
+           wanted_at = excluded.wanted_at, \
+           want_order = MIN(COALESCE(want_order, excluded.want_order), excluded.want_order)";
+    /// Drop artist ?1's kept similar artists from source ?2.
+    pub(super) NEIGHBOURS_DROPPED = "DELETE FROM catalog_artist_neighbours \
+         WHERE artist_mbid = ?1 AND source = ?2";
+    /// Keep artist ?1's similar artist ?4 (named ?5, scored ?6) from source
+    /// ?2 at rank ?3.
+    pub(super) NEIGHBOUR_KEPT = "INSERT INTO catalog_artist_neighbours (artist_mbid, source, \
+         rank, neighbour_mbid, neighbour_name, score) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+    /// Keep artist ?1's counts: ?2 listeners, ?3 listens.
+    pub(super) LISTENERS_KEPT = "INSERT INTO catalog_artist_listeners (artist_mbid, listeners, \
+         listens) VALUES (?1, ?2, ?3) ON CONFLICT (artist_mbid) DO UPDATE SET \
+         listeners = excluded.listeners, listens = excluded.listens";
+    /// Drop artist ?1's kept albums not in the JSON list ?2.
+    pub(super) ALBUMS_DROPPED = "DELETE FROM catalog_artist_albums WHERE artist_mbid = ?1 \
+         AND release_group_mbid NOT IN (SELECT value FROM json_each(?2))";
+    /// Keep artist ?1's album ?2 at ?3 with its facts; a group kept before
+    /// keeps its counts.
+    pub(super) ALBUM_KEPT = "INSERT INTO catalog_artist_albums (artist_mbid, \
+         release_group_mbid, position, title, artist_name, primary_type, secondary_types, \
+         first_release_date, credited_artist_mbids, listeners, listens) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, NULL) \
+         ON CONFLICT (artist_mbid, release_group_mbid) DO UPDATE SET \
+           position = excluded.position, title = excluded.title, \
+           artist_name = excluded.artist_name, primary_type = excluded.primary_type, \
+           secondary_types = excluded.secondary_types, \
+           first_release_date = excluded.first_release_date, \
+           credited_artist_mbids = excluded.credited_artist_mbids";
+    /// Keep group ?1's counts on every kept album list: ?2 listeners, ?3
+    /// listens.
+    pub(super) ALBUM_COUNTS_KEPT = "UPDATE catalog_artist_albums SET listeners = ?2, \
+         listens = ?3 WHERE release_group_mbid = ?1";
+    /// The facts the refresh job may read now (?1): of the kinds in the
+    /// JSON list ?2, due, and wanted or read since ?3 (a wanted fact
+    /// someone still reads stays wanted), or answered and read since ?3.
+    /// Wanted first, by order and age, then the oldest due; ?4 at most.
+    pub(super) FACTS_TO_READ = "SELECT artist_mbid, kind, source FROM catalog_fact_fetches \
+         WHERE due_at <= ?1 AND kind IN (SELECT value FROM json_each(?2)) \
+           AND ((wanted_at IS NOT NULL AND (wanted_at >= ?3 OR read_at >= ?3)) \
+             OR (wanted_at IS NULL AND fetched_at IS NOT NULL AND read_at >= ?3)) \
+         ORDER BY wanted_at IS NULL, want_order, wanted_at, due_at, artist_mbid LIMIT ?4";
+    pub(super) row FactToReadColumns for [FACTS_TO_READ] {
+        artist_mbid: String,
+        kind: FactKind,
+        source: FactSource,
+    }
+    /// Whether any fact the refresh job may read now (?1) waits, picked as
+    /// [`FACTS_TO_READ`] picks them.
+    pub(super) FACTS_WAITING = "SELECT EXISTS (SELECT 1 FROM catalog_fact_fetches \
+         WHERE due_at <= ?1 AND kind IN (SELECT value FROM json_each(?2)) \
+           AND ((wanted_at IS NOT NULL AND (wanted_at >= ?3 OR read_at >= ?3)) \
+             OR (wanted_at IS NULL AND fetched_at IS NOT NULL AND read_at >= ?3)))";
+    /// Drop the kept similar artists of lists last read before ?1, found
+    /// from their fetch rows.
+    pub(super) UNREAD_NEIGHBOURS_DROPPED = "DELETE FROM catalog_artist_neighbours \
+         WHERE (artist_mbid, source) IN (SELECT artist_mbid, source FROM catalog_fact_fetches \
+           WHERE read_at < ?1 AND kind = 'neighbours')";
+    /// Drop the kept counts last read before ?1, found from their fetch
+    /// rows.
+    pub(super) UNREAD_LISTENERS_DROPPED = "DELETE FROM catalog_artist_listeners \
+         WHERE artist_mbid IN (SELECT artist_mbid FROM catalog_fact_fetches \
+           WHERE read_at < ?1 AND kind = 'listeners')";
+    /// Drop the kept album lists last read before ?1, found from their
+    /// fetch rows.
+    pub(super) UNREAD_ALBUMS_DROPPED = "DELETE FROM catalog_artist_albums \
+         WHERE artist_mbid IN (SELECT artist_mbid FROM catalog_fact_fetches \
+           WHERE read_at < ?1 AND kind = 'albums')";
+    /// Drop the fetch rows last read before ?1.
+    pub(super) UNREAD_FETCHES_DROPPED = "DELETE FROM catalog_fact_fetches WHERE read_at < ?1";
+    /// Every kept fact row.
+    pub(super) KEPT_FACT_ROWS = "SELECT (SELECT COUNT(*) FROM catalog_artist_neighbours) \
+         + (SELECT COUNT(*) FROM catalog_artist_listeners) \
+         + (SELECT COUNT(*) FROM catalog_artist_albums)";
+    /// Drop every kept similar artist.
+    pub(super) ALL_NEIGHBOURS_DROPPED = "DELETE FROM catalog_artist_neighbours";
+    /// Drop every kept count.
+    pub(super) ALL_LISTENERS_DROPPED = "DELETE FROM catalog_artist_listeners";
+    /// Drop every kept album list.
+    pub(super) ALL_ALBUMS_DROPPED = "DELETE FROM catalog_artist_albums";
+    /// Drop every fetch row.
+    pub(super) ALL_FETCHES_DROPPED = "DELETE FROM catalog_fact_fetches";
+    /// Count ?3 background reads to ?2 on UTC day ?1.
+    pub(super) READS_COUNTED = "INSERT INTO catalog_background_read_days (day, source, reads) \
+         VALUES (?1, ?2, ?3) ON CONFLICT (day, source) DO UPDATE SET \
+         reads = reads + excluded.reads";
+    /// The background reads counted on UTC day ?1, every source together.
+    pub(super) READS_ON_DAY = "SELECT COALESCE(SUM(reads), 0) \
+         FROM catalog_background_read_days WHERE day = ?1";
+    /// Drop the read counts of days before ?1.
+    pub(super) READ_DAYS_DROPPED = "DELETE FROM catalog_background_read_days WHERE day < ?1";
 }
 
 /// `len` placeholders for an `IN (...)` list.

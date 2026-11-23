@@ -179,10 +179,10 @@ fn scripted_catalog_over(
             ),
         ),
         LocalCatalog::new(db.clone()),
-        crate::common::bundles::quiet_page_sources(crate::common::bundles::cover_warm_at(
+        crate::common::bundles::quiet_page_sources(
             db,
             Arc::new(droppedneedle_kernel::clock::SystemClock),
-        )),
+        ),
     )
 }
 

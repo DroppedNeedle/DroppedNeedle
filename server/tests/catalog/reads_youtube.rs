@@ -121,10 +121,7 @@ async fn youtube_links_journey() {
             crate::common::listening_store(&rig.platform),
         ),
         LocalCatalog::new(rig.platform.db.clone()),
-        crate::common::bundles::quiet_page_sources(crate::common::bundles::cover_warm_at(
-            &rig.platform.db,
-            rig.platform.clock.clone(),
-        )),
+        crate::common::bundles::quiet_page_sources(&rig.platform.db, rig.platform.clock.clone()),
     );
     let search = discover_deps(&rig, &dir, providers, |_| {}).youtube;
     let links = YouTubeLinks::new(

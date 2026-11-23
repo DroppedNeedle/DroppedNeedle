@@ -10,6 +10,7 @@ vi.mock('$lib/features/settings/queries/AdminCacheQueries.svelte', () => ({
 			entries: 42,
 			sources: [],
 			provider_data_on: true,
+			kept_facts: 12,
 			cover_images: 0,
 			cover_bytes: 0,
 			database_bytes: 0,
@@ -29,6 +30,11 @@ describe('SettingsCache', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		h.clear.mockReset();
+	});
+
+	it('shows how many provider facts are kept', async () => {
+		await render(SettingsCache);
+		await expect.element(page.getByText('12 kept facts', { exact: false })).toBeInTheDocument();
 	});
 
 	it('clears a cache only after the confirm, and declining clears nothing', async () => {

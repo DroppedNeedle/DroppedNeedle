@@ -896,7 +896,7 @@ impl ListenBrainzClient {
     }
 
     /// How long labs reads still rest, if they do.
-    fn labs_rest(&self) -> Option<Duration> {
+    pub fn labs_rest(&self) -> Option<Duration> {
         let until = (*self
             .labs_rests_until
             .lock()

@@ -223,6 +223,64 @@ async fn provider_stats_count_a_call_by_source_priority_and_outcome() {
     assert_eq!(rows[0]["calls"], 1);
 }
 
+/// Clearing provider data empties Discover's kept facts and their fetch
+/// rows, which the cache stats count, and keeps the count of background
+/// reads already sent: the daily ceiling still holds after a clear.
+#[tokio::test]
+async fn clearing_provider_data_empties_the_kept_facts_but_not_the_read_count() {
+    use crate::common::Probe as _;
+    let rig = Rig::open("kept-facts-clear").await;
+    rig.runtime
+        .db()
+        .write(Lane::Foreground, "test.facts", |tx| {
+            tx.execute_batch(
+                "INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, outcome,
+                     fetched_at, due_at, read_at)
+                     VALUES ('a', 'neighbours', 'listenbrainz_labs', 'found', 1, 2, 1),
+                            ('b', 'listeners', 'listenbrainz', 'found', 1, 2, 1),
+                            ('a', 'albums', 'musicbrainz', 'found', 1, 2, 1);
+                 INSERT INTO catalog_artist_neighbours (artist_mbid, source, rank,
+                     neighbour_mbid, score) VALUES ('a', 'listenbrainz_labs', 0, 'b', 5.0);
+                 INSERT INTO catalog_artist_listeners (artist_mbid, listeners, listens)
+                     VALUES ('b', 10, 100);
+                 INSERT INTO catalog_artist_albums (artist_mbid, release_group_mbid, position,
+                     title, artist_name, secondary_types) VALUES ('a', 'g', 0, 'T', 'A', '[]');
+                 INSERT INTO catalog_background_read_days (day, source, reads)
+                     VALUES (1, 'listenbrainz_labs', 7);",
+            )?;
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        })
+        .await
+        .expect("kept facts");
+
+    let (status, stats) = call(rig.admin_app(), "GET", "/api/v3/admin/cache/stats", None).await;
+    assert_eq!(status, StatusCode::OK, "{stats}");
+    assert_eq!(stats["kept_facts"], 3);
+
+    let (status, body) = call(
+        rig.admin_app(),
+        "POST",
+        "/api/v3/admin/cache/clear",
+        Some(json!({ "scope": "provider_data" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let db = rig.runtime.db();
+    for table in [
+        "catalog_fact_fetches",
+        "catalog_artist_neighbours",
+        "catalog_artist_listeners",
+        "catalog_artist_albums",
+    ] {
+        let rows: i64 = db.one(&format!("SELECT COUNT(*) FROM {table}"), []);
+        assert_eq!(rows, 0, "{table} is emptied");
+    }
+    let counted: i64 = db.one("SELECT reads FROM catalog_background_read_days", []);
+    assert_eq!(counted, 7, "the read count stays");
+    let (_, stats) = call(rig.admin_app(), "GET", "/api/v3/admin/cache/stats", None).await;
+    assert_eq!(stats["kept_facts"], 0);
+}
+
 const ALPHA: &str = "aaaaaaaa-0000-4000-8000-000000000001";
 const BETA: &str = "bbbbbbbb-0000-4000-8000-000000000002";
 const FIRST: &str = "cccccccc-0000-4000-8000-000000000003";

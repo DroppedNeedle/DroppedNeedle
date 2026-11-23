@@ -1,9 +1,10 @@
 //! [`MixSources`] over the one ListenBrainz client and the per-user link
-//! store, read only while an admin leaves ListenBrainz reads on. Every
-//! read lends the user's own link, which ListenBrainz needs for an
+//! store, read only while an admin leaves ListenBrainz reads on. A read
+//! that goes out lends the user's own link, which ListenBrainz needs for an
 //! artist's top songs. Popularity, similar-artist and album answers are
-//! public, so their keys carry no token; similar artists and a
-//! recording's album share the rows Discover keeps.
+//! public, so their keys carry no token. Similar artists are Discover's
+//! kept facts, read from their rows only and never fetched here; a
+//! recording's album shares the rows Discover keeps.
 //!
 //! Every read runs at background priority: the weekly sweep is scheduled,
 //! and a manual refresh runs in a spawned task whose result reaches the
@@ -16,6 +17,7 @@ use futures_util::future::BoxFuture;
 
 use super::mix::MixSources;
 use super::sql;
+use droppedneedle_catalog::discover::facts::KeptFacts;
 use droppedneedle_catalog::discover::listening::shared::{self, Lender};
 use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_kernel::runtime_config::Live;
@@ -40,18 +42,20 @@ pub struct LiveMixSources {
     cache: ProviderCacheStore,
     links: ListeningStore,
     db: Db,
+    facts: KeptFacts,
     switch: Live<ListenBrainzSettings>,
 }
 
 impl LiveMixSources {
     /// Sources over the ListenBrainz client and answer cache, the link
-    /// store and the database holding `user_connections`, read while
-    /// `switch` leaves ListenBrainz reads on.
+    /// store, the database holding `user_connections` and the kept facts,
+    /// read while `switch` leaves ListenBrainz reads on.
     pub fn new(
         client: ListenBrainzClient,
         cache: ProviderCacheStore,
         links: ListeningStore,
         db: Db,
+        facts: KeptFacts,
         switch: Live<ListenBrainzSettings>,
     ) -> Self {
         Self {
@@ -59,6 +63,7 @@ impl LiveMixSources {
             cache,
             links,
             db,
+            facts,
             switch,
         }
     }
@@ -143,17 +148,17 @@ impl MixSources for LiveMixSources {
 
     fn similar_artists<'a>(
         &'a self,
-        user_id: &'a str,
+        _user_id: &'a str,
         artist_mbids: &'a [String],
         limit: usize,
     ) -> BoxFuture<'a, Vec<Result<Vec<SimilarArtist>, String>>> {
         Box::pin(async move {
             shared::similar_artists_each(
+                &self.facts,
                 &self.cache,
                 &self.client,
                 artist_mbids,
                 limit,
-                &self.lender(user_id),
                 PRIORITY,
             )
             .await
@@ -222,11 +227,14 @@ pub fn live_builder(
     events: droppedneedle_kernel::events::EventHub,
     switch: Live<ListenBrainzSettings>,
 ) -> Arc<super::mix::PersonalMixBuilder> {
+    let db = requests.library.db().clone();
+    let facts = KeptFacts::new(db.clone(), requests.library.clock().clone());
     let sources = Arc::new(LiveMixSources::new(
         providers.listenbrainz.clone(),
         providers.cache.clone(),
         listening.clone(),
-        requests.library.db().clone(),
+        db,
+        facts,
         switch,
     ));
     Arc::new(super::mix::PersonalMixBuilder::new(

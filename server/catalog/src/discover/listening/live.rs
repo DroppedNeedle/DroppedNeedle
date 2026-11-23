@@ -337,6 +337,10 @@ impl ListeningNetwork for LiveNetwork {
         })
     }
 
+    fn labs_rest(&self) -> Option<std::time::Duration> {
+        self.listenbrainz.labs_rest()
+    }
+
     fn scored_similar<'a>(
         &'a self,
         artist_mbid: &'a str,
@@ -353,15 +357,13 @@ impl ListeningNetwork for LiveNetwork {
 
     fn artist_listeners<'a>(
         &'a self,
-        user_id: &'a str,
         artist_mbids: &'a [String],
         priority: RequestPriority,
     ) -> Read<'a, HashMap<String, ArtistPopularity>> {
         Box::pin(async move {
-            let creds = self.credentials(user_id).await;
             provider(
                 self.listenbrainz
-                    .artist_popularity(artist_mbids, &creds, priority)
+                    .artist_popularity(artist_mbids, &ListenBrainzCredentials::default(), priority)
                     .await,
             )
         })

@@ -154,17 +154,22 @@ wanted_seen_candidates
 wanted_watches
 
 [catalog]
+catalog_artist_albums
 catalog_artist_event_checks
 catalog_artist_genres
+catalog_artist_listeners
+catalog_artist_neighbours
 catalog_artist_skiddle_ids
 catalog_artist_skiddle_resolutions
 catalog_artist_tm_attractions
+catalog_background_read_days
 catalog_cached_pages
 catalog_discover_activity
 catalog_discover_feedback
 catalog_discover_picks
 catalog_event_cities
 catalog_event_seen_marks
+catalog_fact_fetches
 catalog_genre_artwork_revisions
 catalog_live_event_feed
 catalog_mbid_resolutions

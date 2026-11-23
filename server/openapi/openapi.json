@@ -41365,6 +41365,7 @@
           "entries",
           "sources",
           "provider_data_on",
+          "kept_facts",
           "cover_images",
           "cover_bytes",
           "database_bytes",
@@ -41393,6 +41394,12 @@
             "type": "integer",
             "format": "int64",
             "description": "Provider answers held.",
+            "minimum": 0
+          },
+          "kept_facts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Provider facts Discover keeps in the database (similar artists,\nlistener counts, album lists), in rows.",
             "minimum": 0
           },
           "provider_data_on": {

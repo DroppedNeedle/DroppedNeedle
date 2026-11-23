@@ -247,6 +247,10 @@ droppedneedle_kernel::sql! {
         FROM auth_tokens t JOIN auth_users u ON u.id = t.user_id WHERE t.token_hash = ?1";
     /// Refresh one session's last use, in milliseconds.
     pub(super) TOUCH_SESSION = "UPDATE auth_tokens SET last_seen_at = ?1 WHERE id = ?2";
+    /// Every account a session or an app password was last used by after
+    /// ?1 (milliseconds), by id.
+    pub(super) SEEN_SINCE = "SELECT user_id FROM auth_tokens WHERE last_seen_at > ?1 \
+        UNION SELECT user_id FROM auth_app_passwords WHERE last_used_at > ?1 ORDER BY 1";
     /// One account's unrevoked sessions.
     pub(super) USER_SESSIONS = "SELECT id, user_id, session_kind, label, user_agent, issued_at, \
         last_seen_at, expires_at FROM auth_tokens WHERE user_id = ?1 AND revoked = 0";

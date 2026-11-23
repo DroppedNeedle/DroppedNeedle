@@ -49,6 +49,7 @@ use std::sync::Arc;
 use super::federated::FederatedError;
 use super::users::stores::StoreError;
 use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::db::time::Millis;
 use droppedneedle_kernel::db::{Db, DbError, Lane};
 
 pub use app_passwords::AppPasswords;
@@ -88,6 +89,23 @@ pub fn forget_sealed(conn: &rusqlite::Connection) -> rusqlite::Result<ForgottenA
         sign_in_tokens,
         links,
     })
+}
+
+/// The accounts seen after `since_ms` (unix milliseconds): those whose
+/// newest session use or app password use is later, by id. The one answer
+/// to "is this person active"; nothing else reads those columns for it.
+///
+/// # Errors
+///
+/// The read's failure.
+pub async fn seen_since(db: &Db, since_ms: i64) -> Result<Vec<String>, DbError> {
+    db.read("auth.seen_since", move |conn| {
+        conn.prepare_cached(sql::SEEN_SINCE.text())?
+            .query_map([Millis(since_ms)], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()
+            .map_err(DbError::from)
+    })
+    .await
 }
 
 /// Shared SQLite handle for every auth adapter, with the clock its rows
@@ -227,3 +245,6 @@ fn op_error(error: rusqlite::Error) -> WriteError {
 fn is_write_conflict(error: &WriteError) -> bool {
     matches!(error, WriteError::Conflict)
 }
+
+#[cfg(test)]
+mod tests;

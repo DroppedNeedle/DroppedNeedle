@@ -75,6 +75,11 @@ pub trait ListeningNetwork: Send + Sync {
         offset: u32,
         priority: RequestPriority,
     ) -> Read<'a, Vec<ListenedAlbum>>;
+    /// How long labs reads still rest after a failure, if they do: a read
+    /// made meanwhile sends nothing.
+    fn labs_rest(&self) -> Option<std::time::Duration> {
+        None
+    }
     /// ListenBrainz labs' scored similar artists for one artist, as
     /// answered. No token is sent.
     fn scored_similar<'a>(
@@ -82,11 +87,10 @@ pub trait ListeningNetwork: Send + Sync {
         artist_mbid: &'a str,
         priority: RequestPriority,
     ) -> Read<'a, Vec<ScoredSimilarArtist>>;
-    /// Listen and listener counts for artists (a popularity read).
-    /// `user_id` lends its token.
+    /// Listen and listener counts for artists (a popularity read), sent
+    /// with no token.
     fn artist_listeners<'a>(
         &'a self,
-        user_id: &'a str,
         artist_mbids: &'a [String],
         priority: RequestPriority,
     ) -> Read<'a, HashMap<String, ArtistPopularity>>;

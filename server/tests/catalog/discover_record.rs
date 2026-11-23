@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use droppedneedle_catalog::discover::due::Due;
+use droppedneedle_catalog::discover::facts::{KeptFacts, job::FactJobs};
 use droppedneedle_catalog::discover::record;
 use droppedneedle_catalog::discover::scheduler::{ArtistDetail, Feature};
 use droppedneedle_catalog::test_support::refresh_pick_outcomes;
@@ -362,6 +363,11 @@ async fn a_visit_queues_the_job_with_the_warm_cycle_off() {
         JobQueue::new(db.clone(), rig.platform.clock.clone()),
         Arc::clone(&rig.platform.clock) as Arc<dyn Clock>,
         true,
+        FactJobs::new(
+            KeptFacts::new(db.clone(), rig.platform.clock.clone()),
+            Arc::new(crate::discover_queue::Script::default()),
+        )
+        .due(),
     );
     on.visit("nobody").await;
     on.clock_pass().await;

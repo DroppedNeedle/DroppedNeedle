@@ -48,6 +48,7 @@ use self::error::CatalogError;
 use self::library::LocalCatalog;
 use self::upstream::Upstream;
 use crate::artwork::warm::{CoverWarm, WarmTargets};
+use crate::discover::facts::KeptFacts;
 
 /// The catalog service. Clone shares everything.
 #[derive(Clone)]
@@ -57,6 +58,7 @@ pub struct Catalog {
     purchase_links: Arc<dyn ports::PurchaseLinkSource>,
     details: Arc<dyn ports::DetailsSource>,
     cover_warm: CoverWarm,
+    facts: KeptFacts,
 }
 
 /// What the pages read beyond MusicBrainz and the library, built before
@@ -71,6 +73,8 @@ pub struct PageSources {
     pub details: Arc<dyn ports::DetailsSource>,
     /// Where pages queue the background warm of the images they show.
     pub cover_warm: CoverWarm,
+    /// The kept provider facts: similar artists and album lists.
+    pub facts: KeptFacts,
 }
 
 struct Inner {
@@ -93,6 +97,7 @@ impl Catalog {
             purchase_links,
             details,
             cover_warm,
+            facts,
         } = sources;
         Self {
             inner: Arc::new(Inner {
@@ -105,7 +110,13 @@ impl Catalog {
             purchase_links,
             details,
             cover_warm,
+            facts,
         }
+    }
+
+    /// The kept provider facts the pages read.
+    pub(crate) fn facts(&self) -> &KeptFacts {
+        &self.facts
     }
 
     /// Queue a background warm of `targets`.

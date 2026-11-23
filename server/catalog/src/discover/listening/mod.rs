@@ -19,8 +19,13 @@
 //!   and [`SourcePolicy`] lets Last.fm stand in.
 //! - the build cap: an [`Ask`] made for a build lets at most
 //!   [`BUILD_CAP`] of its provider calls run at once.
+//! - the kept facts ([`KeptFacts`]): similar artists, listener counts and
+//!   album lists are read from the database, never fetched for a build.
+//! - the background read meter: every read made at background priority to
+//!   ListenBrainz or the official MusicBrainz service is counted by day,
+//!   for the daily ceiling ([`crate::discover::facts::plan`]).
 
-mod albums;
+pub(crate) mod albums;
 pub mod gate;
 mod live;
 mod network;
@@ -46,6 +51,7 @@ use droppedneedle_providers::{
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
+use crate::discover::facts::{KeptFacts, MeteredSource};
 use crate::discover::ports::ProviderFailure;
 
 /// Provider calls one build may have in flight at once. ListenBrainz and
@@ -331,6 +337,7 @@ type Network = Arc<dyn ListeningNetwork>;
 pub struct ListeningData {
     network: Network,
     cache: ProviderCacheStore,
+    facts: KeptFacts,
     health: Arc<Health>,
 }
 
@@ -360,12 +367,39 @@ fn offered(rows: Vec<RankedAlbum>, artist_mbid: &str) -> Vec<RankedAlbum> {
 }
 
 impl ListeningData {
-    /// The reads over `network`, cached in `cache`.
-    pub fn new(network: Arc<dyn ListeningNetwork>, cache: ProviderCacheStore) -> Self {
+    /// The reads over `network`, cached in `cache`, the kept facts read
+    /// from `facts`.
+    pub fn new(
+        network: Arc<dyn ListeningNetwork>,
+        cache: ProviderCacheStore,
+        facts: KeptFacts,
+    ) -> Self {
         Self {
             network,
             cache,
+            facts,
             health: Arc::default(),
+        }
+    }
+
+    /// The kept facts these reads read.
+    pub fn facts(&self) -> &KeptFacts {
+        &self.facts
+    }
+
+    /// What a read to `source` at `priority` is counted against, if
+    /// anything: background reads to ListenBrainz, and to MusicBrainz on
+    /// the official service.
+    fn metered(&self, source: Source, priority: RequestPriority) -> Option<MeteredSource> {
+        if priority.is_user_facing() {
+            return None;
+        }
+        match source {
+            Source::ListenBrainz => Some(MeteredSource::ListenBrainz),
+            Source::MusicBrainz if self.source().mode == "official" => {
+                Some(MeteredSource::MusicBrainz)
+            }
+            _ => None,
         }
     }
 
@@ -385,11 +419,22 @@ impl ListeningData {
         let watch = Watch::new(ask);
         let network = Arc::clone(&self.network);
         let permits = ask.permits.clone();
+        let source = key
+            .as_str()
+            .split(':')
+            .next()
+            .and_then(Source::parse)
+            .and_then(|source| self.metered(source, ask.priority));
+        let facts = self.facts.clone();
         let found = self
             .cache
             .get_or_fetch(&key, policy, ask.priority, move |priority| async move {
                 let _permit = Ask::permit(permits).await;
-                fetch(network, priority).await
+                let fetched = fetch(network, priority).await;
+                if let Some(source) = source {
+                    facts.count_read(source, 1).await;
+                }
+                fetched
             })
             .await;
         watch.settle(found.is_ok());
@@ -466,15 +511,20 @@ impl ListeningData {
             .collect())
     }
 
-    /// One uncached read under the ask's cap.
+    /// One uncached read under the ask's cap, counted when it goes to
+    /// `source` in the background.
     async fn call<T>(
         &self,
         ask: &Ask,
+        source: Option<Source>,
         read: impl Future<Output = ListeningResult<T>>,
     ) -> ListeningResult<T> {
         let watch = Watch::new(ask);
         let _permit = Ask::permit(ask.permits.clone()).await;
         let result = read.await;
+        if let Some(source) = source.and_then(|source| self.metered(source, ask.priority)) {
+            self.facts.count_read(source, 1).await;
+        }
         watch.settle(result.is_ok());
         result
     }
@@ -648,7 +698,8 @@ impl ListeningData {
     }
 
     /// Artists like one artist, best first, `limit` at most: the one
-    /// answer ([`similar`]). `user_id` lends its link to the count read.
+    /// answer ([`similar`]), from the kept facts. A list not kept answers
+    /// "not yet" unless a person waits on the read.
     pub async fn similar_artists(
         &self,
         user_id: &str,
@@ -668,37 +719,46 @@ impl ListeningData {
     /// counts every neighbour in one read.
     pub async fn similar_artists_each(
         &self,
-        user_id: &str,
+        _user_id: &str,
         artist_mbids: &[String],
         limit: usize,
         ask: &Ask,
     ) -> Vec<ListeningResult<Vec<ScoredArtist>>> {
-        if self.listenbrainz_off() {
-            return artist_mbids.iter().map(|_| Ok(Vec::new())).collect();
-        }
+        // While ListenBrainz reads are off the kept lists still answer and
+        // nothing is read, for a person too; an artist with none kept has
+        // nothing to wait for.
+        let off = self.listenbrainz_off();
+        let priority = if off {
+            RequestPriority::BackgroundSync
+        } else {
+            ask.priority
+        };
         let watch = Watch::new(ask);
         let reads = Arc::new(similar::NetworkReads {
             network: Arc::clone(&self.network),
-            user_id: user_id.to_owned(),
             permits: ask.permits.clone(),
             turns: Arc::clone(&ask.similar_turns),
             health: Arc::clone(&self.health),
         });
         let (found, counted) =
-            similar::neighbours_each(&self.cache, reads, artist_mbids, ask.priority).await;
-        // An order built past a failed count read is not kept for long: the
-        // build that read it is tried again soon.
-        watch.settle(counted && found.iter().all(Result::is_ok));
+            similar::neighbours_each(&self.facts, &self.cache, reads, artist_mbids, priority).await;
+        // An order built without every list and count is not kept for long:
+        // the build that read it is tried again soon.
+        watch.settle(off || (counted && found.iter().all(Result::is_ok)));
         found
             .into_iter()
-            .map(|rows| rows.map(|rows| cut(rows, limit)))
+            .map(|rows| match rows {
+                Err(_) if off => Ok(Vec::new()),
+                rows => rows.map(|rows| cut(rows, limit)),
+            })
             .collect()
     }
 
     /// The albums `artist_mbid` may be offered by ([`albums`]), `count` at
     /// most, for anyone asking: no person's token is read or lent for it.
-    /// While ListenBrainz reads are off, or popularity is down, the list is
-    /// in date order, newest first. A list not read yet answers empty.
+    /// While ListenBrainz reads are off the list is in date order, newest
+    /// first. A list not kept yet answers empty, and the read counts as
+    /// failed, so a shelf that had albums keeps them.
     pub async fn artist_albums(
         &self,
         _user_id: &str,
@@ -712,16 +772,17 @@ impl ListeningData {
             permits: ask.permits.clone(),
             health: Arc::clone(&self.health),
         });
+        let namespace = self.namespace();
         let found = albums::artist_albums(
+            &self.facts,
             &self.cache,
             reads,
-            &self.namespace(),
-            artist_mbid,
+            (&namespace, artist_mbid),
             self.listenbrainz_on(),
             ask.priority,
         )
         .await;
-        watch.settle(found.is_ok());
+        watch.settle(found.as_ref().is_ok_and(Option::is_some));
         Ok(cut(offered(found?.unwrap_or_default(), artist_mbid), count))
     }
 
@@ -842,9 +903,14 @@ impl ListeningData {
                 Policy::RECORDING_TO_GROUP,
                 |missing| async move {
                     let _permit = Ask::permit(ask.permits.clone()).await;
-                    self.network
+                    let found = self
+                        .network
                         .recording_groups(user_id, &missing, ask.priority)
-                        .await
+                        .await;
+                    if let Some(source) = self.metered(Source::ListenBrainz, ask.priority) {
+                        self.facts.count_read(source, 1).await;
+                    }
+                    found
                 },
             )
             .await;
@@ -882,6 +948,7 @@ impl ListeningData {
                     let fetched = self
                         .call(
                             ask,
+                            Some(Source::ListenBrainz),
                             self.network.listen_counts(user_id, &missing, ask.priority),
                         )
                         .await;
@@ -1291,13 +1358,15 @@ impl ListeningData {
         mbid: &str,
         ask: &Ask,
     ) -> ListeningResult<Option<ReleaseGroupFacts>> {
-        self.call(ask, self.network.release_group(mbid, ask.priority))
+        let source = Some(Source::MusicBrainz);
+        self.call(ask, source, self.network.release_group(mbid, ask.priority))
             .await
     }
 
     /// Artist facts for a card.
     pub async fn artist(&self, mbid: &str, ask: &Ask) -> ListeningResult<Option<ArtistFacts>> {
-        self.call(ask, self.network.artist(mbid, ask.priority))
+        let source = Some(Source::MusicBrainz);
+        self.call(ask, source, self.network.artist(mbid, ask.priority))
             .await
     }
 
@@ -1307,8 +1376,13 @@ impl ListeningData {
         release_mbid: &str,
         ask: &Ask,
     ) -> ListeningResult<Option<String>> {
-        self.call(ask, self.network.release_video(release_mbid, ask.priority))
-            .await
+        let source = Some(Source::MusicBrainz);
+        self.call(
+            ask,
+            source,
+            self.network.release_video(release_mbid, ask.priority),
+        )
+        .await
     }
 
     /// The first recordings on a release, in track order.
@@ -1320,6 +1394,7 @@ impl ListeningData {
     ) -> ListeningResult<Vec<String>> {
         self.call(
             ask,
+            Some(Source::MusicBrainz),
             self.network
                 .release_recordings(release_mbid, limit, ask.priority),
         )
@@ -1334,6 +1409,7 @@ impl ListeningData {
     ) -> ListeningResult<Option<String>> {
         self.call(
             ask,
+            Some(Source::MusicBrainz),
             self.network.recording_video(recording_mbid, ask.priority),
         )
         .await
@@ -1341,7 +1417,7 @@ impl ListeningData {
 
     /// The Wikipedia intro behind a Wikipedia or Wikidata link.
     pub async fn wikipedia_extract(&self, url: &str, ask: &Ask) -> ListeningResult<Option<String>> {
-        self.call(ask, self.network.wikipedia_extract(url, ask.priority))
+        self.call(ask, None, self.network.wikipedia_extract(url, ask.priority))
             .await
     }
 
@@ -1353,8 +1429,12 @@ impl ListeningData {
         limit: u32,
         ask: &Ask,
     ) -> ListeningResult<Vec<ArtistRow>> {
-        self.call(ask, self.network.jellyfin_artists(user_id, list, limit))
-            .await
+        self.call(
+            ask,
+            None,
+            self.network.jellyfin_artists(user_id, list, limit),
+        )
+        .await
     }
 
     /// The user's most played Jellyfin artists with their play data.
@@ -1364,7 +1444,7 @@ impl ListeningData {
         limit: u32,
         ask: &Ask,
     ) -> ListeningResult<Vec<PlayedArtist>> {
-        self.call(ask, self.network.jellyfin_plays(user_id, limit))
+        self.call(ask, None, self.network.jellyfin_plays(user_id, limit))
             .await
     }
 }

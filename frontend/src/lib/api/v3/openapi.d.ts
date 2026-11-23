@@ -12290,6 +12290,12 @@ export interface components {
              */
             entries: number;
             /**
+             * Format: int64
+             * @description Provider facts Discover keeps in the database (similar artists,
+             *     listener counts, album lists), in rows.
+             */
+            kept_facts: number;
+            /**
              * @description Whether the provider cache file is working. When it is not, every
              *     provider answer is fetched each time.
              */

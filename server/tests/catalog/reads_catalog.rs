@@ -369,15 +369,11 @@ impl CatalogSettings for TestSettings {
 fn catalog_on(upstream: Upstream, dir: &crate::common::ScratchDir) -> Catalog {
     let db =
         droppedneedle_kernel::db::Db::open_for_tests(&dir.join("app.db")).expect("database opens");
-    let warm = crate::common::bundles::cover_warm_at(
+    let sources = crate::common::bundles::quiet_page_sources(
         &db,
         Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
-    Catalog::new(
-        upstream,
-        LocalCatalog::new(db),
-        crate::common::bundles::quiet_page_sources(warm),
-    )
+    Catalog::new(upstream, LocalCatalog::new(db), sources)
 }
 
 /// The library: Radiohead with OK Computer (identified as the CD edition,

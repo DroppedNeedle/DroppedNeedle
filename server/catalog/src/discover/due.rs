@@ -1,25 +1,31 @@
-//! The one place Discover's background work for a person is queued from.
+//! The one place Discover's background work is queued from.
 //!
-//! Two calls, and every kind of work Discover runs for a person in the
-//! background is queued through them, never by a loop of its own:
+//! Three calls, and every kind of work Discover runs in the background is
+//! queued through them, never by a loop of its own:
 //!
-//! - [`Due::clock_pass`], from the 90-second demand tick: once per UTC day,
-//!   each person's daily work. Nothing while the warm cycle is switched
-//!   off (`DISCOVER_WARMER_ENABLED`).
-//! - [`Due::visit`], where the page records a person's activity: that
-//!   person's own work, whether the warm cycle runs or not.
+//! - [`Due::clock_pass`], from the 90-second demand tick: the kept facts'
+//!   refresh whenever it has work and room in the day, and once per UTC day
+//!   each person's daily work. Nothing while the warm cycle is switched off
+//!   (`DISCOVER_WARMER_ENABLED`).
+//! - [`Due::visit`], where the page records a person's activity: the kept
+//!   facts' refresh when it has work, and that person's own work, whether
+//!   the warm cycle runs or not.
+//! - [`Due::queue_now`], inside another write: one kind for one key (a
+//!   person's id, or the install's one key), due now.
 //!
-//! Today that work is the pick record's outcomes job, for each person with
-//! rows in it. A person's job is queued at most once a UTC day; after a
-//! restart it may run once more, which a job may always do.
+//! Today the daily work is the pick record's outcomes job, for each person
+//! with rows in it. A person's job is queued at most once a UTC day; after
+//! a restart it may run once more, which a job may always do.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
-use droppedneedle_kernel::jobs::queue::{JobError, JobQueue};
+use droppedneedle_kernel::jobs::queue::{JobError, JobKind, JobQueue};
+use rusqlite::Transaction;
 
+use crate::discover::facts::job::{self as facts, FactsDue};
 use crate::discover::record::outcomes;
 use crate::discover::sql;
 
@@ -34,6 +40,7 @@ pub struct Due {
     queue: JobQueue,
     clock: Arc<dyn Clock>,
     enabled: bool,
+    facts: FactsDue,
     /// The UTC day the clock last passed; [`NOT_YET`] before the first.
     passed: Mutex<i64>,
     /// The UTC day each person's work was last queued.
@@ -49,13 +56,21 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl Due {
     /// Work queued on `queue`, written through `db`, dated by `clock`.
-    /// `enabled` is the warm cycle's switch.
-    pub fn new(db: Db, queue: JobQueue, clock: Arc<dyn Clock>, enabled: bool) -> Self {
+    /// `enabled` is the warm cycle's switch; `facts` says when the kept
+    /// facts' refresh has work.
+    pub fn new(
+        db: Db,
+        queue: JobQueue,
+        clock: Arc<dyn Clock>,
+        enabled: bool,
+        facts: FactsDue,
+    ) -> Self {
         Self {
             db,
             queue,
             clock,
             enabled,
+            facts,
             passed: Mutex::new(NOT_YET),
             queued: Mutex::new(HashMap::new()),
         }
@@ -65,14 +80,48 @@ impl Due {
         self.clock.now_ms().div_euclid(DAY_MS)
     }
 
-    /// The clock's pass: on the first pass of each UTC day, every person
-    /// with rows in the pick record whose job was not queued today gets one,
-    /// in one write. Nothing while the warm cycle is off. A failed write is
-    /// logged and the next pass tries again.
+    /// Queue `kind` for `key` (a person's id, or an install-wide job's one
+    /// key), due now, on the caller's transaction: work a write makes due.
+    /// A queued job of that key is joined, not doubled. Runs whether the
+    /// warm cycle is on or not.
+    ///
+    /// # Errors
+    ///
+    /// The enqueue's failure, which fails the caller's write.
+    pub fn queue_now(&self, tx: &Transaction, kind: JobKind, key: &str) -> Result<(), JobError> {
+        self.queue.enqueue(tx, kind, key, &())?;
+        Ok(())
+    }
+
+    /// The kept facts' refresh, when it has a fact to read and room in the
+    /// day. A failed write is logged and the next tick tries again.
+    async fn facts_pass(&self) {
+        if !self.facts.waiting().await {
+            return;
+        }
+        let queue = self.queue.clone();
+        let queued = self
+            .db
+            .write(Lane::Background, "discover.due.facts", move |tx| {
+                queue.enqueue(tx, facts::KIND, facts::KEY, &())?;
+                Ok::<_, JobError>(())
+            })
+            .await;
+        if let Err(error) = queued {
+            tracing::warn!(%error, "the kept facts' refresh not queued; trying next pass");
+        }
+    }
+
+    /// The clock's pass: the kept facts' refresh when it has work, then, on
+    /// the first pass of each UTC day, every person with rows in the pick
+    /// record whose job was not queued today gets one, in one write.
+    /// Nothing while the warm cycle is off. A failed write is logged and
+    /// the next pass tries again.
     pub async fn clock_pass(&self) {
         if !self.enabled {
             return;
         }
+        self.facts_pass().await;
         let today = self.today();
         if *lock(&self.passed) == today {
             return;
@@ -113,11 +162,12 @@ impl Due {
         }
     }
 
-    /// A person's visit: their outcomes job, when they have rows in the
-    /// pick record and it was not queued today. Runs whether the warm
-    /// cycle is on or not. A failed write is logged; the next visit or
-    /// pass tries again.
+    /// A person's visit: the kept facts' refresh when it has work, and
+    /// their outcomes job, when they have rows in the pick record and it was
+    /// not queued today. Runs whether the warm cycle is on or not. A failed
+    /// write is logged; the next visit or pass tries again.
     pub async fn visit(&self, user_id: &str) {
+        self.facts_pass().await;
         let today = self.today();
         if lock(&self.queued).get(user_id) == Some(&today) {
             return;

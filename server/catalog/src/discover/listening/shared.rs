@@ -1,9 +1,10 @@
 //! The ListenBrainz rows other areas read without a user's listening data:
 //! search counts, album pages and the Weekly Mix. They go through the same
-//! cache rows as [`ListeningData`](super::ListeningData), so one artist is
-//! read once whichever feature asks first. The answers are public, so the
-//! keys carry no token; a read lends the person's own link when it goes
-//! out, except an artist's album list, which lends none.
+//! rows as [`ListeningData`](super::ListeningData), so one artist is read
+//! once whichever feature asks first. The answers are public, so the keys
+//! carry no token. Similar artists and an artist's album list are kept
+//! facts and lend no one's link; the other reads lend the person's own
+//! link when they go out.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ use droppedneedle_providers::{
 
 use super::rows::{AlbumFacts, AlbumRow, RankedAlbum, ScoredArtist};
 use super::{albums, similar};
+use crate::discover::facts::KeptFacts;
 use crate::metadata::Catalog;
 
 /// An artist's top release groups read per artist.
@@ -111,15 +113,15 @@ fn ranked_albums(rows: Vec<TopReleaseGroup>, artist_mbid: &str) -> Vec<RankedAlb
 }
 
 /// The albums `artist_mbid` may be offered by, `count` at most, read
-/// through the same row as [`ListeningData`](super::ListeningData)'s
+/// through the same kept list as [`ListeningData`](super::ListeningData)'s
 /// ([`albums`](super::albums)): the discography through `catalog`, counted
-/// by `client` with no token. `None` is "not yet": the artist's
-/// discography is still being read, so an answer built without it is not
-/// one to keep.
+/// by `client` with no token. `None` is "not yet": no list is kept, or the
+/// artist's discography is still being read, so an answer built without it
+/// is not one to keep.
 ///
 /// # Errors
 ///
-/// The discography read's failure when no list is kept to stand in.
+/// The discography read's failure, for a person, when no list is kept.
 pub async fn artist_albums(
     catalog: &Catalog,
     client: &ListenBrainzClient,
@@ -133,10 +135,10 @@ pub async fn artist_albums(
         client: client.clone(),
     });
     let rows = albums::artist_albums(
+        catalog.facts(),
         catalog.upstream().cache(),
         reads,
-        &namespace,
-        artist_mbid,
+        (&namespace, artist_mbid),
         true,
         priority,
     )
@@ -208,38 +210,38 @@ async fn release_group_rows(
 }
 
 /// Artists like one artist, best first, `limit` at most: the one answer
-/// ([`similar`](super::similar)). The count read lends `lender`'s link.
+/// ([`similar`](super::similar)), from the kept facts. No token is sent.
 ///
 /// # Errors
 ///
-/// ListenBrainz's failure when no list is kept to stand in.
+/// "Not yet" while no list is kept and no person waits on the read, or
+/// ListenBrainz's failure.
 pub async fn similar_artists(
+    facts: &KeptFacts,
     cache: &ProviderCacheStore,
     client: &ListenBrainzClient,
     artist_mbid: &str,
     limit: usize,
-    lender: &Lender,
     priority: RequestPriority,
 ) -> Result<Vec<ScoredArtist>, ProviderError> {
-    let reads = similar::ClientReads::new(client, lender);
-    let mut rows = similar::neighbours(cache, reads, artist_mbid, priority).await?;
+    let reads = similar::ClientReads::new(client);
+    let mut rows = similar::neighbours(facts, cache, reads, artist_mbid, priority).await?;
     rows.truncate(limit);
     Ok(rows)
 }
 
 /// [`similar_artists`] for each of `artist_mbids`, in their order, as one
-/// pass: it stops asking at its first failed list read, and counts every
-/// neighbour in one read.
+/// pass.
 pub async fn similar_artists_each(
+    facts: &KeptFacts,
     cache: &ProviderCacheStore,
     client: &ListenBrainzClient,
     artist_mbids: &[String],
     limit: usize,
-    lender: &Lender,
     priority: RequestPriority,
 ) -> Vec<Result<Vec<ScoredArtist>, ProviderError>> {
-    let reads = similar::ClientReads::new(client, lender);
-    similar::neighbours_each(cache, reads, artist_mbids, priority)
+    let reads = similar::ClientReads::new(client);
+    similar::neighbours_each(facts, cache, reads, artist_mbids, priority)
         .await
         .0
         .into_iter()

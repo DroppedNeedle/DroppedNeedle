@@ -7,9 +7,6 @@
 //! the catalog's own caches and provider pacing, so a precache run fills
 //! exactly what a page visit would, at the pace the providers allow.
 
-use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use crate::artwork::{
     ArtistImageCandidate, ArtistImageCandidates, ArtistImageSource, ArtworkService,
 };
@@ -21,10 +18,10 @@ use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_kernel::runtime_config::sections::ListenSource;
 use droppedneedle_media::playback::listening::ListeningStore;
-use droppedneedle_providers::listenbrainz::ARTIST_POPULARITY_BATCH;
 
 use super::Catalog;
 use super::error::CatalogError;
+use crate::discover::facts::WantOrder;
 use crate::discover::listening::similar;
 
 /// Discovery section sizes the precache warms: the page defaults, so the
@@ -84,8 +81,8 @@ impl Catalog {
     }
 
     /// Fetch and cache the artist's discovery sections as `user_id` sees
-    /// them, from `source`; similar artists only `with_similar`, as the
-    /// run reads ListenBrainz's lists itself.
+    /// them, from `source`; similar artists only `with_similar`, as
+    /// ListenBrainz's lists are kept facts the refresh job reads.
     async fn warm_artist_discovery(
         &self,
         user_id: &str,
@@ -380,20 +377,6 @@ pub struct CatalogPrecache {
     /// What the run's user can read and follows, found once per run: it
     /// decrypts their key.
     access: tokio::sync::Mutex<Option<(String, RunAccess)>>,
-    /// The run's similar-artist reads, one at a time.
-    similar: tokio::sync::Mutex<SimilarRun>,
-    /// Artists whose discovery the run has still to warm.
-    unwarmed: AtomicUsize,
-}
-
-/// A run's reads of ListenBrainz's similar-artist lists: each list on its
-/// own, one at a time, and the neighbours' counts in batches of
-/// [`ARTIST_POPULARITY_BATCH`], not one count read per artist. The first
-/// failed read stops them for the run.
-#[derive(Default)]
-struct SimilarRun {
-    uncounted: BTreeSet<String>,
-    stopped: bool,
 }
 
 /// What a precache run's user can read and follows.
@@ -430,8 +413,6 @@ impl CatalogPrecache {
             settings,
             listening,
             access: tokio::sync::Mutex::new(None),
-            similar: tokio::sync::Mutex::default(),
-            unwarmed: AtomicUsize::new(0),
         }
     }
 
@@ -452,62 +433,18 @@ impl CatalogPrecache {
         access
     }
 
-    /// Read `artist_mbid`'s similar-artist list for the run, and count its
-    /// neighbours once a batch is full. True when nothing more is read for
-    /// the section: the list has artists, or the run's reads stopped.
-    async fn warm_similar(&self, user_id: &str, artist_mbid: &str) -> bool {
-        let Some(client) = self.catalog.upstream().listenbrainz() else {
+    /// Want `artist_mbid`'s similar-artist list and its neighbours' counts
+    /// for the kept facts' refresh, which reads them under the daily
+    /// ceiling: the precache itself reads no list. True when ListenBrainz
+    /// answers the section, so nothing more is read for it here.
+    async fn warm_similar(&self, artist_mbid: &str) -> bool {
+        if self.catalog.upstream().listenbrainz().is_none() {
             return false;
-        };
-        let cache = self.catalog.upstream().cache();
-        let mut run = self.similar.lock().await;
-        if run.stopped {
-            return true;
         }
-        let missing = match similar::warm_list(cache, &client, artist_mbid, BACKGROUND).await {
-            Ok(Some(missing)) => missing,
-            Ok(None) => return false,
-            Err(error) => {
-                tracing::debug!(artist = artist_mbid, %error, "precache: similar artists stopped");
-                run.stopped = true;
-                return true;
-            }
-        };
-        run.uncounted.extend(missing);
-        while run.uncounted.len() >= ARTIST_POPULARITY_BATCH && !run.stopped {
-            let batch: Vec<String> = run
-                .uncounted
-                .iter()
-                .take(ARTIST_POPULARITY_BATCH)
-                .cloned()
-                .collect();
-            for id in &batch {
-                run.uncounted.remove(id);
-            }
-            self.count(&mut run, user_id, &batch).await;
-        }
+        let artist = [artist_mbid.to_owned()];
+        let (facts, cache) = (self.catalog.facts(), self.catalog.upstream().cache());
+        similar::want(facts, cache, &artist, WantOrder::Library).await;
         true
-    }
-
-    /// Count `ids` for the run; a failed read stops the run's reads.
-    async fn count(&self, run: &mut SimilarRun, user_id: &str, ids: &[String]) {
-        let Some(client) = self.catalog.upstream().listenbrainz() else {
-            return;
-        };
-        let upstream = self.catalog.upstream();
-        let cache = upstream.cache();
-        if !similar::warm_counts(cache, &client, &upstream.lender(user_id), ids, BACKGROUND).await {
-            run.stopped = true;
-        }
-    }
-
-    /// Count what the run's last artists left uncounted.
-    async fn count_the_rest(&self, user_id: &str) {
-        let mut run = self.similar.lock().await;
-        let rest: Vec<String> = std::mem::take(&mut run.uncounted).into_iter().collect();
-        if !run.stopped && !rest.is_empty() {
-            self.count(&mut run, user_id, &rest).await;
-        }
     }
 }
 
@@ -531,8 +468,6 @@ impl PrecacheSources for CatalogPrecache {
         Box::pin(async move {
             // A run starts here: the user's access is asked again.
             *self.access.lock().await = None;
-            *self.similar.lock().await = SimilarRun::default();
-            self.unwarmed.store(0, Ordering::Relaxed);
             self.catalog.precache_library().await
         })
     }
@@ -562,32 +497,19 @@ impl PrecacheSources for CatalogPrecache {
     ) -> BoxFuture<'a, bool> {
         Box::pin(async move {
             let access = self.run_access(user_id).await;
-            let cached = self
-                .catalog
+            self.catalog
                 .artist_discovery_cached(access, artist_mbid)
-                .await;
-            if !cached {
-                self.unwarmed.fetch_add(1, Ordering::Relaxed);
-            }
-            cached
+                .await
         })
     }
 
     fn warm_discovery<'a>(&'a self, user_id: &'a str, artist_mbid: &'a str) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             let source = self.run_access(user_id).await.source();
-            let similar_done = self.warm_similar(user_id, artist_mbid).await;
+            let similar_wanted = self.warm_similar(artist_mbid).await;
             self.catalog
-                .warm_artist_discovery(user_id, artist_mbid, source, !similar_done)
+                .warm_artist_discovery(user_id, artist_mbid, source, !similar_wanted)
                 .await;
-            let left = self
-                .unwarmed
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
-                    left.checked_sub(1)
-                });
-            if left == Ok(1) {
-                self.count_the_rest(user_id).await;
-            }
         })
     }
 

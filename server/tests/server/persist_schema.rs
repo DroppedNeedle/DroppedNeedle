@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 186);
+    assert_eq!(table_names(&connection).len(), 191);
     assert_eq!(
         scalar(
             &connection,
@@ -416,6 +416,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0161_listening_history.sql",
         "8320c7052fc7186cdcab1cf30426d3aeaf694678a9f1a84b1ad0f1edca921a5b",
+    ),
+    (
+        "0162_kept_facts.sql",
+        "9266c0f45ccb7b2d2ca23d70029b3f48b5f2eab8530bac60ecc9ebdc030ae7a5",
     ),
 ];
 
@@ -2782,6 +2786,96 @@ fn listening_history_upgrade_adds_two_empty_tables() {
     );
 }
 
+/// 0162 adds the kept provider facts and the background read meter, all
+/// empty, and changes nothing else: the rows a database held before it
+/// survive as they were. A kind, source or outcome outside its list is
+/// refused.
+#[test]
+fn kept_facts_upgrade_adds_empty_tables_and_keeps_every_row() {
+    let dir = ScratchDir::new("kept-facts-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 162)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 161);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'One', 1);
+             INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind,
+                 created_at) VALUES ('u1', 'album', 'rg-b', 'no', 4000);
+             INSERT INTO catalog_discover_picks (user_id, release_group_mbid_lower,
+                 release_group_mbid, first_surface, first_offered_at, last_offered_at, evidence)
+                 VALUES ('u1', 'rg-c', 'rg-c', 'deck', 1, 1, '{}');",
+        )
+        .unwrap();
+    let kept = [
+        "auth_users",
+        "catalog_discover_feedback",
+        "catalog_discover_picks",
+    ];
+    let added = [
+        "catalog_fact_fetches",
+        "catalog_artist_neighbours",
+        "catalog_artist_listeners",
+        "catalog_artist_albums",
+        "catalog_background_read_days",
+    ];
+    let before_schema = schema_rows(&connection);
+    let before: Vec<Vec<String>> = kept
+        .iter()
+        .map(|table| table_rows(&connection, table, "rowid, *"))
+        .collect();
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 162);
+    for (table, rows) in kept.iter().zip(&before) {
+        assert_eq!(&table_rows(&connection, table, "rowid, *"), rows, "{table}");
+    }
+    for table in added {
+        assert_eq!(
+            scalar(&connection, &format!("SELECT COUNT(*) FROM {table}")),
+            0,
+            "{table} starts empty"
+        );
+    }
+    let mut after_schema = schema_rows(&connection);
+    after_schema.retain(|(_, _, table, _)| !added.contains(&table.as_str()));
+    assert_eq!(after_schema, before_schema, "nothing else changes");
+
+    for refused in [
+        "INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, due_at, read_at) \
+         VALUES ('a', 'tags', 'listenbrainz', 1, 1)",
+        "INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, due_at, read_at) \
+         VALUES ('a', 'listeners', 'spotify', 1, 1)",
+        "INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, outcome, due_at, read_at) \
+         VALUES ('a', 'listeners', 'listenbrainz', 'maybe', 1, 1)",
+        "INSERT INTO catalog_artist_neighbours (artist_mbid, source, rank, neighbour_mbid, \
+         score) VALUES ('a', 'musicbrainz', 0, 'b', 1.0)",
+        "INSERT INTO catalog_background_read_days (day, source, reads) \
+         VALUES (1, 'lastfm', 1)",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+    connection
+        .execute_batch(
+            "INSERT INTO catalog_fact_fetches (artist_mbid, kind, source, outcome, fetched_at,
+                 due_at, read_at) VALUES ('a', 'neighbours', 'listenbrainz_labs', 'found', 1, 2, 1);
+             INSERT INTO catalog_artist_neighbours (artist_mbid, source, rank, neighbour_mbid,
+                 neighbour_name, score) VALUES ('a', 'listenbrainz_labs', 0, 'b', 'B', 12.0);
+             INSERT INTO catalog_background_read_days (day, source, reads)
+                 VALUES (1, 'listenbrainz_labs', 3);",
+        )
+        .unwrap();
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -3659,6 +3753,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_catalog::concerts::store::CheckOutcome;
     use droppedneedle_catalog::discover::cache::PageKind;
     use droppedneedle_catalog::discover::feedback::{FeedbackKind, FeedbackTarget};
+    use droppedneedle_catalog::discover::facts::{FactKind, FactSource, ListSource, MeteredSource, Outcome};
     use droppedneedle_catalog::discover::record::MadeFrom;
     use droppedneedle_catalog::discover::scheduler::Feature;
     use droppedneedle_compat::jellyfin::ids::IdKind;
@@ -3737,6 +3832,8 @@ fn state_columns() -> Vec<StateColumn> {
         state("wanted_watches", "state", &WatchState::ALL, WatchState::as_str),
         // catalog
         state("catalog_artist_event_checks", "last_status", &CheckOutcome::ALL, CheckOutcome::as_str),
+        state("catalog_artist_neighbours", "source", &ListSource::ALL, ListSource::as_str),
+        state("catalog_background_read_days", "source", &MeteredSource::ALL, MeteredSource::as_str),
         state("catalog_artist_tm_attractions", "match_basis", &TmBasis::ALL, TmBasis::as_str),
         state("catalog_cached_pages", "page", &PageKind::ALL, PageKind::as_str),
         state("catalog_discover_activity", "feature", &Feature::ALL, Feature::as_str),
@@ -3746,6 +3843,9 @@ fn state_columns() -> Vec<StateColumn> {
         state("catalog_discover_picks", "feedback_kind", &FeedbackKind::ALL, FeedbackKind::as_str),
         state("catalog_discover_picks", "first_surface", &MadeFrom::ALL, MadeFrom::as_str),
         state("catalog_discover_picks", "requested_from", &MadeFrom::ALL, MadeFrom::as_str),
+        state("catalog_fact_fetches", "kind", &FactKind::ALL, FactKind::as_str),
+        state("catalog_fact_fetches", "outcome", &Outcome::ALL, Outcome::as_str),
+        state("catalog_fact_fetches", "source", &FactSource::ALL, FactSource::as_str),
         state("catalog_live_event_feed", "match_confidence", &Confidence::ALL, Confidence::as_str),
         state("catalog_live_event_feed", "source", &EventSource::ALL, EventSource::as_str),
         state("catalog_live_event_feed", "status", &ConcertStatus::ALL, ConcertStatus::as_str),

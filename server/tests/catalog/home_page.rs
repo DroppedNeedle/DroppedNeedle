@@ -10,6 +10,7 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use droppedneedle_catalog::discover::facts::KeptFacts;
 use droppedneedle_catalog::discover::genre::GenrePages;
 use droppedneedle_catalog::discover::genre::artwork::GenreArt;
 use droppedneedle_catalog::discover::home::library::HomeLibrary;
@@ -23,6 +24,7 @@ use droppedneedle_catalog::discover::models::{
 use droppedneedle_catalog::discover::page::shelves::shelf_of;
 use droppedneedle_catalog::discover::page::{DiscoverPages, PageInputs};
 use droppedneedle_catalog::discover::queue::store::QueueDb;
+use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::test_support::ManualClock;
 
@@ -140,6 +142,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     let listening = ListeningData::new(
         Arc::new(home_script()),
         droppedneedle_providers::Providers::closed().cache,
+        KeptFacts::new(db.clone(), Arc::new(SystemClock)),
     );
     let art = Arc::new(GenreArt::new(HomeLibrary::new(db.clone())));
     let settings = crate::common::config_store(&dir);
@@ -282,6 +285,7 @@ async fn home_shows_weekly(date: &str) -> bool {
             ..home_script()
         }),
         droppedneedle_providers::Providers::closed().cache,
+        KeptFacts::new(db.clone(), Arc::new(SystemClock)),
     );
     let settings = crate::common::config_store(&dir);
     let integrations = || {
@@ -384,7 +388,11 @@ async fn top_albums_after_plays(albums: usize) -> ((String, Vec<String>), usize)
         ..home_script()
     });
     let network: Arc<Script> = Arc::clone(&script);
-    let listening = ListeningData::new(network, droppedneedle_providers::Providers::closed().cache);
+    let listening = ListeningData::new(
+        network,
+        droppedneedle_providers::Providers::closed().cache,
+        KeptFacts::new(db.clone(), Arc::new(SystemClock)),
+    );
     let settings = crate::common::config_store(&dir);
     let integrations = || {
         droppedneedle_catalog::discover::content::IntegrationSettings::new(

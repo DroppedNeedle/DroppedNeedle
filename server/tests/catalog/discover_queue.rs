@@ -17,6 +17,7 @@ use axum::{
 };
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_catalog::discover::facts::KeptFacts;
 use droppedneedle_catalog::discover::listening::{
     AlbumRow, ArtistFacts, ArtistRow, Ask, JellyfinList, LastFmAlbum, LastFmChartAlbum,
     LastFmFacts, ListenedAlbum, ListeningData, ListeningError, ListeningNetwork, LovedTrack,
@@ -257,7 +258,6 @@ impl ListeningNetwork for Script {
     }
     fn artist_listeners<'a>(
         &'a self,
-        _u: &'a str,
         artists: &'a [String],
         _p: RequestPriority,
     ) -> Answer<'a, HashMap<String, ArtistPopularity>> {
@@ -684,6 +684,61 @@ pub(crate) fn discover_deps(
     let mut network = live_network(&inputs, &rig.config);
     script(&mut network);
     deps_over(inputs, &rig.config, network)
+}
+
+/// `user` was seen now: a session of theirs was used.
+pub(crate) async fn seen_now(rig: &AuthRig, user: &str) {
+    let (user, now) = (user.to_owned(), rig.clock().now_ms());
+    rig.platform
+        .db
+        .write(Lane::Foreground, "test.seen", move |tx| {
+            tx.execute(
+                "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, \
+                 last_seen_at, revoked) VALUES (?1, ?1, ?1, 0, ?2, ?2, 0) \
+                 ON CONFLICT (id) DO UPDATE SET last_seen_at = excluded.last_seen_at",
+                rusqlite::params![user, now],
+            )?;
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        })
+        .await
+        .expect("seen");
+}
+
+/// Keep, as the refresh job would have, every similar-artists list and
+/// count `script` answers and the album list of every artist it names, so
+/// a build reads them. They are read as a person waits, so nothing is
+/// counted against the day's ceiling.
+pub(crate) async fn keep_facts_of(rig: &AuthRig, script: Arc<Script>) {
+    let seeds: Vec<String> = script.similar.keys().cloned().collect();
+    let mut artists: Vec<String> = script
+        .similar
+        .values()
+        .flatten()
+        .chain(script.lastfm_similar.values().flatten())
+        .filter_map(|row| row.artist.mbid.clone())
+        .chain(script.artist_albums.keys().cloned())
+        .chain(seeds.iter().cloned())
+        .chain(
+            script
+                .user_artists
+                .iter()
+                .filter_map(|row| row.mbid.clone()),
+        )
+        .collect();
+    artists.sort();
+    artists.dedup();
+    let listening = ListeningData::new(
+        script,
+        Providers::closed().cache,
+        KeptFacts::new(rig.platform.db.clone(), rig.platform.clock.clone()),
+    );
+    let ask = Ask::person();
+    listening
+        .similar_artists_each("user-1", &seeds, 100, &ask)
+        .await;
+    for artist in &artists {
+        let _ = listening.artist_albums("user-1", artist, 100, &ask).await;
+    }
 }
 
 /// Discover's routes over `deps`, signed in as `user-1`.
@@ -1493,6 +1548,9 @@ async fn a_build_whose_pools_failed_keeps_the_deck_before_it() {
 
     script.similar_down.store(true, Ordering::SeqCst);
     answers.clear().await.expect("provider answers cleared");
+    droppedneedle_catalog::discover::facts::clear(&db)
+        .await
+        .expect("kept facts cleared");
     assert_eq!(generate(true).await["action"], "started");
     let kept = settled_status(&app).await;
     assert_eq!(kept["status"], "ready");
@@ -1518,6 +1576,7 @@ async fn a_build_whose_pools_failed_keeps_the_deck_before_it() {
 /// cannot read Last.fm never leaves an empty answer behind for the others.
 #[tokio::test]
 async fn a_user_without_lastfm_leaves_no_empty_answer_for_others() {
+    let rig = AuthRig::new("discover-lastfm-empty").await;
     let script = Script {
         lastfm_users: vec!["with-lastfm".to_owned()],
         lastfm_chart: vec![ArtistRow {
@@ -1527,7 +1586,11 @@ async fn a_user_without_lastfm_leaves_no_empty_answer_for_others() {
         }],
         ..Script::default()
     };
-    let listening = ListeningData::new(Arc::new(script), Providers::closed().cache);
+    let listening = ListeningData::new(
+        Arc::new(script),
+        Providers::closed().cache,
+        KeptFacts::new(rig.platform.db.clone(), rig.platform.clock.clone()),
+    );
     let ask = Ask::person();
 
     let without = listening

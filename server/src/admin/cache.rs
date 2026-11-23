@@ -2,11 +2,14 @@
 //!
 //! v3 keeps two caches: provider answers (MusicBrainz, ListenBrainz,
 //! Last.fm, TheAudioDB and the rest) in their own cache file, and the cover
-//! image cache on disk (album covers and artist images). The stats give
-//! rows and bytes per provider and the images on disk; a clear drops
-//! provider data, images, or both. Clearing provider data also drops the
-//! discover, home and queue pages built from it. Anything cleared is
-//! fetched or built again on demand.
+//! image cache on disk (album covers and artist images). Discover also
+//! keeps some provider facts in the database (similar artists, listener
+//! counts, album lists). The stats give rows and bytes per provider, the
+//! kept facts and the images on disk; a clear drops provider data, images,
+//! or both. Clearing provider data also drops the kept facts and the
+//! discover, home and queue pages built from it, but not the count of
+//! background reads already sent. Anything cleared is fetched or built
+//! again.
 
 use std::path::Path;
 
@@ -22,10 +25,12 @@ use super::{
 };
 use droppedneedle_catalog::artwork::cache::ArtworkCache;
 use droppedneedle_catalog::discover::cache as discover_pages;
+use droppedneedle_catalog::discover::facts as kept_facts;
 use droppedneedle_providers::ProviderCacheStore;
 
-/// Rows and bytes per provider, whether the cache file is working, the
-/// images on disk and the size of the database and its write-ahead log.
+/// Rows and bytes per provider, whether the cache file is working, the kept
+/// facts, the images on disk and the size of the database and its
+/// write-ahead log.
 pub async fn cache_stats(
     cache: &ProviderCacheStore,
     db: &AdminDb,
@@ -33,6 +38,11 @@ pub async fn cache_stats(
 ) -> CacheStatsResponse {
     let (database_bytes, wal_bytes) = database_sizes(db.db.path()).await;
     let (cover_images, cover_bytes) = covers.usage().await;
+    // The count is for display: one that cannot be read shows as none.
+    let kept = kept_facts::kept_rows(&db.db).await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "kept facts uncounted for the cache stats");
+        0
+    });
     let sources: Vec<ProviderSourceStats> = cache
         .stats()
         .await
@@ -47,6 +57,7 @@ pub async fn cache_stats(
         entries: sources.iter().map(|source| source.rows).sum(),
         sources,
         provider_data_on: cache.is_on(),
+        kept_facts: kept,
         cover_images,
         cover_bytes,
         database_bytes,
@@ -70,7 +81,7 @@ async fn file_size(path: &Path) -> u64 {
 }
 
 /// Clear provider data, the images, or both (the default). Provider data
-/// takes the built discover pages in `db` with it.
+/// takes the kept facts and the built discover pages in `db` with it.
 pub async fn clear_cache(
     cache: &ProviderCacheStore,
     db: &AdminDb,
@@ -79,6 +90,9 @@ pub async fn clear_cache(
 ) -> Result<CacheClearResponse, AdminError> {
     let clear_rows = || async {
         discover_pages::clear_all(&db.db)
+            .await
+            .map_err(|error| AdminError::internal(&error))?;
+        kept_facts::clear(&db.db)
             .await
             .map_err(|error| AdminError::internal(&error))?;
         match cache.clear().await {

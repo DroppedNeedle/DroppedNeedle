@@ -14,6 +14,7 @@ pub mod content;
 pub mod demand;
 pub mod due;
 pub mod error;
+pub mod facts;
 pub mod feedback;
 pub mod forget;
 pub mod genre;

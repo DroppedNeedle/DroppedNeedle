@@ -23,7 +23,8 @@ use axum::{
 use droppedneedle_catalog::discover::cache::{
     ForgetCounts, PageKind, Timing, UserPageCache, Variant, clear_all,
 };
-use droppedneedle_catalog::discover::listening::shared::{self, Lender};
+use droppedneedle_catalog::discover::facts::{KeptFacts, job::FactJobs};
+use droppedneedle_catalog::discover::listening::shared;
 use droppedneedle_catalog::discover::listening::{
     AlbumRow, ArtistRow, Ask, LastFmAlbum, ListenedAlbum, ListeningData, PlaylistTrack,
     RankedAlbum, ScoredArtist, SourceContext, UserMusic, WeeklyPlaylist,
@@ -52,8 +53,8 @@ use tower::ServiceExt as _;
 use crate::common::auth::AuthRig;
 use crate::common::platform::TEST_KEY;
 use crate::discover_queue::{
-    Script, after_commits, discover_deps, discover_inputs, discover_routes, insert, library_artist,
-    own, plays,
+    Script, after_commits, discover_deps, discover_inputs, discover_routes, insert, keep_facts_of,
+    library_artist, own, plays, seen_now,
 };
 
 const SEED: &str = "11111111-1111-4111-8111-111111111111";
@@ -205,6 +206,7 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     })
     .await
     .expect("user row");
+    keep_facts_of(&rig, Arc::new(page_script())).await;
     let app = page_app(&rig, &dir);
 
     let (status, first) = call(&app, "GET", "/api/v3/discover", None).await;
@@ -580,8 +582,10 @@ async fn because_entries(on: bool) -> Vec<(String, String, String)> {
         )]),
         ..Script::default()
     };
+    let script = Arc::new(script);
+    keep_facts_of(&rig, Arc::clone(&script)).await;
     let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |network| {
-        *network = Arc::new(script);
+        *network = script;
     }));
     call(&app, "GET", "/api/v3/discover", None).await;
     let page = settled_page(&rig, &app, "the blended page was built").await;
@@ -652,6 +656,7 @@ async fn unreadable_settings_hold_builds_and_serve_the_saved_page() {
     let mut rig = AuthRig::new("discover-unreadable").await;
     let db = rig.platform.db.clone();
     seed_user(&db).await;
+    keep_facts_of(&rig, Arc::new(page_script())).await;
     let app = page_app(&rig, &dir);
     call(&app, "GET", "/api/v3/discover", None).await;
     settled_page(&rig, &app, "the first page was built").await;
@@ -708,6 +713,7 @@ async fn a_shelf_whose_read_failed_is_built_again_soon() {
     let dir = crate::common::ScratchDir::new("discover-failed-shelf");
     let rig = AuthRig::new("discover-failed-shelf").await;
     seed_user(&rig.platform.db).await;
+    keep_facts_of(&rig, Arc::new(page_script())).await;
     let script = Arc::new(page_script());
     script.fresh_down.store(true, Ordering::SeqCst);
     let network = Arc::clone(&script);
@@ -762,14 +768,16 @@ async fn page_after(app: &Router, before: &Value, what: &str) -> Value {
     .unwrap_or_else(|_| panic!("never happened: {what}"))
 }
 
-/// A rebuild whose similar-artist reads fail keeps the Because shelves the
-/// page had, as they were, and says when they are from. A section whose
-/// reads all answered with nothing says it is empty.
+/// A rebuild that finds no similar-artist list kept (provider data was
+/// cleared and labs is down) keeps the Because shelves the page had, as
+/// they were, and says when they are from. A section whose reads all
+/// answered with nothing says it is empty.
 #[tokio::test]
 async fn a_failed_read_keeps_the_sections_the_page_had() {
     let dir = crate::common::ScratchDir::new("discover-kept");
     let rig = AuthRig::new("discover-kept").await;
     seed_user(&rig.platform.db).await;
+    keep_facts_of(&rig, Arc::new(page_script())).await;
     let script = Arc::new(page_script());
     let network = Arc::clone(&script);
     let providers = Providers::closed();
@@ -794,6 +802,9 @@ async fn a_failed_read_keeps_the_sections_the_page_had() {
 
     script.similar_down.store(true, Ordering::SeqCst);
     answers.clear().await.expect("provider answers cleared");
+    droppedneedle_catalog::discover::facts::clear(&rig.platform.db)
+        .await
+        .expect("kept facts cleared");
     rig.clock().advance(60_000);
     let (status, _) = call(&app, "POST", "/api/v3/discover/refresh", None).await;
     assert_eq!(status, StatusCode::ACCEPTED);
@@ -873,6 +884,7 @@ async fn plays_in_the_app_seed_a_person_with_nothing_linked() {
         .concat(),
     )
     .await;
+    keep_facts_of(&rig, Arc::new(page_script())).await;
     let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
         *slot = Arc::new(Script {
             user: UserMusic::default(),
@@ -896,20 +908,27 @@ async fn plays_in_the_app_seed_a_person_with_nothing_linked() {
     assert_eq!(row["health"]["seeds_used"], 2);
 }
 
-/// Top Picks built while an artist's albums would not read are kept for
-/// five minutes, not four hours: the rebuild after the retry wait takes
-/// the albums up.
+/// Top Picks built while the similar artists' albums are not kept yet are
+/// kept for five minutes, not four hours: the rebuild after the retry wait
+/// takes the albums up once they are kept.
 #[tokio::test]
 async fn top_picks_built_past_a_failed_read_are_built_again_soon() {
     let dir = crate::common::ScratchDir::new("discover-picks-retry");
     let rig = AuthRig::new("discover-picks-retry").await;
     seed_user(&rig.platform.db).await;
-    let script = Arc::new(page_script());
-    script.albums_down.store(true, Ordering::SeqCst);
-    let network = Arc::clone(&script);
-    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
-        *slot = network;
-    }));
+    keep_facts_of(&rig, Arc::new(page_script())).await;
+    rig.platform
+        .db
+        .write(Lane::Foreground, "test.albums_unkept", |tx| {
+            tx.execute_batch(
+                "DELETE FROM catalog_artist_albums; \
+                 DELETE FROM catalog_fact_fetches WHERE kind IN ('albums', 'album_counts')",
+            )?;
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        })
+        .await
+        .expect("album lists unkept");
+    let app = page_app(&rig, &dir);
     let personal = |page: &Value| {
         content(page, "top_picks")["picks"]["items"]
             .as_array()
@@ -923,9 +942,9 @@ async fn top_picks_built_past_a_failed_read_are_built_again_soon() {
 
     call(&app, "GET", "/api/v3/discover", None).await;
     let first = settled_page(&rig, &app, "the first page was built").await;
-    assert_eq!(personal(&first), 0, "no artist's albums read");
+    assert_eq!(personal(&first), 0, "no artist's albums kept");
 
-    script.albums_down.store(false, Ordering::SeqCst);
+    keep_facts_of(&rig, Arc::new(page_script())).await;
     rig.clock().advance(361_000);
     let (_, page) = call(&app, "GET", "/api/v3/discover", None).await;
     assert_eq!(page["refreshing"], true, "a rebuild started");
@@ -965,6 +984,7 @@ async fn top_picks_never_hold_an_album_the_library_has() {
     // The first album of the first similar artist, the second of the third.
     let owned = [mbid('a', b'1'), mbid('a', b'3' + 20)];
     own(&db, &owned).await;
+    keep_facts_of(&rig, Arc::new(page_script())).await;
     let app = page_app(&rig, &dir);
 
     call(&app, "GET", "/api/v3/discover", None).await;
@@ -1045,8 +1065,10 @@ async fn top_picks_hold_no_chart_album_with_seeds_or_without() {
         let dir = crate::common::ScratchDir::new(&format!("discover-picks-{name}"));
         let rig = AuthRig::new(&format!("discover-picks-{name}")).await;
         seed_user(&rig.platform.db).await;
+        let script = Arc::new(script);
+        keep_facts_of(&rig, Arc::clone(&script)).await;
         let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
-            *slot = Arc::new(script);
+            *slot = script;
         }));
 
         call(&app, "GET", "/api/v3/discover", None).await;
@@ -1127,6 +1149,7 @@ async fn top_picks_that_run_out_of_time_keep_the_ones_the_page_had() {
     })
     .await
     .expect("resolutions");
+    keep_facts_of(&rig, Arc::new(page_script())).await;
     let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |slot| {
         *slot = Arc::new(lastfm_picks_script(40));
     }));
@@ -1186,9 +1209,14 @@ async fn a_warm_that_kept_nothing_waits_before_it_is_tried_again() {
     let rig = AuthRig::new("discover-warm-wait").await;
     seed_user(&rig.platform.db).await;
     let warm = Arc::new(KeepsNothing::default());
+    let facts = KeptFacts::new(rig.platform.db.clone(), rig.platform.clock.clone());
     let scheduler = WarmScheduler::new(
         ActivityDb::new(rig.platform.db.clone()),
-        ListeningData::new(Arc::new(Script::default()), Providers::closed().cache),
+        ListeningData::new(
+            Arc::new(Script::default()),
+            Providers::closed().cache,
+            facts.clone(),
+        ),
         rig.platform.clock.clone(),
         true,
         Arc::new(droppedneedle_catalog::discover::due::Due::new(
@@ -1199,6 +1227,7 @@ async fn a_warm_that_kept_nothing_waits_before_it_is_tried_again() {
             ),
             rig.platform.clock.clone(),
             true,
+            FactJobs::new(facts, Arc::new(Script::default())).due(),
         )),
         vec![warm.clone()],
     );
@@ -1323,14 +1352,15 @@ async fn similar_stub() -> (String, Arc<Mutex<HashMap<String, usize>>>) {
     (origin, hits)
 }
 
-/// One answer serves every "similar to" list: the Because shelf, the artist
-/// page, the album page (a Last.fm-first person's too) and the Weekly Mix's
-/// source give one order for one artist, with fame divided out (a
+/// One answer serves every "similar to" list: the artist page, the Because
+/// shelf, the album page (a Last.fm-first person's too) and the Weekly
+/// Mix's source give one order for one artist, with fame divided out (a
 /// neighbour with a lower score and far fewer listeners leads a famous
-/// one, and one with no count comes last). The list and the counts are
-/// each read once: the second ask makes no call. Once the person hides an
-/// artist and says no to an album, the artist page and the album page
-/// leave them out.
+/// one, and one with no count comes last). The artist page a person opens
+/// reads the list and the counts once and keeps them; every other list
+/// reads the kept rows and makes no call. Once the person hides an artist
+/// and says no to an album, the artist page and the album page leave them
+/// out.
 #[tokio::test]
 async fn one_similar_answer_leads_every_list_in_one_order() {
     let (origin, hits) = similar_stub().await;
@@ -1379,27 +1409,13 @@ async fn one_similar_answer_leads_every_list_in_one_order() {
             store.clone(),
         ),
         LocalCatalog::new(rig.platform.db.clone()),
-        crate::common::bundles::quiet_page_sources(crate::common::bundles::cover_warm_at(
-            &rig.platform.db,
-            rig.platform.clock.clone(),
-        )),
+        crate::common::bundles::quiet_page_sources(&rig.platform.db, rig.platform.clock.clone()),
     );
     let name_of = |id: &str| {
         (0..NEIGHBOURS.len())
             .find(|at| neighbour_id(*at) == id)
             .map_or("?", |at| NEIGHBOURS[at].0)
     };
-
-    call(&app, "GET", "/api/v3/discover", None).await;
-    let page = settled_page(&rig, &app, "the page was built").await;
-    let shelf: Vec<String> =
-        content(&page, "because_you_listen_to")["entries"][0]["section"]["items"]
-            .as_array()
-            .expect("a Because shelf")
-            .iter()
-            .map(|item| item["name"].as_str().unwrap_or_default().to_owned())
-            .collect();
-    assert_eq!(shelf, RANKED, "{page}");
 
     let artist_page = catalog
         .similar_artists("user-1", SEED, 15, None, RequestPriority::UserInitiated)
@@ -1416,6 +1432,17 @@ async fn one_similar_answer_leads_every_list_in_one_order() {
         Some(10_000),
         "a neighbour carries its own listens"
     );
+
+    call(&app, "GET", "/api/v3/discover", None).await;
+    let page = settled_page(&rig, &app, "the page was built").await;
+    let shelf: Vec<String> =
+        content(&page, "because_you_listen_to")["entries"][0]["section"]["items"]
+            .as_array()
+            .expect("a Because shelf")
+            .iter()
+            .map(|item| item["name"].as_str().unwrap_or_default().to_owned())
+            .collect();
+    assert_eq!(shelf, RANKED, "{page}");
 
     let album_page = catalog
         .similar_albums("user-1", &mbid('a', 1), SEED, 5)
@@ -1447,11 +1474,11 @@ async fn one_similar_answer_leads_every_list_in_one_order() {
     assert_eq!(by, RANKED, "a Last.fm-first person's album page");
 
     let mix = shared::similar_artists(
+        &KeptFacts::new(rig.platform.db.clone(), rig.platform.clock.clone()),
         &providers.cache,
         &providers.listenbrainz,
         SEED,
         10,
-        &Lender::Person(store, "user-1".to_owned()),
         RequestPriority::BackgroundSync,
     )
     .await
@@ -1520,11 +1547,12 @@ async fn one_similar_answer_leads_every_list_in_one_order() {
     );
 }
 
-/// After a good answer, a labs read that fails (labs no longer offers the
-/// dataset) keeps serving the kept list. The failure rests labs reads, so
-/// an artist with nothing kept is not asked for meanwhile.
+/// A list a person read is kept and answers later reads, past its age
+/// too, with no call: only the refresh job reads it again. A labs read
+/// that fails (labs no longer offers the dataset) rests labs reads, so an
+/// artist with nothing kept is not asked for meanwhile.
 #[tokio::test]
-async fn a_failed_labs_read_keeps_the_list_it_had() {
+async fn a_kept_list_answers_and_a_failed_labs_read_rests_labs() {
     const RADIOHEAD: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
     let rig = AuthRig::new("discover-labs-kept").await;
     let wire = Arc::new(ScriptedWire::new());
@@ -1559,14 +1587,15 @@ async fn a_failed_labs_read_keeps_the_list_it_had() {
             ..ProviderEndpoints::closed()
         },
     );
+    let facts = KeptFacts::new(rig.platform.db.clone(), rig.platform.clock.clone());
     let read = |artist: &'static str| {
         shared::similar_artists(
+            &facts,
             &providers.cache,
             &providers.listenbrainz,
             artist,
             100,
-            &Lender::Anonymous,
-            RequestPriority::BackgroundSync,
+            RequestPriority::UserInitiated,
         )
     };
     let labs_reads = || {
@@ -1583,23 +1612,31 @@ async fn a_failed_labs_read_keeps_the_list_it_had() {
         "the one neighbour with a count leads"
     );
     rig.clock().advance(15 * 86_400_000);
-    let kept = read(RADIOHEAD).await.expect("the kept list stands in");
+    let kept = read(RADIOHEAD).await.expect("the kept list answers");
     assert_eq!(kept, first);
-    assert_eq!(labs_reads(), 2, "the stale list was asked for again");
+    assert_eq!(labs_reads(), 1, "a kept list is not read again for a page");
 
     let other = read(SEED).await;
-    assert!(other.is_err(), "nothing kept, and the reads rest");
+    assert!(other.is_err(), "the dataset is gone");
+    assert_eq!(labs_reads(), 2);
+    let after = read("b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d").await;
+    assert!(after.is_err(), "nothing kept, and the reads rest");
     assert_eq!(labs_reads(), 2, "a resting read sends nothing");
 }
 
-/// A pass over several artists stops asking at its first failed similar
-/// read: the rest answer only from kept lists.
+/// A pass over several artists a person waits on stops asking at its
+/// first failed similar read: the rest answer only from kept lists.
 #[tokio::test]
 async fn a_similar_pass_stops_at_its_first_failed_read() {
+    let rig = AuthRig::new("discover-similar-pass").await;
     let script = Arc::new(Script::default());
     script.similar_down.store(true, Ordering::SeqCst);
-    let listening = ListeningData::new(script.clone(), Providers::closed().cache);
-    let ask = Ask::build(RequestPriority::BackgroundSync);
+    let listening = ListeningData::new(
+        script.clone(),
+        Providers::closed().cache,
+        KeptFacts::new(rig.platform.db.clone(), rig.platform.clock.clone()),
+    );
+    let ask = Ask::build(RequestPriority::UserInitiated);
     let artists: Vec<String> = (1..=4).map(|n| mbid('d', n)).collect();
     let answers = listening
         .similar_artists_each("user-1", &artists, 10, &ask)
@@ -1645,14 +1682,15 @@ async fn labs_reads_rest_after_a_failure_with_the_cache_off() {
         cache,
     );
     let artists: Vec<String> = (1..=3).map(|n| mbid('d', n)).collect();
+    let facts = KeptFacts::new(rig.platform.db.clone(), rig.platform.clock.clone());
     let pass = || {
         shared::similar_artists_each(
+            &facts,
             &providers.cache,
             &providers.listenbrainz,
             &artists,
             10,
-            &Lender::Anonymous,
-            RequestPriority::BackgroundSync,
+            RequestPriority::UserInitiated,
         )
     };
     assert!(pass().await.iter().all(Result::is_err));
@@ -1670,6 +1708,8 @@ async fn labs_reads_rest_after_a_failure_with_the_cache_off() {
 #[tokio::test]
 async fn a_failed_count_read_keeps_the_list() {
     const RADIOHEAD: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    let rig = AuthRig::new("discover-count-failed").await;
+    let facts = KeptFacts::new(rig.platform.db.clone(), rig.platform.clock.clone());
     let wire = Arc::new(ScriptedWire::new());
     wire.answer(
         &format!("{}/similar-artists/json", listenbrainz::LABS_BASE_URL),
@@ -1696,12 +1736,12 @@ async fn a_failed_count_read_keeps_the_list() {
     );
     let read = || {
         shared::similar_artists(
+            &facts,
             &providers.cache,
             &providers.listenbrainz,
             RADIOHEAD,
             3,
-            &Lender::Anonymous,
-            RequestPriority::BackgroundSync,
+            RequestPriority::UserInitiated,
         )
     };
     let names = |rows: Vec<ScoredArtist>| -> Vec<String> {
@@ -1723,7 +1763,7 @@ async fn a_failed_count_read_keeps_the_list() {
 /// ListenBrainz, get Missing Essentials from the artist their library holds
 /// most of: its albums they do not have, less one they said no to. Two of
 /// them asking for that artist cost one discography read and one count
-/// read.
+/// read, made by the kept facts' refresh.
 #[tokio::test]
 async fn people_with_nothing_linked_get_album_cards_for_one_read() {
     let dir = crate::common::ScratchDir::new("discover-unlinked-albums");
@@ -1779,18 +1819,21 @@ async fn people_with_nothing_linked_get_album_cards_for_one_read() {
         ..Script::default()
     });
     let network = Arc::clone(&script);
-    let service = discover_deps(&rig, &dir, Providers::closed(), |slot| {
+    let deps = discover_deps(&rig, &dir, Providers::closed(), |slot| {
         *slot = network;
-    })
-    .content;
-    let settled = |user: &'static str| {
+    });
+    let (service, refresh) = (deps.content, deps.facts);
+    let settled = |user: &'static str, before: Value| {
         let service = service.clone();
         async move {
             tokio::time::timeout(crate::common::PATIENCE, async {
                 loop {
                     let page = service.discover(user).await.expect("page");
                     let page = serde_json::to_value(page).expect("the page encodes");
-                    if page["refreshing"] == false && page["generated_at"].is_number() {
+                    if page["refreshing"] == false
+                        && page["generated_at"].is_number()
+                        && page["generated_at"] != before
+                    {
                         return page;
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -1801,7 +1844,23 @@ async fn people_with_nothing_linked_get_album_cards_for_one_read() {
         }
     };
 
-    let (first, second) = tokio::join!(settled("user-1"), settled("user-2"));
+    // The first builds find the artist's albums not kept yet and want
+    // them; the refresh reads them once for both.
+    let (first, second) = tokio::join!(
+        settled("user-1", Value::Null),
+        settled("user-2", Value::Null)
+    );
+    assert!(script.discography_reads.lock().unwrap().is_empty());
+    seen_now(&rig, "user-1").await;
+    refresh.run_once(&|| false).await.expect("the refresh runs");
+    rig.clock().advance(3_600_000);
+    for user in ["user-1", "user-2"] {
+        service.trigger_refresh(user).await.expect("a rebuild");
+    }
+    let (first, second) = tokio::join!(
+        settled("user-1", first["generated_at"].clone()),
+        settled("user-2", second["generated_at"].clone())
+    );
     let missing: Vec<String> = (103..106u8).map(|n| mbid('a', n)).collect();
     let not_passed: Vec<String> = missing
         .iter()
@@ -1896,6 +1955,7 @@ async fn what_a_person_hid_leaves_the_served_page_at_once() {
     by_hidden_song.artist_mbid = Some(hidden_artist.clone());
     weekly.tracks.push(by_hidden_song);
     script.weekly = Some(weekly);
+    keep_facts_of(&rig, Arc::new(page_script())).await;
     let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |network| {
         *network = Arc::new(script);
     }));

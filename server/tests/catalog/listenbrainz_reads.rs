@@ -11,6 +11,7 @@ use axum::Router;
 use axum::http::{StatusCode, Uri};
 use axum::response::IntoResponse;
 use droppedneedle_auth::users::roles::Role;
+use droppedneedle_catalog::discover::facts::KeptFacts;
 use droppedneedle_catalog::discover::listening::{Ask, ListeningData};
 use droppedneedle_catalog::discover::models::PromptService;
 use droppedneedle_catalog::discover::wiring::live_network;
@@ -151,10 +152,10 @@ impl Reads {
         let catalog = Catalog::new(
             upstream(),
             LocalCatalog::new(rig.platform.db.clone()),
-            crate::common::bundles::quiet_page_sources(crate::common::bundles::cover_warm_at(
+            crate::common::bundles::quiet_page_sources(
                 &rig.platform.db,
                 rig.platform.clock.clone(),
-            )),
+            ),
         );
         let counts = SearchCounts::new(
             &providers,
@@ -322,10 +323,10 @@ async fn listenbrainz_reads_are_on_unless_switched_off() {
     assert!(reads.sent() > before, "ListenBrainz was asked");
 }
 
-/// A read lends the person's own ListenBrainz link when they have one and
-/// goes out anonymous otherwise.
+/// Similar artists' counts are public facts: the read goes out with no
+/// one's link, from a linked person's page or an unlinked one's.
 #[tokio::test]
-async fn reads_lend_the_persons_own_link() {
+async fn similar_artist_counts_lend_no_link() {
     let rig = AuthRig::new("listenbrainz-lend").await;
     rig.seed_user("ada", Role::User).await;
     rig.seed_user("bob", Role::User).await;
@@ -350,11 +351,7 @@ async fn reads_lend_the_persons_own_link() {
             .await
             .unwrap();
     }
-    assert_eq!(
-        reads.lent(),
-        [Some("Token ada-token".to_owned()), None],
-        "an unlinked person reads anonymous"
-    );
+    assert_eq!(reads.lent(), [None, None], "no token is sent");
 }
 
 /// ListenBrainz gives an artist's top albums only to a linked account. An
@@ -413,7 +410,8 @@ async fn album_lists_lend_no_token_and_answer_with_listenbrainz_off() {
         .expect("link");
     let reads = Reads::new(&rig);
     let dir = ScratchDir::new("listenbrainz-album-lists");
-    // Its own cache, so the album page's read below is sent as well.
+    // Its own provider cache; the kept list is cleared before the album
+    // page reads, so that read is sent too.
     let inputs = discover_inputs(
         &rig,
         &dir,
@@ -422,6 +420,7 @@ async fn album_lists_lend_no_token_and_answer_with_listenbrainz_off() {
     let listening = ListeningData::new(
         live_network(&inputs, &rig.config),
         inputs.providers.cache.clone(),
+        KeptFacts::new(rig.platform.db.clone(), rig.platform.clock.clone()),
     );
 
     for user in [USER, "user-bob"] {
@@ -431,6 +430,9 @@ async fn album_lists_lend_no_token_and_answer_with_listenbrainz_off() {
             .expect("the albums read");
         assert_eq!(albums.len(), 5, "{user}");
     }
+    droppedneedle_catalog::discover::facts::clear(&rig.platform.db)
+        .await
+        .expect("kept facts cleared");
     reads.labs(&like_radiohead());
     let similar = reads
         .catalog

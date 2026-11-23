@@ -25,6 +25,8 @@ use crate::artwork::ArtistImageCandidate;
 use crate::artwork::cache::ImageCredit;
 use crate::artwork::warm::WarmTargets;
 use crate::collections::state::AutoDownloadState;
+use crate::discover::facts::MeteredSource;
+use droppedneedle_kernel::runtime_config::sections::MbSourceMode;
 
 /// Most discography pages fetched per artist.
 const MAX_RELEASE_GROUP_PAGES: u32 = 10;
@@ -654,8 +656,9 @@ impl Catalog {
                         0,
                         Criticality::IdentityCritical,
                     )
-                    .await
-                    .map_err(mb_search_error)?;
+                    .await;
+                catalog.count_page(priority).await;
+                let page = page.map_err(mb_search_error)?;
                 if page.count == 0 && page.items.is_empty() {
                     return catalog.release_groups_of_releases(&artist, priority).await;
                 }
@@ -716,8 +719,9 @@ impl Catalog {
         let (client, _) = self.upstream().musicbrainz(priority);
         let page = client
             .browse_artist_releases(artist, MAX_PAGE_LIMIT, 0, Criticality::IdentityCritical)
-            .await
-            .map_err(mb_search_error)?;
+            .await;
+        self.count_page(priority).await;
+        let page = page.map_err(mb_search_error)?;
         let complete = page.count <= page.releases.len() as u64;
         let mut seen = HashSet::new();
         let items: Vec<ReleaseGroupItem> = page
@@ -746,9 +750,24 @@ impl Catalog {
         })
     }
 
+    /// Count one discography page read at `priority` against Discover's
+    /// daily ceiling on background reads, while the official MusicBrainz
+    /// service answers them. A page a person waits on is not counted.
+    async fn count_page(&self, priority: RequestPriority) {
+        let official = self
+            .upstream()
+            .settings()
+            .musicbrainz()
+            .is_some_and(|settings| settings.source_mode == MbSourceMode::Official);
+        if official && !priority.is_user_facing() {
+            self.facts().count_read(MeteredSource::MusicBrainz, 1).await;
+        }
+    }
+
     /// Fetch the rest of a large discography at background priority and
     /// cache the whole list. One walker per artist; a failure logs and
-    /// stores nothing, so the next visit tries again.
+    /// stores nothing, so the next visit tries again. Each page is counted
+    /// against Discover's daily ceiling.
     fn spawn_discography_walker(
         &self,
         artist: String,
@@ -805,8 +824,9 @@ impl Catalog {
                     offset,
                     Criticality::IdentityCritical,
                 )
-                .await
-                .map_err(mb_search_error)?;
+                .await;
+            self.count_page(RequestPriority::BackgroundSync).await;
+            let page = page.map_err(mb_search_error)?;
             if page.items.is_empty() {
                 break;
             }

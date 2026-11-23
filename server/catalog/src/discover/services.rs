@@ -113,6 +113,8 @@ pub struct DiscoverDeps {
     pub record: PickRecord,
     /// What "Forget my history" deletes from.
     pub history: HistoryStores,
+    /// The kept facts' refresh job, for the jobs table to run.
+    pub facts: Arc<crate::discover::facts::job::FactJobs>,
 }
 
 /// Clamp a limit into `1..=max`, defaulting when missing.

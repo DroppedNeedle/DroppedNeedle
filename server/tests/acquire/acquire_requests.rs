@@ -1514,10 +1514,11 @@ const SIMILAR_TOPS: [(&str, &str, &str, &str); 2] = [
 
 /// A linked person's Weekly Mix is topped up with the top song of each
 /// artist similar to the ones in it, on the album ListenBrainz places that
-/// song on, and no song twice. ListenBrainz gives an artist's top songs only
-/// to a linked account, so those reads, the album lookup and the listener
-/// counts carry the person's own token; an artist's top albums are never
-/// asked for. An unlinked person gets no mix and nothing is sent.
+/// song on, and no song twice. The similar artists are the kept list, read
+/// earlier for an artist page with no one's token. ListenBrainz gives an
+/// artist's top songs only to a linked account, so those reads and the
+/// album lookup carry the person's own token; an artist's top albums are
+/// never asked for. An unlinked person gets no mix and nothing is sent.
 #[tokio::test]
 async fn a_weekly_mix_tops_up_with_the_persons_own_link() {
     use droppedneedle_providers::listenbrainz::DEFAULT_BASE_URL;
@@ -1637,6 +1638,21 @@ async fn a_weekly_mix_tops_up_with_the_persons_own_link() {
         .expect("link");
     let dir = db.path().parent().expect("scratch dir").join("lb-settings");
     let settings = droppedneedle_acquire::test_support::scratch_settings(&dir).expect("settings");
+    // The list an artist page kept: the mix reads kept lists only.
+    droppedneedle_catalog::discover::listening::shared::similar_artists(
+        &droppedneedle_catalog::discover::facts::KeptFacts::new(
+            db.db().clone(),
+            db.clock().clone(),
+        ),
+        &providers.cache,
+        &providers.listenbrainz,
+        RADIOHEAD,
+        10,
+        droppedneedle_providers::RequestPriority::UserInitiated,
+    )
+    .await
+    .expect("the artist page's similar artists");
+    let counted = wire.sent().len();
     let playlists = PlaylistStore::new(CollectionsDb::new(db.db().clone(), db.clock().clone()));
     let builder = droppedneedle_acquire::requests::mix_sources::live_builder(
         &state,
@@ -1687,11 +1703,23 @@ async fn a_weekly_mix_tops_up_with_the_persons_own_link() {
         asked("top-release-groups-for-artist").is_empty(),
         "an artist's top albums are never asked for"
     );
-    for read in [
-        "top-recordings-for-artist",
-        "metadata/recording",
-        "popularity/artist",
-    ] {
+    for sent in &sent[..counted] {
+        assert!(
+            sent.headers
+                .iter()
+                .all(|(name, _)| !name.eq_ignore_ascii_case("authorization")),
+            "{} carried a token",
+            sent.url
+        );
+    }
+    assert!(
+        sent[counted..]
+            .iter()
+            .all(|sent| !sent.url.path().contains("similar-artists")
+                && !sent.url.path().contains("popularity/artist")),
+        "the mix reads the kept list and counts"
+    );
+    for read in ["top-recordings-for-artist", "metadata/recording"] {
         assert!(!asked(read).is_empty(), "{read} was asked");
         for sent in asked(read) {
             let token = sent

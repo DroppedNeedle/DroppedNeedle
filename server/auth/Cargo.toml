@@ -40,6 +40,9 @@ url.workspace = true
 utoipa.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+droppedneedle-kernel = { workspace = true, features = ["test-support"] }
+
 [features]
 # Test constructors and the statement list, for the test suites above.
 test-support = [

@@ -23,7 +23,7 @@ use tower::ServiceExt as _;
 use crate::common::Probe;
 use crate::common::auth::AuthRig;
 use crate::discover_page::page_script;
-use crate::discover_queue::{after_commits, discover_deps, discover_routes, insert};
+use crate::discover_queue::{after_commits, discover_deps, discover_routes, insert, keep_facts_of};
 
 const DAY: i64 = 86_400_000;
 const FORGET: &str = "/api/v3/discover/history";
@@ -149,6 +149,7 @@ async fn forgetting_takes_the_callers_history_and_nothing_else() {
             .to_owned(),
     )
     .await;
+    keep_facts_of(&rig, Arc::new(page_script())).await;
     let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |network| {
         *network = Arc::new(page_script());
     }));

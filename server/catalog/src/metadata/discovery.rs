@@ -442,7 +442,7 @@ impl Catalog {
                     continue;
                 }
                 if let (ListenSource::Listenbrainz, Section::Similar) = (source, section) {
-                    match similar::held(self.upstream().cache(), mbid).await {
+                    match similar::held(self.facts(), mbid).await {
                         Held::No => return false,
                         Held::Listed => break,
                         Held::Nothing => continue,
@@ -480,7 +480,8 @@ impl Catalog {
             Section::Similar => {
                 let cache = self.upstream().cache();
                 let similar =
-                    shared::similar_artists(cache, client, mbid, count, lender, priority).await?;
+                    shared::similar_artists(self.facts(), cache, client, mbid, count, priority)
+                        .await?;
                 Ok(SectionRows {
                     similar: similar
                         .into_iter()
@@ -962,7 +963,7 @@ impl Catalog {
         for source in [preferred, other_source(preferred)] {
             let found = match source {
                 ListenSource::Listenbrainz => {
-                    self.similar_albums_listenbrainz(user_id, &album, &artist, count)
+                    self.similar_albums_listenbrainz(&album, &artist, count)
                         .await
                 }
                 ListenSource::Lastfm => {
@@ -996,13 +997,11 @@ impl Catalog {
     /// played albums. `None` while ListenBrainz reads are off.
     async fn similar_albums_listenbrainz(
         &self,
-        user_id: &str,
         album: &str,
         artist: &str,
         count: u32,
     ) -> Option<Vec<AlbumRef>> {
         let client = self.upstream().listenbrainz()?;
-        let lender = self.upstream().lender(user_id);
         let key = CacheKey::new(
             Source::ListenBrainz,
             &[
@@ -1024,11 +1023,11 @@ impl Catalog {
                 priority,
                 move |priority| async move {
                     let similar = shared::similar_artists(
+                        catalog.facts(),
                         &shared_rows,
                         &client,
                         &lb_artist,
                         SIMILAR_ALBUM_ARTISTS,
-                        &lender,
                         priority,
                     )
                     .await

@@ -6,9 +6,9 @@
 //! clock: a cold day, a warm day, the Monday the Daily Mix seeds rotate, and
 //! day 15, past the 14-day rows, with a Weekly Mix after it. Each day has
 //! four visits, four searches, two artist pages, two album pages, one radio
-//! shelf and the warm cycle ticking hourly. One artist in five has nothing
-//! on ListenBrainz or MusicBrainz. Run it with `--nocapture` for the calls
-//! per endpoint.
+//! shelf and the warm cycle ticking hourly, the kept facts' refresh running
+//! after each tick. One artist in five has nothing on ListenBrainz or
+//! MusicBrainz. Run it with `--nocapture` for the calls per endpoint.
 //!
 //! Beside it: what an artist's albums read offers from those answers.
 
@@ -51,14 +51,12 @@ use crate::common::ScratchDir;
 use crate::common::auth::AuthRig;
 use crate::discover_queue::{after_commits, discover_inputs, discover_routes};
 
-/// The most ListenBrainz calls each day of this journey may make. The old
-/// code made 296, 294, 276 and 279.
-const LISTENBRAINZ_BOUNDS: [(&str, u64); 4] = [
-    ("cold", 275),
-    ("warm", 105),
-    ("monday", 195),
-    ("day 15", 235),
-];
+/// The most ListenBrainz calls each day of this journey may make. The code
+/// before similar artists, counts and album lists were kept facts made 197,
+/// 52, 128 and 155; this code makes 129, 52, 81 and 87, the album counts
+/// asked across artists in one read by the kept facts' refresh.
+const LISTENBRAINZ_BOUNDS: [(&str, u64); 4] =
+    [("cold", 140), ("warm", 60), ("monday", 90), ("day 15", 95)];
 /// The most MusicBrainz calls each day for the same user. Artists' album
 /// lists read their discographies, about one browse an artist every 14
 /// days, an artist with nothing to offer included; the old code made 12 a
@@ -71,13 +69,15 @@ const MUSICBRAINZ_BOUNDS: [(&str, u64); 4] = [
     ("day 15", 140),
 ];
 /// The most ListenBrainz plus MusicBrainz calls for a user who follows
-/// Last.fm. The old code made 320, 283, 262 and 260. Similar artists come
-/// from ListenBrainz for everyone, which adds its list and count reads: 4
-/// to 20 a day here.
+/// Last.fm. Similar artists come from ListenBrainz for everyone, which adds
+/// its list and count reads: 5 to 18 a day here. The rest are MusicBrainz
+/// lookups matching Last.fm albums, at most 30 a build: with the similar
+/// lists kept, Monday's builds reach more albums to match than before
+/// (150 lookups, 90 before), on BrainzMash on a default install.
 const LASTFM_BOUNDS: [(&str, u64); 4] = [
     ("cold", 315),
     ("warm", 165),
-    ("monday", 125),
+    ("monday", 175),
     ("day 15", 100),
 ];
 
@@ -485,6 +485,24 @@ async fn seed_library(rig: &AuthRig) {
         .expect("library rows");
 }
 
+/// The user's session is used now: they are seen.
+async fn seen_now(rig: &AuthRig) {
+    let now = rig.clock().now_ms();
+    rig.platform
+        .db
+        .write(Lane::Foreground, "test.seen", move |tx| {
+            tx.execute(
+                "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, \
+                 last_seen_at, revoked) VALUES ('s1', 'user-1', 'h1', 0, ?1, ?1, 0) \
+                 ON CONFLICT (id) DO UPDATE SET last_seen_at = excluded.last_seen_at",
+                [now],
+            )?;
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        })
+        .await
+        .expect("seen");
+}
+
 async fn get(app: &Router, uri: &str) -> Value {
     call(app, Method::GET, uri, None).await
 }
@@ -623,6 +641,7 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
     let namespace = network.source().namespace();
     let deps = deps_over(inputs, &rig.config, network);
     let content = deps.content.clone();
+    let refresh = deps.facts.clone();
     let app = discover_routes(deps);
     let catalog = Catalog::new(
         Upstream::new(
@@ -632,10 +651,7 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
             crate::common::listening_store(&rig.platform),
         ),
         LocalCatalog::new(rig.platform.db.clone()),
-        crate::common::bundles::quiet_page_sources(crate::common::bundles::cover_warm_at(
-            &rig.platform.db,
-            rig.platform.clock.clone(),
-        )),
+        crate::common::bundles::quiet_page_sources(&rig.platform.db, rig.platform.clock.clone()),
     );
     let counts = SearchCounts::new(
         &providers,
@@ -679,6 +695,7 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
                 .set(start + i64::from(day * 24 + hour) * HOUR_MS);
             if matches!(hour, 0 | 5 | 12 | 19) {
                 let visit = hour / 5;
+                seen_now(&rig).await;
                 for feature in [Feature::Home, Feature::Discover, Feature::Queue] {
                     activity
                         .record(
@@ -749,6 +766,10 @@ async fn journey(tag: &str, lastfm: bool) -> Measured {
                 }
             }
             content.run_due_tick().await;
+            refresh
+                .run_once(&|| false)
+                .await
+                .expect("the kept facts' refresh runs");
         }
         if !lastfm && day != 1 {
             mixes.build_for_user(USER, true).await.expect("Weekly Mix");
@@ -944,10 +965,7 @@ fn album_reads(
             crate::common::listening_store(&rig.platform),
         ),
         LocalCatalog::new(rig.platform.db.clone()),
-        crate::common::bundles::quiet_page_sources(crate::common::bundles::cover_warm_at(
-            &rig.platform.db,
-            rig.platform.clock.clone(),
-        )),
+        crate::common::bundles::quiet_page_sources(&rig.platform.db, rig.platform.clock.clone()),
     );
     (catalog, providers, wire)
 }

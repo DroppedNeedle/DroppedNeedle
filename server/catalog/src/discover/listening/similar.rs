@@ -2,40 +2,44 @@
 //! asks: Discover's shelves, the queue, radio, the artist and album pages
 //! and the Weekly Mix.
 //!
-//! ListenBrainz labs' co-listening list is kept under one key per artist,
-//! and each neighbour's listener count under one key per neighbour. The
-//! order is worked out on each read: a neighbour's score over its listener
-//! count to [`FAME_EXPONENT`], so an artist does not lead by being in
-//! everyone's sessions, scaled so the best is 1.0. A neighbour with no
-//! count goes after every counted one, in score order. A failed read never
-//! replaces a kept list or count, and nor does an empty list for an artist
-//! with one kept: the kept row answers until a read succeeds.
+//! ListenBrainz labs' co-listening list and each neighbour's listener
+//! count are kept facts ([`KeptFacts`]). The order is worked out on each
+//! read: a neighbour's score over its listener count to [`FAME_EXPONENT`],
+//! so an artist does not lead by being in everyone's sessions, scaled so
+//! the best is 1.0. A neighbour with no count goes after every counted
+//! one, in score order.
 //!
-//! A pass over several artists reads their lists one at a time, stops
-//! asking at its first failed list read (kept lists still answer), and
-//! counts the neighbours of all of them in one read. Labs reads also rest
-//! after a failure for every caller: the client holds that rest.
+//! A reader at background priority reads kept rows only: a list or a count
+//! not kept is wanted, for the refresh job to read, and a list answers "not
+//! yet". A reader a person waits on reads a list nobody has asked about
+//! from labs (one at a time, stopping at the first failure) and counts its
+//! neighbours in one read, keeping both. No token is sent for either: they
+//! are public answers. Labs reads also rest after a failure for every
+//! caller: the client holds that rest.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use droppedneedle_providers::listenbrainz::{
-    self, ArtistPopularity, LABS_SOURCE, ListenBrainzClient, SIMILAR_ARTISTS_ALGORITHM,
-    ScoredSimilarArtist,
+    self, ArtistPopularity, LABS_SOURCE, ListenBrainzClient, ListenBrainzCredentials,
+    SIMILAR_ARTISTS_ALGORITHM, ScoredSimilarArtist,
 };
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use droppedneedle_providers::{
-    CacheKey, Fetched, IntegrationStatus, Policy, ProviderCacheStore, ProviderError,
-    RequestPriority, Source, record_current,
+    CacheKey, IntegrationStatus, ProviderCacheStore, ProviderError, RequestPriority, Source,
+    record_current,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::sync::{Mutex, Semaphore};
 
 use super::network::ListeningNetwork;
 use super::rows::{ArtistRow, ScoredArtist};
-use super::shared::Lender;
 use super::{Ask, Health, ListeningError};
+use crate::discover::facts::{
+    Counts, FactKind, FactSource, Kept, KeptFacts, Looked, Neighbour, Notes, WantOrder,
+    labs_resting,
+};
 use crate::discover::ports::BoxFuture;
 
 /// How strongly a neighbour's fame is divided out: its co-listening score
@@ -43,52 +47,9 @@ use crate::discover::ports::BoxFuture;
 /// would scale every row alike, so the scaling to 1.0 leaves it out.
 pub const FAME_EXPONENT: f64 = 0.5;
 
-const DAY: u64 = 86_400;
-/// An artist's list: it moves over weeks.
-const LISTS: Policy = Policy::LISTENBRAINZ_ARTIST;
-/// An artist's listener count: it moves over months.
-const COUNTS: Policy = Policy {
-    fresh: Duration::from_secs(30 * DAY),
-    miss: Duration::from_secs(DAY),
-};
-
-/// One neighbour as kept.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Neighbour {
-    mbid: String,
-    name: Option<String>,
-    score: i64,
-}
-
-/// One artist's counts as kept: `None` where ListenBrainz has none.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-struct Listeners {
-    listeners: Option<i64>,
-    listens: Option<i64>,
-}
-
-impl From<ArtistPopularity> for Listeners {
-    fn from(counts: ArtistPopularity) -> Self {
-        Self {
-            listeners: counts.listeners,
-            listens: counts.listen_count,
-        }
-    }
-}
-
-fn list_key(artist: &str) -> CacheKey {
-    CacheKey::new(
-        Source::ListenBrainz,
-        &["labs_similar", SIMILAR_ARTISTS_ALGORITHM, artist],
-    )
-}
-
-fn listeners_key(artist: &str) -> CacheKey {
-    CacheKey::new(
-        Source::ListenBrainz,
-        &["artist_listeners", &artist.trim().to_ascii_lowercase()],
-    )
-}
+/// The neighbours' facts: their lists and their counts.
+const LISTS: (FactKind, FactSource) = (FactKind::Neighbours, FactSource::Labs);
+const COUNTS: (FactKind, FactSource) = (FactKind::Listeners, FactSource::ListenBrainz);
 
 impl From<ProviderError> for ListeningError {
     fn from(error: ProviderError) -> Self {
@@ -97,7 +58,7 @@ impl From<ProviderError> for ListeningError {
 }
 
 /// The two outside reads behind the answer.
-pub(super) trait SimilarReads: Send + Sync + 'static {
+pub(crate) trait SimilarReads: Send + Sync + 'static {
     /// How a read fails.
     type Error: From<ProviderError> + std::fmt::Display + Clone + Send + Sync + 'static;
     /// Labs' scored list for one artist, as answered.
@@ -106,7 +67,8 @@ pub(super) trait SimilarReads: Send + Sync + 'static {
         artist_mbid: &'a str,
         priority: RequestPriority,
     ) -> BoxFuture<'a, Result<Vec<ScoredSimilarArtist>, Self::Error>>;
-    /// Listener counts for artists, in as few calls as the batch allows.
+    /// Listener counts for artists, in as few calls as the batch allows,
+    /// sent with no token.
     fn listeners<'a>(
         &'a self,
         artist_mbids: &'a [String],
@@ -121,21 +83,21 @@ pub(super) trait SimilarReads: Send + Sync + 'static {
     fn counts_down(&self) -> bool {
         false
     }
+    /// How long labs reads still rest after a failure, if they do: no list
+    /// read is made meanwhile.
+    fn labs_rest(&self) -> Option<Duration>;
 }
 
 /// The reads straight from the client, for callers outside the listening
-/// data: the artist and album pages, the precache and the Weekly Mix. The
-/// count read lends `lender`'s link.
+/// data: the artist and album pages.
 pub(super) struct ClientReads {
     client: ListenBrainzClient,
-    lender: Lender,
 }
 
 impl ClientReads {
-    pub(super) fn new(client: &ListenBrainzClient, lender: &Lender) -> Arc<Self> {
+    pub(super) fn new(client: &ListenBrainzClient) -> Arc<Self> {
         Arc::new(Self {
             client: client.clone(),
-            lender: lender.clone(),
         })
     }
 }
@@ -157,21 +119,22 @@ impl SimilarReads for ClientReads {
         priority: RequestPriority,
     ) -> BoxFuture<'a, Result<HashMap<String, ArtistPopularity>, ProviderError>> {
         Box::pin(async move {
-            let creds = self.lender.credentials().await;
             self.client
-                .artist_popularity(artist_mbids, &creds, priority)
+                .artist_popularity(artist_mbids, &ListenBrainzCredentials::default(), priority)
                 .await
         })
+    }
+
+    fn labs_rest(&self) -> Option<Duration> {
+        self.client.labs_rest()
     }
 }
 
 /// The reads through the listening network, under an ask's cap and its
-/// turn, so one ask's similar reads go one at a time. The count read lends
-/// `user_id`'s link, and is noted in and held back by the popularity
-/// health.
+/// turn, so one ask's similar reads go one at a time. The count read is
+/// noted in and held back by the popularity health.
 pub(super) struct NetworkReads {
     pub(super) network: Arc<dyn ListeningNetwork>,
-    pub(super) user_id: String,
     pub(super) permits: Option<Arc<Semaphore>>,
     pub(super) turns: Arc<Mutex<()>>,
     pub(super) health: Arc<Health>,
@@ -198,10 +161,7 @@ impl SimilarReads for NetworkReads {
     ) -> BoxFuture<'a, Result<HashMap<String, ArtistPopularity>, ListeningError>> {
         Box::pin(async move {
             let _permit = Ask::permit(self.permits.clone()).await;
-            let counts = self
-                .network
-                .artist_listeners(&self.user_id, artist_mbids, priority)
-                .await;
+            let counts = self.network.artist_listeners(artist_mbids, priority).await;
             self.health.note(&counts, priority);
             counts
         })
@@ -214,10 +174,14 @@ impl SimilarReads for NetworkReads {
     fn counts_down(&self) -> bool {
         self.health.popularity_down()
     }
+
+    fn labs_rest(&self) -> Option<Duration> {
+        self.network.labs_rest()
+    }
 }
 
-/// What an artist the pass no longer asks for answers when nothing is kept.
-fn not_asked() -> ProviderError {
+/// What an artist whose list is not kept answers: "not yet".
+fn not_yet() -> ProviderError {
     ProviderError::Unavailable {
         provider: LABS_SOURCE,
         retry_after: None,
@@ -235,19 +199,188 @@ async fn turn<R: SimilarReads + ?Sized>(reads: &R) -> Option<tokio::sync::MutexG
     }
 }
 
+/// Read labs' list for `artist` and keep it. While labs rests after a
+/// failure no read is made: it answers that rest, and nothing is marked.
+/// Any failure of a read that was made marks the list failed, so it backs
+/// off.
+///
+/// # Errors
+///
+/// The read's failure, or labs' rest; the list kept before stays.
+pub(crate) async fn fetch_list<R: SimilarReads + ?Sized>(
+    facts: &KeptFacts,
+    reads: &R,
+    artist: &str,
+    priority: RequestPriority,
+) -> Result<Kept<Vec<Neighbour>>, R::Error> {
+    if let Some(wait) = reads.labs_rest() {
+        return Err(R::Error::from(labs_resting(wait)));
+    }
+    let answered = match reads.labs(artist, priority).await {
+        Ok(answered) => answered,
+        Err(error) => {
+            if let Err(cause) = facts
+                .keep_failed(LISTS, &[artist.to_owned()], WantOrder::Seed)
+                .await
+            {
+                tracing::warn!(%cause, "a failed similar-artists read went unrecorded");
+            }
+            return Err(error);
+        }
+    };
+    let mut seen = HashSet::new();
+    let rows: Vec<Neighbour> = answered
+        .into_iter()
+        .filter(|row| seen.insert(lower(&row.artist_mbid)))
+        .map(|row| Neighbour {
+            mbid: lower(&row.artist_mbid),
+            name: row.name,
+            score: row.score as f64,
+        })
+        .collect();
+    let fallback = if rows.is_empty() {
+        Kept::Nothing
+    } else {
+        Kept::Found(rows.clone())
+    };
+    Ok(facts
+        .keep_neighbours(artist, rows)
+        .await
+        .unwrap_or_else(|cause| {
+            tracing::warn!(%cause, "a similar-artists list was read but not kept");
+            fallback
+        }))
+}
+
+/// Count `ids` in one read, which the client cuts into its batches, and
+/// keep the counts.
+///
+/// # Errors
+///
+/// The read's failure; the counts kept before stay.
+pub(crate) async fn fetch_counts<R: SimilarReads + ?Sized>(
+    facts: &KeptFacts,
+    reads: &R,
+    ids: &[String],
+    priority: RequestPriority,
+) -> Result<HashMap<String, Counts>, R::Error> {
+    let found = match reads.listeners(ids, priority).await {
+        Ok(found) => found,
+        Err(error) => {
+            if let Err(cause) = facts.keep_failed(COUNTS, ids, WantOrder::Seed).await {
+                tracing::warn!(%cause, "a failed listener count read went unrecorded");
+            }
+            return Err(error);
+        }
+    };
+    let counts: HashMap<String, Counts> = found
+        .into_iter()
+        .map(|(id, counts)| {
+            let counts = Counts {
+                listeners: counts.listeners,
+                listens: counts.listen_count,
+            };
+            (lower(&id), counts)
+        })
+        .collect();
+    if let Err(cause) = facts.keep_listeners(ids, counts.clone()).await {
+        tracing::warn!(%cause, "listener counts were read but not kept");
+    }
+    Ok(counts)
+}
+
+/// The list the provider cache kept before lists were kept facts: one
+/// neighbour as kept there.
+#[derive(Deserialize)]
+struct CarriedNeighbour {
+    mbid: String,
+    name: Option<String>,
+    score: i64,
+}
+
+/// One artist's counts as the provider cache kept them.
+#[derive(Clone, Copy, Deserialize)]
+struct CarriedCounts {
+    listeners: Option<i64>,
+    listens: Option<i64>,
+}
+
+fn carried_list_key(artist: &str) -> CacheKey {
+    CacheKey::new(
+        Source::ListenBrainz,
+        &["labs_similar", SIMILAR_ARTISTS_ALGORITHM, artist],
+    )
+}
+
+fn carried_counts_key(artist: &str) -> CacheKey {
+    CacheKey::new(Source::ListenBrainz, &["artist_listeners", artist])
+}
+
+/// The list the provider cache holds for `artist` from before, kept as a
+/// fact so an upgrade reads nothing again. `None` when it holds none.
+async fn carry_list(
+    cache: &ProviderCacheStore,
+    facts: &KeptFacts,
+    artist: &str,
+) -> Option<Kept<Vec<Neighbour>>> {
+    let carried = cache
+        .peek::<Vec<CarriedNeighbour>>(&carried_list_key(artist))
+        .await?;
+    let rows: Vec<Neighbour> = carried
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| Neighbour {
+            mbid: row.mbid,
+            name: row.name,
+            score: row.score as f64,
+        })
+        .collect();
+    facts
+        .keep_neighbours(artist, rows)
+        .await
+        .map_err(|cause| tracing::warn!(%cause, "a cached similar-artists list was not carried"))
+        .ok()
+}
+
+/// The counts the provider cache holds for `ids` from before, kept as
+/// facts.
+async fn carry_counts(cache: &ProviderCacheStore, facts: &KeptFacts, ids: &[String]) {
+    let keys: Vec<CacheKey> = ids.iter().map(|id| carried_counts_key(id)).collect();
+    let held = cache.peek_many::<CarriedCounts>(&keys).await;
+    let mut asked = Vec::new();
+    let mut found = HashMap::new();
+    for (id, held) in ids.iter().zip(held) {
+        let Some(held) = held else { continue };
+        asked.push(id.clone());
+        if let Some(counts) = held {
+            let counts = Counts {
+                listeners: counts.listeners,
+                listens: counts.listens,
+            };
+            found.insert(id.clone(), counts);
+        }
+    }
+    if !asked.is_empty()
+        && let Err(cause) = facts.keep_listeners(&asked, found).await
+    {
+        tracing::warn!(%cause, "cached listener counts were not carried");
+    }
+}
+
 /// Every neighbour of `artist_mbid`, best first.
 ///
 /// # Errors
 ///
-/// The read's failure when no list is kept to stand in.
+/// "Not yet" when no list is kept, or the read's failure.
 pub(super) async fn neighbours<R: SimilarReads>(
+    facts: &KeptFacts,
     cache: &ProviderCacheStore,
     reads: Arc<R>,
     artist_mbid: &str,
     priority: RequestPriority,
 ) -> Result<Vec<ScoredArtist>, R::Error> {
     let artist = [artist_mbid.to_owned()];
-    neighbours_each(cache, reads, &artist, priority)
+    neighbours_each(facts, cache, reads, &artist, priority)
         .await
         .0
         .pop()
@@ -255,180 +388,205 @@ pub(super) async fn neighbours<R: SimilarReads>(
 }
 
 /// Every neighbour of each of `artist_mbids`, best first, in their order:
-/// one pass. The lists are read one at a time; after the first that fails,
-/// the rest answer only from kept lists. The neighbours of all of them are
-/// counted in one read, which the client cuts into its batches. The flag is
-/// false when a neighbour's count could not be had: the order is then not
-/// one to keep, and the pass notes ListenBrainz as degraded, so no answer
-/// built from it is kept as a good one.
+/// one pass. A list not kept is wanted and answers "not yet", unless a
+/// person waits on the read: then lists are read from labs one at a time,
+/// and after the first that fails the rest answer "not yet". The neighbours
+/// not counted are counted in one read for a person, and wanted otherwise.
+/// The flag is false when a list or a count was not had: the order is then
+/// not one to keep.
 pub(super) async fn neighbours_each<R: SimilarReads>(
+    facts: &KeptFacts,
     cache: &ProviderCacheStore,
     reads: Arc<R>,
     artist_mbids: &[String],
     priority: RequestPriority,
 ) -> (Vec<Result<Vec<ScoredArtist>, R::Error>>, bool) {
-    let mut lists = Vec::with_capacity(artist_mbids.len());
-    let mut failed = false;
-    for artist in artist_mbids {
-        let artist = lower(artist);
-        let found = if failed {
-            match cache.peek::<Vec<Neighbour>>(&list_key(&artist)).await {
-                Some(kept) => Ok(kept.unwrap_or_default()),
-                None => Err(R::Error::from(not_asked())),
-            }
-        } else {
-            list(cache, &reads, &artist, priority).await
-        };
-        failed |= found.is_err();
-        lists.push(found);
-    }
-    let mut seen = HashSet::new();
-    let ids: Vec<String> = lists
+    let now = facts.now();
+    let asked: Vec<String> = artist_mbids.iter().map(|artist| lower(artist)).collect();
+    let mut unique = HashSet::new();
+    let valid: Vec<String> = asked
         .iter()
-        .flatten()
+        .filter(|artist| is_valid_mbid(artist) && unique.insert((*artist).clone()))
+        .cloned()
+        .collect();
+    let mut lists = match facts.neighbours(&valid).await {
+        Ok(lists) => lists,
+        Err(cause) => {
+            tracing::warn!(%cause, "kept similar-artists lists unreadable");
+            HashMap::new()
+        }
+    };
+    let person = priority.is_user_facing();
+    let mut failures: HashMap<String, R::Error> = HashMap::new();
+    let mut stopped = false;
+    for artist in &valid {
+        let looked = lists.entry(artist.clone()).or_insert_with(Looked::missing);
+        if !matches!(looked.kept, Kept::Missing) {
+            continue;
+        }
+        if let Some(kept) = carry_list(cache, facts, artist).await {
+            looked.kept = kept;
+            continue;
+        }
+        if !person || stopped {
+            continue;
+        }
+        let _turn = turn(&*reads).await;
+        // Another read may have kept the list while this one waited.
+        if let Ok(mut again) = facts.neighbours(std::slice::from_ref(artist)).await
+            && let Some(again) = again.remove(artist)
+            && !matches!(again.kept, Kept::Missing)
+        {
+            looked.kept = again.kept;
+            continue;
+        }
+        match fetch_list(facts, &*reads, artist, priority).await {
+            Ok(kept) => looked.kept = kept,
+            Err(error) => {
+                stopped = true;
+                failures.insert(artist.clone(), error);
+            }
+        }
+    }
+
+    let mut seen = HashSet::new();
+    let ids: Vec<String> = valid
+        .iter()
+        .filter_map(|artist| match &lists.get(artist)?.kept {
+            Kept::Found(rows) => Some(rows),
+            _ => None,
+        })
         .flatten()
         .filter(|row| seen.insert(row.mbid.clone()))
         .map(|row| row.mbid.clone())
         .collect();
-    let (counts, counted) = listeners(cache, &*reads, &ids, priority).await;
-    if !counted {
-        record_current(listenbrainz::SOURCE, IntegrationStatus::Degraded, false);
+    let (counts, counted) = listeners(facts, cache, &*reads, &ids, priority).await;
+
+    let mut notes = Notes::default();
+    for artist in &valid {
+        if let Some(looked) = lists.get(artist) {
+            notes.saw(now, (LISTS.0, LISTS.1, WantOrder::Seed), artist, looked);
+        }
     }
-    let ranked = lists
+    for (id, looked) in &counts {
+        notes.saw(now, (COUNTS.0, COUNTS.1, WantOrder::Seed), id, looked);
+    }
+    if let Err(cause) = facts.note(notes).await {
+        tracing::warn!(%cause, "what a similar-artists read saw went unnoted");
+    }
+
+    let counts: HashMap<String, Counts> = counts
         .into_iter()
-        .map(|found| found.map(|rows| rank(rows, &counts)))
-        .collect();
-    (ranked, counted)
-}
-
-/// One artist's kept list, read from labs when none is fresh. Nothing else
-/// is read in its fetch, so a failed count read never stops a good list
-/// being kept.
-async fn list<R: SimilarReads>(
-    cache: &ProviderCacheStore,
-    reads: &Arc<R>,
-    artist: &str,
-    priority: RequestPriority,
-) -> Result<Vec<Neighbour>, R::Error> {
-    if !is_valid_mbid(artist) {
-        return Ok(Vec::new());
-    }
-    let key = list_key(artist);
-    let (store, reads, artist, kept_key) = (
-        cache.clone(),
-        Arc::clone(reads),
-        artist.to_owned(),
-        key.clone(),
-    );
-    let found = cache
-        .get_or_fetch(&key, LISTS, priority, move |priority| async move {
-            let answered = {
-                let _turn = turn(&*reads).await;
-                // Another fetch may have kept the list while this one waited
-                // for its turn: what it kept answers, and is not kept again.
-                if store.fresh(&kept_key).await
-                    && let Some(kept) = store.peek::<Vec<Neighbour>>(&kept_key).await
-                {
-                    return Ok(Fetched::Partial(kept.unwrap_or_default()));
-                }
-                reads.labs(&artist, priority).await?
-            };
-            let mut seen = HashSet::new();
-            let rows: Vec<Neighbour> = answered
-                .into_iter()
-                .filter(|row| seen.insert(lower(&row.artist_mbid)))
-                .map(|row| Neighbour {
-                    mbid: lower(&row.artist_mbid),
-                    name: row.name,
-                    score: row.score,
-                })
-                .collect();
-            if rows.is_empty() {
-                // A retired dataset may answer a known artist with nothing.
-                // The list kept for it is kept again, fresh, so it never ages
-                // out while labs answers nothing for the artist.
-                return Ok(match store.peek::<Vec<Neighbour>>(&kept_key).await {
-                    Some(Some(kept)) if !kept.is_empty() => Fetched::Found(kept),
-                    _ => Fetched::Missing,
-                });
-            }
-            Ok::<_, R::Error>(Fetched::Found(rows))
+        .filter_map(|(id, looked)| match looked.kept {
+            Kept::Found(counts) => Some((id, counts)),
+            _ => None,
         })
-        .await?;
-    Ok(found.unwrap_or_default())
+        .collect();
+    let mut whole = counted;
+    let answers = asked
+        .iter()
+        .map(|artist| {
+            if !is_valid_mbid(artist) {
+                return Ok(Vec::new());
+            }
+            if let Some(error) = failures.get(artist) {
+                whole = false;
+                return Err(error.clone());
+            }
+            match lists.get(artist).map(|looked| &looked.kept) {
+                Some(Kept::Found(rows)) => Ok(rank(rows.clone(), &counts)),
+                Some(Kept::Nothing) => Ok(Vec::new()),
+                _ => {
+                    whole = false;
+                    Err(R::Error::from(not_yet()))
+                }
+            }
+        })
+        .collect();
+    (answers, whole)
 }
 
-/// The counts of `ids`: fresh rows as kept, the rest in one read. While
-/// popularity is down, or when that read fails, every kept count answers,
-/// fresh or stale, and the flag says whether each id had one.
+/// The kept counts of `ids`, the ones kept in the provider cache from
+/// before carried over, and for a person the rest read in one read. The
+/// flag says whether every id has one, a count or "none there".
 async fn listeners<R: SimilarReads + ?Sized>(
+    facts: &KeptFacts,
     cache: &ProviderCacheStore,
     reads: &R,
     ids: &[String],
     priority: RequestPriority,
-) -> (HashMap<String, Listeners>, bool) {
+) -> (HashMap<String, Looked<Counts>>, bool) {
     if ids.is_empty() {
         return (HashMap::new(), true);
     }
-    if !reads.counts_down() {
-        let fetched = cache
-            .fetch_each(ids, listeners_key, COUNTS, |missing| async move {
-                let _turn = turn(reads).await;
-                // Another pass of this ask may have counted some of them
-                // while this one waited for its turn.
-                let (mut counted, missing) =
-                    cache.held_each::<Listeners>(&missing, listeners_key).await;
-                if missing.is_empty() {
-                    return Ok(counted);
-                }
-                let counts = reads.listeners(&missing, priority).await?;
-                counted.extend(
-                    counts
-                        .into_iter()
-                        .map(|(id, counts)| (lower(&id), Listeners::from(counts))),
-                );
-                Ok::<_, R::Error>(counted)
+    let mut counts = match facts.listeners(ids).await {
+        Ok(counts) => counts,
+        Err(cause) => {
+            tracing::warn!(%cause, "kept listener counts unreadable");
+            ids.iter()
+                .map(|id| (id.clone(), Looked::missing()))
+                .collect()
+        }
+    };
+    let missing = |counts: &HashMap<String, Looked<Counts>>| -> Vec<String> {
+        ids.iter()
+            .filter(|id| {
+                counts
+                    .get(*id)
+                    .is_none_or(|looked| matches!(looked.kept, Kept::Missing))
             })
-            .await;
-        match fetched {
-            Ok(found) => return (found, true),
-            Err(error) => tracing::debug!(%error, "listener counts unread; kept counts answer"),
+            .cloned()
+            .collect()
+    };
+    let uncounted = missing(&counts);
+    if !uncounted.is_empty() {
+        carry_counts(cache, facts, &uncounted).await;
+        if let Ok(again) = facts.listeners(&uncounted).await {
+            counts.extend(again);
         }
     }
-    let keys: Vec<CacheKey> = ids.iter().map(|id| listeners_key(id)).collect();
-    let kept = cache.peek_many::<Listeners>(&keys).await;
-    let every_id = kept.iter().all(Option::is_some);
-    let counts = kept
-        .into_iter()
-        .zip(ids)
-        .filter_map(|(kept, id)| Some((id.clone(), kept.flatten()?)))
-        .collect();
-    (counts, every_id)
+    let uncounted = missing(&counts);
+    if !uncounted.is_empty() && priority.is_user_facing() && !reads.counts_down() {
+        let _turn = turn(reads).await;
+        match fetch_counts(facts, reads, &uncounted, priority).await {
+            Ok(_) => {
+                if let Ok(again) = facts.listeners(&uncounted).await {
+                    counts.extend(again);
+                }
+            }
+            Err(error) => {
+                tracing::debug!(%error, "listener counts unread; kept counts answer");
+                record_current(listenbrainz::SOURCE, IntegrationStatus::Degraded, false);
+            }
+        }
+    }
+    let counted = missing(&counts).is_empty();
+    (counts, counted)
 }
 
 /// `rows` best first: counted neighbours by score over listeners to
 /// [`FAME_EXPONENT`], scaled so the best is 1.0, then the uncounted in
 /// score order, scaled below the last counted one. Ties keep labs' order.
-fn rank(rows: Vec<Neighbour>, counts: &HashMap<String, Listeners>) -> Vec<ScoredArtist> {
-    let raw_best = rows.iter().map(|row| row.score).max().unwrap_or(1).max(1) as f64;
+fn rank(rows: Vec<Neighbour>, counts: &HashMap<String, Counts>) -> Vec<ScoredArtist> {
+    let raw_best = rows.iter().map(|row| row.score).fold(1.0_f64, f64::max);
     let mut counted = Vec::new();
     let mut uncounted = Vec::new();
     for row in rows {
         let count = counts.get(&row.mbid).copied();
         match count.and_then(|count| count.listeners) {
             Some(listeners) => {
-                let value = row.score as f64 / (listeners.max(1) as f64).powf(FAME_EXPONENT);
+                let value = row.score / (listeners.max(1) as f64).powf(FAME_EXPONENT);
                 counted.push((value, row, count));
             }
             None => uncounted.push((row, count)),
         }
     }
-    counted.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.score.cmp(&a.1.score)));
-    uncounted.sort_by(|a, b| b.0.score.cmp(&a.0.score));
+    counted.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.score.total_cmp(&a.1.score)));
+    uncounted.sort_by(|a, b| b.0.score.total_cmp(&a.0.score));
     let best = counted.first().map_or(0.0, |(value, _, _)| *value);
     let scaled = |value: f64| if best > 0.0 { value / best } else { 0.0 };
     let floor = counted.last().map_or(1.0, |(value, _, _)| scaled(*value));
-    let shown = |row: Neighbour, score: f64, count: Option<Listeners>| ScoredArtist {
+    let shown = |row: Neighbour, score: f64, count: Option<Counts>| ScoredArtist {
         score,
         artist: ArtistRow {
             name: row.name.unwrap_or_default(),
@@ -441,7 +599,7 @@ fn rank(rows: Vec<Neighbour>, counts: &HashMap<String, Listeners>) -> Vec<Scored
         ranked.push(shown(row, scaled(value), count));
     }
     for (row, count) in uncounted {
-        let score = floor * row.score as f64 / raw_best;
+        let score = floor * row.score / raw_best;
         ranked.push(shown(row, score, count));
     }
     ranked
@@ -450,7 +608,7 @@ fn rank(rows: Vec<Neighbour>, counts: &HashMap<String, Listeners>) -> Vec<Scored
 /// How much of an artist's answer is kept, fresh or stale.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Held {
-    /// No list: a read would ask labs.
+    /// No list, or a neighbour not counted: the refresh job has to read.
     No,
     /// Labs has nothing for the artist.
     Nothing,
@@ -459,68 +617,74 @@ pub(crate) enum Held {
 }
 
 /// How much of `artist_mbid`'s answer is kept. Never dials out.
-pub(crate) async fn held(cache: &ProviderCacheStore, artist_mbid: &str) -> Held {
+pub(crate) async fn held(facts: &KeptFacts, artist_mbid: &str) -> Held {
     let artist = lower(artist_mbid);
     if !is_valid_mbid(&artist) {
         return Held::Nothing;
     }
-    let rows = match cache.peek::<Vec<Neighbour>>(&list_key(&artist)).await {
-        None => return Held::No,
-        Some(None) => return Held::Nothing,
-        Some(Some(rows)) => rows,
-    };
-    let keys: Vec<CacheKey> = rows.iter().map(|row| listeners_key(&row.mbid)).collect();
-    let counted = cache
-        .peek_many::<Listeners>(&keys)
+    let rows = match facts
+        .neighbours(std::slice::from_ref(&artist))
         .await
-        .iter()
-        .all(Option::is_some);
+        .ok()
+        .and_then(|mut lists| lists.remove(&artist))
+        .map(|looked| looked.kept)
+    {
+        Some(Kept::Found(rows)) => rows,
+        Some(Kept::Nothing) => return Held::Nothing,
+        _ => return Held::No,
+    };
+    let ids: Vec<String> = rows.into_iter().map(|row| row.mbid).collect();
+    let counted = facts.listeners(&ids).await.is_ok_and(|counts| {
+        counts
+            .values()
+            .all(|looked| !matches!(looked.kept, Kept::Missing))
+    });
     if counted { Held::Listed } else { Held::No }
 }
 
-/// For a background pass: `artist_mbid`'s list, read from labs when none
-/// is fresh, without counting it. `None` when labs has nothing for the
-/// artist, else the neighbours with no fresh count.
-///
-/// # Errors
-///
-/// The read's failure when no list is kept to stand in.
-pub(crate) async fn warm_list(
+/// Want `artist_mbids`' lists and their neighbours' counts with `order`,
+/// for the refresh job, carrying what the provider cache kept from before.
+/// Never dials out.
+pub(crate) async fn want(
+    facts: &KeptFacts,
     cache: &ProviderCacheStore,
-    client: &ListenBrainzClient,
-    artist_mbid: &str,
-    priority: RequestPriority,
-) -> Result<Option<Vec<String>>, ProviderError> {
-    let reads = ClientReads::new(client, &Lender::Anonymous);
-    let rows = list(cache, &reads, &lower(artist_mbid), priority).await?;
-    if rows.is_empty() {
-        return Ok(None);
-    }
-    let ids: Vec<String> = rows.into_iter().map(|row| row.mbid).collect();
-    let (_, missing) = cache.held_each::<Listeners>(&ids, listeners_key).await;
-    Ok(Some(missing))
-}
-
-/// For a background pass: count `artist_mbids` in as few reads as the
-/// batch allows, lending `lender`'s link. False when the read failed.
-pub(crate) async fn warm_counts(
-    cache: &ProviderCacheStore,
-    client: &ListenBrainzClient,
-    lender: &Lender,
     artist_mbids: &[String],
-    priority: RequestPriority,
-) -> bool {
-    let reads = ClientReads::new(client, lender);
-    cache
-        .fetch_each(artist_mbids, listeners_key, COUNTS, |missing| async move {
-            reads.listeners(&missing, priority).await.map(|counts| {
-                counts
-                    .into_iter()
-                    .map(|(id, counts)| (lower(&id), Listeners::from(counts)))
-                    .collect::<HashMap<_, _>>()
-            })
-        })
-        .await
-        .map_err(|error| tracing::debug!(%error, "precache: listener counts unread"))
-        .is_ok()
+    order: WantOrder,
+) {
+    let now = facts.now();
+    let artists: Vec<String> = artist_mbids
+        .iter()
+        .map(|artist| lower(artist))
+        .filter(|artist| is_valid_mbid(artist))
+        .collect();
+    let Ok(mut lists) = facts.neighbours(&artists).await else {
+        return;
+    };
+    let mut notes = Notes::default();
+    let mut ids = Vec::new();
+    for artist in &artists {
+        let Some(looked) = lists.get_mut(artist) else {
+            continue;
+        };
+        if matches!(looked.kept, Kept::Missing)
+            && let Some(kept) = carry_list(cache, facts, artist).await
+        {
+            looked.kept = kept;
+        }
+        if let Kept::Found(rows) = &looked.kept {
+            ids.extend(rows.iter().map(|row| row.mbid.clone()));
+        }
+        notes.saw(now, (LISTS.0, LISTS.1, order), artist, looked);
+    }
+    if !ids.is_empty() {
+        carry_counts(cache, facts, &ids).await;
+        if let Ok(counts) = facts.listeners(&ids).await {
+            for (id, looked) in &counts {
+                notes.saw(now, (COUNTS.0, COUNTS.1, order), id, looked);
+            }
+        }
+    }
+    if let Err(cause) = facts.note(notes).await {
+        tracing::warn!(%cause, "the precache's similar-artists wants went unnoted");
+    }
 }
