@@ -736,22 +736,32 @@ impl<'c> HeldRows<'c> {
         Ok(())
     }
 
-    /// Whether a download task still has a file held in an open entry: its
-    /// automatic retry waits while it does.
-    pub fn task_holds(&self, task_id: &str) -> rusqlite::Result<bool> {
+    /// Whether a download task has a file of its own held in an open entry.
+    /// For questions about that task's own files: whether its verdict or its
+    /// failure can be closed.
+    pub fn holds_own_file(&self, task_id: &str) -> rusqlite::Result<bool> {
         self.conn
             .query_row(sql::TASK_HOLDS.text(), params![task_id], |row| row.get(0))
     }
 
-    /// The tasks among `task_ids` that still have a file held in an open
-    /// entry.
-    pub fn tasks_holding(&self, task_ids: &[String]) -> rusqlite::Result<HashSet<String>> {
+    /// Whether a download task waits on a file held in an open entry: its
+    /// own, or, once it settled failed or partial, another task's for the
+    /// same ask. Its automatic retry and Wanted wait while it does, and it
+    /// reads as held for review.
+    pub fn ask_holds(&self, task_id: &str) -> rusqlite::Result<bool> {
+        self.conn
+            .query_row(sql::ASK_HOLDS.text(), params![task_id], |row| row.get(0))
+    }
+
+    /// The tasks among `task_ids` that [`Self::ask_holds`] holds, for a
+    /// list of tasks.
+    pub fn asks_holding(&self, task_ids: &[String]) -> rusqlite::Result<HashSet<String>> {
         if task_ids.is_empty() {
             return Ok(HashSet::new());
         }
         let mut statement = self
             .conn
-            .prepare_cached(&sql::tasks_holding(ListLen::new(task_ids.len())))?;
+            .prepare_cached(&sql::asks_holding(ListLen::new(task_ids.len())))?;
         let rows = statement
             .query_map(rusqlite::params_from_iter(task_ids), |row| row.get(0))?
             .collect::<Result<_, _>>()?;

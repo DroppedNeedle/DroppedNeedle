@@ -46383,7 +46383,7 @@
           },
           "held_for_review": {
             "type": "boolean",
-            "description": "Files of this task wait in the held list for a decision."
+            "description": "Files of this task, or of another task for the same ask, wait in\nthe held list for a decision."
           },
           "id": {
             "type": "string"

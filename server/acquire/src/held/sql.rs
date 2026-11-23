@@ -86,12 +86,40 @@ droppedneedle_kernel::sql! {
              release_track_mbid = ?3, recording_mbid = ?4, disc_number = ?5, \
              track_number = ?6, track_title = ?7, expected_duration_seconds = ?8 \
              WHERE id = ?1 AND state = 'held'";
-    /// Whether download task `?1` still has a file held in an open entry.
+    /// Whether download task `?1` has a file of its own held in an open
+    /// entry.
     pub(super) TASK_HOLDS = "SELECT EXISTS (SELECT 1 FROM acquire_held_files f \
              JOIN acquire_held_entries e ON e.id = f.entry_id \
              WHERE f.source_task_id = ?1 AND f.state = 'held' AND e.state IN " + OPEN + ")";
-    /// Tasks among a list that still have a file held in an open entry.
-    family TASKS_HOLDING = tasks_holding;
+    /// Download tasks `t` that wait on a file held in an open entry: their
+    /// own, or, once `t` settled failed or partial, another task's for the
+    /// same ask (owner and track, or owner and album, grouped as the retry
+    /// pass groups them). A copy of a track already held is not held twice,
+    /// so a later task for it owns no held file and waits on the earlier one.
+    /// Upgrades take no part across tasks, either way. The tasks with open
+    /// held files (`h`) are worked out once, from the open entries, and
+    /// each `t` is found by its id, so a user's whole task history is never
+    /// walked; the caller adds the `t.id` condition.
+    pub(super) fragment ASK_HELD = "WITH h AS MATERIALIZED ( \
+               SELECT DISTINCT o.id, o.user_id, o.download_type, o.release_group_mbid, \
+                 COALESCE(o.recording_mbid, '') AS recording, o.origin \
+               FROM acquire_held_entries e \
+               CROSS JOIN acquire_held_files f ON f.entry_id = e.id \
+               CROSS JOIN download_tasks o ON o.id = f.source_task_id \
+               WHERE e.state IN " + OPEN + " AND f.state = 'held') \
+             SELECT t.id FROM download_tasks t \
+             WHERE (EXISTS (SELECT 1 FROM h WHERE h.id = t.id) \
+               OR (t.status IN ('failed', 'partial') AND t.origin != 'upgrade' \
+                 AND EXISTS (SELECT 1 FROM h WHERE h.origin != 'upgrade' \
+                   AND h.user_id = t.user_id AND h.download_type = t.download_type \
+                   AND (t.download_type = 'track' OR h.release_group_mbid = t.release_group_mbid) \
+                   AND h.recording = COALESCE(t.recording_mbid, ''))))";
+    /// Whether download task `?1` waits on a file held in an open entry,
+    /// its own or another task's for the same ask.
+    pub(super) ASK_HOLDS = "SELECT EXISTS (" + ASK_HELD + " AND t.id = ?1)";
+    /// Tasks among a list that wait on a file held in an open entry, their
+    /// own or another task's for the same ask.
+    family ASKS_HOLDING = asks_holding;
     /// Open entries of owner `?1` (NULL for everyone); with `?2`, those of
     /// no user too.
     pub(super) COUNT_OPEN = "SELECT COUNT(*) FROM acquire_held_entries \
@@ -249,12 +277,8 @@ fn marks(len: ListLen) -> String {
     vec!["?"; len.get()].join(", ")
 }
 
-/// Tasks among the list that still have a file held in an open entry.
-pub(super) fn tasks_holding(tasks: ListLen) -> String {
-    format!(
-        "SELECT DISTINCT f.source_task_id FROM acquire_held_files f \
-         JOIN acquire_held_entries e ON e.id = f.entry_id \
-         WHERE f.state = 'held' AND e.state IN {OPEN} AND f.source_task_id IN ({})",
-        marks(tasks)
-    )
+/// Tasks among the list that wait on a file held in an open entry, their
+/// own or another task's for the same ask.
+pub(super) fn asks_holding(tasks: ListLen) -> String {
+    format!("{ASK_HELD} AND t.id IN ({})", marks(tasks))
 }

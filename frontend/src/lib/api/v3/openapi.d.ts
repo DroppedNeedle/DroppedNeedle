@@ -14445,7 +14445,10 @@ export interface components {
             final_path?: string | null;
             /** @description Whether another source may still be tried. */
             has_next_source: boolean;
-            /** @description Files of this task wait in the held list for a decision. */
+            /**
+             * @description Files of this task, or of another task for the same ask, wait in
+             *     the held list for a decision.
+             */
             held_for_review: boolean;
             id: string;
             /**

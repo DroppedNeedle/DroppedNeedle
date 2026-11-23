@@ -98,9 +98,9 @@ impl DownloadWorker {
                     if !still_failed {
                         return Ok(Retried::Nothing);
                     }
-                    // Held tracks gate their task: re-downloading a held
-                    // track loops.
-                    if crate::held::store::HeldRows::new(store.conn()).task_holds(&source.id)? {
+                    // A held file of the ask gates every task for it:
+                    // re-downloading a held track loops.
+                    if crate::held::store::HeldRows::new(store.conn()).ask_holds(&source.id)? {
                         return Ok(Retried::Nothing);
                     }
                     // One live download per album: another one already
@@ -166,8 +166,11 @@ impl DownloadWorker {
                     let still_failed = store
                         .get_task(&source.id)?
                         .is_some_and(|task| task.status == TaskStatus::Failed);
+                    // A held file of the task itself waits for a person;
+                    // another task's held copy does not keep this one open.
                     if !still_failed
-                        || crate::held::store::HeldRows::new(store.conn()).task_holds(&source.id)?
+                        || crate::held::store::HeldRows::new(store.conn())
+                            .holds_own_file(&source.id)?
                         || !store.retry_already_held(&source)?
                     {
                         return Ok(false);

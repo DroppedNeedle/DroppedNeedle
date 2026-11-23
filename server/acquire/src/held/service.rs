@@ -761,7 +761,8 @@ impl HeldService {
             .write("held.discard", move |rows, store| {
                 let moved = rows.resolve(entry_id, &ids, FileState::Discarded, now)?;
                 for task in &tasks {
-                    if !rows.task_holds(task)? {
+                    // The verdict is on this task's own files.
+                    if !rows.holds_own_file(task)? {
                         store.clear_wrong_product_verdict(task)?;
                     }
                 }
@@ -1586,8 +1587,12 @@ impl HeldService {
         }
         let task_id = task.id.clone();
         let probe = task_id.clone();
+        // Only the task's own held files keep it from completing: the
+        // import may have made its album whole.
         match self
-            .read("held.task_holds", move |rows| rows.task_holds(&probe))
+            .read("held.holds_own_file", move |rows| {
+                rows.holds_own_file(&probe)
+            })
             .await
         {
             Ok(false) => {}

@@ -406,6 +406,7 @@ fn auto_retry_sweep_honors_backoff_newest_wins_and_held_gate() {
 
     // A failed upgrade never auto-retries.
     let mut upgrade = new_task("up");
+    upgrade.release_group_mbid = "rg-retry".to_string();
     upgrade.origin = "upgrade".to_string();
     store.insert_task(&upgrade, now - 6000.0).unwrap();
     store
@@ -437,12 +438,15 @@ fn auto_retry_sweep_honors_backoff_newest_wins_and_held_gate() {
             1,
         )
         .unwrap();
-    assert!(held.task_holds("orig-r1").unwrap());
-    assert!(!held.task_holds("orig").unwrap());
+    assert!(held.ask_holds("orig-r1").unwrap());
+    assert!(
+        !held.ask_holds("up").unwrap(),
+        "an upgrade of the album waits on no request's file"
+    );
     held.release(entry, 2).unwrap();
     assert!(held.claim(entry).unwrap());
     assert!(
-        held.task_holds("orig-r1").unwrap(),
+        held.ask_holds("orig-r1").unwrap(),
         "an entry being acted on is open"
     );
 
@@ -454,6 +458,90 @@ fn auto_retry_sweep_honors_backoff_newest_wins_and_held_gate() {
     let upgrade_spawn = plan_retry("up", TaskStatus::Failed, "upgrade", 0).unwrap();
     assert_eq!(upgrade_spawn.origin, DispatchOrigin::Upgrade);
     assert!(plan_retry("live", TaskStatus::Downloading, "user", 0).is_none());
+}
+
+/// A copy of a track already held is not held twice, so a later download
+/// for the same album owns no held file of its own. It waits on the held
+/// one all the same: retrying it would only download another copy into the
+/// same hold.
+#[test]
+fn a_held_track_pauses_later_tasks_for_its_album() {
+    let dir = scratch_dir("held-ask");
+    let conn = scratch_store(&dir);
+    let store = DownloadStore::new(&conn);
+    let now = 1_700_000_000.0;
+    for (id, group, origin, at) in [
+        ("first", "rg-held", "user", now - 9000.0),
+        ("again", "rg-held", "wanted", now - 5000.0),
+        ("elsewhere", "rg-other", "user", now - 5000.0),
+        ("up", "rg-up", "upgrade", now - 9000.0),
+        ("asked", "rg-up", "user", now - 5000.0),
+    ] {
+        let mut task = new_task(id);
+        task.release_group_mbid = group.to_owned();
+        task.origin = origin.to_owned();
+        store.insert_task(&task, at).unwrap();
+        store
+            .transition_task(
+                id,
+                TaskStatus::Failed,
+                at + 100.0,
+                Some(TaskOutcome::new(Reason::TargetOccupied, "occupied")),
+            )
+            .unwrap();
+    }
+    let held = HeldRows::new(&conn);
+    for (group, task) in [("rg-held", "first"), ("rg-up", "up")] {
+        held.hold(
+            &NewEntry {
+                user_id: Some("u1".to_owned()),
+                origin: EntryOrigin::Download,
+                key: GroupKey::Album(group.to_owned()),
+                release_group_mbid: Some(group.to_owned()),
+                recording_mbid: None,
+                drop_item_id: None,
+                artist_name: None,
+                album_title: None,
+            },
+            &[NewFile {
+                source_task_id: Some(task.to_owned()),
+                ..NewFile::new(
+                    HeldRoot::Held,
+                    "01.flac",
+                    Reason::TargetOccupied,
+                    "soulseek",
+                )
+            }],
+            1,
+        )
+        .unwrap();
+    }
+
+    let mut live = new_task("live");
+    live.release_group_mbid = "rg-held".to_owned();
+    store.insert_task(&live, now).unwrap();
+    store
+        .transition_task("live", TaskStatus::Downloading, now, None)
+        .unwrap();
+
+    assert!(held.ask_holds("again").unwrap());
+    assert!(!held.holds_own_file("again").unwrap());
+    assert!(!held.ask_holds("elsewhere").unwrap());
+    assert!(
+        !held.ask_holds("live").unwrap(),
+        "a download still running shows its own state"
+    );
+    assert!(held.ask_holds("up").unwrap(), "an upgrade's own file");
+    assert!(
+        !held.ask_holds("asked").unwrap(),
+        "an upgrade's held file never pauses a request"
+    );
+    let ids = ["again", "elsewhere", "live", "up", "asked"].map(str::to_owned);
+    let holding = held.asks_holding(&ids).unwrap();
+    assert_eq!(
+        holding,
+        ["again", "up"].map(str::to_owned).into_iter().collect()
+    );
 }
 
 /// Quarantine rows expire and clear on a manual retry, and a suspect file

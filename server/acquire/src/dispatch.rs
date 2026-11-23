@@ -184,8 +184,9 @@ pub struct TaskView {
     pub search_job_id: Option<String>,
     /// The candidate picked from that search, once one was.
     pub candidate_index: Option<i64>,
-    /// A file of the task waits in the held list. Read only by
-    /// [`DownloadDispatch::task`]; false elsewhere.
+    /// The task waits on a file in the held list, its own or another
+    /// task's for the same ask. Read only by [`DownloadDispatch::task`];
+    /// false elsewhere.
     pub held_for_review: bool,
 }
 
@@ -393,7 +394,7 @@ impl DownloadDispatch {
             .map_err(DispatchError::from)
     }
 
-    /// One task with whether a file of it waits in the held list, or
+    /// One task with whether it waits on a file in the held list, or
     /// `None` for an unknown id. Read on the read pool.
     pub async fn task(&self, task_id: &str) -> Result<Option<TaskView>, DispatchError> {
         let task_id = task_id.to_owned();

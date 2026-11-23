@@ -136,9 +136,10 @@ impl DownloadStore<'_> {
         })
     }
 
-    /// Whether a file of task `task_id` waits in the held list.
+    /// Whether task `task_id` waits on a file in the held list, its own or
+    /// another task's for the same ask ([`HeldRows::ask_holds`]).
     pub fn task_held(&self, task_id: &str) -> Result<bool, StoreError> {
-        Ok(HeldRows::new(self.conn).task_holds(task_id)?)
+        Ok(HeldRows::new(self.conn).ask_holds(task_id)?)
     }
 
     /// Store one poll's progress on a live task and stamp the poll.
@@ -412,7 +413,8 @@ pub struct TaskFacts {
     pub attempts: i64,
     /// The cleanup-state summary of the attempts.
     pub cleanup_state: Option<String>,
-    /// A file of this task waits in the held list.
+    /// The task waits on a file in the held list, its own or another
+    /// task's for the same ask.
     pub held_for_review: bool,
     /// The newest import decision.
     pub decision: Option<DecisionFacts>,
@@ -503,7 +505,7 @@ impl DownloadStore<'_> {
             }
         }
 
-        for task_id in HeldRows::new(self.conn).tasks_holding(task_ids)? {
+        for task_id in HeldRows::new(self.conn).asks_holding(task_ids)? {
             if let Some(entry) = facts.get_mut(&task_id) {
                 entry.held_for_review = true;
             }

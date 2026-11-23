@@ -168,7 +168,8 @@ pub struct DownloadTaskResponse {
     pub attempt_total: i64,
     /// Whether another source may still be tried.
     pub has_next_source: bool,
-    /// Files of this task wait in the held list for a decision.
+    /// Files of this task, or of another task for the same ask, wait in
+    /// the held list for a decision.
     pub held_for_review: bool,
     pub wrong_product_verdict_at: Option<f64>,
     pub wrong_product_detail: Option<String>,

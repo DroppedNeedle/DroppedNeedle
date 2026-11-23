@@ -31,7 +31,11 @@ use droppedneedle_acquire::flows::{
     stores::{AdminDirectory, LibraryPresence, UpgradeWorklist},
 };
 use droppedneedle_acquire::follows::Follows;
+use droppedneedle_acquire::held::store::{
+    EntryOrigin, FileState, GroupKey, HeldRoot, HeldRows, NewEntry, NewFile,
+};
 use droppedneedle_acquire::plugin_events::FlowTicks;
+use droppedneedle_acquire::reason::Reason;
 use droppedneedle_acquire::requests::{
     ledger::{BeginOutcome, RequestRecord, RequestStatus, WatchState},
     models::{AlbumIntake, RequestKind, RequestOrigin, WaitingReason},
@@ -488,6 +492,55 @@ async fn a_removed_watch_stays_gone_until_the_request_fails_again() {
             .await
             .unwrap()
     );
+    assert_eq!(wanted_tick(NOW, &rig.deps).await.enrolled, 1);
+}
+
+// A failed request whose download left a file in the held list is not
+// watched: another copy would only be held the same way. Once the file is
+// discarded, the request enrols.
+#[tokio::test]
+async fn a_request_with_a_held_file_is_not_watched() {
+    let db = AcquireDb::scratch().unwrap();
+    let rig = wanted(&db).await;
+    seed_task(&db, "t-held", "rg-blue", TaskStatus::Failed).await;
+    seed_request(&rig.deps.ledger, "rg-blue", "failed", Some("t-held")).await;
+    let (entry, file) = db
+        .write("test.hold", |tx| {
+            let (entry, files) = HeldRows::new(tx).hold(
+                &NewEntry {
+                    user_id: Some("user-1".to_owned()),
+                    origin: EntryOrigin::Download,
+                    key: GroupKey::Album("rg-blue".to_owned()),
+                    release_group_mbid: Some("rg-blue".to_owned()),
+                    recording_mbid: None,
+                    drop_item_id: None,
+                    artist_name: None,
+                    album_title: None,
+                },
+                &[NewFile {
+                    source_task_id: Some("t-held".to_owned()),
+                    ..NewFile::new(
+                        HeldRoot::Held,
+                        "01.flac",
+                        Reason::TargetOccupied,
+                        "soulseek",
+                    )
+                }],
+                NOW,
+            )?;
+            Ok((entry, files[0]))
+        })
+        .await
+        .expect("file holds");
+    assert_eq!(wanted_tick(NOW, &rig.deps).await.enrolled, 0);
+
+    let file = file.expect("a new file is held");
+    db.write("test.discard", move |tx| {
+        HeldRows::new(tx).resolve(entry, &[file], FileState::Discarded, NOW)?;
+        Ok(())
+    })
+    .await
+    .expect("file discards");
     assert_eq!(wanted_tick(NOW, &rig.deps).await.enrolled, 1);
 }
 
