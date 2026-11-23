@@ -5243,6 +5243,201 @@
         ]
       }
     },
+    "/api/v3/discover/feedback": {
+      "get": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Everything the caller told Discover that is in effect, newest first.",
+        "operationId": "list_feedback",
+        "responses": {
+          "200": {
+            "description": "The caller's answers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverFeedbackResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The answers could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Record one thing the caller tells Discover about an album or an\nartist; a later answer about the same one replaces it. Every\nrecommending surface leaves out what it hides, and a new deck starts\nbuilding at once.",
+        "operationId": "save_feedback",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The answer as stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverFeedbackEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body, or no id for its target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The answer could not be saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/discover/feedback/{target}/{mbid}": {
+      "delete": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Take back one thing the caller told Discover, so what it hid may come\nback. Answers the same when there was no such answer.",
+        "operationId": "undo_feedback",
+        "parameters": [
+          {
+            "name": "target",
+            "in": "path",
+            "description": "What the answer is about",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeedbackTarget"
+            }
+          },
+          {
+            "name": "mbid",
+            "in": "path",
+            "description": "The album's release-group id or the artist's MusicBrainz id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No such answer is in effect"
+          },
+          "400": {
+            "description": "Not a target or not a MusicBrainz id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The change could not be saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/discover/playlist-suggestions": {
       "post": {
         "tags": [
@@ -5510,187 +5705,6 @@
           },
           "401": {
             "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/discover/queue/ignore": {
-      "post": {
-        "tags": [
-          "discover"
-        ],
-        "summary": "Ignore one release: later decks skip it, and a new deck starts\nbuilding at once.",
-        "operationId": "ignore_queue_item",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/QueueIgnoreRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Release ignored"
-          },
-          "400": {
-            "description": "Bad request body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "The ignore could not be saved",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/discover/queue/ignored": {
-      "get": {
-        "tags": [
-          "discover"
-        ],
-        "summary": "The caller's ignore ledger, newest first.",
-        "operationId": "ignored_releases",
-        "responses": {
-          "200": {
-            "description": "Ignore ledger",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/IgnoredReleasesResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "The ledger could not be read",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "user"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/discover/queue/ignored/{release_group_mbid}": {
-      "delete": {
-        "tags": [
-          "discover"
-        ],
-        "summary": "Take one release off the caller's ignore ledger, so later decks may\nhold it. Answers the same when the caller had not ignored it.",
-        "operationId": "unignore_queue_item",
-        "parameters": [
-          {
-            "name": "release_group_mbid",
-            "in": "path",
-            "description": "MusicBrainz release-group id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Release is not ignored"
-          },
-          "400": {
-            "description": "Not a MusicBrainz id",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "The change could not be saved",
             "content": {
               "application/json": {
                 "schema": {
@@ -43886,6 +43900,114 @@
           }
         }
       },
+      "DiscoverFeedbackEntry": {
+        "type": "object",
+        "description": "One thing a person told Discover, in effect.",
+        "required": [
+          "target",
+          "target_mbid",
+          "kind",
+          "release_group_mbid",
+          "artist_mbid",
+          "release_name",
+          "artist_name",
+          "created_at"
+        ],
+        "properties": {
+          "artist_mbid": {
+            "type": "string",
+            "description": "MusicBrainz artist id, as given; empty when none was."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name, as given."
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was said (unix seconds)."
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When it lapses (unix seconds); null while it holds until undone."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FeedbackKind",
+            "description": "What the person said."
+          },
+          "release_group_mbid": {
+            "type": "string",
+            "description": "MusicBrainz release-group id, as given; empty when none was."
+          },
+          "release_name": {
+            "type": "string",
+            "description": "Album name, as given."
+          },
+          "target": {
+            "$ref": "#/components/schemas/FeedbackTarget",
+            "description": "Whether it is about an album or an artist."
+          },
+          "target_mbid": {
+            "type": "string",
+            "description": "The target's MusicBrainz id, lowercased: the album's release group\nor the artist."
+          }
+        }
+      },
+      "DiscoverFeedbackRequest": {
+        "type": "object",
+        "description": "One thing a person tells Discover: about an album (`no`, `know_it`,\n`not_now`, which need `release_group_mbid`) or an artist\n(`not_artist`, which needs only `artist_mbid`). Names are kept as given\nfor the list.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MusicBrainz id of the artist the album is filed under."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name, for the list."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FeedbackKind",
+            "description": "What the person said."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MusicBrainz release-group id of the album."
+          },
+          "release_name": {
+            "type": "string",
+            "description": "Album name, for the list."
+          }
+        }
+      },
+      "DiscoverFeedbackResponse": {
+        "type": "object",
+        "description": "Everything a person told Discover that is in effect, newest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscoverFeedbackEntry"
+            },
+            "description": "The answers, newest first."
+          }
+        }
+      },
       "DiscoverHealthResponse": {
         "type": "object",
         "description": "Every user's latest discover numbers: counts only, no music named.",
@@ -47660,6 +47782,24 @@
           }
         }
       },
+      "FeedbackKind": {
+        "type": "string",
+        "description": "What a person said.",
+        "enum": [
+          "no",
+          "know_it",
+          "not_now",
+          "not_artist"
+        ]
+      },
+      "FeedbackTarget": {
+        "type": "string",
+        "description": "Whether an answer is about an album or an artist.",
+        "enum": [
+          "album",
+          "artist"
+        ]
+      },
       "FieldMode": {
         "type": "string",
         "description": "Tag-field write mode.",
@@ -49371,56 +49511,6 @@
               "null"
             ],
             "description": "Release MBID, when an exact edition is sealed."
-          }
-        }
-      },
-      "IgnoredRelease": {
-        "type": "object",
-        "description": "One ignored release.",
-        "required": [
-          "release_group_mbid",
-          "artist_mbid",
-          "release_name",
-          "artist_name",
-          "ignored_at"
-        ],
-        "properties": {
-          "artist_mbid": {
-            "type": "string",
-            "description": "MusicBrainz artist id."
-          },
-          "artist_name": {
-            "type": "string",
-            "description": "Artist name."
-          },
-          "ignored_at": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Ignore timestamp (unix seconds)."
-          },
-          "release_group_mbid": {
-            "type": "string",
-            "description": "MusicBrainz release-group id."
-          },
-          "release_name": {
-            "type": "string",
-            "description": "Release name."
-          }
-        }
-      },
-      "IgnoredReleasesResponse": {
-        "type": "object",
-        "description": "The user's ignore ledger.",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/IgnoredRelease"
-            },
-            "description": "Ignored releases, newest first."
           }
         }
       },
@@ -61134,34 +61224,6 @@
           "status": {
             "$ref": "#/components/schemas/QueueBuildStatus",
             "description": "Build state after the trigger."
-          }
-        }
-      },
-      "QueueIgnoreRequest": {
-        "type": "object",
-        "description": "Body ignoring one queue card.",
-        "required": [
-          "release_group_mbid",
-          "artist_mbid",
-          "release_name",
-          "artist_name"
-        ],
-        "properties": {
-          "artist_mbid": {
-            "type": "string",
-            "description": "MusicBrainz artist id behind the card."
-          },
-          "artist_name": {
-            "type": "string",
-            "description": "Artist name for the ignore ledger."
-          },
-          "release_group_mbid": {
-            "type": "string",
-            "description": "MusicBrainz release-group id to ignore."
-          },
-          "release_name": {
-            "type": "string",
-            "description": "Release name for the ignore ledger."
           }
         }
       },

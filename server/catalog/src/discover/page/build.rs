@@ -12,7 +12,8 @@
 //! "seen" set so an artist appears once on the page. Each section builds
 //! under an ask of its own and says how it came out ([`Outcome`]): a read
 //! it needed failing, its own or a shared one, or its bound running out
-//! makes it failed. Album sections are then deduplicated by rank.
+//! makes it failed. Each section about the person leaves out what they
+//! hid ([`Feedback`]), and album sections are then deduplicated by rank.
 //! Ownership is marked when the page is served ([`mark_ownership`]), so a
 //! library change never makes a page wrong.
 
@@ -31,6 +32,7 @@ use droppedneedle_kernel::db::Db;
 use droppedneedle_providers::{ProviderError, TransportKind, listenbrainz};
 
 use crate::discover::cache::Variant;
+use crate::discover::feedback::{self, Feedback};
 use crate::discover::listening::{
     AlbumRow, ArtistRow, Ask, LastFmChartAlbum, ListenSource, ListenedAlbum, ListeningData,
     ListeningError, PlayedArtist, RankedAlbum, ScoredArtist, StatsRange, TAG_PAGE, UserMusic,
@@ -120,8 +122,10 @@ pub struct Builder<'a> {
     /// The build's background priority and its cap on provider calls in
     /// flight, shared by every read the build makes.
     pub ask: Ask,
-    /// The queue tables (ignores, remembered release groups).
+    /// The queue tables (remembered release groups).
     pub queue_db: &'a QueueDb,
+    /// What the person told Discover, read once for the build.
+    pub feedback: &'a Feedback,
     /// Library reads.
     pub library: &'a LibraryReads,
     /// Daily Mix and Top Picks memos.
@@ -592,8 +596,12 @@ impl Builder<'_> {
             let Some((content, failed)) = built.remove(&def.key) else {
                 continue;
             };
-            let section =
-                content.and_then(|content| shelves::section(Page::Discover, def.key, content));
+            let section = content.and_then(|mut content| {
+                if feedback::applies(Page::Discover, def.key) {
+                    self.feedback.filter_content(&mut content);
+                }
+                shelves::section(Page::Discover, def.key, content)
+            });
             let outcome = if failed {
                 let source = input_failure(def)
                     .flatten()
@@ -699,7 +707,7 @@ impl Builder<'_> {
                 .await
                 .map(|picks| SectionContent::Picks { picks }),
             SectionKey::ListenersLikeYou => match ctx.lb_user {
-                Some(username) => one(self.listeners_like_you(user_id, username).await),
+                Some(username) => one(self.listeners_like_you(username).await),
                 None => None,
             },
             SectionKey::WeeklyExploration => match ctx.lb_user {
@@ -1659,15 +1667,7 @@ impl Builder<'_> {
     ) -> (Option<TopPicksSection>, bool) {
         let settings = self.settings.queue.clone();
         let listened = listened_albums(&self.queue_ctx(&settings), user, primary).await;
-        let ignored = self
-            .queue_db
-            .ignored_mbids(user_id)
-            .await
-            .unwrap_or_else(|cause| {
-                tracing::warn!(%cause, "ignored releases unreadable; top picks may show one");
-                HashSet::new()
-            });
-        let exclude: HashSet<String> = listened.union(&ignored).cloned().collect();
+        let exclude: HashSet<String> = listened.union(self.feedback.albums()).cloned().collect();
 
         // Similarity from the reads the Because shelves already made.
         let mut similar: Vec<(String, String, f64, String)> = Vec::new();
@@ -1890,7 +1890,7 @@ impl Builder<'_> {
     }
 
     /// Albums ListenBrainz users with similar taste play this month.
-    async fn listeners_like_you(&self, user_id: &str, username: &str) -> Option<ChartSection> {
+    async fn listeners_like_you(&self, username: &str) -> Option<ChartSection> {
         let names = self
             .listening
             .similar_users(username, &self.ask)
@@ -1903,11 +1903,7 @@ impl Builder<'_> {
         if names.is_empty() {
             return None;
         }
-        let ignored = self
-            .queue_db
-            .ignored_mbids(user_id)
-            .await
-            .unwrap_or_default();
+        let ignored = self.feedback.albums();
         let lists = join_all(names.iter().map(|name| {
             self.listening
                 .user_albums(name, StatsRange::ThisMonth, 15, 0, &self.ask)

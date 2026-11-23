@@ -1316,7 +1316,9 @@ async fn similar_stub() -> (String, Arc<Mutex<HashMap<String, usize>>>) {
 /// source give one order for one artist, with fame divided out (a
 /// neighbour with a lower score and far fewer listeners leads a famous
 /// one, and one with no count comes last). The list and the counts are
-/// each read once: the second ask makes no call.
+/// each read once: the second ask makes no call. Once the person hides an
+/// artist and says no to an album, the artist page and the album page
+/// leave them out.
 #[tokio::test]
 async fn one_similar_answer_leads_every_list_in_one_order() {
     let (origin, hits) = similar_stub().await;
@@ -1444,6 +1446,58 @@ async fn one_similar_answer_leads_every_list_in_one_order() {
     .expect("the Weekly Mix's similar artists");
     let names: Vec<&str> = mix.iter().map(|row| row.artist.name.as_str()).collect();
     assert_eq!(names, RANKED, "the Weekly Mix's source");
+
+    // "Not this artist" on Famous, "no" to Small's album.
+    let at = |name: &str| (0..NEIGHBOURS.len()).find(|at| NEIGHBOURS[*at].0 == name);
+    let famous = neighbour_id(at("Famous").expect("Famous"));
+    let small_album = neighbour_id(at("Small").expect("Small")).replace("9999", "8888");
+    let seed = format!(
+        "INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
+         created_at) VALUES ('user-1', 'artist', '{famous}', 'not_artist', 1), \
+         ('user-1', 'album', '{small_album}', 'no', 1)"
+    );
+    rig.platform
+        .db
+        .write(Lane::Foreground, "test.feedback", move |tx| {
+            tx.execute_batch(&seed)?;
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        })
+        .await
+        .expect("feedback rows");
+    let left_out = |by: Vec<String>, what: &str| {
+        assert!(!by.is_empty(), "{what} still has rows");
+        assert!(
+            by.iter().all(|row| *row != famous && *row != small_album),
+            "{what} leaves out what was hidden: {by:?}"
+        );
+    };
+    let artist_page = catalog
+        .similar_artists("user-1", SEED, 15, None, RequestPriority::UserInitiated)
+        .await
+        .expect("the artist page's similar artists");
+    let names: Vec<&str> = artist_page
+        .similar_artists
+        .iter()
+        .map(|artist| artist.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        ["Cult", "Small", "Middle", "Uncounted"],
+        "the artist page"
+    );
+    let album_page = catalog
+        .similar_albums("user-1", &mbid('a', 1), SEED, 5)
+        .await
+        .expect("the album page's similar albums");
+    left_out(
+        album_page
+            .albums
+            .iter()
+            .flat_map(|album| [album.musicbrainz_id.clone(), album.artist_id.clone()])
+            .flatten()
+            .collect(),
+        "the album page",
+    );
 
     let hits = hits.lock().unwrap();
     assert_eq!(hits.get("/labs/similar-artists/json"), Some(&1), "{hits:?}");
@@ -1655,16 +1709,21 @@ async fn a_failed_count_read_keeps_the_list() {
 
 /// People with nothing linked, on an install where nobody has linked
 /// ListenBrainz, get Missing Essentials from the artist their library holds
-/// most of: its albums they do not have. Two of them asking for that artist
-/// cost one discography read and one count read.
+/// most of: its albums they do not have, less one they said no to. Two of
+/// them asking for that artist cost one discography read and one count
+/// read.
 #[tokio::test]
 async fn people_with_nothing_linked_get_album_cards_for_one_read() {
     let dir = crate::common::ScratchDir::new("discover-unlinked-albums");
     let rig = AuthRig::new("discover-unlinked-albums").await;
     let artist = mbid('e', 1);
+    // Ada said no to one of the missing albums; Bob did not.
+    let passed = mbid('a', 104);
     let mut seed = format!(
         "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
          ('user-1', 'Ada', 'user', 0), ('user-2', 'Bob', 'user', 0); \
+         INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
+         created_at) VALUES ('user-1', 'album', '{passed}', 'no', 1); \
          INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
          updated_at) VALUES ('a1', 'Collected', 'collected', 'group', 1, 1); \
          INSERT INTO local_artist_external_identities (local_artist_id, provider, \
@@ -1732,15 +1791,226 @@ async fn people_with_nothing_linked_get_album_cards_for_one_read() {
 
     let (first, second) = tokio::join!(settled("user-1"), settled("user-2"));
     let missing: Vec<String> = (103..106u8).map(|n| mbid('a', n)).collect();
-    for page in [first, second] {
+    let not_passed: Vec<String> = missing
+        .iter()
+        .filter(|id| **id != passed)
+        .cloned()
+        .collect();
+    for (page, wanted) in [(first, &not_passed), (second, &missing)] {
         let shown: Vec<&str> = content(&page, "missing_essentials")["shelf"]["items"]
             .as_array()
             .into_iter()
             .flatten()
             .filter_map(|item| item["musicbrainz_id"].as_str())
             .collect();
-        assert_eq!(shown, missing, "{page}");
+        assert_eq!(
+            shown, *wanted,
+            "the album Ada passed on is hers alone to miss: {page}"
+        );
     }
     assert_eq!(*script.discography_reads.lock().unwrap(), [artist]);
     assert_eq!(script.count_reads.lock().unwrap().len(), 1);
+}
+
+/// Every album and artist row a served page shows, as (section, kind, id,
+/// artist id): shelves, shelves of several, because shelves, Top Picks.
+fn page_rows(page: &Value) -> Vec<(String, String, String, String)> {
+    let mut rows = Vec::new();
+    let text = |value: &Value| value.as_str().unwrap_or_default().to_owned();
+    for section in page["sections"].as_array().into_iter().flatten() {
+        let key = text(&section["key"]);
+        let content = &section["content"];
+        let mut items: Vec<&Value> = Vec::new();
+        items.extend(content["shelf"]["items"].as_array().into_iter().flatten());
+        for shelf in content["shelves"].as_array().into_iter().flatten() {
+            items.extend(shelf["items"].as_array().into_iter().flatten());
+        }
+        for entry in content["entries"].as_array().into_iter().flatten() {
+            items.extend(entry["section"]["items"].as_array().into_iter().flatten());
+        }
+        for pick in content["picks"]["items"].as_array().into_iter().flatten() {
+            rows.push((
+                key.clone(),
+                "album".to_owned(),
+                text(&pick["album"]["musicbrainz_id"]),
+                text(&pick["album"]["artist_id"]),
+            ));
+        }
+        for item in items {
+            rows.push((
+                key.clone(),
+                text(&item["kind"]),
+                text(&item["musicbrainz_id"]),
+                text(&item["artist_id"]),
+            ));
+        }
+    }
+    rows
+}
+
+/// What a person tells Discover leaves the page they are served at once,
+/// with no rebuild: an album they said no to goes from every section that
+/// held it, and an artist they hid goes from the because shelves and from
+/// every album shelf as a row filed under them, while an album filed under
+/// another artist that only credits them stays. Sections that are not
+/// about the person keep them: the worldwide chart and their own Last.fm
+/// chart. Home's weekly exploration playlist leaves out the hidden
+/// artist's song too.
+#[tokio::test]
+async fn what_a_person_hid_leaves_the_served_page_at_once() {
+    let dir = crate::common::ScratchDir::new("discover-feedback");
+    let rig = AuthRig::new("discover-feedback").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let hidden_artist = mbid('b', 3);
+    let credited = mbid('f', 1);
+    let charted = mbid('c', 1);
+    let scrobbled = mbid('e', 1);
+    let mut script = page_script();
+    script.user.lastfm_username = Some("scrobbler".to_owned());
+    script.user.lastfm = true;
+    script.fresh = vec![AlbumRow {
+        artist_name: "Similar 3 & Friends".to_owned(),
+        ..ranked(90, &credited, 0).album
+    }];
+    script.lastfm_weekly_artists = vec![ArtistRow {
+        name: "Scrobbled".to_owned(),
+        mbid: Some(scrobbled.clone()),
+        listen_count: Some(40),
+    }];
+    let mut weekly = weekly_playlist("2023-12-31T23:00:00+00:00");
+    let mut by_hidden_song = weekly.tracks[0].clone();
+    by_hidden_song.title = "Hidden Song".to_owned();
+    by_hidden_song.artist_mbid = Some(hidden_artist.clone());
+    weekly.tracks.push(by_hidden_song);
+    script.weekly = Some(weekly);
+    let app = discover_routes(discover_deps(&rig, &dir, Providers::closed(), |network| {
+        *network = Arc::new(script);
+    }));
+    call(&app, "GET", "/api/v3/discover", None).await;
+    let built = settled_page(&rig, &app, "the page was built").await;
+    let before = page_rows(&built);
+    let home_weekly = || async {
+        let (_, home) = call(&app, "GET", "/api/v3/home", None).await;
+        content(&home, "weekly_exploration")["weekly"]["tracks"]
+            .as_array()
+            .map(|tracks| {
+                tracks
+                    .iter()
+                    .map(|track| track["title"].as_str().unwrap_or_default().to_owned())
+                    .collect::<Vec<_>>()
+            })
+    };
+    let weekly_before = tokio::time::timeout(crate::common::PATIENCE, async {
+        loop {
+            if let Some(titles) = home_weekly().await {
+                return titles;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("home's weekly playlist was built");
+    assert_eq!(weekly_before, ["Song", "Hidden Song"]);
+
+    // The album the most sections hold.
+    let mut held: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+    for (key, kind, id, _) in &before {
+        if kind == "album" {
+            held.entry(id.clone()).or_default().insert(key.clone());
+        }
+    }
+    let (passed, sections) = held
+        .into_iter()
+        .max_by_key(|(id, sections)| (sections.len(), id.clone()))
+        .expect("the page shows albums");
+    assert!(
+        sections.len() > 1,
+        "an album on several sections: {sections:?}"
+    );
+    let by = |artist: &str, rows: &[(String, String, String, String)]| {
+        rows.iter()
+            .filter(|(_, kind, id, by)| {
+                (kind == "artist" && id == artist) || (kind == "album" && by == artist)
+            })
+            .map(|(key, ..)| key.clone())
+            .collect::<std::collections::HashSet<_>>()
+    };
+    let shown = by(&hidden_artist, &before);
+    assert!(
+        shown.contains("because_you_listen_to") && shown.len() > 1,
+        "the artist is on a because shelf and an album shelf: {shown:?}"
+    );
+    assert!(
+        before
+            .iter()
+            .any(|(key, _, id, artist)| key == "fresh_releases"
+                && *id == mbid('a', 90)
+                && *artist == credited),
+        "the album that only credits them is shown"
+    );
+    let kept = [
+        (charted.clone(), "globally_trending"),
+        (scrobbled.clone(), "lastfm_weekly_artist_chart"),
+    ];
+    for (artist, key) in &kept {
+        assert_eq!(
+            by(artist, &before),
+            [key.to_string()].into(),
+            "shown on {key}"
+        );
+    }
+
+    let ids = [
+        passed.clone(),
+        hidden_artist.clone(),
+        charted.clone(),
+        scrobbled.clone(),
+    ];
+    db.write(Lane::Foreground, "test.feedback", move |tx| {
+        tx.execute(
+            "INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
+             release_group_mbid, created_at) VALUES ('user-1', 'album', ?1, 'no', ?1, 1), \
+             ('user-1', 'artist', ?2, 'not_artist', '', 1), \
+             ('user-1', 'artist', ?3, 'not_artist', '', 1), \
+             ('user-1', 'artist', ?4, 'not_artist', '', 1)",
+            ids,
+        )?;
+        Ok::<_, droppedneedle_kernel::db::DbError>(())
+    })
+    .await
+    .expect("feedback rows");
+    let (_, served) = call(&app, "GET", "/api/v3/discover", None).await;
+    assert_eq!(
+        served["generated_at"], built["generated_at"],
+        "the same build"
+    );
+    let after = page_rows(&served);
+    assert!(
+        after.iter().all(|(_, _, id, _)| *id != passed),
+        "no section holds the album passed on"
+    );
+    assert_eq!(
+        by(&hidden_artist, &after),
+        Default::default(),
+        "no row by the hidden artist"
+    );
+    assert!(
+        after
+            .iter()
+            .any(|(key, _, id, _)| key == "fresh_releases" && *id == mbid('a', 90)),
+        "an album filed under another artist stays"
+    );
+    for (artist, key) in &kept {
+        assert_eq!(
+            by(artist, &after),
+            [key.to_string()].into(),
+            "{key} is not about the person, so it keeps them"
+        );
+    }
+    assert_eq!(
+        home_weekly().await.expect("home's weekly playlist"),
+        ["Song"],
+        "home's weekly playlist leaves out the hidden artist's song"
+    );
 }

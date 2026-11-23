@@ -141,10 +141,10 @@ async fn failures_answer_the_fixed_body_and_an_outage_names_its_service() {
     // A chart ListenBrainz refuses, and a store that fails, both answer 500
     // with the fixed body naming the request id and nothing of the cause.
     // They go first: the outage below rests ListenBrainz for a while.
-    app.seed("DROP TABLE catalog_ignored_releases").await;
+    app.seed("DROP TABLE catalog_discover_feedback").await;
     for (n, uri) in [
         "/api/v3/home/popular/albums?source=listenbrainz",
-        "/api/v3/discover/queue/ignored",
+        "/api/v3/discover/feedback",
     ]
     .into_iter()
     .enumerate()
@@ -172,7 +172,7 @@ async fn failures_answer_the_fixed_body_and_an_outage_names_its_service() {
             }}),
             "{uri}"
         );
-        for marker in LEAK_MARKERS.iter().chain(&["catalog_ignored_releases"]) {
+        for marker in LEAK_MARKERS.iter().chain(&["catalog_discover_feedback"]) {
             assert!(!text.contains(marker), "leaked {marker} on {uri}");
         }
     }

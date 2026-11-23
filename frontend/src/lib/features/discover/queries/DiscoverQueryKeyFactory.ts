@@ -29,7 +29,7 @@ export const DiscoverQueryKeyFactory = {
 		savedDeck: (userId: DiscoverV3UserId) => [...root(userId), 'saved-deck'] as const,
 		queueEnrich: (userId: DiscoverV3UserId, releaseGroupMbid: string) =>
 			[...root(userId), 'queue-enrich', releaseGroupMbid] as const,
-		ignored: (userId: DiscoverV3UserId) => [...root(userId), 'ignored'] as const,
+		feedback: (userId: DiscoverV3UserId) => [...root(userId), 'feedback'] as const,
 		batches: (userId: DiscoverV3UserId) => [...root(userId), 'batches'] as const,
 		batch: (userId: DiscoverV3UserId, batchId: string) =>
 			[...root(userId), 'batch', batchId] as const,
@@ -39,6 +39,11 @@ export const DiscoverQueryKeyFactory = {
 			seedId: string,
 			params: DiscoverV3RadioParams
 		) => [...root(userId), 'radio', seedType, seedId, params] as const,
+		// Every radio shelf, plan and suggestion list, as prefixes.
+		radios: (userId: DiscoverV3UserId) => [...root(userId), 'radio'] as const,
+		radioPlans: (userId: DiscoverV3UserId) => [...root(userId), 'radio-plan'] as const,
+		allPlaylistSuggestions: (userId: DiscoverV3UserId) =>
+			[...root(userId), 'playlist-suggestions'] as const,
 		radioPlan: (userId: DiscoverV3UserId, fingerprint: DiscoverV3RadioPlanFingerprint) =>
 			[...root(userId), 'radio-plan', fingerprint] as const,
 		playlistSuggestions: (userId: DiscoverV3UserId, playlistId: string, count: number) =>

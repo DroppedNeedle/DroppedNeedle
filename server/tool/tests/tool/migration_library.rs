@@ -342,13 +342,19 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     assert_eq!(count("youtube_link"), 1);
     assert_eq!(count("youtube_track_link"), 1);
     assert_eq!(count("ignored_release"), 1);
-    let ignored_at: i64 = db_path.one(
-        "SELECT ignored_at FROM catalog_ignored_releases WHERE release_group_mbid = 'RG-HIDDEN'",
+    let hidden: String = db_path.one(
+        "SELECT user_id || ':' || target || ':' || target_mbid_lower || ':' || kind || ':' || \
+         artist_mbid || ':' || release_name || ':' || artist_name || ':' || created_at || ':' || \
+         expires_at FROM catalog_discover_feedback WHERE release_group_mbid = 'RG-HIDDEN'",
         [],
     );
     assert_eq!(
-        ignored_at, 1_700_000_800_000,
-        "v2 seconds arrive as milliseconds"
+        hidden,
+        format!(
+            "{}:album:rg-hidden:no:artist-hidden:Hidden:Someone:1700000800000:1731536800000",
+            fixture.alice_id
+        ),
+        "a v2 hide lands as a no about the album, in milliseconds, with its year"
     );
 
     // v3 starts on the imported state and scans the carried root.

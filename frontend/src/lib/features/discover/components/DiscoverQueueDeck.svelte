@@ -219,9 +219,9 @@
 		}
 	}
 
-	function handleIgnore() {
+	function handlePass() {
 		deckSampler.stop();
-		void deck.ignoreCurrent();
+		deck.passCurrent();
 	}
 
 	let deckEl = $state<HTMLElement | null>(null);
@@ -616,8 +616,8 @@
 											</Button>
 										{/if}
 
-										<Button variant="danger-ghost" size="sm" icon={X} onclick={handleIgnore}>
-											Not for me
+										<Button variant="danger-ghost" size="sm" icon={X} onclick={handlePass}>
+											No
 										</Button>
 									</div>
 

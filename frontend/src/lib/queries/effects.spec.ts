@@ -44,7 +44,16 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 	newReleasesChanged: [key(U, 'following', 'new-releases-unseen')],
 	concertsChanged: [key(U, 'following', 'concerts-unseen'), key(U, 'following', 'concerts')],
 	wantedChanged: [key(U, 'wanted', 'list')],
-	recommendationsChanged: [key(U, 'discover', 'ignored'), key(U, 'discover', 'home')],
+	recommendationsChanged: [
+		key(U, 'discover', 'feedback'),
+		key(U, 'discover', 'home'),
+		key(U, 'discover', 'radio'),
+		key(U, 'discover', 'radio-plan'),
+		key(U, 'discover', 'playlist-suggestions'),
+		key(U, 'home', 'page'),
+		key(U, 'albums', 'similar'),
+		key(U, 'artist')
+	],
 	artistDuplicatesChanged: [every('library', 'artist-reconciliation')],
 	usersChanged: [key(U, 'auth', 'admin-users')],
 	userImportCandidatesChanged: [key(U, 'auth', 'import', 'job')],

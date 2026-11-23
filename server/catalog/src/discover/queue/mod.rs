@@ -4,9 +4,10 @@
 //! is a row of the page cache, its only copy, so it survives a restart;
 //! it reads as stale once older than a day, and a library change leaves
 //! it alone. The warm scheduler may build decks too, but any request from
-//! the user replaces a warm build that is still running. Ignores are
-//! durable: every later build skips them, and a deck is served without
-//! them, so one built before the ignore never shows the album again.
+//! the user replaces a warm build that is still running. What the user
+//! told Discover ([`feedback`](crate::discover::feedback)) is durable:
+//! every later build skips what it hides, and a deck is served without
+//! it, so one built before the answer never shows the album again.
 //!
 //! A build that met a failed read and found fewer cards of its own than
 //! the deck it would replace keeps that deck, and the next build may start
@@ -30,12 +31,13 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::discover::cache::{PageKind, Saved, Timing, UserPageCache, Variant};
+use crate::discover::feedback::{self, Feedback, FeedbackError, FeedbackTarget};
 use crate::discover::health::{DeckHealth, deck_health, log_deck_health};
 use crate::discover::listening::{Ask, ListeningData};
 use crate::discover::models::{
-    DiscoverQueuePreview, DiscoverQueueStatusResponse, IgnoredRelease, QueueAction,
-    QueueBuildStatus, QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, QueueItemLight,
-    SectionCondition,
+    DiscoverFeedbackEntry, DiscoverFeedbackRequest, DiscoverQueuePreview,
+    DiscoverQueueStatusResponse, QueueAction, QueueBuildStatus, QueueEnrichment,
+    QueueGenerateResponse, QueueItemLight, SectionCondition,
 };
 use crate::discover::ports::{BoxFuture, ProviderFailure, QueueDeck, QueueTrigger};
 use crate::discover::scheduler::{Feature, Warm};
@@ -71,9 +73,10 @@ pub struct QueueSettings {
     /// Whether a user with Last.fm and ListenBrainz both linked gets seed
     /// and similar artists from both.
     pub blend_services: bool,
-    /// Days an ignore is kept.
+    /// Days a hide carried from before typed answers is kept, at most
+    /// its year.
     pub ignored_retention_days: i64,
-    /// How long between ignore-ledger prunes, ms.
+    /// How long between prunes of lapsed answers, ms.
     pub prune_interval_ms: i64,
 }
 
@@ -315,7 +318,7 @@ pub struct QueueInputs {
     pub listening: ListeningData,
     /// The database: the queue tables and the deck rows.
     pub db: Db,
-    /// The kernel clock decks and ignores are dated by.
+    /// The kernel clock decks and answers are dated by.
     pub clock: Arc<dyn Clock>,
     /// Previews behind the cards.
     pub youtube: Arc<LiveYouTube>,
@@ -403,19 +406,14 @@ impl Inner {
         status_of(phase, error, deck.as_ref(), kept_until, self.decks.now_ms())
     }
 
-    /// The user's deck without the albums they ignored: a deck built, or
-    /// still building, when an ignore lands can hold the album.
+    /// The user's deck without what they hid: a deck built, or still
+    /// building, when an answer lands can hold the album.
     async fn current(&self, user_id: &str) -> Option<QueueDeck> {
         let variant = Variant::for_user(&self.listening, user_id).await;
         let mut deck = to_deck(&self.deck(user_id, &variant).await?);
-        match self.db.ignored_mbids(user_id).await {
-            Ok(ignored) => deck
-                .items
-                .retain(|item| !ignored.contains(&item.musicbrainz_id.to_ascii_lowercase())),
-            Err(cause) => {
-                tracing::warn!(%cause, "ignored releases unreadable; the deck is served as built");
-            }
-        }
+        Feedback::load_or_none(self.db.db(), user_id, self.decks.now_ms(), "deck")
+            .await
+            .keep_cards(&mut deck.items);
         Some(deck)
     }
 
@@ -618,7 +616,8 @@ impl Inner {
         }
     }
 
-    /// Drop ignores past their retention, at most once per prune interval.
+    /// Drop answers past their expiry, and carried hides past their
+    /// retention, at most once per prune interval.
     async fn prune_if_due(&self, settings: &QueueSettings) {
         let now = self.decks.now_ms();
         let due = {
@@ -637,10 +636,10 @@ impl Inner {
             return;
         }
         let cutoff = now - settings.ignored_retention_days * 86_400_000;
-        match self.db.prune_ignored(cutoff).await {
+        match feedback::prune(self.db.db(), now, cutoff).await {
             Ok(0) => {}
-            Ok(dropped) => tracing::info!(dropped, "expired queue ignores removed"),
-            Err(cause) => tracing::warn!(%cause, "queue ignores not pruned; trying next build"),
+            Ok(dropped) => tracing::info!(dropped, "lapsed discover answers removed"),
+            Err(cause) => tracing::warn!(%cause, "discover answers not pruned; trying next build"),
         }
     }
 
@@ -740,7 +739,7 @@ impl Inner {
 
 impl LiveQueue {
     /// The user's last built deck, stale or not, when there is one,
-    /// without the albums they ignored.
+    /// without what they hid.
     pub fn current<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Option<QueueDeck>> {
         Box::pin(self.inner.current(user_id))
     }
@@ -769,47 +768,45 @@ impl LiveQueue {
         Box::pin(async move { self.inner.start_build(user_id, trigger).await.0 })
     }
 
-    /// Record one ignored release for the user. Later decks skip it.
-    pub fn ignore_release<'a>(
+    /// Record one answer for the user and return it as stored. Later
+    /// decks skip what it hides.
+    pub fn save_feedback<'a>(
         &'a self,
         user_id: &'a str,
-        release: &'a QueueIgnoreRequest,
+        request: &'a DiscoverFeedbackRequest,
+    ) -> BoxFuture<'a, Result<DiscoverFeedbackEntry, FeedbackError>> {
+        Box::pin(feedback::save(
+            self.inner.db.db(),
+            user_id,
+            request,
+            self.inner.decks.now_ms(),
+        ))
+    }
+
+    /// Take back one of the user's answers. Later decks may hold what it
+    /// hid.
+    pub fn undo_feedback<'a>(
+        &'a self,
+        user_id: &'a str,
+        target: FeedbackTarget,
+        mbid_lower: &'a str,
     ) -> BoxFuture<'a, Result<(), ProviderFailure>> {
         Box::pin(async move {
-            self.inner
-                .db
-                .ignore(user_id, release, self.inner.decks.now_ms())
+            feedback::undo(self.inner.db.db(), user_id, target, mbid_lower)
                 .await
-                .map_err(ProviderFailure::failed)
+                .map_err(|error| ProviderFailure::failed(format!("feedback undo: {error}")))
         })
     }
 
-    /// Remove one ignored release for the user. Later decks may hold it.
-    pub fn unignore_release<'a>(
+    /// The user's answers in effect, newest first.
+    pub fn feedback<'a>(
         &'a self,
         user_id: &'a str,
-        release_group_mbid_lower: &'a str,
-    ) -> BoxFuture<'a, Result<(), ProviderFailure>> {
+    ) -> BoxFuture<'a, Result<Vec<DiscoverFeedbackEntry>, ProviderFailure>> {
         Box::pin(async move {
-            self.inner
-                .db
-                .unignore(user_id, release_group_mbid_lower)
+            feedback::list(self.inner.db.db(), user_id, self.inner.decks.now_ms())
                 .await
-                .map_err(ProviderFailure::failed)
-        })
-    }
-
-    /// The user's ignore ledger, newest first.
-    pub fn ignored<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<IgnoredRelease>, ProviderFailure>> {
-        Box::pin(async move {
-            self.inner
-                .db
-                .ignored(user_id)
-                .await
-                .map_err(ProviderFailure::failed)
+                .map_err(|error| ProviderFailure::failed(format!("feedback read: {error}")))
         })
     }
 

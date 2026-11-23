@@ -18,13 +18,14 @@ use serde::Deserialize;
 use super::{
     models::{
         AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
-        DiscoverActivityRequest, DiscoverActivityResponse, DiscoverHealthResponse,
+        DiscoverActivityRequest, DiscoverActivityResponse, DiscoverFeedbackEntry,
+        DiscoverFeedbackRequest, DiscoverFeedbackResponse, DiscoverHealthResponse,
         DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
-        GenreDetailResponse, HomeResponse, IgnoredReleasesResponse, IntegrationStatus,
-        ListenSource, PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
-        QueueGenerateRequest, QueueGenerateResponse, QueueIgnoreRequest, QueueValidateRequest,
-        QueueValidateResponse, RadioPlanRequest, RadioPlanResponse, RadioRequest, RefreshResponse,
-        StatsRange, TrackPreviewResponse, YouTubeSearchResponse,
+        FeedbackTarget, GenreDetailResponse, HomeResponse, IntegrationStatus, ListenSource,
+        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
+        QueueGenerateRequest, QueueGenerateResponse, QueueValidateRequest, QueueValidateResponse,
+        RadioPlanRequest, RadioPlanResponse, RadioRequest, RefreshResponse, StatsRange,
+        TrackPreviewResponse, YouTubeSearchResponse,
     },
     services::{self, DiscoverDeps},
 };
@@ -378,73 +379,78 @@ pub async fn preview_queue_item(
         .map_err(ApiError::from)
 }
 
-/// Ignore one release: later decks skip it, and a new deck starts
+/// Record one thing the caller tells Discover about an album or an
+/// artist; a later answer about the same one replaces it. Every
+/// recommending surface leaves out what it hides, and a new deck starts
 /// building at once.
 #[utoipa::path(
     post,
     tag = "discover",
-    path = "/api/v3/discover/queue/ignore",
-    request_body = QueueIgnoreRequest,
+    path = "/api/v3/discover/feedback",
+    request_body = DiscoverFeedbackRequest,
     responses(
-        (status = 204, description = "Release ignored"),
-        (status = 400, description = "Bad request body"),
+        (status = 200, description = "The answer as stored", body = DiscoverFeedbackEntry),
+        (status = 400, description = "Bad request body, or no id for its target"),
         (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The ignore could not be saved"),
+        (status = 500, description = "The answer could not be saved"),
         (status = 503, description = "A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known)"),
     )
 )]
-pub async fn ignore_queue_item(
+pub async fn save_feedback(
     State(deps): State<DiscoverDeps>,
     User(user): User,
-    ValidJson(body): ValidJson<QueueIgnoreRequest>,
-) -> Result<StatusCode, ApiError> {
-    services::ignore_queue_item(&deps, user.user_id(), &body)
-        .await
-        .map(|()| StatusCode::NO_CONTENT)
-        .map_err(ApiError::from)
-}
-
-/// The caller's ignore ledger, newest first.
-#[utoipa::path(
-    get,
-    tag = "discover",
-    path = "/api/v3/discover/queue/ignored",
-    responses(
-        (status = 200, description = "Ignore ledger", body = IgnoredReleasesResponse),
-        (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The ledger could not be read"),
-    )
-)]
-pub async fn ignored_releases(
-    State(deps): State<DiscoverDeps>,
-    User(user): User,
-) -> Result<Json<IgnoredReleasesResponse>, ApiError> {
-    services::ignored_releases(&deps, user.user_id())
+    ValidJson(body): ValidJson<DiscoverFeedbackRequest>,
+) -> Result<Json<DiscoverFeedbackEntry>, ApiError> {
+    services::save_feedback(&deps, user.user_id(), &body)
         .await
         .map(Json)
         .map_err(ApiError::from)
 }
 
-/// Take one release off the caller's ignore ledger, so later decks may
-/// hold it. Answers the same when the caller had not ignored it.
+/// Everything the caller told Discover that is in effect, newest first.
+#[utoipa::path(
+    get,
+    tag = "discover",
+    path = "/api/v3/discover/feedback",
+    responses(
+        (status = 200, description = "The caller's answers", body = DiscoverFeedbackResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The answers could not be read"),
+    )
+)]
+pub async fn list_feedback(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+) -> Result<Json<DiscoverFeedbackResponse>, ApiError> {
+    services::list_feedback(&deps, user.user_id())
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+/// Take back one thing the caller told Discover, so what it hid may come
+/// back. Answers the same when there was no such answer.
 #[utoipa::path(
     delete,
     tag = "discover",
-    path = "/api/v3/discover/queue/ignored/{release_group_mbid}",
-    params(("release_group_mbid" = String, Path, description = "MusicBrainz release-group id")),
+    path = "/api/v3/discover/feedback/{target}/{mbid}",
+    params(
+        ("target" = FeedbackTarget, Path, description = "What the answer is about"),
+        ("mbid" = String, Path, description = "The album's release-group id or the artist's MusicBrainz id"),
+    ),
     responses(
-        (status = 204, description = "Release is not ignored"),
-        (status = 400, description = "Not a MusicBrainz id"),
+        (status = 204, description = "No such answer is in effect"),
+        (status = 400, description = "Not a target or not a MusicBrainz id"),
         (status = 401, description = "Not authenticated"),
         (status = 500, description = "The change could not be saved"),
     )
 )]
-pub async fn unignore_queue_item(
+pub async fn undo_feedback(
     State(deps): State<DiscoverDeps>,
     User(user): User,
-    Path(release_group_mbid): Path<String>,
+    Path((target, mbid)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    services::unignore_queue_item(&deps, user.user_id(), &release_group_mbid)
+    services::undo_feedback(&deps, user.user_id(), &target, &mbid)
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(ApiError::from)
@@ -772,9 +778,9 @@ pub fn routes() -> Routes<DiscoverDeps> {
         .user(routes!(queue_generate))
         .user(routes!(enrich_queue_item))
         .user(routes!(preview_queue_item))
-        .user(routes!(ignore_queue_item))
-        .user(routes!(ignored_releases))
-        .user(routes!(unignore_queue_item))
+        .user(routes!(save_feedback))
+        .user(routes!(list_feedback))
+        .user(routes!(undo_feedback))
         .user(routes!(validate_queue))
         .user(routes!(youtube_track_search))
         .user(routes!(track_preview))

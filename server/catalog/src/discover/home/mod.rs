@@ -17,7 +17,9 @@
 //! that is the user's primary source), the user's top albums and loved
 //! tracks, their genres and the weekly exploration playlist. Ownership is
 //! marked and genre tiles get artwork from the collection on every
-//! answer, so a library change shows at once. Each kept build queues a
+//! answer, so a library change shows at once, and the sections about the
+//! person, the discover teaser included, leave out what they told Discover
+//! to hide. Each kept build queues a
 //! background warm of its covers and artist images.
 //!
 //! The sections come from the section list ([`sections`]), in its order.
@@ -36,6 +38,7 @@ use serde::{Deserialize, Serialize};
 
 use super::cache::{PageKind, Timing, UserPageCache, Variant};
 use super::content::IntegrationSettings;
+use super::feedback::Feedback;
 use super::listening::{Ask, ListenSource, ListenedAlbum, ListeningData, StatsRange, UserMusic};
 use super::ownership;
 use super::page::build::{genre_list, weekly_exploration};
@@ -286,7 +289,10 @@ impl LiveHome {
         let started = self.inner.cache.due(user_id, current) && self.start(user_id, variant).await;
         let refreshing = started || self.inner.cache.building(user_id).is_some();
         let status = self.inner.integrations.status();
-        let mut page = self.local(user_id, &music, status, &off).await;
+        let feedback =
+            Feedback::load_or_none(&self.inner.db, user_id, self.inner.cache.now_ms(), "home")
+                .await;
+        let mut page = self.local(user_id, &music, status, &off, &feedback).await;
         if let Some(saved) = saved {
             let mut built = saved.value.sections;
             page.sections = sections::wanted(Page::Home, &off)
@@ -306,6 +312,7 @@ impl LiveHome {
                 })
                 .collect();
         }
+        feedback.filter_sections(Page::Home, &mut page.sections);
         mark_page(&self.inner.db, &mut page).await;
         page.refreshing = refreshing;
         self.apply_artwork(&mut page).await;
@@ -354,7 +361,13 @@ impl LiveHome {
             return None;
         }
         let mut page = self
-            .local(user_id, &music, self.inner.integrations.status(), &off)
+            .local(
+                user_id,
+                &music,
+                self.inner.integrations.status(),
+                &off,
+                &Feedback::default(),
+            )
             .await;
         page.sections.extend(shelves.sections.iter().cloned());
         self.inner.warm.queue("home", warm_targets(&page));
@@ -368,6 +381,7 @@ impl LiveHome {
         music: &UserMusic,
         status: IntegrationStatus,
         off: &HashSet<SectionKey>,
+        feedback: &Feedback,
     ) -> HomeResponse {
         let listenbrainz_on = status.listenbrainz;
         let lastfm_on = status.lastfm;
@@ -411,7 +425,7 @@ impl LiveHome {
             lastfm_on,
             status.lastfm,
         );
-        page.discover_preview = self.discover_preview(user_id).await;
+        page.discover_preview = self.inner.discover.teaser(user_id, feedback).await;
         page
     }
 
@@ -569,11 +583,6 @@ impl LiveHome {
             }
             _ => None,
         }
-    }
-
-    /// The discover teaser, when there is a built discover page.
-    async fn discover_preview(&self, user_id: &str) -> Option<super::models::DiscoverPreview> {
-        self.inner.discover.teaser(user_id).await
     }
 
     async fn apply_artwork(&self, page: &mut HomeResponse) {

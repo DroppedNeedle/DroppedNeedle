@@ -9,16 +9,18 @@ use droppedneedle_providers::ProviderError;
 
 use crate::discover::{
     content::LiveContent,
+    feedback::{self, FeedbackError},
     genre::WithGenrePages,
     models::{
         AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
-        DiscoverActivityResponse, DiscoverHealthResponse, DiscoverQueuePreview,
+        DiscoverActivityResponse, DiscoverFeedbackEntry, DiscoverFeedbackRequest,
+        DiscoverFeedbackResponse, DiscoverHealthResponse, DiscoverQueuePreview,
         DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse, GenreDetailResponse,
-        HomeResponse, IgnoredReleasesResponse, IntegrationStatus, ListenSource,
-        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
-        QueueGenerateRequest, QueueGenerateResponse, QueueIgnoreRequest, QueueValidateRequest,
-        QueueValidateResponse, RadioPlanRequest, RadioPlanResponse, RadioRequest, RadioSeedKind,
-        RefreshResponse, StatsRange, TrackPreviewResponse, YouTubeSearchResponse,
+        HomeResponse, IntegrationStatus, ListenSource, PlaylistSuggestionsRequest,
+        PlaylistSuggestionsResponse, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
+        QueueValidateRequest, QueueValidateResponse, RadioPlanRequest, RadioPlanResponse,
+        RadioRequest, RadioSeedKind, RefreshResponse, StatsRange, TrackPreviewResponse,
+        YouTubeSearchResponse,
     },
     ports::{ProviderFailure, QueueTrigger, RadioFailure},
     previews::LivePreviews,
@@ -95,7 +97,7 @@ fn owned_store_failure(failure: ProviderFailure) -> ServiceError {
 pub struct DiscoverDeps {
     /// Shelf content.
     pub content: Arc<LiveContent>,
-    /// Queue builds and ignore ledger.
+    /// Queue builds and what people told Discover.
     pub queues: Arc<LiveQueue>,
     /// Chart pages and genre detail.
     pub charts: Arc<WithGenrePages>,
@@ -376,50 +378,57 @@ pub async fn preview_queue_item(
     Ok(deps.queues.preview(&mbid).await?)
 }
 
-/// Ignore one release: record it, rebuild the queue without it, and ask
-/// discover to refresh.
-pub async fn ignore_queue_item(
+/// Record one thing the user told Discover, rebuild the queue without
+/// what it hides, and ask discover to refresh. Answers it as stored.
+pub async fn save_feedback(
     deps: &DiscoverDeps,
     user_id: &str,
-    body: &QueueIgnoreRequest,
-) -> Result<(), ServiceError> {
-    checked_release_group(&body.release_group_mbid)?;
-    deps.queues
-        .ignore_release(user_id, body)
+    body: &DiscoverFeedbackRequest,
+) -> Result<DiscoverFeedbackEntry, ServiceError> {
+    let stored = deps
+        .queues
+        .save_feedback(user_id, body)
         .await
-        .map_err(owned_store_failure)?;
+        .map_err(|error| match error {
+            FeedbackError::Invalid(reason) => ServiceError::InvalidInput(reason),
+            FeedbackError::Store(error) => {
+                ServiceError::Internal(format!("feedback save: {error}"))
+            }
+        })?;
     deps.queues
         .start_build(user_id, QueueTrigger::Request { force: true })
         .await;
     deps.content.trigger_refresh(user_id).await?;
-    Ok(())
+    Ok(stored)
 }
 
-/// Take one release off the user's ignore ledger. The current deck stays
-/// as it is: the album can come up in a later one.
-pub async fn unignore_queue_item(
+/// Take back one thing the user told Discover. The current deck stays as
+/// it is: what it hid can come up in a later one.
+pub async fn undo_feedback(
     deps: &DiscoverDeps,
     user_id: &str,
-    release_group_mbid: &str,
+    target: &str,
+    mbid: &str,
 ) -> Result<(), ServiceError> {
-    let release_group = checked_release_group(release_group_mbid)?;
+    let (target, mbid) =
+        feedback::checked_target(target, mbid).map_err(ServiceError::InvalidInput)?;
     deps.queues
-        .unignore_release(user_id, &release_group)
+        .undo_feedback(user_id, target, &mbid)
         .await
         .map_err(owned_store_failure)
 }
 
-/// The user's ignore ledger, newest first.
-pub async fn ignored_releases(
+/// Everything the user told Discover that is in effect, newest first.
+pub async fn list_feedback(
     deps: &DiscoverDeps,
     user_id: &str,
-) -> Result<IgnoredReleasesResponse, ServiceError> {
+) -> Result<DiscoverFeedbackResponse, ServiceError> {
     let items = deps
         .queues
-        .ignored(user_id)
+        .feedback(user_id)
         .await
         .map_err(owned_store_failure)?;
-    Ok(IgnoredReleasesResponse { items })
+    Ok(DiscoverFeedbackResponse { items })
 }
 
 /// The given cards whose albums the library already holds.

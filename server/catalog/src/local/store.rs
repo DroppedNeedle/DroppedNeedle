@@ -50,6 +50,12 @@ impl LocalCatalog {
         }
     }
 
+    /// The database, for a person's Discover answers the catalog pages
+    /// filter by.
+    pub(crate) fn db(&self) -> &Db {
+        &self.db
+    }
+
     /// The totals `key` names at the catalog revision now: remembered from
     /// an earlier page, else counted by `count` in a read named `name`.
     pub(crate) async fn totals<F>(

@@ -3,12 +3,12 @@
  *
  * Load order favours instant paint after source validation: the saved deck,
  * then lightweight server candidates. Only the current and next card hydrate.
- * The queue is consumed-once and changed locally (advance/ignore/jump); every
+ * The queue is consumed-once and changed locally (advance/pass/jump); every
  * change saves the deck through the query cache so a reload resumes it.
  * Coming back to a deck still on screen keeps its cards and place.
  */
 import { isAbortError } from '$lib/utils/errorHandling';
-import { applyEffects, recommendationsChanged } from '$lib/queries/effects';
+import { passOn } from './passLine';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { recordDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
 import {
@@ -18,7 +18,6 @@ import {
 	fetchQueueInLibrary,
 	forgetSavedDeck,
 	generateDiscoverQueue,
-	ignoreQueueItem,
 	markDiscoverQueueConsumed,
 	peekSavedDeck,
 	readSavedDeck,
@@ -414,25 +413,57 @@ function createDiscoverQueueDeck() {
 			persist();
 		},
 
-		async ignoreCurrent(): Promise<void> {
+		/** "No" to the current card: it leaves at once, and the line after it can put it back. */
+		passCurrent(): void {
 			const item = current;
 			if (!item) return;
+			const at = currentIndex;
 			const key = requestKey();
-			let saved = false;
-			try {
-				await ignoreQueueItem({
+			this.removeByMbid(item.musicbrainz_id);
+			void passOn(
+				{
 					releaseGroupMbid: item.musicbrainz_id,
 					artistMbid: item.artist_id,
 					releaseName: item.title,
 					artistName: item.artist_name
-				});
-				saved = true;
-			} catch {
-				// removing it locally is still right even if the ignore write failed
+				},
+				{
+					restore: () => {
+						if (key === requestKey()) this.restore([[item, at]]);
+					},
+					dropArtist: (artistMbid) => {
+						const taken = this.removeByArtist(artistMbid);
+						return () => {
+							if (key === requestKey()) this.restore(taken);
+						};
+					}
+				}
+			);
+		},
+
+		/** Take every card filed under an artist off the deck; answers what went, and where. */
+		removeByArtist(artistMbid: string): [DeckCard, number][] {
+			const artist = artistMbid.toLowerCase();
+			const taken: [DeckCard, number][] = queue
+				.map((card, at): [DeckCard, number] => [card, at])
+				.filter(([card]) => card.artist_id.toLowerCase() === artist);
+			for (const [card] of [...taken].reverse()) this.removeByMbid(card.musicbrainz_id);
+			return taken;
+		},
+
+		/** Put cards back where they were; the first becomes the current one. */
+		restore(cards: [DeckCard, number][]): void {
+			let first: number | null = null;
+			for (const [item, at] of cards) {
+				if (queue.some((card) => card.musicbrainz_id === item.musicbrainz_id)) continue;
+				const index = Math.min(at, queue.length);
+				queue = [...queue.slice(0, index), item, ...queue.slice(index)];
+				first ??= index;
 			}
-			if (key !== requestKey()) return;
-			this.removeByMbid(item.musicbrainz_id);
-			if (saved) await applyEffects(recommendationsChanged(authStore.user?.id));
+			if (first === null) return;
+			currentIndex = first;
+			void enrichWindow();
+			persist();
 		},
 
 		markCurrentRequested(): void {

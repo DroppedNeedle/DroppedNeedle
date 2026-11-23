@@ -1,6 +1,6 @@
 //! Discover's statements: what its pages read from the library, and its own
-//! tables (the page cache, activity, the ignore ledger, the release-group
-//! map and the genres builds learned).
+//! tables (the page cache, activity, what people told Discover, the
+//! release-group map and the genres builds learned).
 
 // `sql!` joins one token per part, so a part built by a definition macro
 // is written in parentheses.
@@ -8,6 +8,8 @@
 
 use droppedneedle_kernel::db::statement::ListLen;
 use droppedneedle_kernel::db::time::Millis;
+
+use super::feedback::{FeedbackKind, FeedbackTarget};
 
 use crate::artwork::local::art_tracks_column;
 use crate::local::sql::{live_album, musicbrainz, owned_album, owned_artist, track_codec};
@@ -647,39 +649,57 @@ droppedneedle_kernel::sql! {
          WHERE user_id = ?3 AND feature = ?4 AND artist_mbid = ?5 \
            AND section = ?6 AND provider = ?7 AND source = ?8";
 
-    // -- the ignore ledger, the release-group map, learned genres ---------------
+    // -- what people told Discover, the release-group map, learned genres -------
 
-    /// Lowercased release-group ids a user ignored.
-    pub(super) IGNORED_MBIDS = "SELECT release_group_mbid_lower FROM catalog_ignored_releases \
-         WHERE user_id = ?1";
-    /// A user's ignore ledger, newest first.
-    pub(super) IGNORED_RELEASES = "SELECT release_group_mbid, artist_mbid, release_name, \
-         artist_name, ignored_at \
-         FROM catalog_ignored_releases WHERE user_id = ?1 ORDER BY ignored_at DESC";
-    pub(super) row IgnoredColumns for [IGNORED_RELEASES] {
+    /// The targets a person's answers hide at a time.
+    pub(super) FEEDBACK_IN_EFFECT = "SELECT target, target_mbid_lower \
+         FROM catalog_discover_feedback \
+         WHERE user_id = ?1 AND (expires_at IS NULL OR expires_at > ?2)";
+    pub(super) row FeedbackTargetColumns for [FEEDBACK_IN_EFFECT] {
+        target: FeedbackTarget,
+        target_mbid_lower: String,
+    }
+    /// A person's answers in effect at a time, newest first.
+    pub(super) FEEDBACK_LIST = "SELECT target, target_mbid_lower, kind, \
+             release_group_mbid, artist_mbid, release_name, artist_name, created_at, \
+             expires_at \
+         FROM catalog_discover_feedback \
+         WHERE user_id = ?1 AND (expires_at IS NULL OR expires_at > ?2) \
+         ORDER BY created_at DESC, target, target_mbid_lower";
+    pub(super) row FeedbackColumns for [FEEDBACK_LIST] {
+        target: FeedbackTarget,
+        target_mbid_lower: String,
+        kind: FeedbackKind,
         release_group_mbid: String,
         artist_mbid: String,
         release_name: String,
         artist_name: String,
-        ignored_at: Millis,
+        created_at: Millis,
+        expires_at: Option<Millis>,
     }
-    /// Record one ignore; again refreshes its names and time.
-    pub(super) IGNORE_RELEASE = "INSERT INTO catalog_ignored_releases (user_id, \
-             release_group_mbid_lower, release_group_mbid, artist_mbid, release_name, \
-             artist_name, ignored_at) \
-         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 \
+    /// Record one answer for a person who still exists; a later answer
+    /// about the same target replaces it.
+    pub(super) SAVE_FEEDBACK = "INSERT INTO catalog_discover_feedback (user_id, target, \
+             target_mbid_lower, kind, release_group_mbid, artist_mbid, release_name, \
+             artist_name, created_at, expires_at) \
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10 \
          WHERE EXISTS (SELECT 1 FROM auth_users WHERE id = ?1) \
-         ON CONFLICT(user_id, release_group_mbid_lower) DO UPDATE SET \
+         ON CONFLICT(user_id, target, target_mbid_lower) DO UPDATE SET \
+             kind = excluded.kind, \
              release_group_mbid = excluded.release_group_mbid, \
              artist_mbid = excluded.artist_mbid, \
              release_name = excluded.release_name, \
              artist_name = excluded.artist_name, \
-             ignored_at = excluded.ignored_at";
-    /// Remove one of a user's ignores.
-    pub(super) UNIGNORE_RELEASE = "DELETE FROM catalog_ignored_releases \
-         WHERE user_id = ?1 AND release_group_mbid_lower = ?2";
-    /// Drop ignores older than a time.
-    pub(super) PRUNE_IGNORED = "DELETE FROM catalog_ignored_releases WHERE ignored_at < ?1";
+             created_at = excluded.created_at, \
+             expires_at = excluded.expires_at";
+    /// Take back one of a person's answers.
+    pub(super) UNDO_FEEDBACK = "DELETE FROM catalog_discover_feedback \
+         WHERE user_id = ?1 AND target = ?2 AND target_mbid_lower = ?3";
+    /// Drop answers past their expiry (?1), and carried hides (?3, with an
+    /// expiry) made before the retention's start (?2).
+    pub(super) PRUNE_FEEDBACK = "DELETE FROM catalog_discover_feedback \
+         WHERE expires_at <= ?1 \
+            OR (kind = ?3 AND expires_at IS NOT NULL AND created_at < ?2)";
     /// Known release to release-group answers.
     family RESOLUTIONS = resolutions;
     pub(super) row ResolutionColumns for family [resolutions] {

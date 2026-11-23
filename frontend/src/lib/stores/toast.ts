@@ -1,11 +1,24 @@
 import { writable } from 'svelte/store';
 
+/** One button on a toast. The toast closes when it runs. */
+export interface ToastAction {
+	label: string;
+	run: () => unknown;
+}
+
 interface Toast {
 	message: string;
+	/** Bold words before the message. */
+	title?: string;
 	type: 'success' | 'error' | 'info' | 'warning';
 	duration?: number;
-	/** One button beside the message, such as Undo. The toast closes when it runs. */
-	action?: { label: string; run: () => unknown };
+	/** One button beside the message, such as Undo. */
+	action?: ToastAction;
+	/**
+	 * A further question after the action and up to three answers to it, as
+	 * in "Undo, or was it: Know it already, Not now".
+	 */
+	choices?: { ask: string; actions: ToastAction[] };
 }
 
 function createToastStore() {

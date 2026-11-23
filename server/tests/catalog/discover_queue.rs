@@ -1,6 +1,7 @@
 //! The discover queue deck end to end over a real database: a background
-//! build from scripted ListenBrainz answers, an ignore that a rebuilt deck
-//! honours, and both the ignore and the deck surviving a restart.
+//! build from scripted ListenBrainz answers, what the person tells
+//! Discover honoured by every deck built or served after it, and both the
+//! answer and the deck surviving a restart.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -67,6 +68,8 @@ pub(crate) struct Script {
     pub lastfm_chart: Vec<ArtistRow>,
     /// The user's Last.fm top artists.
     pub lastfm_user_artists: Vec<ArtistRow>,
+    /// The user's Last.fm weekly artist chart.
+    pub lastfm_weekly_artists: Vec<ArtistRow>,
     /// Last.fm's similar artists, by the asked artist's MBID.
     pub lastfm_similar: HashMap<String, Vec<ScoredArtist>>,
     /// Last.fm's top albums of an artist, by the artist's MBID.
@@ -452,7 +455,7 @@ impl ListeningNetwork for Script {
         _u: &'a str,
         _p: RequestPriority,
     ) -> Answer<'a, Vec<ArtistRow>> {
-        ok(Vec::new())
+        ok(self.lastfm_weekly_artists.clone())
     }
     fn lastfm_weekly_albums<'a>(
         &'a self,
@@ -768,12 +771,15 @@ async fn settled(app: &Router, db: &Db) -> Value {
     .await
 }
 
-async fn ignore(app: &Router, release_group_mbid: &str) {
+/// Tell Discover `kind` about an album by the similar artist; answers the
+/// row as stored.
+async fn tell(app: &Router, kind: &str, release_group_mbid: &str) -> Value {
     let (status, body) = call(
         app,
         "POST",
-        "/api/v3/discover/queue/ignore",
+        "/api/v3/discover/feedback",
         Some(json!({
+            "kind": kind,
             "release_group_mbid": release_group_mbid,
             "artist_mbid": SIMILAR,
             "release_name": "Album",
@@ -781,7 +787,12 @@ async fn ignore(app: &Router, release_group_mbid: &str) {
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+async fn ignore(app: &Router, release_group_mbid: &str) {
+    tell(app, "no", release_group_mbid).await;
 }
 
 fn deck_ids(body: &Value) -> Vec<String> {
@@ -906,8 +917,10 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
 
     // A restart: a new queue over the same database.
     let restarted = queue_app(&rig, &dir, queue_script());
-    let (_, ledger) = call(&restarted, "GET", "/api/v3/discover/queue/ignored", None).await;
-    assert_eq!(ledger["items"][0]["release_group_mbid"], ignored.as_str());
+    let (_, ledger) = call(&restarted, "GET", "/api/v3/discover/feedback", None).await;
+    assert_eq!(ledger["items"][0]["target_mbid"], ignored.as_str());
+    assert_eq!(ledger["items"][0]["kind"], "no");
+    assert_eq!(ledger["items"][0]["expires_at"], Value::Null);
     // The deck reads as ready a moment before its row is written.
     after_commits(&db, "the saved deck reloads", || async {
         let (_, reloaded) = call(&restarted, "GET", "/api/v3/discover/queue/status", None).await;
@@ -1111,19 +1124,19 @@ async fn an_unhidden_album_returns_to_the_queue() {
 
     ignore(&app, &hidden).await;
     deck_once(false).await;
-    let (_, ledger) = call(&app, "GET", "/api/v3/discover/queue/ignored", None).await;
-    assert_eq!(ledger["items"][0]["release_group_mbid"], hidden.as_str());
+    let (_, ledger) = call(&app, "GET", "/api/v3/discover/feedback", None).await;
+    assert_eq!(ledger["items"][0]["target_mbid"], hidden.as_str());
     settled(&app, &db).await;
 
     let (status, body) = call(
         &app,
         "DELETE",
-        &format!("/api/v3/discover/queue/ignored/{hidden}"),
+        &format!("/api/v3/discover/feedback/album/{hidden}"),
         None,
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
-    let (_, ledger) = call(&app, "GET", "/api/v3/discover/queue/ignored", None).await;
+    let (_, ledger) = call(&app, "GET", "/api/v3/discover/feedback", None).await;
     assert_eq!(ledger["items"], json!([]));
 
     let (_, started) = call(
@@ -1136,14 +1149,166 @@ async fn an_unhidden_album_returns_to_the_queue() {
     assert_eq!(started["action"], "started");
     deck_once(true).await;
 
-    let (status, body) = call(
+    for bad in ["album/not-an-mbid", &format!("label/{hidden}")] {
+        let (status, body) = call(
+            &app,
+            "DELETE",
+            &format!("/api/v3/discover/feedback/{bad}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+    }
+}
+
+/// "Not now" hides an album for three months and then lets it back; "not
+/// this artist" takes every card filed under them off the deck served at
+/// once, whichever deck that is, and their albums off radio shelves and
+/// playlist suggestions. The pool is smaller than the deck, so every album
+/// still allowed is always dealt.
+#[tokio::test]
+async fn not_now_lapses_and_not_this_artist_clears_the_deck() {
+    let dir = crate::common::ScratchDir::new("discover-queue-typed");
+    let rig = AuthRig::new("discover-queue-typed").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let full = queue_script();
+    let script = Script {
+        artist_albums: HashMap::from([(
+            SIMILAR.to_owned(),
+            (1..=2)
+                .map(|n| RankedAlbum {
+                    album: album(n, SIMILAR),
+                    listen_count: 0,
+                })
+                .collect(),
+        )]),
+        sitewide_albums: full.sitewide_albums.into_iter().take(1).collect(),
+        ..queue_script()
+    };
+    let app = queue_app(&rig, &dir, script);
+    db.write(Lane::Foreground, "test.playlist", |tx| {
+        tx.execute_batch(&format!(
+            "INSERT INTO catalog_playlists (id, name, created_at, updated_at, user_id) \
+             VALUES ('pl1', 'Mine', 1, 1, 'user-1'); \
+             INSERT INTO catalog_playlist_tracks (id, playlist_id, position, track_name, \
+             artist_name, album_name, artist_id, source_type, created_at) \
+             VALUES ('e1', 'pl1', 0, 'Song', 'Seed', 'Album', '{SEED}', 'jellyfin', 1);"
+        ))?;
+        Ok::<_, droppedneedle_kernel::db::DbError>(())
+    })
+    .await
+    .expect("a playlist of the seed");
+    // The similar artist's albums on a radio shelf of the seed and in the
+    // playlist's suggestions.
+    let by_similar = |app: Router| async move {
+        let (status, radio) = call(
+            &app,
+            "POST",
+            "/api/v3/discover/radio",
+            Some(json!({"seed_type": "artist", "seed_id": SEED})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{radio}");
+        let (status, suggested) = call(
+            &app,
+            "POST",
+            "/api/v3/discover/playlist-suggestions",
+            Some(json!({"playlist_id": "pl1"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{suggested}");
+        [&radio, &suggested["suggestions"]].map(|shelf| {
+            shelf["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|item| item["artist_id"] == SIMILAR)
+                .count()
+        })
+    };
+    let shown = by_similar(app.clone()).await;
+    assert!(shown.iter().all(|count| *count > 0), "{shown:?}");
+    let later = group(11);
+    let deck_once = |wanted: bool| {
+        let (app, db, later) = (&app, &db, &later);
+        async move {
+            after_commits(db, "the deck settled", || async {
+                let (_, status) = call(app, "GET", "/api/v3/discover/queue/status", None).await;
+                if status["status"] != "ready" {
+                    return None;
+                }
+                let (_, deck) = call(app, "GET", "/api/v3/discover/queue", None).await;
+                (deck_ids(&deck).contains(later) == wanted).then_some(())
+            })
+            .await;
+        }
+    };
+    call(
         &app,
-        "DELETE",
-        "/api/v3/discover/queue/ignored/not-an-mbid",
-        None,
+        "POST",
+        "/api/v3/discover/queue/generate",
+        Some(json!({})),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    deck_once(true).await;
+
+    let now = rig.platform.clock.now_ms() / 1000;
+    let told = tell(&app, "not_now", &later).await;
+    assert_eq!(told["target"], "album");
+    let expires = told["expires_at"].as_i64().expect("not now lapses");
+    let days = (expires - now) as f64 / 86_400.0;
+    assert!((89.0..=92.0).contains(&days), "three months: {days} days");
+    deck_once(false).await;
+    settled(&app, &db).await;
+
+    rig.clock().advance((expires - now + 60) * 1000);
+    let (_, ledger) = call(&app, "GET", "/api/v3/discover/feedback", None).await;
+    assert_eq!(ledger["items"], json!([]), "a lapsed answer is not listed");
+    call(
+        &app,
+        "POST",
+        "/api/v3/discover/queue/generate",
+        Some(json!({"force": true})),
+    )
+    .await;
+    deck_once(true).await;
+
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/v3/discover/feedback",
+        Some(json!({"kind": "not_artist", "artist_mbid": SIMILAR, "artist_name": "Similar"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["target"], "artist");
+    assert_eq!(body["expires_at"], Value::Null);
+    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
+    let cards = deck["items"].as_array().expect("items");
+    assert!(!cards.is_empty(), "the chart card stays: {deck}");
+    assert!(
+        cards.iter().all(|card| card["artist_id"] != SIMILAR),
+        "no card by the hidden artist is served: {deck}"
+    );
+    assert_eq!(
+        by_similar(app.clone()).await,
+        [0, 0],
+        "nor on the radio shelf or among the suggestions"
+    );
+
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/v3/discover/feedback",
+        Some(json!({"kind": "not_artist", "release_group_mbid": later})),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "an artist answer names the artist: {body}"
+    );
 }
 
 /// A card whose MusicBrainz read failed is not cached for the day: once

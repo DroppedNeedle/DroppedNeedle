@@ -23,6 +23,10 @@
 //! how it stands (`section_states`): kept, its source down, waiting for a
 //! linked account, thin, empty, or not built yet.
 //!
+//! Every serve, the home teaser's included, leaves out of the sections
+//! about the person what they told Discover to hide ([`Feedback`]), so an
+//! answer shows at once.
+//!
 //! While the advanced settings cannot be read no build starts: visits get
 //! the saved page, and builds resume once the settings are saved again.
 //!
@@ -44,6 +48,7 @@ use serde::{Deserialize, Serialize};
 use crate::artwork::warm::{CoverWarm, WarmTargets};
 use crate::discover::cache::{PageKind, Saved, Timing, UserPageCache, Variant};
 use crate::discover::content::IntegrationSettings;
+use crate::discover::feedback::Feedback;
 use crate::discover::health::{BuildFacts, PageHealth, log_page_health, page_health};
 use crate::discover::listening::{Ask, ListeningData};
 use crate::discover::models::{
@@ -189,10 +194,12 @@ impl DiscoverPages {
     }
 
     /// Home's discover teaser: the first "because you listen to" shelf of
-    /// the user's last built page, without starting a build.
-    pub async fn teaser(&self, user_id: &str) -> Option<DiscoverPreview> {
+    /// the user's last built page, without what `feedback` hides and
+    /// without starting a build.
+    pub async fn teaser(&self, user_id: &str, feedback: &Feedback) -> Option<DiscoverPreview> {
         let variant = Variant::for_user(&self.inner.listening, user_id).await;
-        let saved = self.inner.cache.load(user_id, &variant).await?.value;
+        let mut saved = self.inner.cache.load(user_id, &variant).await?.value;
+        feedback.filter_sections(Page::Discover, &mut saved.page.sections);
         let entry = saved.page.sections.into_iter().find_map(|section| {
             match (section.key, section.content) {
                 (SectionKey::BecauseYouListenTo, SectionContent::Because { entries }) => {
@@ -215,6 +222,17 @@ impl DiscoverPages {
                 })
                 .collect(),
         })
+    }
+
+    /// What the person told Discover, as it stands now.
+    async fn feedback(&self, user_id: &str, surface: &str) -> Feedback {
+        Feedback::load_or_none(
+            self.inner.queue_db.db(),
+            user_id,
+            self.inner.cache.now_ms(),
+            surface,
+        )
+        .await
     }
 
     /// The settings a build reads now. `None` while the advanced settings
@@ -280,10 +298,12 @@ impl DiscoverPages {
         let source = self.inner.listening.source();
         let now = self.inner.cache.now_ms() as f64 / 1000.0;
         let (today, year) = today(now);
+        let feedback = self.feedback(user_id, "discover build").await;
         let builder = Builder {
             listening: &self.inner.listening,
             ask: Ask::build(droppedneedle_providers::RequestPriority::BackgroundSync),
             queue_db: &self.inner.queue_db,
+            feedback: &feedback,
             library: &self.inner.library,
             memo: &self.inner.memo,
             variant,
@@ -404,6 +424,10 @@ impl LiveDiscover {
             Some(saved) => {
                 let mut page = saved.value.page;
                 page.sections.retain(|section| !off.contains(&section.key));
+                self.pages
+                    .feedback(user_id, "discover page")
+                    .await
+                    .filter_sections(Page::Discover, &mut page.sections);
                 // A section switched on since the page was built is being
                 // built while a build runs.
                 let unbuilt: HashSet<SectionKey> = saved.value.skipped.iter().copied().collect();

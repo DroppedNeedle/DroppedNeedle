@@ -582,10 +582,7 @@ const CALLER_KEYED_OPERATIONS: &[(&str, &str)] = &[
     ("GET", "/api/v3/remotes/{source}/connection"),
     ("PUT", "/api/v3/remotes/{source}/connection"),
     ("DELETE", "/api/v3/remotes/{source}/connection"),
-    (
-        "DELETE",
-        "/api/v3/discover/queue/ignored/{release_group_mbid}",
-    ),
+    ("DELETE", "/api/v3/discover/feedback/{target}/{mbid}"),
     ("PUT", "/api/v3/library/albums/{album_id}/looks-wrong"),
 ];
 
@@ -1825,35 +1822,59 @@ async fn caller_keyed_state_stays_with_its_caller() {
         "B's stop ended A's play: {body}"
     );
 
-    // Hidden albums: both hid the same one, and B's un-hide takes only B's.
+    // What each told Discover: both passed on the same album and hid the
+    // same artist, and B's undo takes only B's.
     let hidden_album = "6c5a1c8e-2f0b-4d8a-9b7e-3f1d2c4a5b60";
+    let hidden_artist = "7d6b2d9f-3a1c-4e9b-8c8f-4a2e3d5b6c71";
     for who in [&ada, &bob] {
         app.seed(&format!(
-            "INSERT INTO catalog_ignored_releases (user_id, release_group_mbid_lower, \
-             release_group_mbid, artist_mbid, release_name, artist_name, ignored_at) \
-             VALUES ('{}', '{hidden_album}', '{hidden_album}', '', 'Album', 'Artist', 1000)",
-            who.id
+            "INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
+             release_group_mbid, release_name, artist_name, created_at) \
+             VALUES ('{id}', 'album', '{hidden_album}', 'no', '{hidden_album}', 'Album', \
+             'Artist', 1000), ('{id}', 'artist', '{hidden_artist}', 'not_artist', '', '', \
+             'Artist', 2000)",
+            id = who.id
         ))
         .await;
     }
-    let ledger = "/api/v3/discover/queue/ignored";
-    let unhide = format!("{ledger}/{hidden_album}");
-    let (status, body) = call(&app, &bob, "DELETE", &unhide, None).await;
-    ok(status, &body, "B un-hides");
-    let (status, body) = call(&app, &bob, "GET", ledger, None).await;
-    ok(status, &body, "B reads hidden albums");
-    assert_eq!(body["items"], json!([]), "B's album stays hidden: {body}");
-    let (status, body) = call(&app, &ada, "GET", ledger, None).await;
-    ok(status, &body, "A reads hidden albums");
+    let told = "/api/v3/discover/feedback";
+    let undo_album = format!("{told}/album/{hidden_album}");
+    let undo_artist = format!("{told}/artist/{hidden_artist}");
+    for undo in [&undo_album, &undo_artist] {
+        let (status, body) = call(&app, &bob, "DELETE", undo, None).await;
+        ok(status, &body, "B undoes");
+    }
+    let (status, body) = call(&app, &bob, "GET", told, None).await;
+    ok(status, &body, "B reads what B told Discover");
+    assert_eq!(body["items"], json!([]), "B's answers stay: {body}");
+    let (status, body) = call(&app, &ada, "GET", told, None).await;
+    ok(status, &body, "A reads what A told Discover");
     assert_eq!(
-        body["items"][0]["release_group_mbid"], hidden_album,
-        "B's un-hide took A's: {body}"
+        body["items"].as_array().map(|items| items
+            .iter()
+            .map(|item| item["target_mbid"].clone())
+            .collect()),
+        Some(vec![json!(hidden_artist), json!(hidden_album)]),
+        "B's undo took A's: {body}"
     );
-    let (status, body) = call(&app, &bob, "DELETE", &unhide, None).await;
-    ok(status, &body, "B un-hides again, with nothing left to take");
-    let (status, body) = call(&app, &ada, "GET", ledger, None).await;
-    ok(status, &body, "A reads hidden albums");
-    assert_eq!(body["items"].as_array().map(Vec::len), Some(1), "{body}");
+    let (status, body) = call(&app, &admin, "DELETE", &undo_album, None).await;
+    ok(
+        status,
+        &body,
+        "an admin undoes their own, of which there is none",
+    );
+    let (status, body) = call(&app, &admin, "GET", told, None).await;
+    ok(status, &body, "an admin reads what they told Discover");
+    assert_eq!(
+        body["items"],
+        json!([]),
+        "an admin sees only their own: {body}"
+    );
+    let (status, body) = call(&app, &bob, "DELETE", &undo_album, None).await;
+    ok(status, &body, "B undoes again, with nothing left to take");
+    let (status, body) = call(&app, &ada, "GET", told, None).await;
+    ok(status, &body, "A reads what A told Discover");
+    assert_eq!(body["items"].as_array().map(Vec::len), Some(2), "{body}");
 
     // Remote-server links and folder choices, against the mock Navidrome.
     let navidrome = droppedneedle_testkit::remotes::serve_navidrome()

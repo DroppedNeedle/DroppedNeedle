@@ -1723,6 +1723,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/discover/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Everything the caller told Discover that is in effect, newest first. */
+        get: operations["list_feedback"];
+        put?: never;
+        /**
+         * Record one thing the caller tells Discover about an album or an
+         *     artist; a later answer about the same one replaces it. Every
+         *     recommending surface leaves out what it hides, and a new deck starts
+         *     building at once.
+         */
+        post: operations["save_feedback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/discover/feedback/{target}/{mbid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Take back one thing the caller told Discover, so what it hid may come
+         *     back. Answers the same when there was no such answer.
+         */
+        delete: operations["undo_feedback"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/discover/playlist-suggestions": {
         parameters: {
             query?: never;
@@ -1793,63 +1836,6 @@ export interface paths {
          */
         post: operations["queue_generate"];
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/discover/queue/ignore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ignore one release: later decks skip it, and a new deck starts
-         *     building at once.
-         */
-        post: operations["ignore_queue_item"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/discover/queue/ignored": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** The caller's ignore ledger, newest first. */
-        get: operations["ignored_releases"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/discover/queue/ignored/{release_group_mbid}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Take one release off the caller's ignore ledger, so later decks may
-         *     hold it. Answers the same when the caller had not ignored it.
-         */
-        delete: operations["unignore_queue_item"];
         options?: never;
         head?: never;
         patch?: never;
@@ -13365,6 +13351,59 @@ export interface components {
             /** @description The MusicBrainz source tier the activity was recorded under. */
             source_mode: string;
         };
+        /** @description One thing a person told Discover, in effect. */
+        DiscoverFeedbackEntry: {
+            /** @description MusicBrainz artist id, as given; empty when none was. */
+            artist_mbid: string;
+            /** @description Artist name, as given. */
+            artist_name: string;
+            /**
+             * Format: int64
+             * @description When it was said (unix seconds).
+             */
+            created_at: number;
+            /**
+             * Format: int64
+             * @description When it lapses (unix seconds); null while it holds until undone.
+             */
+            expires_at?: number | null;
+            /** @description What the person said. */
+            kind: components["schemas"]["FeedbackKind"];
+            /** @description MusicBrainz release-group id, as given; empty when none was. */
+            release_group_mbid: string;
+            /** @description Album name, as given. */
+            release_name: string;
+            /** @description Whether it is about an album or an artist. */
+            target: components["schemas"]["FeedbackTarget"];
+            /**
+             * @description The target's MusicBrainz id, lowercased: the album's release group
+             *     or the artist.
+             */
+            target_mbid: string;
+        };
+        /**
+         * @description One thing a person tells Discover: about an album (`no`, `know_it`,
+         *     `not_now`, which need `release_group_mbid`) or an artist
+         *     (`not_artist`, which needs only `artist_mbid`). Names are kept as given
+         *     for the list.
+         */
+        DiscoverFeedbackRequest: {
+            /** @description MusicBrainz id of the artist the album is filed under. */
+            artist_mbid?: string | null;
+            /** @description Artist name, for the list. */
+            artist_name?: string;
+            /** @description What the person said. */
+            kind: components["schemas"]["FeedbackKind"];
+            /** @description MusicBrainz release-group id of the album. */
+            release_group_mbid?: string | null;
+            /** @description Album name, for the list. */
+            release_name?: string;
+        };
+        /** @description Everything a person told Discover that is in effect, newest first. */
+        DiscoverFeedbackResponse: {
+            /** @description The answers, newest first. */
+            items: components["schemas"]["DiscoverFeedbackEntry"][];
+        };
         /** @description Every user's latest discover numbers: counts only, no music named. */
         DiscoverHealthResponse: {
             /** @description Queue decks, one per user. */
@@ -15148,6 +15187,16 @@ export interface components {
             username_display: string;
         };
         /**
+         * @description What a person said.
+         * @enum {string}
+         */
+        FeedbackKind: "no" | "know_it" | "not_now" | "not_artist";
+        /**
+         * @description Whether an answer is about an album or an artist.
+         * @enum {string}
+         */
+        FeedbackTarget: "album" | "artist";
+        /**
          * @description Tag-field write mode.
          * @enum {string}
          */
@@ -15882,27 +15931,6 @@ export interface components {
             release_group_mbid?: string | null;
             /** @description Release MBID, when an exact edition is sealed. */
             release_mbid?: string | null;
-        };
-        /** @description One ignored release. */
-        IgnoredRelease: {
-            /** @description MusicBrainz artist id. */
-            artist_mbid: string;
-            /** @description Artist name. */
-            artist_name: string;
-            /**
-             * Format: int64
-             * @description Ignore timestamp (unix seconds).
-             */
-            ignored_at: number;
-            /** @description MusicBrainz release-group id. */
-            release_group_mbid: string;
-            /** @description Release name. */
-            release_name: string;
-        };
-        /** @description The user's ignore ledger. */
-        IgnoredReleasesResponse: {
-            /** @description Ignored releases, newest first. */
-            items: components["schemas"]["IgnoredRelease"][];
         };
         /** @description Importable accounts on one provider. */
         ImportCandidateListResponse: {
@@ -21272,17 +21300,6 @@ export interface components {
             stale?: boolean | null;
             /** @description Build state after the trigger. */
             status: components["schemas"]["QueueBuildStatus"];
-        };
-        /** @description Body ignoring one queue card. */
-        QueueIgnoreRequest: {
-            /** @description MusicBrainz artist id behind the card. */
-            artist_mbid: string;
-            /** @description Artist name for the ignore ledger. */
-            artist_name: string;
-            /** @description MusicBrainz release-group id to ignore. */
-            release_group_mbid: string;
-            /** @description Release name for the ignore ledger. */
-            release_name: string;
         };
         /** @description One lightweight queue card: the deck renders these before enrichment. */
         QueueItemLight: {
@@ -29837,6 +29854,154 @@ export interface operations {
             };
         };
     };
+    list_feedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's answers */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverFeedbackResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The answers could not be read */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    save_feedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoverFeedbackRequest"];
+            };
+        };
+        responses: {
+            /** @description The answer as stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverFeedbackEntry"];
+                };
+            };
+            /** @description Bad request body, or no id for its target */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The answer could not be saved */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    undo_feedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description What the answer is about */
+                target: components["schemas"]["FeedbackTarget"];
+                /** @description The album's release-group id or the artist's MusicBrainz id */
+                mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No such answer is in effect */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not a target or not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The change could not be saved */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     playlist_suggestions: {
         parameters: {
             query?: never;
@@ -30039,150 +30204,6 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    ignore_queue_item: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["QueueIgnoreRequest"];
-            };
-        };
-        responses: {
-            /** @description Release ignored */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Bad request body */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description The ignore could not be saved */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description A source is down (PROVIDER_UNAVAILABLE names an outside one, with retry_after when known) */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    ignored_releases: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Ignore ledger */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IgnoredReleasesResponse"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description The ledger could not be read */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    unignore_queue_item: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description MusicBrainz release-group id */
-                release_group_mbid: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Release is not ignored */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Not a MusicBrainz id */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description The change could not be saved */
-            500: {
                 headers: {
                     [name: string]: unknown;
                 };

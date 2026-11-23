@@ -13,7 +13,7 @@ import {
 	recommendationsChanged
 } from '$lib/queries/effects';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { discoverQueueDeck } from '$lib/features/discover/state/discoverQueueDeck.svelte';
+import { type FeedbackTarget, undoDiscoverFeedback } from './DiscoverQueueQueries';
 import { toastStore } from '$lib/stores/toast';
 import type {
 	DiscoveryBatchDetailV3,
@@ -23,43 +23,13 @@ import type {
 export type DiscoveryBatchCreateV3 = components['schemas']['DiscoveryBatchCreate'];
 export type DiscoveryBatchRemoveResultV3 = components['schemas']['DiscoveryBatchRemoveResult'];
 
-export interface IgnoreDiscoveryV3Item {
-	releaseGroupMbid: string;
-	artistMbid: string;
-	releaseName: string;
-	artistName: string;
-}
-
-export const createIgnoreDiscoveryV3Mutation = () =>
+/** Takes back one thing the caller told Discover, from the list of them. */
+export const createUndoDiscoverFeedbackMutation = () =>
 	createAppMutation(() => ({
-		mutationFn: (item: IgnoreDiscoveryV3Item) =>
-			api.v3.POST(v3('/api/v3/discover/queue/ignore'), {
-				release_group_mbid: item.releaseGroupMbid,
-				artist_mbid: item.artistMbid,
-				release_name: item.releaseName,
-				artist_name: item.artistName
-			}),
-		onSuccess: (_data, item) => {
-			discoverQueueDeck.removeByMbid(item.releaseGroupMbid);
-			toastStore.show({
-				message: "We'll show fewer recommendations like this.",
-				type: 'info'
-			});
-		},
+		mutationFn: ({ target, mbid }: { target: FeedbackTarget; mbid: string }) =>
+			undoDiscoverFeedback(target, mbid),
 		effects: () => [recommendationsChanged(authStore.user?.id)],
-		onError: () => toastStore.show({ message: "Couldn't save that preference.", type: 'error' })
-	}));
-
-export const createUnhideDiscoveryV3Mutation = () =>
-	createAppMutation(() => ({
-		mutationFn: (releaseGroupMbid: string) =>
-			api.v3.DELETE(
-				v3('/api/v3/discover/queue/ignored/{release_group_mbid}', {
-					path: { release_group_mbid: releaseGroupMbid }
-				})
-			),
-		effects: () => [recommendationsChanged(authStore.user?.id)],
-		onError: () => toastStore.show({ message: "Couldn't un-hide that album.", type: 'error' })
+		onError: () => toastStore.show({ message: "Couldn't undo that.", type: 'error' })
 	}));
 
 export const createRefreshDiscoverV3Mutation = () =>

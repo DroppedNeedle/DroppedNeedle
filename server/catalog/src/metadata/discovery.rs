@@ -35,6 +35,7 @@ use super::models::{
 use super::{Catalog, is_mbid, mb_error, mb_search_error, record_mb_down};
 use crate::artwork::warm::WarmTargets;
 use crate::cache_hold::CacheHold;
+use crate::discover::feedback::Feedback;
 use crate::discover::listening::shared;
 use crate::discover::listening::similar::{self, Held};
 use crate::metadata::library::LocalArtistSong;
@@ -590,15 +591,17 @@ impl Catalog {
             .artist_section(user_id, mbid, count, source, Section::Similar, priority)
             .await?;
         let mut similar = answer.rows.similar;
+        let feedback = self.feedback(user_id).await;
         let mut seen = std::collections::HashSet::new();
         similar.retain(|artist| {
-            seen.insert(
-                artist
-                    .musicbrainz_id
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_ascii_lowercase(),
-            )
+            !feedback.hides_artist_row(artist)
+                && seen.insert(
+                    artist
+                        .musicbrainz_id
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_ascii_lowercase(),
+                )
         });
         let ids: Vec<String> = similar
             .iter()
@@ -954,6 +957,7 @@ impl Catalog {
         let album = checked_mbid(raw_album, "album")?;
         let artist = checked_mbid(raw_artist, "artist")?;
         let preferred = self.upstream().preferred_source(user_id).await;
+        let feedback = self.feedback(user_id).await;
         let mut answered = None;
         for source in [preferred, other_source(preferred)] {
             let found = match source {
@@ -969,6 +973,7 @@ impl Catalog {
             let Some(mut albums) = found else {
                 continue;
             };
+            feedback.keep_albums(&mut albums);
             if !albums.is_empty() {
                 self.flag_discovery_albums(&mut albums).await;
                 return Ok(SimilarAlbumsResponse {
@@ -1353,6 +1358,18 @@ impl Catalog {
             albums,
             artist_name,
         })
+    }
+
+    /// What the person told Discover to hide, which the similar lists
+    /// leave out.
+    async fn feedback(&self, user_id: &str) -> Feedback {
+        Feedback::load_or_none(
+            self.local().db(),
+            user_id,
+            self.upstream().users().clock.now_ms(),
+            "similar lists",
+        )
+        .await
     }
 
     async fn flag_discovery_albums(&self, albums: &mut [AlbumRef]) {

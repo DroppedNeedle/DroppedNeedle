@@ -7,7 +7,9 @@
 //! library holds point at the local file, so they play straight away. When
 //! the user has asked for it and holds the standing grant (admins and
 //! trusted users always do; everyone else needs an admin's approval), up to
-//! five missing albums per build are requested.
+//! five missing albums per build are requested. The top-up and the requests
+//! leave out what the user told Discover to hide; while that cannot be
+//! read, nothing is requested.
 //!
 //! A build is skipped, with a stable reason, when the user has no
 //! ListenBrainz link, the mix is less than six days old (ListenBrainz
@@ -29,6 +31,7 @@ use super::service::RequestsService;
 
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_catalog::collections::store::playlists::{NewEntry, PlaylistStore, Written};
+use droppedneedle_catalog::discover::feedback::Feedback;
 use droppedneedle_catalog::metadata::library::LocalCatalog;
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::db::statement::ListLen;
@@ -408,12 +411,25 @@ impl PersonalMixBuilder {
             .into_iter()
             .collect();
 
+        let feedback = Feedback::load(
+            self.requests.library.db(),
+            user_id,
+            self.requests.library.clock().now_ms(),
+        )
+        .await
+        .inspect_err(|error| {
+            tracing::warn!(%error, user_id, "personal mix: discover answers unreadable; requesting nothing");
+        });
+
         let mut mix = self.recommended_tracks(&creds, &owned).await;
         let seeds = pick_seed_artists(&mix);
         if !seeds.is_empty() && mix.len() < TRACK_CAP {
-            let top_up = self
+            let mut top_up = self
                 .similar_artist_tracks(user_id, &creds, &seeds, &mix, &owned)
                 .await;
+            if let Ok(feedback) = &feedback {
+                top_up.retain(|track| !hidden(feedback, track));
+            }
             mix.extend(top_up);
         }
         mix.truncate(TRACK_CAP);
@@ -428,12 +444,15 @@ impl PersonalMixBuilder {
         let playlist_id = self
             .write_playlist(existing, user_id, &source_ref, &mix)
             .await?;
-        let requested = if self.prefs.prefs(user_id).await.auto_request_personal_mix
-            && self.granted(user_id, role).await?
-        {
-            self.request_missing(user_id, role, name, &mix).await
-        } else {
-            0
+        let requested = match &feedback {
+            Ok(feedback)
+                if self.prefs.prefs(user_id).await.auto_request_personal_mix
+                    && self.granted(user_id, role).await? =>
+            {
+                self.request_missing(user_id, role, name, &mix, feedback)
+                    .await
+            }
+            _ => 0,
         };
         Ok(MixOutcome {
             playlist_id: Some(playlist_id),
@@ -738,14 +757,15 @@ impl PersonalMixBuilder {
     }
 
     /// Request up to [`MAX_AUTO_REQUESTS`] missing albums under the
-    /// standing grant. A quota or storage refusal ends the walk: every
-    /// further ask would be refused the same way.
+    /// standing grant, never one the user hid. A quota or storage refusal
+    /// ends the walk: every further ask would be refused the same way.
     async fn request_missing(
         &self,
         user_id: &str,
         role: Role,
         name: Option<String>,
         mix: &[MixTrack],
+        feedback: &Feedback,
     ) -> u32 {
         let service = RequestsService::new(&self.requests);
         let principal = Principal::acting_for(user_id, role, name);
@@ -755,7 +775,10 @@ impl PersonalMixBuilder {
             if requested as usize >= MAX_AUTO_REQUESTS {
                 break;
             }
-            if track.in_library || !seen.insert(track.release_group_mbid.as_str()) {
+            if track.in_library
+                || hidden(feedback, track)
+                || !seen.insert(track.release_group_mbid.as_str())
+            {
                 continue;
             }
             let intake = AlbumIntake {
@@ -805,6 +828,14 @@ impl PersonalMixBuilder {
             .map_err(|error| RequestsError::internal(&error))?;
         Ok(row.map(|(role, name)| (Role::from_stored(&role), name)))
     }
+}
+
+/// Whether the user told Discover to hide the track's album or artist.
+fn hidden(feedback: &Feedback, track: &MixTrack) -> bool {
+    feedback.hides_album(
+        Some(&track.release_group_mbid),
+        track.artist_mbid.as_deref(),
+    )
 }
 
 /// The first distinct artist MBIDs, in mix order.

@@ -3,6 +3,7 @@
 	import { ChevronLeft, ChevronRight, Sparkles, ThumbsDown } from 'lucide-svelte';
 	import { fly } from '$lib/ui/motion';
 	import type { TopPickItem, TopPicksSection } from '$lib/features/discover/queries/types';
+	import type { PassActions } from '$lib/features/discover/state/passLine';
 	import { SvelteSet } from 'svelte/reactivity';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import AlbumRequestButton from '$lib/features/requests/components/AlbumRequestButton.svelte';
@@ -21,16 +22,16 @@
 	interface Props {
 		section: TopPicksSection;
 		updating?: boolean;
-		onignore?: (pick: TopPickItem) => Promise<void>;
+		/** "No" to a pick, which has left the deck; `actions` take it and its artist away and back. */
+		onpass?: (pick: TopPickItem, actions: PassActions) => void;
 	}
 
-	let { section, updating = false, onignore }: Props = $props();
+	let { section, updating = false, onpass }: Props = $props();
 
 	let featuredIndex = $state(0);
 	let slideDirection = $state(1);
 
 	const dismissed = new SvelteSet<string>();
-	let dismissing = $state(false);
 	const picks = $derived(
 		section.items.filter(
 			(pick) => !pick.album.musicbrainz_id || !dismissed.has(pick.album.musicbrainz_id)
@@ -57,19 +58,25 @@
 		featuredIndex = index;
 	}
 
-	async function ignoreFeatured() {
-		if (!featured?.album.musicbrainz_id || !featured.album.artist_id || !onignore || dismissing)
-			return;
-		dismissing = true;
-		try {
-			await onignore(featured);
-			dismissed.add(featured.album.musicbrainz_id);
-			featuredIndex = 0;
-		} catch {
-			return;
-		} finally {
-			dismissing = false;
-		}
+	function passFeatured() {
+		const mbid = featured?.album.musicbrainz_id;
+		if (!featured || !mbid || !onpass) return;
+		dismissed.add(mbid);
+		featuredIndex = 0;
+		onpass(featured, {
+			restore: () => dismissed.delete(mbid),
+			dropArtist: (artistMbid) => {
+				const artist = artistMbid.toLowerCase();
+				const taken = picks
+					.filter((pick) => pick.album.artist_id?.toLowerCase() === artist)
+					.flatMap((pick) => (pick.album.musicbrainz_id ? [pick.album.musicbrainz_id] : []));
+				for (const id of taken) dismissed.add(id);
+				featuredIndex = 0;
+				return () => {
+					for (const id of taken) dismissed.delete(id);
+				};
+			}
+		});
 	}
 
 	const RING_R = 26;
@@ -231,16 +238,15 @@
 									label="Start radio"
 								/>
 							{/if}
-							{#if onignore && featured.album.musicbrainz_id && featured.album.artist_id}
+							{#if onpass && featured.album.musicbrainz_id}
 								<Button
 									variant="ghost"
 									size="sm"
 									icon={ThumbsDown}
-									disabled={dismissing}
-									title="Show fewer recommendations like this"
-									onclick={() => void ignoreFeatured()}
+									title="No"
+									onclick={passFeatured}
 								>
-									<span class="hidden sm:inline">Not for me</span>
+									<span class="hidden sm:inline">No</span>
 								</Button>
 							{/if}
 						</div>

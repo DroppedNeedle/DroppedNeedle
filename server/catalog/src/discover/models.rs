@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+pub use super::feedback::{FeedbackKind, FeedbackTarget};
 pub use super::health::{DeckHealth, PageHealth};
 pub use super::sections::{SectionKey, SectionZone};
 pub use crate::metadata::models::{AlbumRef, ArtistRef};
@@ -881,39 +882,58 @@ pub struct DiscoverQueuePreview {
     pub youtube_search_url: Option<String>,
 }
 
-/// Body ignoring one queue card.
+/// One thing a person tells Discover: about an album (`no`, `know_it`,
+/// `not_now`, which need `release_group_mbid`) or an artist
+/// (`not_artist`, which needs only `artist_mbid`). Names are kept as given
+/// for the list.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct QueueIgnoreRequest {
-    /// MusicBrainz release-group id to ignore.
-    pub release_group_mbid: String,
-    /// MusicBrainz artist id behind the card.
-    pub artist_mbid: String,
-    /// Release name for the ignore ledger.
+pub struct DiscoverFeedbackRequest {
+    /// What the person said.
+    pub kind: FeedbackKind,
+    /// MusicBrainz release-group id of the album.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_group_mbid: Option<String>,
+    /// MusicBrainz id of the artist the album is filed under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist_mbid: Option<String>,
+    /// Album name, for the list.
+    #[serde(default)]
     pub release_name: String,
-    /// Artist name for the ignore ledger.
+    /// Artist name, for the list.
+    #[serde(default)]
     pub artist_name: String,
 }
 
-/// One ignored release.
+/// One thing a person told Discover, in effect.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct IgnoredRelease {
-    /// MusicBrainz release-group id.
+pub struct DiscoverFeedbackEntry {
+    /// Whether it is about an album or an artist.
+    pub target: FeedbackTarget,
+    /// The target's MusicBrainz id, lowercased: the album's release group
+    /// or the artist.
+    pub target_mbid: String,
+    /// What the person said.
+    pub kind: FeedbackKind,
+    /// MusicBrainz release-group id, as given; empty when none was.
     pub release_group_mbid: String,
-    /// MusicBrainz artist id.
+    /// MusicBrainz artist id, as given; empty when none was.
     pub artist_mbid: String,
-    /// Release name.
+    /// Album name, as given.
     pub release_name: String,
-    /// Artist name.
+    /// Artist name, as given.
     pub artist_name: String,
-    /// Ignore timestamp (unix seconds).
-    pub ignored_at: i64,
+    /// When it was said (unix seconds).
+    pub created_at: i64,
+    /// When it lapses (unix seconds); null while it holds until undone.
+    #[serde(default)]
+    pub expires_at: Option<i64>,
 }
 
-/// The user's ignore ledger.
+/// Everything a person told Discover that is in effect, newest first.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct IgnoredReleasesResponse {
-    /// Ignored releases, newest first.
-    pub items: Vec<IgnoredRelease>,
+pub struct DiscoverFeedbackResponse {
+    /// The answers, newest first.
+    pub items: Vec<DiscoverFeedbackEntry>,
 }
 
 /// Body checking which cards already landed in the library.

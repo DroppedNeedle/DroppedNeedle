@@ -61,8 +61,9 @@ pub const NEW_RELEASE_FEED: TableSection = TableSection {
 };
 
 /// Releases each user hid from the discover queue, so a hidden release
-/// stays hidden after the upgrade. v2 kept the time in seconds; v3 keeps
-/// milliseconds.
+/// stays hidden after the upgrade: each lands as a "no" about the album
+/// that keeps v2's one-year expiry, the way migration 0159 carries v3's
+/// own. v2 kept the time in seconds; v3 keeps milliseconds.
 pub const IGNORED_RELEASES: TableSection = TableSection {
     name: "ignored_release",
     source: Source::Table {
@@ -70,17 +71,20 @@ pub const IGNORED_RELEASES: TableSection = TableSection {
         filter: "",
         requires: &[],
     },
-    target: Target::Table("catalog_ignored_releases"),
+    target: Target::Table("catalog_discover_feedback"),
     columns: &[
         col("user_id"),
-        col("release_group_mbid_lower"),
+        Column::new("target").from_sql("'album'"),
+        Column::new("target_mbid_lower").from_v2("release_group_mbid_lower"),
+        Column::new("kind").from_sql("'no'"),
         col("release_group_mbid"),
         col("artist_mbid"),
         col("release_name"),
         col("artist_name"),
-        Column::new("ignored_at").from_sql("CAST(ignored_at * 1000 AS INTEGER)"),
+        Column::new("created_at").from_sql("CAST(ignored_at * 1000 AS INTEGER)"),
+        Column::new("expires_at").from_sql("CAST(ignored_at * 1000 AS INTEGER) + 31536000000"),
     ],
-    key: &["user_id", "release_group_mbid_lower"],
+    key: &["user_id", "target", "target_mbid_lower"],
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),

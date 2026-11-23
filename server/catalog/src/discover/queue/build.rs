@@ -7,8 +7,8 @@
 //! number of trending wildcards mixed in at fixed slots. Albums the library
 //! holds are dropped before the deal, and a deck short of picks stays
 //! short. Without seed artists, or when their pools come back empty, the
-//! deck is trending albums, topped up from the charts. Ignored releases
-//! never appear.
+//! deck is trending albums, topped up from the charts. Nothing the person
+//! hid ([`Feedback`]) appears.
 //!
 //! Every provider read is allowed to fail: the failure is logged and that
 //! pool is simply empty.
@@ -22,6 +22,7 @@ use super::QueueSettings;
 use super::seeds::weighted_seeds;
 use super::select::{self, Shuffler};
 use super::store::QueueDb;
+use crate::discover::feedback::Feedback;
 use crate::discover::listening::{
     AlbumRow, ArtistRow, Ask, LastFmAlbum, ListenSource, ListenedAlbum, ListeningData,
     ScoredArtist, StatsRange, TagAlbum, UserMusic,
@@ -122,21 +123,22 @@ pub async fn build_deck(
     let policy = ctx.listening.policy(user_id).await;
     let source = policy.listening();
     let user = policy.user().clone();
-    let ignored = ctx.db.ignored_mbids(user_id).await.unwrap_or_else(|cause| {
-        tracing::warn!(%cause, "ignored releases unreadable; the deck may repeat them");
-        HashSet::new()
-    });
+    let feedback = Feedback::load_or_none(ctx.db.db(), user_id, ctx.now_ms, "deck build").await;
+    let ignored = feedback.albums();
     let mut shuffler = Shuffler::random();
     let personal =
-        personalized(ctx, user_id, &user, source, count, &ignored, &mut shuffler).await?;
+        personalized(ctx, user_id, &user, source, count, &feedback, &mut shuffler).await?;
     let charts_only = personal.is_none();
     let mut items = match personal {
         Some(deck) => deck,
-        None => anonymous(ctx, user_id, &user, count, &ignored, &mut shuffler).await,
+        None => anonymous(ctx, user_id, &user, count, ignored, &mut shuffler).await,
     };
-    // A guard: the personal deck dropped owned albums before its deal.
+    // A guard: the personal deck dropped owned and hidden albums before
+    // its deal.
     let mut owned = owned_of(ctx, &items).await?;
-    items.retain(|item| !owned.contains(&item.musicbrainz_id.to_ascii_lowercase()));
+    items.retain(|item| {
+        !owned.contains(&item.musicbrainz_id.to_ascii_lowercase()) && !feedback.hides_card(item)
+    });
     // Only the chart deck is topped up: one more trending pass fills the
     // gap, skipping everything seen so far.
     if charts_only && items.len() < count {
@@ -154,10 +156,9 @@ pub async fn build_deck(
         )
         .await;
         owned = owned_of(ctx, &more).await?;
-        items.extend(
-            more.into_iter()
-                .filter(|item| !owned.contains(&item.musicbrainz_id.to_ascii_lowercase())),
-        );
+        items.extend(more.into_iter().filter(|item| {
+            !owned.contains(&item.musicbrainz_id.to_ascii_lowercase()) && !feedback.hides_card(item)
+        }));
     }
     items.truncate(count);
     Ok(items)
@@ -236,9 +237,10 @@ async fn personalized(
     user: &UserMusic,
     source: ListenSource,
     count: usize,
-    ignored: &HashSet<String>,
+    feedback: &Feedback,
     shuffler: &mut Shuffler,
 ) -> Result<Option<Vec<QueueItemLight>>, String> {
+    let ignored = feedback.albums();
     let seeds = seed_artists(ctx, user_id, user, source).await;
     if seeds.is_empty() {
         return Ok(None);
@@ -279,8 +281,9 @@ async fn personalized(
     )
     .await;
     let owned = owned_of(ctx, pools.iter().flatten().chain(&wildcards)).await?;
-    let unowned =
-        |item: &QueueItemLight| !owned.contains(&item.musicbrainz_id.to_ascii_lowercase());
+    let unowned = |item: &QueueItemLight| {
+        !owned.contains(&item.musicbrainz_id.to_ascii_lowercase()) && !feedback.hides_card(item)
+    };
     for pool in &mut pools {
         pool.retain(unowned);
     }

@@ -580,9 +580,9 @@ async fn users_named_by_library_history_are_not_deleted() {
          ('play-1', 'admin-1', 'album-1', 'S', 'A', 1000); \
          INSERT INTO catalog_user_play_marks (user_id, local_track_id, marked_played_at) \
          VALUES ('user-2', 'track-1', 2000); \
-         INSERT INTO catalog_ignored_releases (user_id, release_group_mbid_lower, \
-         release_group_mbid, artist_mbid, release_name, artist_name, ignored_at) \
-         VALUES ('user-2', 'rg', 'RG', 'a', 'R', 'A', 1); \
+         INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
+         created_at) VALUES ('user-2', 'album', 'rg', 'no', 1), \
+         ('user-2', 'artist', 'a', 'not_artist', 1); \
          INSERT INTO catalog_cached_pages (user_id, page, source, listenbrainz, lastfm, \
          payload, built_at) VALUES ('user-2', 'home', 's', 0, 0, x'7b7d', 1); \
          INSERT INTO catalog_discover_activity (user_id, feature, source, used_at) \
@@ -601,7 +601,7 @@ async fn users_named_by_library_history_are_not_deleted() {
     assert_eq!(
         count(
             &fx,
-            "SELECT (SELECT COUNT(*) FROM catalog_ignored_releases) \
+            "SELECT (SELECT COUNT(*) FROM catalog_discover_feedback) \
              + (SELECT COUNT(*) FROM catalog_cached_pages) \
              + (SELECT COUNT(*) FROM catalog_discover_activity) \
              + (SELECT COUNT(*) FROM acquire_discovery_batches) \

@@ -16,7 +16,10 @@
 //!
 //! Similar-artist pools come from ListenBrainz, or from Last.fm while
 //! ListenBrainz popularity is refused upstream. Every provider read may fail;
-//! a failure shrinks the answer, it never fails the request.
+//! a failure shrinks the answer, it never fails the request. What the
+//! person told Discover to hide ([`Feedback`]) is left out of shelves and
+//! suggestions, no artist they hid is added to a plan's seeds, and a plan
+//! plays nothing from an album they said no to.
 
 pub mod library;
 pub mod plan;
@@ -30,6 +33,7 @@ use std::time::Duration;
 use futures_util::future::join_all;
 use futures_util::stream::{self, StreamExt};
 
+use super::feedback::Feedback;
 use super::listening::{ArtistRow, Ask, ListenSource, ListeningData, SourcePolicy, UserMusic};
 use super::page::build::daily_shuffler;
 use super::page::library::{LibraryReads, fold};
@@ -215,6 +219,11 @@ impl LiveRadio {
         })
     }
 
+    /// What the person told Discover, as it stands now.
+    async fn feedback(&self, user_id: &str) -> Feedback {
+        Feedback::load_or_none(self.queue_db.db(), user_id, self.clock.now_ms(), "radio").await
+    }
+
     /// One pool of albums per seed from its similar artists.
     async fn similar_pools(
         &self,
@@ -340,7 +349,7 @@ impl LiveRadio {
         }
         let count = usize::try_from(request.count).unwrap_or(10);
         let lastfm = source == ListenSource::Lastfm || policy.lastfm_stands_in();
-        let (title, seed_id, items) = match request.seed_type {
+        let (title, seed_id, mut items) = match request.seed_type {
             RadioSeedKind::Artist => {
                 let mbid = normalize(Some(&request.seed_id))
                     .filter(|id| is_valid_mbid(id))
@@ -384,6 +393,7 @@ impl LiveRadio {
                 )
             }
         };
+        self.feedback(user_id).await.keep_rows(&mut items);
         Ok(ChartSection {
             title,
             kind: SectionKind::Albums,
@@ -505,6 +515,7 @@ impl LiveRadio {
         };
         let similar =
             similar_to(&ctx, user_id, &seed(&base.0, &base.1), MAX_SEED_ARTISTS + 1).await;
+        let feedback = self.feedback(user_id).await;
         let mut seeds = vec![base];
         for artist in similar.into_iter().map(|scored| scored.artist) {
             if seeds.len() >= MAX_SEED_ARTISTS {
@@ -512,6 +523,7 @@ impl LiveRadio {
             }
             if let Some(mbid) = normalize(artist.mbid.as_deref())
                 && !is_various_artists(Some(&mbid))
+                && !feedback.hides_artist(Some(mbid.as_str()))
             {
                 seeds.push((mbid, artist.name));
             }
@@ -528,12 +540,13 @@ impl LiveRadio {
     ) -> (Vec<(String, String)>, String) {
         let title = format!("Radio: {}", title_case(genre));
         let want = (MAX_SEED_ARTISTS / 2).max(2);
+        let feedback = self.feedback(user_id).await;
         let mut seen = HashSet::new();
         let mut seeds: Vec<(String, String)> = self
             .genre_seeds(genre, &[user_id, genre], want)
             .await
             .into_iter()
-            .filter(|mbid| seen.insert(mbid.clone()))
+            .filter(|mbid| !feedback.hides_artist(Some(mbid.as_str())) && seen.insert(mbid.clone()))
             .map(|mbid| (mbid, String::new()))
             .collect();
         if seeds.len() < MAX_SEED_ARTISTS {
@@ -549,6 +562,7 @@ impl LiveRadio {
                 }
                 if let Some(mbid) = normalize(artist.mbid.as_deref())
                     && !is_various_artists(Some(&mbid))
+                    && !feedback.hides_artist(Some(mbid.as_str()))
                     && seen.insert(mbid.clone())
                 {
                     seeds.push((mbid, artist.name));
@@ -908,10 +922,15 @@ impl LiveRadio {
         if !genres.is_empty() {
             pools.push(genres);
         }
-        // Leave out the playlist's own artists, matched on artist id.
+        // Leave out the playlist's own artists, matched on artist id, and
+        // what the person hid.
         let own: HashSet<&str> = profile.artist_mbids.iter().map(String::as_str).collect();
+        let feedback = self.feedback(user_id).await;
         for pool in &mut pools {
-            pool.retain(|card| !own.contains(card.artist_id.to_ascii_lowercase().as_str()));
+            pool.retain(|card| {
+                !own.contains(card.artist_id.to_ascii_lowercase().as_str())
+                    && !feedback.hides_card(card)
+            });
         }
         let count = usize::try_from(request.count).unwrap_or(10);
         let picked = round_robin(pools, count, MAX_PER_ARTIST, &mut Shuffler::random());
@@ -986,7 +1005,11 @@ impl LiveRadio {
         user_id: &'a str,
         request: &'a RadioPlanRequest,
     ) -> BoxFuture<'a, Result<RadioPlanResponse, RadioFailure>> {
-        Box::pin(self.build_plan(user_id, request))
+        Box::pin(async move {
+            let mut plan = self.build_plan(user_id, request).await?;
+            self.feedback(user_id).await.keep_tracks(&mut plan.tracks);
+            Ok(plan)
+        })
     }
 
     /// One album shelf seeded by an artist, album or genre.

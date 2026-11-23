@@ -1,11 +1,13 @@
 <!--
 	Shows the current toast from `toastStore`. Mount it once in the app shell.
 	A solid surface with an edge and icon in the toast's tone; the words carry
-	the meaning, never the colour alone.
+	the meaning, never the colour alone. A toast may lead with bold words and
+	carry up to four buttons: its action, then a question and its choices,
+	which wrap to a second row when they do not fit.
 -->
 <script lang="ts">
 	import { Check, Info, TriangleAlert, X } from 'lucide-svelte';
-	import { toastStore } from '$lib/stores/toast';
+	import { toastStore, type ToastAction } from '$lib/stores/toast';
 	import Button from './Button.svelte';
 	import IconButton from './IconButton.svelte';
 
@@ -23,11 +25,19 @@
 		warning: { edge: 'border-l-warning', icon: 'text-warning' },
 		info: { edge: 'border-l-info', icon: 'text-info' }
 	};
+
+	function runAction(action: ToastAction) {
+		// Taken before hiding: hiding empties the toast the action reads from.
+		const { run } = action;
+		toastStore.hide();
+		void run();
+	}
 </script>
 
 {#if $toastStore}
 	{@const tone: string = $toastStore.type}
 	{@const look = tones[tone] ?? tones.info}
+	{@const choices = $toastStore.choices}
 	<div
 		class="droppedneedle-toast fixed left-1/2 z-50 -translate-x-1/2"
 		class:droppedneedle-toast--player={abovePlayer}
@@ -45,20 +55,32 @@
 			{:else}
 				<Info class="size-5 shrink-0 {look.icon}" aria-hidden="true" />
 			{/if}
-			<span class="grow text-sm">{$toastStore.message}</span>
-			{#if $toastStore.action}
-				{@const action = $toastStore.action}
-				<Button
-					variant="outline"
-					size="xs"
-					onclick={() => {
-						// Taken before hiding: hiding empties the toast `action` reads from.
-						const { run } = action;
-						toastStore.hide();
-						void run();
-					}}>{action.label}</Button
-				>
-			{/if}
+			<div class="flex grow flex-wrap items-center gap-x-3 gap-y-2">
+				<span class="text-sm">
+					{#if $toastStore.title}<strong>{$toastStore.title}</strong>{/if}
+					{$toastStore.message}
+				</span>
+				{#if $toastStore.action || choices}
+					<div class="flex flex-wrap items-center gap-2">
+						{#if $toastStore.action}
+							{@const action = $toastStore.action}
+							<Button variant="outline" size="xs" onclick={() => runAction(action)}
+								>{action.label}</Button
+							>
+						{/if}
+						{#if choices}
+							<span class="font-mono text-xs tracking-wide text-muted uppercase">
+								{choices.ask}
+							</span>
+							{#each choices.actions.slice(0, 3) as choice (choice.label)}
+								<Button variant="outline" size="xs" onclick={() => runAction(choice)}
+									>{choice.label}</Button
+								>
+							{/each}
+						{/if}
+					</div>
+				{/if}
+			</div>
 			<IconButton size="xs" icon={X} label="Dismiss" onclick={() => toastStore.hide()} />
 		</div>
 	</div>

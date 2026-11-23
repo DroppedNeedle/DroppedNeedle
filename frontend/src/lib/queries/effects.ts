@@ -138,10 +138,19 @@ export const EFFECTS = {
 	],
 	/** The caller's wanted albums. */
 	wantedChanged: (userId: UserId): Sweep[] => [{ key: WantedQueryKeyFactory.list(userId) }],
-	/** The caller hid an album from their recommendations, or brought one back. */
+	/**
+	 * The caller told Discover something about an album or an artist, or took
+	 * it back: every list that leaves out what they hid.
+	 */
 	recommendationsChanged: (userId: UserId): Sweep[] => [
-		{ key: DiscoverQueryKeyFactory.v3.ignored(userId) },
-		{ key: DiscoverQueryKeyFactory.v3.home(userId) }
+		{ key: DiscoverQueryKeyFactory.v3.feedback(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.home(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.radios(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.radioPlans(userId) },
+		{ key: DiscoverQueryKeyFactory.v3.allPlaylistSuggestions(userId) },
+		{ key: HomeQueryKeyFactory.home(userId) },
+		{ key: key(userScope(userId), AlbumQueryKeyFactory.feature, 'similar') },
+		{ key: key(userScope(userId), ArtistQueryKeyFactory.feature) }
 	],
 	/** The admin's artist duplicate groups. */
 	artistDuplicatesChanged: (): Sweep[] => [{ everyScope: ['library', 'artist-reconciliation'] }],

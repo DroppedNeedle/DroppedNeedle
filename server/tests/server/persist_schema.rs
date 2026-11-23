@@ -145,6 +145,7 @@ fn legacy_and_swap_tables_are_absent() {
         "youtube_links_old",
         "youtube_track_links_old",
         "ignored_releases_legacy",
+        "catalog_ignored_releases",
         "cache_meta",
         "library_artists",
         "library_albums",
@@ -403,6 +404,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0158_play_history_user_cascade.sql",
         "228a517b9f45ca71403476e314f5759f0731933576d9345c85cf918b31d3d58d",
+    ),
+    (
+        "0159_discover_feedback.sql",
+        "171fb0511674ef464e9e6d883bb199dd2c031c90814a2e8fad82b5d9cf1f9b05",
     ),
 ];
 
@@ -2419,6 +2424,131 @@ fn play_history_upgrade_plays_go_with_the_account() {
     );
 }
 
+/// 0159 moves every hidden album into the table of what people told
+/// Discover: each lands as a "no" about the album, keyed by its person and
+/// lowercased release group, dated when it was hidden and lapsing a year
+/// later, as before. The old table and its index go, and nothing else in
+/// the schema or the rows changes. Afterwards a kind or a target outside
+/// its list is refused, only "not this artist" is about an artist, and a
+/// person's answers go with their account.
+#[test]
+fn discover_feedback_upgrade_carries_every_hidden_album() {
+    let dir = ScratchDir::new("discover-feedback-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 159)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 158);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);
+             INSERT INTO catalog_ignored_releases (user_id, release_group_mbid_lower,
+                 release_group_mbid, artist_mbid, release_name, artist_name, ignored_at)
+                 VALUES ('u1', 'rg-a', 'RG-A', 'ar-1', 'First', 'Someone', 1000),
+                        ('u1', 'rg-b', 'RG-B', '', 'Second', '', 2000),
+                        ('u2', 'rg-a', 'RG-A', 'ar-1', 'First', 'Someone', 3000);
+             INSERT INTO catalog_mbid_resolutions (source_mbid_lower, source_mbid,
+                 release_group_mbid) VALUES ('rel-1', 'rel-1', 'rg-a');",
+        )
+        .unwrap();
+    let others = |connection: &Connection| {
+        let mut rows = schema_rows(connection);
+        rows.retain(|(_, _, table, _)| {
+            table != "catalog_ignored_releases" && table != "catalog_discover_feedback"
+        });
+        rows
+    };
+    let before_schema = others(&connection);
+    let before_resolutions = table_rows(&connection, "catalog_mbid_resolutions", "rowid, *");
+    let before_users = table_rows(&connection, "auth_users", "rowid, *");
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM catalog_ignored_releases"),
+        3
+    );
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 159);
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id || ':' || target || ':' || target_mbid_lower || ':' || kind || ':' \
+             || release_group_mbid || ':' || artist_mbid || ':' || release_name || ':' \
+             || artist_name || ':' || created_at || ':' || expires_at \
+             FROM catalog_discover_feedback ORDER BY user_id, target_mbid_lower",
+            []
+        ),
+        [
+            "u1:album:rg-a:no:RG-A:ar-1:First:Someone:1000:31536001000",
+            "u1:album:rg-b:no:RG-B::Second::2000:31536002000",
+            "u2:album:rg-a:no:RG-A:ar-1:First:Someone:3000:31536003000",
+        ],
+        "every hidden album arrives as a no, keyed and dated, with its year"
+    );
+    assert!(!table_names(&connection).contains(&"catalog_ignored_releases".to_owned()));
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT name FROM sqlite_master WHERE name LIKE '%ignored%'",
+            []
+        ),
+        Vec::<String>::new(),
+        "the old index goes with its table"
+    );
+    assert_eq!(others(&connection), before_schema, "nothing else changes");
+    assert_eq!(
+        table_rows(&connection, "catalog_mbid_resolutions", "rowid, *"),
+        before_resolutions
+    );
+    assert_eq!(
+        table_rows(&connection, "auth_users", "rowid, *"),
+        before_users
+    );
+
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .unwrap();
+    for (target, mbid, kind, user) in [
+        ("album", "rg-c", "maybe", "u1"),
+        ("label", "rg-c", "no", "u1"),
+        ("artist", "ar-1", "no", "u1"),
+        ("album", "rg-c", "not_artist", "u1"),
+        ("album", "rg-c", "no", "nobody"),
+    ] {
+        let refused = connection.execute(
+            "INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
+             created_at) VALUES (?1, ?2, ?3, ?4, 1)",
+            [user, target, mbid, kind],
+        );
+        assert!(refused.is_err(), "{user} {target} {mbid} {kind}");
+    }
+    connection
+        .execute_batch(
+            "INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind,
+                 created_at) VALUES ('u2', 'artist', 'ar-1', 'not_artist', 4000);
+             DELETE FROM auth_users WHERE id = 'u1';",
+        )
+        .unwrap();
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id || ':' || target_mbid_lower FROM catalog_discover_feedback \
+             ORDER BY rowid",
+            []
+        ),
+        ["u2:rg-a", "u2:ar-1"],
+        "an account's answers go with it, and only those"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -2722,9 +2852,9 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("auto_download_approvals", "user_id", "auth_users", "CASCADE"),
     ("catalog_cached_pages", "user_id", "auth_users", "CASCADE"),
     ("catalog_discover_activity", "user_id", "auth_users", "CASCADE"),
+    ("catalog_discover_feedback", "user_id", "auth_users", "CASCADE"),
     ("catalog_event_cities", "user_id", "auth_users", "CASCADE"),
     ("catalog_event_seen_marks", "user_id", "auth_users", "CASCADE"),
-    ("catalog_ignored_releases", "user_id", "auth_users", "CASCADE"),
     ("catalog_new_release_seen_marks", "user_id", "auth_users", "CASCADE"),
     ("catalog_playlist_covers", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlist_members", "playlist_id", "catalog_playlists", "CASCADE"),
@@ -3234,6 +3364,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_catalog::concerts::models::{ConcertStatus, EventSource};
     use droppedneedle_catalog::concerts::store::CheckOutcome;
     use droppedneedle_catalog::discover::cache::PageKind;
+    use droppedneedle_catalog::discover::feedback::{FeedbackKind, FeedbackTarget};
     use droppedneedle_catalog::discover::scheduler::Feature;
     use droppedneedle_compat::jellyfin::ids::IdKind;
     use droppedneedle_kernel::db::durable::JobState as LoopState;
@@ -3311,6 +3442,8 @@ fn state_columns() -> Vec<StateColumn> {
         state("catalog_artist_tm_attractions", "match_basis", &TmBasis::ALL, TmBasis::as_str),
         state("catalog_cached_pages", "page", &PageKind::ALL, PageKind::as_str),
         state("catalog_discover_activity", "feature", &Feature::ALL, Feature::as_str),
+        state("catalog_discover_feedback", "kind", &FeedbackKind::ALL, FeedbackKind::as_str),
+        state("catalog_discover_feedback", "target", &FeedbackTarget::ALL, FeedbackTarget::as_str),
         state("catalog_live_event_feed", "match_confidence", &Confidence::ALL, Confidence::as_str),
         state("catalog_live_event_feed", "source", &EventSource::ALL, EventSource::as_str),
         state("catalog_live_event_feed", "status", &ConcertStatus::ALL, ConcertStatus::as_str),

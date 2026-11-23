@@ -1124,8 +1124,9 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
 
     // The weekly mix journey: the toggle queues an approval, the admin
     // grants it, a build writes the playlist and requests the missing albums
-    // without a per-request approval wait, a reject turns the toggle off, and
-    // the refresh route needs a ListenBrainz link.
+    // without a per-request approval wait, never one the person told
+    // Discover to hide, a reject turns the toggle off, and the refresh route
+    // needs a ListenBrainz link.
     let case = "weekly mix";
     let (state, db, dispatch) = setup().await;
     let prefs = ListeningStore::new(
@@ -1177,11 +1178,22 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
         "{case}"
     );
 
+    // Ada hid the artist of the second album, Tris will pass on the first.
+    db.write("test.mix_feedback", |tx| {
+        tx.execute_batch(&format!(
+            "INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind, \
+             created_at) VALUES ('u-ada', 'artist', '{MIX_ARTIST}', 'not_artist', 1), \
+             ('u-tris', 'album', '{MBID_A}', 'no', 1)"
+        ))?;
+        Ok(())
+    })
+    .await
+    .expect("feedback rows");
     let built = builder.build_for_user("u-ada", false).await.unwrap();
     assert_eq!(
         (built.track_count, built.requested_albums, built.skipped),
-        (2, 2, None),
-        "{case}"
+        (2, 1, None),
+        "{case}: the album by the artist Ada hid is not requested"
     );
     let playlist = built.playlist_id.expect("mix playlist");
     assert_eq!(
@@ -1196,7 +1208,7 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
     );
     assert_eq!(
         dispatch.take_calls().await.len(),
-        2,
+        1,
         "{case}: granted asks dispatch straight away"
     );
     let again = builder.build_for_user("u-ada", false).await.unwrap();
@@ -1218,8 +1230,8 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
     );
     let trusted = builder.build_for_user("u-tris", false).await.unwrap();
     assert_eq!(
-        trusted.requested_albums, 2,
-        "{case}: trusted asks need no approval row"
+        trusted.requested_albums, 1,
+        "{case}: trusted asks need no approval row, and skip the album passed on"
     );
 
     db.write("test.demote_tris", |tx| {
@@ -1313,11 +1325,12 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
 }
 
 /// ListenBrainz stand-in: one weekly-jams playlist with two tracks on two
-/// albums, no similar artists.
+/// albums, the second by [`MIX_ARTIST`], no similar artists.
 struct FakeMix;
 
 const MIX_REC_A: &str = "aaaa0000-0000-4000-8000-000000000001";
 const MIX_REC_B: &str = "aaaa0000-0000-4000-8000-000000000002";
+const MIX_ARTIST: &str = "aaaa0000-0000-4000-8000-0000000000a1";
 
 impl MixSources for FakeMix {
     fn reads_on(&self) -> bool {
@@ -1351,16 +1364,21 @@ impl MixSources for FakeMix {
         _id: &'a str,
         _creds: &'a ListenBrainzCredentials,
     ) -> BoxFuture<'a, Result<Vec<RecommendationTrack>, String>> {
-        let track = |title: &str, rec: &str| RecommendationTrack {
+        let track = |title: &str, rec: &str, artists: &[&str]| RecommendationTrack {
             title: title.to_owned(),
             creator: "Band".to_owned(),
             album: format!("{title} LP"),
             recording_mbid: Some(rec.to_owned()),
-            artist_mbids: Vec::new(),
+            artist_mbids: artists.iter().map(|id| (*id).to_owned()).collect(),
             caa_release_mbid: None,
             duration_ms: None,
         };
-        Box::pin(async move { Ok(vec![track("One", MIX_REC_A), track("Two", MIX_REC_B)]) })
+        Box::pin(async move {
+            Ok(vec![
+                track("One", MIX_REC_A, &[]),
+                track("Two", MIX_REC_B, &[MIX_ARTIST]),
+            ])
+        })
     }
     fn release_groups<'a>(
         &'a self,

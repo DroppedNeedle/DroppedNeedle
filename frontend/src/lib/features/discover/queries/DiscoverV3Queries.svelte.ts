@@ -68,12 +68,12 @@ export const getDiscoveryBatchesV3Query = (getEnabled: Getter<boolean> = () => t
 		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/discover/batches'), { signal })
 	}));
 
-/** The caller's hidden albums, read while `getEnabled` holds. */
-export const getIgnoredReleasesV3Query = (getEnabled: Getter<boolean>) =>
+/** What the caller told Discover, read while `getEnabled` holds. */
+export const getDiscoverFeedbackV3Query = (getEnabled: Getter<boolean>) =>
 	createQuery(() => ({
 		enabled: getEnabled() && Boolean(authStore.user?.id),
-		queryKey: DiscoverQueryKeyFactory.v3.ignored(authStore.user?.id),
-		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/discover/queue/ignored'), { signal })
+		queryKey: DiscoverQueryKeyFactory.v3.feedback(authStore.user?.id),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/discover/feedback'), { signal })
 	}));
 
 export interface DiscoverV3RadioInput {

@@ -16,7 +16,8 @@
 	import GenrePills from '$lib/features/genre/components/GenrePills.svelte';
 	import GenreGrid from '$lib/features/genre/components/GenreGrid.svelte';
 	import DiscoverQueueDeck from '$lib/features/discover/components/DiscoverQueueDeck.svelte';
-	import HiddenAlbumsModal from '$lib/features/discover/components/HiddenAlbumsModal.svelte';
+	import ToldDiscoverModal from '$lib/features/discover/components/ToldDiscoverModal.svelte';
+	import { passOn, type PassActions } from '$lib/features/discover/state/passLine';
 	import PlaylistDiscoveryModal from '$lib/features/discover/components/PlaylistDiscoveryModal.svelte';
 	import WeeklyExploration from '$lib/features/discover/components/WeeklyExploration.svelte';
 	import ServicePromptCard, {
@@ -46,10 +47,7 @@
 		SlidersHorizontal
 	} from 'lucide-svelte';
 	import { getDiscoverHomeV3Query } from '$lib/features/discover/queries/DiscoverV3Queries.svelte';
-	import {
-		createIgnoreDiscoveryV3Mutation,
-		createRefreshDiscoverV3Mutation
-	} from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
+	import { createRefreshDiscoverV3Mutation } from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
 	import { useDiscoverActivity } from '$lib/features/discover/queries/DiscoverDemand.svelte';
 	import type {
 		ChartSection,
@@ -75,10 +73,9 @@
 	useDiscoverActivity(() => ({ feature: 'discover' }));
 
 	let playlistDiscoverOpen = $state(false);
-	let hiddenAlbumsOpen = $state(false);
+	let toldOpen = $state(false);
 
 	const discoverQuery = getDiscoverHomeV3Query();
-	const ignoreDiscoveryMutation = createIgnoreDiscoveryV3Mutation();
 	const refreshDiscoverMutation = createRefreshDiscoverV3Mutation();
 	const sectionPrefsQuery = getSectionPrefsQuery();
 	const discoverPrefs = $derived(sectionPrefsQuery.data?.pages?.discover ?? []);
@@ -98,14 +95,17 @@
 		await refreshDiscoverMutation.mutateAsync();
 	}
 
-	async function handleIgnoreTopPick(pick: TopPickItem) {
-		if (!pick.album.musicbrainz_id || !pick.album.artist_id) return;
-		await ignoreDiscoveryMutation.mutateAsync({
-			releaseGroupMbid: pick.album.musicbrainz_id,
-			artistMbid: pick.album.artist_id,
-			releaseName: pick.album.title,
-			artistName: pick.album.artist_name ?? ''
-		});
+	function handlePassTopPick(pick: TopPickItem, actions: PassActions) {
+		if (!pick.album.musicbrainz_id) return;
+		void passOn(
+			{
+				releaseGroupMbid: pick.album.musicbrainz_id,
+				artistMbid: pick.album.artist_id ?? '',
+				releaseName: pick.album.title,
+				artistName: pick.album.artist_name ?? ''
+			},
+			actions
+		);
 	}
 
 	const sections = $derived(discoverData?.sections);
@@ -470,10 +470,10 @@
 							variant="ghost"
 							size="xs"
 							icon={EyeOff}
-							title="Hidden albums"
-							onclick={() => (hiddenAlbumsOpen = true)}
+							title="What you told Discover"
+							onclick={() => (toldOpen = true)}
 						>
-							<span class="hidden sm:inline">Hidden</span>
+							<span class="hidden sm:inline">What you told Discover</span>
 						</Button>
 						<Button
 							variant="ghost"
@@ -582,7 +582,7 @@
 	{#if block.kind === 'queue'}
 		<DiscoverQueueDeck youtubeEnabled={discoverData?.integration_status?.youtube ?? false} />
 	{:else if block.kind === 'picks' && topPicks}
-		<TopPicksDeck section={topPicks} updating={sectionsUpdating} onignore={handleIgnoreTopPick} />
+		<TopPicksDeck section={topPicks} updating={sectionsUpdating} onpass={handlePassTopPick} />
 	{:else if block.kind === 'lounge'}
 		<ListeningLounge section={lounge} {topPicks} updating={sectionsUpdating} />
 	{:else if block.kind === 'weekly' && weekly}
@@ -687,7 +687,7 @@
 {/snippet}
 
 <PlaylistDiscoveryModal bind:open={playlistDiscoverOpen} />
-<HiddenAlbumsModal bind:open={hiddenAlbumsOpen} />
+<ToldDiscoverModal bind:open={toldOpen} />
 
 <style>
 	/* the page's column: the zone strip's 80rem, with its side padding */
