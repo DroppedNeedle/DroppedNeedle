@@ -9,6 +9,7 @@ mod discover_health;
 mod discover_page;
 mod discover_queue;
 mod discover_record;
+mod discover_taste;
 mod home_page;
 mod kept_facts;
 mod listenbrainz_load;

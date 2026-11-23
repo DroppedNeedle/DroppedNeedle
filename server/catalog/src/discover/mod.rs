@@ -13,6 +13,7 @@ pub mod charts;
 pub mod content;
 pub mod demand;
 pub mod due;
+pub mod engine;
 pub mod error;
 pub mod facts;
 pub mod feedback;

@@ -135,7 +135,9 @@ impl ForgetCounts {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn of(&self, user_id: &str) -> u64 {
+    /// The person's count now. A job that keeps rows of theirs reads it
+    /// when it begins and keeps nothing once it has moved on.
+    pub(crate) fn of(&self, user_id: &str) -> u64 {
         self.counts().get(user_id).copied().unwrap_or(0)
     }
 

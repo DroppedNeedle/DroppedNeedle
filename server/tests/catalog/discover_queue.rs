@@ -82,6 +82,8 @@ pub(crate) struct Script {
     pub user_artists_all_time: Vec<ArtistRow>,
     /// All-time top-artist reads made so far.
     pub all_time_reads: AtomicUsize,
+    /// Top-artist reads of every other range made so far.
+    pub user_artist_reads: AtomicUsize,
     pub user_albums: Vec<ListenedAlbum>,
     pub sitewide_artists: Vec<ArtistRow>,
     pub sitewide_albums: Vec<ListenedAlbum>,
@@ -119,6 +121,8 @@ pub(crate) struct Script {
     pub fresh_down: AtomicBool,
     pub similar_down: AtomicBool,
     pub albums_down: AtomicBool,
+    /// When set, the user's Jellyfin most played fails.
+    pub jellyfin_down: AtomicBool,
     /// When set, ListenBrainz top-artist reads wait here until released.
     pub hold: Option<Arc<Hold>>,
 }
@@ -209,6 +213,7 @@ impl ListeningNetwork for Script {
             self.all_time_reads.fetch_add(1, Ordering::SeqCst);
             self.user_artists_all_time.clone()
         } else {
+            self.user_artist_reads.fetch_add(1, Ordering::SeqCst);
             self.user_artists.clone()
         };
         let hold = self.hold.clone();
@@ -572,6 +577,9 @@ impl ListeningNetwork for Script {
         ok(self.jellyfin_artists.clone())
     }
     fn jellyfin_plays<'a>(&'a self, _id: &'a str, _l: u32) -> Answer<'a, Vec<PlayedArtist>> {
+        if self.jellyfin_down.load(Ordering::SeqCst) {
+            return down("jellyfin down");
+        }
         ok(Vec::new())
     }
 }

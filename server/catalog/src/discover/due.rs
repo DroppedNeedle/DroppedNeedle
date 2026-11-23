@@ -4,12 +4,13 @@
 //! queued through them, never by a loop of its own:
 //!
 //! - [`Due::clock_pass`], from the 90-second demand tick: the kept facts'
-//!   refresh whenever it has work and room in the day, and once per UTC day
+//!   refresh whenever it has work and room in the day, a taste build for
+//!   each person seen in seven days who is due one, and once per UTC day
 //!   each person's daily work. Nothing while the warm cycle is switched off
 //!   (`DISCOVER_WARMER_ENABLED`).
 //! - [`Due::visit`], where the page records a person's activity: the kept
-//!   facts' refresh when it has work, and that person's own work, whether
-//!   the warm cycle runs or not.
+//!   facts' refresh when it has work, their taste build when it is due,
+//!   and that person's own work, whether the warm cycle runs or not.
 //! - [`Due::queue_now`], inside another write: one kind for one key (a
 //!   person's id, or the install's one key), due now.
 //!
@@ -25,6 +26,7 @@ use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 use droppedneedle_kernel::jobs::queue::{JobError, JobKind, JobQueue};
 use rusqlite::Transaction;
 
+use crate::discover::engine::schedule::TasteDue;
 use crate::discover::facts::job::{self as facts, FactsDue};
 use crate::discover::record::outcomes;
 use crate::discover::sql;
@@ -41,6 +43,8 @@ pub struct Due {
     clock: Arc<dyn Clock>,
     enabled: bool,
     facts: FactsDue,
+    /// When each person's taste build was last queued.
+    taste: TasteDue,
     /// The UTC day the clock last passed; [`NOT_YET`] before the first.
     passed: Mutex<i64>,
     /// The UTC day each person's work was last queued.
@@ -71,6 +75,7 @@ impl Due {
             clock,
             enabled,
             facts,
+            taste: TasteDue::default(),
             passed: Mutex::new(NOT_YET),
             queued: Mutex::new(HashMap::new()),
         }
@@ -112,16 +117,19 @@ impl Due {
         }
     }
 
-    /// The clock's pass: the kept facts' refresh when it has work, then, on
-    /// the first pass of each UTC day, every person with rows in the pick
-    /// record whose job was not queued today gets one, in one write.
-    /// Nothing while the warm cycle is off. A failed write is logged and
-    /// the next pass tries again.
+    /// The clock's pass: the kept facts' refresh when it has work, the
+    /// taste builds due, then, on the first pass of each UTC day, every
+    /// person with rows in the pick record whose job was not queued today
+    /// gets one, in one write. Nothing while the warm cycle is off. A
+    /// failed write is logged and the next pass tries again.
     pub async fn clock_pass(&self) {
         if !self.enabled {
             return;
         }
         self.facts_pass().await;
+        self.taste
+            .pass(&self.db, &self.queue, self.clock.now_ms())
+            .await;
         let today = self.today();
         if *lock(&self.passed) == today {
             return;
@@ -162,12 +170,16 @@ impl Due {
         }
     }
 
-    /// A person's visit: the kept facts' refresh when it has work, and
-    /// their outcomes job, when they have rows in the pick record and it was
-    /// not queued today. Runs whether the warm cycle is on or not. A failed
-    /// write is logged; the next visit or pass tries again.
+    /// A person's visit: the kept facts' refresh when it has work, their
+    /// taste build when it is due, and their outcomes job, when they have
+    /// rows in the pick record and it was not queued today. Runs whether
+    /// the warm cycle is on or not. A failed write is logged; the next
+    /// visit or pass tries again.
     pub async fn visit(&self, user_id: &str) {
         self.facts_pass().await;
+        self.taste
+            .visit(&self.db, &self.queue, user_id, self.clock.now_ms())
+            .await;
         let today = self.today();
         if lock(&self.queued).get(user_id) == Some(&today) {
             return;

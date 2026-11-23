@@ -97,6 +97,40 @@ fn forgotten_row(table: &str, user: &str, at: i64) -> (String, &'static str) {
             ),
             "last_synced_at",
         ),
+        "catalog_taste_builds" => (
+            format!(
+                "INSERT INTO catalog_taste_builds (user_id, built_at, plays_counted, \
+                 imported_listens_counted, artists_played, seeds, incomplete) \
+                 VALUES ('{user}', {at}, 1, 0, 1, 1, 0);"
+            ),
+            "built_at",
+        ),
+        // A group holds no time: every row of theirs counts as from before.
+        "catalog_taste_groups" => (
+            format!(
+                "INSERT INTO catalog_taste_groups (user_id, group_no, anchor_artist_mbid, \
+                 anchor_name, share, recent_share, trend) VALUES ('{user}', 0, \
+                 'cccccccc-0000-4000-8000-000000000001', 'Someone', 1.0, 1.0, 'steady');"
+            ),
+            "0",
+        ),
+        "catalog_taste_artists" => (
+            format!(
+                "INSERT INTO catalog_taste_artists (user_id, artist_mbid_lower, artist_mbid, \
+                 name, plays, imported_listens, months_active, last_played_at, weight, \
+                 is_seed, group_no) VALUES ('{user}', 'cccccccc-0000-4000-8000-000000000001', \
+                 'cccccccc-0000-4000-8000-000000000001', 'Someone', 1, 0, 1, {at}, 1.0, 1, 0);"
+            ),
+            "last_played_at",
+        ),
+        "catalog_known_release_groups" => (
+            format!(
+                "INSERT INTO catalog_known_release_groups (user_id, release_group_mbid_lower, \
+                 plays, last_played_at) VALUES ('{user}', \
+                 'eeeeeeee-0000-4000-8000-000000000003', 1, {at});"
+            ),
+            "last_played_at",
+        ),
         other => panic!("{other} is listed as forgotten: give it a row here and a step"),
     }
 }

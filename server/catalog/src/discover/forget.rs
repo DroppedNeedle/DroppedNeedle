@@ -1,6 +1,7 @@
 //! "Forget my history": a person removes what the app keeps about their
 //! listening and what Discover did for them, and everything built from it:
-//! the copy of their ListenBrainz history among it.
+//! the copy of their ListenBrainz history and their taste among it. Their
+//! next taste build makes it again from what is left.
 //!
 //! One function runs every step, each deleting the person's rows by their
 //! id and safe to run again, so a forget cut off part way is finished by
@@ -16,6 +17,7 @@ use droppedneedle_media::history::{self, HistoryStore};
 use droppedneedle_media::playback::{events, sqlite::PlaybackStore};
 
 use crate::discover::cache::{self, ForgetCounts};
+use crate::discover::engine::taste_store;
 use crate::discover::{record, scheduler::activity::ActivityDb, services::DiscoverDeps};
 
 /// The stores a forget deletes from.
@@ -60,6 +62,8 @@ pub struct Forgotten {
     pub picks: usize,
     /// Which Discover pages and artist pages they opened lately.
     pub activity: usize,
+    /// Their taste: the build, its groups, the artists and albums known.
+    pub taste: usize,
     /// Their saved Discover, home and queue pages.
     pub pages: usize,
 }
@@ -95,11 +99,12 @@ fn at<E: Into<StepError>>(step: &'static str) -> impl FnOnce(E) -> ForgetError {
 /// Forget `user_id`'s history: how their plays ended, their imported
 /// ListenBrainz history (its import is marked forgotten and its jobs
 /// cancelled in the same write, so an import running across the forget
-/// keeps nothing), the pick record, their Discover activity and their
-/// saved pages, in that order, then start one rebuild of their Discover
-/// page. Their forget count moves on before the first step and again
-/// inside the pages step's write, so a build of theirs claimed before that
-/// commit keeps no page and records no pick. A built deck not yet written
+/// keeps nothing), the pick record, their Discover activity, their taste
+/// and their saved pages, in that order, then start one rebuild of their
+/// Discover page. Their forget count moves on before the first step and
+/// again inside the taste and the pages steps' writes, so a build of
+/// theirs claimed before those commits keeps no taste, no page and records
+/// no pick. A built deck not yet written
 /// is dropped too. While such a build runs no rebuild starts here: their
 /// next visit builds the page, which is due because its row is gone. Fails
 /// at the first step that fails; the rebuild is asked for only once every
@@ -121,6 +126,9 @@ pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, For
         .forget(user_id)
         .await
         .map_err(at("discover activity"))?;
+    let taste = taste_store::forget(&stores.db, &stores.forgets, user_id)
+        .await
+        .map_err(at("taste"))?;
     let pages = cache::forget_user(&stores.db, &stores.forgets, user_id)
         .await
         .map_err(at("saved pages"))?;
@@ -133,6 +141,7 @@ pub async fn forget(deps: &DiscoverDeps, user_id: &str) -> Result<Forgotten, For
         imported_listens,
         picks,
         activity,
+        taste,
         pages,
     })
 }

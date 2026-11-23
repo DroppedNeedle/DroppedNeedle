@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::discover::listening::{ListeningData, ListeningNetwork, LiveNetwork};
 use crate::discover::services::DiscoverDeps;
 use crate::discover::{
-    cache, charts, content, due, facts, forget, home, page, previews, queue, radio, record,
+    cache, charts, content, due, engine, facts, forget, home, page, previews, queue, radio, record,
     scheduler, youtube,
 };
 use crate::metadata::library::LocalCatalog;
@@ -191,6 +191,13 @@ fn deps_with(
         charts,
         forgets: forgets.clone(),
     });
+    let taste = Arc::new(engine::jobs::TasteJobs::new(engine::jobs::TasteInputs {
+        db: inputs.db.clone(),
+        clock: Arc::clone(&inputs.clock),
+        listening: listening.clone(),
+        advanced: config.live(),
+        forgets: forgets.clone(),
+    }));
     let fact_jobs = Arc::new(facts::job::FactJobs::new(kept, network));
     let due = Arc::new(due::Due::new(
         inputs.db.clone(),
@@ -236,6 +243,7 @@ fn deps_with(
             forgets,
         ),
         facts: fact_jobs,
+        taste,
     }
 }
 

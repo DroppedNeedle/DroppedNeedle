@@ -452,23 +452,6 @@ droppedneedle_kernel::sql! {
         musicbrainz!("ai"),
         " GROUP BY lower(ai.provider_artist_id)"
     ));
-    /// A user's plays per artist: how many, in how many calendar months,
-    /// and the latest. Plays filed by name alone have no artist and are
-    /// left out.
-    pub(super) SEED_PLAYS = "WITH s AS (SELECT local_artist_id AS artist_id, played_at \
-         FROM library_play_history WHERE user_id = ?1 AND local_artist_id IS NOT NULL) \
-         SELECT lower(ai.provider_artist_id) AS mbid, MIN(r.display_name) AS name, \
-         COUNT(*) AS plays, \
-         COUNT(DISTINCT strftime('%Y-%m', s.played_at / 1000, 'unixepoch')) AS months, \
-         MAX(s.played_at) AS last_played_at FROM s"
-        + SEED_ARTIST;
-    pub(super) row SeedPlays for [SEED_PLAYS] {
-        mbid: String,
-        name: String,
-        plays: i64,
-        months: i64,
-        last_played_at: Millis,
-    }
     /// A user's hearts per artist: on the artist, on an album (its album
     /// artist) and on a track (its first credited artist).
     pub(super) SEED_HEARTS = "WITH s(kind, artist_id) AS (\

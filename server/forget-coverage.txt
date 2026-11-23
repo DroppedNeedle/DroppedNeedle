@@ -14,6 +14,10 @@
 catalog_cached_pages forgotten
 catalog_discover_activity forgotten
 catalog_discover_picks forgotten
+catalog_known_release_groups forgotten
+catalog_taste_artists forgotten
+catalog_taste_builds forgotten
+catalog_taste_groups forgotten
 # media_history_imports is cleared to a forgotten mark, so nothing is
 # imported until they add a file.
 media_history_imports forgotten

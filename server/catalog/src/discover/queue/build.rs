@@ -22,6 +22,7 @@ use super::QueueSettings;
 use super::seeds::weighted_seeds;
 use super::select::{self, Shuffler};
 use super::store::QueueDb;
+use crate::discover::engine::history;
 use crate::discover::feedback::Feedback;
 use crate::discover::listening::{
     AlbumRow, ArtistRow, Ask, LastFmAlbum, ListenSource, ListenedAlbum, ListeningData,
@@ -201,9 +202,12 @@ pub(in crate::discover) async fn seed_artists(
         .collect()
 }
 
-/// Release groups the user has played, so deep cuts skip them.
+/// Release groups the user has played, so deep cuts skip them: while their
+/// imported ListenBrainz history is current, the ones their taste build
+/// knows, else ListenBrainz's top albums of all time.
 pub(in crate::discover) async fn listened_albums(
     ctx: &BuildContext<'_>,
+    user_id: &str,
     user: &UserMusic,
     source: ListenSource,
 ) -> HashSet<String> {
@@ -212,6 +216,21 @@ pub(in crate::discover) async fn listened_albums(
     };
     if source != ListenSource::Listenbrainz {
         return HashSet::new();
+    }
+    let db = ctx.db.db();
+    let known = match history::import_current(db, user_id).await {
+        Ok(true) => Some(history::known_groups(db, user_id).await),
+        Ok(false) => None,
+        Err(cause) => Some(Err(cause)),
+    };
+    match known {
+        Some(Ok(groups)) => return groups,
+        Some(Err(cause)) => {
+            tracing::warn!(%cause, "the albums a person played are unreadable");
+            ctx.ask.note_failure();
+            return HashSet::new();
+        }
+        None => {}
     }
     let rows = or_empty(
         "listenbrainz listened albums",
@@ -255,7 +274,7 @@ async fn personalized(
     let mut pools = if use_lastfm {
         lastfm_pools(ctx, user_id, &seeds, ignored, per_seed).await
     } else {
-        let listened = listened_albums(ctx, user, source).await;
+        let listened = listened_albums(ctx, user_id, user, source).await;
         listenbrainz_pools(ctx, user_id, user, &seeds, ignored, &listened).await
     };
     // Nothing like the seeds turned up, and nothing failed to say so: the

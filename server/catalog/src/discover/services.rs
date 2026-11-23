@@ -115,6 +115,8 @@ pub struct DiscoverDeps {
     pub history: HistoryStores,
     /// The kept facts' refresh job, for the jobs table to run.
     pub facts: Arc<crate::discover::facts::job::FactJobs>,
+    /// The taste job, for the jobs table to run.
+    pub taste: Arc<crate::discover::engine::jobs::TasteJobs>,
 }
 
 /// Clamp a limit into `1..=max`, defaulting when missing.
@@ -452,6 +454,7 @@ pub async fn forget_history(deps: &DiscoverDeps, user_id: &str) -> Result<(), Se
         imported_listens = forgotten.imported_listens,
         picks = forgotten.picks,
         activity = forgotten.activity,
+        taste = forgotten.taste,
         pages = forgotten.pages,
         "a person's history forgotten"
     );

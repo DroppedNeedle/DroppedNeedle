@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 191);
+    assert_eq!(table_names(&connection).len(), 195);
     assert_eq!(
         scalar(
             &connection,
@@ -420,6 +420,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0162_kept_facts.sql",
         "9266c0f45ccb7b2d2ca23d70029b3f48b5f2eab8530bac60ecc9ebdc030ae7a5",
+    ),
+    (
+        "0163_taste_groups.sql",
+        "f0b4bf32802c8e684b081146b4de3ece1a255fb18b267c942584a0133ba704d8",
     ),
 ];
 
@@ -2876,6 +2880,132 @@ fn kept_facts_upgrade_adds_empty_tables_and_keeps_every_row() {
         .unwrap();
 }
 
+/// 0163 adds the four taste tables, all empty, and changes nothing else:
+/// the rows a database held before it survive as they were. A trend
+/// outside its list, a negative count or a row for no account is refused,
+/// and an account's rows go with it.
+#[test]
+fn taste_tables_upgrade_adds_four_empty_tables() {
+    let dir = ScratchDir::new("taste-tables-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 163)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 162);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);
+             INSERT INTO library_play_history (id, user_id, track_name, artist_name, played_at)
+                 VALUES ('p1', 'u1', 'Song', 'Someone', 1000);
+             INSERT INTO media_imported_listens (user_id, listened_at, artist_name,
+                 track_name, imported_at) VALUES ('u1', 1000, 'Someone', 'Song', 5);",
+        )
+        .unwrap();
+    let kept = [
+        "auth_users",
+        "library_play_history",
+        "media_imported_listens",
+    ];
+    let added = [
+        "catalog_taste_builds",
+        "catalog_taste_groups",
+        "catalog_taste_artists",
+        "catalog_known_release_groups",
+    ];
+    let before_schema = schema_rows(&connection);
+    let before: Vec<Vec<String>> = kept
+        .iter()
+        .map(|table| table_rows(&connection, table, "rowid, *"))
+        .collect();
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 163);
+    for (table, rows) in kept.iter().zip(&before) {
+        assert_eq!(&table_rows(&connection, table, "rowid, *"), rows, "{table}");
+    }
+    let mut after_schema = schema_rows(&connection);
+    for (_, name, table, sql) in &after_schema {
+        if added.contains(&table.as_str()) && name == table {
+            assert!(
+                sql.as_deref().is_some_and(|sql| sql.ends_with("STRICT")),
+                "{name}: {sql:?}"
+            );
+        }
+    }
+    for table in added {
+        assert_eq!(
+            scalar(&connection, &format!("SELECT COUNT(*) FROM {table}")),
+            0,
+            "{table} starts empty"
+        );
+    }
+    after_schema.retain(|(_, _, table, _)| !added.contains(&table.as_str()));
+    assert_eq!(after_schema, before_schema, "nothing else changes");
+
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = ON;
+             INSERT INTO catalog_taste_builds (user_id, built_at, plays_counted,
+                 imported_listens_counted, artists_played, seeds, incomplete)
+                 VALUES ('u1', 1, 1, 1, 1, 1, 0), ('u2', 1, 0, 0, 0, 0, 1);
+             INSERT INTO catalog_taste_groups (user_id, group_no, anchor_artist_mbid,
+                 anchor_name, share, recent_share, trend)
+                 VALUES ('u1', 0, 'a', 'A', 1.0, 1.0, 'steady'),
+                        ('u2', 0, 'a', 'A', 1.0, 0.0, 'fading');
+             INSERT INTO catalog_taste_artists (user_id, artist_mbid_lower, artist_mbid,
+                 name, plays, imported_listens, months_active, weight, is_seed, group_no)
+                 VALUES ('u1', 'a', 'a', 'A', 1, 1, 1, 1.2, 1, 0),
+                        ('u2', 'a', 'a', 'A', 0, 0, 0, 2.0, 1, NULL);
+             INSERT INTO catalog_known_release_groups (user_id, release_group_mbid_lower,
+                 plays, last_played_at) VALUES ('u1', 'rg', 1, 1000), ('u2', 'rg', 2, 1000);",
+        )
+        .expect("taste rows are stored");
+    for refused in [
+        "INSERT INTO catalog_taste_groups (user_id, group_no, anchor_artist_mbid, anchor_name, \
+         share, recent_share, trend) VALUES ('u1', 1, 'b', 'B', 0.5, 0.5, 'falling')",
+        "INSERT INTO catalog_taste_groups (user_id, group_no, anchor_artist_mbid, anchor_name, \
+         share, recent_share, trend) VALUES ('nobody', 0, 'b', 'B', 0.5, 0.5, 'steady')",
+        "INSERT INTO catalog_taste_artists (user_id, artist_mbid_lower, artist_mbid, name, \
+         plays, imported_listens, months_active, weight, is_seed) \
+         VALUES ('u1', 'b', 'b', 'B', -1, 0, 0, 1.0, 0)",
+        "INSERT INTO catalog_taste_artists (user_id, artist_mbid_lower, artist_mbid, name, \
+         plays, imported_listens, months_active, weight, is_seed) \
+         VALUES ('u1', 'b', 'b', 'B', 1, 0, 1, 1.0, 2)",
+        "UPDATE catalog_taste_builds SET incomplete = 2 WHERE user_id = 'u1'",
+        "INSERT INTO catalog_known_release_groups (user_id, release_group_mbid_lower, plays, \
+         last_played_at) VALUES ('u1', 'rg-2', 0, 1000)",
+        "INSERT INTO catalog_taste_builds (user_id, built_at, plays_counted, \
+         imported_listens_counted, artists_played, seeds, incomplete) \
+         VALUES ('u1', 'soon', 0, 0, 0, 0, 0)",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+    connection
+        .execute("DELETE FROM auth_users WHERE id = 'u1'", [])
+        .unwrap();
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id FROM catalog_taste_builds UNION ALL \
+             SELECT user_id FROM catalog_taste_groups UNION ALL \
+             SELECT user_id FROM catalog_taste_artists UNION ALL \
+             SELECT user_id FROM catalog_known_release_groups",
+            []
+        ),
+        ["u2", "u2", "u2", "u2"],
+        "an account's taste goes with it, and only its own"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -3183,12 +3313,16 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("catalog_discover_picks", "user_id", "auth_users", "CASCADE"),
     ("catalog_event_cities", "user_id", "auth_users", "CASCADE"),
     ("catalog_event_seen_marks", "user_id", "auth_users", "CASCADE"),
+    ("catalog_known_release_groups", "user_id", "auth_users", "CASCADE"),
     ("catalog_new_release_seen_marks", "user_id", "auth_users", "CASCADE"),
     ("catalog_playlist_covers", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlist_members", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlist_members", "user_id", "auth_users", "CASCADE"),
     ("catalog_playlist_tracks", "playlist_id", "catalog_playlists", "CASCADE"),
     ("catalog_playlists", "user_id", "auth_users", "CASCADE"),
+    ("catalog_taste_artists", "user_id", "auth_users", "CASCADE"),
+    ("catalog_taste_builds", "user_id", "auth_users", "CASCADE"),
+    ("catalog_taste_groups", "user_id", "auth_users", "CASCADE"),
     ("catalog_user_favorite_names", "user_id, item_kind, item_id", "catalog_user_favorites", "CASCADE"),
     ("catalog_user_favorites", "user_id", "auth_users", "CASCADE"),
     ("catalog_user_play_marks", "local_track_id", "local_tracks", "CASCADE"),
@@ -3752,6 +3886,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_catalog::concerts::models::{ConcertStatus, EventSource};
     use droppedneedle_catalog::concerts::store::CheckOutcome;
     use droppedneedle_catalog::discover::cache::PageKind;
+    use droppedneedle_catalog::discover::engine::taste::Trend;
     use droppedneedle_catalog::discover::feedback::{FeedbackKind, FeedbackTarget};
     use droppedneedle_catalog::discover::facts::{FactKind, FactSource, ListSource, MeteredSource, Outcome};
     use droppedneedle_catalog::discover::record::MadeFrom;
@@ -3849,6 +3984,7 @@ fn state_columns() -> Vec<StateColumn> {
         state("catalog_live_event_feed", "match_confidence", &Confidence::ALL, Confidence::as_str),
         state("catalog_live_event_feed", "source", &EventSource::ALL, EventSource::as_str),
         state("catalog_live_event_feed", "status", &ConcertStatus::ALL, ConcertStatus::as_str),
+        state("catalog_taste_groups", "trend", &Trend::ALL, Trend::as_str),
         state("catalog_user_favorites", "item_kind", &FavoriteKind::ALL, FavoriteKind::as_str),
         state("catalog_user_ratings", "item_kind", &RatedKind::ALL, RatedKind::as_str),
         // compat

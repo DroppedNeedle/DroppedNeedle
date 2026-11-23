@@ -1678,7 +1678,7 @@ impl Builder<'_> {
         shared: &Shared,
     ) -> (Option<TopPicksSection>, bool) {
         let settings = self.settings.queue.clone();
-        let listened = listened_albums(&self.queue_ctx(&settings), user, primary).await;
+        let listened = listened_albums(&self.queue_ctx(&settings), user_id, user, primary).await;
         let exclude: HashSet<String> = listened.union(self.feedback.albums()).cloned().collect();
 
         // Similarity from the reads the Because shelves already made.

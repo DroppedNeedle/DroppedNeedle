@@ -8,7 +8,9 @@
 //!
 //! ListenBrainz (the default source): trending artists and popular albums
 //! come from the sitewide stats, "your top albums" from the user's own
-//! stats through their linked ListenBrainz account. One row more than asked
+//! stats through their linked ListenBrainz account, or, while their
+//! imported ListenBrainz history is current, from their plays in the app
+//! when those name a few albums. One row more than asked
 //! for tells whether another page follows, and a page shows each release
 //! group once, with its higher count. Artists without an
 //! MBID are dropped (they cannot link anywhere). When ListenBrainz is down
@@ -38,6 +40,7 @@ use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 
+use super::engine::history;
 use super::ownership::{owned_albums, owned_artists};
 use super::queue::QueueSettings;
 use super::queue::build::{BuildContext, normalize, resolve_release_groups};
@@ -50,6 +53,10 @@ use crate::discover::{
     models::{AlbumRef, ArtistRef, ChartPage},
     ports::{BoxFuture, ProviderFailure},
 };
+
+/// The fewest albums played in the app over a range for "your top albums"
+/// to be made from them.
+const PLAYED_TOP_MIN: i64 = 3;
 
 /// Most rows one Last.fm range page reads: 200.
 const LASTFM_MAX_ROWS: i64 = 200;
@@ -489,6 +496,9 @@ impl LiveCharts {
                 }
                 (_, _, Some(listenbrainz)) => {
                     let (count, skip) = window(limit, offset);
+                    if let Some(played) = self.played_top(user_id, range, count, skip).await {
+                        return self.album_page(range, limit, offset, played).await;
+                    }
                     match self
                         .listening
                         .user_albums(listenbrainz, range, count, skip, &ask)
@@ -507,6 +517,34 @@ impl LiveCharts {
                 _ => Vec::new(),
             };
             self.album_page(range, limit, offset, albums).await
+        })
+    }
+
+    /// The user's most played albums in the app over `range`, `count` from
+    /// `skip`, while their imported ListenBrainz history is current and
+    /// they played at least [`PLAYED_TOP_MIN`] albums in it; `None` sends
+    /// the page to ListenBrainz's statistics. Imported listens name no
+    /// album, so only plays in the app count.
+    async fn played_top(
+        &self,
+        user_id: &str,
+        range: StatsRange,
+        count: u32,
+        skip: u32,
+    ) -> Option<Vec<AlbumRef>> {
+        let read = async {
+            if !history::import_current(&self.db, user_id).await? {
+                return Ok(None);
+            }
+            let since = history::range_start(range, self.clock.now_ms());
+            let (rows, albums) = history::top_albums(&self.db, user_id, since, count, skip).await?;
+            Ok::<_, droppedneedle_kernel::db::DbError>(
+                (albums >= PLAYED_TOP_MIN).then(|| listenbrainz_albums(rows)),
+            )
+        };
+        read.await.unwrap_or_else(|error| {
+            tracing::warn!(%error, "plays in the app unreadable; asking listenbrainz");
+            None
         })
     }
 

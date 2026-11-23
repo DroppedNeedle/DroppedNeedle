@@ -13,6 +13,14 @@
 //! and a name never joins two inputs. The inputs add up to one weight per
 //! artist; a seed needs [`MIN_WEIGHT`], and the heaviest [`MAX_SEEDS`] are
 //! kept, ties by id.
+//!
+//! Plays are the person's plays in the app and the listens imported from
+//! their ListenBrainz history; while that import is current, ListenBrainz's
+//! top artists are not read, since the history already holds them. An
+//! album they said they know already counts as a heart on it. Once their
+//! taste is built the seeds are read from it instead
+//! ([`crate::discover::engine`]): the heaviest, taking turns across their
+//! groups.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -20,10 +28,13 @@ use droppedneedle_library::identify::artist_links::placeholder;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 use super::build::{BuildContext, normalize, or_empty};
+use crate::discover::engine::history::History;
+use crate::discover::engine::{sql as engine_sql, taste_store};
+use crate::discover::feedback::{FeedbackKind, FeedbackTarget};
 use crate::discover::listening::{ArtistRow, JellyfinList, ListenSource, StatsRange, UserMusic};
 use crate::discover::{read_all, sql};
 
-// The weights, the minimum and the cap: proposed; tuned with taste groups.
+// The weights, the minimum and the cap: proposed. Taste groups weigh with them too.
 
 /// Plays weigh `ln(1 + plays)`, times this much more for each calendar
 /// month past the first that holds a play...
@@ -84,7 +95,7 @@ const DAY_MS: f64 = 86_400_000.0;
 /// What spoke for a seed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(in crate::discover) enum SeedInput {
-    /// The person's plays in the app.
+    /// The person's plays in the app and their imported listens.
     Plays,
     /// Their hearts.
     Hearts,
@@ -110,7 +121,8 @@ pub(in crate::discover) struct Seed {
     pub artist: ArtistRow,
     /// How much the inputs add up to.
     pub weight: f64,
-    /// Which inputs spoke, in [`SeedInput`]'s order.
+    /// Which inputs spoke, in [`SeedInput`]'s order; none named for a seed
+    /// read from the person's taste build.
     pub inputs: Vec<SeedInput>,
 }
 
@@ -122,7 +134,7 @@ pub(in crate::discover) fn links_listening(user: &UserMusic) -> bool {
 
 /// A usable seed id: a MusicBrainz artist id, lowercased, not a
 /// special-purpose one.
-fn seed_mbid(value: Option<&str>) -> Option<String> {
+pub(in crate::discover) fn seed_mbid(value: Option<&str>) -> Option<String> {
     let mbid = normalize(value).filter(|mbid| is_valid_mbid(mbid))?;
     (!placeholder(&mbid)).then_some(mbid)
 }
@@ -139,17 +151,21 @@ fn plays_weight(plays: i64, months: i64, days_since: f64) -> f64 {
         * 0.5_f64.powf(days_since.max(0.0) / PLAY_HALF_LIFE_DAYS)
 }
 
+/// What the inputs say about one artist.
 #[derive(Default)]
-struct Tally {
-    name: String,
-    plays: i64,
-    weight: f64,
+pub(in crate::discover) struct Tally {
+    /// The first name an input gave.
+    pub name: String,
+    /// The person's plays of it in the app.
+    pub plays: i64,
+    /// The inputs' weight added up.
+    pub weight: f64,
     inputs: Vec<SeedInput>,
 }
 
 /// Every artist an input named, by MusicBrainz id.
 #[derive(Default)]
-struct Tallies(BTreeMap<String, Tally>);
+pub(in crate::discover) struct Tallies(BTreeMap<String, Tally>);
 
 impl Tallies {
     /// Count `weight` for the artist `mbid` from `input`; nothing for a
@@ -179,15 +195,34 @@ impl Tallies {
             .count()
     }
 
-    /// The seeds, heaviest first, ties by id.
-    fn into_seeds(self) -> Vec<Seed> {
-        let mut seeds: Vec<Seed> = self
+    /// Every artist named, by id.
+    pub(in crate::discover) fn artists(&self) -> &BTreeMap<String, Tally> {
+        &self.0
+    }
+
+    /// The seeds' ids, heaviest first, ties by id: at most [`MAX_SEEDS`],
+    /// each of weight [`MIN_WEIGHT`] or more.
+    pub(in crate::discover) fn seed_ids(&self) -> Vec<String> {
+        let mut ids: Vec<(&String, f64)> = self
             .0
-            .into_iter()
+            .iter()
             .filter(|(_, tally)| tally.weight >= MIN_WEIGHT)
-            .map(|(mbid, mut tally)| {
+            .map(|(mbid, tally)| (mbid, tally.weight))
+            .collect();
+        // The map is in id order and the sort is stable, so ties stay by id.
+        ids.sort_by(|a, b| b.1.total_cmp(&a.1));
+        ids.truncate(MAX_SEEDS);
+        ids.into_iter().map(|(mbid, _)| mbid.clone()).collect()
+    }
+
+    /// The seeds, heaviest first, ties by id.
+    fn into_seeds(mut self) -> Vec<Seed> {
+        self.seed_ids()
+            .into_iter()
+            .filter_map(|mbid| {
+                let mut tally = self.0.remove(&mbid)?;
                 tally.inputs.sort();
-                Seed {
+                Some(Seed {
                     artist: ArtistRow {
                         name: tally.name,
                         mbid: Some(mbid),
@@ -195,13 +230,9 @@ impl Tallies {
                     },
                     weight: tally.weight,
                     inputs: tally.inputs,
-                }
+                })
             })
-            .collect();
-        // The map is in id order and the sort is stable, so ties stay by id.
-        seeds.sort_by(|a, b| b.weight.total_cmp(&a.weight));
-        seeds.truncate(MAX_SEEDS);
-        seeds
+            .collect()
     }
 }
 
@@ -230,30 +261,111 @@ where
 }
 
 /// The person's seed artists, heaviest first: at most [`MAX_SEEDS`], each
-/// of weight [`MIN_WEIGHT`] or more. `source` is the service their
-/// listening follows; with both linked, both feed while the server blends
-/// them.
+/// of weight [`MIN_WEIGHT`] or more. Once their taste is built they come
+/// from it; until then they are weighed here. `source` is the service
+/// their listening follows; with both linked, both feed while the server
+/// blends them. A list too short is topped up from the library.
 pub(in crate::discover) async fn weighted_seeds(
     ctx: &BuildContext<'_>,
     user_id: &str,
     user: &UserMusic,
     source: ListenSource,
 ) -> Vec<Seed> {
+    match taste_store::seeds(ctx.db.db(), user_id).await {
+        Ok(Some(seeds)) => return topped_up(ctx, seeds).await,
+        Ok(None) => {}
+        Err(cause) => {
+            tracing::warn!(%cause, "taste build unreadable; weighing seeds afresh");
+            ctx.ask.note_failure();
+        }
+    }
+    let history = match History::read(ctx.db.db(), user_id, ctx.now_ms).await {
+        Ok(history) => history,
+        Err(cause) => {
+            tracing::warn!(%cause, "listening history unreadable; leaving plays out");
+            ctx.ask.note_failure();
+            History::default()
+        }
+    };
+    let read_listenbrainz = !history.import_current;
+    let mut tallies = weigh(ctx, user_id, user, source, &history, read_listenbrainz).await;
+    if tallies.seeds() < ctx.settings.seed_artists.max(1) {
+        top_up(ctx, &mut tallies).await;
+    }
+    tallies.into_seeds()
+}
+
+/// `seeds` from the taste build, with the library's artists after them
+/// when there are too few.
+async fn topped_up(ctx: &BuildContext<'_>, mut seeds: Vec<Seed>) -> Vec<Seed> {
+    if seeds.len() >= ctx.settings.seed_artists.max(1) {
+        return seeds;
+    }
+    let mut library = Tallies::default();
+    top_up(ctx, &mut library).await;
+    let have: HashSet<String> = seeds
+        .iter()
+        .filter_map(|seed| seed.artist.mbid.clone())
+        .collect();
+    library.0.retain(|mbid, _| !have.contains(mbid));
+    seeds.extend(library.into_seeds());
+    seeds.truncate(MAX_SEEDS);
+    seeds
+}
+
+/// Add the library's artists to `tallies`, weighed by their albums.
+async fn top_up(ctx: &BuildContext<'_>, tallies: &mut Tallies) {
+    let library = rows(
+        ctx,
+        "discover.seeds.library",
+        sql::TOP_ARTISTS.text(),
+        (LIBRARY_ROWS,),
+        sql::HomeArtistColumns::read,
+    )
+    .await;
+    for row in library {
+        let weight = LIBRARY_SCALE * ln_1p(row.album_count);
+        tallies.add(
+            row.mbid.as_deref(),
+            &row.display_name,
+            SeedInput::Library,
+            weight,
+        );
+    }
+}
+
+/// Every artist the person's own rows and accounts name, weighed: their
+/// plays and imported listens in `history`, hearts, ratings, follows,
+/// playlists, requests, the albums they said they know already, and the
+/// accounts they linked. ListenBrainz's top artists are read only when
+/// `read_listenbrainz` says so. What the library holds is not added.
+pub(in crate::discover) async fn weigh(
+    ctx: &BuildContext<'_>,
+    user_id: &str,
+    user: &UserMusic,
+    source: ListenSource,
+    history: &History,
+    read_listenbrainz: bool,
+) -> Tallies {
     let id = || (user_id.to_owned(),);
-    let (plays, hearts, ratings, follows, playlists, requests, linked) = tokio::join!(
-        rows(
-            ctx,
-            "discover.seeds.plays",
-            sql::SEED_PLAYS.text(),
-            id(),
-            sql::SeedPlays::read
-        ),
+    let (hearts, known, ratings, follows, playlists, requests, linked) = tokio::join!(
         rows(
             ctx,
             "discover.seeds.hearts",
             sql::SEED_HEARTS.text(),
             id(),
             sql::SeedHearts::read
+        ),
+        rows(
+            ctx,
+            "discover.seeds.known_albums",
+            engine_sql::SEED_KNOWN_ALBUMS.text(),
+            (
+                user_id.to_owned(),
+                FeedbackTarget::Album,
+                FeedbackKind::KnowIt
+            ),
+            engine_sql::SeedKnownAlbums::read
         ),
         rows(
             ctx,
@@ -283,23 +395,33 @@ pub(in crate::discover) async fn weighted_seeds(
             id(),
             sql::SeedRequests::read
         ),
-        linked_artists(ctx, user_id, user, source),
+        linked_artists(ctx, user_id, user, source, read_listenbrainz),
     );
 
     let mut tallies = Tallies::default();
-    for row in plays {
-        let days_since = (ctx.now_ms - row.last_played_at.0) as f64 / DAY_MS;
-        let weight = plays_weight(row.plays, row.months, days_since);
-        if let Some(tally) = tallies.add(Some(&row.mbid), &row.name, SeedInput::Plays, weight) {
-            tally.plays += row.plays;
+    for played in &history.artists {
+        let days_since = (ctx.now_ms - played.last_at) as f64 / DAY_MS;
+        let listens = played.plays + played.imported_listens;
+        let weight = plays_weight(listens, played.months, days_since);
+        if let Some(tally) = tallies.add(Some(&played.mbid), &played.name, SeedInput::Plays, weight)
+        {
+            tally.plays += played.plays;
         }
     }
+    // An album they know already counts as a heart on it.
+    let mut hearted: BTreeMap<String, (String, i64, i64, i64)> = BTreeMap::new();
     for row in hearts {
-        let weight = (HEART_ARTIST * row.artists as f64
-            + HEART_ALBUM * row.albums as f64
-            + HEART_TRACK * row.tracks as f64)
+        hearted.insert(row.mbid, (row.name, row.artists, row.albums, row.tracks));
+    }
+    for row in known {
+        hearted.entry(row.mbid).or_insert((row.name, 0, 0, 0)).2 += row.albums;
+    }
+    for (mbid, (name, artists, albums, tracks)) in hearted {
+        let weight = (HEART_ARTIST * artists as f64
+            + HEART_ALBUM * albums as f64
+            + HEART_TRACK * tracks as f64)
             .min(HEARTS_MAX);
-        tallies.add(Some(&row.mbid), &row.name, SeedInput::Hearts, weight);
+        tallies.add(Some(&mbid), &name, SeedInput::Hearts, weight);
     }
     for row in ratings {
         let good =
@@ -371,27 +493,7 @@ pub(in crate::discover) async fn weighted_seeds(
             }
         }
     }
-
-    if tallies.seeds() < wanted {
-        let library = rows(
-            ctx,
-            "discover.seeds.library",
-            sql::TOP_ARTISTS.text(),
-            (LIBRARY_ROWS,),
-            sql::HomeArtistColumns::read,
-        )
-        .await;
-        for row in library {
-            let weight = LIBRARY_SCALE * ln_1p(row.album_count);
-            tallies.add(
-                row.mbid.as_deref(),
-                &row.display_name,
-                SeedInput::Library,
-                weight,
-            );
-        }
-    }
-    tallies.into_seeds()
+    tallies
 }
 
 /// What the person's own linked accounts name.
@@ -411,14 +513,16 @@ fn listens(row: ArtistRow) -> (ArtistRow, f64) {
 }
 
 /// The artists the person's own linked accounts name: ListenBrainz's top
-/// artists of [`LINKED_RANGE`] and Last.fm's, the primary's alone unless
-/// the server blends both, and their own Jellyfin's most played and
-/// favourites. Every read may fail: it is logged and reads as nothing.
+/// artists of [`LINKED_RANGE`] (only when `read_listenbrainz` says so) and
+/// Last.fm's, the primary's alone unless the server blends both, and their
+/// own Jellyfin's most played and favourites. Every read may fail: it is
+/// logged and reads as nothing.
 async fn linked_artists<'u>(
     ctx: &BuildContext<'_>,
     user_id: &str,
     user: &'u UserMusic,
     source: ListenSource,
+    read_listenbrainz: bool,
 ) -> Linked<'u> {
     let blends = ctx
         .listening
@@ -427,7 +531,7 @@ async fn linked_artists<'u>(
     let username = user
         .listenbrainz
         .as_deref()
-        .filter(|_| blends || source == ListenSource::Listenbrainz);
+        .filter(|_| read_listenbrainz && (blends || source == ListenSource::Listenbrainz));
     let listenbrainz = async {
         let Some(username) = username else {
             return Vec::new();

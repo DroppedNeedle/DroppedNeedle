@@ -44,6 +44,7 @@ pub fn statement_files() -> Vec<StatementFile> {
         crate::artwork::sql::registered(),
         crate::collections::sql::registered(),
         crate::concerts::sql::registered(),
+        crate::discover::engine::sql::registered(),
         crate::discover::sql::registered(),
         crate::local::sql::registered(),
         crate::search::sql::registered(),
