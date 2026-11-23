@@ -20,5 +20,7 @@ export const RequestQueryKeyFactory = {
 			params.sort ?? '',
 			params.kind ?? ''
 		] as const,
-	approvals: (userId: UserId) => [...RequestQueryKeyFactory.all(userId), 'approvals'] as const
+	approvals: (userId: UserId) => [...RequestQueryKeyFactory.all(userId), 'approvals'] as const,
+	approvalBatches: (userId: UserId) =>
+		[...RequestQueryKeyFactory.all(userId), 'approval-batches'] as const
 };

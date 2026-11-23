@@ -46,6 +46,52 @@ export const getPlaylistDetailV3Query = (getId: Getter<string>, getEnabled: Gett
 
 export type { PlaylistV3UserId };
 
+export type PlaylistRequestStateV3 = components['schemas']['PlaylistRequestState'];
+export type PlaylistEntryStateV3 = components['schemas']['PlaylistEntryState'];
+export type ImportFailureReasonV3 = components['schemas']['ImportFailureReason'];
+
+/** How often the state is read again while albums are found or Spotify imports. */
+const WORKING_REFETCH_MS = 5_000;
+/** After a minute of that, a job waiting out an outage: read it less often. */
+const WAITING_REFETCH_MS = 60_000;
+const WORKING_FAST_FOR_MS = 60_000;
+
+/**
+ * What a playlist's missing songs wait for. With `poll`, read again on its
+ * own only while the songs' albums are being found or its Spotify import
+ * runs: every 5 s for the first minute, then every minute. One reader of a
+ * page polls; the others share its answer.
+ */
+export const getPlaylistRequestStateQuery = (
+	getId: Getter<string>,
+	getEnabled: Getter<boolean>,
+	poll = true
+) => {
+	let workingSince: number | null = null;
+	return createQuery(() => ({
+		enabled: getEnabled() && Boolean(authStore.user?.id),
+		staleTime: STALE_LIVE,
+		queryKey: PlaylistQueryKeyFactory.requestState(authStore.user?.id, getId()),
+		queryFn: ({ signal }: { signal?: AbortSignal } = {}) =>
+			api.v3.GET(
+				v3('/api/v3/playlists/{playlist_id}/request-state', { path: { playlist_id: getId() } }),
+				{ signal }
+			),
+		refetchInterval: (query: { state: { data?: PlaylistRequestStateV3 } }) => {
+			const state = query.state.data;
+			const working = Boolean(state && (state.finding_albums || state.import?.state === 'running'));
+			if (!poll || !working) {
+				workingSince = null;
+				return false;
+			}
+			workingSince ??= Date.now();
+			return Date.now() - workingSince < WORKING_FAST_FOR_MS
+				? WORKING_REFETCH_MS
+				: WAITING_REFETCH_MS;
+		}
+	}));
+};
+
 export type PlaylistMemberV3 = components['schemas']['PlaylistMember'];
 
 /** The people the caller's playlist is shared with. */

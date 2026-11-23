@@ -205,6 +205,7 @@ const EXPECTED: Record<keyof typeof EFFECTS, Sweep[]> = {
 		key('shared', 'artist', 'x'),
 		every('library', 'artist-reconciliation')
 	],
+	playlistRequestStatesChanged: [every('playlists', 'request-state')],
 	playlistSourcesDropped: [
 		{ key: [U, 'playlists', 'sources', 'job'], exact: true, dropSaved: true }
 	],

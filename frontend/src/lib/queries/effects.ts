@@ -522,6 +522,10 @@ export const EFFECTS = {
 	],
 	/** One artist's header. */
 	artistChanged: (artistId: string): Sweep[] => [{ key: ArtistQueryKeyFactory.basic(artistId) }],
+	/** What playlists' missing songs wait for, in every scope. */
+	playlistRequestStatesChanged: (): Sweep[] => [
+		{ everyScope: [PlaylistQueryKeyFactory.feature, 'request-state'] }
+	],
 	/** One playlist's kept source answer, dropped with its saved copy. */
 	playlistSourcesDropped: (userId: UserId, playlistId: string): Sweep[] => [
 		{ key: PlaylistQueryKeyFactory.sources(userId, playlistId), exact: true, dropSaved: true }
@@ -620,6 +624,7 @@ export const anyFollowChanged = fact('anyFollowChanged');
 export const homeChanged = fact('homeChanged');
 export const playlistListChanged = fact('playlistListChanged');
 export const playlistChanged = fact('playlistChanged');
+export const playlistRequestStatesChanged = fact('playlistRequestStatesChanged');
 export const pluginsChanged = fact('pluginsChanged');
 export const pluginFilesChanged = fact('pluginFilesChanged');
 export const profileChanged = fact('profileChanged');

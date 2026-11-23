@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
-	import { SvelteSet } from 'svelte/reactivity';
-	import { requestMissingTracks, type PlaylistDetail } from '$lib/api/playlists';
+	import type { PlaylistDetail } from '$lib/api/playlists';
 	import {
 		playlistTrackToQueueItem,
 		withPlayedFrom
@@ -28,8 +27,7 @@
 	} from '$lib/features/playlists/queries/playlistV3Adapter';
 	import { queryClient } from '$lib/queries/QueryClient';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { Music, Download, Lock, LogOut } from 'lucide-svelte';
-	import Button from '$lib/ui/Button.svelte';
+	import { Music, Lock, LogOut } from 'lucide-svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import type { PageData } from './$types';
 	import PlaylistHeader from '$lib/features/playlists/components/PlaylistHeader.svelte';
@@ -37,6 +35,7 @@
 	import DeletePlaylistModal from '$lib/features/playlists/components/DeletePlaylistModal.svelte';
 	import SharePlaylistModal from '$lib/features/playlists/components/SharePlaylistModal.svelte';
 	import PlaylistNotice from '$lib/features/playlists/components/PlaylistNotice.svelte';
+	import PlaylistRequestBanner from '$lib/features/playlists/components/PlaylistRequestBanner.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -69,36 +68,8 @@
 	let isOwner = $derived(playlist?.is_owner ?? false);
 	let canDelete = $derived(playlist?.can_delete ?? false);
 
-	let missingAlbumCount = $derived.by(() => {
-		if (!playlist) return 0;
-		const seen = new SvelteSet<string>();
-		for (const t of playlist.tracks) {
-			// library_file_id means owned locally (request-missing skips these too).
-			if (
-				t.album_id &&
-				!t.library_file_id &&
-				(!t.available_sources || t.available_sources.length === 0)
-			) {
-				seen.add(t.album_id);
-			}
-		}
-		return seen.size;
-	});
-
-	let requesting = $state(false);
-
-	async function handleRequestMissing() {
-		if (requesting || !playlist) return;
-		requesting = true;
-		try {
-			const result = await requestMissingTracks(playlist.tracks);
-			toastStore.show({ message: result.message, type: 'success' });
-		} catch {
-			toastStore.show({ message: "Couldn't submit requests", type: 'error' });
-		} finally {
-			requesting = false;
-		}
-	}
+	// The owner and editors see what missing songs wait for and ask for them.
+	let canRequest = $derived(isOwner || (playlist?.can_edit ?? false));
 
 	function applySourcesMap(sources: Record<string, string[]>, onlyMissing = false) {
 		if (!playlist) return;
@@ -308,31 +279,15 @@
 		/>
 
 		<div class="mx-auto max-w-7xl space-y-6 px-4 pb-10 sm:px-6 lg:px-8">
-			{#if isOwner && missingAlbumCount > 0}
-				<div
-					class="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-box border border-warning/60 bg-warning/8 px-4 py-3"
-				>
-					<Download class="size-5 shrink-0 text-warning" aria-hidden="true" />
-					<p class="min-w-0 flex-1 basis-48 text-sm font-medium">
-						{missingAlbumCount}
-						{missingAlbumCount === 1 ? 'album' : 'albums'} not in your library
-					</p>
-					<Button
-						variant="outline"
-						size="display-sm"
-						icon={Download}
-						loading={requesting}
-						onclick={() => void handleRequestMissing()}
-					>
-						Request {missingAlbumCount === 1 ? 'album' : missingAlbumCount + ' albums'}
-					</Button>
-				</div>
+			{#if canRequest}
+				<PlaylistRequestBanner playlistId={playlist.id} />
 			{/if}
 
 			<PlaylistTrackList
 				bind:this={trackList}
 				{playlist}
 				readonly={!playlist.can_edit}
+				{canRequest}
 				ontrackchange={() => {}}
 				onsourcechange={handleSourceChange}
 				onplaytrack={playFromTrack}

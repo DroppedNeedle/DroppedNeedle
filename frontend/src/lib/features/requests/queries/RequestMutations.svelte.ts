@@ -12,7 +12,8 @@ import {
 	applyEffects,
 	createAppMutation,
 	type Effect,
-	pendingApprovalsChanged
+	pendingApprovalsChanged,
+	playlistRequestStatesChanged
 } from '$lib/queries/effects';
 
 export interface RequestActionVars {
@@ -179,6 +180,38 @@ export const createRejectRequestMutation = () =>
 		onError: (err) =>
 			toastStore.show({
 				message: errorMessage(err, 'Could not reject that request'),
+				type: 'error'
+			})
+	}));
+
+/**
+ * Approve a card's `approve` albums and reject the rest of it, in one call.
+ * `all` is every album on the card, whose pages all change.
+ */
+export const createDecideApprovalBatchMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (vars: { batchId: string; approve: string[]; all: string[] }) =>
+			api.v3.POST(
+				v3('/api/v3/requests/approvals/batches/{batch_id}/decide', {
+					path: { batch_id: vars.batchId }
+				}),
+				{ approve: vars.approve }
+			),
+		onMutate: () => ({ userId: authStore.user?.id }),
+		effects: (_data, vars, context) =>
+			sameUser(context.userId)
+				? [...requestSurface(vars.all, true), playlistRequestStatesChanged()]
+				: [],
+		onSuccess: (data, _vars, context) => {
+			if (!sameUser(context.userId)) return;
+			toastStore.show({
+				message: `Approved ${data.approved}, rejected ${data.rejected}.`,
+				type: data.approved > 0 ? 'success' : 'info'
+			});
+		},
+		onError: (err) =>
+			toastStore.show({
+				message: errorMessage(err, 'Could not decide those requests'),
 				type: 'error'
 			})
 	}));

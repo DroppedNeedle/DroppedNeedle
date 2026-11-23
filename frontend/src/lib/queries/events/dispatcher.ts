@@ -10,6 +10,7 @@ import {
 	libraryOperationsChanged,
 	localChanged,
 	newReleasesChanged,
+	playlistRequestStatesChanged,
 	playlistsChanged,
 	requestsChanged,
 	searchJobChanged,
@@ -66,7 +67,11 @@ export const EVENT_TABLE: { [N in ServerEventName]: EventEntry<N> } = {
 	},
 	snapshot: {},
 	'downloads.changed': {
-		effects: (_, { userId }) => [downloadsChanged(userId), requestsChanged(userId)]
+		effects: (_, { userId }) => [
+			downloadsChanged(userId),
+			requestsChanged(userId),
+			playlistRequestStatesChanged()
+		]
 	},
 	'cache.sync': {},
 	wanted_new_candidates: {
@@ -97,6 +102,7 @@ export const EVENT_TABLE: { [N in ServerEventName]: EventEntry<N> } = {
 		})
 	},
 	request_imported: {
+		effects: () => [playlistRequestStatesChanged()],
 		toast: (data) => ({
 			id: `request-imported:${data.event_id}`,
 			message: `${albumOr(data.album_title, 'An album')} is now in your library.`,
@@ -125,7 +131,7 @@ export const EVENT_TABLE: { [N in ServerEventName]: EventEntry<N> } = {
 		effects: (data, { userId }) => [searchJobChanged(userId, data.job_id)]
 	},
 	requests_decided: {
-		effects: (_, { userId }) => [requestsChanged(userId)],
+		effects: (_, { userId }) => [requestsChanged(userId), playlistRequestStatesChanged()],
 		toast: (data) => ({
 			id: `requests-decided:${data.event_id}`,
 			message: decidedMessage(data),
@@ -136,8 +142,7 @@ export const EVENT_TABLE: { [N in ServerEventName]: EventEntry<N> } = {
 
 function decidedMessage(data: ServerEventData<'requests_decided'>): string {
 	const total = data.approved + data.rejected;
-	const albums = total === 1 ? 'album' : 'albums';
-	return `${data.approved} of your ${total} ${albums} from ${data.name} ${data.approved === 1 ? 'was' : 'were'} approved.`;
+	return `${data.name}: ${data.approved} of ${total} ${total === 1 ? 'album' : 'albums'} approved.`;
 }
 
 function mixMessage(data: ServerEventData<'personal_mix_refreshed'>): string {

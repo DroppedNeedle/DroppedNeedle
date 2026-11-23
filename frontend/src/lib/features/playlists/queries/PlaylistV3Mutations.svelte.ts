@@ -3,11 +3,16 @@ import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { authStore } from '$lib/stores/authStore.svelte';
 import {
+	anyDownloadChanged,
+	anyRequestChanged,
 	applyEffects,
 	createAppMutation,
+	pendingApprovalsChanged,
 	playlistChanged,
 	playlistListChanged,
-	playlistSourcesDropped
+	playlistRequestStatesChanged,
+	playlistSourcesDropped,
+	userQuotaChanged
 } from '$lib/queries/effects';
 
 export type UpdatePlaylistBodyV3 = components['schemas']['UpdatePlaylistBody'];
@@ -19,9 +24,51 @@ export type TrackInputV3 = components['schemas']['TrackInput'];
 export type ImportPlaylistBodyV3 = components['schemas']['ImportPlaylistBody'];
 export type ImportPlaylistResponseV3 = components['schemas']['ImportPlaylistResponse'];
 export type ImportUnmatchedReasonV3 = components['schemas']['ImportUnmatchedReason'];
+export type PlaylistRequestResultV3 = components['schemas']['PlaylistRequestResult'];
 const list = () => [playlistListChanged(authStore.user?.id)];
 const detail = (id: string) => [playlistChanged(authStore.user?.id, id)];
 const listAndDetail = (id: string) => [...list(), ...detail(id)];
+
+/** What a playlist request changes: its songs' states, the requests, the
+ * downloads, what waits for approval and the caller's quota. */
+const requested = () => {
+	const userId = authStore.user?.id;
+	return [
+		playlistRequestStatesChanged(),
+		anyRequestChanged(),
+		anyDownloadChanged(),
+		pendingApprovalsChanged(userId),
+		...(userId ? [userQuotaChanged(userId)] : [])
+	];
+};
+
+/**
+ * Ask for a playlist's missing albums, or with `entryId` one row's album.
+ * The caller makes `idempotencyKey` once per press, so a retry keeps it.
+ */
+export const createRequestPlaylistMissingMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (vars: { playlistId: string; idempotencyKey: string; entryId?: string }) =>
+			api.v3.POST(
+				v3('/api/v3/playlists/{playlist_id}/request-missing', {
+					path: { playlist_id: vars.playlistId }
+				}),
+				{ idempotency_key: vars.idempotencyKey, entry_id: vars.entryId ?? null }
+			),
+		effects: requested
+	}));
+
+/** Ask for one row's song alone. */
+export const createRequestPlaylistSongMutation = () =>
+	createAppMutation(() => ({
+		mutationFn: (vars: { playlistId: string; entryId: string }) =>
+			api.v3.POST(
+				v3('/api/v3/playlists/{playlist_id}/tracks/{track_id}/request-song', {
+					path: { playlist_id: vars.playlistId, track_id: vars.entryId }
+				})
+			),
+		effects: requested
+	}));
 
 /** Reads one playlist again, after its tracks' sources were healed. */
 export const refreshPlaylist = (id: string) => applyEffects(...detail(id));

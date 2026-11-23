@@ -55,6 +55,14 @@ export const getApprovalsQuery = (getEnabled: Getter<boolean> = () => true) =>
 		enabled: getEnabled() && !!authStore.user?.id
 	}));
 
+// One card a plain user's playlist press, its albums decided together.
+export const getApprovalBatchesQuery = (getEnabled: Getter<boolean> = () => true) =>
+	createQuery(() => ({
+		queryKey: RequestQueryKeyFactory.approvalBatches(authStore.user?.id),
+		queryFn: ({ signal }) => api.v3.GET(v3('/api/v3/requests/approvals/batches'), { signal }),
+		enabled: getEnabled() && !!authStore.user?.id
+	}));
+
 // Note: the approvals-count endpoint has exactly one reader,
 // getPendingApprovalCountQuery in the following slice (nav badge). Do not
 // add a second hook here; a duplicate key would split the badge cache.

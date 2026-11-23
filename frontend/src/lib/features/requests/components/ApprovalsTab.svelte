@@ -2,7 +2,10 @@
 	import { fade, fly } from '$lib/ui/motion';
 	import { Check, ShieldCheck, X } from 'lucide-svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
-	import { getApprovalsQuery } from '$lib/features/requests/queries/RequestQueries.svelte';
+	import {
+		getApprovalBatchesQuery,
+		getApprovalsQuery
+	} from '$lib/features/requests/queries/RequestQueries.svelte';
 	import {
 		createApproveRequestMutation,
 		createRejectRequestMutation
@@ -10,6 +13,7 @@
 	import type { RequestItem, RequestKind } from '$lib/features/requests/queries/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import ApprovalBatchCard from './ApprovalBatchCard.svelte';
 	import RequestRow from './RequestRow.svelte';
 	import RequestsAlert from './RequestsAlert.svelte';
 	import RequestsEmpty from './RequestsEmpty.svelte';
@@ -28,11 +32,17 @@
 
 	// Fetched on every admin visit, not only on this tab, so its badge is live.
 	const approvalsQuery = getApprovalsQuery(() => authStore.isAdmin);
+	const batchesQuery = getApprovalBatchesQuery(() => authStore.isAdmin);
 	const approvalItems = $derived<RequestItem[]>(approvalsQuery.data?.items ?? []);
-	const approvalLoading = $derived(approvalsQuery.isPending);
-	const approvalError = $derived(approvalsQuery.isError ? "Couldn't load pending approvals" : null);
+	const cards = $derived(batchesQuery.data?.cards ?? []);
+	const approvalLoading = $derived(approvalsQuery.isPending || batchesQuery.isPending);
+	const approvalError = $derived(
+		approvalsQuery.isError || batchesQuery.isError ? "Couldn't load pending approvals" : null
+	);
+	const waiting = $derived(approvalItems.length + cards.length);
 
-	$effect(() => oncount?.(approvalsQuery.data?.count ?? approvalItems.length));
+	// A card is one decision, so it counts once.
+	$effect(() => oncount?.((approvalsQuery.data?.count ?? approvalItems.length) + cards.length));
 
 	const approveRequestMutation = createApproveRequestMutation();
 	const rejectRequestMutation = createRejectRequestMutation();
@@ -57,12 +67,18 @@
 {#if active}
 	<div in:fade={{ duration: 150 }}>
 		{#if approvalError}
-			<RequestsAlert message={approvalError} onretry={() => void approvalsQuery.refetch()} />
+			<RequestsAlert
+				message={approvalError}
+				onretry={() => {
+					void approvalsQuery.refetch();
+					void batchesQuery.refetch();
+				}}
+			/>
 		{/if}
 
-		{#if approvalLoading && approvalItems.length === 0}
+		{#if approvalLoading && waiting === 0}
 			<RequestSkeleton count={3} buttons={2} />
-		{:else if approvalItems.length === 0}
+		{:else if waiting === 0}
 			<RequestsEmpty
 				icon={ShieldCheck}
 				tone="success"
@@ -83,6 +99,9 @@
 			</RequestsEmpty>
 		{:else}
 			<div class="flex flex-col gap-4">
+				{#each cards as card (card.id)}
+					<ApprovalBatchCard {card} />
+				{/each}
 				{#each approvalItems as item, i (itemRequestKey(item))}
 					<div in:fly={{ y: 12, duration: 200, delay: i * 30 }}>
 						<RequestRow>

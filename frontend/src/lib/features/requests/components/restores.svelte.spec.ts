@@ -107,7 +107,8 @@ describe('requests restores', () => {
 	it('shows the album cover on a track approval', async () => {
 		signIn('admin');
 		fakeApi({
-			'GET /api/v3/requests/approvals': { count: 1, items: [trackApproval] }
+			'GET /api/v3/requests/approvals': { count: 1, items: [trackApproval] },
+			'GET /api/v3/requests/approvals/batches': { cards: [] }
 		});
 		await renderWithQuery(ApprovalsTab, { active: true });
 

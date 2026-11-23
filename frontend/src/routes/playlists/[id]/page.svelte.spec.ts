@@ -12,7 +12,6 @@ const mockForgetSources = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
 
 vi.mock('$lib/api/playlists', () => ({
 	isRedactedPlaylist: (p: { is_redacted?: boolean } | null | undefined) => p?.is_redacted === true,
-	requestMissingTracks: vi.fn(),
 	downloadPlaylistExport: vi.fn()
 }));
 
@@ -39,6 +38,7 @@ vi.mock('$lib/features/playlists/queries/PlaylistV3Queries.svelte', () => ({
 	isRedactedPlaylistV3: () => false,
 	getPlaylistMembersV3Query: () => ({ data: [], isPending: false, isError: false }),
 	getUserDirectoryV3Query: () => ({ data: [], isPending: false, isError: false }),
+	getPlaylistRequestStateQuery: () => ({ data: undefined, isPending: false, isError: false }),
 	getPlaylistSourcesV3QueryOptions: (userId: string | undefined, id: string) => ({
 		queryKey: PlaylistQueryKeyFactory.sources(userId, id),
 		queryFn: async () => (await mockResolveMutate(id)).sources
@@ -57,6 +57,8 @@ vi.mock('$lib/features/playlists/queries/PlaylistV3Mutations.svelte', () => ({
 	createRemovePlaylistTracksV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createUpdatePlaylistTrackV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createReorderPlaylistTrackV3Mutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createRequestPlaylistMissingMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	createRequestPlaylistSongMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	refreshPlaylist: vi.fn().mockResolvedValue(undefined),
 	forgetPlaylistSources: mockForgetSources
 }));

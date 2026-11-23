@@ -6,8 +6,14 @@
 		createRemovePlaylistTrackV3Mutation,
 		createRemovePlaylistTracksV3Mutation,
 		createReorderPlaylistTrackV3Mutation,
+		createRequestPlaylistMissingMutation,
+		createRequestPlaylistSongMutation,
 		createUpdatePlaylistTrackV3Mutation
 	} from '$lib/features/playlists/queries/PlaylistV3Mutations.svelte';
+	import { getPlaylistRequestStateQuery } from '$lib/features/playlists/queries/PlaylistV3Queries.svelte';
+	import { ENTRY_CHIPS, pressMessage } from './requestStates';
+	import StatusChip from '$lib/ui/StatusChip.svelte';
+	import { createUuid } from '$lib/utils/uuid';
 	import { toPageTrack } from '$lib/features/playlists/queries/playlistV3Adapter';
 	import { playlistTrackToQueueItem } from '$lib/features/player/playback/queueHelpers';
 	import { playerStore } from '$lib/features/player/state/player.svelte';
@@ -20,7 +26,16 @@
 	import type { MenuItem } from '$lib/ui/ContextMenu.svelte';
 	import SourcePickerDropdown from '$lib/features/playlists/components/SourcePickerDropdown.svelte';
 	import NowPlayingIndicator from '$lib/features/player/components/NowPlayingIndicator.svelte';
-	import { Trash2, ListPlus, ListStart, GripVertical, Play, X } from 'lucide-svelte';
+	import {
+		Trash2,
+		ListPlus,
+		ListStart,
+		GripVertical,
+		Play,
+		X,
+		Download,
+		Music
+	} from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import VinylRecord from '$lib/ui/VinylRecord.svelte';
 	import PaperPanel from '$lib/ui/PaperPanel.svelte';
@@ -32,9 +47,69 @@
 		onsourcechange?: () => void;
 		onplaytrack?: (index: number) => void;
 		readonly?: boolean;
+		/** The owner or an editor: missing songs show what they wait for and can be asked for. */
+		canRequest?: boolean;
 	}
 
-	let { playlist, ontrackchange, onsourcechange, onplaytrack, readonly = false }: Props = $props();
+	let {
+		playlist,
+		ontrackchange,
+		onsourcechange,
+		onplaytrack,
+		readonly = false,
+		canRequest = false
+	}: Props = $props();
+
+	// The banner polls this answer; the rows read the same one.
+	const requestState = getPlaylistRequestStateQuery(
+		() => playlist.id,
+		() => canRequest,
+		false
+	);
+	const pressMutation = createRequestPlaylistMissingMutation();
+	const songMutation = createRequestPlaylistSongMutation();
+	// Keyed on the entry, so only the rows the server names carry a state.
+	const entryStates = $derived(
+		new Map((requestState.data?.entries ?? []).map((entry) => [entry.entry_id, entry.state]))
+	);
+
+	function requestFailed(error: unknown, fallback: string) {
+		toastStore.show({
+			message: error instanceof Error && error.message ? error.message : fallback,
+			type: 'error'
+		});
+	}
+
+	async function requestAlbum(track: PlaylistTrack) {
+		try {
+			const result = await pressMutation.mutateAsync({
+				playlistId: playlist.id,
+				idempotencyKey: createUuid(),
+				entryId: track.id
+			});
+			toastStore.show({ message: pressMessage(result), type: 'success' });
+		} catch (error) {
+			requestFailed(error, "Couldn't ask for that album");
+		}
+	}
+
+	async function requestSong(track: PlaylistTrack) {
+		try {
+			const result = await songMutation.mutateAsync({
+				playlistId: playlist.id,
+				entryId: track.id
+			});
+			toastStore.show({
+				message:
+					result.status === 'awaiting_approval'
+						? `Asked for ${track.track_name}, waiting for approval.`
+						: `Asked for ${track.track_name}.`,
+				type: 'success'
+			});
+		} catch (error) {
+			requestFailed(error, "Couldn't ask for that song");
+		}
+	}
 
 	let dragIndex = $state<number | null>(null);
 	let dragOverIndex = $state<number | null>(null);
@@ -335,6 +410,21 @@
 				onclick: () => playTrackNext(track)
 			}
 		];
+		const state = entryStates.get(track.id);
+		if (state === 'requestable') {
+			items.push({
+				label: 'Request album',
+				icon: Download,
+				onclick: () => void requestAlbum(track)
+			});
+		}
+		if (state === 'requestable' || state === 'album_in_library') {
+			items.push({
+				label: 'Request just this song',
+				icon: Music,
+				onclick: () => void requestSong(track)
+			});
+		}
 		// Non-owners (public read-only view) cannot mutate the playlist.
 		if (!readonly) {
 			items.push({
@@ -408,6 +498,8 @@
 						: playerStore.currentQueueItem?.trackSourceId === track.track_source_id &&
 							playerStore.currentQueueItem?.sourceType === track.source_type)}
 				{@const albumLinked = isValidMbid(track.album_id)}
+				{@const entryState = entryStates.get(track.id)}
+				{@const chip = entryState ? ENTRY_CHIPS[entryState] : null}
 				<li
 					transition:slide={{ duration: 200 }}
 					class="pl-row group {selectedIds.has(track.id)
@@ -490,6 +582,9 @@
 						{:else}
 							<span class="pl-row__name">{track.track_name}</span>
 						{/if}
+						{#if chip}
+							<StatusChip tone={chip.tone} size="xs" class="self-start">{chip.label}</StatusChip>
+						{/if}
 						<span class="pl-row__sub">
 							{#if track.artist_id}
 								<a href={withBasePath(`/artist/${track.artist_id}`)} class="hover:underline"
@@ -515,11 +610,14 @@
 
 					{#if !readonly}
 						<span class="pl-row__source">
-							<SourcePickerDropdown
-								currentSource={track.source_type}
-								availableSources={track.available_sources ?? [track.source_type]}
-								onchange={(src) => void handleSourceChange(track, src)}
-							/>
+							<!-- A song with no source yet has none to show or switch. -->
+							{#if track.source_type}
+								<SourcePickerDropdown
+									currentSource={track.source_type}
+									availableSources={track.available_sources ?? [track.source_type]}
+									onchange={(src) => void handleSourceChange(track, src)}
+								/>
+							{/if}
 						</span>
 					{/if}
 
