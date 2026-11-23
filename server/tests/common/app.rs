@@ -117,6 +117,24 @@ impl TestApp {
         Self::launch(tag, outbound, AppConfig::with_test_hooks, |_| {}).await
     }
 
+    /// As [`TestApp::start_hooked_with`], with the deployment config also
+    /// passed through `configure` before the app builds.
+    // Only some test binaries use it.
+    #[allow(dead_code)]
+    pub async fn start_hooked_configured(
+        tag: &str,
+        outbound: bootstrap::Outbound,
+        configure: impl FnOnce(AppConfig) -> AppConfig,
+    ) -> Self {
+        Self::launch(
+            tag,
+            outbound,
+            |config| configure(config.with_test_hooks()),
+            |_| {},
+        )
+        .await
+    }
+
     /// As [`TestApp::start`], with the deployment config passed through
     /// `configure` before the app builds: `AppConfig::with_test_hooks` mounts
     /// the `__test__` failure routes.

@@ -432,6 +432,18 @@ async fn answer(
     }
 }
 
+/// The app over `lb`, with Discover's warm cycle off. Its pass, on a timer
+/// of its own, queues taste builds that read a linked person's top artists
+/// from ListenBrainz while their import is not current, which the exact
+/// request lists here would catch at random.
+async fn start(tag: &str, lb: &ListenBrainz) -> TestApp {
+    TestApp::start_hooked_configured(tag, lb.outbound().await, |mut config| {
+        config.discover_warmer = false;
+        config
+    })
+    .await
+}
+
 /// `name`, signed in, with ListenBrainz linked as `name` with the token
 /// `name`, as the link route stores it.
 async fn linked(app: &TestApp, name: &str) -> crate::common::Login {
@@ -574,7 +586,7 @@ const SYNC: droppedneedle_kernel::jobs::queue::JobKind = droppedneedle_media::hi
 async fn a_link_imports_the_history_through_an_export() {
     let lb = ListenBrainz::default();
     lb.script().statuses = [fresh(EXPORT_WAITING), fresh(EXPORT_COMPLETED)].into();
-    let app = TestApp::start_hooked_with("history-export", lb.outbound().await).await;
+    let app = start("history-export", &lb).await;
     let ada = app.login_user("ada").await;
     let auth = ada.authorization.as_str();
 
@@ -681,7 +693,7 @@ async fn a_link_imports_the_history_through_an_export() {
 async fn the_read_starts_at_the_newest_listen_and_stays_quiet_when_it_should() {
     let lb = ListenBrainz::default();
     lb.script().pages = [(200, LISTENS.to_owned())].into();
-    let app = TestApp::start_hooked_with("history-sync", lb.outbound().await).await;
+    let app = start("history-sync", &lb).await;
     let history_store = app.state().media.history.clone();
     let (queue, _) = job_table(&app);
     let bo = linked(&app, "bowie").await;
@@ -793,7 +805,7 @@ async fn the_read_starts_at_the_newest_listen_and_stays_quiet_when_it_should() {
 #[tokio::test]
 async fn first_imports_are_spread_and_a_visit_starts_one_at_once() {
     let lb = ListenBrainz::default();
-    let app = TestApp::start_hooked_with("history-spread", lb.outbound().await).await;
+    let app = start("history-spread", &lb).await;
     let (queue, kit) = job_table(&app);
     let admin = app.login_admin().await;
     let first = linked(&app, "listener0").await;
@@ -878,7 +890,7 @@ async fn first_imports_are_spread_and_a_visit_starts_one_at_once() {
 #[tokio::test]
 async fn a_forget_before_the_first_import_keeps_it_from_starting() {
     let lb = ListenBrainz::default();
-    let app = TestApp::start_hooked_with("history-forget-first", lb.outbound().await).await;
+    let app = start("history-forget-first", &lb).await;
     let (queue, kit) = job_table(&app);
     let kim = linked(&app, "kimber").await;
     let (status, body) = app
@@ -914,7 +926,7 @@ async fn a_forget_before_the_first_import_keeps_it_from_starting() {
 #[tokio::test]
 async fn linking_another_account_asks_first_and_replaces_on_yes() {
     let lb = ListenBrainz::default();
-    let app = TestApp::start_hooked_with("history-replace", lb.outbound().await).await;
+    let app = start("history-replace", &lb).await;
     let fay = linked(&app, "fay").await;
     let auth = fay.authorization.as_str();
     let (status, body) = upload(&app, auth, EXPORT).await;
@@ -982,7 +994,7 @@ async fn a_refused_read_is_not_asked_again_within_six_hours() {
         r#"{"code": 401, "error": "Invalid authorization token."}"#.to_owned(),
     )]
     .into();
-    let app = TestApp::start_hooked_with("history-refused", lb.outbound().await).await;
+    let app = start("history-refused", &lb).await;
     let gil = linked(&app, "gilda").await;
     // Brought up to date seven hours ago: its read is due.
     let synced = droppedneedle_kernel::clock::SystemClock.now_ms() - 7 * 3_600_000;
@@ -1047,7 +1059,7 @@ async fn a_refused_export_request_fails_and_is_not_asked_again() {
             .to_owned(),
     )]
     .into();
-    let app = TestApp::start_hooked_with("history-refused-export", lb.outbound().await).await;
+    let app = start("history-refused-export", &lb).await;
     let (queue, kit) = job_table(&app);
     let creates = || {
         lb.seen()
@@ -1101,7 +1113,7 @@ async fn until_failed(app: &TestApp, user_id: &str) {
 #[tokio::test]
 async fn a_discover_visit_starts_the_import() {
     let lb = ListenBrainz::default();
-    let app = TestApp::start_hooked_with("history-discover", lb.outbound().await).await;
+    let app = start("history-discover", &lb).await;
     let jo = linked(&app, "jolene").await;
     let (status, body) = app
         .call(
