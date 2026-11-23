@@ -675,6 +675,170 @@ async fn art_that_comes_back_gets_a_new_version() {
     assert!(!stopped.complete, "a stop request ends the sweep early");
 }
 
+/// SQL adding album `album` titled `title` (already folded) with one indexed
+/// track `track` at `path`, which the scan records as `relative` below its
+/// library folder.
+fn album_with_track(album: &str, title: &str, track: &str, path: &Path, relative: &str) -> String {
+    format!(
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+         created_at, updated_at) VALUES ('{album}', 'r1', 'g{album}', '{title}', '{title}', \
+         'Aurora', 'aurora', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, availability, ingest_source, \
+         imported_at, membership_source) VALUES ('{track}', '{album}', 'r1', '{path}', \
+         '{relative}', 'h{track}', 1, 1, 's1', 'Opener', 'opener', '{title}', '{title}', \
+         'flac', 'indexed', 'scan', 1, 'automatic');",
+        path = path.display(),
+    )
+}
+
+/// The source and locator of an album's recorded art, if it has any.
+fn recorded_art(rig: &Rig, album: &str) -> Option<(String, String)> {
+    rig.runtime.db().maybe_row(
+        "SELECT source, source_locator FROM local_album_artwork WHERE local_album_id = ?1",
+        [album],
+    )
+}
+
+/// Runs `sql` as one write on the rig's database.
+async fn seed_catalog(rig: &Rig, sql: String) {
+    rig.runtime
+        .db()
+        .write(Lane::Foreground, "catalog seed", move |tx| {
+            tx.execute_batch(&sql).map_err(DbError::from)
+        })
+        .await
+        .unwrap();
+}
+
+/// Albums of different titles whose tracks sit in one folder with a
+/// `Folder.jpg` in it each record their own embedded picture, because that
+/// image is no album's alone. Album rows of one title in one folder, such as
+/// a compilation split by artist, keep its cover image. An album alone in its
+/// folder records its cover image, and an album recorded with that image
+/// before its folder became shared is read again.
+#[tokio::test]
+async fn a_folder_image_shared_by_albums_is_no_ones_cover() {
+    let files = ScratchDir::new("reads-artwork-shared");
+    let fixture = "tests/fixtures/library/management_full.flac";
+    let shared = files.join("Artist");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::copy(fixture, shared.join("01 - One.flac")).unwrap();
+    std::fs::copy(fixture, shared.join("02 - Two.flac")).unwrap();
+    let comp = files.join("Comp");
+    std::fs::create_dir_all(&comp).unwrap();
+    std::fs::copy(fixture, comp.join("01 - Comp One.flac")).unwrap();
+    std::fs::copy(fixture, comp.join("02 - Comp Two.flac")).unwrap();
+    let mut jpeg = Vec::new();
+    image::RgbImage::from_pixel(8, 8, image::Rgb(BLUE))
+        .write_to(
+            &mut std::io::Cursor::new(&mut jpeg),
+            image::ImageFormat::Jpeg,
+        )
+        .unwrap();
+    std::fs::write(comp.join("cover.jpg"), &jpeg).unwrap();
+    std::fs::write(shared.join("Folder.jpg"), jpeg).unwrap();
+    let solo = files.join("Solo");
+    std::fs::create_dir_all(&solo).unwrap();
+    std::fs::copy(fixture, solo.join("01.flac")).unwrap();
+    std::fs::write(solo.join("cover.png"), solid_png(RED, 8)).unwrap();
+
+    let rig = rig(None).await;
+    let sa = album_with_track(
+        "sa",
+        "one",
+        "sta",
+        &shared.join("01 - One.flac"),
+        "Artist/01 - One.flac",
+    );
+    let sb = album_with_track(
+        "sb",
+        "two",
+        "stb",
+        &shared.join("02 - Two.flac"),
+        "Artist/02 - Two.flac",
+    );
+    let sc = album_with_track("sc", "solo", "stc", &solo.join("01.flac"), "Solo/01.flac");
+    let ca = album_with_track(
+        "ca",
+        "comp",
+        "cta",
+        &comp.join("01 - Comp One.flac"),
+        "Comp/01 - Comp One.flac",
+    );
+    let cb = album_with_track(
+        "cb",
+        "comp",
+        "ctb",
+        &comp.join("02 - Comp Two.flac"),
+        "Comp/02 - Comp Two.flac",
+    );
+    seed_catalog(&rig, format!("{sa}{sc}{ca}{cb}")).await;
+    let store = SqliteScanStore::new(
+        rig.runtime.db().clone(),
+        std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+    );
+
+    // sb is not in the catalog yet, so sa is alone in its folder.
+    let first = store.refresh_album_artwork(&|| false).unwrap();
+    assert_eq!((first.checked, first.changed), (4, 4));
+    assert_eq!(
+        recorded_art(&rig, "sa"),
+        Some((
+            "folder".to_owned(),
+            shared.join("Folder.jpg").display().to_string()
+        )),
+        "an album alone in its folder keeps the folder image"
+    );
+    assert_eq!(
+        recorded_art(&rig, "sc"),
+        Some((
+            "folder".to_owned(),
+            solo.join("cover.png").display().to_string()
+        )),
+        "an album alone in its folder keeps its cover image"
+    );
+    for album in ["ca", "cb"] {
+        assert_eq!(
+            recorded_art(&rig, album),
+            Some((
+                "folder".to_owned(),
+                comp.join("cover.jpg").display().to_string()
+            )),
+            "album rows of one title keep the folder image"
+        );
+    }
+
+    // Only the catalog changes: sb's file has been in the folder all along,
+    // so the folder becomes shared and sa must be read again.
+    seed_catalog(&rig, sb).await;
+    let second = store.refresh_album_artwork(&|| false).unwrap();
+    assert_eq!(
+        second.checked, 2,
+        "sa and sb only: no other folder is shared"
+    );
+    assert_eq!(
+        recorded_art(&rig, "sa"),
+        Some(("embedded".to_owned(), "sta".to_owned())),
+        "a folder image shared with another title is nobody's cover"
+    );
+    assert_eq!(
+        recorded_art(&rig, "sb"),
+        Some(("embedded".to_owned(), "stb".to_owned())),
+    );
+    assert_eq!(
+        recorded_art(&rig, "sc"),
+        Some((
+            "folder".to_owned(),
+            solo.join("cover.png").display().to_string()
+        )),
+    );
+    let again = store.refresh_album_artwork(&|| false).unwrap();
+    assert_eq!(again.checked, 0, "no album is read again");
+}
+
 /// A folder image is read only when nothing below the library folder on
 /// the way to it is a link: a linked album folder can lead anywhere.
 #[cfg(unix)]

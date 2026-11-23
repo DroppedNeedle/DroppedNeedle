@@ -3,7 +3,9 @@
 //! [`SqliteScanStore::refresh_album_artwork`] walks the indexed albums and
 //! records the cover each one has in `local_album_artwork`: an image in the
 //! album folder first (`cover.jpg`, `folder.png`, ...), else the first
-//! picture embedded in one of its tracks. Navidrome uses the same order.
+//! picture embedded in one of its tracks. Navidrome uses the same order. An
+//! image in a folder holding tracks of albums with more than one title is
+//! used for none of them.
 //!
 //! Only the reference is stored (the folder image path, or the id of the
 //! track holding the picture) plus a hash of the image bytes. The hash is
@@ -16,7 +18,9 @@
 //! and the folder image's own size and time. Albums whose signature is
 //! unchanged are skipped, so a scan that changed nothing costs one stat per
 //! folder. Adding or replacing a folder image changes the folder's
-//! modification time, which brings the album back in.
+//! modification time, which brings the album back in. An album whose folder
+//! is shared with albums of another title also signs that folder's path, so
+//! it is looked at again when the folder starts or stops being shared.
 //!
 //! An album with a track file that cannot be reached (its folder is away,
 //! a share is unmounted, or a read fails) is left as it is, with no new
@@ -130,7 +134,8 @@ struct Checked {
 /// in one read they share.
 #[derive(Default)]
 pub(super) struct Snapshot {
-    pub(super) albums: Vec<(String, Vec<TrackFile>)>,
+    /// Each album's id, folded title and tracks, in album order.
+    pub(super) albums: Vec<(String, String, Vec<TrackFile>)>,
     current: HashMap<String, CurrentArt>,
     checks: HashMap<String, String>,
     pub(super) lyrics_checks: HashMap<String, String>,
@@ -163,8 +168,9 @@ impl SqliteScanStore {
             complete: true,
             ..ArtworkSweep::default()
         };
+        let owners = FolderOwners::new(&snapshot.albums);
         let mut pending = Vec::new();
-        for (album_id, tracks) in &snapshot.albums {
+        for (album_id, title_folded, tracks) in &snapshot.albums {
             let slice_spent = started.is_some_and(|at| at.elapsed() >= SWEEP_SLICE)
                 && sweep.checked + sweep.unreachable >= MIN_PER_SLICE;
             if stop() || slice_spent {
@@ -176,11 +182,16 @@ impl SqliteScanStore {
                 continue;
             }
             let dirs = album_dirs(tracks);
+            // A folder holding albums of another title gives this album no image.
+            let (shared, unshared): (Vec<&Path>, Vec<&Path>) = dirs
+                .iter()
+                .map(PathBuf::as_path)
+                .partition(|dir| owners.is_shared(title_folded, dir));
             let current_folder = current
                 .filter(|art| art.source == ArtworkSource::Folder)
                 .and_then(|art| art.locator.as_deref())
                 .map(Path::new);
-            let signature = album_signature(tracks, &dirs, current_folder.as_slice());
+            let signature = art_signature(tracks, &dirs, current_folder.as_slice(), &shared);
             if snapshot.checks.get(album_id) == Some(&signature) {
                 continue;
             }
@@ -190,7 +201,7 @@ impl SqliteScanStore {
                 continue;
             }
             sweep.checked += 1;
-            let ArtSearch { found, unread } = find_art(tracks, &dirs);
+            let ArtSearch { found, unread } = find_art(tracks, &unshared);
             // A failed read only stands aside for art that adds to an album
             // with none: an unreadable cover must not cost the embedded one.
             // The album is still looked at again, as fixing a file's
@@ -203,8 +214,8 @@ impl SqliteScanStore {
             }
             // Sign with the image actually found, so the next sweep (which
             // signs with the stored folder image) sees the same value.
-            let signature =
-                (!unread).then(|| album_signature(tracks, &dirs, found_folder(&found).as_slice()));
+            let signature = (!unread)
+                .then(|| art_signature(tracks, &dirs, found_folder(&found).as_slice(), &shared));
             pending.push(Checked {
                 album_id: album_id.clone(),
                 signature,
@@ -306,16 +317,17 @@ impl SqliteScanStore {
     }
 }
 
-/// Every live album with its indexed tracks, in album order.
+/// Every live album's id, folded title and indexed tracks, in album order.
 pub(super) fn album_tracks(
     conn: &rusqlite::Connection,
-) -> rusqlite::Result<Vec<(String, Vec<TrackFile>)>> {
-    let mut albums: Vec<(String, Vec<TrackFile>)> = Vec::new();
+) -> rusqlite::Result<Vec<(String, String, Vec<TrackFile>)>> {
+    let mut albums: Vec<(String, String, Vec<TrackFile>)> = Vec::new();
     let mut tracks = conn.prepare(crate::scan::sql::ALBUM_TRACKS.text())?;
     let mut rows = tracks.query([])?;
     while let Some(row) = rows.next()? {
         let row = crate::scan::sql::AlbumTrackFile::read(row)?;
         let album_id = row.local_album_id;
+        let title_folded = row.title_folded;
         let track = TrackFile {
             id: row.id,
             path: PathBuf::from(row.file_path),
@@ -324,8 +336,8 @@ pub(super) fn album_tracks(
             size_bytes: row.file_size_bytes,
         };
         match albums.last_mut() {
-            Some((last, files)) if *last == album_id => files.push(track),
-            _ => albums.push((album_id, vec![track])),
+            Some((last, _, files)) if *last == album_id => files.push(track),
+            _ => albums.push((album_id, title_folded, vec![track])),
         }
     }
     Ok(albums)
@@ -369,6 +381,67 @@ pub(super) fn album_dirs(tracks: &[TrackFile]) -> Vec<PathBuf> {
     dirs
 }
 
+/// The album title a folder's tracks belong to, or several titles sharing it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Owner<'a> {
+    Title(&'a str),
+    Shared,
+}
+
+impl<'a> Owner<'a> {
+    /// The owner once `other` holds tracks in the same folder too.
+    fn merge(self, other: Self) -> Self {
+        if self == other { self } else { Self::Shared }
+    }
+}
+
+/// Which album titles hold the tracks in each folder, and in each folder's
+/// direct subfolders. Each map has one entry per folder, not per track.
+struct FolderOwners<'a> {
+    in_folder: HashMap<&'a Path, Owner<'a>>,
+    in_subfolders: HashMap<&'a Path, Owner<'a>>,
+}
+
+impl<'a> FolderOwners<'a> {
+    fn new(albums: &'a [(String, String, Vec<TrackFile>)]) -> Self {
+        let mut in_folder = HashMap::new();
+        for (_, title_folded, tracks) in albums {
+            for folder in tracks.iter().filter_map(|track| track.path.parent()) {
+                claim(&mut in_folder, folder, Owner::Title(title_folded.as_str()));
+            }
+        }
+        let mut in_subfolders = HashMap::new();
+        for (&folder, &owner) in &in_folder {
+            if let Some(parent) = folder.parent() {
+                claim(&mut in_subfolders, parent, owner);
+            }
+        }
+        Self {
+            in_folder,
+            in_subfolders,
+        }
+    }
+
+    /// True when albums with another title have tracks in `folder` or in one
+    /// of its direct subfolders, so the folder's image is not
+    /// `title_folded`'s alone.
+    fn is_shared(&self, title_folded: &str, folder: &Path) -> bool {
+        [self.in_folder.get(folder), self.in_subfolders.get(folder)]
+            .into_iter()
+            .flatten()
+            .any(|owner| *owner != Owner::Title(title_folded))
+    }
+}
+
+/// Records that `owner` holds tracks in `folder`, which makes the folder
+/// shared when another owner already does.
+fn claim<'a>(owners: &mut HashMap<&'a Path, Owner<'a>>, folder: &'a Path, owner: Owner<'a>) {
+    owners
+        .entry(folder)
+        .and_modify(|seen| *seen = seen.merge(owner))
+        .or_insert(owner);
+}
+
 /// Hash of what decides an album's art or lyrics: track ids and stat
 /// revisions, folder modification times, and the size and time of each of
 /// `files` (the folder image, or the `.lrc` files beside the tracks).
@@ -387,6 +460,29 @@ pub(super) fn album_signature(tracks: &[TrackFile], dirs: &[PathBuf], files: &[&
     for file in files {
         hasher.update(file.to_string_lossy().as_bytes());
         hasher.update(stat_stamp(file).as_bytes());
+    }
+    hex(&hasher.finalize())
+}
+
+/// The art signature: `album_signature`, plus the folders the album shares
+/// with albums of another title. An album with no shared folder keeps
+/// `album_signature`'s value, so an album that shares no folder is never
+/// read again because of this rule.
+fn art_signature(
+    tracks: &[TrackFile],
+    dirs: &[PathBuf],
+    files: &[&Path],
+    shared: &[&Path],
+) -> String {
+    let signature = album_signature(tracks, dirs, files);
+    if shared.is_empty() {
+        return signature;
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(signature.as_bytes());
+    for folder in shared {
+        hasher.update([0]);
+        hasher.update(folder.to_string_lossy().as_bytes());
     }
     hex(&hasher.finalize())
 }
@@ -410,8 +506,8 @@ fn found_folder(found: &Option<FoundArt>) -> Option<&Path> {
     found.as_ref().and_then(|art| art.folder_image.as_deref())
 }
 
-/// Folder image first, then the first embedded picture.
-fn find_art(tracks: &[TrackFile], dirs: &[PathBuf]) -> ArtSearch {
+/// Folder image from `dirs` first, then the first embedded picture.
+fn find_art(tracks: &[TrackFile], dirs: &[&Path]) -> ArtSearch {
     let mut unread = false;
     if let Some((path, bytes)) = folder_image(tracks, dirs, &mut unread) {
         return ArtSearch {
@@ -472,10 +568,12 @@ fn read_track_art(track: &TrackFile) -> Result<Option<Vec<u8>>, TagsError> {
 /// The first readable raster image named like a cover in the folders.
 /// `unread` is set when a folder or image could not be read. A folder no
 /// track's library folder holds (above two library folders an album
-/// spans) is not looked in.
+/// spans) is not looked in. A folder that holds tracks of albums with more
+/// than one title gives none of them its image, so callers pass only the
+/// folders an album does not share.
 fn folder_image(
     tracks: &[TrackFile],
-    dirs: &[PathBuf],
+    dirs: &[&Path],
     unread: &mut bool,
 ) -> Option<(PathBuf, Vec<u8>)> {
     for dir in dirs {

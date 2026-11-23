@@ -86,7 +86,7 @@ impl SqliteScanStore {
             ..LyricsSweep::default()
         };
         let mut pending = Vec::new();
-        for (album_id, tracks) in &snapshot.albums {
+        for (album_id, _, tracks) in &snapshot.albums {
             let slice_spent = started.is_some_and(|at| at.elapsed() >= SWEEP_SLICE)
                 && sweep.checked + sweep.unreachable >= MIN_PER_SLICE;
             if stop() || slice_spent {

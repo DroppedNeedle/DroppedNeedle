@@ -269,7 +269,7 @@ droppedneedle_kernel::sql! {
                      signature = excluded.signature, checked_at = excluded.checked_at, \
                      art_version = MAX(art_version, excluded.art_version)";
     pub(super) ALBUM_TRACKS = "SELECT t.local_album_id, t.id, t.file_path, t.relative_path, \
-         t.stat_revision, t.file_size_bytes FROM local_tracks t \
+         t.stat_revision, t.file_size_bytes, a.title_folded FROM local_tracks t \
          JOIN local_albums a ON a.id = t.local_album_id \
          WHERE t.availability = 'indexed' AND a.retired_into_album_id IS NULL \
          ORDER BY t.local_album_id, t.disc_number, t.track_number, t.id";
@@ -1249,6 +1249,7 @@ droppedneedle_kernel::sql! {
         relative_path: String,
         stat_revision: String,
         file_size_bytes: i64,
+        title_folded: String,
     }
     pub(super) row ArtworkRow for [ALL_ARTWORK] {
         local_album_id: String,
