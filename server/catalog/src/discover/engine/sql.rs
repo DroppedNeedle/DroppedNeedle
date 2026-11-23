@@ -20,7 +20,11 @@ droppedneedle_kernel::sql! {
     /// MusicBrainz id: how many of each, in how many calendar months, the
     /// first and the latest, and how many since `?2`. A play filed by name
     /// alone, a placeholder artist row (by kind) and a listen with no artist
-    /// id are left out.
+    /// id are left out. A listen within `?3` ms of one of the person's
+    /// counted plays of the same artist and the same recording or title is
+    /// that play, scrobbled: the play is counted and the listen is not. The
+    /// title is enough because ListenBrainz may map a scrobble to another
+    /// recording of the same song.
     pub(in crate::discover) HISTORY_ARTISTS = "WITH s(mbid, name, at, app) AS (\
          SELECT lower(ai.provider_artist_id), r.display_name, h.played_at, 1 \
            FROM library_play_history h \
@@ -31,7 +35,18 @@ droppedneedle_kernel::sql! {
         + " WHERE h.user_id = ?1 \
          UNION ALL SELECT lower(l.artist_mbid), l.artist_name, l.listened_at, 0 \
            FROM media_imported_listens l \
-           WHERE l.user_id = ?1 AND l.artist_mbid IS NOT NULL AND l.artist_mbid <> '') \
+           WHERE l.user_id = ?1 AND l.artist_mbid IS NOT NULL AND l.artist_mbid <> '' \
+             AND NOT EXISTS (SELECT 1 FROM library_play_history p \
+               JOIN local_artists pr ON pr.id = p.local_artist_id \
+                 AND pr.kind NOT IN ('various_artists', 'unknown') \
+               JOIN local_artist_external_identities pi ON pi.local_artist_id = pr.id AND "
+        + (musicbrainz!("pi"))
+        + " WHERE p.user_id = ?1 \
+                 AND p.played_at BETWEEN l.listened_at - ?3 AND l.listened_at + ?3 \
+                 AND lower(pi.provider_artist_id) = lower(l.artist_mbid) \
+                 AND ((p.recording_mbid <> '' \
+                     AND lower(p.recording_mbid) = lower(l.recording_mbid)) \
+                   OR lower(p.track_name) = lower(l.track_name)))) \
          SELECT mbid, MIN(name) AS name, SUM(app) AS plays, SUM(1 - app) AS imported_listens, \
          COUNT(DISTINCT strftime('%Y-%m', at / 1000, 'unixepoch')) AS months, \
          MIN(at) AS first_played_at, MAX(at) AS last_played_at, SUM(at >= ?2) AS recent \

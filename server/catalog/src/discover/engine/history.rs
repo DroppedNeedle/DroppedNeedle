@@ -2,7 +2,9 @@
 //! listens imported from their ListenBrainz history, per artist, and the
 //! release groups they played here. Imported listens name no release
 //! group, so they are known at artist level only. An imported listen is
-//! history for taste and never a play: nothing here counts it as one.
+//! history for taste and never a play: nothing here counts it as one. A
+//! play the person also scrobbled to ListenBrainz comes back as a listen;
+//! it counts once, as the play ([`SAME_PLAY_MS`]).
 
 use std::collections::HashSet;
 
@@ -17,6 +19,13 @@ use crate::discover::queue::seeds::seed_mbid;
 
 /// A day, ms.
 const DAY_MS: i64 = 86_400_000;
+
+/// An imported listen of the same artist and the same recording or title
+/// as one of the person's plays in the app, this close to it either way,
+/// is that play scrobbled, and is not counted. A play and its scrobble usually
+/// share the second; the window is as long as a long track, for a client
+/// that stamps a listen's end rather than its start.
+pub const SAME_PLAY_MS: i64 = 30 * 60_000;
 
 /// One artist the person played or listened to.
 #[derive(Debug, Clone, PartialEq)]
@@ -91,7 +100,10 @@ impl History {
             // describe one moment of the person's history.
             let artists = conn
                 .prepare_cached(sql::HISTORY_ARTISTS.text())?
-                .query_map(params![user, recent_since], sql::HistoryArtist::read)?
+                .query_map(
+                    params![user, recent_since, SAME_PLAY_MS],
+                    sql::HistoryArtist::read,
+                )?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             let groups = conn
                 .prepare_cached(sql::HISTORY_GROUPS.text())?

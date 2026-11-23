@@ -7,15 +7,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
+use droppedneedle_catalog::discover::engine::history::SAME_PLAY_MS;
 use droppedneedle_media::history::archive::{ArchiveError, Export};
 
 /// A day, ms.
 pub const DAY_MS: i64 = 86_400_000;
 /// A week, ms.
 pub const WEEK_MS: i64 = 7 * DAY_MS;
-/// An in-app play this close to a listen in the timeline is that listen,
-/// scrobbled to ListenBrainz: it is counted once.
-pub const SAME_PLAY_MS: i64 = 10 * 60_000;
 /// The plays after a cut that make a new artist adopted.
 pub const ADOPTED: usize = 5;
 /// The plays after a cut that make a new artist adopted for certain.
@@ -49,8 +47,8 @@ pub struct Timeline {
     pub listens: Vec<Listen>,
     /// Lines of the export that were not a listen.
     pub skipped: usize,
-    /// In-app plays left out as the same as a listen.
-    pub same_as_a_listen: usize,
+    /// Imported listens left out as the same as an in-app play.
+    pub same_as_a_play: usize,
 }
 
 impl Timeline {
@@ -93,29 +91,31 @@ impl Timeline {
         }
     }
 
-    /// Add the person's in-app `plays`, leaving out each one within
-    /// [`SAME_PLAY_MS`] of an imported listen: that is the play, scrobbled.
+    /// Add the person's in-app `plays`, leaving out each imported listen
+    /// that is one of them scrobbled, as the taste build does: the same
+    /// artist and the same recording or title within [`SAME_PLAY_MS`]. The
+    /// play is kept.
     pub fn add_app_plays(&mut self, plays: Vec<Listen>) {
-        let imported: Vec<i64> = self
-            .listens
-            .iter()
-            .filter(|listen| !listen.in_app)
-            .map(|listen| listen.at_ms)
+        let mut plays: Vec<Listen> = plays
+            .into_iter()
+            .map(|play| Listen {
+                in_app: true,
+                ..play
+            })
             .collect();
-        for play in plays {
-            let near = imported.partition_point(|at| *at < play.at_ms - SAME_PLAY_MS);
-            if imported
-                .get(near)
-                .is_some_and(|at| *at <= play.at_ms + SAME_PLAY_MS)
-            {
-                self.same_as_a_listen += 1;
-            } else {
-                self.listens.push(Listen {
-                    in_app: true,
-                    ..play
-                });
+        plays.sort_by_key(|play| play.at_ms);
+        let before = self.listens.len();
+        self.listens.retain(|listen| {
+            listen.in_app || {
+                let from = plays.partition_point(|play| play.at_ms < listen.at_ms - SAME_PLAY_MS);
+                !plays[from..]
+                    .iter()
+                    .take_while(|play| play.at_ms <= listen.at_ms + SAME_PLAY_MS)
+                    .any(|play| same_play(play, listen))
             }
-        }
+        });
+        self.same_as_a_play += before - self.listens.len();
+        self.listens.extend(plays);
         self.listens.sort_by_key(|listen| listen.at_ms);
     }
 
@@ -152,6 +152,26 @@ impl Timeline {
         }
         cuts
     }
+}
+
+/// Whether `listen` is `play`, scrobbled: the same artist, and the same
+/// recording or the same title. Cases are folded as SQLite's `lower` folds
+/// them.
+fn same_play(play: &Listen, listen: &Listen) -> bool {
+    let folded = |text: &str| text.to_ascii_lowercase();
+    let artist = |listen: &Listen| listen.artist_mbid.as_deref().map(folded);
+    let recording = |listen: &Listen| {
+        listen
+            .recording_mbid
+            .as_deref()
+            .filter(|id| !id.is_empty())
+            .map(folded)
+    };
+    if artist(play).is_none() || artist(play) != artist(listen) {
+        return false;
+    }
+    let same_recording = recording(play).is_some_and(|played| recording(listen) == Some(played));
+    same_recording || folded(&play.track_name) == folded(&listen.track_name)
 }
 
 /// A request for one of an artist's albums.

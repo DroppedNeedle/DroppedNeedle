@@ -741,24 +741,26 @@ fn imported_listens(db: &Path, user: &str) -> Vec<Listen> {
 
 /// The person's plays in the app, their artist by its MusicBrainz id.
 fn app_plays(db: &Path, user: &str) -> Vec<Listen> {
-    let rows: Vec<(i64, Option<String>, String, String)> = db.rows(
+    let rows: Vec<(i64, Option<String>, String, String, Option<String>)> = db.rows(
         "SELECT h.played_at, (SELECT lower(ai.provider_artist_id) \
          FROM local_artist_external_identities ai WHERE ai.local_artist_id = h.local_artist_id \
-         AND ai.provider = 'musicbrainz' LIMIT 1), h.artist_name, h.track_name \
-         FROM library_play_history h WHERE h.user_id = ?1",
+         AND ai.provider = 'musicbrainz' LIMIT 1), h.artist_name, h.track_name, \
+         lower(h.recording_mbid) FROM library_play_history h WHERE h.user_id = ?1",
         [user],
     );
     rows.into_iter()
-        .map(|(at_ms, artist_mbid, artist_name, track_name)| Listen {
-            at_ms,
-            artist_mbid,
-            artist_name,
-            track_name,
-            recording_mbid: None,
-            release_name: None,
-            release_mbid: None,
-            in_app: true,
-        })
+        .map(
+            |(at_ms, artist_mbid, artist_name, track_name, recording_mbid)| Listen {
+                at_ms,
+                artist_mbid,
+                artist_name,
+                track_name,
+                recording_mbid,
+                release_name: None,
+                release_mbid: None,
+                in_app: true,
+            },
+        )
         .collect()
 }
 
@@ -1914,7 +1916,9 @@ async fn cuts(env: &Env, base: &Path, person: &Person, network: Arc<Replay>, spe
         ),
     };
     let imported = timeline.listens.len();
-    timeline.add_app_plays(app_plays(base, &person.id));
+    let plays = app_plays(base, &person.id);
+    let played = plays.len();
+    timeline.add_app_plays(plays);
     let Some((first, last)) = timeline.span() else {
         panic!("{} has no listens to cut", person.name);
     };
@@ -1932,13 +1936,13 @@ async fn cuts(env: &Env, base: &Path, person: &Person, network: Arc<Replay>, spe
         .count();
     println!("== replay cuts: {}", person.name);
     println!(
-        "timeline: {source}, {imported} listens ({} lines unread), {} to {}; {} in-app plays \
-         added, {} more the same as a listen; {with_ids} of {} name an artist id",
+        "timeline: {source}, {imported} listens ({} lines unread), {} to {}; {played} in-app \
+         plays added, {} listens left out as the same as a play; {with_ids} of {} name an \
+         artist id",
         timeline.skipped,
         replay::day(first),
         replay::day(last),
-        timeline.listens.len() - imported,
-        timeline.same_as_a_listen,
+        timeline.same_as_a_play,
         timeline.listens.len(),
     );
     println!(
@@ -2067,7 +2071,7 @@ fn discover_replay_scoring_counts_what_the_person_went_on_to_play() {
     }];
     let truth = replay::truth(&timeline, cut, 8 * WEEK_MS, &asked);
 
-    assert_eq!(timeline.same_as_a_listen, 1, "the app play is the listen");
+    assert_eq!(timeline.same_as_a_play, 1, "the listen is the app play");
     assert_eq!(truth.ids(1).len(), 4, "new artists played");
     assert_eq!(truth.ids(ADOPTED).len(), 3, "adopted at five plays");
     let through_app: Vec<&str> = truth

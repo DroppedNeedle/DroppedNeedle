@@ -13,6 +13,7 @@ use std::sync::atomic::Ordering;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle_catalog::discover::due::Due;
+use droppedneedle_catalog::discover::engine::history::SAME_PLAY_MS;
 use droppedneedle_catalog::discover::facts::KeptFacts;
 use droppedneedle_catalog::discover::facts::job::FactJobs;
 use droppedneedle_catalog::discover::listening::{ArtistRow, ScoredArtist, UserMusic};
@@ -460,4 +461,75 @@ async fn discover_taste_regroups_when_an_input_fails() {
     build(&deps).await;
     assert_eq!(build_row(&db), (8, 10, 4, 4, true), "the build says so");
     assert_eq!(groups(&db).len(), 2, "her seeds are grouped all the same");
+}
+
+/// One play in the app by `user` of `artist`'s `track`, at `at`.
+fn play(user: &str, artist: &str, track: &str, recording: Option<&str>, at: i64) -> String {
+    let recording = recording.map_or("NULL".to_owned(), |id| format!("'{id}'"));
+    format!(
+        "INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
+         artist_name, recording_mbid, played_at) VALUES ('{user}-{artist}-{at}', '{user}', \
+         '{artist}', '{track}', 'Someone', {recording}, {at});"
+    )
+}
+
+/// One listen imported for Ada of `artist`'s `track`, at `at`.
+fn listen(artist: &str, track: &str, recording: &str, at: i64) -> String {
+    format!(
+        "INSERT INTO media_imported_listens (user_id, listened_at, recording_mbid, artist_mbid, \
+         artist_name, track_name, imported_at) \
+         VALUES ('user-1', {at}, '{recording}', '{artist}', 'Someone', '{track}', 1);"
+    )
+}
+
+/// A play Ada scrobbled to ListenBrainz comes back as a listen and counts
+/// once, as the play: matched by artist and recording, or by artist and
+/// title when the play has no recording id or ListenBrainz mapped the
+/// scrobble to another recording, minutes apart. A listen of another of the
+/// artist's tracks, one further off than the window, and one matching
+/// only Bob's play all count.
+#[tokio::test]
+async fn discover_taste_counts_a_scrobbled_play_once() {
+    let dir = crate::common::ScratchDir::new("discover-taste-scrobbled");
+    let rig = AuthRig::new("discover-taste-scrobbled").await;
+    let db = rig.platform.db.clone();
+    let at = rig.clock().now_ms() - 10 * DAY;
+    let (a1, a2) = (mbid('a', 1), mbid('a', 2));
+    let (song, other, titled, remapped) = (mbid('d', 1), mbid('d', 2), mbid('d', 3), mbid('d', 4));
+    let mut rows = String::from(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('user-1', 'Ada', 'user', 0), ('user-2', 'Bob', 'user', 0);",
+    );
+    rows += &library_artist("art-a1", "Alpha One", &a1, "group");
+    rows += &library_artist("art-a2", "Alpha Two", &a2, "group");
+    rows += &play("user-1", "art-a1", "Song", Some(&song), at);
+    rows += &play("user-1", "art-a2", "Title Case", None, at);
+    rows += &play("user-2", "art-a1", "Song", Some(&song), at - 3 * DAY);
+    rows += &listen(&a1, "Song", &song, at + 5 * MINUTE);
+    rows += &listen(&a1, "song", &remapped, at + 3 * MINUTE);
+    rows += &listen(&a2, "title case", &titled, at + MINUTE);
+    rows += &listen(&a1, "Other Song", &other, at + 2 * MINUTE);
+    rows += &listen(&a1, "Song", &song, at + SAME_PLAY_MS + MINUTE);
+    rows += &listen(&a1, "Song", &song, at - 3 * DAY);
+    insert(&db, rows).await;
+    import_current(&db).await;
+    let deps = discover_deps(&rig, &dir, Providers::closed(), |slot| {
+        *slot = Arc::new(Script::default());
+    });
+
+    build(&deps).await;
+    let counted: Vec<(String, i64, i64)> = db.rows(
+        "SELECT name, plays, imported_listens FROM catalog_taste_artists \
+         WHERE user_id = 'user-1' ORDER BY name",
+        [],
+    );
+    assert_eq!(
+        counted,
+        [
+            ("Alpha One".to_owned(), 1, 3),
+            ("Alpha Two".to_owned(), 1, 0),
+        ]
+    );
+    let (plays, listens, ..) = build_row(&db);
+    assert_eq!((plays, listens), (2, 3), "the build counts what was kept");
 }
