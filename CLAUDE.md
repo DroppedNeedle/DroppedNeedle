@@ -301,6 +301,18 @@ Run from the repo root. `make help` lists every target.
 - A person's plays go with their account: `library_play_history.user_id`
   cascades from `auth_users`, and a new per-person table cascades the same
   way.
+- How a playback ended lives in `media_playback_events`, written only
+  through `media/src/playback/events.rs` (the web player's
+  `POST /api/v3/playback/events` and compat stop reports). It sits beside
+  `library_play_history` and never counts as a play: no play count,
+  scrobble or statistic reads it.
+- "Forget my history" (`catalog/src/discover/forget.rs`) deletes a person's
+  pick record, how their plays ended, their Discover activity and their
+  saved pages, by user id and safe to run again; it keeps plays, the
+  library, requests and what they told Discover. Every table with a column
+  ending `user_id` is listed in `server/forget-coverage.txt` as forgotten,
+  kept (with its reason) or not personal, and `persist_schema.rs` fails on
+  one left out.
 - Every table has one owning area, listed in `server/table-owners.txt` and
   checked by a test. Only the owner writes and migrates it.
 - A read model derived from other tables (a summary table or a column) is
@@ -323,6 +335,10 @@ Run from the repo root. `make help` lists every target.
 - Every loop runs on the one loop supervisor (`kernel/src/jobs/supervisor.rs`)
   and appears in the admin jobs view. A spawn outside it is listed, with
   its reason, in `server/tests/server/source_gates.rs`.
+- Discover's background work for a person is queued only from
+  `catalog/src/discover/due.rs`: `clock_pass` from the demand tick (nothing
+  while `DISCOVER_WARMER_ENABLED` is off) and `visit` where the page records
+  a person's activity.
 - A worker that hears a busy database puts its job back and tries again
   later. Busy never spends an attempt or marks work failed.
 - Durable operations are SQLite state machines with idempotency keys and
@@ -368,6 +384,13 @@ Run from the repo root. `make help` lists every target.
   data allows, background work never refetches what a kept row can answer, and
   a user's chosen source is asked first, the other only when it cannot answer.
   A change that adds calls to them says how many a day, for one active install.
+- Every "similar to" list reads one answer per artist from
+  `catalog/src/discover/listening/similar.rs`: ListenBrainz labs'
+  co-listening list, ordered by score over the neighbour's listener count to
+  `FAME_EXPONENT`, with Last.fm's only while ListenBrainz reads are off or
+  have nothing for the artist. No list is ordered or cut by listen counts
+  alone. A failed labs read rests labs in the ListenBrainz client, so a pass
+  stops at its first failure.
 - The User-Agent is `DroppedNeedleApp/v<version> (<contact>; <site>)`, the form
   MetaBrainz's gateway matches. Never change it, or send another name to get
   past a refusal, without asking the provider first.
@@ -766,6 +789,24 @@ Run from the repo root. `make help` lists every target.
 - Album and track identities, match state and their undo rows are written
   only through `library/src/identity/`; a source gate holds it.
 
+**Discover**
+- Discover's seed artists come from one function, `weighted_seeds`
+  (`catalog/src/discover/queue/seeds.rs`), over the person's own plays,
+  hearts, ratings, follows, playlists and requests and the accounts they
+  linked themselves; the library only tops up a short list. Discover reads
+  a media server only through the person's own link (`source_gates.rs`,
+  `discover_never_resolves_a_shared_media_server_account`).
+- What a person tells Discover (No, Know it already, Not this artist, Not
+  now) is one row per person and target in `catalog_discover_feedback`,
+  read through the one filter in `catalog/src/discover/feedback.rs` on every
+  recommending surface, the Weekly Mix's top-up and auto-requests included,
+  which request nothing while it cannot be read. Charts, the library, a
+  person's own history, search and an artist's own lists are not filtered.
+- A Discover build never drops a section that was good: a section whose own
+  reads failed keeps the one the saved page showed (same variant, under a
+  week old) and says so in `section_states`, and a deck whose reads failed
+  keeps the deck before it.
+
 **Compat, plugins, upgrade, readiness**
 - Compat support means the tested matrix and its golden
   traces, for the apps the README lists only, not "parity". Streaming keeps its
@@ -910,6 +951,8 @@ Run from the repo root. `make help` lists every target.
   `app.css` stops motion under `prefers-reduced-motion`; motion that
   carries meaning opts out with `motion-keep`, and Svelte transitions come
   from `$lib/ui/motion`.
+- Never mark something as selected, current or highlighted with a coloured
+  stripe on its left edge (a `border-left` accent or an inset left shadow).
 - In-app links and `goto` go through `withBasePath`; lint refuses a bare root
   path.
 - A library view says `art_missing` when the server knows the cover routes
