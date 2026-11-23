@@ -23,9 +23,11 @@ defaults:
   run:
     working-directory: ./frontend
 
+# A run on main finishes, so a burst of pushes still ends in a full run;
+# GitHub keeps only the newest waiting one. Other refs cancel the older run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   quality:
