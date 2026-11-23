@@ -14,18 +14,19 @@ use crate::discover::{
     models::{
         AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
         DiscoverActivityResponse, DiscoverFeedbackEntry, DiscoverFeedbackRequest,
-        DiscoverFeedbackResponse, DiscoverHealthResponse, DiscoverQueuePreview,
-        DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse, GenreDetailResponse,
-        HomeResponse, IntegrationStatus, ListenSource, PlaylistSuggestionsRequest,
-        PlaylistSuggestionsResponse, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
-        QueueValidateRequest, QueueValidateResponse, RadioPlanRequest, RadioPlanResponse,
-        RadioRequest, RadioSeedKind, RefreshResponse, StatsRange, TrackPreviewResponse,
-        YouTubeSearchResponse,
+        DiscoverFeedbackResponse, DiscoverHealthResponse, DiscoverPickEventRequest,
+        DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
+        GenreDetailResponse, HomeResponse, IntegrationStatus, ListenSource,
+        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
+        QueueGenerateRequest, QueueGenerateResponse, QueueValidateRequest, QueueValidateResponse,
+        RadioPlanRequest, RadioPlanResponse, RadioRequest, RadioSeedKind, RefreshResponse,
+        StatsRange, TrackPreviewResponse, YouTubeSearchResponse,
     },
     ports::{ProviderFailure, QueueTrigger, RadioFailure},
     previews::LivePreviews,
     queue::LiveQueue,
     radio::LiveRadio,
+    record::{EventError, PickRecord},
     scheduler::{ArtistDetail, Feature},
     youtube::LiveYouTube,
 };
@@ -107,6 +108,8 @@ pub struct DiscoverDeps {
     pub youtube: Arc<LiveYouTube>,
     /// Radio plans and suggestions.
     pub radio: Arc<LiveRadio>,
+    /// The pick record's events from the web UI.
+    pub record: PickRecord,
 }
 
 /// Clamp a limit into `1..=max`, defaulting when missing.
@@ -400,6 +403,21 @@ pub async fn save_feedback(
         .await;
     deps.content.trigger_refresh(user_id).await?;
     Ok(stored)
+}
+
+/// Stamp what the web UI saw happen to one of the user's picks.
+pub async fn record_pick_event(
+    deps: &DiscoverDeps,
+    user_id: &str,
+    body: &DiscoverPickEventRequest,
+) -> Result<(), ServiceError> {
+    deps.record
+        .event(user_id, &body.release_group_mbid, body.event)
+        .await
+        .map_err(|error| match error {
+            EventError::Invalid(reason) => ServiceError::InvalidInput(reason),
+            EventError::Store(error) => ServiceError::Internal(format!("pick event: {error}")),
+        })
 }
 
 /// Take back one thing the user told Discover. The current deck stays as

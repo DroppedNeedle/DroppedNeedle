@@ -202,8 +202,9 @@ pub fn acquire_hosted(
 /// The production catalog bundle over `platform`, with no provider pair:
 /// collections in `collections`, the catalog and artwork on closed
 /// upstreams and no plugins, files read through `library`, and download
-/// readiness from `acquire` when there is one. Image warms queue on the
-/// platform's jobs table, where nothing runs them.
+/// readiness from `acquire` when there is one. Image warms and discover's
+/// background work queue on the platform's jobs table, where nothing runs
+/// them.
 pub fn catalog_setup_at(
     platform: &Platform,
     users: UsersDeps,
@@ -246,6 +247,7 @@ pub fn catalog_setup_at(
             library_files: LibraryFiles::new(platform.db.clone(), library.core.root_source()),
             download_readiness,
             cover_warm,
+            jobs: JobQueue::new(platform.db.clone(), platform.clock.clone()),
         },
     )
 }

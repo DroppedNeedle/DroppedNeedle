@@ -94,7 +94,8 @@
 					release_group_mbid: activeAlbum.musicbrainz_id,
 					artist_name: activeAlbum.artist_name ?? undefined,
 					album_title: activeAlbum.title,
-					artist_mbid: activeAlbum.artist_id ?? undefined
+					artist_mbid: activeAlbum.artist_id ?? undefined,
+					made_from: 'discover_shelf'
 				})
 				.catch(() => null);
 		} finally {

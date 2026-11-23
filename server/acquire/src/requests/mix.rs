@@ -32,6 +32,7 @@ use super::service::RequestsService;
 use droppedneedle_auth::{Principal, Role};
 use droppedneedle_catalog::collections::store::playlists::{NewEntry, PlaylistStore, Written};
 use droppedneedle_catalog::discover::feedback::Feedback;
+use droppedneedle_catalog::discover::record::MadeFrom;
 use droppedneedle_catalog::metadata::library::LocalCatalog;
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::db::statement::ListLen;
@@ -790,6 +791,7 @@ impl PersonalMixBuilder {
                 release_mbid: None,
                 monitor_artist: false,
                 auto_download_artist: false,
+                made_from: Some(MadeFrom::WeeklyMix),
             };
             match service.request_album_granted(&principal, &intake).await {
                 Ok(response) if response.task_id.is_some() => requested += 1,

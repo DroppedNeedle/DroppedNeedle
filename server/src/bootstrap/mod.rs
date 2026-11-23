@@ -498,6 +498,7 @@ pub(crate) async fn build_on(
             library_files: LibraryFiles::new(db.clone(), library.core.root_source()),
             download_readiness: Arc::new(acquire.readiness.clone()),
             cover_warm,
+            jobs: queues.queue().clone(),
         },
     );
     // Your Weekly Mix: one builder behind the refresh route, the daily
@@ -591,6 +592,15 @@ pub(crate) async fn build_on(
             droppedneedle_library::removal::recycle_bin::handler(&library.publishing),
         )
         .with(droppedneedle_catalog::artwork::warm::SPEC, cover_warm_jobs)
+        .with(
+            droppedneedle_catalog::discover::record::outcomes::SPEC,
+            Arc::new(
+                droppedneedle_catalog::discover::record::outcomes::OutcomeJobs::new(
+                    db.clone(),
+                    p.clock.clone(),
+                ),
+            ),
+        )
         .with(
             droppedneedle_acquire::imports::jobs::SPEC,
             acquire.spotify_import_jobs.clone(),

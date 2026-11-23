@@ -1,8 +1,9 @@
 //! Discovery batch journey: a batch files real album requests under the
 //! normal approval rules in the same write as the batch, skips what
 //! someone already asked for, answers a retried create with the batch it
-//! made, stays private to its owner, and its removal cancels only what it
-//! caused and never recycles a plain user's albums.
+//! made, stays private to its owner, keeps where it was made, and its
+//! removal cancels only what it caused and never recycles a plain user's
+//! albums.
 
 use droppedneedle_acquire::requests::batches::DiscoveryBatches;
 use droppedneedle_acquire::requests::batches::models::{
@@ -11,6 +12,7 @@ use droppedneedle_acquire::requests::batches::models::{
 use droppedneedle_acquire::requests::error::RequestsError;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
+use droppedneedle_catalog::discover::record::MadeFrom;
 
 use crate::common::auth::test_principal;
 
@@ -46,6 +48,7 @@ fn batch(name: &str, ids: &[&str]) -> DiscoveryBatchCreate {
             })
             .collect(),
         idempotency_key: None,
+        made_from: None,
     }
 }
 
@@ -79,7 +82,10 @@ async fn batch_files_requests_and_removal_cancels_only_its_own() {
     let adas = batches
         .create(
             &user("u-ada"),
-            &batch("", &[MBID_A, MBID_B, MBID_C, MBID_A]),
+            &DiscoveryBatchCreate {
+                made_from: Some(MadeFrom::DiscoverShelf),
+                ..batch("", &[MBID_A, MBID_B, MBID_C, MBID_A])
+            },
         )
         .await
         .expect("ada's batch");
@@ -106,6 +112,33 @@ async fn batch_files_requests_and_removal_cancels_only_its_own() {
         Some((BatchOutcome::SkippedDuplicate, waiting.clone()))
     );
     assert_eq!(adas.pending_count, 2);
+    // The batch keeps where it was made, and so do the asks it filed.
+    let places = db
+        .write("test.batch_places", |tx| {
+            let mut rows = Vec::new();
+            for query in [
+                "SELECT user_id || ':' || COALESCE(made_from, '-') \
+                 FROM acquire_discovery_batches ORDER BY user_id",
+                "SELECT user_id || ':' || COALESCE(made_from, '-') \
+                 FROM request_history_requesters ORDER BY user_id, musicbrainz_id_lower",
+            ] {
+                let found = tx
+                    .prepare(query)?
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                rows.push(found);
+            }
+            Ok(rows)
+        })
+        .await
+        .expect("places");
+    assert_eq!(
+        places,
+        [
+            vec!["u-ada:discover_shelf", "u-bob:-"],
+            vec!["u-ada:discover_shelf", "u-ada:discover_shelf", "u-bob:-"],
+        ]
+    );
 
     // Only already-owned or already-requested albums: nothing to file.
     assert!(matches!(

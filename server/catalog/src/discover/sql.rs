@@ -681,8 +681,8 @@ droppedneedle_kernel::sql! {
     /// about the same target replaces it.
     pub(super) SAVE_FEEDBACK = "INSERT INTO catalog_discover_feedback (user_id, target, \
              target_mbid_lower, kind, release_group_mbid, artist_mbid, release_name, \
-             artist_name, created_at, expires_at) \
-         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10 \
+             artist_name, created_at, expires_at, made_from) \
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11 \
          WHERE EXISTS (SELECT 1 FROM auth_users WHERE id = ?1) \
          ON CONFLICT(user_id, target, target_mbid_lower) DO UPDATE SET \
              kind = excluded.kind, \
@@ -691,7 +691,8 @@ droppedneedle_kernel::sql! {
              release_name = excluded.release_name, \
              artist_name = excluded.artist_name, \
              created_at = excluded.created_at, \
-             expires_at = excluded.expires_at";
+             expires_at = excluded.expires_at, \
+             made_from = excluded.made_from";
     /// Take back one of a person's answers.
     pub(super) UNDO_FEEDBACK = "DELETE FROM catalog_discover_feedback \
          WHERE user_id = ?1 AND target = ?2 AND target_mbid_lower = ?3";
@@ -720,6 +721,147 @@ droppedneedle_kernel::sql! {
              genre = excluded.genre, learned_at = excluded.learned_at";
     /// Drop pairs no build has seen since a time.
     pub(super) FORGET_ARTIST_GENRES = "DELETE FROM catalog_artist_genres WHERE learned_at < ?1";
+
+    // -- the pick record ---------------------------------------------------------
+
+    /// Record one offer (?1 user, ?2 lowercased group, ?3 group as given,
+    /// ?4 artist, ?5 album, ?6 artist name, ?7 surface, ?8 now, ?9
+    /// evidence) for a person who still exists. A row offered before keeps
+    /// its first surface and date.
+    pub(super) OFFER_PICK = "INSERT INTO catalog_discover_picks (user_id, \
+             release_group_mbid_lower, release_group_mbid, artist_mbid, album_name, \
+             artist_name, first_surface, first_offered_at, last_offered_at, evidence) \
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9 \
+         WHERE EXISTS (SELECT 1 FROM auth_users WHERE id = ?1) \
+         ON CONFLICT(user_id, release_group_mbid_lower) DO UPDATE SET \
+             release_group_mbid = excluded.release_group_mbid, \
+             artist_mbid = excluded.artist_mbid, \
+             album_name = excluded.album_name, \
+             artist_name = excluded.artist_name, \
+             last_offered_at = MAX(catalog_discover_picks.last_offered_at, \
+                 excluded.last_offered_at), \
+             evidence = excluded.evidence";
+    /// Person ?1's pick ?2 was shown at ?3: counted once per UTC day.
+    pub(super) PICK_SHOWN = "UPDATE catalog_discover_picks SET \
+             first_shown_at = COALESCE(first_shown_at, ?3), \
+             last_shown_at = MAX(COALESCE(last_shown_at, ?3), ?3), \
+             shown_days = shown_days + (last_shown_at IS NULL \
+                 OR last_shown_at / 86400000 < ?3 / 86400000) \
+         WHERE user_id = ?1 AND release_group_mbid_lower = ?2";
+    /// Person ?1's pick ?2 was first sampled at ?3.
+    pub(super) PICK_SAMPLED = "UPDATE catalog_discover_picks \
+         SET sampled_at = COALESCE(sampled_at, ?3) \
+         WHERE user_id = ?1 AND release_group_mbid_lower = ?2";
+    /// Person ?1's pick ?2 was first opened at ?3.
+    pub(super) PICK_OPENED = "UPDATE catalog_discover_picks \
+         SET opened_at = COALESCE(opened_at, ?3) \
+         WHERE user_id = ?1 AND release_group_mbid_lower = ?2";
+    /// Every row of person ?1's.
+    pub(super) FORGET_PICKS = "DELETE FROM catalog_discover_picks WHERE user_id = ?1";
+    /// The people with rows in the pick record.
+    pub(super) PICK_USERS = "SELECT DISTINCT user_id FROM catalog_discover_picks ORDER BY user_id";
+    /// Whether person ?1 has rows in the pick record.
+    pub(super) USER_HAS_PICKS = "SELECT EXISTS (SELECT 1 FROM catalog_discover_picks \
+         WHERE user_id = ?1)";
+    /// Person ?1's first ask for each pick at or after it was first offered,
+    /// and where it was made. A request seen once is kept.
+    pub(super) PICKS_REQUESTED = "UPDATE catalog_discover_picks \
+         SET requested_at = r.requested_at, requested_from = r.made_from \
+         FROM request_history_requesters r \
+         WHERE catalog_discover_picks.user_id = ?1 AND r.user_id = ?1 \
+           AND r.musicbrainz_id_lower = catalog_discover_picks.release_group_mbid_lower \
+           AND catalog_discover_picks.requested_at IS NULL \
+           AND r.requested_at >= catalog_discover_picks.first_offered_at";
+    /// When each of person ?1's picks arrived: the oldest album that owns
+    /// its release group and came in once the pick was offered. An arrival
+    /// seen once is kept.
+    pub(super) PICKS_ARRIVED = (concat!(
+        "WITH first_owned AS (SELECT p.release_group_mbid_lower AS g, \
+             MIN(a.created_at) AS at \
+         FROM catalog_discover_picks p JOIN local_albums a \
+           ON a.created_at >= p.first_offered_at AND a.id IN (SELECT album_id FROM (",
+        owns_group!("= +p.release_group_mbid_lower"),
+        ")) WHERE p.user_id = ?1 AND p.arrived_at IS NULL \
+         GROUP BY p.release_group_mbid_lower) \
+         UPDATE catalog_discover_picks SET arrived_at = first_owned.at FROM first_owned \
+         WHERE catalog_discover_picks.user_id = ?1 \
+           AND catalog_discover_picks.release_group_mbid_lower = first_owned.g \
+           AND catalog_discover_picks.arrived_at IS NULL"
+    ));
+    /// Person ?1's plays of each arrived pick in its first ?2 ms (90 days)
+    /// after arrival: the first, and how many in the first ?3 ms and in all
+    /// of it. A play is of the pick when it is on an album that owns the
+    /// release group (read through the album index) or names the group
+    /// (read through the person's plays in the window). It is one pass over
+    /// the person's plays per branch, each pick's stopping at its window,
+    /// read on the long pool outside any write.
+    pub(super) PICK_PLAYS = (concat!(
+        "WITH picks AS MATERIALIZED (SELECT release_group_mbid_lower AS g, \
+             arrived_at AS at FROM catalog_discover_picks \
+             WHERE user_id = ?1 AND arrived_at IS NOT NULL), \
+         owners AS MATERIALIZED (SELECT p.g AS g, p.at AS at, a.id AS album_id \
+         FROM picks p JOIN local_albums a ON a.id IN (SELECT album_id FROM (",
+        owns_group!("= +p.g"),
+        "))), \
+         plays AS (SELECT o.g AS g, h.id AS play, h.played_at - o.at AS since \
+             FROM owners o JOIN library_play_history h ON h.local_album_id = o.album_id \
+             WHERE h.user_id = ?1 AND h.played_at >= o.at AND h.played_at < o.at + ?2 \
+           UNION SELECT p.g, h.id, h.played_at - p.at \
+             FROM picks p JOIN library_play_history h ON h.user_id = ?1 \
+               AND h.played_at >= p.at AND h.played_at < p.at + ?2 \
+             WHERE lower(h.release_group_mbid) = p.g) \
+         SELECT g AS release_group_mbid_lower, MIN(since) AS first_since, \
+             SUM(since < ?3) AS plays_30d, COUNT(*) AS plays_90d \
+         FROM plays GROUP BY g ORDER BY g"
+    ));
+    pub(super) row PickPlaysColumns for [PICK_PLAYS] {
+        release_group_mbid_lower: String,
+        first_since: i64,
+        plays_30d: i64,
+        plays_90d: i64,
+    }
+    /// Set person ?1's pick ?2: first played ?3 ms after arrival, ?4 and ?5
+    /// plays. A row already holding these is left alone.
+    pub(super) PICK_PLAYS_SET = "UPDATE catalog_discover_picks \
+         SET first_played_at = arrived_at + ?3, plays_30d = ?4, plays_90d = ?5 \
+         WHERE user_id = ?1 AND release_group_mbid_lower = ?2 AND arrived_at IS NOT NULL \
+           AND (first_played_at IS NOT arrived_at + ?3 OR plays_30d IS NOT ?4 \
+             OR plays_90d IS NOT ?5)";
+    /// Clear the play counts of person ?1's picks not in the JSON list ?2.
+    pub(super) PICK_PLAYS_CLEARED = "UPDATE catalog_discover_picks \
+         SET first_played_at = NULL, plays_30d = 0, plays_90d = 0 \
+         WHERE user_id = ?1 \
+           AND (first_played_at IS NOT NULL OR plays_30d != 0 OR plays_90d != 0) \
+           AND release_group_mbid_lower NOT IN (SELECT value FROM json_each(?2))";
+    /// What person ?1 told Discover about each pick: about its album (?2)
+    /// first, else about its artist (?3). A row already holding it is left
+    /// alone.
+    pub(super) PICKS_FEEDBACK = "WITH told AS (SELECT p.release_group_mbid_lower AS g, \
+             (SELECT f.kind FROM catalog_discover_feedback f WHERE f.user_id = p.user_id \
+                   AND ((f.target = ?2 AND f.target_mbid_lower = p.release_group_mbid_lower) \
+                     OR (f.target = ?3 AND p.artist_mbid != '' \
+                       AND f.target_mbid_lower = lower(p.artist_mbid))) \
+                 ORDER BY f.target = ?2 DESC LIMIT 1) AS kind, \
+             (SELECT f.created_at FROM catalog_discover_feedback f WHERE f.user_id = p.user_id \
+                   AND ((f.target = ?2 AND f.target_mbid_lower = p.release_group_mbid_lower) \
+                     OR (f.target = ?3 AND p.artist_mbid != '' \
+                       AND f.target_mbid_lower = lower(p.artist_mbid))) \
+                 ORDER BY f.target = ?2 DESC LIMIT 1) AS at \
+         FROM catalog_discover_picks p WHERE p.user_id = ?1) \
+         UPDATE catalog_discover_picks SET feedback_kind = told.kind, feedback_at = told.at \
+         FROM told WHERE catalog_discover_picks.user_id = ?1 \
+           AND catalog_discover_picks.release_group_mbid_lower = told.g \
+           AND (catalog_discover_picks.feedback_kind IS NOT told.kind \
+             OR catalog_discover_picks.feedback_at IS NOT told.at)";
+    /// Drop person ?1's rows with no outcome: never shown and last offered
+    /// before ?2, or shown and last offered or shown before ?3.
+    pub(super) PICKS_RETAINED = "DELETE FROM catalog_discover_picks WHERE user_id = ?1 \
+         AND sampled_at IS NULL AND opened_at IS NULL AND requested_at IS NULL \
+         AND arrived_at IS NULL AND first_played_at IS NULL AND feedback_kind IS NULL \
+         AND let_go_at IS NULL \
+         AND ((first_shown_at IS NULL AND last_offered_at < ?2) \
+           OR (first_shown_at IS NOT NULL \
+             AND MAX(last_offered_at, COALESCE(last_shown_at, 0)) < ?3))";
 }
 
 /// `len` placeholders for an `IN (...)` list.

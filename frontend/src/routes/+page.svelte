@@ -199,9 +199,10 @@
 										headerLink={block.link}
 										showPreview={block.showPreview}
 										eager={i < 2}
+										madeFrom="home_shelf"
 									/>
 								{:else}
-									<WeeklyExploration section={block.section} />
+									<WeeklyExploration section={block.section} madeFrom="home_shelf" />
 								{/if}
 							{/each}
 						</div>
@@ -221,9 +222,10 @@
 										section={block.section}
 										headerLink={block.link}
 										showPreview={block.showPreview}
+										madeFrom="home_shelf"
 									/>
 								{:else}
-									<WeeklyExploration section={block.section} />
+									<WeeklyExploration section={block.section} madeFrom="home_shelf" />
 								{/if}
 							{/each}
 						</div>
@@ -256,7 +258,11 @@
 					<div class="discover-section-enter">
 						{#each postGenreSections as block (block.key)}
 							{#if block.kind === 'section'}
-								<HomeSection section={block.section} headerLink={block.link} />
+								<HomeSection
+									section={block.section}
+									headerLink={block.link}
+									madeFrom="home_shelf"
+								/>
 							{/if}
 						{/each}
 					</div>

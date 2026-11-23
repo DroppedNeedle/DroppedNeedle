@@ -66,7 +66,8 @@
 					release_group_mbid: id,
 					artist_name: album.artist_name ?? undefined,
 					album_title: album.title ?? undefined,
-					year: album.year ?? undefined
+					year: album.year ?? undefined,
+					made_from: 'artist_page'
 				})
 				.catch(() => null);
 		} finally {

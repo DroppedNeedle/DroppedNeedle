@@ -35,6 +35,7 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import MediaTile from '$lib/media/MediaTile.svelte';
+	import type { MadeFrom } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 
 	interface Props {
 		section: ChartSection;
@@ -47,6 +48,8 @@
 		eager?: boolean;
 		/** Smaller tiles, for a shelf that shares its row with another. */
 		compact?: boolean;
+		/** The page the shelf is on. */
+		madeFrom: MadeFrom;
 	}
 
 	let {
@@ -57,7 +60,8 @@
 		hideHeader = false,
 		showPreview = true,
 		eager = false,
-		compact = false
+		compact = false,
+		madeFrom
 	}: Props = $props();
 
 	const tileWidth = $derived(compact ? 'w-28 sm:w-32 md:w-36' : 'w-32 sm:w-36 md:w-44');
@@ -254,6 +258,7 @@
 										artistName={item.artist_name ?? ''}
 										albumName={item.title}
 										artistMbid={item.artist_id ?? undefined}
+										{madeFrom}
 										labelled
 									/>
 								{/if}

@@ -72,7 +72,7 @@ fn schema_rows(connection: &Connection) -> Vec<(String, String, String, Option<S
 fn fresh_migrate_marks_version_and_seeds() {
     let connection = migrated();
     assert_eq!(scalar(&connection, "PRAGMA user_version"), latest_version());
-    assert_eq!(table_names(&connection).len(), 183);
+    assert_eq!(table_names(&connection).len(), 184);
     assert_eq!(
         scalar(
             &connection,
@@ -408,6 +408,10 @@ const SHIPPED: &[(&str, &str)] = &[
     (
         "0159_discover_feedback.sql",
         "171fb0511674ef464e9e6d883bb199dd2c031c90814a2e8fad82b5d9cf1f9b05",
+    ),
+    (
+        "0160_discover_picks.sql",
+        "d938a966ff6114bfb93eb6928843b05196ca5937b0aa69adf3e752712547be78",
     ),
 ];
 
@@ -2549,6 +2553,120 @@ fn discover_feedback_upgrade_carries_every_hidden_album() {
     );
 }
 
+/// 0160 adds the pick record, empty, and a place a request, a batch or an
+/// answer was made on to each of their rows. Every requester, batch and
+/// answer stored before it survives as it was, with no place; nothing else
+/// in the schema changes. A place or a pick's surface outside the list is
+/// refused, and a person's picks go with their account.
+#[test]
+fn discover_picks_upgrade_keeps_every_row_with_no_place() {
+    let dir = ScratchDir::new("discover-picks-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 160)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 159);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at)
+                 VALUES ('u1', 'One', 1), ('u2', 'Two', 1);
+             INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name,
+                 album_title, requested_at, status, user_id)
+                 VALUES ('rg-a', 'RG-A', 'Someone', 'First', 1000, 'pending', 'u1');
+             INSERT INTO request_history_requesters (user_id, musicbrainz_id_lower,
+                 requested_at, requested_by_name)
+                 VALUES ('u1', 'rg-a', 1000, 'One'), ('u2', 'rg-a', 2000, NULL);
+             INSERT INTO acquire_discovery_batches (id, user_id, name, source_section,
+                 created_at) VALUES ('b1', 'u1', 'Batch', 'fresh_releases', 3000);
+             INSERT INTO catalog_discover_feedback (user_id, target, target_mbid_lower, kind,
+                 created_at) VALUES ('u2', 'album', 'rg-b', 'no', 4000);",
+        )
+        .unwrap();
+    let kept = [
+        "request_history_requesters",
+        "acquire_discovery_batches",
+        "catalog_discover_feedback",
+    ];
+    let others = |connection: &Connection| {
+        let mut rows = schema_rows(connection);
+        rows.retain(|(_, _, table, _)| {
+            !kept.contains(&table.as_str()) && table != "catalog_discover_picks"
+        });
+        rows
+    };
+    let before_schema = others(&connection);
+    let before: Vec<Vec<String>> = kept
+        .iter()
+        .map(|table| table_rows(&connection, table, "rowid, *"))
+        .collect();
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 160);
+    for (table, rows) in kept.iter().zip(&before) {
+        let after = table_rows(&connection, table, "rowid, *");
+        let carried: Vec<String> = rows.iter().map(|row| format!("{row}|Null")).collect();
+        assert_eq!(after, carried, "{table} keeps its rows, with no place");
+        assert_eq!(
+            scalar(
+                &connection,
+                &format!("SELECT COUNT(*) FROM {table} WHERE made_from IS NOT NULL")
+            ),
+            0,
+            "{table}"
+        );
+    }
+    assert_eq!(
+        scalar(&connection, "SELECT COUNT(*) FROM catalog_discover_picks"),
+        0
+    );
+    assert_eq!(others(&connection), before_schema, "nothing else changes");
+
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .unwrap();
+    for refused in [
+        "UPDATE request_history_requesters SET made_from = 'somewhere' WHERE user_id = 'u1'",
+        "UPDATE acquire_discovery_batches SET made_from = 'Deck' WHERE id = 'b1'",
+        "UPDATE catalog_discover_feedback SET made_from = '' WHERE user_id = 'u2'",
+        "INSERT INTO catalog_discover_picks (user_id, release_group_mbid_lower, \
+         release_group_mbid, first_surface, first_offered_at, last_offered_at, evidence) \
+         VALUES ('u1', 'rg-c', 'rg-c', 'chart', 1, 1, '{}')",
+        "INSERT INTO catalog_discover_picks (user_id, release_group_mbid_lower, \
+         release_group_mbid, first_surface, first_offered_at, last_offered_at, evidence) \
+         VALUES ('nobody', 'rg-c', 'rg-c', 'deck', 1, 1, '{}')",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+    connection
+        .execute_batch(
+            "UPDATE request_history_requesters SET made_from = 'passed_on' WHERE user_id = 'u1';
+             INSERT INTO catalog_discover_picks (user_id, release_group_mbid_lower,
+                 release_group_mbid, first_surface, first_offered_at, last_offered_at,
+                 evidence, requested_from)
+                 VALUES ('u1', 'rg-c', 'rg-c', 'deck', 1, 1, '{}', 'top_picks'),
+                        ('u2', 'rg-c', 'rg-c', 'weekly_set', 1, 1, '{}', NULL);
+             DELETE FROM auth_users WHERE id = 'u1';",
+        )
+        .unwrap();
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT user_id || ':' || release_group_mbid_lower FROM catalog_discover_picks",
+            []
+        ),
+        ["u2:rg-c"],
+        "an account's picks go with it, and only those"
+    );
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -2853,6 +2971,7 @@ const FOREIGN_KEYS: &[(&str, &str, &str, &str)] = &[
     ("catalog_cached_pages", "user_id", "auth_users", "CASCADE"),
     ("catalog_discover_activity", "user_id", "auth_users", "CASCADE"),
     ("catalog_discover_feedback", "user_id", "auth_users", "CASCADE"),
+    ("catalog_discover_picks", "user_id", "auth_users", "CASCADE"),
     ("catalog_event_cities", "user_id", "auth_users", "CASCADE"),
     ("catalog_event_seen_marks", "user_id", "auth_users", "CASCADE"),
     ("catalog_new_release_seen_marks", "user_id", "auth_users", "CASCADE"),
@@ -3365,6 +3484,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_catalog::concerts::store::CheckOutcome;
     use droppedneedle_catalog::discover::cache::PageKind;
     use droppedneedle_catalog::discover::feedback::{FeedbackKind, FeedbackTarget};
+    use droppedneedle_catalog::discover::record::MadeFrom;
     use droppedneedle_catalog::discover::scheduler::Feature;
     use droppedneedle_compat::jellyfin::ids::IdKind;
     use droppedneedle_kernel::db::durable::JobState as LoopState;
@@ -3415,6 +3535,7 @@ fn state_columns() -> Vec<StateColumn> {
     vec![
         // acquire
         state("acquire_discovery_batch_items", "outcome", &BatchOutcome::ALL, BatchOutcome::as_str),
+        state("acquire_discovery_batches", "made_from", &MadeFrom::ALL, MadeFrom::as_str),
         state("acquire_held_entries", "origin", &EntryOrigin::ALL, EntryOrigin::as_str),
         state("acquire_held_entries", "state", &EntryState::ALL, EntryState::as_str),
         state("acquire_held_files", "reason", &Reason::HELD, Reason::code),
@@ -3434,6 +3555,7 @@ fn state_columns() -> Vec<StateColumn> {
         state("request_history", "origin", &DispatchOrigin::ALL, DispatchOrigin::as_str),
         state("request_history", "request_kind", &RequestKind::ALL, RequestKind::as_str),
         state("request_history", "status", &RequestStatus::ALL, RequestStatus::as_str),
+        state("request_history_requesters", "made_from", &MadeFrom::ALL, MadeFrom::as_str),
         state("search_jobs", "status", &JobStatus::ALL, JobStatus::as_str),
         state("wanted_watches", "kind", &WatchKind::ALL, WatchKind::as_str),
         state("wanted_watches", "state", &WatchState::ALL, WatchState::as_str),
@@ -3443,7 +3565,11 @@ fn state_columns() -> Vec<StateColumn> {
         state("catalog_cached_pages", "page", &PageKind::ALL, PageKind::as_str),
         state("catalog_discover_activity", "feature", &Feature::ALL, Feature::as_str),
         state("catalog_discover_feedback", "kind", &FeedbackKind::ALL, FeedbackKind::as_str),
+        state("catalog_discover_feedback", "made_from", &MadeFrom::ALL, MadeFrom::as_str),
         state("catalog_discover_feedback", "target", &FeedbackTarget::ALL, FeedbackTarget::as_str),
+        state("catalog_discover_picks", "feedback_kind", &FeedbackKind::ALL, FeedbackKind::as_str),
+        state("catalog_discover_picks", "first_surface", &MadeFrom::ALL, MadeFrom::as_str),
+        state("catalog_discover_picks", "requested_from", &MadeFrom::ALL, MadeFrom::as_str),
         state("catalog_live_event_feed", "match_confidence", &Confidence::ALL, Confidence::as_str),
         state("catalog_live_event_feed", "source", &EventSource::ALL, EventSource::as_str),
         state("catalog_live_event_feed", "status", &ConcertStatus::ALL, ConcertStatus::as_str),

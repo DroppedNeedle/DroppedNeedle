@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use crate::discover::cache::{self, PageKind};
+use crate::discover::due::Due;
 use crate::discover::genre::artwork::GenreArt;
 use crate::discover::health;
 use crate::discover::home::{LiveHome, genre_names};
@@ -122,18 +123,21 @@ pub struct LiveContent {
     page: LiveDiscover,
     home: LiveHome,
     art: Arc<GenreArt>,
+    due: Arc<Due>,
 }
 
 impl LiveContent {
     /// Read the integration flags from `settings` and the catalog from
-    /// `db`; discover comes from `page` and home from `home`, and genre
-    /// tiles take their artwork from `art`.
+    /// `db`; discover comes from `page` and home from `home`, genre tiles
+    /// take their artwork from `art`, and the demand tick queues each
+    /// person's daily work through `due`.
     pub fn new(
         settings: IntegrationSettings,
         db: Db,
         page: LiveDiscover,
         home: LiveHome,
         art: Arc<GenreArt>,
+        due: Arc<Due>,
     ) -> Self {
         Self {
             settings,
@@ -141,6 +145,7 @@ impl LiveContent {
             page,
             home,
             art,
+            due,
         }
     }
 
@@ -239,9 +244,12 @@ impl LiveContent {
         })
     }
 
-    /// One pass of the warm cycle: prune old activity and rebuild what
-    /// recent activity says is due.
+    /// One pass of the warm cycle: queue each person's daily work, prune
+    /// old activity and rebuild what recent activity says is due.
     pub fn run_due_tick(&self) -> BoxFuture<'_, ()> {
-        Box::pin(async move { self.page.scheduler().tick().await })
+        Box::pin(async move {
+            self.due.clock_pass().await;
+            self.page.scheduler().tick().await;
+        })
     }
 }

@@ -4,7 +4,10 @@
 -->
 <script lang="ts">
 	import { Download } from 'lucide-svelte';
-	import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
+	import {
+		createRequestAlbumMutation,
+		type MadeFrom
+	} from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 
@@ -14,6 +17,8 @@
 		albumName: string;
 		year?: number | null;
 		artistMbid?: string;
+		/** The surface the button sits on. */
+		madeFrom: MadeFrom;
 		size?: 'sm' | 'md';
 		/** A small button with a visible "Request" label, as wide as its tile. */
 		labelled?: boolean;
@@ -25,6 +30,7 @@
 		albumName,
 		year,
 		artistMbid,
+		madeFrom,
 		size = 'sm',
 		labelled = false
 	}: Props = $props();
@@ -45,7 +51,8 @@
 					artist_name: artistName || undefined,
 					album_title: albumName,
 					year: year ?? undefined,
-					artist_mbid: artistMbid
+					artist_mbid: artistMbid,
+					made_from: madeFrom
 				})
 				.catch(() => null);
 		} finally {

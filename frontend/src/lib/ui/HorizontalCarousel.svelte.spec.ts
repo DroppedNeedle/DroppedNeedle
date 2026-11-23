@@ -30,7 +30,8 @@ describe('carousel images', () => {
 				title: 'Similar artists',
 				type: 'artists',
 				items: artists
-			}
+			},
+			madeFrom: 'discover_shelf'
 		});
 
 		// A row not marked eager leaves even its first image to the observer.

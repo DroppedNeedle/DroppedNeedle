@@ -74,6 +74,7 @@
 			const created = await createDiscoveryBatchV3({
 				name: name.trim() || sectionTitle,
 				source_section: sectionKey,
+				made_from: 'discover_shelf',
 				items
 			});
 			if (created) open = false;

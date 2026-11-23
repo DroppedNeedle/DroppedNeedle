@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { fly } from '$lib/ui/motion';
 	import {
 		ArrowRight,
@@ -24,7 +24,11 @@
 	import { createRequestAlbumMutation } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import YouTubeIcon from '$lib/media/icons/YouTubeIcon.svelte';
-	import { createQueuePreviewV3Mutation } from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
+	import {
+		createPickEventMutation,
+		createQueuePreviewV3Mutation,
+		type PickEventV3
+	} from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
 	import SectionStateLine from '$lib/features/discover/components/SectionStateLine.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -51,6 +55,11 @@
 	let previewController: AbortController | null = null;
 	let previewGeneration = 0;
 	const previewMutation = createQueuePreviewV3Mutation();
+	const pickEvent = createPickEventMutation();
+
+	function report(mbid: string, event: PickEventV3['event']) {
+		pickEvent.mutate({ release_group_mbid: mbid, event });
+	}
 
 	const current = $derived(deck.current);
 	const cardIdentity = $derived(`${deck.requestKey}:${current?.musicbrainz_id ?? ''}`);
@@ -81,6 +90,15 @@
 			audioFocus.interrupt();
 			videoOpen = false;
 		}
+	});
+
+	// the card on screen is shown, once each time it becomes the current one
+	let lastShown = '';
+	$effect(() => {
+		const mbid = deck.phase === 'ready' ? current?.musicbrainz_id : undefined;
+		if (!mbid || mbid === lastShown) return;
+		lastShown = mbid;
+		untrack(() => report(mbid, 'shown'));
 	});
 
 	// leaving the current item resets its transient panes
@@ -187,6 +205,7 @@
 			return;
 		}
 		videoOpen = false;
+		report(current.musicbrainz_id, 'sampled');
 		void deckSampler.start(current.musicbrainz_id, current.artist_name, current.title);
 	}
 
@@ -199,7 +218,8 @@
 					release_group_mbid: current.musicbrainz_id,
 					artist_name: current.artist_name,
 					album_title: current.title,
-					artist_mbid: current.artist_id || undefined
+					artist_mbid: current.artist_id || undefined,
+					made_from: 'deck'
 				})
 				.catch(() => null);
 			if (result?.success) deck.markCurrentRequested();
@@ -380,6 +400,7 @@
 											<a
 												href={withBasePath(`/album/${current.musicbrainz_id}`)}
 												aria-label="View {current.title}"
+												onclick={() => report(current.musicbrainz_id, 'opened')}
 											>
 												<AlbumImage
 													mbid={current.musicbrainz_id}
@@ -480,6 +501,7 @@
 								<a
 									href={withBasePath(`/album/${current.musicbrainz_id}`)}
 									class="dn-deck__title w-fit max-w-full"
+									onclick={() => report(current.musicbrainz_id, 'opened')}
 								>
 									{current.title}
 								</a>

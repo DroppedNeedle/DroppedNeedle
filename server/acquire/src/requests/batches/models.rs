@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use droppedneedle_catalog::discover::record::MadeFrom;
+
 /// One album to request inside a new batch.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DiscoveryBatchItemIn {
@@ -34,6 +36,10 @@ pub struct DiscoveryBatchCreate {
     /// batch it made instead of filing the albums twice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
+    /// Where the batch was made, when the caller says. Kept on the batch
+    /// and on the asker's own row of each album it asks for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub made_from: Option<MadeFrom>,
 }
 
 /// What a batch did with one album.

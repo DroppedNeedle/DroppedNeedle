@@ -28,6 +28,16 @@ use crate::artwork::local::LocalArtwork;
 use crate::artwork::{ArtistImageCandidates, ArtistImageSource, ArtworkService};
 use crate::concerts::sweep::ConcertsSweep;
 
+/// The pick record's daily job for `user_id` at `now_ms`, run outside a
+/// job. Answers how many rows the retention removed.
+pub async fn refresh_pick_outcomes(
+    db: &droppedneedle_kernel::db::Db,
+    user_id: &str,
+    now_ms: i64,
+) -> Result<usize, droppedneedle_kernel::jobs::queue::JobError> {
+    crate::discover::record::outcomes::run(db, user_id, now_ms, |_| Ok(())).await
+}
+
 /// Every `sql.rs` of this crate, one line each, for the schema test.
 pub fn statement_files() -> Vec<StatementFile> {
     vec![

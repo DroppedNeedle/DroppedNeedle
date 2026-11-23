@@ -177,15 +177,20 @@ droppedneedle_kernel::sql! {
          dispatch_authorized, generation, origin) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, \
          ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, \
          ?24)";
-    /// The owner as the new row's first listener.
+    /// The owner as the new row's first listener, with where they asked
+    /// (`?5`).
     pub(crate) INSERT_OWNER = "INSERT INTO request_history_requesters (user_id, \
-         musicbrainz_id_lower, requested_at, requested_by_name) VALUES (?1, ?2, ?3, ?4)";
-    /// Attach listener `?1` to row `?2`, keeping a known name.
+         musicbrainz_id_lower, requested_at, requested_by_name, made_from) \
+         VALUES (?1, ?2, ?3, ?4, ?5)";
+    /// Attach listener `?1` to row `?2`, keeping a known name and the place
+    /// of their first ask (`?5` fills one only where none is known).
     pub(crate) ATTACH_LISTENER = "INSERT INTO request_history_requesters (user_id, \
-         musicbrainz_id_lower, requested_at, requested_by_name) VALUES (?1, ?2, ?3, ?4) \
+         musicbrainz_id_lower, requested_at, requested_by_name, made_from) \
+         VALUES (?1, ?2, ?3, ?4, ?5) \
          ON CONFLICT (user_id, musicbrainz_id_lower) DO UPDATE SET \
          requested_by_name = COALESCE(excluded.requested_by_name, \
-         request_history_requesters.requested_by_name)";
+         request_history_requesters.requested_by_name), \
+         made_from = COALESCE(request_history_requesters.made_from, excluded.made_from)";
     /// Detach listener `?2` from row `?1`.
     pub(crate) DETACH_LISTENER = "DELETE FROM request_history_requesters \
          WHERE musicbrainz_id_lower = ?1 AND user_id = ?2";
@@ -499,7 +504,7 @@ droppedneedle_kernel::sql! {
          WHERE i.batch_id = ?1 ORDER BY i.added_at, i.album_name";
     /// Record one discovery batch.
     pub(crate) INSERT_BATCH = "INSERT INTO acquire_discovery_batches (id, user_id, name, \
-         source_section, created_at) VALUES (?1, ?2, ?3, ?4, ?5)";
+         source_section, created_at, made_from) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
     /// Record one album of a discovery batch.
     pub(crate) INSERT_BATCH_ITEM = "INSERT INTO acquire_discovery_batch_items (batch_id, \
          release_group_mbid, artist_mbid, album_name, artist_name, outcome, added_at) \

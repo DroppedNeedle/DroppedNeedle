@@ -1187,6 +1187,15 @@ async fn a_warm_that_kept_nothing_waits_before_it_is_tried_again() {
         ListeningData::new(Arc::new(Script::default()), Providers::closed().cache),
         rig.platform.clock.clone(),
         true,
+        Arc::new(droppedneedle_catalog::discover::due::Due::new(
+            rig.platform.db.clone(),
+            droppedneedle_kernel::jobs::queue::JobQueue::new(
+                rig.platform.db.clone(),
+                rig.platform.clock.clone(),
+            ),
+            rig.platform.clock.clone(),
+            true,
+        )),
         vec![warm.clone()],
     );
     let tries = || warm.0.load(Ordering::SeqCst);

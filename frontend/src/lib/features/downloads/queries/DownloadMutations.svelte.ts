@@ -25,8 +25,13 @@ import {
 	searchResultsChanged
 } from '$lib/queries/effects';
 
+/** Where a request was made, kept on the asker's own row. */
+export type MadeFrom = components['schemas']['MadeFrom'];
+
 interface AlbumRequestInput {
 	release_group_mbid: string;
+	/** The surface the request is made on. */
+	made_from: MadeFrom;
 	artist_name?: string | null;
 	album_title?: string | null;
 	year?: number | null;
@@ -81,6 +86,7 @@ export function createRequestAlbumMutation() {
 					year: input.year ?? null,
 					artist_mbid: input.artist_mbid ?? null,
 					release_mbid: input.release_mbid ?? null,
+					made_from: input.made_from,
 					...(input.monitor_artist || input.auto_download_artist
 						? {
 								monitor_artist: input.monitor_artist === true,

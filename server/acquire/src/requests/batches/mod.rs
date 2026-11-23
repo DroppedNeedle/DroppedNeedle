@@ -310,6 +310,7 @@ impl DiscoveryBatches {
         let batch = NewBatch {
             head: head.clone(),
             items,
+            made_from: body.made_from,
         };
         match RequestsService::new(&self.requests)
             .file_discovery_batch(caller, batch)

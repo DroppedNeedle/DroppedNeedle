@@ -27,6 +27,7 @@ use droppedneedle_catalog::discover::ports::BoxFuture;
 use droppedneedle_catalog::discover::services::DiscoverDeps;
 use droppedneedle_catalog::discover::wiring::{DiscoverInputs, deps_over, live_network};
 use droppedneedle_catalog::metadata::artist::ReleaseGroupItem;
+use droppedneedle_kernel::clock::Clock as _;
 use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_providers::listenbrainz::{
@@ -659,6 +660,10 @@ pub(crate) fn discover_inputs(rig: &AuthRig, dir: &Path, providers: Providers) -
         discover_warmer: false,
         clock: platform.clock.clone(),
         warm: crate::common::bundles::cover_warm_at(&platform.db, platform.clock.clone()),
+        jobs: droppedneedle_kernel::jobs::queue::JobQueue::new(
+            platform.db.clone(),
+            platform.clock.clone(),
+        ),
         download_readiness: Arc::new(NoDownloadSource),
         remotes: Arc::new(remotes_resolver(platform)),
     }
@@ -926,6 +931,101 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
         (reloaded["status"] == "ready" && reloaded["queue_id"] == rebuilt["queue_id"]).then_some(())
     })
     .await;
+}
+
+/// A saved deck records each of its cards as offered on the deck, with the
+/// reason it carried. A card shown counts once per UTC day however often it
+/// is shown, its first sample and opening are stamped, and an event about
+/// an album never offered to the person writes nothing and answers the
+/// same.
+#[tokio::test]
+async fn a_saved_deck_records_its_picks_and_what_the_person_saw() {
+    let dir = crate::common::ScratchDir::new("discover-queue-picks");
+    let rig = AuthRig::new("discover-queue-picks").await;
+    let db = rig.platform.db.clone();
+    seed_user(&db).await;
+    let app = queue_app(&rig, &dir, queue_script());
+    call(
+        &app,
+        "POST",
+        "/api/v3/discover/queue/generate",
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(settled(&app, &db).await["status"], "ready");
+    let (_, deck) = call(&app, "GET", "/api/v3/discover/queue", None).await;
+    let mut ids = deck_ids(&deck);
+    ids.sort();
+    let offered: Vec<(String, String)> = after_commits(&db, "the deck's picks", || async {
+        let rows: Vec<(String, String)> = db.rows(
+            "SELECT release_group_mbid_lower, evidence FROM catalog_discover_picks \
+             WHERE user_id = 'user-1' AND first_surface = 'deck' \
+             ORDER BY release_group_mbid_lower",
+            [],
+        );
+        (rows.len() == ids.len()).then_some(rows)
+    })
+    .await;
+    assert_eq!(
+        offered.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
+        ids
+    );
+    let evidence: Vec<Value> = offered
+        .iter()
+        .map(|(_, evidence)| serde_json::from_str(evidence).expect("evidence is JSON"))
+        .collect();
+    assert!(
+        evidence.iter().all(|row| row["version"] == 1),
+        "{evidence:?}"
+    );
+    assert_eq!(
+        evidence.iter().filter(|row| row["chart"] == true).count(),
+        1,
+        "the chart card says so: {evidence:?}"
+    );
+    assert_eq!(
+        evidence
+            .iter()
+            .filter(|row| row["reasons"] == json!(["Similar to Seed"]))
+            .count(),
+        2,
+        "{evidence:?}"
+    );
+
+    let card = ids[0].clone();
+    let event = |id: &str, kind: &str| {
+        Some(json!({"release_group_mbid": id.to_uppercase(), "event": kind}))
+    };
+    let events = "/api/v3/discover/picks/events";
+    for _ in 0..2 {
+        let (status, body) = call(&app, "POST", events, event(&card, "shown")).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    }
+    let first = rig.clock().now_ms();
+    rig.clock().advance(86_400_000);
+    for kind in ["shown", "sampled", "opened", "sampled"] {
+        let (status, body) = call(&app, "POST", events, event(&card, kind)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{kind}: {body}");
+    }
+    let next = rig.clock().now_ms();
+    let seen: (i64, i64, i64, i64, i64) = db.row(
+        "SELECT shown_days, first_shown_at, last_shown_at, sampled_at, opened_at \
+         FROM catalog_discover_picks WHERE user_id = 'user-1' AND release_group_mbid_lower = ?1",
+        [&card],
+    );
+    assert_eq!(seen, (2, first, next, next, next));
+
+    let stranger = group(99);
+    let (status, _) = call(&app, "POST", events, event(&stranger, "shown")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let rows: i64 = db.one("SELECT COUNT(*) FROM catalog_discover_picks", []);
+    assert_eq!(
+        rows as usize,
+        ids.len(),
+        "an album never offered writes nothing"
+    );
+    let (status, _) = call(&app, "POST", events, event("not-an-mbid", "shown")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 /// The library holds `groups`: one album with a file for each.

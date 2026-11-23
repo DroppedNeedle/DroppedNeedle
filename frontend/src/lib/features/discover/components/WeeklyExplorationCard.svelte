@@ -11,12 +11,15 @@
 	import AlbumRequestButton from '$lib/features/requests/components/AlbumRequestButton.svelte';
 	import SampleButton from './SampleButton.svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
+	import type { MadeFrom } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 
 	interface Props {
 		track: WeeklyTrack;
+		/** The page the shelf is on. */
+		madeFrom: MadeFrom;
 	}
 
-	let { track }: Props = $props();
+	let { track, madeFrom }: Props = $props();
 
 	const albumHref = $derived(albumHrefOrNull(track.release_group_mbid));
 	const artistHref = $derived(artistHrefOrNull(track.artist_mbid));
@@ -97,6 +100,7 @@
 				artistName={track.artist_name}
 				albumName={track.album_name || track.title}
 				artistMbid={track.artist_mbid ?? undefined}
+				{madeFrom}
 				labelled
 			/>
 		</div>

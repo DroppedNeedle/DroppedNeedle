@@ -37,9 +37,10 @@ use crate::discover::listening::{Ask, ListeningData};
 use crate::discover::models::{
     DiscoverFeedbackEntry, DiscoverFeedbackRequest, DiscoverQueuePreview,
     DiscoverQueueStatusResponse, QueueAction, QueueBuildStatus, QueueEnrichment,
-    QueueGenerateResponse, QueueItemLight, SectionCondition,
+    QueueGenerateResponse, QueueItemLight, SectionCondition, ShelfSource,
 };
 use crate::discover::ports::{BoxFuture, ProviderFailure, QueueDeck, QueueTrigger};
+use crate::discover::record::{self, MadeFrom, Offer};
 use crate::discover::scheduler::{Feature, Warm};
 use crate::discover::youtube::LiveYouTube;
 use droppedneedle_kernel::clock::Clock;
@@ -591,6 +592,28 @@ impl Inner {
             }
             None => false,
         };
+        if saved {
+            let policy = self.listening.policy(&user_id).await;
+            let service = if seeds::links_listening(policy.user()) {
+                ShelfSource::from(policy.listening())
+            } else {
+                ShelfSource::Local
+            };
+            let offers = built
+                .value
+                .items
+                .iter()
+                .map(|card| Offer::from_card(card, Some(service)))
+                .collect();
+            record::offered(
+                self.db.db(),
+                &user_id,
+                MadeFrom::Deck,
+                offers,
+                built.built_at,
+            )
+            .await;
+        }
         {
             let mut states = self.states();
             if let Some(state) = states.get_mut(&user_id)

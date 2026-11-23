@@ -57,6 +57,6 @@
 	</div>
 
 	<div class="relative px-4 sm:px-5 pb-1">
-		<HomeSection section={entry.section} hideHeader />
+		<HomeSection madeFrom="discover_shelf" section={entry.section} hideHeader />
 	</div>
 </article>

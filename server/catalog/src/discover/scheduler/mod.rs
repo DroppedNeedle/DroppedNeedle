@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use crate::discover::due::Due;
 use crate::discover::listening::{ListeningData, SourceContext};
 use crate::discover::ports::BoxFuture;
 use activity::{Activity, ActivityDb};
@@ -70,6 +71,7 @@ pub struct WarmScheduler {
     listening: ListeningData,
     clock: Arc<dyn Clock>,
     enabled: bool,
+    due: Arc<Due>,
     registrations: Vec<Arc<dyn Warm>>,
     warming: Mutex<HashSet<String>>,
     recorded: Mutex<HashMap<Activity, i64>>,
@@ -107,12 +109,14 @@ pub struct ArtistDetail<'a> {
 
 impl WarmScheduler {
     /// A scheduler over the activity in `activity` that warms through
-    /// `registrations`. `enabled` is the deployment's kill switch.
+    /// `registrations`. `enabled` is the deployment's kill switch; a
+    /// person's visit queues their own work through `due` either way.
     pub fn new(
         activity: ActivityDb,
         listening: ListeningData,
         clock: Arc<dyn Clock>,
         enabled: bool,
+        due: Arc<Due>,
         registrations: Vec<Arc<dyn Warm>>,
     ) -> Self {
         Self {
@@ -120,6 +124,7 @@ impl WarmScheduler {
             listening,
             clock,
             enabled,
+            due,
             registrations,
             warming: Mutex::default(),
             recorded: Mutex::default(),
@@ -170,8 +175,12 @@ impl WarmScheduler {
     }
 
     /// Take the first user with activity due under the current source
-    /// (or `only_user`) and warm their features.
+    /// (or `only_user`) and warm their features. A pass for one person is
+    /// their visit, which queues their own work even with warming off.
     pub async fn run_due(&self, only_user: Option<&str>) {
+        if let Some(user_id) = only_user {
+            self.due.visit(user_id).await;
+        }
         if !self.enabled {
             return;
         }

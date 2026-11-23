@@ -62,6 +62,8 @@ pub struct CatalogPorts {
     pub download_readiness: Arc<dyn discover::content::DownloadReadiness>,
     /// Where discover, home and genre pages queue their image warm.
     pub cover_warm: art::warm::CoverWarm,
+    /// The jobs table discover queues each person's background work on.
+    pub jobs: droppedneedle_kernel::jobs::queue::JobQueue,
 }
 
 /// The cover and artist image service: local and Cover Art Archive art
@@ -114,6 +116,7 @@ impl CatalogSetup {
             library_files,
             download_readiness,
             cover_warm,
+            jobs,
         } = ports;
         let discover = discover::wiring::production_deps(
             discover::wiring::DiscoverInputs {
@@ -127,6 +130,7 @@ impl CatalogSetup {
                 clock: Arc::clone(&platform.clock),
                 download_readiness,
                 warm: cover_warm,
+                jobs,
                 remotes,
             },
             settings,

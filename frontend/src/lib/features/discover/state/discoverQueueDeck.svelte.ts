@@ -425,7 +425,8 @@ function createDiscoverQueueDeck() {
 					releaseGroupMbid: item.musicbrainz_id,
 					artistMbid: item.artist_id,
 					releaseName: item.title,
-					artistName: item.artist_name
+					artistName: item.artist_name,
+					madeFrom: 'deck'
 				},
 				{
 					restore: () => {

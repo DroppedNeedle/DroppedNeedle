@@ -11,6 +11,7 @@ use utoipa::ToSchema;
 
 pub use super::feedback::{FeedbackKind, FeedbackTarget};
 pub use super::health::{DeckHealth, PageHealth};
+pub use super::record::{MadeFrom, PickEvent};
 pub use super::sections::{SectionKey, SectionZone};
 pub use crate::metadata::models::{AlbumRef, ArtistRef};
 pub use droppedneedle_kernel::runtime_config::sections::ListenSource;
@@ -902,6 +903,18 @@ pub struct DiscoverFeedbackRequest {
     /// Artist name, for the list.
     #[serde(default)]
     pub artist_name: String,
+    /// Where the answer was given, when the caller says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub made_from: Option<MadeFrom>,
+}
+
+/// One thing the web UI saw happen to a pick.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DiscoverPickEventRequest {
+    /// MusicBrainz release-group id of the pick.
+    pub release_group_mbid: String,
+    /// What happened.
+    pub event: PickEvent,
 }
 
 /// One thing a person told Discover, in effect.

@@ -523,6 +523,82 @@ async fn an_album_dispatches_once_however_it_is_asked() {
     assert_eq!(dispatch.take_calls().await.len(), 2, "{case}");
 }
 
+/// Each asker's row matching `filter`, with where they asked.
+async fn places(db: &AcquireDb, filter: &str) -> Vec<(String, Option<String>)> {
+    let query = format!(
+        "SELECT user_id, made_from FROM request_history_requesters WHERE {filter} \
+         ORDER BY user_id, musicbrainz_id_lower"
+    );
+    db.db()
+        .read("test.places", move |conn| {
+            conn.prepare(&query)?
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(droppedneedle_kernel::db::DbError::from)
+        })
+        .await
+        .unwrap()
+}
+
+/// Ask for album `mbid` as `who`, made on `place` when one is given.
+async fn ask_from(state: &RequestsState, who: Who, mbid: &str, place: Option<&str>) -> StatusCode {
+    let mut body = json!({"musicbrainz_id": mbid, "artist": "Artist", "album": "Album"});
+    if let Some(place) = place {
+        body["made_from"] = json!(place);
+    }
+    let path = "/api/v3/requests/albums";
+    call(state, Method::POST, path, Some(who), Some(body))
+        .await
+        .0
+}
+
+// Where an ask was made lands on the asker's own row: a second asker keeps
+// their own, a later ask by the same person keeps the first, an ask that
+// names none stores none and works as any other, and a place off the list
+// is refused.
+#[tokio::test]
+async fn an_ask_keeps_where_its_asker_made_it() {
+    let (state, db, dispatch) = setup().await;
+    assert_eq!(
+        ask_from(&state, TRUSTED, MBID_A, Some("deck")).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(
+        ask_from(&state, BOB, MBID_A, Some("search")).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(
+        ask_from(&state, BOB, MBID_A, Some("album_page")).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(
+        ask_from(&state, TRUSTED, MBID_B, None).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(
+        dispatch.take_calls().await.len(),
+        2,
+        "the place changes nothing the ask does"
+    );
+    assert_eq!(
+        places(&db, "1").await,
+        [
+            ("u-bob".to_owned(), Some("search".to_owned())),
+            ("u-tris".to_owned(), Some("deck".to_owned())),
+            ("u-tris".to_owned(), None),
+        ]
+    );
+    let (status, _) = call(
+        &state,
+        Method::POST,
+        "/api/v3/requests/albums",
+        Some(ADA),
+        Some(json!({"musicbrainz_id": MBID_C, "artist": "A", "album": "B", "made_from": "x"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 const REL_1: &str = "44444444-4444-4444-8444-444444444444";
 const REL_2: &str = "55555555-5555-4555-8555-555555555555";
 const REL_3: &str = "66666666-6666-4666-8666-666666666666";
@@ -1194,6 +1270,11 @@ async fn standing_grants_wait_for_an_admin_and_follow_the_role() {
         (built.track_count, built.requested_albums, built.skipped),
         (2, 1, None),
         "{case}: the album by the artist Ada hid is not requested"
+    );
+    assert_eq!(
+        places(&db, "user_id = 'u-ada'").await,
+        [("u-ada".to_owned(), Some("weekly_mix".to_owned()))],
+        "{case}: the mix's ask says where it was made"
     );
     let playlist = built.playlist_id.expect("mix playlist");
     assert_eq!(

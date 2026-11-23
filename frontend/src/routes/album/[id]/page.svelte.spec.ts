@@ -490,7 +490,8 @@ describe('choosing the edition to request', () => {
 		await vi.waitFor(() => expect(api.calls(requestRoute)).toHaveLength(1));
 		expect(api.calls(requestRoute)[0].body).toMatchObject({
 			musicbrainz_id: albumId,
-			release_mbid: 'release-deluxe'
+			release_mbid: 'release-deluxe',
+			made_from: 'album_page'
 		});
 	});
 

@@ -160,6 +160,7 @@ catalog_artist_tm_attractions
 catalog_cached_pages
 catalog_discover_activity
 catalog_discover_feedback
+catalog_discover_picks
 catalog_event_cities
 catalog_event_seen_marks
 catalog_genre_artwork_revisions

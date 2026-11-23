@@ -20,6 +20,7 @@ use crate::requests::models::{
 };
 use crate::requests::quota::QuotaLedger;
 use droppedneedle_auth::Principal;
+use droppedneedle_catalog::discover::record::MadeFrom;
 use droppedneedle_kernel::events::{AutoDownloadEnqueued, UserNotice};
 
 /// Batch row cap.
@@ -492,7 +493,13 @@ impl RequestsService {
             && (existing.status.is_active() || existing.status == RequestStatus::Cancelling)
         {
             return self
-                .attach_album(principal, &existing, follow, asked.as_deref())
+                .attach_album(
+                    principal,
+                    &existing,
+                    follow,
+                    asked.as_deref(),
+                    body.made_from,
+                )
                 .await;
         }
 
@@ -522,14 +529,20 @@ impl RequestsService {
         };
         let outcome = self
             .store
-            .begin(record, principal.user_id(), gate, follow.clone())
+            .begin(
+                record,
+                principal.user_id(),
+                gate,
+                follow.clone(),
+                body.made_from,
+            )
             .await?
             .map_err(|refusal| QuotaLedger::refusal(&refusal))?;
         match outcome {
             BeginOutcome::Existing(winner)
                 if winner.status.is_active() || winner.status == RequestStatus::Cancelling =>
             {
-                self.attach_album(principal, &winner, follow, asked.as_deref())
+                self.attach_album(principal, &winner, follow, asked.as_deref(), body.made_from)
                     .await
             }
             BeginOutcome::Existing(_) => Ok(IntakeResponse {
@@ -626,7 +639,7 @@ impl RequestsService {
         };
         let outcome = self
             .store
-            .begin(record, principal.user_id(), gate, None)
+            .begin(record, principal.user_id(), gate, None, None)
             .await?
             .map_err(|refusal| QuotaLedger::refusal(&refusal))?;
         match outcome {
@@ -742,7 +755,14 @@ impl RequestsService {
         if new_items.is_empty() {
             for (mbid, _) in &existing_items {
                 self.store
-                    .attach_following(mbid, user_id, Some(name.clone()), now, follow_for(mbid))
+                    .attach_following(
+                        mbid,
+                        user_id,
+                        Some(name.clone()),
+                        now,
+                        follow_for(mbid),
+                        None,
+                    )
                     .await?;
             }
             let joined: Vec<String> = existing_items
@@ -818,7 +838,7 @@ impl RequestsService {
         }
         let outcomes = self
             .store
-            .begin_following(records, user_id, gate)
+            .begin_following(records, user_id, gate, None)
             .await?
             .map_err(|refusal| QuotaLedger::refusal(&refusal))?;
         let mut created = Vec::new();
@@ -848,7 +868,14 @@ impl RequestsService {
             .chain(existing_items.iter().map(|(mbid, _)| mbid))
         {
             self.store
-                .attach_following(mbid, user_id, Some(name.clone()), now, follow_for(mbid))
+                .attach_following(
+                    mbid,
+                    user_id,
+                    Some(name.clone()),
+                    now,
+                    follow_for(mbid),
+                    None,
+                )
                 .await?;
         }
         let joined: Vec<String> = raced
@@ -1032,6 +1059,7 @@ impl RequestsService {
         existing: &RequestRecord,
         follow: Option<FollowAsk>,
         asked: Option<&str>,
+        made_from: Option<MadeFrom>,
     ) -> Result<IntakeResponse, RequestsError> {
         self.store
             .attach_following(
@@ -1040,6 +1068,7 @@ impl RequestsService {
                 Some(principal.username_display().to_owned()),
                 self.now_epoch(),
                 follow,
+                made_from,
             )
             .await?;
         let switch = self.edition_switch(principal, existing, asked).await?;

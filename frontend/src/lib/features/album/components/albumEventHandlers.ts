@@ -62,7 +62,8 @@ export function createEventHandlers(deps: EventHandlerDeps) {
 					album_title: album.title,
 					year: album.year ?? undefined,
 					artist_mbid: album.artist_id,
-					release_mbid: deps.getSelectedRelease?.() ?? null
+					release_mbid: deps.getSelectedRelease?.() ?? null,
+					made_from: 'album_page'
 				})
 				.catch(() => null);
 			const current = deps.getAlbum();

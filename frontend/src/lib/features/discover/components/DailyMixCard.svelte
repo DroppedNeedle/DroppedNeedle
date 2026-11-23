@@ -135,7 +135,7 @@
 					playedFrom={{ kind: 'mix' }}
 				/>
 			</div>
-			<HomeSection {section} showConnectCard={false} />
+			<HomeSection madeFrom="discover_shelf" {section} showConnectCard={false} />
 		</Card>
 	</div>
 {/if}

@@ -114,7 +114,7 @@ describe('download queue queries', () => {
 		const cases: [() => unknown, unknown, unknown, Record<string, unknown>][] = [
 			[
 				createRequestAlbumMutation,
-				{ release_group_mbid: 'release-a' },
+				{ release_group_mbid: 'release-a', made_from: 'search' },
 				{ success: true, message: '', musicbrainz_id: 'release-a', status: 'pending' },
 				{ success: false }
 			],
@@ -139,5 +139,9 @@ describe('download queue queries', () => {
 			expect(mockAddRequested).not.toHaveBeenCalled();
 			expect(mockToast).not.toHaveBeenCalled();
 		}
+		expect(mockPost).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ musicbrainz_id: 'release-a', made_from: 'search' })
+		);
 	});
 });

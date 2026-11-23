@@ -54,7 +54,8 @@
 					release_group_mbid: album.musicbrainz_id,
 					artist_name: album.artist ?? undefined,
 					album_title: album.title,
-					year: album.year ?? undefined
+					year: album.year ?? undefined,
+					made_from: 'album_page'
 				})
 				.catch(() => null);
 			if (result?.success) {

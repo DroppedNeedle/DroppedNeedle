@@ -19,6 +19,7 @@ use crate::db::{AcquireDb, to_i64, to_u64};
 use crate::dispatch::DispatchOrigin;
 use crate::follows::FollowAsk;
 use droppedneedle_auth::Role;
+use droppedneedle_catalog::discover::record::MadeFrom;
 use droppedneedle_kernel::db::statement::ListLen;
 
 droppedneedle_kernel::sql_choice! {
@@ -183,7 +184,11 @@ fn is_member_tx(tx: &Transaction, stored: &str, user_id: &str) -> rusqlite::Resu
 /// live or cancelling row wins over the
 /// newcomer; a terminal row is replaced, and its listeners and dismissals
 /// go with it.
-fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<BeginOutcome> {
+fn begin_tx(
+    tx: &Transaction,
+    mut record: RequestRecord,
+    made_from: Option<MadeFrom>,
+) -> rusqlite::Result<BeginOutcome> {
     let stored = row_key(record.kind, &record.key);
     let existing: Option<(RequestStatus, i64)> = tx
         .query_row(sql::ROW_STATE.text(), params![stored], |row| {
@@ -252,7 +257,8 @@ fn begin_tx(tx: &Transaction, mut record: RequestRecord) -> rusqlite::Result<Beg
                 owner,
                 stored,
                 ms_from_secs(record.requested_at),
-                record.requested_by_name
+                record.requested_by_name,
+                made_from
             ],
         )?;
     }
@@ -290,14 +296,15 @@ fn rearm_stopped_watch(
     Ok(())
 }
 
-/// Attach a listener to a live row. Terminal
-/// and cancelling rows refuse; the generation is untouched.
+/// Attach a listener to a live row, with where they asked when known.
+/// Terminal and cancelling rows refuse; the generation is untouched.
 fn attach_tx(
     tx: &Transaction,
     stored: &str,
     user_id: &str,
     name: Option<&str>,
     now: u64,
+    made_from: Option<MadeFrom>,
 ) -> rusqlite::Result<bool> {
     let status: Option<RequestStatus> = tx
         .query_row(sql::ROW_STATUS.text(), params![stored], |row| row.get(0))
@@ -307,7 +314,7 @@ fn attach_tx(
     }
     tx.execute(
         sql::ATTACH_LISTENER.text(),
-        params![user_id, stored, ms_from_secs(now), name],
+        params![user_id, stored, ms_from_secs(now), name, made_from],
     )?;
     Ok(true)
 }
@@ -408,16 +415,18 @@ impl RequestStore {
     }
 
     /// Claim one row, enforcing the quota gate inside the same write. A
-    /// won row writes the follow it asks for in the same write.
+    /// won row writes the follow it asks for and where the owner asked
+    /// (`made_from`) in the same write.
     pub async fn begin(
         &self,
         record: RequestRecord,
         owner: &str,
         gate: Option<QuotaGate>,
         follow: Option<FollowAsk>,
+        made_from: Option<MadeFrom>,
     ) -> Result<Result<BeginOutcome, QuotaRefusal>, RequestsError> {
         match self
-            .begin_following(vec![(record, follow)], owner, gate)
+            .begin_following(vec![(record, follow)], owner, gate, made_from)
             .await?
         {
             Err(refusal) => Ok(Err(refusal)),
@@ -439,17 +448,19 @@ impl RequestStore {
         gate: Option<QuotaGate>,
     ) -> Result<Result<Vec<BeginOutcome>, QuotaRefusal>, RequestsError> {
         let records = records.into_iter().map(|record| (record, None)).collect();
-        self.begin_following(records, owner, gate).await
+        self.begin_following(records, owner, gate, None).await
     }
 
     /// [`Self::begin_batch`] where each row may carry the follow its ask
     /// names: a won row follows for `owner` in the same write, so a
-    /// refused or lost claim follows nobody.
+    /// refused or lost claim follows nobody. Each won row keeps where the
+    /// owner asked (`made_from`).
     pub async fn begin_following(
         &self,
         records: Vec<(RequestRecord, Option<FollowAsk>)>,
         owner: &str,
         gate: Option<QuotaGate>,
+        made_from: Option<MadeFrom>,
     ) -> Result<Result<Vec<BeginOutcome>, QuotaRefusal>, RequestsError> {
         let owner = owner.to_owned();
         let now = records.first().map_or(0, |(record, _)| record.requested_at);
@@ -461,7 +472,7 @@ impl RequestStore {
                 }
                 let mut outcomes = Vec::with_capacity(records.len());
                 for (record, follow) in records {
-                    let outcome = begin_tx(tx, record)?;
+                    let outcome = begin_tx(tx, record, made_from)?;
                     if let (BeginOutcome::Won(_), Some(follow)) = (&outcome, follow) {
                         follow.apply(tx, &owner, crate::follows::now_ms(clock.as_ref()))?;
                     }
@@ -498,17 +509,18 @@ impl RequestStore {
                 if let Some(refusal) = gate_refusal(tx, &user_id, gate, now)? {
                     return Ok(BatchWrite::Refused(refusal));
                 }
+                let made_from = batch.made_from;
                 let mut filed = HashSet::new();
                 let mut won = Vec::new();
                 for record in records {
-                    match begin_tx(tx, record)? {
+                    match begin_tx(tx, record, made_from)? {
                         BeginOutcome::Won(record) => {
                             filed.insert(record.key.clone());
                             won.push(record);
                         }
                         BeginOutcome::Existing(winner) => {
                             let stored = row_key(RequestKind::Album, &winner.key);
-                            if attach_tx(tx, &stored, &user_id, Some(&name), now)? {
+                            if attach_tx(tx, &stored, &user_id, Some(&name), now, made_from)? {
                                 tx.execute(sql::OWN_FOLLOW_ROW.text(), params![stored, user_id])?;
                                 filed.insert(winner.key);
                             }
@@ -517,7 +529,7 @@ impl RequestStore {
                 }
                 for key in joins {
                     let stored = row_key(RequestKind::Album, &key);
-                    if attach_tx(tx, &stored, &user_id, Some(&name), now)? {
+                    if attach_tx(tx, &stored, &user_id, Some(&name), now, made_from)? {
                         tx.execute(sql::OWN_FOLLOW_ROW.text(), params![stored, user_id])?;
                         filed.insert(key);
                     }
@@ -555,7 +567,7 @@ impl RequestStore {
                 if hold || !has_room(tx, &owner, gate.as_ref(), record.requested_at)? {
                     record.status = RequestStatus::Queued;
                 }
-                Ok(begin_tx(tx, record)?)
+                Ok(begin_tx(tx, record, None)?)
             })
             .await
             .map_err(|error| lane_error("requests.begin", error))
@@ -683,15 +695,22 @@ impl RequestStore {
         let user_id = user_id.to_owned();
         self.db
             .write("requests.attach", move |tx| {
-                Ok(attach_tx(tx, &stored, &user_id, name.as_deref(), now)?)
+                Ok(attach_tx(
+                    tx,
+                    &stored,
+                    &user_id,
+                    name.as_deref(),
+                    now,
+                    None,
+                )?)
             })
             .await
             .map_err(|error| lane_error("requests.attach", error))
     }
 
     /// Attach a listener to a live album row with the follow its ask
-    /// names, in one write: the row's monitoring flags widen (never
-    /// narrow) and the listener follows the
+    /// names and where they asked, in one write: the row's monitoring
+    /// flags widen (never narrow) and the listener follows the
     /// artist. A row that refuses the listener follows nobody.
     pub async fn attach_following(
         &self,
@@ -700,13 +719,14 @@ impl RequestStore {
         name: Option<String>,
         now: u64,
         follow: Option<FollowAsk>,
+        made_from: Option<MadeFrom>,
     ) -> Result<bool, RequestsError> {
         let stored = row_key(RequestKind::Album, key);
         let user_id = user_id.to_owned();
         let clock = self.db.clock().clone();
         self.db
             .write("requests.attach", move |tx| {
-                if !attach_tx(tx, &stored, &user_id, name.as_deref(), now)? {
+                if !attach_tx(tx, &stored, &user_id, name.as_deref(), now, made_from)? {
                     return Ok(false);
                 }
                 tx.execute(sql::OWN_FOLLOW_ROW.text(), params![stored, user_id])?;

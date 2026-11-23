@@ -36,7 +36,8 @@ export function createSearchAlbumRequest() {
 						release_group_mbid: album.musicbrainz_id,
 						artist_name: album.artist ?? undefined,
 						album_title: album.title,
-						year: album.year ?? undefined
+						year: album.year ?? undefined,
+						made_from: 'search'
 					})
 					.catch(() => null);
 			} finally {

@@ -1217,6 +1217,7 @@ async fn a_rejected_re_ask_stops_its_watch() {
         release_mbid: None,
         monitor_artist: false,
         auto_download_artist: false,
+        made_from: None,
     };
     requests.request_album(&owner, &ask).await.unwrap();
     requests

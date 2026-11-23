@@ -50,7 +50,8 @@
 			release_group_mbid: item.release_group_mbid,
 			artist_name: item.artist_name,
 			album_title: item.title,
-			artist_mbid: item.artist_mbid
+			artist_mbid: item.artist_mbid,
+			made_from: 'new_releases'
 		});
 		requested.add(item.release_group_mbid);
 	}

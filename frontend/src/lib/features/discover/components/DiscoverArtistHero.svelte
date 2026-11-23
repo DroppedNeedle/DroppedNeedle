@@ -64,6 +64,7 @@
 
 	<div class="relative px-4 sm:px-6">
 		<HomeSection
+			madeFrom="discover_shelf"
 			section={{
 				...entry.section,
 				title: `Similar to ${entry.seed_artist}`

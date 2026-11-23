@@ -7,13 +7,16 @@
 	import SectionHead from '$lib/ui/SectionHead.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
 	import { outsideLink } from '$lib/ui/outsideLink';
+	import type { MadeFrom } from '$lib/features/downloads/queries/DownloadMutations.svelte';
 
 	interface Props {
 		section: SectionType;
 		updating?: boolean;
+		/** The page the shelf is on. */
+		madeFrom: MadeFrom;
 	}
 
-	let { section, updating = false }: Props = $props();
+	let { section, updating = false, madeFrom }: Props = $props();
 	const sourceLink = $derived(outsideLink(section.source_url));
 
 	function formatPlaylistDate(dateStr: string): string {
@@ -56,7 +59,7 @@
 
 	<HorizontalCarousel class="-mx-4 px-4 pb-2 sm:mx-0 sm:px-0">
 		{#each section.tracks as track (track.artist_name + track.title)}
-			<WeeklyExplorationCard {track} />
+			<WeeklyExplorationCard {track} {madeFrom} />
 		{/each}
 	</HorizontalCarousel>
 </section>

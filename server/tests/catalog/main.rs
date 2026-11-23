@@ -7,6 +7,7 @@ mod concerts;
 mod discover_health;
 mod discover_page;
 mod discover_queue;
+mod discover_record;
 mod home_page;
 mod listenbrainz_load;
 mod listenbrainz_reads;

@@ -11,6 +11,7 @@ use crate::requests::error::RequestsError;
 use crate::requests::ledger::{QuotaRefusal, RequestRecord};
 use crate::requests::sql;
 use crate::requests::sqlite::{lane_error, read, unknown_value};
+use droppedneedle_catalog::discover::record::MadeFrom;
 
 /// One stored batch.
 #[derive(Debug, Clone)]
@@ -44,6 +45,8 @@ pub(crate) struct BatchItem {
 pub(crate) struct NewBatch {
     pub(crate) head: BatchHead,
     pub(crate) items: Vec<BatchItem>,
+    /// Where it was made, when the caller said.
+    pub(crate) made_from: Option<MadeFrom>,
 }
 
 /// What the filing write came to.
@@ -79,7 +82,8 @@ impl NewBatch {
                 head.user_id,
                 head.name,
                 head.source_section,
-                head.created_at
+                head.created_at,
+                self.made_from
             ],
         )?;
         for item in &self.items {

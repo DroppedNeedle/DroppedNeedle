@@ -423,6 +423,7 @@
 													artistName={album.artist_name ?? ''}
 													albumName={album.title}
 													artistMbid={album.artist_id ?? undefined}
+													madeFrom="playlist_suggestions"
 												/>
 											</div>
 										{:else if album.in_library}

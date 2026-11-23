@@ -290,7 +290,8 @@
 				.mutateAsync({
 					release_group_mbid: releaseId,
 					artist_name: artist?.name,
-					album_title: releaseTitle
+					album_title: releaseTitle,
+					made_from: 'artist_page'
 				})
 				.catch(() => null);
 

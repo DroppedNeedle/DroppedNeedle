@@ -53,7 +53,7 @@
 	});
 </script>
 
-<HomeSection {section} {headerLink} {compact}>
+<HomeSection madeFrom="discover_shelf" {section} {headerLink} {compact}>
 	{#snippet headerActions()}
 		<div class="flex items-center gap-1">
 			{#if seedItems.length > 0}

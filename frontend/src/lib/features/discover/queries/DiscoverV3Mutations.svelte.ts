@@ -32,6 +32,20 @@ export const createUndoDiscoverFeedbackMutation = () =>
 		onError: () => toastStore.show({ message: "Couldn't undo that.", type: 'error' })
 	}));
 
+export type PickEventV3 = components['schemas']['DiscoverPickEventRequest'];
+
+/**
+ * Tells the pick record what the person saw happen to a pick: shown, its
+ * sample started, or its album opened from the card. Nothing cached changes,
+ * and nothing on the page waits on it.
+ */
+export const createPickEventMutation = () =>
+	createAppMutation(() => ({
+		retry: false,
+		effects: () => [],
+		mutationFn: (event: PickEventV3) => api.v3.POST(v3('/api/v3/discover/picks/events'), event)
+	}));
+
 export const createRefreshDiscoverV3Mutation = () =>
 	createAppMutation(() => ({
 		mutationFn: () => api.v3.POST(v3('/api/v3/discover/refresh')),

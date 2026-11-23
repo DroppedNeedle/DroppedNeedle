@@ -5,6 +5,12 @@
 	import type { TopPickItem, TopPicksSection } from '$lib/features/discover/queries/types';
 	import type { PassActions } from '$lib/features/discover/state/passLine';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { untrack } from 'svelte';
+	import {
+		createPickEventMutation,
+		type PickEventV3
+	} from '$lib/features/discover/queries/DiscoverV3Mutations.svelte';
+	import { deckSampler } from '$lib/features/discover/state/deckSampler.svelte';
 	import AlbumImage from '$lib/media/AlbumImage.svelte';
 	import AlbumRequestButton from '$lib/features/requests/components/AlbumRequestButton.svelte';
 	import RadioPlayButton from '$lib/features/discover/components/RadioPlayButton.svelte';
@@ -44,6 +50,33 @@
 		!!featured &&
 			(featured.album.requested || libraryStore.isRequested(featured.album.musicbrainz_id))
 	);
+
+	const pickEvent = createPickEventMutation();
+
+	function report(mbid: string | null | undefined, event: PickEventV3['event']) {
+		if (mbid) pickEvent.mutate({ release_group_mbid: mbid, event });
+	}
+
+	function openFeatured() {
+		if (featuredHref) report(featured?.album.musicbrainz_id, 'opened');
+	}
+
+	// the featured pick is the one shown; its sample starting is reported once
+	let lastShown = '';
+	let lastSampled = '';
+	$effect(() => {
+		const mbid = featured?.album.musicbrainz_id;
+		if (!mbid || mbid === lastShown) return;
+		lastShown = mbid;
+		untrack(() => report(mbid, 'shown'));
+	});
+	$effect(() => {
+		const mbid = featured?.album.musicbrainz_id;
+		const sampling = !!mbid && deckSampler.activeKey === mbid && deckSampler.status !== 'idle';
+		if (!sampling || mbid === lastSampled) return;
+		lastSampled = mbid;
+		untrack(() => report(mbid, 'sampled'));
+	});
 
 	// cycling is MANUAL only: a self-rotating hero yanks the card away mid-read
 	function cycle(delta: number) {
@@ -132,6 +165,8 @@
 				<svelte:element
 					this={featuredHref ? 'a' : 'div'}
 					href={featuredHref ?? undefined}
+					role={featuredHref ? 'link' : undefined}
+					onclick={openFeatured}
 					class="group/cover relative mx-auto w-44 shrink-0 overflow-hidden rounded-md shadow-lg transition-transform duration-300 sm:mx-0 sm:w-40 xl:w-48 {featuredHref
 						? 'hover:scale-[1.02]'
 						: ''}"
@@ -186,6 +221,8 @@
 						<svelte:element
 							this={featuredHref ? 'a' : 'span'}
 							href={featuredHref ?? undefined}
+							role={featuredHref ? 'link' : undefined}
+							onclick={openFeatured}
 							class="line-clamp-2 text-xl font-extrabold leading-tight tracking-tight sm:text-2xl {featuredHref
 								? 'transition-colors hover:text-primary'
 								: ''}"
@@ -217,6 +254,7 @@
 									artistName={featured.album.artist_name ?? ''}
 									albumName={featured.album.title}
 									artistMbid={featured.album.artist_id ?? undefined}
+									madeFrom="top_picks"
 								/>
 							{/if}
 							{#if featured.album.musicbrainz_id}

@@ -51,6 +51,7 @@ use crate::discover::queue::build::{
 use crate::discover::queue::seeds::{links_listening, weighted_seeds};
 use crate::discover::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
 use crate::discover::queue::store::QueueDb;
+use crate::discover::record::{self, MadeFrom, Offer};
 use crate::discover::sections::{self, Dedupe, Input, Page, Requires, SectionDef};
 
 /// Bound on any one upstream read in a build.
@@ -1643,6 +1644,18 @@ impl Builder<'_> {
         let (picks, degraded) = self
             .build_top_picks(user_id, user, primary, seeds, shared)
             .await;
+        if let Some(section) = &picks {
+            let now_ms = (self.now * 1000.0) as i64;
+            let offers = Offer::from_top_picks(section);
+            record::offered(
+                self.library.db(),
+                user_id,
+                MadeFrom::TopPicks,
+                offers,
+                now_ms,
+            )
+            .await;
+        }
         // The section's own ask, which also holds the shared reads it
         // stands on.
         let short = degraded || self.ask.met_failure();

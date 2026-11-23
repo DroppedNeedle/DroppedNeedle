@@ -200,6 +200,7 @@ pub async fn save(
     };
     let user_id = user_id.to_owned();
     let row = stored.clone();
+    let made_from = request.made_from;
     db.write(Lane::Foreground, "discover.feedback.save", move |tx| {
         tx.execute(
             sql::SAVE_FEEDBACK.text(),
@@ -214,6 +215,7 @@ pub async fn save(
                 row.artist_name,
                 Millis(now_ms),
                 expires_at.map(Millis),
+                made_from,
             ],
         )?;
         Ok::<_, DbError>(())

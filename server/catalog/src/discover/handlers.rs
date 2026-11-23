@@ -20,12 +20,12 @@ use super::{
         AlbumPreviewResponse, AlbumRef, ArtistRef, ChartPage, ChartSection,
         DiscoverActivityRequest, DiscoverActivityResponse, DiscoverFeedbackEntry,
         DiscoverFeedbackRequest, DiscoverFeedbackResponse, DiscoverHealthResponse,
-        DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
-        FeedbackTarget, GenreDetailResponse, HomeResponse, IntegrationStatus, ListenSource,
-        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, QueueEnrichment,
-        QueueGenerateRequest, QueueGenerateResponse, QueueValidateRequest, QueueValidateResponse,
-        RadioPlanRequest, RadioPlanResponse, RadioRequest, RefreshResponse, StatsRange,
-        TrackPreviewResponse, YouTubeSearchResponse,
+        DiscoverPickEventRequest, DiscoverQueuePreview, DiscoverQueueResponse,
+        DiscoverQueueStatusResponse, DiscoverResponse, FeedbackTarget, GenreDetailResponse,
+        HomeResponse, IntegrationStatus, ListenSource, PlaylistSuggestionsRequest,
+        PlaylistSuggestionsResponse, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
+        QueueValidateRequest, QueueValidateResponse, RadioPlanRequest, RadioPlanResponse,
+        RadioRequest, RefreshResponse, StatsRange, TrackPreviewResponse, YouTubeSearchResponse,
     },
     services::{self, DiscoverDeps},
 };
@@ -456,6 +456,32 @@ pub async fn undo_feedback(
         .map_err(ApiError::from)
 }
 
+/// Record what the web UI saw happen to one of the caller's picks: shown
+/// (counted once a UTC day), its sample started, or its album page opened
+/// from the card. An album Discover never offered the caller is left alone.
+#[utoipa::path(
+    post,
+    tag = "discover",
+    path = "/api/v3/discover/picks/events",
+    request_body = DiscoverPickEventRequest,
+    responses(
+        (status = 204, description = "Recorded, or nothing to record"),
+        (status = 400, description = "Bad request body, or not a MusicBrainz id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The event could not be saved"),
+    )
+)]
+pub async fn record_pick_event(
+    State(deps): State<DiscoverDeps>,
+    User(user): User,
+    ValidJson(body): ValidJson<DiscoverPickEventRequest>,
+) -> Result<StatusCode, ApiError> {
+    services::record_pick_event(&deps, user.user_id(), &body)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(ApiError::from)
+}
+
 /// The given cards whose albums the library already holds.
 #[utoipa::path(
     post,
@@ -781,6 +807,7 @@ pub fn routes() -> Routes<DiscoverDeps> {
         .user(routes!(save_feedback))
         .user(routes!(list_feedback))
         .user(routes!(undo_feedback))
+        .user(routes!(record_pick_event))
         .user(routes!(validate_queue))
         .user(routes!(youtube_track_search))
         .user(routes!(track_preview))

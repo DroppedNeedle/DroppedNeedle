@@ -1766,6 +1766,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/discover/picks/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record what the web UI saw happen to one of the caller's picks: shown
+         *     (counted once a UTC day), its sample started, or its album page opened
+         *     from the card. An album Discover never offered the caller is left alone.
+         */
+        post: operations["record_pick_event"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/discover/playlist-suggestions": {
         parameters: {
             query?: never;
@@ -10575,6 +10596,11 @@ export interface components {
             artist_mbid?: string | null;
             /** @description Auto-download the artist's future releases (approval-gated for users). */
             auto_download_artist?: boolean;
+            /**
+             * @description Where the request was made, when the caller says. Kept on the
+             *     asker's own row; it never changes what the request does.
+             */
+            made_from?: null | components["schemas"]["MadeFrom"];
             /** @description Follow the artist for new releases. */
             monitor_artist?: boolean;
             /** @description Release-group MBID. */
@@ -13394,6 +13420,8 @@ export interface components {
             artist_name?: string;
             /** @description What the person said. */
             kind: components["schemas"]["FeedbackKind"];
+            /** @description Where the answer was given, when the caller says. */
+            made_from?: null | components["schemas"]["MadeFrom"];
             /** @description MusicBrainz release-group id of the album. */
             release_group_mbid?: string | null;
             /** @description Album name, for the list. */
@@ -13410,6 +13438,13 @@ export interface components {
             decks: components["schemas"]["DeckHealthRow"][];
             /** @description Discover pages, one per user. */
             pages: components["schemas"]["PageHealthRow"][];
+        };
+        /** @description One thing the web UI saw happen to a pick. */
+        DiscoverPickEventRequest: {
+            /** @description What happened. */
+            event: components["schemas"]["PickEvent"];
+            /** @description MusicBrainz release-group id of the pick. */
+            release_group_mbid: string;
         };
         /** @description A discover teaser on home: one seed artist plus similar artists. */
         DiscoverPreview: {
@@ -13513,6 +13548,11 @@ export interface components {
             idempotency_key?: string | null;
             /** @description Albums to request. */
             items?: components["schemas"]["DiscoveryBatchItemIn"][];
+            /**
+             * @description Where the batch was made, when the caller says. Kept on the batch
+             *     and on the asker's own row of each album it asks for.
+             */
+            made_from?: null | components["schemas"]["MadeFrom"];
             /** @description Batch name. */
             name: string;
             /** @description Discover section the batch came from. */
@@ -17621,6 +17661,13 @@ export interface components {
             /** @description Full text, lines joined with newlines. */
             text: string;
         };
+        /**
+         * @description Where a request, a batch, an answer or a pick was made. Absent means not
+         *     known. Declared whole: a stored CHECK lists every value, the ones later
+         *     work first writes included.
+         * @enum {string}
+         */
+        MadeFrom: "deck" | "top_picks" | "discover_shelf" | "home_shelf" | "playlist_suggestions" | "album_page" | "artist_page" | "weekly_mix" | "search" | "new_releases" | "weekly_set" | "dig_further" | "later" | "thread_page" | "radio" | "mix" | "listen_first" | "passed_on";
         /** @description Undo one published bundle as a new previewed operation. */
         ManageUndoBody: {
             /** @description Source operation bundle id. */
@@ -19999,6 +20046,11 @@ export interface components {
             /** @description The licence's page, http or https. */
             licence_url?: string | null;
         };
+        /**
+         * @description What the web UI saw happen to a pick.
+         * @enum {string}
+         */
+        PickEvent: "shown" | "sampled" | "opened";
         /** @description Pick one candidate. */
         PickRequest: {
             /** @description `candidate_index` of the candidate to download. */
@@ -29992,6 +30044,55 @@ export interface operations {
                 };
             };
             /** @description The change could not be saved */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    record_pick_event: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoverPickEventRequest"];
+            };
+        };
+        responses: {
+            /** @description Recorded, or nothing to record */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad request body, or not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The event could not be saved */
             500: {
                 headers: {
                     [name: string]: unknown;

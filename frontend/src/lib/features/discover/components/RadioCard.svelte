@@ -187,7 +187,11 @@
 						</Button>
 					</div>
 				</div>
-				{#if albumCount}<HomeSection {section} showConnectCard={false} />{/if}
+				{#if albumCount}<HomeSection
+						madeFrom="discover_shelf"
+						{section}
+						showConnectCard={false}
+					/>{/if}
 			</Card>
 		</div>
 	{/if}

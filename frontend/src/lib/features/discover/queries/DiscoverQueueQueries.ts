@@ -146,6 +146,8 @@ export interface FeedbackItem {
 	artistMbid: string;
 	releaseName: string;
 	artistName: string;
+	/** The surface the answer is given on. */
+	madeFrom: components['schemas']['MadeFrom'];
 }
 
 /** Tells Discover one thing about an album, or about its artist for `not_artist`. */
@@ -155,7 +157,8 @@ export function tellDiscover(kind: FeedbackKind, item: FeedbackItem) {
 		release_group_mbid: item.releaseGroupMbid,
 		artist_mbid: item.artistMbid || undefined,
 		release_name: item.releaseName,
-		artist_name: item.artistName
+		artist_name: item.artistName,
+		made_from: item.madeFrom
 	});
 }
 

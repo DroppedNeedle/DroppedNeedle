@@ -10,7 +10,9 @@ use std::sync::Arc;
 
 use crate::discover::listening::{ListeningData, ListeningNetwork, LiveNetwork};
 use crate::discover::services::DiscoverDeps;
-use crate::discover::{charts, content, home, page, previews, queue, radio, scheduler, youtube};
+use crate::discover::{
+    charts, content, due, home, page, previews, queue, radio, record, scheduler, youtube,
+};
 use crate::metadata::library::LocalCatalog;
 use crate::metadata::ports::{NoDetails, NoFollows, NoPurchaseLinks};
 use crate::metadata::upstream::{LiveCatalogSettings, Upstream};
@@ -48,6 +50,8 @@ pub struct DiscoverInputs {
     pub clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     /// Where built pages queue the warm of their covers and artist images.
     pub warm: crate::artwork::warm::CoverWarm,
+    /// The jobs table Discover queues its background work for a person on.
+    pub jobs: droppedneedle_kernel::jobs::queue::JobQueue,
     /// Whether a download source is on, for the "set up a download
     /// client" prompts.
     pub download_readiness: Arc<dyn content::DownloadReadiness>,
@@ -170,11 +174,18 @@ fn deps_with(
         warm: inputs.warm.clone(),
         charts,
     });
+    let due = Arc::new(due::Due::new(
+        inputs.db.clone(),
+        inputs.jobs.clone(),
+        Arc::clone(&inputs.clock),
+        inputs.discover_warmer,
+    ));
     let warm_scheduler = Arc::new(scheduler::WarmScheduler::new(
         scheduler::activity::ActivityDb::new(inputs.db.clone()),
         listening,
         Arc::clone(&inputs.clock),
         inputs.discover_warmer,
+        Arc::clone(&due),
         vec![
             Arc::new(pages.clone()),
             Arc::new(home.clone()),
@@ -189,6 +200,7 @@ fn deps_with(
             page,
             home,
             genre_art,
+            due,
         )),
         queues,
         charts: Arc::new(charts),
@@ -197,6 +209,7 @@ fn deps_with(
         )),
         youtube,
         radio: Arc::new(radio),
+        record: record::PickRecord::new(inputs.db.clone(), Arc::clone(&inputs.clock)),
     }
 }
 

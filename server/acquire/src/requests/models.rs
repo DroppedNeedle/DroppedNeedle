@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use super::ledger::RequestStatus;
+use droppedneedle_catalog::discover::record::MadeFrom;
 
 /// What kind of thing a request asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
@@ -49,6 +50,10 @@ pub struct AlbumIntake {
     /// Auto-download the artist's future releases (approval-gated for users).
     #[serde(default)]
     pub auto_download_artist: bool,
+    /// Where the request was made, when the caller says. Kept on the
+    /// asker's own row; it never changes what the request does.
+    #[serde(default)]
+    pub made_from: Option<MadeFrom>,
 }
 
 /// Exact-track intake body.

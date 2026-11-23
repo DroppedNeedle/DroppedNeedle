@@ -5438,6 +5438,67 @@
         ]
       }
     },
+    "/api/v3/discover/picks/events": {
+      "post": {
+        "tags": [
+          "discover"
+        ],
+        "summary": "Record what the web UI saw happen to one of the caller's picks: shown\n(counted once a UTC day), its sample started, or its album page opened\nfrom the card. An album Discover never offered the caller is left alone.",
+        "operationId": "record_pick_event",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverPickEventRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Recorded, or nothing to record"
+          },
+          "400": {
+            "description": "Bad request body, or not a MusicBrainz id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The event could not be saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/discover/playlist-suggestions": {
       "post": {
         "tags": [
@@ -37692,6 +37753,17 @@
             "type": "boolean",
             "description": "Auto-download the artist's future releases (approval-gated for users)."
           },
+          "made_from": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MadeFrom"
+              }
+            ],
+            "description": "Where the request was made, when the caller says. Kept on the\nasker's own row; it never changes what the request does."
+          },
           "monitor_artist": {
             "type": "boolean",
             "description": "Follow the artist for new releases."
@@ -43979,6 +44051,17 @@
             "$ref": "#/components/schemas/FeedbackKind",
             "description": "What the person said."
           },
+          "made_from": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MadeFrom"
+              }
+            ],
+            "description": "Where the answer was given, when the caller says."
+          },
           "release_group_mbid": {
             "type": [
               "string",
@@ -44029,6 +44112,24 @@
               "$ref": "#/components/schemas/PageHealthRow"
             },
             "description": "Discover pages, one per user."
+          }
+        }
+      },
+      "DiscoverPickEventRequest": {
+        "type": "object",
+        "description": "One thing the web UI saw happen to a pick.",
+        "required": [
+          "release_group_mbid",
+          "event"
+        ],
+        "properties": {
+          "event": {
+            "$ref": "#/components/schemas/PickEvent",
+            "description": "What happened."
+          },
+          "release_group_mbid": {
+            "type": "string",
+            "description": "MusicBrainz release-group id of the pick."
           }
         }
       },
@@ -44288,6 +44389,17 @@
               "$ref": "#/components/schemas/DiscoveryBatchItemIn"
             },
             "description": "Albums to request."
+          },
+          "made_from": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MadeFrom"
+              }
+            ],
+            "description": "Where the batch was made, when the caller says. Kept on the batch\nand on the asker's own row of each album it asks for."
           },
           "name": {
             "type": "string",
@@ -52857,6 +52969,30 @@
           }
         }
       },
+      "MadeFrom": {
+        "type": "string",
+        "description": "Where a request, a batch, an answer or a pick was made. Absent means not\nknown. Declared whole: a stored CHECK lists every value, the ones later\nwork first writes included.",
+        "enum": [
+          "deck",
+          "top_picks",
+          "discover_shelf",
+          "home_shelf",
+          "playlist_suggestions",
+          "album_page",
+          "artist_page",
+          "weekly_mix",
+          "search",
+          "new_releases",
+          "weekly_set",
+          "dig_further",
+          "later",
+          "thread_page",
+          "radio",
+          "mix",
+          "listen_first",
+          "passed_on"
+        ]
+      },
       "ManageUndoBody": {
         "type": "object",
         "description": "Undo one published bundle as a new previewed operation.",
@@ -58527,6 +58663,15 @@
             "description": "The licence's page, http or https."
           }
         }
+      },
+      "PickEvent": {
+        "type": "string",
+        "description": "What the web UI saw happen to a pick.",
+        "enum": [
+          "shown",
+          "sampled",
+          "opened"
+        ]
       },
       "PickRequest": {
         "type": "object",

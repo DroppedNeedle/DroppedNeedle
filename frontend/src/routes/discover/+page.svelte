@@ -102,7 +102,8 @@
 				releaseGroupMbid: pick.album.musicbrainz_id,
 				artistMbid: pick.album.artist_id ?? '',
 				releaseName: pick.album.title,
-				artistName: pick.album.artist_name ?? ''
+				artistName: pick.album.artist_name ?? '',
+				madeFrom: 'top_picks'
 			},
 			actions
 		);
@@ -586,7 +587,7 @@
 	{:else if block.kind === 'lounge'}
 		<ListeningLounge section={lounge} {topPicks} updating={sectionsUpdating} />
 	{:else if block.kind === 'weekly' && weekly}
-		<WeeklyExploration section={weekly} updating={sectionsUpdating} />
+		<WeeklyExploration madeFrom="discover_shelf" section={weekly} updating={sectionsUpdating} />
 	{:else if block.kind === 'playlist'}
 		<DiscoverPlaylistBand covers={bandCovers} onopen={() => (playlistDiscoverOpen = true)} />
 	{:else if block.kind === 'mixes'}
@@ -627,12 +628,20 @@
 					>
 						{#if artistsYouMightLike}
 							<div>
-								<HomeSection section={artistsYouMightLike} compact={!!popularInYourGenres} />
+								<HomeSection
+									madeFrom="discover_shelf"
+									section={artistsYouMightLike}
+									compact={!!popularInYourGenres}
+								/>
 							</div>
 						{/if}
 						{#if popularInYourGenres}
 							<div>
-								<HomeSection section={popularInYourGenres} compact={!!artistsYouMightLike} />
+								<HomeSection
+									madeFrom="discover_shelf"
+									section={popularInYourGenres}
+									compact={!!artistsYouMightLike}
+								/>
 							</div>
 						{/if}
 					</div>
@@ -657,7 +666,7 @@
 				compact={paired}
 			/>
 		{:else}
-			<HomeSection section={block.shelf} compact={paired} />
+			<HomeSection madeFrom="discover_shelf" section={block.shelf} compact={paired} />
 		{/if}
 	{:else if block.kind === 'genres-explore' && unexploredGenres}
 		{@render kickerRow(block.kicker)}
@@ -680,7 +689,7 @@
 				<SourceBadge source={block.shelf.source ?? undefined} />
 			</div>
 			<div class="min-w-0 flex-1">
-				<HomeSection section={block.shelf} hideHeader />
+				<HomeSection madeFrom="discover_shelf" section={block.shelf} hideHeader />
 			</div>
 		</div>
 	{/if}

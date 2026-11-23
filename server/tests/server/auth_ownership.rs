@@ -1876,6 +1876,43 @@ async fn caller_keyed_state_stays_with_its_caller() {
     ok(status, &body, "A reads what A told Discover");
     assert_eq!(body["items"].as_array().map(Vec::len), Some(2), "{body}");
 
+    // A pick Discover offered A: B's events about the same album stamp
+    // nothing of A's, and A's own do.
+    app.seed(&format!(
+        "INSERT INTO catalog_discover_picks (user_id, release_group_mbid_lower, \
+         release_group_mbid, first_surface, first_offered_at, last_offered_at, evidence) \
+         VALUES ('{id}', '{hidden_album}', '{hidden_album}', 'deck', 1000, 1000, '{{}}')",
+        id = ada.id
+    ))
+    .await;
+    let seen = || {
+        app.db()
+            .query_row(
+                "SELECT COUNT(*), COALESCE(SUM(shown_days), 0), \
+                 COUNT(sampled_at) + COUNT(opened_at) FROM catalog_discover_picks",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap()
+    };
+    let picks = "/api/v3/discover/picks/events";
+    for event in ["shown", "sampled", "opened"] {
+        let body = json!({"release_group_mbid": hidden_album, "event": event});
+        let (status, answer) = call(&app, &bob, "POST", picks, Some(body)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "B's {event}: {answer}");
+    }
+    assert_eq!(seen(), (1, 0, 0), "B's events stamped A's pick");
+    let body = json!({"release_group_mbid": hidden_album, "event": "shown"});
+    let (status, answer) = call(&app, &ada, "POST", picks, Some(body)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "A's shown: {answer}");
+    assert_eq!(seen(), (1, 1, 0), "A's own event stamps A's pick");
+
     // Remote-server links and folder choices, against the mock Navidrome.
     let navidrome = droppedneedle_testkit::remotes::serve_navidrome()
         .await
