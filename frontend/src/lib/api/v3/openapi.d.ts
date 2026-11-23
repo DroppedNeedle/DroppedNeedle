@@ -6605,6 +6605,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/playlists/{playlist_id}/request-missing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask for the albums of the playlist's songs the library lacks, or with
+         *     `entry_id` for that entry's album, under the caller's approval and
+         *     quota. Albums owned, already asked for or rejected before are skipped;
+         *     one press files at most 200, and a plain user's what their quota has
+         *     room for.
+         */
+        post: operations["request_missing_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/playlists/{playlist_id}/request-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What each of the playlist's missing songs waits for, and the
+         *     playlist's Spotify import while it runs or after it failed.
+         */
+        get: operations["request_state_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/playlists/{playlist_id}/resolve-sources": {
         parameters: {
             query?: never;
@@ -6689,6 +6732,23 @@ export interface paths {
         head?: never;
         /** Update one track's source fields. */
         patch: operations["update_track_handler"];
+        trace?: never;
+    };
+    "/api/v3/playlists/{playlist_id}/tracks/{track_id}/request-song": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask for one entry's song alone, on its album. */
+        post: operations["request_song_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v3/playlists/{playlist_id}/visibility": {
@@ -15203,6 +15263,13 @@ export interface components {
          * @enum {string}
          */
         EntryOrigin: "download" | "upload" | "import_folder";
+        /** @description One song's state. */
+        EntryRequestState: {
+            /** @description The playlist entry. */
+            entry_id: string;
+            /** @description What it waits for. */
+            state: components["schemas"]["PlaylistEntryState"];
+        };
         /**
          * @description Where an entry is in its life.
          * @enum {string}
@@ -16291,6 +16358,11 @@ export interface components {
             /** @description The reason as a plain sentence. */
             reason_text?: string | null;
         };
+        /**
+         * @description Why an import failed, read from the job's code.
+         * @enum {string}
+         */
+        ImportFailureReason: "not_linked" | "unavailable" | "rate_limited" | "save_failed" | "other";
         /**
          * @description The folder on the server DroppedNeedle imports music from by itself and
          *     empties as it goes. An empty path turns it off.
@@ -20698,6 +20770,21 @@ export interface components {
              */
             updated_at: number;
         };
+        /**
+         * @description What a song the library lacks waits for.
+         * @enum {string}
+         */
+        PlaylistEntryState: "requestable" | "no_album_yet" | "finding_album" | "awaiting_approval" | "downloading" | "awaiting_review" | "album_in_library" | "rejected";
+        /** @description Where the Spotify import of a playlist stands, while it is not done. */
+        PlaylistImportState: {
+            /** @enum {string} */
+            state: "running";
+        } | {
+            /** @description Why. */
+            reason: components["schemas"]["ImportFailureReason"];
+            /** @enum {string} */
+            state: "failed";
+        };
         /** @description `playlist_imported`: an imported playlist has its tracks. */
         PlaylistImported: {
             /** @description Id for de-duplication. */
@@ -20734,6 +20821,77 @@ export interface components {
              * @description Playlist track count.
              */
             track_count?: number;
+        };
+        /** @description Body asking for a playlist's missing albums. */
+        PlaylistRequestBody: {
+            /** @description Ask only for this entry's album, from the entry's row. */
+            entry_id?: string | null;
+            /**
+             * @description A UUID naming this press. Sending the same key again answers what
+             *     the first press filed instead of filing again.
+             */
+            idempotency_key: string;
+        };
+        /** @description What a press filed and why the rest were left out. Counts are albums. */
+        PlaylistRequestResult: {
+            /**
+             * Format: int32
+             * @description Albums someone has already asked for.
+             */
+            already_requested: number;
+            /** @description The batch the press filed, when it filed any album. */
+            batch_id?: string | null;
+            /**
+             * Format: int32
+             * @description Albums the library holds already.
+             */
+            in_library: number;
+            /** @description True when the asks wait for an admin's approval. */
+            needs_approval: boolean;
+            /**
+             * Format: int32
+             * @description Albums past the most one press files; pressing again asks for them.
+             */
+            over_cap: number;
+            /**
+             * Format: int32
+             * @description Albums left out because the caller's request quota is spent;
+             *     pressing again once it has room asks for them.
+             */
+            over_quota: number;
+            /**
+             * Format: int32
+             * @description Albums whose last request was rejected; they are not asked for
+             *     again by a press.
+             */
+            rejected_before: number;
+            /**
+             * Format: int32
+             * @description Albums asked for.
+             */
+            requested: number;
+        };
+        /**
+         * @description What a playlist's missing songs wait for. Songs with a file or a
+         *     source of their own are not listed.
+         */
+        PlaylistRequestState: {
+            /** @description Each missing song, in playlist order. */
+            entries: components["schemas"]["EntryRequestState"][];
+            /** @description True while the albums of kept songs are being looked up. */
+            finding_albums: boolean;
+            /** @description The playlist's Spotify import, while it runs or after it failed. */
+            import?: null | components["schemas"]["PlaylistImportState"];
+            /**
+             * Format: int32
+             * @description Songs with no album found.
+             */
+            no_album_songs: number;
+            /**
+             * Format: int32
+             * @description Albums a press would ask for.
+             */
+            requestable_albums: number;
         };
         /** @description Body requesting playlist suggestions. */
         PlaylistSuggestionsRequest: {
@@ -44642,6 +44800,128 @@ export interface operations {
             };
         };
     };
+    request_missing_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaylistRequestBody"];
+            };
+        };
+        responses: {
+            /** @description What the press filed */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistRequestResult"];
+                };
+            };
+            /** @description The idempotency key is not a UUID, or another press's */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Storage full (STORAGE_FULL) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No such playlist or entry the caller may edit */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The entry has no album yet (NO_ALBUM_YET) or can already be played (ALREADY_PLAYABLE) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Request quota spent (QUOTA_EXCEEDED) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    request_state_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The missing songs' states */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaylistRequestState"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No such playlist the caller may edit */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     resolve_sources_handler: {
         parameters: {
             query?: never;
@@ -44980,6 +45260,76 @@ export interface operations {
             };
             /** @description Unknown playlist or track id */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    request_song_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Playlist id */
+                playlist_id: string;
+                /** @description Playlist entry id */
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The song's request */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackIntakeResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Storage full (STORAGE_FULL) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No such playlist or entry the caller may edit */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No album yet (NO_ALBUM_YET), not on its album (SONG_NOT_ON_ALBUM) or already playable (ALREADY_PLAYABLE) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Request quota spent (QUOTA_EXCEEDED) */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

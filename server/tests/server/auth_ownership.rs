@@ -166,6 +166,27 @@ const PATH_ID_ROWS: &[(Owned, &str, &str, u16, u16)] = &[
     ),
     (
         Owned::Playlist,
+        "GET",
+        "/api/v3/playlists/{playlist_id}/request-state",
+        404,
+        404,
+    ),
+    (
+        Owned::Playlist,
+        "POST",
+        "/api/v3/playlists/{playlist_id}/request-missing",
+        404,
+        404,
+    ),
+    (
+        Owned::Playlist,
+        "POST",
+        "/api/v3/playlists/{playlist_id}/tracks/{track_id}/request-song",
+        404,
+        404,
+    ),
+    (
+        Owned::Playlist,
         "POST",
         "/api/v3/playlists/{playlist_id}/tracks",
         404,
@@ -978,6 +999,9 @@ fn body(method: &str, template: &str, ids: &Ids) -> Option<Value> {
         }
         ("POST", "/api/v3/playlists/{playlist_id}/tracks/remove") => {
             Some(json!({"track_ids": [id("track_id")]}))
+        }
+        ("POST", "/api/v3/playlists/{playlist_id}/request-missing") => {
+            Some(json!({"idempotency_key": uuid::Uuid::new_v4().to_string()}))
         }
         ("POST", "/api/v3/held/{entry_id}/match") => {
             Some(json!({"release_group_mbid": "00000000-0000-0000-0000-0000000000aa"}))

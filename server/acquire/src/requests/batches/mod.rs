@@ -28,8 +28,8 @@ use droppedneedle_library::removal::{LIBRARY_OFF, MutationError, RECYCLE_BIN_UNK
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 use self::models::{
-    BatchOutcome, DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchItemStatus,
-    DiscoveryBatchRemoveResult, DiscoveryBatchSummary,
+    BatchOutcome, BatchSource, DiscoveryBatchCreate, DiscoveryBatchDetail,
+    DiscoveryBatchItemStatus, DiscoveryBatchRemoveResult, DiscoveryBatchSummary,
 };
 use self::store::{BatchHead, BatchItem, BatchStore, NewBatch};
 use super::RequestsState;
@@ -107,15 +107,21 @@ impl DiscoveryBatches {
         }
     }
 
-    /// The batch when the caller may see it: their own, or any for an
-    /// admin. Anything else reads as missing.
+    /// The Discover batch when the caller may see it: their own, or any
+    /// for an admin. Anything else, a playlist's batch included, reads as
+    /// missing: those are reached from their playlist.
     async fn visible(
         &self,
         caller: &Principal,
         batch_id: &str,
     ) -> Result<BatchHead, RequestsError> {
         match self.store.head(batch_id).await? {
-            Some(head) if head.user_id == caller.user_id() || caller.is_admin() => Ok(head),
+            Some(head)
+                if head.source == BatchSource::Discover
+                    && (head.user_id == caller.user_id() || caller.is_admin()) =>
+            {
+                Ok(head)
+            }
             _ => Err(RequestsError::NotFound),
         }
     }
@@ -285,6 +291,8 @@ impl DiscoveryBatches {
                 album_name: item.title.clone(),
                 artist_name: item.artist_name.clone(),
                 request_status: None,
+                song_count: None,
+                request_generation: None,
             })
             .collect();
         if !items
@@ -306,6 +314,7 @@ impl DiscoveryBatches {
             },
             source_section: body.source_section.clone(),
             created_at: self.requests.library.clock().now_ms(),
+            source: BatchSource::Discover,
         };
         let batch = NewBatch {
             head: head.clone(),
@@ -321,9 +330,9 @@ impl DiscoveryBatches {
         }
     }
 
-    /// The caller's batches, newest first.
+    /// The caller's Discover batches, newest first.
     pub async fn list(&self, user_id: &str) -> Result<Vec<DiscoveryBatchSummary>, RequestsError> {
-        let heads = self.store.heads_of(user_id).await?;
+        let heads = self.store.heads_of(user_id, BatchSource::Discover).await?;
         let mut out = Vec::with_capacity(heads.len());
         for head in &heads {
             let items = self.store.items(&head.id).await?;

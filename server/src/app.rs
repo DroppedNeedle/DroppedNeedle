@@ -254,6 +254,10 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
         .area(droppedneedle_acquire::requests::mix_routes(), |state| {
             state.acquire.mix_routes()
         })
+        .area(
+            droppedneedle_acquire::playlist_requests::http::routes(),
+            |state| state.acquire.playlist_requests.clone(),
+        )
         .area(droppedneedle_acquire::follows::routes(), |state| {
             state.acquire.requests.follows.clone()
         })

@@ -147,6 +147,14 @@ droppedneedle_kernel::sql! {
          WHERE musicbrainz_id_lower = ?1 ORDER BY requested_at, user_id";
     /// The listeners of several rows: `(key, user id, name)`.
     family LISTENERS_IN = listeners_in;
+    /// The status and download of the rows a list of keys names.
+    family REQUEST_STATES = request_states;
+    /// One row's status and download.
+    pub(crate) row RequestState for family [request_states] {
+        stored_key: String,
+        status: String,
+        task_id: Option<String>,
+    }
     /// Asks listener `?1` made since `?2` (ms). A row still waiting for
     /// quota room has used none yet.
     pub(crate) COUNT_ASKS = "SELECT COUNT(*) FROM request_history_requesters rr \
@@ -488,27 +496,29 @@ droppedneedle_kernel::sql! {
            WHERE local_album_id = ?1 AND retag_followed_at IS NOT NULL)";
     /// Who owns discovery batch `?1`.
     pub(crate) BATCH_OWNER = "SELECT user_id FROM acquire_discovery_batches WHERE id = ?1";
-    /// One discovery batch (`?1`): `(id, user, name, section, created_at)`.
-    pub(crate) BATCH_HEAD = "SELECT id, user_id, name, source_section, created_at \
+    /// One request batch (`?1`): `(id, user, name, section, created_at,
+    /// source)`.
+    pub(crate) BATCH_HEAD = "SELECT id, user_id, name, source_section, created_at, source \
          FROM acquire_discovery_batches WHERE id = ?1";
-    /// User `?1`'s discovery batches, newest first.
-    pub(crate) BATCHES_OF_USER = "SELECT id, user_id, name, source_section, created_at \
-         FROM acquire_discovery_batches WHERE user_id = ?1 ORDER BY created_at DESC, id";
+    /// User `?1`'s request batches from source `?2`, newest first.
+    pub(crate) BATCHES_OF_USER = "SELECT id, user_id, name, source_section, created_at, \
+         source FROM acquire_discovery_batches WHERE user_id = ?1 AND source = ?2 \
+         ORDER BY created_at DESC, id";
     /// Batch `?1`'s albums with the live state of each album's request:
-    /// `(group, artist id, album, artist, outcome, request status)`.
+    /// `(group, artist id, album, artist, outcome, request status, songs)`.
     pub(crate) BATCH_ITEMS = "SELECT i.release_group_mbid, i.artist_mbid, i.album_name, \
-             i.artist_name, i.outcome, h.status \
+             i.artist_name, i.outcome, h.status, i.song_count \
          FROM acquire_discovery_batch_items i \
          LEFT JOIN request_history h ON h.musicbrainz_id_lower = lower(i.release_group_mbid) \
              AND h.request_kind = 'album' \
          WHERE i.batch_id = ?1 ORDER BY i.added_at, i.album_name";
-    /// Record one discovery batch.
+    /// Record one request batch.
     pub(crate) INSERT_BATCH = "INSERT INTO acquire_discovery_batches (id, user_id, name, \
-         source_section, created_at, made_from) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
-    /// Record one album of a discovery batch.
+         source_section, created_at, made_from, source) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+    /// Record one album of a request batch.
     pub(crate) INSERT_BATCH_ITEM = "INSERT INTO acquire_discovery_batch_items (batch_id, \
-         release_group_mbid, artist_mbid, album_name, artist_name, outcome, added_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+         release_group_mbid, artist_mbid, album_name, artist_name, outcome, added_at, \
+         song_count, request_generation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
     /// Drop album `?2` from batch `?1`.
     pub(crate) DELETE_BATCH_ITEM = "DELETE FROM acquire_discovery_batch_items \
          WHERE batch_id = ?1 AND release_group_mbid = ?2";
@@ -558,6 +568,15 @@ pub(crate) fn listeners_in(rows: ListLen) -> String {
          FROM request_history_requesters WHERE musicbrainz_id_lower IN ({}) \
          ORDER BY requested_at, user_id",
         marks(rows)
+    )
+}
+
+/// The status and download of the rows `keys` name.
+pub(crate) fn request_states(keys: ListLen) -> String {
+    format!(
+        "SELECT musicbrainz_id_lower AS stored_key, status, download_task_id AS task_id \
+         FROM request_history WHERE musicbrainz_id_lower IN ({})",
+        marks(keys)
     )
 }
 

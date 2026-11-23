@@ -56,6 +56,21 @@ pub enum BatchOutcome {
     NotRequested,
 }
 
+/// Where a request batch came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BatchSource {
+    /// Discover's "Download all".
+    Discover,
+    /// A playlist's Request missing.
+    Playlist,
+}
+
+droppedneedle_kernel::spelled!(BatchSource {
+    Discover => "discover",
+    Playlist => "playlist",
+});
+
 droppedneedle_kernel::spelled!(BatchOutcome {
     Requested => "requested",
     SkippedInLibrary => "skipped_in_library",

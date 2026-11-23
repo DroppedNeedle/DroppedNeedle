@@ -25758,6 +25758,174 @@
         ]
       }
     },
+    "/api/v3/playlists/{playlist_id}/request-missing": {
+      "post": {
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Ask for the albums of the playlist's songs the library lacks, or with\n`entry_id` for that entry's album, under the caller's approval and\nquota. Albums owned, already asked for or rejected before are skipped;\none press files at most 200, and a plain user's what their quota has\nroom for.",
+        "operationId": "request_missing_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaylistRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "What the press filed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistRequestResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The idempotency key is not a UUID, or another press's",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Storage full (STORAGE_FULL)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such playlist or entry the caller may edit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The entry has no album yet (NO_ALBUM_YET) or can already be played (ALREADY_PLAYABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Request quota spent (QUOTA_EXCEEDED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/playlists/{playlist_id}/request-state": {
+      "get": {
+        "tags": [
+          "playlists"
+        ],
+        "summary": "What each of the playlist's missing songs waits for, and the\nplaylist's Spotify import while it runs or after it failed.",
+        "operationId": "request_state_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The missing songs' states",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistRequestState"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such playlist the caller may edit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
     "/api/v3/playlists/{playlist_id}/resolve-sources": {
       "post": {
         "tags": [
@@ -26240,6 +26408,104 @@
           },
           "404": {
             "description": "Unknown playlist or track id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
+      }
+    },
+    "/api/v3/playlists/{playlist_id}/tracks/{track_id}/request-song": {
+      "post": {
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Ask for one entry's song alone, on its album.",
+        "operationId": "request_song_handler",
+        "parameters": [
+          {
+            "name": "playlist_id",
+            "in": "path",
+            "description": "Playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "track_id",
+            "in": "path",
+            "description": "Playlist entry id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The song's request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackIntakeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Storage full (STORAGE_FULL)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such playlist or entry the caller may edit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No album yet (NO_ALBUM_YET), not on its album (SONG_NOT_ON_ALBUM) or already playable (ALREADY_PLAYABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Request quota spent (QUOTA_EXCEEDED)",
             "content": {
               "application/json": {
                 "schema": {
@@ -48020,6 +48286,24 @@
           "import_folder"
         ]
       },
+      "EntryRequestState": {
+        "type": "object",
+        "description": "One song's state.",
+        "required": [
+          "entry_id",
+          "state"
+        ],
+        "properties": {
+          "entry_id": {
+            "type": "string",
+            "description": "The playlist entry."
+          },
+          "state": {
+            "$ref": "#/components/schemas/PlaylistEntryState",
+            "description": "What it waits for."
+          }
+        }
+      },
       "EntryState": {
         "type": "string",
         "description": "Where an entry is in its life.",
@@ -50443,6 +50727,17 @@
             "description": "The reason as a plain sentence."
           }
         }
+      },
+      "ImportFailureReason": {
+        "type": "string",
+        "description": "Why an import failed, read from the job's code.",
+        "enum": [
+          "not_linked",
+          "unavailable",
+          "rate_limited",
+          "save_failed",
+          "other"
+        ]
       },
       "ImportFolder": {
         "type": "object",
@@ -60094,6 +60389,60 @@
           }
         }
       },
+      "PlaylistEntryState": {
+        "type": "string",
+        "description": "What a song the library lacks waits for.",
+        "enum": [
+          "requestable",
+          "no_album_yet",
+          "finding_album",
+          "awaiting_approval",
+          "downloading",
+          "awaiting_review",
+          "album_in_library",
+          "rejected"
+        ]
+      },
+      "PlaylistImportState": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Queued or running.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "running"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The last import failed.",
+            "required": [
+              "reason",
+              "state"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/ImportFailureReason",
+                "description": "Why."
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "failed"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Where the Spotify import of a playlist stands, while it is not done."
+      },
       "PlaylistImported": {
         "type": "object",
         "description": "`playlist_imported`: an imported playlist has its tracks.",
@@ -60192,6 +60541,134 @@
             "type": "integer",
             "format": "int64",
             "description": "Playlist track count."
+          }
+        }
+      },
+      "PlaylistRequestBody": {
+        "type": "object",
+        "description": "Body asking for a playlist's missing albums.",
+        "required": [
+          "idempotency_key"
+        ],
+        "properties": {
+          "entry_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Ask only for this entry's album, from the entry's row."
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "A UUID naming this press. Sending the same key again answers what\nthe first press filed instead of filing again."
+          }
+        }
+      },
+      "PlaylistRequestResult": {
+        "type": "object",
+        "description": "What a press filed and why the rest were left out. Counts are albums.",
+        "required": [
+          "requested",
+          "in_library",
+          "already_requested",
+          "rejected_before",
+          "over_cap",
+          "over_quota",
+          "needs_approval"
+        ],
+        "properties": {
+          "already_requested": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Albums someone has already asked for.",
+            "minimum": 0
+          },
+          "batch_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The batch the press filed, when it filed any album."
+          },
+          "in_library": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Albums the library holds already.",
+            "minimum": 0
+          },
+          "needs_approval": {
+            "type": "boolean",
+            "description": "True when the asks wait for an admin's approval."
+          },
+          "over_cap": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Albums past the most one press files; pressing again asks for them.",
+            "minimum": 0
+          },
+          "over_quota": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Albums left out because the caller's request quota is spent;\npressing again once it has room asks for them.",
+            "minimum": 0
+          },
+          "rejected_before": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Albums whose last request was rejected; they are not asked for\nagain by a press.",
+            "minimum": 0
+          },
+          "requested": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Albums asked for.",
+            "minimum": 0
+          }
+        }
+      },
+      "PlaylistRequestState": {
+        "type": "object",
+        "description": "What a playlist's missing songs wait for. Songs with a file or a\nsource of their own are not listed.",
+        "required": [
+          "finding_albums",
+          "requestable_albums",
+          "no_album_songs",
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntryRequestState"
+            },
+            "description": "Each missing song, in playlist order."
+          },
+          "finding_albums": {
+            "type": "boolean",
+            "description": "True while the albums of kept songs are being looked up."
+          },
+          "import": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PlaylistImportState"
+              }
+            ],
+            "description": "The playlist's Spotify import, while it runs or after it failed."
+          },
+          "no_album_songs": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Songs with no album found.",
+            "minimum": 0
+          },
+          "requestable_albums": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Albums a press would ask for.",
+            "minimum": 0
           }
         }
       },

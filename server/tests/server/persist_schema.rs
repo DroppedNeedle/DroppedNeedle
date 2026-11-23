@@ -437,6 +437,10 @@ const SHIPPED: &[(&str, &str)] = &[
         "0166_playlist_entry_isrcs.sql",
         "f922b00f2c3648386c251061d5d6a97c062da5c99897a366f6052ea30bf44247",
     ),
+    (
+        "0167_request_batch_sources.sql",
+        "077e5773856ebe6c8e02fa7997a9d6a09f3192076a6cdf3a96b4eb71623f9c0a",
+    ),
 ];
 
 /// The files in `server/migrations/`, by name.
@@ -3345,6 +3349,97 @@ fn playlist_entry_isrcs_upgrade_adds_an_empty_column() {
     );
 }
 
+/// 0167 gives request batches their source and their albums a song count
+/// and a request generation: every batch made before is Discover's and its
+/// albums carry neither, and nothing else changes. A source outside its
+/// list, a count below one and a negative generation are refused.
+#[test]
+fn request_batch_sources_upgrade_reads_old_batches_as_discovers() {
+    let dir = ScratchDir::new("request-batch-sources-upgrade");
+    let path = dir.join("app.db");
+    let at = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 167)
+        .unwrap();
+    let connection = migrate(
+        Connection::open(&path).unwrap(),
+        &Chain::new(&MIGRATIONS[..at], None),
+    )
+    .unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 166);
+    connection
+        .execute_batch(
+            "INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'One', 1);
+             INSERT INTO acquire_discovery_batches (id, user_id, name, source_section,
+                 created_at) VALUES ('b1', 'u1', 'Fresh', 'fresh_releases', 1);
+             INSERT INTO acquire_discovery_batch_items (batch_id, release_group_mbid,
+                 artist_mbid, album_name, artist_name, outcome, added_at)
+                 VALUES ('b1', 'rg', '', 'Album', 'Someone', 'requested', 1);",
+        )
+        .unwrap();
+    let tables = ["acquire_discovery_batches", "acquire_discovery_batch_items"];
+    let before_schema = schema_rows(&connection);
+    let columns: Vec<String> = tables
+        .iter()
+        .map(|table| {
+            let sql = format!("SELECT name FROM pragma_table_info('{table}')");
+            format!("rowid, {}", texts(&connection, &sql, []).join(", "))
+        })
+        .collect();
+    let before: Vec<Vec<String>> = tables
+        .iter()
+        .map(|table| table_rows(&connection, table, "rowid, *"))
+        .collect();
+    drop(connection);
+
+    migrate_file(&path, &Chain::new(&MIGRATIONS[..=at], None)).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(scalar(&connection, "PRAGMA user_version"), 167);
+    for ((table, columns), rows) in tables.iter().zip(&columns).zip(&before) {
+        assert_eq!(&table_rows(&connection, table, columns), rows, "{table}");
+    }
+    assert_eq!(
+        texts(
+            &connection,
+            "SELECT source FROM acquire_discovery_batches",
+            []
+        ),
+        ["discover"],
+        "an old batch is Discover's"
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM acquire_discovery_batch_items \
+             WHERE song_count IS NULL AND request_generation IS NULL"
+        ),
+        1,
+        "an old album counts no songs and names no request"
+    );
+    let mut after_schema = schema_rows(&connection);
+    after_schema.retain(|(_, name, _, _)| !tables.contains(&name.as_str()));
+    let mut unchanged = before_schema.clone();
+    unchanged.retain(|(_, name, _, _)| !tables.contains(&name.as_str()));
+    assert_eq!(after_schema, unchanged, "nothing else changes");
+
+    connection
+        .execute_batch(
+            "INSERT INTO acquire_discovery_batches (id, user_id, name, source_section,
+                 created_at, source) VALUES ('b2', 'u1', 'Road Trip', '', 1, 'playlist');
+             INSERT INTO acquire_discovery_batch_items (batch_id, release_group_mbid,
+                 artist_mbid, album_name, artist_name, outcome, added_at, song_count)
+                 VALUES ('b2', 'rg', '', 'Album', 'Someone', 'requested', 1, 3);",
+        )
+        .expect("a playlist batch is stored");
+    for refused in [
+        "UPDATE acquire_discovery_batches SET source = 'mix' WHERE id = 'b2'",
+        "UPDATE acquire_discovery_batch_items SET song_count = 0 WHERE batch_id = 'b2'",
+        "UPDATE acquire_discovery_batch_items SET request_generation = -1 WHERE batch_id = 'b2'",
+    ] {
+        assert!(connection.execute_batch(refused).is_err(), "{refused}");
+    }
+}
+
 /// 0146 adds the table of recycle bin paths v2 used, empty, and changes
 /// nothing else: only an upgrade from v2 records a path in it.
 #[test]
@@ -4222,7 +4317,7 @@ fn state_columns() -> Vec<StateColumn> {
     use droppedneedle_acquire::drop_import::store::{DropItemStatus, DropJobSource, DropJobStatus};
     use droppedneedle_acquire::held::store::{EntryOrigin, EntryState, FileState, HeldRoot};
     use droppedneedle_acquire::reason::Reason;
-    use droppedneedle_acquire::requests::batches::models::BatchOutcome;
+    use droppedneedle_acquire::requests::batches::models::{BatchOutcome, BatchSource};
     use droppedneedle_acquire::requests::ledger::{ApprovalState, RequestStatus, WatchKind, WatchState};
     use droppedneedle_acquire::requests::models::RequestKind;
     use droppedneedle_acquire::search_jobs::store::JobStatus;
@@ -4293,6 +4388,7 @@ fn state_columns() -> Vec<StateColumn> {
         // acquire
         state("acquire_discovery_batch_items", "outcome", &BatchOutcome::ALL, BatchOutcome::as_str),
         state("acquire_discovery_batches", "made_from", &MadeFrom::ALL, MadeFrom::as_str),
+        state("acquire_discovery_batches", "source", &BatchSource::ALL, BatchSource::as_str),
         state("acquire_held_entries", "origin", &EntryOrigin::ALL, EntryOrigin::as_str),
         state("acquire_held_entries", "state", &EntryState::ALL, EntryState::as_str),
         state("acquire_held_files", "reason", &Reason::HELD, Reason::code),

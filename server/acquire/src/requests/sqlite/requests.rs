@@ -399,6 +399,33 @@ impl RequestStore {
         .await
     }
 
+    /// The status and download task of the rows of `kind` that `keys`
+    /// (bare MBIDs) name, by lowercased bare MBID. Keys with no row are left
+    /// out.
+    pub async fn states_of(
+        &self,
+        kind: RequestKind,
+        keys: &[String],
+    ) -> Result<HashMap<String, (RequestStatus, Option<String>)>, RequestsError> {
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let stored: Vec<String> = keys.iter().map(|key| row_key(kind, key)).collect();
+        read(&self.db, "requests.states_of", move |conn| {
+            let mut statement = conn.prepare(&sql::request_states(ListLen::new(stored.len())))?;
+            let rows = statement.query_map(params_from_iter(&stored), sql::RequestState::read)?;
+            let mut states = HashMap::with_capacity(stored.len());
+            for row in rows {
+                let row = row?;
+                let status = RequestStatus::parse(&row.status)
+                    .ok_or_else(|| unknown_value(1, "status", &row.status))?;
+                states.insert(bare_key(&row.stored_key), (status, row.task_id));
+            }
+            Ok(states)
+        })
+        .await
+    }
+
     /// Lowercased MBIDs with a live row of one kind (the
     /// batch dedupe read).
     pub async fn active_mbids(&self, kind: RequestKind) -> Result<HashSet<String>, RequestsError> {
@@ -537,12 +564,18 @@ impl RequestStore {
                 if filed.is_empty() {
                     return Ok(BatchWrite::NothingFiled);
                 }
+                let generations: HashMap<&str, u64> = won
+                    .iter()
+                    .map(|record| (record.key.as_str(), record.generation))
+                    .collect();
                 for item in &mut batch.items {
                     if item.outcome == BatchOutcome::Requested
                         && !filed.contains(&item.release_group_mbid)
                     {
                         item.outcome = BatchOutcome::NotRequested;
                     }
+                    item.request_generation =
+                        generations.get(item.release_group_mbid.as_str()).copied();
                 }
                 batch.insert_tx(tx)?;
                 Ok(BatchWrite::Filed { won })

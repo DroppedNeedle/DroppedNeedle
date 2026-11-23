@@ -5,7 +5,7 @@
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use super::models::BatchOutcome;
+use super::models::{BatchOutcome, BatchSource};
 use crate::db::AcquireDb;
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{QuotaRefusal, RequestRecord};
@@ -22,6 +22,8 @@ pub(crate) struct BatchHead {
     pub(crate) source_section: String,
     /// Integer milliseconds.
     pub(crate) created_at: i64,
+    /// Where it came from.
+    pub(crate) source: BatchSource,
 }
 
 /// One album of a batch, with its request's live state when read back.
@@ -36,6 +38,12 @@ pub(crate) struct BatchItem {
     /// The album request's status; `None` when writing or when there is
     /// no request.
     pub(crate) request_status: Option<String>,
+    /// How many of a playlist's songs the album carries; `None` for
+    /// Discover's albums.
+    pub(crate) song_count: Option<u32>,
+    /// The generation of the request the batch made for the album, set by
+    /// the filing write for a request it won; `None` otherwise.
+    pub(crate) request_generation: Option<u64>,
 }
 
 /// A batch about to be filed: its row and its albums. An album marked
@@ -83,7 +91,8 @@ impl NewBatch {
                 head.name,
                 head.source_section,
                 head.created_at,
-                self.made_from
+                self.made_from,
+                head.source.as_str()
             ],
         )?;
         for item in &self.items {
@@ -97,6 +106,8 @@ impl NewBatch {
                     item.artist_name,
                     item.outcome.as_str(),
                     head.created_at,
+                    item.song_count,
+                    item.request_generation.map(crate::db::to_i64),
                 ],
             )?;
         }
@@ -105,12 +116,14 @@ impl NewBatch {
 }
 
 fn head_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BatchHead> {
+    let source: String = row.get(5)?;
     Ok(BatchHead {
         id: row.get(0)?,
         user_id: row.get(1)?,
         name: row.get(2)?,
         source_section: row.get(3)?,
         created_at: row.get(4)?,
+        source: BatchSource::parse(&source).ok_or_else(|| unknown_value(5, "source", &source))?,
     })
 }
 
@@ -136,12 +149,16 @@ impl BatchStore {
         .await
     }
 
-    /// A user's batches, newest first.
-    pub(crate) async fn heads_of(&self, user_id: &str) -> Result<Vec<BatchHead>, RequestsError> {
+    /// A user's batches from `source`, newest first.
+    pub(crate) async fn heads_of(
+        &self,
+        user_id: &str,
+        source: BatchSource,
+    ) -> Result<Vec<BatchHead>, RequestsError> {
         let user_id = user_id.to_owned();
         read(&self.db, "requests.batches.list", move |conn| {
             conn.prepare_cached(sql::BATCHES_OF_USER.text())?
-                .query_map(params![user_id], head_from_row)?
+                .query_map(params![user_id, source.as_str()], head_from_row)?
                 .collect()
         })
         .await
@@ -162,6 +179,8 @@ impl BatchStore {
                         outcome: BatchOutcome::parse(&outcome)
                             .ok_or_else(|| unknown_value(4, "outcome", &outcome))?,
                         request_status: row.get(5)?,
+                        song_count: row.get(6)?,
+                        request_generation: None,
                     })
                 })?
                 .collect()

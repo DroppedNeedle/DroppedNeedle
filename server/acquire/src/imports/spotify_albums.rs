@@ -790,6 +790,11 @@ pub(crate) fn title_key(title: &str) -> String {
     }
 }
 
+/// Whether two titles share a title form, as the proofs compare them.
+pub(crate) fn same_title(left: &str, right: &str) -> bool {
+    !non_empty_forms(left).is_disjoint(&non_empty_forms(right))
+}
+
 /// Non-empty title keys for `title` and its stripped edition form, so an
 /// empty or whitespace-only string never matches anything.
 fn non_empty_forms(title: &str) -> BTreeSet<String> {

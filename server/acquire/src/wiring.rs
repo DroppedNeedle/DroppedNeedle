@@ -45,6 +45,7 @@ use crate::imports::spotify_store::{
 };
 use crate::landing::LandingService;
 use crate::landing::ports::LandingLibrary;
+use crate::playlist_requests::PlaylistRequests;
 use crate::probes::{DeemixChecks, DeemixFolders, LiveProbes, ProbeCache};
 use crate::readiness::{SourceNotices, SourceReadiness};
 use crate::requests::error::RequestsError;
@@ -255,6 +256,9 @@ pub struct AcquireSetup {
     /// Deemix's Test and status checks, on the session the Deezer source
     /// keeps.
     pub deemix: Arc<DeemixChecks>,
+    /// A playlist's Request missing, its song requests and what its
+    /// missing songs wait for.
+    pub playlist_requests: PlaylistRequests,
 }
 
 /// The drop-import service over the landing's library port, a staging
@@ -831,7 +835,7 @@ impl AcquireSetup {
             Arc::new(Targets::new(
                 stores.journal.clone(),
                 ports.album_lookup,
-                ports.catalog,
+                ports.catalog.clone(),
             )),
             ports.plugins.clone(),
             deemix,
@@ -903,7 +907,14 @@ impl AcquireSetup {
             resolver.clone(),
             config_store.live(),
         ));
-        let spotify_imports = SpotifyImports::new(platform.db.clone(), queue);
+        let spotify_imports = SpotifyImports::new(platform.db.clone(), queue.clone());
+        let playlist_requests = PlaylistRequests::new(
+            core.requests.clone(),
+            collections.playlists.clone(),
+            ports.catalog,
+            spotify_imports.clone(),
+            queue,
+        );
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let imports = ImportsDeps {
             lidarr: LidarrClient::new(http.clone()),
@@ -990,6 +1001,7 @@ impl AcquireSetup {
         Ok(Self {
             db,
             requests: core.requests,
+            playlist_requests,
             mixer: core.mixer,
             imports,
             dispatch: core.dispatch,

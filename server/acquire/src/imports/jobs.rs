@@ -13,7 +13,7 @@
 //! attempt. Spotify app settings that do not read hold the job until they
 //! are saved again (or a recheck comes round), then put it back the same
 //! way, so a broken section never fails an import. Any other failure ends
-//! the job failed, with a code the status route turns into its message.
+//! the job failed, with a code read back as an [`ImportFailureReason`].
 //!
 //! The jobs module runs one handler per kind, so imports run one at a time
 //! across users.
@@ -74,21 +74,39 @@ pub enum ImportState {
     Running,
     /// Finished.
     Done,
-    /// Failed. The message is user-safe.
+    /// Failed.
     Error {
-        /// What went wrong.
-        message: String,
+        /// Why.
+        reason: ImportFailureReason,
     },
 }
 
-/// The user-safe line for a failed import's code.
-pub fn failure_message(code: Option<&str>) -> &'static str {
-    match code {
-        Some(NOT_LINKED) => "Spotify account not linked",
-        Some(UNAVAILABLE) => "Failed to fetch playlist from Spotify",
-        Some(RATE_LIMITED) => "Spotify is limiting requests. Try again later",
-        Some(SAVE_FAILED) => "Failed to save the imported playlist",
-        _ => "The import did not finish",
+/// Why an import failed, read from the job's code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportFailureReason {
+    /// Not linked to Spotify, or the link no longer refreshes.
+    NotLinked,
+    /// Spotify did not answer, or answered something the import cannot read.
+    Unavailable,
+    /// Spotify kept asking us to slow down.
+    RateLimited,
+    /// The playlist could not be saved.
+    SaveFailed,
+    /// Anything else.
+    Other,
+}
+
+impl ImportFailureReason {
+    /// The reason a failed job's code names.
+    pub fn of(code: Option<&str>) -> Self {
+        match code {
+            Some(NOT_LINKED) => Self::NotLinked,
+            Some(UNAVAILABLE) => Self::Unavailable,
+            Some(RATE_LIMITED) => Self::RateLimited,
+            Some(SAVE_FAILED) => Self::SaveFailed,
+            _ => Self::Other,
+        }
     }
 }
 
@@ -148,7 +166,7 @@ impl SpotifyImports {
                 State::Queued | State::Running => ImportState::Running,
                 State::Done => ImportState::Done,
                 State::Failed => ImportState::Error {
-                    message: failure_message(status.last_error.as_deref()).to_owned(),
+                    reason: ImportFailureReason::of(status.last_error.as_deref()),
                 },
             }))
     }
